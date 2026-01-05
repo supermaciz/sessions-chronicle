@@ -1,0 +1,102 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 700" style="font-family: -apple-system, sans-serif;">
+  <!-- Window frame -->
+  <rect width="1000" height="700" fill="#f6f5f4" rx="12"/>
+
+  <!-- Header Bar -->
+  <rect width="1000" height="46" fill="#ffffff" rx="12"/>
+  <rect y="12" width="1000" height="46" fill="#ffffff"/>
+
+  <!-- App title -->
+  <text x="20" y="32" font-size="14" font-weight="600" fill="#1c1c1c">Sessions Chronicle</text>
+
+  <!-- Header buttons -->
+  <circle cx="960" cy="23" r="16" fill="#e1e1e1"/>
+  <text x="954" y="28" font-size="16" fill="#1c1c1c">⚙</text>
+  <circle cx="920" cy="23" r="16" fill="#e1e1e1"/>
+  <text x="914" y="28" font-size="16" fill="#1c1c1c">☰</text>
+
+  <!-- Search bar -->
+  <rect x="20" y="66" width="960" height="40" fill="#ffffff" rx="8" stroke="#d5d3d0" stroke-width="1"/>
+  <text x="40" y="92" font-size="14" fill="#9a9996">🔍 Search sessions...</text>
+
+  <!-- Sidebar background -->
+  <rect x="20" y="126" width="220" height="554" fill="#fafafa" rx="8"/>
+
+  <!-- Sidebar sections -->
+  <text x="35" y="152" font-size="12" font-weight="600" fill="#6e6d6b">TOOLS</text>
+
+  <!-- Tool filters -->
+  <rect x="30" y="162" width="200" height="32" fill="#3584e4" rx="6"/>
+  <text x="45" y="183" font-size="13" fill="#ffffff">• All Sessions</text>
+
+  <text x="45" y="213" font-size="13" fill="#1c1c1c">• Claude Code</text>
+  <text x="45" y="243" font-size="13" fill="#1c1c1c">• OpenCode</text>
+  <text x="45" y="273" font-size="13" fill="#1c1c1c">• Codex</text>
+
+  <text x="35" y="312" font-size="12" font-weight="600" fill="#6e6d6b">PROJECTS</text>
+  <text x="45" y="338" font-size="13" fill="#1c1c1c">• sessions-chronicle</text>
+  <text x="45" y="368" font-size="13" fill="#1c1c1c">• my-web-app</text>
+  <text x="45" y="398" font-size="13" fill="#1c1c1c">• dotfiles</text>
+
+  <!-- Main content area -->
+  <rect x="260" y="126" width="720" height="554" fill="#fafafa" rx="8"/>
+
+  <!-- Session Cards (CARDS VIEW) -->
+  <!-- Card 1 -->
+  <rect x="280" y="146" width="330" height="150" fill="#ffffff" rx="12" stroke="#e1e1e1" stroke-width="1"/>
+  <rect x="290" y="156" width="4" height="130" fill="#3584e4" rx="2"/>
+  <text x="305" y="178" font-size="14" font-weight="600" fill="#1c1c1c">Implementing session</text>
+  <text x="305" y="196" font-size="14" font-weight="600" fill="#1c1c1c">browser UI</text>
+  <text x="305" y="220" font-size="11" fill="#6e6d6b">~/projects/sessions-chronicle</text>
+  <text x="305" y="241" font-size="11" fill="#9a9996">2 hours ago</text>
+  <rect x="305" y="252" width="80" height="20" fill="#3584e4" rx="4"/>
+  <text x="314" y="265" font-size="10" fill="#ffffff">Claude Code</text>
+  <text x="395" y="265" font-size="10" fill="#6e6d6b">23 messages</text>
+
+  <!-- Card 2 -->
+  <rect x="630" y="146" width="330" height="150" fill="#ffffff" rx="12" stroke="#e1e1e1" stroke-width="1"/>
+  <rect x="640" y="156" width="4" height="130" fill="#26a269" rx="2"/>
+  <text x="655" y="178" font-size="14" font-weight="600" fill="#1c1c1c">Fixed authentication bug</text>
+  <text x="655" y="196" font-size="14" font-weight="600" fill="#1c1c1c">in login flow</text>
+  <text x="655" y="220" font-size="11" fill="#6e6d6b">~/projects/my-web-app</text>
+  <text x="655" y="241" font-size="11" fill="#9a9996">Yesterday</text>
+  <rect x="655" y="252" width="70" height="20" fill="#26a269" rx="4"/>
+  <text x="664" y="265" font-size="10" fill="#ffffff">OpenCode</text>
+  <text x="735" y="265" font-size="10" fill="#6e6d6b">45 messages</text>
+
+  <!-- Card 3 -->
+  <rect x="280" y="316" width="330" height="150" fill="#ffffff" rx="12" stroke="#e1e1e1" stroke-width="1"/>
+  <rect x="290" y="326" width="4" height="130" fill="#e66100" rx="2"/>
+  <text x="305" y="348" font-size="14" font-weight="600" fill="#1c1c1c">Refactored database</text>
+  <text x="305" y="366" font-size="14" font-weight="600" fill="#1c1c1c">connection pooling</text>
+  <text x="305" y="390" font-size="11" fill="#6e6d6b">~/projects/my-web-app</text>
+  <text x="305" y="411" font-size="11" fill="#9a9996">2 days ago</text>
+  <rect x="305" y="422" width="50" height="20" fill="#e66100" rx="4"/>
+  <text x="314" y="435" font-size="10" fill="#ffffff">Codex</text>
+  <text x="365" y="435" font-size="10" fill="#6e6d6b">67 messages</text>
+
+  <!-- Card 4 -->
+  <rect x="630" y="316" width="330" height="150" fill="#ffffff" rx="12" stroke="#e1e1e1" stroke-width="1"/>
+  <rect x="640" y="326" width="4" height="130" fill="#3584e4" rx="2"/>
+  <text x="655" y="348" font-size="14" font-weight="600" fill="#1c1c1c">Setup Docker dev</text>
+  <text x="655" y="366" font-size="14" font-weight="600" fill="#1c1c1c">environment</text>
+  <text x="655" y="390" font-size="11" fill="#6e6d6b">~/projects/dotfiles</text>
+  <text x="655" y="411" font-size="11" fill="#9a9996">3 days ago</text>
+  <rect x="655" y="422" width="80" height="20" fill="#3584e4" rx="4"/>
+  <text x="664" y="435" font-size="10" fill="#ffffff">Claude Code</text>
+  <text x="745" y="435" font-size="10" fill="#6e6d6b">12 messages</text>
+
+  <!-- Card 5 -->
+  <rect x="280" y="486" width="330" height="150" fill="#ffffff" rx="12" stroke="#e1e1e1" stroke-width="1"/>
+  <rect x="290" y="496" width="4" height="130" fill="#26a269" rx="2"/>
+  <text x="305" y="518" font-size="14" font-weight="600" fill="#1c1c1c">Added TypeScript types</text>
+  <text x="305" y="536" font-size="14" font-weight="600" fill="#1c1c1c">for API responses</text>
+  <text x="305" y="560" font-size="11" fill="#6e6d6b">~/projects/my-web-app</text>
+  <text x="305" y="581" font-size="11" fill="#9a9996">1 week ago</text>
+  <rect x="305" y="592" width="70" height="20" fill="#26a269" rx="4"/>
+  <text x="314" y="605" font-size="10" fill="#ffffff">OpenCode</text>
+  <text x="385" y="605" font-size="10" fill="#6e6d6b">34 messages</text>
+
+  <!-- Title label -->
+  <text x="400" y="30" font-size="11" font-weight="600" fill="#e66100">CARDS VIEW</text>
+</svg>

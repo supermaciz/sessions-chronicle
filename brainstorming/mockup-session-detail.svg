@@ -1,0 +1,80 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 700" style="font-family: -apple-system, sans-serif;">
+  <!-- Window frame -->
+  <rect width="1000" height="700" fill="#f6f5f4" rx="12"/>
+
+  <!-- Header Bar -->
+  <rect width="1000" height="46" fill="#ffffff" rx="12"/>
+  <rect y="12" width="1000" height="46" fill="#ffffff"/>
+
+  <!-- Back button -->
+  <text x="20" y="32" font-size="18" fill="#3584e4">←</text>
+  <!-- Session title in header -->
+  <text x="50" y="32" font-size="14" font-weight="600" fill="#1c1c1c">Implementing session browser UI</text>
+
+  <!-- Header action buttons -->
+  <rect x="820" y="10" width="140" height="26" fill="#3584e4" rx="6"/>
+  <text x="842" y="28" font-size="12" font-weight="500" fill="#ffffff">Resume Session</text>
+  <circle cx="960" cy="23" r="16" fill="#e1e1e1"/>
+  <text x="954" y="28" font-size="16" fill="#1c1c1c">⋮</text>
+
+  <!-- Session metadata bar -->
+  <rect x="20" y="66" width="960" height="50" fill="#ffffff" rx="8"/>
+  <text x="35" y="88" font-size="12" fill="#6e6d6b">Project:</text>
+  <text x="85" y="88" font-size="12" fill="#1c1c1c">~/projects/sessions-chronicle</text>
+  <text x="350" y="88" font-size="12" fill="#6e6d6b">Tool:</text>
+  <rect x="390" y="76" width="80" height="20" fill="#3584e4" rx="4"/>
+  <text x="399" y="89" font-size="10" fill="#ffffff">Claude Code</text>
+  <text x="510" y="88" font-size="12" fill="#6e6d6b">Started:</text>
+  <text x="565" y="88" font-size="12" fill="#1c1c1c">2 hours ago</text>
+  <text x="680" y="88" font-size="12" fill="#6e6d6b">Messages:</text>
+  <text x="750" y="88" font-size="12" fill="#1c1c1c">23</text>
+  <text x="35" y="105" font-size="11" fill="#9a9996">Session ID: 20260105-143022-abc123</text>
+
+  <!-- Main content area - scrollable transcript -->
+  <rect x="20" y="136" width="960" height="544" fill="#ffffff" rx="8"/>
+
+  <!-- Message 1 - User -->
+  <rect x="40" y="156" width="920" height="70" fill="#fafafa" rx="6"/>
+  <text x="55" y="175" font-size="11" font-weight="600" fill="#3584e4">USER</text>
+  <text x="920" y="175" font-size="10" fill="#9a9996">14:30:22</text>
+  <text x="55" y="195" font-size="13" fill="#1c1c1c">I want to create a GNOME app for browsing AI coding sessions.</text>
+  <text x="55" y="213" font-size="13" fill="#1c1c1c">Can you help me design it?</text>
+
+  <!-- Message 2 - Assistant -->
+  <rect x="40" y="236" width="920" height="88" fill="#ffffff" rx="6" stroke="#e1e1e1" stroke-width="1"/>
+  <text x="55" y="255" font-size="11" font-weight="600" fill="#26a269">ASSISTANT</text>
+  <text x="920" y="255" font-size="10" fill="#9a9996">14:30:45</text>
+  <text x="55" y="275" font-size="13" fill="#1c1c1c">I'd be happy to help design a GNOME app for browsing AI coding</text>
+  <text x="55" y="293" font-size="13" fill="#1c1c1c">sessions! This sounds like a useful tool. Let's start by understanding</text>
+  <text x="55" y="311" font-size="13" fill="#1c1c1c">your requirements...</text>
+
+  <!-- Message 3 - Tool Call -->
+  <rect x="40" y="334" width="920" height="56" fill="#fff8dc" rx="6" stroke="#f6d32d" stroke-width="1"/>
+  <text x="55" y="353" font-size="11" font-weight="600" fill="#e66100">TOOL: WebFetch</text>
+  <text x="920" y="353" font-size="10" fill="#9a9996">14:31:02</text>
+  <text x="55" y="373" font-size="12" font-family="monospace" fill="#5e5c64">url: https://github.com/jazzyalex/agent-sessions</text>
+
+  <!-- Message 4 - Tool Result -->
+  <rect x="40" y="400" width="920" height="56" fill="#f0f9ff" rx="6" stroke="#62a0ea" stroke-width="1"/>
+  <text x="55" y="419" font-size="11" font-weight="600" fill="#1c71d8">TOOL RESULT</text>
+  <text x="920" y="419" font-size="10" fill="#9a9996">14:31:15</text>
+  <text x="55" y="439" font-size="12" fill="#5e5c64">agent-sessions is a macOS app for browsing AI coding sessions...</text>
+
+  <!-- Message 5 - Assistant (partial) -->
+  <rect x="40" y="466" width="920" height="70" fill="#ffffff" rx="6" stroke="#e1e1e1" stroke-width="1"/>
+  <text x="55" y="485" font-size="11" font-weight="600" fill="#26a269">ASSISTANT</text>
+  <text x="920" y="485" font-size="10" fill="#9a9996">14:31:20</text>
+  <text x="55" y="505" font-size="13" fill="#1c1c1c">Based on the agent-sessions app, here are some design</text>
+  <text x="55" y="523" font-size="13" fill="#1c1c1c">considerations for your GNOME version...</text>
+
+  <!-- Scroll indicator -->
+  <rect x="970" y="146" width="4" height="100" fill="#d5d3d0" rx="2"/>
+  <rect x="970" y="146" width="4" height="30" fill="#9a9996" rx="2"/>
+
+  <!-- Bottom status hint -->
+  <rect x="20" y="650" width="960" height="30" fill="#fafafa" rx="6"/>
+  <text x="35" y="670" font-size="11" fill="#6e6d6b">💡 Tip: Press Ctrl+R to resume this session in your terminal</text>
+
+  <!-- Title label -->
+  <text x="400" y="30" font-size="11" font-weight="600" fill="#26a269">SESSION DETAIL VIEW</text>
+</svg>
