@@ -1,0 +1,6 @@
+data/io.github.supermaciz.sessionschronicle.desktop.in.in
+data/io.github.supermaciz.sessionschronicle.gschema.xml.in
+data/io.github.supermaciz.sessionschronicle.metainfo.xml.in.in
+data/resources/ui/shortcuts.ui
+src/app.rs
+src/main.rs
