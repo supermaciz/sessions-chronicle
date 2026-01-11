@@ -6,35 +6,36 @@ This directory contains all design documentation, mockups, and architectural dec
 
 ## 📋 Documentation Index
 
-### Core Design Documents
+### Core Documents
 
-1. **[DESIGN_SUMMARY.md](DESIGN_SUMMARY.md)** ⭐ **START HERE**
-   - Complete project overview
-   - Feature scope for v1
-   - Technical decisions
-   - Next steps
+1. **[PROJECT_STATUS.md](PROJECT_STATUS.md)** ⭐ **START HERE**
+   - Current implementation status
+   - What's completed, what's next
+   - Technical architecture overview
+   - Development workflow and best practices
 
-2. **[UI_DESIGN_COMPARISON.md](UI_DESIGN_COMPARISON.md)**
-   - List view vs Cards view analysis
-   - Pros/cons of each approach
-   - Recommendation: Start with List View
+2. **[SESSION_FORMAT_ANALYSIS.md](SESSION_FORMAT_ANALYSIS.md)** 📄
+   - Detailed file format specs for Claude Code, Codex, OpenCode
+   - Parser implementation guidance
+   - Event structure comparisons
 
-3. **[SEARCH_ARCHITECTURE.md](SEARCH_ARCHITECTURE.md)**
-   - How agent-sessions implements search
-   - Two-phase progressive search explained
-   - Recommendation for Sessions Chronicle: SQLite FTS5
-
-4. **[RUST_ARCHITECTURE.md](RUST_ARCHITECTURE.md)** 🔧
-   - Complete Rust code structure
-   - Dependencies (Relm4, GTK4, rusqlite)
-   - Data models, parsers, database layer
-   - Code examples for each module
-
-5. **[DEVELOPMENT_WORKFLOW.md](DEVELOPMENT_WORKFLOW.md)** 🛠️
+3. **[DEVELOPMENT_WORKFLOW.md](DEVELOPMENT_WORKFLOW.md)** 🛠️
    - Running with test data vs production
    - Command-line arguments for development
    - Testing workflow and IDE configuration
    - Why we use CLI args instead of hardcoded checks
+
+### Design Decisions
+
+4. **[UI_DESIGN_COMPARISON.md](UI_DESIGN_COMPARISON.md)**
+   - List view vs Cards view analysis
+   - Pros/cons of each approach
+   - Recommendation: Start with List View
+
+5. **[SEARCH_ARCHITECTURE.md](SEARCH_ARCHITECTURE.md)**
+   - How agent-sessions implements search
+   - Two-phase progressive search explained
+   - Recommendation for Sessions Chronicle: SQLite FTS5
 
 ---
 
@@ -66,99 +67,35 @@ All mockups are SVG files (open in browser or image viewer):
 
 ---
 
-## 🎯 Quick Summary
+## 🎯 Current Status
 
-**What**: GNOME app for browsing/searching/resuming AI coding sessions
+**Phase**: Phase 1 - Core Implementation (Claude Code only)
 
-**Tech Stack**:
-- Rust + Relm4 (reactive UI)
-- GTK4 + Libadwaita (GNOME HIG)
-- SQLite + FTS5 (full-text search)
+**Completed**:
+- ✅ Project structure with Rust + GTK4 + Relm4
+- ✅ Data models (Session, Message, Tool, Role)
+- ✅ Database schema (SQLite + FTS5)
+- ✅ Claude Code parser (JSONL streaming)
+- ✅ Test fixtures
+- ✅ Basic UI components (Sidebar, SessionList)
 
-**Supported Tools** (v1):
-- Claude Code
-- OpenCode
-- Codex
-
-**Core Features** (v1):
-- Browse all sessions with filtering
-- Full-text search across messages
-- Session detail view
-- Resume sessions in terminal
-
-**UI Choice**: List view (compact, information-dense)
+**Next Tasks**:
+- ⬜ Add CLI args (`clap`) for `--sessions-dir`
+- ⬜ Wire database indexer into App
+- ⬜ Load sessions from DB in SessionList
+- ⬜ Implement search (FTS5 queries)
+- ⬜ Add SessionDetail component
+- ⬜ Session resumption (terminal launch)
 
 ---
 
 ## 📁 Session Data Locations
 
 ```
-~/.claude/sessions/                           ← Claude Code
-~/.local/share/opencode/storage/session/      ← OpenCode
-~/.codex/sessions/                            ← Codex
+~/.claude/projects/                           ← Claude Code (v1)
+~/.local/share/opencode/storage/session/      ← OpenCode (v2)
+~/.codex/sessions/                            ← Codex (v2)
 ```
-
-All stored as JSON files (format TBD - need to inspect actual files).
-
----
-
-## ✅ Next Steps
-
-1. **Inspect session file formats**
-   - Look at actual JSON from each tool
-   - Design parsers accordingly
-
-2. **Create Rust project skeleton**
-   - `cargo new sessions-chronicle`
-   - Add dependencies to Cargo.toml
-
-3. **Implement first parser** (Claude Code)
-   - Parse metadata
-   - Parse messages
-   - Unit tests
-
-4. **Build database indexer**
-   - SQLite schema
-   - FTS5 setup
-   - Index one tool's sessions
-
-5. **Create basic UI**
-   - Relm4 main window
-   - Session list view
-   - Search bar
-
-6. **Implement search**
-   - FTS5 queries
-   - Filter by tool/project
-   - Display results
-
-7. **Add session detail view**
-   - Message rendering
-   - Syntax highlighting for code (future)
-
-8. **Implement session resumption**
-   - Terminal detection
-   - Launch command
-   - Test with each tool
-
----
-
-## 🔍 Open Questions
-
-1. **Session file format**: Need to inspect actual files
-2. **Resume command**: Verify each tool supports `resume <session-id>`
-3. **Real-time updates**: Manual refresh (v1) or auto-watch (v2)?
-4. **Relm4 complexity**: Worth it? (Yes, for this app's state management)
-
----
-
-## 📝 Notes
-
-- **No code yet** - pure design phase
-- Focus on v1 MVP: browse, search, resume
-- Future: analytics, git integration, more tools
-- GNOME HIG compliance is critical
-- Accessibility built-in via GTK4
 
 ---
 
@@ -172,5 +109,5 @@ All stored as JSON files (format TBD - need to inspect actual files).
 
 ---
 
-**Last Updated**: 2026-01-05
-**Status**: Design phase complete, ready for implementation
+**Last Updated**: 2026-01-11
+**Status**: Phase 1 implementation in progress
