@@ -2,7 +2,7 @@
 name = "sessions-chronicle"
 version = "0.1.0"
 authors = ["Mathieu Cizo <maciz@outlook.fr>"]
-edition = "2021"
+edition = "2024"
 publish = false
 
 [profile.release]

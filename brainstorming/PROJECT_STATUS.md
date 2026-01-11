@@ -66,7 +66,7 @@
 
 ### Tech Stack
 
-- **Language**: Rust 2021
+- **Language**: Rust 2024
 - **UI**: GTK4 + Libadwaita (GNOME HIG compliant)
 - **Reactive UI**: Relm4 (Elm-inspired architecture)
 - **Database**: SQLite with FTS5 (full-text search)
