@@ -10,8 +10,7 @@ pub struct SessionIndexer {
 
 impl SessionIndexer {
     pub fn new(db_path: &Path) -> Result<Self> {
-        let db = Connection::open(db_path)
-            .context("Failed to open database")?;
+        let db = Connection::open(db_path).context("Failed to open database")?;
         crate::database::schema::initialize_database(&db)
             .context("Failed to initialize database schema")?;
         Ok(Self { db })
@@ -42,11 +41,7 @@ impl SessionIndexer {
         Ok(count)
     }
 
-    fn index_session_file(
-        &mut self,
-        file_path: &Path,
-        parser: &ClaudeCodeParser,
-    ) -> Result<()> {
+    fn index_session_file(&mut self, file_path: &Path, parser: &ClaudeCodeParser) -> Result<()> {
         let session = parser.parse_metadata(file_path)?;
         let messages = parser.parse_messages(file_path)?;
 
@@ -67,10 +62,8 @@ impl SessionIndexer {
         )?;
 
         // Delete old messages for this session
-        self.db.execute(
-            "DELETE FROM messages WHERE session_id = ?1",
-            [&session.id],
-        )?;
+        self.db
+            .execute("DELETE FROM messages WHERE session_id = ?1", [&session.id])?;
 
         // Insert new messages
         for msg in messages {

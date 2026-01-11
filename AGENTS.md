@@ -1,7 +1,7 @@
 # Repository Guidelines
 
 ## Project Structure & Module Organization
-- `src/` contains the Rust app: `app.rs` and `main.rs` glue, `ui/` for Relm4 widgets, `database/` for SQLite, `parsers/` for session formats, `models/` for domain types, and `modals/` for dialogs.
+- `src/` contains the Rust app: `app.rs` and `main.rs` glue, `ui/` for Relm4 widgets (including `modals/` for dialogs), `database/` for SQLite, `parsers/` for session formats, and `models/` for domain types.
 - `data/` holds desktop metadata, GSettings schema, icons, CSS, and UI resources in `data/resources/`.
 - `tests/fixtures/` provides sample JSONL sessions for development and manual testing.
 - `build-aux/` contains Flatpak and Meson manifests.

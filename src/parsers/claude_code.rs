@@ -11,8 +11,7 @@ pub struct ClaudeCodeParser;
 
 impl ClaudeCodeParser {
     pub fn parse_metadata(&self, file_path: &Path) -> Result<Session> {
-        let file = File::open(file_path)
-            .context("Failed to open session file")?;
+        let file = File::open(file_path).context("Failed to open session file")?;
 
         let reader = BufReader::new(file);
         let mut first_timestamp = None;
@@ -26,12 +25,12 @@ impl ClaudeCodeParser {
                 continue;
             }
 
-            let event: Value = serde_json::from_str(&line)
-                .context("Failed to parse JSON")?;
+            let event: Value = serde_json::from_str(&line).context("Failed to parse JSON")?;
 
             // Extract session ID from first event
             if session_id.is_none() {
-                session_id = event.get("sessionId")
+                session_id = event
+                    .get("sessionId")
                     .and_then(|v| v.as_str())
                     .or_else(|| file_path.file_stem().and_then(|s| s.to_str()))
                     .map(|s| s.to_string());
@@ -39,7 +38,8 @@ impl ClaudeCodeParser {
 
             // Extract project path from cwd
             if project_path.is_none() {
-                project_path = event.get("cwd")
+                project_path = event
+                    .get("cwd")
                     .and_then(|v| v.as_str())
                     .map(|s| s.to_string());
             }
@@ -62,14 +62,16 @@ impl ClaudeCodeParser {
         // Count total messages by reading entire file
         let file = File::open(file_path)?;
         let reader = BufReader::new(file);
-        let total_count = reader.lines()
+        let total_count = reader
+            .lines()
             .filter_map(|l| l.ok())
             .filter(|l| !l.trim().is_empty())
             .count();
 
         Ok(Session {
             id: session_id.unwrap_or_else(|| {
-                file_path.file_stem()
+                file_path
+                    .file_stem()
                     .and_then(|s| s.to_str())
                     .unwrap_or("unknown")
                     .to_string()
@@ -94,8 +96,7 @@ impl ClaudeCodeParser {
                 continue;
             }
 
-            let event: Value = serde_json::from_str(&line)
-                .context("Failed to parse JSON")?;
+            let event: Value = serde_json::from_str(&line).context("Failed to parse JSON")?;
 
             if let Some(msg) = Self::parse_event(&event, index) {
                 messages.push(msg);
@@ -122,11 +123,15 @@ impl ClaudeCodeParser {
                 match subtype {
                     "local_command" => {
                         let stdout = event.get("stdout").and_then(|v| v.as_str()).unwrap_or("");
-                        let cmd = event.get("command").and_then(|v| v.as_array())
-                            .map(|arr| arr.iter()
-                                .filter_map(|v| v.as_str())
-                                .collect::<Vec<_>>()
-                                .join(" "))
+                        let cmd = event
+                            .get("command")
+                            .and_then(|v| v.as_array())
+                            .map(|arr| {
+                                arr.iter()
+                                    .filter_map(|v| v.as_str())
+                                    .collect::<Vec<_>>()
+                                    .join(" ")
+                            })
                             .unwrap_or_else(|| "command".to_string());
                         (Role::ToolResult, format!("$ {}\n{}", cmd, stdout))
                     }
@@ -136,12 +141,14 @@ impl ClaudeCodeParser {
             _ => return None,
         };
 
-        let timestamp = event.get("timestamp")
+        let timestamp = event
+            .get("timestamp")
             .and_then(|v| v.as_str())
             .and_then(|s| Self::parse_timestamp(s).ok())
             .unwrap_or_else(|| Utc::now());
 
-        let session_id = event.get("sessionId")
+        let session_id = event
+            .get("sessionId")
             .and_then(|v| v.as_str())
             .unwrap_or("unknown")
             .to_string();

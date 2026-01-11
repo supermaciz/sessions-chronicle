@@ -1,5 +1,5 @@
-use relm4::{gtk, ComponentParts, ComponentSender, RelmWidgetExt, SimpleComponent};
 use gtk::prelude::*;
+use relm4::{ComponentParts, ComponentSender, RelmWidgetExt, SimpleComponent, gtk};
 
 #[derive(Debug)]
 pub struct Sidebar {}

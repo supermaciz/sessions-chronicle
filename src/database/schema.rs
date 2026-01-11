@@ -17,10 +17,7 @@ pub fn initialize_database(conn: &Connection) -> Result<()> {
     )?;
 
     // Create indexes
-    conn.execute(
-        "CREATE INDEX IF NOT EXISTS idx_tool ON sessions(tool)",
-        [],
-    )?;
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_tool ON sessions(tool)", [])?;
 
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_project ON sessions(project_path)",

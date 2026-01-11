@@ -1,5 +1,5 @@
-use relm4::{adw, gtk, ComponentParts, ComponentSender, SimpleComponent};
 use gtk::prelude::*;
+use relm4::{ComponentParts, ComponentSender, SimpleComponent, adw, gtk};
 
 #[derive(Debug)]
 pub struct SessionList {}

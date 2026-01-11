@@ -1,15 +1,18 @@
 use relm4::{
+    Component, ComponentController, ComponentParts, ComponentSender, SimpleComponent,
     actions::{AccelsPlus, RelmAction, RelmActionGroup},
-    adw, gtk, main_application, Component, ComponentController, ComponentParts, ComponentSender, SimpleComponent,
+    adw, gtk, main_application,
 };
 
 use adw::prelude::AdwApplicationWindowExt;
-use gtk::prelude::{ApplicationExt, ButtonExt, GtkWindowExt, OrientableExt, SettingsExt, ToggleButtonExt, WidgetExt};
+use gtk::prelude::{
+    ApplicationExt, ButtonExt, GtkWindowExt, OrientableExt, SettingsExt, ToggleButtonExt, WidgetExt,
+};
 use gtk::{gio, glib};
 
 use crate::config::{APP_ID, PROFILE};
-use crate::modals::{about::AboutDialog, shortcuts::ShortcutsDialog};
-use crate::ui::{sidebar::Sidebar, session_list::SessionList};
+use crate::ui::modals::{about::AboutDialog, shortcuts::ShortcutsDialog};
+use crate::ui::{session_list::SessionList, sidebar::Sidebar};
 
 pub(super) struct App {
     search_visible: bool,
