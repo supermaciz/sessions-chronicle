@@ -33,6 +33,9 @@ chrono = "0.4"
 anyhow = "1.0"
 thiserror = "1.0"
 
+# Command-line argument parsing
+clap = { version = "4.5", features = ["derive"] }
+
 # Logging (existing)
 tracing = "0.1.44"
 tracing-subscriber = "0.3.22"
@@ -43,13 +46,30 @@ gettext-rs = { version = "0.7.7", features = ["gettext-system"] }
 
 ### Step 2: Create Mock Data
 
-Create `data/` directory with sample session files:
+Create `tests/fixtures/` directory with sample session files for testing and development:
 
 ```bash
-mkdir -p data/claude_sessions
+mkdir -p tests/fixtures/claude_sessions
 ```
 
-Create `data/claude_sessions/sample-session.jsonl`:
+**Important**: The application should not check for test fixtures in production code. Instead, use command-line arguments during development:
+
+```bash
+# Development with test fixtures
+sessions-chronicle --sessions-dir tests/fixtures/claude_sessions
+
+# Production (uses ~/.claude/projects by default)
+sessions-chronicle
+```
+
+**Design Rationale:**
+- ✅ **Clean separation**: Production code doesn't check for test directories
+- ✅ **Explicit over magical**: Developers explicitly choose test mode with `--sessions-dir`
+- ✅ **Standard practice**: CLI args are the conventional way to override defaults
+- ✅ **Flexible**: Easy to test with any directory, not just `tests/fixtures/`
+- ✅ **No pollution**: Test-checking logic doesn't bloat production binary
+
+Create `tests/fixtures/claude_sessions/sample-session.jsonl`:
 
 ```json
 {"type":"user","message":{"role":"user","content":"Help me refactor this code"},"timestamp":"2025-01-10T10:30:00.000Z","cwd":"/home/user/project","sessionId":"abc123","uuid":"msg1","parentUuid":null,"isMeta":false}
@@ -490,7 +510,32 @@ pub use indexer::SessionIndexer;
 
 ### Step 6: Wire Indexer into App
 
-Update `src/app.rs` to initialize database and index sessions:
+First, add command-line argument parsing to `src/main.rs`:
+
+```rust
+use clap::Parser;
+use std::path::PathBuf;
+
+#[derive(Parser, Debug)]
+#[command(author, version, about, long_about = None)]
+struct Args {
+    /// Override sessions directory (for development/testing)
+    #[arg(long, value_name = "DIR")]
+    sessions_dir: Option<PathBuf>,
+}
+
+fn main() {
+    let args = Args::parse();
+
+    // ... existing main.rs code ...
+
+    // Pass sessions_dir to App
+    let app = RelmApp::new("io.github.supermaciz.sessionschronicle");
+    app.run::<App>(args.sessions_dir);
+}
+```
+
+Update `src/app.rs` to accept sessions directory and initialize database:
 
 ```rust
 use relm4::{
@@ -500,6 +545,7 @@ use relm4::{
 use adw::prelude::AdwApplicationWindowExt;
 use gtk::prelude::{ApplicationExt, ButtonExt, GtkWindowExt, OrientableExt, SettingsExt, ToggleButtonExt, WidgetExt};
 use gtk::{gio, glib};
+use std::path::PathBuf;
 use tracing::{error, info};
 
 use crate::config::{APP_ID, PROFILE};
@@ -510,6 +556,7 @@ use crate::ui::{sidebar::Sidebar, session_list::SessionList};
 pub(super) struct App {
     search_visible: bool,
     db_initialized: bool,
+    sessions_dir: Option<PathBuf>,
 }
 
 #[derive(Debug)]
@@ -527,7 +574,7 @@ relm4::new_stateless_action!(QuitAction, WindowActionGroup, "quit");
 
 #[relm4::component(pub)]
 impl SimpleComponent for App {
-    type Init = ();
+    type Init = Option<PathBuf>;  // Sessions directory override
     type Input = AppMsg;
     type Output = ();
     type Widgets = AppWidgets;
@@ -613,7 +660,7 @@ impl SimpleComponent for App {
     }
 
     fn init(
-        _init: Self::Init,
+        sessions_dir: Self::Init,
         root: Self::Root,
         sender: ComponentSender<Self>,
     ) -> ComponentParts<Self> {
@@ -623,6 +670,7 @@ impl SimpleComponent for App {
         let model = Self {
             search_visible: false,
             db_initialized: false,
+            sessions_dir,
         };
         let widgets = view_output!();
 
@@ -691,13 +739,11 @@ impl SimpleComponent for App {
                         }
                     };
 
-                    // Check if we should use mock data or real sessions
-                    let sessions_dir = if std::path::Path::new("data/claude_sessions").exists() {
-                        std::path::PathBuf::from("data/claude_sessions")
-                    } else {
+                    // Get sessions directory from command-line args or use default
+                    let sessions_dir = self.sessions_dir.clone().unwrap_or_else(|| {
                         let home = std::env::var("HOME").unwrap();
                         std::path::PathBuf::from(format!("{}/.claude/projects", home))
-                    };
+                    });
 
                     match indexer.index_claude_sessions(&sessions_dir) {
                         Ok(count) => {
@@ -1126,7 +1172,7 @@ use std::path::PathBuf;
 
 #[test]
 fn test_parse_and_index_session() {
-    let test_data = PathBuf::from("data/claude_sessions/sample-session.jsonl");
+    let test_data = PathBuf::from("tests/fixtures/claude_sessions/sample-session.jsonl");
     assert!(test_data.exists(), "Test data file not found");
 
     let parser = ClaudeCodeParser;

@@ -30,6 +30,12 @@ This directory contains all design documentation, mockups, and architectural dec
    - Data models, parsers, database layer
    - Code examples for each module
 
+5. **[DEVELOPMENT_WORKFLOW.md](DEVELOPMENT_WORKFLOW.md)** 🛠️
+   - Running with test data vs production
+   - Command-line arguments for development
+   - Testing workflow and IDE configuration
+   - Why we use CLI args instead of hardcoded checks
+
 ---
 
 ## 🎨 Visual Mockups

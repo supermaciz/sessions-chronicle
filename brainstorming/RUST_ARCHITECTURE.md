@@ -566,7 +566,7 @@ fn show_resume_fallback_notification(command: &str) {
 
 ### Phase 1: Data Layer & Single Tool Support
 
-1. **Create mock data directory** (`data/`) with sample Claude Code session files before inspecting actual files
+1. **Create mock data directory** (`tests/fixtures/`) with sample Claude Code session files before inspecting actual files
 2. **Implement data models** in `src/models/`:
    - `session.rs` - Session struct with Tool enum
    - `message.rs` - Message struct with Role enum

@@ -268,7 +268,7 @@ User can override in Settings.
 
 ### Testing Strategy
 
-13. **Mock data early** - Create sample session files in `data/` directory for development. Don't rely on having actual Claude Code sessions locally. This ensures you can test without real data.
+13. **Mock data early** - Create sample session files in `tests/fixtures/` directory for development. Don't rely on having actual Claude Code sessions locally. This ensures you can test without real data. Use command-line arguments (`--sessions-dir`) to specify test fixtures during development, rather than checking for test directories in production code.
 
 14. **Integration test** - Write a test that: parses → stores in DB → retrieves → displays. This validates the full pipeline and catches data transformation bugs early.
 
@@ -318,7 +318,7 @@ User can override in Settings.
 2. ✅ Confirm technical approach
 3. ✅ Create project skeleton (Cargo, GTK4, Relm4)
 4. ⏭️ Add missing dependencies to Cargo.toml
-5. ⏭️ Create mock data directory (data/) with sample session files
+5. ⏭️ Create mock data directory (tests/fixtures/) with sample session files
 6. ⏭️ Implement data models (Session, Message, Tool, Role)
 7. ⏭️ Create database schema and indexer (SQLite + FTS5)
 8. ⏭️ Implement session parser for one tool (Claude Code)
