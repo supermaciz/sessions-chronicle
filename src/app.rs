@@ -1,19 +1,24 @@
 use relm4::{
     actions::{AccelsPlus, RelmAction, RelmActionGroup},
-    adw, gtk, main_application, Component, ComponentParts, ComponentSender, SimpleComponent,
+    adw, gtk, main_application, Component, ComponentController, ComponentParts, ComponentSender, SimpleComponent,
 };
 
-use gtk::prelude::{ApplicationExt, GtkWindowExt, OrientableExt, SettingsExt, WidgetExt};
+use adw::prelude::AdwApplicationWindowExt;
+use gtk::prelude::{ApplicationExt, ButtonExt, GtkWindowExt, OrientableExt, SettingsExt, ToggleButtonExt, WidgetExt};
 use gtk::{gio, glib};
 
 use crate::config::{APP_ID, PROFILE};
 use crate::modals::{about::AboutDialog, shortcuts::ShortcutsDialog};
+use crate::ui::{sidebar::Sidebar, session_list::SessionList};
 
-pub(super) struct App {}
+pub(super) struct App {
+    search_visible: bool,
+}
 
 #[derive(Debug)]
 pub(super) enum AppMsg {
     Quit,
+    ToggleSearch,
 }
 
 relm4::new_action_group!(pub(super) WindowActionGroup, "win");
@@ -54,23 +59,58 @@ impl SimpleComponent for App {
                     None
                 },
 
-            gtk::Box {
-                set_orientation: gtk::Orientation::Vertical,
+            #[wrap(Some)]
+            set_content = &adw::ToolbarView {
+                add_top_bar = &adw::HeaderBar {
+                    pack_start = &gtk::ToggleButton {
+                        set_icon_name: "system-search-symbolic",
+                        set_tooltip_text: Some("Search sessions"),
+                        #[watch]
+                        set_active: model.search_visible,
+                        connect_toggled[sender] => move |_| {
+                            sender.input(AppMsg::ToggleSearch);
+                        },
+                    },
 
-                adw::HeaderBar {
                     pack_end = &gtk::MenuButton {
                         set_icon_name: "open-menu-symbolic",
                         set_menu_model: Some(&primary_menu),
-                    }
+                    },
                 },
 
-                gtk::Label {
-                    set_label: "Hello world!",
-                    add_css_class: "title-header",
-                    set_vexpand: true,
-                }
-            }
+                #[wrap(Some)]
+                set_content = &gtk::Box {
+                    set_orientation: gtk::Orientation::Vertical,
 
+                    #[name = "search_bar"]
+                    gtk::SearchBar {
+                        #[watch]
+                        set_search_mode: model.search_visible,
+
+                        #[wrap(Some)]
+                        set_child = &gtk::SearchEntry {
+                            set_placeholder_text: Some("Search sessions..."),
+                            set_hexpand: true,
+                        },
+                    },
+
+                    adw::NavigationSplitView {
+                        set_vexpand: true,
+
+                        #[wrap(Some)]
+                        set_sidebar = &adw::NavigationPage::builder()
+                            .title("Filters")
+                            .child(sidebar.widget())
+                            .build(),
+
+                        #[wrap(Some)]
+                        set_content = &adw::NavigationPage::builder()
+                            .title("Sessions")
+                            .child(session_list.widget())
+                            .build(),
+                    },
+                },
+            },
         }
     }
 
@@ -79,7 +119,13 @@ impl SimpleComponent for App {
         root: Self::Root,
         sender: ComponentSender<Self>,
     ) -> ComponentParts<Self> {
-        let model = Self {};
+        // Initialize child components
+        let sidebar = Sidebar::builder().launch(()).detach();
+        let session_list = SessionList::builder().launch(()).detach();
+
+        let model = Self {
+            search_visible: false,
+        };
         let widgets = view_output!();
 
         let app = root.application().unwrap();
@@ -119,6 +165,9 @@ impl SimpleComponent for App {
     fn update(&mut self, message: Self::Input, _sender: ComponentSender<Self>) {
         match message {
             AppMsg::Quit => main_application().quit(),
+            AppMsg::ToggleSearch => {
+                self.search_visible = !self.search_visible;
+            }
         }
     }
 
