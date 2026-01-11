@@ -5,7 +5,7 @@
 ### 1. Fix Dependencies
 ```toml
 # Add to Cargo.toml
-rusqlite = { version = "0.38.0", features = ["bundled", "fts5"] }  # Add fts5!
+rusqlite = { version = "0.38.0", features = ["bundled"] }  # FTS5 is built-in
 clap = { version = "4.5", features = ["derive"] }
 ```
 
@@ -80,11 +80,10 @@ cargo run
 
 ## Current Blockers
 
-1. **FTS5 missing** - Add `fts5` feature to rusqlite
-2. **No CLI args** - Can't override sessions directory for testing
-3. **Indexer not wired** - Database stays empty
-4. **SessionList static** - Not loading from DB
+1. **No CLI args** - Can't override sessions directory for testing
+2. **Indexer not wired** - Database stays empty
+3. **SessionList static** - Not loading from DB
 
 ---
 
-**Fix these 4 blockers first, then the app will start working!**
+**Fix these 3 blockers first, then the app will start working!**

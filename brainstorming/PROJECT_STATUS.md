@@ -36,7 +36,6 @@
 - ⬜ Sidebar filters connected to SessionList
 
 **Missing Dependencies**
-- ⬜ Add `fts5` feature to `rusqlite` in Cargo.toml
 - ⬜ Add `clap` for CLI argument parsing
 
 ### 📋 Roadmap
@@ -197,7 +196,7 @@ let db_path = data_dir.join("sessions-chronicle").join("sessions.db");
 
 1. **Update Cargo.toml:**
    ```toml
-   rusqlite = { version = "0.38.0", features = ["bundled", "fts5"] }
+   rusqlite = { version = "0.38.0", features = ["bundled"] }  # FTS5 is built-in
    clap = { version = "4.5", features = ["derive"] }
    ```
 
