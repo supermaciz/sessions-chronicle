@@ -222,16 +222,115 @@ User can override in Settings.
 
 ---
 
+## Implementation Advice
+
+### Immediate Priorities
+
+1. **Start with a single tool** - Don't try to support all 3 tools at once. Pick Claude Code first (it's the most popular), get it working end-to-end, then add others. The complexity of parsing 3 different formats simultaneously will slow you down.
+
+2. **Build the data layer before more UI** - You have UI structure but no models, database, or parsers yet. Implement in this order:
+   - `src/models/` - Session/Message structs
+   - `src/database/` - SQLite + FTS5 setup
+   - `src/parsers/` - Start with just `claude_code.rs`
+   - Then wire into existing UI
+
+3. **Add missing dependencies to Cargo.toml** - Your design docs mention SQLite with FTS5 but it's not in `Cargo.toml` yet. Add:
+   ```toml
+   rusqlite = { version = "0.32", features = ["bundled", "fts5"] }
+   serde = { version = "1.0", features = ["derive"] }
+   serde_json = "1.0"
+   walkdir = "2.5"
+   chrono = "0.4"
+   anyhow = "1.0"
+   ```
+
+### Architecture Suggestions
+
+4. **Connect Sidebar checkboxes to filters** - Currently they don't emit messages. Add `connect_toggled` handlers to send filter change messages to the parent component.
+
+5. **Add SessionDetail component early** - You have `SessionList` but no detail view. Implement this early to test your parser outputs. It doesn't need to be polished - just display raw data to verify parsing works.
+
+6. **Error handling strategy** - Decide on error propagation. Use `anyhow` for app-level errors and `thiserror` for parser-specific errors.
+
+### Technical Considerations
+
+7. **JSONL streaming for large files** - Don't load entire JSONL files into memory. Use `BufReader::lines()` to process line by line. This is critical for sessions with thousands of messages.
+
+8. **Database location** - Use `glib::user_data_dir()` with your APP_ID, not hardcoded paths. This makes the app portable across different Linux distributions.
+
+9. **File watching vs polling** - Design docs mention both. For v1, just do a "Refresh" button. The `notify` crate adds complexity you don't need yet.
+
+10. **Session resumption fallback** - Don't assume `resume <id>` works for all tools. If terminal command fails, fall back to: copy session ID to clipboard + show notification with manual command.
+
+11. **SQLite thread safety** - If you add background indexing later, use a connection pool (like `r2d2`) or `OnceLock` for the single connection. Don't share a single Connection across threads.
+
+12. **Tool color consistency** - Your design has hex codes - use CSS custom properties in `style.css` instead of hardcoding in Rust. This makes theming easier and more maintainable.
+
+### Testing Strategy
+
+13. **Mock data early** - Create sample session files in `data/` directory for development. Don't rely on having actual Claude Code sessions locally. This ensures you can test without real data.
+
+14. **Integration test** - Write a test that: parses → stores in DB → retrieves → displays. This validates the full pipeline and catches data transformation bugs early.
+
+15. **Loading states** - Add a spinner/progress bar during initial indexing. First run could take minutes if user has many sessions. Give users feedback that something is happening.
+
+### UX Polish
+
+16. **Empty states** - You have "No Sessions Yet" - good. Also need empty states for:
+   - Search with no results
+   - All filters unchecked
+   - No sessions for selected tool
+
+17. **Keyboard shortcuts** - Add to ShortcutsDialog:
+   - `Ctrl+F` - Toggle search
+   - `Ctrl+R` - Resume selected session
+   - `Escape` - Clear search
+
+18. **Session metadata display** - Show useful info in list view: tool icon/color, project name (extracted from path), date, message count. This helps users quickly find what they need.
+
+### OpenCode Complexity
+
+19. **Defer OpenCode's multi-file structure** - It's the most complex (session metadata + message dirs + parts + diffs). Save for last or consider v2.
+
+20. **Parent-child session display** - OpenCode has subagent sessions with `parentID`. For v1, just show them as flat list. Hierarchical display is a v2 feature.
+
+### Documentation
+
+21. **Write actual README.md** - Currently empty. Include:
+   - Installation instructions
+   - First run setup
+   - Screenshots/mockups
+   - Requirements (Claude Code, OpenCode, Codex need to be installed separately)
+
+22. **Document dev setup** - How to build, run, test. Use your existing `relm4_template_README.md` as template but customize for this project.
+
+### Potential Issues
+
+23. **Relm4 macro complexity** - The `view!` macro is great but debugging can be hard. If you hit issues, fall back to traditional GTK4 builder pattern temporarily.
+
+24. **Codex encrypted reasoning** - Never decrypt locally. Persist encrypted content unchanged. If user wants to view reasoning, they need to use the Codex CLI itself.
+
+---
+
 ## Next Steps
 
 1. ✅ Review design mockups
 2. ✅ Confirm technical approach
-3. ⏭️ Inspect actual session file formats (Claude Code, OpenCode, Codex)
-4. ⏭️ Create project skeleton (Cargo, GTK4, Relm4)
-5. ⏭️ Implement session parser for one tool (Claude Code)
-6. ⏭️ Build database indexer
-7. ⏭️ Build basic UI (list view)
-8. ⏭️ Implement search
-9. ⏭️ Implement session detail view
-10. ⏭️ Implement session resumption
+3. ✅ Create project skeleton (Cargo, GTK4, Relm4)
+4. ⏭️ Add missing dependencies to Cargo.toml
+5. ⏭️ Create mock data directory (data/) with sample session files
+6. ⏭️ Implement data models (Session, Message, Tool, Role)
+7. ⏭️ Create database schema and indexer (SQLite + FTS5)
+8. ⏭️ Implement session parser for one tool (Claude Code)
+9. ⏭️ Wire indexer into App init phase with progress bar
+10. ⏭️ Connect SessionList to display real data from DB
+11. ⏭️ Add SessionDetail view with raw data display
+12. ⏭️ Connect Sidebar checkboxes to filter logic
+13. ⏭️ Implement search with FTS5
+14. ⏭️ Polish SessionDetail with proper message display
+15. ⏭️ Implement session resumption with fallback
+16. ⏭️ Add keyboard shortcuts and polish UI
+17. ⏭️ Write integration tests
+18. ⏭️ Add OpenCode parser (v2)
+19. ⏭️ Add Codex parser (v2)
 

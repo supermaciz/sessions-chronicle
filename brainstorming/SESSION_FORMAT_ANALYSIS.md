@@ -310,6 +310,34 @@ fn get_messages_path_opencode(session_id: &str) -> PathBuf {
 }
 ```
 
+### Important: Use Streaming for JSONL Files
+
+**Do NOT load entire JSONL files into memory:**
+
+```rust
+// WRONG - loads entire file into RAM
+let content = fs::read_to_string(file_path)?;
+let lines: Vec<&str> = content.lines().collect();
+for line in lines { /* parse */ }
+```
+
+**Use BufReader for line-by-line streaming:**
+
+```rust
+// CORRECT - streams line by line
+let file = File::open(file_path)?;
+let reader = BufReader::new(file);
+for line in reader.lines() {
+    let line = line?;
+    if !line.trim().is_empty() {
+        let event: Value = serde_json::from_str(&line)?;
+        // process event
+    }
+}
+```
+
+This is critical for sessions with thousands of messages.
+
 ### Tool Call Handling
 
 **Claude Code:**
@@ -496,6 +524,18 @@ impl OpenCodeParser {
    - Should subagent sessions be shown nested under parents?
    - Or displayed as separate sessions with parent reference?
    - How deep can nesting go?
+
+8. **Error Handling for Malformed Data**:
+   - How should parser handle malformed JSON/JSONL lines?
+   - Skip and continue, or fail entire session?
+   - What about missing required fields?
+   - Recommendation: Log warnings, skip problematic entries, continue indexing
+
+9. **Memory Management for Large Sessions**:
+   - What's the practical limit for session size?
+   - Should large messages be truncated for display?
+   - How to handle sessions with 10,000+ messages?
+   - Consider pagination or virtual scrolling in UI
 
 ---
 

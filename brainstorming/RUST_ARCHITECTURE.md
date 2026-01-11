@@ -52,9 +52,8 @@ edition = "2021"
 
 [dependencies]
 # UI Framework
-relm4 = "0.9"
-gtk4 = "0.9"
-libadwaita = "0.7"
+relm4 = { version = "0.10.0", features = ["libadwaita", "gnome_48"] }
+adw = { version = "0.8.1", package = "libadwaita", features = ["v1_8"] }
 
 # Database
 rusqlite = { version = "0.32", features = ["bundled", "fts5"] }
@@ -65,7 +64,6 @@ serde_json = "1.0"
 
 # File system
 walkdir = "2.5"
-notify = "6.1"  # For watching session directories (future)
 
 # Date/Time
 chrono = "0.4"
@@ -74,8 +72,9 @@ chrono = "0.4"
 anyhow = "1.0"
 thiserror = "1.0"
 
-# Async (if needed)
-tokio = { version = "1", features = ["rt", "fs"], optional = true }
+# Logging (existing in project)
+tracing = "0.1.44"
+tracing-subscriber = "0.3.22"
 ```
 
 ---
@@ -514,13 +513,142 @@ fn detect_terminal() -> String {
 }
 ```
 
+### Session Resumption with Fallback
+
+```rust
+use gtk::prelude::*;
+use gtk::gdk::Display;
+
+pub fn resume_session_in_terminal(session: &Session) {
+    let command = build_resume_command(session);
+    let terminal = detect_terminal();
+
+    // Try to launch terminal with resume command
+    let result = Command::new(&terminal)
+        .args(&["--", "bash", "-c", &format!("{}; exec bash", command)])
+        .spawn();
+
+    if result.is_err() {
+        // Fallback: copy command to clipboard and show notification
+        copy_to_clipboard(&command);
+        show_resume_fallback_notification(&command);
+    }
+}
+
+fn copy_to_clipboard(text: &str) {
+    if let Some(display) = Display::default() {
+        if let Some(clipboard) = display.clipboard() {
+            clipboard.set_text(text);
+        }
+    }
+}
+
+fn show_resume_fallback_notification(command: &str) {
+    let notification = gio::Notification::new("Session Resume");
+    notification.set_body(Some(&format!(
+        "Terminal launch failed. Command copied to clipboard:\n{}",
+        command
+    )));
+    notification.set_default_action_and_target_value(
+        Some("app.show-notification"),
+        None,
+    );
+
+    if let Some(app) = gio::Application::default() {
+        app.send_notification(None, &notification);
+    }
+}
+```
+
 ---
 
-## Next: Inspect Real Session Files
+## Next: Implementation Steps
 
-We need to look at actual session files from:
-- `~/.claude/sessions/`
-- `~/.local/share/opencode/storage/session/`
-- `~/.codex/sessions/`
+### Phase 1: Data Layer & Single Tool Support
 
-To understand their JSON structure and adapt the parsers accordingly.
+1. **Create mock data directory** (`data/`) with sample Claude Code session files before inspecting actual files
+2. **Implement data models** in `src/models/`:
+   - `session.rs` - Session struct with Tool enum
+   - `message.rs` - Message struct with Role enum
+3. **Build database layer** in `src/database/`:
+   - `schema.rs` - Initialize SQLite + FTS5 tables
+   - `indexer.rs` - Index sessions from JSONL files (streaming, not loading into memory)
+   - `search.rs` - FTS5 query implementation
+4. **Implement Claude Code parser** (`src/parsers/claude_code.rs`):
+   - Parse metadata from JSONL file
+   - Parse messages line-by-line with `BufReader::lines()`
+   - Handle streaming chunks and encrypted reasoning
+   - Extract title: first `type == "user"` where `isMeta == false` or `type == "summary"`
+5. **Wire indexer into App init**:
+   - Add progress bar during initial indexing
+   - Show session count after indexing completes
+   - Handle errors gracefully (skip malformed files, log errors)
+6. **Connect SessionList to database**:
+   - Load sessions from DB on startup
+   - Display session metadata (tool, project, date, message count)
+   - Add loading state during initial load
+7. **Add SessionDetail component**:
+   - Display raw message data to verify parsing
+   - Color-code by role (user, assistant, tool_call, tool_result)
+   - Add scrolling for long conversations
+
+### Phase 2: UI Polish & Filtering
+
+8. **Connect Sidebar checkboxes**:
+   - Wire up Claude Code, OpenCode, Codex checkboxes to filter messages
+   - Update SessionList when filters change
+   - Handle "all unchecked" case (show empty state)
+9. **Implement search with FTS5**:
+   - Connect SearchEntry to FTS5 query
+   - Highlight matching terms in results
+   - Debounce search input (don't query on every keystroke)
+10. **Polish SessionDetail view**:
+    - Format timestamps nicely (relative time: "2 hours ago")
+    - Truncate very long messages with "Show more" button
+    - Add syntax highlighting for code blocks (if feasible)
+11. **Add keyboard shortcuts**:
+    - `Ctrl+F` - Toggle search bar
+    - `Ctrl+R` - Resume selected session
+    - `Escape` - Clear search
+    - Update ShortcutsDialog with new shortcuts
+12. **Implement session resumption**:
+    - Detect available terminal
+    - Launch with resume command
+    - Add fallback: copy to clipboard + notification
+    - Add resume button to SessionDetail view
+
+### Phase 3: Testing & Error Handling
+
+13. **Add loading states**:
+    - Progress bar during initial indexing
+    - Spinner when searching
+    - Skeleton screens while loading session detail
+14. **Write integration tests**:
+    - Parse mock session file → Store in DB → Retrieve → Verify data integrity
+    - Test FTS5 search with various queries
+    - Test filter combinations
+15. **Error handling**:
+    - Use `anyhow` for app-level errors with context
+    - Use `thiserror` for parser-specific errors
+    - Skip malformed JSONL files, log errors, continue indexing
+    - Show user-friendly error messages
+
+### Phase 4: Multi-Tool Support (v2)
+
+16. **Add OpenCode parser** (defer - most complex):
+    - Parse session metadata JSON file
+    - Read messages from separate directory structure
+    - Handle parent-child session relationships (flat display for v1)
+    - Consider storing sessions separately due to multi-file complexity
+17. **Add Codex parser**:
+    - Parse JSONL format with streaming chunks
+    - Coalesce chunks by message_id
+    - Handle encrypted reasoning (never decrypt locally)
+    - Support multimodal content (images as base64 or URLs)
+
+### Technical Notes
+
+- **Database location**: Use `glib::user_data_dir()` with `APP_ID` instead of hardcoded paths
+- **JSONL streaming**: Use `BufReader::lines()` to avoid loading large files into memory
+- **CSS theming**: Define tool colors as CSS custom properties in `style.css`
+- **SQLite threading**: If adding background indexing later, use `r2d2` connection pool or `OnceLock`
