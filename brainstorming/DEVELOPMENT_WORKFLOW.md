@@ -30,6 +30,22 @@ Point to any directory containing session files:
 cargo run -- --sessions-dir /path/to/custom/sessions
 ```
 
+### GTK Options Passthrough
+
+Pass GTK options after `--` so clap ignores them:
+
+```bash
+cargo run -- --sessions-dir tests/fixtures/claude_sessions -- --help-all
+```
+
+### Flatpak Development
+
+Run the Flatpak build with a custom sessions directory:
+
+```bash
+flatpak-builder --run flatpak_app build-aux/io.github.supermaciz.sessionschronicle.Devel.json sessions-chronicle --sessions-dir /path/to/sessions
+```
+
 ## Why This Approach?
 
 ### ✅ Advantages

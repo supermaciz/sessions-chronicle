@@ -16,6 +16,12 @@
 - ✅ Test fixtures in `tests/fixtures/claude_sessions/`
 - ✅ Basic UI structure (Sidebar, SessionList)
 
+**Implemented Core Features**
+- ✅ CLI arguments (`clap`) for `--sessions-dir` override
+- ✅ Relm4 CLI passthrough (`with_args`) + GTK arg split
+- ✅ Database indexer wired into App initialization
+- ✅ SessionList loading from database
+
 **Dependencies**
 - ✅ Relm4 (reactive UI framework)
 - ✅ Libadwaita (GNOME styling)
@@ -23,28 +29,23 @@
 - ✅ serde/serde_json (JSON parsing)
 - ✅ chrono (date/time handling)
 - ✅ anyhow/thiserror (error handling)
+- ✅ clap (CLI args)
 
 ### 🚧 In Progress / Next Steps
 
 **Missing Features**
-- ⬜ CLI arguments (`clap`) for `--sessions-dir` override
-- ⬜ Database indexer wired into App initialization
-- ⬜ SessionList loading from database
 - ⬜ Search functionality (FTS5 queries)
 - ⬜ SessionDetail component (conversation view)
 - ⬜ Session resumption (terminal launch)
 - ⬜ Sidebar filters connected to SessionList
 
-**Missing Dependencies**
-- ⬜ Add `clap` for CLI argument parsing
-
 ### 📋 Roadmap
 
 **Phase 1: Single Tool (Claude Code)** - Current
-1. Add missing dependencies
-2. Implement CLI args with `--sessions-dir`
-3. Wire database indexer into App
-4. Load sessions in SessionList from DB
+1. ✅ Add missing dependencies
+2. ✅ Implement CLI args with `--sessions-dir`
+3. ✅ Wire database indexer into App
+4. ✅ Load sessions in SessionList from DB
 5. Add SessionDetail component
 6. Implement search with FTS5
 7. Add session resumption (terminal launch)
@@ -194,37 +195,18 @@ let db_path = data_dir.join("sessions-chronicle").join("sessions.db");
 
 ### Immediate Tasks
 
-1. **Update Cargo.toml:**
-   ```toml
-   rusqlite = { version = "0.38.0", features = ["bundled"] }  # FTS5 is built-in
-   clap = { version = "4.5", features = ["derive"] }
-   ```
-
-2. **Add CLI argument parsing** in `main.rs`:
-   ```rust
-   use clap::Parser;
-
-   #[derive(Parser)]
-   struct Args {
-       #[arg(long)]
-       sessions_dir: Option<PathBuf>,
-   }
-   ```
-
-3. **Wire database indexer** in `app.rs`:
-   - Initialize DB on app startup
-   - Index sessions from directory
-   - Show progress bar during indexing
-
-4. **Load sessions in SessionList**:
-   - Query DB for sessions
-   - Display in list with metadata
-   - Format timestamps ("2 hours ago")
-
-5. **Connect Sidebar filters**:
+1. **Connect Sidebar filters**:
    - Emit filter change messages
    - Update SessionList query
    - Handle "all unchecked" case
+
+2. **Add SessionDetail component**:
+   - Display transcript for selected session
+   - Include tool icon + timestamps
+
+3. **Implement search (FTS5)**:
+   - Query messages table
+   - Highlight matches in SessionDetail
 
 ### Testing Strategy
 
@@ -269,6 +251,6 @@ cargo run  # Uses ~/.claude/projects
 
 ---
 
-**Last Updated**: 2026-01-11
+**Last Updated**: 2026-01-13
 **Current Phase**: Phase 1 - Single Tool Support (Claude Code)
-**Next Milestone**: Database indexing + session display
+**Next Milestone**: Session detail + search + filters

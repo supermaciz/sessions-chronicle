@@ -78,14 +78,15 @@ All mockups are SVG files (open in browser or image viewer):
 - ✅ Claude Code parser (JSONL streaming)
 - ✅ Test fixtures
 - ✅ Basic UI components (Sidebar, SessionList)
+- ✅ CLI args (`clap`) for `--sessions-dir`
+- ✅ Database indexer wired into App
+- ✅ SessionList loading from DB
 
 **Next Tasks**:
-- ⬜ Add CLI args (`clap`) for `--sessions-dir`
-- ⬜ Wire database indexer into App
-- ⬜ Load sessions from DB in SessionList
 - ⬜ Implement search (FTS5 queries)
 - ⬜ Add SessionDetail component
 - ⬜ Session resumption (terminal launch)
+- ⬜ Sidebar filters wired to list
 
 ---
 
@@ -109,5 +110,5 @@ All mockups are SVG files (open in browser or image viewer):
 
 ---
 
-**Last Updated**: 2026-01-11
+**Last Updated**: 2026-01-13
 **Status**: Phase 1 implementation in progress
