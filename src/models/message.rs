@@ -19,6 +19,7 @@ pub enum Role {
 }
 
 impl Role {
+    #[allow(dead_code)]
     pub fn color(&self) -> &'static str {
         match self {
             Role::User => "#3584e4",

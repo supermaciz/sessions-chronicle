@@ -1,6 +1,9 @@
 #[rustfmt::skip]
 mod config;
 mod app;
+mod database;
+mod models;
+mod parsers;
 mod ui;
 
 use config::{APP_ID, GETTEXT_PACKAGE, LOCALEDIR, RESOURCES_FILE};
@@ -8,13 +11,27 @@ use gettextrs::{LocaleCategory, gettext};
 use gtk::prelude::ApplicationExt;
 use gtk::{gio, glib};
 use relm4::{RelmApp, gtk, main_application};
+use std::{env, path::PathBuf};
 
 use app::App;
+
+use clap::Parser;
+
+#[derive(Parser)]
+struct Args {
+    #[arg(long, value_name = "DIR")]
+    sessions_dir: Option<PathBuf>,
+
+    #[arg(allow_hyphen_values = true, trailing_var_arg = true)]
+    gtk_options: Vec<String>,
+}
 
 relm4::new_action_group!(AppActionGroup, "app");
 relm4::new_stateless_action!(QuitAction, AppActionGroup, "quit");
 
 fn main() {
+    let args = Args::parse();
+
     gtk::init().unwrap();
 
     // Enable logging
@@ -38,7 +55,13 @@ fn main() {
     let app = main_application();
     app.set_resource_base_path(Some("/io/github/supermaciz/sessionschronicle/"));
 
-    let app = RelmApp::from_app(app);
+    let program_invocation = env::args()
+        .next()
+        .unwrap_or_else(|| String::from("sessions-chronicle"));
+    let mut gtk_args = vec![program_invocation];
+    gtk_args.extend(args.gtk_options.clone());
+
+    let app = RelmApp::from_app(app).with_args(gtk_args);
 
     let data = res
         .lookup_data(
@@ -47,5 +70,5 @@ fn main() {
         )
         .unwrap();
     relm4::set_global_css(&glib::GString::from_utf8_checked(data.to_vec()).unwrap());
-    app.visible_on_activate(false).run::<App>(());
+    app.visible_on_activate(false).run::<App>(args.sessions_dir);
 }

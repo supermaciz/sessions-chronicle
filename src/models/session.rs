@@ -20,6 +20,7 @@ pub enum Tool {
 }
 
 impl Tool {
+    #[allow(dead_code)]
     pub fn color(&self) -> &'static str {
         match self {
             Tool::ClaudeCode => "#3584e4",
@@ -33,6 +34,15 @@ impl Tool {
             Tool::ClaudeCode => "claude-code-symbolic",
             Tool::OpenCode => "opencode-symbolic",
             Tool::Codex => "codex-symbolic",
+        }
+    }
+
+    pub fn from_storage(value: &str) -> Option<Self> {
+        match value {
+            "claude_code" => Some(Tool::ClaudeCode),
+            "opencode" => Some(Tool::OpenCode),
+            "codex" => Some(Tool::Codex),
+            _ => None,
         }
     }
 

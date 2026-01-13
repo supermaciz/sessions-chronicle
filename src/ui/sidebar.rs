@@ -5,11 +5,13 @@ use relm4::{ComponentParts, ComponentSender, RelmWidgetExt, SimpleComponent, gtk
 pub struct Sidebar {}
 
 #[derive(Debug)]
+#[allow(dead_code)]
 pub enum SidebarMsg {
     FilterByTool(Option<String>),
 }
 
 #[derive(Debug)]
+#[allow(dead_code)]
 pub enum SidebarOutput {
     FilterChanged(Option<String>),
 }

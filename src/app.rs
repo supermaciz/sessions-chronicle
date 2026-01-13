@@ -9,8 +9,11 @@ use gtk::prelude::{
     ApplicationExt, ButtonExt, GtkWindowExt, OrientableExt, SettingsExt, ToggleButtonExt, WidgetExt,
 };
 use gtk::{gio, glib};
+use std::{fs, path::PathBuf};
 
 use crate::config::{APP_ID, PROFILE};
+use crate::database::SessionIndexer;
+use crate::models::session::Tool;
 use crate::ui::modals::{about::AboutDialog, shortcuts::ShortcutsDialog};
 use crate::ui::{session_list::SessionList, sidebar::Sidebar};
 
@@ -32,7 +35,7 @@ relm4::new_stateless_action!(QuitAction, WindowActionGroup, "quit");
 
 #[relm4::component(pub)]
 impl SimpleComponent for App {
-    type Init = ();
+    type Init = Option<PathBuf>;
     type Input = AppMsg;
     type Output = ();
     type Widgets = AppWidgets;
@@ -118,13 +121,32 @@ impl SimpleComponent for App {
     }
 
     fn init(
-        _init: Self::Init,
+        sessions_dir: Self::Init,
         root: Self::Root,
         sender: ComponentSender<Self>,
     ) -> ComponentParts<Self> {
+        let sessions_dir =
+            sessions_dir.unwrap_or_else(|| PathBuf::from(Tool::ClaudeCode.session_dir()));
+        let db_dir = glib::user_data_dir().join(APP_ID);
+        let db_path = db_dir.join("sessions.db");
+
+        if let Err(err) = fs::create_dir_all(&db_dir) {
+            tracing::error!("Failed to create data dir {}: {}", db_dir.display(), err);
+        } else {
+            match SessionIndexer::new(&db_path)
+                .and_then(|mut indexer| indexer.index_claude_sessions(&sessions_dir))
+            {
+                Ok(count) => {
+                    tracing::info!("Indexed {} sessions from {}", count, sessions_dir.display());
+                }
+                Err(err) => {
+                    tracing::error!("Failed to index sessions: {}", err);
+                }
+            }
+        }
         // Initialize child components
         let sidebar = Sidebar::builder().launch(()).detach();
-        let session_list = SessionList::builder().launch(()).detach();
+        let session_list = SessionList::builder().launch(db_path.clone()).detach();
 
         let model = Self {
             search_visible: false,
