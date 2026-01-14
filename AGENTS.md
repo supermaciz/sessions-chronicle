@@ -29,3 +29,6 @@
 - Commit messages follow a `type: short summary` pattern (e.g., `feat: ...`, `docs: ...`, `fix: ...`).
 - PRs should include a clear description, the key commands run (`cargo test`, `cargo fmt --all`, or Flatpak build if relevant), and screenshots for UI changes.
 - Link related issues or notes from `brainstorming/` when applicable.
+
+## Documentation & Resources
+- Relm4 Book: https://relm4.org/book/stable/ - official documentation for UI widgets and patterns.
