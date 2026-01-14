@@ -22,6 +22,8 @@
 - ✅ Database indexer wired into App initialization
 - ✅ SessionList loading from database
 - ✅ Sidebar tool filters wired to SessionList (Claude data only)
+- ✅ Search functionality with FTS5 full-text search
+- ✅ Search UI with SearchBar and SearchEntry in `app.rs`
 
 **Dependencies**
 - ✅ Relm4 (reactive UI framework)
@@ -35,10 +37,10 @@
 ### 🚧 In Progress / Next Steps
 
 **Missing Features**
-- ⬜ Search functionality (FTS5 queries)
-- ⬜ SessionDetail component (conversation view)
-- ⬜ Session resumption (terminal launch)
+- ⬜ SessionDetail component (conversation view for selected session)
+- ⬜ Session resumption (terminal launch with tool resume command)
 - ⬜ OpenCode/Codex parsers + indexing (filters show empty for those tools)
+- ⬜ Search term highlighting in SessionDetail
 
 ### 📋 Roadmap
 
@@ -48,8 +50,8 @@
 3. ✅ Wire database indexer into App
 4. ✅ Load sessions in SessionList from DB
 5. ✅ Connect sidebar tool filters to SessionList
-6. Add SessionDetail component
-7. Implement search with FTS5
+6. ✅ Implement search with FTS5 queries
+7. Add SessionDetail component
 8. Add session resumption (terminal launch)
 
 **Phase 2: Multi-Tool Support** - Future
@@ -82,7 +84,8 @@ sessions-chronicle/
 ├── src/
 │   ├── main.rs           # Entry point, Relm4 app setup
 │   ├── lib.rs            # Library exports
-│   ├── app.rs            # Main App component
+│   ├── config.rs         # App constants (APP_ID, VERSION)
+│   ├── app.rs            # Main App component (search, window)
 │   ├── models/           # Data models
 │   │   ├── session.rs    # Session, Tool
 │   │   └── message.rs    # Message, Role
@@ -90,13 +93,15 @@ sessions-chronicle/
 │   │   └── claude_code.rs
 │   ├── database/         # SQLite operations
 │   │   ├── schema.rs     # DB schema + FTS5
-│   │   └── indexer.rs    # Index sessions
+│   │   ├── indexer.rs    # Index sessions
+│   │   └── mod.rs        # load_sessions, search_sessions
 │   ├── ui/               # UI components (Relm4)
-│   │   ├── sidebar.rs
-│   │   └── session_list.rs
-│   └── modals/           # Dialogs
-│       ├── about.rs
-│       └── shortcuts.rs
+│   │   ├── sidebar.rs    # Tool/project filters
+│   │   ├── session_list.rs  # Session list view
+│   │   └── modals/
+│   │       ├── about.rs      # About dialog
+│   │       └── shortcuts.rs  # Keyboard shortcuts
+│   └── models/mod.rs      # Model exports
 ├── tests/fixtures/       # Test data
 └── brainstorming/        # Design docs
 ```
@@ -197,20 +202,22 @@ let db_path = data_dir.join("sessions-chronicle").join("sessions.db");
 
 ### Immediate Tasks
 
-1. **Implement search (FTS5)**:
-   - Query messages table
-   - Highlight matches in SessionDetail
-
-2. **Add SessionDetail component**:
+1. **Add SessionDetail component**:
    - Display transcript for selected session
    - Include tool icon + timestamps
+   - Color-code messages by role (user/assistant/system)
 
-3. **Session resumption**:
-   - Launch tool-specific resume commands
+2. **Session resumption**:
+   - Create `src/utils/terminal.rs`
+   - Detect available terminal emulator
+   - Build and launch tool-specific resume commands
 
-4. **OpenCode + Codex indexing**:
+3. **OpenCode + Codex indexing**:
    - Add parsers for OpenCode and Codex
    - Index sessions into SQLite so filters show data
+
+4. **Search term highlighting**:
+   - Highlight matching terms in SessionDetail when viewing search results
 
 ### Testing Strategy
 
@@ -257,4 +264,4 @@ cargo run  # Uses ~/.claude/projects
 
 **Last Updated**: 2026-01-14
 **Current Phase**: Phase 1 - Single Tool Support (Claude Code)
-**Next Milestone**: Session detail + search + resumption
+**Next Milestone**: Session detail view + session resumption
