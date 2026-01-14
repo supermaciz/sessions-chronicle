@@ -31,6 +31,10 @@ flatpak-builder --user flatpak_app build-aux/io.github.supermaciz.sessionschroni
 flatpak-builder --run flatpak_app build-aux/io.github.supermaciz.sessionschronicle.Devel.json sessions-chronicle
 ```
 
+## Inspiration
+
+This project was inspired by [agent-sessions](https://github.com/jazzyalex/agent-sessions).
+
 ## License
 
 See LICENSE file.
