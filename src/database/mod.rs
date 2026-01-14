@@ -3,27 +3,53 @@ pub mod schema;
 
 use anyhow::{Context, Result};
 use chrono::{TimeZone, Utc};
-use rusqlite::Connection;
+use rusqlite::{Connection, ToSql};
 use std::path::Path;
 
 use crate::models::{Session, Tool};
 
 pub use indexer::SessionIndexer;
 
-pub fn load_sessions(db_path: &Path) -> Result<Vec<Session>> {
+pub fn load_sessions(db_path: &Path, tools: &[Tool]) -> Result<Vec<Session>> {
     if !db_path.exists() {
         return Ok(Vec::new());
     }
 
+    if tools.is_empty() {
+        return Ok(Vec::new());
+    }
+
     let db = Connection::open(db_path).context("Failed to open database")?;
-    let mut stmt = db.prepare(
-        "SELECT id, tool, project_path, start_time, message_count, file_path, last_updated
-         FROM sessions
-         ORDER BY last_updated DESC",
-    )?;
+
+    let (query, tool_strings): (String, Vec<String>) = if tools.len() == 3 {
+        (
+            "SELECT id, tool, project_path, start_time, message_count, file_path, last_updated
+             FROM sessions
+             ORDER BY last_updated DESC"
+                .to_string(),
+            vec![],
+        )
+    } else {
+        let placeholders: Vec<String> = tools.iter().map(|_| "?".to_string()).collect();
+        let tool_strings: Vec<String> = tools.iter().map(|t| t.to_storage()).collect::<Vec<_>>();
+        (
+            format!(
+                "SELECT id, tool, project_path, start_time, message_count, file_path, last_updated
+                 FROM sessions
+                 WHERE tool IN ({})
+                 ORDER BY last_updated DESC",
+                placeholders.join(",")
+            ),
+            tool_strings,
+        )
+    };
+
+    let mut stmt = db.prepare(&query)?;
+
+    let tool_refs: Vec<&dyn ToSql> = tool_strings.iter().map(|s| s as &dyn ToSql).collect();
 
     let sessions = stmt
-        .query_map([], |row| {
+        .query_map(tool_refs.as_slice(), |row| {
             let tool_value: String = row.get(1)?;
             let tool = Tool::from_storage(&tool_value).unwrap_or(Tool::ClaudeCode);
             let start_time: i64 = row.get(3)?;

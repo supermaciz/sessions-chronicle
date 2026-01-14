@@ -61,3 +61,8 @@ Both views use accent colors for AI tools:
 - **Codex**: Orange (#e66100) - Distinct from blue/green
 
 These follow GNOME color palette for consistency.
+
+---
+
+**Status**: List view implemented in UI; cards view not implemented.
+**Last Updated**: 2026-01-14

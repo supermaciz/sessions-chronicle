@@ -1,19 +1,23 @@
 use gtk::prelude::*;
 use relm4::{ComponentParts, ComponentSender, RelmWidgetExt, SimpleComponent, gtk};
 
-#[derive(Debug)]
-pub struct Sidebar {}
+use crate::models::session::Tool;
 
 #[derive(Debug)]
-#[allow(dead_code)]
-pub enum SidebarMsg {
-    FilterByTool(Option<String>),
+pub struct Sidebar {
+    claude_enabled: bool,
+    opencode_enabled: bool,
+    codex_enabled: bool,
 }
 
 #[derive(Debug)]
-#[allow(dead_code)]
+pub enum SidebarMsg {
+    ToolToggled(Tool, bool),
+}
+
+#[derive(Debug)]
 pub enum SidebarOutput {
-    FilterChanged(Option<String>),
+    FiltersChanged(Vec<Tool>),
 }
 
 #[relm4::component(pub)]
@@ -52,19 +56,31 @@ impl SimpleComponent for Sidebar {
                 set_orientation: gtk::Orientation::Vertical,
                 set_spacing: 6,
 
+                #[name = "claude_check"]
                 gtk::CheckButton {
                     set_label: Some("Claude Code"),
                     set_active: true,
+                    connect_toggled[sender] => move |btn| {
+                        sender.input(SidebarMsg::ToolToggled(Tool::ClaudeCode, btn.is_active()));
+                    },
                 },
 
+                #[name = "opencode_check"]
                 gtk::CheckButton {
                     set_label: Some("OpenCode"),
                     set_active: true,
+                    connect_toggled[sender] => move |btn| {
+                        sender.input(SidebarMsg::ToolToggled(Tool::OpenCode, btn.is_active()));
+                    },
                 },
 
+                #[name = "codex_check"]
                 gtk::CheckButton {
                     set_label: Some("Codex"),
                     set_active: true,
+                    connect_toggled[sender] => move |btn| {
+                        sender.input(SidebarMsg::ToolToggled(Tool::Codex, btn.is_active()));
+                    },
                 },
             },
 
@@ -101,18 +117,45 @@ impl SimpleComponent for Sidebar {
     fn init(
         _init: Self::Init,
         root: Self::Root,
-        _sender: ComponentSender<Self>,
+        sender: ComponentSender<Self>,
     ) -> ComponentParts<Self> {
-        let model = Self {};
+        let model = Self {
+            claude_enabled: true,
+            opencode_enabled: true,
+            codex_enabled: true,
+        };
         let widgets = view_output!();
+
+        let _ = sender.output(SidebarOutput::FiltersChanged(vec![
+            Tool::ClaudeCode,
+            Tool::OpenCode,
+            Tool::Codex,
+        ]));
 
         ComponentParts { model, widgets }
     }
 
     fn update(&mut self, message: Self::Input, sender: ComponentSender<Self>) {
         match message {
-            SidebarMsg::FilterByTool(tool) => {
-                let _ = sender.output(SidebarOutput::FilterChanged(tool));
+            SidebarMsg::ToolToggled(tool, active) => {
+                match tool {
+                    Tool::ClaudeCode => self.claude_enabled = active,
+                    Tool::OpenCode => self.opencode_enabled = active,
+                    Tool::Codex => self.codex_enabled = active,
+                }
+
+                let mut tools = Vec::new();
+                if self.claude_enabled {
+                    tools.push(Tool::ClaudeCode);
+                }
+                if self.opencode_enabled {
+                    tools.push(Tool::OpenCode);
+                }
+                if self.codex_enabled {
+                    tools.push(Tool::Codex);
+                }
+
+                let _ = sender.output(SidebarOutput::FiltersChanged(tools));
             }
         }
     }

@@ -66,3 +66,8 @@ We have options:
 - Good performance
 - Rust has excellent SQLite support (rusqlite)
 - Can optimize later if needed
+
+---
+
+**Status**: Search is not implemented yet; plan remains SQLite FTS5.
+**Last Updated**: 2026-01-14

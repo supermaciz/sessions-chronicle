@@ -81,12 +81,13 @@ All mockups are SVG files (open in browser or image viewer):
 - ✅ CLI args (`clap`) for `--sessions-dir`
 - ✅ Database indexer wired into App
 - ✅ SessionList loading from DB
+- ✅ Sidebar tool filters wired to SessionList (Claude data only)
 
 **Next Tasks**:
 - ⬜ Implement search (FTS5 queries)
 - ⬜ Add SessionDetail component
 - ⬜ Session resumption (terminal launch)
-- ⬜ Sidebar filters wired to list
+- ⬜ OpenCode/Codex parsers + indexing (populate filters)
 
 ---
 
@@ -110,5 +111,5 @@ All mockups are SVG files (open in browser or image viewer):
 
 ---
 
-**Last Updated**: 2026-01-13
+**Last Updated**: 2026-01-14
 **Status**: Phase 1 implementation in progress

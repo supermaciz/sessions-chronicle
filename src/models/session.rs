@@ -46,6 +46,14 @@ impl Tool {
         }
     }
 
+    pub fn to_storage(&self) -> String {
+        match self {
+            Tool::ClaudeCode => "claude_code".to_string(),
+            Tool::OpenCode => "opencode".to_string(),
+            Tool::Codex => "codex".to_string(),
+        }
+    }
+
     pub fn session_dir(&self) -> String {
         let home = std::env::var("HOME").unwrap_or_else(|_| String::from("/home/user"));
         match self {

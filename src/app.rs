@@ -1,5 +1,5 @@
 use relm4::{
-    Component, ComponentController, ComponentParts, ComponentSender, SimpleComponent,
+    Component, ComponentController, ComponentParts, ComponentSender, Controller, SimpleComponent,
     actions::{AccelsPlus, RelmAction, RelmActionGroup},
     adw, gtk, main_application,
 };
@@ -15,16 +15,23 @@ use crate::config::{APP_ID, PROFILE};
 use crate::database::SessionIndexer;
 use crate::models::session::Tool;
 use crate::ui::modals::{about::AboutDialog, shortcuts::ShortcutsDialog};
-use crate::ui::{session_list::SessionList, sidebar::Sidebar};
+use crate::ui::{
+    session_list::{SessionList, SessionListMsg, SessionListOutput},
+    sidebar::{Sidebar, SidebarOutput},
+};
 
 pub(super) struct App {
     search_visible: bool,
+    session_list: Controller<SessionList>,
+    sidebar: Controller<Sidebar>,
 }
 
 #[derive(Debug)]
 pub(super) enum AppMsg {
     Quit,
     ToggleSearch,
+    FiltersChanged(Vec<Tool>),
+    SessionSelected(String),
 }
 
 relm4::new_action_group!(pub(super) WindowActionGroup, "win");
@@ -100,20 +107,9 @@ impl SimpleComponent for App {
                         },
                     },
 
+                    #[name = "nav_split"]
                     adw::NavigationSplitView {
                         set_vexpand: true,
-
-                        #[wrap(Some)]
-                        set_sidebar = &adw::NavigationPage::builder()
-                            .title("Filters")
-                            .child(sidebar.widget())
-                            .build(),
-
-                        #[wrap(Some)]
-                        set_content = &adw::NavigationPage::builder()
-                            .title("Sessions")
-                            .child(session_list.widget())
-                            .build(),
                     },
                 },
             },
@@ -145,13 +141,37 @@ impl SimpleComponent for App {
             }
         }
         // Initialize child components
-        let sidebar = Sidebar::builder().launch(()).detach();
-        let session_list = SessionList::builder().launch(db_path.clone()).detach();
+        let session_list =
+            SessionList::builder()
+                .launch(db_path.clone())
+                .forward(sender.input_sender(), |msg| match msg {
+                    SessionListOutput::SessionSelected(id) => AppMsg::SessionSelected(id),
+                });
+        let sidebar = Sidebar::builder()
+            .launch(())
+            .forward(sender.input_sender(), |output| match output {
+                SidebarOutput::FiltersChanged(tools) => AppMsg::FiltersChanged(tools),
+            });
 
         let model = Self {
             search_visible: false,
+            session_list,
+            sidebar,
         };
         let widgets = view_output!();
+
+        // Add child components to NavigationSplitView
+        let sidebar_page = adw::NavigationPage::builder()
+            .title("Filters")
+            .child(model.sidebar.widget())
+            .build();
+        widgets.nav_split.set_sidebar(Some(&sidebar_page));
+
+        let session_list_page = adw::NavigationPage::builder()
+            .title("Sessions")
+            .child(model.session_list.widget())
+            .build();
+        widgets.nav_split.set_content(Some(&session_list_page));
 
         let app = root.application().unwrap();
         let mut actions = RelmActionGroup::<WindowActionGroup>::new();
@@ -192,6 +212,12 @@ impl SimpleComponent for App {
             AppMsg::Quit => main_application().quit(),
             AppMsg::ToggleSearch => {
                 self.search_visible = !self.search_visible;
+            }
+            AppMsg::FiltersChanged(tools) => {
+                self.session_list.emit(SessionListMsg::SetTools(tools));
+            }
+            AppMsg::SessionSelected(id) => {
+                tracing::debug!("Session selected: {}", id);
             }
         }
     }

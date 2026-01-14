@@ -21,6 +21,7 @@
 - ✅ Relm4 CLI passthrough (`with_args`) + GTK arg split
 - ✅ Database indexer wired into App initialization
 - ✅ SessionList loading from database
+- ✅ Sidebar tool filters wired to SessionList (Claude data only)
 
 **Dependencies**
 - ✅ Relm4 (reactive UI framework)
@@ -37,7 +38,7 @@
 - ⬜ Search functionality (FTS5 queries)
 - ⬜ SessionDetail component (conversation view)
 - ⬜ Session resumption (terminal launch)
-- ⬜ Sidebar filters connected to SessionList
+- ⬜ OpenCode/Codex parsers + indexing (filters show empty for those tools)
 
 ### 📋 Roadmap
 
@@ -46,9 +47,10 @@
 2. ✅ Implement CLI args with `--sessions-dir`
 3. ✅ Wire database indexer into App
 4. ✅ Load sessions in SessionList from DB
-5. Add SessionDetail component
-6. Implement search with FTS5
-7. Add session resumption (terminal launch)
+5. ✅ Connect sidebar tool filters to SessionList
+6. Add SessionDetail component
+7. Implement search with FTS5
+8. Add session resumption (terminal launch)
 
 **Phase 2: Multi-Tool Support** - Future
 - OpenCode parser (multi-file format)
@@ -195,18 +197,20 @@ let db_path = data_dir.join("sessions-chronicle").join("sessions.db");
 
 ### Immediate Tasks
 
-1. **Connect Sidebar filters**:
-   - Emit filter change messages
-   - Update SessionList query
-   - Handle "all unchecked" case
+1. **Implement search (FTS5)**:
+   - Query messages table
+   - Highlight matches in SessionDetail
 
 2. **Add SessionDetail component**:
    - Display transcript for selected session
    - Include tool icon + timestamps
 
-3. **Implement search (FTS5)**:
-   - Query messages table
-   - Highlight matches in SessionDetail
+3. **Session resumption**:
+   - Launch tool-specific resume commands
+
+4. **OpenCode + Codex indexing**:
+   - Add parsers for OpenCode and Codex
+   - Index sessions into SQLite so filters show data
 
 ### Testing Strategy
 
@@ -251,6 +255,6 @@ cargo run  # Uses ~/.claude/projects
 
 ---
 
-**Last Updated**: 2026-01-13
+**Last Updated**: 2026-01-14
 **Current Phase**: Phase 1 - Single Tool Support (Claude Code)
-**Next Milestone**: Session detail + search + filters
+**Next Milestone**: Session detail + search + resumption

@@ -6,17 +6,20 @@ use std::path::PathBuf;
 use adw::prelude::ActionRowExt;
 
 use crate::database::load_sessions;
-use crate::models::Session;
+use crate::models::{Session, Tool};
 
 #[derive(Debug)]
 pub struct SessionList {
+    db_path: PathBuf,
+    active_tools: Vec<Tool>,
     sessions: Vec<Session>,
+    all_tools_selected: bool,
 }
 
 #[derive(Debug)]
-#[allow(dead_code)]
 pub enum SessionListMsg {
     SelectSession(String),
+    SetTools(Vec<Tool>),
 }
 
 #[derive(Debug)]
@@ -68,10 +71,11 @@ impl SimpleComponent for SessionList {
 
     fn init(
         db_path: Self::Init,
-        _root: Self::Root,
+        root: Self::Root,
         _sender: ComponentSender<Self>,
     ) -> ComponentParts<Self> {
-        let sessions = match load_sessions(&db_path) {
+        let active_tools = vec![Tool::ClaudeCode, Tool::OpenCode, Tool::Codex];
+        let sessions = match load_sessions(&db_path, &active_tools) {
             Ok(sessions) => sessions,
             Err(err) => {
                 tracing::error!("Failed to load sessions: {}", err);
@@ -79,7 +83,12 @@ impl SimpleComponent for SessionList {
             }
         };
 
-        let model = Self { sessions };
+        let model = Self {
+            db_path,
+            active_tools,
+            sessions,
+            all_tools_selected: true,
+        };
         let widgets = view_output!();
 
         if model.sessions.is_empty() {
@@ -104,6 +113,50 @@ impl SimpleComponent for SessionList {
         match message {
             SessionListMsg::SelectSession(id) => {
                 let _ = sender.output(SessionListOutput::SessionSelected(id));
+            }
+            SessionListMsg::SetTools(tools) => {
+                self.active_tools = tools.clone();
+                self.all_tools_selected = tools.len() == 3;
+                let sessions = match load_sessions(&self.db_path, &self.active_tools) {
+                    Ok(sessions) => sessions,
+                    Err(err) => {
+                        tracing::error!("Failed to load sessions: {}", err);
+                        Vec::new()
+                    }
+                };
+                self.sessions = sessions;
+            }
+        }
+    }
+
+    fn post_view(&self, widgets: &mut Self::Widgets) {
+        while let Some(row) = widgets.session_list.first_child() {
+            widgets.session_list.remove(&row);
+        }
+
+        if self.sessions.is_empty() {
+            if self.all_tools_selected {
+                widgets.empty_state.set_title("No Sessions Yet");
+                widgets
+                    .empty_state
+                    .set_description(Some("Your AI coding sessions will appear here"));
+            } else {
+                widgets.empty_state.set_title("No sessions match filters");
+                widgets
+                    .empty_state
+                    .set_description(Some("Try adjusting the tool filters in the sidebar"));
+            }
+            widgets
+                .content_stack
+                .set_visible_child(&widgets.empty_state);
+        } else {
+            widgets
+                .content_stack
+                .set_visible_child(&widgets.session_list_scroller);
+
+            for session in &self.sessions {
+                let row = Self::build_session_row(session);
+                widgets.session_list.append(&row);
             }
         }
     }

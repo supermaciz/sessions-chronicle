@@ -226,3 +226,7 @@ In CI/CD pipelines, use test fixtures:
 **Custom**: `--sessions-dir /path/to/sessions`
 
 This keeps code clean, explicit, and follows Rust CLI best practices.
+
+---
+
+**Last Updated**: 2026-01-14

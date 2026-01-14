@@ -4,6 +4,14 @@ Analysis of Claude Code, Codex, and OpenCode session file formats for Sessions C
 
 ---
 
+## Implementation Status
+
+- ✅ Claude Code parser + indexer implemented
+- ⬜ OpenCode parser pending (filters show empty for OpenCode)
+- ⬜ Codex parser pending (filters show empty for Codex)
+
+---
+
 ## Storage Locations
 
 | Tool | Path | Organization |
@@ -602,5 +610,5 @@ impl OpenCodeParser {
 
 ---
 
-**Last Updated**: 2026-01-06
+**Last Updated**: 2026-01-14
 **Status**: All three formats documented - OpenCode metadata complete, message format needs actual file inspection
