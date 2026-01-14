@@ -31,4 +31,4 @@
 - Link related issues or notes from `brainstorming/` when applicable.
 
 ## Documentation & Resources
-- Relm4 Book: https://relm4.org/book/stable/ - official documentation for UI widgets and patterns.
+- Relm4 Book: https://raw.githubusercontent.com/Relm4/book/refs/heads/main/src/SUMMARY.md - official documentation for UI widgets and patterns.
