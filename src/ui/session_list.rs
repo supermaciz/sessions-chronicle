@@ -5,21 +5,22 @@ use std::path::PathBuf;
 
 use adw::prelude::ActionRowExt;
 
-use crate::database::load_sessions;
+use crate::database::{load_sessions, search_sessions};
 use crate::models::{Session, Tool};
 
 #[derive(Debug)]
 pub struct SessionList {
     db_path: PathBuf,
     active_tools: Vec<Tool>,
+    search_query: String,
     sessions: Vec<Session>,
     all_tools_selected: bool,
 }
 
 #[derive(Debug)]
 pub enum SessionListMsg {
-    SelectSession(String),
     SetTools(Vec<Tool>),
+    SetSearchQuery(String),
 }
 
 #[derive(Debug)]
@@ -75,17 +76,13 @@ impl SimpleComponent for SessionList {
         _sender: ComponentSender<Self>,
     ) -> ComponentParts<Self> {
         let active_tools = vec![Tool::ClaudeCode, Tool::OpenCode, Tool::Codex];
-        let sessions = match load_sessions(&db_path, &active_tools) {
-            Ok(sessions) => sessions,
-            Err(err) => {
-                tracing::error!("Failed to load sessions: {}", err);
-                Vec::new()
-            }
-        };
+        let search_query = String::new();
+        let sessions = Self::fetch_sessions(&db_path, &active_tools, &search_query);
 
         let model = Self {
             db_path,
             active_tools,
+            search_query,
             sessions,
             all_tools_selected: true,
         };
@@ -109,22 +106,18 @@ impl SimpleComponent for SessionList {
         ComponentParts { model, widgets }
     }
 
-    fn update(&mut self, message: Self::Input, sender: ComponentSender<Self>) {
+    fn update(&mut self, message: Self::Input, _sender: ComponentSender<Self>) {
         match message {
-            SessionListMsg::SelectSession(id) => {
-                let _ = sender.output(SessionListOutput::SessionSelected(id));
-            }
             SessionListMsg::SetTools(tools) => {
                 self.active_tools = tools.clone();
-                self.all_tools_selected = tools.len() == 3;
-                let sessions = match load_sessions(&self.db_path, &self.active_tools) {
-                    Ok(sessions) => sessions,
-                    Err(err) => {
-                        tracing::error!("Failed to load sessions: {}", err);
-                        Vec::new()
-                    }
-                };
-                self.sessions = sessions;
+                self.all_tools_selected = tools.len() == Tool::ALL.len();
+                self.sessions =
+                    Self::fetch_sessions(&self.db_path, &self.active_tools, &self.search_query);
+            }
+            SessionListMsg::SetSearchQuery(query) => {
+                self.search_query = query;
+                self.sessions =
+                    Self::fetch_sessions(&self.db_path, &self.active_tools, &self.search_query);
             }
         }
     }
@@ -135,7 +128,12 @@ impl SimpleComponent for SessionList {
         }
 
         if self.sessions.is_empty() {
-            if self.all_tools_selected {
+            if !self.search_query.trim().is_empty() {
+                widgets.empty_state.set_title("No sessions match search");
+                widgets
+                    .empty_state
+                    .set_description(Some("Try a different query or adjust filters"));
+            } else if self.all_tools_selected {
                 widgets.empty_state.set_title("No Sessions Yet");
                 widgets
                     .empty_state
@@ -163,6 +161,23 @@ impl SimpleComponent for SessionList {
 }
 
 impl SessionList {
+    fn fetch_sessions(db_path: &PathBuf, tools: &[Tool], query: &str) -> Vec<Session> {
+        let query = query.trim();
+        let sessions = if query.is_empty() {
+            load_sessions(db_path, tools)
+        } else {
+            search_sessions(db_path, tools, query)
+        };
+
+        match sessions {
+            Ok(sessions) => sessions,
+            Err(err) => {
+                tracing::error!("Failed to load sessions: {}", err);
+                Vec::new()
+            }
+        }
+    }
+
     fn build_session_row(session: &Session) -> adw::ActionRow {
         let row = adw::ActionRow::builder()
             .title(Self::session_title(session))

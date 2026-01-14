@@ -111,12 +111,12 @@ impl ClaudeCodeParser {
 
         let (role, content) = match event_type {
             "user" => {
-                let content = event.get("message")?.get("content")?.as_str()?;
-                (Role::User, content.to_string())
+                let content = Self::extract_content(event.get("message")?.get("content")?)?;
+                (Role::User, content)
             }
             "assistant" => {
-                let content = event.get("message")?.get("content")?.as_str()?;
-                (Role::Assistant, content.to_string())
+                let content = Self::extract_content(event.get("message")?.get("content")?)?;
+                (Role::Assistant, content)
             }
             "system" => {
                 let subtype = event.get("subtype")?.as_str()?;
@@ -166,5 +166,38 @@ impl ClaudeCodeParser {
         DateTime::parse_from_rfc3339(s)
             .map(|dt| dt.with_timezone(&Utc))
             .context("Failed to parse timestamp")
+    }
+
+    fn extract_content(value: &Value) -> Option<String> {
+        // Handle string content directly
+        if let Some(s) = value.as_str() {
+            return Some(s.to_string());
+        }
+
+        // Handle array of content blocks
+        if let Some(arr) = value.as_array() {
+            let parts: Vec<String> = arr
+                .iter()
+                .filter_map(|block| {
+                    let block_type = block.get("type")?.as_str()?;
+                    match block_type {
+                        "text" => block.get("text")?.as_str().map(|s| s.to_string()),
+                        "thinking" => block.get("thinking")?.as_str().map(|s| s.to_string()),
+                        "tool_use" => {
+                            let name = block.get("name")?.as_str()?;
+                            Some(format!("[Tool: {}]", name))
+                        }
+                        _ => None,
+                    }
+                })
+                .collect();
+
+            if parts.is_empty() {
+                return None;
+            }
+            return Some(parts.join("\n"));
+        }
+
+        None
     }
 }

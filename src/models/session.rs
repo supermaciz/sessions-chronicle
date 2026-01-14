@@ -20,6 +20,8 @@ pub enum Tool {
 }
 
 impl Tool {
+    pub const ALL: &'static [Tool] = &[Tool::ClaudeCode, Tool::OpenCode, Tool::Codex];
+
     #[allow(dead_code)]
     pub fn color(&self) -> &'static str {
         match self {

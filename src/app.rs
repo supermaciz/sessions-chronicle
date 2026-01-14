@@ -6,7 +6,8 @@ use relm4::{
 
 use adw::prelude::AdwApplicationWindowExt;
 use gtk::prelude::{
-    ApplicationExt, ButtonExt, GtkWindowExt, OrientableExt, SettingsExt, ToggleButtonExt, WidgetExt,
+    ApplicationExt, ButtonExt, EditableExt, GtkWindowExt, OrientableExt, SettingsExt,
+    ToggleButtonExt, WidgetExt,
 };
 use gtk::{gio, glib};
 use std::{fs, path::PathBuf};
@@ -30,6 +31,7 @@ pub(super) struct App {
 pub(super) enum AppMsg {
     Quit,
     ToggleSearch,
+    SearchQueryChanged(String),
     FiltersChanged(Vec<Tool>),
     SessionSelected(String),
 }
@@ -104,6 +106,9 @@ impl SimpleComponent for App {
                         set_child = &gtk::SearchEntry {
                             set_placeholder_text: Some("Search sessions..."),
                             set_hexpand: true,
+                            connect_search_changed[sender] => move |entry| {
+                                sender.input(AppMsg::SearchQueryChanged(entry.text().to_string()));
+                            },
                         },
                     },
 
@@ -212,6 +217,10 @@ impl SimpleComponent for App {
             AppMsg::Quit => main_application().quit(),
             AppMsg::ToggleSearch => {
                 self.search_visible = !self.search_visible;
+            }
+            AppMsg::SearchQueryChanged(query) => {
+                self.session_list
+                    .emit(SessionListMsg::SetSearchQuery(query));
             }
             AppMsg::FiltersChanged(tools) => {
                 self.session_list.emit(SessionListMsg::SetTools(tools));
