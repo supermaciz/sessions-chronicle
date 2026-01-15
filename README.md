@@ -2,19 +2,17 @@
 
 A GNOME app for browsing, searching, and resuming AI coding sessions.
 
-## What does it contain?
+## Features
 
 - Parse Claude Code session files (JSONL format)
 - SQLite database with full-text search (FTS5)
-- Basic UI with sidebar and session list
+- Browse and search sessions with filters
+- Session detail view with conversation history
 - Local data only (no telemetry)
 
-### Planned Features
-- Search across all sessions
-- Session detail view with conversation history
+### Planned
 - Resume sessions in terminal
 - Support for OpenCode and Codex formats
-- Real-time session monitoring
 
 ## Building the project
 

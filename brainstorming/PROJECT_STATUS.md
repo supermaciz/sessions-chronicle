@@ -14,7 +14,7 @@
 - ✅ Database layer with SQLite + FTS5
 - ✅ Claude Code parser (JSONL format, streaming)
 - ✅ Test fixtures in `tests/fixtures/claude_sessions/`
-- ✅ Basic UI structure (Sidebar, SessionList)
+- ✅ Basic UI structure (Sidebar, SessionList, SessionDetail)
 
 **Implemented Core Features**
 - ✅ CLI arguments (`clap`) for `--sessions-dir` override
@@ -24,6 +24,8 @@
 - ✅ Sidebar tool filters wired to SessionList (Claude data only)
 - ✅ Search functionality with FTS5 full-text search
 - ✅ Search UI with SearchBar and SearchEntry in `app.rs`
+- ✅ SessionDetail component with conversation transcript view
+- ✅ Navigation between list and detail views using NavigationView
 
 **Dependencies**
 - ✅ Relm4 (reactive UI framework)
@@ -37,7 +39,6 @@
 ### 🚧 In Progress / Next Steps
 
 **Missing Features**
-- ⬜ SessionDetail component (conversation view for selected session)
 - ⬜ Session resumption (terminal launch with tool resume command)
 - ⬜ OpenCode/Codex parsers + indexing (filters show empty for those tools)
 - ⬜ Search term highlighting in SessionDetail
@@ -51,7 +52,7 @@
 4. ✅ Load sessions in SessionList from DB
 5. ✅ Connect sidebar tool filters to SessionList
 6. ✅ Implement search with FTS5 queries
-7. Add SessionDetail component
+7. ✅ Add SessionDetail component
 8. Add session resumption (terminal launch)
 
 **Phase 2: Multi-Tool Support** - Future
@@ -262,6 +263,6 @@ cargo run  # Uses ~/.claude/projects
 
 ---
 
-**Last Updated**: 2026-01-14
+**Last Updated**: 2026-01-15
 **Current Phase**: Phase 1 - Single Tool Support (Claude Code)
-**Next Milestone**: Session detail view + session resumption
+**Next Milestone**: Session resumption + OpenCode/Codex support
