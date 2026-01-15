@@ -39,6 +39,14 @@ impl Tool {
         }
     }
 
+    pub fn display_name(&self) -> &'static str {
+        match self {
+            Tool::ClaudeCode => "Claude Code",
+            Tool::OpenCode => "OpenCode",
+            Tool::Codex => "Codex",
+        }
+    }
+
     pub fn from_storage(value: &str) -> Option<Self> {
         match value {
             "claude_code" => Some(Tool::ClaudeCode),

@@ -7,7 +7,7 @@ use rusqlite::{Connection, Row, ToSql};
 use std::collections::HashSet;
 use std::path::Path;
 
-use crate::models::{Session, Tool};
+use crate::models::{Message, Role, Session, Tool};
 
 pub use indexer::SessionIndexer;
 
@@ -205,4 +205,69 @@ pub fn load_sessions(db_path: &Path, tools: &[Tool]) -> Result<Vec<Session>> {
         .context("Failed to load sessions")?;
 
     Ok(sessions)
+}
+
+/// Load a single session by ID.
+pub fn load_session(db_path: &Path, session_id: &str) -> Result<Option<Session>> {
+    if !db_path.exists() {
+        return Ok(None);
+    }
+
+    let db = Connection::open(db_path).context("Failed to open database")?;
+
+    let mut stmt = db.prepare(
+        "SELECT id, tool, project_path, start_time, message_count, file_path, last_updated
+         FROM sessions
+         WHERE id = ?1",
+    )?;
+
+    let mut rows = stmt
+        .query([session_id])
+        .context("Failed to query session")?;
+
+    if let Some(row) = rows.next()? {
+        Ok(Some(session_from_row(row)?))
+    } else {
+        Ok(None)
+    }
+}
+
+/// Load all messages for a session, ordered by message_index.
+pub fn load_messages_for_session(db_path: &Path, session_id: &str) -> Result<Vec<Message>> {
+    if !db_path.exists() {
+        return Ok(Vec::new());
+    }
+
+    let db = Connection::open(db_path).context("Failed to open database")?;
+
+    let mut stmt = db.prepare(
+        "SELECT session_id, message_index, role, content, timestamp
+         FROM messages
+         WHERE session_id = ?1
+         ORDER BY message_index ASC",
+    )?;
+
+    let mut rows = stmt
+        .query([session_id])
+        .context("Failed to query messages")?;
+
+    let mut messages = Vec::new();
+    while let Some(row) = rows.next()? {
+        let role_str: String = row.get(2)?;
+        let role = Role::from_storage(&role_str).unwrap_or(Role::User);
+        let timestamp: i64 = row.get(4)?;
+
+        messages.push(Message {
+            session_id: row.get(0)?,
+            index: row.get::<_, i64>(1)? as usize,
+            role,
+            content: row.get(3)?,
+            timestamp: Utc
+                .timestamp_opt(timestamp, 0)
+                .single()
+                .unwrap_or_else(Utc::now),
+        });
+    }
+
+    Ok(messages)
 }

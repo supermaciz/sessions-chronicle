@@ -4,7 +4,7 @@ use relm4::{
     adw, gtk, main_application,
 };
 
-use adw::prelude::AdwApplicationWindowExt;
+use adw::prelude::{AdwApplicationWindowExt, NavigationPageExt};
 use gtk::prelude::{
     ApplicationExt, ButtonExt, EditableExt, GtkWindowExt, OrientableExt, SettingsExt,
     ToggleButtonExt, WidgetExt,
@@ -17,14 +17,19 @@ use crate::database::SessionIndexer;
 use crate::models::session::Tool;
 use crate::ui::modals::{about::AboutDialog, shortcuts::ShortcutsDialog};
 use crate::ui::{
+    session_detail::{SessionDetail, SessionDetailMsg},
     session_list::{SessionList, SessionListMsg, SessionListOutput},
     sidebar::{Sidebar, SidebarOutput},
 };
 
 pub(super) struct App {
     search_visible: bool,
+    detail_visible: bool,
     session_list: Controller<SessionList>,
+    session_detail: Controller<SessionDetail>,
     sidebar: Controller<Sidebar>,
+    nav_view: adw::NavigationView,
+    detail_page: adw::NavigationPage,
 }
 
 #[derive(Debug)]
@@ -34,6 +39,7 @@ pub(super) enum AppMsg {
     SearchQueryChanged(String),
     FiltersChanged(Vec<Tool>),
     SessionSelected(String),
+    NavigateBack,
 }
 
 relm4::new_action_group!(pub(super) WindowActionGroup, "win");
@@ -77,6 +83,17 @@ impl SimpleComponent for App {
             #[wrap(Some)]
             set_content = &adw::ToolbarView {
                 add_top_bar = &adw::HeaderBar {
+                    #[name = "back_button"]
+                    pack_start = &gtk::Button {
+                        set_icon_name: "go-previous-symbolic",
+                        set_tooltip_text: Some("Go back"),
+                        #[watch]
+                        set_visible: model.detail_visible,
+                        connect_clicked[sender] => move |_| {
+                            sender.input(AppMsg::NavigateBack);
+                        },
+                    },
+
                     pack_start = &gtk::ToggleButton {
                         set_icon_name: "system-search-symbolic",
                         set_tooltip_text: Some("Search sessions"),
@@ -152,16 +169,46 @@ impl SimpleComponent for App {
                 .forward(sender.input_sender(), |msg| match msg {
                     SessionListOutput::SessionSelected(id) => AppMsg::SessionSelected(id),
                 });
+        let session_detail = SessionDetail::builder().launch(db_path.clone()).detach();
         let sidebar = Sidebar::builder()
             .launch(())
             .forward(sender.input_sender(), |output| match output {
                 SidebarOutput::FiltersChanged(tools) => AppMsg::FiltersChanged(tools),
             });
 
+        // Create NavigationView and pages before model
+        let nav_view = adw::NavigationView::new();
+
+        let session_list_page = adw::NavigationPage::builder()
+            .title("Sessions")
+            .tag("sessions")
+            .child(session_list.widget())
+            .build();
+        nav_view.add(&session_list_page);
+
+        // Create detail page (but don't push yet)
+        let detail_page = adw::NavigationPage::builder()
+            .title("Session")
+            .tag("detail")
+            .child(session_detail.widget())
+            .build();
+
+        // Connect popped signal to reset detail_visible when user navigates back
+        let popped_sender = sender.input_sender().clone();
+        nav_view.connect_popped(move |_, page| {
+            if page.tag().as_deref() == Some("detail") {
+                popped_sender.send(AppMsg::NavigateBack).ok();
+            }
+        });
+
         let model = Self {
             search_visible: false,
+            detail_visible: false,
             session_list,
+            session_detail,
             sidebar,
+            nav_view: nav_view.clone(),
+            detail_page: detail_page.clone(),
         };
         let widgets = view_output!();
 
@@ -172,11 +219,12 @@ impl SimpleComponent for App {
             .build();
         widgets.nav_split.set_sidebar(Some(&sidebar_page));
 
-        let session_list_page = adw::NavigationPage::builder()
+        // Wrap NavigationView in a NavigationPage for the split view
+        let content_page = adw::NavigationPage::builder()
             .title("Sessions")
-            .child(model.session_list.widget())
+            .child(&nav_view)
             .build();
-        widgets.nav_split.set_content(Some(&session_list_page));
+        widgets.nav_split.set_content(Some(&content_page));
 
         let app = root.application().unwrap();
         let mut actions = RelmActionGroup::<WindowActionGroup>::new();
@@ -227,6 +275,28 @@ impl SimpleComponent for App {
             }
             AppMsg::SessionSelected(id) => {
                 tracing::debug!("Session selected: {}", id);
+                // Load the session in the detail view
+                self.session_detail.emit(SessionDetailMsg::SetSession(id));
+                // Push the detail page onto the navigation stack
+                if !self.detail_visible {
+                    self.nav_view.push(&self.detail_page);
+                    self.detail_visible = true;
+                }
+            }
+            AppMsg::NavigateBack => {
+                if self.detail_visible {
+                    self.detail_visible = false;
+                    // Only pop if we're currently showing detail (avoid double-pop from signal)
+                    if self
+                        .nav_view
+                        .visible_page()
+                        .and_then(|p| p.tag())
+                        .as_deref()
+                        == Some("detail")
+                    {
+                        self.nav_view.pop();
+                    }
+                }
             }
         }
     }

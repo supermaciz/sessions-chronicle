@@ -24,7 +24,6 @@ pub enum SessionListMsg {
 }
 
 #[derive(Debug)]
-#[allow(dead_code)]
 pub enum SessionListOutput {
     SessionSelected(String),
 }
@@ -64,6 +63,7 @@ impl SimpleComponent for SessionList {
                     gtk::ListBox {
                         add_css_class: "boxed-list",
                         set_selection_mode: gtk::SelectionMode::None,
+                        set_activate_on_single_click: true,
                     }
                 }
             }
@@ -73,7 +73,7 @@ impl SimpleComponent for SessionList {
     fn init(
         db_path: Self::Init,
         root: Self::Root,
-        _sender: ComponentSender<Self>,
+        sender: ComponentSender<Self>,
     ) -> ComponentParts<Self> {
         let active_tools = vec![Tool::ClaudeCode, Tool::OpenCode, Tool::Codex];
         let search_query = String::new();
@@ -87,6 +87,14 @@ impl SimpleComponent for SessionList {
             all_tools_selected: true,
         };
         let widgets = view_output!();
+
+        // Connect row activation to emit SessionSelected
+        let output_sender = sender.output_sender().clone();
+        widgets.session_list.connect_row_activated(move |_, row| {
+            if let Some(session_id) = Self::get_session_id_from_row(row) {
+                let _ = output_sender.send(SessionListOutput::SessionSelected(session_id));
+            }
+        });
 
         if model.sessions.is_empty() {
             widgets
@@ -161,6 +169,8 @@ impl SimpleComponent for SessionList {
 }
 
 impl SessionList {
+    const SESSION_ID_KEY: &'static str = "session-id";
+
     fn fetch_sessions(db_path: &PathBuf, tools: &[Tool], query: &str) -> Vec<Session> {
         let query = query.trim();
         let sessions = if query.is_empty() {
@@ -178,15 +188,33 @@ impl SessionList {
         }
     }
 
+    fn get_session_id_from_row(row: &gtk::ListBoxRow) -> Option<String> {
+        unsafe {
+            row.data::<String>(Self::SESSION_ID_KEY)
+                .map(|ptr| ptr.as_ref().clone())
+        }
+    }
+
     fn build_session_row(session: &Session) -> adw::ActionRow {
         let row = adw::ActionRow::builder()
             .title(Self::session_title(session))
             .subtitle(Self::session_subtitle(session))
+            .activatable(true)
             .build();
+
+        // Store session ID on the row for retrieval on activation
+        unsafe {
+            row.set_data(Self::SESSION_ID_KEY, session.id.clone());
+        }
 
         let icon = gtk::Image::from_icon_name(session.tool.icon_name());
         icon.set_pixel_size(16);
         row.add_prefix(&icon);
+
+        // Add chevron to indicate row is clickable
+        let chevron = gtk::Image::from_icon_name("go-next-symbolic");
+        chevron.add_css_class("dim-label");
+        row.add_suffix(&chevron);
 
         let time_label = gtk::Label::new(Some(&Self::format_relative_time(session.last_updated)));
         time_label.add_css_class("dim-label");

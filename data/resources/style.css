@@ -2,3 +2,55 @@
   font-size: 36px;
   font-weight: bold;
 }
+
+/* Session detail message styling */
+.message-row {
+  padding: 12px;
+  border-radius: 8px;
+  background-color: alpha(@card_bg_color, 0.5);
+  border-left: 3px solid transparent;
+}
+
+.message-row:not(:last-child) {
+  margin-bottom: 8px;
+}
+
+/* Role-specific accent colors */
+.role-user {
+  border-left-color: #3584e4;
+}
+
+.role-user.heading {
+  color: #3584e4;
+}
+
+.role-assistant {
+  border-left-color: #26a269;
+}
+
+.role-assistant.heading {
+  color: #26a269;
+}
+
+.role-toolcall {
+  border-left-color: #e66100;
+}
+
+.role-toolcall.heading {
+  color: #e66100;
+}
+
+.role-toolresult {
+  border-left-color: #1c71d8;
+}
+
+.role-toolresult.heading {
+  color: #1c71d8;
+}
+
+/* Metadata card styling */
+.card {
+  padding: 16px;
+  border-radius: 12px;
+  background-color: @card_bg_color;
+}
