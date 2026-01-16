@@ -7,6 +7,7 @@
 - Detect available terminal emulator
 - Build resume command for tool
 - Launch terminal with session
+- Detailed plan: `brainstorming/SESSION_RESUMPTION_AND_PREFERENCES.md`
 
 ### 3. OpenCode + Codex Indexing
 - Add parsers for OpenCode and Codex
