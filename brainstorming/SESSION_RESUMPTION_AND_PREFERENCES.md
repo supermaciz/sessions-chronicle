@@ -2,8 +2,8 @@
 
 ## Goals
 - Let users choose which terminal emulator is used to resume sessions.
-- Follow GNOME HIG using `AdwPreferencesWindow`.
-- Provide “Resume in Terminal” entry points in both:
+- Follow GNOME HIG using `AdwPreferencesDialog` (newer API, replaces `AdwPreferencesWindow`).
+- Provide "Resume in Terminal" entry points in both:
   - Session detail view
   - Session list rows
 - Work in Flatpak (host terminal launch).
@@ -11,7 +11,7 @@
 ## UX (GNOME HIG)
 
 ### Preferences
-- Window: `AdwPreferencesWindow`
+- Dialog: `AdwPreferencesDialog`
 - Page: “General”
 - Group: “Session Resumption”
 - Row: “Terminal” (`AdwComboRow`)
@@ -59,19 +59,49 @@ Files:
 
 ## Implementation Plan (Code)
 
-### 1) Preferences window component
+### Recommended Implementation Order
+1. `src/utils/terminal.rs` - Self-contained, testable first
+2. GSettings schema - Add `resume-terminal` key
+3. `src/ui/modals/preferences.rs` - Wire to `PreferencesAction`
+4. `src/ui/session_list.rs` - Add resume button + `ResumeRequested` output
+5. `src/ui/session_detail.rs` - Add resume button + output to parent
+6. `src/app.rs` - Handle `ResumeSession`, spawn terminal, error dialogs
+
+### 1) Preferences dialog component
 - Create a new modal component:
   - `src/ui/modals/preferences.rs`
   - Export in `src/ui/modals/mod.rs`
 - Wire existing menu action:
   - `PreferencesAction` already exists in `src/app.rs`
-  - Add a stateless action handler to launch the preferences window.
+  - Add a stateless action handler to launch the preferences dialog.
+
+Relm4 pattern (follow `src/ui/modals/about.rs`):
+```rust
+impl SimpleComponent for PreferencesDialog {
+    type Init = ();
+    type Root = adw::PreferencesDialog;
+    type Widgets = PreferencesWidgets;  // Custom struct to hold ComboRow reference
+    type Input = PreferencesMsg;
+    type Output = ();  // No output needed back to parent
+
+    fn init_root() -> Self::Root {
+        adw::PreferencesDialog::builder().build()
+    }
+
+    fn init(...) {
+        // Build UI: PreferencesPage > PreferencesGroup > ComboRow
+        // Read GSettings, set ComboRow selection
+        // Connect notify::selected signal
+        widgets.present(Some(&relm4::main_application().windows()[0]));
+    }
+}
+```
 
 Preferences UI behavior:
 - On init:
   - Read `resume-terminal` from GSettings
   - Set ComboRow selection accordingly
-- On selection change:
+- On selection change (use `connect_notify_selected`):
   - Write updated string back to GSettings
 
 ### 2) Terminal abstraction
@@ -109,21 +139,65 @@ If not Flatpak:
 - Spawn terminal directly.
 
 ### 5) UI message plumbing
-- Session list (`src/ui/session_list.rs`):
-  - Add a suffix “resume” button per row.
-  - Emit new output: `SessionListOutput::ResumeRequested(session_id)`.
-- App (`src/app.rs`):
-  - Handle `ResumeRequested` output:
-    - Load session from DB (`load_session`)
-    - Determine working directory
-    - Spawn terminal + command
-    - Show `AdwAlertDialog` on error
-- Session detail (`src/ui/session_detail.rs`):
-  - Add a “Resume” button.
-  - Emit a message to request resumption for current session id.
-  - Either:
-    - bubble to App, or
-    - spawn directly (App-centralized is preferred for consistent dialogs + settings access).
+
+#### Session list (`src/ui/session_list.rs`)
+- Add a suffix "resume" button per row using `row.add_suffix()`:
+  ```rust
+  let resume_btn = gtk::Button::from_icon_name("utilities-terminal-symbolic");
+  resume_btn.add_css_class("flat");
+  row.add_suffix(&resume_btn);
+  ```
+- Add new output variant:
+  ```rust
+  pub enum SessionListOutput {
+      SessionSelected(String),
+      ResumeRequested(String),  // NEW
+  }
+  ```
+
+#### App (`src/app.rs`)
+- Update `forward()` to handle new output:
+  ```rust
+  SessionList::builder()
+      .launch(db_path.clone())
+      .forward(sender.input_sender(), |msg| match msg {
+          SessionListOutput::SessionSelected(id) => AppMsg::SessionSelected(id),
+          SessionListOutput::ResumeRequested(id) => AppMsg::ResumeSession(id),  // NEW
+      });
+  ```
+- Add new message variant and handler:
+  ```rust
+  pub enum AppMsg {
+      // ... existing variants
+      ResumeSession(String),  // NEW
+  }
+  ```
+- In `update()`, handle `ResumeSession`:
+  - Load session from DB (`load_session`)
+  - Determine working directory
+  - Spawn terminal + command via `utils::terminal`
+  - Show `AdwAlertDialog` on error
+
+#### Session detail (`src/ui/session_detail.rs`)
+- Add a "Resume" button in metadata_box.
+- Add output type (currently uses `detach()` with no output):
+  ```rust
+  pub enum SessionDetailOutput {
+      ResumeRequested(String),
+  }
+  ```
+- Change from `detach()` to `forward()` in `app.rs`:
+  ```rust
+  // Before:
+  let session_detail = SessionDetail::builder().launch(db_path.clone()).detach();
+
+  // After:
+  let session_detail = SessionDetail::builder()
+      .launch(db_path.clone())
+      .forward(sender.input_sender(), |msg| match msg {
+          SessionDetailOutput::ResumeRequested(id) => AppMsg::ResumeSession(id),
+      });
+  ```
 
 ## Errors & Dialogs
 - Use `AdwAlertDialog` for:
