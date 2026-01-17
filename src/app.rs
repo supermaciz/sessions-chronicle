@@ -4,23 +4,26 @@ use relm4::{
     adw, gtk, main_application,
 };
 
-use adw::prelude::{AdwApplicationWindowExt, NavigationPageExt};
+use adw::prelude::{AdwApplicationWindowExt, AdwDialogExt, AlertDialogExt, NavigationPageExt};
 use gtk::prelude::{
-    ApplicationExt, ButtonExt, EditableExt, GtkWindowExt, OrientableExt, SettingsExt,
-    ToggleButtonExt, WidgetExt,
+    ApplicationExt, ButtonExt, EditableExt, GtkApplicationExt, GtkWindowExt, OrientableExt,
+    SettingsExt, ToggleButtonExt, WidgetExt,
 };
 use gtk::{gio, glib};
 use std::{fs, path::PathBuf};
 
 use crate::config::{APP_ID, PROFILE};
-use crate::database::SessionIndexer;
+use crate::database::{SessionIndexer, load_session};
 use crate::models::session::Tool;
-use crate::ui::modals::{about::AboutDialog, shortcuts::ShortcutsDialog};
+use crate::ui::modals::{
+    about::AboutDialog, preferences::PreferencesDialog, shortcuts::ShortcutsDialog,
+};
 use crate::ui::{
-    session_detail::{SessionDetail, SessionDetailMsg},
+    session_detail::{SessionDetail, SessionDetailMsg, SessionDetailOutput},
     session_list::{SessionList, SessionListMsg, SessionListOutput},
     sidebar::{Sidebar, SidebarOutput},
 };
+use crate::utils::terminal::{self, Terminal};
 
 pub(super) struct App {
     search_visible: bool,
@@ -30,6 +33,7 @@ pub(super) struct App {
     sidebar: Controller<Sidebar>,
     nav_view: adw::NavigationView,
     detail_page: adw::NavigationPage,
+    db_path: PathBuf,
 }
 
 #[derive(Debug)]
@@ -40,6 +44,7 @@ pub(super) enum AppMsg {
     FiltersChanged(Vec<Tool>),
     SessionSelected(String),
     NavigateBack,
+    ResumeSession(String),
 }
 
 relm4::new_action_group!(pub(super) WindowActionGroup, "win");
@@ -168,8 +173,14 @@ impl SimpleComponent for App {
                 .launch(db_path.clone())
                 .forward(sender.input_sender(), |msg| match msg {
                     SessionListOutput::SessionSelected(id) => AppMsg::SessionSelected(id),
+                    SessionListOutput::ResumeRequested(id) => AppMsg::ResumeSession(id),
                 });
-        let session_detail = SessionDetail::builder().launch(db_path.clone()).detach();
+        let session_detail = SessionDetail::builder().launch(db_path.clone()).forward(
+            sender.input_sender(),
+            |msg| match msg {
+                SessionDetailOutput::ResumeRequested(id) => AppMsg::ResumeSession(id),
+            },
+        );
         let sidebar = Sidebar::builder()
             .launch(())
             .forward(sender.input_sender(), |output| match output {
@@ -209,6 +220,7 @@ impl SimpleComponent for App {
             sidebar,
             nav_view: nav_view.clone(),
             detail_page: detail_page.clone(),
+            db_path,
         };
         let widgets = view_output!();
 
@@ -228,6 +240,12 @@ impl SimpleComponent for App {
 
         let app = root.application().unwrap();
         let mut actions = RelmActionGroup::<WindowActionGroup>::new();
+
+        let preferences_action = {
+            RelmAction::<PreferencesAction>::new_stateless(move |_| {
+                PreferencesDialog::builder().launch(()).detach();
+            })
+        };
 
         let shortcuts_action = {
             RelmAction::<ShortcutsAction>::new_stateless(move |_| {
@@ -250,6 +268,7 @@ impl SimpleComponent for App {
         // Connect action with hotkeys
         app.set_accelerators_for_action::<QuitAction>(&["<Control>q"]);
 
+        actions.add_action(preferences_action);
         actions.add_action(shortcuts_action);
         actions.add_action(about_action);
         actions.add_action(quit_action);
@@ -298,11 +317,107 @@ impl SimpleComponent for App {
                     }
                 }
             }
+            AppMsg::ResumeSession(session_id) => {
+                tracing::debug!("Resume session requested: {}", session_id);
+
+                // Load session from DB
+                let session = match load_session(&self.db_path, &session_id) {
+                    Ok(Some(session)) => session,
+                    Ok(None) => {
+                        tracing::error!("Session not found: {}", session_id);
+                        self.show_error_dialog(
+                            "Session Not Found",
+                            "The requested session could not be found in the database.",
+                        );
+                        return;
+                    }
+                    Err(err) => {
+                        tracing::error!("Failed to load session {}: {}", session_id, err);
+                        self.show_error_dialog(
+                            "Failed to Load Session",
+                            &format!("An error occurred while loading the session: {}", err),
+                        );
+                        return;
+                    }
+                };
+
+                // Determine workdir
+                let workdir = if let Some(project_path) = &session.project_path {
+                    PathBuf::from(project_path)
+                } else {
+                    // Use the directory containing the session file
+                    match PathBuf::from(&session.file_path).parent() {
+                        Some(dir) => dir.to_path_buf(),
+                        None => {
+                            tracing::error!(
+                                "Cannot determine workdir for session: no project_path and no valid parent directory"
+                            );
+                            self.show_error_dialog(
+                                "Invalid Session",
+                                "The session has no valid working directory.",
+                            );
+                            return;
+                        }
+                    }
+                };
+
+                // Get terminal preference
+                let settings = gio::Settings::new(APP_ID);
+                let terminal_str = settings.string("resume-terminal");
+                let terminal = match Terminal::from_str(&terminal_str) {
+                    Some(t) => t,
+                    None => {
+                        tracing::error!("Invalid terminal preference: {}", terminal_str);
+                        self.show_error_dialog(
+                            "Invalid Terminal Preference",
+                            "Please check your terminal preference in settings.",
+                        );
+                        return;
+                    }
+                };
+
+                // Build and spawn resume command
+                match terminal::build_resume_command(&session_id, &workdir) {
+                    Ok(args) => match terminal::spawn_terminal(terminal, &args) {
+                        Ok(_) => {
+                            tracing::info!(
+                                "Successfully launched terminal for session: {}",
+                                session_id
+                            );
+                        }
+                        Err(err) => {
+                            tracing::error!("Failed to spawn terminal: {}", err);
+                            self.show_error_dialog("Failed to Launch Terminal", &format!("Could not launch the terminal emulator: {}. Please check your preferences.", err));
+                        }
+                    },
+                    Err(err) => {
+                        tracing::error!("Failed to build resume command: {}", err);
+                        self.show_error_dialog(
+                            "Failed to Build Resume Command",
+                            &format!("Could not build the resume command: {}", err),
+                        );
+                    }
+                }
+            }
         }
     }
 
     fn shutdown(&mut self, widgets: &mut Self::Widgets, _output: relm4::Sender<Self::Output>) {
         widgets.save_window_size().unwrap();
+    }
+}
+
+impl App {
+    fn show_error_dialog(&self, title: &str, message: &str) {
+        let dialog = adw::AlertDialog::builder()
+            .heading(title)
+            .body(message)
+            .build();
+
+        dialog.add_response("ok", "OK");
+        dialog.set_default_response(Some("ok"));
+
+        dialog.present(Some(&relm4::main_application().windows()[0]));
     }
 }
 

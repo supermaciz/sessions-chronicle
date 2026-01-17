@@ -15,6 +15,7 @@ pub struct SessionList {
     search_query: String,
     sessions: Vec<Session>,
     all_tools_selected: bool,
+    output_sender: relm4::Sender<SessionListOutput>,
 }
 
 #[derive(Debug)]
@@ -26,6 +27,7 @@ pub enum SessionListMsg {
 #[derive(Debug)]
 pub enum SessionListOutput {
     SessionSelected(String),
+    ResumeRequested(String),
 }
 
 #[relm4::component(pub)]
@@ -78,6 +80,7 @@ impl SimpleComponent for SessionList {
         let active_tools = vec![Tool::ClaudeCode, Tool::OpenCode, Tool::Codex];
         let search_query = String::new();
         let sessions = Self::fetch_sessions(&db_path, &active_tools, &search_query);
+        let output_sender = sender.output_sender().clone();
 
         let model = Self {
             db_path,
@@ -85,6 +88,7 @@ impl SimpleComponent for SessionList {
             search_query,
             sessions,
             all_tools_selected: true,
+            output_sender,
         };
         let widgets = view_output!();
 
@@ -106,7 +110,7 @@ impl SimpleComponent for SessionList {
                 .set_visible_child(&widgets.session_list_scroller);
 
             for session in &model.sessions {
-                let row = Self::build_session_row(session);
+                let row = Self::build_session_row(session, &model.output_sender);
                 widgets.session_list.append(&row);
             }
         }
@@ -161,7 +165,7 @@ impl SimpleComponent for SessionList {
                 .set_visible_child(&widgets.session_list_scroller);
 
             for session in &self.sessions {
-                let row = Self::build_session_row(session);
+                let row = Self::build_session_row(session, &self.output_sender);
                 widgets.session_list.append(&row);
             }
         }
@@ -195,21 +199,40 @@ impl SessionList {
         }
     }
 
-    fn build_session_row(session: &Session) -> adw::ActionRow {
+    fn build_session_row(
+        session: &Session,
+        sender: &relm4::Sender<SessionListOutput>,
+    ) -> adw::ActionRow {
         let row = adw::ActionRow::builder()
             .title(Self::session_title(session))
             .subtitle(Self::session_subtitle(session))
             .activatable(true)
             .build();
 
+        let session_id = session.id.clone();
+
         // Store session ID on the row for retrieval on activation
         unsafe {
-            row.set_data(Self::SESSION_ID_KEY, session.id.clone());
+            row.set_data(Self::SESSION_ID_KEY, session_id.clone());
         }
 
         let icon = gtk::Image::from_icon_name(session.tool.icon_name());
         icon.set_pixel_size(16);
         row.add_prefix(&icon);
+
+        // Add resume button
+        let resume_button = gtk::Button::from_icon_name("utilities-terminal-symbolic");
+        resume_button.add_css_class("flat");
+        resume_button.set_tooltip_text(Some("Resume in terminal"));
+        let sender_resume = sender.clone();
+        let session_id_resume = session_id.clone();
+        resume_button.connect_clicked(move |_| {
+            let _ = sender_resume.send(SessionListOutput::ResumeRequested(
+                session_id_resume.clone(),
+            ));
+        });
+
+        row.add_suffix(&resume_button);
 
         // Add chevron to indicate row is clickable
         let chevron = gtk::Image::from_icon_name("go-next-symbolic");
