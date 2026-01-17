@@ -146,9 +146,21 @@ pub fn spawn_terminal(terminal: Terminal, args: &[String]) -> Result<()> {
     };
 
     let mut final_args: Vec<String> = Vec::new();
-    if resolved == Terminal::Ghostty {
-        final_args.push("-e".to_string());
+
+    // Each terminal has different syntax for specifying the command to run
+    match resolved {
+        Terminal::Ghostty | Terminal::Alacritty | Terminal::Kitty => {
+            final_args.push("-e".to_string());
+        }
+        Terminal::Ptyxis | Terminal::GnomeTerminal => {
+            final_args.push("--".to_string());
+        }
+        Terminal::Foot => {
+            // Foot takes the command directly without a separator
+        }
+        Terminal::Auto => unreachable!("Auto should be resolved"),
     }
+
     final_args.extend(args.iter().cloned());
 
     for arg in &final_args {
