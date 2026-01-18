@@ -11,7 +11,6 @@ fn is_flatpak() -> bool {
 pub enum Terminal {
     Auto,
     Ptyxis,
-    GnomeTerminal,
     Ghostty,
     Foot,
     Alacritty,
@@ -21,7 +20,6 @@ pub enum Terminal {
 impl Terminal {
     const ALL: &'static [Terminal] = &[
         Terminal::Ptyxis,
-        Terminal::GnomeTerminal,
         Terminal::Ghostty,
         Terminal::Foot,
         Terminal::Alacritty,
@@ -32,7 +30,6 @@ impl Terminal {
         match s {
             "auto" => Some(Terminal::Auto),
             "ptyxis" => Some(Terminal::Ptyxis),
-            "gnome-terminal" => Some(Terminal::GnomeTerminal),
             "ghostty" => Some(Terminal::Ghostty),
             "foot" => Some(Terminal::Foot),
             "alacritty" => Some(Terminal::Alacritty),
@@ -45,7 +42,6 @@ impl Terminal {
         match self {
             Terminal::Auto => "auto",
             Terminal::Ptyxis => "ptyxis",
-            Terminal::GnomeTerminal => "gnome-terminal",
             Terminal::Ghostty => "ghostty",
             Terminal::Foot => "foot",
             Terminal::Alacritty => "alacritty",
@@ -57,7 +53,6 @@ impl Terminal {
         match self {
             Terminal::Auto => "Automatic",
             Terminal::Ptyxis => "Ptyxis",
-            Terminal::GnomeTerminal => "GNOME Terminal",
             Terminal::Ghostty => "Ghostty",
             Terminal::Foot => "Foot",
             Terminal::Alacritty => "Alacritty",
@@ -69,7 +64,6 @@ impl Terminal {
         match self {
             Terminal::Auto => None,
             Terminal::Ptyxis => Some("ptyxis"),
-            Terminal::GnomeTerminal => Some("gnome-terminal"),
             Terminal::Ghostty => Some("ghostty"),
             Terminal::Foot => Some("foot"),
             Terminal::Alacritty => Some("alacritty"),
@@ -152,7 +146,7 @@ pub fn spawn_terminal(terminal: Terminal, args: &[String]) -> Result<()> {
         Terminal::Ghostty | Terminal::Alacritty | Terminal::Kitty => {
             final_args.push("-e".to_string());
         }
-        Terminal::Ptyxis | Terminal::GnomeTerminal => {
+        Terminal::Ptyxis => {
             final_args.push("--".to_string());
         }
         Terminal::Foot => {
@@ -182,10 +176,6 @@ mod tests {
     fn test_terminal_from_str() {
         assert_eq!(Terminal::from_str("auto"), Some(Terminal::Auto));
         assert_eq!(Terminal::from_str("ptyxis"), Some(Terminal::Ptyxis));
-        assert_eq!(
-            Terminal::from_str("gnome-terminal"),
-            Some(Terminal::GnomeTerminal)
-        );
         assert_eq!(Terminal::from_str("ghostty"), Some(Terminal::Ghostty));
         assert_eq!(Terminal::from_str("foot"), Some(Terminal::Foot));
         assert_eq!(Terminal::from_str("alacritty"), Some(Terminal::Alacritty));
@@ -197,7 +187,6 @@ mod tests {
     fn test_terminal_to_str() {
         assert_eq!(Terminal::Auto.to_str(), "auto");
         assert_eq!(Terminal::Ptyxis.to_str(), "ptyxis");
-        assert_eq!(Terminal::GnomeTerminal.to_str(), "gnome-terminal");
         assert_eq!(Terminal::Ghostty.to_str(), "ghostty");
         assert_eq!(Terminal::Foot.to_str(), "foot");
         assert_eq!(Terminal::Alacritty.to_str(), "alacritty");

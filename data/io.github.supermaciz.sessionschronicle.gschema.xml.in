@@ -16,7 +16,7 @@
     <key name="resume-terminal" type="s">
       <default>"auto"</default>
       <summary>Terminal emulator for resuming sessions</summary>
-      <description>The terminal emulator to use when resuming sessions. Accepted values: auto, ptyxis, gnome-terminal, ghostty, foot, alacritty, kitty.</description>
+      <description>The terminal emulator to use when resuming sessions. Accepted values: auto, ptyxis, ghostty, foot, alacritty, kitty.</description>
     </key>
   </schema>
 </schemalist>

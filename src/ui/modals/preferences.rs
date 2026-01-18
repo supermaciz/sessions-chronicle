@@ -43,7 +43,6 @@ impl SimpleComponent for PreferencesDialog {
         let terminals: Vec<Terminal> = vec![
             Terminal::Auto,
             Terminal::Ptyxis,
-            Terminal::GnomeTerminal,
             Terminal::Ghostty,
             Terminal::Foot,
             Terminal::Alacritty,
