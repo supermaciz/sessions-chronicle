@@ -25,15 +25,15 @@ impl SessionIndexer {
             .into_iter()
             .filter_map(|e| e.ok())
         {
-            if entry.file_type().is_file() {
-                if let Some(ext) = entry.path().extension() {
-                    if ext == "jsonl" {
-                        if let Err(e) = self.index_session_file(entry.path(), &parser) {
-                            tracing::warn!("Failed to index {}: {}", entry.path().display(), e);
-                        } else {
-                            count += 1;
-                        }
-                    }
+            let path = entry.path();
+            if entry.file_type().is_file()
+                && let Some(ext) = path.extension()
+                && ext == "jsonl"
+            {
+                if let Err(e) = self.index_session_file(path, &parser) {
+                    tracing::warn!("Failed to index {}: {}", path.display(), e);
+                } else {
+                    count += 1;
                 }
             }
         }

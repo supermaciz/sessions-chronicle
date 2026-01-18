@@ -48,10 +48,10 @@ impl ClaudeCodeParser {
             }
 
             // Extract first timestamp
-            if first_timestamp.is_none() {
-                if let Some(ts) = event.get("timestamp").and_then(|v| v.as_str()) {
-                    first_timestamp = Self::parse_timestamp(ts).ok();
-                }
+            if first_timestamp.is_none()
+                && let Some(ts) = event.get("timestamp").and_then(|v| v.as_str())
+            {
+                first_timestamp = Self::parse_timestamp(ts).ok();
             }
 
             message_count += 1;
@@ -67,7 +67,7 @@ impl ClaudeCodeParser {
         let reader = BufReader::new(file);
         let total_count = reader
             .lines()
-            .filter_map(|l| l.ok())
+            .map_while(Result::ok)
             .filter(|l| !l.trim().is_empty())
             .count();
 
@@ -81,7 +81,7 @@ impl ClaudeCodeParser {
             }),
             tool: Tool::ClaudeCode,
             project_path,
-            start_time: first_timestamp.unwrap_or_else(|| Utc::now()),
+            start_time: first_timestamp.unwrap_or_else(Utc::now),
             message_count: total_count,
             file_path: file_path.to_str().unwrap().to_string(),
             last_updated: Utc::now(),
@@ -148,7 +148,7 @@ impl ClaudeCodeParser {
             .get("timestamp")
             .and_then(|v| v.as_str())
             .and_then(|s| Self::parse_timestamp(s).ok())
-            .unwrap_or_else(|| Utc::now());
+            .unwrap_or_else(Utc::now);
 
         let session_id = event
             .get("sessionId")
