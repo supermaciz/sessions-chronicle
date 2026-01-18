@@ -78,7 +78,7 @@ impl SimpleComponent for PreferencesDialog {
         root.add(&page);
 
         let model = Self {};
-        let widgets = PreferencesWidgets { root, combo_row };
+        let widgets = PreferencesWidgets { root };
 
         widgets.root.present(Some(&main_application().windows()[0]));
 
@@ -90,5 +90,4 @@ impl SimpleComponent for PreferencesDialog {
 
 pub struct PreferencesWidgets {
     root: adw::PreferencesDialog,
-    combo_row: adw::ComboRow,
 }

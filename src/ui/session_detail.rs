@@ -326,7 +326,7 @@ impl SessionDetail {
         header.append(&role_label);
 
         let time_label = gtk::Label::builder()
-            .label(&message.timestamp.format("%H:%M:%S").to_string())
+            .label(message.timestamp.format("%H:%M:%S").to_string())
             .css_classes(["caption", "dim-label"])
             .halign(gtk::Align::Start)
             .build();

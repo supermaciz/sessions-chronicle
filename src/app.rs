@@ -10,7 +10,7 @@ use gtk::prelude::{
     SettingsExt, ToggleButtonExt, WidgetExt,
 };
 use gtk::{gio, glib};
-use std::{fs, path::PathBuf};
+use std::{fs, path::PathBuf, str::FromStr};
 
 use crate::config::{APP_ID, PROFILE};
 use crate::database::{SessionIndexer, load_session};
@@ -365,8 +365,8 @@ impl SimpleComponent for App {
                 let settings = gio::Settings::new(APP_ID);
                 let terminal_str = settings.string("resume-terminal");
                 let terminal = match Terminal::from_str(&terminal_str) {
-                    Some(t) => t,
-                    None => {
+                    Ok(t) => t,
+                    Err(()) => {
                         tracing::error!("Invalid terminal preference: {}", terminal_str);
                         self.show_error_dialog(
                             "Invalid Terminal Preference",

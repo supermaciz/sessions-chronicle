@@ -42,7 +42,7 @@ impl Role {
 
     /// Return the storage format string for this role.
     #[allow(dead_code)]
-    pub fn to_storage(&self) -> &'static str {
+    pub fn to_storage(self) -> &'static str {
         match self {
             Role::User => "user",
             Role::Assistant => "assistant",

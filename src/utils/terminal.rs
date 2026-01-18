@@ -2,6 +2,7 @@ use anyhow::{Context, Result};
 use std::env;
 use std::path::Path;
 use std::process::Command;
+use std::str::FromStr;
 
 fn is_flatpak() -> bool {
     Path::new("/.flatpak-info").exists() || env::var("FLATPAK_ID").is_ok()
@@ -26,19 +27,7 @@ impl Terminal {
         Terminal::Kitty,
     ];
 
-    pub fn from_str(s: &str) -> Option<Self> {
-        match s {
-            "auto" => Some(Terminal::Auto),
-            "ptyxis" => Some(Terminal::Ptyxis),
-            "ghostty" => Some(Terminal::Ghostty),
-            "foot" => Some(Terminal::Foot),
-            "alacritty" => Some(Terminal::Alacritty),
-            "kitty" => Some(Terminal::Kitty),
-            _ => None,
-        }
-    }
-
-    pub fn to_str(&self) -> &'static str {
+    pub fn to_str(self) -> &'static str {
         match self {
             Terminal::Auto => "auto",
             Terminal::Ptyxis => "ptyxis",
@@ -105,12 +94,28 @@ impl Terminal {
     }
 }
 
+impl FromStr for Terminal {
+    type Err = ();
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "auto" => Ok(Terminal::Auto),
+            "ptyxis" => Ok(Terminal::Ptyxis),
+            "ghostty" => Ok(Terminal::Ghostty),
+            "foot" => Ok(Terminal::Foot),
+            "alacritty" => Ok(Terminal::Alacritty),
+            "kitty" => Ok(Terminal::Kitty),
+            _ => Err(()),
+        }
+    }
+}
+
 pub fn build_resume_command(session_id: &str, workdir: &Path) -> Result<Vec<String>> {
     let workdir = workdir
         .canonicalize()
         .context("Failed to canonicalize workdir")?;
 
-    let shell_cmd = format!("cd \"$1\" && claude -r \"$2\"; exec bash");
+    let shell_cmd = "cd \"$1\" && claude -r \"$2\"; exec bash".to_string();
 
     Ok(vec![
         "bash".to_string(),
@@ -171,16 +176,17 @@ pub fn spawn_terminal(terminal: Terminal, args: &[String]) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::str::FromStr;
 
     #[test]
     fn test_terminal_from_str() {
-        assert_eq!(Terminal::from_str("auto"), Some(Terminal::Auto));
-        assert_eq!(Terminal::from_str("ptyxis"), Some(Terminal::Ptyxis));
-        assert_eq!(Terminal::from_str("ghostty"), Some(Terminal::Ghostty));
-        assert_eq!(Terminal::from_str("foot"), Some(Terminal::Foot));
-        assert_eq!(Terminal::from_str("alacritty"), Some(Terminal::Alacritty));
-        assert_eq!(Terminal::from_str("kitty"), Some(Terminal::Kitty));
-        assert_eq!(Terminal::from_str("invalid"), None);
+        assert_eq!(Terminal::from_str("auto"), Ok(Terminal::Auto));
+        assert_eq!(Terminal::from_str("ptyxis"), Ok(Terminal::Ptyxis));
+        assert_eq!(Terminal::from_str("ghostty"), Ok(Terminal::Ghostty));
+        assert_eq!(Terminal::from_str("foot"), Ok(Terminal::Foot));
+        assert_eq!(Terminal::from_str("alacritty"), Ok(Terminal::Alacritty));
+        assert_eq!(Terminal::from_str("kitty"), Ok(Terminal::Kitty));
+        assert_eq!(Terminal::from_str("invalid"), Err(()));
     }
 
     #[test]

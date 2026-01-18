@@ -56,7 +56,7 @@ impl Tool {
         }
     }
 
-    pub fn to_storage(&self) -> String {
+    pub fn to_storage(self) -> String {
         match self {
             Tool::ClaudeCode => "claude_code".to_string(),
             Tool::OpenCode => "opencode".to_string(),

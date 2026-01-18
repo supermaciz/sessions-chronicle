@@ -1,7 +1,7 @@
 use chrono::{DateTime, Duration as ChronoDuration, Utc};
 use gtk::prelude::*;
 use relm4::{ComponentParts, ComponentSender, SimpleComponent, adw, gtk};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use adw::prelude::ActionRowExt;
 
@@ -175,7 +175,7 @@ impl SimpleComponent for SessionList {
 impl SessionList {
     const SESSION_ID_KEY: &'static str = "session-id";
 
-    fn fetch_sessions(db_path: &PathBuf, tools: &[Tool], query: &str) -> Vec<Session> {
+    fn fetch_sessions(db_path: &Path, tools: &[Tool], query: &str) -> Vec<Session> {
         let query = query.trim();
         let sessions = if query.is_empty() {
             load_sessions(db_path, tools)
