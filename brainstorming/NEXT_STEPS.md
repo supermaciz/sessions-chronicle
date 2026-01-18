@@ -2,19 +2,12 @@
 
 ## Immediate Tasks (Priority Order)
 
-### 1. Session Resumption
-- Create `src/utils/terminal.rs`
-- Detect available terminal emulator
-- Build resume command for tool
-- Launch terminal with session
-- Detailed plan: `brainstorming/SESSION_RESUMPTION_AND_PREFERENCES.md`
-
-### 3. OpenCode + Codex Indexing
+### 1. OpenCode + Codex Indexing
 - Add parsers for OpenCode and Codex
 - Index sessions into SQLite
 - Ensure tool filters show data
 
-### 4. Search Term Highlighting
+### 2. Search Term Highlighting
 - Highlight matching terms in SessionDetail
 - Use markup tags with highlighting class
 
@@ -34,6 +27,8 @@
 - ✅ Color-code messages by role in SessionDetail
 - ✅ Add scrolling support to SessionDetail
 - ✅ Implement navigation between list and detail views
+- ✅ Add session resumption with terminal emulator integration
+- ✅ Add terminal preferences dialog for emulator selection
 
 ---
 
@@ -51,6 +46,5 @@ cargo run
 
 ## Current Blockers
 
-1. **Session resumption missing** - Can't resume sessions from the app
-2. **OpenCode/Codex not indexed** - Filters show empty results for those tools
-3. **Search term highlighting missing** - Search works but doesn't highlight matches
+1. **OpenCode/Codex not indexed** - Filters show empty results for those tools
+2. **Search term highlighting missing** - Search works but doesn't highlight matches

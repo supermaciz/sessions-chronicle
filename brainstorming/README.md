@@ -77,17 +77,19 @@ All mockups are SVG files (open in browser or image viewer):
 - ✅ Database schema (SQLite + FTS5)
 - ✅ Claude Code parser (JSONL streaming)
 - ✅ Test fixtures
-- ✅ Basic UI components (Sidebar, SessionList)
+- ✅ Basic UI components (Sidebar, SessionList, SessionDetail)
 - ✅ CLI args (`clap`) for `--sessions-dir`
 - ✅ Database indexer wired into App
 - ✅ SessionList loading from DB
 - ✅ Sidebar tool filters wired to SessionList (Claude data only)
+- ✅ Search functionality with FTS5 full-text search
+- ✅ Session detail view with conversation transcript
+- ✅ Session resumption with terminal emulator integration
+- ✅ Terminal preferences dialog for emulator selection
 
 **Next Tasks**:
-- ⬜ Implement search (FTS5 queries)
-- ⬜ Add SessionDetail component
-- ⬜ Session resumption (terminal launch)
 - ⬜ OpenCode/Codex parsers + indexing (populate filters)
+- ⬜ Search term highlighting in SessionDetail
 
 ---
 
@@ -111,5 +113,5 @@ All mockups are SVG files (open in browser or image viewer):
 
 ---
 
-**Last Updated**: 2026-01-14
-**Status**: Phase 1 implementation in progress
+**Last Updated**: 2026-01-18
+**Status**: Phase 1 core features complete (Claude Code support)

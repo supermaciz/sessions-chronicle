@@ -1,7 +1,9 @@
 use chrono::{DateTime, Duration as ChronoDuration, Utc};
 use gtk::prelude::*;
 use relm4::{ComponentParts, ComponentSender, RelmWidgetExt, SimpleComponent, adw, gtk};
+use std::cell::RefCell;
 use std::path::PathBuf;
+use std::rc::Rc;
 
 use crate::database::{load_messages_for_session, load_session};
 use crate::models::{Message, Session};
@@ -11,6 +13,8 @@ pub struct SessionDetail {
     db_path: PathBuf,
     session: Option<Session>,
     messages: Vec<Message>,
+    output_sender: relm4::Sender<SessionDetailOutput>,
+    current_session_id: Rc<RefCell<Option<String>>>,
 }
 
 #[derive(Debug)]
@@ -20,11 +24,16 @@ pub enum SessionDetailMsg {
     Clear,
 }
 
+#[derive(Debug)]
+pub enum SessionDetailOutput {
+    ResumeRequested(String),
+}
+
 #[relm4::component(pub)]
 impl SimpleComponent for SessionDetail {
     type Init = PathBuf;
     type Input = SessionDetailMsg;
-    type Output = ();
+    type Output = SessionDetailOutput;
     type Widgets = SessionDetailWidgets;
 
     view! {
@@ -133,6 +142,13 @@ impl SimpleComponent for SessionDetail {
                                     set_selectable: true,
                                 },
                             },
+
+                            #[name = "resume_button"]
+                            gtk::Button {
+                                set_label: "Resume in Terminal",
+                                add_css_class: "suggested-action",
+                                set_halign: gtk::Align::Start,
+                            },
                         },
 
                         // Messages container
@@ -150,12 +166,18 @@ impl SimpleComponent for SessionDetail {
     fn init(
         db_path: Self::Init,
         root: Self::Root,
-        _sender: ComponentSender<Self>,
+        sender: ComponentSender<Self>,
     ) -> ComponentParts<Self> {
+        let output_sender = sender.output_sender().clone();
+
+        let current_session_id = Rc::new(RefCell::new(None));
+
         let model = Self {
             db_path,
             session: None,
             messages: Vec::new(),
+            output_sender,
+            current_session_id: current_session_id.clone(),
         };
         let widgets = view_output!();
 
@@ -163,6 +185,14 @@ impl SimpleComponent for SessionDetail {
         widgets
             .content_stack
             .set_visible_child(&widgets.loading_state);
+
+        // Connect resume button once
+        let sender = model.output_sender.clone();
+        widgets.resume_button.connect_clicked(move |_| {
+            if let Some(session_id) = current_session_id.borrow().as_ref() {
+                let _ = sender.send(SessionDetailOutput::ResumeRequested(session_id.clone()));
+            }
+        });
 
         ComponentParts { model, widgets }
     }
@@ -173,18 +203,23 @@ impl SimpleComponent for SessionDetail {
                 // Load session metadata
                 match load_session(&self.db_path, &session_id) {
                     Ok(Some(session)) => {
+                        self.current_session_id
+                            .borrow_mut()
+                            .replace(session.id.clone());
                         self.session = Some(session);
                     }
                     Ok(None) => {
                         tracing::warn!("Session not found: {}", session_id);
                         self.session = None;
                         self.messages = Vec::new();
+                        self.current_session_id.borrow_mut().take();
                         return;
                     }
                     Err(err) => {
                         tracing::error!("Failed to load session {}: {}", session_id, err);
                         self.session = None;
                         self.messages = Vec::new();
+                        self.current_session_id.borrow_mut().take();
                         return;
                     }
                 }
@@ -203,6 +238,7 @@ impl SimpleComponent for SessionDetail {
             SessionDetailMsg::Clear => {
                 self.session = None;
                 self.messages = Vec::new();
+                self.current_session_id.borrow_mut().take();
             }
         }
     }
@@ -247,6 +283,9 @@ impl SimpleComponent for SessionDetail {
 
             widgets.session_id_label.set_label(&session.id);
 
+            widgets.resume_button.set_sensitive(true);
+            widgets.resume_button.set_label("Resume in Terminal");
+
             // Build message widgets
             for message in &self.messages {
                 let message_widget = Self::build_message_widget(message);
@@ -257,6 +296,7 @@ impl SimpleComponent for SessionDetail {
                 .content_stack
                 .set_visible_child(&widgets.detail_content);
         } else {
+            widgets.resume_button.set_sensitive(false);
             widgets
                 .content_stack
                 .set_visible_child(&widgets.loading_state);

@@ -16,7 +16,11 @@ impl ClaudeCodeParser {
         let reader = BufReader::new(file);
         let mut first_timestamp = None;
         let mut project_path = None;
-        let mut session_id = None;
+        let file_stem_id = file_path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .map(|s| s.to_string());
+        let mut session_id = file_stem_id;
         let mut message_count = 0;
 
         for line in reader.lines() {
@@ -32,7 +36,6 @@ impl ClaudeCodeParser {
                 session_id = event
                     .get("sessionId")
                     .and_then(|v| v.as_str())
-                    .or_else(|| file_path.file_stem().and_then(|s| s.to_str()))
                     .map(|s| s.to_string());
             }
 

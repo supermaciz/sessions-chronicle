@@ -5,6 +5,7 @@ mod database;
 mod models;
 mod parsers;
 mod ui;
+mod utils;
 
 use config::{APP_ID, GETTEXT_PACKAGE, LOCALEDIR, RESOURCES_FILE};
 use gettextrs::{LocaleCategory, gettext};

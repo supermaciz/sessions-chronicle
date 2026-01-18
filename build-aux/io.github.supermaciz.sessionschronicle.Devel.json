@@ -16,7 +16,8 @@
         "--env=RUST_LOG=sessions_chronicle=debug",
         "--env=G_MESSAGES_DEBUG=none",
         "--env=RUST_BACKTRACE=1",
-        "--filesystem=host"
+        "--filesystem=host",
+        "--talk-name=org.freedesktop.Flatpak"
     ],
     "build-options": {
         "append-path": "/usr/lib/sdk/rust-stable/bin:/usr/lib/sdk/llvm21/bin",

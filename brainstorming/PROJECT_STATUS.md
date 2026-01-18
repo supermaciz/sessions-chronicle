@@ -26,6 +26,8 @@
 - ✅ Search UI with SearchBar and SearchEntry in `app.rs`
 - ✅ SessionDetail component with conversation transcript view
 - ✅ Navigation between list and detail views using NavigationView
+- ✅ Session resumption with terminal emulator integration
+- ✅ Terminal preferences dialog for emulator selection
 
 **Dependencies**
 - ✅ Relm4 (reactive UI framework)
@@ -39,7 +41,6 @@
 ### 🚧 In Progress / Next Steps
 
 **Missing Features**
-- ⬜ Session resumption (terminal launch with tool resume command)
 - ⬜ OpenCode/Codex parsers + indexing (filters show empty for those tools)
 - ⬜ Search term highlighting in SessionDetail
 
@@ -53,7 +54,7 @@
 5. ✅ Connect sidebar tool filters to SessionList
 6. ✅ Implement search with FTS5 queries
 7. ✅ Add SessionDetail component
-8. Add session resumption (terminal launch)
+8. ✅ Add session resumption (terminal launch)
 
 **Phase 2: Multi-Tool Support** - Future
 - OpenCode parser (multi-file format)
@@ -203,21 +204,11 @@ let db_path = data_dir.join("sessions-chronicle").join("sessions.db");
 
 ### Immediate Tasks
 
-1. **Add SessionDetail component**:
-   - Display transcript for selected session
-   - Include tool icon + timestamps
-   - Color-code messages by role (user/assistant/system)
-
-2. **Session resumption**:
-   - Create `src/utils/terminal.rs`
-   - Detect available terminal emulator
-   - Build and launch tool-specific resume commands
-
-3. **OpenCode + Codex indexing**:
+1. **OpenCode + Codex indexing**:
    - Add parsers for OpenCode and Codex
    - Index sessions into SQLite so filters show data
 
-4. **Search term highlighting**:
+2. **Search term highlighting**:
    - Highlight matching terms in SessionDetail when viewing search results
 
 ### Testing Strategy
@@ -263,6 +254,6 @@ cargo run  # Uses ~/.claude/projects
 
 ---
 
-**Last Updated**: 2026-01-15
+**Last Updated**: 2026-01-18
 **Current Phase**: Phase 1 - Single Tool Support (Claude Code)
-**Next Milestone**: Session resumption + OpenCode/Codex support
+**Next Milestone**: OpenCode/Codex parsers + search term highlighting
