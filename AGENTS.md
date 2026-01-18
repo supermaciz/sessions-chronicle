@@ -10,9 +10,8 @@
 ## Build, Test, and Development Commands
 - `flatpak-builder --user flatpak_app build-aux/io.github.supermaciz.sessionschronicle.Devel.json --force-clean`: build the GNOME Flatpak bundle.
 - `flatpak-builder --run flatpak_app build-aux/io.github.supermaciz.sessionschronicle.Devel.json sessions-chronicle`: run the Flatpak build.
-- `cargo run -- --sessions-dir tests/fixtures/claude_sessions`: run with fixture sessions for development.
-- `cargo run`: run against the default sessions directory (`~/.claude/projects/`).
 - `cargo test`: run Rust tests.
+- `cargo clippy`: run Rust lint checks.
 - `cargo fmt --all`: enforce rustfmt style (also used by the pre-commit hook).
 
 ## Coding Style & Naming Conventions
