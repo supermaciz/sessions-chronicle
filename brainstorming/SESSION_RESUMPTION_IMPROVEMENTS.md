@@ -1,8 +1,17 @@
 # Session Resumption Improvements - Implementation Plan
 
-**Status**: Proposal Draft
+**Status**: Reviewed
 **Last Updated**: 2026-01-19
 **Related**: `NEXT_STEPS.md`, `PROJECT_STATUS.md`
+
+---
+
+## Review Notes
+
+> **Review Date**: 2026-01-19
+>
+> This document has been reviewed against the current codebase and libadwaita/GTK4 documentation.
+> Code examples have been corrected to match the actual libadwaita API.
 
 ---
 
@@ -25,19 +34,28 @@ This document outlines specific improvements to the session resumption feature t
 
 **Location**: `src/app.rs` in `AppMsg::ResumeSession` handler
 
+> **Technical Note**: The current `app.rs` does not have a `ToastOverlay`. The main window content
+> is wrapped in `adw::ToolbarView` (line 89). To add toast notifications, we need to wrap the
+> existing content with `adw::ToastOverlay` and store a reference to it.
+
 **Implementation**:
 ```rust
-// Before terminal spawn
-let toast = adw::Toast::new("Preparing terminal...");
-toast.set_timeout(0); // No auto-dismiss
-let toast_id = widgets.main_window.toast_overlay().add_toast(toast);
+// In view! macro - wrap existing ToolbarView content with ToastOverlay
+#[name = "toast_overlay"]
+adw::ToastOverlay {
+    set_child = &adw::ToolbarView { /* existing content */ }
+}
 
-// After successful spawn
-widgets.main_window.toast_overlay().dismiss_toast(toast_id);
-let success_toast = adw::Toast::new("Terminal launched successfully!");
-success_toast.set_timeout(3); // 3 seconds
-widgets.main_window.toast_overlay().add_toast(success_toast);
+// After successful terminal spawn - include terminal name for clarity
+let terminal_name = terminal.to_string(); // e.g., "Ptyxis", "GNOME Console"
+let toast = adw::Toast::new(&format!("Launched in {}", terminal_name));
+toast.set_timeout(3); // Auto-dismiss after 3 seconds
+widgets.toast_overlay.add_toast(toast);
 ```
+
+> **API Note**: `adw::ToastOverlay::add_toast()` takes ownership of the toast and returns nothing.
+> To dismiss a toast early, keep a reference and call `toast.dismiss()` on it.
+> For simple success notifications, auto-dismiss with `set_timeout()` is preferred.
 
 #### 2. Temporary Button State
 
@@ -83,6 +101,10 @@ widgets.main_window.toast_overlay().add_toast(success_toast);
 **Implementation**:
 
 1. **Add installation check function**:
+
+> **Note**: This reuses the existing `is_flatpak()` function from `terminal.rs`.
+> The pattern matches the existing `Terminal::is_available()` implementation.
+
 ```rust
 pub fn check_claude_installed() -> bool {
     if is_flatpak() {
@@ -161,12 +183,10 @@ set_tooltip_text: Some(
 // Add mnemonic
 resume_button.set_use_underline(true);
 resume_button.set_label("_Resume in Terminal");
-
-// Add accelerator hint
-resume_button.set_tooltip_text(Some(
-    "Resume session (Ctrl+R)"
-));
 ```
+
+> **Deferred**: `Ctrl+R` accelerator is out of scope for initial implementation.
+> Adding an accelerator requires `AccelsPlus` setup in `app.rs` - can be added later.
 
 3. **ARIA labels** (future GTK version):
 ```rust
@@ -189,9 +209,10 @@ resume_button.set_property("accessible-name", "Resume session button");
 ## Priority 4: Unit Testing for Terminal Utilities
 
 ### Current State
-- `build_resume_command()` has basic tests
-- `spawn_terminal()` has no tests
-- No mocking for external commands
+- `build_resume_command()` has basic tests ✓
+- `test_terminal_from_str()` - Terminal parsing ✓
+- `test_terminal_to_str()` - String conversion ✓
+- `spawn_terminal()` has no tests (difficult to test - spawns real processes)
 - Limited error case coverage
 
 ### Proposed Test Suite
@@ -229,16 +250,29 @@ fn test_terminal_resolution() {
 }
 ```
 
-3. **Mock terminal spawning** (requires condvar or mockall):
+3. **Mock terminal spawning**:
+
+> **Review Note**: Testing `spawn_terminal()` with invalid commands is tricky because it spawns
+> real processes. The `mockall` dependency is heavy for this use case. Consider testing the
+> command construction rather than actual spawning. Integration tests should be marked `#[ignore]`
+> and run manually.
+
 ```rust
 #[test]
+fn test_spawn_terminal_command_construction() {
+    // Test that commands are built correctly before spawning
+    // Focus on argument formatting, not actual process execution
+    let terminal = Terminal::Ptyxis;
+    let args = ["echo", "test"];
+    // Verify the command would be constructed correctly
+    assert!(terminal.is_available()); // Only if terminal installed
+}
+
+#[test]
+#[ignore = "spawns real processes - run manually"]
 fn test_spawn_terminal_error_handling() {
     // Test with invalid command
     let result = spawn_terminal(Terminal::Ptyxis, &["nonexistent-command"]);
-    assert!(result.is_err());
-    
-    // Test with empty args
-    let result = spawn_terminal(Terminal::Auto, &[]);
     assert!(result.is_err());
 }
 ```
@@ -254,9 +288,12 @@ fn test_full_resume_flow() {
 ```
 
 ### Test Infrastructure Needs
-- Add `mockall` or `condvar` to `Cargo.toml` for mocking
-- Consider `tempfile` for path testing
+- Consider `tempfile` crate for path testing with temporary directories
 - Add test fixtures for different scenarios
+- Mark integration tests with `#[ignore]` for manual execution
+
+> **Review Note**: Heavy mocking frameworks (`mockall`, `condvar`) are not recommended.
+> Focus on testing command construction and argument formatting instead.
 
 ### Benefits
 - Prevents regressions
@@ -319,10 +356,12 @@ fn test_full_resume_flow() {
 ### Crate Additions (for testing)
 ```toml
 [dev-dependencies]
-mockall = "0.11"
-tempfile = "3.3"
-condvar = "0.1"  # For command mocking
+tempfile = "3.3"  # For path testing
 ```
+
+> **Review Note**: `mockall` and `condvar` are heavy dependencies for this use case.
+> Consider testing command construction rather than mocking process spawning.
+> Integration tests can be marked `#[ignore]` and run manually when needed.
 
 ### Documentation Updates
 - Update `README.md` with testing instructions
@@ -341,6 +380,28 @@ condvar = "0.1"  # For command mocking
 
 ### Risk: Test flakiness with external commands
 **Mitigation**: Use mocking for unit tests, manual for integration
+
+---
+
+## Design Decisions (Confirmed)
+
+The following decisions were confirmed during review:
+
+1. **Toast message content**: Include the resolved terminal name for clarity
+   - Example: "Launched in Ptyxis" rather than generic "Terminal launched successfully"
+   - Helps users understand which terminal was used (especially with Auto selection)
+
+2. **Keyboard shortcut (`Ctrl+R`)**: Deferred to future scope
+   - Keep initial implementation focused on visual feedback
+   - Can be added later with `AccelsPlus` setup
+
+3. **Claude CLI error handling**: Simple error message only
+   - No "Learn More" button or link to installation docs
+   - Clear, actionable message: "Claude CLI not found. Please install Claude Code CLI first."
+
+4. **Testing strategy**: Prefer command construction tests over spawn mocking
+   - Avoid heavy dependencies like `mockall`
+   - Integration tests marked `#[ignore]` for manual execution
 
 ---
 
@@ -368,20 +429,30 @@ condvar = "0.1"  # For command mocking
 
 ### Toast Implementation Example
 ```rust
-// In app.rs widgets struct
+// In app.rs view! macro - wrap ToolbarView with ToastOverlay
 #[name = "toast_overlay"]
 adw::ToastOverlay {
-    set_child: &gtk::Box { /* existing content */ }
+    set_child = &adw::ToolbarView { /* existing content */ }
 }
 
-// In resume handler
-let toast = adw::Toast::new("Launching terminal...");
-toast.set_timeout(0); // Persistent until dismissed
-let toast_id = widgets.toast_overlay.add_toast(toast);
+// In resume handler - simple auto-dismissing toast
+let terminal_name = resolved_terminal.to_string();
+let toast = adw::Toast::new(&format!("Launched in {}", terminal_name));
+toast.set_timeout(3); // Auto-dismiss after 3 seconds
+widgets.toast_overlay.add_toast(toast);
 
-// Later, when done
-widgets.toast_overlay.dismiss_toast(toast_id);
+// Alternative: Keep reference for early dismissal if needed
+let toast = adw::Toast::new("Preparing terminal...");
+toast.set_timeout(0); // No auto-dismiss
+let toast_ref = toast.clone(); // Keep reference
+widgets.toast_overlay.add_toast(toast);
+
+// Later, to dismiss early:
+toast_ref.dismiss();
 ```
+
+> **API Clarification**: `adw::ToastOverlay::add_toast()` does not return a toast ID.
+> To dismiss a toast programmatically, keep a clone of the `adw::Toast` and call `.dismiss()` on it.
 
 ### Button State Management
 ```rust
