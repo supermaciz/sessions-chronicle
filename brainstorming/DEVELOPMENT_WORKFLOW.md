@@ -229,4 +229,4 @@ This keeps code clean, explicit, and follows Rust CLI best practices.
 
 ---
 
-**Last Updated**: 2026-01-14
+**Last Updated**: 2026-01-19

@@ -87,24 +87,36 @@ sessions-chronicle/
 │   ├── main.rs           # Entry point, Relm4 app setup
 │   ├── lib.rs            # Library exports
 │   ├── config.rs         # App constants (APP_ID, VERSION)
-│   ├── app.rs            # Main App component (search, window)
+│   ├── app.rs            # Main App component (search, window, navigation)
 │   ├── models/           # Data models
 │   │   ├── session.rs    # Session, Tool
 │   │   └── message.rs    # Message, Role
 │   ├── parsers/          # Session file parsers
-│   │   └── claude_code.rs
+│   │   └── claude_code.rs   # Claude Code JSONL parser
 │   ├── database/         # SQLite operations
 │   │   ├── schema.rs     # DB schema + FTS5
 │   │   ├── indexer.rs    # Index sessions
-│   │   └── mod.rs        # load_sessions, search_sessions
+│   │   └── mod.rs        # load_session, search_sessions
 │   ├── ui/               # UI components (Relm4)
 │   │   ├── sidebar.rs    # Tool/project filters
 │   │   ├── session_list.rs  # Session list view
-│   │   └── modals/
-│   │       ├── about.rs      # About dialog
-│   │       └── shortcuts.rs  # Keyboard shortcuts
-│   └── models/mod.rs      # Model exports
+│   │   ├── session_detail.rs # Session detail/transcript view
+│   │   ├── modals/
+│   │   │   ├── about.rs      # About dialog
+│   │   │   ├── preferences.rs # Preferences dialog (terminal settings)
+│   │   │   └── shortcuts.rs  # Keyboard shortcuts
+│   │   └── mod.rs
+│   └── utils/            # Utilities
+│       ├── terminal.rs   # Terminal emulator detection and spawning
+│       └── mod.rs
+├── data/                 # Desktop integration
+│   ├── icons/            # App icons
+│   ├── resources/        # UI resources (CSS, .ui files)
+│   └── *.xml.in          # GSettings schema, desktop entry, metainfo
 ├── tests/fixtures/       # Test data
+│   └── claude_sessions/  # Sample Claude Code sessions
+├── build-aux/            # Build manifests
+│   └── io.github.supermaciz.sessionschronicle.Devel.json
 └── brainstorming/        # Design docs
 ```
 
@@ -254,6 +266,6 @@ cargo run  # Uses ~/.claude/projects
 
 ---
 
-**Last Updated**: 2026-01-18
+**Last Updated**: 2026-01-19
 **Current Phase**: Phase 1 - Single Tool Support (Claude Code)
 **Next Milestone**: OpenCode/Codex parsers + search term highlighting

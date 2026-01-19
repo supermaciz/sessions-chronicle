@@ -7,6 +7,7 @@ Analysis of Claude Code, Codex, and OpenCode session file formats for Sessions C
 ## Implementation Status
 
 - ✅ Claude Code parser + indexer implemented
+- ✅ Session date/sort semantics aligned with agent-sessions (Claude: end time = latest message-like event)
 - ⬜ OpenCode parser pending (filters show empty for OpenCode)
 - ⬜ Codex parser pending (filters show empty for Codex)
 
@@ -610,5 +611,5 @@ impl OpenCodeParser {
 
 ---
 
-**Last Updated**: 2026-01-14
+**Last Updated**: 2026-01-19
 **Status**: All three formats documented - OpenCode metadata complete, message format needs actual file inspection

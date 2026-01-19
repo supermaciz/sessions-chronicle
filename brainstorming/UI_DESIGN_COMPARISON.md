@@ -65,4 +65,4 @@ These follow GNOME color palette for consistency.
 ---
 
 **Status**: List view implemented in UI; cards view not implemented.
-**Last Updated**: 2026-01-14
+**Last Updated**: 2026-01-19

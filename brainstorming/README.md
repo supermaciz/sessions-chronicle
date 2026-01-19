@@ -113,5 +113,5 @@ All mockups are SVG files (open in browser or image viewer):
 
 ---
 
-**Last Updated**: 2026-01-18
+**Last Updated**: 2026-01-19
 **Status**: Phase 1 core features complete (Claude Code support)

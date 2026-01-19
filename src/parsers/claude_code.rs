@@ -12,22 +12,25 @@ pub struct ClaudeCodeParser;
 impl ClaudeCodeParser {
     pub fn parse_metadata(&self, file_path: &Path) -> Result<Session> {
         let file = File::open(file_path).context("Failed to open session file")?;
-
         let reader = BufReader::new(file);
-        let mut first_timestamp = None;
+
+        let mut earliest_timestamp: Option<DateTime<Utc>> = None;
+        let mut latest_timestamp: Option<DateTime<Utc>> = None;
         let mut project_path = None;
+
         let file_stem_id = file_path
             .file_stem()
             .and_then(|s| s.to_str())
             .map(|s| s.to_string());
         let mut session_id = file_stem_id;
-        let mut message_count = 0;
+        let mut total_count = 0;
 
         for line in reader.lines() {
             let line = line.context("Failed to read line")?;
             if line.trim().is_empty() {
                 continue;
             }
+            total_count += 1;
 
             let event: Value = serde_json::from_str(&line).context("Failed to parse JSON")?;
 
@@ -47,29 +50,39 @@ impl ClaudeCodeParser {
                     .map(|s| s.to_string());
             }
 
-            // Extract first timestamp
-            if first_timestamp.is_none()
+            // Date column semantics:
+            // - Primary: end time = latest timestamp among message-like events
+            // - Fallback: start time = earliest timestamp among message-like events
+            let is_message_like = match event.get("type").and_then(|v| v.as_str()) {
+                Some("user") | Some("assistant") => true,
+                Some("system") => event
+                    .get("subtype")
+                    .and_then(|v| v.as_str())
+                    .is_some_and(|s| s == "local_command"),
+                _ => false,
+            };
+
+            if is_message_like
                 && let Some(ts) = event.get("timestamp").and_then(|v| v.as_str())
+                && let Ok(ts) = Self::parse_timestamp(ts)
             {
-                first_timestamp = Self::parse_timestamp(ts).ok();
-            }
+                earliest_timestamp = Some(match earliest_timestamp {
+                    Some(existing) => existing.min(ts),
+                    None => ts,
+                });
 
-            message_count += 1;
-
-            // Only process first few events for metadata
-            if message_count >= 10 {
-                break;
+                latest_timestamp = Some(match latest_timestamp {
+                    Some(existing) => existing.max(ts),
+                    None => ts,
+                });
             }
         }
 
-        // Count total messages by reading entire file
-        let file = File::open(file_path)?;
-        let reader = BufReader::new(file);
-        let total_count = reader
-            .lines()
-            .map_while(Result::ok)
-            .filter(|l| !l.trim().is_empty())
-            .count();
+        // Skip empty sessions (no message-like events)
+        let Some(start_time) = earliest_timestamp else {
+            anyhow::bail!("Session contains no messages");
+        };
+        let last_updated = latest_timestamp.unwrap_or(start_time);
 
         Ok(Session {
             id: session_id.unwrap_or_else(|| {
@@ -81,10 +94,10 @@ impl ClaudeCodeParser {
             }),
             tool: Tool::ClaudeCode,
             project_path,
-            start_time: first_timestamp.unwrap_or_else(Utc::now),
+            start_time,
             message_count: total_count,
             file_path: file_path.to_str().unwrap().to_string(),
-            last_updated: Utc::now(),
+            last_updated,
         })
     }
 

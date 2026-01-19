@@ -17,6 +17,8 @@
 
 - ✅ Add `clap` dependency
 - ✅ Add CLI args for `--sessions-dir`
+- ✅ Fix session date/sort semantics (Date column = session end time)
+- ✅ Wire database indexer in `App`
 - ✅ Wire database indexer in `App`
 - ✅ Load sessions from database in `SessionList`
 - ✅ Connect sidebar tool filters to SessionList
@@ -48,3 +50,7 @@ cargo run
 
 1. **OpenCode/Codex not indexed** - Filters show empty results for those tools
 2. **Search term highlighting missing** - Search works but doesn't highlight matches
+
+---
+
+**Last Updated**: 2026-01-19

@@ -69,5 +69,5 @@ We have options:
 
 ---
 
-**Status**: Search is not implemented yet; plan remains SQLite FTS5.
-**Last Updated**: 2026-01-14
+**Status**: Search is implemented using SQLite FTS5 with SearchBar and SearchEntry UI.
+**Last Updated**: 2026-01-19
