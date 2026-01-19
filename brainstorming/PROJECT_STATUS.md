@@ -41,6 +41,7 @@
 ### 🚧 In Progress / Next Steps
 
 **Missing Features**
+- ⬜ Session resumption improvements (visual feedback, error handling, tests)
 - ⬜ OpenCode/Codex parsers + indexing (filters show empty for those tools)
 - ⬜ Search term highlighting in SessionDetail
 
@@ -216,11 +217,17 @@ let db_path = data_dir.join("sessions-chronicle").join("sessions.db");
 
 ### Immediate Tasks
 
-1. **OpenCode + Codex indexing**:
+1. **Session resumption improvements** (see `SESSION_RESUMPTION_IMPROVEMENTS.md`):
+   - Add visual feedback during terminal launch (toasts, button states)
+   - Implement Claude CLI installation verification
+   - Enhance tooltips and accessibility
+   - Add comprehensive unit tests for terminal utilities
+
+2. **OpenCode + Codex indexing**:
    - Add parsers for OpenCode and Codex
    - Index sessions into SQLite so filters show data
 
-2. **Search term highlighting**:
+3. **Search term highlighting**:
    - Highlight matching terms in SessionDetail when viewing search results
 
 ### Testing Strategy
@@ -257,6 +264,7 @@ cargo run  # Uses ~/.claude/projects
 - **SEARCH_ARCHITECTURE.md** - Why we chose SQLite FTS5
 - **UI_DESIGN_COMPARISON.md** - List view vs cards view analysis
 - **DEVELOPMENT_WORKFLOW.md** - CLI args and testing workflow
+- **SESSION_RESUMPTION_IMPROVEMENTS.md** - Detailed plan for resumption enhancements
 
 ### External Resources
 
@@ -268,4 +276,4 @@ cargo run  # Uses ~/.claude/projects
 
 **Last Updated**: 2026-01-19
 **Current Phase**: Phase 1 - Single Tool Support (Claude Code)
-**Next Milestone**: OpenCode/Codex parsers + search term highlighting
+**Next Milestone**: Session resumption improvements + OpenCode/Codex parsers
