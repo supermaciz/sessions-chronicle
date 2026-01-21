@@ -6,7 +6,7 @@ use relm4::{
 
 use adw::prelude::{AdwApplicationWindowExt, AdwDialogExt, AlertDialogExt, NavigationPageExt};
 use gtk::prelude::{
-    ApplicationExt, ButtonExt, EditableExt, GtkApplicationExt, GtkWindowExt, OrientableExt,
+    ApplicationExt, ButtonExt, Cast, EditableExt, GtkApplicationExt, GtkWindowExt, OrientableExt,
     SettingsExt, ToggleButtonExt, WidgetExt,
 };
 use gtk::{gio, glib};
@@ -24,6 +24,9 @@ use crate::ui::{
     sidebar::{Sidebar, SidebarOutput},
 };
 use crate::utils::terminal::{self, Terminal};
+
+/// Timeout in seconds for resume failure toast notifications
+const RESUME_FAILURE_TOAST_TIMEOUT_SECS: u32 = 4;
 
 pub(super) struct App {
     search_visible: bool,
@@ -88,7 +91,6 @@ impl SimpleComponent for App {
 
             #[wrap(Some)]
             set_content = &adw::ToastOverlay {
-                #[name = "toast_overlay"]
                 #[wrap(Some)]
                 set_child = &adw::ToolbarView {
                     add_top_bar = &adw::HeaderBar {
@@ -217,6 +219,7 @@ impl SimpleComponent for App {
             }
         });
 
+        // Create model with a temporary toast_overlay (will be replaced after view_output!)
         let mut model = Self {
             search_visible: false,
             detail_visible: false,
@@ -228,8 +231,14 @@ impl SimpleComponent for App {
             toast_overlay: adw::ToastOverlay::new(),
             db_path,
         };
+
         let widgets = view_output!();
-        model.toast_overlay = widgets.toast_overlay.clone();
+
+        // Get the actual ToastOverlay from the root window's content
+        model.toast_overlay = root
+            .content()
+            .and_then(|w| w.downcast::<adw::ToastOverlay>().ok())
+            .expect("Root content should be a ToastOverlay");
 
         // Add child components to NavigationSplitView
         let sidebar_page = adw::NavigationPage::builder()
@@ -393,12 +402,20 @@ impl SimpleComponent for App {
                             );
                         }
                         Err(err) => {
-                            tracing::error!("Failed to spawn terminal: {}", err);
-                            self.show_resume_failure_toast(&err.to_string());
+                            tracing::error!(
+                                "Failed to spawn terminal for session {}: {}",
+                                session_id,
+                                err
+                            );
+                            self.show_resume_failure_toast(&err);
                         }
                     },
                     Err(err) => {
-                        tracing::error!("Failed to build resume command: {}", err);
+                        tracing::error!(
+                            "Failed to build resume command for session {}: {}",
+                            session_id,
+                            err
+                        );
                         self.show_error_dialog(
                             "Failed to Build Resume Command",
                             &format!("Could not build the resume command: {}", err),
@@ -427,19 +444,13 @@ impl App {
         dialog.present(Some(&relm4::main_application().windows()[0]));
     }
 
-    fn show_resume_failure_toast(&self, error_message: &str) {
-        let (title, show_preferences) = match error_message {
-            "No terminal emulator found" => ("No terminal emulator found", true),
-            message if message.ends_with("is not available") => (message, true),
-            _ => ("Failed to launch terminal", false),
-        };
-
+    fn show_resume_failure_toast(&self, error: &terminal::TerminalSpawnError) {
         let toast = adw::Toast::builder()
-            .title(title)
-            .timeout(4)
+            .title(error.to_string())
+            .timeout(RESUME_FAILURE_TOAST_TIMEOUT_SECS)
             .build();
 
-        if show_preferences {
+        if error.should_show_preferences() {
             toast.set_button_label(Some("Preferences"));
             toast.set_action_name(Some("win.preferences"));
         }

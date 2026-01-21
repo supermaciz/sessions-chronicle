@@ -8,6 +8,46 @@ fn is_flatpak() -> bool {
     Path::new("/.flatpak-info").exists() || env::var("FLATPAK_ID").is_ok()
 }
 
+/// Error type for terminal spawning operations
+#[derive(Debug)]
+pub enum TerminalSpawnError {
+    /// No terminal emulator was found on the system
+    NoTerminalFound,
+    /// The specified terminal is not available
+    NotAvailable(String),
+    /// Other error occurred during terminal spawn
+    Other(anyhow::Error),
+}
+
+impl std::fmt::Display for TerminalSpawnError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            TerminalSpawnError::NoTerminalFound => write!(f, "No terminal emulator found"),
+            TerminalSpawnError::NotAvailable(name) => write!(f, "{} is not available", name),
+            TerminalSpawnError::Other(err) => write!(f, "{}", err),
+        }
+    }
+}
+
+impl std::error::Error for TerminalSpawnError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            TerminalSpawnError::Other(err) => Some(err.as_ref()),
+            _ => None,
+        }
+    }
+}
+
+impl TerminalSpawnError {
+    /// Returns true if this error should show a preferences button
+    pub fn should_show_preferences(&self) -> bool {
+        matches!(
+            self,
+            TerminalSpawnError::NoTerminalFound | TerminalSpawnError::NotAvailable(_)
+        )
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Terminal {
     Auto,
@@ -79,7 +119,7 @@ impl Terminal {
         }
     }
 
-    pub fn resolve_auto(&self) -> Result<Self> {
+    pub fn resolve_auto(&self) -> Result<Self, TerminalSpawnError> {
         if *self != Terminal::Auto {
             return Ok(*self);
         }
@@ -90,7 +130,7 @@ impl Terminal {
             }
         }
 
-        Err(anyhow::anyhow!("No terminal emulator found"))
+        Err(TerminalSpawnError::NoTerminalFound)
     }
 }
 
@@ -127,21 +167,18 @@ pub fn build_resume_command(session_id: &str, workdir: &Path) -> Result<Vec<Stri
     ])
 }
 
-pub fn spawn_terminal(terminal: Terminal, args: &[String]) -> Result<()> {
-    let resolved = terminal
-        .resolve_auto()
-        .context("Failed to resolve terminal")?;
+pub fn spawn_terminal(terminal: Terminal, args: &[String]) -> Result<(), TerminalSpawnError> {
+    let resolved = terminal.resolve_auto()?;
 
     if !resolved.is_available() {
-        return Err(anyhow::anyhow!(
-            "{} is not available",
-            resolved.display_name()
+        return Err(TerminalSpawnError::NotAvailable(
+            resolved.display_name().to_string(),
         ));
     }
 
     let executable = resolved
         .executable()
-        .ok_or_else(|| anyhow::anyhow!("Terminal has no executable"))?;
+        .ok_or_else(|| TerminalSpawnError::Other(anyhow::anyhow!("Terminal has no executable")))?;
 
     let mut command = if is_flatpak() {
         let mut cmd = Command::new("flatpak-spawn");
@@ -173,9 +210,11 @@ pub fn spawn_terminal(terminal: Terminal, args: &[String]) -> Result<()> {
         command.arg(arg);
     }
 
-    command
-        .spawn()
-        .context("Failed to spawn terminal process")?;
+    command.spawn().map_err(|e| {
+        TerminalSpawnError::Other(
+            anyhow::Error::from(e).context("Failed to spawn terminal process"),
+        )
+    })?;
 
     Ok(())
 }
@@ -223,5 +262,45 @@ mod tests {
         assert_eq!(cmd[3], "--");
         assert!(cmd[4].ends_with("test-project"));
         assert_eq!(cmd[5], "test-session-id");
+    }
+
+    #[test]
+    fn test_terminal_spawn_error_display() {
+        let err = TerminalSpawnError::NoTerminalFound;
+        assert_eq!(err.to_string(), "No terminal emulator found");
+
+        let err = TerminalSpawnError::NotAvailable("Ptyxis".to_string());
+        assert_eq!(err.to_string(), "Ptyxis is not available");
+
+        let err = TerminalSpawnError::Other(anyhow::anyhow!("Custom error"));
+        assert_eq!(err.to_string(), "Custom error");
+    }
+
+    #[test]
+    fn test_terminal_spawn_error_should_show_preferences() {
+        let err = TerminalSpawnError::NoTerminalFound;
+        assert!(err.should_show_preferences());
+
+        let err = TerminalSpawnError::NotAvailable("Ptyxis".to_string());
+        assert!(err.should_show_preferences());
+
+        let err = TerminalSpawnError::Other(anyhow::anyhow!("Custom error"));
+        assert!(!err.should_show_preferences());
+    }
+
+    #[test]
+    fn test_resolve_auto_no_terminal_found() {
+        // This test assumes no terminals are available, which may not always be true
+        // It's more of a documentation of expected behavior
+        let result = Terminal::Auto.resolve_auto();
+        // Result depends on system state, but error should be NoTerminalFound if none available
+        if result.is_err() {
+            match result.unwrap_err() {
+                TerminalSpawnError::NoTerminalFound => {
+                    // Expected when no terminals are available
+                }
+                _ => panic!("Expected NoTerminalFound error"),
+            }
+        }
     }
 }
