@@ -30,7 +30,8 @@
 - Link related issues or notes from `brainstorming/` when applicable.
 
 ## Documentation & Resources
-- Relm4 Book: https://raw.githubusercontent.com/Relm4/book/refs/heads/main/src/SUMMARY.md - official documentation for UI widgets and patterns.
+- Relm4 docs are not available via Context7; use the direct links below.
 - Relm4 Crate docs: https://docs.rs/crate/relm4/0.10.0
+- Relm4 Book: https://raw.githubusercontent.com/Relm4/book/refs/heads/main/src/SUMMARY.md - official documentation for UI widgets and patterns.
 - Relm4 macros: https://docs.rs/relm4-macros/0.10.1/relm4_macros/
 - Relm4 icons: https://crates.io/crates/relm4-icons
