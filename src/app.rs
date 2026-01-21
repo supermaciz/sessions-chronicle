@@ -33,6 +33,7 @@ pub(super) struct App {
     sidebar: Controller<Sidebar>,
     nav_view: adw::NavigationView,
     detail_page: adw::NavigationPage,
+    toast_overlay: adw::ToastOverlay,
     db_path: PathBuf,
 }
 
@@ -86,60 +87,64 @@ impl SimpleComponent for App {
                 },
 
             #[wrap(Some)]
-            set_content = &adw::ToolbarView {
-                add_top_bar = &adw::HeaderBar {
-                    #[name = "back_button"]
-                    pack_start = &gtk::Button {
-                        set_icon_name: "go-previous-symbolic",
-                        set_tooltip_text: Some("Go back"),
-                        #[watch]
-                        set_visible: model.detail_visible,
-                        connect_clicked[sender] => move |_| {
-                            sender.input(AppMsg::NavigateBack);
-                        },
-                    },
-
-                    pack_start = &gtk::ToggleButton {
-                        set_icon_name: "system-search-symbolic",
-                        set_tooltip_text: Some("Search sessions"),
-                        #[watch]
-                        set_active: model.search_visible,
-                        connect_toggled[sender] => move |_| {
-                            sender.input(AppMsg::ToggleSearch);
-                        },
-                    },
-
-                    pack_end = &gtk::MenuButton {
-                        set_icon_name: "open-menu-symbolic",
-                        set_menu_model: Some(&primary_menu),
-                    },
-                },
-
+            set_content = &adw::ToastOverlay {
+                #[name = "toast_overlay"]
                 #[wrap(Some)]
-                set_content = &gtk::Box {
-                    set_orientation: gtk::Orientation::Vertical,
-
-                    #[name = "search_bar"]
-                    gtk::SearchBar {
-                        #[watch]
-                        set_search_mode: model.search_visible,
-
-                        #[wrap(Some)]
-                        set_child = &gtk::SearchEntry {
-                            set_placeholder_text: Some("Search sessions..."),
-                            set_hexpand: true,
-                            connect_search_changed[sender] => move |entry| {
-                                sender.input(AppMsg::SearchQueryChanged(entry.text().to_string()));
+                set_child = &adw::ToolbarView {
+                    add_top_bar = &adw::HeaderBar {
+                        #[name = "back_button"]
+                        pack_start = &gtk::Button {
+                            set_icon_name: "go-previous-symbolic",
+                            set_tooltip_text: Some("Go back"),
+                            #[watch]
+                            set_visible: model.detail_visible,
+                            connect_clicked[sender] => move |_| {
+                                sender.input(AppMsg::NavigateBack);
                             },
                         },
+
+                        pack_start = &gtk::ToggleButton {
+                            set_icon_name: "system-search-symbolic",
+                            set_tooltip_text: Some("Search sessions"),
+                            #[watch]
+                            set_active: model.search_visible,
+                            connect_toggled[sender] => move |_| {
+                                sender.input(AppMsg::ToggleSearch);
+                            },
+                        },
+
+                        pack_end = &gtk::MenuButton {
+                            set_icon_name: "open-menu-symbolic",
+                            set_menu_model: Some(&primary_menu),
+                        },
                     },
 
-                    #[name = "nav_split"]
-                    adw::NavigationSplitView {
-                        set_vexpand: true,
+                    #[wrap(Some)]
+                    set_content = &gtk::Box {
+                        set_orientation: gtk::Orientation::Vertical,
+
+                        #[name = "search_bar"]
+                        gtk::SearchBar {
+                            #[watch]
+                            set_search_mode: model.search_visible,
+
+                            #[wrap(Some)]
+                            set_child = &gtk::SearchEntry {
+                                set_placeholder_text: Some("Search sessions..."),
+                                set_hexpand: true,
+                                connect_search_changed[sender] => move |entry| {
+                                    sender.input(AppMsg::SearchQueryChanged(entry.text().to_string()));
+                                },
+                            },
+                        },
+
+                        #[name = "nav_split"]
+                        adw::NavigationSplitView {
+                            set_vexpand: true,
+                        },
                     },
                 },
-            },
+            }
         }
     }
 
@@ -212,7 +217,7 @@ impl SimpleComponent for App {
             }
         });
 
-        let model = Self {
+        let mut model = Self {
             search_visible: false,
             detail_visible: false,
             session_list,
@@ -220,9 +225,11 @@ impl SimpleComponent for App {
             sidebar,
             nav_view: nav_view.clone(),
             detail_page: detail_page.clone(),
+            toast_overlay: adw::ToastOverlay::new(),
             db_path,
         };
         let widgets = view_output!();
+        model.toast_overlay = widgets.toast_overlay.clone();
 
         // Add child components to NavigationSplitView
         let sidebar_page = adw::NavigationPage::builder()
@@ -387,7 +394,7 @@ impl SimpleComponent for App {
                         }
                         Err(err) => {
                             tracing::error!("Failed to spawn terminal: {}", err);
-                            self.show_error_dialog("Failed to Launch Terminal", &format!("Could not launch the terminal emulator: {}. Please check your preferences.", err));
+                            self.show_resume_failure_toast(&err.to_string());
                         }
                     },
                     Err(err) => {
@@ -418,6 +425,26 @@ impl App {
         dialog.set_default_response(Some("ok"));
 
         dialog.present(Some(&relm4::main_application().windows()[0]));
+    }
+
+    fn show_resume_failure_toast(&self, error_message: &str) {
+        let (title, show_preferences) = match error_message {
+            "No terminal emulator found" => ("No terminal emulator found", true),
+            message if message.ends_with("is not available") => (message, true),
+            _ => ("Failed to launch terminal", false),
+        };
+
+        let toast = adw::Toast::builder()
+            .title(title)
+            .timeout(4)
+            .build();
+
+        if show_preferences {
+            toast.set_button_label(Some("Preferences"));
+            toast.set_action_name(Some("win.preferences"));
+        }
+
+        self.toast_overlay.add_toast(toast);
     }
 }
 
