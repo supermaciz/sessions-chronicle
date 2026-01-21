@@ -5,7 +5,7 @@
 - `data/` holds desktop metadata, GSettings schema, icons, CSS, and UI resources in `data/resources/`.
 - `tests/fixtures/` provides sample JSONL sessions for development and manual testing.
 - `build-aux/` contains Flatpak and Meson manifests.
-- `brainstorming/` hosts design notes and planning docs (reference only).
+- `docs/` hosts design notes and planning docs (reference only).
 
 ## Build, Test, and Development Commands
 - `flatpak-builder --user flatpak_app build-aux/io.github.supermaciz.sessionschronicle.Devel.json --force-clean`: build the GNOME Flatpak bundle.
@@ -27,7 +27,7 @@
 ## Commit & Pull Request Guidelines
 - Commit messages follow a `type: short summary` pattern (e.g., `feat: ...`, `docs: ...`, `fix: ...`).
 - PRs should include a clear description, the key commands run (`cargo test`, `cargo fmt --all`, or Flatpak build if relevant), and screenshots for UI changes.
-- Link related issues or notes from `brainstorming/` when applicable.
+- Link related issues or notes from `docs/` when applicable.
 
 ## Documentation & Resources
 - Relm4 docs are not available via Context7; use the direct links below.

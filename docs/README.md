@@ -41,26 +41,26 @@ This directory contains all design documentation, mockups, and architectural dec
 
 ## 🎨 Visual Mockups
 
-All mockups are SVG files (open in browser or image viewer):
+All mockups are SVG files in the `mockups/` subfolder (open in browser or image viewer):
 
-1. **[mockup-list-view.svg](mockup-list-view.svg)** ⭐ **PRIMARY DESIGN**
+1. **[mockups/list-view.svg](mockups/list-view.svg)** ⭐ **PRIMARY DESIGN**
    - Compact list of sessions
    - Sidebar with filters
    - Search bar
    - Information-dense layout
 
-2. **[mockup-cards-view.svg](mockup-cards-view.svg)**
+2. **[mockups/cards-view.svg](mockups/cards-view.svg)**
    - Alternative: Card-based layout
    - More visual, less dense
    - Could be added as view toggle later
 
-3. **[mockup-session-detail.svg](mockup-session-detail.svg)**
+3. **[mockups/session-detail.svg](mockups/session-detail.svg)**
    - Session conversation view
    - Message types (User, Assistant, Tool Call, Tool Result)
    - Resume button in header
    - Scrollable transcript
 
-4. **[architecture-diagram.svg](architecture-diagram.svg)** 📐
+4. **[mockups/architecture-diagram.svg](mockups/architecture-diagram.svg)** 📐
    - Visual architecture diagram
    - Data flow from session files → UI
    - Shows all layers: Parsers, Indexer, Database, UI, Terminal

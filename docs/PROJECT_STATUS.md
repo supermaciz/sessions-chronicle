@@ -118,7 +118,7 @@ sessions-chronicle/
 │   └── claude_sessions/  # Sample Claude Code sessions
 ├── build-aux/            # Build manifests
 │   └── io.github.supermaciz.sessionschronicle.Devel.json
-└── brainstorming/        # Design docs
+└── docs/                 # Design docs
 ```
 
 ### Database Schema
@@ -229,6 +229,13 @@ let db_path = data_dir.join("sessions-chronicle").join("sessions.db");
 
 3. **Search term highlighting**:
    - Highlight matching terms in SessionDetail when viewing search results
+
+### Current Blockers
+
+1. **Session resumption lacks user feedback** - No visual indication during terminal launch
+2. **No Claude CLI verification** - Silent failures if Claude not installed
+3. **OpenCode/Codex not indexed** - Filters show empty results for those tools
+4. **Search term highlighting missing** - Search works but doesn't highlight matches
 
 ### Testing Strategy
 

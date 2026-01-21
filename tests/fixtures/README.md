@@ -25,7 +25,7 @@ Files are in JSONL (JSON Lines) format, with one JSON object per line:
 - **System events**: `type: "system"` with `subtype` (e.g., `local_command`)
 - **Summary**: `type: "summary"` containing session title
 
-See `brainstorming/SESSION_FORMAT_ANALYSIS.md` for detailed format documentation.
+See `docs/SESSION_FORMAT_ANALYSIS.md` for detailed format documentation.
 
 ## Adding Fixtures
 
