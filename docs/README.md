@@ -86,6 +86,7 @@ All mockups are SVG files in the `mockups/` subfolder (open in browser or image 
 - ✅ Session detail view with conversation transcript
 - ✅ Session resumption with terminal emulator integration
 - ✅ Terminal preferences dialog for emulator selection
+- ✅ Session resumption failure notifications with toast feedback
 
 **Next Tasks**:
 - ⬜ OpenCode/Codex parsers + indexing (populate filters)
@@ -113,5 +114,5 @@ All mockups are SVG files in the `mockups/` subfolder (open in browser or image 
 
 ---
 
-**Last Updated**: 2026-01-19
+**Last Updated**: 2026-01-22
 **Status**: Phase 1 core features complete (Claude Code support)

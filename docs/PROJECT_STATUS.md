@@ -28,6 +28,7 @@
 - ✅ Navigation between list and detail views using NavigationView
 - ✅ Session resumption with terminal emulator integration
 - ✅ Terminal preferences dialog for emulator selection
+- ✅ Session resumption failure notifications with toast feedback
 
 **Dependencies**
 - ✅ Relm4 (reactive UI framework)
@@ -41,7 +42,6 @@
 ### 🚧 In Progress / Next Steps
 
 **Missing Features**
-- ⬜ Session resumption improvements (visual feedback, error handling, tests)
 - ⬜ OpenCode/Codex parsers + indexing (filters show empty for those tools)
 - ⬜ Search term highlighting in SessionDetail
 
@@ -217,25 +217,17 @@ let db_path = data_dir.join("sessions-chronicle").join("sessions.db");
 
 ### Immediate Tasks
 
-1. **Session resumption improvements** (see `SESSION_RESUMPTION_IMPROVEMENTS.md`):
-   - Add visual feedback during terminal launch (toasts, button states)
-   - Implement Claude CLI installation verification
-   - Enhance tooltips and accessibility
-   - Add comprehensive unit tests for terminal utilities
-
-2. **OpenCode + Codex indexing**:
+1. **OpenCode + Codex indexing**:
    - Add parsers for OpenCode and Codex
    - Index sessions into SQLite so filters show data
 
-3. **Search term highlighting**:
+2. **Search term highlighting**:
    - Highlight matching terms in SessionDetail when viewing search results
 
 ### Current Blockers
 
-1. **Session resumption lacks user feedback** - No visual indication during terminal launch
-2. **No Claude CLI verification** - Silent failures if Claude not installed
-3. **OpenCode/Codex not indexed** - Filters show empty results for those tools
-4. **Search term highlighting missing** - Search works but doesn't highlight matches
+1. **OpenCode/Codex not indexed** - Filters show empty results for those tools
+2. **Search term highlighting missing** - Search works but doesn't highlight matches
 
 ### Testing Strategy
 
@@ -271,7 +263,6 @@ cargo run  # Uses ~/.claude/projects
 - **SEARCH_ARCHITECTURE.md** - Why we chose SQLite FTS5
 - **UI_DESIGN_COMPARISON.md** - List view vs cards view analysis
 - **DEVELOPMENT_WORKFLOW.md** - CLI args and testing workflow
-- **SESSION_RESUMPTION_IMPROVEMENTS.md** - Detailed plan for resumption enhancements
 
 ### External Resources
 
@@ -281,6 +272,6 @@ cargo run  # Uses ~/.claude/projects
 
 ---
 
-**Last Updated**: 2026-01-19
+**Last Updated**: 2026-01-22
 **Current Phase**: Phase 1 - Single Tool Support (Claude Code)
-**Next Milestone**: Session resumption improvements + OpenCode/Codex parsers
+**Next Milestone**: OpenCode/Codex parsers + search term highlighting
