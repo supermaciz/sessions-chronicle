@@ -2,7 +2,7 @@
 
 **Status**: Updated (Simplified)
 **Last Updated**: 2026-01-21
-**Related**: `NEXT_STEPS.md`, `PROJECT_STATUS.md`
+**Related**: `PROJECT_STATUS.md`
 
 ---
 
