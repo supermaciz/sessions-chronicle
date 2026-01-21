@@ -132,6 +132,13 @@ pub fn spawn_terminal(terminal: Terminal, args: &[String]) -> Result<()> {
         .resolve_auto()
         .context("Failed to resolve terminal")?;
 
+    if !resolved.is_available() {
+        return Err(anyhow::anyhow!(
+            "{} is not available",
+            resolved.display_name()
+        ));
+    }
+
     let executable = resolved
         .executable()
         .ok_or_else(|| anyhow::anyhow!("Terminal has no executable"))?;
