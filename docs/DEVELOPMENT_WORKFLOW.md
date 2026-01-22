@@ -1,49 +1,25 @@
 # Development Workflow
 
-## Running with Test Data
-
-Sessions Chronicle uses command-line arguments to specify session directories, making development and testing straightforward without polluting production code.
-
-### Development Mode
-
-Use the `--sessions-dir` flag to point to test fixtures:
+## Building the Project
 
 ```bash
-cargo run -- --sessions-dir tests/fixtures/claude_sessions
+flatpak-builder --user flatpak_app build-aux/io.github.supermaciz.sessionschronicle.Devel.json --force-clean
 ```
 
-### Production Mode
-
-Run without arguments to use default Claude Code sessions directory:
+## Running the Project
 
 ```bash
-cargo run
+flatpak-builder --run flatpak_app build-aux/io.github.supermaciz.sessionschronicle.Devel.json sessions-chronicle
 ```
 
-This defaults to `~/.claude/projects/`.
+This uses the default Claude Code sessions directory (`~/.claude/projects/`).
 
-### Custom Sessions Directory
+## Using Test Fixtures
 
-Point to any directory containing session files:
-
-```bash
-cargo run -- --sessions-dir /path/to/custom/sessions
-```
-
-### GTK Options Passthrough
-
-Pass GTK options after `--` so clap ignores them:
+The `--sessions-dir` flag allows you to point to test data instead of your real sessions:
 
 ```bash
-cargo run -- --sessions-dir tests/fixtures/claude_sessions -- --help-all
-```
-
-### Flatpak Development
-
-Run the Flatpak build with a custom sessions directory:
-
-```bash
-flatpak-builder --run flatpak_app build-aux/io.github.supermaciz.sessionschronicle.Devel.json sessions-chronicle --sessions-dir /path/to/sessions
+flatpak-builder --run flatpak_app build-aux/io.github.supermaciz.sessionschronicle.Devel.json sessions-chronicle --sessions-dir tests/fixtures/claude_sessions
 ```
 
 ## Why This Approach?
@@ -89,81 +65,46 @@ These use fixtures automatically via the test harness.
 
 ### Integration Testing
 
-Run the full app with test data:
-
-```bash
-# Terminal 1: Run with test fixtures
-cargo run -- --sessions-dir tests/fixtures/claude_sessions
-
-# Terminal 2: Make changes to code
-# Save file, app auto-reloads (if using cargo watch)
-
-# Or with cargo watch:
-cargo watch -x 'run -- --sessions-dir tests/fixtures/claude_sessions'
-```
-
-### Testing with Real Sessions
-
-Test with your actual Claude Code sessions:
-
-```bash
-# Use default directory
-cargo run
-
-# Or explicitly specify
-cargo run -- --sessions-dir ~/.claude/projects
-```
+Run the full app with test fixtures using the `--sessions-dir` flag shown above.
 
 ## Adding Test Fixtures
 
 Create new test session files in `tests/fixtures/claude_sessions/`:
 
 ```bash
-# Create a new test fixture
 cat > tests/fixtures/claude_sessions/another-session.jsonl << 'EOF'
 {"type":"user","message":{"role":"user","content":"Test message"},"timestamp":"2025-01-11T10:00:00.000Z","cwd":"/home/user/project","sessionId":"test123","uuid":"msg1","parentUuid":null,"isMeta":false}
 {"type":"summary","summary":"Test session title","leafUuid":"msg1","timestamp":"2025-01-11T10:00:05.000Z","cwd":"/home/user/project","sessionId":"test123"}
 EOF
-
-# Run to verify
-cargo run -- --sessions-dir tests/fixtures/claude_sessions
 ```
+
+Then run with `--sessions-dir tests/fixtures/claude_sessions` to verify.
 
 ## Debugging
 
-Enable trace logging:
+Enable trace logging by setting `RUST_LOG`:
 
 ```bash
-RUST_LOG=debug cargo run -- --sessions-dir tests/fixtures/claude_sessions
+# Debug level
+RUST_LOG=debug flatpak-builder --run flatpak_app build-aux/io.github.supermaciz.sessionschronicle.Devel.json sessions-chronicle
+
+# Filter to specific modules
+RUST_LOG=sessions_chronicle::parsers=trace flatpak-builder --run flatpak_app build-aux/io.github.supermaciz.sessionschronicle.Devel.json sessions-chronicle
 ```
 
-Filter to specific modules:
+## Testing
+
+### Unit Tests
 
 ```bash
-RUST_LOG=sessions_chronicle::parsers=trace cargo run -- --sessions-dir tests/fixtures/claude_sessions
+cargo test
 ```
 
-## Build Profiles
-
-### Development Build
+### Linting
 
 ```bash
-cargo build
-cargo run -- --sessions-dir tests/fixtures/claude_sessions
-```
-
-### Release Build
-
-```bash
-cargo build --release
-./target/release/sessions-chronicle --sessions-dir tests/fixtures/claude_sessions
-```
-
-### Production Installation
-
-```bash
-cargo install --path .
-sessions-chronicle  # Uses default ~/.claude/projects
+cargo clippy
+cargo fmt --all
 ```
 
 ## IDE Configuration
@@ -206,26 +147,12 @@ Create run configurations:
 2. **Debug (production)**
    - Program arguments: (empty)
 
-## Continuous Integration
-
-In CI/CD pipelines, use test fixtures:
-
-```yaml
-# .github/workflows/test.yml
-- name: Run tests
-  run: cargo test
-
-- name: Run integration test
-  run: cargo run -- --sessions-dir tests/fixtures/claude_sessions
-```
-
 ## Summary
 
-**Development**: `cargo run -- --sessions-dir tests/fixtures/claude_sessions`
-**Production**: `cargo run` or installed binary
-**Custom**: `--sessions-dir /path/to/sessions`
-
-This keeps code clean, explicit, and follows Rust CLI best practices.
+- **Build**: `flatpak-builder --user flatpak_app build-aux/io.github.supermaciz.sessionschronicle.Devel.json --force-clean`
+- **Run**: `flatpak-builder --run flatpak_app build-aux/io.github.supermaciz.sessionschronicle.Devel.json sessions-chronicle`
+- **Test Data**: Add `--sessions-dir tests/fixtures/claude_sessions` flag
+- **Unit Tests**: `cargo test`
 
 ---
 
