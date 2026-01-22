@@ -20,9 +20,8 @@
 - Keep UI definitions in `data/resources/ui/` and CSS in `data/resources/style.css`.
 
 ## Testing Guidelines
-- Use fixtures from `tests/fixtures/claude_sessions/` for repeatable manual runs.
+- Use fixtures from `tests/fixtures/claude_sessions/` for repeatable manual runs (see `docs/DEVELOPMENT_WORKFLOW.md` for the `--sessions-dir` flag).
 - Prefer adding integration tests under `tests/` and running them via `cargo test`.
-- Use `RUST_LOG=debug` for troubleshooting (e.g., `RUST_LOG=debug cargo run -- --sessions-dir tests/fixtures/claude_sessions`).
 
 ## Commit & Pull Request Guidelines
 - Commit messages follow a `type: short summary` pattern (e.g., `feat: ...`, `docs: ...`, `fix: ...`).

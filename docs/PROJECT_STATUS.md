@@ -166,17 +166,17 @@ CREATE VIRTUAL TABLE messages USING fts5(
 
 ## Development Workflow
 
-### Running with Test Data
+### Building and Running
 
 ```bash
-# Development with test fixtures
-cargo run -- --sessions-dir tests/fixtures/claude_sessions
+# Build
+flatpak-builder --user flatpak_app build-aux/io.github.supermaciz.sessionschronicle.Devel.json --force-clean
 
-# Production (uses ~/.claude/projects by default)
-cargo run
+# Run
+flatpak-builder --run flatpak_app build-aux/io.github.supermaciz.sessionschronicle.Devel.json sessions-chronicle
 ```
 
-See `DEVELOPMENT_WORKFLOW.md` for details.
+See `DEVELOPMENT_WORKFLOW.md` for test fixtures and development workflow.
 
 ### Key Design Decisions
 
@@ -231,20 +231,12 @@ let db_path = data_dir.join("sessions-chronicle").join("sessions.db");
 
 ### Testing Strategy
 
-**Unit tests**: Test parsers with fixtures
+**Unit tests**:
 ```bash
 cargo test
 ```
 
-**Integration testing**: Run with test data
-```bash
-cargo run -- --sessions-dir tests/fixtures/claude_sessions
-```
-
-**With real sessions**: Test with actual Claude Code sessions
-```bash
-cargo run  # Uses ~/.claude/projects
-```
+**Integration testing**: Use the `--sessions-dir` flag to test with fixtures (see `DEVELOPMENT_WORKFLOW.md`)
 
 ### Error Handling
 
