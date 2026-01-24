@@ -15,9 +15,9 @@ This directory contains all design documentation, mockups, and architectural dec
    - Development workflow and best practices
 
 2. **[SESSION_FORMAT_ANALYSIS.md](SESSION_FORMAT_ANALYSIS.md)** 📄
-   - Detailed file format specs for Claude Code, Codex, OpenCode
-   - Parser implementation guidance
-   - Event structure comparisons
+    - Detailed file format specs for Claude Code, Codex, OpenCode, Mistral Vibe
+    - Parser implementation guidance
+    - Event structure comparisons
 
 3. **[DEVELOPMENT_WORKFLOW.md](DEVELOPMENT_WORKFLOW.md)** 🛠️
    - Running with test data vs production
@@ -89,7 +89,7 @@ All mockups are SVG files in the `mockups/` subfolder (open in browser or image 
 - ✅ Session resumption failure notifications with toast feedback
 
 **Next Tasks**:
-- ⬜ OpenCode/Codex parsers + indexing (populate filters)
+- ⬜ OpenCode/Codex/Mistral Vibe parsers + indexing (populate filters)
 - ⬜ Search term highlighting in SessionDetail
 
 ---
@@ -100,6 +100,7 @@ All mockups are SVG files in the `mockups/` subfolder (open in browser or image 
 ~/.claude/projects/                           ← Claude Code (v1)
 ~/.local/share/opencode/storage/session/      ← OpenCode (v2)
 ~/.codex/sessions/                            ← Codex (v2)
+~/.vibe/logs/session/                         ← Mistral Vibe (v1)
 ```
 
 ---
@@ -114,5 +115,5 @@ All mockups are SVG files in the `mockups/` subfolder (open in browser or image 
 
 ---
 
-**Last Updated**: 2026-01-22
+**Last Updated**: 2026-01-24
 **Status**: Phase 1 core features complete (Claude Code support)

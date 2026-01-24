@@ -42,7 +42,7 @@
 ### 🚧 In Progress / Next Steps
 
 **Missing Features**
-- ⬜ OpenCode/Codex parsers + indexing (filters show empty for those tools)
+- ⬜ OpenCode/Codex/Mistral Vibe parsers + indexing (filters show empty for those tools)
 - ⬜ Search term highlighting in SessionDetail
 
 ### 📋 Roadmap
@@ -60,6 +60,7 @@
 **Phase 2: Multi-Tool Support** - Future
 - OpenCode parser (multi-file format)
 - Codex parser (streaming, encrypted reasoning)
+- Mistral Vibe parser (single JSON file, OpenAI-style messages)
 - Tool switching in UI
 
 **Phase 3: Advanced Features** - Future
@@ -78,7 +79,7 @@
 - **UI**: GTK4 + Libadwaita (GNOME HIG compliant)
 - **Reactive UI**: Relm4 (Elm-inspired architecture)
 - **Database**: SQLite with FTS5 (full-text search)
-- **Supported Tools**: Claude Code (v1), OpenCode (v2), Codex (v2)
+- **Supported Tools**: Claude Code (v1), OpenCode (v2), Codex (v2), Mistral Vibe (v1)
 
 ### Project Structure
 
@@ -162,6 +163,10 @@ CREATE VIRTUAL TABLE messages USING fts5(
 - Format: JSONL with streaming chunks
 - Special: Encrypted reasoning blocks (never decrypt locally)
 
+**Mistral Vibe**: `~/.vibe/logs/session/` (v1)
+- Format: Single JSON file per session (metadata + OpenAI-style messages)
+- Special: No per-message timestamps; session-level metadata with tool stats
+
 ---
 
 ## Development Workflow
@@ -217,16 +222,16 @@ let db_path = data_dir.join("sessions-chronicle").join("sessions.db");
 
 ### Immediate Tasks
 
-1. **OpenCode + Codex indexing**:
-   - Add parsers for OpenCode and Codex
-   - Index sessions into SQLite so filters show data
+1. **OpenCode + Codex + Mistral Vibe indexing**:
+    - Add parsers for OpenCode, Codex, and Mistral Vibe
+    - Index sessions into SQLite so filters show data
 
 2. **Search term highlighting**:
    - Highlight matching terms in SessionDetail when viewing search results
 
 ### Current Blockers
 
-1. **OpenCode/Codex not indexed** - Filters show empty results for those tools
+1. **OpenCode/Codex/Mistral Vibe not indexed** - Filters show empty results for those tools
 2. **Search term highlighting missing** - Search works but doesn't highlight matches
 
 ### Testing Strategy
@@ -251,7 +256,7 @@ cargo test
 
 ### Design Documents
 
-- **SESSION_FORMAT_ANALYSIS.md** - Detailed format specs for all 3 tools
+- **SESSION_FORMAT_ANALYSIS.md** - Detailed format specs for all 4 tools
 - **SEARCH_ARCHITECTURE.md** - Why we chose SQLite FTS5
 - **UI_DESIGN_COMPARISON.md** - List view vs cards view analysis
 - **DEVELOPMENT_WORKFLOW.md** - CLI args and testing workflow
@@ -264,6 +269,6 @@ cargo test
 
 ---
 
-**Last Updated**: 2026-01-22
+**Last Updated**: 2026-01-24
 **Current Phase**: Phase 1 - Single Tool Support (Claude Code)
-**Next Milestone**: OpenCode/Codex parsers + search term highlighting
+**Next Milestone**: OpenCode/Codex/Mistral Vibe parsers + search term highlighting
