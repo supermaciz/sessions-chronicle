@@ -63,15 +63,15 @@ impl ClaudeCodeParser {
                 _ => false,
             };
 
+            // Track if this is a user message (independent of timestamp validity)
+            if event.get("type").and_then(|v| v.as_str()) == Some("user") {
+                has_user_message = true;
+            }
+
             if is_message_like
                 && let Some(ts) = event.get("timestamp").and_then(|v| v.as_str())
                 && let Ok(ts) = Self::parse_timestamp(ts)
             {
-                // Track if this is a user message
-                if event.get("type").and_then(|v| v.as_str()) == Some("user") {
-                    has_user_message = true;
-                }
-
                 earliest_timestamp = Some(match earliest_timestamp {
                     Some(existing) => existing.min(ts),
                     None => ts,
