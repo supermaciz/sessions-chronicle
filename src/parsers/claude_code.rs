@@ -24,6 +24,7 @@ impl ClaudeCodeParser {
             .map(|s| s.to_string());
         let mut session_id = file_stem_id;
         let mut total_count = 0;
+        let mut has_user_message = false;
 
         for line in reader.lines() {
             let line = line.context("Failed to read line")?;
@@ -66,6 +67,11 @@ impl ClaudeCodeParser {
                 && let Some(ts) = event.get("timestamp").and_then(|v| v.as_str())
                 && let Ok(ts) = Self::parse_timestamp(ts)
             {
+                // Track if this is a user message
+                if event.get("type").and_then(|v| v.as_str()) == Some("user") {
+                    has_user_message = true;
+                }
+
                 earliest_timestamp = Some(match earliest_timestamp {
                     Some(existing) => existing.min(ts),
                     None => ts,
@@ -82,6 +88,12 @@ impl ClaudeCodeParser {
         let Some(start_time) = earliest_timestamp else {
             anyhow::bail!("Session contains no messages");
         };
+
+        // Skip sessions with no user input
+        if !has_user_message {
+            anyhow::bail!("Session contains no user messages");
+        }
+
         let last_updated = latest_timestamp.unwrap_or(start_time);
 
         Ok(Session {
