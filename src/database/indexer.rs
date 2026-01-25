@@ -30,6 +30,16 @@ impl SessionIndexer {
                 && let Some(ext) = path.extension()
                 && ext == "jsonl"
             {
+                if Self::is_sidechain_file(path, sessions_dir) {
+                    if let Err(err) = self.remove_session_for_file(path) {
+                        tracing::warn!(
+                            "Failed to prune sidechain session {}: {}",
+                            path.display(),
+                            err
+                        );
+                    }
+                    continue;
+                }
                 if let Err(e) = self.index_session_file(path, &parser) {
                     tracing::warn!("Failed to index {}: {}", path.display(), e);
                 } else {
@@ -81,5 +91,80 @@ impl SessionIndexer {
         }
 
         Ok(())
+    }
+
+    fn is_sidechain_file(file_path: &Path, sessions_dir: &Path) -> bool {
+        let is_agent_file = file_path
+            .file_stem()
+            .and_then(|stem| stem.to_str())
+            .is_some_and(|stem| stem.starts_with("agent-"));
+
+        // Check if path is under sessions_dir/subagents/
+        let is_subagent = file_path
+            .strip_prefix(sessions_dir)
+            .ok()
+            .and_then(|rel| rel.components().next())
+            .is_some_and(|first| first.as_os_str() == "subagents");
+
+        is_agent_file || is_subagent
+    }
+
+    fn remove_session_for_file(&mut self, file_path: &Path) -> Result<()> {
+        let Some(file_path_str) = file_path.to_str() else {
+            tracing::warn!("Cannot prune session with non-UTF8 path: {:?}", file_path);
+            return Ok(());
+        };
+        self.db.execute(
+            "DELETE FROM messages WHERE session_id IN (SELECT id FROM sessions WHERE file_path = ?1)",
+            [file_path_str],
+        )?;
+        self.db
+            .execute("DELETE FROM sessions WHERE file_path = ?1", [file_path_str])?;
+
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::PathBuf;
+
+    #[test]
+    fn is_sidechain_file_detects_agent_prefix() {
+        let sessions_dir = PathBuf::from("/home/user/.claude/sessions");
+        let path = PathBuf::from("/home/user/.claude/sessions/agent-abc123.jsonl");
+        assert!(SessionIndexer::is_sidechain_file(&path, &sessions_dir));
+    }
+
+    #[test]
+    fn is_sidechain_file_detects_subagents_directory() {
+        let sessions_dir = PathBuf::from("/home/user/.claude/sessions");
+        let path = PathBuf::from("/home/user/.claude/sessions/subagents/some-session.jsonl");
+        assert!(SessionIndexer::is_sidechain_file(&path, &sessions_dir));
+    }
+
+    #[test]
+    fn is_sidechain_file_allows_regular_sessions() {
+        let sessions_dir = PathBuf::from("/home/user/.claude/sessions");
+        let path = PathBuf::from("/home/user/.claude/sessions/abc123.jsonl");
+        assert!(!SessionIndexer::is_sidechain_file(&path, &sessions_dir));
+    }
+
+    #[test]
+    fn is_sidechain_file_allows_agent_in_middle_of_name() {
+        // "agent-" prefix is required, not just containing "agent"
+        let sessions_dir = PathBuf::from("/home/user/.claude/sessions");
+        let path = PathBuf::from("/home/user/.claude/sessions/my-agent-session.jsonl");
+        assert!(!SessionIndexer::is_sidechain_file(&path, &sessions_dir));
+    }
+
+    #[test]
+    fn is_sidechain_file_allows_subagents_in_project_name() {
+        // "subagents" in an encoded project path should not trigger filtering
+        let sessions_dir = PathBuf::from("/home/user/.claude/projects");
+        let path =
+            PathBuf::from("/home/user/.claude/projects/-home-user-subagents/session.jsonl");
+        assert!(!SessionIndexer::is_sidechain_file(&path, &sessions_dir));
     }
 }
