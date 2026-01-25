@@ -1,5 +1,6 @@
 use anyhow::{Context, Result};
 use rusqlite::Connection;
+use std::ffi::OsStr;
 use std::path::Path;
 
 use crate::parsers::claude_code::ClaudeCodeParser;
@@ -30,6 +31,16 @@ impl SessionIndexer {
                 && let Some(ext) = path.extension()
                 && ext == "jsonl"
             {
+                if Self::is_sidechain_file(path) {
+                    if let Err(err) = self.remove_session_for_file(path) {
+                        tracing::warn!(
+                            "Failed to prune sidechain session {}: {}",
+                            path.display(),
+                            err
+                        );
+                    }
+                    continue;
+                }
                 if let Err(e) = self.index_session_file(path, &parser) {
                     tracing::warn!("Failed to index {}: {}", path.display(), e);
                 } else {
@@ -79,6 +90,30 @@ impl SessionIndexer {
                 ],
             )?;
         }
+
+        Ok(())
+    }
+
+    fn is_sidechain_file(file_path: &Path) -> bool {
+        let is_agent_file = file_path
+            .file_stem()
+            .and_then(|stem| stem.to_str())
+            .is_some_and(|stem| stem.starts_with("agent-"));
+        let is_subagent = file_path
+            .components()
+            .any(|component| component.as_os_str() == OsStr::new("subagents"));
+
+        is_agent_file || is_subagent
+    }
+
+    fn remove_session_for_file(&mut self, file_path: &Path) -> Result<()> {
+        let file_path = file_path.to_str().unwrap_or_default();
+        self.db.execute(
+            "DELETE FROM messages WHERE session_id IN (SELECT id FROM sessions WHERE file_path = ?1)",
+            [file_path],
+        )?;
+        self.db
+            .execute("DELETE FROM sessions WHERE file_path = ?1", [file_path])?;
 
         Ok(())
     }
