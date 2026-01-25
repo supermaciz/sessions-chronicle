@@ -54,7 +54,8 @@ impl ClaudeCodeParser {
             // Date column semantics:
             // - Primary: end time = latest timestamp among message-like events
             // - Fallback: start time = earliest timestamp among message-like events
-            let is_message_like = match event.get("type").and_then(|v| v.as_str()) {
+            let event_type = event.get("type").and_then(|v| v.as_str());
+            let is_message_like = match event_type {
                 Some("user") | Some("assistant") => true,
                 Some("system") => event
                     .get("subtype")
@@ -64,7 +65,7 @@ impl ClaudeCodeParser {
             };
 
             // Track if this is a user message (independent of timestamp validity)
-            if event.get("type").and_then(|v| v.as_str()) == Some("user") {
+            if event_type == Some("user") {
                 has_user_message = true;
             }
 
@@ -227,5 +228,72 @@ impl ClaudeCodeParser {
         }
 
         None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+    use tempfile::NamedTempFile;
+
+    fn create_temp_session(lines: &[&str]) -> NamedTempFile {
+        let mut file = NamedTempFile::with_suffix(".jsonl").unwrap();
+        for line in lines {
+            writeln!(file, "{}", line).unwrap();
+        }
+        file.flush().unwrap();
+        file
+    }
+
+    #[test]
+    fn parse_metadata_rejects_no_user_messages() {
+        let file = create_temp_session(&[
+            r#"{"type":"assistant","timestamp":"2024-01-01T00:00:00Z","message":{"content":"Hello"}}"#,
+        ]);
+
+        let parser = ClaudeCodeParser;
+        let result = parser.parse_metadata(file.path());
+
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("no user messages"));
+    }
+
+    #[test]
+    fn parse_metadata_accepts_session_with_user_message() {
+        let file = create_temp_session(&[
+            r#"{"type":"user","timestamp":"2024-01-01T00:00:00Z","message":{"content":"Hello"}}"#,
+            r#"{"type":"assistant","timestamp":"2024-01-01T00:00:01Z","message":{"content":"Hi!"}}"#,
+        ]);
+
+        let parser = ClaudeCodeParser;
+        let result = parser.parse_metadata(file.path());
+
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn parse_metadata_detects_user_message_without_timestamp() {
+        // User message without timestamp should still count as having user input
+        let file = create_temp_session(&[
+            r#"{"type":"user","message":{"content":"Hello"}}"#,
+            r#"{"type":"assistant","timestamp":"2024-01-01T00:00:01Z","message":{"content":"Hi!"}}"#,
+        ]);
+
+        let parser = ClaudeCodeParser;
+        let result = parser.parse_metadata(file.path());
+
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn parse_metadata_rejects_empty_session() {
+        let file = create_temp_session(&[]);
+
+        let parser = ClaudeCodeParser;
+        let result = parser.parse_metadata(file.path());
+
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("no messages"));
     }
 }
