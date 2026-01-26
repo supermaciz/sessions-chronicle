@@ -3,9 +3,14 @@ use rusqlite::Connection;
 use std::path::Path;
 
 use crate::parsers::claude_code::ClaudeCodeParser;
+use crate::parsers::opencode::{OpenCodeParser, ParseError};
 
 pub struct SessionIndexer {
     db: Connection,
+}
+
+fn is_skippable_error(err: &anyhow::Error) -> bool {
+    err.downcast_ref::<ParseError>().is_some()
 }
 
 impl SessionIndexer {
@@ -51,12 +56,58 @@ impl SessionIndexer {
         Ok(count)
     }
 
-    fn index_session_file(&mut self, file_path: &Path, parser: &ClaudeCodeParser) -> Result<()> {
-        let session = parser.parse_metadata(file_path)?;
-        let messages = parser.parse_messages(file_path)?;
+    pub fn index_opencode_sessions(&mut self, storage_root: &Path) -> Result<usize> {
+        let sessions_dir = storage_root.join("session");
 
-        // Insert or update session
-        self.db.execute(
+        if !sessions_dir.exists() {
+            return Ok(0);
+        }
+
+        let parser = OpenCodeParser::new(storage_root);
+        let mut count = 0;
+
+        for entry in walkdir::WalkDir::new(&sessions_dir)
+            .max_depth(5)
+            .into_iter()
+            .filter_map(|e| e.ok())
+        {
+            let path = entry.path();
+            if entry.file_type().is_file()
+                && let Some(ext) = path.extension()
+                && ext == "json"
+            {
+                match self.index_opencode_session_file(path, &parser) {
+                    Ok(indexed) => {
+                        if indexed {
+                            count += 1;
+                        }
+                    }
+                    Err(err) => {
+                        if is_skippable_error(&err) {
+                            if let Err(remove_err) = self.remove_session_for_file(path) {
+                                tracing::warn!(
+                                    "Failed to prune session {}: {}",
+                                    path.display(),
+                                    remove_err
+                                );
+                            }
+                        } else {
+                            tracing::warn!("Failed to index {}: {}", path.display(), err);
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(count)
+    }
+
+    fn index_session_file(&mut self, file_path: &Path, parser: &ClaudeCodeParser) -> Result<()> {
+        let (session, messages) = parser.parse(file_path)?;
+
+        let tx = self.db.transaction()?;
+
+        tx.execute(
             "INSERT OR REPLACE INTO sessions
              (id, tool, project_path, start_time, message_count, file_path, last_updated)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
@@ -71,13 +122,10 @@ impl SessionIndexer {
             ],
         )?;
 
-        // Delete old messages for this session
-        self.db
-            .execute("DELETE FROM messages WHERE session_id = ?1", [&session.id])?;
+        tx.execute("DELETE FROM messages WHERE session_id = ?1", [&session.id])?;
 
-        // Insert new messages
-        for msg in messages {
-            self.db.execute(
+        for msg in &messages {
+            tx.execute(
                 "INSERT INTO messages (session_id, message_index, role, content, timestamp)
                  VALUES (?1, ?2, ?3, ?4, ?5)",
                 rusqlite::params![
@@ -90,7 +138,54 @@ impl SessionIndexer {
             )?;
         }
 
+        tx.commit()?;
+
         Ok(())
+    }
+
+    fn index_opencode_session_file(
+        &mut self,
+        file_path: &Path,
+        parser: &OpenCodeParser,
+    ) -> Result<bool> {
+        let (session, messages) = parser.parse(file_path)?;
+
+        let tx = self.db.transaction()?;
+
+        tx.execute(
+            "INSERT OR REPLACE INTO sessions
+             (id, tool, project_path, start_time, message_count, file_path, last_updated)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            rusqlite::params![
+                &session.id,
+                "opencode",
+                &session.project_path,
+                session.start_time.timestamp(),
+                session.message_count as i64,
+                file_path.to_str(),
+                session.last_updated.timestamp(),
+            ],
+        )?;
+
+        tx.execute("DELETE FROM messages WHERE session_id = ?1", [&session.id])?;
+
+        for msg in &messages {
+            tx.execute(
+                "INSERT INTO messages (session_id, message_index, role, content, timestamp)
+                 VALUES (?1, ?2, ?3, ?4, ?5)",
+                rusqlite::params![
+                    &msg.session_id,
+                    msg.index as i64,
+                    format!("{:?}", msg.role).to_lowercase(),
+                    &msg.content,
+                    msg.timestamp.timestamp(),
+                ],
+            )?;
+        }
+
+        tx.commit()?;
+
+        Ok(true)
     }
 
     fn is_sidechain_file(file_path: &Path, sessions_dir: &Path) -> bool {
@@ -114,12 +209,16 @@ impl SessionIndexer {
             tracing::warn!("Cannot prune session with non-UTF8 path: {:?}", file_path);
             return Ok(());
         };
-        self.db.execute(
+
+        let tx = self.db.transaction()?;
+
+        tx.execute(
             "DELETE FROM messages WHERE session_id IN (SELECT id FROM sessions WHERE file_path = ?1)",
             [file_path_str],
         )?;
-        self.db
-            .execute("DELETE FROM sessions WHERE file_path = ?1", [file_path_str])?;
+        tx.execute("DELETE FROM sessions WHERE file_path = ?1", [file_path_str])?;
+
+        tx.commit()?;
 
         Ok(())
     }
@@ -129,6 +228,7 @@ impl SessionIndexer {
 mod tests {
     use super::*;
     use std::path::PathBuf;
+    use tempfile::NamedTempFile;
 
     #[test]
     fn is_sidechain_file_detects_agent_prefix() {
@@ -163,8 +263,48 @@ mod tests {
     fn is_sidechain_file_allows_subagents_in_project_name() {
         // "subagents" in an encoded project path should not trigger filtering
         let sessions_dir = PathBuf::from("/home/user/.claude/projects");
-        let path =
-            PathBuf::from("/home/user/.claude/projects/-home-user-subagents/session.jsonl");
+        let path = PathBuf::from("/home/user/.claude/projects/-home-user-subagents/session.jsonl");
         assert!(!SessionIndexer::is_sidechain_file(&path, &sessions_dir));
+    }
+
+    #[test]
+    fn opencode_indexing_indexes_sessions_and_prunes_subagents() {
+        let temp_db = NamedTempFile::new().unwrap();
+        let mut indexer = SessionIndexer::new(temp_db.path()).unwrap();
+        let storage_root = PathBuf::from("tests/fixtures/opencode_storage");
+
+        let count = indexer.index_opencode_sessions(&storage_root).unwrap();
+        assert_eq!(count, 2);
+
+        let sessions: Vec<(String, String)> = indexer
+            .db
+            .prepare("SELECT id, tool FROM sessions ORDER BY id")
+            .unwrap()
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+
+        assert_eq!(sessions.len(), 2);
+        assert_eq!(sessions[0].0, "session-001");
+        assert_eq!(sessions[0].1, "opencode");
+        assert_eq!(sessions[1].0, "session-003");
+        assert_eq!(sessions[1].1, "opencode");
+
+        let msg_count: i64 = indexer
+            .db
+            .query_row("SELECT COUNT(*) FROM messages", [], |row| row.get(0))
+            .unwrap();
+        assert!(msg_count > 0, "Should have messages for indexed sessions");
+    }
+
+    #[test]
+    fn opencode_indexing_returns_zero_for_missing_storage_root() {
+        let temp_db = NamedTempFile::new().unwrap();
+        let mut indexer = SessionIndexer::new(temp_db.path()).unwrap();
+        let nonexistent_root = PathBuf::from("tests/fixtures/nonexistent_opencode_storage");
+
+        let count = indexer.index_opencode_sessions(&nonexistent_root).unwrap();
+        assert_eq!(count, 0);
     }
 }

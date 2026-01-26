@@ -6,7 +6,7 @@ use std::path::PathBuf;
 use std::rc::Rc;
 
 use crate::database::{load_messages_for_session, load_session};
-use crate::models::{Message, Session};
+use crate::models::{Message, Session, Tool};
 
 #[derive(Debug)]
 pub struct SessionDetail {
@@ -15,6 +15,7 @@ pub struct SessionDetail {
     messages: Vec<Message>,
     output_sender: relm4::Sender<SessionDetailOutput>,
     current_session_id: Rc<RefCell<Option<String>>>,
+    current_tool: Rc<RefCell<Option<Tool>>>,
 }
 
 #[derive(Debug)]
@@ -26,7 +27,7 @@ pub enum SessionDetailMsg {
 
 #[derive(Debug)]
 pub enum SessionDetailOutput {
-    ResumeRequested(String),
+    ResumeRequested(String, Tool),
 }
 
 #[relm4::component(pub)]
@@ -171,6 +172,7 @@ impl SimpleComponent for SessionDetail {
         let output_sender = sender.output_sender().clone();
 
         let current_session_id = Rc::new(RefCell::new(None));
+        let current_tool = Rc::new(RefCell::new(None));
 
         let model = Self {
             db_path,
@@ -178,6 +180,7 @@ impl SimpleComponent for SessionDetail {
             messages: Vec::new(),
             output_sender,
             current_session_id: current_session_id.clone(),
+            current_tool: current_tool.clone(),
         };
         let widgets = view_output!();
 
@@ -190,7 +193,12 @@ impl SimpleComponent for SessionDetail {
         let sender = model.output_sender.clone();
         widgets.resume_button.connect_clicked(move |_| {
             if let Some(session_id) = current_session_id.borrow().as_ref() {
-                let _ = sender.send(SessionDetailOutput::ResumeRequested(session_id.clone()));
+                if let Some(tool) = current_tool.borrow().as_ref() {
+                    let _ = sender.send(SessionDetailOutput::ResumeRequested(
+                        session_id.clone(),
+                        *tool,
+                    ));
+                }
             }
         });
 
@@ -206,6 +214,7 @@ impl SimpleComponent for SessionDetail {
                         self.current_session_id
                             .borrow_mut()
                             .replace(session.id.clone());
+                        self.current_tool.borrow_mut().replace(session.tool);
                         self.session = Some(session);
                     }
                     Ok(None) => {
@@ -213,6 +222,7 @@ impl SimpleComponent for SessionDetail {
                         self.session = None;
                         self.messages = Vec::new();
                         self.current_session_id.borrow_mut().take();
+                        self.current_tool.borrow_mut().take();
                         return;
                     }
                     Err(err) => {
@@ -220,6 +230,7 @@ impl SimpleComponent for SessionDetail {
                         self.session = None;
                         self.messages = Vec::new();
                         self.current_session_id.borrow_mut().take();
+                        self.current_tool.borrow_mut().take();
                         return;
                     }
                 }
@@ -239,6 +250,7 @@ impl SimpleComponent for SessionDetail {
                 self.session = None;
                 self.messages = Vec::new();
                 self.current_session_id.borrow_mut().take();
+                self.current_tool.borrow_mut().take();
             }
         }
     }

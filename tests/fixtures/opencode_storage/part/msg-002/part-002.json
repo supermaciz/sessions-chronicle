@@ -1,0 +1,8 @@
+{
+  "id": "part-002",
+  "type": "tool-invocation",
+  "content": {
+    "name": "bash",
+    "arguments": "{\"command\":\"ls -la\",\"description\":\"List files in directory\"}"
+  }
+}
