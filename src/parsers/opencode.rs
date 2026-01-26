@@ -37,7 +37,8 @@ struct PartData {
     id: String,
     kind: String,
     order: Option<i64>,
-    content: Value,
+    /// Raw part JSON for extracting type-specific fields
+    raw: Value,
 }
 
 impl OpenCodeParser {
@@ -292,13 +293,12 @@ impl OpenCodeParser {
                 }
             };
             let order = value.get("order").and_then(|v| v.as_i64());
-            let content = value.get("content").cloned().unwrap_or(Value::Null);
 
             parts.push(PartData {
                 id,
                 kind,
                 order,
-                content,
+                raw: value,
             });
         }
 
@@ -326,8 +326,9 @@ impl OpenCodeParser {
                         Role::Assistant
                     }
                 };
+                // OpenCode stores text directly on the part, not under content
                 let text = part
-                    .content
+                    .raw
                     .get("text")
                     .and_then(|v| v.as_str())
                     .map(str::to_string)
@@ -345,17 +346,28 @@ impl OpenCodeParser {
                     timestamp,
                 })
             }
-            "tool-invocation" => {
+            "tool" => {
+                // OpenCode uses "tool" type with tool name in "tool" field
+                // and state containing input/output
                 let name = part
-                    .content
-                    .get("name")
+                    .raw
+                    .get("tool")
                     .and_then(|v| v.as_str())
                     .unwrap_or("tool");
-                let summary = self.tool_input_summary(&part.content);
-                let content = if summary.is_empty() {
+
+                let state = part.raw.get("state");
+                let input_summary = state
+                    .and_then(|s| s.get("input"))
+                    .map(|v| match v {
+                        Value::String(s) => s.clone(),
+                        _ => serde_json::to_string(v).unwrap_or_default(),
+                    })
+                    .unwrap_or_default();
+
+                let content = if input_summary.is_empty() {
                     format!("[Tool: {}]", name)
                 } else {
-                    format!("[Tool: {}] {}", name, summary)
+                    format!("[Tool: {}] {}", name, input_summary)
                 };
 
                 Some(Message {
@@ -366,35 +378,14 @@ impl OpenCodeParser {
                     timestamp,
                 })
             }
-            "tool-result" => {
-                let content = match part.content.get("result") {
-                    Some(Value::String(value)) => value.clone(),
-                    Some(value) => serde_json::to_string(value)
-                        .unwrap_or_else(|_| "Tool result unavailable".to_string()),
-                    None => "Tool result unavailable".to_string(),
-                };
-
-                Some(Message {
-                    session_id: session_id.to_string(),
-                    index: 0,
-                    role: Role::ToolResult,
-                    content,
-                    timestamp,
-                })
-            }
-            "reasoning" => None,
-            other => {
-                tracing::warn!("Unknown part type: {}", other);
+            // Skip metadata/control parts
+            "reasoning" | "step-start" | "step-finish" | "snapshot" | "compaction" | "subtask" => {
                 None
             }
-        }
-    }
-
-    fn tool_input_summary(&self, content: &Value) -> String {
-        match content.get("input") {
-            Some(Value::String(value)) => value.clone(),
-            Some(value) => serde_json::to_string(value).unwrap_or_default(),
-            None => String::new(),
+            other => {
+                tracing::debug!("Unhandled part type: {}", other);
+                None
+            }
         }
     }
 
@@ -541,7 +532,7 @@ mod tests {
             json!({
                 "id": "part-001",
                 "type": "text",
-                "content": { "text": "Hello" }
+                "text": "Hello"
             }),
         );
 
@@ -609,7 +600,7 @@ mod tests {
                 "id": "part-002",
                 "order": 2,
                 "type": "text",
-                "content": { "text": "Second" }
+                "text": "Second"
             }),
         );
         write_part_file(
@@ -620,7 +611,7 @@ mod tests {
                 "id": "part-001",
                 "order": 1,
                 "type": "text",
-                "content": { "text": "First" }
+                "text": "First"
             }),
         );
 
@@ -631,26 +622,16 @@ mod tests {
             json!({
                 "id": "part-001",
                 "order": 1,
-                "type": "tool-invocation",
-                "content": { "name": "search", "input": { "query": "rust" } }
-            }),
-        );
-        write_part_file(
-            root,
-            "msg-001",
-            "part-002.json",
-            json!({
-                "id": "part-002",
-                "order": 2,
-                "type": "tool-result",
-                "content": { "result": "done" }
+                "type": "tool",
+                "tool": "grep",
+                "state": { "input": { "pattern": "rust" } }
             }),
         );
 
         let parser = OpenCodeParser::new(root);
         let (_session, messages) = parser.parse(&session_path).unwrap();
 
-        assert_eq!(messages.len(), 4);
+        assert_eq!(messages.len(), 3);
         assert_eq!(messages[0].index, 0);
         assert_eq!(messages[0].role, Role::User);
         assert_eq!(messages[0].content, "First");
@@ -659,10 +640,7 @@ mod tests {
         assert_eq!(messages[1].content, "Second");
         assert_eq!(messages[2].index, 2);
         assert_eq!(messages[2].role, Role::ToolCall);
-        assert_eq!(messages[2].content, "[Tool: search] {\"query\":\"rust\"}");
-        assert_eq!(messages[3].index, 3);
-        assert_eq!(messages[3].role, Role::ToolResult);
-        assert_eq!(messages[3].content, "done");
+        assert_eq!(messages[2].content, "[Tool: grep] {\"pattern\":\"rust\"}");
     }
 
     #[test]
@@ -713,7 +691,7 @@ mod tests {
                 "id": "part-001",
                 "order": 1,
                 "type": "text",
-                "content": { "text": "First message" }
+                "text": "First message"
             }),
         );
 
@@ -725,7 +703,7 @@ mod tests {
                 "id": "part-001",
                 "order": 1,
                 "type": "text",
-                "content": { "text": "Second message" }
+                "text": "Second message"
             }),
         );
 
@@ -786,7 +764,7 @@ mod tests {
                 "id": "part-valid",
                 "order": 1,
                 "type": "text",
-                "content": { "text": "Hello" }
+                "text": "Hello"
             }),
         );
 
@@ -796,7 +774,7 @@ mod tests {
             "part-invalid.json",
             json!({
                 "id": "part-invalid",
-                "content": { "text": "Ignore" }
+                "text": "Ignore"
             }),
         );
 
@@ -809,7 +787,7 @@ mod tests {
     }
 
     #[test]
-    fn tool_result_serializes_non_string_payloads() {
+    fn tool_part_extracts_tool_name_and_input() {
         let temp_dir = TempDir::new().unwrap();
         let root = temp_dir.path();
 
@@ -856,7 +834,7 @@ mod tests {
                 "id": "part-user",
                 "order": 1,
                 "type": "text",
-                "content": { "text": "Run tool" }
+                "text": "Run tool"
             }),
         );
 
@@ -867,8 +845,12 @@ mod tests {
             json!({
                 "id": "part-tool",
                 "order": 1,
-                "type": "tool-result",
-                "content": { "result": { "status": "ok", "count": 2 } }
+                "type": "tool",
+                "tool": "read",
+                "state": {
+                    "status": "completed",
+                    "input": { "path": "/tmp/test.txt" }
+                }
             }),
         );
 
@@ -876,9 +858,9 @@ mod tests {
         let (_session, messages) = parser.parse(&session_path).unwrap();
 
         assert_eq!(messages.len(), 2);
-        assert_eq!(messages[1].role, Role::ToolResult);
-        let parsed: serde_json::Value = serde_json::from_str(&messages[1].content).unwrap();
-        assert_eq!(parsed, json!({ "status": "ok", "count": 2 }));
+        assert_eq!(messages[1].role, Role::ToolCall);
+        assert!(messages[1].content.contains("[Tool: read]"));
+        assert!(messages[1].content.contains("/tmp/test.txt"));
     }
 
     #[test]
@@ -928,7 +910,7 @@ mod tests {
                 "id": "part-user",
                 "order": 1,
                 "type": "text",
-                "content": { "text": "Hello" }
+                "text": "Hello"
             }),
         );
 
@@ -940,7 +922,7 @@ mod tests {
                 "id": "part-assistant",
                 "order": 1,
                 "type": "text",
-                "content": { "text": "I can help" }
+                "text": "I can help"
             }),
         );
 

@@ -1,7 +1,7 @@
 {
   "id": "part-001",
+  "sessionID": "session-001",
+  "messageID": "msg-002",
   "type": "text",
-  "content": {
-    "text": "I can help you with that task. Let me check the files."
-  }
+  "text": "I can help you with that task. Let me check the files."
 }
