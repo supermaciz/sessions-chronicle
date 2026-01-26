@@ -69,6 +69,33 @@ fn opencode_search_finds_text_part_content() {
 }
 
 #[test]
+fn opencode_search_finds_tool_output() {
+    let db = TempDatabase::new();
+    let storage_root = PathBuf::from("tests/fixtures/opencode_storage");
+
+    let mut indexer = SessionIndexer::new(&db.path).expect("Failed to create indexer");
+    let indexed_count = indexer
+        .index_opencode_sessions(&storage_root)
+        .expect("Failed to index OpenCode sessions");
+
+    assert_eq!(indexed_count, 2, "Should index 2 non-subagent sessions");
+
+    // Search for content that exists only in tool output
+    let sessions =
+        search_sessions(&db.path, &[Tool::OpenCode], "total").expect("Search failed");
+
+    assert_eq!(
+        sessions.len(),
+        1,
+        "Should find session containing tool output with 'total'"
+    );
+    assert_eq!(
+        sessions[0].id, "session-001",
+        "Should find the correct session with bash tool output"
+    );
+}
+
+#[test]
 fn opencode_search_respects_tool_filter() {
     let db = TempDatabase::new();
     let storage_root = PathBuf::from("tests/fixtures/opencode_storage");

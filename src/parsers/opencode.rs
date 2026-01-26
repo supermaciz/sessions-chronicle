@@ -74,15 +74,14 @@ impl OpenCodeParser {
             });
 
             for part in parts {
-                if let Some(message_entry) = self.part_to_message(
+                let messages_from_part = self.part_to_message(
                     &metadata.id,
                     message.role,
                     message.time_created,
                     &part,
                     &mut has_user_message,
-                ) {
-                    flattened.push(message_entry);
-                }
+                );
+                flattened.extend(messages_from_part);
             }
         }
 
@@ -312,7 +311,7 @@ impl OpenCodeParser {
         timestamp: DateTime<Utc>,
         part: &PartData,
         has_user_message: &mut bool,
-    ) -> Option<Message> {
+    ) -> Vec<Message> {
         match part.kind.as_str() {
             "text" => {
                 let role = match message_role {
@@ -332,19 +331,24 @@ impl OpenCodeParser {
                     .get("text")
                     .and_then(|v| v.as_str())
                     .map(str::to_string)
-                    .filter(|value| !value.trim().is_empty())?;
+                    .filter(|value| !value.trim().is_empty());
+
+                let text = match text {
+                    Some(t) => t,
+                    None => return Vec::new(),
+                };
 
                 if role == Role::User {
                     *has_user_message = true;
                 }
 
-                Some(Message {
+                vec![Message {
                     session_id: session_id.to_string(),
                     index: 0,
                     role,
                     content: text,
                     timestamp,
-                })
+                }]
             }
             "tool" => {
                 // OpenCode uses "tool" type with tool name in "tool" field
@@ -370,21 +374,58 @@ impl OpenCodeParser {
                     format!("[Tool: {}] {}", name, input_summary)
                 };
 
-                Some(Message {
+                let mut messages = vec![Message {
                     session_id: session_id.to_string(),
                     index: 0,
                     role: Role::ToolCall,
                     content,
                     timestamp,
-                })
+                }];
+
+                // Emit a ToolResult message if output or error is present
+                if let Some(state) = state {
+                    let output = state
+                        .get("output")
+                        .map(|v| match v {
+                            Value::String(s) => s.clone(),
+                            _ => serde_json::to_string_pretty(v).unwrap_or_default(),
+                        })
+                        .filter(|s| !s.trim().is_empty());
+
+                    let error = state
+                        .get("error")
+                        .and_then(|v| v.as_str())
+                        .map(str::to_string)
+                        .filter(|s| !s.trim().is_empty());
+
+                    if let Some(output_text) = output {
+                        messages.push(Message {
+                            session_id: session_id.to_string(),
+                            index: 0,
+                            role: Role::ToolResult,
+                            content: output_text,
+                            timestamp,
+                        });
+                    } else if let Some(error_text) = error {
+                        messages.push(Message {
+                            session_id: session_id.to_string(),
+                            index: 0,
+                            role: Role::ToolResult,
+                            content: format!("Error: {}", error_text),
+                            timestamp,
+                        });
+                    }
+                }
+
+                messages
             }
             // Skip metadata/control parts
             "reasoning" | "step-start" | "step-finish" | "snapshot" | "compaction" | "subtask" => {
-                None
+                Vec::new()
             }
             other => {
                 tracing::debug!("Unhandled part type: {}", other);
-                None
+                Vec::new()
             }
         }
     }
@@ -861,6 +902,165 @@ mod tests {
         assert_eq!(messages[1].role, Role::ToolCall);
         assert!(messages[1].content.contains("[Tool: read]"));
         assert!(messages[1].content.contains("/tmp/test.txt"));
+    }
+
+    #[test]
+    fn tool_part_with_output_emits_tool_result() {
+        let temp_dir = TempDir::new().unwrap();
+        let root = temp_dir.path();
+
+        let session_path = write_session_file(
+            root,
+            "project-a",
+            "session-009.json",
+            json!({
+                "id": "session-009",
+                "directory": "/projects/alpha",
+                "time": { "created": 1_704_067_200_000i64, "updated": 1_704_067_260_000i64 }
+            }),
+        );
+
+        write_message_file(
+            root,
+            "session-009",
+            "msg-user.json",
+            json!({
+                "id": "msg-user",
+                "sessionID": "session-009",
+                "role": "user",
+                "time": { "created": 1_704_067_200_000i64 }
+            }),
+        );
+
+        write_message_file(
+            root,
+            "session-009",
+            "msg-tool.json",
+            json!({
+                "id": "msg-tool",
+                "sessionID": "session-009",
+                "role": "assistant",
+                "time": { "created": 1_704_067_260_000i64 }
+            }),
+        );
+
+        write_part_file(
+            root,
+            "msg-user",
+            "part-user.json",
+            json!({
+                "id": "part-user",
+                "order": 1,
+                "type": "text",
+                "text": "Read file"
+            }),
+        );
+
+        write_part_file(
+            root,
+            "msg-tool",
+            "part-tool.json",
+            json!({
+                "id": "part-tool",
+                "order": 1,
+                "type": "tool",
+                "tool": "read",
+                "state": {
+                    "status": "completed",
+                    "input": { "path": "/tmp/test.txt" },
+                    "output": "File contents here\nLine 2\nLine 3"
+                }
+            }),
+        );
+
+        let parser = OpenCodeParser::new(root);
+        let (_session, messages) = parser.parse(&session_path).unwrap();
+
+        assert_eq!(messages.len(), 3);
+        assert_eq!(messages[0].role, Role::User);
+        assert_eq!(messages[1].role, Role::ToolCall);
+        assert!(messages[1].content.contains("[Tool: read]"));
+        assert_eq!(messages[2].role, Role::ToolResult);
+        assert_eq!(messages[2].content, "File contents here\nLine 2\nLine 3");
+    }
+
+    #[test]
+    fn tool_part_with_error_emits_tool_result() {
+        let temp_dir = TempDir::new().unwrap();
+        let root = temp_dir.path();
+
+        let session_path = write_session_file(
+            root,
+            "project-a",
+            "session-010.json",
+            json!({
+                "id": "session-010",
+                "directory": "/projects/alpha",
+                "time": { "created": 1_704_067_200_000i64, "updated": 1_704_067_260_000i64 }
+            }),
+        );
+
+        write_message_file(
+            root,
+            "session-010",
+            "msg-user.json",
+            json!({
+                "id": "msg-user",
+                "sessionID": "session-010",
+                "role": "user",
+                "time": { "created": 1_704_067_200_000i64 }
+            }),
+        );
+
+        write_message_file(
+            root,
+            "session-010",
+            "msg-tool.json",
+            json!({
+                "id": "msg-tool",
+                "sessionID": "session-010",
+                "role": "assistant",
+                "time": { "created": 1_704_067_260_000i64 }
+            }),
+        );
+
+        write_part_file(
+            root,
+            "msg-user",
+            "part-user.json",
+            json!({
+                "id": "part-user",
+                "order": 1,
+                "type": "text",
+                "text": "Read file"
+            }),
+        );
+
+        write_part_file(
+            root,
+            "msg-tool",
+            "part-tool.json",
+            json!({
+                "id": "part-tool",
+                "order": 1,
+                "type": "tool",
+                "tool": "read",
+                "state": {
+                    "status": "failed",
+                    "input": { "path": "/tmp/missing.txt" },
+                    "error": "File not found"
+                }
+            }),
+        );
+
+        let parser = OpenCodeParser::new(root);
+        let (_session, messages) = parser.parse(&session_path).unwrap();
+
+        assert_eq!(messages.len(), 3);
+        assert_eq!(messages[0].role, Role::User);
+        assert_eq!(messages[1].role, Role::ToolCall);
+        assert_eq!(messages[2].role, Role::ToolResult);
+        assert_eq!(messages[2].content, "Error: File not found");
     }
 
     #[test]
