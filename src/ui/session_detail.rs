@@ -192,13 +192,13 @@ impl SimpleComponent for SessionDetail {
         // Connect resume button once
         let sender = model.output_sender.clone();
         widgets.resume_button.connect_clicked(move |_| {
-            if let Some(session_id) = current_session_id.borrow().as_ref() {
-                if let Some(tool) = current_tool.borrow().as_ref() {
-                    let _ = sender.send(SessionDetailOutput::ResumeRequested(
-                        session_id.clone(),
-                        *tool,
-                    ));
-                }
+            if let Some(session_id) = current_session_id.borrow().as_ref()
+                && let Some(tool) = current_tool.borrow().as_ref()
+            {
+                let _ = sender.send(SessionDetailOutput::ResumeRequested(
+                    session_id.clone(),
+                    *tool,
+                ));
             }
         });
 

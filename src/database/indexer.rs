@@ -104,7 +104,26 @@ impl SessionIndexer {
 
     fn index_session_file(&mut self, file_path: &Path, parser: &ClaudeCodeParser) -> Result<()> {
         let (session, messages) = parser.parse(file_path)?;
+        self.insert_session_and_messages(&session, &messages, file_path)?;
+        Ok(())
+    }
 
+    fn index_opencode_session_file(
+        &mut self,
+        file_path: &Path,
+        parser: &OpenCodeParser,
+    ) -> Result<bool> {
+        let (session, messages) = parser.parse(file_path)?;
+        self.insert_session_and_messages(&session, &messages, file_path)?;
+        Ok(true)
+    }
+
+    fn insert_session_and_messages(
+        &mut self,
+        session: &crate::models::Session,
+        messages: &[crate::models::Message],
+        file_path: &Path,
+    ) -> Result<()> {
         let tx = self.db.transaction()?;
 
         tx.execute(
@@ -113,7 +132,7 @@ impl SessionIndexer {
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
             rusqlite::params![
                 &session.id,
-                "claude_code",
+                session.tool.to_storage(),
                 &session.project_path,
                 session.start_time.timestamp(),
                 session.message_count as i64,
@@ -124,7 +143,7 @@ impl SessionIndexer {
 
         tx.execute("DELETE FROM messages WHERE session_id = ?1", [&session.id])?;
 
-        for msg in &messages {
+        for msg in messages {
             tx.execute(
                 "INSERT INTO messages (session_id, message_index, role, content, timestamp)
                  VALUES (?1, ?2, ?3, ?4, ?5)",
@@ -141,51 +160,6 @@ impl SessionIndexer {
         tx.commit()?;
 
         Ok(())
-    }
-
-    fn index_opencode_session_file(
-        &mut self,
-        file_path: &Path,
-        parser: &OpenCodeParser,
-    ) -> Result<bool> {
-        let (session, messages) = parser.parse(file_path)?;
-
-        let tx = self.db.transaction()?;
-
-        tx.execute(
-            "INSERT OR REPLACE INTO sessions
-             (id, tool, project_path, start_time, message_count, file_path, last_updated)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-            rusqlite::params![
-                &session.id,
-                "opencode",
-                &session.project_path,
-                session.start_time.timestamp(),
-                session.message_count as i64,
-                file_path.to_str(),
-                session.last_updated.timestamp(),
-            ],
-        )?;
-
-        tx.execute("DELETE FROM messages WHERE session_id = ?1", [&session.id])?;
-
-        for msg in &messages {
-            tx.execute(
-                "INSERT INTO messages (session_id, message_index, role, content, timestamp)
-                 VALUES (?1, ?2, ?3, ?4, ?5)",
-                rusqlite::params![
-                    &msg.session_id,
-                    msg.index as i64,
-                    format!("{:?}", msg.role).to_lowercase(),
-                    &msg.content,
-                    msg.timestamp.timestamp(),
-                ],
-            )?;
-        }
-
-        tx.commit()?;
-
-        Ok(true)
     }
 
     fn is_sidechain_file(file_path: &Path, sessions_dir: &Path) -> bool {
