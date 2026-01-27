@@ -2,17 +2,21 @@ use chrono::{DateTime, Duration as ChronoDuration, Utc};
 use gtk::prelude::*;
 use relm4::{ComponentParts, ComponentSender, RelmWidgetExt, SimpleComponent, adw, gtk};
 use std::cell::RefCell;
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::rc::Rc;
 
-use crate::database::{load_messages_for_session, load_session};
-use crate::models::{Message, Session, Tool};
+use crate::database::{load_message_previews_for_session, load_session};
+use crate::models::{MessagePreview, Session, Tool};
 
 #[derive(Debug)]
 pub struct SessionDetail {
     db_path: PathBuf,
     session: Option<Session>,
-    messages: Vec<Message>,
+    message_previews: Vec<MessagePreview>,
+    full_content_by_index: HashMap<usize, String>,
+    page_size: usize,
+    preview_len: usize,
     output_sender: relm4::Sender<SessionDetailOutput>,
     current_session_id: Rc<RefCell<Option<String>>>,
     current_tool: Rc<RefCell<Option<Tool>>>,
@@ -177,7 +181,10 @@ impl SimpleComponent for SessionDetail {
         let model = Self {
             db_path,
             session: None,
-            messages: Vec::new(),
+            message_previews: Vec::new(),
+            full_content_by_index: HashMap::new(),
+            page_size: 200,
+            preview_len: 2000,
             output_sender,
             current_session_id: current_session_id.clone(),
             current_tool: current_tool.clone(),
@@ -220,7 +227,8 @@ impl SimpleComponent for SessionDetail {
                     Ok(None) => {
                         tracing::warn!("Session not found: {}", session_id);
                         self.session = None;
-                        self.messages = Vec::new();
+                        self.message_previews = Vec::new();
+                        self.full_content_by_index.clear();
                         self.current_session_id.borrow_mut().take();
                         self.current_tool.borrow_mut().take();
                         return;
@@ -228,27 +236,37 @@ impl SimpleComponent for SessionDetail {
                     Err(err) => {
                         tracing::error!("Failed to load session {}: {}", session_id, err);
                         self.session = None;
-                        self.messages = Vec::new();
+                        self.message_previews = Vec::new();
+                        self.full_content_by_index.clear();
                         self.current_session_id.borrow_mut().take();
                         self.current_tool.borrow_mut().take();
                         return;
                     }
                 }
 
-                // Load messages
-                match load_messages_for_session(&self.db_path, &session_id) {
-                    Ok(messages) => {
-                        self.messages = messages;
+                // Load first page of message previews
+                match load_message_previews_for_session(
+                    &self.db_path,
+                    &session_id,
+                    self.page_size,
+                    0,
+                    self.preview_len,
+                ) {
+                    Ok(previews) => {
+                        self.message_previews = previews;
+                        self.full_content_by_index.clear();
                     }
                     Err(err) => {
-                        tracing::error!("Failed to load messages for {}: {}", session_id, err);
-                        self.messages = Vec::new();
+                        tracing::error!("Failed to load message previews for {}: {}", session_id, err);
+                        self.message_previews = Vec::new();
+                        self.full_content_by_index.clear();
                     }
                 }
             }
             SessionDetailMsg::Clear => {
                 self.session = None;
-                self.messages = Vec::new();
+                self.message_previews = Vec::new();
+                self.full_content_by_index.clear();
                 self.current_session_id.borrow_mut().take();
                 self.current_tool.borrow_mut().take();
             }
@@ -256,6 +274,7 @@ impl SimpleComponent for SessionDetail {
     }
 
     fn post_view(&self, widgets: &mut Self::Widgets) {
+        let start = std::time::Instant::now();
         // Clear existing message widgets
         while let Some(child) = widgets.messages_box.first_child() {
             widgets.messages_box.remove(&child);
@@ -299,10 +318,16 @@ impl SimpleComponent for SessionDetail {
             widgets.resume_button.set_label("Resume in Terminal");
 
             // Build message widgets
-            for message in &self.messages {
-                let message_widget = Self::build_message_widget(message);
+            for preview in &self.message_previews {
+                let message_widget = Self::build_message_widget(preview);
                 widgets.messages_box.append(&message_widget);
             }
+
+            tracing::debug!(
+                "post_view UI rendering took {:?} - {} rows rendered",
+                start.elapsed(),
+                self.message_previews.len()
+            );
 
             widgets
                 .content_stack
@@ -317,11 +342,11 @@ impl SimpleComponent for SessionDetail {
 }
 
 impl SessionDetail {
-    fn build_message_widget(message: &Message) -> gtk::Box {
+    fn build_message_widget(preview: &MessagePreview) -> gtk::Box {
         let container = gtk::Box::builder()
             .orientation(gtk::Orientation::Vertical)
             .spacing(4)
-            .css_classes(["message-row", message.role.css_class()])
+            .css_classes(["message-row", preview.role.css_class()])
             .build();
 
         // Header with role and time
@@ -331,14 +356,14 @@ impl SessionDetail {
             .build();
 
         let role_label = gtk::Label::builder()
-            .label(message.role.label())
-            .css_classes(["caption", "heading", message.role.css_class()])
+            .label(preview.role.label())
+            .css_classes(["caption", "heading", preview.role.css_class()])
             .halign(gtk::Align::Start)
             .build();
         header.append(&role_label);
 
         let time_label = gtk::Label::builder()
-            .label(message.timestamp.format("%H:%M:%S").to_string())
+            .label(preview.timestamp.format("%H:%M:%S").to_string())
             .css_classes(["caption", "dim-label"])
             .halign(gtk::Align::Start)
             .build();
@@ -348,7 +373,7 @@ impl SessionDetail {
 
         // Content
         let content_label = gtk::Label::builder()
-            .label(&message.content)
+            .label(&preview.content_preview)
             .wrap(true)
             .wrap_mode(gtk::pango::WrapMode::WordChar)
             .halign(gtk::Align::Start)
