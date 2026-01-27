@@ -6,8 +6,10 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::rc::Rc;
 
-use crate::database::{load_message_previews_for_session, load_session};
-use crate::models::{MessagePreview, Session, Tool};
+use crate::database::{
+    load_message_content_for_session_index, load_message_previews_for_session, load_session,
+};
+use crate::models::{MessagePreview, Role, Session, Tool};
 
 #[derive(Debug)]
 pub struct SessionDetail {
@@ -28,6 +30,7 @@ pub struct SessionDetail {
 pub enum SessionDetailMsg {
     SetSession(String),
     LoadMore,
+    LoadFullContent { message_index: usize },
     #[allow(dead_code)]
     Clear,
 }
@@ -291,6 +294,33 @@ impl SimpleComponent for SessionDetail {
                     }
                 }
             }
+            SessionDetailMsg::LoadFullContent { message_index } => {
+                // Check if we already have the full content
+                if self.full_content_by_index.contains_key(&message_index) {
+                    return;
+                }
+
+                if let Some(session_id) = self.current_session_id.borrow().as_ref() {
+                    match load_message_content_for_session_index(
+                        &self.db_path,
+                        session_id,
+                        message_index,
+                    ) {
+                        Ok(Some(content)) => {
+                            self.full_content_by_index.insert(message_index, content);
+                        }
+                        Ok(None) => {
+                            tracing::warn!(
+                                "No content found for message index {}",
+                                message_index
+                            );
+                        }
+                        Err(err) => {
+                            tracing::error!("Failed to load full content: {}", err);
+                        }
+                    }
+                }
+            }
             SessionDetailMsg::Clear => {
                 self.session = None;
                 self.message_previews = Vec::new();
@@ -348,7 +378,11 @@ impl SimpleComponent for SessionDetail {
 
             // Build message widgets
             for preview in &self.message_previews {
-                let message_widget = Self::build_message_widget(preview);
+                let message_widget = Self::build_message_widget(
+                    preview,
+                    &self.full_content_by_index,
+                    &self.sender,
+                );
                 widgets.messages_box.append(&message_widget);
             }
 
@@ -386,7 +420,11 @@ impl SimpleComponent for SessionDetail {
 }
 
 impl SessionDetail {
-    fn build_message_widget(preview: &MessagePreview) -> gtk::Box {
+    fn build_message_widget(
+        preview: &MessagePreview,
+        full_content_by_index: &HashMap<usize, String>,
+        sender: &ComponentSender<Self>,
+    ) -> gtk::Box {
         let container = gtk::Box::builder()
             .orientation(gtk::Orientation::Vertical)
             .spacing(4)
@@ -415,9 +453,21 @@ impl SessionDetail {
 
         container.append(&header);
 
-        // Content
+        // Determine what content to show
+        let is_tool_result = preview.role == Role::ToolResult;
+        let has_full_content = full_content_by_index.contains_key(&preview.index);
+        let is_truncated = preview.is_truncated();
+
+        // Choose content to display
+        let content_to_show = if has_full_content {
+            full_content_by_index.get(&preview.index).unwrap()
+        } else {
+            &preview.content_preview
+        };
+
+        // Content label
         let content_label = gtk::Label::builder()
-            .label(&preview.content_preview)
+            .label(content_to_show)
             .wrap(true)
             .wrap_mode(gtk::pango::WrapMode::WordChar)
             .halign(gtk::Align::Start)
@@ -425,6 +475,25 @@ impl SessionDetail {
             .selectable(true)
             .build();
         container.append(&content_label);
+
+        // Add "Show full" button for collapsed ToolResult
+        if is_tool_result && !has_full_content {
+            let sender = sender.clone();
+            let message_index = preview.index;
+            let button_label = if is_truncated { "Show full" } else { "Show" };
+
+            let expand_button = gtk::Button::builder()
+                .label(button_label)
+                .halign(gtk::Align::Start)
+                .margin_top(4)
+                .build();
+
+            expand_button.connect_clicked(move |_| {
+                sender.input(SessionDetailMsg::LoadFullContent { message_index });
+            });
+
+            container.append(&expand_button);
+        }
 
         container
     }
