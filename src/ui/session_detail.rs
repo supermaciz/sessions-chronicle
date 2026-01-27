@@ -17,6 +17,8 @@ pub struct SessionDetail {
     full_content_by_index: HashMap<usize, String>,
     page_size: usize,
     preview_len: usize,
+    has_more_messages: bool,
+    sender: ComponentSender<Self>,
     output_sender: relm4::Sender<SessionDetailOutput>,
     current_session_id: Rc<RefCell<Option<String>>>,
     current_tool: Rc<RefCell<Option<Tool>>>,
@@ -25,6 +27,7 @@ pub struct SessionDetail {
 #[derive(Debug)]
 pub enum SessionDetailMsg {
     SetSession(String),
+    LoadMore,
     #[allow(dead_code)]
     Clear,
 }
@@ -185,6 +188,8 @@ impl SimpleComponent for SessionDetail {
             full_content_by_index: HashMap::new(),
             page_size: 200,
             preview_len: 2000,
+            has_more_messages: false,
+            sender: sender.clone(),
             output_sender,
             current_session_id: current_session_id.clone(),
             current_tool: current_tool.clone(),
@@ -253,6 +258,7 @@ impl SimpleComponent for SessionDetail {
                     self.preview_len,
                 ) {
                     Ok(previews) => {
+                        self.has_more_messages = previews.len() == self.page_size;
                         self.message_previews = previews;
                         self.full_content_by_index.clear();
                     }
@@ -260,6 +266,28 @@ impl SimpleComponent for SessionDetail {
                         tracing::error!("Failed to load message previews for {}: {}", session_id, err);
                         self.message_previews = Vec::new();
                         self.full_content_by_index.clear();
+                        self.has_more_messages = false;
+                    }
+                }
+            }
+            SessionDetailMsg::LoadMore => {
+                if let Some(session_id) = self.current_session_id.borrow().as_ref() {
+                    let offset = self.message_previews.len();
+                    match load_message_previews_for_session(
+                        &self.db_path,
+                        session_id,
+                        self.page_size,
+                        offset,
+                        self.preview_len,
+                    ) {
+                        Ok(mut previews) => {
+                            self.has_more_messages = previews.len() == self.page_size;
+                            self.message_previews.append(&mut previews);
+                        }
+                        Err(err) => {
+                            tracing::error!("Failed to load more previews: {}", err);
+                            self.has_more_messages = false;
+                        }
                     }
                 }
             }
@@ -267,6 +295,7 @@ impl SimpleComponent for SessionDetail {
                 self.session = None;
                 self.message_previews = Vec::new();
                 self.full_content_by_index.clear();
+                self.has_more_messages = false;
                 self.current_session_id.borrow_mut().take();
                 self.current_tool.borrow_mut().take();
             }
@@ -321,6 +350,21 @@ impl SimpleComponent for SessionDetail {
             for preview in &self.message_previews {
                 let message_widget = Self::build_message_widget(preview);
                 widgets.messages_box.append(&message_widget);
+            }
+
+            // Add "Load more" button if there are more messages
+            if self.has_more_messages {
+                let sender = self.sender.clone();
+                let load_more_button = gtk::Button::builder()
+                    .label("Load more")
+                    .halign(gtk::Align::Center)
+                    .margin_top(12)
+                    .margin_bottom(12)
+                    .build();
+                load_more_button.connect_clicked(move |_| {
+                    sender.input(SessionDetailMsg::LoadMore);
+                });
+                widgets.messages_box.append(&load_more_button);
             }
 
             tracing::debug!(
