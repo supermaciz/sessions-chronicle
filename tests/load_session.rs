@@ -2,8 +2,8 @@ use rusqlite::Connection;
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use sessions_chronicle::database::load_session;
 use sessions_chronicle::database::schema::initialize_database;
-use sessions_chronicle::database::{load_messages_for_session, load_session};
 use sessions_chronicle::models::Role;
 
 struct TempDatabase {
@@ -134,38 +134,6 @@ fn load_session_returns_none_for_nonexistent() {
     let session = load_session(&db.path, "nonexistent").expect("Failed to load session");
 
     assert!(session.is_none());
-}
-
-#[test]
-fn load_messages_returns_ordered_by_index() {
-    let db = TempDatabase::new();
-    db.seed_with_messages();
-
-    let messages =
-        load_messages_for_session(&db.path, "test-session").expect("Failed to load messages");
-
-    assert_eq!(messages.len(), 4);
-    assert_eq!(messages[0].index, 0);
-    assert_eq!(messages[1].index, 1);
-    assert_eq!(messages[2].index, 2);
-    assert_eq!(messages[3].index, 3);
-
-    // Check roles are parsed correctly
-    assert_eq!(messages[0].role, Role::User);
-    assert_eq!(messages[1].role, Role::Assistant);
-    assert_eq!(messages[2].role, Role::ToolCall);
-    assert_eq!(messages[3].role, Role::ToolResult);
-}
-
-#[test]
-fn load_messages_returns_empty_for_nonexistent_session() {
-    let db = TempDatabase::new();
-    db.seed_with_messages();
-
-    let messages =
-        load_messages_for_session(&db.path, "nonexistent").expect("Failed to load messages");
-
-    assert!(messages.is_empty());
 }
 
 #[test]

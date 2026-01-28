@@ -7,7 +7,7 @@ use rusqlite::{Connection, Row, ToSql};
 use std::collections::HashSet;
 use std::path::Path;
 
-use crate::models::{Message, Role, Session, Tool};
+use crate::models::{MessagePreview, Role, Session, Tool};
 
 pub use indexer::SessionIndexer;
 
@@ -209,6 +209,7 @@ pub fn load_sessions(db_path: &Path, tools: &[Tool]) -> Result<Vec<Session>> {
 
 /// Load a single session by ID.
 pub fn load_session(db_path: &Path, session_id: &str) -> Result<Option<Session>> {
+    let start = std::time::Instant::now();
     if !db_path.exists() {
         return Ok(None);
     }
@@ -225,15 +226,25 @@ pub fn load_session(db_path: &Path, session_id: &str) -> Result<Option<Session>>
         .query([session_id])
         .context("Failed to query session")?;
 
-    if let Some(row) = rows.next()? {
+    let result = if let Some(row) = rows.next()? {
         Ok(Some(session_from_row(row)?))
     } else {
         Ok(None)
-    }
+    };
+
+    tracing::debug!("load_session took {:?}", start.elapsed());
+    result
 }
 
-/// Load all messages for a session, ordered by message_index.
-pub fn load_messages_for_session(db_path: &Path, session_id: &str) -> Result<Vec<Message>> {
+/// Load message previews for a session with pagination and truncation.
+pub fn load_message_previews_for_session(
+    db_path: &Path,
+    session_id: &str,
+    limit: usize,
+    offset: usize,
+    preview_len: usize,
+) -> Result<Vec<MessagePreview>> {
+    let start = std::time::Instant::now();
     if !db_path.exists() {
         return Ok(Vec::new());
     }
@@ -241,27 +252,36 @@ pub fn load_messages_for_session(db_path: &Path, session_id: &str) -> Result<Vec
     let db = Connection::open(db_path).context("Failed to open database")?;
 
     let mut stmt = db.prepare(
-        "SELECT session_id, message_index, role, content, timestamp
-         FROM messages
-         WHERE session_id = ?1
-         ORDER BY message_index ASC",
+        "SELECT
+          role,
+          substr(content, 1, ?2) AS content_preview,
+          length(content) AS content_len,
+          timestamp
+        FROM messages
+        WHERE session_id = ?1
+        ORDER BY CAST(message_index AS INTEGER) ASC
+        LIMIT ?3 OFFSET ?4",
     )?;
 
     let mut rows = stmt
-        .query([session_id])
-        .context("Failed to query messages")?;
+        .query([
+            &session_id as &dyn ToSql,
+            &(preview_len as i64),
+            &(limit as i64),
+            &(offset as i64),
+        ])
+        .context("Failed to query message previews")?;
 
-    let mut messages = Vec::new();
+    let mut previews = Vec::new();
     while let Some(row) = rows.next()? {
-        let role_str: String = row.get(2)?;
+        let role_str: String = row.get(0)?;
         let role = Role::from_storage(&role_str).unwrap_or(Role::User);
-        let timestamp: i64 = row.get(4)?;
+        let timestamp: i64 = row.get(3)?;
 
-        messages.push(Message {
-            session_id: row.get(0)?,
-            index: row.get::<_, i64>(1)? as usize,
+        previews.push(MessagePreview {
             role,
-            content: row.get(3)?,
+            content_preview: row.get(1)?,
+            content_len: row.get::<_, i64>(2)? as usize,
             timestamp: Utc
                 .timestamp_opt(timestamp, 0)
                 .single()
@@ -269,5 +289,11 @@ pub fn load_messages_for_session(db_path: &Path, session_id: &str) -> Result<Vec
         });
     }
 
-    Ok(messages)
+    tracing::debug!(
+        "load_message_previews_for_session took {:?} - {} previews",
+        start.elapsed(),
+        previews.len()
+    );
+
+    Ok(previews)
 }

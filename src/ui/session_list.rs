@@ -27,7 +27,7 @@ pub enum SessionListMsg {
 #[derive(Debug)]
 pub enum SessionListOutput {
     SessionSelected(String),
-    ResumeRequested(String),
+    ResumeRequested(String, Tool),
 }
 
 #[relm4::component(pub)]
@@ -226,9 +226,11 @@ impl SessionList {
         resume_button.set_tooltip_text(Some("Resume in terminal"));
         let sender_resume = sender.clone();
         let session_id_resume = session_id.clone();
+        let tool_resume = session.tool;
         resume_button.connect_clicked(move |_| {
             let _ = sender_resume.send(SessionListOutput::ResumeRequested(
                 session_id_resume.clone(),
+                tool_resume,
             ));
         });
 

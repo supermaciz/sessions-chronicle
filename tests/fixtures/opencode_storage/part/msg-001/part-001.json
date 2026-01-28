@@ -1,0 +1,7 @@
+{
+  "id": "part-001",
+  "sessionID": "session-001",
+  "messageID": "msg-001",
+  "type": "text",
+  "text": "Hello OpenCode"
+}

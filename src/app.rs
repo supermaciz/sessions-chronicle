@@ -48,7 +48,7 @@ pub(super) enum AppMsg {
     FiltersChanged(Vec<Tool>),
     SessionSelected(String),
     NavigateBack,
-    ResumeSession(String),
+    ResumeSession(String, Tool),
 }
 
 relm4::new_action_group!(pub(super) WindowActionGroup, "win");
@@ -163,14 +163,47 @@ impl SimpleComponent for App {
         if let Err(err) = fs::create_dir_all(&db_dir) {
             tracing::error!("Failed to create data dir {}: {}", db_dir.display(), err);
         } else {
-            match SessionIndexer::new(&db_path)
-                .and_then(|mut indexer| indexer.index_claude_sessions(&sessions_dir))
-            {
-                Ok(count) => {
-                    tracing::info!("Indexed {} sessions from {}", count, sessions_dir.display());
-                }
+            let mut indexer: Option<SessionIndexer> = match SessionIndexer::new(&db_path) {
+                Ok(i) => Some(i),
                 Err(err) => {
-                    tracing::error!("Failed to index sessions: {}", err);
+                    tracing::error!("Failed to initialize session indexer: {}", err);
+                    None
+                }
+            };
+
+            if let Some(ref mut idx) = indexer {
+                match idx.index_claude_sessions(&sessions_dir) {
+                    Ok(count) => {
+                        tracing::info!(
+                            "Indexed {} Claude sessions from {}",
+                            count,
+                            sessions_dir.display()
+                        );
+                    }
+                    Err(err) => {
+                        tracing::error!("Failed to index Claude sessions: {}", err);
+                    }
+                }
+
+                let opencode_session_dir = PathBuf::from(Tool::OpenCode.session_dir());
+                if let Some(opencode_root) = opencode_session_dir.parent() {
+                    match idx.index_opencode_sessions(opencode_root) {
+                        Ok(count) => {
+                            tracing::info!(
+                                "Indexed {} OpenCode sessions from {}",
+                                count,
+                                opencode_root.display()
+                            );
+                        }
+                        Err(err) => {
+                            tracing::error!("Failed to index OpenCode sessions: {}", err);
+                        }
+                    }
+                } else {
+                    tracing::warn!(
+                        "Failed to resolve OpenCode storage root from {}",
+                        opencode_session_dir.display()
+                    );
                 }
             }
         }
@@ -180,12 +213,12 @@ impl SimpleComponent for App {
                 .launch(db_path.clone())
                 .forward(sender.input_sender(), |msg| match msg {
                     SessionListOutput::SessionSelected(id) => AppMsg::SessionSelected(id),
-                    SessionListOutput::ResumeRequested(id) => AppMsg::ResumeSession(id),
+                    SessionListOutput::ResumeRequested(id, tool) => AppMsg::ResumeSession(id, tool),
                 });
         let session_detail = SessionDetail::builder().launch(db_path.clone()).forward(
             sender.input_sender(),
             |msg| match msg {
-                SessionDetailOutput::ResumeRequested(id) => AppMsg::ResumeSession(id),
+                SessionDetailOutput::ResumeRequested(id, tool) => AppMsg::ResumeSession(id, tool),
             },
         );
         let sidebar = Sidebar::builder()
@@ -333,7 +366,7 @@ impl SimpleComponent for App {
                     }
                 }
             }
-            AppMsg::ResumeSession(session_id) => {
+            AppMsg::ResumeSession(session_id, tool) => {
                 tracing::debug!("Resume session requested: {}", session_id);
 
                 // Load session from DB
@@ -393,7 +426,7 @@ impl SimpleComponent for App {
                 };
 
                 // Build and spawn resume command
-                match terminal::build_resume_command(&session_id, &workdir) {
+                match terminal::build_resume_command(tool, &session_id, &workdir) {
                     Ok(args) => match terminal::spawn_terminal(terminal, &args) {
                         Ok(_) => {
                             tracing::info!(

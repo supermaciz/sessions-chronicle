@@ -10,7 +10,7 @@ use crate::models::{Message, Role, Session, Tool};
 pub struct ClaudeCodeParser;
 
 impl ClaudeCodeParser {
-    pub fn parse_metadata(&self, file_path: &Path) -> Result<Session> {
+    pub fn parse(&self, file_path: &Path) -> Result<(Session, Vec<Message>)> {
         let file = File::open(file_path).context("Failed to open session file")?;
         let reader = BufReader::new(file);
 
@@ -22,20 +22,18 @@ impl ClaudeCodeParser {
             .file_stem()
             .and_then(|s| s.to_str())
             .map(|s| s.to_string());
-        let mut session_id = file_stem_id;
-        let mut total_count = 0;
+        let mut session_id = None;
         let mut has_user_message = false;
+        let mut messages = Vec::new();
 
-        for line in reader.lines() {
+        for (index, line) in reader.lines().enumerate() {
             let line = line.context("Failed to read line")?;
             if line.trim().is_empty() {
                 continue;
             }
-            total_count += 1;
 
             let event: Value = serde_json::from_str(&line).context("Failed to parse JSON")?;
 
-            // Extract session ID from first event
             if session_id.is_none() {
                 session_id = event
                     .get("sessionId")
@@ -43,7 +41,6 @@ impl ClaudeCodeParser {
                     .map(|s| s.to_string());
             }
 
-            // Extract project path from cwd
             if project_path.is_none() {
                 project_path = event
                     .get("cwd")
@@ -51,20 +48,9 @@ impl ClaudeCodeParser {
                     .map(|s| s.to_string());
             }
 
-            // Date column semantics:
-            // - Primary: end time = latest timestamp among message-like events
-            // - Fallback: start time = earliest timestamp among message-like events
             let event_type = event.get("type").and_then(|v| v.as_str());
-            let is_message_like = match event_type {
-                Some("user") | Some("assistant") => true,
-                Some("system") => event
-                    .get("subtype")
-                    .and_then(|v| v.as_str())
-                    .is_some_and(|s| s == "local_command"),
-                _ => false,
-            };
+            let is_message_like = matches!(event_type, Some("user") | Some("assistant"));
 
-            // Track if this is a user message (independent of timestamp validity)
             if event_type == Some("user") {
                 has_user_message = true;
             }
@@ -83,56 +69,41 @@ impl ClaudeCodeParser {
                     None => ts,
                 });
             }
-        }
-
-        // Skip empty sessions (no message-like events)
-        let Some(start_time) = earliest_timestamp else {
-            anyhow::bail!("Session contains no messages");
-        };
-
-        // Skip sessions with no user input
-        if !has_user_message {
-            anyhow::bail!("Session contains no user messages");
-        }
-
-        let last_updated = latest_timestamp.unwrap_or(start_time);
-
-        Ok(Session {
-            id: session_id.unwrap_or_else(|| {
-                file_path
-                    .file_stem()
-                    .and_then(|s| s.to_str())
-                    .unwrap_or("unknown")
-                    .to_string()
-            }),
-            tool: Tool::ClaudeCode,
-            project_path,
-            start_time,
-            message_count: total_count,
-            file_path: file_path.to_str().unwrap().to_string(),
-            last_updated,
-        })
-    }
-
-    pub fn parse_messages(&self, file_path: &Path) -> Result<Vec<Message>> {
-        let file = File::open(file_path)?;
-        let reader = BufReader::new(file);
-        let mut messages = Vec::new();
-
-        for (index, line) in reader.lines().enumerate() {
-            let line = line.context("Failed to read line")?;
-            if line.trim().is_empty() {
-                continue;
-            }
-
-            let event: Value = serde_json::from_str(&line).context("Failed to parse JSON")?;
 
             if let Some(msg) = Self::parse_event(&event, index) {
                 messages.push(msg);
             }
         }
 
-        Ok(messages)
+        let Some(start_time) = earliest_timestamp else {
+            anyhow::bail!("Session contains no messages");
+        };
+
+        if !has_user_message {
+            anyhow::bail!("Session contains no user messages");
+        }
+
+        let final_session_id = session_id
+            .or(file_stem_id)
+            .unwrap_or_else(|| "unknown".to_string());
+        for message in &mut messages {
+            message.session_id = final_session_id.clone();
+        }
+
+        let last_updated = latest_timestamp.unwrap_or(start_time);
+
+        Ok((
+            Session {
+                id: final_session_id,
+                tool: Tool::ClaudeCode,
+                project_path,
+                start_time,
+                message_count: messages.len(),
+                file_path: file_path.to_str().unwrap().to_string(),
+                last_updated,
+            },
+            messages,
+        ))
     }
 
     fn parse_event(event: &Value, index: usize) -> Option<Message> {
@@ -146,26 +117,6 @@ impl ClaudeCodeParser {
             "assistant" => {
                 let content = Self::extract_content(event.get("message")?.get("content")?)?;
                 (Role::Assistant, content)
-            }
-            "system" => {
-                let subtype = event.get("subtype")?.as_str()?;
-                match subtype {
-                    "local_command" => {
-                        let stdout = event.get("stdout").and_then(|v| v.as_str()).unwrap_or("");
-                        let cmd = event
-                            .get("command")
-                            .and_then(|v| v.as_array())
-                            .map(|arr| {
-                                arr.iter()
-                                    .filter_map(|v| v.as_str())
-                                    .collect::<Vec<_>>()
-                                    .join(" ")
-                            })
-                            .unwrap_or_else(|| "command".to_string());
-                        (Role::ToolResult, format!("$ {}\n{}", cmd, stdout))
-                    }
-                    _ => return None,
-                }
             }
             _ => return None,
         };
@@ -212,10 +163,6 @@ impl ClaudeCodeParser {
                     match block_type {
                         "text" => block.get("text")?.as_str().map(|s| s.to_string()),
                         "thinking" => block.get("thinking")?.as_str().map(|s| s.to_string()),
-                        "tool_use" => {
-                            let name = block.get("name")?.as_str()?;
-                            Some(format!("[Tool: {}]", name))
-                        }
                         _ => None,
                     }
                 })
@@ -253,7 +200,7 @@ mod tests {
         ]);
 
         let parser = ClaudeCodeParser;
-        let result = parser.parse_metadata(file.path());
+        let result = parser.parse(file.path());
 
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("no user messages"));
@@ -267,7 +214,7 @@ mod tests {
         ]);
 
         let parser = ClaudeCodeParser;
-        let result = parser.parse_metadata(file.path());
+        let result = parser.parse(file.path());
 
         assert!(result.is_ok());
     }
@@ -281,7 +228,7 @@ mod tests {
         ]);
 
         let parser = ClaudeCodeParser;
-        let result = parser.parse_metadata(file.path());
+        let result = parser.parse(file.path());
 
         assert!(result.is_ok());
     }
@@ -291,9 +238,90 @@ mod tests {
         let file = create_temp_session(&[]);
 
         let parser = ClaudeCodeParser;
-        let result = parser.parse_metadata(file.path());
+        let result = parser.parse(file.path());
 
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("no messages"));
+    }
+
+    #[test]
+    fn parse_returns_session_and_messages() {
+        let file = create_temp_session(&[
+            r#"{"type":"user","timestamp":"2024-01-01T00:00:00Z","sessionId":"session-123","cwd":"/tmp","message":{"content":"Hello"}}"#,
+            r#"{"type":"assistant","timestamp":"2024-01-01T00:00:01Z","sessionId":"session-123","cwd":"/tmp","message":{"content":"Hi!"}}"#,
+        ]);
+
+        let parser = ClaudeCodeParser;
+        let (session, messages) = parser.parse(file.path()).unwrap();
+
+        let expected_start = ClaudeCodeParser::parse_timestamp("2024-01-01T00:00:00Z").unwrap();
+        let expected_end = ClaudeCodeParser::parse_timestamp("2024-01-01T00:00:01Z").unwrap();
+
+        assert_eq!(session.id, "session-123");
+        assert_eq!(session.project_path.as_deref(), Some("/tmp"));
+        assert_eq!(session.start_time, expected_start);
+        assert_eq!(session.last_updated, expected_end);
+        assert_eq!(session.message_count, 2);
+
+        assert_eq!(messages.len(), 2);
+        assert_eq!(messages[0].session_id, "session-123");
+        assert_eq!(messages[0].index, 0);
+        assert_eq!(messages[0].role, Role::User);
+        assert_eq!(messages[0].content, "Hello");
+        assert_eq!(messages[1].session_id, "session-123");
+        assert_eq!(messages[1].index, 1);
+        assert_eq!(messages[1].role, Role::Assistant);
+        assert_eq!(messages[1].content, "Hi!");
+    }
+
+    #[test]
+    fn parse_prefers_event_session_id_and_propagates_to_messages() {
+        let file = create_temp_session(&[
+            r#"{"type":"user","timestamp":"2024-01-01T00:00:00Z","sessionId":"event-123","message":{"content":"Hello"}}"#,
+            r#"{"type":"assistant","timestamp":"2024-01-01T00:00:01Z","sessionId":"event-123","message":{"content":"Hi!"}}"#,
+        ]);
+
+        let parser = ClaudeCodeParser;
+        let (session, messages) = parser.parse(file.path()).unwrap();
+
+        assert_eq!(session.id, "event-123");
+        assert_eq!(messages.len(), 2);
+        assert_eq!(messages[0].session_id, "event-123");
+        assert_eq!(messages[1].session_id, "event-123");
+    }
+
+    #[test]
+    fn parse_message_count_matches_parsed_messages() {
+        let file = create_temp_session(&[
+            r#"{"type":"user","timestamp":"2024-01-01T00:00:00Z","sessionId":"session-123","message":{"content":"Hello"}}"#,
+            r#"{"type":"system","timestamp":"2024-01-01T00:00:00Z","subtype":"session_start"}"#,
+            r#"{"type":"assistant","timestamp":"2024-01-01T00:00:01Z","sessionId":"session-123","message":{"content":"Hi!"}}"#,
+        ]);
+
+        let parser = ClaudeCodeParser;
+        let (session, messages) = parser.parse(file.path()).unwrap();
+
+        assert_eq!(messages.len(), 2);
+        assert_eq!(session.message_count, 2);
+    }
+
+    #[test]
+    fn parse_ignores_tool_events() {
+        let file = create_temp_session(&[
+            r#"{"type":"user","timestamp":"2024-01-01T00:00:00Z","sessionId":"session-123","message":{"content":"Hello"}}"#,
+            r#"{"type":"assistant","timestamp":"2024-01-01T00:00:01Z","sessionId":"session-123","message":{"content":[{"type":"tool_use","name":"bash","input":{"command":"ls"}}]}}"#,
+            r#"{"type":"system","timestamp":"2024-01-01T00:00:02Z","subtype":"local_command","command":["ls","-la"],"stdout":"file1.txt\nfile2.txt"}"#,
+            r#"{"type":"assistant","timestamp":"2024-01-01T00:00:03Z","sessionId":"session-123","message":{"content":"Here are the files"}}"#,
+        ]);
+
+        let parser = ClaudeCodeParser;
+        let (session, messages) = parser.parse(file.path()).unwrap();
+
+        assert_eq!(messages.len(), 2);
+        assert_eq!(session.message_count, 2);
+        assert_eq!(messages[0].role, Role::User);
+        assert_eq!(messages[0].content, "Hello");
+        assert_eq!(messages[1].role, Role::Assistant);
+        assert_eq!(messages[1].content, "Here are the files");
     }
 }

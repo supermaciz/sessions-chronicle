@@ -1,3 +1,4 @@
+use crate::models::Tool;
 use anyhow::{Context, Result};
 use std::env;
 use std::path::Path;
@@ -150,12 +151,18 @@ impl FromStr for Terminal {
     }
 }
 
-pub fn build_resume_command(session_id: &str, workdir: &Path) -> Result<Vec<String>> {
+pub fn build_resume_command(tool: Tool, session_id: &str, workdir: &Path) -> Result<Vec<String>> {
     let workdir = workdir
         .canonicalize()
         .context("Failed to canonicalize workdir")?;
 
-    let shell_cmd = "cd \"$1\" && claude -r \"$2\"; exec bash".to_string();
+    let tool_cmd = match tool {
+        Tool::ClaudeCode => "claude -r \"$2\"".to_string(),
+        Tool::OpenCode => "opencode --session \"$2\"".to_string(),
+        Tool::Codex => "codex \"$2\"".to_string(),
+    };
+
+    let shell_cmd = format!("cd \"$1\" && {}; exec bash", tool_cmd);
 
     Ok(vec![
         "bash".to_string(),
@@ -254,11 +261,49 @@ mod tests {
             std::fs::create_dir(&project_dir).ok();
         }
 
-        let cmd = build_resume_command("test-session-id", &project_dir).unwrap();
+        let cmd = build_resume_command(Tool::ClaudeCode, "test-session-id", &project_dir).unwrap();
         assert_eq!(cmd.len(), 6);
         assert_eq!(cmd[0], "bash");
         assert_eq!(cmd[1], "-lc");
-        assert!(cmd[2].contains("claude -r"));
+        assert!(cmd[2].contains("claude -r \"$2\""));
+        assert_eq!(cmd[3], "--");
+        assert!(cmd[4].ends_with("test-project"));
+        assert_eq!(cmd[5], "test-session-id");
+    }
+
+    #[test]
+    fn test_build_resume_command_opencode() {
+        let temp_dir = std::env::temp_dir();
+        let project_dir = temp_dir.join("test-project");
+
+        if !project_dir.exists() {
+            std::fs::create_dir(&project_dir).ok();
+        }
+
+        let cmd = build_resume_command(Tool::OpenCode, "test-session-id", &project_dir).unwrap();
+        assert_eq!(cmd.len(), 6);
+        assert_eq!(cmd[0], "bash");
+        assert_eq!(cmd[1], "-lc");
+        assert!(cmd[2].contains("opencode --session \"$2\""));
+        assert_eq!(cmd[3], "--");
+        assert!(cmd[4].ends_with("test-project"));
+        assert_eq!(cmd[5], "test-session-id");
+    }
+
+    #[test]
+    fn test_build_resume_command_codex() {
+        let temp_dir = std::env::temp_dir();
+        let project_dir = temp_dir.join("test-project");
+
+        if !project_dir.exists() {
+            std::fs::create_dir(&project_dir).ok();
+        }
+
+        let cmd = build_resume_command(Tool::Codex, "test-session-id", &project_dir).unwrap();
+        assert_eq!(cmd.len(), 6);
+        assert_eq!(cmd[0], "bash");
+        assert_eq!(cmd[1], "-lc");
+        assert!(cmd[2].contains("codex \"$2\""));
         assert_eq!(cmd[3], "--");
         assert!(cmd[4].ends_with("test-project"));
         assert_eq!(cmd[5], "test-session-id");

@@ -5,28 +5,34 @@ use std::cell::RefCell;
 use std::path::PathBuf;
 use std::rc::Rc;
 
-use crate::database::{load_messages_for_session, load_session};
-use crate::models::{Message, Session};
+use crate::database::{load_message_previews_for_session, load_session};
+use crate::models::{MessagePreview, Session, Tool};
 
 #[derive(Debug)]
 pub struct SessionDetail {
     db_path: PathBuf,
     session: Option<Session>,
-    messages: Vec<Message>,
+    message_previews: Vec<MessagePreview>,
+    page_size: usize,
+    preview_len: usize,
+    has_more_messages: bool,
+    sender: ComponentSender<Self>,
     output_sender: relm4::Sender<SessionDetailOutput>,
     current_session_id: Rc<RefCell<Option<String>>>,
+    current_tool: Rc<RefCell<Option<Tool>>>,
 }
 
 #[derive(Debug)]
 pub enum SessionDetailMsg {
     SetSession(String),
+    LoadMore,
     #[allow(dead_code)]
     Clear,
 }
 
 #[derive(Debug)]
 pub enum SessionDetailOutput {
-    ResumeRequested(String),
+    ResumeRequested(String, Tool),
 }
 
 #[relm4::component(pub)]
@@ -171,13 +177,19 @@ impl SimpleComponent for SessionDetail {
         let output_sender = sender.output_sender().clone();
 
         let current_session_id = Rc::new(RefCell::new(None));
+        let current_tool = Rc::new(RefCell::new(None));
 
         let model = Self {
             db_path,
             session: None,
-            messages: Vec::new(),
+            message_previews: Vec::new(),
+            page_size: 200,
+            preview_len: 2000,
+            has_more_messages: false,
+            sender: sender.clone(),
             output_sender,
             current_session_id: current_session_id.clone(),
+            current_tool: current_tool.clone(),
         };
         let widgets = view_output!();
 
@@ -189,8 +201,13 @@ impl SimpleComponent for SessionDetail {
         // Connect resume button once
         let sender = model.output_sender.clone();
         widgets.resume_button.connect_clicked(move |_| {
-            if let Some(session_id) = current_session_id.borrow().as_ref() {
-                let _ = sender.send(SessionDetailOutput::ResumeRequested(session_id.clone()));
+            if let Some(session_id) = current_session_id.borrow().as_ref()
+                && let Some(tool) = current_tool.borrow().as_ref()
+            {
+                let _ = sender.send(SessionDetailOutput::ResumeRequested(
+                    session_id.clone(),
+                    *tool,
+                ));
             }
         });
 
@@ -206,44 +223,83 @@ impl SimpleComponent for SessionDetail {
                         self.current_session_id
                             .borrow_mut()
                             .replace(session.id.clone());
+                        self.current_tool.borrow_mut().replace(session.tool);
                         self.session = Some(session);
                     }
                     Ok(None) => {
                         tracing::warn!("Session not found: {}", session_id);
                         self.session = None;
-                        self.messages = Vec::new();
+                        self.message_previews = Vec::new();
                         self.current_session_id.borrow_mut().take();
+                        self.current_tool.borrow_mut().take();
                         return;
                     }
                     Err(err) => {
                         tracing::error!("Failed to load session {}: {}", session_id, err);
                         self.session = None;
-                        self.messages = Vec::new();
+                        self.message_previews = Vec::new();
                         self.current_session_id.borrow_mut().take();
+                        self.current_tool.borrow_mut().take();
                         return;
                     }
                 }
 
-                // Load messages
-                match load_messages_for_session(&self.db_path, &session_id) {
-                    Ok(messages) => {
-                        self.messages = messages;
+                // Load first page of message previews
+                match load_message_previews_for_session(
+                    &self.db_path,
+                    &session_id,
+                    self.page_size,
+                    0,
+                    self.preview_len,
+                ) {
+                    Ok(previews) => {
+                        self.has_more_messages = previews.len() == self.page_size;
+                        self.message_previews = previews;
                     }
                     Err(err) => {
-                        tracing::error!("Failed to load messages for {}: {}", session_id, err);
-                        self.messages = Vec::new();
+                        tracing::error!(
+                            "Failed to load message previews for {}: {}",
+                            session_id,
+                            err
+                        );
+                        self.message_previews = Vec::new();
+                        self.has_more_messages = false;
+                    }
+                }
+            }
+            SessionDetailMsg::LoadMore => {
+                if let Some(session_id) = self.current_session_id.borrow().as_ref() {
+                    let offset = self.message_previews.len();
+                    match load_message_previews_for_session(
+                        &self.db_path,
+                        session_id,
+                        self.page_size,
+                        offset,
+                        self.preview_len,
+                    ) {
+                        Ok(mut previews) => {
+                            self.has_more_messages = previews.len() == self.page_size;
+                            self.message_previews.append(&mut previews);
+                        }
+                        Err(err) => {
+                            tracing::error!("Failed to load more previews: {}", err);
+                            self.has_more_messages = false;
+                        }
                     }
                 }
             }
             SessionDetailMsg::Clear => {
                 self.session = None;
-                self.messages = Vec::new();
+                self.message_previews = Vec::new();
+                self.has_more_messages = false;
                 self.current_session_id.borrow_mut().take();
+                self.current_tool.borrow_mut().take();
             }
         }
     }
 
     fn post_view(&self, widgets: &mut Self::Widgets) {
+        let start = std::time::Instant::now();
         // Clear existing message widgets
         while let Some(child) = widgets.messages_box.first_child() {
             widgets.messages_box.remove(&child);
@@ -287,10 +343,31 @@ impl SimpleComponent for SessionDetail {
             widgets.resume_button.set_label("Resume in Terminal");
 
             // Build message widgets
-            for message in &self.messages {
-                let message_widget = Self::build_message_widget(message);
+            for preview in &self.message_previews {
+                let message_widget = Self::build_message_widget(preview);
                 widgets.messages_box.append(&message_widget);
             }
+
+            // Add "Load more" button if there are more messages
+            if self.has_more_messages {
+                let sender = self.sender.clone();
+                let load_more_button = gtk::Button::builder()
+                    .label("Load more")
+                    .halign(gtk::Align::Center)
+                    .margin_top(12)
+                    .margin_bottom(12)
+                    .build();
+                load_more_button.connect_clicked(move |_| {
+                    sender.input(SessionDetailMsg::LoadMore);
+                });
+                widgets.messages_box.append(&load_more_button);
+            }
+
+            tracing::debug!(
+                "post_view UI rendering took {:?} - {} rows rendered",
+                start.elapsed(),
+                self.message_previews.len()
+            );
 
             widgets
                 .content_stack
@@ -305,11 +382,11 @@ impl SimpleComponent for SessionDetail {
 }
 
 impl SessionDetail {
-    fn build_message_widget(message: &Message) -> gtk::Box {
+    fn build_message_widget(preview: &MessagePreview) -> gtk::Box {
         let container = gtk::Box::builder()
             .orientation(gtk::Orientation::Vertical)
             .spacing(4)
-            .css_classes(["message-row", message.role.css_class()])
+            .css_classes(["message-row", preview.role.css_class()])
             .build();
 
         // Header with role and time
@@ -319,14 +396,14 @@ impl SessionDetail {
             .build();
 
         let role_label = gtk::Label::builder()
-            .label(message.role.label())
-            .css_classes(["caption", "heading", message.role.css_class()])
+            .label(preview.role.label())
+            .css_classes(["caption", "heading", preview.role.css_class()])
             .halign(gtk::Align::Start)
             .build();
         header.append(&role_label);
 
         let time_label = gtk::Label::builder()
-            .label(message.timestamp.format("%H:%M:%S").to_string())
+            .label(preview.timestamp.format("%H:%M:%S").to_string())
             .css_classes(["caption", "dim-label"])
             .halign(gtk::Align::Start)
             .build();
@@ -334,9 +411,9 @@ impl SessionDetail {
 
         container.append(&header);
 
-        // Content
+        // Content label
         let content_label = gtk::Label::builder()
-            .label(&message.content)
+            .label(&preview.content_preview)
             .wrap(true)
             .wrap_mode(gtk::pango::WrapMode::WordChar)
             .halign(gtk::Align::Start)
@@ -344,6 +421,17 @@ impl SessionDetail {
             .selectable(true)
             .build();
         container.append(&content_label);
+
+        // Add truncation badge if content is truncated
+        if preview.is_truncated() {
+            let truncation_badge = gtk::Label::builder()
+                .label("(content truncated)")
+                .css_classes(["caption", "dim-label"])
+                .halign(gtk::Align::Start)
+                .margin_top(4)
+                .build();
+            container.append(&truncation_badge);
+        }
 
         container
     }

@@ -1,0 +1,9 @@
+{
+  "id": "session-002",
+  "parentID": "session-001",
+  "directory": "/projects/alpha/subagent",
+  "time": {
+    "created": 1704067300000,
+    "updated": 1704067350000
+  }
+}

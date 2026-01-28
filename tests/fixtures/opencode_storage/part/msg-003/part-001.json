@@ -1,0 +1,7 @@
+{
+  "id": "part-001",
+  "sessionID": "session-003",
+  "messageID": "msg-003",
+  "type": "text",
+  "text": "Global session user message"
+}
