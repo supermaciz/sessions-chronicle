@@ -422,6 +422,17 @@ impl SessionDetail {
             .build();
         container.append(&content_label);
 
+        // Add truncation badge if content is truncated
+        if preview.is_truncated() {
+            let truncation_badge = gtk::Label::builder()
+                .label("(content truncated)")
+                .css_classes(["caption", "dim-label"])
+                .halign(gtk::Align::Start)
+                .margin_top(4)
+                .build();
+            container.append(&truncation_badge);
+        }
+
         container
     }
 
