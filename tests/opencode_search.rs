@@ -2,8 +2,8 @@ use rusqlite::Connection;
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use sessions_chronicle::database::SessionIndexer;
 use sessions_chronicle::database::search_sessions;
+use sessions_chronicle::database::SessionIndexer;
 use sessions_chronicle::models::Tool;
 
 struct TempDatabase {
@@ -69,7 +69,7 @@ fn opencode_search_finds_text_part_content() {
 }
 
 #[test]
-fn opencode_search_finds_tool_output() {
+fn opencode_search_excludes_tool_output() {
     let db = TempDatabase::new();
     let storage_root = PathBuf::from("tests/fixtures/opencode_storage");
 
@@ -80,18 +80,13 @@ fn opencode_search_finds_tool_output() {
 
     assert_eq!(indexed_count, 2, "Should index 2 non-subagent sessions");
 
-    // Search for content that exists only in tool output
-    let sessions =
-        search_sessions(&db.path, &[Tool::OpenCode], "total").expect("Search failed");
+    // Search for content that exists only in tool output (now excluded)
+    let sessions = search_sessions(&db.path, &[Tool::OpenCode], "total").expect("Search failed");
 
     assert_eq!(
         sessions.len(),
-        1,
-        "Should find session containing tool output with 'total'"
-    );
-    assert_eq!(
-        sessions[0].id, "session-001",
-        "Should find the correct session with bash tool output"
+        0,
+        "Should not find sessions when searching for tool output content"
     );
 }
 
