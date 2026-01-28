@@ -49,10 +49,7 @@ impl ClaudeCodeParser {
             }
 
             let event_type = event.get("type").and_then(|v| v.as_str());
-            let is_message_like = match event_type {
-                Some("user") | Some("assistant") => true,
-                _ => false,
-            };
+            let is_message_like = matches!(event_type, Some("user") | Some("assistant"));
 
             if event_type == Some("user") {
                 has_user_message = true;
