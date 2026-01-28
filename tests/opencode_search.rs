@@ -2,8 +2,8 @@ use rusqlite::Connection;
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use sessions_chronicle::database::search_sessions;
 use sessions_chronicle::database::SessionIndexer;
+use sessions_chronicle::database::search_sessions;
 use sessions_chronicle::models::Tool;
 
 struct TempDatabase {
