@@ -77,9 +77,9 @@ fn load_message_previews_returns_numeric_order() {
         .expect("Failed to load previews");
 
     assert_eq!(previews.len(), 3);
-    assert_eq!(previews[0].index, 1);
-    assert_eq!(previews[1].index, 2);
-    assert_eq!(previews[2].index, 10);
+    assert_eq!(previews[0].content_preview, "Message 1");
+    assert_eq!(previews[1].content_preview, "Message 2");
+    assert_eq!(previews[2].content_preview, "Message 10");
 }
 
 #[test]
@@ -119,21 +119,21 @@ fn load_message_previews_respects_pagination() {
         .expect("Failed to load page 1");
 
     assert_eq!(page1.len(), 2);
-    assert_eq!(page1[0].index, 0);
-    assert_eq!(page1[1].index, 1);
+    assert_eq!(page1[0].content_preview, "Message 0");
+    assert_eq!(page1[1].content_preview, "Message 1");
 
     // Load second page (limit 2, offset 2)
     let page2 = load_message_previews_for_session(&db.path, "test-session", 2, 2, 2000)
         .expect("Failed to load page 2");
 
     assert_eq!(page2.len(), 2);
-    assert_eq!(page2[0].index, 2);
-    assert_eq!(page2[1].index, 3);
+    assert_eq!(page2[0].content_preview, "Message 2");
+    assert_eq!(page2[1].content_preview, "Message 3");
 
     // Load third page (limit 2, offset 4) - should have only 1 message
     let page3 = load_message_previews_for_session(&db.path, "test-session", 2, 4, 2000)
         .expect("Failed to load page 3");
 
     assert_eq!(page3.len(), 1);
-    assert_eq!(page3[0].index, 4);
+    assert_eq!(page3[0].content_preview, "Message 4");
 }
