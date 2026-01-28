@@ -350,79 +350,9 @@ impl OpenCodeParser {
                     timestamp,
                 }]
             }
-            "tool" => {
-                // OpenCode uses "tool" type with tool name in "tool" field
-                // and state containing input/output
-                let name = part
-                    .raw
-                    .get("tool")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("tool");
-
-                let state = part.raw.get("state");
-                let input_summary = state
-                    .and_then(|s| s.get("input"))
-                    .map(|v| match v {
-                        Value::String(s) => s.clone(),
-                        _ => serde_json::to_string(v).unwrap_or_default(),
-                    })
-                    .unwrap_or_default();
-
-                let content = if input_summary.is_empty() {
-                    format!("[Tool: {}]", name)
-                } else {
-                    format!("[Tool: {}] {}", name, input_summary)
-                };
-
-                let mut messages = vec![Message {
-                    session_id: session_id.to_string(),
-                    index: 0,
-                    role: Role::ToolCall,
-                    content,
-                    timestamp,
-                }];
-
-                // Emit a ToolResult message if output or error is present
-                if let Some(state) = state {
-                    let output = state
-                        .get("output")
-                        .map(|v| match v {
-                            Value::String(s) => s.clone(),
-                            _ => serde_json::to_string_pretty(v).unwrap_or_default(),
-                        })
-                        .filter(|s| !s.trim().is_empty());
-
-                    let error = state
-                        .get("error")
-                        .and_then(|v| v.as_str())
-                        .map(str::to_string)
-                        .filter(|s| !s.trim().is_empty());
-
-                    if let Some(output_text) = output {
-                        messages.push(Message {
-                            session_id: session_id.to_string(),
-                            index: 0,
-                            role: Role::ToolResult,
-                            content: output_text,
-                            timestamp,
-                        });
-                    } else if let Some(error_text) = error {
-                        messages.push(Message {
-                            session_id: session_id.to_string(),
-                            index: 0,
-                            role: Role::ToolResult,
-                            content: format!("Error: {}", error_text),
-                            timestamp,
-                        });
-                    }
-                }
-
-                messages
-            }
             // Skip metadata/control parts
-            "reasoning" | "step-start" | "step-finish" | "snapshot" | "compaction" | "subtask" => {
-                Vec::new()
-            }
+            "tool" | "reasoning" | "step-start" | "step-finish" | "snapshot" | "compaction"
+            | "subtask" => Vec::new(),
             other => {
                 tracing::debug!("Unhandled part type: {}", other);
                 Vec::new()
@@ -672,16 +602,13 @@ mod tests {
         let parser = OpenCodeParser::new(root);
         let (_session, messages) = parser.parse(&session_path).unwrap();
 
-        assert_eq!(messages.len(), 3);
+        assert_eq!(messages.len(), 2);
         assert_eq!(messages[0].index, 0);
         assert_eq!(messages[0].role, Role::User);
         assert_eq!(messages[0].content, "First");
         assert_eq!(messages[1].index, 1);
         assert_eq!(messages[1].role, Role::User);
         assert_eq!(messages[1].content, "Second");
-        assert_eq!(messages[2].index, 2);
-        assert_eq!(messages[2].role, Role::ToolCall);
-        assert_eq!(messages[2].content, "[Tool: grep] {\"pattern\":\"rust\"}");
     }
 
     #[test]
@@ -828,7 +755,7 @@ mod tests {
     }
 
     #[test]
-    fn tool_part_extracts_tool_name_and_input() {
+    fn tool_part_is_skipped() {
         let temp_dir = TempDir::new().unwrap();
         let root = temp_dir.path();
 
@@ -898,14 +825,13 @@ mod tests {
         let parser = OpenCodeParser::new(root);
         let (_session, messages) = parser.parse(&session_path).unwrap();
 
-        assert_eq!(messages.len(), 2);
-        assert_eq!(messages[1].role, Role::ToolCall);
-        assert!(messages[1].content.contains("[Tool: read]"));
-        assert!(messages[1].content.contains("/tmp/test.txt"));
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].role, Role::User);
+        assert_eq!(messages[0].content, "Run tool");
     }
 
     #[test]
-    fn tool_part_with_output_emits_tool_result() {
+    fn tool_part_with_output_is_skipped() {
         let temp_dir = TempDir::new().unwrap();
         let root = temp_dir.path();
 
@@ -976,16 +902,13 @@ mod tests {
         let parser = OpenCodeParser::new(root);
         let (_session, messages) = parser.parse(&session_path).unwrap();
 
-        assert_eq!(messages.len(), 3);
+        assert_eq!(messages.len(), 1);
         assert_eq!(messages[0].role, Role::User);
-        assert_eq!(messages[1].role, Role::ToolCall);
-        assert!(messages[1].content.contains("[Tool: read]"));
-        assert_eq!(messages[2].role, Role::ToolResult);
-        assert_eq!(messages[2].content, "File contents here\nLine 2\nLine 3");
+        assert_eq!(messages[0].content, "Read file");
     }
 
     #[test]
-    fn tool_part_with_error_emits_tool_result() {
+    fn tool_part_with_error_is_skipped() {
         let temp_dir = TempDir::new().unwrap();
         let root = temp_dir.path();
 
@@ -1056,11 +979,9 @@ mod tests {
         let parser = OpenCodeParser::new(root);
         let (_session, messages) = parser.parse(&session_path).unwrap();
 
-        assert_eq!(messages.len(), 3);
+        assert_eq!(messages.len(), 1);
         assert_eq!(messages[0].role, Role::User);
-        assert_eq!(messages[1].role, Role::ToolCall);
-        assert_eq!(messages[2].role, Role::ToolResult);
-        assert_eq!(messages[2].content, "Error: File not found");
+        assert_eq!(messages[0].content, "Read file");
     }
 
     #[test]
