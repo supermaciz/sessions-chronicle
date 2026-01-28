@@ -51,10 +51,6 @@ impl ClaudeCodeParser {
             let event_type = event.get("type").and_then(|v| v.as_str());
             let is_message_like = match event_type {
                 Some("user") | Some("assistant") => true,
-                Some("system") => event
-                    .get("subtype")
-                    .and_then(|v| v.as_str())
-                    .is_some_and(|s| s == "local_command"),
                 _ => false,
             };
 
@@ -125,26 +121,6 @@ impl ClaudeCodeParser {
                 let content = Self::extract_content(event.get("message")?.get("content")?)?;
                 (Role::Assistant, content)
             }
-            "system" => {
-                let subtype = event.get("subtype")?.as_str()?;
-                match subtype {
-                    "local_command" => {
-                        let stdout = event.get("stdout").and_then(|v| v.as_str()).unwrap_or("");
-                        let cmd = event
-                            .get("command")
-                            .and_then(|v| v.as_array())
-                            .map(|arr| {
-                                arr.iter()
-                                    .filter_map(|v| v.as_str())
-                                    .collect::<Vec<_>>()
-                                    .join(" ")
-                            })
-                            .unwrap_or_else(|| "command".to_string());
-                        (Role::ToolResult, format!("$ {}\n{}", cmd, stdout))
-                    }
-                    _ => return None,
-                }
-            }
             _ => return None,
         };
 
@@ -190,10 +166,6 @@ impl ClaudeCodeParser {
                     match block_type {
                         "text" => block.get("text")?.as_str().map(|s| s.to_string()),
                         "thinking" => block.get("thinking")?.as_str().map(|s| s.to_string()),
-                        "tool_use" => {
-                            let name = block.get("name")?.as_str()?;
-                            Some(format!("[Tool: {}]", name))
-                        }
                         _ => None,
                     }
                 })
@@ -334,5 +306,25 @@ mod tests {
 
         assert_eq!(messages.len(), 2);
         assert_eq!(session.message_count, 2);
+    }
+
+    #[test]
+    fn parse_ignores_tool_events() {
+        let file = create_temp_session(&[
+            r#"{"type":"user","timestamp":"2024-01-01T00:00:00Z","sessionId":"session-123","message":{"content":"Hello"}}"#,
+            r#"{"type":"assistant","timestamp":"2024-01-01T00:00:01Z","sessionId":"session-123","message":{"content":[{"type":"tool_use","name":"bash","input":{"command":"ls"}}]}}"#,
+            r#"{"type":"system","timestamp":"2024-01-01T00:00:02Z","subtype":"local_command","command":["ls","-la"],"stdout":"file1.txt\nfile2.txt"}"#,
+            r#"{"type":"assistant","timestamp":"2024-01-01T00:00:03Z","sessionId":"session-123","message":{"content":"Here are the files"}}"#,
+        ]);
+
+        let parser = ClaudeCodeParser;
+        let (session, messages) = parser.parse(file.path()).unwrap();
+
+        assert_eq!(messages.len(), 2);
+        assert_eq!(session.message_count, 2);
+        assert_eq!(messages[0].role, Role::User);
+        assert_eq!(messages[0].content, "Hello");
+        assert_eq!(messages[1].role, Role::Assistant);
+        assert_eq!(messages[1].content, "Here are the files");
     }
 }
