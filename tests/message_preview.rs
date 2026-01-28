@@ -2,10 +2,8 @@ use rusqlite::Connection;
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use sessions_chronicle::database::load_message_previews_for_session;
 use sessions_chronicle::database::schema::initialize_database;
-use sessions_chronicle::database::{
-    load_message_content_for_session_index, load_message_previews_for_session,
-};
 
 struct TempDatabase {
     path: PathBuf,
@@ -107,23 +105,6 @@ fn load_message_previews_truncates_long_content() {
 }
 
 #[test]
-fn load_message_content_returns_full_content() {
-    let db = TempDatabase::new();
-    db.insert_session("test-session");
-
-    // Create a 10,000 character string
-    let long_content = "b".repeat(10_000);
-    db.insert_message("test-session", 10, "toolresult", &long_content);
-
-    let content = load_message_content_for_session_index(&db.path, "test-session", 10)
-        .expect("Failed to load content")
-        .expect("Content should exist");
-
-    assert_eq!(content.len(), 10_000);
-    assert_eq!(content, long_content);
-}
-
-#[test]
 fn load_message_previews_respects_pagination() {
     let db = TempDatabase::new();
     db.insert_session("test-session");
@@ -155,15 +136,4 @@ fn load_message_previews_respects_pagination() {
 
     assert_eq!(page3.len(), 1);
     assert_eq!(page3[0].index, 4);
-}
-
-#[test]
-fn load_message_content_returns_none_for_nonexistent() {
-    let db = TempDatabase::new();
-    db.insert_session("test-session");
-
-    let content = load_message_content_for_session_index(&db.path, "test-session", 999)
-        .expect("Failed to query content");
-
-    assert!(content.is_none());
 }

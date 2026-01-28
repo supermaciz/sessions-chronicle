@@ -356,33 +356,3 @@ pub fn load_message_previews_for_session(
 
     Ok(previews)
 }
-
-/// Load the full content of a specific message by session ID and message index.
-pub fn load_message_content_for_session_index(
-    db_path: &Path,
-    session_id: &str,
-    message_index: usize,
-) -> Result<Option<String>> {
-    if !db_path.exists() {
-        return Ok(None);
-    }
-
-    let db = Connection::open(db_path).context("Failed to open database")?;
-
-    let mut stmt = db.prepare(
-        "SELECT content
-        FROM messages
-        WHERE session_id = ?1 AND CAST(message_index AS INTEGER) = ?2
-        LIMIT 1",
-    )?;
-
-    let mut rows = stmt
-        .query([&session_id as &dyn ToSql, &(message_index as i64)])
-        .context("Failed to query message content")?;
-
-    if let Some(row) = rows.next()? {
-        Ok(Some(row.get(0)?))
-    } else {
-        Ok(None)
-    }
-}
