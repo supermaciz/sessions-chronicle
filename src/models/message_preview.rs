@@ -12,6 +12,6 @@ pub struct MessagePreview {
 
 impl MessagePreview {
     pub fn is_truncated(&self) -> bool {
-        self.content_preview.len() < self.content_len
+        self.content_preview.chars().count() < self.content_len
     }
 }
