@@ -69,7 +69,7 @@ All mockups are SVG files in the `mockups/` subfolder (open in browser or image 
 
 ## 🎯 Current Status
 
-**Phase**: Phase 1 - Core Implementation (Claude Code only)
+**Phase**: Phase 2 - Multi-Tool Support (Claude Code + OpenCode)
 
 **Completed**:
 - ✅ Project structure with Rust + GTK4 + Relm4
@@ -81,7 +81,7 @@ All mockups are SVG files in the `mockups/` subfolder (open in browser or image 
 - ✅ CLI args (`clap`) for `--sessions-dir`
 - ✅ Database indexer wired into App
 - ✅ SessionList loading from DB
-- ✅ Sidebar tool filters wired to SessionList (Claude data only)
+- ✅ Sidebar tool filters wired to SessionList (Claude + OpenCode)
 - ✅ Search functionality with FTS5 full-text search
 - ✅ Session detail view with conversation transcript
 - ✅ Session resumption with terminal emulator integration
@@ -89,7 +89,7 @@ All mockups are SVG files in the `mockups/` subfolder (open in browser or image 
 - ✅ Session resumption failure notifications with toast feedback
 
 **Next Tasks**:
-- ⬜ OpenCode/Codex/Mistral Vibe parsers + indexing (populate filters)
+- ⬜ Codex/Mistral Vibe parsers + indexing (populate filters)
 - ⬜ Search term highlighting in SessionDetail
 
 ---
@@ -115,5 +115,5 @@ All mockups are SVG files in the `mockups/` subfolder (open in browser or image 
 
 ---
 
-**Last Updated**: 2026-01-24
-**Status**: Phase 1 core features complete (Claude Code support)
+**Last Updated**: 2026-01-28
+**Status**: Phase 2 multi-tool support in progress (Claude Code + OpenCode)

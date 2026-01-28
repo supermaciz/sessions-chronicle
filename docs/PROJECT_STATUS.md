@@ -4,7 +4,7 @@
 
 ---
 
-## Current Status: Phase 1 - Core Implementation
+## Current Status: Phase 2 - Multi-Tool Support
 
 ### ✅ Completed
 
@@ -21,7 +21,7 @@
 - ✅ Relm4 CLI passthrough (`with_args`) + GTK arg split
 - ✅ Database indexer wired into App initialization
 - ✅ SessionList loading from database
-- ✅ Sidebar tool filters wired to SessionList (Claude data only)
+- ✅ Sidebar tool filters wired to SessionList (Claude + OpenCode)
 - ✅ Search functionality with FTS5 full-text search
 - ✅ Search UI with SearchBar and SearchEntry in `app.rs`
 - ✅ SessionDetail component with conversation transcript view
@@ -29,6 +29,9 @@
 - ✅ Session resumption with terminal emulator integration
 - ✅ Terminal preferences dialog for emulator selection
 - ✅ Session resumption failure notifications with toast feedback
+- ✅ Filter sessions with no user messages (excludes pure tool sessions)
+- ✅ OpenCode parser (multi-file format with message parts)
+- ✅ Message preview model with truncation badges
 
 **Dependencies**
 - ✅ Relm4 (reactive UI framework)
@@ -42,12 +45,12 @@
 ### 🚧 In Progress / Next Steps
 
 **Missing Features**
-- ⬜ OpenCode/Codex/Mistral Vibe parsers + indexing (filters show empty for those tools)
+- ⬜ Codex/Mistral Vibe parsers + indexing (filters show empty for those tools)
 - ⬜ Search term highlighting in SessionDetail
 
 ### 📋 Roadmap
 
-**Phase 1: Single Tool (Claude Code)** - Current
+**Phase 1: Single Tool (Claude Code)** - Complete
 1. ✅ Add missing dependencies
 2. ✅ Implement CLI args with `--sessions-dir`
 3. ✅ Wire database indexer into App
@@ -57,11 +60,13 @@
 7. ✅ Add SessionDetail component
 8. ✅ Add session resumption (terminal launch)
 
-**Phase 2: Multi-Tool Support** - Future
-- OpenCode parser (multi-file format)
-- Codex parser (streaming, encrypted reasoning)
-- Mistral Vibe parser (single JSON file, OpenAI-style messages)
-- Tool switching in UI
+**Phase 2: Multi-Tool Support** - Current
+- ✅ OpenCode parser (multi-file format)
+- ✅ Filter sessions with no user messages
+- ✅ Message preview model
+- ⬜ Codex parser (streaming, encrypted reasoning)
+- ⬜ Mistral Vibe parser (single JSON file, OpenAI-style messages)
+- ✅ Tool filters in UI (sidebar checkboxes)
 
 **Phase 3: Advanced Features** - Future
 - Real-time session monitoring (file watching)
@@ -91,10 +96,12 @@ sessions-chronicle/
 │   ├── config.rs         # App constants (APP_ID, VERSION)
 │   ├── app.rs            # Main App component (search, window, navigation)
 │   ├── models/           # Data models
-│   │   ├── session.rs    # Session, Tool
-│   │   └── message.rs    # Message, Role
+│   │   ├── session.rs         # Session, Tool
+│   │   ├── message.rs         # Message, Role
+│   │   └── message_preview.rs # MessagePreview for UI
 │   ├── parsers/          # Session file parsers
-│   │   └── claude_code.rs   # Claude Code JSONL parser
+│   │   ├── claude_code.rs   # Claude Code JSONL parser
+│   │   └── opencode.rs      # OpenCode multi-file parser
 │   ├── database/         # SQLite operations
 │   │   ├── schema.rs     # DB schema + FTS5
 │   │   ├── indexer.rs    # Index sessions
@@ -116,7 +123,8 @@ sessions-chronicle/
 │   ├── resources/        # UI resources (CSS, .ui files)
 │   └── *.xml.in          # GSettings schema, desktop entry, metainfo
 ├── tests/fixtures/       # Test data
-│   └── claude_sessions/  # Sample Claude Code sessions
+│   ├── claude_sessions/  # Sample Claude Code sessions
+│   └── opencode_storage/ # Sample OpenCode sessions
 ├── build-aux/            # Build manifests
 │   └── io.github.supermaciz.sessionschronicle.Devel.json
 └── docs/                 # Design docs
@@ -222,17 +230,12 @@ let db_path = data_dir.join("sessions-chronicle").join("sessions.db");
 
 ### Immediate Tasks
 
-1. **OpenCode + Codex + Mistral Vibe indexing**:
-    - Add parsers for OpenCode, Codex, and Mistral Vibe
+1. **Codex + Mistral Vibe indexing**:
+    - Add parsers for Codex and Mistral Vibe
     - Index sessions into SQLite so filters show data
 
 2. **Search term highlighting**:
-   - Highlight matching terms in SessionDetail when viewing search results
-
-### Current Blockers
-
-1. **OpenCode/Codex/Mistral Vibe not indexed** - Filters show empty results for those tools
-2. **Search term highlighting missing** - Search works but doesn't highlight matches
+    - Highlight matching terms in SessionDetail when viewing search results
 
 ### Testing Strategy
 
@@ -269,6 +272,6 @@ cargo test
 
 ---
 
-**Last Updated**: 2026-01-24
-**Current Phase**: Phase 1 - Single Tool Support (Claude Code)
-**Next Milestone**: OpenCode/Codex/Mistral Vibe parsers + search term highlighting
+**Last Updated**: 2026-01-28
+**Current Phase**: Phase 2 - Multi-Tool Support (Claude Code + OpenCode)
+**Next Milestone**: Codex/Mistral Vibe parsers + search term highlighting
