@@ -1,6 +1,17 @@
 # Sessions Chronicle
 
-A GNOME app for browsing, searching, and resuming AI coding sessions.
+<table>
+<tr>
+<td width="100" align="center">
+  <img src="data/icons/io.github.supermaciz.sessionschronicle.svg" alt="App Icon" width="80" height="80"/>
+</td>
+<td>
+
+**A GNOME app for browsing, searching, and resuming AI coding sessions.**
+
+</td>
+</tr>
+</table>
 
 ## Features
 
