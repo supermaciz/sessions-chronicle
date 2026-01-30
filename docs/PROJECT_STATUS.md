@@ -68,11 +68,22 @@
 - ⬜ Mistral Vibe parser (single JSON file, OpenAI-style messages)
 - ✅ Tool filters in UI (sidebar checkboxes)
 
-**Phase 3: Advanced Features** - Future
+**Phase 3: Tool Calls & Subagents** - Future ([design](plans/2026-01-30-tool-calls-and-subagents-design.md))
+- ⬜ Enrich Message model (tool_name, tool_input, parent_message_index)
+- ⬜ Enrich Session model (parent_session_id)
+- ⬜ Parse tool_use/tool_result in Claude Code & OpenCode
+- ⬜ Inline tool badges in transcript
+- ⬜ Tool detail panel (lateral, input/output display)
+- ⬜ Subagent tree view & navigation
+
+**Phase 4: Advanced Features** - Future
 - Real-time session monitoring (file watching)
 - Session export (Markdown/HTML)
 - Analytics and usage charts
 - Git integration
+- Display reasoning/thinking blocks
+- Semantic search
+- Session summaries (grouped by project or other criteria)
 
 ---
 
