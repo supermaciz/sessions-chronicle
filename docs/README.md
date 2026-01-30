@@ -37,6 +37,16 @@ This directory contains all design documentation, mockups, and architectural dec
    - Two-phase progressive search explained
    - Recommendation for Sessions Chronicle: SQLite FTS5
 
+### Plans
+
+6. **[plans/2026-01-30-tool-calls-and-subagents-design.md](plans/2026-01-30-tool-calls-and-subagents-design.md)**
+   - Tool calls display with inline badges and detail panel
+   - Subagent tree view and navigation
+
+7. **[plans/2026-01-30-markdown-rendering-design.md](plans/2026-01-30-markdown-rendering-design.md)**
+   - Markdown rendering for assistant messages (pulldown-cmark + Pango markup)
+   - Native GTK4 widgets per block type
+
 ---
 
 ## 🎨 Visual Mockups
@@ -67,33 +77,6 @@ All mockups are SVG files in the `mockups/` subfolder (open in browser or image 
 
 ---
 
-## 🎯 Current Status
-
-**Phase**: Phase 2 - Multi-Tool Support (Claude Code + OpenCode)
-
-**Completed**:
-- ✅ Project structure with Rust + GTK4 + Relm4
-- ✅ Data models (Session, Message, Tool, Role)
-- ✅ Database schema (SQLite + FTS5)
-- ✅ Claude Code parser (JSONL streaming)
-- ✅ Test fixtures
-- ✅ Basic UI components (Sidebar, SessionList, SessionDetail)
-- ✅ CLI args (`clap`) for `--sessions-dir`
-- ✅ Database indexer wired into App
-- ✅ SessionList loading from DB
-- ✅ Sidebar tool filters wired to SessionList (Claude + OpenCode)
-- ✅ Search functionality with FTS5 full-text search
-- ✅ Session detail view with conversation transcript
-- ✅ Session resumption with terminal emulator integration
-- ✅ Terminal preferences dialog for emulator selection
-- ✅ Session resumption failure notifications with toast feedback
-
-**Next Tasks**:
-- ⬜ Codex/Mistral Vibe parsers + indexing (populate filters)
-- ⬜ Search term highlighting in SessionDetail
-
----
-
 ## 📁 Session Data Locations
 
 ```
@@ -115,5 +98,4 @@ All mockups are SVG files in the `mockups/` subfolder (open in browser or image 
 
 ---
 
-**Last Updated**: 2026-01-28
-**Status**: Phase 2 multi-tool support in progress (Claude Code + OpenCode)
+**Last Updated**: 2026-01-30
