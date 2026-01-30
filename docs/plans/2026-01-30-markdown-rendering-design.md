@@ -52,7 +52,7 @@ Internal logic:
 | Markdown block     | GTK Widget        | Details                                      |
 |--------------------|-------------------|----------------------------------------------|
 | Paragraph          | `gtk::Label`      | Pango markup, wrap, selectable               |
-| Heading (h1–h6)   | `gtk::Label`      | Adwaita CSS classes (`title-1` to `title-4`) |
+| Heading (h1–h6)   | `gtk::Label`      | Adwaita CSS classes: h1-h4 `title-1`..`title-4`, h5-h6 `heading` |
 | Fenced code block  | `gtk::Label`      | Monospace, `.code-block` CSS class           |
 | List (ul/ol)       | `gtk::Box`        | Vertical; each item = horizontal box         |
 | Task list          | `gtk::Box`        | CheckButton (insensitive) + label            |
@@ -92,7 +92,7 @@ flushes into a Label with `use_markup: true`.
 | `*italic*`        | `<i>text</i>`     |
 | `` `code` ``      | `<tt>text</tt>`   |
 | `~~strikethrough~~` | `<s>text</s>`   |
-| `[text](url)`     | text + URL in dim  |
+| `[text](url)`     | text + URL in `.dimmed` parentheses |
 
 ### Escaping
 
@@ -101,7 +101,7 @@ flushes into a Label with `use_markup: true`.
 ### Links
 
 `gtk::Label` with Pango does not reliably support clickable links. Links are
-rendered as: **link text** followed by the URL in dim-label parentheses.
+rendered as: **link text** followed by the URL in parentheses (styled with `.dimmed`).
 
 ### Code blocks (fenced)
 
@@ -144,7 +144,7 @@ New classes added to `data/resources/style.css`:
 ```
 
 Existing styles (`.message-row`, role borders, headings) are unchanged.
-Headings use Adwaita built-in classes (`title-1` to `title-4`).
+Headings use Adwaita built-in classes: h1-h4 `title-1`..`title-4`, h5-h6 `heading`.
 
 ---
 
