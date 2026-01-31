@@ -1,7 +1,7 @@
 # OpenCode Parser Design
 
 **Date:** 2026-01-26
-**Status:** Ready for implementation
+**Status:** ✅ Implementation complete (automated validation passed)
 
 ## Overview
 
@@ -243,10 +243,10 @@ tests/fixtures/opencode_storage/
 
 ## Validation Checklist
 
-- [ ] `cargo fmt --all`
-- [ ] `cargo clippy`
-- [ ] `cargo test`
-- [ ] Manual: OpenCode sessions appear under OpenCode filter
-- [ ] Manual: Session detail shows user/assistant text and tool entries
-- [ ] Manual: Search returns hits from OpenCode sessions
-- [ ] Manual: Resume uses `opencode --session <id>` for OpenCode sessions
+- [x] `cargo fmt --all` - Clean
+- [x] `cargo clippy` - 0 warnings
+- [x] `cargo test` - 34 unit + 9 integration tests pass, 0 failures
+- [x] Manual: OpenCode sessions appear under OpenCode filter
+- [x] Manual: Session detail shows user/assistant text and tool entries
+- [x] Manual: Search returns hits from OpenCode sessions
+- [x] Manual: Resume uses `opencode --session <id>` for OpenCode sessions
