@@ -100,9 +100,7 @@ impl SimpleComponent for App {
                             set_tooltip_text: Some("Go back"),
                             #[watch]
                             set_visible: model.detail_visible,
-                            connect_clicked[sender] => move |_| {
-                                sender.input(AppMsg::NavigateBack);
-                            },
+                            connect_clicked => AppMsg::NavigateBack,
                         },
 
                         pack_start = &gtk::ToggleButton {
@@ -110,9 +108,7 @@ impl SimpleComponent for App {
                             set_tooltip_text: Some("Search sessions"),
                             #[watch]
                             set_active: model.search_visible,
-                            connect_toggled[sender] => move |_| {
-                                sender.input(AppMsg::ToggleSearch);
-                            },
+                            connect_toggled => AppMsg::ToggleSearch,
                         },
 
                         pack_end = &gtk::MenuButton {
