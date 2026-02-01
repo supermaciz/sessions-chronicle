@@ -48,11 +48,10 @@ impl FactoryComponent for SessionRow {
         &mut self,
         _index: &DynamicIndex,
         root: Self::Root,
-        _returned_widget: &<Self::ParentWidget as relm4::factory::FactoryView>::ReturnedWidget,
+        returned_widget: &<Self::ParentWidget as relm4::factory::FactoryView>::ReturnedWidget,
         sender: FactorySender<Self>,
     ) -> Self::Widgets {
-        // Build an ActionRow manually since it needs complex suffix widgets.
-        // We replace the generated root box with our ActionRow content.
+        // Build an ActionRow with complex suffix widgets.
         let row = adw::ActionRow::builder()
             .title(Self::session_title(&self.session))
             .subtitle(Self::session_subtitle(&self.session))
@@ -88,15 +87,18 @@ impl FactoryComponent for SessionRow {
         time_label.set_halign(gtk::Align::End);
         row.add_suffix(&time_label);
 
-        // Clicking the row emits Selected
+        // Make ActionRow fill the root box so ListBox layout works correctly
+        row.set_hexpand(true);
+        root.append(&row);
+
+        // Connect activation on the ListBoxRow (returned_widget), not the ActionRow.
+        // The ListBox only emits row-activated for its direct ListBoxRow children.
+        returned_widget.set_activatable(true);
         let session_id_click = self.session.id.clone();
         let sender_click = sender.clone();
-        row.connect_activated(move |_| {
+        returned_widget.connect_activate(move || {
             let _ = sender_click.output(SessionRowOutput::Selected(session_id_click.clone()));
         });
-
-        // Append ActionRow inside the root box so the ListBox picks it up.
-        root.append(&row);
 
         let widgets = view_output!();
         widgets
