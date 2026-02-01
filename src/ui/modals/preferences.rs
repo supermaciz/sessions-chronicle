@@ -3,7 +3,7 @@ use adw::prelude::{
 };
 use gtk::gio;
 use gtk::prelude::{GtkApplicationExt, SettingsExt};
-use relm4::{ComponentParts, ComponentSender, SimpleComponent, adw, gtk, main_application};
+use relm4::{adw, gtk, main_application, ComponentParts, ComponentSender, SimpleComponent};
 
 use crate::config::APP_ID;
 use crate::utils::terminal::Terminal;
@@ -17,19 +17,12 @@ const TERMINALS: &[Terminal] = &[
     Terminal::Kitty,
 ];
 
-pub struct PreferencesDialog {
-    combo_model: gio::ListStore,
-}
-
-#[derive(Debug)]
-pub enum PreferencesMsg {
-    TerminalChanged(u32),
-}
+pub struct PreferencesDialog;
 
 impl SimpleComponent for PreferencesDialog {
     type Init = ();
-    type Widgets = PreferencesWidgets;
-    type Input = PreferencesMsg;
+    type Widgets = ();
+    type Input = ();
     type Output = ();
     type Root = adw::PreferencesDialog;
 
@@ -40,7 +33,7 @@ impl SimpleComponent for PreferencesDialog {
     fn init(
         _: Self::Init,
         root: Self::Root,
-        sender: ComponentSender<Self>,
+        _sender: ComponentSender<Self>,
     ) -> ComponentParts<Self> {
         let settings = gio::Settings::new(APP_ID);
         let current_terminal = settings.string("resume-terminal");
@@ -78,8 +71,8 @@ impl SimpleComponent for PreferencesDialog {
         page.add(&group);
         root.add(&page);
 
-        let model = Self { combo_model };
-        let widgets = PreferencesWidgets { root: root.clone() };
+        let model = Self;
+        let widgets = ();
 
         root.present(Some(&main_application().windows()[0]));
 
@@ -88,8 +81,4 @@ impl SimpleComponent for PreferencesDialog {
 
     fn update(&mut self, _message: Self::Input, _sender: ComponentSender<Self>) {}
     fn update_view(&self, _widgets: &mut Self::Widgets, _sender: ComponentSender<Self>) {}
-}
-
-pub struct PreferencesWidgets {
-    root: adw::PreferencesDialog,
 }

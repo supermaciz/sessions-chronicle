@@ -220,15 +220,7 @@ mod tests {
     use gtk::glib::prelude::ObjectExt;
     use relm4::Component;
     use relm4::ComponentController;
-    use std::sync::Once;
     use std::{cell::RefCell, rc::Rc};
-
-    fn init_gtk() {
-        static INIT: Once = Once::new();
-        INIT.call_once(|| {
-            gtk::init().expect("GTK init failed");
-        });
-    }
 
     fn find_list_box(widget: &gtk::Widget) -> Option<gtk::ListBox> {
         if let Ok(list_box) = widget.clone().downcast::<gtk::ListBox>() {
@@ -256,10 +248,8 @@ mod tests {
         }
     }
 
-    #[test]
+    #[gtk::test]
     fn session_list_activates_on_single_click() {
-        init_gtk();
-
         let temp_db = tempfile::NamedTempFile::new().expect("temp db");
         let controller = SessionList::builder().launch(temp_db.path().to_path_buf());
         let root = controller.widget().clone().upcast::<gtk::Widget>();
@@ -268,10 +258,8 @@ mod tests {
         assert!(list_box.activates_on_single_click());
     }
 
-    #[test]
+    #[gtk::test]
     fn session_list_emits_selection_on_row_activation() {
-        init_gtk();
-
         let temp_db = tempfile::NamedTempFile::new().expect("temp db");
         let outputs: Rc<RefCell<Vec<SessionListOutput>>> = Rc::new(RefCell::new(Vec::new()));
         let outputs_ref = outputs.clone();
