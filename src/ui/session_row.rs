@@ -1,4 +1,5 @@
 use chrono::{DateTime, Duration as ChronoDuration, Utc};
+use gtk::glib::prelude::ObjectExt;
 use gtk::prelude::*;
 use relm4::factory::{DynamicIndex, FactoryComponent, FactorySender};
 use relm4::{adw, gtk};
@@ -18,9 +19,10 @@ pub struct SessionRow {
     session: Session,
 }
 
+const SESSION_ID_KEY: &str = "session-id";
+
 #[derive(Debug)]
 pub enum SessionRowOutput {
-    Selected(String),
     ResumeRequested(String, Tool),
 }
 
@@ -62,11 +64,15 @@ impl FactoryComponent for SessionRow {
         icon.set_pixel_size(16);
         row.add_prefix(&icon);
 
+        let session_id = self.session.id.clone();
+        unsafe {
+            returned_widget.set_data(SESSION_ID_KEY, session_id.clone());
+        }
+
         // Resume button
         let resume_button = gtk::Button::from_icon_name("utilities-terminal-symbolic");
         resume_button.add_css_class("flat");
         resume_button.set_tooltip_text(Some("Resume in terminal"));
-        let session_id = self.session.id.clone();
         let tool = self.session.tool;
         let sender_resume = sender.clone();
         resume_button.connect_clicked(move |_| {
@@ -90,15 +96,6 @@ impl FactoryComponent for SessionRow {
         // Make ActionRow fill the root box so ListBox layout works correctly
         row.set_hexpand(true);
         root.append(&row);
-
-        // Connect activation on the ListBoxRow (returned_widget), not the ActionRow.
-        // The ListBox only emits row-activated for its direct ListBoxRow children.
-        returned_widget.set_activatable(true);
-        let session_id_click = self.session.id.clone();
-        let sender_click = sender.clone();
-        returned_widget.connect_activate(move || {
-            let _ = sender_click.output(SessionRowOutput::Selected(session_id_click.clone()));
-        });
 
         let widgets = view_output!();
         widgets

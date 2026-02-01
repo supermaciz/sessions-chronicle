@@ -1,6 +1,7 @@
+use gtk::glib::prelude::ObjectExt;
 use gtk::prelude::*;
 use relm4::factory::FactoryVecDeque;
-use relm4::{ComponentParts, ComponentSender, SimpleComponent, adw, gtk};
+use relm4::{adw, gtk, ComponentParts, ComponentSender, SimpleComponent};
 use std::path::{Path, PathBuf};
 
 use crate::database::{load_sessions, search_sessions};
@@ -83,7 +84,6 @@ impl SimpleComponent for SessionList {
         let sessions: FactoryVecDeque<SessionRow> = FactoryVecDeque::builder()
             .launch_default()
             .forward(sender.input_sender(), |msg| match msg {
-                SessionRowOutput::Selected(id) => SessionListMsg::SessionSelected(id),
                 SessionRowOutput::ResumeRequested(id, tool) => {
                     SessionListMsg::ResumeRequested(id, tool)
                 }
@@ -107,6 +107,13 @@ impl SimpleComponent for SessionList {
 
         let session_list_box = model.sessions.widget();
         let widgets = view_output!();
+
+        let input_sender = sender.input_sender().clone();
+        session_list_box.connect_row_activated(move |_, row| {
+            if let Some(session_id) = SessionList::get_session_id_from_row(row) {
+                let _ = input_sender.send(SessionListMsg::SessionSelected(session_id));
+            }
+        });
 
         if model.sessions.is_empty() {
             widgets
@@ -171,6 +178,8 @@ impl SimpleComponent for SessionList {
 }
 
 impl SessionList {
+    const SESSION_ID_KEY: &'static str = "session-id";
+
     fn fetch_sessions(db_path: &Path, tools: &[Tool], query: &str) -> Vec<Session> {
         let query = query.trim();
         let sessions = if query.is_empty() {
@@ -188,6 +197,13 @@ impl SessionList {
         }
     }
 
+    fn get_session_id_from_row(row: &gtk::ListBoxRow) -> Option<String> {
+        unsafe {
+            row.data::<String>(Self::SESSION_ID_KEY)
+                .map(|ptr| ptr.as_ref().clone())
+        }
+    }
+
     fn reload_sessions(&mut self) {
         let fetched = Self::fetch_sessions(&self.db_path, &self.active_tools, &self.search_query);
         let mut guard = self.sessions.guard();
@@ -195,5 +211,107 @@ impl SessionList {
         for session in fetched {
             guard.push_back(SessionRowInit { session });
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use gtk::glib::prelude::ObjectExt;
+    use relm4::Component;
+    use relm4::ComponentController;
+    use std::sync::Once;
+    use std::{cell::RefCell, rc::Rc};
+
+    fn init_gtk() {
+        static INIT: Once = Once::new();
+        INIT.call_once(|| {
+            gtk::init().expect("GTK init failed");
+        });
+    }
+
+    fn find_list_box(widget: &gtk::Widget) -> Option<gtk::ListBox> {
+        if let Ok(list_box) = widget.clone().downcast::<gtk::ListBox>() {
+            return Some(list_box);
+        }
+
+        let mut child = widget.first_child();
+        while let Some(child_widget) = child {
+            if let Some(found) = find_list_box(&child_widget) {
+                return Some(found);
+            }
+            child = child_widget.next_sibling();
+        }
+
+        None
+    }
+
+    fn pump_main_context(condition: impl Fn() -> bool) {
+        let context = gtk::glib::MainContext::default();
+        for _ in 0..50 {
+            if condition() {
+                break;
+            }
+            context.iteration(false);
+        }
+    }
+
+    #[test]
+    fn session_list_activates_on_single_click() {
+        init_gtk();
+
+        let temp_db = tempfile::NamedTempFile::new().expect("temp db");
+        let controller = SessionList::builder().launch(temp_db.path().to_path_buf());
+        let root = controller.widget().clone().upcast::<gtk::Widget>();
+        let list_box = find_list_box(&root).expect("list box");
+
+        assert!(list_box.activates_on_single_click());
+    }
+
+    #[test]
+    fn session_list_emits_selection_on_row_activation() {
+        init_gtk();
+
+        let temp_db = tempfile::NamedTempFile::new().expect("temp db");
+        let outputs: Rc<RefCell<Vec<SessionListOutput>>> = Rc::new(RefCell::new(Vec::new()));
+        let outputs_ref = outputs.clone();
+
+        let controller = SessionList::builder()
+            .launch(temp_db.path().to_path_buf())
+            .connect_receiver(move |_, output| {
+                outputs_ref.borrow_mut().push(output);
+            });
+
+        let session = Session {
+            id: "test-session".to_string(),
+            tool: Tool::ClaudeCode,
+            project_path: Some("/tmp/project".to_string()),
+            start_time: chrono::Utc::now(),
+            message_count: 1,
+            file_path: "/tmp/session.jsonl".to_string(),
+            last_updated: chrono::Utc::now(),
+        };
+
+        {
+            let mut parts = controller.state().get_mut();
+            let mut guard = parts.model.sessions.guard();
+            guard.push_back(SessionRowInit {
+                session: session.clone(),
+            });
+        }
+
+        let root = controller.widget().clone().upcast::<gtk::Widget>();
+        let list_box = find_list_box(&root).expect("list box");
+        let row = list_box.row_at_index(0).expect("row");
+
+        list_box.emit_by_name::<()>("row-activated", &[&row]);
+
+        pump_main_context(|| !outputs.borrow().is_empty());
+
+        let outputs = outputs.borrow();
+        assert!(matches!(
+            outputs.as_slice(),
+            [SessionListOutput::SessionSelected(id)] if id == "test-session"
+        ));
     }
 }
