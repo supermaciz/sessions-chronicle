@@ -80,15 +80,14 @@ impl SimpleComponent for SessionList {
         let search_query = String::new();
         let fetched = Self::fetch_sessions(&db_path, &active_tools, &search_query);
 
-        let sessions: FactoryVecDeque<SessionRow> =
-            FactoryVecDeque::builder()
-                .launch_default()
-                .forward(sender.input_sender(), |msg| match msg {
-                    SessionRowOutput::Selected(id) => SessionListMsg::SessionSelected(id),
-                    SessionRowOutput::ResumeRequested(id, tool) => {
-                        SessionListMsg::ResumeRequested(id, tool)
-                    }
-                });
+        let sessions: FactoryVecDeque<SessionRow> = FactoryVecDeque::builder()
+            .launch_default()
+            .forward(sender.input_sender(), |msg| match msg {
+                SessionRowOutput::Selected(id) => SessionListMsg::SessionSelected(id),
+                SessionRowOutput::ResumeRequested(id, tool) => {
+                    SessionListMsg::ResumeRequested(id, tool)
+                }
+            });
 
         let mut model = Self {
             db_path,
