@@ -43,3 +43,5 @@ build.ninja
 # Misc
 compile_commands.json
 
+# Git worktrees
+.worktrees/
