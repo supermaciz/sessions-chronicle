@@ -1,7 +1,7 @@
 use relm4::{
+    Component, ComponentController, ComponentParts, ComponentSender, Controller, SimpleComponent,
     actions::{AccelsPlus, RelmAction, RelmActionGroup},
-    adw, gtk, main_application, Component, ComponentController, ComponentParts, ComponentSender,
-    Controller, SimpleComponent,
+    adw, gtk, main_application,
 };
 
 use adw::prelude::{AdwApplicationWindowExt, AdwDialogExt, AlertDialogExt, NavigationPageExt};
@@ -13,7 +13,7 @@ use gtk::{gio, glib};
 use std::{fs, path::PathBuf, str::FromStr};
 
 use crate::config::{APP_ID, PROFILE};
-use crate::database::{load_session, SessionIndexer};
+use crate::database::{SessionIndexer, load_session};
 use crate::models::session::Tool;
 use crate::ui::modals::{
     about::AboutDialog, preferences::PreferencesDialog, shortcuts::ShortcutsDialog,

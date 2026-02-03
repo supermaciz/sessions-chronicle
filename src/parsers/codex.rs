@@ -26,7 +26,7 @@ impl CodexParser {
 
         let mut lines = reader.lines();
         let mut first_line = None;
-        while let Some(line) = lines.next() {
+        for line in lines.by_ref() {
             let line = line.context("Failed to read line")?;
             if line.trim().is_empty() {
                 continue;
@@ -134,10 +134,10 @@ impl CodexParser {
                 None => None,
             };
 
-            if let Some(parsed) = parsed_timestamp {
-                if parsed > last_updated {
-                    last_updated = parsed;
-                }
+            if let Some(parsed) = parsed_timestamp
+                && parsed > last_updated
+            {
+                last_updated = parsed;
             }
 
             let timestamp = parsed_timestamp.unwrap_or_else(Utc::now);
@@ -155,6 +155,11 @@ impl CodexParser {
         if !has_user_message {
             return Err(ParseError::NoUserMessages.into());
         }
+
+        // TODO: Title extraction not yet implemented. Future enhancement should:
+        // 1. Extract title from turn_context.summary if present
+        // 2. Fall back to first user_message content (truncated to ~100 chars)
+        // This requires adding a title field to the Session model.
 
         Ok((
             Session {
@@ -180,7 +185,6 @@ impl CodexParser {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::models::Role;
     use std::io::Write;
     use std::path::PathBuf;
     use std::sync::{Arc, Mutex};
@@ -188,7 +192,9 @@ mod tests {
     #[test]
     fn parse_valid_session_extracts_messages() {
         let parser = CodexParser;
-        let path = PathBuf::from("tests/fixtures/codex_sessions/2026/01/18/rollout-2026-01-18T02-01-28-019bce9f-0a40-79e2-8351-8818e8487fb6.jsonl");
+        let path = PathBuf::from(
+            "tests/fixtures/codex_sessions/2026/01/18/rollout-2026-01-18T02-01-28-019bce9f-0a40-79e2-8351-8818e8487fb6.jsonl",
+        );
         let (session, messages) = parser.parse(&path).unwrap();
         assert_eq!(session.id, "019bce9f-0a40-79e2-8351-8818e8487fb6");
         assert_eq!(session.project_path.as_deref(), Some("/home/user/project"));
@@ -201,13 +207,17 @@ mod tests {
     #[test]
     fn parse_empty_session_is_rejected() {
         let parser = CodexParser;
-        let path = PathBuf::from("tests/fixtures/codex_sessions/2026/01/18/rollout-2026-01-18T02-02-00-empty-session.jsonl");
+        let path = PathBuf::from(
+            "tests/fixtures/codex_sessions/2026/01/18/rollout-2026-01-18T02-02-00-empty-session.jsonl",
+        );
         let result = parser.parse(&path);
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("Session contains no user messages"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("Session contains no user messages")
+        );
     }
 
     #[test]
@@ -218,10 +228,12 @@ mod tests {
         );
         let result = parser.parse(&path);
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("First line must be session_meta"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("First line must be session_meta")
+        );
     }
 
     #[derive(Clone, Default)]

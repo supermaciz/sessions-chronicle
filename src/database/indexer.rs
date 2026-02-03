@@ -167,11 +167,7 @@ impl SessionIndexer {
         Ok(true)
     }
 
-    fn index_codex_session_file(
-        &mut self,
-        file_path: &Path,
-        parser: &CodexParser,
-    ) -> Result<()> {
+    fn index_codex_session_file(&mut self, file_path: &Path, parser: &CodexParser) -> Result<()> {
         let (session, messages) = parser.parse(file_path)?;
         self.insert_session_and_messages(&session, &messages, file_path)?;
         Ok(())

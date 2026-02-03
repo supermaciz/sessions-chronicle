@@ -3,7 +3,7 @@ use adw::prelude::{
 };
 use gtk::gio;
 use gtk::prelude::{GtkApplicationExt, SettingsExt};
-use relm4::{adw, gtk, main_application, ComponentParts, ComponentSender, SimpleComponent};
+use relm4::{ComponentParts, ComponentSender, SimpleComponent, adw, gtk, main_application};
 
 use crate::config::APP_ID;
 use crate::utils::terminal::Terminal;
