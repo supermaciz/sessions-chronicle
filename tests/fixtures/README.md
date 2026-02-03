@@ -5,9 +5,13 @@ This directory contains sample session files for testing and development.
 ## Structure
 
 ```
-fixtures/
-└── claude_sessions/     # Claude Code session samples (JSONL format)
-    └── sample-session.jsonl
+tests/fixtures/
+├── claude_sessions/        # Claude Code session samples (JSONL format)
+│   └── sample-session.jsonl
+├── codex_sessions/         # Codex CLI session samples (JSONL format)
+│   └── 2026/01/18/...
+└── opencode_storage/       # OpenCode session samples (JSON format)
+    └── ...
 ```
 
 ## Purpose
@@ -26,6 +30,27 @@ Files are in JSONL (JSON Lines) format, with one JSON object per line:
 - **Summary**: `type: "summary"` containing session title
 
 See `docs/SESSION_FORMAT_ANALYSIS.md` for detailed format documentation.
+
+## Codex Session Format
+
+Files are in JSONL (JSON Lines) format, with one JSON object per line:
+
+- **Session metadata**: first line must be `type: "session_meta"`
+- **Event messages**: `type: "event_msg"` with `payload.type` values such as `user_message` and `agent_message`
+
+Fixtures added for Codex parsing coverage:
+
+- `tests/fixtures/codex_sessions/2026/01/18/rollout-2026-01-18T02-01-28-019bce9f-0a40-79e2-8351-8818e8487fb6.jsonl` (valid 3-line session)
+- `tests/fixtures/codex_sessions/2026/01/18/rollout-2026-01-18T02-02-00-empty-session.jsonl` (session_meta only)
+- `tests/fixtures/codex_sessions/2026/01/18/rollout-2026-01-18T02-03-00-malformed.jsonl` (event_msg first line, missing session_meta)
+
+## OpenCode Session Format
+
+Files are in JSON (not JSONL) format, with a single JSON document per file.
+
+Fixtures added for OpenCode parsing coverage:
+
+- `tests/fixtures/opencode_storage/`
 
 ## Adding Fixtures
 

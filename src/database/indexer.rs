@@ -3,14 +3,19 @@ use rusqlite::Connection;
 use std::path::Path;
 
 use crate::parsers::claude_code::ClaudeCodeParser;
-use crate::parsers::opencode::{OpenCodeParser, ParseError};
+use crate::parsers::codex::{CodexParser, ParseError as CodexParseError};
+use crate::parsers::opencode::{OpenCodeParser, ParseError as OpenCodeParseError};
 
 pub struct SessionIndexer {
     db: Connection,
 }
 
-fn is_skippable_error(err: &anyhow::Error) -> bool {
-    err.downcast_ref::<ParseError>().is_some()
+fn is_opencode_error(err: &anyhow::Error) -> bool {
+    err.downcast_ref::<OpenCodeParseError>().is_some()
+}
+
+fn is_codex_error(err: &anyhow::Error) -> bool {
+    err.downcast_ref::<CodexParseError>().is_some()
 }
 
 impl SessionIndexer {
@@ -83,7 +88,51 @@ impl SessionIndexer {
                         }
                     }
                     Err(err) => {
-                        if is_skippable_error(&err) {
+                        if is_opencode_error(&err) {
+                            if let Err(remove_err) = self.remove_session_for_file(path) {
+                                tracing::warn!(
+                                    "Failed to prune session {}: {}",
+                                    path.display(),
+                                    remove_err
+                                );
+                            }
+                        } else {
+                            tracing::warn!("Failed to index {}: {}", path.display(), err);
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(count)
+    }
+
+    pub fn index_codex_sessions(&mut self, sessions_dir: &Path) -> Result<usize> {
+        if !sessions_dir.exists() {
+            return Ok(0);
+        }
+
+        let parser = CodexParser;
+        let mut count = 0;
+
+        for entry in walkdir::WalkDir::new(sessions_dir)
+            .max_depth(5)
+            .into_iter()
+            .filter_map(|e| e.ok())
+        {
+            let path = entry.path();
+            if entry.file_type().is_file()
+                && let Some(file_name) = path.file_name().and_then(|name| name.to_str())
+                && file_name.starts_with("rollout-")
+                && file_name.ends_with(".jsonl")
+            {
+                match self.index_codex_session_file(path, &parser) {
+                    Ok(()) => {
+                        count += 1;
+                    }
+                    Err(err) => {
+                        if is_codex_error(&err) {
+                            tracing::warn!("Skipped Codex session {}: {}", path.display(), err);
                             if let Err(remove_err) = self.remove_session_for_file(path) {
                                 tracing::warn!(
                                     "Failed to prune session {}: {}",
@@ -116,6 +165,16 @@ impl SessionIndexer {
         let (session, messages) = parser.parse(file_path)?;
         self.insert_session_and_messages(&session, &messages, file_path)?;
         Ok(true)
+    }
+
+    fn index_codex_session_file(
+        &mut self,
+        file_path: &Path,
+        parser: &CodexParser,
+    ) -> Result<()> {
+        let (session, messages) = parser.parse(file_path)?;
+        self.insert_session_and_messages(&session, &messages, file_path)?;
+        Ok(())
     }
 
     fn insert_session_and_messages(
@@ -279,6 +338,38 @@ mod tests {
         let nonexistent_root = PathBuf::from("tests/fixtures/nonexistent_opencode_storage");
 
         let count = indexer.index_opencode_sessions(&nonexistent_root).unwrap();
+        assert_eq!(count, 0);
+    }
+
+    #[test]
+    fn codex_indexing_indexes_sessions() {
+        let temp_db = NamedTempFile::new().unwrap();
+        let mut indexer = SessionIndexer::new(temp_db.path()).unwrap();
+        let sessions_dir = PathBuf::from("tests/fixtures/codex_sessions");
+
+        let count = indexer.index_codex_sessions(&sessions_dir).unwrap();
+        assert_eq!(count, 1);
+
+        let sessions: Vec<(String, String)> = indexer
+            .db
+            .prepare("SELECT id, tool FROM sessions ORDER BY id")
+            .unwrap()
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+
+        assert_eq!(sessions.len(), 1);
+        assert_eq!(sessions[0].1, "codex");
+    }
+
+    #[test]
+    fn codex_indexing_returns_zero_for_missing_sessions_dir() {
+        let temp_db = NamedTempFile::new().unwrap();
+        let mut indexer = SessionIndexer::new(temp_db.path()).unwrap();
+        let nonexistent_dir = PathBuf::from("tests/fixtures/nonexistent_codex_sessions");
+
+        let count = indexer.index_codex_sessions(&nonexistent_dir).unwrap();
         assert_eq!(count, 0);
     }
 }
