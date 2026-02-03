@@ -25,6 +25,14 @@
 - Resume sessions in terminal
 - Support for OpenCode and Codex formats
 
+## Screenshots
+
+**Session List View**  
+<img src="docs/screenshots/session_list.png" alt="Session List" width="800"/>
+
+**Session Detail View**  
+<img src="docs/screenshots/session_detail.png" alt="Session Detail" width="800"/>
+
 ## Building the project
 
 Make sure you have `flatpak` and `flatpak-builder` installed. Then run:
