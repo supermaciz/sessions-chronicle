@@ -1,7 +1,7 @@
 use gtk::glib::prelude::ObjectExt;
 use gtk::prelude::*;
 use relm4::factory::FactoryVecDeque;
-use relm4::{adw, gtk, ComponentParts, ComponentSender, SimpleComponent};
+use relm4::{ComponentParts, ComponentSender, SimpleComponent, adw, gtk};
 use std::path::{Path, PathBuf};
 
 use crate::database::{load_sessions, search_sessions};

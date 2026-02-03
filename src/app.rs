@@ -168,6 +168,10 @@ impl SimpleComponent for App {
             };
 
             if let Some(ref mut idx) = indexer {
+                let opencode_session_dir = PathBuf::from(Tool::OpenCode.session_dir());
+                let opencode_root = opencode_session_dir.parent();
+                let codex_sessions_dir = PathBuf::from(Tool::Codex.session_dir());
+
                 match idx.index_claude_sessions(&sessions_dir) {
                     Ok(count) => {
                         tracing::info!(
@@ -181,8 +185,7 @@ impl SimpleComponent for App {
                     }
                 }
 
-                let opencode_session_dir = PathBuf::from(Tool::OpenCode.session_dir());
-                if let Some(opencode_root) = opencode_session_dir.parent() {
+                if let Some(opencode_root) = opencode_root {
                     match idx.index_opencode_sessions(opencode_root) {
                         Ok(count) => {
                             tracing::info!(
@@ -200,6 +203,19 @@ impl SimpleComponent for App {
                         "Failed to resolve OpenCode storage root from {}",
                         opencode_session_dir.display()
                     );
+                }
+
+                match idx.index_codex_sessions(&codex_sessions_dir) {
+                    Ok(count) => {
+                        tracing::info!(
+                            "Indexed {} Codex sessions from {}",
+                            count,
+                            codex_sessions_dir.display()
+                        );
+                    }
+                    Err(err) => {
+                        tracing::error!("Failed to index Codex sessions: {}", err);
+                    }
                 }
             }
         }
