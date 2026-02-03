@@ -1,17 +1,10 @@
-# Sessions Chronicle
-
-<table>
-<tr>
-<td width="100" align="center">
+<div style="display: flex; align-items: center; gap: 20px;">
   <img src="data/icons/io.github.supermaciz.sessionschronicle.svg" alt="App Icon" width="80" height="80"/>
-</td>
-<td>
-
-**A GNOME app for browsing, searching, and resuming AI coding sessions.**
-
-</td>
-</tr>
-</table>
+  <div>
+    <h1>Sessions Chronicle</h1>
+    <p><strong>A GNOME app for browsing, searching, and resuming AI coding sessions.</strong></p>
+  </div>
+</div>
 
 ## Features
 
@@ -33,9 +26,16 @@
 **Session Detail View**  
 <img src="docs/screenshots/session_detail.png" alt="Session Detail" width="800"/>
 
+## Prerequisites
+
+- `flatpak`
+- `flatpak-builder`
+
+Install via your package manager (e.g., `apt install flatpak flatpak-builder`).
+
 ## Building the project
 
-Make sure you have `flatpak` and `flatpak-builder` installed. Then run:
+Install the required SDKs, then build:
 
 ```bash
 flatpak install --user org.gnome.Sdk//49 org.gnome.Platform//49 org.freedesktop.Sdk.Extension.rust-stable//25.08 org.freedesktop.Sdk.Extension.llvm21//25.08
