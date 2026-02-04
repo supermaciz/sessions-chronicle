@@ -39,11 +39,23 @@ This directory contains all design documentation, mockups, and architectural dec
 
 ### Plans
 
-6. **[plans/2026-01-30-tool-calls-and-subagents-design.md](plans/2026-01-30-tool-calls-and-subagents-design.md)**
+6. **[plans/2026-01-26-opencode-parser-design.md](plans/2026-01-26-opencode-parser-design.md)** ✅
+   - OpenCode session parser implementation (completed)
+   - Multi-file structure handling
+
+7. **[plans/2026-02-03-codex-parser-design.md](plans/2026-02-03-codex-parser-design.md)** ✅
+   - Codex CLI session parser implementation (completed)
+   - JSONL event streaming and message extraction
+
+8. **[plans/2026-02-04-mistral-vibe-v2-design.md](plans/2026-02-04-mistral-vibe-v2-design.md)** ✅
+   - Mistral Vibe v2 parser implementation (completed)
+   - Directory-based sessions with meta.json + messages.jsonl
+
+9. **[plans/2026-01-30-tool-calls-and-subagents-design.md](plans/2026-01-30-tool-calls-and-subagents-design.md)**
    - Tool calls display with inline badges and detail panel
    - Subagent tree view and navigation
 
-7. **[plans/2026-01-30-markdown-rendering-design.md](plans/2026-01-30-markdown-rendering-design.md)**
+10. **[plans/2026-01-30-markdown-rendering-design.md](plans/2026-01-30-markdown-rendering-design.md)**
    - Markdown rendering for assistant messages (pulldown-cmark + Pango markup)
    - Native GTK4 widgets per block type
 
@@ -98,4 +110,4 @@ All mockups are SVG files in the `mockups/` subfolder (open in browser or image 
 
 ---
 
-**Last Updated**: 2026-01-30
+**Last Updated**: 2026-02-04
