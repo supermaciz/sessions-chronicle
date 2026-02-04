@@ -1,5 +1,5 @@
 use anyhow::{Context, Result};
-use chrono::{DateTime, Duration, Utc};
+use chrono::{DateTime, Duration, NaiveDateTime, TimeZone, Utc};
 use serde_json::Value;
 use std::fs::File;
 use std::io::{BufRead, BufReader};
@@ -184,9 +184,19 @@ impl MistralVibeParser {
     }
 
     fn parse_timestamp(value: &str) -> Result<DateTime<Utc>> {
-        DateTime::parse_from_rfc3339(value)
-            .map(|dt| dt.with_timezone(&Utc))
-            .context("Failed to parse timestamp")
+        // 1) RFC3339 with timezone/offset
+        if let Ok(dt) = DateTime::parse_from_rfc3339(value) {
+            return Ok(dt.with_timezone(&Utc));
+        }
+
+        // 2) Naive timestamps treated as UTC
+        for fmt in ["%Y-%m-%dT%H:%M:%S%.f", "%Y-%m-%dT%H:%M:%S"] {
+            if let Ok(naive) = NaiveDateTime::parse_from_str(value, fmt) {
+                return Ok(Utc.from_utc_datetime(&naive));
+            }
+        }
+
+        anyhow::bail!("Failed to parse timestamp: {value}")
     }
 }
 
@@ -194,6 +204,7 @@ impl MistralVibeParser {
 mod tests {
     use super::*;
     use crate::models::Role;
+    use chrono::{NaiveDateTime, TimeZone};
     use serde_json::json;
     use std::fs::{self, File};
     use std::io::Write;
@@ -255,6 +266,35 @@ mod tests {
 
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("no user messages"));
+    }
+
+    #[test]
+    fn parse_accepts_timestamps_without_timezone() {
+        let temp_dir = TempDir::new().unwrap();
+        let root = temp_dir.path();
+        let value = json!({
+            "session_id": "temp-session",
+            "start_time": "2026-02-04T11:38:48.695030",
+            "end_time": "2026-02-04T11:43:02.173084",
+            "environment": { "working_directory": "/tmp/project" }
+        });
+        fs::write(root.join("meta.json"), serde_json::to_vec(&value).unwrap()).unwrap();
+        write_messages(
+            &root.join("messages.jsonl"),
+            &[
+                r#"{"role":"user","content":"Hi"}"#,
+                r#"{"role":"assistant","content":"Hello"}"#,
+            ],
+        );
+
+        let parser = MistralVibeParser;
+        let (session, _messages) = parser.parse(root).unwrap();
+        let expected = Utc.from_utc_datetime(
+            &NaiveDateTime::parse_from_str("2026-02-04T11:38:48.695030", "%Y-%m-%dT%H:%M:%S%.f")
+                .unwrap(),
+        );
+
+        assert_eq!(session.start_time, expected);
     }
 
     #[test]
