@@ -75,20 +75,6 @@ impl MistralVibeParser {
                     }
                 }
                 Some("assistant") => {
-                    if let Some(tool_calls) = event.get("tool_calls").and_then(|v| v.as_array()) {
-                        for tool_call in tool_calls {
-                            if let Some(summary) = Self::tool_call_summary(tool_call) {
-                                Self::push_message(
-                                    &mut messages,
-                                    &session_id,
-                                    Role::ToolCall,
-                                    summary,
-                                    start_time,
-                                );
-                            }
-                        }
-                    }
-
                     if let Some(content) = Self::extract_content(&event) {
                         Self::push_message(
                             &mut messages,
@@ -127,36 +113,6 @@ impl MistralVibeParser {
             .and_then(|v| v.as_str())
             .map(str::to_string)
             .filter(|value| !value.trim().is_empty())
-    }
-
-    fn tool_call_summary(tool_call: &Value) -> Option<String> {
-        let name = tool_call
-            .get("function")
-            .and_then(|v| v.get("name"))
-            .and_then(|v| v.as_str())
-            .or_else(|| tool_call.get("name").and_then(|v| v.as_str()))
-            .unwrap_or("tool");
-
-        let args_value = tool_call
-            .get("function")
-            .and_then(|v| v.get("arguments"))
-            .or_else(|| tool_call.get("arguments"));
-
-        let summary = match args_value {
-            Some(value) => {
-                let args = value
-                    .as_str()
-                    .map(str::to_string)
-                    .or_else(|| serde_json::to_string(value).ok());
-                match args {
-                    Some(args) => format!("{}: {}", name, args),
-                    None => name.to_string(),
-                }
-            }
-            None => name.to_string(),
-        };
-
-        Some(summary)
     }
 
     fn push_message(
@@ -247,12 +203,10 @@ mod tests {
             session.project_path.as_deref(),
             Some("/home/anon/projects/sessions-chronicle")
         );
-        assert_eq!(session.message_count, 3);
-        assert_eq!(messages.len(), 3);
+        assert_eq!(session.message_count, 2);
+        assert_eq!(messages.len(), 2);
         assert_eq!(messages[0].role, Role::User);
-        assert_eq!(messages[1].role, Role::ToolCall);
-        assert_eq!(messages[2].role, Role::Assistant);
-        assert!(messages[1].content.contains("list_files"));
+        assert_eq!(messages[1].role, Role::Assistant);
     }
 
     #[test]

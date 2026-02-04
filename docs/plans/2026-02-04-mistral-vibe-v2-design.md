@@ -7,7 +7,7 @@ Design document for adding Mistral Vibe v2 session support to Sessions Chronicle
 
 ## Overview
 
-Mistral Vibe v2 stores each session as a directory containing `meta.json` and `messages.jsonl`. The parser streams `messages.jsonl`, extracts user and assistant messages, and emits tool calls from assistant `tool_calls` entries. Tool outputs (`role: tool`) are intentionally ignored to keep the index lean and avoid indexing potentially sensitive outputs.
+Mistral Vibe v2 stores each session as a directory containing `meta.json` and `messages.jsonl`. The parser streams `messages.jsonl` and extracts user and assistant messages. Tool calls (`tool_calls` on assistant messages) and tool outputs (`role: tool`) are intentionally ignored — tool call support is deferred to Phase 4 alongside the other parsers.
 
 ## Storage Structure
 
@@ -72,8 +72,7 @@ Rules:
 - Ignore `role: system` and `role: tool`.
 - Emit `Role::User` for `role: user` with non-empty `content`.
 - Emit `Role::Assistant` for `role: assistant` with non-empty `content`.
-- For `role: assistant` with `tool_calls[]`, emit one `Role::ToolCall` per entry.
-- `ToolCall` content uses a compact summary: `name: <arguments>` when possible, otherwise `tool: <name>`.
+- Ignore `tool_calls` on assistant messages (deferred to Phase 4).
 - Synthetic timestamps: `session.start_time + index seconds`.
 - If no user message exists, reject the session (skip/prune).
 
