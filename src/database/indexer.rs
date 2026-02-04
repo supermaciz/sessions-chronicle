@@ -4,6 +4,7 @@ use std::path::Path;
 
 use crate::parsers::claude_code::ClaudeCodeParser;
 use crate::parsers::codex::{CodexParser, ParseError as CodexParseError};
+use crate::parsers::mistral_vibe::{MistralVibeParser, ParseError as MistralVibeParseError};
 use crate::parsers::opencode::{OpenCodeParser, ParseError as OpenCodeParseError};
 
 pub struct SessionIndexer {
@@ -143,6 +144,62 @@ impl SessionIndexer {
                         } else {
                             tracing::warn!("Failed to index {}: {}", path.display(), err);
                         }
+                    }
+                }
+            }
+        }
+
+        Ok(count)
+    }
+
+    pub fn index_vibe_sessions(&mut self, sessions_dir: &Path) -> Result<usize> {
+        if !sessions_dir.exists() {
+            return Ok(0);
+        }
+
+        let parser = MistralVibeParser;
+        let mut count = 0;
+
+        let entries = std::fs::read_dir(sessions_dir)
+            .with_context(|| format!("Failed to read {}", sessions_dir.display()))?;
+
+        for entry in entries {
+            let entry = match entry {
+                Ok(entry) => entry,
+                Err(err) => {
+                    tracing::warn!("Failed to read Mistral Vibe session entry: {}", err);
+                    continue;
+                }
+            };
+
+            let path = entry.path();
+            if !path.is_dir() {
+                continue;
+            }
+
+            if !path.join("meta.json").exists() || !path.join("messages.jsonl").exists() {
+                continue;
+            }
+
+            match parser.parse(&path) {
+                Ok((session, messages)) => {
+                    self.insert_session_and_messages(&session, &messages, &path)?;
+                    count += 1;
+                }
+                Err(err) => {
+                    if matches!(
+                        err.downcast_ref::<MistralVibeParseError>(),
+                        Some(MistralVibeParseError::NoUserMessages)
+                    ) {
+                        if let Err(remove_err) = self.remove_session_for_file(&path) {
+                            tracing::warn!(
+                                "Failed to prune session {}: {}",
+                                path.display(),
+                                remove_err
+                            );
+                        }
+                    } else {
+                        tracing::warn!("Failed to index {}: {}", path.display(), err);
                     }
                 }
             }
@@ -366,6 +423,38 @@ mod tests {
         let nonexistent_dir = PathBuf::from("tests/fixtures/nonexistent_codex_sessions");
 
         let count = indexer.index_codex_sessions(&nonexistent_dir).unwrap();
+        assert_eq!(count, 0);
+    }
+
+    #[test]
+    fn mistral_vibe_indexing_indexes_sessions() {
+        let temp_db = NamedTempFile::new().unwrap();
+        let mut indexer = SessionIndexer::new(temp_db.path()).unwrap();
+        let sessions_dir = PathBuf::from("tests/fixtures/vibe_sessions");
+
+        let count = indexer.index_vibe_sessions(&sessions_dir).unwrap();
+        assert_eq!(count, 1);
+
+        let sessions: Vec<(String, String)> = indexer
+            .db
+            .prepare("SELECT id, tool FROM sessions ORDER BY id")
+            .unwrap()
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+
+        assert_eq!(sessions.len(), 1);
+        assert_eq!(sessions[0].1, "mistral_vibe");
+    }
+
+    #[test]
+    fn mistral_vibe_indexing_returns_zero_for_missing_sessions_dir() {
+        let temp_db = NamedTempFile::new().unwrap();
+        let mut indexer = SessionIndexer::new(temp_db.path()).unwrap();
+        let nonexistent_dir = PathBuf::from("tests/fixtures/nonexistent_vibe_sessions");
+
+        let count = indexer.index_vibe_sessions(&nonexistent_dir).unwrap();
         assert_eq!(count, 0);
     }
 }

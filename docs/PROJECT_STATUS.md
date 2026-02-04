@@ -15,15 +15,15 @@
 - ✅ Claude Code parser (JSONL format, streaming)
 - ✅ OpenCode parser (multi-file format with message parts)
 - ✅ Codex parser (JSONL format, streaming)
-- ✅ Test fixtures in `tests/fixtures/claude_sessions/`, `tests/fixtures/opencode_storage/`, `tests/fixtures/codex_sessions/`
+- ✅ Test fixtures in `tests/fixtures/claude_sessions/`, `tests/fixtures/opencode_storage/`, `tests/fixtures/codex_sessions/`, `tests/fixtures/vibe_sessions/`
 - ✅ Basic UI structure (Sidebar, SessionList, SessionDetail)
 
 **Implemented Core Features**
 - ✅ CLI arguments (`clap`) for `--sessions-dir` override
 - ✅ Relm4 CLI passthrough (`with_args`) + GTK arg split
-- ✅ Database indexer wired into App initialization for all three tools
+- ✅ Database indexer wired into App initialization for all four tools
 - ✅ SessionList loading from database
-- ✅ Sidebar tool filters wired to SessionList (Claude, OpenCode, Codex)
+- ✅ Sidebar tool filters wired to SessionList (Claude, OpenCode, Codex, Mistral Vibe)
 - ✅ Search functionality with FTS5 full-text search
 - ✅ Search UI with SearchBar and SearchEntry in `app.rs`
 - ✅ SessionDetail component with conversation transcript view
@@ -46,7 +46,6 @@
 ### 🚧 In Progress / Next Steps
 
 **Missing Features**
-- ⬜ Mistral Vibe parser + indexing (filters show empty for that tool)
 - ⬜ Search term highlighting in SessionDetail
 
 ### 📋 Roadmap
@@ -66,7 +65,7 @@
 - ✅ Codex parser (JSONL streaming, encrypted reasoning support)
 - ✅ Filter sessions with no user messages
 - ✅ Message preview model
-- ⬜ Mistral Vibe parser (single JSON file, OpenAI-style messages)
+- ✅ Mistral Vibe parser (directory-based logs with `meta.json` + `messages.jsonl`)
 - ✅ Tool filters in UI (sidebar checkboxes)
 
 **Phase 3: Markdown Rendering** - Future ([design](plans/2026-01-30-markdown-rendering-design.md))
@@ -100,7 +99,7 @@
 - **UI**: GTK4 + Libadwaita (GNOME HIG compliant)
 - **Reactive UI**: Relm4 (Elm-inspired architecture)
 - **Database**: SQLite with FTS5 (full-text search)
-- **Supported Tools**: Claude Code (v1), OpenCode (v2), Codex (v2), Mistral Vibe (v1)
+- **Supported Tools**: Claude Code (v1), OpenCode (v2), Codex (v2), Mistral Vibe (v2)
 
 ### Project Structure
 
@@ -117,6 +116,8 @@ sessions-chronicle/
 │   │   └── message_preview.rs # MessagePreview for UI
 │   ├── parsers/          # Session file parsers
 │   │   ├── claude_code.rs   # Claude Code JSONL parser
+│   │   ├── codex.rs         # Codex JSONL parser
+│   │   ├── mistral_vibe.rs  # Mistral Vibe parser
 │   │   └── opencode.rs      # OpenCode multi-file parser
 │   ├── database/         # SQLite operations
 │   │   ├── schema.rs     # DB schema + FTS5
@@ -140,7 +141,9 @@ sessions-chronicle/
 │   └── *.xml.in          # GSettings schema, desktop entry, metainfo
 ├── tests/fixtures/       # Test data
 │   ├── claude_sessions/  # Sample Claude Code sessions
-│   └── opencode_storage/ # Sample OpenCode sessions
+│   ├── codex_sessions/   # Sample Codex sessions
+│   ├── opencode_storage/ # Sample OpenCode sessions
+│   └── vibe_sessions/    # Sample Mistral Vibe sessions
 ├── build-aux/            # Build manifests
 │   └── io.github.supermaciz.sessionschronicle.Devel.json
 └── docs/                 # Design docs
@@ -187,8 +190,8 @@ CREATE VIRTUAL TABLE messages USING fts5(
 - Format: JSONL with streaming chunks
 - Special: Encrypted reasoning blocks (never decrypt locally)
 
-**Mistral Vibe**: `~/.vibe/logs/session/` (v1)
-- Format: Single JSON file per session (metadata + OpenAI-style messages)
+**Mistral Vibe**: `~/.vibe/logs/session/` (v2)
+- Format: Directory per session with `meta.json` + JSONL `messages.jsonl`
 - Special: No per-message timestamps; session-level metadata with tool stats
 
 ---
@@ -246,11 +249,7 @@ let db_path = data_dir.join("sessions-chronicle").join("sessions.db");
 
 ### Immediate Tasks
 
-1. **Codex + Mistral Vibe indexing**:
-    - Add parsers for Codex and Mistral Vibe
-    - Index sessions into SQLite so filters show data
-
-2. **Search term highlighting**:
+1. **Search term highlighting**:
     - Highlight matching terms in SessionDetail when viewing search results
 
 ### Testing Strategy
@@ -289,5 +288,5 @@ cargo test
 ---
 
 **Last Updated**: 2026-02-04
-**Current Phase**: Phase 2 - Multi-Tool Support (Claude Code + OpenCode + Codex)
-**Next Milestone**: Mistral Vibe parser + search term highlighting
+**Current Phase**: Phase 2 - Multi-Tool Support (Claude Code + OpenCode + Codex + Mistral Vibe)
+**Next Milestone**: Search term highlighting

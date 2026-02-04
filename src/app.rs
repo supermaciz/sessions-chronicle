@@ -171,6 +171,7 @@ impl SimpleComponent for App {
                 let opencode_session_dir = PathBuf::from(Tool::OpenCode.session_dir());
                 let opencode_root = opencode_session_dir.parent();
                 let codex_sessions_dir = PathBuf::from(Tool::Codex.session_dir());
+                let vibe_sessions_dir = PathBuf::from(Tool::MistralVibe.session_dir());
 
                 match idx.index_claude_sessions(&sessions_dir) {
                     Ok(count) => {
@@ -215,6 +216,19 @@ impl SimpleComponent for App {
                     }
                     Err(err) => {
                         tracing::error!("Failed to index Codex sessions: {}", err);
+                    }
+                }
+
+                match idx.index_vibe_sessions(&vibe_sessions_dir) {
+                    Ok(count) => {
+                        tracing::info!(
+                            "Indexed {} Mistral Vibe sessions from {}",
+                            count,
+                            vibe_sessions_dir.display()
+                        );
+                    }
+                    Err(err) => {
+                        tracing::error!("Failed to index Mistral Vibe sessions: {}", err);
                     }
                 }
             }

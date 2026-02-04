@@ -10,6 +10,8 @@ tests/fixtures/
 │   └── sample-session.jsonl
 ├── codex_sessions/         # Codex CLI session samples (JSONL format)
 │   └── 2026/01/18/...
+├── vibe_sessions/          # Mistral Vibe session samples (meta.json + JSONL)
+│   └── session_20260203_191451_b9383361/
 └── opencode_storage/       # OpenCode session samples (JSON format)
     └── ...
 ```
@@ -43,6 +45,13 @@ Fixtures added for Codex parsing coverage:
 - `tests/fixtures/codex_sessions/2026/01/18/rollout-2026-01-18T02-01-28-019bce9f-0a40-79e2-8351-8818e8487fb6.jsonl` (valid 3-line session)
 - `tests/fixtures/codex_sessions/2026/01/18/rollout-2026-01-18T02-02-00-empty-session.jsonl` (session_meta only)
 - `tests/fixtures/codex_sessions/2026/01/18/rollout-2026-01-18T02-03-00-malformed.jsonl` (event_msg first line, missing session_meta)
+
+## Vibe Session Format
+
+Each session directory includes:
+
+- `meta.json` with `session_id`, `start_time`, `end_time`, and `environment.working_directory`
+- `messages.jsonl` containing `system`, `user`, `assistant` (with optional `tool_calls`), and `tool` messages
 
 ## OpenCode Session Format
 

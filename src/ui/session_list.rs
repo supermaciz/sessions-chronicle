@@ -77,7 +77,12 @@ impl SimpleComponent for SessionList {
         root: Self::Root,
         sender: ComponentSender<Self>,
     ) -> ComponentParts<Self> {
-        let active_tools = vec![Tool::ClaudeCode, Tool::OpenCode, Tool::Codex];
+        let active_tools = vec![
+            Tool::ClaudeCode,
+            Tool::OpenCode,
+            Tool::Codex,
+            Tool::MistralVibe,
+        ];
         let search_query = String::new();
         let fetched = Self::fetch_sessions(&db_path, &active_tools, &search_query);
 
