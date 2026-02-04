@@ -160,6 +160,7 @@ pub fn build_resume_command(tool: Tool, session_id: &str, workdir: &Path) -> Res
         Tool::ClaudeCode => "claude -r \"$2\"".to_string(),
         Tool::OpenCode => "opencode --session \"$2\"".to_string(),
         Tool::Codex => "codex \"$2\"".to_string(),
+        Tool::MistralVibe => "vibe --resume \"$2\"".to_string(),
     };
 
     let shell_cmd = format!("cd \"$1\" && {}; exec bash", tool_cmd);
@@ -304,6 +305,25 @@ mod tests {
         assert_eq!(cmd[0], "bash");
         assert_eq!(cmd[1], "-lc");
         assert!(cmd[2].contains("codex \"$2\""));
+        assert_eq!(cmd[3], "--");
+        assert!(cmd[4].ends_with("test-project"));
+        assert_eq!(cmd[5], "test-session-id");
+    }
+
+    #[test]
+    fn test_build_resume_command_mistral_vibe() {
+        let temp_dir = std::env::temp_dir();
+        let project_dir = temp_dir.join("test-project");
+
+        if !project_dir.exists() {
+            std::fs::create_dir(&project_dir).ok();
+        }
+
+        let cmd = build_resume_command(Tool::MistralVibe, "test-session-id", &project_dir).unwrap();
+        assert_eq!(cmd.len(), 6);
+        assert_eq!(cmd[0], "bash");
+        assert_eq!(cmd[1], "-lc");
+        assert!(cmd[2].contains("vibe --resume \"$2\""));
         assert_eq!(cmd[3], "--");
         assert!(cmd[4].ends_with("test-project"));
         assert_eq!(cmd[5], "test-session-id");

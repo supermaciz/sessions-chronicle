@@ -1,6 +1,6 @@
 # Codex Parser Design
 
-**Status**: Design validated
+**Status**: Implemented
 **Date**: 2026-02-03
 
 Design document for implementing a Codex CLI session parser in Sessions Chronicle.

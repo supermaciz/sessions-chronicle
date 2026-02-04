@@ -1,0 +1,5 @@
+{"role":"system","content":"Vibe v2 session system message."}
+{"role":"user","content":"List the files in the project root."}
+{"role":"assistant","content":"","tool_calls":[{"id":"call_1","type":"function","function":{"name":"list_files","arguments":"{\"path\":\".\"}"}}]}
+{"role":"tool","tool_call_id":"call_1","content":"README.md\nsrc\n"}
+{"role":"assistant","content":"The root contains README.md and src."}

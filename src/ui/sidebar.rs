@@ -8,6 +8,7 @@ pub struct Sidebar {
     claude_enabled: bool,
     opencode_enabled: bool,
     codex_enabled: bool,
+    mistral_vibe_enabled: bool,
 }
 
 #[derive(Debug)]
@@ -82,6 +83,15 @@ impl SimpleComponent for Sidebar {
                         sender.input(SidebarMsg::ToolToggled(Tool::Codex, btn.is_active()));
                     },
                 },
+
+                #[name = "mistral_vibe_check"]
+                gtk::CheckButton {
+                    set_label: Some("Mistral Vibe"),
+                    set_active: true,
+                    connect_toggled[sender] => move |btn| {
+                        sender.input(SidebarMsg::ToolToggled(Tool::MistralVibe, btn.is_active()));
+                    },
+                },
             },
 
             gtk::Separator {
@@ -123,6 +133,7 @@ impl SimpleComponent for Sidebar {
             claude_enabled: true,
             opencode_enabled: true,
             codex_enabled: true,
+            mistral_vibe_enabled: true,
         };
         let widgets = view_output!();
 
@@ -130,6 +141,7 @@ impl SimpleComponent for Sidebar {
             Tool::ClaudeCode,
             Tool::OpenCode,
             Tool::Codex,
+            Tool::MistralVibe,
         ]));
 
         ComponentParts { model, widgets }
@@ -142,6 +154,7 @@ impl SimpleComponent for Sidebar {
                     Tool::ClaudeCode => self.claude_enabled = active,
                     Tool::OpenCode => self.opencode_enabled = active,
                     Tool::Codex => self.codex_enabled = active,
+                    Tool::MistralVibe => self.mistral_vibe_enabled = active,
                 }
 
                 let mut tools = Vec::new();
@@ -153,6 +166,9 @@ impl SimpleComponent for Sidebar {
                 }
                 if self.codex_enabled {
                     tools.push(Tool::Codex);
+                }
+                if self.mistral_vibe_enabled {
+                    tools.push(Tool::MistralVibe);
                 }
 
                 let _ = sender.output(SidebarOutput::FiltersChanged(tools));

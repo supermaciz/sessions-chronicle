@@ -8,9 +8,9 @@ Analysis of Claude Code, Codex, OpenCode, and Mistral Vibe session file formats 
 
 - ✅ Claude Code parser + indexer implemented
 - ✅ Session date/sort semantics aligned with agent-sessions (Claude: end time = latest message-like event)
-- ⬜ OpenCode parser pending (filters show empty for OpenCode)
-- ⬜ Codex parser pending (filters show empty for Codex)
-- ⬜ Mistral Vibe parser pending (not yet detected/indexed)
+- ✅ OpenCode parser implemented
+- ✅ Codex parser implemented
+- ✅ Mistral Vibe parser implemented
 
 ---
 
@@ -21,7 +21,7 @@ Analysis of Claude Code, Codex, OpenCode, and Mistral Vibe session file formats 
 | **Claude Code** | `~/.claude/` | Project-specific directories<br>`~/.claude/projects/-Users-alexm-Repository-<project>/UUID.jsonl` |
 | **Codex** | `~/.codex/sessions/` | Date-sharded directories<br>`YYYY/MM/DD/rollout-*.jsonl` |
 | **OpenCode** | `~/.local/share/opencode/storage/` | Multi-directory structure:<br>`session/<project>/ses_xxx.json` (metadata)<br>`message/ses_xxx/` (messages)<br>`part/msg_xxx/` (message parts)<br>`session_diff/ses_xxx.json` (file changes) |
-| **Mistral Vibe** | `~/.vibe/logs/session/` | One JSON file per session:<br>`session_YYYYMMDD_HHMMSS_<shortid>.json`<br>Default can be overridden via `VIBE_HOME` or `session_logging.save_dir` in `config.toml`. |
+| **Mistral Vibe** | `~/.vibe/logs/session/` | One directory per session:<br>`session_YYYYMMDD_HHMMSS_<shortid>/`<br>Contains `meta.json` + `messages.jsonl`.<br>Default can be overridden via `VIBE_HOME` or `session_logging.save_dir` in `config.toml`. |
 
 ---
 
@@ -37,11 +37,10 @@ Analysis of Claude Code, Codex, OpenCode, and Mistral Vibe session file formats 
 - Separate directories for messages and parts
 - Standard JSON format (not line-delimited)
 
-**Mistral Vibe** uses **single JSON files**:
-- One JSON file per session
-- UTF-8 encoded, pretty-printed JSON (not line-delimited)
-- Session file is rewritten/updated over time (not append-only)
-- Conversation stored as a list of messages (OpenAI-style)
+**Mistral Vibe** uses a **directory-based format**:
+- `meta.json` contains session-level metadata (standard JSON)
+- `messages.jsonl` is JSONL (one message per line)
+- Messages are OpenAI-style (`role`, `content`, optional `tool_calls`)
 
 ---
 
@@ -52,7 +51,7 @@ Analysis of Claude Code, Codex, OpenCode, and Mistral Vibe session file formats 
 | **Claude Code** | `UUID.jsonl` | `a1b2c3d4-e5f6-7890-abcd-ef1234567890.jsonl` |
 | **Codex** | `rollout-*.jsonl` | `rollout-20250912-164103.jsonl` |
 | **OpenCode** | `ses_*.json` | `ses_66a71b6f4ffeq796jvvOpJQ04m.json` |
-| **Mistral Vibe** | `session_*.json` | `session_20260123_174305_64883c86.json` |
+| **Mistral Vibe** | `session_YYYYMMDD_HHMMSS_<shortid>/` | `session_20260123_174305_64883c86/` |
 
 ---
 
@@ -62,10 +61,10 @@ Analysis of Claude Code, Codex, OpenCode, and Mistral Vibe session file formats 
 
 | Field Category | Claude Code | Codex | OpenCode | Mistral Vibe |
 |----------------|-------------|-------|----------|-------------|
-| **Event Type** | `type` (`user`, `system`, `summary`) | `type` (preferred) or `role` (fallback) | Session metadata only (messages in separate files) | `role` (`system`, `user`, `assistant`, `tool`); tool calls on assistant messages via `tool_calls` |
+| **Event Type** | `type` (`user`, `system`, `summary`) | `type` (preferred) or `role` (fallback) | Session metadata only (messages in separate files) | `role` (`system`, `user`, `assistant`, `tool`) in `messages.jsonl`; tool calls on assistant messages via `tool_calls` |
 | **Identity** | `uuid`, `parentUuid` (tree structure) | `id`/`message_id`, `parent_id` (threaded) | `id`, `parentID` (hierarchical sessions) | No message IDs; tool calls have an `id` and tool responses reference it via `tool_call_id` |
-| **Timestamp** | `timestamp` (ISO-8601) | Multiple possible keys: `timestamp`, `time`, `ts`, `created`, etc. | `time.created`, `time.updated` (session level) | Session-level only: `metadata.start_time`, `metadata.end_time` (ISO-8601). No per-message timestamps |
-| **Content** | Nested: `message.content` | Top-level: `content`, `text`, or `message` | Stored in `message/ses_xxx/` directory | `messages[*].content` for text; tool output stored as `role: "tool"` messages |
+| **Timestamp** | `timestamp` (ISO-8601) | Multiple possible keys: `timestamp`, `time`, `ts`, `created`, etc. | `time.created`, `time.updated` (session level) | Session-level only in `meta.json`: `start_time`, `end_time` (ISO-8601). No per-message timestamps |
+| **Content** | Nested: `message.content` | Top-level: `content`, `text`, or `message` | Stored in `message/ses_xxx/` directory | `messages.jsonl` lines with `content`; tool output stored as `role: "tool"` messages |
 
 ### Key Architectural Differences
 
@@ -73,25 +72,25 @@ Analysis of Claude Code, Codex, OpenCode, and Mistral Vibe session file formats 
 - **Claude Code**: Tree structure via `uuid`/`parentUuid` + `isSidechain` flag
 - **Codex**: Linear threading via `message_id`/`parent_id`
 - **OpenCode**: Parent-child sessions via `parentID` (subagent sessions)
-- **Mistral Vibe**: Linear message list; tool calls are embedded in assistant messages and resolved by subsequent `tool` role messages
+- **Mistral Vibe**: Linear message list in `messages.jsonl`; tool calls are embedded in assistant messages and resolved by subsequent `tool` role messages
 
 **Metadata Storage:**
 - **Claude Code**: Rich per-event metadata (`cwd`, `gitBranch`, `version`, `sessionId`)
 - **Codex**: Minimal per-event metadata, model info stored separately
 - **OpenCode**: Session-level metadata (`projectID`, `directory`, `version`, `title`)
-- **Mistral Vibe**: Session-level `metadata` includes environment, optional git info, token/tool usage stats, tools snapshot, and agent config snapshot
+- **Mistral Vibe**: Session-level `meta.json` includes environment, optional git info, token/tool usage stats, tools snapshot, and agent config snapshot
 
 **Content Access:**
 - **Claude Code**: `event.message.content` (nested in JSONL events)
 - **Codex**: `event.content` or `event.text` (top-level in JSONL events)
 - **OpenCode**: Separate file system (messages not in session metadata file)
-- **Mistral Vibe**: `messages` array inside the JSON session file
+- **Mistral Vibe**: `messages.jsonl` holds message entries (one JSON object per line)
 
 **File Organization:**
 - **Claude Code**: Single JSONL file per session
 - **Codex**: Single JSONL file per session
 - **OpenCode**: Multi-file structure (metadata + message directories + parts + diffs)
-- **Mistral Vibe**: One JSON file per session (non-append-only), plus a separate input history file `~/.vibe/vibehistory` (not a full session log)
+- **Mistral Vibe**: Directory-based session (`meta.json` + `messages.jsonl`), plus a separate input history file `~/.vibe/vibehistory` (not a full session log)
 
 ---
 
@@ -215,11 +214,10 @@ Analysis of Claude Code, Codex, OpenCode, and Mistral Vibe session file formats 
 
 ### Mistral Vibe
 
-**Session Log File** (`~/.vibe/logs/session/session_*.json`):
+**Session Directory** (`~/.vibe/logs/session/session_*/`):
 
-- Top-level object with two keys: `metadata` and `messages`
-- `metadata` contains session-wide timestamps, environment info, token/tool usage stats, and config snapshots
-- `messages` is an OpenAI-style chat transcript (`role`, `content`, optional `tool_calls`)
+- `meta.json` contains session-wide timestamps, environment info, token/tool usage stats, and config snapshots
+- `messages.jsonl` is an OpenAI-style chat transcript (`role`, `content`, optional `tool_calls`)
 
 **Tool Call + Result (simplified):**
 ```json
@@ -319,9 +317,9 @@ Two patterns:
 ### Mistral Vibe
 
 **Rich Session Metadata:**
-- `metadata.stats` includes token usage and tool call counters
-- `metadata.tools_available` captures the set of tools available to the agent for the session
-- `metadata.agent_config` captures a snapshot of the resolved configuration (providers, models, tool permissions)
+- `meta.json.stats` includes token usage and tool call counters
+- `meta.json.tools_available` captures the set of tools available to the agent for the session
+- `meta.json.agent_config` captures a snapshot of the resolved configuration (providers, models, tool permissions)
 
 **Input History (Not a Session Log):**
 - `~/.vibe/vibehistory` stores a JSONL list of user inputs for prompt recall; it does not contain the full assistant/tool transcript
@@ -337,7 +335,7 @@ Two patterns:
 | **Claude Code** | Look for `type == "summary"` and extract `summary` field<br>Fallback: First `type == "user"` where `isMeta == false` → use `message.content` |
 | **Codex** | First `type == "user"` event → use `content` or `text` field |
 | **OpenCode** | Direct access: session metadata contains `title` field at top level |
-| **Mistral Vibe** | No explicit title field. Use first `messages[*]` where `role == "user"` and `content` is non-empty (optionally truncate for display). |
+| **Mistral Vibe** | No explicit title field. Use first `messages.jsonl` entry where `role == "user"` and `content` is non-empty (optionally truncate for display). |
 
 ### Timestamp Parsing
 
@@ -346,7 +344,7 @@ Two patterns:
 | **Claude Code** | Single field: `timestamp` (ISO-8601 string) |
 | **Codex** | Check multiple fields in priority order:<br>`timestamp` → `time` → `ts` → `created` → `created_at` → ... |
 | **OpenCode** | Nested object: `time.created` and `time.updated` (Unix epoch milliseconds) |
-| **Mistral Vibe** | Prefer `metadata.end_time` (ISO-8601), fallback to `metadata.start_time`, then file mtime if missing. |
+| **Mistral Vibe** | Prefer `meta.json.end_time` (ISO-8601), fallback to `meta.json.start_time`, then directory mtime if missing. |
 
 ### Content Extraction
 
@@ -370,10 +368,8 @@ fn extract_title_opencode(session: &Value) -> Option<String> {
 }
 
 // Mistral Vibe
-fn extract_title_vibe(session_log: &Value) -> Option<String> {
-    session_log
-        .get("messages")?
-        .as_array()?
+fn extract_title_vibe(messages: &[Value]) -> Option<String> {
+    messages
         .iter()
         .find(|m| m.get("role").and_then(|v| v.as_str()) == Some("user"))
         .and_then(|m| m.get("content"))
@@ -468,7 +464,7 @@ This is critical for sessions with thousands of messages.
 
 **Mistral Vibe:**
 ```
-~/.vibe/logs/session/session_20260123_174305_64883c86.json
+~/.vibe/logs/session/session_20260123_174305_64883c86/
                     └──────────────┬──────────────┘
                        timestamp + session id prefix
 ```
@@ -495,7 +491,7 @@ This is critical for sessions with thousands of messages.
 - `title`: User-provided session title
 - `parentID`: Parent session ID (if subagent)
 
-**Mistral Vibe** (session-level metadata in `metadata` object):
+**Mistral Vibe** (session-level metadata in `meta.json`):
 - `session_id`: UUID
 - `start_time`, `end_time`: ISO-8601 strings
 - `environment.working_directory`: working directory
@@ -519,7 +515,7 @@ trait SessionParser {
 struct ClaudeCodeParser;  // JSONL parser
 struct CodexParser;       // JSONL parser
 struct OpenCodeParser;    // JSON + multi-file parser
-struct MistralVibeParser; // JSON session log parser
+struct MistralVibeParser; // Directory-based session parser
 
 impl SessionParser for ClaudeCodeParser { /* ... */ }
 impl SessionParser for CodexParser { /* ... */ }
@@ -529,7 +525,7 @@ impl SessionParser for OpenCodeParser {
     // Must handle parent-child session relationships
 }
 impl SessionParser for MistralVibeParser {
-    // Reads a single JSON file containing `metadata` + `messages`
+    // Reads `meta.json` + streams `messages.jsonl`
     // Title and timestamps are stored at session-level (no per-message timestamps)
 }
 ```
@@ -711,9 +707,9 @@ impl OpenCodeParser {
 - **Claude Code**: JSONL format, tree-structured events, project-based organization
 - **Codex**: JSONL format, threaded messages, date-sharded storage
 - **OpenCode**: Multi-file JSON format, session metadata + separate message directories, git-based project identification
-- **Mistral Vibe**: Single JSON session log file containing `metadata` + OpenAI-style `messages` (including tool call/result pairing)
+- **Mistral Vibe**: Directory-based session format with `meta.json` + JSONL `messages.jsonl` (including tool call/result pairing)
 
 ---
 
-**Last Updated**: 2026-01-23
-**Status**: Claude/Codex/OpenCode documented; Mistral Vibe session log format documented (session logs only; input history noted)
+**Last Updated**: 2026-02-04
+**Status**: Claude/Codex/OpenCode/Mistral Vibe documented (session logs + input history noted)
