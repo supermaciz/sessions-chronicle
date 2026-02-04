@@ -10,18 +10,20 @@
 
 **Core Architecture**
 - ✅ Project structure with Rust + GTK4 + Relm4
-- ✅ Data models (`Session`, `Message`, `Tool`, `Role`)
+- ✅ Data models (`Session`, `Message`, `Tool`)
 - ✅ Database layer with SQLite + FTS5
 - ✅ Claude Code parser (JSONL format, streaming)
-- ✅ Test fixtures in `tests/fixtures/claude_sessions/`
+- ✅ OpenCode parser (multi-file format with message parts)
+- ✅ Codex parser (JSONL format, streaming)
+- ✅ Test fixtures in `tests/fixtures/claude_sessions/`, `tests/fixtures/opencode_storage/`, `tests/fixtures/codex_sessions/`
 - ✅ Basic UI structure (Sidebar, SessionList, SessionDetail)
 
 **Implemented Core Features**
 - ✅ CLI arguments (`clap`) for `--sessions-dir` override
 - ✅ Relm4 CLI passthrough (`with_args`) + GTK arg split
-- ✅ Database indexer wired into App initialization
+- ✅ Database indexer wired into App initialization for all three tools
 - ✅ SessionList loading from database
-- ✅ Sidebar tool filters wired to SessionList (Claude + OpenCode)
+- ✅ Sidebar tool filters wired to SessionList (Claude, OpenCode, Codex)
 - ✅ Search functionality with FTS5 full-text search
 - ✅ Search UI with SearchBar and SearchEntry in `app.rs`
 - ✅ SessionDetail component with conversation transcript view
@@ -30,7 +32,6 @@
 - ✅ Terminal preferences dialog for emulator selection
 - ✅ Session resumption failure notifications with toast feedback
 - ✅ Filter sessions with no user messages (excludes pure tool sessions)
-- ✅ OpenCode parser (multi-file format with message parts)
 - ✅ Message preview model with truncation badges
 
 **Dependencies**
@@ -45,7 +46,7 @@
 ### 🚧 In Progress / Next Steps
 
 **Missing Features**
-- ⬜ Codex/Mistral Vibe parsers + indexing (filters show empty for those tools)
+- ⬜ Mistral Vibe parser + indexing (filters show empty for that tool)
 - ⬜ Search term highlighting in SessionDetail
 
 ### 📋 Roadmap
@@ -62,9 +63,9 @@
 
 **Phase 2: Multi-Tool Support** - Current
 - ✅ OpenCode parser (multi-file format)
+- ✅ Codex parser (JSONL streaming, encrypted reasoning support)
 - ✅ Filter sessions with no user messages
 - ✅ Message preview model
-- ⬜ Codex parser (streaming, encrypted reasoning)
 - ⬜ Mistral Vibe parser (single JSON file, OpenAI-style messages)
 - ✅ Tool filters in UI (sidebar checkboxes)
 
@@ -287,6 +288,6 @@ cargo test
 
 ---
 
-**Last Updated**: 2026-01-28
-**Current Phase**: Phase 2 - Multi-Tool Support (Claude Code + OpenCode)
-**Next Milestone**: Codex/Mistral Vibe parsers + search term highlighting
+**Last Updated**: 2026-02-04
+**Current Phase**: Phase 2 - Multi-Tool Support (Claude Code + OpenCode + Codex)
+**Next Milestone**: Mistral Vibe parser + search term highlighting

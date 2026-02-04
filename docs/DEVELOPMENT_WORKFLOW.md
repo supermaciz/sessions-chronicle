@@ -12,7 +12,10 @@ flatpak-builder --user flatpak_app build-aux/io.github.supermaciz.sessionschroni
 flatpak-builder --run flatpak_app build-aux/io.github.supermaciz.sessionschronicle.Devel.json sessions-chronicle
 ```
 
-This uses the default Claude Code sessions directory (`~/.claude/projects/`).
+This indexes sessions from all supported tools:
+- Claude Code: `~/.claude/projects/`
+- OpenCode: `~/.local/share/opencode/storage/session/`
+- Codex: `~/.codex/sessions/`
 
 ## Using Test Fixtures
 
@@ -21,6 +24,8 @@ The `--sessions-dir` flag allows you to point to test data instead of your real 
 ```bash
 flatpak-builder --run flatpak_app build-aux/io.github.supermaciz.sessionschronicle.Devel.json sessions-chronicle --sessions-dir tests/fixtures/claude_sessions
 ```
+
+**Note:** This flag only overrides the Claude Code sessions directory. The app continues to index OpenCode and Codex sessions from their default locations.
 
 ## Why This Approach?
 
@@ -69,16 +74,17 @@ Run the full app with test fixtures using the `--sessions-dir` flag shown above.
 
 ## Adding Test Fixtures
 
-Create new test session files in `tests/fixtures/claude_sessions/`:
+Create new test session files in the appropriate fixture directory:
 
 ```bash
+# Claude Code (JSONL format)
 cat > tests/fixtures/claude_sessions/another-session.jsonl << 'EOF'
 {"type":"user","message":{"role":"user","content":"Test message"},"timestamp":"2025-01-11T10:00:00.000Z","cwd":"/home/user/project","sessionId":"test123","uuid":"msg1","parentUuid":null,"isMeta":false}
 {"type":"summary","summary":"Test session title","leafUuid":"msg1","timestamp":"2025-01-11T10:00:05.000Z","cwd":"/home/user/project","sessionId":"test123"}
 EOF
 ```
 
-Then run with `--sessions-dir tests/fixtures/claude_sessions` to verify.
+See `tests/fixtures/README.md` for format details on all supported tools.
 
 ## Debugging
 
@@ -156,4 +162,4 @@ Create run configurations:
 
 ---
 
-**Last Updated**: 2026-01-19
+**Last Updated**: 2026-02-04

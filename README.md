@@ -1,10 +1,10 @@
-<div style="display: flex; align-items: center; gap: 20px;">
-  <img src="data/icons/io.github.supermaciz.sessionschronicle.svg" alt="App Icon" width="80" height="80"/>
-  <div>
-    <h1>Sessions Chronicle</h1>
-    <p><strong>A GNOME app for browsing, searching, and resuming AI coding sessions.</strong></p>
-  </div>
-</div>
+<img src="data/icons/io.github.supermaciz.sessionschronicle.svg" alt="App Icon" width="80" height="80" align="left"/>
+
+# Sessions Chronicle
+<br clear="left"/>
+
+**A GNOME app for browsing, searching, and resuming AI coding sessions.**
+
 
 ## Features
 
@@ -13,10 +13,8 @@
 - Browse and search sessions with filters
 - Session detail view with conversation history
 - Local data only (no telemetry)
-
-### Planned
 - Resume sessions in terminal
-- Support for OpenCode and Codex formats
+- Support for multiple AI tools: Claude Code, OpenCode, Codex
 
 ## Screenshots
 
