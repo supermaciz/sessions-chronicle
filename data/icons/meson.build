@@ -8,3 +8,18 @@ install_data(
   install_dir: iconsdir / 'hicolor' / 'symbolic' / 'apps',
   rename: '@0@-symbolic.svg'.format(application_id)
 )
+
+# Symbolic icons used inside the app UI (gtk::Image::from_icon_name).
+tool_symbolic_icons = [
+  'claude-code-symbolic.svg',
+  'codex-symbolic.svg',
+  'mistral-vibe-symbolic.svg',
+  'opencode-symbolic.svg',
+]
+
+foreach icon : tool_symbolic_icons
+  install_data(
+    icon,
+    install_dir: iconsdir / 'hicolor' / 'symbolic' / 'apps',
+  )
+endforeach
