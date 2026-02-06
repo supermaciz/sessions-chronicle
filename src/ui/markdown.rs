@@ -234,10 +234,15 @@ pub fn markdown_to_blocks(content: &str) -> Vec<MarkdownBlock> {
                 }
             }
             Event::End(TagEnd::Table) => {
-                blocks.push(MarkdownBlock::Table {
+                let block = MarkdownBlock::Table {
                     headers: std::mem::take(&mut table_headers),
                     rows: std::mem::take(&mut table_rows),
-                });
+                };
+                if in_blockquote {
+                    blockquote_blocks.push(block);
+                } else {
+                    blocks.push(block);
+                }
             }
             Event::Rule => {
                 if in_blockquote {
@@ -258,166 +263,163 @@ pub fn render_markdown(content: &str) -> gtk::Box {
     let container = gtk::Box::new(gtk::Orientation::Vertical, 4);
 
     for block in markdown_to_blocks(content) {
-        match block {
-            MarkdownBlock::Paragraph(markup) => {
-                let label = gtk::Label::new(None);
-                label.set_markup(&markup);
-                label.set_wrap(true);
-                label.set_wrap_mode(gtk::pango::WrapMode::WordChar);
-                label.set_halign(gtk::Align::Start);
-                label.set_xalign(0.0);
-                label.set_selectable(true);
-                container.append(&label);
-            }
-            MarkdownBlock::Heading { level, content } => {
-                let label = gtk::Label::new(None);
-                label.set_markup(&content);
-                label.set_wrap(true);
-                label.set_wrap_mode(gtk::pango::WrapMode::WordChar);
-                label.set_halign(gtk::Align::Start);
-                label.set_xalign(0.0);
-                match level {
-                    1 => label.add_css_class("title-1"),
-                    2 => label.add_css_class("title-2"),
-                    3 => label.add_css_class("title-3"),
-                    4 => label.add_css_class("title-4"),
-                    _ => label.add_css_class("heading"),
-                }
-                container.append(&label);
-            }
-            MarkdownBlock::CodeBlock { language, code } => {
-                let wrapper = gtk::Box::new(gtk::Orientation::Vertical, 4);
-                wrapper.add_css_class("code-block");
-
-                if let Some(language) = language {
-                    let language_label = gtk::Label::new(Some(&language));
-                    language_label.add_css_class("caption");
-                    language_label.add_css_class("dim-label");
-                    language_label.set_halign(gtk::Align::Start);
-                    wrapper.append(&language_label);
-                }
-
-                let label = gtk::Label::new(Some(&code));
-                label.set_wrap(true);
-                label.set_wrap_mode(gtk::pango::WrapMode::WordChar);
-                label.set_halign(gtk::Align::Fill);
-                label.set_xalign(0.0);
-                label.set_selectable(true);
-                wrapper.append(&label);
-                container.append(&wrapper);
-            }
-            MarkdownBlock::List { ordered, items } => {
-                let list_box = gtk::Box::new(gtk::Orientation::Vertical, 2);
-                for (index, item_markup) in items.iter().enumerate() {
-                    let row = gtk::Box::new(gtk::Orientation::Horizontal, 6);
-
-                    let marker = if ordered {
-                        format!("{}.", index + 1)
-                    } else {
-                        String::from("-")
-                    };
-
-                    let marker_label = gtk::Label::new(Some(&marker));
-                    marker_label.set_valign(gtk::Align::Start);
-                    marker_label.set_halign(gtk::Align::Start);
-                    row.append(&marker_label);
-
-                    let text_label = gtk::Label::new(None);
-                    text_label.set_markup(item_markup);
-                    text_label.set_wrap(true);
-                    text_label.set_wrap_mode(gtk::pango::WrapMode::WordChar);
-                    text_label.set_halign(gtk::Align::Start);
-                    text_label.set_xalign(0.0);
-                    text_label.set_selectable(true);
-                    text_label.set_hexpand(true);
-                    row.append(&text_label);
-
-                    list_box.append(&row);
-                }
-                container.append(&list_box);
-            }
-            MarkdownBlock::TaskList(items) => {
-                let list_box = gtk::Box::new(gtk::Orientation::Vertical, 2);
-                for (checked, item_markup) in items {
-                    let row = gtk::Box::new(gtk::Orientation::Horizontal, 6);
-
-                    let check = gtk::CheckButton::new();
-                    check.set_active(checked);
-                    check.set_sensitive(false);
-                    check.set_valign(gtk::Align::Start);
-                    row.append(&check);
-
-                    let text_label = gtk::Label::new(None);
-                    text_label.set_markup(&item_markup);
-                    text_label.set_wrap(true);
-                    text_label.set_wrap_mode(gtk::pango::WrapMode::WordChar);
-                    text_label.set_halign(gtk::Align::Start);
-                    text_label.set_xalign(0.0);
-                    text_label.set_selectable(true);
-                    text_label.set_hexpand(true);
-                    row.append(&text_label);
-
-                    list_box.append(&row);
-                }
-                container.append(&list_box);
-            }
-            MarkdownBlock::Blockquote(inner_blocks) => {
-                let quote_box = gtk::Box::new(gtk::Orientation::Vertical, 4);
-                quote_box.add_css_class("markdown-blockquote");
-
-                for inner in inner_blocks {
-                    if let MarkdownBlock::Paragraph(markup) = inner {
-                        let label = gtk::Label::new(None);
-                        label.set_markup(&markup);
-                        label.set_wrap(true);
-                        label.set_wrap_mode(gtk::pango::WrapMode::WordChar);
-                        label.set_halign(gtk::Align::Start);
-                        label.set_xalign(0.0);
-                        label.set_selectable(true);
-                        quote_box.append(&label);
-                    }
-                }
-
-                container.append(&quote_box);
-            }
-            MarkdownBlock::Table { headers, rows } => {
-                let grid = gtk::Grid::new();
-                grid.add_css_class("markdown-table");
-                grid.set_column_spacing(12);
-                grid.set_row_spacing(4);
-
-                for (col, header) in headers.iter().enumerate() {
-                    let label = gtk::Label::new(None);
-                    label.set_markup(header);
-                    label.add_css_class("markdown-table-header");
-                    label.set_halign(gtk::Align::Start);
-                    label.set_hexpand(true);
-                    grid.attach(&label, col as i32, 0, 1, 1);
-                }
-
-                for (row_index, row) in rows.iter().enumerate() {
-                    for (col, cell) in row.iter().enumerate() {
-                        let label = gtk::Label::new(None);
-                        label.set_markup(cell);
-                        label.set_halign(gtk::Align::Start);
-                        label.set_wrap(true);
-                        label.set_wrap_mode(gtk::pango::WrapMode::WordChar);
-                        label.set_selectable(true);
-                        grid.attach(&label, col as i32, (row_index + 1) as i32, 1, 1);
-                    }
-                }
-
-                container.append(&grid);
-            }
-            MarkdownBlock::HorizontalRule => {
-                let separator = gtk::Separator::new(gtk::Orientation::Horizontal);
-                separator.add_css_class("markdown-hr");
-                container.append(&separator);
-            }
-        }
+        render_block(&container, block);
     }
 
     container
+}
+
+/// Render a single `MarkdownBlock` as GTK widgets appended to `container`.
+/// Called recursively for blockquotes.
+fn render_block(container: &gtk::Box, block: MarkdownBlock) {
+    match block {
+        MarkdownBlock::Paragraph(markup) => {
+            let label = gtk::Label::new(None);
+            label.set_markup(&markup);
+            label.set_wrap(true);
+            label.set_wrap_mode(gtk::pango::WrapMode::WordChar);
+            label.set_halign(gtk::Align::Start);
+            label.set_xalign(0.0);
+            label.set_selectable(true);
+            container.append(&label);
+        }
+        MarkdownBlock::Heading { level, content } => {
+            let label = gtk::Label::new(None);
+            label.set_markup(&content);
+            label.set_wrap(true);
+            label.set_wrap_mode(gtk::pango::WrapMode::WordChar);
+            label.set_halign(gtk::Align::Start);
+            label.set_xalign(0.0);
+            match level {
+                1 => label.add_css_class("title-1"),
+                2 => label.add_css_class("title-2"),
+                3 => label.add_css_class("title-3"),
+                4 => label.add_css_class("title-4"),
+                _ => label.add_css_class("heading"),
+            }
+            container.append(&label);
+        }
+        MarkdownBlock::CodeBlock { language, code } => {
+            let wrapper = gtk::Box::new(gtk::Orientation::Vertical, 4);
+            wrapper.add_css_class("code-block");
+
+            if let Some(language) = language {
+                let language_label = gtk::Label::new(Some(&language));
+                language_label.add_css_class("caption");
+                language_label.add_css_class("dim-label");
+                language_label.set_halign(gtk::Align::Start);
+                wrapper.append(&language_label);
+            }
+
+            let label = gtk::Label::new(Some(&code));
+            label.set_wrap(true);
+            label.set_wrap_mode(gtk::pango::WrapMode::WordChar);
+            label.set_halign(gtk::Align::Fill);
+            label.set_xalign(0.0);
+            label.set_selectable(true);
+            wrapper.append(&label);
+            container.append(&wrapper);
+        }
+        MarkdownBlock::List { ordered, items } => {
+            let list_box = gtk::Box::new(gtk::Orientation::Vertical, 2);
+            for (index, item_markup) in items.iter().enumerate() {
+                let row = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+
+                let marker = if ordered {
+                    format!("{}.", index + 1)
+                } else {
+                    String::from("-")
+                };
+
+                let marker_label = gtk::Label::new(Some(&marker));
+                marker_label.set_valign(gtk::Align::Start);
+                marker_label.set_halign(gtk::Align::Start);
+                row.append(&marker_label);
+
+                let text_label = gtk::Label::new(None);
+                text_label.set_markup(item_markup);
+                text_label.set_wrap(true);
+                text_label.set_wrap_mode(gtk::pango::WrapMode::WordChar);
+                text_label.set_halign(gtk::Align::Start);
+                text_label.set_xalign(0.0);
+                text_label.set_selectable(true);
+                text_label.set_hexpand(true);
+                row.append(&text_label);
+
+                list_box.append(&row);
+            }
+            container.append(&list_box);
+        }
+        MarkdownBlock::TaskList(items) => {
+            let list_box = gtk::Box::new(gtk::Orientation::Vertical, 2);
+            for (checked, item_markup) in items {
+                let row = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+
+                let check = gtk::CheckButton::new();
+                check.set_active(checked);
+                check.set_sensitive(false);
+                check.set_valign(gtk::Align::Start);
+                row.append(&check);
+
+                let text_label = gtk::Label::new(None);
+                text_label.set_markup(&item_markup);
+                text_label.set_wrap(true);
+                text_label.set_wrap_mode(gtk::pango::WrapMode::WordChar);
+                text_label.set_halign(gtk::Align::Start);
+                text_label.set_xalign(0.0);
+                text_label.set_selectable(true);
+                text_label.set_hexpand(true);
+                row.append(&text_label);
+
+                list_box.append(&row);
+            }
+            container.append(&list_box);
+        }
+        MarkdownBlock::Blockquote(inner_blocks) => {
+            let quote_box = gtk::Box::new(gtk::Orientation::Vertical, 4);
+            quote_box.add_css_class("markdown-blockquote");
+
+            for inner in inner_blocks {
+                render_block(&quote_box, inner);
+            }
+
+            container.append(&quote_box);
+        }
+        MarkdownBlock::Table { headers, rows } => {
+            let grid = gtk::Grid::new();
+            grid.add_css_class("markdown-table");
+            grid.set_column_spacing(12);
+            grid.set_row_spacing(4);
+
+            for (col, header) in headers.iter().enumerate() {
+                let label = gtk::Label::new(None);
+                label.set_markup(header);
+                label.add_css_class("markdown-table-header");
+                label.set_halign(gtk::Align::Start);
+                label.set_hexpand(true);
+                grid.attach(&label, col as i32, 0, 1, 1);
+            }
+
+            for (row_index, row) in rows.iter().enumerate() {
+                for (col, cell) in row.iter().enumerate() {
+                    let label = gtk::Label::new(None);
+                    label.set_markup(cell);
+                    label.set_halign(gtk::Align::Start);
+                    label.set_wrap(true);
+                    label.set_wrap_mode(gtk::pango::WrapMode::WordChar);
+                    label.set_selectable(true);
+                    grid.attach(&label, col as i32, (row_index + 1) as i32, 1, 1);
+                }
+            }
+
+            container.append(&grid);
+        }
+        MarkdownBlock::HorizontalRule => {
+            let separator = gtk::Separator::new(gtk::Orientation::Horizontal);
+            separator.add_css_class("markdown-hr");
+            container.append(&separator);
+        }
+    }
 }
 
 #[cfg(test)]
