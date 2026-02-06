@@ -169,15 +169,25 @@ pub fn markdown_to_blocks(content: &str) -> Vec<MarkdownBlock> {
             }
             Event::End(TagEnd::Heading(level)) => {
                 let text = std::mem::take(&mut inline_buf);
-                blocks.push(MarkdownBlock::Heading {
+                let block = MarkdownBlock::Heading {
                     level: level as u8,
                     content: text,
-                });
+                };
+                if in_blockquote {
+                    blockquote_blocks.push(block);
+                } else {
+                    blocks.push(block);
+                }
             }
             Event::End(TagEnd::CodeBlock) => {
                 let code = code_buf.trim_end_matches('\n').to_string();
                 let language = in_code_block.take().flatten();
-                blocks.push(MarkdownBlock::CodeBlock { language, code });
+                let block = MarkdownBlock::CodeBlock { language, code };
+                if in_blockquote {
+                    blockquote_blocks.push(block);
+                } else {
+                    blocks.push(block);
+                }
             }
             Event::End(TagEnd::Item) => {
                 let text = std::mem::take(&mut inline_buf);
@@ -189,15 +199,18 @@ pub fn markdown_to_blocks(content: &str) -> Vec<MarkdownBlock> {
                 }
             }
             Event::End(TagEnd::List(_)) => {
-                if is_task_list {
-                    blocks.push(MarkdownBlock::TaskList(std::mem::take(
-                        &mut task_list_items,
-                    )));
+                let block = if is_task_list {
+                    MarkdownBlock::TaskList(std::mem::take(&mut task_list_items))
                 } else {
-                    blocks.push(MarkdownBlock::List {
+                    MarkdownBlock::List {
                         ordered: list_ordered.unwrap_or(false),
                         items: std::mem::take(&mut list_items),
-                    });
+                    }
+                };
+                if in_blockquote {
+                    blockquote_blocks.push(block);
+                } else {
+                    blocks.push(block);
                 }
                 list_ordered = None;
             }
@@ -227,7 +240,11 @@ pub fn markdown_to_blocks(content: &str) -> Vec<MarkdownBlock> {
                 });
             }
             Event::Rule => {
-                blocks.push(MarkdownBlock::HorizontalRule);
+                if in_blockquote {
+                    blockquote_blocks.push(MarkdownBlock::HorizontalRule);
+                } else {
+                    blocks.push(MarkdownBlock::HorizontalRule);
+                }
             }
             _ => {}
         }
