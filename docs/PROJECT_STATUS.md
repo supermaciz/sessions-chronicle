@@ -108,7 +108,7 @@
 - **Reactive UI**: Relm4 (Elm-inspired architecture)
 - **Database**: SQLite with FTS5 (full-text search)
 - **Supported Tools**: Claude Code (v1), OpenCode (v2), Codex (v2), Mistral Vibe (v2)
-- **License**: Dual-licensed `MIT OR GPL-3.0-or-later`
+- **License**: `MIT`
 
 ### Project Structure
 

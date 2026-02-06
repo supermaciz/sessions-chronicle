@@ -59,4 +59,4 @@ This project was inspired by [agent-sessions](https://github.com/jazzyalex/agent
 
 ## License
 
-Dual-licensed under `MIT OR GPL-3.0-or-later`. See LICENSE file.
+Licensed under MIT. See LICENSE file.
