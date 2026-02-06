@@ -45,7 +45,7 @@
 - ✅ anyhow/thiserror (error handling)
 - ✅ clap (CLI args)
 - ✅ pulldown-cmark (markdown parsing)
-- ✅ html2pango (Pango markup generation)
+- ✅ In-tree `pango_escape` helper (Pango markup escaping)
 
 ### 🚧 In Progress / Next Steps
 
@@ -108,7 +108,7 @@
 - **Reactive UI**: Relm4 (Elm-inspired architecture)
 - **Database**: SQLite with FTS5 (full-text search)
 - **Supported Tools**: Claude Code (v1), OpenCode (v2), Codex (v2), Mistral Vibe (v2)
-- **License**: Dual-licensed `MIT OR GPL-3.0-or-later` (Flatpak distributions are GPL-3.0-or-later due to `html2pango` dependency)
+- **License**: `MIT`
 
 ### Project Structure
 
