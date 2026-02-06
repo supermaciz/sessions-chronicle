@@ -4,6 +4,7 @@ version = "0.1.0"
 authors = ["Mathieu Cizo <maciz@outlook.fr>"]
 edition = "2024"
 publish = false
+license = "MIT OR GPL-3.0-or-later"
 
 [profile.release]
 lto = true
