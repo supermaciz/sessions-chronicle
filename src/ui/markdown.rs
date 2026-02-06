@@ -30,6 +30,15 @@ pub enum MarkdownBlock {
 }
 
 /// Parse markdown into intermediate blocks with Pango-markup strings.
+///
+/// # Known Limitations
+///
+/// - **Nested blockquotes** are not fully supported. When a blockquote contains
+///   another blockquote (`> outer\n>\n> > inner`), only the innermost quote
+///   content is preserved. This is due to the single-level `in_blockquote` flag
+///   and `blockquote_blocks` buffer being cleared on each new quote start.
+///   In practice, Claude sessions rarely contain nested blockquotes, so this
+///   limitation has minimal impact.
 pub fn markdown_to_blocks(content: &str) -> Vec<MarkdownBlock> {
     let mut options = Options::empty();
     options.insert(Options::ENABLE_TABLES);
@@ -158,12 +167,18 @@ pub fn markdown_to_blocks(content: &str) -> Vec<MarkdownBlock> {
                 current_task_checked = Some(checked);
             }
             Event::End(TagEnd::Paragraph) => {
-                let text = std::mem::take(&mut inline_buf);
-                if !text.is_empty() {
-                    if in_blockquote {
-                        blockquote_blocks.push(MarkdownBlock::Paragraph(text));
-                    } else {
-                        blocks.push(MarkdownBlock::Paragraph(text));
+                // For loose lists (items separated by blank lines), pulldown-cmark
+                // wraps item content in paragraphs. We must NOT drain inline_buf here,
+                // or End(Item) will receive empty text and the paragraph will appear
+                // outside the list. Only emit standalone paragraphs when NOT in a list.
+                if list_ordered.is_none() {
+                    let text = std::mem::take(&mut inline_buf);
+                    if !text.is_empty() {
+                        if in_blockquote {
+                            blockquote_blocks.push(MarkdownBlock::Paragraph(text));
+                        } else {
+                            blocks.push(MarkdownBlock::Paragraph(text));
+                        }
                     }
                 }
             }
@@ -639,5 +654,33 @@ mod tests {
             && matches!(&inner[0], MarkdownBlock::Paragraph(_))
             && matches!(&inner[1], MarkdownBlock::Heading { level: 2, .. })
             && matches!(&inner[2], MarkdownBlock::Paragraph(_))));
+    }
+
+    #[test]
+    fn loose_list_items_kept_in_list() {
+        // Loose lists have blank lines between items, so pulldown-cmark wraps
+        // each item's content in Paragraph events. We must keep that content
+        // inside the list items, not emit it as standalone paragraphs.
+        let md = "- First item\n\n- Second item\n\n- Third item";
+        let blocks = markdown_to_blocks(md);
+
+        // Should be exactly one list block, not a list plus paragraphs
+        assert_eq!(
+            blocks.len(),
+            1,
+            "Expected single list block, got {:?}",
+            blocks
+        );
+
+        match &blocks[0] {
+            MarkdownBlock::List { ordered, items } => {
+                assert!(!ordered, "Expected unordered list");
+                assert_eq!(items.len(), 3, "Expected 3 items, got {}", items.len());
+                assert!(items[0].contains("First item"));
+                assert!(items[1].contains("Second item"));
+                assert!(items[2].contains("Third item"));
+            }
+            _ => panic!("Expected List block, got {:?}", blocks[0]),
+        }
     }
 }

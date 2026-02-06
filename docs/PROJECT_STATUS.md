@@ -245,6 +245,19 @@ let db_path = data_dir.join("sessions-chronicle").join("sessions.db");
 
 ---
 
+## Known Limitations
+
+### Markdown Rendering
+
+**Nested blockquotes are not fully supported** (`src/ui/markdown.rs`)
+- When a blockquote contains another blockquote (`> outer\n>\n> > inner`), only the innermost quote content is preserved
+- This is due to the single-level `in_blockquote` flag and `blockquote_blocks` buffer being cleared on each new quote start
+- **Impact**: Low — Claude sessions rarely contain nested blockquotes
+- **Status**: Documented limitation, not prioritized for fixing
+- **Reference**: [PR #12 review comment](https://github.com/supermaciz/sessions-chronicle/pull/12#discussion_r2774898364)
+
+---
+
 ## Implementation Notes
 
 ### Immediate Tasks
