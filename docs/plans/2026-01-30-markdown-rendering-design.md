@@ -19,7 +19,7 @@ widgets and Pango markup — no WebKit dependency.
   Supports GFM (tables, task lists, strikethrough) via options.
 - **Pango markup for inline formatting** — Bold, italic, code, strikethrough
   rendered via Pango tags inside `gtk::Label`.
-- **html2pango for escaping** — Prevents content from breaking Pango markup.
+- **In-tree `pango_escape` helper** — Prevents content from breaking Pango markup.
 - **Prepared for syntax highlighting** — Code blocks use a dedicated CSS class
   and plain text, ready for `syntect` integration in a future iteration.
 
@@ -96,7 +96,7 @@ flushes into a Label with `use_markup: true`.
 
 ### Escaping
 
-`html2pango` escapes `<`, `>`, `&` in raw text before insertion into markup.
+`pango_escape()` escapes `<`, `>`, `&`, `"`, `'` in raw text before insertion into markup.
 
 ### Links
 
@@ -170,7 +170,7 @@ The `gtk::Box` returned by `render_markdown()` sits inside the existing
 
 ### HTML in content
 
-`html2pango` escapes HTML characters. Raw HTML in assistant responses is
+`pango_escape()` escapes special characters. Raw HTML in assistant responses is
 displayed as text, not interpreted.
 
 ---
@@ -179,7 +179,7 @@ displayed as text, not interpreted.
 
 ### Modified
 
-- **`Cargo.toml`** — Add `pulldown-cmark` and `html2pango`
+- **`Cargo.toml`** — Add `pulldown-cmark`
 - **`src/ui/mod.rs`** — Declare `pub mod markdown;`
 - **`src/ui/session_detail.rs`** — Import `markdown::render_markdown`, conditional
   call in `build_message_widget()` for assistant role

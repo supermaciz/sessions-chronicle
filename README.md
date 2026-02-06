@@ -60,4 +60,3 @@ This project was inspired by [agent-sessions](https://github.com/jazzyalex/agent
 ## License
 
 Dual-licensed under `MIT OR GPL-3.0-or-later`. See LICENSE file.
-Note: If you distribute binaries that include GPL-3.0-or-later dependencies (e.g. `html2pango`), the distribution must comply with GPL-3.0-or-later.

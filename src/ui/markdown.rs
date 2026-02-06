@@ -1,4 +1,3 @@
-use html2pango::html_escape;
 use pulldown_cmark::{CodeBlockKind, Event, Options, Parser, Tag, TagEnd};
 use relm4::gtk;
 use relm4::gtk::prelude::*;
@@ -27,6 +26,22 @@ pub enum MarkdownBlock {
         rows: Vec<Vec<String>>,
     },
     HorizontalRule,
+}
+
+/// Escape characters that are special in Pango markup.
+fn pango_escape(s: &str) -> String {
+    let mut escaped = String::with_capacity(s.len());
+    for c in s.chars() {
+        match c {
+            '&' => escaped.push_str("&amp;"),
+            '<' => escaped.push_str("&lt;"),
+            '>' => escaped.push_str("&gt;"),
+            '"' => escaped.push_str("&quot;"),
+            '\'' => escaped.push_str("&apos;"),
+            _ => escaped.push(c),
+        }
+    }
+    escaped
 }
 
 /// Parse markdown into intermediate blocks with Pango-markup strings.
@@ -127,7 +142,7 @@ pub fn markdown_to_blocks(content: &str) -> Vec<MarkdownBlock> {
                 if let Some(url) = link_url.take() {
                     inline_buf.push_str(&format!(
                         " <span size=\"small\" alpha=\"60%\">({})</span>",
-                        html_escape(&url)
+                        pango_escape(&url)
                     ));
                 }
             }
@@ -135,18 +150,18 @@ pub fn markdown_to_blocks(content: &str) -> Vec<MarkdownBlock> {
                 if in_code_block.is_some() {
                     code_buf.push_str(&text);
                 } else {
-                    inline_buf.push_str(&html_escape(&text));
+                    inline_buf.push_str(&pango_escape(&text));
                 }
             }
             Event::Html(html) | Event::InlineHtml(html) => {
                 if in_code_block.is_some() {
                     code_buf.push_str(&html);
                 } else {
-                    inline_buf.push_str(&html_escape(&html));
+                    inline_buf.push_str(&pango_escape(&html));
                 }
             }
             Event::Code(code) => {
-                inline_buf.push_str(&format!("<tt>{}</tt>", html_escape(&code)));
+                inline_buf.push_str(&format!("<tt>{}</tt>", pango_escape(&code)));
             }
             Event::SoftBreak => {
                 if in_code_block.is_some() {
