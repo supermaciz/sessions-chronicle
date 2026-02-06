@@ -1,3 +1,14 @@
+This project is dual-licensed under either:
+- MIT License (see below)
+- GNU GPL-3.0-or-later
+
+You may choose either license for use of this project. For the full
+GPL-3.0-or-later text, see <https://www.gnu.org/licenses/gpl-3.0.txt>.
+If you distribute binaries that include GPL-3.0-or-later dependencies
+(e.g. html2pango), the distribution must comply with GPL-3.0-or-later.
+
+---
+
 MIT License
 
 Copyright (c) 2026 Mathieu Cizo

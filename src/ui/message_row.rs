@@ -2,7 +2,8 @@ use gtk::prelude::*;
 use relm4::factory::{DynamicIndex, FactoryComponent, FactorySender};
 use relm4::gtk;
 
-use crate::models::MessagePreview;
+use crate::models::{MessagePreview, Role};
+use crate::ui::markdown;
 
 pub struct MessageRowInit {
     pub preview: MessagePreview,
@@ -48,13 +49,10 @@ impl FactoryComponent for MessageRow {
                 },
             },
 
-            gtk::Label {
-                set_label: &self.preview.content_preview,
-                set_wrap: true,
-                set_wrap_mode: gtk::pango::WrapMode::WordChar,
-                set_halign: gtk::Align::Start,
-                set_xalign: 0.0,
-                set_selectable: true,
+            #[name(content_container)]
+            gtk::Box {
+                set_orientation: gtk::Orientation::Vertical,
+                set_spacing: 4,
             },
 
             // Truncation badge
@@ -74,5 +72,30 @@ impl FactoryComponent for MessageRow {
         Self {
             preview: init.preview,
         }
+    }
+
+    fn init_widgets(
+        &mut self,
+        _index: &DynamicIndex,
+        _root: Self::Root,
+        _returned_widget: &<Self::ParentWidget as relm4::factory::FactoryView>::ReturnedWidget,
+        _sender: FactorySender<Self>,
+    ) -> Self::Widgets {
+        let widgets = view_output!();
+
+        if self.preview.role == Role::Assistant {
+            let rendered = markdown::render_markdown(&self.preview.content_preview);
+            widgets.content_container.append(&rendered);
+        } else {
+            let label = gtk::Label::new(Some(&self.preview.content_preview));
+            label.set_wrap(true);
+            label.set_wrap_mode(gtk::pango::WrapMode::WordChar);
+            label.set_halign(gtk::Align::Start);
+            label.set_xalign(0.0);
+            label.set_selectable(true);
+            widgets.content_container.append(&label);
+        }
+
+        widgets
     }
 }

@@ -16,8 +16,8 @@ impl SimpleComponent for AboutDialog {
     fn init_root() -> Self::Root {
         adw::AboutDialog::builder()
             .application_icon(APP_ID)
-            // Insert your license of choice here
-            // .license_type(gtk::License::MitX11)
+            .license_type(gtk::License::Custom)
+            .license("MIT OR GPL-3.0-or-later")
             // Insert your website here
             // .website("https://gitlab.gnome.org/bilelmoussaoui/sessions-chronicle/")
             // Insert your Issues page

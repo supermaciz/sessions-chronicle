@@ -1,3 +1,4 @@
+pub mod markdown;
 pub mod message_row;
 pub mod modals;
 pub mod session_detail;

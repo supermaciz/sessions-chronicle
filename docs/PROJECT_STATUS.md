@@ -4,7 +4,7 @@
 
 ---
 
-## Current Status: Phase 2 - Multi-Tool Support
+## Current Status: Phase 3 - Markdown Rendering
 
 ### ✅ Completed
 
@@ -33,6 +33,8 @@
 - ✅ Session resumption failure notifications with toast feedback
 - ✅ Filter sessions with no user messages (excludes pure tool sessions)
 - ✅ Message preview model with truncation badges
+- ✅ Markdown rendering for assistant messages (pulldown-cmark + Pango markup)
+- ✅ Rich text support (headings, code blocks, lists, task lists, blockquotes, tables, horizontal rules)
 
 **Dependencies**
 - ✅ Relm4 (reactive UI framework)
@@ -42,10 +44,13 @@
 - ✅ chrono (date/time handling)
 - ✅ anyhow/thiserror (error handling)
 - ✅ clap (CLI args)
+- ✅ pulldown-cmark (markdown parsing)
+- ✅ html2pango (Pango markup generation)
 
 ### 🚧 In Progress / Next Steps
 
-**Missing Features**
+**Next Features**
+- ⬜ Syntax highlighting for code blocks (syntect)
 - ⬜ Search term highlighting in SessionDetail
 
 ### 📋 Roadmap
@@ -60,7 +65,7 @@
 7. ✅ Add SessionDetail component
 8. ✅ Add session resumption (terminal launch)
 
-**Phase 2: Multi-Tool Support** - Current
+**Phase 2: Multi-Tool Support** - Complete
 - ✅ OpenCode parser (multi-file format)
 - ✅ Codex parser (JSONL streaming, encrypted reasoning support)
 - ✅ Filter sessions with no user messages
@@ -68,9 +73,12 @@
 - ✅ Mistral Vibe parser (directory-based logs with `meta.json` + `messages.jsonl`)
 - ✅ Tool filters in UI (sidebar checkboxes)
 
-**Phase 3: Markdown Rendering** - Future ([design](plans/2026-01-30-markdown-rendering-design.md))
-- ⬜ Markdown rendering for assistant messages (pulldown-cmark + Pango markup)
-- ⬜ Syntax highlighting for code blocks (syntect)
+**Phase 3: Markdown Rendering** - Current ([design](plans/2026-01-30-markdown-rendering-design.md))
+- ✅ Markdown rendering for assistant messages (pulldown-cmark + Pango markup)
+- ✅ Support for headings, code blocks, lists, task lists, blockquotes, tables, horizontal rules
+- ✅ Inline formatting (bold, italic, strikethrough, inline code, links)
+- ✅ Comprehensive test suite (19 unit tests)
+- ⬜ Syntax highlighting for code blocks (syntect) - Future enhancement
 
 **Phase 4: Tool Calls & Subagents** - Future ([design](plans/2026-01-30-tool-calls-and-subagents-design.md))
 - ⬜ Enrich Message model (tool_name, tool_input, parent_message_index)
@@ -100,6 +108,7 @@
 - **Reactive UI**: Relm4 (Elm-inspired architecture)
 - **Database**: SQLite with FTS5 (full-text search)
 - **Supported Tools**: Claude Code (v1), OpenCode (v2), Codex (v2), Mistral Vibe (v2)
+- **License**: Dual-licensed `MIT OR GPL-3.0-or-later` (Flatpak distributions are GPL-3.0-or-later due to `html2pango` dependency)
 
 ### Project Structure
 
@@ -124,6 +133,8 @@ sessions-chronicle/
 │   │   ├── indexer.rs    # Index sessions
 │   │   └── mod.rs        # load_session, search_sessions
 │   ├── ui/               # UI components (Relm4)
+│   │   ├── markdown.rs   # Markdown parser and GTK renderer
+│   │   ├── message_row.rs # Message row component
 │   │   ├── sidebar.rs    # Tool/project filters
 │   │   ├── session_list.rs  # Session list view
 │   │   ├── session_detail.rs # Session detail/transcript view
@@ -245,11 +256,42 @@ let db_path = data_dir.join("sessions-chronicle").join("sessions.db");
 
 ---
 
+## Known Limitations
+
+### Markdown Rendering
+
+**Nested blockquotes are not fully supported** (`src/ui/markdown.rs`)
+- When a blockquote contains another blockquote (`> outer\n>\n> > inner`), only the innermost quote content is preserved
+- This is due to the single-level `in_blockquote` flag and `blockquote_blocks` buffer being cleared on each new quote start
+- **Impact**: Low — Claude sessions rarely contain nested blockquotes
+- **Status**: Documented limitation, not prioritized for fixing
+- **Reference**: [PR #12 review comment](https://github.com/supermaciz/sessions-chronicle/pull/12#discussion_r2774898364)
+
+**Markdown parsing performance** (`src/ui/message_row.rs:73`)
+- Markdown parsing happens on every `MessageRow` widget initialization
+- Each assistant message is parsed from scratch when the row is created
+- **Impact**: Low for typical session sizes (<100 messages), but could become noticeable for very large sessions
+- **Status**: Monitor performance; consider caching parsed `MarkdownBlock` structures if needed
+- **Mitigation strategy**: Could cache parsed blocks in `MessagePreview` or lazily render on scroll
+
+**Links are not clickable** (`src/ui/markdown.rs:1182-1186`)
+- Links render as text followed by the URL in parentheses: `[text](url)` → "text (url)"
+- URLs are shown but not clickable due to GTK Label limitations
+- **Impact**: Low — users can copy/paste URLs, most Claude sessions don't have many links
+- **Status**: Acceptable for v1
+- **Future enhancement**: Could use `gtk::LinkButton` or handle click events to make links interactive
+
+---
+
 ## Implementation Notes
 
 ### Immediate Tasks
 
-1. **Search term highlighting**:
+1. **Syntax highlighting for code blocks**:
+    - Integrate `syntect` or similar for syntax highlighting
+    - Add language-aware coloring in markdown code blocks
+
+2. **Search term highlighting**:
     - Highlight matching terms in SessionDetail when viewing search results
 
 ### Testing Strategy
@@ -287,6 +329,6 @@ cargo test
 
 ---
 
-**Last Updated**: 2026-02-04
-**Current Phase**: Phase 2 - Multi-Tool Support (Claude Code + OpenCode + Codex + Mistral Vibe)
-**Next Milestone**: Search term highlighting
+**Last Updated**: 2026-02-06
+**Current Phase**: Phase 3 - Markdown Rendering (Complete)
+**Next Milestone**: Syntax highlighting for code blocks

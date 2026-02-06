@@ -54,3 +54,30 @@
   border-radius: 12px;
   background-color: @card_bg_color;
 }
+
+/* Markdown rendering styles */
+.code-block {
+  font-family: monospace;
+  background-color: alpha(@card_shade_color, 0.5);
+  border-radius: 6px;
+  padding: 12px;
+}
+
+.markdown-blockquote {
+  border-left: 3px solid @accent_color;
+  padding-left: 12px;
+  opacity: 0.85;
+}
+
+.markdown-table {
+  padding: 4px;
+}
+
+.markdown-table-header {
+  font-weight: bold;
+}
+
+.markdown-hr {
+  margin-top: 8px;
+  margin-bottom: 8px;
+}
