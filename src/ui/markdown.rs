@@ -570,4 +570,55 @@ mod tests {
         assert_eq!(blocks.len(), 1);
         assert!(matches!(&blocks[0], MarkdownBlock::Paragraph(_)));
     }
+
+    #[test]
+    fn blockquote_contains_heading() {
+        let blocks = markdown_to_blocks("> ## Heading inside quote");
+        assert_eq!(blocks.len(), 1);
+        assert!(matches!(&blocks[0], MarkdownBlock::Blockquote(inner)
+            if inner.len() == 1 && matches!(&inner[0], MarkdownBlock::Heading { level: 2, .. })));
+    }
+
+    #[test]
+    fn blockquote_contains_code_block() {
+        let blocks = markdown_to_blocks("> ```rust\n> fn main() {}\n> ```");
+        assert_eq!(blocks.len(), 1);
+        assert!(matches!(&blocks[0], MarkdownBlock::Blockquote(inner)
+            if inner.len() == 1 && matches!(&inner[0], MarkdownBlock::CodeBlock { .. })));
+    }
+
+    #[test]
+    fn blockquote_contains_list() {
+        let blocks = markdown_to_blocks("> - First item\n> - Second item");
+        assert_eq!(blocks.len(), 1);
+        assert!(matches!(&blocks[0], MarkdownBlock::Blockquote(inner)
+            if inner.len() == 1 && matches!(&inner[0], MarkdownBlock::List { .. })));
+    }
+
+    #[test]
+    fn blockquote_contains_task_list() {
+        let blocks = markdown_to_blocks("> - [x] Done\n> - [ ] Todo");
+        assert_eq!(blocks.len(), 1);
+        assert!(matches!(&blocks[0], MarkdownBlock::Blockquote(inner)
+            if inner.len() == 1 && matches!(&inner[0], MarkdownBlock::TaskList(_))));
+    }
+
+    #[test]
+    fn blockquote_contains_horizontal_rule() {
+        let blocks = markdown_to_blocks("> ---");
+        assert_eq!(blocks.len(), 1);
+        assert!(matches!(&blocks[0], MarkdownBlock::Blockquote(inner)
+            if inner.len() == 1 && matches!(&inner[0], MarkdownBlock::HorizontalRule)));
+    }
+
+    #[test]
+    fn blockquote_contains_multiple_blocks() {
+        let blocks = markdown_to_blocks("> Text\n> \n> ## Heading\n> \n> More text");
+        assert_eq!(blocks.len(), 1);
+        assert!(matches!(&blocks[0], MarkdownBlock::Blockquote(inner)
+            if inner.len() == 3
+            && matches!(&inner[0], MarkdownBlock::Paragraph(_))
+            && matches!(&inner[1], MarkdownBlock::Heading { level: 2, .. })
+            && matches!(&inner[2], MarkdownBlock::Paragraph(_))));
+    }
 }
