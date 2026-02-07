@@ -168,7 +168,7 @@ add_overlay = &gtk::Box {
 
 ### Behavior
 
-- **Visible** when `search_query.is_some()` and total_matches > 0.
+- **Visible** when `search_query.is_some()` (even if total_matches == 0).
 - **Counter** shows `"2 / 7"` (1-indexed display).
 - **Prev/Next** wrap around. Disabled when total_matches == 0.
 - **Close** emits `SessionDetailMsg::ClearSearch` — clears highlights and hides bar, but does NOT clear the global search (session list stays filtered).
