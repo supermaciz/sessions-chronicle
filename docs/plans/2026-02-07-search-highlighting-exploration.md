@@ -1,9 +1,26 @@
-# Search Term Highlighting in SessionDetail - Mockups
+# Search Term Highlighting in SessionDetail - Exploration
 
 **Date**: 2026-02-07
+**Status**: Accepted (Proposal A)
 **Feature**: When a user searches for a term and opens a session from the results, highlight the matching terms inside the session detail view.
 
 **Current behavior**: The search bar (top of the app) filters the session *list* via FTS5. When the user clicks a result, the detail view shows all messages without any indication of where the search term appears.
+
+## Decision (Accepted): Proposal A (Inline Highlight + Floating Search Navigation Bar)
+
+- Keep the full conversation visible, and highlight every occurrence of the active search term inline in the detail view.
+- Show a floating navigation bar overlay in `SessionDetail` with match count + prev/next controls + a close button.
+- Auto-scroll to the first match when opening a session from search results.
+- Highlights persist while a search query is active; clearing the main search (or dismissing via the nav bar) removes highlights.
+
+## Rationale
+
+The primary use case is: "I searched for something, now show me *where* it appears in the conversation". The conversational context is essential; hiding messages by default (Proposal B) makes results less useful.
+
+- Familiar UX (Ctrl+F): immediate comprehension, no learning.
+- Prev/Next navigation solves long sessions without removing context.
+- Lower implementation complexity than a filtered/collapsible "matches only" mode.
+- Avoids the UX downside of "N messages hidden" (anxiety / repeated expand-to-everything).
 
 ## Visual Mockups
 
