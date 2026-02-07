@@ -95,7 +95,7 @@ git add src/session_sources.rs src/main.rs src/lib.rs
 git commit -m "feat: add unified session source resolver"
 ```
 
-### Task 2: Wire app startup to unified sources and DB isolation
+### Task 2: Wire app startup to unified sources, DB isolation, and persist sources
 
 **Files:**
 - Modify: `src/app.rs`
@@ -131,8 +131,18 @@ In `App::init`:
 - Choose DB path by mode:
   - default: `<user_data_dir>/<APP_ID>/sessions.db`
   - override: `<user_data_dir>/<APP_ID>/sessions-override.db`
+- **Store `SessionSources` in the `App` struct** so it remains accessible for later reindexing (Task 5 needs it for `AppMsg::ReindexRequested`).
 - Index using resolved paths only.
 - Keep existing per-tool log lines, but log resolved source path(s).
+
+Updated `App` struct (add field):
+
+```rust
+pub(super) struct App {
+    // ... existing fields ...
+    sources: SessionSources,
+}
+```
 
 **Step 4: Run tests to verify pass**
 
@@ -175,6 +185,10 @@ Expected: FAIL.
 Add to `SessionIndexer`:
 
 ```rust
+/// Clear all indexed sessions and messages.
+///
+/// Note: `messages` is an FTS5 virtual table. Standard `DELETE FROM` works
+/// correctly on FTS5 tables and participates in transactions normally.
 pub fn clear_all_sessions(&mut self) -> Result<()> {
     let tx = self.db.transaction()?;
     tx.execute("DELETE FROM messages", [])?;
@@ -197,79 +211,12 @@ git add src/database/indexer.rs
 git commit -m "feat: add full index reset operation"
 ```
 
-### Task 4: Expose reset action in Preferences
+### Task 4: Add Reload message to session list
 
-**Files:**
-- Modify: `src/ui/modals/preferences.rs`
-- Modify: `src/ui/modals/mod.rs` (if type exports change)
-- Modify: `src/app.rs`
-- Modify: `data/io.github.supermaciz.sessionschronicle.gschema.xml.in` (only if adding preference key)
-- Test: `src/ui/modals/preferences.rs` (or integration tests where feasible)
-
-**Step 1: Write the failing test/spec**
-
-Define message contract first:
-
-```rust
-pub enum PreferencesOutput {
-    ReindexRequested,
-}
-```
-
-and in app:
-
-```rust
-enum AppMsg {
-    // ...
-    ReindexRequested,
-}
-```
-
-Add basic test(s) for signal wiring where possible, or a compile-time flow test that the forwarding compiles and triggers path.
-
-**Step 2: Run test to verify it fails**
-
-Run: `cargo test preferences -- --nocapture`
-
-Expected: FAIL or compile error before implementation.
-
-**Step 3: Write minimal implementation**
-
-In Preferences dialog:
-- Add an "Advanced" group.
-- Add action row/button labeled `Reset session index`.
-- On click: show confirmation (`adw::AlertDialog`).
-- If confirmed: emit `PreferencesOutput::ReindexRequested`.
-
-In app:
-- Launch preferences as a controller connected to outputs (instead of detached fire-and-forget).
-- Handle `AppMsg::ReindexRequested`:
-  1. Open `SessionIndexer` for active DB.
-  2. Call `clear_all_sessions()`.
-  3. Re-run indexing with current `SessionSources`.
-  4. Ask `SessionList` to reload.
-  5. Show success/failure toast.
-
-Keep behavior idempotent and non-blocking enough for UI (short synchronous action acceptable for now).
-
-**Step 4: Run tests to verify pass**
-
-Run: `cargo test preferences -- --nocapture`
-
-Expected: PASS.
-
-**Step 5: Commit**
-
-```bash
-git add src/ui/modals/preferences.rs src/app.rs src/ui/modals/mod.rs
-git commit -m "feat: add preferences action to reset and rebuild index"
-```
-
-### Task 5: Refresh session list after reindex
+> Moved before the Preferences task (was Task 5) because it is simple, independent, and can be tested in isolation before wiring the full reindex flow.
 
 **Files:**
 - Modify: `src/ui/session_list.rs`
-- Modify: `src/app.rs`
 - Test: `src/ui/session_list.rs`
 
 **Step 1: Write the failing test**
@@ -294,7 +241,7 @@ Expected: FAIL.
 **Step 3: Write minimal implementation**
 
 - Handle `SessionListMsg::Reload` by calling `reload_sessions()`.
-- In `AppMsg::ReindexRequested` success path, emit `SessionListMsg::Reload`.
+- No changes to `app.rs` yet -- the wiring from `AppMsg::ReindexRequested` to `SessionListMsg::Reload` happens in Task 5.
 
 **Step 4: Run tests to verify pass**
 
@@ -305,8 +252,188 @@ Expected: PASS.
 **Step 5: Commit**
 
 ```bash
-git add src/ui/session_list.rs src/app.rs
-git commit -m "feat: reload session list after index rebuild"
+git add src/ui/session_list.rs
+git commit -m "feat: add Reload message to session list"
+```
+
+### Task 5: Expose reset action in Preferences and wire reindex flow
+
+> This task involves a **significant refactoring** of the PreferencesDialog: migrating from the current fire-and-forget pattern to a controller-with-outputs pattern. The sub-steps below detail this migration explicitly.
+
+**Files:**
+- Modify: `src/ui/modals/preferences.rs`
+- Modify: `src/ui/modals/mod.rs` (if type exports change)
+- Modify: `src/app.rs`
+- Modify: `data/io.github.supermaciz.sessionschronicle.gschema.xml.in` (only if adding preference key)
+
+#### Current state (what needs to change)
+
+The PreferencesDialog is currently fire-and-forget:
+
+```rust
+// app.rs — inside post_view / action setup
+let preferences_action = {
+    RelmAction::<PreferencesAction>::new_stateless(move |_| {
+        PreferencesDialog::builder().launch(()).detach(); // output channel dropped
+    })
+};
+```
+
+And the dialog presents itself inside its own `init()`:
+
+```rust
+// preferences.rs
+fn init(_: Self::Init, root: Self::Root, _sender: ComponentSender<Self>) -> ComponentParts<Self> {
+    // ... build widgets ...
+    root.present(Some(&main_application().windows()[0]));
+    ComponentParts { model, widgets }
+}
+```
+
+This pattern cannot support outputs. Four changes are required:
+
+1. **Define `PreferencesInput` and `PreferencesOutput` enums** on the dialog.
+2. **Create the dialog once in `App::init()`** using `.forward(sender.input_sender(), ...)` and store the `Controller<PreferencesDialog>` in `App`.
+3. **Replace the stateless action** with an `AppMsg::ShowPreferences` that calls `present()` on the stored controller's widget.
+4. **Move `present()` out of `PreferencesDialog::init()`** — the parent controls visibility.
+
+#### Step 1: Define message contracts
+
+In `preferences.rs`:
+
+```rust
+pub enum PreferencesInput {
+    /// User clicked the "Reset session index" button.
+    ResetClicked,
+    /// Confirmation dialog responded.
+    ResetConfirmed,
+}
+
+pub enum PreferencesOutput {
+    ReindexRequested,
+}
+```
+
+In `app.rs`:
+
+```rust
+enum AppMsg {
+    // ... existing variants ...
+    ShowPreferences,
+    ReindexRequested,
+}
+```
+
+#### Step 2: Refactor PreferencesDialog to controller-with-outputs
+
+In `preferences.rs`:
+- Change `type Input = PreferencesInput;` and `type Output = PreferencesOutput;`.
+- Remove the `root.present(...)` call from `init()`.
+- Add an "Advanced" preferences group with an action row/button labeled **"Reset session index"**.
+- On button click: send `PreferencesInput::ResetClicked`.
+- In `update()`, handle `ResetClicked` by showing an `adw::AlertDialog` confirmation.
+
+**`adw::AlertDialog` API note:** Unlike `gtk::MessageDialog`, libadwaita's `AlertDialog` uses **string-based response IDs**, not `gtk::ResponseType`:
+
+```rust
+// In update(), handling ResetClicked:
+let dialog = adw::AlertDialog::builder()
+    .heading("Reset session index?")
+    .body("This will clear and rebuild the entire session index from source files.")
+    .build();
+dialog.add_response("cancel", "Cancel");
+dialog.add_response("confirm", "Reset");
+dialog.set_response_appearance("confirm", adw::ResponseAppearance::Destructive);
+dialog.set_default_response(Some("cancel"));
+dialog.set_close_response("cancel");
+
+let sender_clone = sender.clone();
+dialog.connect_response(None, move |_, response| {
+    if response == "confirm" {
+        sender_clone.input(PreferencesInput::ResetConfirmed);
+    }
+});
+dialog.present(Some(&root_widget));
+```
+
+Handle `ResetConfirmed` by emitting: `sender.output(PreferencesOutput::ReindexRequested).unwrap();`
+
+#### Step 3: Refactor App to use stored controller
+
+In `App::init()`:
+
+```rust
+// Create preferences dialog once, with forwarded outputs
+let preferences_dialog = PreferencesDialog::builder()
+    .launch(())
+    .forward(sender.input_sender(), |msg| match msg {
+        PreferencesOutput::ReindexRequested => AppMsg::ReindexRequested,
+    });
+```
+
+Store in `App` struct:
+
+```rust
+pub(super) struct App {
+    // ... existing fields ...
+    sources: SessionSources,  // from Task 2
+    preferences_dialog: Controller<PreferencesDialog>,
+}
+```
+
+Replace the stateless action:
+
+```rust
+// Old: PreferencesDialog::builder().launch(()).detach();
+// New: send a message to App, which presents the stored dialog
+let preferences_action = {
+    let sender = sender.clone();
+    RelmAction::<PreferencesAction>::new_stateless(move |_| {
+        sender.input(AppMsg::ShowPreferences);
+    })
+};
+```
+
+Handle `AppMsg::ShowPreferences` in `update()`:
+
+```rust
+AppMsg::ShowPreferences => {
+    let dialog_widget = self.preferences_dialog.widget();
+    dialog_widget.present(Some(&root_widget));
+}
+```
+
+Handle `AppMsg::ReindexRequested` in `update()`:
+
+1. Open `SessionIndexer` for active DB (`self.db_path`).
+2. Call `clear_all_sessions()`.
+3. Re-run indexing using `self.sources` (stored in Task 2).
+4. Send `SessionListMsg::Reload` to the session list controller (wired in Task 4).
+5. Show success/failure toast.
+
+#### Step 4: Test strategy
+
+Automated testing of Relm4 UI wiring requires `gtk::init()` and an event loop, which is impractical for unit tests. The test strategy for this task is:
+
+- **Unit-testable:** The `select_db_filename` helper (Task 2) and `clear_all_sessions` primitive (Task 3) are already covered.
+- **Compile-time verification:** The type system enforces that `PreferencesOutput::ReindexRequested` maps to `AppMsg::ReindexRequested` via the `.forward()` closure. A type mismatch will not compile.
+- **Manual verification:** The full flow (button click -> confirmation -> reindex -> list reload -> toast) is verified in Task 6 step 5.
+
+Run: `cargo test` (ensure no regressions).
+
+Expected: PASS.
+
+#### Step 5: Known technical debt — synchronous reindex blocks UI
+
+The reindex operation (clear + re-index all tools) runs synchronously on the GTK main thread. This **will freeze the UI** during the operation. For small to medium datasets this is acceptable (sub-second). For large datasets it could be noticeable.
+
+Accepted debt. Future improvement path: use a Relm4 `Worker` (dedicated background thread) or `CommandOutput` for async indexing, with a spinner in the dialog during execution.
+
+#### Step 6: Commit
+
+```bash
+git add src/ui/modals/preferences.rs src/app.rs src/ui/modals/mod.rs
+git commit -m "feat: add preferences action to reset and rebuild index"
 ```
 
 ### Task 6: Documentation and final verification
@@ -365,6 +492,7 @@ Expected manual results:
 - Override run does not index from home paths.
 - Switching between modes does not mix stale sessions.
 - Preferences reset clears and rebuilds active DB index.
+- UI does not freeze noticeably during reindex on fixture data.
 
 **Step 6: Commit**
 
@@ -378,6 +506,7 @@ git commit -m "docs: describe unified sessions-dir behavior and reset flow"
 - Safe rollback path: remove resolver wiring and revert to existing per-tool defaults in `App::init`.
 - Keep `clear_all_sessions` even if UI action is rolled back (useful maintenance primitive).
 - If UI wiring causes regressions, disable only the Preferences button while preserving CLI behavior improvements.
+- PreferencesDialog can be reverted to fire-and-forget independently of the source resolver changes.
 
 ## Risks and mitigations
 
@@ -385,13 +514,17 @@ git commit -m "docs: describe unified sessions-dir behavior and reset flow"
   - **Mitigation:** Resolver chooses `opencode_storage` when present; fallback root keeps flexibility.
 - **Risk:** Users surprised by two DB files.
   - **Mitigation:** Document clearly; expose reset action and log active DB file at startup.
-- **Risk:** Long reindex time on large datasets.
-  - **Mitigation:** Keep operation manual and explicit via confirmation dialog.
+- **Risk:** Long reindex time on large datasets freezes UI.
+  - **Mitigation:** Keep operation manual and explicit via confirmation dialog. Synchronous blocking is accepted technical debt; future path is Relm4 `Worker` or `CommandOutput` for async indexing.
+- **Risk:** `adw::AlertDialog` uses string response IDs (not `gtk::ResponseType`).
+  - **Mitigation:** Implementation uses `dialog.add_response("confirm", ...)` / `dialog.connect_response(None, ...)` pattern per libadwaita API.
 
 ## Definition of done
 
 - `--sessions-dir` influences all tools consistently.
 - Override mode never reads tool paths from `HOME`.
 - Override/default indexes are isolated (no stale cross-mode contamination).
+- `SessionSources` is stored in `App` and available for reindexing.
 - Preferences includes a working reset-and-reindex action.
+- PreferencesDialog uses controller-with-outputs pattern (not fire-and-forget).
 - `cargo fmt --all`, `cargo test`, and `cargo clippy` pass.
