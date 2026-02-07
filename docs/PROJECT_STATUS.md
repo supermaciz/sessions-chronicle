@@ -4,7 +4,7 @@
 
 ---
 
-## Current Status: Phase 3 - Markdown Rendering
+## Current Status: Phase 3 Complete - Next: Search Highlighting
 
 ### ✅ Completed
 
@@ -50,7 +50,6 @@
 ### 🚧 In Progress / Next Steps
 
 **Next Features**
-- ⬜ Syntax highlighting for code blocks (syntect)
 - ⬜ Search term highlighting in SessionDetail
 
 ### 📋 Roadmap
@@ -78,7 +77,6 @@
 - ✅ Support for headings, code blocks, lists, task lists, blockquotes, tables, horizontal rules
 - ✅ Inline formatting (bold, italic, strikethrough, inline code, links)
 - ✅ Comprehensive test suite (19 unit tests)
-- ⬜ Syntax highlighting for code blocks (syntect) - Future enhancement
 
 **Phase 4: Tool Calls & Subagents** - Future ([design](plans/2026-01-30-tool-calls-and-subagents-design.md))
 - ⬜ Enrich Message model (tool_name, tool_input, parent_message_index)
@@ -89,6 +87,7 @@
 - ⬜ Subagent tree view & navigation
 
 **Phase 5: Advanced Features** - Future
+- Syntax highlighting for code blocks (syntect)
 - Real-time session monitoring (file watching)
 - Session export (Markdown/HTML)
 - Analytics and usage charts
@@ -287,11 +286,7 @@ let db_path = data_dir.join("sessions-chronicle").join("sessions.db");
 
 ### Immediate Tasks
 
-1. **Syntax highlighting for code blocks**:
-    - Integrate `syntect` or similar for syntax highlighting
-    - Add language-aware coloring in markdown code blocks
-
-2. **Search term highlighting**:
+1. **Search term highlighting**:
     - Highlight matching terms in SessionDetail when viewing search results
 
 ### Testing Strategy
@@ -329,6 +324,6 @@ cargo test
 
 ---
 
-**Last Updated**: 2026-02-06
+**Last Updated**: 2026-02-07
 **Current Phase**: Phase 3 - Markdown Rendering (Complete)
-**Next Milestone**: Syntax highlighting for code blocks
+**Next Milestone**: Search term highlighting in SessionDetail

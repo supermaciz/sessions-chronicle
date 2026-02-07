@@ -56,8 +56,16 @@ This directory contains all design documentation, mockups, and architectural dec
    - Subagent tree view and navigation
 
 10. **[plans/2026-01-30-markdown-rendering-design.md](plans/2026-01-30-markdown-rendering-design.md)**
-   - Markdown rendering for assistant messages (pulldown-cmark + Pango markup)
-   - Native GTK4 widgets per block type
+    - Markdown rendering for assistant messages (pulldown-cmark + Pango markup)
+    - Native GTK4 widgets per block type
+
+11. **[plans/2026-02-07-search-highlighting-exploration.md](plans/2026-02-07-search-highlighting-exploration.md)**
+    - UX exploration for search highlighting behavior in SessionDetail
+    - Tradeoffs between inline and filtered-match approaches
+
+12. **[plans/2026-02-07-search-highlighting-design.md](plans/2026-02-07-search-highlighting-design.md)**
+    - Chosen implementation direction for search highlighting
+    - Detailed UI and integration notes for next feature
 
 ---
 
@@ -95,7 +103,7 @@ All mockups are SVG files in the `mockups/` subfolder (open in browser or image 
 ~/.claude/projects/                           ← Claude Code (v1)
 ~/.local/share/opencode/storage/session/      ← OpenCode (v2)
 ~/.codex/sessions/                            ← Codex (v2)
-~/.vibe/logs/session/                         ← Mistral Vibe (v1)
+~/.vibe/logs/session/                         ← Mistral Vibe (v2)
 ```
 
 ---
@@ -110,4 +118,4 @@ All mockups are SVG files in the `mockups/` subfolder (open in browser or image 
 
 ---
 
-**Last Updated**: 2026-02-04
+**Last Updated**: 2026-02-07
