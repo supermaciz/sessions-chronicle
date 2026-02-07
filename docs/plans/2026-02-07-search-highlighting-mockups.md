@@ -5,6 +5,12 @@
 
 **Current behavior**: The search bar (top of the app) filters the session *list* via FTS5. When the user clicks a result, the detail view shows all messages without any indication of where the search term appears.
 
+## Visual Mockups
+
+| Proposal A | Proposal B |
+|------------|------------|
+| ![Proposal A](mockup-a-inline-highlight.svg) | ![Proposal B](mockup-b-filtered-matches.svg) |
+
 ---
 
 ## Proposal A: Inline Highlight + Floating Search Navigation Bar
