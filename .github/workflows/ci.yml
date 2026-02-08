@@ -14,9 +14,9 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - name: Install dependencies
-        run: dnf install -y gcc pkg-config gtk4-devel libadwaita-devel glib2-devel rust cargo
+        run: dnf install -y gcc pkg-config gtk4-devel libadwaita-devel glib2-devel rust cargo xorg-x11-server-Xvfb
       - name: Run cargo test
-        run: cargo test --all --no-fail-fast
+        run: xvfb-run cargo test --all --no-fail-fast
 
   clippy:
     name: Clippy
