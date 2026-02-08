@@ -103,10 +103,21 @@ enum UtilityPaneMode {
 }
 ```
 
-And a visibility flag (or directly mirror split view property):
+And app-owned UI/session state:
 
 - `pane_mode: UtilityPaneMode`
 - `pane_open: bool`
+- `active_session: Option<ActiveSessionRef>`
+
+```rust
+struct ActiveSessionRef {
+    id: String,
+    tool: Tool,
+    project_name: String,
+}
+```
+
+`active_session` is the canonical source for resume routing from the utility pane.
 
 ### Pane content swap mechanism
 
@@ -142,9 +153,9 @@ Add a small component `src/ui/detail_context_pane.rs` that provides:
 - A short context heading (project name, tool icon).
 - Primary action: `Resume in Terminal` button (`suggested-action` CSS class).
 
-The component is stateless regarding session data — it emits a generic `ResumeClicked` output and `App` resolves the session from its own state (see [Resume routing](#resume-action-in-detail-pane) below).
+The component is not the canonical owner of session state. It stores display-only fields and emits a generic `ResumeClicked` output; `App` owns canonical session identity and resume data (see [Resume routing](#resume-action-in-detail-pane) below).
 
-To display session metadata, `App` sends a `SetSession { project_name, tool }` message to the detail pane on `SessionSelected`. The pane stores only what it needs for display.
+On `SessionSelected`, `App` resolves metadata for the selected session and sends `SetSession { project_name, tool }` to this pane.
 
 YAGNI for v1:
 
@@ -182,7 +193,7 @@ gtk::ToggleButton {
 
 Bind `OverlaySplitView::show-sidebar` to `model.pane_open` via the `#[watch]` macro in the view definition. The `TogglePane` message updates `pane_open`, and the `#[watch]` on `set_show_sidebar` propagates to the widget.
 
-Per GNOME HIG: *"If utility pane visibility can be toggled, assign the F9 key as a shortcut."* Register `F9` as an accelerator for the toggle action.
+Per GNOME HIG: *"If utility pane visibility can be toggled, assign the F9 key as a shortcut."* Register a dedicated window action (for example `win.toggle-pane`) that dispatches `AppMsg::TogglePane`, then bind `F9` to that action. The toggle button and accelerator must both route through the same app message to avoid divergence.
 
 ## Search Bar Positioning
 
@@ -217,8 +228,9 @@ AdwApplicationWindow
 
 ### Select session (`SessionSelected`)
 
+- Resolve selected-session metadata in `App` and store `active_session`.
 - Load detail (`SessionDetailMsg::SetSession`).
-- Send display data to detail pane (`DetailContextPaneMsg::SetSession { project_name, tool }`).
+- Send display data to detail pane (`DetailContextPaneMsg::SetSession { project_name, tool }`) from `active_session`.
 - Push detail page in `NavigationView`.
 - Switch `pane_mode = SessionContext`.
 - Set `pane_open = false`.
@@ -234,7 +246,8 @@ AdwApplicationWindow
 
 ### Toggle pane button / F9
 
-- Inverts `pane_open` regardless of mode.
+- `AppMsg::TogglePane` inverts `pane_open` regardless of mode.
+- `OverlaySplitView` can also change visibility via gestures and collapse behavior. Wire `notify::show-sidebar` to `AppMsg::PaneVisibilityChanged(bool)` so model state stays synchronized with widget state.
 - Does **not** change `pane_mode` or stack visible child.
 
 ### Resume action in detail pane
@@ -244,9 +257,10 @@ The detail context pane component is kept simple:
 1. `DetailContextPane` defines `Output = DetailContextPaneOutput::ResumeClicked`.
 2. On button click, it emits `ResumeClicked` (no session data — the pane doesn't own it).
 3. `App` receives this via the `forward()` wiring and maps it to `AppMsg::ResumeFromPane`.
-4. `AppMsg::ResumeFromPane` handler reads `self.session_detail`'s current session (via the existing `SessionDetail` state) and calls the same `ResumeSession(id, tool)` pipeline.
+4. `AppMsg::ResumeFromPane` reads `self.active_session` and calls the existing `ResumeSession(id, tool)` pipeline.
+5. If `active_session` is `None`, the pane keeps its resume button disabled and the message is ignored with a warning log.
 
-This avoids duplicating session state in the pane and reuses the existing resume flow end-to-end.
+This keeps session ownership in one place (`App`) and reuses the existing resume flow end-to-end.
 
 ## `OverlaySplitView` Configuration
 
@@ -261,6 +275,16 @@ Key properties to set on the split view:
 | `max-sidebar-width` | `280` (default) | Reasonable for filters |
 | `enable-show-gesture` | `true` | Swipe-to-reveal on touch |
 | `enable-hide-gesture` | `true` | Swipe-to-hide on touch |
+| `pin-sidebar` | `false` (default) | Keep automatic hide/show on collapse transitions |
+
+### Bidirectional visibility sync
+
+`pane_open` should not be write-only app state. Keep it synchronized both ways:
+
+1. `pane_open` -> `OverlaySplitView::show-sidebar` via `#[watch]`.
+2. `OverlaySplitView::show-sidebar` -> `AppMsg::PaneVisibilityChanged(bool)` via `notify::show-sidebar`.
+
+This prevents desynchronization when users open/close the pane with touch gestures or when collapse transitions modify visibility.
 
 ### Breakpoint for responsive collapse
 
@@ -278,7 +302,7 @@ In Relm4 code, this is set up imperatively in `init()` after `view_output!()`. T
 - Utility pane must never block primary navigation.
 - If no active session exists in detail mode, the detail pane shows a neutral placeholder and disables the resume button. Avoid `unwrap()` on optional session data — use `if let` / `map` / defaults.
 - Resume failures continue to surface existing toast notifications via `App::show_resume_failure_toast`.
-- If the `gtk::Stack` switch fails (child not found), log the error and hide the pane rather than panic.
+- After calling `stack.set_visible_child_name(...)`, verify `stack.visible_child_name()`. If the expected child is not active, log the mismatch and hide the pane rather than panic.
 
 ## Testing Strategy
 
@@ -303,6 +327,7 @@ Test cases:
 - `transition_to_detail` enforces `SessionContext + closed`.
 - `transition_to_list` enforces `Filters + open`.
 - Toggle flips `pane_open` without changing `pane_mode`.
+- `PaneVisibilityChanged(bool)` mirrors widget-originated visibility updates to `pane_open`.
 - `UtilityPaneMode` maps to correct stack child name (`Filters` → `"filters"`, `SessionContext` → `"session-context"`).
 
 ### Integration/manual checks
@@ -313,6 +338,7 @@ Test cases:
 - Verify narrow window overlay behavior and toggle affordance.
 - Verify F9 keyboard shortcut toggles the pane.
 - Verify swipe gestures work on touchscreen (show/hide).
+- Verify toggle button state remains synchronized after gesture-driven open/close.
 - Verify keyboard navigation/focus and back behavior remain coherent.
 
 ## Out of Scope
@@ -327,19 +353,19 @@ Test cases:
 Keep the implementation incremental and low-risk. Each step has a validation gate:
 
 1. **Replace split view in `App`.**
-   Replace `adw::NavigationSplitView` with `adw::OverlaySplitView`. Use a `gtk::Stack` as the sidebar, containing only the existing `Sidebar` widget initially. Add breakpoint for collapse. Add pane toggle button and F9 shortcut.
-   *Gate:* app builds, filters sidebar works in list mode, pane toggle shows/hides, responsive collapse works on narrow resize.
+   Replace `adw::NavigationSplitView` with `adw::OverlaySplitView`. Use a `gtk::Stack` as the sidebar, containing only the existing `Sidebar` widget initially. Add breakpoint for collapse. Add pane toggle button, `win.toggle-pane` action, F9 shortcut, and `notify::show-sidebar` back-sync.
+   *Gate:* app builds, filters sidebar works in list mode, pane toggle shows/hides, responsive collapse works on narrow resize, and toggle state stays synchronized after gesture/collapse transitions.
 
 2. **Add detail context pane component.**
    Create `src/ui/detail_context_pane.rs` with heading + resume button. Register it as the second Stack child (`"session-context"`). No wiring yet — it just exists.
    *Gate:* app builds, manually switching stack child shows the new pane.
 
 3. **Wire mode transitions and visibility rules.**
-   Add `UtilityPaneMode` enum, `pane_mode`/`pane_open` to `App` model. Implement state transitions on `SessionSelected`, `NavigateBack`, and `TogglePane`. Extract and test pure transition helpers.
-   *Gate:* selecting a session hides pane and switches to context view; going back reopens filters; toggle works in both modes; unit tests pass.
+   Add `UtilityPaneMode` enum, `pane_mode`/`pane_open`, and canonical `active_session` state to `App` model. Implement state transitions on `SessionSelected`, `NavigateBack`, `TogglePane`, and `PaneVisibilityChanged`. Extract and test pure transition helpers.
+   *Gate:* selecting a session hides pane and switches to context view; going back reopens filters; toggle works in both modes; widget-model visibility stays in sync; unit tests pass.
 
 4. **Move resume action emphasis to the pane.**
-   Wire `DetailContextPaneOutput::ResumeClicked` → `AppMsg::ResumeFromPane` → existing resume pipeline. Remove `resume_button` from `session_detail.rs` metadata card.
+   Wire `DetailContextPaneOutput::ResumeClicked` → `AppMsg::ResumeFromPane` → `active_session` lookup → existing resume pipeline. Remove `resume_button` from `session_detail.rs` metadata card.
    *Gate:* resume from pane works end-to-end; toast on failure; no resume button in content area.
 
 Prefer preserving existing message/event contracts unless a simplification is clear and test-covered.
