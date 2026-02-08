@@ -1,0 +1,57 @@
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+name: CI
+
+jobs:
+  tests:
+    name: Tests
+    runs-on: ubuntu-latest
+    container:
+      image: fedora:latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install dependencies
+        run: dnf install -y gcc pkg-config gtk4-devel libadwaita-devel glib2-devel rust cargo xorg-x11-server-Xvfb
+      - name: Run cargo test
+        run: xvfb-run cargo test --all --no-fail-fast
+
+  clippy:
+    name: Clippy
+    runs-on: ubuntu-latest
+    container:
+      image: fedora:latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install dependencies
+        run: dnf install -y gcc pkg-config gtk4-devel libadwaita-devel glib2-devel rust cargo clippy
+      - name: Run cargo clippy
+        run: cargo clippy --all -- -D warnings
+
+  rustfmt:
+    name: Rustfmt
+    runs-on: ubuntu-latest
+    container:
+      image: fedora:latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install dependencies
+        run: dnf install -y cargo rustfmt
+      - name: Run cargo fmt
+        run: cargo fmt --all -- --check
+
+  flatpak:
+    name: Flatpak
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/flathub-infra/flatpak-github-actions:gnome-49
+      options: --privileged
+    steps:
+      - uses: actions/checkout@v6
+      - uses: flatpak/flatpak-github-actions/flatpak-builder@v6
+        with:
+          bundle: sessions-chronicle.flatpak
+          manifest-path: build-aux/io.github.supermaciz.sessionschronicle.Devel.json
+          cache-key: flatpak-builder-${{ github.sha }}
