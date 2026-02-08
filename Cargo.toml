@@ -18,7 +18,7 @@ tracing-subscriber = "0.3.22"
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.149"
 walkdir = "2.5.0"
-chrono = { version = "0.4.42", features = ["serde"] }
+chrono = { version = "0.4.43", features = ["serde"] }
 anyhow = "1.0.100"
 thiserror = "2.0.17"
 rusqlite = { version = "0.38.0", features = ["bundled"] }
