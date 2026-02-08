@@ -178,21 +178,21 @@ fn extract_visible_units(markup: &str) -> Vec<VisibleUnit> {
             continue;
         }
 
-        if rest.starts_with('&') {
-            if let Some(entity_end_rel) = rest.find(';') {
-                let entity_end = i + entity_end_rel + 1;
-                let entity = &markup[i..entity_end];
-                let decoded = decode_entity(entity);
-                for ch in decoded.chars() {
-                    units.push(VisibleUnit {
-                        ch,
-                        markup_start: i,
-                        markup_end: entity_end,
-                    });
-                }
-                i = entity_end;
-                continue;
+        if rest.starts_with('&')
+            && let Some(entity_end_rel) = rest.find(';')
+        {
+            let entity_end = i + entity_end_rel + 1;
+            let entity = &markup[i..entity_end];
+            let decoded = decode_entity(entity);
+            for ch in decoded.chars() {
+                units.push(VisibleUnit {
+                    ch,
+                    markup_start: i,
+                    markup_end: entity_end,
+                });
             }
+            i = entity_end;
+            continue;
         }
 
         let ch = rest

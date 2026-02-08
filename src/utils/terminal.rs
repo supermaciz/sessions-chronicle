@@ -359,8 +359,8 @@ mod tests {
         // It's more of a documentation of expected behavior
         let result = Terminal::Auto.resolve_auto();
         // Result depends on system state, but error should be NoTerminalFound if none available
-        if result.is_err() {
-            match result.unwrap_err() {
+        if let Err(e) = result {
+            match e {
                 TerminalSpawnError::NoTerminalFound => {
                     // Expected when no terminals are available
                 }
