@@ -3,22 +3,30 @@ use relm4::factory::{DynamicIndex, FactoryComponent, FactorySender};
 use relm4::gtk;
 
 use crate::models::{MessagePreview, Role};
+use crate::ui::highlight;
 use crate::ui::markdown;
 
 pub struct MessageRowInit {
     pub preview: MessagePreview,
+    pub highlight_query: Option<String>,
+}
+
+#[derive(Debug)]
+pub enum MessageRowOutput {
+    MatchCount { count: usize },
 }
 
 #[derive(Debug)]
 pub struct MessageRow {
     preview: MessagePreview,
+    highlight_query: Option<String>,
 }
 
 #[relm4::factory(pub)]
 impl FactoryComponent for MessageRow {
     type Init = MessageRowInit;
     type Input = ();
-    type Output = ();
+    type Output = MessageRowOutput;
     type CommandOutput = ();
     type ParentWidget = gtk::Box;
 
@@ -71,6 +79,7 @@ impl FactoryComponent for MessageRow {
     fn init_model(init: Self::Init, _index: &DynamicIndex, _sender: FactorySender<Self>) -> Self {
         Self {
             preview: init.preview,
+            highlight_query: init.highlight_query,
         }
     }
 
@@ -79,13 +88,29 @@ impl FactoryComponent for MessageRow {
         _index: &DynamicIndex,
         _root: Self::Root,
         _returned_widget: &<Self::ParentWidget as relm4::factory::FactoryView>::ReturnedWidget,
-        _sender: FactorySender<Self>,
+        sender: FactorySender<Self>,
     ) -> Self::Widgets {
         let widgets = view_output!();
+        let mut match_count = 0usize;
 
         if self.preview.role == Role::Assistant {
-            let rendered = markdown::render_markdown(&self.preview.content_preview);
-            widgets.content_container.append(&rendered);
+            let rendered = markdown::render_markdown(
+                &self.preview.content_preview,
+                self.highlight_query.as_deref(),
+            );
+            match_count = rendered.1;
+            widgets.content_container.append(&rendered.0);
+        } else if let Some(ref query) = self.highlight_query {
+            let (markup, count) = highlight::highlight_text(&self.preview.content_preview, query);
+            match_count = count;
+            let label = gtk::Label::new(None);
+            label.set_markup(&markup);
+            label.set_wrap(true);
+            label.set_wrap_mode(gtk::pango::WrapMode::WordChar);
+            label.set_halign(gtk::Align::Start);
+            label.set_xalign(0.0);
+            label.set_selectable(true);
+            widgets.content_container.append(&label);
         } else {
             let label = gtk::Label::new(Some(&self.preview.content_preview));
             label.set_wrap(true);
@@ -95,6 +120,8 @@ impl FactoryComponent for MessageRow {
             label.set_selectable(true);
             widgets.content_container.append(&label);
         }
+
+        let _ = sender.output(MessageRowOutput::MatchCount { count: match_count });
 
         widgets
     }

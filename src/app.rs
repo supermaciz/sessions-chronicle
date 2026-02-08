@@ -31,6 +31,7 @@ const RESUME_FAILURE_TOAST_TIMEOUT_SECS: u32 = 4;
 pub(super) struct App {
     search_visible: bool,
     detail_visible: bool,
+    search_query: String,
     session_list: Controller<SessionList>,
     session_detail: Controller<SessionDetail>,
     sidebar: Controller<Sidebar>,
@@ -282,6 +283,7 @@ impl SimpleComponent for App {
         let mut model = Self {
             search_visible: false,
             detail_visible: false,
+            search_query: String::new(),
             session_list,
             session_detail,
             sidebar,
@@ -361,6 +363,7 @@ impl SimpleComponent for App {
                 self.search_visible = !self.search_visible;
             }
             AppMsg::SearchQueryChanged(query) => {
+                self.search_query = query.clone();
                 self.session_list
                     .emit(SessionListMsg::SetSearchQuery(query));
             }
@@ -369,8 +372,14 @@ impl SimpleComponent for App {
             }
             AppMsg::SessionSelected(id) => {
                 tracing::debug!("Session selected: {}", id);
-                // Load the session in the detail view
-                self.session_detail.emit(SessionDetailMsg::SetSession(id));
+                let search_query = if self.search_query.is_empty() {
+                    None
+                } else {
+                    Some(self.search_query.clone())
+                };
+                // Load the session in the detail view with search query
+                self.session_detail
+                    .emit(SessionDetailMsg::SetSession { id, search_query });
                 // Push the detail page onto the navigation stack
                 if !self.detail_visible {
                     self.nav_view.push(&self.detail_page);

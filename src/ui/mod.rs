@@ -1,3 +1,4 @@
+pub mod highlight;
 pub mod markdown;
 pub mod message_row;
 pub mod modals;
