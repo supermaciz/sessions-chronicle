@@ -31,6 +31,7 @@ const RESUME_FAILURE_TOAST_TIMEOUT_SECS: u32 = 4;
 pub(super) struct App {
     search_visible: bool,
     detail_visible: bool,
+    search_query: String,
     session_list: Controller<SessionList>,
     session_detail: Controller<SessionDetail>,
     sidebar: Controller<Sidebar>,
@@ -56,6 +57,24 @@ relm4::new_stateless_action!(PreferencesAction, WindowActionGroup, "preferences"
 relm4::new_stateless_action!(pub(super) ShortcutsAction, WindowActionGroup, "show-help-overlay");
 relm4::new_stateless_action!(AboutAction, WindowActionGroup, "about");
 relm4::new_stateless_action!(QuitAction, WindowActionGroup, "quit");
+
+fn active_search_query(query: &str) -> Option<String> {
+    let trimmed = query.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed.to_string())
+    }
+}
+
+fn search_query_update_messages(query: String) -> (SessionListMsg, SessionDetailMsg) {
+    let detail_query = active_search_query(&query);
+
+    (
+        SessionListMsg::SetSearchQuery(query),
+        SessionDetailMsg::UpdateSearchQuery(detail_query),
+    )
+}
 
 #[relm4::component(pub)]
 impl SimpleComponent for App {
@@ -282,6 +301,7 @@ impl SimpleComponent for App {
         let mut model = Self {
             search_visible: false,
             detail_visible: false,
+            search_query: String::new(),
             session_list,
             session_detail,
             sidebar,
@@ -361,16 +381,20 @@ impl SimpleComponent for App {
                 self.search_visible = !self.search_visible;
             }
             AppMsg::SearchQueryChanged(query) => {
-                self.session_list
-                    .emit(SessionListMsg::SetSearchQuery(query));
+                self.search_query = query.clone();
+                let (list_msg, detail_msg) = search_query_update_messages(query);
+                self.session_list.emit(list_msg);
+                self.session_detail.emit(detail_msg);
             }
             AppMsg::FiltersChanged(tools) => {
                 self.session_list.emit(SessionListMsg::SetTools(tools));
             }
             AppMsg::SessionSelected(id) => {
                 tracing::debug!("Session selected: {}", id);
-                // Load the session in the detail view
-                self.session_detail.emit(SessionDetailMsg::SetSession(id));
+                let search_query = active_search_query(&self.search_query);
+                // Load the session in the detail view with search query
+                self.session_detail
+                    .emit(SessionDetailMsg::SetSession { id, search_query });
                 // Push the detail page onto the navigation stack
                 if !self.detail_visible {
                     self.nav_view.push(&self.detail_page);
@@ -543,5 +567,41 @@ impl AppWidgets {
         if is_maximized {
             self.main_window.maximize();
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn search_query_update_messages_include_detail_update() {
+        let query = "needle".to_string();
+
+        let (list_msg, detail_msg) = search_query_update_messages(query);
+
+        match list_msg {
+            SessionListMsg::SetSearchQuery(list_query) => {
+                assert_eq!(list_query, "needle");
+            }
+            _ => panic!("expected SessionListMsg::SetSearchQuery"),
+        }
+
+        match detail_msg {
+            SessionDetailMsg::UpdateSearchQuery(Some(detail_query)) => {
+                assert_eq!(detail_query, "needle");
+            }
+            _ => panic!("expected SessionDetailMsg::UpdateSearchQuery(Some(..))"),
+        }
+    }
+
+    #[test]
+    fn active_search_query_treats_blank_input_as_none() {
+        assert_eq!(active_search_query(""), None);
+        assert_eq!(active_search_query("   \n\t  "), None);
+        assert_eq!(
+            active_search_query("  needle  "),
+            Some("needle".to_string())
+        );
     }
 }

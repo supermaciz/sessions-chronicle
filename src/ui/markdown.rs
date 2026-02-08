@@ -29,7 +29,7 @@ pub enum MarkdownBlock {
 }
 
 /// Escape characters that are special in Pango markup.
-fn pango_escape(s: &str) -> String {
+pub fn pango_escape(s: &str) -> String {
     let mut escaped = String::with_capacity(s.len());
     for c in s.chars() {
         match c {
@@ -289,23 +289,47 @@ pub fn markdown_to_blocks(content: &str) -> Vec<MarkdownBlock> {
 }
 
 /// Render markdown content as a vertical `gtk::Box` of native widgets.
-pub fn render_markdown(content: &str) -> gtk::Box {
+///
+/// If `highlight_query` is provided, matches are highlighted in text blocks
+/// (paragraphs, headings, lists, tables) but not inside code blocks.
+/// Returns the widget and the total number of highlighted matches.
+pub fn render_markdown(content: &str, highlight_query: Option<&str>) -> (gtk::Box, usize) {
     let container = gtk::Box::new(gtk::Orientation::Vertical, 4);
+    let mut total_matches = 0usize;
 
     for block in markdown_to_blocks(content) {
-        render_block(&container, block);
+        total_matches += render_block(&container, block, highlight_query);
     }
 
-    container
+    (container, total_matches)
+}
+
+/// Apply highlighting to Pango markup if a query is provided.
+/// Returns the (possibly highlighted) markup and the match count.
+fn apply_highlight(markup: &str, highlight_query: Option<&str>) -> (String, usize) {
+    if let Some(query) = highlight_query
+        && !query.is_empty()
+    {
+        return crate::ui::highlight::highlight_in_markup(markup, query);
+    }
+    (markup.to_string(), 0)
 }
 
 /// Render a single `MarkdownBlock` as GTK widgets appended to `container`.
-/// Called recursively for blockquotes.
-fn render_block(container: &gtk::Box, block: MarkdownBlock) {
+/// Called recursively for blockquotes. Returns number of highlighted matches.
+fn render_block(
+    container: &gtk::Box,
+    block: MarkdownBlock,
+    highlight_query: Option<&str>,
+) -> usize {
+    let mut matches = 0usize;
+
     match block {
         MarkdownBlock::Paragraph(markup) => {
+            let (highlighted, count) = apply_highlight(&markup, highlight_query);
+            matches += count;
             let label = gtk::Label::new(None);
-            label.set_markup(&markup);
+            label.set_markup(&highlighted);
             label.set_wrap(true);
             label.set_wrap_mode(gtk::pango::WrapMode::WordChar);
             label.set_halign(gtk::Align::Start);
@@ -314,8 +338,10 @@ fn render_block(container: &gtk::Box, block: MarkdownBlock) {
             container.append(&label);
         }
         MarkdownBlock::Heading { level, content } => {
+            let (highlighted, count) = apply_highlight(&content, highlight_query);
+            matches += count;
             let label = gtk::Label::new(None);
-            label.set_markup(&content);
+            label.set_markup(&highlighted);
             label.set_wrap(true);
             label.set_wrap_mode(gtk::pango::WrapMode::WordChar);
             label.set_halign(gtk::Align::Start);
@@ -330,6 +356,7 @@ fn render_block(container: &gtk::Box, block: MarkdownBlock) {
             container.append(&label);
         }
         MarkdownBlock::CodeBlock { language, code } => {
+            // No highlighting inside code blocks (v1 scope exclusion)
             let wrapper = gtk::Box::new(gtk::Orientation::Vertical, 4);
             wrapper.add_css_class("code-block");
 
@@ -366,8 +393,10 @@ fn render_block(container: &gtk::Box, block: MarkdownBlock) {
                 marker_label.set_halign(gtk::Align::Start);
                 row.append(&marker_label);
 
+                let (highlighted, count) = apply_highlight(item_markup, highlight_query);
+                matches += count;
                 let text_label = gtk::Label::new(None);
-                text_label.set_markup(item_markup);
+                text_label.set_markup(&highlighted);
                 text_label.set_wrap(true);
                 text_label.set_wrap_mode(gtk::pango::WrapMode::WordChar);
                 text_label.set_halign(gtk::Align::Start);
@@ -391,8 +420,10 @@ fn render_block(container: &gtk::Box, block: MarkdownBlock) {
                 check.set_valign(gtk::Align::Start);
                 row.append(&check);
 
+                let (highlighted, count) = apply_highlight(&item_markup, highlight_query);
+                matches += count;
                 let text_label = gtk::Label::new(None);
-                text_label.set_markup(&item_markup);
+                text_label.set_markup(&highlighted);
                 text_label.set_wrap(true);
                 text_label.set_wrap_mode(gtk::pango::WrapMode::WordChar);
                 text_label.set_halign(gtk::Align::Start);
@@ -410,7 +441,7 @@ fn render_block(container: &gtk::Box, block: MarkdownBlock) {
             quote_box.add_css_class("markdown-blockquote");
 
             for inner in inner_blocks {
-                render_block(&quote_box, inner);
+                matches += render_block(&quote_box, inner, highlight_query);
             }
 
             container.append(&quote_box);
@@ -422,8 +453,10 @@ fn render_block(container: &gtk::Box, block: MarkdownBlock) {
             grid.set_row_spacing(4);
 
             for (col, header) in headers.iter().enumerate() {
+                let (highlighted, count) = apply_highlight(header, highlight_query);
+                matches += count;
                 let label = gtk::Label::new(None);
-                label.set_markup(header);
+                label.set_markup(&highlighted);
                 label.add_css_class("markdown-table-header");
                 label.set_halign(gtk::Align::Start);
                 label.set_hexpand(true);
@@ -432,8 +465,10 @@ fn render_block(container: &gtk::Box, block: MarkdownBlock) {
 
             for (row_index, row) in rows.iter().enumerate() {
                 for (col, cell) in row.iter().enumerate() {
+                    let (highlighted, count) = apply_highlight(cell, highlight_query);
+                    matches += count;
                     let label = gtk::Label::new(None);
-                    label.set_markup(cell);
+                    label.set_markup(&highlighted);
                     label.set_halign(gtk::Align::Start);
                     label.set_wrap(true);
                     label.set_wrap_mode(gtk::pango::WrapMode::WordChar);
@@ -450,6 +485,8 @@ fn render_block(container: &gtk::Box, block: MarkdownBlock) {
             container.append(&separator);
         }
     }
+
+    matches
 }
 
 #[cfg(test)]

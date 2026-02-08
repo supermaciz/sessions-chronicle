@@ -81,3 +81,17 @@
   margin-top: 8px;
   margin-bottom: 8px;
 }
+
+/* Search navigation bar */
+.search-nav-bar {
+  background-color: alpha(@headerbar_bg_color, 0.95);
+  border-bottom: 1px solid alpha(@borders, 0.3);
+  padding: 6px 12px;
+  border-radius: 0 0 8px 8px;
+  margin-top: 0;
+}
+
+.search-nav-bar .match-counter {
+  font-variant-numeric: tabular-nums;
+  min-width: 60px;
+}
