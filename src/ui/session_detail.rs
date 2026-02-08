@@ -496,8 +496,8 @@ impl SimpleComponent for SessionDetail {
                 };
 
                 let Some(scrolled_window) = scroll_child
-                    .parent()
-                    .and_then(|p| p.downcast::<gtk::ScrolledWindow>().ok())
+                    .ancestor(gtk::ScrolledWindow::static_type())
+                    .and_then(|w| w.downcast::<gtk::ScrolledWindow>().ok())
                 else {
                     return;
                 };
