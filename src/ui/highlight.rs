@@ -13,15 +13,13 @@ pub fn highlight_text(text: &str, query: &str) -> (String, usize) {
         return (pango_escape(text), 0);
     }
 
-    let lower_text = text.to_lowercase();
-    let lower_query = query.to_lowercase();
+    let matches = find_case_insensitive_matches_in_text(text, query);
     let mut result = String::with_capacity(text.len() * 2);
-    let mut count = 0usize;
     let mut pos = 0usize;
 
-    while let Some(match_start) = lower_text[pos..].find(&lower_query) {
-        let abs_start = pos + match_start;
-        let abs_end = abs_start + query.len();
+    for (abs_start, abs_end) in &matches {
+        let abs_start = *abs_start;
+        let abs_end = *abs_end;
 
         // Append escaped non-match segment
         result.push_str(&pango_escape(&text[pos..abs_start]));
@@ -32,14 +30,13 @@ pub fn highlight_text(text: &str, query: &str) -> (String, usize) {
         ));
         result.push_str(&pango_escape(&text[abs_start..abs_end]));
         result.push_str("</span>");
-        count += 1;
         pos = abs_end;
     }
 
     // Append remaining text
     result.push_str(&pango_escape(&text[pos..]));
 
-    (result, count)
+    (result, matches.len())
 }
 
 /// Highlight every case-insensitive occurrence of `query` inside existing Pango
@@ -51,40 +48,11 @@ pub fn highlight_in_markup(markup: &str, query: &str) -> (String, usize) {
         return (markup.to_string(), 0);
     }
 
-    // Extract visible text segments with their byte ranges in the markup.
-    let segments = extract_text_segments(markup);
-
-    // Collect all visible text into one string so we can match across segments.
-    let visible: String = segments.iter().map(|(_, text)| text.as_str()).collect();
-    let lower_visible = visible.to_lowercase();
-    let lower_query = query.to_lowercase();
-
-    // Find match positions in the visible-text string.
-    let mut match_positions: Vec<(usize, usize)> = Vec::new();
-    let mut search_pos = 0;
-    while let Some(start) = lower_visible[search_pos..].find(&lower_query) {
-        let abs = search_pos + start;
-        match_positions.push((abs, abs + query.len()));
-        search_pos = abs + query.len();
-    }
-
+    let visible_units = extract_visible_units(markup);
+    let match_positions = find_case_insensitive_matches_in_units(&visible_units, query);
     let count = match_positions.len();
     if count == 0 {
         return (markup.to_string(), 0);
-    }
-
-    // Map visible-text offsets back to markup byte ranges.
-    // Build a map: for each visible-text offset, what markup byte offset is it?
-    let mut vis_to_markup: Vec<usize> = Vec::with_capacity(visible.len() + 1);
-    for (markup_start, text) in &segments {
-        for (i, _) in text.char_indices() {
-            vis_to_markup.push(markup_start + i);
-        }
-        // End sentinel for the segment
-    }
-    // Final sentinel: end of all visible text maps to the position after the last segment
-    if let Some((start, text)) = segments.last() {
-        vis_to_markup.push(start + text.len());
     }
 
     // Build highlighted markup by walking the original markup and inserting spans.
@@ -93,10 +61,7 @@ pub fn highlight_in_markup(markup: &str, query: &str) -> (String, usize) {
     let mut result = String::with_capacity(markup.len() * 2);
     let mut markup_pos = 0usize;
 
-    for &(vis_start, vis_end) in &match_positions {
-        let m_start = vis_to_markup[vis_start];
-        let m_end = vis_to_markup[vis_end];
-
+    for &(m_start, m_end) in &match_positions {
         // Copy markup from current position to match start verbatim
         result.push_str(&markup[markup_pos..m_start]);
         // Insert highlight span around the matched region
@@ -115,54 +80,6 @@ pub fn highlight_in_markup(markup: &str, query: &str) -> (String, usize) {
     (result, count)
 }
 
-/// Extract visible text segments from Pango markup.
-/// Returns `(byte_offset_in_markup, visible_text)` pairs.
-fn extract_text_segments(markup: &str) -> Vec<(usize, String)> {
-    let mut segments = Vec::new();
-    let bytes = markup.as_bytes();
-    let len = bytes.len();
-    let mut i = 0;
-
-    while i < len {
-        if bytes[i] == b'<' {
-            // Skip tag
-            while i < len && bytes[i] != b'>' {
-                i += 1;
-            }
-            if i < len {
-                i += 1; // skip '>'
-            }
-        } else {
-            // Text segment
-            let start = i;
-            let mut text = String::new();
-            while i < len && bytes[i] != b'<' {
-                if bytes[i] == b'&' {
-                    // Entity — copy verbatim but don't count as separate chars
-                    // for matching purposes. Decode for visible text.
-                    let entity_start = i;
-                    while i < len && bytes[i] != b';' {
-                        i += 1;
-                    }
-                    if i < len {
-                        i += 1; // skip ';'
-                    }
-                    let entity = &markup[entity_start..i];
-                    text.push_str(&decode_entity(entity));
-                } else {
-                    text.push(bytes[i] as char);
-                    i += 1;
-                }
-            }
-            if !text.is_empty() {
-                segments.push((start, text));
-            }
-        }
-    }
-
-    segments
-}
-
 /// Decode a Pango/HTML entity to its character representation.
 fn decode_entity(entity: &str) -> String {
     match entity {
@@ -175,24 +92,143 @@ fn decode_entity(entity: &str) -> String {
     }
 }
 
+#[derive(Clone, Debug)]
+struct VisibleUnit {
+    ch: char,
+    markup_start: usize,
+    markup_end: usize,
+}
+
+fn fold_query_chars(query: &str) -> Vec<char> {
+    query.chars().flat_map(char::to_lowercase).collect()
+}
+
+fn find_case_insensitive_matches_in_text(text: &str, query: &str) -> Vec<(usize, usize)> {
+    let mut folded_units: Vec<(char, usize, usize)> = Vec::new();
+    for (start, ch) in text.char_indices() {
+        let end = start + ch.len_utf8();
+        for lower in ch.to_lowercase() {
+            folded_units.push((lower, start, end));
+        }
+    }
+
+    let query_chars = fold_query_chars(query);
+    find_case_insensitive_matches_in_folded_units(&folded_units, &query_chars)
+}
+
+fn find_case_insensitive_matches_in_units(
+    units: &[VisibleUnit],
+    query: &str,
+) -> Vec<(usize, usize)> {
+    let mut folded_units: Vec<(char, usize, usize)> = Vec::new();
+    for unit in units {
+        for lower in unit.ch.to_lowercase() {
+            folded_units.push((lower, unit.markup_start, unit.markup_end));
+        }
+    }
+
+    let query_chars = fold_query_chars(query);
+    find_case_insensitive_matches_in_folded_units(&folded_units, &query_chars)
+}
+
+fn find_case_insensitive_matches_in_folded_units(
+    folded_units: &[(char, usize, usize)],
+    query_chars: &[char],
+) -> Vec<(usize, usize)> {
+    if query_chars.is_empty() || folded_units.is_empty() || query_chars.len() > folded_units.len() {
+        return Vec::new();
+    }
+
+    let mut matches = Vec::new();
+    let mut i = 0usize;
+    while i + query_chars.len() <= folded_units.len() {
+        let is_match = folded_units[i..i + query_chars.len()]
+            .iter()
+            .zip(query_chars.iter())
+            .all(|((ch, _, _), q)| ch == q);
+
+        if is_match {
+            let start = folded_units[i].1;
+            let end = folded_units[i + query_chars.len() - 1].2;
+            matches.push((start, end));
+            i += query_chars.len();
+        } else {
+            i += 1;
+        }
+    }
+
+    matches
+}
+
+/// Extract visible characters from Pango markup and map each displayed character
+/// back to a byte range in the original markup string.
+fn extract_visible_units(markup: &str) -> Vec<VisibleUnit> {
+    let mut units = Vec::new();
+    let mut i = 0usize;
+
+    while i < markup.len() {
+        let rest = &markup[i..];
+
+        if rest.starts_with('<') {
+            if let Some(tag_end) = rest.find('>') {
+                i += tag_end + 1;
+            } else {
+                break;
+            }
+            continue;
+        }
+
+        if rest.starts_with('&') {
+            if let Some(entity_end_rel) = rest.find(';') {
+                let entity_end = i + entity_end_rel + 1;
+                let entity = &markup[i..entity_end];
+                let decoded = decode_entity(entity);
+                for ch in decoded.chars() {
+                    units.push(VisibleUnit {
+                        ch,
+                        markup_start: i,
+                        markup_end: entity_end,
+                    });
+                }
+                i = entity_end;
+                continue;
+            }
+        }
+
+        let ch = rest
+            .chars()
+            .next()
+            .expect("non-empty rest must have at least one char");
+        let end = i + ch.len_utf8();
+        units.push(VisibleUnit {
+            ch,
+            markup_start: i,
+            markup_end: end,
+        });
+        i = end;
+    }
+
+    units
+}
+
 /// Wrap only the visible text portions within a markup fragment in highlight spans.
 /// Tags are passed through unchanged.
 fn wrap_text_in_markup(fragment: &str, bg: &str, fg: &str) -> String {
     let mut result = String::new();
-    let bytes = fragment.as_bytes();
-    let len = bytes.len();
     let mut i = 0;
 
-    while i < len {
-        if bytes[i] == b'<' {
+    while i < fragment.len() {
+        let rest = &fragment[i..];
+
+        if rest.starts_with('<') {
             // Copy tag verbatim
-            while i < len && bytes[i] != b'>' {
-                result.push(bytes[i] as char);
-                i += 1;
-            }
-            if i < len {
-                result.push(bytes[i] as char);
-                i += 1;
+            if let Some(tag_end) = rest.find('>') {
+                let end = i + tag_end + 1;
+                result.push_str(&fragment[i..end]);
+                i = end;
+            } else {
+                result.push_str(rest);
+                break;
             }
         } else {
             // Text segment — wrap in highlight span
@@ -200,9 +236,13 @@ fn wrap_text_in_markup(fragment: &str, bg: &str, fg: &str) -> String {
                 "<span background=\"{}\" foreground=\"{}\">",
                 bg, fg
             ));
-            while i < len && bytes[i] != b'<' {
-                result.push(bytes[i] as char);
-                i += 1;
+            if let Some(next_tag_rel) = rest.find('<') {
+                let end = i + next_tag_rel;
+                result.push_str(&fragment[i..end]);
+                i = end;
+            } else {
+                result.push_str(rest);
+                i = fragment.len();
             }
             result.push_str("</span>");
         }
@@ -309,6 +349,29 @@ mod tests {
     fn highlight_in_markup_match_across_entity() {
         // "a&b" in visible text, query "a&b"
         let (result, count) = highlight_in_markup("a&amp;b", "a&b");
+        assert_eq!(count, 1);
+        assert!(result.contains("<span background="));
+    }
+
+    #[test]
+    fn highlight_text_handles_unicode_case_folding_expansion() {
+        let (markup, count) = highlight_text("İstanbul", "i");
+        assert_eq!(count, 1);
+        assert!(markup.contains("<span background="));
+    }
+
+    #[test]
+    fn highlight_in_markup_preserves_entity_bytes_when_highlighting() {
+        let (result, count) = highlight_in_markup("a&amp;b", "&b");
+        assert_eq!(count, 1);
+        assert!(
+            result.contains("<span background=\"#fce94f\" foreground=\"#1e1e1e\">&amp;b</span>")
+        );
+    }
+
+    #[test]
+    fn highlight_in_markup_handles_utf8_visible_text() {
+        let (result, count) = highlight_in_markup("<b>café 漢字</b>", "漢字");
         assert_eq!(count, 1);
         assert!(result.contains("<span background="));
     }
