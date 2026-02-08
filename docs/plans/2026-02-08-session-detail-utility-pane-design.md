@@ -185,15 +185,17 @@ Add a **pane toggle button** at `pack_end`, before the menu button:
 gtk::ToggleButton {
     set_icon_name: "sidebar-show-symbolic",
     set_tooltip_text: Some("Toggle utility pane (F9)"),
+    set_action_name: Some("win.toggle-pane"),
     #[watch]
     set_active: model.pane_open,
-    connect_toggled => AppMsg::TogglePane,
 },
 ```
 
+**Important:** the button uses `set_action_name` instead of `connect_toggled`. The `toggled` signal fires on *any* `active` property change, including programmatic updates from `#[watch]`. Using `connect_toggled` with `#[watch] set_active` would cause an infinite feedback loop: `set_active(false)` → `toggled` → `TogglePane` → `pane_open = true` → `set_active(true)` → ... The GAction only activates on user interaction (click), breaking the cycle.
+
 Bind `OverlaySplitView::show-sidebar` to `model.pane_open` via the `#[watch]` macro in the view definition. The `TogglePane` message updates `pane_open`, and the `#[watch]` on `set_show_sidebar` propagates to the widget.
 
-Per GNOME HIG: *"If utility pane visibility can be toggled, assign the F9 key as a shortcut."* Register a dedicated window action (for example `win.toggle-pane`) that dispatches `AppMsg::TogglePane`, then bind `F9` to that action. The toggle button and accelerator must both route through the same app message to avoid divergence.
+Per GNOME HIG: *"If utility pane visibility can be toggled, assign the F9 key as a shortcut."* Register a dedicated window action `win.toggle-pane` that dispatches `AppMsg::TogglePane`, then bind `F9` to that action. The toggle button and accelerator both route through the same GAction to avoid divergence.
 
 ## Search Bar Positioning
 
@@ -240,6 +242,7 @@ AdwApplicationWindow
 
 - Pop detail if needed.
 - Preserve existing `detail_visible` guard to prevent double-pop from the `connect_popped` signal.
+- Clear `active_session = None`.
 - Switch `pane_mode = Filters`.
 - Set `pane_open = true`.
 - Switch stack to `"filters"`.
@@ -286,6 +289,18 @@ Key properties to set on the split view:
 
 This prevents desynchronization when users open/close the pane with touch gestures or when collapse transitions modify visibility.
 
+The `PaneVisibilityChanged` handler must guard against no-op updates to avoid redundant view cycles:
+
+```rust
+AppMsg::PaneVisibilityChanged(visible) => {
+    if self.pane_open != visible {
+        self.pane_open = visible;
+    }
+}
+```
+
+**Collapse interaction note:** with `pin-sidebar: false`, collapsing the split view auto-hides the sidebar and uncollapsing auto-shows it. These widget-driven changes propagate through `PaneVisibilityChanged`. This means a window resize can override an earlier `pane_open = false` from `SessionSelected` if the window crosses the breakpoint threshold. This is acceptable — the pane follows the layout's spatial constraints — but implementers should be aware that `pane_open` reflects the *effective* visibility, not a latched user intent.
+
 ### Breakpoint for responsive collapse
 
 Add an `AdwBreakpoint` to the `AdwApplicationWindow`:
@@ -302,7 +317,7 @@ In Relm4 code, this is set up imperatively in `init()` after `view_output!()`. T
 - Utility pane must never block primary navigation.
 - If no active session exists in detail mode, the detail pane shows a neutral placeholder and disables the resume button. Avoid `unwrap()` on optional session data — use `if let` / `map` / defaults.
 - Resume failures continue to surface existing toast notifications via `App::show_resume_failure_toast`.
-- After calling `stack.set_visible_child_name(...)`, verify `stack.visible_child_name()`. If the expected child is not active, log the mismatch and hide the pane rather than panic.
+- After calling `stack.set_visible_child_name(name)`, verify `stack.visible_child_name()`. If the returned name does not match the requested `name`, log both values (requested vs actual) and hide the pane rather than panic.
 
 ## Testing Strategy
 
@@ -325,7 +340,7 @@ fn transition_to_list(pane_mode: &mut UtilityPaneMode, pane_open: &mut bool) {
 Test cases:
 
 - `transition_to_detail` enforces `SessionContext + closed`.
-- `transition_to_list` enforces `Filters + open`.
+- `transition_to_list` enforces `Filters + open` and clears `active_session`.
 - Toggle flips `pane_open` without changing `pane_mode`.
 - `PaneVisibilityChanged(bool)` mirrors widget-originated visibility updates to `pane_open`.
 - `UtilityPaneMode` maps to correct stack child name (`Filters` → `"filters"`, `SessionContext` → `"session-context"`).
