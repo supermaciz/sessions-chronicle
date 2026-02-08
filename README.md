@@ -8,12 +8,10 @@
 
 ## Features
 
-- Parse Claude Code session files (JSONL format)
 - SQLite database with full-text search (FTS5)
 - Browse and search sessions with filters
 - Session detail view with conversation history
 - Rich markdown rendering (code blocks, tables, task lists, blockquotes)
-- Local data only (no telemetry)
 - Resume sessions in terminal
 - Support for multiple AI tools: Claude Code, OpenCode, Codex, Mistral Vibe
 

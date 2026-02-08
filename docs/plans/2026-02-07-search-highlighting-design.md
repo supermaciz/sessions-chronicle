@@ -1,7 +1,7 @@
 # Search Term Highlighting — Design Document
 
 **Date**: 2026-02-07
-**Status**: Validated
+**Status**: Implemented ✅
 **Proposal**: A (Inline Highlight + Floating Search Navigation Bar)
 **Exploration**: [2026-02-07-search-highlighting-exploration.md](2026-02-07-search-highlighting-exploration.md)
 
