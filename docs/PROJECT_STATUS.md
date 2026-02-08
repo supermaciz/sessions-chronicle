@@ -4,7 +4,7 @@
 
 ---
 
-## Current Status: Phase 3 Complete - Next: Search Highlighting
+## Current Status: Phase 4 Complete - Search Highlighting Implemented
 
 ### ✅ Completed
 
@@ -35,6 +35,7 @@
 - ✅ Message preview model with truncation badges
 - ✅ Markdown rendering for assistant messages (pulldown-cmark + Pango markup)
 - ✅ Rich text support (headings, code blocks, lists, task lists, blockquotes, tables, horizontal rules)
+- ✅ Search term highlighting in SessionDetail view
 
 **Dependencies**
 - ✅ Relm4 (reactive UI framework)
@@ -50,7 +51,8 @@
 ### 🚧 In Progress / Next Steps
 
 **Next Features**
-- ⬜ Search term highlighting in SessionDetail
+- ⬜ Sessions directory unified behavior (isolated DB, fixture subdirectories)
+- ⬜ Tool calls and subagents support
 
 ### 📋 Roadmap
 
@@ -72,13 +74,26 @@
 - ✅ Mistral Vibe parser (directory-based logs with `meta.json` + `messages.jsonl`)
 - ✅ Tool filters in UI (sidebar checkboxes)
 
-**Phase 3: Markdown Rendering** - Current ([design](plans/2026-01-30-markdown-rendering-design.md))
+**Phase 3: Markdown Rendering** - Complete ([design](plans/2026-01-30-markdown-rendering-design.md))
 - ✅ Markdown rendering for assistant messages (pulldown-cmark + Pango markup)
 - ✅ Support for headings, code blocks, lists, task lists, blockquotes, tables, horizontal rules
 - ✅ Inline formatting (bold, italic, strikethrough, inline code, links)
 - ✅ Comprehensive test suite (19 unit tests)
 
-**Phase 4: Tool Calls & Subagents** - Future ([design](plans/2026-01-30-tool-calls-and-subagents-design.md))
+**Phase 4: Search Highlighting** - Complete ([design](plans/2026-02-07-search-highlighting-design.md))
+- ✅ Search term highlighting in SessionDetail view
+- ✅ Highlight matching terms when viewing search results
+- ✅ Visual distinction for search matches
+
+**Phase 5: Consolidating Foundations** - Next
+- ⬜ Unified `--sessions-dir` behavior across all tools ([design](plans/2026-02-07-sessions-dir-unified-behavior-design.md))
+- ⬜ Isolated override database to prevent data contamination
+- ⬜ Fixture subdirectory mapping (claude_sessions/, opencode_storage/, etc.)
+- ⬜ Preferences dialog for index reset
+- ⬜ Single source resolver module
+- ⬜ UI polish and bug fixes (design documents to be added)
+
+**Phase 6: Tool Calls & Subagents** - Future ([design](plans/2026-01-30-tool-calls-and-subagents-design.md))
 - ⬜ Enrich Message model (tool_name, tool_input, parent_message_index)
 - ⬜ Enrich Session model (parent_session_id)
 - ⬜ Parse tool_use/tool_result in Claude Code & OpenCode
@@ -86,7 +101,7 @@
 - ⬜ Tool detail panel (lateral, input/output display)
 - ⬜ Subagent tree view & navigation
 
-**Phase 5: Advanced Features** - Future
+**Phase 7: Advanced Features** - Future
 - Syntax highlighting for code blocks (syntect)
 - Real-time session monitoring (file watching)
 - Session export (Markdown/HTML)
@@ -286,8 +301,18 @@ let db_path = data_dir.join("sessions-chronicle").join("sessions.db");
 
 ### Immediate Tasks
 
-1. **Search term highlighting**:
-    - Highlight matching terms in SessionDetail when viewing search results
+1. **Consolidating foundations**:
+    - Create `src/session_sources.rs` module
+    - Implement fixture subdirectory mapping
+    - Add isolated override database
+    - Implement Preferences reset action
+    - Update all parsers to use new source resolver
+    - UI polish and bug fixes
+
+2. **Tool calls and subagents support**:
+    - Enrich Message model with tool call data
+    - Parse tool_use/tool_result events from session files
+    - Display tool badges and detail panels
 
 ### Testing Strategy
 
@@ -325,5 +350,5 @@ cargo test
 ---
 
 **Last Updated**: 2026-02-07
-**Current Phase**: Phase 3 - Markdown Rendering (Complete)
-**Next Milestone**: Search term highlighting in SessionDetail
+**Current Phase**: Phase 4 - Search Highlighting (Complete)
+**Next Milestone**: Phase 5 - Consolidating foundations (sessions dir + UI polish)

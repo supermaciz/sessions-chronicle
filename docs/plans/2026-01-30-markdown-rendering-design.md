@@ -9,6 +9,8 @@ tables) that is currently rendered as-is, hurting readability.
 This design adds markdown rendering for assistant messages using native GTK4
 widgets and Pango markup — no WebKit dependency.
 
+**Status**: ✅ Implemented
+
 ## Design Decisions
 
 - **Scope: assistant messages only** — User, ToolCall, and ToolResult messages

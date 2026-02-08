@@ -55,17 +55,22 @@ This directory contains all design documentation, mockups, and architectural dec
    - Tool calls display with inline badges and detail panel
    - Subagent tree view and navigation
 
-10. **[plans/2026-01-30-markdown-rendering-design.md](plans/2026-01-30-markdown-rendering-design.md)**
+10. **[plans/2026-01-30-markdown-rendering-design.md](plans/2026-01-30-markdown-rendering-design.md)** ✅
     - Markdown rendering for assistant messages (pulldown-cmark + Pango markup)
     - Native GTK4 widgets per block type
 
-11. **[plans/2026-02-07-search-highlighting-exploration.md](plans/2026-02-07-search-highlighting-exploration.md)**
+11. **[plans/2026-02-07-search-highlighting-exploration.md](plans/2026-02-07-search-highlighting-exploration.md)** ✅
     - UX exploration for search highlighting behavior in SessionDetail
     - Tradeoffs between inline and filtered-match approaches
 
-12. **[plans/2026-02-07-search-highlighting-design.md](plans/2026-02-07-search-highlighting-design.md)**
+12. **[plans/2026-02-07-search-highlighting-design.md](plans/2026-02-07-search-highlighting-design.md)** ✅
     - Chosen implementation direction for search highlighting
-    - Detailed UI and integration notes for next feature
+    - Detailed UI and integration notes for implemented feature
+
+13. **[plans/2026-02-07-sessions-dir-unified-behavior-design.md](plans/2026-02-07-sessions-dir-unified-behavior-design.md)** 🚀
+    - Next milestone: Unified sessions directory behavior
+    - Isolated database and fixture subdirectory mapping
+    - Preferences reset action for index management
 
 ---
 
@@ -119,3 +124,6 @@ All mockups are SVG files in the `mockups/` subfolder (open in browser or image 
 ---
 
 **Last Updated**: 2026-02-07
+
+**Current Status**: Phase 4 Complete - Search Highlighting Implemented ✅
+**Next Milestone**: Phase 4.5 - Consolidating Foundations 🚀
