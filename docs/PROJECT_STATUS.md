@@ -92,6 +92,7 @@
 - ⬜ Preferences dialog for index reset
 - ⬜ Single source resolver module
 - ⬜ UI polish and bug fixes (design documents to be added)
+- ⬜ Basic CI/CD setup with GitHub Actions (automated testing, formatting checks, linting, Flatpak builds)
 
 **Phase 6: Tool Calls & Subagents** - Future ([design](plans/2026-01-30-tool-calls-and-subagents-design.md))
 - ⬜ Enrich Message model (tool_name, tool_input, parent_message_index)
