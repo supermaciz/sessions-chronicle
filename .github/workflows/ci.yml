@@ -16,6 +16,10 @@ jobs:
           profile: minimal
           toolchain: stable
           override: true
+      - name: Install GNOME dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgtk-4-dev libadwaita-1-dev libglib2.0-dev build-essential pkg-config
       - name: Run cargo test
         run: cargo test --all --no-fail-fast
 
@@ -30,6 +34,10 @@ jobs:
           toolchain: stable
           override: true
           components: clippy
+      - name: Install GNOME dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgtk-4-dev libadwaita-1-dev libglib2.0-dev build-essential pkg-config
       - name: Run cargo clippy
         run: cargo clippy --all -- -D warnings
 
