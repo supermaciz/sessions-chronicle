@@ -191,7 +191,7 @@ gtk::ToggleButton {
 },
 ```
 
-**Important:** the button uses `set_action_name` instead of `connect_toggled`. The `toggled` signal fires on *any* `active` property change, including programmatic updates from `#[watch]`. Using `connect_toggled` with `#[watch] set_active` would cause an infinite feedback loop: `set_active(false)` → `toggled` → `TogglePane` → `pane_open = true` → `set_active(true)` → ... The GAction only activates on user interaction (click), breaking the cycle.
+**Important:** the button uses `set_action_name` instead of `connect_toggled`. The `toggled` signal fires on *any* `active` property change, including programmatic updates from `#[watch]`. Using `connect_toggled` with `#[watch] set_active` can cause a feedback loop with the current `TogglePane`-flips-bool pattern: `set_active(false)` → `toggled` → `TogglePane` → `pane_open = true` → `set_active(true)` → ... The GAction is activated through explicit action paths (button activation, accelerators like `F9`, or programmatic activation), not by programmatic `set_active` updates, breaking the cycle.
 
 Bind `OverlaySplitView::show-sidebar` to `model.pane_open` via the `#[watch]` macro in the view definition. The `TogglePane` message updates `pane_open`, and the `#[watch]` on `set_show_sidebar` propagates to the widget.
 
@@ -340,7 +340,7 @@ fn transition_to_list(pane_mode: &mut UtilityPaneMode, pane_open: &mut bool) {
 Test cases:
 
 - `transition_to_detail` enforces `SessionContext + closed`.
-- `transition_to_list` enforces `Filters + open` and clears `active_session`.
+- `transition_to_list` enforces `Filters + open`.
 - Toggle flips `pane_open` without changing `pane_mode`.
 - `PaneVisibilityChanged(bool)` mirrors widget-originated visibility updates to `pane_open`.
 - `UtilityPaneMode` maps to correct stack child name (`Filters` → `"filters"`, `SessionContext` → `"session-context"`).
