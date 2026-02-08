@@ -9,51 +9,36 @@ jobs:
   tests:
     name: Tests
     runs-on: ubuntu-latest
+    container:
+      image: fedora:latest
     steps:
       - uses: actions/checkout@v6
-      - uses: actions-rs/toolchain@v1
-        with:
-          profile: minimal
-          toolchain: stable
-          override: true
-      - name: Install GNOME dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libgtk-4-dev libadwaita-1-dev libglib2.0-dev build-essential pkg-config
+      - name: Install dependencies
+        run: dnf install -y gcc pkg-config gtk4-devel libadwaita-devel glib2-devel rust cargo
       - name: Run cargo test
         run: cargo test --all --no-fail-fast
 
   clippy:
     name: Clippy
     runs-on: ubuntu-latest
+    container:
+      image: fedora:latest
     steps:
       - uses: actions/checkout@v6
-      - uses: actions-rs/toolchain@v1
-        with:
-          profile: minimal
-          toolchain: stable
-          override: true
-          components: clippy
-      - name: Install GNOME dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libgtk-4-dev libadwaita-1-dev libglib2.0-dev build-essential pkg-config
+      - name: Install dependencies
+        run: dnf install -y gcc pkg-config gtk4-devel libadwaita-devel glib2-devel rust cargo clippy
       - name: Run cargo clippy
         run: cargo clippy --all -- -D warnings
 
   rustfmt:
     name: Rustfmt
     runs-on: ubuntu-latest
+    container:
+      image: fedora:latest
     steps:
       - uses: actions/checkout@v6
-      - uses: actions-rs/toolchain@v1
-        with:
-          profile: minimal
-          toolchain: stable
-          override: true
-          components: rustfmt
-      # - name: Create blank versions of configured file # so rustfmt does not yell about non-existent files or completely empty files
-      #   run: echo -e "" >> src/config.rs
+      - name: Install dependencies
+        run: dnf install -y cargo rustfmt
       - name: Run cargo fmt
         run: cargo fmt --all -- --check
 
