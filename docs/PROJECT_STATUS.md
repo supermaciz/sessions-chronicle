@@ -86,11 +86,13 @@
 - ✅ Visual distinction for search matches
 
 **Phase 5: Consolidating Foundations** - Next
+
 - ⬜ Unified `--sessions-dir` behavior across all tools ([design](plans/2026-02-07-sessions-dir-unified-behavior-design.md))
-- ⬜ Isolated override database to prevent data contamination
-- ⬜ Fixture subdirectory mapping (claude_sessions/, opencode_storage/, etc.)
-- ⬜ Preferences dialog for index reset
-- ⬜ Single source resolver module
+  - ⬜ Isolated override database to prevent data contamination
+  - ⬜ Fixture subdirectory mapping (claude_sessions/, opencode_storage/, etc.)
+  - ⬜ Preferences dialog for index reset
+  - ⬜ Single source resolver module
+
 - ⬜ UI polish and bug fixes (design documents to be added)
 - ⬜ Basic CI/CD setup with GitHub Actions (automated testing, formatting checks, linting, Flatpak builds)
 
@@ -122,7 +124,7 @@
 - **UI**: GTK4 + Libadwaita (GNOME HIG compliant)
 - **Reactive UI**: Relm4 (Elm-inspired architecture)
 - **Database**: SQLite with FTS5 (full-text search)
-- **Supported Tools**: Claude Code (v1), OpenCode (v2), Codex (v2), Mistral Vibe (v2)
+- **Supported Tools**: Claude Code, OpenCode, Codex, Mistral Vibe
 - **License**: `MIT`
 
 ### Project Structure
