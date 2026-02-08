@@ -48,11 +48,7 @@
 - ✅ pulldown-cmark (markdown parsing)
 - ✅ In-tree `pango_escape` helper (Pango markup escaping)
 
-### 🚧 In Progress / Next Steps
 
-**Next Features**
-- ⬜ Sessions directory unified behavior (isolated DB, fixture subdirectories)
-- ⬜ Tool calls and subagents support
 
 ### 📋 Roadmap
 
@@ -87,13 +83,8 @@
 
 **Phase 5: Consolidating Foundations** - Next
 
-- ⬜ Unified `--sessions-dir` behavior across all tools ([design](plans/2026-02-07-sessions-dir-unified-behavior-design.md))
-  - ⬜ Isolated override database to prevent data contamination
-  - ⬜ Fixture subdirectory mapping (claude_sessions/, opencode_storage/, etc.)
-  - ⬜ Preferences dialog for index reset
-  - ⬜ Single source resolver module
-
-- ⬜ UI polish and bug fixes (design documents to be added)
+- ⬜ Unified `--sessions-dir` behavior across all tools (isolated DB + fixture mapping + single resolver) ([design](plans/2026-02-07-sessions-dir-unified-behavior-design.md))
+- ⬜ UI refinement (utility pane + session detail) ([design](plans/2026-02-08-session-detail-utility-pane-design.md))
 - ⬜ Basic CI/CD setup with GitHub Actions (automated testing, formatting checks, linting, Flatpak builds)
 
 **Phase 6: Tool Calls & Subagents** - Future ([design](plans/2026-01-30-tool-calls-and-subagents-design.md))
@@ -352,6 +343,6 @@ cargo test
 
 ---
 
-**Last Updated**: 2026-02-07
+**Last Updated**: 2026-02-08
 **Current Phase**: Phase 4 - Search Highlighting (Complete)
 **Next Milestone**: Phase 5 - Consolidating foundations (sessions dir + UI polish)
