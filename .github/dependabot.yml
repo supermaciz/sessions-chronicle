@@ -4,6 +4,13 @@ updates:
     directory: "/"
     schedule:
       interval: "monthly"
+    groups:
+      cargo-nonbreaking:
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"
 
   - package-ecosystem: "github-actions"
     directory: "/"
