@@ -17,7 +17,9 @@ use crate::database::{SessionIndexer, load_session};
 use crate::models::session::Tool;
 use crate::session_sources::{SessionSources, select_db_filename};
 use crate::ui::modals::{
-    about::AboutDialog, preferences::PreferencesDialog, shortcuts::ShortcutsDialog,
+    about::AboutDialog,
+    preferences::{PreferencesDialog, PreferencesOutput},
+    shortcuts::ShortcutsDialog,
 };
 use crate::ui::{
     session_detail::{SessionDetail, SessionDetailMsg, SessionDetailOutput},
@@ -36,6 +38,7 @@ pub(super) struct App {
     session_list: Controller<SessionList>,
     session_detail: Controller<SessionDetail>,
     sidebar: Controller<Sidebar>,
+    preferences_dialog: Controller<PreferencesDialog>,
     nav_view: adw::NavigationView,
     detail_page: adw::NavigationPage,
     toast_overlay: adw::ToastOverlay,
@@ -52,6 +55,8 @@ pub(super) enum AppMsg {
     SessionSelected(String),
     NavigateBack,
     ResumeSession(String, Tool),
+    ShowPreferences,
+    ReindexRequested,
 }
 
 relm4::new_action_group!(pub(super) WindowActionGroup, "win");
@@ -271,6 +276,14 @@ impl SimpleComponent for App {
                 SidebarOutput::FiltersChanged(tools) => AppMsg::FiltersChanged(tools),
             });
 
+        // Create preferences dialog once, with forwarded outputs
+        let preferences_dialog = PreferencesDialog::builder().launch(()).forward(
+            sender.input_sender(),
+            |msg| match msg {
+                PreferencesOutput::ReindexRequested => AppMsg::ReindexRequested,
+            },
+        );
+
         // Create NavigationView and pages before model
         let nav_view = adw::NavigationView::new();
 
@@ -304,6 +317,7 @@ impl SimpleComponent for App {
             session_list,
             session_detail,
             sidebar,
+            preferences_dialog,
             nav_view: nav_view.clone(),
             detail_page: detail_page.clone(),
             toast_overlay: adw::ToastOverlay::new(),
@@ -337,8 +351,9 @@ impl SimpleComponent for App {
         let mut actions = RelmActionGroup::<WindowActionGroup>::new();
 
         let preferences_action = {
+            let sender = sender.clone();
             RelmAction::<PreferencesAction>::new_stateless(move |_| {
-                PreferencesDialog::builder().launch(()).detach();
+                sender.input(AppMsg::ShowPreferences);
             })
         };
 
@@ -413,6 +428,61 @@ impl SimpleComponent for App {
                         == Some("detail")
                     {
                         self.nav_view.pop();
+                    }
+                }
+            }
+            AppMsg::ShowPreferences => {
+                let dialog_widget = self.preferences_dialog.widget();
+                dialog_widget.present(Some(&main_application().windows()[0]));
+            }
+            AppMsg::ReindexRequested => {
+                tracing::info!("Reindex requested — clearing and rebuilding index");
+                match SessionIndexer::new(&self.db_path) {
+                    Ok(mut indexer) => {
+                        if let Err(err) = indexer.clear_all_sessions() {
+                            tracing::error!("Failed to clear sessions: {}", err);
+                            self.toast_overlay.add_toast(
+                                adw::Toast::builder()
+                                    .title("Failed to reset index")
+                                    .timeout(3)
+                                    .build(),
+                            );
+                            return;
+                        }
+
+                        let mut total = 0usize;
+                        if let Ok(n) = indexer.index_claude_sessions(&self.sources.claude_dir) {
+                            total += n;
+                        }
+                        if let Ok(n) =
+                            indexer.index_opencode_sessions(&self.sources.opencode_storage_root)
+                        {
+                            total += n;
+                        }
+                        if let Ok(n) = indexer.index_codex_sessions(&self.sources.codex_dir) {
+                            total += n;
+                        }
+                        if let Ok(n) = indexer.index_vibe_sessions(&self.sources.vibe_dir) {
+                            total += n;
+                        }
+
+                        tracing::info!("Reindex complete: {} sessions indexed", total);
+                        self.session_list.emit(SessionListMsg::Reload);
+                        self.toast_overlay.add_toast(
+                            adw::Toast::builder()
+                                .title(format!("Index rebuilt — {} sessions", total))
+                                .timeout(3)
+                                .build(),
+                        );
+                    }
+                    Err(err) => {
+                        tracing::error!("Failed to open indexer for reindex: {}", err);
+                        self.toast_overlay.add_toast(
+                            adw::Toast::builder()
+                                .title("Failed to reset index")
+                                .timeout(3)
+                                .build(),
+                        );
                     }
                 }
             }
