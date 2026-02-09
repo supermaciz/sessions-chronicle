@@ -23,6 +23,7 @@ pub enum SessionListMsg {
     SetSearchQuery(String),
     SessionSelected(String),
     ResumeRequested(String, Tool),
+    Reload,
 }
 
 #[derive(Debug)]
@@ -149,6 +150,9 @@ impl SimpleComponent for SessionList {
             }
             SessionListMsg::ResumeRequested(id, tool) => {
                 let _ = sender.output(SessionListOutput::ResumeRequested(id, tool));
+            }
+            SessionListMsg::Reload => {
+                self.reload_sessions();
             }
         }
     }
