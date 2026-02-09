@@ -290,6 +290,18 @@ impl SessionIndexer {
         is_agent_file || is_subagent
     }
 
+    /// Clear all indexed sessions and messages.
+    ///
+    /// Note: `messages` is an FTS5 virtual table. Standard `DELETE FROM` works
+    /// correctly on FTS5 tables and participates in transactions normally.
+    pub fn clear_all_sessions(&mut self) -> Result<()> {
+        let tx = self.db.transaction()?;
+        tx.execute("DELETE FROM messages", [])?;
+        tx.execute("DELETE FROM sessions", [])?;
+        tx.commit()?;
+        Ok(())
+    }
+
     fn remove_session_for_file(&mut self, file_path: &Path) -> Result<()> {
         let Some(file_path_str) = file_path.to_str() else {
             tracing::warn!("Cannot prune session with non-UTF8 path: {:?}", file_path);
@@ -456,5 +468,37 @@ mod tests {
 
         let count = indexer.index_vibe_sessions(&nonexistent_dir).unwrap();
         assert_eq!(count, 0);
+    }
+
+    #[test]
+    fn clear_all_sessions_removes_sessions_and_messages() {
+        let temp_db = NamedTempFile::new().unwrap();
+        let mut indexer = SessionIndexer::new(temp_db.path()).unwrap();
+
+        // Seed with real fixture data
+        let sessions_dir = PathBuf::from("tests/fixtures/claude_sessions");
+        let count = indexer.index_claude_sessions(&sessions_dir).unwrap();
+        assert!(count > 0, "Should have indexed at least one session");
+
+        let msg_count: i64 = indexer
+            .db
+            .query_row("SELECT COUNT(*) FROM messages", [], |row| row.get(0))
+            .unwrap();
+        assert!(msg_count > 0, "Should have messages before clear");
+
+        // Clear everything
+        indexer.clear_all_sessions().unwrap();
+
+        let session_count: i64 = indexer
+            .db
+            .query_row("SELECT COUNT(*) FROM sessions", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(session_count, 0, "Sessions should be empty after clear");
+
+        let msg_count: i64 = indexer
+            .db
+            .query_row("SELECT COUNT(*) FROM messages", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(msg_count, 0, "Messages should be empty after clear");
     }
 }
