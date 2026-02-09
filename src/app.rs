@@ -537,7 +537,7 @@ impl SimpleComponent for App {
                     self.detail_visible = true;
                 }
 
-                // Switch to session context pane mode (closed by default)
+                // Switch to session context pane mode (open by default)
                 transition_to_detail(&mut self.pane_mode, &mut self.pane_open);
                 self.apply_pane_stack_switch();
             }
@@ -723,10 +723,10 @@ impl SimpleComponent for App {
     }
 }
 
-/// Pure transition: switch to detail mode (session context pane, closed).
+/// Pure transition: switch to detail mode (session context pane, open).
 fn transition_to_detail(pane_mode: &mut UtilityPaneMode, pane_open: &mut bool) {
     *pane_mode = UtilityPaneMode::SessionContext;
-    *pane_open = false;
+    *pane_open = true;
 }
 
 /// Pure transition: switch to list mode (filters pane, open).
@@ -843,12 +843,12 @@ mod tests {
     }
 
     #[test]
-    fn transition_to_detail_sets_session_context_and_closed() {
+    fn transition_to_detail_sets_session_context_and_open() {
         let mut mode = UtilityPaneMode::Filters;
-        let mut open = true;
+        let mut open = false;
         transition_to_detail(&mut mode, &mut open);
         assert_eq!(mode, UtilityPaneMode::SessionContext);
-        assert!(!open);
+        assert!(open);
     }
 
     #[test]
