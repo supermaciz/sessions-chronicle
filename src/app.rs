@@ -6,8 +6,8 @@ use relm4::{
 
 use adw::prelude::{AdwApplicationWindowExt, AdwDialogExt, AlertDialogExt, NavigationPageExt};
 use gtk::prelude::{
-    ApplicationExt, ButtonExt, Cast, EditableExt, GtkApplicationExt, GtkWindowExt, OrientableExt,
-    SettingsExt, ToggleButtonExt, WidgetExt,
+    ActionableExt, ApplicationExt, ButtonExt, Cast, EditableExt, GtkApplicationExt, GtkWindowExt,
+    OrientableExt, SettingsExt, ToggleButtonExt, WidgetExt,
 };
 use gtk::{gio, glib};
 use std::{fs, path::PathBuf, str::FromStr};
@@ -22,7 +22,8 @@ use crate::ui::modals::{
     shortcuts::ShortcutsDialog,
 };
 use crate::ui::{
-    session_detail::{SessionDetail, SessionDetailMsg, SessionDetailOutput},
+    detail_context_pane::{DetailContextPane, DetailContextPaneMsg, DetailContextPaneOutput},
+    session_detail::{SessionDetail, SessionDetailMsg},
     session_list::{SessionList, SessionListMsg, SessionListOutput},
     sidebar::{Sidebar, SidebarOutput},
 };
@@ -31,16 +32,45 @@ use crate::utils::terminal::{self, Terminal};
 /// Timeout in seconds for resume failure toast notifications
 const RESUME_FAILURE_TOAST_TIMEOUT_SECS: u32 = 4;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum UtilityPaneMode {
+    Filters,
+    SessionContext,
+}
+
+impl UtilityPaneMode {
+    fn stack_child_name(self) -> &'static str {
+        match self {
+            UtilityPaneMode::Filters => "filters",
+            UtilityPaneMode::SessionContext => "session-context",
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+struct ActiveSessionRef {
+    id: String,
+    tool: Tool,
+    #[allow(dead_code)] // Retained for future pane enrichment
+    project_name: String,
+}
+
 pub(super) struct App {
     search_visible: bool,
     detail_visible: bool,
+    pane_open: bool,
+    pane_mode: UtilityPaneMode,
+    active_session: Option<ActiveSessionRef>,
     search_query: String,
     session_list: Controller<SessionList>,
     session_detail: Controller<SessionDetail>,
+    #[allow(dead_code)] // Controller must stay alive to keep the widget
     sidebar: Controller<Sidebar>,
+    detail_context_pane: Controller<DetailContextPane>,
     preferences_dialog: Controller<PreferencesDialog>,
     nav_view: adw::NavigationView,
     detail_page: adw::NavigationPage,
+    pane_stack: gtk::Stack,
     toast_overlay: adw::ToastOverlay,
     db_path: PathBuf,
     sources: SessionSources,
@@ -50,11 +80,14 @@ pub(super) struct App {
 pub(super) enum AppMsg {
     Quit,
     ToggleSearch,
+    TogglePane,
+    PaneVisibilityChanged(bool),
     SearchQueryChanged(String),
     FiltersChanged(Vec<Tool>),
     SessionSelected(String),
     NavigateBack,
     ResumeSession(String, Tool),
+    ResumeFromPane,
     ShowPreferences,
     ReindexRequested,
 }
@@ -64,6 +97,7 @@ relm4::new_stateless_action!(PreferencesAction, WindowActionGroup, "preferences"
 relm4::new_stateless_action!(pub(super) ShortcutsAction, WindowActionGroup, "show-help-overlay");
 relm4::new_stateless_action!(AboutAction, WindowActionGroup, "about");
 relm4::new_stateless_action!(QuitAction, WindowActionGroup, "quit");
+relm4::new_stateless_action!(TogglePaneAction, WindowActionGroup, "toggle-pane");
 
 fn active_search_query(query: &str) -> Option<String> {
     let trimmed = query.trim();
@@ -137,6 +171,15 @@ impl SimpleComponent for App {
                             connect_toggled => AppMsg::ToggleSearch,
                         },
 
+                        #[name = "pane_toggle"]
+                        pack_end = &gtk::ToggleButton {
+                            set_icon_name: "sidebar-show-symbolic",
+                            set_tooltip_text: Some("Toggle utility pane (F9)"),
+                            set_action_name: Some("win.toggle-pane"),
+                            #[watch]
+                            set_active: model.pane_open,
+                        },
+
                         pack_end = &gtk::MenuButton {
                             set_icon_name: "open-menu-symbolic",
                             set_menu_model: Some(&primary_menu),
@@ -162,9 +205,13 @@ impl SimpleComponent for App {
                             },
                         },
 
-                        #[name = "nav_split"]
-                        adw::NavigationSplitView {
+                        #[name = "overlay_split"]
+                        adw::OverlaySplitView {
                             set_vexpand: true,
+                            #[watch]
+                            set_show_sidebar: model.pane_open,
+                            set_enable_show_gesture: true,
+                            set_enable_hide_gesture: true,
                         },
                     },
                 },
@@ -264,17 +311,18 @@ impl SimpleComponent for App {
                     SessionListOutput::SessionSelected(id) => AppMsg::SessionSelected(id),
                     SessionListOutput::ResumeRequested(id, tool) => AppMsg::ResumeSession(id, tool),
                 });
-        let session_detail = SessionDetail::builder().launch(db_path.clone()).forward(
-            sender.input_sender(),
-            |msg| match msg {
-                SessionDetailOutput::ResumeRequested(id, tool) => AppMsg::ResumeSession(id, tool),
-            },
-        );
+        let session_detail = SessionDetail::builder().launch(db_path.clone()).detach();
         let sidebar = Sidebar::builder()
             .launch(())
             .forward(sender.input_sender(), |output| match output {
                 SidebarOutput::FiltersChanged(tools) => AppMsg::FiltersChanged(tools),
             });
+        let detail_context_pane =
+            DetailContextPane::builder()
+                .launch(())
+                .forward(sender.input_sender(), |output| match output {
+                    DetailContextPaneOutput::ResumeClicked => AppMsg::ResumeFromPane,
+                });
 
         // Create preferences dialog once, with forwarded outputs
         let preferences_dialog = PreferencesDialog::builder().launch(()).forward(
@@ -309,17 +357,29 @@ impl SimpleComponent for App {
             }
         });
 
+        // Build the utility pane Stack (sidebar content switcher)
+        let pane_stack = gtk::Stack::new();
+        pane_stack.set_transition_type(gtk::StackTransitionType::None);
+        pane_stack.add_named(sidebar.widget(), Some("filters"));
+        pane_stack.add_named(detail_context_pane.widget(), Some("session-context"));
+        pane_stack.set_visible_child_name("filters");
+
         // Create model with a temporary toast_overlay (will be replaced after view_output!)
         let mut model = Self {
             search_visible: false,
             detail_visible: false,
+            pane_open: true,
+            pane_mode: UtilityPaneMode::Filters,
+            active_session: None,
             search_query: String::new(),
             session_list,
             session_detail,
             sidebar,
+            detail_context_pane,
             preferences_dialog,
             nav_view: nav_view.clone(),
             detail_page: detail_page.clone(),
+            pane_stack,
             toast_overlay: adw::ToastOverlay::new(),
             db_path,
             sources,
@@ -333,19 +393,28 @@ impl SimpleComponent for App {
             .and_then(|w| w.downcast::<adw::ToastOverlay>().ok())
             .expect("Root content should be a ToastOverlay");
 
-        // Add child components to NavigationSplitView
-        let sidebar_page = adw::NavigationPage::builder()
-            .title("Filters")
-            .child(model.sidebar.widget())
-            .build();
-        widgets.nav_split.set_sidebar(Some(&sidebar_page));
+        // Set up OverlaySplitView: sidebar = pane Stack, content = NavigationView
+        widgets.overlay_split.set_sidebar(Some(&model.pane_stack));
+        widgets.overlay_split.set_content(Some(&nav_view));
 
-        // Wrap NavigationView in a NavigationPage for the split view
-        let content_page = adw::NavigationPage::builder()
-            .title("Sessions")
-            .child(&nav_view)
-            .build();
-        widgets.nav_split.set_content(Some(&content_page));
+        // Wire notify::show-sidebar for bidirectional sync (gestures, collapse)
+        let visibility_sender = sender.input_sender().clone();
+        widgets
+            .overlay_split
+            .connect_show_sidebar_notify(move |split| {
+                visibility_sender
+                    .send(AppMsg::PaneVisibilityChanged(split.shows_sidebar()))
+                    .ok();
+            });
+
+        // Add responsive collapse breakpoint
+        let breakpoint = adw::Breakpoint::new(adw::BreakpointCondition::new_length(
+            adw::BreakpointConditionLengthType::MaxWidth,
+            400.0,
+            adw::LengthUnit::Sp,
+        ));
+        breakpoint.add_setter(&widgets.overlay_split, "collapsed", Some(&true.into()));
+        root.add_breakpoint(breakpoint);
 
         let app = root.application().unwrap();
         let mut actions = RelmActionGroup::<WindowActionGroup>::new();
@@ -369,18 +438,27 @@ impl SimpleComponent for App {
             })
         };
 
+        let toggle_pane_action = {
+            let sender = sender.clone();
+            RelmAction::<TogglePaneAction>::new_stateless(move |_| {
+                sender.input(AppMsg::TogglePane);
+            })
+        };
+
         let quit_action = {
             RelmAction::<QuitAction>::new_stateless(move |_| {
                 sender.input(AppMsg::Quit);
             })
         };
 
-        // Connect action with hotkeys
+        // Connect actions with hotkeys
         app.set_accelerators_for_action::<QuitAction>(&["<Control>q"]);
+        app.set_accelerators_for_action::<TogglePaneAction>(&["F9"]);
 
         actions.add_action(preferences_action);
         actions.add_action(shortcuts_action);
         actions.add_action(about_action);
+        actions.add_action(toggle_pane_action);
         actions.add_action(quit_action);
         actions.register_for_widget(&widgets.main_window);
 
@@ -395,6 +473,14 @@ impl SimpleComponent for App {
             AppMsg::ToggleSearch => {
                 self.search_visible = !self.search_visible;
             }
+            AppMsg::TogglePane => {
+                self.pane_open = !self.pane_open;
+            }
+            AppMsg::PaneVisibilityChanged(visible) => {
+                if self.pane_open != visible {
+                    self.pane_open = visible;
+                }
+            }
             AppMsg::SearchQueryChanged(query) => {
                 self.search_query = query.clone();
                 let (list_msg, detail_msg) = search_query_update_messages(query);
@@ -406,15 +492,54 @@ impl SimpleComponent for App {
             }
             AppMsg::SessionSelected(id) => {
                 tracing::debug!("Session selected: {}", id);
+
+                // Resolve session metadata for the context pane
+                match load_session(&self.db_path, &id) {
+                    Ok(Some(session)) => {
+                        let project_name = session
+                            .project_path
+                            .as_deref()
+                            .and_then(|p| std::path::Path::new(p).file_name())
+                            .and_then(|n| n.to_str())
+                            .unwrap_or("Unknown project")
+                            .to_string();
+
+                        self.active_session = Some(ActiveSessionRef {
+                            id: session.id.clone(),
+                            tool: session.tool,
+                            project_name: project_name.clone(),
+                        });
+
+                        self.detail_context_pane
+                            .emit(DetailContextPaneMsg::SetSession {
+                                project_name,
+                                tool: session.tool,
+                            });
+                    }
+                    Ok(None) => {
+                        tracing::warn!("Session not found for context pane: {}", id);
+                        self.active_session = None;
+                    }
+                    Err(err) => {
+                        tracing::error!("Failed to load session for context pane: {}", err);
+                        self.active_session = None;
+                    }
+                }
+
                 let search_query = active_search_query(&self.search_query);
                 // Load the session in the detail view with search query
                 self.session_detail
                     .emit(SessionDetailMsg::SetSession { id, search_query });
+
                 // Push the detail page onto the navigation stack
                 if !self.detail_visible {
                     self.nav_view.push(&self.detail_page);
                     self.detail_visible = true;
                 }
+
+                // Switch to session context pane mode (closed by default)
+                transition_to_detail(&mut self.pane_mode, &mut self.pane_open);
+                self.apply_pane_stack_switch();
             }
             AppMsg::NavigateBack => {
                 if self.detail_visible {
@@ -429,6 +554,11 @@ impl SimpleComponent for App {
                     {
                         self.nav_view.pop();
                     }
+
+                    // Return to filter pane mode
+                    self.active_session = None;
+                    transition_to_list(&mut self.pane_mode, &mut self.pane_open);
+                    self.apply_pane_stack_switch();
                 }
             }
             AppMsg::ShowPreferences => {
@@ -578,6 +708,13 @@ impl SimpleComponent for App {
                     }
                 }
             }
+            AppMsg::ResumeFromPane => {
+                if let Some(ref session) = self.active_session {
+                    _sender.input(AppMsg::ResumeSession(session.id.clone(), session.tool));
+                } else {
+                    tracing::warn!("ResumeFromPane ignored — no active session");
+                }
+            }
         }
     }
 
@@ -586,7 +723,35 @@ impl SimpleComponent for App {
     }
 }
 
+/// Pure transition: switch to detail mode (session context pane, closed).
+fn transition_to_detail(pane_mode: &mut UtilityPaneMode, pane_open: &mut bool) {
+    *pane_mode = UtilityPaneMode::SessionContext;
+    *pane_open = false;
+}
+
+/// Pure transition: switch to list mode (filters pane, open).
+fn transition_to_list(pane_mode: &mut UtilityPaneMode, pane_open: &mut bool) {
+    *pane_mode = UtilityPaneMode::Filters;
+    *pane_open = true;
+}
+
 impl App {
+    /// Apply the current `pane_mode` to the Stack widget, with verification.
+    fn apply_pane_stack_switch(&self) {
+        let target = self.pane_mode.stack_child_name();
+        self.pane_stack.set_visible_child_name(target);
+
+        // Verify the switch succeeded
+        let actual = self.pane_stack.visible_child_name();
+        if actual.as_deref() != Some(target) {
+            tracing::warn!(
+                "Pane stack switch failed: requested '{}', got {:?}",
+                target,
+                actual
+            );
+        }
+    }
+
     fn show_error_dialog(&self, title: &str, message: &str) {
         let dialog = adw::AlertDialog::builder()
             .heading(title)
@@ -674,6 +839,67 @@ mod tests {
         assert_eq!(
             active_search_query("  needle  "),
             Some("needle".to_string())
+        );
+    }
+
+    #[test]
+    fn transition_to_detail_sets_session_context_and_closed() {
+        let mut mode = UtilityPaneMode::Filters;
+        let mut open = true;
+        transition_to_detail(&mut mode, &mut open);
+        assert_eq!(mode, UtilityPaneMode::SessionContext);
+        assert!(!open);
+    }
+
+    #[test]
+    fn transition_to_list_sets_filters_and_open() {
+        let mut mode = UtilityPaneMode::SessionContext;
+        let mut open = false;
+        transition_to_list(&mut mode, &mut open);
+        assert_eq!(mode, UtilityPaneMode::Filters);
+        assert!(open);
+    }
+
+    #[test]
+    fn toggle_flips_pane_open_without_changing_mode() {
+        let mut pane_open = false;
+        let pane_mode = UtilityPaneMode::SessionContext;
+
+        // Simulate TogglePane: flips open, does not change mode
+        pane_open = !pane_open;
+        assert!(pane_open);
+        assert_eq!(pane_mode, UtilityPaneMode::SessionContext);
+
+        pane_open = !pane_open;
+        assert!(!pane_open);
+        assert_eq!(pane_mode, UtilityPaneMode::SessionContext);
+    }
+
+    #[test]
+    fn pane_visibility_changed_mirrors_widget_state() {
+        let mut pane_open = true;
+
+        // Simulate PaneVisibilityChanged(false) from gesture
+        let visible = false;
+        if pane_open != visible {
+            pane_open = visible;
+        }
+        assert!(!pane_open);
+
+        // No-op update
+        let visible = false;
+        if pane_open != visible {
+            pane_open = visible;
+        }
+        assert!(!pane_open);
+    }
+
+    #[test]
+    fn utility_pane_mode_maps_to_correct_stack_child_name() {
+        assert_eq!(UtilityPaneMode::Filters.stack_child_name(), "filters");
+        assert_eq!(
+            UtilityPaneMode::SessionContext.stack_child_name(),
+            "session-context"
         );
     }
 }

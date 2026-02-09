@@ -8,7 +8,7 @@ use relm4::factory::FactoryVecDeque;
 use relm4::{ComponentParts, ComponentSender, RelmWidgetExt, SimpleComponent, adw, gtk};
 
 use crate::database::{load_message_previews_for_session, load_session};
-use crate::models::{Session, Tool};
+use crate::models::Session;
 use crate::ui::message_row::{MessageRow, MessageRowInit, MessageRowOutput};
 
 #[derive(Debug)]
@@ -36,7 +36,6 @@ pub enum SessionDetailMsg {
     #[allow(dead_code)]
     UpdateSearchQuery(Option<String>),
     LoadMore,
-    ResumeClicked,
     PrevMatch,
     NextMatch,
     ClearSearch,
@@ -46,9 +45,7 @@ pub enum SessionDetailMsg {
 }
 
 #[derive(Debug)]
-pub enum SessionDetailOutput {
-    ResumeRequested(String, Tool),
-}
+pub enum SessionDetailOutput {}
 
 #[relm4::component(pub)]
 impl SimpleComponent for SessionDetail {
@@ -165,13 +162,6 @@ impl SimpleComponent for SessionDetail {
                                     },
                                 },
 
-                                #[name = "resume_button"]
-                                gtk::Button {
-                                    set_label: "Resume in Terminal",
-                                    add_css_class: "suggested-action",
-                                    set_halign: gtk::Align::Start,
-                                    connect_clicked => SessionDetailMsg::ResumeClicked,
-                                },
                             },
 
                             // Messages container — managed by factory
@@ -290,7 +280,7 @@ impl SimpleComponent for SessionDetail {
         ComponentParts { model, widgets }
     }
 
-    fn update(&mut self, message: Self::Input, sender: ComponentSender<Self>) {
+    fn update(&mut self, message: Self::Input, _sender: ComponentSender<Self>) {
         match message {
             SessionDetailMsg::SetSession {
                 id: session_id,
@@ -365,14 +355,6 @@ impl SimpleComponent for SessionDetail {
                             self.has_more_messages = false;
                         }
                     }
-                }
-            }
-            SessionDetailMsg::ResumeClicked => {
-                if let Some(session) = &self.session {
-                    let _ = sender.output(SessionDetailOutput::ResumeRequested(
-                        session.id.clone(),
-                        session.tool,
-                    ));
                 }
             }
             SessionDetailMsg::PrevMatch => {
@@ -464,13 +446,11 @@ impl SimpleComponent for SessionDetail {
             widgets.time_label.set_label(&time_str);
 
             widgets.session_id_label.set_label(&session.id);
-            widgets.resume_button.set_sensitive(true);
 
             widgets
                 .content_stack
                 .set_visible_child(&widgets.detail_overlay);
         } else {
-            widgets.resume_button.set_sensitive(false);
             widgets
                 .content_stack
                 .set_visible_child(&widgets.loading_state);

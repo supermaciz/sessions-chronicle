@@ -1,3 +1,4 @@
+pub mod detail_context_pane;
 pub mod highlight;
 pub mod markdown;
 pub mod message_row;

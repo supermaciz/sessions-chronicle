@@ -28,8 +28,8 @@ impl SimpleComponent for ShortcutsDialog {
         let section = adw::ShortcutsSection::new(None);
 
         // Add more shortcuts items below or create new section
+        section.add(adw::ShortcutsItem::new("Toggle utility pane", "F9"));
         section.add(adw::ShortcutsItem::new("Quit", "<Control>q"));
-        // section.add(adw::ShortcutsItem::new("New Tab", "<Control>t"));
 
         widgets.add(section);
         widgets.present(Some(&relm4::main_adw_application().windows()[0]));
