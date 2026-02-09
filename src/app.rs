@@ -451,19 +451,21 @@ impl SimpleComponent for App {
                         }
 
                         let mut total = 0usize;
-                        if let Ok(n) = indexer.index_claude_sessions(&self.sources.claude_dir) {
-                            total += n;
+                        match indexer.index_claude_sessions(&self.sources.claude_dir) {
+                            Ok(n) => total += n,
+                            Err(err) => tracing::warn!("Claude sessions: {}", err),
                         }
-                        if let Ok(n) =
-                            indexer.index_opencode_sessions(&self.sources.opencode_storage_root)
-                        {
-                            total += n;
+                        match indexer.index_opencode_sessions(&self.sources.opencode_storage_root) {
+                            Ok(n) => total += n,
+                            Err(err) => tracing::warn!("OpenCode sessions: {}", err),
                         }
-                        if let Ok(n) = indexer.index_codex_sessions(&self.sources.codex_dir) {
-                            total += n;
+                        match indexer.index_codex_sessions(&self.sources.codex_dir) {
+                            Ok(n) => total += n,
+                            Err(err) => tracing::warn!("Codex sessions: {}", err),
                         }
-                        if let Ok(n) = indexer.index_vibe_sessions(&self.sources.vibe_dir) {
-                            total += n;
+                        match indexer.index_vibe_sessions(&self.sources.vibe_dir) {
+                            Ok(n) => total += n,
+                            Err(err) => tracing::warn!("Vibe sessions: {}", err),
                         }
 
                         tracing::info!("Reindex complete: {} sessions indexed", total);
