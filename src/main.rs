@@ -4,6 +4,7 @@ mod app;
 mod database;
 mod models;
 mod parsers;
+mod session_sources;
 mod ui;
 mod utils;
 
