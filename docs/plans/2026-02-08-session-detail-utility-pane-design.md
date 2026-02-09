@@ -1,8 +1,7 @@
 # Session Detail Utility Pane Design
 
-**Status:** Validated in collaborative design discussion, refined with API research
-
-**Date:** 2026-02-08
+**Status:** Validated in collaborative design discussion, refined with API research  
+**Date:** 2026-02-08  
 
 ## Goal
 

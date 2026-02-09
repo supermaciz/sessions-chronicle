@@ -1,7 +1,7 @@
 # OpenCode Parser Design
 
-**Date:** 2026-01-26
-**Status:** ✅ Implementation complete (automated validation passed)
+**Date:** 2026-01-26  
+**Status:** ✅ Implementation complete (automated validation passed)  
 
 ## Overview
 

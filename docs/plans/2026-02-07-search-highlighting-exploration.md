@@ -1,7 +1,7 @@
 # Search Term Highlighting in SessionDetail - Exploration
 
-**Date**: 2026-02-07
-**Status**: Accepted (Proposal A)
+**Date**: 2026-02-07  
+**Status**: Accepted (Proposal A)  
 **Feature**: When a user searches for a term and opens a session from the results, highlight the matching terms inside the session detail view.
 
 **Current behavior**: The search bar (top of the app) filters the session *list* via FTS5. When the user clicks a result, the detail view shows all messages without any indication of where the search term appears.

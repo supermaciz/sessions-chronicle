@@ -18,27 +18,12 @@
 - ✅ Test fixtures in `tests/fixtures/claude_sessions/`, `tests/fixtures/opencode_storage/`, `tests/fixtures/codex_sessions/`, `tests/fixtures/vibe_sessions/`
 - ✅ Basic UI structure (Sidebar, SessionList, SessionDetail)
 
-**Implemented Core Features**
-- ✅ CLI arguments (`clap`) for `--sessions-dir` override
-- ✅ Relm4 CLI passthrough (`with_args`) + GTK arg split
-- ✅ Database indexer wired into App initialization for all four tools
-- ✅ SessionList loading from database
-- ✅ Sidebar tool filters wired to SessionList (Claude, OpenCode, Codex, Mistral Vibe)
-- ✅ Search functionality with FTS5 full-text search
-- ✅ Search UI with SearchBar and SearchEntry in `app.rs`
-- ✅ SessionDetail component with conversation transcript view
-- ✅ Navigation between list and detail views using NavigationView
-- ✅ Session resumption with terminal emulator integration
-- ✅ Terminal preferences dialog for emulator selection (controller-with-outputs pattern)
-- ✅ Session resumption failure notifications with toast feedback
-- ✅ Unified `--sessions-dir` behavior across all tools with fixture subdirectory mapping
-- ✅ Isolated override database (`sessions-override.db`) to prevent cross-mode contamination
-- ✅ Preferences reset action to clear and rebuild the session index
-- ✅ Filter sessions with no user messages (excludes pure tool sessions)
-- ✅ Message preview model with truncation badges
-- ✅ Markdown rendering for assistant messages (pulldown-cmark + Pango markup)
-- ✅ Rich text support (headings, code blocks, lists, task lists, blockquotes, tables, horizontal rules)
-- ✅ Search term highlighting in SessionDetail view
+**Key Shipped Features (high-level)**
+- ✅ Browse and filter sessions across 4 tools (Claude Code, OpenCode, Codex, Mistral Vibe)
+- ✅ Full-text search (SQLite FTS5) + in-detail search term highlighting
+- ✅ Rich markdown rendering for assistant messages
+- ✅ Resume sessions in a configurable terminal emulator + failure toasts
+- ✅ Consistent `--sessions-dir` override across tools + isolated override index DB + reset/reindex in Preferences (PR #24)
 
 **Dependencies**
 - ✅ Relm4 (reactive UI framework)
@@ -86,9 +71,12 @@
 
 **Phase 5: Consolidating Foundations** - In Progress
 
-- ✅ Unified `--sessions-dir` behavior across all tools (isolated DB + fixture mapping + single resolver) ([design](plans/2026-02-07-sessions-dir-unified-behavior-design.md))
+- ✅ Unified `--sessions-dir` behavior across all tools (isolated DB + fixture mapping + single resolver) ([design](plans/2026-02-07-sessions-dir-unified-behavior-design.md), PR #24)
 - ⬜ UI refinement (utility pane + session detail) ([design](plans/2026-02-08-session-detail-utility-pane-design.md))
+- ⬜ Improve keyboard shortcuts (TODO - design)
+- ⬜ Fix "About" modal
 - ✅ Basic CI/CD setup with GitHub Actions (automated testing, formatting checks, linting, Flatpak builds)
+- ⬜ Releases
 
 **Phase 6: Tool Calls & Subagents** - Future ([design](plans/2026-01-30-tool-calls-and-subagents-design.md))
 - ⬜ Enrich Message model (tool_name, tool_input, parent_message_index)

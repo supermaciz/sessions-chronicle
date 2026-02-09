@@ -4,7 +4,7 @@
 
 **Goal:** Make `--sessions-dir` behave consistently across Claude Code, OpenCode, Codex, and Mistral Vibe, while preventing stale cross-source data with an isolated override database and exposing a manual reset action in Preferences.
 
-**Status**: ✅ Planned for Phase 4.5 - Consolidating Foundations
+**Status**: ✅ Implemented (Phase 5 - Consolidating Foundations, PR #24)
 
 **Architecture:** Introduce a single source resolver that maps one optional override root into four effective input paths (one per tool), preferring known fixture subdirectories and falling back to the root itself. Use a dedicated database file when override mode is active so default home indexing and override indexing never contaminate each other. Add a Preferences action that clears and rebuilds the active index using the current runtime source mapping.
 
