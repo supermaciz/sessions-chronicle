@@ -4,7 +4,7 @@
 
 ---
 
-## Current Status: Phase 4 Complete - Search Highlighting Implemented
+## Current Status: Phase 5 In Progress - Consolidating Foundations
 
 ### ✅ Completed
 
@@ -29,8 +29,11 @@
 - ✅ SessionDetail component with conversation transcript view
 - ✅ Navigation between list and detail views using NavigationView
 - ✅ Session resumption with terminal emulator integration
-- ✅ Terminal preferences dialog for emulator selection
+- ✅ Terminal preferences dialog for emulator selection (controller-with-outputs pattern)
 - ✅ Session resumption failure notifications with toast feedback
+- ✅ Unified `--sessions-dir` behavior across all tools with fixture subdirectory mapping
+- ✅ Isolated override database (`sessions-override.db`) to prevent cross-mode contamination
+- ✅ Preferences reset action to clear and rebuild the session index
 - ✅ Filter sessions with no user messages (excludes pure tool sessions)
 - ✅ Message preview model with truncation badges
 - ✅ Markdown rendering for assistant messages (pulldown-cmark + Pango markup)
@@ -81,11 +84,11 @@
 - ✅ Highlight matching terms when viewing search results
 - ✅ Visual distinction for search matches
 
-**Phase 5: Consolidating Foundations** - Next
+**Phase 5: Consolidating Foundations** - In Progress
 
-- ⬜ Unified `--sessions-dir` behavior across all tools (isolated DB + fixture mapping + single resolver) ([design](plans/2026-02-07-sessions-dir-unified-behavior-design.md))
+- ✅ Unified `--sessions-dir` behavior across all tools (isolated DB + fixture mapping + single resolver) ([design](plans/2026-02-07-sessions-dir-unified-behavior-design.md))
 - ⬜ UI refinement (utility pane + session detail) ([design](plans/2026-02-08-session-detail-utility-pane-design.md))
-- ⬜ Basic CI/CD setup with GitHub Actions (automated testing, formatting checks, linting, Flatpak builds)
+- ✅ Basic CI/CD setup with GitHub Actions (automated testing, formatting checks, linting, Flatpak builds)
 
 **Phase 6: Tool Calls & Subagents** - Future ([design](plans/2026-01-30-tool-calls-and-subagents-design.md))
 - ⬜ Enrich Message model (tool_name, tool_input, parent_message_index)
@@ -127,6 +130,7 @@ sessions-chronicle/
 │   ├── lib.rs            # Library exports
 │   ├── config.rs         # App constants (APP_ID, VERSION)
 │   ├── app.rs            # Main App component (search, window, navigation)
+│   ├── session_sources.rs # Unified session source resolver
 │   ├── models/           # Data models
 │   │   ├── session.rs         # Session, Tool
 │   │   ├── message.rs         # Message, Role
@@ -148,7 +152,7 @@ sessions-chronicle/
 │   │   ├── session_detail.rs # Session detail/transcript view
 │   │   ├── modals/
 │   │   │   ├── about.rs      # About dialog
-│   │   │   ├── preferences.rs # Preferences dialog (terminal settings)
+│   │   │   ├── preferences.rs # Preferences dialog (terminal settings, index reset)
 │   │   │   └── shortcuts.rs  # Keyboard shortcuts
 │   │   └── mod.rs
 │   └── utils/            # Utilities
@@ -295,13 +299,12 @@ let db_path = data_dir.join("sessions-chronicle").join("sessions.db");
 
 ### Immediate Tasks
 
-1. **Consolidating foundations**:
-    - Create `src/session_sources.rs` module
-    - Implement fixture subdirectory mapping
-    - Add isolated override database
-    - Implement Preferences reset action
-    - Update all parsers to use new source resolver
-    - UI polish and bug fixes
+1. **Consolidating foundations** (partially complete):
+    - ✅ `src/session_sources.rs` module with fixture subdirectory mapping
+    - ✅ Isolated override database (`sessions-override.db`)
+    - ✅ Preferences reset action (controller-with-outputs pattern)
+    - ✅ Unified source resolver wired into App startup
+    - ⬜ UI polish (utility pane + session detail)
 
 2. **Tool calls and subagents support**:
     - Enrich Message model with tool call data
@@ -343,6 +346,6 @@ cargo test
 
 ---
 
-**Last Updated**: 2026-02-08
-**Current Phase**: Phase 4 - Search Highlighting (Complete)
-**Next Milestone**: Phase 5 - Consolidating foundations (sessions dir + UI polish)
+**Last Updated**: 2026-02-09
+**Current Phase**: Phase 5 - Consolidating Foundations (In Progress)
+**Next Milestone**: Phase 5 completion - UI refinement (utility pane + session detail)
