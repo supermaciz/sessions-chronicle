@@ -15,8 +15,11 @@ use std::{fs, path::PathBuf, str::FromStr};
 use crate::config::{APP_ID, PROFILE};
 use crate::database::{SessionIndexer, load_session};
 use crate::models::session::Tool;
+use crate::session_sources::{SessionSources, select_db_filename};
 use crate::ui::modals::{
-    about::AboutDialog, preferences::PreferencesDialog, shortcuts::ShortcutsDialog,
+    about::AboutDialog,
+    preferences::{PreferencesDialog, PreferencesOutput},
+    shortcuts::ShortcutsDialog,
 };
 use crate::ui::{
     session_detail::{SessionDetail, SessionDetailMsg, SessionDetailOutput},
@@ -35,10 +38,12 @@ pub(super) struct App {
     session_list: Controller<SessionList>,
     session_detail: Controller<SessionDetail>,
     sidebar: Controller<Sidebar>,
+    preferences_dialog: Controller<PreferencesDialog>,
     nav_view: adw::NavigationView,
     detail_page: adw::NavigationPage,
     toast_overlay: adw::ToastOverlay,
     db_path: PathBuf,
+    sources: SessionSources,
 }
 
 #[derive(Debug)]
@@ -50,6 +55,8 @@ pub(super) enum AppMsg {
     SessionSelected(String),
     NavigateBack,
     ResumeSession(String, Tool),
+    ShowPreferences,
+    ReindexRequested,
 }
 
 relm4::new_action_group!(pub(super) WindowActionGroup, "win");
@@ -170,10 +177,19 @@ impl SimpleComponent for App {
         root: Self::Root,
         sender: ComponentSender<Self>,
     ) -> ComponentParts<Self> {
-        let sessions_dir =
-            sessions_dir.unwrap_or_else(|| PathBuf::from(Tool::ClaudeCode.session_dir()));
+        let sources = SessionSources::resolve(sessions_dir.as_deref());
         let db_dir = glib::user_data_dir().join(APP_ID);
-        let db_path = db_dir.join("sessions.db");
+        let db_path = db_dir.join(select_db_filename(sources.override_mode));
+
+        tracing::info!(
+            "Session sources (override={}): claude={}, opencode={}, codex={}, vibe={}",
+            sources.override_mode,
+            sources.claude_dir.display(),
+            sources.opencode_storage_root.display(),
+            sources.codex_dir.display(),
+            sources.vibe_dir.display(),
+        );
+        tracing::info!("Using database: {}", db_path.display());
 
         if let Err(err) = fs::create_dir_all(&db_dir) {
             tracing::error!("Failed to create data dir {}: {}", db_dir.display(), err);
@@ -187,17 +203,12 @@ impl SimpleComponent for App {
             };
 
             if let Some(ref mut idx) = indexer {
-                let opencode_session_dir = PathBuf::from(Tool::OpenCode.session_dir());
-                let opencode_root = opencode_session_dir.parent();
-                let codex_sessions_dir = PathBuf::from(Tool::Codex.session_dir());
-                let vibe_sessions_dir = PathBuf::from(Tool::MistralVibe.session_dir());
-
-                match idx.index_claude_sessions(&sessions_dir) {
+                match idx.index_claude_sessions(&sources.claude_dir) {
                     Ok(count) => {
                         tracing::info!(
                             "Indexed {} Claude sessions from {}",
                             count,
-                            sessions_dir.display()
+                            sources.claude_dir.display()
                         );
                     }
                     Err(err) => {
@@ -205,32 +216,25 @@ impl SimpleComponent for App {
                     }
                 }
 
-                if let Some(opencode_root) = opencode_root {
-                    match idx.index_opencode_sessions(opencode_root) {
-                        Ok(count) => {
-                            tracing::info!(
-                                "Indexed {} OpenCode sessions from {}",
-                                count,
-                                opencode_root.display()
-                            );
-                        }
-                        Err(err) => {
-                            tracing::error!("Failed to index OpenCode sessions: {}", err);
-                        }
+                match idx.index_opencode_sessions(&sources.opencode_storage_root) {
+                    Ok(count) => {
+                        tracing::info!(
+                            "Indexed {} OpenCode sessions from {}",
+                            count,
+                            sources.opencode_storage_root.display()
+                        );
                     }
-                } else {
-                    tracing::warn!(
-                        "Failed to resolve OpenCode storage root from {}",
-                        opencode_session_dir.display()
-                    );
+                    Err(err) => {
+                        tracing::error!("Failed to index OpenCode sessions: {}", err);
+                    }
                 }
 
-                match idx.index_codex_sessions(&codex_sessions_dir) {
+                match idx.index_codex_sessions(&sources.codex_dir) {
                     Ok(count) => {
                         tracing::info!(
                             "Indexed {} Codex sessions from {}",
                             count,
-                            codex_sessions_dir.display()
+                            sources.codex_dir.display()
                         );
                     }
                     Err(err) => {
@@ -238,12 +242,12 @@ impl SimpleComponent for App {
                     }
                 }
 
-                match idx.index_vibe_sessions(&vibe_sessions_dir) {
+                match idx.index_vibe_sessions(&sources.vibe_dir) {
                     Ok(count) => {
                         tracing::info!(
                             "Indexed {} Mistral Vibe sessions from {}",
                             count,
-                            vibe_sessions_dir.display()
+                            sources.vibe_dir.display()
                         );
                     }
                     Err(err) => {
@@ -271,6 +275,14 @@ impl SimpleComponent for App {
             .forward(sender.input_sender(), |output| match output {
                 SidebarOutput::FiltersChanged(tools) => AppMsg::FiltersChanged(tools),
             });
+
+        // Create preferences dialog once, with forwarded outputs
+        let preferences_dialog = PreferencesDialog::builder().launch(()).forward(
+            sender.input_sender(),
+            |msg| match msg {
+                PreferencesOutput::ReindexRequested => AppMsg::ReindexRequested,
+            },
+        );
 
         // Create NavigationView and pages before model
         let nav_view = adw::NavigationView::new();
@@ -305,10 +317,12 @@ impl SimpleComponent for App {
             session_list,
             session_detail,
             sidebar,
+            preferences_dialog,
             nav_view: nav_view.clone(),
             detail_page: detail_page.clone(),
             toast_overlay: adw::ToastOverlay::new(),
             db_path,
+            sources,
         };
 
         let widgets = view_output!();
@@ -337,8 +351,9 @@ impl SimpleComponent for App {
         let mut actions = RelmActionGroup::<WindowActionGroup>::new();
 
         let preferences_action = {
+            let sender = sender.clone();
             RelmAction::<PreferencesAction>::new_stateless(move |_| {
-                PreferencesDialog::builder().launch(()).detach();
+                sender.input(AppMsg::ShowPreferences);
             })
         };
 
@@ -413,6 +428,63 @@ impl SimpleComponent for App {
                         == Some("detail")
                     {
                         self.nav_view.pop();
+                    }
+                }
+            }
+            AppMsg::ShowPreferences => {
+                let dialog_widget = self.preferences_dialog.widget();
+                dialog_widget.present(Some(&main_application().windows()[0]));
+            }
+            AppMsg::ReindexRequested => {
+                tracing::info!("Reindex requested — clearing and rebuilding index");
+                match SessionIndexer::new(&self.db_path) {
+                    Ok(mut indexer) => {
+                        if let Err(err) = indexer.clear_all_sessions() {
+                            tracing::error!("Failed to clear sessions: {}", err);
+                            self.toast_overlay.add_toast(
+                                adw::Toast::builder()
+                                    .title("Failed to reset index")
+                                    .timeout(3)
+                                    .build(),
+                            );
+                            return;
+                        }
+
+                        let mut total = 0usize;
+                        match indexer.index_claude_sessions(&self.sources.claude_dir) {
+                            Ok(n) => total += n,
+                            Err(err) => tracing::warn!("Claude sessions: {}", err),
+                        }
+                        match indexer.index_opencode_sessions(&self.sources.opencode_storage_root) {
+                            Ok(n) => total += n,
+                            Err(err) => tracing::warn!("OpenCode sessions: {}", err),
+                        }
+                        match indexer.index_codex_sessions(&self.sources.codex_dir) {
+                            Ok(n) => total += n,
+                            Err(err) => tracing::warn!("Codex sessions: {}", err),
+                        }
+                        match indexer.index_vibe_sessions(&self.sources.vibe_dir) {
+                            Ok(n) => total += n,
+                            Err(err) => tracing::warn!("Vibe sessions: {}", err),
+                        }
+
+                        tracing::info!("Reindex complete: {} sessions indexed", total);
+                        self.session_list.emit(SessionListMsg::Reload);
+                        self.toast_overlay.add_toast(
+                            adw::Toast::builder()
+                                .title(format!("Index rebuilt — {} sessions", total))
+                                .timeout(3)
+                                .build(),
+                        );
+                    }
+                    Err(err) => {
+                        tracing::error!("Failed to open indexer for reindex: {}", err);
+                        self.toast_overlay.add_toast(
+                            adw::Toast::builder()
+                                .title("Failed to reset index")
+                                .timeout(3)
+                                .build(),
+                        );
                     }
                 }
             }

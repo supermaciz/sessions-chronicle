@@ -14,18 +14,43 @@ flatpak-builder --run flatpak_app build-aux/io.github.supermaciz.sessionschronic
 
 This indexes sessions from all supported tools:
 - Claude Code: `~/.claude/projects/`
-- OpenCode: `~/.local/share/opencode/storage/session/`
+- OpenCode: `~/.local/share/opencode/storage/`
 - Codex: `~/.codex/sessions/`
+- Mistral Vibe: `~/.vibe/logs/session/`
 
 ## Using Test Fixtures
 
-The `--sessions-dir` flag allows you to point to test data instead of your real sessions:
+The `--sessions-dir` flag overrides session source paths **for all tools**. It maps known fixture subdirectories automatically:
 
 ```bash
+# Override with the full fixture root — maps all four tools
+flatpak-builder --run flatpak_app build-aux/io.github.supermaciz.sessionschronicle.Devel.json sessions-chronicle --sessions-dir tests/fixtures
+```
+
+This maps to:
+| Tool | Resolved path |
+|------|--------------|
+| Claude Code | `tests/fixtures/claude_sessions/` |
+| OpenCode | `tests/fixtures/opencode_storage/` |
+| Codex | `tests/fixtures/codex_sessions/` |
+| Mistral Vibe | `tests/fixtures/vibe_sessions/` |
+
+If a known subdirectory is missing, the override root itself is used as a fallback for that tool.
+
+You can also point to a single tool's directory:
+
+```bash
+# Override with Claude-only data — all tools fall back to this path
 flatpak-builder --run flatpak_app build-aux/io.github.supermaciz.sessionschronicle.Devel.json sessions-chronicle --sessions-dir tests/fixtures/claude_sessions
 ```
 
-**Note:** This flag only overrides the Claude Code sessions directory. The app continues to index OpenCode and Codex sessions from their default locations.
+### Override mode and database isolation
+
+When `--sessions-dir` is active, the app uses a separate database file (`sessions-override.db`) instead of the default `sessions.db`. This prevents stale cross-mode data contamination when switching between override and normal mode.
+
+### Resetting the index
+
+The Preferences dialog (menu > Preferences > Advanced) includes a **Reset session index** action that clears and rebuilds the active database from the current session sources. This is useful after modifying fixture files or when the index gets out of sync.
 
 ## Why This Approach?
 
@@ -157,9 +182,9 @@ Create run configurations:
 
 - **Build**: `flatpak-builder --user flatpak_app build-aux/io.github.supermaciz.sessionschronicle.Devel.json --force-clean`
 - **Run**: `flatpak-builder --run flatpak_app build-aux/io.github.supermaciz.sessionschronicle.Devel.json sessions-chronicle`
-- **Test Data**: Add `--sessions-dir tests/fixtures/claude_sessions` flag
+- **Test Data**: Add `--sessions-dir tests/fixtures` flag
 - **Unit Tests**: `cargo test`
 
 ---
 
-**Last Updated**: 2026-02-04
+**Last Updated**: 2026-02-09
