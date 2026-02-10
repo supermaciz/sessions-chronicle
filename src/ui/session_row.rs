@@ -1,5 +1,4 @@
 use chrono::{DateTime, Duration as ChronoDuration, Utc};
-use gtk::glib::prelude::ObjectExt;
 use gtk::prelude::*;
 use relm4::factory::{DynamicIndex, FactoryComponent, FactorySender};
 use relm4::{adw, gtk};
@@ -18,8 +17,6 @@ pub struct SessionRowInit {
 pub struct SessionRow {
     session: Session,
 }
-
-const SESSION_ID_KEY: &str = "session-id";
 
 #[derive(Debug)]
 pub enum SessionRowOutput {
@@ -80,20 +77,19 @@ impl FactoryComponent for SessionRow {
         &mut self,
         _index: &DynamicIndex,
         root: Self::Root,
-        returned_widget: &<Self::ParentWidget as relm4::factory::FactoryView>::ReturnedWidget,
+        _returned_widget: &<Self::ParentWidget as relm4::factory::FactoryView>::ReturnedWidget,
         sender: FactorySender<Self>,
     ) -> Self::Widgets {
-        let session_id = self.session.id.clone();
-        unsafe {
-            returned_widget.set_data(SESSION_ID_KEY, session_id.clone());
-        }
-
         let widgets = view_output!();
         widgets
     }
 }
 
 impl SessionRow {
+    pub fn session_id(&self) -> &str {
+        &self.session.id
+    }
+
     fn session_title(session: &Session) -> String {
         session
             .project_path

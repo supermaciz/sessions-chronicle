@@ -1,4 +1,3 @@
-use gtk::glib::prelude::ObjectExt;
 use gtk::prelude::*;
 use relm4::factory::FactoryVecDeque;
 use relm4::{ComponentParts, ComponentSender, SimpleComponent, adw, gtk};
@@ -21,7 +20,7 @@ pub struct SessionList {
 pub enum SessionListMsg {
     SetTools(Vec<Tool>),
     SetSearchQuery(String),
-    SessionSelected(String),
+    SessionActivated(i32),
     ResumeRequested(String, Tool),
     Reload,
 }
@@ -116,9 +115,7 @@ impl SimpleComponent for SessionList {
 
         let input_sender = sender.input_sender().clone();
         session_list_box.connect_row_activated(move |_, row| {
-            if let Some(session_id) = SessionList::get_session_id_from_row(row) {
-                let _ = input_sender.send(SessionListMsg::SessionSelected(session_id));
-            }
+            let _ = input_sender.send(SessionListMsg::SessionActivated(row.index()));
         });
 
         if model.sessions.is_empty() {
@@ -145,8 +142,12 @@ impl SimpleComponent for SessionList {
                 self.search_query = query;
                 self.reload_sessions();
             }
-            SessionListMsg::SessionSelected(id) => {
-                let _ = sender.output(SessionListOutput::SessionSelected(id));
+            SessionListMsg::SessionActivated(index) => {
+                if let Some(row) = self.sessions.get(index as usize) {
+                    let _ = sender.output(SessionListOutput::SessionSelected(
+                        row.session_id().to_owned(),
+                    ));
+                }
             }
             SessionListMsg::ResumeRequested(id, tool) => {
                 let _ = sender.output(SessionListOutput::ResumeRequested(id, tool));
@@ -187,8 +188,6 @@ impl SimpleComponent for SessionList {
 }
 
 impl SessionList {
-    const SESSION_ID_KEY: &'static str = "session-id";
-
     fn fetch_sessions(db_path: &Path, tools: &[Tool], query: &str) -> Vec<Session> {
         let query = query.trim();
         let sessions = if query.is_empty() {
@@ -203,13 +202,6 @@ impl SessionList {
                 tracing::error!("Failed to load sessions: {}", err);
                 Vec::new()
             }
-        }
-    }
-
-    fn get_session_id_from_row(row: &gtk::ListBoxRow) -> Option<String> {
-        unsafe {
-            row.data::<String>(Self::SESSION_ID_KEY)
-                .map(|ptr| ptr.as_ref().clone())
         }
     }
 
