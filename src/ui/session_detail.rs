@@ -7,8 +7,8 @@ use gtk::prelude::*;
 use relm4::factory::FactoryVecDeque;
 use relm4::{ComponentParts, ComponentSender, RelmWidgetExt, SimpleComponent, adw, gtk};
 
-use crate::database::{load_message_previews_for_session, load_session};
-use crate::models::{Session, Tool};
+use crate::database::load_message_previews_for_session;
+use crate::models::Session;
 use crate::ui::message_row::{MessageRow, MessageRowInit, MessageRowOutput};
 
 #[derive(Debug)]
@@ -30,13 +30,12 @@ pub struct SessionDetail {
 #[derive(Debug)]
 pub enum SessionDetailMsg {
     SetSession {
-        id: String,
+        session: Session,
         search_query: Option<String>,
     },
     #[allow(dead_code)]
     UpdateSearchQuery(Option<String>),
     LoadMore,
-    ResumeClicked,
     PrevMatch,
     NextMatch,
     ClearSearch,
@@ -45,16 +44,11 @@ pub enum SessionDetailMsg {
     Clear,
 }
 
-#[derive(Debug)]
-pub enum SessionDetailOutput {
-    ResumeRequested(String, Tool),
-}
-
 #[relm4::component(pub)]
 impl SimpleComponent for SessionDetail {
     type Init = PathBuf;
     type Input = SessionDetailMsg;
-    type Output = SessionDetailOutput;
+    type Output = ();
     type Widgets = SessionDetailWidgets;
 
     view! {
@@ -165,13 +159,6 @@ impl SimpleComponent for SessionDetail {
                                     },
                                 },
 
-                                #[name = "resume_button"]
-                                gtk::Button {
-                                    set_label: "Resume in Terminal",
-                                    add_css_class: "suggested-action",
-                                    set_halign: gtk::Align::Start,
-                                    connect_clicked => SessionDetailMsg::ResumeClicked,
-                                },
                             },
 
                             // Messages container — managed by factory
@@ -290,10 +277,10 @@ impl SimpleComponent for SessionDetail {
         ComponentParts { model, widgets }
     }
 
-    fn update(&mut self, message: Self::Input, sender: ComponentSender<Self>) {
+    fn update(&mut self, message: Self::Input, _sender: ComponentSender<Self>) {
         match message {
             SessionDetailMsg::SetSession {
-                id: session_id,
+                session,
                 search_query,
             } => {
                 self.search_query = search_query;
@@ -301,28 +288,8 @@ impl SimpleComponent for SessionDetail {
                 self.current_match = 0;
                 self.total_matches = 0;
 
-                match load_session(&self.db_path, &session_id) {
-                    Ok(Some(session)) => {
-                        self.session = Some(session);
-                    }
-                    Ok(None) => {
-                        tracing::warn!("Session not found: {}", session_id);
-                        self.session = None;
-                        self.messages.guard().clear();
-                        self.loaded_count = 0;
-                        self.has_more_messages = false;
-                        return;
-                    }
-                    Err(err) => {
-                        tracing::error!("Failed to load session {}: {}", session_id, err);
-                        self.session = None;
-                        self.messages.guard().clear();
-                        self.loaded_count = 0;
-                        self.has_more_messages = false;
-                        return;
-                    }
-                }
-
+                let session_id = session.id.clone();
+                self.session = Some(session);
                 self.load_first_page(&session_id);
             }
             SessionDetailMsg::UpdateSearchQuery(query) => {
@@ -365,14 +332,6 @@ impl SimpleComponent for SessionDetail {
                             self.has_more_messages = false;
                         }
                     }
-                }
-            }
-            SessionDetailMsg::ResumeClicked => {
-                if let Some(session) = &self.session {
-                    let _ = sender.output(SessionDetailOutput::ResumeRequested(
-                        session.id.clone(),
-                        session.tool,
-                    ));
                 }
             }
             SessionDetailMsg::PrevMatch => {
@@ -464,13 +423,11 @@ impl SimpleComponent for SessionDetail {
             widgets.time_label.set_label(&time_str);
 
             widgets.session_id_label.set_label(&session.id);
-            widgets.resume_button.set_sensitive(true);
 
             widgets
                 .content_stack
                 .set_visible_child(&widgets.detail_overlay);
         } else {
-            widgets.resume_button.set_sensitive(false);
             widgets
                 .content_stack
                 .set_visible_child(&widgets.loading_state);
