@@ -519,10 +519,14 @@ impl SimpleComponent for App {
                     Ok(None) => {
                         tracing::warn!("Session not found for context pane: {}", id);
                         self.active_session = None;
+                        self.detail_context_pane
+                            .emit(DetailContextPaneMsg::ClearSession);
                     }
                     Err(err) => {
                         tracing::error!("Failed to load session for context pane: {}", err);
                         self.active_session = None;
+                        self.detail_context_pane
+                            .emit(DetailContextPaneMsg::ClearSession);
                     }
                 }
 

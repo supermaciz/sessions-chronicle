@@ -12,6 +12,7 @@ pub struct DetailContextPane {
 #[derive(Debug)]
 pub enum DetailContextPaneMsg {
     SetSession { project_name: String, tool: Tool },
+    ClearSession,
     ResumeClicked,
 }
 
@@ -99,6 +100,10 @@ impl SimpleComponent for DetailContextPane {
             DetailContextPaneMsg::SetSession { project_name, tool } => {
                 self.project_name = Some(project_name);
                 self.tool = Some(tool);
+            }
+            DetailContextPaneMsg::ClearSession => {
+                self.project_name = None;
+                self.tool = None;
             }
             DetailContextPaneMsg::ResumeClicked => {
                 let _ = sender.output(DetailContextPaneOutput::ResumeClicked);
