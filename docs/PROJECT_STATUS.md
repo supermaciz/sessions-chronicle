@@ -72,7 +72,9 @@
 **Phase 5: Consolidating Foundations** - In Progress
 
 - ✅ Unified `--sessions-dir` behavior across all tools (isolated DB + fixture mapping + single resolver) ([design](plans/2026-02-07-sessions-dir-unified-behavior-design.md), PR #24)
-- ⬜ UI refinement (utility pane + session detail) ([design](plans/2026-02-08-session-detail-utility-pane-design.md))
+- ⬜ UI refinement
+  * ✅ Utility pane + session detail ([design](plans/2026-02-08-session-detail-utility-pane-design.md)) PR #27
+  * ⬜ Improve session row (TODO - design)
 - ⬜ Improve keyboard shortcuts (TODO - design)
 - ⬜ Fix "About" modal
 - ✅ Basic CI/CD setup with GitHub Actions (automated testing, formatting checks, linting, Flatpak builds)
@@ -334,6 +336,6 @@ cargo test
 
 ---
 
-**Last Updated**: 2026-02-09
+**Last Updated**: 2026-02-10
 **Current Phase**: Phase 5 - Consolidating Foundations (In Progress)
 **Next Milestone**: Phase 5 completion - UI refinement (utility pane + session detail)
