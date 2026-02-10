@@ -7,7 +7,7 @@ use gtk::prelude::*;
 use relm4::factory::FactoryVecDeque;
 use relm4::{ComponentParts, ComponentSender, RelmWidgetExt, SimpleComponent, adw, gtk};
 
-use crate::database::{load_message_previews_for_session, load_session};
+use crate::database::load_message_previews_for_session;
 use crate::models::Session;
 use crate::ui::message_row::{MessageRow, MessageRowInit, MessageRowOutput};
 
@@ -30,7 +30,7 @@ pub struct SessionDetail {
 #[derive(Debug)]
 pub enum SessionDetailMsg {
     SetSession {
-        id: String,
+        session: Session,
         search_query: Option<String>,
     },
     #[allow(dead_code)]
@@ -44,14 +44,11 @@ pub enum SessionDetailMsg {
     Clear,
 }
 
-#[derive(Debug)]
-pub enum SessionDetailOutput {}
-
 #[relm4::component(pub)]
 impl SimpleComponent for SessionDetail {
     type Init = PathBuf;
     type Input = SessionDetailMsg;
-    type Output = SessionDetailOutput;
+    type Output = ();
     type Widgets = SessionDetailWidgets;
 
     view! {
@@ -283,7 +280,7 @@ impl SimpleComponent for SessionDetail {
     fn update(&mut self, message: Self::Input, _sender: ComponentSender<Self>) {
         match message {
             SessionDetailMsg::SetSession {
-                id: session_id,
+                session,
                 search_query,
             } => {
                 self.search_query = search_query;
@@ -291,28 +288,8 @@ impl SimpleComponent for SessionDetail {
                 self.current_match = 0;
                 self.total_matches = 0;
 
-                match load_session(&self.db_path, &session_id) {
-                    Ok(Some(session)) => {
-                        self.session = Some(session);
-                    }
-                    Ok(None) => {
-                        tracing::warn!("Session not found: {}", session_id);
-                        self.session = None;
-                        self.messages.guard().clear();
-                        self.loaded_count = 0;
-                        self.has_more_messages = false;
-                        return;
-                    }
-                    Err(err) => {
-                        tracing::error!("Failed to load session {}: {}", session_id, err);
-                        self.session = None;
-                        self.messages.guard().clear();
-                        self.loaded_count = 0;
-                        self.has_more_messages = false;
-                        return;
-                    }
-                }
-
+                let session_id = session.id.clone();
+                self.session = Some(session);
                 self.load_first_page(&session_id);
             }
             SessionDetailMsg::UpdateSearchQuery(query) => {

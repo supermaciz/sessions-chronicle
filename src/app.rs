@@ -493,7 +493,9 @@ impl SimpleComponent for App {
             AppMsg::SessionSelected(id) => {
                 tracing::debug!("Session selected: {}", id);
 
-                // Resolve session metadata for the context pane
+                let search_query = active_search_query(&self.search_query);
+
+                // Load session once, shared by context pane and detail view
                 match load_session(&self.db_path, &id) {
                     Ok(Some(session)) => {
                         let project_name = session
@@ -515,25 +517,27 @@ impl SimpleComponent for App {
                                 project_name,
                                 tool: session.tool,
                             });
+
+                        self.session_detail.emit(SessionDetailMsg::SetSession {
+                            session,
+                            search_query,
+                        });
                     }
                     Ok(None) => {
-                        tracing::warn!("Session not found for context pane: {}", id);
+                        tracing::warn!("Session not found: {}", id);
                         self.active_session = None;
                         self.detail_context_pane
                             .emit(DetailContextPaneMsg::ClearSession);
+                        self.session_detail.emit(SessionDetailMsg::Clear);
                     }
                     Err(err) => {
-                        tracing::error!("Failed to load session for context pane: {}", err);
+                        tracing::error!("Failed to load session: {}", err);
                         self.active_session = None;
                         self.detail_context_pane
                             .emit(DetailContextPaneMsg::ClearSession);
+                        self.session_detail.emit(SessionDetailMsg::Clear);
                     }
                 }
-
-                let search_query = active_search_query(&self.search_query);
-                // Load the session in the detail view with search query
-                self.session_detail
-                    .emit(SessionDetailMsg::SetSession { id, search_query });
 
                 // Push the detail page onto the navigation stack
                 if !self.detail_visible {
@@ -561,7 +565,7 @@ impl SimpleComponent for App {
 
                     // Return to filter pane mode
                     self.active_session = None;
-                    transition_to_list(&mut self.pane_mode, &mut self.pane_open);
+                    transition_to_list(&mut self.pane_mode);
                     self.apply_pane_stack_switch();
                 }
             }
@@ -733,10 +737,9 @@ fn transition_to_detail(pane_mode: &mut UtilityPaneMode, pane_open: &mut bool) {
     *pane_open = true;
 }
 
-/// Pure transition: switch to list mode (filters pane, open).
-fn transition_to_list(pane_mode: &mut UtilityPaneMode, pane_open: &mut bool) {
+/// Pure transition: switch to list mode (filters pane), preserving pane visibility.
+fn transition_to_list(pane_mode: &mut UtilityPaneMode) {
     *pane_mode = UtilityPaneMode::Filters;
-    *pane_open = true;
 }
 
 impl App {
@@ -856,12 +859,10 @@ mod tests {
     }
 
     #[test]
-    fn transition_to_list_sets_filters_and_open() {
+    fn transition_to_list_sets_filters_preserving_visibility() {
         let mut mode = UtilityPaneMode::SessionContext;
-        let mut open = false;
-        transition_to_list(&mut mode, &mut open);
+        transition_to_list(&mut mode);
         assert_eq!(mode, UtilityPaneMode::Filters);
-        assert!(open);
     }
 
     #[test]
