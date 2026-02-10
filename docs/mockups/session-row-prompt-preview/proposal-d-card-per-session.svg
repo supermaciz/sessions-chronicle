@@ -1,0 +1,111 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="720" height="580" viewBox="0 0 720 580">
+  <defs>
+    <style>
+      @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&amp;display=swap');
+      text { font-family: 'Inter', 'Cantarell', sans-serif; }
+    </style>
+    <filter id="shadow" x="-2%" y="-4%" width="104%" height="110%">
+      <feDropShadow dx="0" dy="1" stdDeviation="3" flood-opacity="0.08"/>
+    </filter>
+    <filter id="shadow-sm" x="-1%" y="-2%" width="102%" height="106%">
+      <feDropShadow dx="0" dy="1" stdDeviation="1.5" flood-opacity="0.06"/>
+    </filter>
+  </defs>
+
+  <!-- Background -->
+  <rect width="720" height="580" fill="#f2f2f2" rx="16"/>
+
+  <!-- Title -->
+  <text x="20" y="35" font-size="15" font-weight="600" fill="#1e1e1e" opacity="0.6">PROPOSAL D — Separate cards per session (Creative)</text>
+
+  <!-- Card 1 -->
+  <g transform="translate(28, 55)">
+    <rect x="0" y="0" width="664" height="115" rx="14" fill="#ffffff" filter="url(#shadow)"/>
+
+    <!-- Top bar: icon + project + time -->
+    <circle cx="24" cy="24" r="10" fill="#e66100" opacity="0.2"/>
+    <text x="24" y="29" text-anchor="middle" font-size="10" fill="#e66100">✦</text>
+    <text x="42" y="28" font-size="11" font-weight="500" fill="#e66100">Claude Code</text>
+    <text x="140" y="28" font-size="11" fill="#bbbbbb">·</text>
+    <text x="152" y="28" font-size="11" fill="#999999">sessions-chronicle</text>
+    <text x="644" y="28" text-anchor="end" font-size="11" fill="#aaaaaa">4d ago</text>
+
+    <!-- Prompt text (main content, 2 lines) -->
+    <text x="24" y="55" font-size="14" font-weight="500" fill="#1e1e1e">Redesign the SessionRow component to show the first</text>
+    <text x="24" y="73" font-size="14" font-weight="500" fill="#1e1e1e">prompt instead of the project path…</text>
+
+    <!-- Bottom bar: message count badge + resume -->
+    <rect x="24" y="88" width="80" height="20" rx="10" fill="#f0f0f0"/>
+    <text x="64" y="102" text-anchor="middle" font-size="10" fill="#777777">8 messages</text>
+
+    <!-- Resume pill button -->
+    <rect x="560" y="86" width="84" height="24" rx="12" fill="#f0f0f0"/>
+    <text x="581" y="102" font-size="11" fill="#666666">⏵ Resume</text>
+  </g>
+
+  <!-- Card 2 -->
+  <g transform="translate(28, 185)">
+    <rect x="0" y="0" width="664" height="115" rx="14" fill="#ffffff" filter="url(#shadow)"/>
+
+    <circle cx="24" cy="24" r="10" fill="#26a269" opacity="0.2"/>
+    <text x="24" y="29" text-anchor="middle" font-size="10" fill="#26a269">◆</text>
+    <text x="42" y="28" font-size="11" font-weight="500" fill="#26a269">Codex</text>
+    <text x="84" y="28" font-size="11" fill="#bbbbbb">·</text>
+    <text x="96" y="28" font-size="11" fill="#999999">my-webapp</text>
+    <text x="644" y="28" text-anchor="end" font-size="11" fill="#aaaaaa">2026-01-18</text>
+
+    <text x="24" y="55" font-size="14" font-weight="500" fill="#1e1e1e">Fix the authentication bug in the login flow. Users</text>
+    <text x="24" y="73" font-size="14" font-weight="500" fill="#1e1e1e">are getting 403 errors after token refresh.</text>
+
+    <rect x="24" y="88" width="72" height="20" rx="10" fill="#f0f0f0"/>
+    <text x="60" y="102" text-anchor="middle" font-size="10" fill="#777777">3 messages</text>
+
+    <rect x="560" y="86" width="84" height="24" rx="12" fill="#f0f0f0"/>
+    <text x="581" y="102" font-size="11" fill="#666666">⏵ Resume</text>
+  </g>
+
+  <!-- Card 3 -->
+  <g transform="translate(28, 315)">
+    <rect x="0" y="0" width="664" height="115" rx="14" fill="#ffffff" filter="url(#shadow)"/>
+
+    <circle cx="24" cy="24" r="10" fill="#3584e4" opacity="0.2"/>
+    <text x="24" y="29" text-anchor="middle" font-size="10" fill="#3584e4">◎</text>
+    <text x="42" y="28" font-size="11" font-weight="500" fill="#3584e4">OpenCode</text>
+    <text x="102" y="28" font-size="11" fill="#bbbbbb">·</text>
+    <text x="114" y="28" font-size="11" fill="#999999">project</text>
+    <text x="644" y="28" text-anchor="end" font-size="11" fill="#aaaaaa">2025-01-10</text>
+
+    <text x="24" y="55" font-size="14" font-weight="500" fill="#1e1e1e">Help me write unit tests for the database module.</text>
+    <text x="24" y="73" font-size="14" font-weight="500" fill="#1e1e1e">I need good coverage for the query functions.</text>
+
+    <rect x="24" y="88" width="72" height="20" rx="10" fill="#f0f0f0"/>
+    <text x="60" y="102" text-anchor="middle" font-size="10" fill="#777777">2 messages</text>
+
+    <rect x="560" y="86" width="84" height="24" rx="12" fill="#f0f0f0"/>
+    <text x="581" y="102" font-size="11" fill="#666666">⏵ Resume</text>
+  </g>
+
+  <!-- Card 4 -->
+  <g transform="translate(28, 445)">
+    <rect x="0" y="0" width="664" height="115" rx="14" fill="#ffffff" filter="url(#shadow)"/>
+
+    <circle cx="24" cy="24" r="10" fill="#1c71d8" opacity="0.2"/>
+    <text x="24" y="29" text-anchor="middle" font-size="10" fill="#1c71d8">◈</text>
+    <text x="42" y="28" font-size="11" font-weight="500" fill="#1c71d8">Mistral Vibe</text>
+    <text x="118" y="28" font-size="11" fill="#bbbbbb">·</text>
+    <text x="130" y="28" font-size="11" fill="#999999">alpha</text>
+    <text x="644" y="28" text-anchor="end" font-size="11" fill="#aaaaaa">2024-01-01</text>
+
+    <text x="24" y="55" font-size="14" font-weight="500" fill="#1e1e1e">Refactor the API endpoints to use async handlers</text>
+    <text x="24" y="73" font-size="14" font-weight="500" fill="#1e1e1e">with proper error propagation throughout.</text>
+
+    <rect x="24" y="88" width="72" height="20" rx="10" fill="#f0f0f0"/>
+    <text x="60" y="102" text-anchor="middle" font-size="10" fill="#777777">2 messages</text>
+
+    <rect x="560" y="86" width="84" height="24" rx="12" fill="#f0f0f0"/>
+    <text x="581" y="102" font-size="11" fill="#666666">⏵ Resume</text>
+  </g>
+
+  <!-- Annotation -->
+  <text x="360" y="574" text-anchor="middle" font-size="11" fill="#999999">Uses .boxed-list-separate · Each session is a card · 2-line prompt preview · Tool name + project in header · Resume as pill button</text>
+</svg>

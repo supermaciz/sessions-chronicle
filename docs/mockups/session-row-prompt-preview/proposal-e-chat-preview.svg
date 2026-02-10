@@ -1,0 +1,112 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="720" height="520" viewBox="0 0 720 520">
+  <defs>
+    <style>
+      @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&amp;display=swap');
+      text { font-family: 'Inter', 'Cantarell', sans-serif; }
+    </style>
+    <filter id="shadow" x="-2%" y="-2%" width="104%" height="108%">
+      <feDropShadow dx="0" dy="1" stdDeviation="2" flood-opacity="0.1"/>
+    </filter>
+  </defs>
+
+  <!-- Background -->
+  <rect width="720" height="520" fill="#fafafa" rx="16"/>
+
+  <!-- Title -->
+  <text x="20" y="35" font-size="15" font-weight="600" fill="#1e1e1e" opacity="0.6">PROPOSAL E — Chat/messaging-style preview (Creative)</text>
+
+  <!-- Card container -->
+  <rect x="20" y="50" width="680" height="440" rx="12" fill="#ffffff" filter="url(#shadow)" stroke="#e0e0e0" stroke-width="0.5"/>
+
+  <!-- Row 1 -->
+  <g transform="translate(20, 50)">
+    <rect x="0" y="0" width="680" height="105" fill="#ffffff" rx="12"/>
+
+    <!-- Large colored avatar -->
+    <rect x="16" y="16" width="48" height="48" rx="24" fill="#e66100" opacity="0.15"/>
+    <text x="40" y="47" text-anchor="middle" font-size="20" fill="#e66100">✦</text>
+    <!-- Unread dot / activity indicator -->
+    <circle cx="58" cy="18" r="5" fill="#e66100"/>
+
+    <!-- Top line: project name (bold) + time -->
+    <text x="78" y="30" font-size="13" font-weight="600" fill="#1e1e1e">sessions-chronicle</text>
+    <text x="660" y="30" text-anchor="end" font-size="11" fill="#aaaaaa">4d ago</text>
+
+    <!-- User prompt (blue, bold-ish) -->
+    <text x="78" y="50" font-size="13" fill="#3584e4" font-weight="500">You: </text>
+    <text x="114" y="50" font-size="13" fill="#444444">Redesign the SessionRow component to show first…</text>
+
+    <!-- Assistant preview (dim, italic-ish) -->
+    <text x="78" y="70" font-size="12" fill="#999999">I'll research the GNOME HIG guidelines and the Session model…</text>
+
+    <!-- Message count badge -->
+    <rect x="78" y="80" width="50" height="16" rx="8" fill="#f0f0f0"/>
+    <text x="103" y="92" text-anchor="middle" font-size="9" fill="#888888">8 msgs</text>
+
+    <line x1="78" y1="104" x2="660" y2="104" stroke="#f0f0f0" stroke-width="1"/>
+  </g>
+
+  <!-- Row 2 -->
+  <g transform="translate(20, 155)">
+    <rect x="0" y="0" width="680" height="105" fill="#ffffff"/>
+
+    <rect x="16" y="16" width="48" height="48" rx="24" fill="#26a269" opacity="0.15"/>
+    <text x="40" y="47" text-anchor="middle" font-size="20" fill="#26a269">◆</text>
+
+    <text x="78" y="30" font-size="13" font-weight="600" fill="#1e1e1e">my-webapp</text>
+    <text x="660" y="30" text-anchor="end" font-size="11" fill="#aaaaaa">2026-01-18</text>
+
+    <text x="78" y="50" font-size="13" fill="#3584e4" font-weight="500">You: </text>
+    <text x="114" y="50" font-size="13" fill="#444444">Fix the authentication bug in the login flow</text>
+
+    <text x="78" y="70" font-size="12" fill="#999999">I found the issue. The token refresh endpoint returns a 403…</text>
+
+    <rect x="78" y="80" width="50" height="16" rx="8" fill="#f0f0f0"/>
+    <text x="103" y="92" text-anchor="middle" font-size="9" fill="#888888">3 msgs</text>
+
+    <line x1="78" y1="104" x2="660" y2="104" stroke="#f0f0f0" stroke-width="1"/>
+  </g>
+
+  <!-- Row 3 -->
+  <g transform="translate(20, 260)">
+    <rect x="0" y="0" width="680" height="105" fill="#ffffff"/>
+
+    <rect x="16" y="16" width="48" height="48" rx="24" fill="#3584e4" opacity="0.15"/>
+    <text x="40" y="47" text-anchor="middle" font-size="20" fill="#3584e4">◎</text>
+
+    <text x="78" y="30" font-size="13" font-weight="600" fill="#1e1e1e">project</text>
+    <text x="660" y="30" text-anchor="end" font-size="11" fill="#aaaaaa">2025-01-10</text>
+
+    <text x="78" y="50" font-size="13" fill="#3584e4" font-weight="500">You: </text>
+    <text x="114" y="50" font-size="13" fill="#444444">Help me write unit tests for the database module</text>
+
+    <text x="78" y="70" font-size="12" fill="#999999">Sure! Let me look at the database module structure first…</text>
+
+    <rect x="78" y="80" width="50" height="16" rx="8" fill="#f0f0f0"/>
+    <text x="103" y="92" text-anchor="middle" font-size="9" fill="#888888">2 msgs</text>
+
+    <line x1="78" y1="104" x2="660" y2="104" stroke="#f0f0f0" stroke-width="1"/>
+  </g>
+
+  <!-- Row 4 -->
+  <g transform="translate(20, 365)">
+    <rect x="0" y="0" width="680" height="105" fill="#ffffff"/>
+
+    <rect x="16" y="16" width="48" height="48" rx="24" fill="#1c71d8" opacity="0.15"/>
+    <text x="40" y="47" text-anchor="middle" font-size="20" fill="#1c71d8">◈</text>
+
+    <text x="78" y="30" font-size="13" font-weight="600" fill="#1e1e1e">alpha</text>
+    <text x="660" y="30" text-anchor="end" font-size="11" fill="#aaaaaa">2024-01-01</text>
+
+    <text x="78" y="50" font-size="13" fill="#3584e4" font-weight="500">You: </text>
+    <text x="114" y="50" font-size="13" fill="#444444">Refactor the API endpoints to use async handlers</text>
+
+    <text x="78" y="70" font-size="12" fill="#999999">Let me plan the refactoring approach. First, I'll identify…</text>
+
+    <rect x="78" y="80" width="50" height="16" rx="8" fill="#f0f0f0"/>
+    <text x="103" y="92" text-anchor="middle" font-size="9" fill="#888888">2 msgs</text>
+  </g>
+
+  <!-- Annotation -->
+  <text x="360" y="510" text-anchor="middle" font-size="11" fill="#999999">Messaging app style · Project as "contact name" · User prompt + assistant preview · Round avatar · Resume via right-click or detail view</text>
+</svg>
