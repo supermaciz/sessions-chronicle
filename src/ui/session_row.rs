@@ -37,6 +37,36 @@ impl FactoryComponent for SessionRow {
     view! {
         root = gtk::Box {
             set_orientation: gtk::Orientation::Horizontal,
+
+            append = &adw::ActionRow::builder()
+                .title(Self::session_title(&self.session))
+                .subtitle(Self::session_subtitle(&self.session))
+                .activatable(true)
+                .build() {
+                set_hexpand: true,
+
+                add_prefix = &gtk::Image::from_icon_name(self.session.tool.icon_name()) {
+                    set_pixel_size: 16,
+                },
+
+                add_suffix = &gtk::Button::from_icon_name("utilities-terminal-symbolic") {
+                    add_css_class: "flat",
+                    set_tooltip_text: Some("Resume in terminal"),
+                    connect_clicked[sender, session_id = self.session.id.clone(), tool = self.session.tool] => move |_| {
+                        let _ = sender.output(SessionRowOutput::ResumeRequested(session_id.clone(), tool));
+                    },
+                },
+
+                add_suffix = &gtk::Image::from_icon_name("go-next-symbolic") {
+                    add_css_class: "dim-label",
+                },
+
+                add_suffix = &gtk::Label {
+                    add_css_class: "dim-label",
+                    set_halign: gtk::Align::End,
+                    set_label: &Self::format_relative_time(self.session.last_updated),
+                },
+            },
         }
     }
 
@@ -53,49 +83,10 @@ impl FactoryComponent for SessionRow {
         returned_widget: &<Self::ParentWidget as relm4::factory::FactoryView>::ReturnedWidget,
         sender: FactorySender<Self>,
     ) -> Self::Widgets {
-        // Build an ActionRow with complex suffix widgets.
-        let row = adw::ActionRow::builder()
-            .title(Self::session_title(&self.session))
-            .subtitle(Self::session_subtitle(&self.session))
-            .activatable(true)
-            .build();
-
-        let icon = gtk::Image::from_icon_name(self.session.tool.icon_name());
-        icon.set_pixel_size(16);
-        row.add_prefix(&icon);
-
         let session_id = self.session.id.clone();
         unsafe {
             returned_widget.set_data(SESSION_ID_KEY, session_id.clone());
         }
-
-        // Resume button
-        let resume_button = gtk::Button::from_icon_name("utilities-terminal-symbolic");
-        resume_button.add_css_class("flat");
-        resume_button.set_tooltip_text(Some("Resume in terminal"));
-        let tool = self.session.tool;
-        let sender_resume = sender.clone();
-        resume_button.connect_clicked(move |_| {
-            let _ =
-                sender_resume.output(SessionRowOutput::ResumeRequested(session_id.clone(), tool));
-        });
-        row.add_suffix(&resume_button);
-
-        // Chevron
-        let chevron = gtk::Image::from_icon_name("go-next-symbolic");
-        chevron.add_css_class("dim-label");
-        row.add_suffix(&chevron);
-
-        // Time label
-        let time_label =
-            gtk::Label::new(Some(&Self::format_relative_time(self.session.last_updated)));
-        time_label.add_css_class("dim-label");
-        time_label.set_halign(gtk::Align::End);
-        row.add_suffix(&time_label);
-
-        // Make ActionRow fill the root box so ListBox layout works correctly
-        row.set_hexpand(true);
-        root.append(&row);
 
         let widgets = view_output!();
         widgets
