@@ -1,7 +1,7 @@
 # Session Row Prompt Preview - Exploration
 
 **Date**: 2026-02-10  
-**Status**: Pending decision  
+**Status**: Accepted (Proposal A)  
 **Feature**: Redesign the session list rows to show the first user prompt instead of the project path, and fix button alignment issues.
 
 ## Problems with current design
