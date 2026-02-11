@@ -10,6 +10,8 @@ pub struct Session {
     pub message_count: usize,
     pub file_path: String,
     pub last_updated: DateTime<Utc>,
+    #[serde(default)]
+    pub first_prompt: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]

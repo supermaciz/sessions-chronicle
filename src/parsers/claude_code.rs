@@ -91,6 +91,7 @@ impl ClaudeCodeParser {
         }
 
         let last_updated = latest_timestamp.unwrap_or(start_time);
+        let first_prompt = crate::parsers::extract_first_prompt(&messages);
 
         Ok((
             Session {
@@ -101,6 +102,7 @@ impl ClaudeCodeParser {
                 message_count: messages.len(),
                 file_path: file_path.to_str().unwrap().to_string(),
                 last_updated,
+                first_prompt,
             },
             messages,
         ))
@@ -262,6 +264,7 @@ mod tests {
         assert_eq!(session.start_time, expected_start);
         assert_eq!(session.last_updated, expected_end);
         assert_eq!(session.message_count, 2);
+        assert_eq!(session.first_prompt.as_deref(), Some("Hello"));
 
         assert_eq!(messages.len(), 2);
         assert_eq!(messages[0].session_id, "session-123");

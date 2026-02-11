@@ -1,6 +1,7 @@
 use chrono::{DateTime, Duration as ChronoDuration, Utc};
 use gtk::prelude::*;
 use relm4::factory::{DynamicIndex, FactoryComponent, FactorySender};
+use relm4::gtk::{gdk, gio};
 use relm4::{adw, gtk};
 
 use adw::prelude::ActionRowExt;
@@ -23,6 +24,10 @@ pub enum SessionRowOutput {
     ResumeRequested(String, Tool),
 }
 
+fn emit_resume(sender: &relm4::Sender<SessionRowOutput>, id: &str, tool: Tool) {
+    let _ = sender.send(SessionRowOutput::ResumeRequested(id.to_string(), tool));
+}
+
 #[relm4::factory(pub)]
 impl FactoryComponent for SessionRow {
     type Init = SessionRowInit;
@@ -41,27 +46,14 @@ impl FactoryComponent for SessionRow {
                 .activatable(true)
                 .build() {
                 set_hexpand: true,
+                set_title_lines: 1,
 
                 add_prefix = &gtk::Image::from_icon_name(self.session.tool.icon_name()) {
                     set_pixel_size: 16,
                 },
 
-                add_suffix = &gtk::Button::from_icon_name("utilities-terminal-symbolic") {
-                    add_css_class: "flat",
-                    set_tooltip_text: Some("Resume in terminal"),
-                    connect_clicked[sender, session_id = self.session.id.clone(), tool = self.session.tool] => move |_| {
-                        let _ = sender.output(SessionRowOutput::ResumeRequested(session_id.clone(), tool));
-                    },
-                },
-
                 add_suffix = &gtk::Image::from_icon_name("go-next-symbolic") {
                     add_css_class: "dim-label",
-                },
-
-                add_suffix = &gtk::Label {
-                    add_css_class: "dim-label",
-                    set_halign: gtk::Align::End,
-                    set_label: &Self::format_relative_time(self.session.last_updated),
                 },
             },
         }
@@ -80,7 +72,37 @@ impl FactoryComponent for SessionRow {
         _returned_widget: &<Self::ParentWidget as relm4::factory::FactoryView>::ReturnedWidget,
         sender: FactorySender<Self>,
     ) -> Self::Widgets {
+        let root_for_actions = root.clone();
         let widgets = view_output!();
+
+        let menu = gio::Menu::new();
+        menu.append(Some("Resume in Terminal"), Some("row.resume"));
+
+        let action_group = gio::SimpleActionGroup::new();
+        let resume_action = gio::SimpleAction::new("resume", None);
+
+        let output_sender = sender.output_sender().clone();
+        let session_id = self.session.id.clone();
+        let tool = self.session.tool;
+        resume_action.connect_activate(move |_, _| {
+            emit_resume(&output_sender, &session_id, tool);
+        });
+
+        action_group.add_action(&resume_action);
+        root_for_actions.insert_action_group("row", Some(&action_group));
+
+        let popover = gtk::PopoverMenu::from_model(Some(&menu));
+        popover.set_parent(&root_for_actions);
+
+        let gesture = gtk::GestureClick::new();
+        gesture.set_button(gdk::BUTTON_SECONDARY);
+        let popover_ref = popover.clone();
+        gesture.connect_pressed(move |_, _, x, y| {
+            popover_ref.set_pointing_to(Some(&gdk::Rectangle::new(x as i32, y as i32, 1, 1)));
+            popover_ref.popup();
+        });
+        root_for_actions.add_controller(gesture);
+
         widgets
     }
 }
@@ -91,21 +113,35 @@ impl SessionRow {
     }
 
     fn session_title(session: &Session) -> String {
+        if let Some(prompt) = session
+            .first_prompt
+            .as_deref()
+            .map(str::trim)
+            .filter(|prompt| !prompt.is_empty())
+        {
+            return prompt.to_string();
+        }
+
+        Self::project_name(session).unwrap_or_else(|| "Unknown project".to_string())
+    }
+
+    fn project_name(session: &Session) -> Option<String> {
         session
             .project_path
             .as_deref()
             .and_then(|path| std::path::Path::new(path).file_name())
             .and_then(|name| name.to_str())
-            .map(|name| name.to_string())
-            .unwrap_or_else(|| "Unknown project".to_string())
+            .map(str::to_string)
     }
 
     fn session_subtitle(session: &Session) -> String {
-        let detail = session
-            .project_path
-            .as_deref()
-            .unwrap_or(&session.file_path);
-        format!("{} • {} messages", detail, session.message_count)
+        let project_name =
+            Self::project_name(session).unwrap_or_else(|| "Unknown project".to_string());
+        let relative_time = Self::format_relative_time(session.last_updated);
+        format!(
+            "{} · {} messages · {}",
+            project_name, session.message_count, relative_time
+        )
     }
 
     fn format_relative_time(instant: DateTime<Utc>) -> String {
@@ -123,5 +159,76 @@ impl SessionRow {
         } else {
             instant.format("%Y-%m-%d").to_string()
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn build_session(
+        project_path: Option<&str>,
+        first_prompt: Option<&str>,
+        minutes_ago: i64,
+    ) -> Session {
+        let now = Utc::now();
+        Session {
+            id: "session-id".to_string(),
+            tool: Tool::ClaudeCode,
+            project_path: project_path.map(str::to_string),
+            start_time: now,
+            message_count: 7,
+            file_path: "/tmp/session.jsonl".to_string(),
+            last_updated: now - ChronoDuration::minutes(minutes_ago),
+            first_prompt: first_prompt.map(str::to_string),
+        }
+    }
+
+    #[test]
+    fn session_title_uses_first_prompt_when_present() {
+        let session = build_session(
+            Some("/home/user/work/my-project"),
+            Some("Investigate this failing parser test"),
+            10,
+        );
+
+        assert_eq!(
+            SessionRow::session_title(&session),
+            "Investigate this failing parser test"
+        );
+    }
+
+    #[test]
+    fn session_title_falls_back_to_project_name_then_unknown_project() {
+        let with_project = build_session(Some("/home/user/work/my-project"), None, 10);
+        let without_project = build_session(None, None, 10);
+
+        assert_eq!(SessionRow::session_title(&with_project), "my-project");
+        assert_eq!(
+            SessionRow::session_title(&without_project),
+            "Unknown project"
+        );
+    }
+
+    #[test]
+    fn session_subtitle_formats_project_messages_and_relative_time() {
+        let session = build_session(Some("/home/user/work/my-project"), None, 5);
+
+        assert_eq!(
+            SessionRow::session_subtitle(&session),
+            "my-project · 7 messages · 5m ago"
+        );
+    }
+
+    #[test]
+    fn emit_resume_sends_resume_requested_output() {
+        let (sender, receiver) = relm4::channel();
+
+        emit_resume(&sender, "session-123", Tool::OpenCode);
+
+        assert!(matches!(
+            receiver.recv_sync(),
+            Some(SessionRowOutput::ResumeRequested(id, tool)) if id == "session-123" && tool == Tool::OpenCode
+        ));
     }
 }

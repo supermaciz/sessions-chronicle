@@ -33,8 +33,8 @@ impl TempDatabase {
         // Insert a session
         self.connection
             .execute(
-                "INSERT INTO sessions (id, tool, project_path, start_time, message_count, file_path, last_updated)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                "INSERT INTO sessions (id, tool, project_path, start_time, message_count, file_path, last_updated, first_prompt)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
                 rusqlite::params![
                     "test-session",
                     "claude_code",
@@ -43,6 +43,7 @@ impl TempDatabase {
                     4_i64,
                     "/tmp/test-session.jsonl",
                     2000_i64,
+                    Some("Help me refactor this code"),
                 ],
             )
             .expect("Failed to insert session");
@@ -124,6 +125,10 @@ fn load_session_returns_existing_session() {
     assert_eq!(session.id, "test-session");
     assert_eq!(session.project_path, Some("/projects/test".to_string()));
     assert_eq!(session.message_count, 4);
+    assert_eq!(
+        session.first_prompt.as_deref(),
+        Some("Help me refactor this code")
+    );
 }
 
 #[test]
