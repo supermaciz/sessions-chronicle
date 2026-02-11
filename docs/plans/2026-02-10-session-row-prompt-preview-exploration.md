@@ -99,6 +99,35 @@ Alternative: JOIN at query time from the `messages` FTS table. But storing it di
 
 ---
 
+### Proposal C-lite — ActionRow with fixed suffix columns (GNOME HIG + pragmatic)
+
+![Proposal C-lite](../mockups/session-row-prompt-preview/proposal-c-lite-actionrow-fixed-suffix.svg)
+
+**Layout**: Keep `AdwActionRow`, but place a custom fixed-width suffix container inside it
+
+```
+[icon 32px] [CONTENT flex] [SUFFIX BOX: TIME 70px | RESUME 32px | CHEVRON]
+```
+
+| Area | Content |
+|------|---------|
+| Prefix | Tool icon (symbolic, 16-24px) |
+| Title | First prompt (1 line, ellipsis via `title_lines: 1`) |
+| Subtitle | `project-name · N messages` |
+| Suffix container | Fixed-width `gtk::Box` holding time, resume button, chevron |
+
+**Key decisions**:
+- Keep `AdwActionRow` semantics and built-in accessibility/typography behavior
+- Fix alignment by grouping suffix widgets in one controlled container
+- Time label gets fixed width (`width_request: 70`) and numeric style (`.numeric`)
+- Resume button stays visible (`flat`, icon-only, 32x32)
+- Chevron remains the navigation affordance (`go-next-symbolic`)
+
+**Pros**: Perfect alignment while keeping ActionRow, resume remains visible, lower risk than full custom row  
+**Cons**: Slightly more custom than pure ActionRow patterns, requires careful spacing for narrow widths
+
+---
+
 ### Proposal D — Separate cards per session (Creative)
 
 ![Proposal D](../mockups/session-row-prompt-preview/proposal-d-card-per-session.svg)
@@ -112,7 +141,7 @@ Alternative: JOIN at query time from the `messages` FTS table. But storing it di
 │ Redesign the SessionRow component to show the first  │  ← prompt (2 lines)
 │ prompt instead of the project path…                  │
 │                                                      │
-│ ⌈8 messages⌉                           ⌈⏵ Resume⌉  │  ← footer
+│ ⌈8 messages⌉                             ⌈⏵ Resume⌉  │  ← footer
 └──────────────────────────────────────────────────────┘
 ```
 
@@ -162,15 +191,15 @@ Alternative: JOIN at query time from the `messages` FTS table. But storing it di
 
 ## Comparison matrix
 
-| Criterion | A | B | C | D | E |
-|-----------|---|---|---|---|---|
-| HIG conformance | ★★★ | ★★★ | ★★☆ | ★★☆ | ★☆☆ |
-| Implementation complexity | Low | Low | Medium | Medium | High |
-| Button alignment | N/A (no btn) | N/A (no btn) | Perfect | Good | N/A (no btn) |
-| Resume discoverability | Low (ctx menu) | Low (ctx menu) | High (visible) | High (pill btn) | Low (ctx menu) |
-| Info density per row | Medium | Good | Good | Very good | Excellent |
-| Vertical space per row | ~72px | ~90px | ~76px | ~115px | ~105px |
-| Data model changes | `first_prompt` | `first_prompt` | `first_prompt` | `first_prompt` | `first_prompt` + `first_response` |
+| Criterion | A | B | C | C-lite | D | E |
+|-----------|---|---|---|--------|---|---|
+| HIG conformance | ★★★ | ★★★ | ★★☆ | ★★★ | ★★☆ | ★☆☆ |
+| Implementation complexity | Low | Low | Medium | Low-Medium | Medium | High |
+| Button alignment | N/A (no btn) | N/A (no btn) | Perfect | Perfect | Good | N/A (no btn) |
+| Resume discoverability | Low (ctx menu) | Low (ctx menu) | High (visible) | High (visible) | High (pill btn) | Low (ctx menu) |
+| Info density per row | Medium | Good | Good | Good | Very good | Excellent |
+| Vertical space per row | ~72px | ~90px | ~76px | ~76px | ~115px | ~105px |
+| Data model changes | `first_prompt` | `first_prompt` | `first_prompt` | `first_prompt` | `first_prompt` | `first_prompt` + `first_response` |
 
 ## GNOME HIG references used
 
