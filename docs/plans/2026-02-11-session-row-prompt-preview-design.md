@@ -31,6 +31,31 @@
   - Boxed lists: `https://developer.gnome.org/hig/patterns/containers/boxed-lists.html`
   - Menus: `https://developer.gnome.org/hig/patterns/controls/menus.html`
 
+## Technical notes (from review)
+
+### Relm4 factory `init_widgets`
+
+The `view!` macro in `FactoryComponent` works the same as in regular components (using `self` to refer to the model). However, imperative widget construction (gesture controllers, popovers, action groups) **cannot** be expressed in the `view!` macro and **must** go inside `init_widgets`, which the current `SessionRow` already overrides.
+
+### Column index safety
+
+The `session_from_row()` mapper uses hardcoded column indices (`row.get(0)` through `row.get(6)`). The new `first_prompt` column must be **appended as the last column** (after `last_updated`) in the CREATE TABLE and all SELECT statements to preserve existing indices. The new field maps to `row.get(7)?`.
+
+### PopoverMenu lifecycle in GTK4
+
+A `PopoverMenu` created imperatively must not be dropped. Use `popover.set_parent(&root)` in `init_widgets` to transfer ownership to the widget tree. The gesture closure must capture a cloned reference to the popover for calling `popup()`.
+
+### FactorySender output in imperative code
+
+Inside `init_widgets`, the `view!` macro sugar (`sender.output(...)`) is not available for plain closures. Use:
+
+```rust
+let output_sender = sender.output_sender().clone();
+action.connect_activate(move |_, _| {
+    let _ = output_sender.send(SessionRowOutput::ResumeRequested(id.clone(), tool));
+});
+```
+
 ---
 
 ### Task 1: Add `first_prompt` to model and schema migration
@@ -60,28 +85,38 @@ Expected: FAIL because migration path does not exist yet.
 
 **Step 3: Implement schema + migration**
 
-- Add `first_prompt TEXT` in `CREATE TABLE IF NOT EXISTS sessions (...)`.
+- **Append** `first_prompt TEXT` as the **last column** in `CREATE TABLE IF NOT EXISTS sessions (...)`, after `last_updated`. This preserves all existing column indices (0–6) in `session_from_row()`.
 - Add idempotent migration logic:
   - query `PRAGMA table_info(sessions)`;
   - if column missing, run `ALTER TABLE sessions ADD COLUMN first_prompt TEXT`.
+- Existing rows get `NULL` for `first_prompt`, which maps to `Option::None`.
 
 **Step 4: Add model field**
 
-Add to `Session`:
+Add to `Session` (in `src/models/session.rs`):
 
 ```rust
+#[serde(default)]
 pub first_prompt: Option<String>,
 ```
 
-**Step 5: Run test to verify it passes**
+Note: `#[serde(default)]` ensures backward-compatible deserialization if `Session` is ever read from JSON without the field.
+
+**Step 5: Update all existing `Session` struct literals in tests**
+
+Adding `first_prompt` to `Session` will break any test that constructs a `Session` inline. Update:
+- `src/ui/session_list.rs:274` — add `first_prompt: None,` to the `Session` literal in `session_list_emits_selection_on_row_activation`.
+- Any other direct `Session` construction sites discovered during compilation.
+
+**Step 6: Run test to verify it passes**
 
 Run: `cargo test initialize_database_adds_first_prompt_column_for_legacy_schema`
 Expected: PASS.
 
-**Step 6: Commit**
+**Step 7: Commit**
 
 ```bash
-git add src/models/session.rs src/database/schema.rs
+git add src/models/session.rs src/database/schema.rs src/ui/session_list.rs
 git commit -m "feat: add first_prompt field and schema migration"
 ```
 
@@ -109,18 +144,27 @@ Expected: FAIL due to SQL column mismatch or missing mapping.
 
 **Step 3: Update indexer insert statement**
 
-In `insert_session_and_messages()`:
-- extend `INSERT OR REPLACE INTO sessions` column list with `first_prompt`;
-- pass `&session.first_prompt` in params.
+In `insert_session_and_messages()` (`src/database/indexer.rs:241-254`):
+- extend `INSERT OR REPLACE INTO sessions` column list with `first_prompt` as the 8th column;
+- pass `&session.first_prompt` as `?8` in params.
 
-**Step 4: Update all session SELECT queries and row mapping**
+**Step 4: Update all 5 session SELECT queries and row mapping**
 
-In `src/database/mod.rs`:
-- include `first_prompt` in every session query used by:
-  - `search_sessions_with_query()`
-  - `load_sessions()`
-  - `load_session()`
-- update `session_from_row()` field offsets accordingly.
+In `src/database/mod.rs`, add `s.first_prompt` (or `first_prompt`) to **all five** SQL strings:
+
+1. `search_sessions_with_query()` — all-tools variant (line ~113): add `s.first_prompt` after `s.last_updated`
+2. `search_sessions_with_query()` — filtered variant (line ~127): add `s.first_prompt` after `s.last_updated`
+3. `load_sessions()` — all-tools variant (line ~176): add `first_prompt` after `last_updated`
+4. `load_sessions()` — filtered variant (line ~187): add `first_prompt` after `last_updated`
+5. `load_session()` (line ~220): add `first_prompt` after `last_updated`
+
+Update `session_from_row()` to read the new column at **index 7**:
+
+```rust
+first_prompt: row.get(7)?,
+```
+
+This preserves all existing indices (0–6) unchanged.
 
 **Step 5: Run tests to verify pass**
 
@@ -194,12 +238,20 @@ first_prompt: crate::parsers::extract_first_prompt(&messages),
 
 after message vector is finalized.
 
-**Step 5: Run parser tests again**
+**Step 5: Update Codex parser TODO comment**
+
+In `src/parsers/codex.rs:159-162`, remove or update the TODO comment about title extraction since `first_prompt` now fulfills that intent:
+
+```rust
+// first_prompt is populated via extract_first_prompt() in parsers/mod.rs
+```
+
+**Step 6: Run parser tests again**
 
 Run: `cargo test parsers`
 Expected: PASS.
 
-**Step 6: Commit**
+**Step 7: Commit**
 
 ```bash
 git add src/parsers/mod.rs src/parsers/claude_code.rs src/parsers/opencode.rs src/parsers/codex.rs src/parsers/mistral_vibe.rs
@@ -219,7 +271,7 @@ git commit -m "feat: extract and store first user prompt during parsing"
 Add unit tests for:
 - title uses `first_prompt` when present,
 - title fallback uses project name then `Unknown project`,
-- subtitle format is `project-name - N messages - relative-time` (or the project style separator chosen by implementation).
+- subtitle format is `project-name · N messages · relative-time` (or the project style separator chosen by implementation).
 
 **Step 2: Run tests to verify they fail**
 
@@ -263,24 +315,64 @@ git commit -m "feat: redesign session row to prompt-first clean actionrow"
 - Modify: `src/ui/session_row.rs`
 - Optional style tweak: `data/resources/style.css` (only if needed for popover spacing)
 
-**Step 1: Write failing interaction test (or minimal structural test)**
+**Step 1: Extract resume action handler into a testable helper**
 
-If GTK test ergonomics allow, add a widget-level test that ensures right-click path is wired (action group exists and emits `ResumeRequested`). If not practical, add a focused unit test for the action callback helper function and document manual QA fallback.
+Create a standalone function that can be unit-tested without GTK:
+
+```rust
+fn emit_resume(sender: &relm4::Sender<SessionRowOutput>, id: &str, tool: Tool) {
+    let _ = sender.send(SessionRowOutput::ResumeRequested(id.to_string(), tool));
+}
+```
+
+Add a unit test for this helper.
 
 **Step 2: Run test to verify fail**
 
 Run: `cargo test session_row`
-Expected: FAIL until action/menu wiring exists.
+Expected: FAIL until helper exists.
 
-**Step 3: Implement popover menu and action**
+**Step 3: Implement popover menu and action in `init_widgets`**
 
-Implementation shape:
-- create `gio::Menu` with item label `Resume in Terminal` bound to a row-local action name;
-- attach `gio::SimpleActionGroup` to row root;
-- install action callback to emit `SessionRowOutput::ResumeRequested(session_id.clone(), tool)`;
-- create `gtk::PopoverMenu::from_model(...)` parented to row root;
-- add `gtk::GestureClick` with `set_button(3)`;
-- on `pressed`, set pointing rectangle from `(x, y)` and call `popover.popup()`.
+All imperative widget wiring **must go inside `init_widgets`**, since the `view!` macro cannot express gesture controllers, popovers, or action groups.
+
+Implementation shape inside `init_widgets`:
+
+```rust
+// 1. Create menu model
+let menu = gio::Menu::new();
+menu.append(Some("Resume in Terminal"), Some("row.resume"));
+
+// 2. Create action group with "row" prefix
+let action_group = gio::SimpleActionGroup::new();
+let resume_action = gio::SimpleAction::new("resume", None);
+
+// 3. Capture output sender (NOT sender.output() — that's view! macro sugar)
+let output_sender = sender.output_sender().clone();
+let session_id = self.session.id.clone();
+let tool = self.session.tool;
+resume_action.connect_activate(move |_, _| {
+    emit_resume(&output_sender, &session_id, tool);
+});
+action_group.add_action(&resume_action);
+root.insert_action_group("row", Some(&action_group));
+
+// 4. Create popover, parent it to root for lifecycle management
+let popover = gtk::PopoverMenu::from_model(Some(&menu));
+popover.set_parent(&root);
+
+// 5. Attach right-click gesture
+let gesture = gtk::GestureClick::new();
+gesture.set_button(3); // right-click
+let popover_ref = popover.clone();
+gesture.connect_pressed(move |_, _, x, y| {
+    popover_ref.set_pointing_to(Some(&gdk::Rectangle::new(x as i32, y as i32, 1, 1)));
+    popover_ref.popup();
+});
+root.add_controller(gesture);
+```
+
+Note on action prefix: the `gio::Menu` item uses `"row.resume"` which matches the action group registered as `"row"` on the root widget.
 
 **Step 4: Ensure no left-click regression**
 
