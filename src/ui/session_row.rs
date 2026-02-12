@@ -17,6 +17,7 @@ pub struct SessionRowInit {
 #[derive(Debug)]
 pub struct SessionRow {
     session: Session,
+    context_menu: Option<gtk::PopoverMenu>,
 }
 
 #[derive(Debug)]
@@ -62,6 +63,7 @@ impl FactoryComponent for SessionRow {
     fn init_model(init: Self::Init, _index: &DynamicIndex, _sender: FactorySender<Self>) -> Self {
         Self {
             session: init.session,
+            context_menu: None,
         }
     }
 
@@ -93,17 +95,23 @@ impl FactoryComponent for SessionRow {
 
         let popover = gtk::PopoverMenu::from_model(Some(&menu));
         popover.set_parent(&root_for_actions);
+        self.context_menu = Some(popover.clone());
 
         let gesture = gtk::GestureClick::new();
         gesture.set_button(gdk::BUTTON_SECONDARY);
-        let popover_ref = popover.clone();
         gesture.connect_pressed(move |_, _, x, y| {
-            popover_ref.set_pointing_to(Some(&gdk::Rectangle::new(x as i32, y as i32, 1, 1)));
-            popover_ref.popup();
+            popover.set_pointing_to(Some(&gdk::Rectangle::new(x as i32, y as i32, 1, 1)));
+            popover.popup();
         });
         root_for_actions.add_controller(gesture);
 
         widgets
+    }
+
+    fn shutdown(&mut self, _widgets: &mut Self::Widgets, _output: relm4::Sender<Self::Output>) {
+        if let Some(popover) = self.context_menu.take() {
+            popover.unparent();
+        }
     }
 }
 
@@ -135,12 +143,24 @@ impl SessionRow {
     }
 
     fn session_subtitle(session: &Session) -> String {
-        let project_name =
-            Self::project_name(session).unwrap_or_else(|| "Unknown project".to_string());
+        let has_prompt = session
+            .first_prompt
+            .as_deref()
+            .is_some_and(|p| !p.trim().is_empty());
+
+        let location = if has_prompt {
+            Self::project_name(session).unwrap_or_else(|| "Unknown project".to_string())
+        } else {
+            session
+                .project_path
+                .clone()
+                .unwrap_or_else(|| session.file_path.clone())
+        };
+
         let relative_time = Self::format_relative_time(session.last_updated);
         format!(
             "{} · {} messages · {}",
-            project_name, session.message_count, relative_time
+            location, session.message_count, relative_time
         )
     }
 
@@ -211,8 +231,18 @@ mod tests {
     }
 
     #[test]
-    fn session_subtitle_formats_project_messages_and_relative_time() {
+    fn session_subtitle_shows_full_path_when_no_prompt() {
         let session = build_session(Some("/home/user/work/my-project"), None, 5);
+
+        assert_eq!(
+            SessionRow::session_subtitle(&session),
+            "/home/user/work/my-project · 7 messages · 5m ago"
+        );
+    }
+
+    #[test]
+    fn session_subtitle_shows_project_name_when_prompt_present() {
+        let session = build_session(Some("/home/user/work/my-project"), Some("Fix the build"), 5);
 
         assert_eq!(
             SessionRow::session_subtitle(&session),

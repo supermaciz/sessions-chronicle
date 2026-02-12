@@ -25,7 +25,9 @@ fn truncate_chars(value: &str, max_chars: usize) -> String {
         return value.to_string();
     }
 
-    value.chars().take(max_chars).collect()
+    let mut truncated: String = value.chars().take(max_chars).collect();
+    truncated.push('\u{2026}');
+    truncated
 }
 
 #[cfg(test)]
@@ -76,7 +78,10 @@ mod tests {
         let exactly_201 = "b".repeat(201);
 
         assert_eq!(normalize_prompt(&exactly_200), exactly_200);
-        assert_eq!(normalize_prompt(&exactly_201), "b".repeat(200));
+
+        let mut expected = "b".repeat(200);
+        expected.push('\u{2026}');
+        assert_eq!(normalize_prompt(&exactly_201), expected);
     }
 
     #[test]
@@ -84,7 +89,9 @@ mod tests {
         let multibyte = "é".repeat(201);
 
         let truncated = normalize_prompt(&multibyte);
-        assert_eq!(truncated, "é".repeat(200));
-        assert_eq!(truncated.chars().count(), 200);
+        let mut expected = "é".repeat(200);
+        expected.push('\u{2026}');
+        assert_eq!(truncated, expected);
+        assert_eq!(truncated.chars().count(), 201); // 200 chars + ellipsis
     }
 }
