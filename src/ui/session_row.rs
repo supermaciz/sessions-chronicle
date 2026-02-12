@@ -7,6 +7,7 @@ use relm4::{adw, gtk};
 use adw::prelude::ActionRowExt;
 
 use crate::models::{Session, Tool};
+use gtk::glib;
 
 /// Data passed to initialize each factory row.
 pub struct SessionRowInit {
@@ -121,16 +122,20 @@ impl SessionRow {
     }
 
     fn session_title(session: &Session) -> String {
-        if let Some(prompt) = session
+        let raw = if let Some(prompt) = session
             .first_prompt
             .as_deref()
             .map(str::trim)
             .filter(|prompt| !prompt.is_empty())
         {
-            return prompt.to_string();
-        }
+            prompt.to_string()
+        } else {
+            Self::project_name(session).unwrap_or_else(|| "Unknown project".to_string())
+        };
 
-        Self::project_name(session).unwrap_or_else(|| "Unknown project".to_string())
+        // ActionRow interprets title as Pango markup by default.
+        // Escape special chars (<, >, &) to prevent parse failures.
+        glib::markup_escape_text(&raw).to_string()
     }
 
     fn project_name(session: &Session) -> Option<String> {
@@ -158,10 +163,13 @@ impl SessionRow {
         };
 
         let relative_time = Self::format_relative_time(session.last_updated);
-        format!(
+        let raw = format!(
             "{} · {} messages · {}",
             location, session.message_count, relative_time
-        )
+        );
+
+        // Escape for Pango markup (ActionRow subtitle also uses markup).
+        glib::markup_escape_text(&raw).to_string()
     }
 
     fn format_relative_time(instant: DateTime<Utc>) -> String {
@@ -247,6 +255,20 @@ mod tests {
         assert_eq!(
             SessionRow::session_subtitle(&session),
             "my-project · 7 messages · 5m ago"
+        );
+    }
+
+    #[test]
+    fn session_title_escapes_markup_special_chars() {
+        let session = build_session(
+            Some("/home/user/work/my-project"),
+            Some("<command-message>review</command-message> & fix"),
+            10,
+        );
+
+        assert_eq!(
+            SessionRow::session_title(&session),
+            "&lt;command-message&gt;review&lt;/command-message&gt; &amp; fix"
         );
     }
 
