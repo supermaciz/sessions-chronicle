@@ -2,6 +2,8 @@
 
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
+**Status:** Implemented
+
 **Goal:** Replace session row project-path-first labeling with first user prompt preview, remove inline resume button from the row, and expose resume via right-click context menu.
 
 **Architecture:** Extend the `Session` domain model and SQLite schema with `first_prompt`, populate it during indexing from the first `Role::User` message, and load it in all session queries. Then refactor `SessionRow` to a clean `AdwActionRow` layout (single-line title, compact metadata subtitle, chevron-only suffix) and attach a right-click `PopoverMenu` action that forwards the existing resume output signal.
