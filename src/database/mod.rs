@@ -32,6 +32,7 @@ fn session_from_row(row: &Row) -> rusqlite::Result<Session> {
             .timestamp_opt(last_updated, 0)
             .single()
             .unwrap_or_else(Utc::now),
+        first_prompt: row.get(7)?,
     })
 }
 
@@ -110,7 +111,7 @@ fn search_sessions_with_query(
 ) -> Result<Vec<Session>> {
     let (query_sql, tool_strings): (String, Vec<String>) = if tools.len() == Tool::ALL.len() {
         (
-            "SELECT s.id, s.tool, s.project_path, s.start_time, s.message_count, s.file_path, s.last_updated,
+            "SELECT s.id, s.tool, s.project_path, s.start_time, s.message_count, s.file_path, s.last_updated, s.first_prompt,
                     bm25(messages) AS rank
              FROM messages
              JOIN sessions s ON s.id = messages.session_id
@@ -124,7 +125,7 @@ fn search_sessions_with_query(
         let tool_strings: Vec<String> = tools.iter().map(|t| t.to_storage()).collect::<Vec<_>>();
         (
             format!(
-                "SELECT s.id, s.tool, s.project_path, s.start_time, s.message_count, s.file_path, s.last_updated,
+                "SELECT s.id, s.tool, s.project_path, s.start_time, s.message_count, s.file_path, s.last_updated, s.first_prompt,
                         bm25(messages) AS rank
                  FROM messages
                  JOIN sessions s ON s.id = messages.session_id
@@ -173,7 +174,7 @@ pub fn load_sessions(db_path: &Path, tools: &[Tool]) -> Result<Vec<Session>> {
 
     let (query, tool_strings): (String, Vec<String>) = if tools.len() == Tool::ALL.len() {
         (
-            "SELECT id, tool, project_path, start_time, message_count, file_path, last_updated
+            "SELECT id, tool, project_path, start_time, message_count, file_path, last_updated, first_prompt
              FROM sessions
              ORDER BY last_updated DESC"
                 .to_string(),
@@ -184,7 +185,7 @@ pub fn load_sessions(db_path: &Path, tools: &[Tool]) -> Result<Vec<Session>> {
         let tool_strings: Vec<String> = tools.iter().map(|t| t.to_storage()).collect::<Vec<_>>();
         (
             format!(
-                "SELECT id, tool, project_path, start_time, message_count, file_path, last_updated
+                "SELECT id, tool, project_path, start_time, message_count, file_path, last_updated, first_prompt
                  FROM sessions
                  WHERE tool IN ({})
                  ORDER BY last_updated DESC",
@@ -217,7 +218,7 @@ pub fn load_session(db_path: &Path, session_id: &str) -> Result<Option<Session>>
     let db = Connection::open(db_path).context("Failed to open database")?;
 
     let mut stmt = db.prepare(
-        "SELECT id, tool, project_path, start_time, message_count, file_path, last_updated
+        "SELECT id, tool, project_path, start_time, message_count, file_path, last_updated, first_prompt
          FROM sessions
          WHERE id = ?1",
     )?;

@@ -279,6 +279,7 @@ mod tests {
             message_count: 1,
             file_path: "/tmp/session.jsonl".to_string(),
             last_updated: chrono::Utc::now(),
+            first_prompt: None,
         };
 
         {
@@ -302,5 +303,60 @@ mod tests {
             outputs.as_slice(),
             [SessionListOutput::SessionSelected(id)] if id == "test-session"
         ));
+    }
+
+    #[gtk::test]
+    fn session_list_forwards_row_resume_action_without_selection() {
+        let temp_db = tempfile::NamedTempFile::new().expect("temp db");
+        let outputs: Rc<RefCell<Vec<SessionListOutput>>> = Rc::new(RefCell::new(Vec::new()));
+        let outputs_ref = outputs.clone();
+
+        let controller = SessionList::builder()
+            .launch(temp_db.path().to_path_buf())
+            .connect_receiver(move |_, output| {
+                outputs_ref.borrow_mut().push(output);
+            });
+
+        let session = Session {
+            id: "resume-session".to_string(),
+            tool: Tool::OpenCode,
+            project_path: Some("/tmp/project".to_string()),
+            start_time: chrono::Utc::now(),
+            message_count: 1,
+            file_path: "/tmp/session.jsonl".to_string(),
+            last_updated: chrono::Utc::now(),
+            first_prompt: None,
+        };
+
+        {
+            let mut parts = controller.state().get_mut();
+            let mut guard = parts.model.sessions.guard();
+            guard.push_back(SessionRowInit {
+                session: session.clone(),
+            });
+        }
+
+        let root = controller.widget().clone().upcast::<gtk::Widget>();
+        let list_box = find_list_box(&root).expect("list box");
+        let row = list_box.row_at_index(0).expect("row");
+        let row_child = row.child().expect("row child");
+
+        row_child
+            .activate_action("row.resume", None)
+            .expect("activate row.resume action");
+
+        pump_main_context(|| !outputs.borrow().is_empty());
+
+        let outputs = outputs.borrow();
+        assert_eq!(outputs.len(), 1);
+        assert!(matches!(
+            outputs.as_slice(),
+            [SessionListOutput::ResumeRequested(id, tool)] if id == "resume-session" && *tool == Tool::OpenCode
+        ));
+        assert!(
+            !outputs
+                .iter()
+                .any(|output| matches!(output, SessionListOutput::SessionSelected(_)))
+        );
     }
 }

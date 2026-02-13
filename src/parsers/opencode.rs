@@ -93,6 +93,8 @@ impl OpenCodeParser {
             message.index = index;
         }
 
+        let first_prompt = crate::parsers::extract_first_prompt(&flattened);
+
         let session = Session {
             id: metadata.id.clone(),
             tool: Tool::OpenCode,
@@ -101,6 +103,7 @@ impl OpenCodeParser {
             message_count: flattened.len(),
             file_path: session_path.to_str().unwrap_or_default().to_string(),
             last_updated: metadata.time_updated,
+            first_prompt,
         };
 
         Ok((session, flattened))
@@ -600,7 +603,7 @@ mod tests {
         );
 
         let parser = OpenCodeParser::new(root);
-        let (_session, messages) = parser.parse(&session_path).unwrap();
+        let (session, messages) = parser.parse(&session_path).unwrap();
 
         assert_eq!(messages.len(), 2);
         assert_eq!(messages[0].index, 0);
@@ -609,6 +612,7 @@ mod tests {
         assert_eq!(messages[1].index, 1);
         assert_eq!(messages[1].role, Role::User);
         assert_eq!(messages[1].content, "Second");
+        assert_eq!(session.first_prompt.as_deref(), Some("First"));
     }
 
     #[test]

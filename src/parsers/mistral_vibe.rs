@@ -93,6 +93,8 @@ impl MistralVibeParser {
             return Err(ParseError::NoUserMessages.into());
         }
 
+        let first_prompt = crate::parsers::extract_first_prompt(&messages);
+
         Ok((
             Session {
                 id: session_id.clone(),
@@ -102,6 +104,7 @@ impl MistralVibeParser {
                 message_count: messages.len(),
                 file_path: session_dir.to_str().unwrap_or_default().to_string(),
                 last_updated: end_time,
+                first_prompt,
             },
             messages,
         ))
@@ -204,6 +207,10 @@ mod tests {
             Some("/home/anon/projects/sessions-chronicle")
         );
         assert_eq!(session.message_count, 2);
+        assert_eq!(
+            session.first_prompt.as_deref(),
+            Some("List the files in the project root.")
+        );
         assert_eq!(messages.len(), 2);
         assert_eq!(messages[0].role, Role::User);
         assert_eq!(messages[1].role, Role::Assistant);

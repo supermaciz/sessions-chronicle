@@ -240,8 +240,8 @@ impl SessionIndexer {
 
         tx.execute(
             "INSERT OR REPLACE INTO sessions
-             (id, tool, project_path, start_time, message_count, file_path, last_updated)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+             (id, tool, project_path, start_time, message_count, file_path, last_updated, first_prompt)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
             rusqlite::params![
                 &session.id,
                 session.tool.to_storage(),
@@ -250,6 +250,7 @@ impl SessionIndexer {
                 session.message_count as i64,
                 file_path.to_str(),
                 session.last_updated.timestamp(),
+                &session.first_prompt,
             ],
         )?;
 

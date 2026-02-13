@@ -11,7 +11,8 @@ pub fn initialize_database(conn: &Connection) -> Result<()> {
             start_time INTEGER NOT NULL,
             message_count INTEGER NOT NULL,
             file_path TEXT NOT NULL,
-            last_updated INTEGER NOT NULL
+            last_updated INTEGER NOT NULL,
+            first_prompt TEXT
         )",
         [],
     )?;

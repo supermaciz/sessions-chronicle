@@ -156,10 +156,8 @@ impl CodexParser {
             return Err(ParseError::NoUserMessages.into());
         }
 
-        // TODO: Title extraction not yet implemented. Future enhancement should:
-        // 1. Extract title from turn_context.summary if present
-        // 2. Fall back to first user_message content (truncated to ~100 chars)
-        // This requires adding a title field to the Session model.
+        // first_prompt is populated via extract_first_prompt() in parsers/mod.rs.
+        let first_prompt = crate::parsers::extract_first_prompt(&messages);
 
         Ok((
             Session {
@@ -170,6 +168,7 @@ impl CodexParser {
                 message_count: messages.len(),
                 file_path: file_path.to_str().unwrap_or_default().to_string(),
                 last_updated,
+                first_prompt,
             },
             messages,
         ))
@@ -199,6 +198,7 @@ mod tests {
         assert_eq!(session.id, "019bce9f-0a40-79e2-8351-8818e8487fb6");
         assert_eq!(session.project_path.as_deref(), Some("/home/user/project"));
         assert_eq!(session.message_count, 2);
+        assert_eq!(session.first_prompt.as_deref(), Some("Summarize the repo"));
         assert_eq!(messages[0].role, Role::User);
         assert_eq!(messages[0].content, "Summarize the repo");
         assert_eq!(messages[1].role, Role::Assistant);
