@@ -77,8 +77,8 @@
 - ⬜ UI refinement
   * ✅ Utility pane + session detail ([design](plans/2026-02-08-session-detail-utility-pane-design.md)) PR #27
   * ✅ Improve session row with first-prompt preview + safer markup handling ([design](plans/2026-02-11-session-row-prompt-preview-design.md)) PR #30
-- ⬜ Improve keyboard shortcuts (TODO - design)
-- ⬜ Fix "About" modal
+  * ⬜ Improve keyboard shortcuts ([design](plans/2026-02-13-keyboard-shortcuts-hig-conformity-design.md))
+  * ⬜ Fix "About" modal
 - ✅ Basic CI/CD setup with GitHub Actions (automated testing, formatting checks, linting, Flatpak builds)
 - ⬜ Releases
 
