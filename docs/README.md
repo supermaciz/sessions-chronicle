@@ -1,6 +1,6 @@
-# Sessions Chronicle - Brainstorming & Design
+# Sessions Chronicle - Documentation Index
 
-This directory contains all design documentation, mockups, and architectural decisions for **Sessions Chronicle**, a GNOME app for browsing AI coding sessions.
+This directory contains project documentation, architecture notes, and implementation plans for **Sessions Chronicle**, a GNOME app for browsing AI coding sessions.
 
 ---
 
@@ -67,10 +67,18 @@ This directory contains all design documentation, mockups, and architectural dec
     - Chosen implementation direction for search highlighting
     - Detailed UI and integration notes for implemented feature
 
-13. **[plans/2026-02-07-sessions-dir-unified-behavior-design.md](plans/2026-02-07-sessions-dir-unified-behavior-design.md)** 🚀
-    - Next milestone: Unified sessions directory behavior
+13. **[plans/2026-02-07-sessions-dir-unified-behavior-design.md](plans/2026-02-07-sessions-dir-unified-behavior-design.md)** ✅
+    - Unified sessions directory behavior
     - Isolated database and fixture subdirectory mapping
     - Preferences reset action for index management
+
+14. **[plans/2026-02-08-session-detail-utility-pane-design.md](plans/2026-02-08-session-detail-utility-pane-design.md)** ✅
+    - Utility pane behavior and session detail integration
+    - Filters/session-context pane mode switching
+
+15. **[plans/2026-02-11-session-row-prompt-preview-design.md](plans/2026-02-11-session-row-prompt-preview-design.md)** ✅
+    - Session row prompt preview and subtitle behavior
+    - Markup-safe title/subtitle rendering guidance
 
 ---
 
@@ -123,7 +131,7 @@ All mockups are SVG files in the `mockups/` subfolder (open in browser or image 
 
 ---
 
-**Last Updated**: 2026-02-07
+**Last Updated**: 2026-02-13
 
-**Current Status**: Phase 4 Complete - Search Highlighting Implemented ✅
-**Next Milestone**: Phase 4.5 - Consolidating Foundations 🚀
+**Current Status**: Phase 5 In Progress - Consolidating Foundations
+**Next Milestone**: Phase 5 completion (UI polish + release readiness)

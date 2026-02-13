@@ -24,6 +24,8 @@
 - ✅ Rich markdown rendering for assistant messages
 - ✅ Resume sessions in a configurable terminal emulator + failure toasts
 - ✅ Consistent `--sessions-dir` override across tools + isolated override index DB + reset/reindex in Preferences (PR #24)
+- ✅ Utility pane with filters/session-context modes and in-pane resume action (PR #27)
+- ✅ Session row redesign: first prompt title, project-aware subtitle, relative timestamps, row context menu resume (PR #30)
 
 **Dependencies**
 - ✅ Relm4 (reactive UI framework)
@@ -74,7 +76,7 @@
 - ✅ Unified `--sessions-dir` behavior across all tools (isolated DB + fixture mapping + single resolver) ([design](plans/2026-02-07-sessions-dir-unified-behavior-design.md), PR #24)
 - ⬜ UI refinement
   * ✅ Utility pane + session detail ([design](plans/2026-02-08-session-detail-utility-pane-design.md)) PR #27
-  * ⬜ Improve session row (TODO - design)
+  * ✅ Improve session row with first-prompt preview + safer markup handling ([design](plans/2026-02-11-session-row-prompt-preview-design.md)) PR #30
 - ⬜ Improve keyboard shortcuts (TODO - design)
 - ⬜ Fix "About" modal
 - ✅ Basic CI/CD setup with GitHub Actions (automated testing, formatting checks, linting, Flatpak builds)
@@ -135,11 +137,14 @@ sessions-chronicle/
 │   │   ├── indexer.rs    # Index sessions
 │   │   └── mod.rs        # load_session, search_sessions
 │   ├── ui/               # UI components (Relm4)
+│   │   ├── detail_context_pane.rs # Session context utility pane
+│   │   ├── highlight.rs  # Search term highlighting helpers
 │   │   ├── markdown.rs   # Markdown parser and GTK renderer
 │   │   ├── message_row.rs # Message row component
 │   │   ├── sidebar.rs    # Tool/project filters
 │   │   ├── session_list.rs  # Session list view
 │   │   ├── session_detail.rs # Session detail/transcript view
+│   │   ├── session_row.rs # Session list row component
 │   │   ├── modals/
 │   │   │   ├── about.rs      # About dialog
 │   │   │   ├── preferences.rs # Preferences dialog (terminal settings, index reset)
@@ -228,8 +233,8 @@ See `DEVELOPMENT_WORKFLOW.md` for test fixtures and development workflow.
 1. **CLI args for test data** - No hardcoded checks for test directories
 2. **Streaming JSONL parsing** - Use `BufReader::lines()`, never load entire file
 3. **SQLite FTS5 for search** - Simple, fast, built-in full-text search
-4. **Single tool first** - Claude Code only for v1, others in v2
-5. **List view UI** - More information density than cards view
+4. **Unified source resolution** - One override mechanism for all tools (`session_sources.rs`)
+5. **Utility-pane navigation model** - Filters in list mode, session context in detail mode
 
 ### Common Pitfalls
 
@@ -336,6 +341,6 @@ cargo test
 
 ---
 
-**Last Updated**: 2026-02-10
+**Last Updated**: 2026-02-13
 **Current Phase**: Phase 5 - Consolidating Foundations (In Progress)
-**Next Milestone**: Phase 5 completion - UI refinement (utility pane + session detail)
+**Next Milestone**: Phase 5 completion - keyboard shortcuts polish, About dialog follow-up, and release readiness
