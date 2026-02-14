@@ -18,14 +18,14 @@ impl SimpleComponent for AboutDialog {
             .application_icon(APP_ID)
             .license_type(gtk::License::MitX11)
             // Insert your website here
-            // .website("https://gitlab.gnome.org/bilelmoussaoui/sessions-chronicle/")
+            .website("https://github.com/supermaciz/sessions-chronicle")
             // Insert your Issues page
-            // .issue_url("https://gitlab.gnome.org/World/Rust/sessions-chronicle/-/issues")
+            .issue_url("https://github.com/supermaciz/sessions-chronicle/issues")
             // Insert your application name here
-            .application_name("Relm4-template")
+            .application_name("Sessions Chronicle")
             .version(VERSION)
             .translator_credits("translator-credits")
-            .copyright("© 2024 Mathieu Cizo")
+            .copyright("© 2026 Mathieu Cizo")
             .developers(vec!["Mathieu Cizo"])
             .designers(vec!["Mathieu Cizo"])
             .build()
