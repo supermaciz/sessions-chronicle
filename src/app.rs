@@ -7,7 +7,7 @@ use relm4::{
 use adw::prelude::{AdwApplicationWindowExt, AdwDialogExt, AlertDialogExt, NavigationPageExt};
 use gtk::prelude::{
     ActionableExt, ApplicationExt, ButtonExt, Cast, EditableExt, GtkApplicationExt, GtkWindowExt,
-    OrientableExt, SettingsExt, ToggleButtonExt, WidgetExt,
+    ObjectExt, OrientableExt, SettingsExt, ToggleButtonExt, WidgetExt,
 };
 use gtk::{gio, glib};
 use std::{fs, path::PathBuf, str::FromStr};
@@ -79,7 +79,7 @@ pub(super) struct App {
 #[derive(Debug)]
 pub(super) enum AppMsg {
     Quit,
-    ToggleSearch,
+    SearchModeChanged(bool),
     TogglePane,
     PaneVisibilityChanged(bool),
     SearchQueryChanged(String),
@@ -98,6 +98,7 @@ relm4::new_stateless_action!(pub(super) ShortcutsAction, WindowActionGroup, "sho
 relm4::new_stateless_action!(AboutAction, WindowActionGroup, "about");
 relm4::new_stateless_action!(QuitAction, WindowActionGroup, "quit");
 relm4::new_stateless_action!(TogglePaneAction, WindowActionGroup, "toggle-pane");
+relm4::new_stateless_action!(ShowSearchAction, WindowActionGroup, "show-search");
 
 fn active_search_query(query: &str) -> Option<String> {
     let trimmed = query.trim();
@@ -163,12 +164,10 @@ impl SimpleComponent for App {
                             connect_clicked => AppMsg::NavigateBack,
                         },
 
+                        #[name = "search_toggle"]
                         pack_start = &gtk::ToggleButton {
                             set_icon_name: "system-search-symbolic",
                             set_tooltip_text: Some("Search sessions"),
-                            #[watch]
-                            set_active: model.search_visible,
-                            connect_toggled => AppMsg::ToggleSearch,
                         },
 
                         #[name = "pane_toggle"]
@@ -183,6 +182,7 @@ impl SimpleComponent for App {
                         pack_end = &gtk::MenuButton {
                             set_icon_name: "open-menu-symbolic",
                             set_menu_model: Some(&primary_menu),
+                            set_primary: true,
                         },
                     },
 
@@ -192,9 +192,7 @@ impl SimpleComponent for App {
 
                         #[name = "search_bar"]
                         gtk::SearchBar {
-                            #[watch]
-                            set_search_mode: model.search_visible,
-
+                            #[name = "search_entry"]
                             #[wrap(Some)]
                             set_child = &gtk::SearchEntry {
                                 set_placeholder_text: Some("Search sessions..."),
@@ -393,6 +391,38 @@ impl SimpleComponent for App {
             .and_then(|w| w.downcast::<adw::ToastOverlay>().ok())
             .expect("Root content should be a ToastOverlay");
 
+        // Enable type-to-search: keystrokes captured from main window open SearchBar
+        widgets
+            .search_bar
+            .set_key_capture_widget(Some(&widgets.main_window));
+
+        // Bidirectional binding: ToggleButton.active <-> SearchBar.search-mode-enabled
+        widgets
+            .search_bar
+            .bind_property("search-mode-enabled", &widgets.search_toggle, "active")
+            .bidirectional()
+            .sync_create()
+            .build();
+
+        // Sync SearchBar state changes (Escape, type-to-search, ToggleButton) back to model
+        {
+            let search_mode_sender = sender.input_sender().clone();
+            let search_entry = widgets.search_entry.clone();
+            widgets
+                .search_bar
+                .connect_search_mode_enabled_notify(move |bar| {
+                    let enabled = bar.is_search_mode();
+                    if enabled {
+                        search_entry.grab_focus();
+                    } else {
+                        search_entry.set_text("");
+                    }
+                    search_mode_sender
+                        .send(AppMsg::SearchModeChanged(enabled))
+                        .ok();
+                });
+        }
+
         // Set up OverlaySplitView: sidebar = pane Stack, content = NavigationView
         widgets.overlay_split.set_sidebar(Some(&model.pane_stack));
         widgets.overlay_split.set_content(Some(&nav_view));
@@ -438,6 +468,15 @@ impl SimpleComponent for App {
             })
         };
 
+        let show_search_action = {
+            let search_bar = widgets.search_bar.clone();
+            let search_entry = widgets.search_entry.clone();
+            RelmAction::<ShowSearchAction>::new_stateless(move |_| {
+                search_bar.set_search_mode(true);
+                search_entry.grab_focus();
+            })
+        };
+
         let toggle_pane_action = {
             let sender = sender.clone();
             RelmAction::<TogglePaneAction>::new_stateless(move |_| {
@@ -454,10 +493,14 @@ impl SimpleComponent for App {
         // Connect actions with hotkeys
         app.set_accelerators_for_action::<QuitAction>(&["<Control>q"]);
         app.set_accelerators_for_action::<TogglePaneAction>(&["F9"]);
+        app.set_accelerators_for_action::<ShowSearchAction>(&["<Control>f"]);
+        app.set_accelerators_for_action::<ShortcutsAction>(&["<Control>question"]);
+        app.set_accelerators_for_action::<PreferencesAction>(&["<Control>comma"]);
 
         actions.add_action(preferences_action);
         actions.add_action(shortcuts_action);
         actions.add_action(about_action);
+        actions.add_action(show_search_action);
         actions.add_action(toggle_pane_action);
         actions.add_action(quit_action);
         actions.register_for_widget(&widgets.main_window);
@@ -470,8 +513,16 @@ impl SimpleComponent for App {
     fn update(&mut self, message: Self::Input, _sender: ComponentSender<Self>) {
         match message {
             AppMsg::Quit => main_application().quit(),
-            AppMsg::ToggleSearch => {
-                self.search_visible = !self.search_visible;
+            AppMsg::SearchModeChanged(enabled) => {
+                if self.search_visible != enabled {
+                    self.search_visible = enabled;
+                    if !enabled {
+                        self.search_query.clear();
+                        let (list_msg, detail_msg) = search_query_update_messages(String::new());
+                        self.session_list.emit(list_msg);
+                        self.session_detail.emit(detail_msg);
+                    }
+                }
             }
             AppMsg::TogglePane => {
                 self.pane_open = !self.pane_open;
