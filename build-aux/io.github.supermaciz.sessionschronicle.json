@@ -1,5 +1,5 @@
 {
-    "id": "com.belmoussaoui.GtkRustTemplate",
+    "id": "io.github.supermaciz.sessionschronicle",
     "runtime": "org.gnome.Platform",
     "runtime-version": "49",
     "sdk": "org.gnome.Sdk",
@@ -7,19 +7,20 @@
         "org.freedesktop.Sdk.Extension.rust-stable",
         "org.freedesktop.Sdk.Extension.llvm21"
     ],
-    "command": "gtk-rust-template",
+    "command": "sessions-chronicle",
     "finish-args": [
         "--share=ipc",
         "--socket=fallback-x11",
         "--socket=wayland",
         "--device=dri",
-        "--env=RUST_LOG=gtk_rust_template=debug",
-        "--env=G_MESSAGES_DEBUG=none",
-        "--env=RUST_BACKTRACE=1"
+        "--filesystem=home:ro",
+        "--talk-name=org.freedesktop.Flatpak"
     ],
     "build-options": {
         "append-path": "/usr/lib/sdk/rust-stable/bin:/usr/lib/sdk/llvm21/bin",
-        "build-args": ["--share=network"],
+        "build-args": [
+            "--share=network"
+        ],
         "env": {
             "CARGO_REGISTRIES_CRATES_IO_PROTOCOL": "sparse",
             "CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER": "clang",
@@ -27,14 +28,16 @@
             "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER": "clang",
             "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_RUSTFLAGS": "-C link-arg=-fuse-ld=/usr/lib/sdk/rust-stable/bin/mold"
         },
-        "test-args": ["--socket=x11", "--share=network"]
+        "test-args": [
+            "--socket=x11",
+            "--share=network"
+        ]
     },
     "modules": [
         {
-            "name": "gtk-rust-template",
+            "name": "sessions-chronicle",
             "buildsystem": "meson",
             "run-tests": true,
-            "config-opts": ["-Dprofile=development"],
             "sources": [
                 {
                     "type": "dir",

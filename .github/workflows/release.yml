@@ -1,0 +1,46 @@
+on:
+  release:
+    types: [published]
+
+name: Release
+
+jobs:
+  flatpak:
+    name: Flatpak Bundle
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/flathub-infra/flatpak-github-actions:gnome-49
+      options: --privileged
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set version from tag
+        id: version
+        run: |
+          TAG="${{ github.event.release.tag_name }}"
+          VERSION="${TAG#v}"
+          SAFE_VERSION="$(printf '%s' "$VERSION" | sed 's#[^0-9A-Za-z._-]#-#g')"
+          [ -n "$SAFE_VERSION" ] || SAFE_VERSION="${{ github.event.release.id }}"
+          echo "version=$SAFE_VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Build Flatpak
+        uses: flatpak/flatpak-github-actions/flatpak-builder@v6
+        with:
+          bundle: sessions-chronicle-${{ steps.version.outputs.version }}.flatpak
+          manifest-path: build-aux/io.github.supermaciz.sessionschronicle.json
+          cache-key: flatpak-builder-${{ github.sha }}
+          upload-artifact: false
+
+      - name: Generate SHA256 checksum
+        run: |
+          sha256sum sessions-chronicle-${{ steps.version.outputs.version }}.flatpak \
+            > sessions-chronicle-${{ steps.version.outputs.version }}.flatpak.sha256
+
+      - name: Upload bundle to release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            sessions-chronicle-${{ steps.version.outputs.version }}.flatpak
+            sessions-chronicle-${{ steps.version.outputs.version }}.flatpak.sha256
