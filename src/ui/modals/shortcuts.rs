@@ -24,14 +24,26 @@ impl SimpleComponent for ShortcutsDialog {
         let model = Self {};
         let widgets = root.clone();
 
-        // Shortcuts section
-        let section = adw::ShortcutsSection::new(None);
+        // General section
+        let general = adw::ShortcutsSection::new(Some("General"));
+        general.add(adw::ShortcutsItem::new(
+            "Keyboard Shortcuts",
+            "<Control>question",
+        ));
+        general.add(adw::ShortcutsItem::new("Preferences", "<Control>comma"));
+        general.add(adw::ShortcutsItem::new("Quit", "<Control>q"));
+        widgets.add(general);
 
-        // Add more shortcuts items below or create new section
-        section.add(adw::ShortcutsItem::new("Toggle utility pane", "F9"));
-        section.add(adw::ShortcutsItem::new("Quit", "<Control>q"));
+        // Search section
+        let search = adw::ShortcutsSection::new(Some("Search"));
+        search.add(adw::ShortcutsItem::new("Search", "<Control>f"));
+        widgets.add(search);
 
-        widgets.add(section);
+        // View section
+        let view = adw::ShortcutsSection::new(Some("View"));
+        view.add(adw::ShortcutsItem::new("Toggle utility pane", "F9"));
+        widgets.add(view);
+
         widgets.present(Some(&relm4::main_adw_application().windows()[0]));
         ComponentParts { model, widgets }
     }
