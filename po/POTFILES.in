@@ -3,3 +3,4 @@ data/io.github.supermaciz.sessionschronicle.gschema.xml.in
 data/io.github.supermaciz.sessionschronicle.metainfo.xml.in.in
 src/app.rs
 src/main.rs
+src/ui/modals/shortcuts.rs

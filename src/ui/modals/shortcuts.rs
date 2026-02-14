@@ -1,5 +1,6 @@
 use adw::gtk::prelude::GtkApplicationExt;
 use adw::prelude::AdwDialogExt;
+use gettextrs::gettext;
 use relm4::adw;
 use relm4::prelude::*;
 
@@ -25,24 +26,30 @@ impl SimpleComponent for ShortcutsDialog {
         let widgets = root.clone();
 
         // General section
-        let general = adw::ShortcutsSection::new(Some("General"));
+        let general = adw::ShortcutsSection::new(Some(&gettext("General")));
         general.add(adw::ShortcutsItem::new(
-            "Keyboard Shortcuts",
+            &gettext("Keyboard Shortcuts"),
             "<Control>question",
         ));
-        general.add(adw::ShortcutsItem::new("Preferences", "<Control>comma"));
-        general.add(adw::ShortcutsItem::new("Primary menu", "F10"));
-        general.add(adw::ShortcutsItem::new("Quit", "<Control>q"));
+        general.add(adw::ShortcutsItem::new(
+            &gettext("Preferences"),
+            "<Control>comma",
+        ));
+        general.add(adw::ShortcutsItem::new(&gettext("Primary menu"), "F10"));
+        general.add(adw::ShortcutsItem::new(&gettext("Quit"), "<Control>q"));
         widgets.add(general);
 
         // Search section
-        let search = adw::ShortcutsSection::new(Some("Search"));
-        search.add(adw::ShortcutsItem::new("Search", "<Control>f"));
+        let search = adw::ShortcutsSection::new(Some(&gettext("Search")));
+        search.add(adw::ShortcutsItem::new(&gettext("Search"), "<Control>f"));
         widgets.add(search);
 
         // View section
-        let view = adw::ShortcutsSection::new(Some("View"));
-        view.add(adw::ShortcutsItem::new("Toggle utility pane", "F9"));
+        let view = adw::ShortcutsSection::new(Some(&gettext("View")));
+        view.add(adw::ShortcutsItem::new(
+            &gettext("Toggle utility pane"),
+            "F9",
+        ));
         widgets.add(view);
 
         widgets.present(Some(&relm4::main_adw_application().windows()[0]));
