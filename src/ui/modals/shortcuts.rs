@@ -31,6 +31,7 @@ impl SimpleComponent for ShortcutsDialog {
             "<Control>question",
         ));
         general.add(adw::ShortcutsItem::new("Preferences", "<Control>comma"));
+        general.add(adw::ShortcutsItem::new("Primary menu", "F10"));
         general.add(adw::ShortcutsItem::new("Quit", "<Control>q"));
         widgets.add(general);
 

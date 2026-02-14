@@ -182,6 +182,7 @@ impl SimpleComponent for App {
                         pack_end = &gtk::MenuButton {
                             set_icon_name: "open-menu-symbolic",
                             set_menu_model: Some(&primary_menu),
+                            set_primary: true,
                         },
                     },
 
