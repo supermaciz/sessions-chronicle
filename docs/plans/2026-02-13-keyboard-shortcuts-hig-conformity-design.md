@@ -1,7 +1,7 @@
 # Keyboard Shortcuts — GNOME HIG Conformity
 
-**Date:** 2026-02-13
-**Status:** Accepted (revised)
+**Date:** 2026-02-13  
+**Status:** Implemented
 
 ## Goal
 
