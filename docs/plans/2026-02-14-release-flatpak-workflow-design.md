@@ -16,10 +16,10 @@ Derived from the Devel manifest with these differences:
 | `RUST_LOG` env | `sessions_chronicle=debug` | removed |
 | `RUST_BACKTRACE` env | `1` | removed |
 | `--filesystem` | `host` | `home:ro` |
-| `--talk-name` | `org.freedesktop.Flatpak` | removed |
+| `--talk-name` | `org.freedesktop.Flatpak` | kept (required for `flatpak-spawn --host`) |
 | `config-opts` | `["-Dprofile=development"]` | `[]` (Meson default = `'default'` = release build) |
 
-Everything else stays the same (runtime gnome-49, SDK extensions, mold linker, build-options, `run-tests: true`). `G_MESSAGES_DEBUG=none` is kept as it suppresses noisy GLib messages in production too.
+Everything else stays the same (runtime gnome-49, SDK extensions, mold linker, build-options). `G_MESSAGES_DEBUG=none` is kept as it suppresses noisy GLib messages in production too.
 
 ### 2. `.github/workflows/release.yml` — Release workflow
 
@@ -47,7 +47,9 @@ jobs:
         run: |
           TAG="${{ github.event.release.tag_name }}"
           VERSION="${TAG#v}"
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          SAFE_VERSION="$(printf '%s' "$VERSION" | sed 's#[^0-9A-Za-z._-]#-#g')"
+          [ -n "$SAFE_VERSION" ] || SAFE_VERSION="${{ github.event.release.id }}"
+          echo "version=$SAFE_VERSION" >> "$GITHUB_OUTPUT"
 
       - name: Build Flatpak
         uses: flatpak/flatpak-github-actions/flatpak-builder@v6
@@ -65,9 +67,10 @@ jobs:
 
 Key decisions:
 - **Trigger:** `release: published` fires for releases and pre-releases (not drafts)
-- **Tag format:** Handles both `v0.1.0` and `0.1.0` via `${TAG#v}`
+- **Tag format:** Strips optional `v` prefix, sanitizes for filename safety, and falls back to release ID if needed
 - **Upload:** `softprops/action-gh-release@v2` attaches the bundle to the existing release
 - **No artifact:** `upload-artifact: false` avoids redundant storage; the release asset is the canonical location
+- **Tests:** release workflow only builds/uploads; tests remain in CI on push/PR
 - **Permissions:** `contents: write` needed by softprops to attach assets
 
 ## Critical Files (reference)
