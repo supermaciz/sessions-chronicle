@@ -74,13 +74,13 @@
 **Phase 5: Consolidating Foundations** - In Progress
 
 - ✅ Unified `--sessions-dir` behavior across all tools (isolated DB + fixture mapping + single resolver) ([design](plans/2026-02-07-sessions-dir-unified-behavior-design.md), PR #24)
-- ⬜ UI refinement
+- ✅ UI refinement
   * ✅ Utility pane + session detail ([design](plans/2026-02-08-session-detail-utility-pane-design.md)) PR #27
   * ✅ Improve session row with first-prompt preview + safer markup handling ([design](plans/2026-02-11-session-row-prompt-preview-design.md)) PR #30
   * ✅ Improve keyboard shortcuts ([design](plans/2026-02-13-keyboard-shortcuts-hig-conformity-design.md))
-  * ⬜ Fix "About" modal
+  * ✅ Fix "About" modal
 - ✅ Basic CI/CD setup with GitHub Actions (automated testing, formatting checks, linting, Flatpak builds)
-- ⬜ Releases
+- ⬜ Releases [design](plans/2026-02-14-release-flatpak-workflow-design.md)
 
 **Phase 6: Tool Calls & Subagents** - Future ([design](plans/2026-01-30-tool-calls-and-subagents-design.md))
 - ⬜ Enrich Message model (tool_name, tool_input, parent_message_index)
