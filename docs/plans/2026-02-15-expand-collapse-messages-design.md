@@ -76,7 +76,7 @@ pub enum MessageRowMsg {
 
 Change `type Input = ()` to `type Input = MessageRowMsg`.
 
-Update output enum so SessionDetail can update match counts for a specific row:
+Replace the existing output enum so SessionDetail can update match counts for a specific row:
 
 ```rust
 pub enum MessageRowOutput {
@@ -86,6 +86,10 @@ pub enum MessageRowOutput {
     },
 }
 ```
+
+This replaces the current `MatchCount { count }` variant. Both emission sites must change:
+- **`init_widgets`** (initial render): the existing `MatchCount` emission becomes `MatchCountChanged { message_index: self.preview.message_index, count: match_count }`
+- **`update_with_view`** (on toggle, Step 6): emit `MatchCountChanged` when rendered match count differs from cached value
 
 ### Step 5: Replace truncation label with toggle button
 
@@ -112,7 +116,9 @@ gtk::Button {
 
 **File:** `src/ui/message_row.rs`
 
-In `update_with_view()` handler for `ToggleExpand`:
+Override `update_with_view()` instead of `update()` because we need direct access to widgets (specifically `content_container`) to clear and re-render children. **Important:** `update_with_view` replaces the default pipeline (`update` + `update_view`), so we must call `self.update_view(widgets, sender)` at the end to ensure `#[watch]` macros on the toggle button label and visibility re-evaluate.
+
+Handler for `ToggleExpand`:
 
 1. On toggle, branch by current state:
    - If currently collapsed, attempt expand
@@ -124,6 +130,26 @@ In `update_with_view()` handler for `ToggleExpand`:
 3. Determine displayed content: expanded -> cached full content, collapsed -> `self.preview.content_preview`
 4. Re-render `content_container` via shared helper
 5. If rendered match count changed, emit `MessageRowOutput::MatchCountChanged { message_index, count }`
+6. Call `self.update_view(widgets, sender)` to flush `#[watch]` updates
+
+Skeleton:
+
+```rust
+fn update_with_view(
+    &mut self,
+    widgets: &mut Self::Widgets,
+    message: Self::Input,
+    sender: FactorySender<Self>,
+) {
+    match message {
+        MessageRowMsg::ToggleExpand => {
+            // ... steps 1-5 ...
+        }
+    }
+    // IMPORTANT: trigger #[watch] updates for label and visibility
+    self.update_view(widgets, sender);
+}
+```
 
 ### Step 7: Extract content rendering helper
 
