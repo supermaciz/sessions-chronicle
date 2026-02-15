@@ -9,8 +9,10 @@ Long messages in the session transcript are truncated to 2000 characters at the 
 - **Inline expand** (not lateral panel) — simple, direct, independent of the utility pane
 - **No size limit** — load full content from DB, no progressive loading
 - **Toggle** — expand and collapse, with cached content to avoid re-querying
+- **Async fetch on first expand** — avoid blocking GTK main loop while loading very large message bodies
 - **Tool results excluded** — hide toggle for `Role::ToolResult` (handled separately in Phase 6)
 - **Search counts stay correct** — expanding/collapsing can change highlighted match totals, so match counters must update per row
+- **User-visible failure feedback** — failed full-content loads should show toast feedback, not logs only
 
 ## Implementation Plan
 
@@ -65,7 +67,18 @@ Model changes:
 - Add `db_path: PathBuf` field
 - Add `expanded: bool` field (default `false`)
 - Add `full_content: Option<String>` field (cached full content)
+- Add `loading_full_content: bool` field (disable toggle and show loading state)
 - Add `rendered_match_count: usize` field (last rendered count, used to emit updates)
+
+Add command output enum for background DB fetch:
+
+```rust
+pub enum MessageRowCmd {
+    FullContentLoaded(Result<Option<String>>),
+}
+```
+
+Change `type CommandOutput = ()` to `type CommandOutput = MessageRowCmd`.
 
 Add input enum:
 ```rust
@@ -84,6 +97,9 @@ pub enum MessageRowOutput {
         message_index: usize,
         count: usize,
     },
+    ExpandLoadFailed {
+        message_index: usize,
+    },
 }
 ```
 
@@ -100,12 +116,20 @@ In the `view!` macro, replace the static `gtk::Label` "(content truncated)" with
 ```rust
 gtk::Button {
     #[watch]
-    set_label: &if self.expanded { "Collapse" } else { "Show full message" },
+    set_label: &if self.loading_full_content {
+        "Loading..."
+    } else if self.expanded {
+        "Collapse"
+    } else {
+        "Show full message"
+    },
     add_css_class: "flat",
     add_css_class: "caption",
     add_css_class: "expand-toggle",
     set_halign: gtk::Align::Start,
     set_margin_top: 4,
+    #[watch]
+    set_sensitive: !self.loading_full_content,
     #[watch]
     set_visible: self.preview.is_truncated() && self.preview.role != Role::ToolResult,
     connect_clicked => MessageRowMsg::ToggleExpand,
@@ -124,13 +148,21 @@ Handler for `ToggleExpand`:
    - If currently collapsed, attempt expand
    - If currently expanded, collapse immediately
 2. Expand path:
-   - If `self.full_content.is_none()`, call `load_message_full_content(&self.db_path, &self.preview.session_id, self.preview.message_index)`
-   - If function returns `Ok(Some(content))`, cache in `self.full_content` and set `self.expanded = true`
-   - If `Ok(None)` or `Err(_)`, log warning/error and keep collapsed state (`self.expanded = false`)
-3. Determine displayed content: expanded -> cached full content, collapsed -> `self.preview.content_preview`
-4. Re-render `content_container` via shared helper
-5. If rendered match count changed, emit `MessageRowOutput::MatchCountChanged { message_index, count }`
-6. Call `self.update_view(widgets, sender)` to flush `#[watch]` updates
+   - If `self.full_content.is_some()`, expand immediately without DB access
+   - If `self.full_content.is_none()`, set `self.loading_full_content = true` and dispatch background fetch using `sender.spawn_oneshot_command(...)`
+   - Return after scheduling command; do not block the GTK thread
+3. Collapse path:
+   - Set `self.expanded = false`
+   - Re-render collapsed preview content
+4. If rendered match count changed, update `self.rendered_match_count` and emit `MessageRowOutput::MatchCountChanged { message_index, count }`
+5. Call `self.update_view(widgets, sender)` to flush `#[watch]` updates
+
+Handle command completion in `update_cmd_with_view()`:
+
+- On `FullContentLoaded(Ok(Some(content)))`: cache content, set `expanded = true`, set `loading_full_content = false`, re-render expanded content, emit match update if count changed
+- On `FullContentLoaded(Ok(None))`: set `expanded = false`, set `loading_full_content = false`, keep preview content rendered, emit `ExpandLoadFailed { message_index }`
+- On `FullContentLoaded(Err(err))`: log error, set `expanded = false`, set `loading_full_content = false`, keep preview content rendered, emit `ExpandLoadFailed { message_index }`
+- Call `self.update_view(widgets, sender)` at the end (same reason: flush `#[watch]` updates)
 
 Skeleton:
 
@@ -155,7 +187,7 @@ fn update_with_view(
 
 **File:** `src/ui/message_row.rs`
 
-Extract the content rendering logic from `init_widgets` into a reusable method:
+Extract the content rendering logic from `init_widgets` into a reusable helper and call it with `&widgets.content_container`:
 
 ```rust
 fn render_content(
@@ -173,7 +205,7 @@ This method:
 
 Call this from both `init_widgets` (initial render) and `update_with_view` (on toggle).
 
-### Step 8: Keep SessionDetail match counters in sync
+### Step 8: Keep SessionDetail match counters in sync and surface load failures
 
 **File:** `src/ui/session_detail.rs`
 
@@ -184,23 +216,38 @@ Model changes:
 
 Message/output wiring changes:
 - Update forwarding from `MessageRowOutput::MatchCountChanged { message_index, count }`
+- Forward `MessageRowOutput::ExpandLoadFailed { .. }` to a new `SessionDetailMsg::ShowExpandLoadFailure`
 - Update `SessionDetailMsg::MatchCount` to carry `(message_index, count)`
 - On receipt, insert/replace count for that `message_index`, then recompute `total_matches`
+- Keep existing auto-scroll behavior: when `total_matches` transitions from `0` to `> 0`, jump to the first match
+
+Toast UX changes:
+
+- Add an `adw::ToastOverlay` in `SessionDetail` (or parent-provided equivalent)
+- On `ShowExpandLoadFailure`, show a short non-blocking toast like: `"Could not load full message."`
 
 Navigation helper changes:
-- Update `find_message_for_match()` to iterate counts in ascending `message_index` order and return the loaded row offset for scrolling.
+- Update `find_message_for_match()` to accept the `BTreeMap<usize, usize>` and iterate in ascending `message_index` order.
+- Use `enumerate()` while iterating map entries so the helper can return the **loaded row offset** (factory child position), not the raw `message_index` key.
+- Keep returning `(loaded_row_offset, local_match_index)` so existing scroll logic stays index-based against `messages.observe_children()`.
 
 ### Step 9: Style the expand button
 
 **File:** `data/resources/style.css`
 
 ```css
-.expand-toggle {
+.message-row .expand-toggle {
     padding: 2px 8px;
     min-height: 0;
     font-size: 0.85em;
 }
+
+.message-row .expand-toggle:disabled {
+    opacity: 0.7;
+}
 ```
+
+Keep Adwaita defaults for colors/borders (do not override `color`, `background`, or `border-color`) to reduce style conflicts with `flat` buttons.
 
 ## Files Modified
 
@@ -208,8 +255,8 @@ Navigation helper changes:
 |------|--------|
 | `src/database/mod.rs` | Add `load_message_full_content()` and include identifiers in preview query |
 | `src/models/message_preview.rs` | Add `session_id`, `message_index` fields |
-| `src/ui/message_row.rs` | Add expand/collapse state, input, toggle button, content rendering helper, per-row match count output |
-| `src/ui/session_detail.rs` | Pass `db_path` in `MessageRowInit` and replace match counting with keyed updates |
+| `src/ui/message_row.rs` | Add expand/collapse state, async load command flow, toggle loading state, content rendering helper, per-row match count output |
+| `src/ui/session_detail.rs` | Pass `db_path` in `MessageRowInit`, replace match counting with keyed updates, and show toast on load failure |
 | `data/resources/style.css` | Style for `.expand-toggle` button |
 | `tests/message_preview.rs` | Add coverage for `load_message_full_content()` and identifier fields |
 
@@ -228,3 +275,6 @@ Navigation helper changes:
     - Verify non-truncated messages show no button
     - Verify search highlighting works on expanded content
     - Verify match counter and next/prev navigation update correctly after expand and collapse
+    - While first expand is loading, verify toggle shows `Loading...` and is disabled
+    - Force a missing/full-content lookup failure case and verify row stays collapsed, app remains responsive, and a toast appears
+    - Open GTK inspector to verify `.message-row .expand-toggle` does not break Adwaita flat-button visuals in light and dark themes
