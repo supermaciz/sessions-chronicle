@@ -16,9 +16,11 @@ This repository already has most of the “GNOME desktop integration” plumbing
 
 ## The “must do” to look/feel properly integrated
 
+> **Status (2026-02-15):** The About dialog has been fixed (commit `085a3a5`) with correct app name, links, and developer info. However, the desktop file and AppStream metainfo templates below are **still pending** and need to be updated.
+
 - **Replace template metadata with real content**:
-  - Update the desktop file template `data/io.github.supermaciz.sessionschronicle.desktop.in.in` (it still says “Write a GTK + Rust application”).
-  - Update the AppStream template `data/io.github.supermaciz.sessionschronicle.metainfo.xml.in.in` (it still references old template project URLs and a template screenshot URL).
+  - Update the desktop file template `data/io.github.supermaciz.sessionschronicle.desktop.in.in` — it still says `Comment=Write a GTK + Rust application` and has generic `Keywords`.
+  - Update the AppStream template `data/io.github.supermaciz.sessionschronicle.metainfo.xml.in.in` — it still has the boilerplate description, old template URLs pointing to `gitlab.gnome.org/bilelmoussaoui`, a broken screenshot URL, and placeholder branding colors.
 - **Make `Exec=` match how users actually run it**:
   - If you want GNOME to be able to “open” things (files/URIs), you’ll typically add `%U` (or `%f/%F`) in `Exec=` and implement `open()` / command-line handling in the app.
 

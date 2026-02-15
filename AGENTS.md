@@ -4,7 +4,7 @@
 - `src/` contains the Rust app: `app.rs` and `main.rs` glue, `ui/` for Relm4 widgets (including `modals/` for dialogs), `database/` for SQLite, `parsers/` for session formats, and `models/` for domain types.
 - `data/` holds desktop metadata, GSettings schema, icons, CSS, and UI resources in `data/resources/`.
 - `tests/fixtures/` provides sample JSONL sessions for development and manual testing.
-- `build-aux/` contains Flatpak and Meson manifests.
+- `build-aux/` contains Flatpak manifests (dev and stable) and the vendor script for offline builds.
 - `docs/` hosts design notes and planning docs (reference only).
 
 ## Build, Test, and Development Commands

@@ -80,6 +80,14 @@ This directory contains project documentation, architecture notes, and implement
     - Session row prompt preview and subtitle behavior
     - Markup-safe title/subtitle rendering guidance
 
+16. **[plans/2026-02-13-keyboard-shortcuts-hig-conformity-design.md](plans/2026-02-13-keyboard-shortcuts-hig-conformity-design.md)** ✅
+    - Keyboard shortcuts aligned with GNOME HIG
+    - Type-to-search integration
+
+17. **[plans/2026-02-14-release-flatpak-workflow-design.md](plans/2026-02-14-release-flatpak-workflow-design.md)** ✅
+    - Stable Flatpak manifest and release workflow
+    - GitHub Actions CI/CD for release builds
+
 ---
 
 ## 🎨 Visual Mockups
@@ -131,7 +139,7 @@ All mockups are SVG files in the `mockups/` subfolder (open in browser or image 
 
 ---
 
-**Last Updated**: 2026-02-13
+**Last Updated**: 2026-02-15
 
-**Current Status**: Phase 5 In Progress - Consolidating Foundations
-**Next Milestone**: Phase 5 completion (UI polish + release readiness)
+**Current Status**: Phase 5 Complete — Phase 6 (Tool Calls & Subagents) is next
+**Next Milestone**: Phase 6 — Enrich Message model, parse tool events, inline tool badges
