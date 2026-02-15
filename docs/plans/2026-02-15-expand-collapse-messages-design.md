@@ -123,7 +123,7 @@ pub enum MessageRowOutput {
 
 This replaces the current `MatchCount { count }` variant. Both emission sites must change:
 - **`init_widgets`** (initial render): the existing `MatchCount` emission becomes `MatchCountChanged { message_index: self.preview.message_index, count: match_count }`
-- **`update_with_view`** (on toggle, Step 6): emit `MatchCountChanged` when rendered match count differs from cached value
+- **`update_with_view`** (on toggle, Step 7): emit `MatchCountChanged` when rendered match count differs from cached value
 
 **Important:** `sender.output(...)` returns `Result<(), O>`. Use `.ok()` to discard the error when the receiver has been dropped (e.g. `sender.output(MessageRowOutput::MatchCountChanged { ... }).ok();`).
 
@@ -184,7 +184,7 @@ Call this from both `init_widgets` (initial render) and `update_with_view` (on t
 
 #### Input handling: `update_with_view()`
 
-Override `update_with_view()` instead of `update()` because we need direct access to widgets (specifically `content_container`) to clear and re-render children via `render_content()`. **Important:** when you override `update_with_view`, you **replace** the default pipeline (`update` + `update_view`) entirely — the runtime never calls `update()`. We must call `self.update_view(widgets, sender)` at the end to ensure `#[watch]` macros on the toggle button label and visibility re-evaluate.
+Override `update_with_view()` instead of `update()` because we need direct access to widgets (specifically `content_container`) to clear and re-render children via `render_content()`. **Important:** when you override `update_with_view`, you **replace** the default pipeline (`update` + `update_view`) entirely — the runtime never calls `update()`. We must call `self.update_view(widgets, sender)` before returning from each handled path so `#[watch]` macros on the toggle button label and visibility re-evaluate.
 
 Handler for `ToggleExpand`:
 
@@ -194,12 +194,12 @@ Handler for `ToggleExpand`:
 2. Expand path:
    - If `self.full_content.is_some()`, expand immediately without DB access
    - If `self.full_content.is_none()`, set `self.loading_full_content = true` and dispatch background fetch using `sender.spawn_oneshot_command(...)`
-   - Return after scheduling command; do not block the GTK thread
+   - After scheduling the command, call `self.update_view(widgets, sender)` and return immediately (do not block the GTK thread)
 3. Collapse path:
    - Set `self.expanded = false`
    - Re-render collapsed preview content using `render_content()`
 4. If rendered match count changed, update `self.rendered_match_count` and emit `MessageRowOutput::MatchCountChanged { message_index, count }` (use `.ok()`)
-5. Call `self.update_view(widgets, sender)` to flush `#[watch]` updates
+5. For non-early-return paths, call `self.update_view(widgets, sender)` at the end to flush `#[watch]` updates
 
 Skeleton:
 
@@ -215,7 +215,7 @@ fn update_with_view(
             // ... steps 1-5 ...
         }
     }
-    // IMPORTANT: trigger #[watch] updates for label and visibility
+    // IMPORTANT: for non-early-return paths, trigger #[watch] updates
     self.update_view(widgets, sender);
 }
 ```
@@ -257,7 +257,7 @@ Message/output wiring changes:
 
 Toast UX changes:
 
-- Add an `adw::ToastOverlay` as the **new root widget** of `SessionDetail`, wrapping the existing `gtk::Overlay` (`detail_overlay`). Store a `#[name(toast_overlay)]` reference in the widgets struct.
+- Add an `adw::ToastOverlay` as the **root of the detail page content** in `SessionDetail`, wrapping the existing `gtk::Overlay` (`detail_overlay`) inside that stack page. Store a `#[name(toast_overlay)]` reference in the widgets struct.
 - On `ShowExpandLoadFailure`, show a short non-blocking toast: `toast_overlay.add_toast(adw::Toast::new("Could not load full message."));`
 
 Navigation helper changes:
