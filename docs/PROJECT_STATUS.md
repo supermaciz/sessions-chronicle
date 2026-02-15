@@ -4,7 +4,7 @@
 
 ---
 
-## Current Status: Between Phases — Phase 5 Complete, Phase 6 Next
+## Current Status: Phase 5.5 — Expand/Collapse Truncated Messages
 
 ### ✅ Completed
 
@@ -81,6 +81,11 @@
   * ✅ Fix "About" modal
 - ✅ Basic CI/CD setup with GitHub Actions (automated testing, formatting checks, linting, Flatpak builds)
 - ✅ Stable Flatpak manifest and release workflow ([design](plans/2026-02-14-release-flatpak-workflow-design.md), PR #33)
+
+**Phase 5.5: Expand/Collapse Truncated Messages** - In Progress ([design](plans/2026-02-15-expand-collapse-messages-design.md))
+- ⬜ Inline expand/collapse toggle for truncated messages in transcript view
+- ⬜ Load full content on demand from DB with caching
+- ⬜ Toggle button replacing static "(content truncated)" badge
 
 **Phase 6: Tool Calls & Subagents** - Future ([design](plans/2026-01-30-tool-calls-and-subagents-design.md))
 - ⬜ Enrich Message model (tool_name, tool_input, parent_message_index)
@@ -336,5 +341,5 @@ cargo test
 ---
 
 **Last Updated**: 2026-02-15
-**Current Phase**: Phase 5 Complete — Phase 6 (Tool Calls & Subagents) is next
-**Next Milestone**: Phase 6 — Enrich Message model, parse tool_use/tool_result events, inline tool badges
+**Current Phase**: Phase 5.5 — Expand/Collapse Truncated Messages
+**Next Milestone**: Phase 6 — Tool Calls & Subagents
