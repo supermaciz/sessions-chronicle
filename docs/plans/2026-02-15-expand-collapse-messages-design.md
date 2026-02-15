@@ -49,22 +49,40 @@ These are needed so `MessageRow` can request the full content from the DB.
 
 Update `load_message_previews_for_session()` SQL to also select `session_id` and `message_index`, and populate the new fields when constructing `MessagePreview`.
 
+Updated SQL:
+
+```sql
+SELECT
+  session_id,
+  CAST(message_index AS INTEGER) AS message_index,
+  role,
+  substr(content, 1, ?2) AS content_preview,
+  length(content) AS content_len,
+  timestamp
+FROM messages
+WHERE session_id = ?1
+ORDER BY CAST(message_index AS INTEGER) ASC
+LIMIT ?3 OFFSET ?4
+```
+
+Column index offsets shift by 2 compared to the current query (currently 0–3, becomes 0–5). Update the `row.get(...)` calls accordingly.
+
 ### Step 3: Enrich `MessageRowInit` with DB path
 
 **File:** `src/ui/message_row.rs`
 
-Add `db_path: PathBuf` to `MessageRowInit`. This is passed through from `SessionDetail` so the row can load full content on demand.
+Add `db_path: Arc<PathBuf>` to `MessageRowInit`. Using `Arc` avoids a heap allocation per row — the path is immutable shared state and `Arc::clone` is a cheap atomic increment.
 
 **File:** `src/ui/session_detail.rs`
 
-Pass `self.db_path.clone()` when constructing `MessageRowInit` in both `load_first_page()` and `LoadMore` handler.
+Store `db_path` as `Arc<PathBuf>` in the `SessionDetail` model (wrap it once in `init()`). Pass `self.db_path.clone()` (Arc clone) when constructing `MessageRowInit` in both `load_first_page()` and `LoadMore` handler.
 
 ### Step 4: Add expand/collapse state and input to `MessageRow`
 
 **File:** `src/ui/message_row.rs`
 
 Model changes:
-- Add `db_path: PathBuf` field
+- Add `db_path: Arc<PathBuf>` field
 - Add `expanded: bool` field (default `false`)
 - Add `full_content: Option<String>` field (cached full content)
 - Add `loading_full_content: bool` field (disable toggle and show loading state)
@@ -107,6 +125,8 @@ This replaces the current `MatchCount { count }` variant. Both emission sites mu
 - **`init_widgets`** (initial render): the existing `MatchCount` emission becomes `MatchCountChanged { message_index: self.preview.message_index, count: match_count }`
 - **`update_with_view`** (on toggle, Step 6): emit `MatchCountChanged` when rendered match count differs from cached value
 
+**Important:** `sender.output(...)` returns `Result<(), O>`. Use `.ok()` to discard the error when the receiver has been dropped (e.g. `sender.output(MessageRowOutput::MatchCountChanged { ... }).ok();`).
+
 ### Step 5: Replace truncation label with toggle button
 
 **File:** `src/ui/message_row.rs`
@@ -136,11 +156,35 @@ gtk::Button {
 }
 ```
 
-### Step 6: Implement `update_with_view()` for `ToggleExpand`
+### Step 6: Extract content rendering helper
 
 **File:** `src/ui/message_row.rs`
 
-Override `update_with_view()` instead of `update()` because we need direct access to widgets (specifically `content_container`) to clear and re-render children. **Important:** `update_with_view` replaces the default pipeline (`update` + `update_view`), so we must call `self.update_view(widgets, sender)` at the end to ensure `#[watch]` macros on the toggle button label and visibility re-evaluate.
+Extract the content rendering logic from `init_widgets` into a reusable helper **before** implementing the toggle handler, since both `init_widgets` and the toggle need to render content. Call it with `&widgets.content_container`:
+
+```rust
+fn render_content(
+    container: &gtk::Box,
+    content: &str,
+    role: Role,
+    highlight_query: Option<&str>,
+) -> usize  // returns match_count
+```
+
+This method:
+1. Clears `container` children
+2. Renders markdown (assistant) or plain text (other roles) with optional highlighting
+3. Returns the highlight match count
+
+Call this from both `init_widgets` (initial render) and `update_with_view` (on toggle, Step 7).
+
+### Step 7: Implement `update_with_view()` and `update_cmd_with_view()` for expand/collapse
+
+**File:** `src/ui/message_row.rs`
+
+#### Input handling: `update_with_view()`
+
+Override `update_with_view()` instead of `update()` because we need direct access to widgets (specifically `content_container`) to clear and re-render children via `render_content()`. **Important:** when you override `update_with_view`, you **replace** the default pipeline (`update` + `update_view`) entirely — the runtime never calls `update()`. We must call `self.update_view(widgets, sender)` at the end to ensure `#[watch]` macros on the toggle button label and visibility re-evaluate.
 
 Handler for `ToggleExpand`:
 
@@ -153,16 +197,9 @@ Handler for `ToggleExpand`:
    - Return after scheduling command; do not block the GTK thread
 3. Collapse path:
    - Set `self.expanded = false`
-   - Re-render collapsed preview content
-4. If rendered match count changed, update `self.rendered_match_count` and emit `MessageRowOutput::MatchCountChanged { message_index, count }`
+   - Re-render collapsed preview content using `render_content()`
+4. If rendered match count changed, update `self.rendered_match_count` and emit `MessageRowOutput::MatchCountChanged { message_index, count }` (use `.ok()`)
 5. Call `self.update_view(widgets, sender)` to flush `#[watch]` updates
-
-Handle command completion in `update_cmd_with_view()`:
-
-- On `FullContentLoaded(Ok(Some(content)))`: cache content, set `expanded = true`, set `loading_full_content = false`, re-render expanded content, emit match update if count changed
-- On `FullContentLoaded(Ok(None))`: set `expanded = false`, set `loading_full_content = false`, keep preview content rendered, emit `ExpandLoadFailed { message_index }`
-- On `FullContentLoaded(Err(err))`: log error, set `expanded = false`, set `loading_full_content = false`, keep preview content rendered, emit `ExpandLoadFailed { message_index }`
-- Call `self.update_view(widgets, sender)` at the end (same reason: flush `#[watch]` updates)
 
 Skeleton:
 
@@ -183,27 +220,14 @@ fn update_with_view(
 }
 ```
 
-### Step 7: Extract content rendering helper
+#### Command handling: `update_cmd_with_view()`
 
-**File:** `src/ui/message_row.rs`
+Override `update_cmd_with_view()` instead of `update_cmd()` because we need `&mut widgets.content_container` to re-render children after the async DB fetch completes. Same as above: overriding replaces the default pipeline, so we must call `self.update_view(widgets, sender)` ourselves.
 
-Extract the content rendering logic from `init_widgets` into a reusable helper and call it with `&widgets.content_container`:
-
-```rust
-fn render_content(
-    container: &gtk::Box,
-    content: &str,
-    role: Role,
-    highlight_query: Option<&str>,
-) -> usize  // returns match_count
-```
-
-This method:
-1. Clears `container` children
-2. Renders markdown (assistant) or plain text (other roles) with optional highlighting
-3. Returns the highlight match count
-
-Call this from both `init_widgets` (initial render) and `update_with_view` (on toggle).
+- On `FullContentLoaded(Ok(Some(content)))`: cache content, set `expanded = true`, set `loading_full_content = false`, re-render expanded content via `render_content()`, emit match update if count changed (`.ok()`)
+- On `FullContentLoaded(Ok(None))`: set `expanded = false`, set `loading_full_content = false`, keep preview content rendered, emit `ExpandLoadFailed { message_index }` (`.ok()`)
+- On `FullContentLoaded(Err(err))`: log error, set `expanded = false`, set `loading_full_content = false`, keep preview content rendered, emit `ExpandLoadFailed { message_index }` (`.ok()`)
+- Call `self.update_view(widgets, sender)` at the end to flush `#[watch]` updates
 
 ### Step 8: Keep SessionDetail match counters in sync and surface load failures
 
@@ -215,16 +239,26 @@ Model changes:
 - Replace `match_counts: Vec<usize>` with `BTreeMap<usize, usize>` keyed by `message_index`
 
 Message/output wiring changes:
-- Update forwarding from `MessageRowOutput::MatchCountChanged { message_index, count }`
-- Forward `MessageRowOutput::ExpandLoadFailed { .. }` to a new `SessionDetailMsg::ShowExpandLoadFailure`
-- Update `SessionDetailMsg::MatchCount` to carry `(message_index, count)`
-- On receipt, insert/replace count for that `message_index`, then recompute `total_matches`
+- Update `SessionDetailMsg::MatchCount` to carry `(message_index, count)` instead of a bare `usize`
+- Add `SessionDetailMsg::ShowExpandLoadFailure` variant
+- Update the factory forwarding closure in `init()`:
+
+```rust
+.forward(sender.input_sender(), |output| match output {
+    MessageRowOutput::MatchCountChanged { message_index, count } =>
+        SessionDetailMsg::MatchCount(message_index, count),
+    MessageRowOutput::ExpandLoadFailed { .. } =>
+        SessionDetailMsg::ShowExpandLoadFailure,
+})
+```
+
+- On `MatchCount(message_index, count)`, insert/replace count for that `message_index` in the `BTreeMap`, then recompute `total_matches` as the sum of all values
 - Keep existing auto-scroll behavior: when `total_matches` transitions from `0` to `> 0`, jump to the first match
 
 Toast UX changes:
 
-- Add an `adw::ToastOverlay` in `SessionDetail` (or parent-provided equivalent)
-- On `ShowExpandLoadFailure`, show a short non-blocking toast like: `"Could not load full message."`
+- Add an `adw::ToastOverlay` as the **new root widget** of `SessionDetail`, wrapping the existing `gtk::Overlay` (`detail_overlay`). Store a `#[name(toast_overlay)]` reference in the widgets struct.
+- On `ShowExpandLoadFailure`, show a short non-blocking toast: `toast_overlay.add_toast(adw::Toast::new("Could not load full message."));`
 
 Navigation helper changes:
 - Update `find_message_for_match()` to accept the `BTreeMap<usize, usize>` and iterate in ascending `message_index` order.
@@ -258,7 +292,7 @@ Keep Adwaita defaults for colors/borders (do not override `color`, `background`,
 | `src/ui/message_row.rs` | Add expand/collapse state, async load command flow, toggle loading state, content rendering helper, per-row match count output |
 | `src/ui/session_detail.rs` | Pass `db_path` in `MessageRowInit`, replace match counting with keyed updates, and show toast on load failure |
 | `data/resources/style.css` | Style for `.expand-toggle` button |
-| `tests/message_preview.rs` | Add coverage for `load_message_full_content()` and identifier fields |
+| `tests/message_preview.rs` | Add coverage for `load_message_full_content()` (happy path, missing session, missing message index, very large content) and identifier fields |
 
 ## Verification
 
