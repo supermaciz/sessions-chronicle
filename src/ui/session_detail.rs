@@ -27,6 +27,7 @@ pub struct SessionDetail {
     current_match: usize,
     total_matches: usize,
     scroll_to_message: Cell<Option<usize>>,
+    pending_toast: Cell<bool>,
 }
 
 #[derive(Debug)]
@@ -73,9 +74,12 @@ impl SimpleComponent for SessionDetail {
                     set_description: Some("Please wait..."),
                 },
 
-                #[name = "detail_overlay"]
-                gtk::Overlay {
+                #[name = "toast_overlay"]
+                adw::ToastOverlay {
                     set_vexpand: true,
+
+                    #[name = "detail_overlay"]
+                    gtk::Overlay {
 
                     #[wrap(Some)]
                     set_child = &gtk::ScrolledWindow {
@@ -240,6 +244,7 @@ impl SimpleComponent for SessionDetail {
                         },
                     },
                 },
+                }, // close toast_overlay
             },
         }
     }
@@ -275,6 +280,7 @@ impl SimpleComponent for SessionDetail {
             current_match: 0,
             total_matches: 0,
             scroll_to_message: Cell::new(None),
+            pending_toast: Cell::new(false),
         };
 
         let messages_box = model.messages.widget();
@@ -378,8 +384,8 @@ impl SimpleComponent for SessionDetail {
                 }
             }
             SessionDetailMsg::ShowExpandLoadFailure => {
-                // Will add toast in Step 8
                 tracing::warn!("Could not load full message content");
+                self.pending_toast.set(true);
             }
             SessionDetailMsg::ClearSearch => {
                 self.search_query = None;
@@ -442,11 +448,18 @@ impl SimpleComponent for SessionDetail {
 
             widgets
                 .content_stack
-                .set_visible_child(&widgets.detail_overlay);
+                .set_visible_child(&widgets.toast_overlay);
         } else {
             widgets
                 .content_stack
                 .set_visible_child(&widgets.loading_state);
+        }
+
+        // Show toast if expand load failed
+        if self.pending_toast.take() {
+            widgets
+                .toast_overlay
+                .add_toast(adw::Toast::new("Could not load full message."));
         }
 
         // Scroll to match if requested
