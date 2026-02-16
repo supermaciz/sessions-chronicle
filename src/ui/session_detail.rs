@@ -382,6 +382,14 @@ impl SimpleComponent for SessionDetail {
                     let (msg_idx, _) = Self::find_message_for_match(&self.match_counts, 0);
                     self.scroll_to_message.set(Some(msg_idx));
                 }
+                // Clamp current_match when total shrinks (e.g. after collapse)
+                if self.total_matches > 0 {
+                    if self.current_match >= self.total_matches {
+                        self.current_match = self.total_matches - 1;
+                    }
+                } else {
+                    self.current_match = 0;
+                }
             }
             SessionDetailMsg::ShowExpandLoadFailure => {
                 tracing::warn!("Could not load full message content");
