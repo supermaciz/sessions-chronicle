@@ -237,6 +237,33 @@ pub fn load_session(db_path: &Path, session_id: &str) -> Result<Option<Session>>
     result
 }
 
+/// Load the full (untruncated) content of a single message.
+pub fn load_message_full_content(
+    db_path: &Path,
+    session_id: &str,
+    message_index: usize,
+) -> Result<String> {
+    let db = Connection::open(db_path).context("Failed to open database")?;
+
+    let mut stmt = db.prepare(
+        "SELECT content FROM messages WHERE session_id = ?1 AND CAST(message_index AS INTEGER) = ?2",
+    )?;
+
+    let mut rows = stmt
+        .query([&session_id as &dyn ToSql, &(message_index as i64)])
+        .context("Failed to query full message content")?;
+
+    if let Some(row) = rows.next()? {
+        Ok(row.get(0)?)
+    } else {
+        anyhow::bail!(
+            "Message not found: session={} index={}",
+            session_id,
+            message_index
+        )
+    }
+}
+
 /// Load message previews for a session with pagination and truncation.
 pub fn load_message_previews_for_session(
     db_path: &Path,
@@ -254,6 +281,8 @@ pub fn load_message_previews_for_session(
 
     let mut stmt = db.prepare(
         "SELECT
+          session_id,
+          CAST(message_index AS INTEGER) AS message_index,
           role,
           substr(content, 1, ?2) AS content_preview,
           length(content) AS content_len,
@@ -275,14 +304,16 @@ pub fn load_message_previews_for_session(
 
     let mut previews = Vec::new();
     while let Some(row) = rows.next()? {
-        let role_str: String = row.get(0)?;
+        let role_str: String = row.get(2)?;
         let role = Role::from_storage(&role_str).unwrap_or(Role::User);
-        let timestamp: i64 = row.get(3)?;
+        let timestamp: i64 = row.get(5)?;
 
         previews.push(MessagePreview {
+            session_id: row.get(0)?,
+            message_index: row.get::<_, i64>(1)? as usize,
             role,
-            content_preview: row.get(1)?,
-            content_len: row.get::<_, i64>(2)? as usize,
+            content_preview: row.get(3)?,
+            content_len: row.get::<_, i64>(4)? as usize,
             timestamp: Utc
                 .timestamp_opt(timestamp, 0)
                 .single()
