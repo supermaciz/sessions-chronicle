@@ -242,11 +242,7 @@ pub fn load_message_full_content(
     db_path: &Path,
     session_id: &str,
     message_index: usize,
-) -> Result<Option<String>> {
-    if !db_path.exists() {
-        return Ok(None);
-    }
-
+) -> Result<String> {
     let db = Connection::open(db_path).context("Failed to open database")?;
 
     let mut stmt = db.prepare(
@@ -258,9 +254,13 @@ pub fn load_message_full_content(
         .context("Failed to query full message content")?;
 
     if let Some(row) = rows.next()? {
-        Ok(Some(row.get(0)?))
+        Ok(row.get(0)?)
     } else {
-        Ok(None)
+        anyhow::bail!(
+            "Message not found: session={} index={}",
+            session_id,
+            message_index
+        )
     }
 }
 

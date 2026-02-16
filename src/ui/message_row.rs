@@ -24,7 +24,7 @@ pub enum MessageRowMsg {
 
 #[derive(Debug)]
 pub enum MessageRowCmd {
-    FullContentLoaded(Result<Option<String>>),
+    FullContentLoaded(Result<String>),
 }
 
 #[derive(Debug)]
@@ -266,7 +266,7 @@ impl FactoryComponent for MessageRow {
         sender: FactorySender<Self>,
     ) {
         match message {
-            MessageRowCmd::FullContentLoaded(Ok(Some(content))) => {
+            MessageRowCmd::FullContentLoaded(Ok(content)) => {
                 self.full_content = Some(content.clone());
                 self.expanded = true;
                 self.loading_full_content = false;
@@ -285,15 +285,6 @@ impl FactoryComponent for MessageRow {
                         })
                         .ok();
                 }
-            }
-            MessageRowCmd::FullContentLoaded(Ok(None)) => {
-                self.expanded = false;
-                self.loading_full_content = false;
-                sender
-                    .output(MessageRowOutput::ExpandLoadFailed {
-                        message_index: self.preview.message_index,
-                    })
-                    .ok();
             }
             MessageRowCmd::FullContentLoaded(Err(err)) => {
                 tracing::error!(
