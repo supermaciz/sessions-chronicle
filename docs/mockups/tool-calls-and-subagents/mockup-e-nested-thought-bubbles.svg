@@ -1,0 +1,188 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="900" height="950" viewBox="0 0 900 950">
+  <defs>
+    <!-- Fade-out gradient for collapsed output -->
+    <linearGradient id="fadeOut" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#f6f6f6" stop-opacity="0"/>
+      <stop offset="100%" stop-color="#f6f6f6" stop-opacity="1"/>
+    </linearGradient>
+    <!-- Shadow filters -->
+    <filter id="cardShadow" x="-2%" y="-1%" width="104%" height="104%">
+      <feDropShadow dx="0" dy="1" stdDeviation="2" flood-color="#000" flood-opacity="0.08"/>
+    </filter>
+    <filter id="innerShadow" x="-2%" y="-1%" width="104%" height="103%">
+      <feDropShadow dx="0" dy="1" stdDeviation="1.5" flood-color="#000" flood-opacity="0.06"/>
+    </filter>
+  </defs>
+
+  <!-- Background -->
+  <rect width="900" height="950" fill="#fafafa"/>
+
+  <!-- ==================== HEADERBAR ==================== -->
+  <rect width="900" height="47" rx="0" fill="#303030"/>
+  <!-- Window controls -->
+  <circle cx="20" cy="24" r="7" fill="#c01c28" opacity="0.85"/>
+  <circle cx="40" cy="24" r="7" fill="#e5a50a" opacity="0.85"/>
+  <circle cx="60" cy="24" r="7" fill="#26a269" opacity="0.85"/>
+  <!-- Title -->
+  <text x="450" y="29" text-anchor="middle" font-family="Cantarell, sans-serif" font-size="14" font-weight="700" fill="#ffffff">Sessions Chronicle</text>
+  <!-- Hamburger menu -->
+  <g transform="translate(868, 16)">
+    <rect y="0" width="16" height="2" rx="1" fill="#ccc"/>
+    <rect y="5" width="16" height="2" rx="1" fill="#ccc"/>
+    <rect y="10" width="16" height="2" rx="1" fill="#ccc"/>
+  </g>
+
+  <!-- Subtle separator below headerbar -->
+  <rect y="47" width="900" height="1" fill="#d5d5d5"/>
+
+  <!-- ==================== CONTENT AREA ==================== -->
+
+  <!-- ===== USER MESSAGE ===== -->
+  <g transform="translate(32, 64)">
+    <!-- Card background -->
+    <rect x="0" y="0" width="836" height="56" rx="12" fill="#ffffff" filter="url(#cardShadow)"/>
+    <!-- Blue left border -->
+    <rect x="0" y="0" width="5" height="56" rx="2.5" fill="#3584e4"/>
+    <!-- Avatar circle -->
+    <circle cx="30" cy="28" r="14" fill="#3584e4" opacity="0.15"/>
+    <text x="30" y="33" text-anchor="middle" font-family="Cantarell, sans-serif" font-size="13" font-weight="700" fill="#3584e4">U</text>
+    <!-- Label -->
+    <text x="54" y="22" font-family="Cantarell, sans-serif" font-size="11" font-weight="600" fill="#3584e4">You</text>
+    <!-- Message text -->
+    <text x="54" y="42" font-family="Cantarell, sans-serif" font-size="14" fill="#1e1e1e">Can you read the config file and fix the bug?</text>
+  </g>
+
+  <!-- ===== ASSISTANT COMPOSITE MESSAGE ===== -->
+  <g transform="translate(32, 136)">
+    <!-- Outer assistant card -->
+    <rect x="0" y="0" width="836" height="778" rx="12" fill="#ffffff" filter="url(#cardShadow)"/>
+    <!-- Green left border -->
+    <rect x="0" y="0" width="5" height="778" rx="2.5" fill="#26a269"/>
+    <!-- Avatar -->
+    <circle cx="30" cy="24" r="14" fill="#26a269" opacity="0.15"/>
+    <text x="30" y="29" text-anchor="middle" font-family="Cantarell, sans-serif" font-size="13" font-weight="700" fill="#26a269">A</text>
+    <text x="54" y="20" font-family="Cantarell, sans-serif" font-size="11" font-weight="600" fill="#26a269">Assistant</text>
+
+    <!-- Text segment 1 -->
+    <text x="54" y="40" font-family="Cantarell, sans-serif" font-size="14" fill="#1e1e1e">Let me check the configuration file first.</text>
+
+    <!-- ===== NESTED TOOL CARD 1: Read (collapsed) ===== -->
+    <g transform="translate(54, 56)">
+      <rect x="0" y="0" width="758" height="100" rx="8" fill="#f6f6f6" filter="url(#innerShadow)"/>
+      <!-- Orange left border -->
+      <rect x="0" y="0" width="4" height="100" rx="2" fill="#e66100"/>
+      <!-- Header row -->
+      <text x="16" y="22" font-family="Cantarell, sans-serif" font-size="13" fill="#1e1e1e" font-weight="700">&#x1F4C4; Read</text>
+      <text x="86" y="22" font-family="Cantarell, sans-serif" font-size="12" fill="#77767b">src/config.rs</text>
+      <!-- Duration pill -->
+      <rect x="694" y="8" width="50" height="20" rx="10" fill="#e8e8e8"/>
+      <text x="719" y="22" text-anchor="middle" font-family="Cantarell, sans-serif" font-size="10" fill="#77767b">250ms</text>
+      <!-- Collapsed output preview (2 lines monospace) -->
+      <text x="16" y="46" font-family="Source Code Pro, monospace" font-size="11" fill="#555555">use serde::Deserialize;</text>
+      <text x="16" y="62" font-family="Source Code Pro, monospace" font-size="11" fill="#555555">#[derive(Debug, Deserialize)]</text>
+      <!-- Fade overlay for truncation effect -->
+      <rect x="1" y="55" width="756" height="30" rx="0" fill="url(#fadeOut)"/>
+      <!-- Show output link -->
+      <text x="16" y="92" font-family="Cantarell, sans-serif" font-size="11" fill="#3584e4" cursor="pointer">Show output &#x2193;</text>
+    </g>
+
+    <!-- Text segment 2 -->
+    <text x="54" y="180" font-family="Cantarell, sans-serif" font-size="14" fill="#1e1e1e">Found a validation error. Let me run the tests to confirm.</text>
+
+    <!-- ===== NESTED TOOL CARD 2: Bash (expanded) ===== -->
+    <g transform="translate(54, 196)">
+      <rect x="0" y="0" width="758" height="172" rx="8" fill="#f6f6f6" filter="url(#innerShadow)"/>
+      <!-- Orange left border -->
+      <rect x="0" y="0" width="4" height="172" rx="2" fill="#e66100"/>
+      <!-- Header row -->
+      <text x="16" y="22" font-family="Cantarell, sans-serif" font-size="13" fill="#1e1e1e" font-weight="700">&#x2699;&#xFE0F; Bash</text>
+      <text x="82" y="22" font-family="Cantarell, sans-serif" font-size="12" fill="#77767b">cargo test</text>
+      <!-- Duration pill -->
+      <rect x="700" y="8" width="44" height="20" rx="10" fill="#e8e8e8"/>
+      <text x="722" y="22" text-anchor="middle" font-family="Cantarell, sans-serif" font-size="10" fill="#77767b">1.2s</text>
+      <!-- Dark code block -->
+      <rect x="12" y="34" width="734" height="108" rx="6" fill="#2d2d2d"/>
+      <text x="24" y="54" font-family="Source Code Pro, monospace" font-size="11" fill="#d0d0d0">running 12 tests...</text>
+      <text x="24" y="72" font-family="Source Code Pro, monospace" font-size="11" fill="#d0d0d0">test config::test_parse ......... <tspan fill="#26a269">ok</tspan></text>
+      <text x="24" y="90" font-family="Source Code Pro, monospace" font-size="11" fill="#d0d0d0">test config::test_validate ...... <tspan fill="#c01c28">FAILED</tspan></text>
+      <text x="24" y="108" font-family="Source Code Pro, monospace" font-size="11" fill="#d0d0d0">test config::test_load .......... <tspan fill="#26a269">ok</tspan></text>
+      <text x="24" y="126" font-family="Source Code Pro, monospace" font-size="11" fill="#77767b">test result: <tspan fill="#c01c28">FAILED</tspan>. 11 passed; 1 failed</text>
+      <!-- Hide output link -->
+      <text x="16" y="162" font-family="Cantarell, sans-serif" font-size="11" fill="#3584e4" cursor="pointer">Hide output &#x2191;</text>
+    </g>
+
+    <!-- Text segment 3 -->
+    <text x="54" y="392" font-family="Cantarell, sans-serif" font-size="14" fill="#1e1e1e">The validation test fails. Let me fix line 42.</text>
+
+    <!-- ===== NESTED TOOL CARD 3: Edit (mini diff) ===== -->
+    <g transform="translate(54, 408)">
+      <rect x="0" y="0" width="758" height="90" rx="8" fill="#f6f6f6" filter="url(#innerShadow)"/>
+      <!-- Orange left border -->
+      <rect x="0" y="0" width="4" height="90" rx="2" fill="#e66100"/>
+      <!-- Header row -->
+      <text x="16" y="22" font-family="Cantarell, sans-serif" font-size="13" fill="#1e1e1e" font-weight="700">&#x270F;&#xFE0F; Edit</text>
+      <text x="76" y="22" font-family="Cantarell, sans-serif" font-size="12" fill="#77767b">src/config.rs:42</text>
+      <!-- Duration pill -->
+      <rect x="690" y="8" width="54" height="20" rx="10" fill="#e8e8e8"/>
+      <text x="717" y="22" text-anchor="middle" font-family="Cantarell, sans-serif" font-size="10" fill="#77767b">instant</text>
+      <!-- Mini diff display -->
+      <!-- Removed line (red bg) -->
+      <rect x="12" y="34" width="734" height="22" rx="4" fill="#c01c28" opacity="0.1"/>
+      <text x="24" y="50" font-family="Source Code Pro, monospace" font-size="11" fill="#c01c28">-  if value != nil {</text>
+      <!-- Added line (green bg) -->
+      <rect x="12" y="58" width="734" height="22" rx="4" fill="#26a269" opacity="0.1"/>
+      <text x="24" y="74" font-family="Source Code Pro, monospace" font-size="11" fill="#26a269">+  if value.is_valid() {</text>
+    </g>
+
+    <!-- Text segment 4 -->
+    <text x="54" y="524" font-family="Cantarell, sans-serif" font-size="14" fill="#1e1e1e">Now let me verify with a thorough review.</text>
+
+    <!-- ===== NESTED SUBAGENT CARD (double nesting, purple) ===== -->
+    <g transform="translate(78, 540)">
+      <rect x="0" y="0" width="710" height="122" rx="8" fill="#efefef" filter="url(#innerShadow)"/>
+      <!-- Purple left border -->
+      <rect x="0" y="0" width="4" height="122" rx="2" fill="#613583"/>
+      <!-- Header row -->
+      <text x="16" y="22" font-family="Cantarell, sans-serif" font-size="13" fill="#1e1e1e" font-weight="700">&#x1F500; Task</text>
+      <text x="76" y="22" font-family="Cantarell, sans-serif" font-size="12" fill="#77767b">Code review subagent</text>
+      <!-- Compact tool call summary pills -->
+      <g transform="translate(16, 36)">
+        <!-- Read x3 pill -->
+        <rect x="0" y="0" width="64" height="22" rx="11" fill="#e66100" opacity="0.12"/>
+        <text x="32" y="15" text-anchor="middle" font-family="Cantarell, sans-serif" font-size="10" font-weight="600" fill="#e66100">Read &#xd7;3</text>
+        <!-- Grep x2 pill -->
+        <rect x="72" y="0" width="64" height="22" rx="11" fill="#e66100" opacity="0.12"/>
+        <text x="104" y="15" text-anchor="middle" font-family="Cantarell, sans-serif" font-size="10" font-weight="600" fill="#e66100">Grep &#xd7;2</text>
+        <!-- Bash x1 pill -->
+        <rect x="144" y="0" width="64" height="22" rx="11" fill="#e66100" opacity="0.12"/>
+        <text x="176" y="15" text-anchor="middle" font-family="Cantarell, sans-serif" font-size="10" font-weight="600" fill="#e66100">Bash &#xd7;1</text>
+      </g>
+      <!-- Separator -->
+      <rect x="16" y="68" width="678" height="1" fill="#d5d5d5"/>
+      <!-- Result label -->
+      <text x="16" y="88" font-family="Cantarell, sans-serif" font-size="13" fill="#26a269" font-weight="600">Result</text>
+      <!-- Result text -->
+      <text x="16" y="108" font-family="Cantarell, sans-serif" font-size="13" fill="#555555">No issues found. Code changes look correct and well-structured. LGTM.</text>
+    </g>
+
+    <!-- Text segment 5 (conclusion) -->
+    <text x="54" y="692" font-family="Cantarell, sans-serif" font-size="14" fill="#1e1e1e">All done! The config has been updated and all tests pass.</text>
+    <!-- Success indicator -->
+    <circle cx="66" cy="714" r="12" fill="#26a269" opacity="0.12"/>
+    <text x="66" y="719" text-anchor="middle" font-family="Cantarell, sans-serif" font-size="14" fill="#26a269">&#x2713;</text>
+    <text x="86" y="719" font-family="Cantarell, sans-serif" font-size="13" fill="#26a269" font-weight="600">Task completed successfully</text>
+
+    <!-- Nesting depth legend (subtle, at bottom of card) -->
+    <g transform="translate(54, 748)" opacity="0.5">
+      <rect x="0" y="0" width="6" height="6" rx="1" fill="#26a269"/>
+      <text x="12" y="6" font-family="Cantarell, sans-serif" font-size="9" fill="#77767b">Assistant</text>
+      <rect x="80" y="0" width="6" height="6" rx="1" fill="#e66100"/>
+      <text x="92" y="6" font-family="Cantarell, sans-serif" font-size="9" fill="#77767b">Tool call</text>
+      <rect x="152" y="0" width="6" height="6" rx="1" fill="#613583"/>
+      <text x="164" y="6" font-family="Cantarell, sans-serif" font-size="9" fill="#77767b">Subagent</text>
+    </g>
+  </g>
+
+  <!-- ===== MOCKUP LABEL ===== -->
+  <text x="450" y="938" text-anchor="middle" font-family="Cantarell, sans-serif" font-size="11" fill="#77767b">Mockup E: Nested Thought Bubbles &#x2014; Sessions Chronicle</text>
+</svg>

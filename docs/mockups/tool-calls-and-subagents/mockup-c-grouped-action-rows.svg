@@ -1,0 +1,142 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="900" height="750" viewBox="0 0 900 750">
+  <defs>
+    <filter id="cardShadow" x="-2%" y="-2%" width="104%" height="108%">
+      <feDropShadow dx="0" dy="1" stdDeviation="2" flood-color="#000000" flood-opacity="0.08"/>
+    </filter>
+    <filter id="headerShadow" x="0" y="0" width="100%" height="150%">
+      <feDropShadow dx="0" dy="1" stdDeviation="1" flood-color="#000000" flood-opacity="0.12"/>
+    </filter>
+  </defs>
+
+  <!-- Background -->
+  <rect width="900" height="750" fill="#fafafa"/>
+
+  <!-- Header bar -->
+  <rect width="900" height="47" fill="#ebebeb" filter="url(#headerShadow)"/>
+  <line x1="0" y1="47" x2="900" y2="47" stroke="#d5d5d5" stroke-width="1"/>
+  <text x="20" y="30" font-family="Cantarell, sans-serif" font-size="16" fill="#2e3436">&#x2190;</text>
+  <text x="450" y="30" font-family="Cantarell, sans-serif" font-size="14" font-weight="bold" fill="#2e3436" text-anchor="middle">Session Detail</text>
+  <circle cx="840" cy="23" r="7" fill="#d5d5d5" stroke="#c0c0c0" stroke-width="0.5"/>
+  <circle cx="862" cy="23" r="7" fill="#d5d5d5" stroke="#c0c0c0" stroke-width="0.5"/>
+  <circle cx="884" cy="23" r="7" fill="#d5d5d5" stroke="#c0c0c0" stroke-width="0.5"/>
+
+  <!-- Content area -->
+  <g transform="translate(32, 63)">
+
+    <!-- === User message (blue left border) === -->
+    <g transform="translate(0, 0)">
+      <rect x="0" y="0" width="836" height="56" rx="12" ry="12" fill="#ffffff" filter="url(#cardShadow)"/>
+      <rect x="0" y="12" width="4" height="32" fill="#3584e4"/>
+      <path d="M0,12 A12,12 0 0,1 12,0 L12,4 A8,8 0 0,0 4,12 Z" fill="#3584e4"/>
+      <path d="M0,44 A12,12 0 0,0 12,56 L12,52 A8,8 0 0,1 4,44 Z" fill="#3584e4"/>
+      <text x="20" y="22" font-family="Cantarell, sans-serif" font-size="11" font-weight="bold" fill="#3584e4">You</text>
+      <text x="20" y="40" font-family="Cantarell, sans-serif" font-size="13" fill="#2e3436">Can you read the config file and fix the bug?</text>
+    </g>
+
+    <!-- === Assistant message 1 (green left border) === -->
+    <g transform="translate(0, 72)">
+      <rect x="0" y="0" width="836" height="56" rx="12" ry="12" fill="#ffffff" filter="url(#cardShadow)"/>
+      <rect x="0" y="12" width="4" height="32" fill="#26a269"/>
+      <path d="M0,12 A12,12 0 0,1 12,0 L12,4 A8,8 0 0,0 4,12 Z" fill="#26a269"/>
+      <path d="M0,44 A12,12 0 0,0 12,56 L12,52 A8,8 0 0,1 4,44 Z" fill="#26a269"/>
+      <text x="20" y="22" font-family="Cantarell, sans-serif" font-size="11" font-weight="bold" fill="#26a269">Assistant</text>
+      <text x="20" y="40" font-family="Cantarell, sans-serif" font-size="13" fill="#2e3436">Let me check the configuration file first.</text>
+    </g>
+
+    <!-- === Tool Calls Group: 3 tools (orange left border) === -->
+    <g transform="translate(0, 144)">
+      <rect x="0" y="0" width="836" height="180" rx="12" ry="12" fill="#ffffff" filter="url(#cardShadow)"/>
+      <!-- Orange left border with rounded ends -->
+      <rect x="0" y="12" width="4" height="156" fill="#e66100"/>
+      <path d="M0,12 A12,12 0 0,1 12,0 L12,4 A8,8 0 0,0 4,12 Z" fill="#e66100"/>
+      <path d="M0,168 A12,12 0 0,0 12,180 L12,176 A8,8 0 0,1 4,168 Z" fill="#e66100"/>
+
+      <!-- Group header caption -->
+      <text x="20" y="26" font-family="Cantarell, sans-serif" font-size="11" fill="#929595">3 tool calls</text>
+
+      <!-- Row 1: Read  (y=36, 48px tall) -->
+      <g transform="translate(0, 36)">
+        <!-- Icon circle -->
+        <circle cx="32" cy="24" r="14" fill="#fff3e0"/>
+        <text x="32" y="29" font-family="sans-serif" font-size="13" text-anchor="middle" fill="#e66100">&#x1F4C4;</text>
+        <!-- Title -->
+        <text x="56" y="28" font-family="Cantarell, sans-serif" font-size="14" font-weight="bold" fill="#2e3436">Read</text>
+        <!-- Suffix -->
+        <text x="100" y="28" font-family="Cantarell, sans-serif" font-size="13" fill="#929595">src/config.rs</text>
+        <!-- Chevron -->
+        <text x="816" y="29" font-family="Cantarell, sans-serif" font-size="20" fill="#c0c0c0" text-anchor="end">&#x203A;</text>
+      </g>
+
+      <!-- Separator -->
+      <line x1="20" y1="84" x2="816" y2="84" stroke="#e0e0e0" stroke-width="1"/>
+
+      <!-- Row 2: Bash (y=84, 48px tall) -->
+      <g transform="translate(0, 84)">
+        <circle cx="32" cy="24" r="14" fill="#fff3e0"/>
+        <text x="32" y="29" font-family="sans-serif" font-size="13" text-anchor="middle" fill="#e66100">&#x2699;</text>
+        <text x="56" y="28" font-family="Cantarell, sans-serif" font-size="14" font-weight="bold" fill="#2e3436">Bash</text>
+        <text x="102" y="28" font-family="Cantarell, sans-serif" font-size="13" fill="#929595">cargo test</text>
+        <text x="816" y="29" font-family="Cantarell, sans-serif" font-size="20" fill="#c0c0c0" text-anchor="end">&#x203A;</text>
+      </g>
+
+      <!-- Separator -->
+      <line x1="20" y1="132" x2="816" y2="132" stroke="#e0e0e0" stroke-width="1"/>
+
+      <!-- Row 3: Edit (y=132, 48px tall) -->
+      <g transform="translate(0, 132)">
+        <circle cx="32" cy="24" r="14" fill="#fff3e0"/>
+        <text x="32" y="29" font-family="sans-serif" font-size="13" text-anchor="middle" fill="#e66100">&#x270E;</text>
+        <text x="56" y="28" font-family="Cantarell, sans-serif" font-size="14" font-weight="bold" fill="#2e3436">Edit</text>
+        <text x="96" y="28" font-family="Cantarell, sans-serif" font-size="13" fill="#929595">src/config.rs:42</text>
+        <text x="816" y="29" font-family="Cantarell, sans-serif" font-size="20" fill="#c0c0c0" text-anchor="end">&#x203A;</text>
+      </g>
+    </g>
+
+    <!-- === Assistant message 2 (green left border) === -->
+    <g transform="translate(0, 340)">
+      <rect x="0" y="0" width="836" height="56" rx="12" ry="12" fill="#ffffff" filter="url(#cardShadow)"/>
+      <rect x="0" y="12" width="4" height="32" fill="#26a269"/>
+      <path d="M0,12 A12,12 0 0,1 12,0 L12,4 A8,8 0 0,0 4,12 Z" fill="#26a269"/>
+      <path d="M0,44 A12,12 0 0,0 12,56 L12,52 A8,8 0 0,1 4,44 Z" fill="#26a269"/>
+      <text x="20" y="22" font-family="Cantarell, sans-serif" font-size="11" font-weight="bold" fill="#26a269">Assistant</text>
+      <text x="20" y="40" font-family="Cantarell, sans-serif" font-size="13" fill="#2e3436">The bug is fixed. Let me verify with a subagent.</text>
+    </g>
+
+    <!-- === Tool Calls Group: 1 tool (purple left border) === -->
+    <g transform="translate(0, 412)">
+      <rect x="0" y="0" width="836" height="84" rx="12" ry="12" fill="#ffffff" filter="url(#cardShadow)"/>
+      <!-- Purple left border with rounded ends -->
+      <rect x="0" y="12" width="4" height="60" fill="#613583"/>
+      <path d="M0,12 A12,12 0 0,1 12,0 L12,4 A8,8 0 0,0 4,12 Z" fill="#613583"/>
+      <path d="M0,72 A12,12 0 0,0 12,84 L12,80 A8,8 0 0,1 4,72 Z" fill="#613583"/>
+
+      <!-- Group header caption -->
+      <text x="20" y="26" font-family="Cantarell, sans-serif" font-size="11" fill="#929595">1 tool call</text>
+
+      <!-- Row 1: Task -->
+      <g transform="translate(0, 36)">
+        <circle cx="32" cy="24" r="14" fill="#f3e5f5"/>
+        <text x="32" y="29" font-family="sans-serif" font-size="13" text-anchor="middle" fill="#613583">&#x1F500;</text>
+        <text x="56" y="28" font-family="Cantarell, sans-serif" font-size="14" font-weight="bold" fill="#2e3436">Task</text>
+        <text x="98" y="28" font-family="Cantarell, sans-serif" font-size="13" fill="#929595">Code review subagent</text>
+        <text x="816" y="29" font-family="Cantarell, sans-serif" font-size="20" fill="#c0c0c0" text-anchor="end">&#x203A;</text>
+      </g>
+    </g>
+
+    <!-- === Assistant message 3 (green left border) === -->
+    <g transform="translate(0, 512)">
+      <rect x="0" y="0" width="836" height="56" rx="12" ry="12" fill="#ffffff" filter="url(#cardShadow)"/>
+      <rect x="0" y="12" width="4" height="32" fill="#26a269"/>
+      <path d="M0,12 A12,12 0 0,1 12,0 L12,4 A8,8 0 0,0 4,12 Z" fill="#26a269"/>
+      <path d="M0,44 A12,12 0 0,0 12,56 L12,52 A8,8 0 0,1 4,44 Z" fill="#26a269"/>
+      <text x="20" y="22" font-family="Cantarell, sans-serif" font-size="11" font-weight="bold" fill="#26a269">Assistant</text>
+      <text x="20" y="40" font-family="Cantarell, sans-serif" font-size="13" fill="#2e3436">All done! Tests pass.</text>
+    </g>
+
+  </g>
+
+  <!-- Legend annotation -->
+  <g transform="translate(32, 718)">
+    <text x="0" y="0" font-family="Cantarell, sans-serif" font-size="10" fill="#929595">Mockup C: Grouped Action Rows &#x2014; Tool calls between assistant messages grouped into AdwPreferencesGroup-style cards with AdwActionRow items</text>
+  </g>
+</svg>

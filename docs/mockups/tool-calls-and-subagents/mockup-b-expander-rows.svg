@@ -1,0 +1,126 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="900" height="850" viewBox="0 0 900 850">
+  <defs>
+    <style>
+      text { font-family: Cantarell, sans-serif; }
+      .mono { font-family: Source Code Pro, monospace; }
+      .headerbar-title { font-weight: 700; font-size: 15px; fill: #ffffff; }
+      .msg-text { font-size: 13px; fill: #1e1e1e; }
+      .expander-label { font-size: 13px; fill: #1e1e1e; font-weight: 700; }
+      .expander-summary { font-size: 13px; fill: #636363; }
+      .chevron { font-size: 13px; fill: #636363; }
+      .terminal-text { font-size: 12px; fill: #d0d0d0; }
+      .role-label { font-size: 11px; fill: #636363; font-weight: 700; letter-spacing: 0.5px; }
+    </style>
+    <filter id="cardShadow" x="-2%" y="-2%" width="104%" height="108%">
+      <feDropShadow dx="0" dy="1" stdDeviation="1.5" flood-color="#000000" flood-opacity="0.08"/>
+    </filter>
+    <filter id="insetShadow" x="-1%" y="-1%" width="102%" height="104%">
+      <feDropShadow dx="0" dy="0.5" stdDeviation="0.8" flood-color="#000000" flood-opacity="0.06"/>
+    </filter>
+  </defs>
+
+  <!-- Background -->
+  <rect width="900" height="850" fill="#fafafa" rx="12"/>
+
+  <!-- ===== HEADERBAR ===== -->
+  <rect width="900" height="47" fill="#303030" rx="12"/>
+  <rect y="12" width="900" height="35" fill="#303030"/>
+  <!-- Window controls -->
+  <circle cx="24" cy="23" r="7" fill="#e04040" opacity="0.85"/>
+  <circle cx="46" cy="23" r="7" fill="#e8a828" opacity="0.85"/>
+  <circle cx="68" cy="23" r="7" fill="#2eb840" opacity="0.85"/>
+  <!-- Title -->
+  <text x="450" y="28" text-anchor="middle" class="headerbar-title">Sessions Chronicle</text>
+  <!-- Back button hint -->
+  <text x="108" y="28" font-size="14" fill="#aaaaaa" font-family="Cantarell, sans-serif">&#x25C0;  Session Detail</text>
+
+  <!-- ===== CONTENT AREA ===== -->
+  <!-- Session metadata bar -->
+  <g transform="translate(32, 65)">
+    <rect width="836" height="36" rx="8" fill="#ebebeb"/>
+    <text x="14" y="23" font-size="12" fill="#636363" font-family="Cantarell, sans-serif" font-weight="700">Claude Code</text>
+    <text x="120" y="23" font-size="12" fill="#929292" font-family="Cantarell, sans-serif">~/Projects/myapp  |  12 messages  |  6 tool calls  |  2 min ago</text>
+  </g>
+
+  <!-- ===== MESSAGE 1: User ===== -->
+  <g transform="translate(32, 117)">
+    <rect width="836" height="72" rx="10" fill="#ffffff" filter="url(#cardShadow)"/>
+    <rect width="3" height="72" rx="1.5" fill="#3584e4"/>
+    <text x="18" y="22" class="role-label" fill="#3584e4">USER</text>
+    <text x="18" y="50" class="msg-text">Can you read the config file and fix the bug?</text>
+  </g>
+
+  <!-- ===== MESSAGE 2: Assistant ===== -->
+  <g transform="translate(32, 201)">
+    <rect width="836" height="72" rx="10" fill="#ffffff" filter="url(#cardShadow)"/>
+    <rect width="3" height="72" rx="1.5" fill="#26a269"/>
+    <text x="18" y="22" class="role-label" fill="#26a269">ASSISTANT</text>
+    <text x="18" y="50" class="msg-text">Let me check the configuration file first.</text>
+  </g>
+
+  <!-- ===== TOOL CALL 1: Read (COLLAPSED) ===== -->
+  <g transform="translate(32, 285)">
+    <rect width="836" height="50" rx="10" fill="#ffffff" filter="url(#cardShadow)"/>
+    <rect width="3" height="50" rx="1.5" fill="#e66100"/>
+    <text x="18" y="31" font-size="15">&#x1F4C4;</text>
+    <text x="42" y="32" class="expander-label">Read</text>
+    <text x="82" y="32" class="expander-summary">&#x2014;  src/config.rs</text>
+    <text x="806" y="32" class="chevron" text-anchor="middle">&#x25B6;</text>
+  </g>
+
+  <!-- ===== TOOL CALL 2: Bash (EXPANDED) ===== -->
+  <g transform="translate(32, 347)">
+    <rect width="836" height="186" rx="10" fill="#ffffff" filter="url(#cardShadow)"/>
+    <rect width="3" height="186" rx="1.5" fill="#e66100"/>
+    <!-- Header row -->
+    <text x="18" y="31" font-size="15">&#x2699;&#xFE0F;</text>
+    <text x="42" y="32" class="expander-label">Bash</text>
+    <text x="82" y="32" class="expander-summary">&#x2014;  cargo test</text>
+    <text x="806" y="32" class="chevron" text-anchor="middle">&#x25BC;</text>
+    <!-- Separator line -->
+    <line x1="12" y1="48" x2="824" y2="48" stroke="#e0e0e0" stroke-width="1"/>
+    <!-- Expanded content area (dark terminal background) -->
+    <rect x="12" y="54" width="812" height="120" rx="8" fill="#2d2d2d" filter="url(#insetShadow)"/>
+    <text x="26" y="78" class="terminal-text mono">$ cargo test</text>
+    <text x="26" y="96" class="terminal-text mono">running 12 tests...</text>
+    <text x="26" y="114" class="terminal-text mono">test config::test_parse ... <tspan fill="#26a269">ok</tspan></text>
+    <text x="26" y="132" class="terminal-text mono">test config::test_validate ... <tspan fill="#e04040">FAILED</tspan></text>
+    <text x="26" y="156" class="terminal-text mono" fill="#888888">&#x2500;&#x2500;&#x2500; truncated (8 more lines) &#x2500;&#x2500;&#x2500;</text>
+  </g>
+
+  <!-- ===== MESSAGE 3: Assistant ===== -->
+  <g transform="translate(32, 545)">
+    <rect width="836" height="72" rx="10" fill="#ffffff" filter="url(#cardShadow)"/>
+    <rect width="3" height="72" rx="1.5" fill="#26a269"/>
+    <text x="18" y="22" class="role-label" fill="#26a269">ASSISTANT</text>
+    <text x="18" y="50" class="msg-text">I found the issue. The validation test is failing because of a missing field check.</text>
+  </g>
+
+  <!-- ===== TOOL CALL 3: Edit (COLLAPSED) ===== -->
+  <g transform="translate(32, 629)">
+    <rect width="836" height="50" rx="10" fill="#ffffff" filter="url(#cardShadow)"/>
+    <rect width="3" height="50" rx="1.5" fill="#e66100"/>
+    <text x="18" y="31" font-size="15">&#x270F;&#xFE0F;</text>
+    <text x="42" y="32" class="expander-label">Edit</text>
+    <text x="82" y="32" class="expander-summary">&#x2014;  src/config.rs:42</text>
+    <text x="806" y="32" class="chevron" text-anchor="middle">&#x25B6;</text>
+  </g>
+
+  <!-- ===== TOOL CALL 4: Task / Subagent (COLLAPSED) ===== -->
+  <g transform="translate(32, 691)">
+    <rect width="836" height="50" rx="10" fill="#ffffff" filter="url(#cardShadow)"/>
+    <rect width="3" height="50" rx="1.5" fill="#613583"/>
+    <text x="18" y="31" font-size="15">&#x1F500;</text>
+    <text x="42" y="32" class="expander-label" fill="#613583">Task</text>
+    <text x="82" y="32" class="expander-summary">&#x2014;  Running code review subagent</text>
+    <text x="806" y="32" class="chevron" text-anchor="middle">&#x25B6;</text>
+  </g>
+
+  <!-- ===== MESSAGE 4: Assistant ===== -->
+  <g transform="translate(32, 753)">
+    <rect width="836" height="72" rx="10" fill="#ffffff" filter="url(#cardShadow)"/>
+    <rect width="3" height="72" rx="1.5" fill="#26a269"/>
+    <text x="18" y="22" class="role-label" fill="#26a269">ASSISTANT</text>
+    <text x="18" y="50" class="msg-text">Done! The config has been updated and all tests pass now.</text>
+  </g>
+</svg>

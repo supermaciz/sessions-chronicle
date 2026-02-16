@@ -1,0 +1,299 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="900" viewBox="0 0 1200 900">
+  <defs>
+    <!-- Swimlane background pattern -->
+    <pattern id="swimlane-stripe" x="0" y="0" width="8" height="8" patternUnits="userSpaceOnUse">
+      <rect width="8" height="8" fill="#f5f5f5"/>
+      <rect x="0" width="4" height="8" fill="#f0f0f0"/>
+    </pattern>
+    <!-- Drop shadow for cards -->
+    <filter id="card-shadow" x="-4%" y="-4%" width="108%" height="112%">
+      <feDropShadow dx="0" dy="1" stdDeviation="2" flood-color="#000" flood-opacity="0.08"/>
+    </filter>
+    <filter id="tool-shadow" x="-4%" y="-4%" width="108%" height="112%">
+      <feDropShadow dx="0" dy="1" stdDeviation="1.5" flood-color="#000" flood-opacity="0.1"/>
+    </filter>
+    <!-- Headerbar gradient -->
+    <linearGradient id="headerbar-bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#3c3c3c"/>
+      <stop offset="100%" stop-color="#303030"/>
+    </linearGradient>
+    <!-- Spinner-like decoration for running task -->
+    <linearGradient id="spinner-grad" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#613583" stop-opacity="0.8"/>
+      <stop offset="50%" stop-color="#613583" stop-opacity="0.3"/>
+      <stop offset="100%" stop-color="#613583" stop-opacity="0.8"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Background -->
+  <rect width="1200" height="900" fill="#fafafa" rx="12"/>
+
+  <!-- Window border -->
+  <rect x="0.5" y="0.5" width="1199" height="899" fill="none" stroke="#d0d0d0" rx="12"/>
+
+  <!-- ============================================ -->
+  <!-- GNOME HEADERBAR                              -->
+  <!-- ============================================ -->
+  <rect width="1200" height="47" fill="url(#headerbar-bg)" rx="12"/>
+  <rect y="35" width="1200" height="12" fill="url(#headerbar-bg)"/>
+
+  <!-- Window controls -->
+  <circle cx="22" cy="23" r="7" fill="#4a4a4a" stroke="#555" stroke-width="0.5"/>
+  <circle cx="44" cy="23" r="7" fill="#4a4a4a" stroke="#555" stroke-width="0.5"/>
+  <circle cx="66" cy="23" r="7" fill="#4a4a4a" stroke="#555" stroke-width="0.5"/>
+
+  <!-- Title -->
+  <text x="600" y="28" font-family="Cantarell, sans-serif" font-size="14" font-weight="700" fill="#ffffff" text-anchor="middle">Sessions Chronicle - Session Detail</text>
+
+  <!-- Subtitle -->
+  <text x="600" y="43" font-family="Cantarell, sans-serif" font-size="10" fill="#aaaaaa" text-anchor="middle">Timeline with Swimlanes View</text>
+
+  <!-- ============================================ -->
+  <!-- COLUMN HEADERS                               -->
+  <!-- ============================================ -->
+  <rect x="0" y="47" width="1200" height="32" fill="#f0f0f0"/>
+  <line x1="0" y1="79" x2="1200" y2="79" stroke="#dcdcdc"/>
+
+  <text x="90" y="67" font-family="Cantarell, sans-serif" font-size="11" fill="#777" text-anchor="middle" font-weight="600">TIME</text>
+  <text x="390" y="67" font-family="Cantarell, sans-serif" font-size="11" fill="#777" text-anchor="middle" font-weight="600">CONVERSATION</text>
+  <text x="900" y="67" font-family="Cantarell, sans-serif" font-size="11" fill="#777" text-anchor="middle" font-weight="600">TOOL EXECUTION</text>
+
+  <!-- Column dividers -->
+  <line x1="180" y1="47" x2="180" y2="900" stroke="#e8e8e8" stroke-width="1"/>
+  <line x1="660" y1="47" x2="660" y2="900" stroke="#e8e8e8" stroke-width="1"/>
+
+  <!-- ============================================ -->
+  <!-- SWIMLANE BACKGROUND (right column)           -->
+  <!-- ============================================ -->
+  <rect x="660" y="79" width="540" height="821" fill="url(#swimlane-stripe)"/>
+
+  <!-- ============================================ -->
+  <!-- VERTICAL TIMELINE LINE (center of left col)  -->
+  <!-- ============================================ -->
+  <line x1="90" y1="95" x2="90" y2="860" stroke="#d0d0d0" stroke-width="2" stroke-dasharray="4,4"/>
+
+  <!-- ============================================ -->
+  <!-- EVENT 1: USER MESSAGE                        -->
+  <!-- ============================================ -->
+  <!-- Timeline dot -->
+  <circle cx="90" cy="115" r="6" fill="#3584e4" stroke="#fff" stroke-width="2"/>
+  <!-- Timestamp -->
+  <text x="90" y="135" font-family="Source Code Pro, monospace" font-size="9" fill="#999" text-anchor="middle">14:23:01</text>
+  <text x="90" y="145" font-family="Source Code Pro, monospace" font-size="9" fill="#bbb" text-anchor="middle">#1</text>
+
+  <!-- User message card -->
+  <rect x="200" y="95" width="440" height="50" rx="8" fill="#ffffff" filter="url(#card-shadow)"/>
+  <rect x="200" y="95" width="4" height="50" rx="2" fill="#3584e4"/>
+  <text x="218" y="112" font-family="Cantarell, sans-serif" font-size="10" fill="#3584e4" font-weight="700">USER</text>
+  <text x="218" y="130" font-family="Cantarell, sans-serif" font-size="13" fill="#333">"Can you read the config and fix the bug?"</text>
+
+  <!-- ============================================ -->
+  <!-- EVENT 2: ASSISTANT TEXT                      -->
+  <!-- ============================================ -->
+  <circle cx="90" cy="185" r="6" fill="#26a269" stroke="#fff" stroke-width="2"/>
+  <text x="90" y="205" font-family="Source Code Pro, monospace" font-size="9" fill="#999" text-anchor="middle">14:23:02</text>
+  <text x="90" y="215" font-family="Source Code Pro, monospace" font-size="9" fill="#bbb" text-anchor="middle">#2</text>
+
+  <rect x="200" y="167" width="440" height="42" rx="8" fill="#ffffff" filter="url(#card-shadow)"/>
+  <rect x="200" y="167" width="4" height="42" rx="2" fill="#26a269"/>
+  <text x="218" y="184" font-family="Cantarell, sans-serif" font-size="10" fill="#26a269" font-weight="700">ASSISTANT</text>
+  <text x="218" y="200" font-family="Cantarell, sans-serif" font-size="13" fill="#333">"Let me check the config file and run the tests."</text>
+
+  <!-- ============================================ -->
+  <!-- EVENT 3: TOOL - Read file (branch out)       -->
+  <!-- ============================================ -->
+  <circle cx="90" cy="260" r="5" fill="#e66100" stroke="#fff" stroke-width="2"/>
+  <text x="90" y="280" font-family="Source Code Pro, monospace" font-size="9" fill="#999" text-anchor="middle">14:23:02</text>
+  <text x="90" y="290" font-family="Source Code Pro, monospace" font-size="9" fill="#bbb" text-anchor="middle">#3</text>
+
+  <!-- Branch-out bezier curve from center to right -->
+  <path d="M 620,260 C 645,260 655,260 680,260" stroke="#e66100" stroke-width="1.5" fill="none" stroke-dasharray="5,3" opacity="0.7"/>
+  <!-- Small arrow at the branch point -->
+  <circle cx="620" cy="260" r="3" fill="#e66100" opacity="0.5"/>
+
+  <!-- Connector dot in conversation column -->
+  <rect x="200" y="248" width="440" height="24" rx="6" fill="#fff8f0" stroke="#e66100" stroke-width="0.5" stroke-dasharray="3,3"/>
+  <text x="420" y="264" font-family="Cantarell, sans-serif" font-size="10" fill="#e66100" text-anchor="middle" opacity="0.7">tool call dispatched</text>
+
+  <!-- Tool box: Read -->
+  <rect x="690" y="235" width="280" height="58" rx="8" fill="#ffffff" filter="url(#tool-shadow)"/>
+  <rect x="690" y="235" width="4" height="58" rx="2" fill="#e66100"/>
+  <text x="710" y="254" font-family="Cantarell, sans-serif" font-size="12" fill="#333" font-weight="600">Read  src/config.rs</text>
+  <!-- Duration pill -->
+  <rect x="905" y="242" width="52" height="18" rx="9" fill="#fff3e6" stroke="#e66100" stroke-width="0.5"/>
+  <text x="931" y="254" font-family="Source Code Pro, monospace" font-size="9" fill="#e66100" text-anchor="middle">250ms</text>
+  <!-- Result summary -->
+  <text x="710" y="278" font-family="Source Code Pro, monospace" font-size="10" fill="#888">142 lines read</text>
+
+  <!-- Merge-back bezier curve -->
+  <path d="M 690,293 C 665,310 645,320 620,320" stroke="#e66100" stroke-width="1.5" fill="none" stroke-dasharray="5,3" opacity="0.5"/>
+  <circle cx="620" cy="320" r="3" fill="#e66100" opacity="0.4"/>
+
+  <!-- ============================================ -->
+  <!-- EVENT 4: TOOL - Bash cargo test (branch out) -->
+  <!-- ============================================ -->
+  <circle cx="90" cy="350" r="5" fill="#e66100" stroke="#fff" stroke-width="2"/>
+  <text x="90" y="370" font-family="Source Code Pro, monospace" font-size="9" fill="#999" text-anchor="middle">14:23:03</text>
+  <text x="90" y="380" font-family="Source Code Pro, monospace" font-size="9" fill="#bbb" text-anchor="middle">#4</text>
+
+  <!-- Branch-out bezier -->
+  <path d="M 620,350 C 650,350 660,345 690,340" stroke="#e66100" stroke-width="1.5" fill="none" stroke-dasharray="5,3" opacity="0.7"/>
+  <circle cx="620" cy="350" r="3" fill="#e66100" opacity="0.5"/>
+
+  <rect x="200" y="338" width="440" height="24" rx="6" fill="#fff8f0" stroke="#e66100" stroke-width="0.5" stroke-dasharray="3,3"/>
+  <text x="420" y="354" font-family="Cantarell, sans-serif" font-size="10" fill="#e66100" text-anchor="middle" opacity="0.7">tool call dispatched</text>
+
+  <!-- Tool box: Bash -->
+  <rect x="690" y="320" width="280" height="72" rx="8" fill="#ffffff" filter="url(#tool-shadow)"/>
+  <rect x="690" y="320" width="4" height="72" rx="2" fill="#e66100"/>
+  <text x="710" y="340" font-family="Cantarell, sans-serif" font-size="12" fill="#333" font-weight="600">Bash  cargo test</text>
+  <!-- Duration pill -->
+  <rect x="905" y="327" width="52" height="18" rx="9" fill="#fff3e6" stroke="#e66100" stroke-width="0.5"/>
+  <text x="931" y="339" font-family="Source Code Pro, monospace" font-size="9" fill="#e66100" text-anchor="middle">1.2s</text>
+  <!-- Mini output preview -->
+  <rect x="706" y="350" width="250" height="30" rx="4" fill="#f8f8f8" stroke="#e0e0e0" stroke-width="0.5"/>
+  <text x="716" y="363" font-family="Source Code Pro, monospace" font-size="10" fill="#888">running 12 tests...</text>
+  <text x="716" y="376" font-family="Source Code Pro, monospace" font-size="10" fill="#c01c28">test config::parse ... FAILED</text>
+
+  <!-- Merge-back bezier -->
+  <path d="M 690,392 C 665,410 645,420 620,425" stroke="#e66100" stroke-width="1.5" fill="none" stroke-dasharray="5,3" opacity="0.5"/>
+  <circle cx="620" cy="425" r="3" fill="#e66100" opacity="0.4"/>
+
+  <!-- ============================================ -->
+  <!-- EVENT 5: ASSISTANT TEXT                      -->
+  <!-- ============================================ -->
+  <circle cx="90" cy="445" r="6" fill="#26a269" stroke="#fff" stroke-width="2"/>
+  <text x="90" y="465" font-family="Source Code Pro, monospace" font-size="9" fill="#999" text-anchor="middle">14:23:05</text>
+  <text x="90" y="475" font-family="Source Code Pro, monospace" font-size="9" fill="#bbb" text-anchor="middle">#5</text>
+
+  <rect x="200" y="427" width="440" height="42" rx="8" fill="#ffffff" filter="url(#card-shadow)"/>
+  <rect x="200" y="427" width="4" height="42" rx="2" fill="#26a269"/>
+  <text x="218" y="444" font-family="Cantarell, sans-serif" font-size="10" fill="#26a269" font-weight="700">ASSISTANT</text>
+  <text x="218" y="460" font-family="Cantarell, sans-serif" font-size="13" fill="#333">"Found the issue in the config parser. Fixing now."</text>
+
+  <!-- ============================================ -->
+  <!-- EVENT 6+7: PARALLEL TOOLS (Edit + Task)      -->
+  <!-- ============================================ -->
+  <circle cx="90" cy="525" r="5" fill="#e66100" stroke="#fff" stroke-width="2"/>
+  <text x="90" y="545" font-family="Source Code Pro, monospace" font-size="9" fill="#999" text-anchor="middle">14:23:05</text>
+  <text x="90" y="555" font-family="Source Code Pro, monospace" font-size="9" fill="#bbb" text-anchor="middle">#6-7</text>
+
+  <!-- Parallel indicator in conversation area -->
+  <rect x="200" y="507" width="440" height="36" rx="6" fill="#fff8f0" stroke="#e66100" stroke-width="0.5" stroke-dasharray="3,3"/>
+  <text x="420" y="521" font-family="Cantarell, sans-serif" font-size="10" fill="#e66100" text-anchor="middle" opacity="0.7">2 tool calls dispatched in parallel</text>
+  <text x="420" y="535" font-family="Cantarell, sans-serif" font-size="9" fill="#999" text-anchor="middle">concurrent execution</text>
+
+  <!-- Branch-out bezier to BOTH tools -->
+  <!-- Upper branch (Edit) -->
+  <path d="M 620,515 C 648,510 660,505 690,502" stroke="#e66100" stroke-width="1.5" fill="none" stroke-dasharray="5,3" opacity="0.7"/>
+  <!-- Lower branch (Task) -->
+  <path d="M 620,530 C 648,540 660,555 690,565" stroke="#613583" stroke-width="1.5" fill="none" stroke-dasharray="5,3" opacity="0.7"/>
+  <circle cx="620" cy="515" r="3" fill="#e66100" opacity="0.5"/>
+  <circle cx="620" cy="530" r="3" fill="#613583" opacity="0.5"/>
+
+  <!-- Parallel indicator: vertical bracket on right -->
+  <line x1="680" y1="498" x2="680" y2="625" stroke="#999" stroke-width="1" stroke-dasharray="2,2"/>
+  <text x="676" y="560" font-family="Cantarell, sans-serif" font-size="8" fill="#999" text-anchor="end" transform="rotate(-90,676,560)">PARALLEL</text>
+
+  <!-- Tool box: Edit -->
+  <rect x="690" y="490" width="280" height="55" rx="8" fill="#ffffff" filter="url(#tool-shadow)"/>
+  <rect x="690" y="490" width="4" height="55" rx="2" fill="#e66100"/>
+  <text x="710" y="510" font-family="Cantarell, sans-serif" font-size="12" fill="#333" font-weight="600">Edit  src/config.rs:42</text>
+  <!-- Duration pill -->
+  <rect x="905" y="498" width="52" height="18" rx="9" fill="#fff3e6" stroke="#e66100" stroke-width="0.5"/>
+  <text x="931" y="510" font-family="Source Code Pro, monospace" font-size="9" fill="#e66100" text-anchor="middle">80ms</text>
+  <!-- Diff summary -->
+  <text x="710" y="532" font-family="Source Code Pro, monospace" font-size="10" fill="#26a269">+3</text>
+  <text x="728" y="532" font-family="Source Code Pro, monospace" font-size="10" fill="#c01c28">-1</text>
+  <text x="745" y="532" font-family="Source Code Pro, monospace" font-size="10" fill="#888">lines changed</text>
+
+  <!-- Tool box: Task (parallel, overlapping Y) -->
+  <rect x="690" y="558" width="280" height="62" rx="8" fill="#ffffff" filter="url(#tool-shadow)"/>
+  <rect x="690" y="558" width="4" height="62" rx="2" fill="#613583"/>
+  <text x="710" y="578" font-family="Cantarell, sans-serif" font-size="12" fill="#333" font-weight="600">Task  review changes</text>
+  <!-- Duration pill - running -->
+  <rect x="885" y="566" width="72" height="18" rx="9" fill="#f3ecf7" stroke="#613583" stroke-width="0.5"/>
+  <text x="921" y="578" font-family="Source Code Pro, monospace" font-size="9" fill="#613583" text-anchor="middle">running...</text>
+  <!-- Spinner decoration -->
+  <circle cx="894" cy="575" r="5" fill="none" stroke="url(#spinner-grad)" stroke-width="1.5" stroke-dasharray="6,4" stroke-linecap="round"/>
+  <!-- Subtext -->
+  <text x="710" y="600" font-family="Source Code Pro, monospace" font-size="10" fill="#888">Reviewing 3 modified files...</text>
+  <text x="710" y="612" font-family="Source Code Pro, monospace" font-size="10" fill="#613583">2 sub-tasks spawned</text>
+
+  <!-- Both merge back -->
+  <path d="M 690,545 C 660,558 645,570 620,580" stroke="#e66100" stroke-width="1.5" fill="none" stroke-dasharray="5,3" opacity="0.4"/>
+  <path d="M 690,620 C 660,630 645,640 620,645" stroke="#613583" stroke-width="1.5" fill="none" stroke-dasharray="5,3" opacity="0.4"/>
+  <circle cx="620" cy="580" r="3" fill="#e66100" opacity="0.3"/>
+  <circle cx="620" cy="645" r="3" fill="#613583" opacity="0.3"/>
+
+  <!-- Merge join point -->
+  <path d="M 620,580 L 620,645" stroke="#ccc" stroke-width="1" stroke-dasharray="2,2"/>
+  <circle cx="620" cy="660" r="4" fill="#ccc"/>
+
+  <!-- ============================================ -->
+  <!-- EVENT 8: FINAL ASSISTANT MESSAGE             -->
+  <!-- ============================================ -->
+  <circle cx="90" cy="700" r="6" fill="#26a269" stroke="#fff" stroke-width="2"/>
+  <text x="90" y="720" font-family="Source Code Pro, monospace" font-size="9" fill="#999" text-anchor="middle">14:23:08</text>
+  <text x="90" y="730" font-family="Source Code Pro, monospace" font-size="9" fill="#bbb" text-anchor="middle">#8</text>
+
+  <rect x="200" y="680" width="440" height="52" rx="8" fill="#ffffff" filter="url(#card-shadow)"/>
+  <rect x="200" y="680" width="4" height="52" rx="2" fill="#26a269"/>
+  <text x="218" y="697" font-family="Cantarell, sans-serif" font-size="10" fill="#26a269" font-weight="700">ASSISTANT</text>
+  <text x="218" y="715" font-family="Cantarell, sans-serif" font-size="13" fill="#333">"Done! Config updated and tests are passing now."</text>
+
+  <!-- ============================================ -->
+  <!-- LEGEND / KEY (bottom area)                   -->
+  <!-- ============================================ -->
+  <rect x="24" y="780" width="1152" height="100" rx="10" fill="#ffffff" filter="url(#card-shadow)"/>
+  <text x="46" y="802" font-family="Cantarell, sans-serif" font-size="11" fill="#555" font-weight="700">LEGEND</text>
+
+  <!-- User -->
+  <rect x="46" y="814" width="12" height="12" rx="2" fill="#3584e4"/>
+  <text x="64" y="825" font-family="Cantarell, sans-serif" font-size="10" fill="#555">User message</text>
+
+  <!-- Assistant -->
+  <rect x="180" y="814" width="12" height="12" rx="2" fill="#26a269"/>
+  <text x="198" y="825" font-family="Cantarell, sans-serif" font-size="10" fill="#555">Assistant message</text>
+
+  <!-- Tool -->
+  <rect x="340" y="814" width="12" height="12" rx="2" fill="#e66100"/>
+  <text x="358" y="825" font-family="Cantarell, sans-serif" font-size="10" fill="#555">Tool call (Read, Edit, Bash)</text>
+
+  <!-- Task -->
+  <rect x="540" y="814" width="12" height="12" rx="2" fill="#613583"/>
+  <text x="558" y="825" font-family="Cantarell, sans-serif" font-size="10" fill="#555">Sub-agent / Task</text>
+
+  <!-- Branch line -->
+  <line x1="720" y1="820" x2="760" y2="820" stroke="#e66100" stroke-width="1.5" stroke-dasharray="5,3"/>
+  <text x="770" y="825" font-family="Cantarell, sans-serif" font-size="10" fill="#555">Branch / merge flow</text>
+
+  <!-- Duration pill -->
+  <rect x="940" y="812" width="40" height="16" rx="8" fill="#fff3e6" stroke="#e66100" stroke-width="0.5"/>
+  <text x="960" y="823" font-family="Source Code Pro, monospace" font-size="8" fill="#e66100" text-anchor="middle">1.2s</text>
+  <text x="990" y="825" font-family="Cantarell, sans-serif" font-size="10" fill="#555">Duration</text>
+
+  <!-- Second legend row -->
+  <!-- Parallel indicator -->
+  <line x1="46" y1="850" x2="46" y2="865" stroke="#999" stroke-width="1" stroke-dasharray="2,2"/>
+  <text x="64" y="861" font-family="Cantarell, sans-serif" font-size="10" fill="#555">Parallel execution bracket</text>
+
+  <!-- Timeline dot -->
+  <circle cx="246" cy="857" r="5" fill="#3584e4" stroke="#fff" stroke-width="1.5"/>
+  <text x="258" y="861" font-family="Cantarell, sans-serif" font-size="10" fill="#555">Timeline event marker</text>
+
+  <!-- Concept note -->
+  <text x="1152" y="861" font-family="Cantarell, sans-serif" font-size="9" fill="#aaa" text-anchor="end">Concept D: Timeline with Swimlanes | Sessions Chronicle</text>
+
+  <!-- ============================================ -->
+  <!-- SUBTLE CENTER-COLUMN VERTICAL FLOW LINE      -->
+  <!-- ============================================ -->
+  <line x1="420" y1="145" x2="420" y2="167" stroke="#e0e0e0" stroke-width="1"/>
+  <line x1="420" y1="209" x2="420" y2="248" stroke="#e0e0e0" stroke-width="1"/>
+  <line x1="420" y1="272" x2="420" y2="338" stroke="#e0e0e0" stroke-width="1"/>
+  <line x1="420" y1="362" x2="420" y2="427" stroke="#e0e0e0" stroke-width="1"/>
+  <line x1="420" y1="469" x2="420" y2="507" stroke="#e0e0e0" stroke-width="1"/>
+  <line x1="420" y1="543" x2="420" y2="680" stroke="#e0e0e0" stroke-width="1"/>
+  <line x1="420" y1="732" x2="420" y2="770" stroke="#e0e0e0" stroke-width="1"/>
+</svg>
