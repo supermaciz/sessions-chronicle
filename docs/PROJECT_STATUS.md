@@ -4,7 +4,7 @@
 
 ---
 
-## Current Status: Phase 5.5 — Expand/Collapse Truncated Messages
+## Current Status: Phase 6 — Tool Calls & Subagents
 
 ### ✅ Completed
 
@@ -26,6 +26,7 @@
 - ✅ Consistent `--sessions-dir` override across tools + isolated override index DB + reset/reindex in Preferences (PR #24)
 - ✅ Utility pane with filters/session-context modes and in-pane resume action (PR #27)
 - ✅ Session row redesign: first prompt title, project-aware subtitle, relative timestamps, row context menu resume (PR #30)
+- ✅ Inline expand/collapse for truncated messages with on-demand full content loading (PR #35)
 
 **Dependencies**
 - ✅ Relm4 (reactive UI framework)
@@ -82,10 +83,10 @@
 - ✅ Basic CI/CD setup with GitHub Actions (automated testing, formatting checks, linting, Flatpak builds)
 - ✅ Stable Flatpak manifest and release workflow ([design](plans/2026-02-14-release-flatpak-workflow-design.md), PR #33)
 
-**Phase 5.5: Expand/Collapse Truncated Messages** - In Progress ([design](plans/2026-02-15-expand-collapse-messages-design.md))
-- ⬜ Inline expand/collapse toggle for truncated messages in transcript view
-- ⬜ Load full content on demand from DB with caching
-- ⬜ Toggle button replacing static "(content truncated)" badge
+**Phase 5.5: Expand/Collapse Truncated Messages** - Complete ([design](plans/2026-02-15-expand-collapse-messages-design.md), PR #35)
+- ✅ Inline expand/collapse toggle for truncated messages in transcript view
+- ✅ Load full content on demand from DB with caching
+- ✅ Toggle button replacing static "(content truncated)" badge
 
 **Phase 6: Tool Calls & Subagents** - Future ([design](plans/2026-01-30-tool-calls-and-subagents-design.md))
 - ⬜ Enrich Message model (tool_name, tool_input, parent_message_index)
@@ -185,7 +186,8 @@ CREATE TABLE sessions (
     start_time INTEGER NOT NULL,
     message_count INTEGER NOT NULL,
     file_path TEXT NOT NULL,
-    last_updated INTEGER NOT NULL
+    last_updated INTEGER NOT NULL,
+    first_prompt TEXT
 );
 ```
 
@@ -340,6 +342,6 @@ cargo test
 
 ---
 
-**Last Updated**: 2026-02-15
-**Current Phase**: Phase 5.5 — Expand/Collapse Truncated Messages
+**Last Updated**: 2026-02-16
+**Current Phase**: Phase 6 — Tool Calls & Subagents
 **Next Milestone**: Phase 6 — Tool Calls & Subagents
