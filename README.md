@@ -51,6 +51,10 @@ flatpak-builder --run flatpak_app build-aux/io.github.supermaciz.sessionschronic
 cargo test
 ```
 
+## CI/CD
+
+GitHub Actions run on every push and PR: tests, clippy, rustfmt, and Flatpak build. A separate release workflow builds stable Flatpak bundles when a GitHub release is published.
+
 ## Inspiration
 
 This project was inspired by [agent-sessions](https://github.com/jazzyalex/agent-sessions).

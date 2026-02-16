@@ -4,7 +4,7 @@
 
 ---
 
-## Current Status: Phase 5 In Progress - Consolidating Foundations
+## Current Status: Phase 5.5 — Expand/Collapse Truncated Messages
 
 ### ✅ Completed
 
@@ -71,16 +71,21 @@
 - ✅ Highlight matching terms when viewing search results
 - ✅ Visual distinction for search matches
 
-**Phase 5: Consolidating Foundations** - In Progress
+**Phase 5: Consolidating Foundations** - Complete
 
 - ✅ Unified `--sessions-dir` behavior across all tools (isolated DB + fixture mapping + single resolver) ([design](plans/2026-02-07-sessions-dir-unified-behavior-design.md), PR #24)
 - ✅ UI refinement
   * ✅ Utility pane + session detail ([design](plans/2026-02-08-session-detail-utility-pane-design.md)) PR #27
   * ✅ Improve session row with first-prompt preview + safer markup handling ([design](plans/2026-02-11-session-row-prompt-preview-design.md)) PR #30
-  * ✅ Improve keyboard shortcuts ([design](plans/2026-02-13-keyboard-shortcuts-hig-conformity-design.md))
+  * ✅ Improve keyboard shortcuts ([design](plans/2026-02-13-keyboard-shortcuts-hig-conformity-design.md)) PR #32
   * ✅ Fix "About" modal
 - ✅ Basic CI/CD setup with GitHub Actions (automated testing, formatting checks, linting, Flatpak builds)
-- ⬜ Releases [design](plans/2026-02-14-release-flatpak-workflow-design.md)
+- ✅ Stable Flatpak manifest and release workflow ([design](plans/2026-02-14-release-flatpak-workflow-design.md), PR #33)
+
+**Phase 5.5: Expand/Collapse Truncated Messages** - In Progress ([design](plans/2026-02-15-expand-collapse-messages-design.md))
+- ⬜ Inline expand/collapse toggle for truncated messages in transcript view
+- ⬜ Load full content on demand from DB with caching
+- ⬜ Toggle button replacing static "(content truncated)" badge
 
 **Phase 6: Tool Calls & Subagents** - Future ([design](plans/2026-01-30-tool-calls-and-subagents-design.md))
 - ⬜ Enrich Message model (tool_name, tool_input, parent_message_index)
@@ -164,7 +169,8 @@ sessions-chronicle/
 │   ├── opencode_storage/ # Sample OpenCode sessions
 │   └── vibe_sessions/    # Sample Mistral Vibe sessions
 ├── build-aux/            # Build manifests
-│   └── io.github.supermaciz.sessionschronicle.Devel.json
+│   ├── io.github.supermaciz.sessionschronicle.Devel.json   # Dev Flatpak
+│   └── io.github.supermaciz.sessionschronicle.json         # Stable Flatpak
 └── docs/                 # Design docs
 ```
 
@@ -228,6 +234,12 @@ flatpak-builder --run flatpak_app build-aux/io.github.supermaciz.sessionschronic
 ```
 
 See `DEVELOPMENT_WORKFLOW.md` for test fixtures and development workflow.
+
+### CI/CD
+
+GitHub Actions workflows handle:
+- Automated `cargo test`, `cargo clippy`, and `cargo fmt --check` on every push/PR
+- Flatpak build verification (dev and stable manifests)
 
 ### Key Design Decisions
 
@@ -293,20 +305,6 @@ let db_path = data_dir.join("sessions-chronicle").join("sessions.db");
 
 ## Implementation Notes
 
-### Immediate Tasks
-
-1. **Consolidating foundations** (partially complete):
-    - ✅ `src/session_sources.rs` module with fixture subdirectory mapping
-    - ✅ Isolated override database (`sessions-override.db`)
-    - ✅ Preferences reset action (controller-with-outputs pattern)
-    - ✅ Unified source resolver wired into App startup
-    - ⬜ UI polish (utility pane + session detail)
-
-2. **Tool calls and subagents support**:
-    - Enrich Message model with tool call data
-    - Parse tool_use/tool_result events from session files
-    - Display tool badges and detail panels
-
 ### Testing Strategy
 
 **Unit tests**:
@@ -342,6 +340,6 @@ cargo test
 
 ---
 
-**Last Updated**: 2026-02-13
-**Current Phase**: Phase 5 - Consolidating Foundations (In Progress)
-**Next Milestone**: Phase 5 completion - keyboard shortcuts polish, About dialog follow-up, and release readiness
+**Last Updated**: 2026-02-15
+**Current Phase**: Phase 5.5 — Expand/Collapse Truncated Messages
+**Next Milestone**: Phase 6 — Tool Calls & Subagents

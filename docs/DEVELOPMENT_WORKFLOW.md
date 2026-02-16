@@ -178,6 +178,32 @@ Create run configurations:
 2. **Debug (production)**
    - Program arguments: (empty)
 
+## CI/CD
+
+The project uses GitHub Actions for continuous integration and releases. Workflows are defined in `.github/workflows/`.
+
+### CI (`ci.yml`) — runs on every push to `main` and on PRs
+
+| Job | What it does |
+|-----|-------------|
+| **Tests** | `cargo test` (under Xvfb for GTK) |
+| **Clippy** | `cargo clippy -- -D warnings` |
+| **Rustfmt** | `cargo fmt --all -- --check` |
+| **Flatpak** | Builds the dev Flatpak bundle |
+
+### Release (`release.yml`) — runs when a GitHub release is published
+
+Builds the stable Flatpak bundle using the `build-aux/io.github.supermaciz.sessionschronicle.json` manifest, generates a SHA256 checksum, and uploads both to the release.
+
+### Build manifests
+
+Two Flatpak manifests exist in `build-aux/`:
+
+| Manifest | Purpose |
+|----------|---------|
+| `io.github.supermaciz.sessionschronicle.Devel.json` | Development builds (used in CI and local dev) |
+| `io.github.supermaciz.sessionschronicle.json` | Stable release builds (used by release workflow) |
+
 ## Summary
 
 - **Build**: `flatpak-builder --user flatpak_app build-aux/io.github.supermaciz.sessionschronicle.Devel.json --force-clean`
@@ -187,4 +213,4 @@ Create run configurations:
 
 ---
 
-**Last Updated**: 2026-02-09
+**Last Updated**: 2026-02-15
