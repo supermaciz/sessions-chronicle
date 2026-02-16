@@ -1,5 +1,7 @@
 use std::cell::Cell;
+use std::collections::BTreeMap;
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use chrono::{DateTime, Duration as ChronoDuration, Utc};
 use gtk::glib;
@@ -13,7 +15,7 @@ use crate::ui::message_row::{MessageRow, MessageRowInit, MessageRowOutput};
 
 #[derive(Debug)]
 pub struct SessionDetail {
-    db_path: PathBuf,
+    db_path: Arc<PathBuf>,
     session: Option<Session>,
     messages: FactoryVecDeque<MessageRow>,
     page_size: usize,
@@ -21,7 +23,7 @@ pub struct SessionDetail {
     loaded_count: usize,
     has_more_messages: bool,
     search_query: Option<String>,
-    match_counts: Vec<usize>,
+    match_counts: BTreeMap<usize, usize>,
     current_match: usize,
     total_matches: usize,
     scroll_to_message: Cell<Option<usize>>,
@@ -39,7 +41,8 @@ pub enum SessionDetailMsg {
     PrevMatch,
     NextMatch,
     ClearSearch,
-    MatchCount(usize),
+    MatchCount(usize, usize),
+    ShowExpandLoadFailure,
     #[allow(dead_code)]
     Clear,
 }
@@ -249,9 +252,16 @@ impl SimpleComponent for SessionDetail {
         let messages: FactoryVecDeque<MessageRow> = FactoryVecDeque::builder()
             .launch_default()
             .forward(sender.input_sender(), |output| match output {
-                MessageRowOutput::MatchCount { count } => SessionDetailMsg::MatchCount(count),
+                MessageRowOutput::MatchCountChanged {
+                    message_index,
+                    count,
+                } => SessionDetailMsg::MatchCount(message_index, count),
+                MessageRowOutput::ExpandLoadFailed { .. } => {
+                    SessionDetailMsg::ShowExpandLoadFailure
+                }
             });
 
+        let db_path = Arc::new(db_path);
         let model = Self {
             db_path,
             session: None,
@@ -261,7 +271,7 @@ impl SimpleComponent for SessionDetail {
             loaded_count: 0,
             has_more_messages: false,
             search_query: None,
-            match_counts: Vec::new(),
+            match_counts: BTreeMap::new(),
             current_match: 0,
             total_matches: 0,
             scroll_to_message: Cell::new(None),
@@ -319,11 +329,13 @@ impl SimpleComponent for SessionDetail {
                             self.has_more_messages = previews.len() == self.page_size;
                             self.loaded_count += previews.len();
                             let highlight = self.search_query.clone();
+                            let db_path = self.db_path.clone();
                             let mut guard = self.messages.guard();
                             for preview in previews {
                                 guard.push_back(MessageRowInit {
                                     preview,
                                     highlight_query: highlight.clone(),
+                                    db_path: db_path.clone(),
                                 });
                             }
                         }
@@ -354,16 +366,20 @@ impl SimpleComponent for SessionDetail {
                     self.scroll_to_message.set(Some(msg_idx));
                 }
             }
-            SessionDetailMsg::MatchCount(count) => {
+            SessionDetailMsg::MatchCount(message_index, count) => {
                 let was_empty = self.total_matches == 0;
-                self.match_counts.push(count);
-                self.total_matches = self.match_counts.iter().sum();
+                self.match_counts.insert(message_index, count);
+                self.total_matches = self.match_counts.values().sum();
                 // Auto-scroll to first match when results arrive
                 if was_empty && self.total_matches > 0 && self.search_query.is_some() {
                     self.current_match = 0;
                     let (msg_idx, _) = Self::find_message_for_match(&self.match_counts, 0);
                     self.scroll_to_message.set(Some(msg_idx));
                 }
+            }
+            SessionDetailMsg::ShowExpandLoadFailure => {
+                // Will add toast in Step 8
+                tracing::warn!("Could not load full message content");
             }
             SessionDetailMsg::ClearSearch => {
                 self.search_query = None;
@@ -481,12 +497,14 @@ impl SessionDetail {
                 self.has_more_messages = previews.len() == self.page_size;
                 self.loaded_count = previews.len();
                 let highlight = self.search_query.clone();
+                let db_path = self.db_path.clone();
                 let mut guard = self.messages.guard();
                 guard.clear();
                 for preview in previews {
                     guard.push_back(MessageRowInit {
                         preview,
                         highlight_query: highlight.clone(),
+                        db_path: db_path.clone(),
                     });
                 }
             }
@@ -503,12 +521,18 @@ impl SessionDetail {
         }
     }
 
-    /// Resolve a global match index to a (message_index, local_match_index) pair.
-    fn find_message_for_match(counts: &[usize], global_index: usize) -> (usize, usize) {
+    /// Resolve a global match index to a (loaded_row_offset, local_match_index) pair.
+    ///
+    /// Iterates the BTreeMap in ascending message_index order, using `enumerate()`
+    /// so the returned offset is the factory child position (not the raw message_index).
+    fn find_message_for_match(
+        counts: &BTreeMap<usize, usize>,
+        global_index: usize,
+    ) -> (usize, usize) {
         let mut remaining = global_index;
-        for (i, &count) in counts.iter().enumerate() {
+        for (row_offset, (_message_index, &count)) in counts.iter().enumerate() {
             if remaining < count {
-                return (i, remaining);
+                return (row_offset, remaining);
             }
             remaining -= count;
         }
