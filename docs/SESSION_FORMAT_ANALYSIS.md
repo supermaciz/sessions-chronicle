@@ -11,6 +11,9 @@ Analysis of Claude Code, Codex, OpenCode, and Mistral Vibe session file formats 
 - ✅ OpenCode parser implemented
 - ✅ Codex parser implemented
 - ✅ Mistral Vibe parser implemented
+- ✅ OpenCode subagent session detection implemented (`parentID` sessions are skipped during indexing)
+- ✅ Tool-call wire formats documented for Claude, OpenCode, Mistral Vibe, and Codex rollouts
+- ℹ️ Current parser behavior: tool-call/tool-result content is intentionally not indexed yet (Phase 4)
 
 ---
 
@@ -61,16 +64,16 @@ Analysis of Claude Code, Codex, OpenCode, and Mistral Vibe session file formats 
 
 | Field Category | Claude Code | Codex | OpenCode | Mistral Vibe |
 |----------------|-------------|-------|----------|-------------|
-| **Event Type** | `type` (`user`, `system`, `summary`) | `type` (preferred) or `role` (fallback) | Session metadata only (messages in separate files) | `role` (`system`, `user`, `assistant`, `tool`) in `messages.jsonl`; tool calls on assistant messages via `tool_calls` |
-| **Identity** | `uuid`, `parentUuid` (tree structure) | `id`/`message_id`, `parent_id` (threaded) | `id`, `parentID` (hierarchical sessions) | No message IDs; tool calls have an `id` and tool responses reference it via `tool_call_id` |
-| **Timestamp** | `timestamp` (ISO-8601) | Multiple possible keys: `timestamp`, `time`, `ts`, `created`, etc. | `time.created`, `time.updated` (session level) | Session-level only in `meta.json`: `start_time`, `end_time` (ISO-8601). No per-message timestamps |
-| **Content** | Nested: `message.content` | Top-level: `content`, `text`, or `message` | Stored in `message/ses_xxx/` directory | `messages.jsonl` lines with `content`; tool output stored as `role: "tool"` messages |
+| **Event Type** | `type` (`user`, `assistant`, `system`, `summary`, ...) | Rollout envelope `type` (`session_meta`, `event_msg`, `response_item`, `turn_context`, ...); nested `event_msg.payload.type` (`user_message`, `agent_message`, `exec_command_*`, `mcp_tool_call_*`, `collab_*`, ...) | Session metadata only (messages in separate files) | `role` (`system`, `user`, `assistant`, `tool`) in `messages.jsonl`; tool calls on assistant messages via `tool_calls` |
+| **Identity** | `uuid`, `parentUuid` (tree structure) | Session id at `session_meta.payload.id`; event-specific IDs like `call_id`, `sender_thread_id`, `receiver_thread_id` | `id`, `parentID` (hierarchical sessions) | No message IDs; tool calls have an `id` and tool responses reference it via `tool_call_id` |
+| **Timestamp** | `timestamp` (ISO-8601) | Top-level rollout-line `timestamp` (ISO-8601 string) | `time.created`, `time.updated` (session level) | Session-level only in `meta.json`: `start_time`, `end_time` (ISO-8601). No per-message timestamps |
+| **Content** | Nested: `message.content` | Usually in `event_msg.payload` (for example `message`, command output deltas, MCP results), plus optional `response_item.payload.content[]` blocks | Stored in `message/ses_xxx/` directory + `part/msg_xxx/` | `messages.jsonl` lines with `content`; tool output stored as `role: "tool"` messages |
 
 ### Key Architectural Differences
 
 **Threading Model:**
 - **Claude Code**: Tree structure via `uuid`/`parentUuid` + `isSidechain` flag
-- **Codex**: Linear threading via `message_id`/`parent_id`
+- **Codex**: Thread-based rollouts (`session_meta.payload.id` thread id); optional subagent provenance via `session_meta.payload.source == "subagent_*"` and collab events (`collab_agent_spawn_*`, `collab_resume_*`, ...)
 - **OpenCode**: Parent-child sessions via `parentID` (subagent sessions)
 - **Mistral Vibe**: Linear message list in `messages.jsonl`; tool calls are embedded in assistant messages and resolved by subsequent `tool` role messages
 
@@ -82,7 +85,7 @@ Analysis of Claude Code, Codex, OpenCode, and Mistral Vibe session file formats 
 
 **Content Access:**
 - **Claude Code**: `event.message.content` (nested in JSONL events)
-- **Codex**: `event.content` or `event.text` (top-level in JSONL events)
+- **Codex**: `event_msg.payload.message` for user/assistant text; tool/collab info in event-specific payload fields
 - **OpenCode**: Separate file system (messages not in session metadata file)
 - **Mistral Vibe**: `messages.jsonl` holds message entries (one JSON object per line)
 
@@ -102,6 +105,7 @@ Analysis of Claude Code, Codex, OpenCode, and Mistral Vibe session file formats 
 {
   "type": "summary",          // Session title
   "type": "user",             // User messages
+  "type": "assistant",        // Assistant messages
   "type": "system",           // System events (subtype: local_command)
   "type": "file-history-snapshot"  // File state tracking
 }
@@ -128,39 +132,127 @@ Analysis of Claude Code, Codex, OpenCode, and Mistral Vibe session file formats 
 }
 ```
 
+**Assistant Tool-Use Content Block (in `message.content[]`):**
+```json
+{
+  "type": "assistant",
+  "message": {
+    "role": "assistant",
+    "content": [
+      {
+        "type": "tool_use",
+        "id": "toolu_01D7FLrfh4GYq7yT1ULFeyMV",
+        "name": "bash",
+        "input": {
+          "command": "ls -la"
+        }
+      }
+    ]
+  }
+}
+```
+
+**Tool Execution System Event (commonly observed):**
+```json
+{
+  "type": "system",
+  "subtype": "local_command",
+  "command": ["ls", "-la"],
+  "stdout": "...",
+  "timestamp": "2025-01-10T10:30:10.000Z"
+}
+```
+
 ### Codex
 
+Codex rollout logs are envelope-based JSONL entries (`RolloutLine`).
+
 ```json
 {
-  "type": "user",             // User messages
-  "type": "assistant",        // Assistant responses
-  "type": "tool_call",        // Tool invocations
-  "type": "tool_result",      // Tool outputs
-  "type": "error",            // Error events
-  "type": "meta",             // Metadata events
-  "type": "reasoning"         // Thinking/reasoning (may be encrypted)
+  "timestamp": "2026-01-18T01:01:30.000Z",
+  "type": "session_meta" | "event_msg" | "response_item" | "turn_context" | "compacted",
+  "payload": { "...": "..." }
 }
 ```
 
-**User Message Example:**
+**Session Metadata Example:**
 ```json
 {
-  "type": "user",
-  "timestamp": "2025-09-12T16:41:03Z",
-  "content": "Find all TODOs in the repo"
+  "timestamp": "2026-01-18T01:01:28.000Z",
+  "type": "session_meta",
+  "payload": {
+    "id": "019bce9f-0a40-79e2-8351-8818e8487fb6",
+    "timestamp": "2026-01-18T01:01:28.000Z",
+    "cwd": "/home/user/project",
+    "source": "cli"
+  }
 }
 ```
 
-**Tool Call + Result:**
+**User / Assistant Events (via `event_msg`):**
 ```json
 {
-  "type": "tool_call",
-  "function": {"name": "grep"},
-  "arguments": {"pattern": "TODO"}
+  "timestamp": "2026-01-18T01:01:30.000Z",
+  "type": "event_msg",
+  "payload": {
+    "type": "user_message",
+    "message": "Summarize the repo"
+  }
 }
 {
-  "type": "tool_result",
-  "stdout": "README.md:12: TODO: add tests\n"
+  "timestamp": "2026-01-18T01:01:31.000Z",
+  "type": "event_msg",
+  "payload": {
+    "type": "agent_message",
+    "message": "Here is the summary"
+  }
+}
+```
+
+**Tool-Related Events (selected examples):**
+```json
+{
+  "type": "event_msg",
+  "payload": {
+    "type": "mcp_tool_call_begin",
+    "call_id": "call_123",
+    "invocation": {
+      "server": "filesystem",
+      "tool": "read_file",
+      "arguments": { "path": "README.md" }
+    }
+  }
+}
+{
+  "type": "event_msg",
+  "payload": {
+    "type": "mcp_tool_call_end",
+    "call_id": "call_123",
+    "result": { "Ok": { "is_error": false, "content": [] } }
+  }
+}
+```
+
+**Collaboration/Subagent Events (Codex app-server / collab mode):**
+```json
+{
+  "type": "event_msg",
+  "payload": {
+    "type": "collab_agent_spawn_begin",
+    "call_id": "spawn_1",
+    "sender_thread_id": "thr_parent",
+    "prompt": "Investigate failing tests"
+  }
+}
+{
+  "type": "event_msg",
+  "payload": {
+    "type": "collab_agent_spawn_end",
+    "call_id": "spawn_1",
+    "sender_thread_id": "thr_parent",
+    "new_thread_id": "thr_child",
+    "status": "completed"
+  }
 }
 ```
 
@@ -196,9 +288,55 @@ Analysis of Claude Code, Codex, OpenCode, and Mistral Vibe session file formats 
 ```
 ~/.local/share/opencode/storage/
 ├── session/<projectID>/ses_xxx.json     # Session metadata
-├── message/ses_xxx/                      # Session messages (separate directory)
-├── part/msg_xxx/                         # Message parts/components
+├── message/ses_xxx/                      # Message metadata files
+├── part/msg_xxx/                         # Message parts (text/tool/subtask/etc.)
 └── session_diff/ses_xxx.json            # File change tracking
+```
+
+**Message File** (`message/<sessionID>/msg_xxx.json`):
+```json
+{
+  "id": "msg_001",
+  "sessionID": "ses_abc",
+  "role": "assistant",
+  "time": {
+    "created": 1704067210000
+  }
+}
+```
+
+**Tool Part** (`part/<messageID>/part_xxx.json`):
+```json
+{
+  "id": "part_002",
+  "sessionID": "ses_abc",
+  "messageID": "msg_001",
+  "type": "tool",
+  "callID": "call_01",
+  "tool": "bash",
+  "state": {
+    "status": "completed",
+    "input": { "command": "ls -la" },
+    "title": "List files",
+    "output": "...",
+    "time": { "start": 1704067210000, "end": 1704067211200 }
+  }
+}
+```
+
+**Subtask Part** (records delegated work in parent session):
+```json
+{
+  "id": "part_subtask",
+  "sessionID": "ses_parent",
+  "messageID": "msg_user",
+  "type": "subtask",
+  "prompt": "Find all parser files",
+  "description": "Explore parser layout",
+  "agent": "explore",
+  "model": { "providerID": "anthropic", "modelID": "claude-sonnet" },
+  "command": "@explore find parser files"
+}
 ```
 
 **Project Identification:**
@@ -218,6 +356,7 @@ Analysis of Claude Code, Codex, OpenCode, and Mistral Vibe session file formats 
 
 - `meta.json` contains session-wide timestamps, environment info, token/tool usage stats, and config snapshots
 - `messages.jsonl` is an OpenAI-style chat transcript (`role`, `content`, optional `tool_calls`)
+- No stable per-message IDs in `messages.jsonl`; tool call correlation is via `tool_calls[*].id` -> `tool_call_id`
 
 **Tool Call + Result (simplified):**
 ```json
@@ -244,6 +383,48 @@ Analysis of Claude Code, Codex, OpenCode, and Mistral Vibe session file formats 
 ```
 
 ---
+
+## Subagents & Tool Calls (Focused Update)
+
+### Raw Format Findings
+
+**Claude Code**
+- Tool invocations are represented in assistant `message.content[]` blocks as `{"type":"tool_use", "id", "name", "input"}`.
+- Tool execution output is commonly observable in `system` events (`subtype: "local_command"`) with command/result fields (`command`, `stdout`, `stderr`).
+- Sidechain/subagent context appears through `isSidechain` and parent links (`parentUuid`).
+
+**Codex**
+- Modern rollouts are envelope JSONL entries: `session_meta`, `event_msg`, `response_item`, `turn_context`, `compacted`.
+- Tool-related activity is emitted as `event_msg.payload.type` variants, especially `exec_command_*`, `mcp_tool_call_*`, and web-search events.
+- Collaboration/subagent activity is explicit in `collab_*` events (`collab_agent_spawn_begin/end`, `collab_resume_*`, `collab_waiting_*`) and in `session_meta.source` (`subagent_*`).
+
+**OpenCode**
+- Parent/child sessions are explicit at session level with `parentID`.
+- Tool calls are first-class message parts (`type: "tool"`) with lifecycle state machine:
+  - `pending` (`input`, `raw`)
+  - `running` (`input`, optional `title`/`metadata`, `time.start`)
+  - `completed` (`input`, `output`, `title`, `metadata`, `time.start/end`, optional `attachments`)
+  - `error` (`input`, `error`, optional `metadata`, `time.start/end`)
+- Delegation intent is captured in `subtask` parts (`prompt`, `description`, `agent`, optional `model`, optional `command`), and task execution creates child sessions with `parentID`.
+
+**Mistral Vibe**
+- Tool calls are OpenAI-style `assistant.tool_calls[]` entries (`id`, `function.name`, `function.arguments`).
+- Tool outputs are separate `role: "tool"` messages, linked by `tool_call_id`.
+- No dedicated subagent session model observed in current `meta.json` + `messages.jsonl` format.
+
+### Current Sessions Chronicle Parsing Behavior
+
+**Important:** raw formats above are richer than what is currently indexed.
+
+- **Claude parser (`src/parsers/claude_code.rs`)**: indexes `type == user|assistant`; ignores `tool_use` blocks and `system` tool-output events.
+- **Codex parser (`src/parsers/codex.rs`)**: indexes only `event_msg.payload.type == user_message|agent_message`; ignores tool/collab event variants.
+- **OpenCode parser (`src/parsers/opencode.rs`)**:
+  - skips sessions with `parentID` (subagents)
+  - converts only `part.type == text`
+  - skips `tool`, `reasoning`, `step-start`, `step-finish`, `snapshot`, `compaction`, `subtask`
+- **Mistral Vibe parser (`src/parsers/mistral_vibe.rs`)**: indexes `role == user|assistant` text; skips `role == tool` and assistant records that only contain `tool_calls` with empty text.
+
+This is intentional and matches current project scope. Tool/subagent transcript indexing remains a separate follow-up.
 
 ## Special Features
 
@@ -276,15 +457,22 @@ Analysis of Claude Code, Codex, OpenCode, and Mistral Vibe session file formats 
 
 ### Codex
 
-**Streaming Support:**
-- Fields: `delta`, `chunk`, `delta_index`
-- Parser must coalesce chunks by `message_id`
+**Rollout Envelope:**
+- Each JSONL line is a `RolloutLine` (`timestamp` + tagged `type` + `payload`)
+- Core variants: `session_meta`, `event_msg`, `response_item`, `turn_context`, `compacted`
+
+**Subagent/Collab Provenance:**
+- `session_meta.source` supports subagent variants (`subagent_review`, `subagent_compact`, thread-spawn variants)
+- `event_msg` can include collab lifecycle events (`collab_agent_spawn_*`, `collab_waiting_*`, `collab_resume_*`, `collab_close_*`)
 
 **Encrypted Reasoning:**
 ```json
 {
-  "type": "reasoning",
-  "encrypted_content": "AAECAwQFBgcICQoL..."
+  "type": "response_item",
+  "payload": {
+    "type": "reasoning",
+    "encrypted_content": "AAECAwQFBgcICQoL..."
+  }
 }
 ```
 - Never decrypt locally
@@ -314,6 +502,10 @@ Two patterns:
 - No built-in cleanup mechanism
 - Manual deletion requires removing multiple related directories
 
+**Subtask Metadata:**
+- Delegated work is represented in `subtask` parts on parent-session user messages (`prompt`, `description`, `agent`, optional `model`, optional `command`)
+- Task execution then creates child sessions whose `parentID` points to the parent session
+
 ### Mistral Vibe
 
 **Rich Session Metadata:**
@@ -332,55 +524,54 @@ Two patterns:
 
 | Tool | Logic |
 |------|-------|
-| **Claude Code** | Look for `type == "summary"` and extract `summary` field<br>Fallback: First `type == "user"` where `isMeta == false` → use `message.content` |
-| **Codex** | First `type == "user"` event → use `content` or `text` field |
-| **OpenCode** | Direct access: session metadata contains `title` field at top level |
-| **Mistral Vibe** | No explicit title field. Use first `messages.jsonl` entry where `role == "user"` and `content` is non-empty (optionally truncate for display). |
+| **Claude Code** | First parsed `user` message content (assistant/system/summary are ignored by parser). |
+| **Codex** | First `event_msg.payload.type == "user_message"` event (`payload.message`). |
+| **OpenCode** | First flattened `text` part attached to a `user` message (session metadata `title` is currently not indexed). |
+| **Mistral Vibe** | First `messages.jsonl` entry where `role == "user"` and `content` is non-empty. |
 
 ### Timestamp Parsing
 
 | Tool | Approach |
 |------|----------|
-| **Claude Code** | Single field: `timestamp` (ISO-8601 string) |
-| **Codex** | Check multiple fields in priority order:<br>`timestamp` → `time` → `ts` → `created` → `created_at` → ... |
-| **OpenCode** | Nested object: `time.created` and `time.updated` (Unix epoch milliseconds) |
-| **Mistral Vibe** | Prefer `meta.json.end_time` (ISO-8601), fallback to `meta.json.start_time`, then directory mtime if missing. |
+| **Claude Code** | Track earliest/latest across `type in {user, assistant}` using per-event `timestamp` (ISO-8601). |
+| **Codex** | `start_time` from first-line `session_meta.payload.timestamp`; `last_updated` from max `event.timestamp` seen in `event_msg` lines. |
+| **OpenCode** | Session timestamps from metadata `time.created` + `time.updated` (ms epoch), with per-message `time.created` used for ordering. |
+| **Mistral Vibe** | `start_time` from `meta.json.start_time`; `last_updated` from `meta.json.end_time` (fallback to `start_time`). |
 
 ### Content Extraction
 
 ```rust
 // Claude Code
 fn extract_content_claude(event: &Value) -> Option<String> {
-    event.get("message")?.get("content")?.as_str()
+    // supports both plain string and block arrays
+    // array blocks currently include "text" and "thinking"
+    ClaudeCodeParser::extract_content(event.get("message")?.get("content")?)
 }
 
 // Codex
-fn extract_content_codex(event: &Value) -> Option<String> {
-    event.get("content")
-        .or_else(|| event.get("text"))
-        .or_else(|| event.get("message"))
-        .and_then(|v| v.as_str())
+fn extract_content_codex_event_msg(event: &Value) -> Option<(Role, String)> {
+    let payload = event.get("payload")?;
+    match payload.get("type")?.as_str()? {
+        "user_message" => Some((Role::User, payload.get("message")?.as_str()?.to_string())),
+        "agent_message" => Some((Role::Assistant, payload.get("message")?.as_str()?.to_string())),
+        _ => None,
+    }
 }
 
 // OpenCode
-fn extract_title_opencode(session: &Value) -> Option<String> {
-    session.get("title")?.as_str().map(|s| s.to_string())
+fn extract_opencode_text_part(part: &Value) -> Option<String> {
+    if part.get("type")?.as_str()? != "text" {
+        return None;
+    }
+    part.get("text")?.as_str().map(|s| s.to_string())
 }
 
 // Mistral Vibe
-fn extract_title_vibe(messages: &[Value]) -> Option<String> {
-    messages
-        .iter()
-        .find(|m| m.get("role").and_then(|v| v.as_str()) == Some("user"))
-        .and_then(|m| m.get("content"))
-        .and_then(|v| v.as_str())
-        .map(|s| s.to_string())
-}
-
-// Note: OpenCode messages are in separate directory structure
-fn get_messages_path_opencode(session_id: &str) -> PathBuf {
-    PathBuf::from("~/.local/share/opencode/storage/message")
-        .join(session_id)
+fn extract_vibe_content(event: &Value) -> Option<String> {
+    event.get("content")?
+        .as_str()
+        .map(str::to_string)
+        .filter(|s| !s.trim().is_empty())
 }
 ```
 
@@ -415,24 +606,25 @@ This is critical for sessions with thousands of messages.
 ### Tool Call Handling
 
 **Claude Code:**
-- Not explicitly documented (may be in `system` events with `subtype`)
-- Need to inspect actual files
+- Raw data can appear in assistant `message.content[]` as `type == "tool_use"`
+- Tool execution output is often represented in `system` events (`subtype == "local_command"`)
+- Current parser behavior: ignores both patterns (indexes only `user`/`assistant` text)
 
 **Codex:**
-- Clear structure: `tool_call` → `tool_result`
-- Tool name: `tool`, `name`, or `function.name`
-- Arguments: `arguments` or `input`
-- Output: `stdout`, `stderr`, `result`, or `output`
+- Raw data is emitted via `event_msg.payload.type` variants such as `exec_command_*`, `mcp_tool_call_*`, `web_search_*`, and collab `collab_*`
+- Tool call correlation typically uses `call_id`
+- Current parser behavior: ignores these events and indexes only `user_message` / `agent_message`
 
 **OpenCode:**
-- Tool calls likely stored in message parts (`part/msg_xxx/`)
-- Structure not documented - needs investigation
-- May follow similar pattern to Codex (structured messages)
+- Tool calls are explicit `part.type == "tool"` records with lifecycle state (`pending`/`running`/`completed`/`error`)
+- Delegation markers are explicit `part.type == "subtask"` records
+- Current parser behavior: skips `tool` and `subtask` parts, and skips child sessions with `parentID`
 
 **Mistral Vibe:**
 - Tool calls appear on assistant messages under `tool_calls[]`
-- Tool outputs are separate messages with `role == "tool"`, `name == <tool>`, and `tool_call_id` matching the call id
+- Tool outputs are separate messages with `role == "tool"` and `tool_call_id` matching the call id (`name` may be present depending on producer)
 - Arguments are stored as JSON-encoded strings (`tool_calls[*].function.arguments`)
+- Current parser behavior: ignores `role == "tool"` records and assistant-only tool-call stubs without text
 
 ---
 
@@ -478,13 +670,14 @@ This is critical for sessions with thousands of messages.
 - `version`: Claude Code version
 - `userType`: "external" or other
 
-**Codex** (minimal per-event):
-- Extract from first event
-- Infer from directory structure
-- Tool/model info may vary by event
+**Codex** (envelope + event payload model):
+- `session_meta.payload.id`: session/thread identifier
+- `session_meta.payload.cwd`: working directory
+- `session_meta.payload.source`: source provenance (`cli`, `vscode`, `subagent_*`, ...)
+- Additional event metadata in `event_msg.payload` (tool call IDs, collab thread IDs, etc.)
 
 **OpenCode** (session-level metadata):
-- `id`: Session identifier (`ses_<id>`)
+- `id`: Session identifier (commonly `ses_*`, but parser should not hardcode prefix)
 - `projectID`: Git root commit hash
 - `directory`: Working directory path
 - `version`: OpenCode version
@@ -559,7 +752,7 @@ impl OpenCodeParser {
         let metadata = self.read_session_metadata(session_path)?;
 
         // 2. Construct message directory path
-        let session_id = metadata.id.strip_prefix("ses_")?;
+        let session_id = &metadata.id;
         let msg_dir = Path::new("~/.local/share/opencode/storage/message")
             .join(session_id);
 
@@ -586,52 +779,34 @@ impl OpenCodeParser {
 
 ## Open Questions
 
-1. **Claude Code Tool Calls**: Not explicitly shown in docs
-   - Do they appear as `system` events?
-   - What does `subtype: "local_command"` contain?
-   - Need to inspect actual session files
+1. **Tool/Event Indexing Scope**:
+   - Should tool calls/results become first-class indexed records (new role/type), or remain transcript-only metadata?
+   - If indexed, should we preserve full structured JSON (`input`, `output`, `metadata`, `attachments`) or normalize to text?
 
-2. **OpenCode Message Format**: Session metadata is documented, but message structure is not
-   - What format are files in `message/ses_xxx/` directory?
-   - What are "message parts" in `part/msg_xxx/`?
-   - How are tool calls represented?
-   - Are messages also JSONL, JSON, or another format?
-
-3. **OpenCode Session Diffs**: File change tracking mentioned but not detailed
-   - What's the structure of `session_diff/ses_xxx.json`?
-   - How are file changes tracked (full content vs diffs)?
-   - Is this similar to Claude Code's `file-history-snapshot`?
-
-4. **Streaming Chunks**: Codex supports delta/chunk fields
-   - Should parser coalesce automatically?
-   - Or store chunks separately for playback?
-
-5. **Image Handling**:
-   - Claude Code: "Multimodal content appears as arrays"
-   - Codex: Base64 or URLs
-   - OpenCode: Unknown
-   - Should images be extracted/cached?
-   - Privacy implications for remote URLs?
-
-6. **Session Resumption**:
-   - What's the command format for each tool?
-   - `claude-code resume <session-id>`?
-   - `codex resume <session-id>`?
-   - `opencode resume <session-id>` or different command?
-   - Need to verify for each tool
-
-7. **OpenCode Parent-Child Session Display**:
+2. **OpenCode Parent-Child Session Display**:
    - Should subagent sessions be shown nested under parents?
    - Or displayed as separate sessions with parent reference?
    - How deep can nesting go?
 
-8. **Error Handling for Malformed Data**:
+3. **Codex Collaboration Mapping**:
+   - Should Codex `collab_*` events map to the same "subagent" concept as OpenCode `parentID` sessions?
+   - Do we show child thread IDs as navigable links in the UI?
+
+4. **OpenCode Session Diffs**:
+   - Should `session_diff/ses_xxx.json` be ingested for richer "changes made" previews?
+   - How should diff metadata be surfaced without overwhelming session list/search?
+
+5. **Image/Attachment Handling in Tool Results**:
+   - How should we present tool-result attachments (data URLs, image/pdf, references) safely?
+   - Should remote references require explicit user opt-in before fetch?
+
+6. **Error Handling for Malformed Data**:
    - How should parser handle malformed JSON/JSONL lines?
    - Skip and continue, or fail entire session?
    - What about missing required fields?
    - Recommendation: Log warnings, skip problematic entries, continue indexing
 
-9. **Memory Management for Large Sessions**:
+7. **Memory Management for Large Sessions**:
    - What's the practical limit for session size?
    - Should large messages be truncated for display?
    - How to handle sessions with 10,000+ messages?
@@ -641,39 +816,22 @@ impl OpenCodeParser {
 
 ## Next Steps for Design
 
-1. **Inspect actual session files**:
-   - Get real Claude Code session from `~/.claude/`
-   - Get real Codex session from `~/.codex/`
-   - Get real OpenCode sessions from `~/.local/share/opencode/storage/`
-      - Inspect session metadata JSON
-      - Examine message directory structure
-      - Look at message parts format
-      - Check session_diff format
-   - Get real Mistral Vibe sessions from `~/.vibe/logs/session/`
-      - Confirm `metadata` fields and `messages` structure
+1. **Tool call indexing prototype (Phase 4 candidate)**:
+   - Add optional extraction mode in each parser for tool/subtask/collab events
+   - Keep existing user/assistant indexing unchanged as baseline behavior
 
-2. **Verify tool call format**:
-   - How does Claude Code represent tool calls/results?
-   - Confirm Codex format matches documentation
-   - Investigate OpenCode message/part structure
-   - Confirm Mistral Vibe pairing: `assistant.tool_calls[]` <-> `tool.tool_call_id`
+2. **Subagent graph model**:
+   - Prototype a unified parent-child relation that can represent:
+     - OpenCode session-level `parentID`
+     - Codex collab/thread-spawn links
+     - Claude sidechain indicators
 
-3. **Define unified data model**:
-   - Design `Session`, `Event`, `Message` structs
-   - Handle different threading models/representations:
-      - Tree structure (Claude Code: `uuid`/`parentUuid`)
-      - Linear threading (Codex: `message_id`/`parent_id`)
-      - Hierarchical sessions (OpenCode: session-level `parentID`)
-      - Linear message list (Mistral Vibe: message roles, no per-message ids/timestamps)
-   - Support multimodal content (text, images, code)
-   - Handle JSONL events vs multi-file storage
+3. **UI surfacing experiment**:
+   - Add optional expandable "Tool Activity" and "Subtasks/Subagents" sections in session details
+   - Evaluate nested vs flat display using OpenCode fixtures with parent/child sessions
 
-4. **Database schema design**:
-   - How to represent four different threading models/representations in unified schema?
-   - Should OpenCode subagent sessions be separate rows or nested?
-   - FTS5 indexing strategy for all four formats
-   - Metadata normalization (different field names, different types)
-   - How to handle OpenCode's multi-file structure (index messages separately?)
+4. **Diff ingestion spike (OpenCode)**:
+   - Parse `session_diff/ses_xxx.json` and test lightweight summaries (file count, additions/deletions)
 
 5. **Test parser with edge cases**:
    - Empty sessions
@@ -690,13 +848,24 @@ impl OpenCodeParser {
 ### Official Format Documentation
 - [Claude Code Session Format](https://github.com/jazzyalex/agent-sessions/blob/main/docs/claude-code-session-format.md)
 - [Codex Session Storage Format](https://github.com/jazzyalex/agent-sessions/blob/main/docs/session-storage-format.md)
-- [Codex Schema Reference](https://github.com/jazzyalex/agent-sessions/blob/main/docs/schemas/session_event.schema.json) (mentioned but not fetched)
+- [Codex Schema Reference](https://github.com/jazzyalex/agent-sessions/blob/main/docs/schemas/session_event.schema.json)
+
+### Codex (Primary Sources)
+- [Codex protocol `RolloutItem`, `SessionMeta`, `EventMsg`](https://github.com/openai/codex/blob/main/codex-rs/protocol/src/protocol.rs)
+- [Codex app-server thread/item event model](https://github.com/openai/codex/blob/main/codex-rs/app-server/README.md)
+- [Codex TypeScript SDK note on session persistence (`~/.codex/sessions`)](https://github.com/openai/codex/blob/main/sdk/typescript/README.md)
 
 ### OpenCode Information Sources
 - [Agent Sessions GitHub Repository](https://github.com/jazzyalex/agent-sessions) - Multi-tool session browser
-- [OpenCode GitHub Repository](https://github.com/opencode-ai/opencode) - Official OpenCode repository
+- [OpenCode GitHub Repository](https://github.com/sst/opencode) - Official OpenCode repository
 - [OpenCode Sessions Issue #3026](https://github.com/sst/opencode/issues/3026) - Storage structure details
 - [OpenCode Sessions Issue #5734](https://github.com/sst/opencode/issues/5734) - Subagent session structure
+- [OpenCode `MessageV2` part schemas (`tool`, `subtask`, etc.)](https://github.com/sst/opencode/blob/dev/packages/opencode/src/session/message-v2.ts)
+- [OpenCode task tool creates child sessions with `parentID`](https://github.com/sst/opencode/blob/dev/packages/opencode/src/tool/task.ts)
+- [OpenCode generated v2 SDK types (`Session`, `Part`, `ToolPart`)](https://github.com/sst/opencode/blob/dev/packages/sdk/js/src/v2/gen/types.gen.ts)
+
+### Claude Tool-Use References
+- [Claude API tool-use block structure (`tool_use`/`tool_result`)](https://platform.claude.com/docs/en/api/typescript/messages/create)
 
 ### Mistral Vibe Information Sources
 - [Mistral Vibe Configuration Docs](https://docs.mistral.ai/mistral-vibe/introduction/configuration) - `VIBE_HOME`, `config.toml` behavior
@@ -705,11 +874,11 @@ impl OpenCodeParser {
 ### Key Findings Summary
 
 - **Claude Code**: JSONL format, tree-structured events, project-based organization
-- **Codex**: JSONL format, threaded messages, date-sharded storage
-- **OpenCode**: Multi-file JSON format, session metadata + separate message directories, git-based project identification
+- **Codex**: JSONL rollout envelope (`session_meta`/`event_msg`/...), date-sharded storage, event-level tool/collab lifecycle signals
+- **OpenCode**: Multi-file JSON format with explicit `tool` and `subtask` parts, plus session-level parent-child links via `parentID`
 - **Mistral Vibe**: Directory-based session format with `meta.json` + JSONL `messages.jsonl` (including tool call/result pairing)
 
 ---
 
-**Last Updated**: 2026-02-04
-**Status**: Claude/Codex/OpenCode/Mistral Vibe documented (session logs + input history noted)
+**Last Updated**: 2026-02-17
+**Status**: Subagent + tool-call analysis refreshed; parser behavior and remaining scope gaps documented
