@@ -25,7 +25,7 @@ showing the full input/output.
 | Interaction | Click badge → panel shows input, output, duration |
 | Navigation | Mini-pills at panel bottom to switch between tool calls |
 
-**Pros:** Compact transcript, full detail on demand, badge navigation.
+**Pros:** Compact transcript, full detail on demand, badge navigation.  
 **Cons:** Requires lateral panel management, split layout reduces transcript width.
 
 **Analysis:** The 60/40 split is problematic on screens < 1400px. On a typical
@@ -54,7 +54,7 @@ transcript. Follows the GNOME Settings pattern.
 | Expanded | Monospace content block (terminal output, file content) |
 | Subagents | Same pattern, purple accent |
 
-**Pros:** Native GNOME pattern, familiar UX, no panel complexity, full width.
+**Pros:** Native GNOME pattern, familiar UX, no panel complexity, full width.  
 **Cons:** Expanding a tool pushes messages down, can stretch the transcript.
 
 **Analysis:** Excellent for simple tool calls (Read, Bash, Edit). The pattern
@@ -82,7 +82,7 @@ Each tool is an **AdwActionRow** inside the group.
 | Interaction | Click row → navigates to detail (or expands) |
 | Subagents | Separate group card with purple accent |
 
-**Pros:** Reduces visual noise, groups related calls, clean HIG pattern.
+**Pros:** Reduces visual noise, groups related calls, clean HIG pattern.  
 **Cons:** Loses chronological interleaving with text, click target less obvious.
 
 **Analysis:** Good presentation layer, but incomplete as a standalone solution.
@@ -112,7 +112,7 @@ the center, tool calls branch to the right as parallel execution lanes.
 | Metadata | Duration pills, result summaries on each tool box |
 | Subagents | Distinct lane with purple accent, nested sub-tasks |
 
-**Pros:** Shows execution flow and parallelism, rich metadata, unique.
+**Pros:** Shows execution flow and parallelism, rich metadata, unique.  
 **Cons:** Complex layout, harder to implement in GTK4, wide screen needed.
 
 **Analysis:** The only proposal that honestly represents parallelism — Claude
@@ -142,7 +142,7 @@ interleaved with **nested tool cards** at increasing indentation levels.
 | Nesting | Background shading: #fff → #f6f6f6 → #efefef |
 | Content | Collapsed (2-line preview + "Show output") or expanded |
 
-**Pros:** Reads like the AI's thought process, natural flow, shows hierarchy.
+**Pros:** Reads like the AI's thought process, natural flow, shows hierarchy.  
 **Cons:** Tall messages, deep nesting can become visually heavy.
 
 **Analysis:** The best conceptual representation of the hierarchy. Subagents
@@ -273,7 +273,7 @@ Transcript (full width)
 | Breadcrumb trail | `GtkBox` with `GtkLabel` + separator |
 | Code output block | `GtkSourceView` or `GtkTextView` with monospace |
 
-**Pros:**
+**Pros:**  
 - Full-width transcript (no permanent split)
 - Inline preview for quick inspection (expand/collapse)
 - Full detail on demand via overlay (no wasted screen space)

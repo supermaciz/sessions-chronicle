@@ -53,6 +53,10 @@
 - UI changes include updated screenshots.
 - Packaging/build changes include a Flatpak build verification run.
 
+## Markdown Style
+- All documentation uses GitHub Flavored Markdown (GFM).
+- To create a line break within a paragraph (soft break), add **two trailing spaces** at the end of the line. Without them, consecutive lines render as a single paragraph.
+
 ## Documentation & Resources
 - Relm4 docs are not available via Context7; use zread or the direct links below.
 - Relm4 crate docs: https://docs.rs/crate/relm4/0.10.0
