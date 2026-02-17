@@ -39,8 +39,10 @@ jobs:
             > sessions-chronicle-${{ steps.version.outputs.version }}.flatpak.sha256
 
       - name: Upload bundle to release
-        uses: softprops/action-gh-release@v2
-        with:
-          files: |
-            sessions-chronicle-${{ steps.version.outputs.version }}.flatpak
-            sessions-chronicle-${{ steps.version.outputs.version }}.flatpak.sha256
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release upload "${{ github.event.release.tag_name }}" \
+            sessions-chronicle-${{ steps.version.outputs.version }}.flatpak \
+            sessions-chronicle-${{ steps.version.outputs.version }}.flatpak.sha256 \
+            --clobber
