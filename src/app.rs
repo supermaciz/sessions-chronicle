@@ -106,6 +106,8 @@ pub(super) enum AppMsg {
     OpenChildSession(String),
     /// Header-bar button: return to the one-hop parent session.
     ReturnToParentSession,
+    /// Esc key: pop inspector drill-down (native) → close pane → navigate back.
+    Escape,
     ShowPreferences,
     ReindexRequested,
 }
@@ -117,6 +119,7 @@ relm4::new_stateless_action!(AboutAction, WindowActionGroup, "about");
 relm4::new_stateless_action!(QuitAction, WindowActionGroup, "quit");
 relm4::new_stateless_action!(TogglePaneAction, WindowActionGroup, "toggle-pane");
 relm4::new_stateless_action!(ShowSearchAction, WindowActionGroup, "show-search");
+relm4::new_stateless_action!(EscapeAction, WindowActionGroup, "escape");
 
 fn active_search_query(query: &str) -> Option<String> {
     let trimmed = query.trim();
@@ -375,6 +378,8 @@ impl SimpleComponent for App {
 
         // Create NavigationView and pages before model
         let nav_view = adw::NavigationView::new();
+        // Esc is routed via EscapeAction; disable native pop to avoid conflicts.
+        nav_view.set_pop_on_escape(false);
 
         let session_list_page = adw::NavigationPage::builder()
             .title("Sessions")
@@ -529,8 +534,16 @@ impl SimpleComponent for App {
         };
 
         let quit_action = {
+            let sender = sender.clone();
             RelmAction::<QuitAction>::new_stateless(move |_| {
                 sender.input(AppMsg::Quit);
+            })
+        };
+
+        let escape_action = {
+            let sender = sender.clone();
+            RelmAction::<EscapeAction>::new_stateless(move |_| {
+                sender.input(AppMsg::Escape);
             })
         };
 
@@ -540,6 +553,7 @@ impl SimpleComponent for App {
         app.set_accelerators_for_action::<ShowSearchAction>(&["<Control>f"]);
         app.set_accelerators_for_action::<ShortcutsAction>(&["<Control>question"]);
         app.set_accelerators_for_action::<PreferencesAction>(&["<Control>comma"]);
+        app.set_accelerators_for_action::<EscapeAction>(&["Escape"]);
 
         actions.add_action(preferences_action);
         actions.add_action(shortcuts_action);
@@ -547,6 +561,7 @@ impl SimpleComponent for App {
         actions.add_action(show_search_action);
         actions.add_action(toggle_pane_action);
         actions.add_action(quit_action);
+        actions.add_action(escape_action);
         actions.register_for_widget(&widgets.main_window);
 
         widgets.load_window_size();
@@ -893,6 +908,18 @@ impl SimpleComponent for App {
                             tracing::error!("Failed to load parent session: {}", err);
                         }
                     }
+                }
+            }
+            AppMsg::Escape => {
+                // Priority: inspector nav pop (native, handled by inner AdwNavigationView)
+                // → close inspector pane → navigate back to session list.
+                if self.detail_visible
+                    && self.pane_open
+                    && self.pane_mode == UtilityPaneMode::ToolInspector
+                {
+                    self.pane_open = false;
+                } else if self.detail_visible {
+                    _sender.input(AppMsg::NavigateBack);
                 }
             }
         }

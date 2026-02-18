@@ -106,3 +106,56 @@
 .message-row .expand-toggle:disabled {
     opacity: 0.7;
 }
+
+/* Inline transcript rows for tool calls and subagents */
+.tool-call-row {
+  padding: 2px 8px;
+  border-radius: 6px;
+  background-color: alpha(@card_bg_color, 0.4);
+  border-left: 2px solid #e66100;
+  margin-bottom: 2px;
+}
+
+.subagent-row {
+  padding: 2px 8px;
+  border-radius: 6px;
+  background-color: alpha(@card_bg_color, 0.4);
+  border-left: 2px solid #9141ac;
+  margin-bottom: 2px;
+}
+
+/* Tool call status chip colors */
+.status-completed {
+  color: #26a269;
+}
+
+.status-error {
+  color: #e01b24;
+}
+
+.status-running {
+  color: #e66100;
+}
+
+.status-pending,
+.status-unknown {
+  opacity: 0.6;
+}
+
+/* Inspector pane code/text block sections */
+.inspector-code-block {
+  font-family: monospace;
+  font-size: 0.9em;
+  background-color: alpha(@card_shade_color, 0.5);
+  border-radius: 4px;
+  padding: 6px 8px;
+}
+
+/* Inspector pane heading labels */
+.inspector-section-heading {
+  font-weight: bold;
+  font-size: 0.85em;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  opacity: 0.7;
+}

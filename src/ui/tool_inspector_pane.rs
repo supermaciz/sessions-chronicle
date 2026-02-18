@@ -603,9 +603,10 @@ fn make_mono_label() -> gtk::Label {
 fn make_text_section(title: &str) -> (gtk::Box, gtk::Label) {
     let section = gtk::Box::new(gtk::Orientation::Vertical, 4);
     let header = gtk::Label::new(Some(title));
-    header.add_css_class("heading");
+    header.add_css_class("inspector-section-heading");
     header.set_halign(gtk::Align::Start);
     let content = make_mono_label();
+    content.add_css_class("inspector-code-block");
     section.append(&header);
     section.append(&content);
     section.set_visible(false);

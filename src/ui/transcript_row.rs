@@ -191,6 +191,16 @@ fn tool_status_label(status: ToolCallStatus) -> &'static str {
     }
 }
 
+fn tool_status_css_class(status: ToolCallStatus) -> &'static str {
+    match status {
+        ToolCallStatus::Completed => "status-completed",
+        ToolCallStatus::Error => "status-error",
+        ToolCallStatus::Running => "status-running",
+        ToolCallStatus::Pending => "status-pending",
+        ToolCallStatus::Unknown => "status-unknown",
+    }
+}
+
 impl FactoryComponent for TranscriptRow {
     type Init = TranscriptItemInit;
     type Input = TranscriptRowMsg;
@@ -526,7 +536,7 @@ impl TranscriptRow {
         if let Some(status) = self.tool_status {
             let status_label = gtk::Label::new(Some(tool_status_label(status)));
             status_label.add_css_class("caption");
-            status_label.add_css_class("dim-label");
+            status_label.add_css_class(tool_status_css_class(status));
             row.append(&status_label);
         }
 
