@@ -240,8 +240,9 @@ impl SessionIndexer {
 
         tx.execute(
             "INSERT OR REPLACE INTO sessions
-             (id, tool, project_path, start_time, message_count, file_path, last_updated, first_prompt)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+             (id, tool, project_path, start_time, message_count, file_path, last_updated,
+              first_prompt, parent_session_id, is_subagent)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
             rusqlite::params![
                 &session.id,
                 session.tool.to_storage(),
@@ -251,10 +252,21 @@ impl SessionIndexer {
                 file_path.to_str(),
                 session.last_updated.timestamp(),
                 &session.first_prompt,
+                &session.parent_session_id,
+                session.is_subagent as i64,
             ],
         )?;
 
         tx.execute("DELETE FROM messages WHERE session_id = ?1", [&session.id])?;
+        tx.execute(
+            "DELETE FROM transcript_items WHERE session_id = ?1",
+            [&session.id],
+        )?;
+        tx.execute(
+            "DELETE FROM tool_calls WHERE session_id = ?1",
+            [&session.id],
+        )?;
+        tx.execute("DELETE FROM subagents WHERE session_id = ?1", [&session.id])?;
 
         for msg in messages {
             tx.execute(
@@ -297,6 +309,9 @@ impl SessionIndexer {
     /// correctly on FTS5 tables and participates in transactions normally.
     pub fn clear_all_sessions(&mut self) -> Result<()> {
         let tx = self.db.transaction()?;
+        tx.execute("DELETE FROM transcript_items", [])?;
+        tx.execute("DELETE FROM tool_calls", [])?;
+        tx.execute("DELETE FROM subagents", [])?;
         tx.execute("DELETE FROM messages", [])?;
         tx.execute("DELETE FROM sessions", [])?;
         tx.commit()?;
@@ -311,6 +326,18 @@ impl SessionIndexer {
 
         let tx = self.db.transaction()?;
 
+        tx.execute(
+            "DELETE FROM transcript_items WHERE session_id IN (SELECT id FROM sessions WHERE file_path = ?1)",
+            [file_path_str],
+        )?;
+        tx.execute(
+            "DELETE FROM tool_calls WHERE session_id IN (SELECT id FROM sessions WHERE file_path = ?1)",
+            [file_path_str],
+        )?;
+        tx.execute(
+            "DELETE FROM subagents WHERE session_id IN (SELECT id FROM sessions WHERE file_path = ?1)",
+            [file_path_str],
+        )?;
         tx.execute(
             "DELETE FROM messages WHERE session_id IN (SELECT id FROM sessions WHERE file_path = ?1)",
             [file_path_str],
@@ -373,7 +400,8 @@ mod tests {
         let storage_root = PathBuf::from("tests/fixtures/opencode_storage");
 
         let count = indexer.index_opencode_sessions(&storage_root).unwrap();
-        assert_eq!(count, 2);
+        // session-tools-child has parentID → pruned; session-002 also pruned
+        assert_eq!(count, 3);
 
         let sessions: Vec<(String, String)> = indexer
             .db
@@ -384,11 +412,12 @@ mod tests {
             .collect::<Result<Vec<_>, _>>()
             .unwrap();
 
-        assert_eq!(sessions.len(), 2);
-        assert_eq!(sessions[0].0, "session-001");
-        assert_eq!(sessions[0].1, "opencode");
-        assert_eq!(sessions[1].0, "session-003");
-        assert_eq!(sessions[1].1, "opencode");
+        assert_eq!(sessions.len(), 3);
+        assert!(sessions.iter().all(|(_, tool)| tool == "opencode"));
+        let ids: Vec<&str> = sessions.iter().map(|(id, _)| id.as_str()).collect();
+        assert!(ids.contains(&"session-001"));
+        assert!(ids.contains(&"session-003"));
+        assert!(ids.contains(&"session-tools-001"));
 
         let msg_count: i64 = indexer
             .db
@@ -414,7 +443,7 @@ mod tests {
         let sessions_dir = PathBuf::from("tests/fixtures/codex_sessions");
 
         let count = indexer.index_codex_sessions(&sessions_dir).unwrap();
-        assert_eq!(count, 1);
+        assert_eq!(count, 2);
 
         let sessions: Vec<(String, String)> = indexer
             .db
@@ -425,8 +454,8 @@ mod tests {
             .collect::<Result<Vec<_>, _>>()
             .unwrap();
 
-        assert_eq!(sessions.len(), 1);
-        assert_eq!(sessions[0].1, "codex");
+        assert_eq!(sessions.len(), 2);
+        assert!(sessions.iter().all(|(_, tool)| tool == "codex"));
     }
 
     #[test]
@@ -446,7 +475,7 @@ mod tests {
         let sessions_dir = PathBuf::from("tests/fixtures/vibe_sessions");
 
         let count = indexer.index_vibe_sessions(&sessions_dir).unwrap();
-        assert_eq!(count, 1);
+        assert_eq!(count, 2);
 
         let sessions: Vec<(String, String)> = indexer
             .db
@@ -457,8 +486,8 @@ mod tests {
             .collect::<Result<Vec<_>, _>>()
             .unwrap();
 
-        assert_eq!(sessions.len(), 1);
-        assert_eq!(sessions[0].1, "mistral_vibe");
+        assert_eq!(sessions.len(), 2);
+        assert!(sessions.iter().all(|(_, tool)| tool == "mistral_vibe"));
     }
 
     #[test]

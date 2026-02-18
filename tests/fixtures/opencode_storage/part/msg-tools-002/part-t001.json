@@ -1,0 +1,13 @@
+{
+  "id": "part-t001",
+  "sessionID": "session-tools-001",
+  "messageID": "msg-tools-002",
+  "order": 1,
+  "type": "tool",
+  "tool": "read",
+  "state": {
+    "status": "completed",
+    "input": { "path": "/home/user/myproject/config.json" },
+    "output": "{ \"name\": \"myproject\", \"version\": \"1.0.0\" }"
+  }
+}

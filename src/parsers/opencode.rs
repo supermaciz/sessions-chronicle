@@ -104,6 +104,8 @@ impl OpenCodeParser {
             file_path: session_path.to_str().unwrap_or_default().to_string(),
             last_updated: metadata.time_updated,
             first_prompt,
+            parent_session_id: None,
+            is_subagent: false,
         };
 
         Ok((session, flattened))

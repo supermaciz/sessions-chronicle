@@ -12,6 +12,10 @@ pub struct Session {
     pub last_updated: DateTime<Utc>,
     #[serde(default)]
     pub first_prompt: Option<String>,
+    #[serde(default)]
+    pub parent_session_id: Option<String>,
+    #[serde(default)]
+    pub is_subagent: bool,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]

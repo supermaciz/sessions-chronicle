@@ -103,6 +103,8 @@ impl ClaudeCodeParser {
                 file_path: file_path.to_str().unwrap().to_string(),
                 last_updated,
                 first_prompt,
+                parent_session_id: None,
+                is_subagent: false,
             },
             messages,
         ))

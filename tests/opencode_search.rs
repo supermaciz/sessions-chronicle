@@ -47,7 +47,7 @@ fn opencode_search_finds_text_part_content() {
         .index_opencode_sessions(&storage_root)
         .expect("Failed to index OpenCode sessions");
 
-    assert_eq!(indexed_count, 2, "Should index 2 non-subagent sessions");
+    assert_eq!(indexed_count, 3, "Should index 3 non-subagent sessions");
 
     let sessions = search_sessions(&db.path, &[Tool::OpenCode], "I can help you with that task")
         .expect("Search failed");
@@ -78,7 +78,7 @@ fn opencode_search_excludes_tool_output() {
         .index_opencode_sessions(&storage_root)
         .expect("Failed to index OpenCode sessions");
 
-    assert_eq!(indexed_count, 2, "Should index 2 non-subagent sessions");
+    assert_eq!(indexed_count, 3, "Should index 3 non-subagent sessions");
 
     // Search for content that exists only in tool output (now excluded)
     let sessions = search_sessions(&db.path, &[Tool::OpenCode], "total").expect("Search failed");

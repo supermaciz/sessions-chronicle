@@ -169,6 +169,8 @@ impl CodexParser {
                 file_path: file_path.to_str().unwrap_or_default().to_string(),
                 last_updated,
                 first_prompt,
+                parent_session_id: None,
+                is_subagent: false,
             },
             messages,
         ))
