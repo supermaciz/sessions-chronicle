@@ -5,12 +5,14 @@ use std::cmp::Ordering;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use crate::models::{Message, Role, Session, Tool};
+use crate::models::{
+    Message, Role, Session, Subagent, Tool, ToolCall, ToolCallStatus, TranscriptItem,
+    TranscriptItemKind,
+};
+use crate::parsers::ParsedSession;
 
 #[derive(Debug, thiserror::Error)]
 pub enum ParseError {
-    #[error("Skipping subagent session")]
-    SubagentSession,
     #[error("Session contains no user messages")]
     NoUserMessages,
 }
@@ -41,6 +43,13 @@ struct PartData {
     raw: Value,
 }
 
+enum PartOutcome {
+    Message(Message),
+    ToolCall(ToolCall),
+    Subagent(Subagent),
+    Nothing,
+}
+
 impl OpenCodeParser {
     pub fn new(storage_root: &Path) -> Self {
         Self {
@@ -48,11 +57,11 @@ impl OpenCodeParser {
         }
     }
 
-    pub fn parse(&self, session_path: &Path) -> Result<(Session, Vec<Message>)> {
+    pub fn parse(&self, session_path: &Path) -> Result<ParsedSession> {
         let metadata = self.parse_session_metadata(session_path)?;
-        if metadata.parent_id.is_some() {
-            return Err(ParseError::SubagentSession.into());
-        }
+
+        let is_subagent = metadata.parent_id.is_some();
+        let parent_session_id = metadata.parent_id.clone();
 
         let mut messages = self.load_messages(&metadata.id)?;
         messages.sort_by(|a, b| {
@@ -61,7 +70,10 @@ impl OpenCodeParser {
                 .then_with(|| a.id.cmp(&b.id))
         });
 
-        let mut flattened = Vec::new();
+        let mut flattened: Vec<Message> = Vec::new();
+        let mut tool_calls: Vec<ToolCall> = Vec::new();
+        let mut subagents: Vec<Subagent> = Vec::new();
+        let mut transcript_items: Vec<TranscriptItem> = Vec::new();
         let mut has_user_message = false;
 
         for message in messages {
@@ -74,14 +86,54 @@ impl OpenCodeParser {
             });
 
             for part in parts {
-                let messages_from_part = self.part_to_message(
+                let outcome = self.process_part(
                     &metadata.id,
                     message.role,
                     message.time_created,
                     &part,
                     &mut has_user_message,
                 );
-                flattened.extend(messages_from_part);
+
+                let item_idx = transcript_items.len() as i64;
+                match outcome {
+                    PartOutcome::Message(msg) => {
+                        let msg_idx = flattened.len() as i64;
+                        transcript_items.push(TranscriptItem {
+                            session_id: metadata.id.clone(),
+                            item_index: item_idx,
+                            kind: TranscriptItemKind::Message,
+                            message_index: Some(msg_idx),
+                            tool_call_id: None,
+                            subagent_id: None,
+                        });
+                        flattened.push(msg);
+                    }
+                    PartOutcome::ToolCall(tc) => {
+                        let tc_id = tc.id.clone();
+                        transcript_items.push(TranscriptItem {
+                            session_id: metadata.id.clone(),
+                            item_index: item_idx,
+                            kind: TranscriptItemKind::ToolCall,
+                            message_index: None,
+                            tool_call_id: Some(tc_id),
+                            subagent_id: None,
+                        });
+                        tool_calls.push(tc);
+                    }
+                    PartOutcome::Subagent(sa) => {
+                        let sa_id = sa.id.clone();
+                        transcript_items.push(TranscriptItem {
+                            session_id: metadata.id.clone(),
+                            item_index: item_idx,
+                            kind: TranscriptItemKind::Subagent,
+                            message_index: None,
+                            tool_call_id: None,
+                            subagent_id: Some(sa_id),
+                        });
+                        subagents.push(sa);
+                    }
+                    PartOutcome::Nothing => {}
+                }
             }
         }
 
@@ -104,11 +156,17 @@ impl OpenCodeParser {
             file_path: session_path.to_str().unwrap_or_default().to_string(),
             last_updated: metadata.time_updated,
             first_prompt,
-            parent_session_id: None,
-            is_subagent: false,
+            parent_session_id,
+            is_subagent,
         };
 
-        Ok((session, flattened))
+        Ok(ParsedSession {
+            session,
+            messages: flattened,
+            tool_calls,
+            subagents,
+            transcript_items,
+        })
     }
 
     fn parse_session_metadata(&self, session_path: &Path) -> Result<SessionMetadata> {
@@ -309,14 +367,14 @@ impl OpenCodeParser {
         Ok(parts)
     }
 
-    fn part_to_message(
+    fn process_part(
         &self,
         session_id: &str,
         message_role: Option<Role>,
         timestamp: DateTime<Utc>,
         part: &PartData,
         has_user_message: &mut bool,
-    ) -> Vec<Message> {
+    ) -> PartOutcome {
         match part.kind.as_str() {
             "text" => {
                 let role = match message_role {
@@ -340,27 +398,106 @@ impl OpenCodeParser {
 
                 let text = match text {
                     Some(t) => t,
-                    None => return Vec::new(),
+                    None => return PartOutcome::Nothing,
                 };
 
                 if role == Role::User {
                     *has_user_message = true;
                 }
 
-                vec![Message {
+                PartOutcome::Message(Message {
                     session_id: session_id.to_string(),
                     index: 0,
                     role,
                     content: text,
                     timestamp,
-                }]
+                })
+            }
+            "tool" => {
+                let tool_name = part
+                    .raw
+                    .get("tool")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("unknown")
+                    .to_string();
+
+                let state = part.raw.get("state");
+
+                let status = match state.and_then(|s| s.get("status")).and_then(|v| v.as_str()) {
+                    Some("completed") => ToolCallStatus::Completed,
+                    Some("failed") | Some("error") => ToolCallStatus::Error,
+                    Some("running") => ToolCallStatus::Running,
+                    _ => ToolCallStatus::Unknown,
+                };
+
+                let input_json = state.and_then(|s| s.get("input")).map(|v| v.to_string());
+
+                let output_text = state
+                    .and_then(|s| s.get("output"))
+                    .and_then(|v| v.as_str())
+                    .map(str::to_string);
+
+                let error_text = state
+                    .and_then(|s| s.get("error"))
+                    .and_then(|v| v.as_str())
+                    .map(str::to_string);
+
+                PartOutcome::ToolCall(ToolCall {
+                    id: format!("{}-{}", session_id, part.id),
+                    session_id: session_id.to_string(),
+                    subagent_id: None,
+                    tool_name,
+                    status,
+                    title: None,
+                    summary: None,
+                    input_json,
+                    output_text,
+                    error_text,
+                    started_at: None,
+                    ended_at: None,
+                    duration_ms: None,
+                    parser_call_id: None,
+                })
+            }
+            "subtask" => {
+                let title = part
+                    .raw
+                    .get("description")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or_default()
+                    .to_string();
+
+                let child_session_id = part
+                    .raw
+                    .get("childSessionID")
+                    .or_else(|| part.raw.get("childSessionId"))
+                    .and_then(|v| v.as_str())
+                    .map(str::to_string);
+
+                let result_summary = part
+                    .raw
+                    .get("state")
+                    .and_then(|s| s.get("output"))
+                    .and_then(|v| v.as_str())
+                    .map(str::to_string);
+
+                PartOutcome::Subagent(Subagent {
+                    id: format!("{}-{}", session_id, part.id),
+                    session_id: session_id.to_string(),
+                    title,
+                    prompt: None,
+                    result_summary,
+                    child_session_id,
+                    parser_ref: None,
+                })
             }
             // Skip metadata/control parts
-            "tool" | "reasoning" | "step-start" | "step-finish" | "snapshot" | "compaction"
-            | "subtask" => Vec::new(),
+            "reasoning" | "step-start" | "step-finish" | "snapshot" | "compaction" => {
+                PartOutcome::Nothing
+            }
             other => {
                 tracing::debug!("Unhandled part type: {}", other);
-                Vec::new()
+                PartOutcome::Nothing
             }
         }
     }
@@ -452,7 +589,8 @@ mod tests {
     }
 
     #[test]
-    fn parse_skips_subagent_sessions() {
+    fn parse_subagent_session_without_messages_fails() {
+        // Subagent sessions without messages fail with NoUserMessages (not silently skipped)
         let temp_dir = TempDir::new().unwrap();
         let root = temp_dir.path();
 
@@ -471,6 +609,59 @@ mod tests {
         let result = parser.parse(&session_path);
 
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn parse_subagent_session_is_indexed_with_flag() {
+        // Subagent sessions (parentID set) are indexed with is_subagent=true
+        let temp_dir = TempDir::new().unwrap();
+        let root = temp_dir.path();
+
+        let session_path = write_session_file(
+            root,
+            "project-a",
+            "child-session.json",
+            json!({
+                "id": "child-session",
+                "parentID": "parent-session",
+                "directory": "/projects/alpha",
+                "time": { "created": 1_704_067_200_000i64, "updated": 1_704_067_260_000i64 }
+            }),
+        );
+
+        write_message_file(
+            root,
+            "child-session",
+            "msg-001.json",
+            json!({
+                "id": "msg-001",
+                "sessionID": "child-session",
+                "role": "user",
+                "time": { "created": 1_704_067_200_000i64 }
+            }),
+        );
+
+        write_part_file(
+            root,
+            "msg-001",
+            "part-001.json",
+            json!({
+                "id": "part-001",
+                "order": 1,
+                "type": "text",
+                "text": "Do the subtask"
+            }),
+        );
+
+        let parser = OpenCodeParser::new(root);
+        let parsed = parser.parse(&session_path).unwrap();
+
+        assert!(parsed.session.is_subagent);
+        assert_eq!(
+            parsed.session.parent_session_id.as_deref(),
+            Some("parent-session")
+        );
+        assert_eq!(parsed.messages.len(), 1);
     }
 
     #[test]
@@ -605,16 +796,21 @@ mod tests {
         );
 
         let parser = OpenCodeParser::new(root);
-        let (session, messages) = parser.parse(&session_path).unwrap();
+        let parsed = parser.parse(&session_path).unwrap();
 
-        assert_eq!(messages.len(), 2);
-        assert_eq!(messages[0].index, 0);
-        assert_eq!(messages[0].role, Role::User);
-        assert_eq!(messages[0].content, "First");
-        assert_eq!(messages[1].index, 1);
-        assert_eq!(messages[1].role, Role::User);
-        assert_eq!(messages[1].content, "Second");
-        assert_eq!(session.first_prompt.as_deref(), Some("First"));
+        // Tool part doesn't produce a message — only text parts do
+        assert_eq!(parsed.messages.len(), 2);
+        assert_eq!(parsed.messages[0].index, 0);
+        assert_eq!(parsed.messages[0].role, Role::User);
+        assert_eq!(parsed.messages[0].content, "First");
+        assert_eq!(parsed.messages[1].index, 1);
+        assert_eq!(parsed.messages[1].role, Role::User);
+        assert_eq!(parsed.messages[1].content, "Second");
+        assert_eq!(parsed.session.first_prompt.as_deref(), Some("First"));
+
+        // The tool part produces a ToolCall entry
+        assert_eq!(parsed.tool_calls.len(), 1);
+        assert_eq!(parsed.tool_calls[0].tool_name, "grep");
     }
 
     #[test]
@@ -682,13 +878,13 @@ mod tests {
         );
 
         let parser = OpenCodeParser::new(root);
-        let (_session, messages) = parser.parse(&session_path).unwrap();
+        let parsed = parser.parse(&session_path).unwrap();
 
-        assert_eq!(messages.len(), 2);
-        assert_eq!(messages[0].role, Role::User);
-        assert_eq!(messages[0].content, "First message");
-        assert_eq!(messages[1].role, Role::Assistant);
-        assert_eq!(messages[1].content, "Second message");
+        assert_eq!(parsed.messages.len(), 2);
+        assert_eq!(parsed.messages[0].role, Role::User);
+        assert_eq!(parsed.messages[0].content, "First message");
+        assert_eq!(parsed.messages[1].role, Role::Assistant);
+        assert_eq!(parsed.messages[1].content, "Second message");
     }
 
     #[test]
@@ -753,15 +949,15 @@ mod tests {
         );
 
         let parser = OpenCodeParser::new(root);
-        let (_session, messages) = parser.parse(&session_path).unwrap();
+        let parsed = parser.parse(&session_path).unwrap();
 
-        assert_eq!(messages.len(), 1);
-        assert_eq!(messages[0].role, Role::User);
-        assert_eq!(messages[0].content, "Hello");
+        assert_eq!(parsed.messages.len(), 1);
+        assert_eq!(parsed.messages[0].role, Role::User);
+        assert_eq!(parsed.messages[0].content, "Hello");
     }
 
     #[test]
-    fn tool_part_is_skipped() {
+    fn tool_part_produces_tool_call_not_message() {
         let temp_dir = TempDir::new().unwrap();
         let root = temp_dir.path();
 
@@ -829,15 +1025,21 @@ mod tests {
         );
 
         let parser = OpenCodeParser::new(root);
-        let (_session, messages) = parser.parse(&session_path).unwrap();
+        let parsed = parser.parse(&session_path).unwrap();
 
-        assert_eq!(messages.len(), 1);
-        assert_eq!(messages[0].role, Role::User);
-        assert_eq!(messages[0].content, "Run tool");
+        // Tool part is not in messages
+        assert_eq!(parsed.messages.len(), 1);
+        assert_eq!(parsed.messages[0].role, Role::User);
+        assert_eq!(parsed.messages[0].content, "Run tool");
+
+        // Tool part is extracted as a ToolCall
+        assert_eq!(parsed.tool_calls.len(), 1);
+        assert_eq!(parsed.tool_calls[0].tool_name, "read");
+        assert_eq!(parsed.tool_calls[0].status, ToolCallStatus::Completed);
     }
 
     #[test]
-    fn tool_part_with_output_is_skipped() {
+    fn tool_part_with_output_is_extracted() {
         let temp_dir = TempDir::new().unwrap();
         let root = temp_dir.path();
 
@@ -906,15 +1108,21 @@ mod tests {
         );
 
         let parser = OpenCodeParser::new(root);
-        let (_session, messages) = parser.parse(&session_path).unwrap();
+        let parsed = parser.parse(&session_path).unwrap();
 
-        assert_eq!(messages.len(), 1);
-        assert_eq!(messages[0].role, Role::User);
-        assert_eq!(messages[0].content, "Read file");
+        assert_eq!(parsed.messages.len(), 1);
+        assert_eq!(parsed.messages[0].content, "Read file");
+
+        assert_eq!(parsed.tool_calls.len(), 1);
+        assert_eq!(
+            parsed.tool_calls[0].output_text.as_deref(),
+            Some("File contents here\nLine 2\nLine 3")
+        );
+        assert_eq!(parsed.tool_calls[0].status, ToolCallStatus::Completed);
     }
 
     #[test]
-    fn tool_part_with_error_is_skipped() {
+    fn tool_part_with_error_captures_error_text() {
         let temp_dir = TempDir::new().unwrap();
         let root = temp_dir.path();
 
@@ -983,11 +1191,110 @@ mod tests {
         );
 
         let parser = OpenCodeParser::new(root);
-        let (_session, messages) = parser.parse(&session_path).unwrap();
+        let parsed = parser.parse(&session_path).unwrap();
 
-        assert_eq!(messages.len(), 1);
-        assert_eq!(messages[0].role, Role::User);
-        assert_eq!(messages[0].content, "Read file");
+        assert_eq!(parsed.messages.len(), 1);
+        assert_eq!(parsed.messages[0].content, "Read file");
+
+        assert_eq!(parsed.tool_calls.len(), 1);
+        assert_eq!(parsed.tool_calls[0].status, ToolCallStatus::Error);
+        assert_eq!(
+            parsed.tool_calls[0].error_text.as_deref(),
+            Some("File not found")
+        );
+    }
+
+    #[test]
+    fn subtask_part_produces_subagent_entry() {
+        let temp_dir = TempDir::new().unwrap();
+        let root = temp_dir.path();
+
+        let session_path = write_session_file(
+            root,
+            "project-a",
+            "session-sub.json",
+            json!({
+                "id": "session-sub",
+                "directory": "/projects/alpha",
+                "time": { "created": 1_704_067_200_000i64, "updated": 1_704_067_260_000i64 }
+            }),
+        );
+
+        write_message_file(
+            root,
+            "session-sub",
+            "msg-user.json",
+            json!({
+                "id": "msg-user",
+                "sessionID": "session-sub",
+                "role": "user",
+                "time": { "created": 1_704_067_200_000i64 }
+            }),
+        );
+
+        write_message_file(
+            root,
+            "session-sub",
+            "msg-asst.json",
+            json!({
+                "id": "msg-asst",
+                "sessionID": "session-sub",
+                "role": "assistant",
+                "time": { "created": 1_704_067_260_000i64 }
+            }),
+        );
+
+        write_part_file(
+            root,
+            "msg-user",
+            "part-user.json",
+            json!({
+                "id": "part-user",
+                "order": 1,
+                "type": "text",
+                "text": "Analyse docs"
+            }),
+        );
+
+        write_part_file(
+            root,
+            "msg-asst",
+            "part-subtask.json",
+            json!({
+                "id": "part-subtask",
+                "order": 1,
+                "type": "subtask",
+                "description": "Summarise markdown files",
+                "childSessionID": "session-child-123",
+                "state": {
+                    "status": "completed",
+                    "output": "Found 3 files"
+                }
+            }),
+        );
+
+        let parser = OpenCodeParser::new(root);
+        let parsed = parser.parse(&session_path).unwrap();
+
+        assert_eq!(parsed.messages.len(), 1);
+        assert_eq!(parsed.subagents.len(), 1);
+        assert_eq!(parsed.subagents[0].title, "Summarise markdown files");
+        assert_eq!(
+            parsed.subagents[0].child_session_id.as_deref(),
+            Some("session-child-123")
+        );
+        assert_eq!(
+            parsed.subagents[0].result_summary.as_deref(),
+            Some("Found 3 files")
+        );
+
+        // Transcript: message item + subagent item
+        assert_eq!(parsed.transcript_items.len(), 2);
+        assert_eq!(parsed.transcript_items[0].kind, TranscriptItemKind::Message);
+        assert_eq!(
+            parsed.transcript_items[1].kind,
+            TranscriptItemKind::Subagent
+        );
     }
 
     #[test]
@@ -1054,10 +1361,10 @@ mod tests {
         );
 
         let parser = OpenCodeParser::new(root);
-        let (_session, messages) = parser.parse(&session_path).unwrap();
+        let parsed = parser.parse(&session_path).unwrap();
 
-        assert_eq!(messages.len(), 2);
-        assert_eq!(messages[1].role, Role::Assistant);
-        assert_eq!(messages[1].content, "I can help");
+        assert_eq!(parsed.messages.len(), 2);
+        assert_eq!(parsed.messages[1].role, Role::Assistant);
+        assert_eq!(parsed.messages[1].content, "I can help");
     }
 }

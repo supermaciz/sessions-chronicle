@@ -17,6 +17,7 @@ pub use indexer::SessionIndexer;
 /// Flat preview row returned by the transcript LEFT JOIN query.
 /// The caller interprets fields based on `kind`.
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct TranscriptItemRow {
     pub item_index: i64,
     pub kind: TranscriptItemKind,
@@ -371,6 +372,7 @@ pub fn load_message_previews_for_session(
 
 /// Load ordered transcript items for a session with pagination.
 /// Returns preview rows combining message/tool_call/subagent fields via LEFT JOINs.
+#[allow(dead_code)]
 pub fn load_transcript_items(
     db_path: &Path,
     session_id: &str,

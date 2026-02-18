@@ -1,11 +1,15 @@
 use anyhow::{Context, Result};
 use chrono::{DateTime, Duration, NaiveDateTime, TimeZone, Utc};
 use serde_json::Value;
+use std::collections::HashMap;
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::path::Path;
 
-use crate::models::{Message, Role, Session, Tool};
+use crate::models::{
+    Message, Role, Session, Tool, ToolCall, ToolCallStatus, TranscriptItem, TranscriptItemKind,
+};
+use crate::parsers::ParsedSession;
 
 #[derive(Debug, thiserror::Error)]
 pub enum ParseError {
@@ -16,7 +20,7 @@ pub enum ParseError {
 pub struct MistralVibeParser;
 
 impl MistralVibeParser {
-    pub fn parse(&self, session_dir: &Path) -> Result<(Session, Vec<Message>)> {
+    pub fn parse(&self, session_dir: &Path) -> Result<ParsedSession> {
         let meta_path = session_dir.join("meta.json");
         let metadata = Self::read_json(&meta_path).context("Failed to read meta.json")?;
 
@@ -48,8 +52,12 @@ impl MistralVibeParser {
         let file = File::open(&messages_path).context("Failed to open messages.jsonl")?;
         let reader = BufReader::new(file);
 
-        let mut messages = Vec::new();
+        let mut messages: Vec<Message> = Vec::new();
+        let mut tool_calls: Vec<ToolCall> = Vec::new();
+        let mut transcript_items: Vec<TranscriptItem> = Vec::new();
         let mut has_user_message = false;
+        // Maps the raw tool_call id from the JSON → index in tool_calls vec for result correlation
+        let mut pending_calls: HashMap<String, usize> = HashMap::new();
 
         for line in reader.lines() {
             let line = line.context("Failed to read line")?;
@@ -61,10 +69,25 @@ impl MistralVibeParser {
             let role = event.get("role").and_then(|v| v.as_str());
 
             match role {
-                Some("system") | Some("tool") => continue,
+                Some("system") => continue,
+                Some("tool") => {
+                    // Correlate tool result with the pending ToolCall by tool_call_id
+                    if let Some(raw_id) = event.get("tool_call_id").and_then(|v| v.as_str())
+                        && let Some(&tc_idx) = pending_calls.get(raw_id)
+                    {
+                        let output = event
+                            .get("content")
+                            .and_then(|v| v.as_str())
+                            .map(str::to_string);
+                        tool_calls[tc_idx].output_text = output;
+                        tool_calls[tc_idx].status = ToolCallStatus::Completed;
+                    }
+                }
                 Some("user") => {
                     if let Some(content) = Self::extract_content(&event) {
                         has_user_message = true;
+                        let msg_idx = messages.len() as i64;
+                        let item_idx = transcript_items.len() as i64;
                         Self::push_message(
                             &mut messages,
                             &session_id,
@@ -72,10 +95,21 @@ impl MistralVibeParser {
                             content,
                             start_time,
                         );
+                        transcript_items.push(TranscriptItem {
+                            session_id: session_id.clone(),
+                            item_index: item_idx,
+                            kind: TranscriptItemKind::Message,
+                            message_index: Some(msg_idx),
+                            tool_call_id: None,
+                            subagent_id: None,
+                        });
                     }
                 }
                 Some("assistant") => {
+                    // Text content produces a Message transcript item
                     if let Some(content) = Self::extract_content(&event) {
+                        let msg_idx = messages.len() as i64;
+                        let item_idx = transcript_items.len() as i64;
                         Self::push_message(
                             &mut messages,
                             &session_id,
@@ -83,6 +117,64 @@ impl MistralVibeParser {
                             content,
                             start_time,
                         );
+                        transcript_items.push(TranscriptItem {
+                            session_id: session_id.clone(),
+                            item_index: item_idx,
+                            kind: TranscriptItemKind::Message,
+                            message_index: Some(msg_idx),
+                            tool_call_id: None,
+                            subagent_id: None,
+                        });
+                    }
+                    // tool_calls array produces ToolCall transcript items
+                    if let Some(tc_arr) = event.get("tool_calls").and_then(|v| v.as_array()) {
+                        for tc_val in tc_arr {
+                            let raw_id = match tc_val.get("id").and_then(|v| v.as_str()) {
+                                Some(id) => id.to_string(),
+                                None => continue,
+                            };
+                            let tool_name = tc_val
+                                .get("function")
+                                .and_then(|f| f.get("name"))
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("unknown")
+                                .to_string();
+                            let input_json = tc_val
+                                .get("function")
+                                .and_then(|f| f.get("arguments"))
+                                .and_then(|v| v.as_str())
+                                .map(str::to_string);
+
+                            let tc_idx = tool_calls.len();
+                            let item_idx = transcript_items.len() as i64;
+                            let tc_id = format!("{}-{}", session_id, raw_id);
+
+                            pending_calls.insert(raw_id, tc_idx);
+                            tool_calls.push(ToolCall {
+                                id: tc_id.clone(),
+                                session_id: session_id.clone(),
+                                subagent_id: None,
+                                tool_name,
+                                status: ToolCallStatus::Pending,
+                                title: None,
+                                summary: None,
+                                input_json,
+                                output_text: None,
+                                error_text: None,
+                                started_at: None,
+                                ended_at: None,
+                                duration_ms: None,
+                                parser_call_id: None,
+                            });
+                            transcript_items.push(TranscriptItem {
+                                session_id: session_id.clone(),
+                                item_index: item_idx,
+                                kind: TranscriptItemKind::ToolCall,
+                                message_index: None,
+                                tool_call_id: Some(tc_id),
+                                subagent_id: None,
+                            });
+                        }
                     }
                 }
                 _ => continue,
@@ -95,8 +187,8 @@ impl MistralVibeParser {
 
         let first_prompt = crate::parsers::extract_first_prompt(&messages);
 
-        Ok((
-            Session {
+        Ok(ParsedSession {
+            session: Session {
                 id: session_id.clone(),
                 tool: Tool::MistralVibe,
                 project_path,
@@ -109,7 +201,10 @@ impl MistralVibeParser {
                 is_subagent: false,
             },
             messages,
-        ))
+            tool_calls,
+            subagents: Vec::new(),
+            transcript_items,
+        })
     }
 
     fn extract_content(event: &Value) -> Option<String> {
@@ -201,7 +296,9 @@ mod tests {
     fn parse_valid_session_extracts_messages_and_tool_calls() {
         let parser = MistralVibeParser;
         let path = PathBuf::from("tests/fixtures/vibe_sessions/session_20260203_191451_b9383361");
-        let (session, messages) = parser.parse(&path).unwrap();
+        let parsed = parser.parse(&path).unwrap();
+        let session = parsed.session;
+        let messages = parsed.messages;
 
         assert_eq!(session.id, "session_20260203_191451_b9383361");
         assert_eq!(
@@ -251,7 +348,8 @@ mod tests {
         );
 
         let parser = MistralVibeParser;
-        let (session, _messages) = parser.parse(root).unwrap();
+        let parsed = parser.parse(root).unwrap();
+        let session = parsed.session;
         let expected = Utc.from_utc_datetime(
             &NaiveDateTime::parse_from_str("2026-02-04T11:38:48.695030", "%Y-%m-%dT%H:%M:%S%.f")
                 .unwrap(),
@@ -264,17 +362,67 @@ mod tests {
     fn parse_ignores_system_and_tool_roles() {
         let temp_dir = create_temp_session_dir(&[
             r#"{"role":"system","content":"Boot"}"#,
-            r#"{"role":"tool","content":"Tool output"}"#,
+            r#"{"role":"tool","tool_call_id":"x","content":"Tool output"}"#,
             r#"{"role":"user","content":"Hi"}"#,
             r#"{"role":"assistant","content":"Hello"}"#,
         ]);
         let parser = MistralVibeParser;
-        let (_session, messages) = parser.parse(temp_dir.path()).unwrap();
+        let parsed = parser.parse(temp_dir.path()).unwrap();
+        let messages = parsed.messages;
 
         assert_eq!(messages.len(), 2);
         assert_eq!(messages[0].role, Role::User);
         assert_eq!(messages[0].content, "Hi");
         assert_eq!(messages[1].role, Role::Assistant);
         assert_eq!(messages[1].content, "Hello");
+    }
+
+    #[test]
+    fn parse_extracts_tool_calls_from_assistant_messages() {
+        let temp_dir = create_temp_session_dir(&[
+            r#"{"role":"user","content":"Run bash"}"#,
+            r#"{"role":"assistant","content":null,"tool_calls":[{"id":"call-1","type":"function","function":{"name":"bash","arguments":"{\"command\":\"ls\"}"}}]}"#,
+            r#"{"role":"tool","tool_call_id":"call-1","content":"file1.txt\nfile2.rs"}"#,
+        ]);
+        let parser = MistralVibeParser;
+        let parsed = parser.parse(temp_dir.path()).unwrap();
+
+        // Only the user message in messages list (assistant had no text content)
+        assert_eq!(parsed.messages.len(), 1);
+        assert_eq!(parsed.messages[0].role, Role::User);
+
+        assert_eq!(parsed.tool_calls.len(), 1);
+        assert_eq!(parsed.tool_calls[0].tool_name, "bash");
+        assert_eq!(
+            parsed.tool_calls[0].input_json.as_deref(),
+            Some("{\"command\":\"ls\"}")
+        );
+        assert_eq!(
+            parsed.tool_calls[0].output_text.as_deref(),
+            Some("file1.txt\nfile2.rs")
+        );
+        assert_eq!(parsed.tool_calls[0].status, ToolCallStatus::Completed);
+
+        // Transcript: user message + tool call
+        assert_eq!(parsed.transcript_items.len(), 2);
+        assert_eq!(parsed.transcript_items[0].kind, TranscriptItemKind::Message);
+        assert_eq!(
+            parsed.transcript_items[1].kind,
+            TranscriptItemKind::ToolCall
+        );
+    }
+
+    #[test]
+    fn parse_tool_call_without_result_stays_pending() {
+        let temp_dir = create_temp_session_dir(&[
+            r#"{"role":"user","content":"Run something"}"#,
+            r#"{"role":"assistant","content":null,"tool_calls":[{"id":"call-x","type":"function","function":{"name":"search","arguments":"{}"}}]}"#,
+        ]);
+        let parser = MistralVibeParser;
+        let parsed = parser.parse(temp_dir.path()).unwrap();
+
+        assert_eq!(parsed.tool_calls.len(), 1);
+        assert_eq!(parsed.tool_calls[0].status, ToolCallStatus::Pending);
+        assert!(parsed.tool_calls[0].output_text.is_none());
     }
 }

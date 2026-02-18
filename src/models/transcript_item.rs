@@ -8,6 +8,7 @@ pub enum TranscriptItemKind {
 }
 
 impl TranscriptItemKind {
+    #[allow(dead_code)]
     pub fn from_storage(value: &str) -> Option<Self> {
         match value {
             "message" => Some(Self::Message),

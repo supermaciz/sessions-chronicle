@@ -3,9 +3,19 @@ pub mod codex;
 pub mod mistral_vibe;
 pub mod opencode;
 
-use crate::models::{Message, Role};
+use crate::models::{Message, Role, Subagent, ToolCall, TranscriptItem};
 
 const FIRST_PROMPT_MAX_CHARS: usize = 200;
+
+/// All data produced by parsing a single session file.
+#[derive(Debug)]
+pub struct ParsedSession {
+    pub session: crate::models::Session,
+    pub messages: Vec<Message>,
+    pub tool_calls: Vec<ToolCall>,
+    pub subagents: Vec<Subagent>,
+    pub transcript_items: Vec<TranscriptItem>,
+}
 
 pub(crate) fn extract_first_prompt(messages: &[Message]) -> Option<String> {
     messages
