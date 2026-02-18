@@ -143,6 +143,10 @@ fn search_query_update_messages(query: String) -> (SessionListMsg, SessionDetail
     )
 }
 
+fn parent_session_load_failure_messages() -> (SessionDetailMsg, ToolInspectorPaneMsg) {
+    (SessionDetailMsg::Clear, ToolInspectorPaneMsg::Clear)
+}
+
 #[relm4::component(pub)]
 impl SimpleComponent for App {
     type Init = Option<PathBuf>;
@@ -911,12 +915,18 @@ impl SimpleComponent for App {
                         Ok(None) => {
                             tracing::warn!("Parent session no longer found; resetting");
                             self.active_session = None;
-                            self.session_detail.emit(SessionDetailMsg::Clear);
+                            let (detail_msg, inspector_msg) =
+                                parent_session_load_failure_messages();
+                            self.session_detail.emit(detail_msg);
+                            self.tool_inspector_pane.emit(inspector_msg);
                         }
                         Err(err) => {
                             tracing::error!("Failed to load parent session: {}", err);
                             self.active_session = None;
-                            self.session_detail.emit(SessionDetailMsg::Clear);
+                            let (detail_msg, inspector_msg) =
+                                parent_session_load_failure_messages();
+                            self.session_detail.emit(detail_msg);
+                            self.tool_inspector_pane.emit(inspector_msg);
                         }
                     }
                 }
@@ -1074,6 +1084,14 @@ mod tests {
             }
             _ => panic!("expected SessionDetailMsg::UpdateSearchQuery(Some(..))"),
         }
+    }
+
+    #[test]
+    fn parent_session_load_failure_clears_detail_and_inspector() {
+        let (detail_msg, inspector_msg) = parent_session_load_failure_messages();
+
+        assert!(matches!(detail_msg, SessionDetailMsg::Clear));
+        assert!(matches!(inspector_msg, ToolInspectorPaneMsg::Clear));
     }
 
     #[test]
