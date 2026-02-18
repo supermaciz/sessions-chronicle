@@ -274,7 +274,11 @@ impl SimpleComponent for ToolInspectorPane {
             .tag("drill-down")
             .child(&drill_toolbar)
             .build();
-        // drill_page is NOT added to nav_view here; it is pushed dynamically.
+        // Register the page so it always has a stable parent; push/pop manage
+        // visibility.  Without add(), repeated push-after-pop cycles can hit a
+        // GTK parentage assertion when the page is still being unparented by a
+        // running pop animation.
+        nav_view.add(&drill_page);
 
         // ── Attach nav_view to root ───────────────────────────────────────────
         root.append(&nav_view);

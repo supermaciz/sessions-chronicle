@@ -88,6 +88,7 @@ impl OpenCodeParser {
             for part in parts {
                 let outcome = self.process_part(
                     &metadata.id,
+                    &message.id,
                     message.role,
                     message.time_created,
                     &part,
@@ -370,6 +371,7 @@ impl OpenCodeParser {
     fn process_part(
         &self,
         session_id: &str,
+        message_id: &str,
         message_role: Option<Role>,
         timestamp: DateTime<Utc>,
         part: &PartData,
@@ -443,7 +445,7 @@ impl OpenCodeParser {
                     .map(str::to_string);
 
                 PartOutcome::ToolCall(ToolCall {
-                    id: format!("{}-{}", session_id, part.id),
+                    id: format!("{}-{}-{}", session_id, message_id, part.id),
                     session_id: session_id.to_string(),
                     subagent_id: None,
                     tool_name,
@@ -482,7 +484,7 @@ impl OpenCodeParser {
                     .map(str::to_string);
 
                 PartOutcome::Subagent(Subagent {
-                    id: format!("{}-{}", session_id, part.id),
+                    id: format!("{}-{}-{}", session_id, message_id, part.id),
                     session_id: session_id.to_string(),
                     title,
                     prompt: None,
