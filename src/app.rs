@@ -22,10 +22,10 @@ use crate::ui::modals::{
     shortcuts::ShortcutsDialog,
 };
 use crate::ui::{
-    detail_context_pane::{DetailContextPane, DetailContextPaneMsg, DetailContextPaneOutput},
-    session_detail::{SessionDetail, SessionDetailMsg},
+    session_detail::{SessionDetail, SessionDetailMsg, SessionDetailOutput},
     session_list::{SessionList, SessionListMsg, SessionListOutput},
     sidebar::{Sidebar, SidebarOutput},
+    tool_inspector_pane::{ToolInspectorPane, ToolInspectorPaneMsg},
 };
 use crate::utils::terminal::{self, Terminal};
 
@@ -35,14 +35,21 @@ const RESUME_FAILURE_TOAST_TIMEOUT_SECS: u32 = 4;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum UtilityPaneMode {
     Filters,
-    SessionContext,
+    ToolInspector,
 }
 
 impl UtilityPaneMode {
     fn stack_child_name(self) -> &'static str {
         match self {
             UtilityPaneMode::Filters => "filters",
-            UtilityPaneMode::SessionContext => "session-context",
+            UtilityPaneMode::ToolInspector => "tool-inspector",
+        }
+    }
+
+    fn sidebar_position(self) -> gtk::PackType {
+        match self {
+            UtilityPaneMode::Filters => gtk::PackType::Start,
+            UtilityPaneMode::ToolInspector => gtk::PackType::End,
         }
     }
 }
@@ -66,7 +73,8 @@ pub(super) struct App {
     session_detail: Controller<SessionDetail>,
     #[allow(dead_code)] // Controller must stay alive to keep the widget
     sidebar: Controller<Sidebar>,
-    detail_context_pane: Controller<DetailContextPane>,
+    #[allow(dead_code)] // Controller must stay alive to keep the widget
+    tool_inspector_pane: Controller<ToolInspectorPane>,
     preferences_dialog: Controller<PreferencesDialog>,
     nav_view: adw::NavigationView,
     detail_page: adw::NavigationPage,
@@ -87,7 +95,10 @@ pub(super) enum AppMsg {
     SessionSelected(String),
     NavigateBack,
     ResumeSession(String, Tool),
-    ResumeFromPane,
+    /// Resume the currently active session (triggered from the header bar button).
+    ResumeActiveSession,
+    InspectToolCall(String),
+    InspectSubagent(String),
     ShowPreferences,
     ReindexRequested,
 }
@@ -168,6 +179,16 @@ impl SimpleComponent for App {
                         pack_start = &gtk::ToggleButton {
                             set_icon_name: "system-search-symbolic",
                             set_tooltip_text: Some("Search sessions"),
+                        },
+
+                        #[name = "resume_button"]
+                        pack_end = &gtk::Button {
+                            set_label: "Resume",
+                            set_tooltip_text: Some("Resume session in terminal"),
+                            add_css_class: "suggested-action",
+                            #[watch]
+                            set_visible: model.detail_visible,
+                            connect_clicked => AppMsg::ResumeActiveSession,
                         },
 
                         #[name = "pane_toggle"]
@@ -309,18 +330,19 @@ impl SimpleComponent for App {
                     SessionListOutput::SessionSelected(id) => AppMsg::SessionSelected(id),
                     SessionListOutput::ResumeRequested(id, tool) => AppMsg::ResumeSession(id, tool),
                 });
-        let session_detail = SessionDetail::builder().launch(db_path.clone()).detach();
+        let session_detail = SessionDetail::builder().launch(db_path.clone()).forward(
+            sender.input_sender(),
+            |msg| match msg {
+                SessionDetailOutput::InspectToolCall(id) => AppMsg::InspectToolCall(id),
+                SessionDetailOutput::InspectSubagent(id) => AppMsg::InspectSubagent(id),
+            },
+        );
         let sidebar = Sidebar::builder()
             .launch(())
             .forward(sender.input_sender(), |output| match output {
                 SidebarOutput::FiltersChanged(tools) => AppMsg::FiltersChanged(tools),
             });
-        let detail_context_pane =
-            DetailContextPane::builder()
-                .launch(())
-                .forward(sender.input_sender(), |output| match output {
-                    DetailContextPaneOutput::ResumeClicked => AppMsg::ResumeFromPane,
-                });
+        let tool_inspector_pane = ToolInspectorPane::builder().launch(()).detach();
 
         // Create preferences dialog once, with forwarded outputs
         let preferences_dialog = PreferencesDialog::builder().launch(()).forward(
@@ -359,7 +381,7 @@ impl SimpleComponent for App {
         let pane_stack = gtk::Stack::new();
         pane_stack.set_transition_type(gtk::StackTransitionType::None);
         pane_stack.add_named(sidebar.widget(), Some("filters"));
-        pane_stack.add_named(detail_context_pane.widget(), Some("session-context"));
+        pane_stack.add_named(tool_inspector_pane.widget(), Some("tool-inspector"));
         pane_stack.set_visible_child_name("filters");
 
         // Create model with a temporary toast_overlay (will be replaced after view_output!)
@@ -373,7 +395,7 @@ impl SimpleComponent for App {
             session_list,
             session_detail,
             sidebar,
-            detail_context_pane,
+            tool_inspector_pane,
             preferences_dialog,
             nav_view: nav_view.clone(),
             detail_page: detail_page.clone(),
@@ -546,7 +568,6 @@ impl SimpleComponent for App {
 
                 let search_query = active_search_query(&self.search_query);
 
-                // Load session once, shared by context pane and detail view
                 match load_session(&self.db_path, &id) {
                     Ok(Some(session)) => {
                         let project_name = session
@@ -560,14 +581,8 @@ impl SimpleComponent for App {
                         self.active_session = Some(ActiveSessionRef {
                             id: session.id.clone(),
                             tool: session.tool,
-                            project_name: project_name.clone(),
+                            project_name,
                         });
-
-                        self.detail_context_pane
-                            .emit(DetailContextPaneMsg::SetSession {
-                                project_name,
-                                tool: session.tool,
-                            });
 
                         self.session_detail.emit(SessionDetailMsg::SetSession {
                             session,
@@ -577,15 +592,11 @@ impl SimpleComponent for App {
                     Ok(None) => {
                         tracing::warn!("Session not found: {}", id);
                         self.active_session = None;
-                        self.detail_context_pane
-                            .emit(DetailContextPaneMsg::ClearSession);
                         self.session_detail.emit(SessionDetailMsg::Clear);
                     }
                     Err(err) => {
                         tracing::error!("Failed to load session: {}", err);
                         self.active_session = None;
-                        self.detail_context_pane
-                            .emit(DetailContextPaneMsg::ClearSession);
                         self.session_detail.emit(SessionDetailMsg::Clear);
                     }
                 }
@@ -596,14 +607,13 @@ impl SimpleComponent for App {
                     self.detail_visible = true;
                 }
 
-                // Switch to session context pane mode (open by default)
+                // Switch to tool inspector pane mode (pane stays closed until inspect action)
                 transition_to_detail(&mut self.pane_mode, &mut self.pane_open);
                 self.apply_pane_stack_switch();
             }
             AppMsg::NavigateBack => {
                 if self.detail_visible {
                     self.detail_visible = false;
-                    // Only pop if we're currently showing detail (avoid double-pop from signal)
                     if self
                         .nav_view
                         .visible_page()
@@ -680,7 +690,6 @@ impl SimpleComponent for App {
             AppMsg::ResumeSession(session_id, tool) => {
                 tracing::debug!("Resume session requested: {}", session_id);
 
-                // Load session from DB
                 let session = match load_session(&self.db_path, &session_id) {
                     Ok(Some(session)) => session,
                     Ok(None) => {
@@ -701,11 +710,9 @@ impl SimpleComponent for App {
                     }
                 };
 
-                // Determine workdir
                 let workdir = if let Some(project_path) = &session.project_path {
                     PathBuf::from(project_path)
                 } else {
-                    // Use the directory containing the session file
                     match PathBuf::from(&session.file_path).parent() {
                         Some(dir) => dir.to_path_buf(),
                         None => {
@@ -721,7 +728,6 @@ impl SimpleComponent for App {
                     }
                 };
 
-                // Get terminal preference
                 let settings = gio::Settings::new(APP_ID);
                 let terminal_str = settings.string("resume-terminal");
                 let terminal = match Terminal::from_str(&terminal_str) {
@@ -736,7 +742,6 @@ impl SimpleComponent for App {
                     }
                 };
 
-                // Build and spawn resume command
                 match terminal::build_resume_command(tool, &session_id, &workdir) {
                     Ok(args) => match terminal::spawn_terminal(terminal, &args) {
                         Ok(_) => {
@@ -767,14 +772,39 @@ impl SimpleComponent for App {
                     }
                 }
             }
-            AppMsg::ResumeFromPane => {
+            AppMsg::ResumeActiveSession => {
                 if let Some(ref session) = self.active_session {
                     _sender.input(AppMsg::ResumeSession(session.id.clone(), session.tool));
                 } else {
-                    tracing::warn!("ResumeFromPane ignored — no active session");
+                    tracing::warn!("ResumeActiveSession ignored — no active session");
                 }
             }
+            AppMsg::InspectToolCall(id) => {
+                tracing::debug!("Inspect tool call: {}", id);
+                self.pane_mode = UtilityPaneMode::ToolInspector;
+                self.pane_open = true;
+                self.apply_pane_stack_switch();
+                self.tool_inspector_pane
+                    .emit(ToolInspectorPaneMsg::SelectToolCall(id));
+            }
+            AppMsg::InspectSubagent(id) => {
+                tracing::debug!("Inspect subagent: {}", id);
+                self.pane_mode = UtilityPaneMode::ToolInspector;
+                self.pane_open = true;
+                self.apply_pane_stack_switch();
+                self.tool_inspector_pane
+                    .emit(ToolInspectorPaneMsg::SelectSubagent(id));
+            }
         }
+    }
+
+    fn post_view(&self, widgets: &mut Self::Widgets) {
+        // Apply sidebar position based on current pane mode:
+        //  - Filters (list view) → Start (left), per GNOME HIG for navigation/filter panes
+        //  - ToolInspector (detail view) → End (right), per GNOME HIG for inspector panes
+        widgets
+            .overlay_split
+            .set_sidebar_position(self.pane_mode.sidebar_position());
     }
 
     fn shutdown(&mut self, widgets: &mut Self::Widgets, _output: relm4::Sender<Self::Output>) {
@@ -782,13 +812,14 @@ impl SimpleComponent for App {
     }
 }
 
-/// Pure transition: switch to detail mode (session context pane, open).
+/// Pure transition: switch to detail (tool inspector) mode.
+/// The pane stays closed; it opens only when an inspect action fires.
 fn transition_to_detail(pane_mode: &mut UtilityPaneMode, pane_open: &mut bool) {
-    *pane_mode = UtilityPaneMode::SessionContext;
-    *pane_open = true;
+    *pane_mode = UtilityPaneMode::ToolInspector;
+    *pane_open = false;
 }
 
-/// Pure transition: switch to list mode (filters pane), preserving pane visibility.
+/// Pure transition: switch to list (filters) mode, preserving pane visibility.
 fn transition_to_list(pane_mode: &mut UtilityPaneMode) {
     *pane_mode = UtilityPaneMode::Filters;
 }
@@ -799,7 +830,6 @@ impl App {
         let target = self.pane_mode.stack_child_name();
         self.pane_stack.set_visible_child_name(target);
 
-        // Verify the switch succeeded
         let actual = self.pane_stack.visible_child_name();
         if actual.as_deref() != Some(target) {
             tracing::warn!(
@@ -901,17 +931,17 @@ mod tests {
     }
 
     #[test]
-    fn transition_to_detail_sets_session_context_and_open() {
+    fn transition_to_detail_sets_tool_inspector_and_pane_closed() {
         let mut mode = UtilityPaneMode::Filters;
-        let mut open = false;
+        let mut open = true;
         transition_to_detail(&mut mode, &mut open);
-        assert_eq!(mode, UtilityPaneMode::SessionContext);
-        assert!(open);
+        assert_eq!(mode, UtilityPaneMode::ToolInspector);
+        assert!(!open);
     }
 
     #[test]
     fn transition_to_list_sets_filters_preserving_visibility() {
-        let mut mode = UtilityPaneMode::SessionContext;
+        let mut mode = UtilityPaneMode::ToolInspector;
         transition_to_list(&mut mode);
         assert_eq!(mode, UtilityPaneMode::Filters);
     }
@@ -919,30 +949,27 @@ mod tests {
     #[test]
     fn toggle_flips_pane_open_without_changing_mode() {
         let mut pane_open = false;
-        let pane_mode = UtilityPaneMode::SessionContext;
+        let pane_mode = UtilityPaneMode::ToolInspector;
 
-        // Simulate TogglePane: flips open, does not change mode
         pane_open = !pane_open;
         assert!(pane_open);
-        assert_eq!(pane_mode, UtilityPaneMode::SessionContext);
+        assert_eq!(pane_mode, UtilityPaneMode::ToolInspector);
 
         pane_open = !pane_open;
         assert!(!pane_open);
-        assert_eq!(pane_mode, UtilityPaneMode::SessionContext);
+        assert_eq!(pane_mode, UtilityPaneMode::ToolInspector);
     }
 
     #[test]
     fn pane_visibility_changed_mirrors_widget_state() {
         let mut pane_open = true;
 
-        // Simulate PaneVisibilityChanged(false) from gesture
         let visible = false;
         if pane_open != visible {
             pane_open = visible;
         }
         assert!(!pane_open);
 
-        // No-op update
         let visible = false;
         if pane_open != visible {
             pane_open = visible;
@@ -954,8 +981,20 @@ mod tests {
     fn utility_pane_mode_maps_to_correct_stack_child_name() {
         assert_eq!(UtilityPaneMode::Filters.stack_child_name(), "filters");
         assert_eq!(
-            UtilityPaneMode::SessionContext.stack_child_name(),
-            "session-context"
+            UtilityPaneMode::ToolInspector.stack_child_name(),
+            "tool-inspector"
+        );
+    }
+
+    #[test]
+    fn utility_pane_mode_maps_to_correct_sidebar_position() {
+        assert_eq!(
+            UtilityPaneMode::Filters.sidebar_position(),
+            gtk::PackType::Start
+        );
+        assert_eq!(
+            UtilityPaneMode::ToolInspector.sidebar_position(),
+            gtk::PackType::End
         );
     }
 }

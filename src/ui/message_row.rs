@@ -1,3 +1,7 @@
+//! MessageRow factory is superseded by TranscriptRow (Phase 3).
+//! Kept for reference; all items are unused.
+#![allow(dead_code)]
+
 use std::path::PathBuf;
 use std::sync::Arc;
 

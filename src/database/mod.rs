@@ -17,7 +17,6 @@ pub use indexer::SessionIndexer;
 /// Flat preview row returned by the transcript LEFT JOIN query.
 /// The caller interprets fields based on `kind`.
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
 pub struct TranscriptItemRow {
     pub item_index: i64,
     pub kind: TranscriptItemKind,
@@ -36,6 +35,7 @@ pub struct TranscriptItemRow {
     // Subagent fields
     pub subagent_id: Option<String>,
     pub subagent_title: Option<String>,
+    #[allow(dead_code)] // Will be used in Phase 4 inspector pane
     pub subagent_prompt: Option<String>,
 }
 
@@ -305,6 +305,7 @@ pub fn load_message_full_content(
 }
 
 /// Load message previews for a session with pagination and truncation.
+#[allow(dead_code)] // Superseded by load_transcript_items; kept for potential fallback use
 pub fn load_message_previews_for_session(
     db_path: &Path,
     session_id: &str,
@@ -372,7 +373,6 @@ pub fn load_message_previews_for_session(
 
 /// Load ordered transcript items for a session with pagination.
 /// Returns preview rows combining message/tool_call/subagent fields via LEFT JOINs.
-#[allow(dead_code)]
 pub fn load_transcript_items(
     db_path: &Path,
     session_id: &str,

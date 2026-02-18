@@ -1,3 +1,7 @@
+//! DetailContextPane is superseded by ToolInspectorPane (Phase 3).
+//! Kept for reference; all items are unused.
+#![allow(dead_code)]
+
 use gtk::prelude::*;
 use relm4::{ComponentParts, ComponentSender, RelmWidgetExt, SimpleComponent, gtk};
 

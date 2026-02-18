@@ -9,25 +9,34 @@ use gtk::prelude::*;
 use relm4::factory::FactoryVecDeque;
 use relm4::{ComponentParts, ComponentSender, RelmWidgetExt, SimpleComponent, adw, gtk};
 
-use crate::database::load_message_previews_for_session;
+use crate::database::load_transcript_items;
 use crate::models::Session;
-use crate::ui::message_row::{MessageRow, MessageRowInit, MessageRowOutput};
+use crate::ui::transcript_row::{
+    TranscriptRow, TranscriptRowOutput, transcript_item_init_from_row,
+};
 
 #[derive(Debug)]
 pub struct SessionDetail {
     db_path: Arc<PathBuf>,
     session: Option<Session>,
-    messages: FactoryVecDeque<MessageRow>,
+    messages: FactoryVecDeque<TranscriptRow>,
     page_size: usize,
     preview_len: usize,
     loaded_count: usize,
     has_more_messages: bool,
     search_query: Option<String>,
+    /// Keyed by transcript item_index (== factory position). Only message rows contribute.
     match_counts: BTreeMap<usize, usize>,
     current_match: usize,
     total_matches: usize,
-    scroll_to_message: Cell<Option<usize>>,
+    scroll_to_item: Cell<Option<usize>>,
     pending_toast: Cell<bool>,
+}
+
+#[derive(Debug)]
+pub enum SessionDetailOutput {
+    InspectToolCall(String),
+    InspectSubagent(String),
 }
 
 #[derive(Debug)]
@@ -46,13 +55,15 @@ pub enum SessionDetailMsg {
     ShowExpandLoadFailure,
     #[allow(dead_code)]
     Clear,
+    InspectToolCall(String),
+    InspectSubagent(String),
 }
 
 #[relm4::component(pub)]
 impl SimpleComponent for SessionDetail {
     type Init = PathBuf;
     type Input = SessionDetailMsg;
-    type Output = ();
+    type Output = SessionDetailOutput;
     type Widgets = SessionDetailWidgets;
 
     view! {
@@ -168,7 +179,7 @@ impl SimpleComponent for SessionDetail {
 
                             },
 
-                            // Messages container — managed by factory
+                            // Transcript rows — managed by factory
                             #[local_ref]
                             messages_box -> gtk::Box {
                                 set_orientation: gtk::Orientation::Vertical,
@@ -254,16 +265,17 @@ impl SimpleComponent for SessionDetail {
         root: Self::Root,
         sender: ComponentSender<Self>,
     ) -> ComponentParts<Self> {
-        let messages: FactoryVecDeque<MessageRow> = FactoryVecDeque::builder()
+        let messages: FactoryVecDeque<TranscriptRow> = FactoryVecDeque::builder()
             .launch_default()
             .forward(sender.input_sender(), |output| match output {
-                MessageRowOutput::MatchCountChanged {
-                    message_index,
-                    count,
-                } => SessionDetailMsg::MatchCount(message_index, count),
-                MessageRowOutput::ExpandLoadFailed { .. } => {
+                TranscriptRowOutput::MatchCountChanged { item_index, count } => {
+                    SessionDetailMsg::MatchCount(item_index, count)
+                }
+                TranscriptRowOutput::ExpandLoadFailed { .. } => {
                     SessionDetailMsg::ShowExpandLoadFailure
                 }
+                TranscriptRowOutput::InspectToolCall(id) => SessionDetailMsg::InspectToolCall(id),
+                TranscriptRowOutput::InspectSubagent(id) => SessionDetailMsg::InspectSubagent(id),
             });
 
         let db_path = Arc::new(db_path);
@@ -279,7 +291,7 @@ impl SimpleComponent for SessionDetail {
             match_counts: BTreeMap::new(),
             current_match: 0,
             total_matches: 0,
-            scroll_to_message: Cell::new(None),
+            scroll_to_item: Cell::new(None),
             pending_toast: Cell::new(false),
         };
 
@@ -293,7 +305,7 @@ impl SimpleComponent for SessionDetail {
         ComponentParts { model, widgets }
     }
 
-    fn update(&mut self, message: Self::Input, _sender: ComponentSender<Self>) {
+    fn update(&mut self, message: Self::Input, sender: ComponentSender<Self>) {
         match message {
             SessionDetailMsg::SetSession {
                 session,
@@ -314,7 +326,6 @@ impl SimpleComponent for SessionDetail {
                 self.current_match = 0;
                 self.total_matches = 0;
 
-                // Rebuild messages with new highlighting
                 if let Some(session) = &self.session {
                     let session_id = session.id.clone();
                     self.load_first_page(&session_id);
@@ -324,29 +335,30 @@ impl SimpleComponent for SessionDetail {
                 if let Some(session) = &self.session {
                     let session_id = session.id.clone();
                     let offset = self.loaded_count;
-                    match load_message_previews_for_session(
+                    match load_transcript_items(
                         &self.db_path,
                         &session_id,
-                        self.page_size,
-                        offset,
-                        self.preview_len,
+                        self.page_size as i64,
+                        offset as i64,
+                        self.preview_len as i64,
                     ) {
-                        Ok(previews) => {
-                            self.has_more_messages = previews.len() == self.page_size;
-                            self.loaded_count += previews.len();
+                        Ok(rows) => {
+                            self.has_more_messages = rows.len() == self.page_size;
+                            self.loaded_count += rows.len();
                             let highlight = self.search_query.clone();
                             let db_path = self.db_path.clone();
                             let mut guard = self.messages.guard();
-                            for preview in previews {
-                                guard.push_back(MessageRowInit {
-                                    preview,
-                                    highlight_query: highlight.clone(),
-                                    db_path: db_path.clone(),
-                                });
+                            for row in rows {
+                                guard.push_back(transcript_item_init_from_row(
+                                    &row,
+                                    &session_id,
+                                    highlight.clone(),
+                                    db_path.clone(),
+                                ));
                             }
                         }
                         Err(err) => {
-                            tracing::error!("Failed to load more previews: {}", err);
+                            tracing::error!("Failed to load more transcript items: {}", err);
                             self.has_more_messages = false;
                         }
                     }
@@ -359,30 +371,28 @@ impl SimpleComponent for SessionDetail {
                     } else {
                         self.current_match -= 1;
                     }
-                    let (msg_idx, _) =
-                        Self::find_message_for_match(&self.match_counts, self.current_match);
-                    self.scroll_to_message.set(Some(msg_idx));
+                    let item_idx =
+                        Self::find_item_for_match(&self.match_counts, self.current_match);
+                    self.scroll_to_item.set(Some(item_idx));
                 }
             }
             SessionDetailMsg::NextMatch => {
                 if self.total_matches > 0 {
                     self.current_match = (self.current_match + 1) % self.total_matches;
-                    let (msg_idx, _) =
-                        Self::find_message_for_match(&self.match_counts, self.current_match);
-                    self.scroll_to_message.set(Some(msg_idx));
+                    let item_idx =
+                        Self::find_item_for_match(&self.match_counts, self.current_match);
+                    self.scroll_to_item.set(Some(item_idx));
                 }
             }
-            SessionDetailMsg::MatchCount(message_index, count) => {
+            SessionDetailMsg::MatchCount(item_index, count) => {
                 let was_empty = self.total_matches == 0;
-                self.match_counts.insert(message_index, count);
+                self.match_counts.insert(item_index, count);
                 self.total_matches = self.match_counts.values().sum();
-                // Auto-scroll to first match when results arrive
                 if was_empty && self.total_matches > 0 && self.search_query.is_some() {
                     self.current_match = 0;
-                    let (msg_idx, _) = Self::find_message_for_match(&self.match_counts, 0);
-                    self.scroll_to_message.set(Some(msg_idx));
+                    let item_idx = Self::find_item_for_match(&self.match_counts, 0);
+                    self.scroll_to_item.set(Some(item_idx));
                 }
-                // Clamp current_match when total shrinks (e.g. after collapse)
                 if self.total_matches > 0 {
                     if self.current_match >= self.total_matches {
                         self.current_match = self.total_matches - 1;
@@ -401,7 +411,6 @@ impl SimpleComponent for SessionDetail {
                 self.current_match = 0;
                 self.total_matches = 0;
 
-                // Rebuild messages without highlighting
                 if let Some(session) = &self.session {
                     let session_id = session.id.clone();
                     self.load_first_page(&session_id);
@@ -416,6 +425,12 @@ impl SimpleComponent for SessionDetail {
                 self.match_counts.clear();
                 self.current_match = 0;
                 self.total_matches = 0;
+            }
+            SessionDetailMsg::InspectToolCall(id) => {
+                sender.output(SessionDetailOutput::InspectToolCall(id)).ok();
+            }
+            SessionDetailMsg::InspectSubagent(id) => {
+                sender.output(SessionDetailOutput::InspectSubagent(id)).ok();
             }
         }
     }
@@ -463,21 +478,19 @@ impl SimpleComponent for SessionDetail {
                 .set_visible_child(&widgets.loading_state);
         }
 
-        // Show toast if expand load failed
         if self.pending_toast.take() {
             widgets
                 .toast_overlay
                 .add_toast(adw::Toast::new("Could not load full message."));
         }
 
-        // Scroll to match if requested
-        if let Some(msg_index) = self.scroll_to_message.take() {
+        if let Some(item_index) = self.scroll_to_item.take() {
             let messages_widget = self.messages.widget().clone();
             let scroll_child = widgets.scroll_child.clone();
             glib::idle_add_local_once(move || {
                 let Some(target) = messages_widget
                     .observe_children()
-                    .item(msg_index as u32)
+                    .item(item_index as u32)
                     .and_then(|obj| obj.downcast::<gtk::Widget>().ok())
                 else {
                     return;
@@ -497,7 +510,6 @@ impl SimpleComponent for SessionDetail {
                 };
 
                 let vadj = scrolled_window.vadjustment();
-                // Position match roughly 1/3 from the top
                 let target_y = (point.y() as f64) - (vadj.page_size() / 3.0);
                 vadj.set_value(target_y.max(0.0));
             });
@@ -507,31 +519,32 @@ impl SimpleComponent for SessionDetail {
 
 impl SessionDetail {
     fn load_first_page(&mut self, session_id: &str) {
-        match load_message_previews_for_session(
+        match load_transcript_items(
             &self.db_path,
             session_id,
-            self.page_size,
+            self.page_size as i64,
             0,
-            self.preview_len,
+            self.preview_len as i64,
         ) {
-            Ok(previews) => {
-                self.has_more_messages = previews.len() == self.page_size;
-                self.loaded_count = previews.len();
+            Ok(rows) => {
+                self.has_more_messages = rows.len() == self.page_size;
+                self.loaded_count = rows.len();
                 let highlight = self.search_query.clone();
                 let db_path = self.db_path.clone();
                 let mut guard = self.messages.guard();
                 guard.clear();
-                for preview in previews {
-                    guard.push_back(MessageRowInit {
-                        preview,
-                        highlight_query: highlight.clone(),
-                        db_path: db_path.clone(),
-                    });
+                for row in rows {
+                    guard.push_back(transcript_item_init_from_row(
+                        &row,
+                        session_id,
+                        highlight.clone(),
+                        db_path.clone(),
+                    ));
                 }
             }
             Err(err) => {
                 tracing::error!(
-                    "Failed to load message previews for {}: {}",
+                    "Failed to load transcript items for {}: {}",
                     session_id,
                     err
                 );
@@ -542,22 +555,18 @@ impl SessionDetail {
         }
     }
 
-    /// Resolve a global match index to a (loaded_row_offset, local_match_index) pair.
-    ///
-    /// Iterates the BTreeMap in ascending message_index order, using `enumerate()`
-    /// so the returned offset is the factory child position (not the raw message_index).
-    fn find_message_for_match(
-        counts: &BTreeMap<usize, usize>,
-        global_index: usize,
-    ) -> (usize, usize) {
+    /// Resolve a global match index to the transcript item_index of the matching row.
+    /// Since item_index == factory position (items pushed in transcript order),
+    /// this can be used directly as the scroll target.
+    fn find_item_for_match(counts: &BTreeMap<usize, usize>, global_index: usize) -> usize {
         let mut remaining = global_index;
-        for (row_offset, (_message_index, &count)) in counts.iter().enumerate() {
+        for (&item_index, &count) in counts.iter() {
             if remaining < count {
-                return (row_offset, remaining);
+                return item_index;
             }
             remaining -= count;
         }
-        (counts.len().saturating_sub(1), 0)
+        counts.keys().last().copied().unwrap_or(0)
     }
 
     fn format_relative_time(instant: DateTime<Utc>) -> String {
