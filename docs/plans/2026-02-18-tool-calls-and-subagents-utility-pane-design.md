@@ -162,8 +162,9 @@ The sidebar position changes dynamically with view transitions:
 | Return to list view (`transition_to_list`) | `Start` (left) | Filters affect main content — HIG `start` position |
 
 Implementation:
-- `transition_to_detail()`: call `overlay_split.set_sidebar_position(gtk::PackType::End)`
-- `transition_to_list()`: call `overlay_split.set_sidebar_position(gtk::PackType::Start)`
+- `transition_to_detail()` / `transition_to_list()` update view state only (no widget side effects).
+- Apply `widgets.overlay_split.set_sidebar_position(...)` in `update_with_view`
+  based on the resolved target view (`End` in detail, `Start` in list).
 
 Note: validate that the position change is visually smooth. If it causes a jarring flash,
 briefly set `show_sidebar: false` before changing position, then restore visibility.
@@ -192,9 +193,10 @@ briefly set `show_sidebar: false` before changing position, then restore visibil
   `app.set_accelerators_for_action::<EscapeAction>(&["Escape"])`.
   The action fires only when the inspector nav does not consume Esc (i.e. stack depth == 1).
   In the action handler, send `AppMsg::Escape` and resolve priority in `update()`:
-  1. *(handled natively by inspector nav)* pop inspector page if stack depth > 1;
-  2. else if utility pane is visible, close pane;
-  3. else trigger normal detail back navigation to list.
+  1. if utility pane is visible, close pane;
+  2. else trigger normal detail back navigation to list.
+  (Defensive check: if stack depth > 1 is observed, no-op because level 1 should have
+  already been consumed natively by inspector navigation.)
 
 ### Inspect Action Widget
 
@@ -369,8 +371,9 @@ Pagination applies to `transcript_items` count (not just messages). A session wi
 - Add "Resume in Terminal" `GtkButton` to `AdwHeaderBar`, visible only when `detail_visible == true`. Wire to existing `AppMsg::ResumeSession` using `active_session`.
 - Add `ToolInspectorPane` controller to the existing `pane_stack`.
   The stack child name for `ToolInspector` mode is `"tool-inspector"`; update `UtilityPaneMode::stack_child_name()` to return it.
-- Add `set_sidebar_position()` calls in `transition_to_detail()` (→ `End`) and `transition_to_list()` (→ `Start`).
-  Call `widgets.overlay_split.set_sidebar_position(...)` inside `update_with_view`; the pure transition helpers remain for unit-testable state logic.
+- Keep `transition_to_detail()` / `transition_to_list()` pure (state-only) and apply
+  `widgets.overlay_split.set_sidebar_position(...)` inside `update_with_view`
+  (`End` for detail, `Start` for list).
 - `transition_to_detail()` sets `pane_open = false`; the pane opens only when the user triggers an inspect action.
 - Keep F9 shortcut and toggle button behavior unchanged.
 - Set main app `AdwNavigationView` `pop_on_escape = false`; route Esc using the priority contract defined above.
