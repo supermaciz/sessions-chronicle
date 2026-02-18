@@ -1,8 +1,8 @@
 # Tool Calls and Subagents Utility Pane Design
 
-**Status:** Proposed  
-**Date:** 2026-02-18  
-**Based on:** [Tool Calls and Subagents - UI Exploration](2026-02-16-tool-calls-and-subagents-exploration.md) proposal F  
+**Status:** Proposed
+**Date:** 2026-02-18
+**Based on:** [Tool Calls and Subagents - UI Exploration](2026-02-16-tool-calls-and-subagents-exploration.md) proposal F
 **Supersedes (for phase 6):** [Tool Calls and Subagents Display](2026-01-30-tool-calls-and-subagents-design.md)
 
 ## Goal
@@ -41,37 +41,45 @@ Today, phase 6 data is not indexed for display:
 UI context:
 
 - The app already uses `AdwOverlaySplitView` at app level (`src/app.rs`) with F9 toggle.
-- Session detail currently renders only message rows.
-- A utility-pane stack already exists (`filters` and `session-context`).
+- Session detail currently renders only message rows via `FactoryVecDeque<MessageRow>`.
+- A utility-pane `gtk::Stack` already exists with `Filters` and `SessionContext` modes.
+- `DetailContextPane` currently shows project name, tool icon, and "Resume in Terminal" button.
 
 ## Corrections Applied vs Exploration F
 
-The exploration doc identified the right direction; this design tightens behavior in four places:
+The exploration doc identified the right direction; this design tightens behavior in five places:
 
-1. **No contradiction on pane lifecycle**  
+1. **No contradiction on pane lifecycle**
    Pane has explicit hidden/visible states; opening and closing are expected actions.
-2. **No click ambiguity with expander rows**  
+2. **No click ambiguity with expander rows**
    Expander row activation controls expansion. A dedicated inspect action opens/updates the pane.
-3. **No fixed 73/27 rule**  
+3. **No fixed 73/27 rule**
    Use `AdwOverlaySplitView` sizing properties (`sidebar_width_fraction`, min/max width) instead of a hard-coded split ratio.
-4. **Robust Claude correlation**  
-   Prefer `tool_use_id` matching when available; only use ordered fallback as a secondary strategy.
+4. **Robust Claude correlation**
+   Prefer `tool_use_id` matching when available; only use ordered fallback as a secondary strategy. Verify against fixture data.
+5. **Inspector-only pane in detail view**
+   The utility pane in detail view is exclusively a tool/subagent inspector. "Resume in Terminal" moves to the header bar. `DetailContextPane` and `SessionContext` mode are removed.
 
 ## Options Considered
 
-### A) Reuse app-level utility pane + inline expanders (chosen)
+### A) Reuse app-level utility pane with dynamic position (chosen)
 
-Reuse existing `AdwOverlaySplitView` in `App`, add a third pane mode (`tool-inspector`), and render tool/subagent rows inline in `SessionDetail`.
+Reuse existing `AdwOverlaySplitView` in `App`. Replace `SessionContext` mode with
+`ToolInspector` mode. Change sidebar position dynamically: `start` (left) for
+filters in list view, `end` (right) for inspector in detail view.
 
 **Pros:**
 
 - Reuses existing split view, breakpoint, and F9 behavior.
 - Avoids nested split containers.
-- Keeps one global pane policy across list/detail.
+- Inspector on the right follows GNOME HIG (inspectors at `end`).
+- Filters on the left follows GNOME HIG (navigation/filters at `start`).
+- Simpler pane model: only 2 modes instead of 3.
 
 **Cons:**
 
-- Requires new cross-component messages between transcript and app-level pane.
+- Requires `set_sidebar_position()` call during view transitions. Visual smoothness needs validation.
+- Cross-component messages between transcript and app-level pane.
 
 ### B) Add another split view inside `SessionDetail`
 
@@ -104,17 +112,18 @@ Open full details in `AdwDialog`.
 Adopt option A.
 
 - Continue using the existing app-level `AdwOverlaySplitView`.
-- Add `ToolInspector` as a new utility pane mode.
+- Replace `SessionContext` mode with `ToolInspector` mode (2 modes total).
+- Remove `DetailContextPane` component entirely.
+- Move "Resume in Terminal" to a `GtkButton` in the header bar, visible only in detail view.
+- Change sidebar position dynamically via `set_sidebar_position()` during list↔detail transitions.
 - Render tool/subagent rows inline using expander semantics.
 - Open inspector from explicit inspect actions.
 - Keep modal dialogs out of normal inspection workflow.
 
-## Interaction Model
-
 ## Terminology
 
-- **Utility pane**: HIG concept.
-- **Sidebar**: libadwaita API name for the same area.
+- **Utility pane**: HIG concept for the secondary panel.
+- **Sidebar**: libadwaita API name for the same area (`AdwOverlaySplitView` sidebar).
 
 ## State Model
 
@@ -130,9 +139,8 @@ Adopt option A.
 
 `PaneMode`
 
-- `Filters`
-- `SessionContext`
-- `ToolInspector`
+- `Filters` — list view, sidebar position: `Start` (left)
+- `ToolInspector` — detail view, sidebar position: `End` (right)
 
 `InspectorSelection`
 
@@ -141,17 +149,39 @@ Adopt option A.
 - `Subagent(subagent_id)`
 - `SubagentTool(subagent_id, tool_call_id)`
 
+## Sidebar Position Strategy
+
+The sidebar position changes dynamically with view transitions:
+
+| Transition | Sidebar position | Rationale |
+|------------|-----------------|-----------|
+| Enter detail view (`transition_to_detail`) | `End` (right) | Inspector inspects selected content — HIG `end` position |
+| Return to list view (`transition_to_list`) | `Start` (left) | Filters affect main content — HIG `start` position |
+
+Implementation:
+- `transition_to_detail()`: call `overlay_split.set_sidebar_position(gtk::PackType::End)`
+- `transition_to_list()`: call `overlay_split.set_sidebar_position(gtk::PackType::Start)`
+
+Note: validate that the position change is visually smooth. If it causes a jarring flash,
+briefly set `show_sidebar: false` before changing position, then restore visibility.
+
 ## Interaction Contract
 
 | User action | Expected behavior |
 |-------------|-------------------|
 | Click expander row body | Toggle inline expand/collapse only |
-| Activate inspect suffix on tool row | Select tool call; switch pane mode to `ToolInspector`; open pane if hidden |
-| Activate inspect suffix on subagent row | Select subagent overview; switch pane mode to `ToolInspector`; open pane if hidden |
-| Activate inner tool action in subagent row | Push detail page in inspector nav stack |
+| Click inspect button (`view-reveal-symbolic`) on tool row | Select tool call; switch pane to `ToolInspector`; open pane if hidden |
+| Click inspect button on subagent row | Select subagent overview; switch pane to `ToolInspector`; open pane if hidden |
+| Click `go-next-symbolic` on inner tool row (inside expanded subagent) | Push detail page in inspector nav stack |
+| Click "Resume in Terminal" button in header bar | Resume session in terminal (existing pipeline) |
 | Press F9 | Toggle pane visibility; keep current mode and selection |
 | Press Esc in inspector (overlay mode) | Pop inspector nav page if possible; otherwise close pane |
-| Navigate back to session list | Clear inspector selection; switch pane mode to `Filters` |
+| Navigate back to session list | Clear inspector selection; switch pane to `Filters`; change sidebar position to `Start` |
+
+### Inspect Action Widget
+
+- **Tool call rows**: `GtkButton` with `view-reveal-symbolic` icon placed as suffix widget on the expander row. Clicking the button opens/updates the inspector pane. Clicking the row body toggles expand/collapse.
+- **Subagent inner tool rows**: `AdwActionRow` with `go-next-symbolic` as suffix icon. Clicking the row pushes a detail page in the inspector navigation stack.
 
 Notes:
 
@@ -230,6 +260,28 @@ Suggested columns:
 
 Index: `(session_id)`.
 
+### Transcript loading query
+
+Load transcript items with previews in a single query:
+
+```sql
+SELECT ti.item_index, ti.kind, ti.message_index, ti.tool_call_id, ti.subagent_id,
+       m.role, substr(m.content, 1, ?2) AS content_preview,
+       length(m.content) AS content_len, m.timestamp,
+       tc.tool_name, tc.status, tc.summary, tc.duration_ms,
+       sa.title AS subagent_title, sa.prompt AS subagent_prompt
+FROM transcript_items ti
+LEFT JOIN messages m ON ti.session_id = m.session_id
+                    AND ti.message_index = CAST(m.message_index AS INTEGER)
+LEFT JOIN tool_calls tc ON ti.tool_call_id = tc.id
+LEFT JOIN subagents sa ON ti.subagent_id = sa.id
+WHERE ti.session_id = ?1
+ORDER BY ti.item_index
+LIMIT ?3 OFFSET ?4
+```
+
+Pagination applies to `transcript_items` count (not just messages). A session with 200 messages + 150 tool calls = 350 items; page size stays at 200 items per page.
+
 ## Parser Extraction Rules
 
 ### Claude Code
@@ -239,6 +291,7 @@ Index: `(session_id)`.
 - Correlation strategy:
   1. match by `tool_result.tool_use_id` when present,
   2. fallback to first unmatched call in order.
+- Verify against Claude Code fixtures that `tool_use_id` is consistently present in the wire format.
 - Treat `Task` tool usage as subagent entries.
 
 ### Codex
@@ -267,19 +320,36 @@ Index: `(session_id)`.
 
 ### App-level pane orchestration (`src/app.rs`)
 
-- Extend `UtilityPaneMode` with `ToolInspector`.
+- Replace `UtilityPaneMode` variants: remove `SessionContext`, keep `Filters`, add `ToolInspector`.
+- Remove `DetailContextPane` controller and all references to `DetailContextPaneMsg` / `DetailContextPaneOutput`.
+- Remove `AppMsg::ResumeFromPane`.
+- Add "Resume in Terminal" `GtkButton` to `AdwHeaderBar`, visible only when `detail_visible == true`. Wire to existing `AppMsg::ResumeSession` using `active_session`.
 - Add `ToolInspectorPane` controller to the existing `pane_stack`.
+- Add `set_sidebar_position()` calls in `transition_to_detail()` (→ `End`) and `transition_to_list()` (→ `Start`).
 - Keep F9 shortcut and toggle button behavior unchanged.
 - Route transcript selection events into pane mode changes and inspector updates.
 
 ### Session detail transcript (`src/ui/session_detail.rs`)
 
-- Replace message-only rendering with transcript item rendering.
+- Replace `FactoryVecDeque<MessageRow>` with `FactoryVecDeque<TranscriptRow>`.
+- `TranscriptRow` dispatches internally based on a `TranscriptItemInit` enum:
+
+```rust
+enum TranscriptItemInit {
+    Message(MessageRowInit),
+    ToolCall(ToolCallRowInit),
+    Subagent(SubagentRowInit),
+}
+```
+
 - Introduce row types:
-  - message row (existing style)
-  - tool-call expander row
-  - subagent expander row with inner action rows
-- Emit outputs when inspect actions are activated.
+  - message row (existing style, refactored from `MessageRow`)
+  - tool-call expander row (icon + name + summary + duration pill + inspect button suffix)
+  - subagent expander row (icon + name + summary + tool count pill + inspect button suffix; expanded content shows prompt, inner tool ActionRows, result summary)
+- Emit outputs when inspect actions are activated:
+  - `TranscriptRowOutput::InspectToolCall(tool_call_id)`
+  - `TranscriptRowOutput::InspectSubagent(subagent_id)`
+  - `TranscriptRowOutput::InspectSubagentTool(subagent_id, tool_call_id)`
 
 ### New pane component (`src/ui/tool_inspector_pane.rs`)
 
@@ -301,14 +371,19 @@ Add classes for:
 - inspector code blocks,
 - compact metadata labels.
 
+### Removed component (`src/ui/detail_context_pane.rs`)
+
+`DetailContextPane` is removed. Its "Resume in Terminal" functionality moves to a header bar button in `src/app.rs`. The `ActiveSessionRef` struct in `App` already holds the session identity needed for resume routing.
+
 ## Data Flow
 
 1. Indexers parse raw sessions and persist `sessions`, `messages` (FTS), and artifact tables.
-2. Session detail loads ordered `transcript_items` previews.
+2. Session detail loads ordered `transcript_items` previews via the LEFT JOIN query.
 3. Inline expander interactions stay local to transcript rows.
-4. Inspect action sends selection to `App`.
-5. `App` switches pane mode to `ToolInspector`, ensures pane visibility, and forwards selection to inspector pane.
+4. Inspect action emits `TranscriptRowOutput` → forwarded to `AppMsg`.
+5. `App` switches pane mode to `ToolInspector`, changes sidebar position to `End`, ensures pane visibility, and forwards selection to inspector pane.
 6. Inspector pane can request navigation to sibling calls or child sessions.
+7. "Resume in Terminal" is handled by header bar button → `AppMsg::ResumeSession` → existing terminal pipeline.
 
 ## Performance and Safety
 
@@ -316,23 +391,30 @@ Add classes for:
 - Store full output but render preview first; lazy-load heavy text into inspector blocks.
 - Continue streaming JSONL reads with `BufReader`.
 - Avoid hardcoded filesystem paths; use existing source resolvers.
+- Paginate transcript items at 200 items per page (same threshold as current message pagination).
 
 ## Implementation Phases
 
-### Phase 1 - Schema and models
+### Phase 1 - Schema, models, and fixtures
 
-- Add session columns and new artifact tables.
+- Add session columns and new artifact tables via migration.
 - Add model structs for transcript items, tool calls, and subagents.
-- Update load/query APIs.
+- Update load/query APIs with the LEFT JOIN transcript query.
+- Create test fixtures with tool calls and subagents for all 4 parser formats, so phases 2-3 can develop against real data shapes.
 
 ### Phase 2 - Parser and indexer enrichment
 
 - Implement extraction for all four parsers.
 - Persist transcript ordering and correlated artifacts.
-- Add parser fixtures for tool and subagent coverage.
+- Verify Claude Code `tool_use_id` correlation against fixture data.
+- Unit tests for extraction and correlation edge cases.
 
-### Phase 3 - Inline transcript rows
+### Phase 3 - Pane restructuring and inline transcript rows
 
+- Remove `DetailContextPane` and `SessionContext` mode.
+- Add "Resume in Terminal" button to header bar.
+- Add `ToolInspector` mode and dynamic sidebar position.
+- Replace `FactoryVecDeque<MessageRow>` with `FactoryVecDeque<TranscriptRow>`.
 - Implement tool/subagent expander rows in `SessionDetail`.
 - Wire inspect outputs to app-level message flow.
 
@@ -341,11 +423,12 @@ Add classes for:
 - Build `ToolInspectorPane` with navigation stack.
 - Add subagent inner-tool drill-down and optional child-session open action.
 
-### Phase 5 - polish and grouping heuristic
+### Phase 5 - Polish and grouping heuristic
 
 - Optional grouping for consecutive tool-call runs.
 - Keyboard/a11y polish.
 - Empty/error states and truncation UX tuning.
+- Validate sidebar position transition smoothness.
 
 ## Testing Strategy
 
@@ -360,8 +443,10 @@ Add classes for:
 - `flatpak-builder --run flatpak_app build-aux/io.github.supermaciz.sessionschronicle.Devel.json sessions-chronicle --sessions-dir tests/fixtures`
 - Verify:
   - F9 toggle behavior in list and detail,
+  - sidebar position changes on view transitions,
+  - "Resume in Terminal" button in header bar,
   - split vs overlay adaptation,
-  - inspect action semantics,
+  - inspect action semantics (separate from expand),
   - subagent drill-down navigation.
 
 ### CI parity before PR
@@ -374,6 +459,8 @@ Add classes for:
 
 - Tool-call rows render inline for all supported parsers when data exists.
 - Inspector pane is non-modal and updates from explicit inspect actions.
+- Inspector pane appears on the right (end) in detail view, filters on the left (start) in list view.
+- "Resume in Terminal" works from header bar button (no regression from removing `DetailContextPane`).
 - Subagent rows support drill-down to inner tool details.
 - OpenCode child sessions are linkable without polluting default session list.
 - No regressions to existing search, list navigation, or session resume behavior.
