@@ -156,136 +156,172 @@ collapsed/expanded state management adds significant UI complexity.
 
 ---
 
-### F — Expanders + Overlay (Recommended Hybrid)
+### F — Expanders + Utility Pane (Recommended Hybrid)
 
 This proposal combines the strengths of **B (Expander Rows)** for inline
-preview and **A (Detail Panel)** for full detail, using an on-demand overlay
-instead of a permanent split layout.
+preview and **A (Detail Panel)** for full detail, using an **AdwOverlaySplitView
+utility pane** instead of a permanent split or a modal dialog.
 
-#### F1 — Transcript with Expander Rows
+The key insight: the transcript is a "list" and the pane is the "detail". Click
+a tool call in the transcript, the pane updates. No open/close cycle — the pane
+stays open and follows selection. This is the GNOME Builder inspector pattern.
+
+#### F1 — Transcript (pane hidden)
 
 ![Mockup F1](../mockups/tool-calls-and-subagents/mockup-f1-expanders-transcript.svg)
 
-The main transcript uses **AdwExpanderRow-style rows** (from Proposal B) for
-all tool calls. Each row shows icon + tool name + summary + duration pill, and
-can be expanded inline for a quick preview. Subagent rows expand to show a
-prompt summary and a **list of inner tool calls** as ActionRows.
+When the utility pane is hidden, the transcript uses full width with
+**AdwExpanderRow-style rows** for all tool calls. Each row shows icon + tool
+name + summary + duration pill, and can be expanded inline for a quick preview.
+Subagent rows expand to show a prompt summary and a **list of inner tool calls**
+as ActionRows. Clicking `›` on an inner tool call opens the utility pane.
 
-#### F2 — Overlay Detail Panel
+#### F2 — Wide screen: side-by-side split
 
-![Mockup F2](../mockups/tool-calls-and-subagents/mockup-f2-overlay-detail-panel.svg)
+![Mockup F2](../mockups/tool-calls-and-subagents/mockup-f2-utility-pane-split.svg)
 
-When the user wants full detail (clicking a `›` chevron on an inner tool call,
-or double-clicking any tool row), an **overlay panel** opens on top of the
-transcript. This panel uses **AdwNavigationView** stack navigation: you can
-drill into a subagent's tool calls and navigate back without leaving the
-overlay.
+On wide screens (above `AdwBreakpoint` threshold), the utility pane appears
+**side-by-side** with the transcript (~73% / ~27%). The transcript remains
+scrollable and interactive. Clicking any tool call row in the transcript updates
+the pane content — no modal, no navigation away. The selected tool call is
+highlighted in the transcript with a border accent.
+
+#### F3 — Narrow screen: overlay mode
+
+![Mockup F3](../mockups/tool-calls-and-subagents/mockup-f3-utility-pane-overlay.svg)
+
+On narrow screens (below breakpoint), `AdwOverlaySplitView` automatically
+collapses: the pane **floats over** the transcript as a sliding panel from the
+right edge. The transcript is dimmed but visible behind. Swipe-right or the
+close button dismisses the pane. This is the same widget in both modes — only
+the `collapsed` property changes via `AdwBreakpoint`.
 
 #### Design Summary
 
 | Aspect | Detail |
 |--------|--------|
-| Layout | Full width transcript (100%), overlay on demand |
+| Layout | `AdwOverlaySplitView`: side-by-side on wide, overlay on narrow |
+| Transcript | Full width when pane hidden; ~73% when pane visible (wide) |
 | Tool calls | AdwExpanderRow inline: collapsed summary, expand for quick preview |
 | Subagents | Expanded row shows prompt + inner tool call list (AdwActionRow) |
-| Full detail | Overlay panel (AdwDialog / AdwNavigationView) with stack navigation |
-| Navigation | `‹ Back` to parent subagent, `←/→` to navigate sibling tool calls |
+| Utility pane | Non-modal, follows selection, shows full input/output/status |
+| Pane navigation | `AdwNavigationView` stack inside pane for subagent drill-down |
+| Toggle | Header bar button toggles pane; also opens on tool call click |
+| Adaptive | `AdwBreakpoint` auto-collapses below threshold (e.g. `max-width: 800sp`) |
+| Gestures | Edge swipe to open/close pane on touch (`enable-show-gesture`) |
 | Grouping | Optional: N consecutive tool calls with no text → "N tool calls" group |
 
 #### Interaction Flow
 
 ```
-Transcript (full width)
-├── [User message]
-├── [Assistant message]
-├── [▶ Read — src/config.rs         120ms]     ← collapsed: click ▶ to expand
-├── [▼ Bash — cargo test             3.2s]     ← expanded: inline preview
-│   └── $ cargo test
-│       running 12 tests...
-│       test config::test_validate ... FAILED
-│       ─── truncated (8 more lines) ───
-├── [Assistant message]
-├── [▶ Edit — src/config.rs:42       85ms]     ← collapsed
-├── [▼ 🔀 Task — Code review     3 tools]     ← subagent expanded
-│   ├── PROMPT: Review the config changes...
-│   ├── 📄 Read  src/config.rs           ›     ← click › opens overlay
-│   ├── 📄 Read  src/config_test.rs      ›
-│   └── RESULT: Looks good. The Option<T>...
-└── [Assistant message]
+Wide screen (side-by-side):
 
-         │ click › on inner tool call
-         ▼
+┌─────────────────────────────────────────┬──────────────────┐
+│ Transcript (~73%)                       │ Utility Pane     │
+│                                         │                  │
+│ [User message]                          │ 📄 Read  ✓ 120ms│
+│ [Assistant message]                     │                  │
+│ [▶ Read — config.rs      120ms] ◄───────│ INPUT            │
+│ [▶ Bash — cargo test      3.2s]         │ file_path: ...   │
+│ [Assistant message]                     │                  │
+│ [▶ Edit — config.rs:42    85ms]         │ OUTPUT           │
+│ [▼ 🔀 Task — Review   3 tools]         │ ┌──────────────┐ │
+│   ├ 📄 Read config.rs        ›          │ │ 1 use serde  │ │
+│   ├ 📄 Read config_test.rs   ›          │ │ 2 use std    │ │
+│   └ RESULT: Looks good...              │ │ ...          │ │
+│ [Assistant message]                     │ └──────────────┘ │
+│                                         │                  │
+│ Click any tool row → pane updates       │ SESSION TOOLS    │
+│                                         │ [📄 Read ██████] │
+│                                         │ [⚙ Bash       ›] │
+│                                         │ [✏ Edit       ›] │
+│                                         │ [🔀 Task      ›] │
+└─────────────────────────────────────────┴──────────────────┘
 
-┌──────── Overlay Panel ────────┐
-│ ‹ Task: Code review           │  ← back to subagent view
-│                               │
-│ 🔀 Task: Code review › 📄 Read│  ← breadcrumb
-│                               │
-│ 📄 Read         Success 120ms │
-│                               │
-│ INPUT                         │
-│ ┌───────────────────────────┐ │
-│ │ file_path: src/config.rs  │ │
-│ └───────────────────────────┘ │
-│                               │
-│ OUTPUT                        │
-│ ┌───────────────────────────┐ │
-│ │ 1  use serde::{De...};    │ │
-│ │ 2  use std::path::PathBuf;│ │
-│ │ ...                       │ │
-│ └───────────────────────────┘ │
-│                               │
-│ OTHER TOOL CALLS              │
-│ [📄 Read config.rs ██████████]│  ← current (highlighted)
-│ [📄 Read config_test.rs    ›]│
-│ [🔍 Grep "unwrap()"        ›]│
-│                               │
-│   ← → navigate  |  Esc close │
-└───────────────────────────────┘
+Narrow screen (overlay):
+
+┌──────────────────────────┐
+│ Transcript (100%)        │
+│                     ┌────┤
+│ (dimmed)            │Pane│  ← slides in from right
+│                     │    │  ← swipe right to dismiss
+│                     │    │
+│                     └────┤
+└──────────────────────────┘
+
+Subagent drill-down (inside pane):
+
+┌──────────────────┐      ┌──────────────────┐
+│ 🔀 Task overview │ ───► │ ‹ Task: Review   │
+│                  │      │                  │
+│ PROMPT: Review.. │      │ 🔀 Task › 📄 Read│
+│ TOOL CALLS       │      │                  │
+│ [📄 Read    ›]   │ click│ 📄 Read  ✓ 120ms │
+│ [📄 Read    ›]   │      │ INPUT: ...       │
+│ [🔍 Grep    ›]   │      │ OUTPUT: ...      │
+│ RESULT: Looks... │      │                  │
+└──────────────────┘      └──────────────────┘
+         page 1 (push)           page 2 (push)
 ```
+
+#### Why Utility Pane over Dialog Overlay
+
+| Aspect | AdwDialog (previous design) | AdwOverlaySplitView (current) |
+|--------|---------------------------|-------------------------------|
+| Modality | Modal — blocks transcript interaction | Non-modal — transcript stays interactive |
+| Workflow | Close → scroll → click another tool → reopen | Click tool → pane updates in place |
+| Wide screen | Dialog floats centered, space wasted | Side-by-side, all space used |
+| Narrow screen | Same dialog, covers most of the view | Collapses to overlay automatically |
+| Persistence | Ephemeral, closing loses context | Stays open, toggle on/off |
+| Gestures | None | Edge swipe to open/close (touch) |
+| GNOME pattern | Dialogs are for confirmations/forms | Inspector/utility pane (GNOME Builder) |
 
 #### Per-Parser Behavior
 
 | Parser | Tool calls | Subagents |
 |--------|-----------|-----------|
-| **Claude Code** | Expander rows from `tool_use` blocks | Subagent row expands to show prompt + inner tools extracted from `tool_result` blob. Click inner tool → overlay with stack |
-| **Codex** | Expander rows from `mcp_tool_call_*` / `exec_command_*` events | Subagent row from `collab_agent_spawn_*` events. Inner tools filtered by child `thread_id`. Click → overlay |
+| **Claude Code** | Expander rows from `tool_use` blocks | Subagent row expands to show prompt + inner tools extracted from `tool_result` blob. Click inner tool → pane navigates (stack push) |
+| **Codex** | Expander rows from `mcp_tool_call_*` / `exec_command_*` events | Subagent row from `collab_agent_spawn_*` events. Inner tools filtered by child `thread_id`. Click → pane navigates |
 | **OpenCode** | Expander rows from `tool` parts (with full lifecycle state) | Subagent row from `subtask` parts. Inner tools loaded from child session (`parentID`). "Open full session" link also available |
 | **Mistral Vibe** | Expander rows from `tool_calls[]` + correlated `role: "tool"` results | No subagent support. Tool calls stay at one level |
 
 #### Tool Call ↔ Result Correlation
 
-| Parser | Mechanism | Overlay impact |
-|--------|-----------|----------------|
-| **Claude Code** | `tool_use.id` → next `tool_result` (API sequencing convention) | Parser must reconstruct pairs before display |
-| **Codex** | `call_id` shared between `begin` and `end` events | Direct ID-based lookup |
-| **OpenCode** | Single `tool` part contains `state.input` + `state.output` | No correlation needed — self-contained |
-| **Mistral Vibe** | `tool_calls[].id` → `tool_call_id` on `role: "tool"` message | ID-based lookup |
+| Parser | Mechanism |
+|--------|-----------|
+| **Claude Code** | `tool_use.id` → next `tool_result` (API sequencing convention). Parser reconstructs pairs |
+| **Codex** | `call_id` shared between `begin` and `end` events. Direct ID lookup |
+| **OpenCode** | Single `tool` part contains `state.input` + `state.output`. Self-contained |
+| **Mistral Vibe** | `tool_calls[].id` → `tool_call_id` on `role: "tool"` message. ID lookup |
 
 #### GTK4/libadwaita Components
 
 | UI Element | Widget |
 |-----------|--------|
+| Split layout (transcript + pane) | `AdwOverlaySplitView` (sidebar = pane, content = transcript) |
+| Adaptive collapse | `AdwBreakpoint` sets `collapsed: true` below threshold |
 | Tool call rows (collapsed/expanded) | `AdwExpanderRow` or custom `GtkListBoxRow` with expand logic |
 | Inner tool call list (inside subagent) | `AdwActionRow` inside `AdwPreferencesGroup` |
-| Overlay detail panel | `AdwDialog` (modal overlay with dim backdrop) |
-| Stack navigation in overlay | `AdwNavigationView` with push/pop pages |
+| Stack navigation in pane | `AdwNavigationView` with push/pop pages |
 | Breadcrumb trail | `GtkBox` with `GtkLabel` + separator |
 | Code output block | `GtkSourceView` or `GtkTextView` with monospace |
+| Pane toggle | `GtkToggleButton` in header bar |
 
-**Pros:**  
-- Full-width transcript (no permanent split)
-- Inline preview for quick inspection (expand/collapse)
-- Full detail on demand via overlay (no wasted screen space)
-- Stack navigation handles subagent nesting naturally
-- GNOME HIG compliant (AdwExpanderRow, AdwDialog, AdwNavigationView)
+**Pros:**
+- Full-width transcript when pane is hidden (no permanent split cost)
+- Non-modal: transcript remains interactive while pane is open
+- Click-to-update: selecting a tool call in transcript updates pane (no open/close cycle)
+- Adaptive: side-by-side on wide screens, overlay on narrow screens (single widget)
+- Touch support: edge swipe gestures via `AdwOverlaySplitView`
+- Stack navigation in pane handles subagent nesting naturally
+- GNOME HIG compliant (AdwOverlaySplitView, AdwNavigationView, AdwBreakpoint)
 - Works for all 4 parsers with parser-specific correlation strategies
 - Optional grouping of consecutive tool calls (Proposal C bonus)
 
 **Cons:**
-- Two interaction modes to learn (expand inline vs. open overlay)
-- Overlay obscures transcript (mitigated by dimmed backdrop and Esc to close)
-- More implementation work than pure B (expanders) due to overlay + navigation
+- Two interaction modes to learn (expand inline vs. inspect in pane)
+- Pane reduces transcript width on wide screens when open (~73% vs 100%)
+- More implementation work than pure B (expanders) due to split view + navigation
 
 ---
 
@@ -298,19 +334,26 @@ Transcript (full width)
 | Transcript readability | High | Medium | High | Medium | Medium | **High** |
 | Tool detail visibility | High (panel) | High (inline) | Low (nav) | Medium | High (inline) | **High (both)** |
 | Parallelism display | No | No | No | Yes | No | No |
-| Subagent hierarchy | Badge only | Row only | Group | Swimlane | Nesting | **Expand + overlay stack** |
-| Screen width needed | Wide (split) | Normal | Normal | Wide (3-col) | Normal | **Normal** |
+| Subagent hierarchy | Badge only | Row only | Group | Swimlane | Nesting | **Expand + pane stack** |
+| Screen width needed | Wide (split) | Normal | Normal | Wide (3-col) | Normal | **Adaptive** |
 | Multi-parser support | Medium | Medium | Medium | Low | Medium | **High** |
 
 ---
 
 ## Recommendation
 
-**Proposal F (Expanders + Overlay)** is the recommended approach. It provides
-the best balance of HIG compliance, transcript readability, and subagent
-support across all four parsers. The inline expander rows handle 90% of tool
-call inspection needs (quick preview), while the overlay panel handles the 10%
-that requires full detail or subagent drill-down.
+**Proposal F (Expanders + Utility Pane)** is the recommended approach. It
+provides the best balance of HIG compliance, transcript readability, and
+subagent support across all four parsers.
+
+The inline expander rows handle 90% of tool call inspection needs (quick
+preview), while the utility pane handles the 10% that requires full detail or
+subagent drill-down — without blocking interaction with the transcript.
+
+The `AdwOverlaySplitView` widget gives adaptive behavior for free: side-by-side
+on wide screens, overlay on narrow screens, with a single `AdwBreakpoint`
+condition. This resolves Proposal A's permanent split problem and the dialog
+overlay's modality problem in one widget.
 
 The optional grouping heuristic from Proposal C can be layered on top: when N
 consecutive tool calls appear with no interleaved text, collapse them under a

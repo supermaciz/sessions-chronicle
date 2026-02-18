@@ -1,0 +1,300 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="850" viewBox="0 0 1200 850">
+  <defs>
+    <style>
+      text { font-family: Cantarell, sans-serif; }
+      .mono { font-family: Source Code Pro, monospace; }
+      .headerbar-title { font-weight: 700; font-size: 15px; fill: #ffffff; }
+      .msg-text { font-size: 13px; fill: #1e1e1e; }
+      .expander-label { font-size: 13px; fill: #1e1e1e; font-weight: 700; }
+      .expander-summary { font-size: 13px; fill: #636363; }
+      .chevron { font-size: 13px; fill: #636363; }
+      .terminal-text { font-size: 12px; fill: #d0d0d0; }
+      .role-label { font-size: 11px; fill: #636363; font-weight: 700; letter-spacing: 0.5px; }
+      .section-label { font-size: 10px; fill: #77767b; font-weight: 700; letter-spacing: 0.8px; }
+      .panel-title { font-size: 15px; fill: #1e1e1e; font-weight: 700; }
+      .back-link { font-size: 13px; fill: #3584e4; font-weight: 500; }
+      .inner-tool-name { font-size: 12px; fill: #1e1e1e; font-weight: 600; }
+      .inner-tool-desc { font-size: 12px; fill: #77767b; }
+    </style>
+    <filter id="cardShadow" x="-2%" y="-2%" width="104%" height="108%">
+      <feDropShadow dx="0" dy="1" stdDeviation="1.5" flood-color="#000000" flood-opacity="0.08"/>
+    </filter>
+    <filter id="insetShadow" x="-1%" y="-1%" width="102%" height="104%">
+      <feDropShadow dx="0" dy="0.5" stdDeviation="0.8" flood-color="#000000" flood-opacity="0.06"/>
+    </filter>
+    <clipPath id="windowClip">
+      <rect width="1200" height="850" rx="12"/>
+    </clipPath>
+  </defs>
+
+  <g clip-path="url(#windowClip)">
+    <!-- Background -->
+    <rect width="1200" height="850" fill="#fafafa" rx="12"/>
+
+    <!-- ===== HEADERBAR ===== -->
+    <rect width="1200" height="47" fill="#303030" rx="12"/>
+    <rect y="12" width="1200" height="35" fill="#303030"/>
+    <circle cx="24" cy="23" r="7" fill="#e04040" opacity="0.85"/>
+    <circle cx="46" cy="23" r="7" fill="#e8a828" opacity="0.85"/>
+    <circle cx="68" cy="23" r="7" fill="#2eb840" opacity="0.85"/>
+    <text x="108" y="28" font-size="14" fill="#aaaaaa" font-family="Cantarell, sans-serif">&#x25C0;  Session Detail</text>
+    <text x="450" y="28" text-anchor="middle" class="headerbar-title">Sessions Chronicle</text>
+    <!-- Pane toggle button (active state) -->
+    <rect x="1140" y="10" width="36" height="28" rx="6" fill="#3584e4"/>
+    <text x="1158" y="29" font-size="14" fill="#ffffff" text-anchor="middle">&#x2759;</text>
+
+    <!-- ===== SESSION METADATA BAR (spans full width) ===== -->
+    <g transform="translate(24, 57)">
+      <rect width="840" height="32" rx="6" fill="#ebebeb"/>
+      <text x="12" y="21" font-size="11" fill="#636363" font-family="Cantarell, sans-serif" font-weight="700">Claude Code</text>
+      <text x="108" y="21" font-size="11" fill="#929292" font-family="Cantarell, sans-serif">~/Projects/myapp  |  12 messages  |  6 tool calls  |  1 subagent  |  2 min ago</text>
+    </g>
+
+    <!-- ===== VERTICAL SEPARATOR ===== -->
+    <line x1="876" y1="47" x2="876" y2="850" stroke="#d5d3d0" stroke-width="1"/>
+
+    <!-- ================================================================ -->
+    <!-- LEFT: TRANSCRIPT (~73%)                                          -->
+    <!-- ================================================================ -->
+
+    <!-- Message 1: User -->
+    <g transform="translate(24, 101)">
+      <rect width="840" height="56" rx="10" fill="#ffffff" filter="url(#cardShadow)"/>
+      <rect width="3" height="56" rx="1.5" fill="#3584e4"/>
+      <text x="16" y="20" class="role-label" fill="#3584e4">USER</text>
+      <text x="16" y="40" class="msg-text">Can you read the config file, fix the bug, and run the tests?</text>
+    </g>
+
+    <!-- Message 2: Assistant -->
+    <g transform="translate(24, 169)">
+      <rect width="840" height="44" rx="10" fill="#ffffff" filter="url(#cardShadow)"/>
+      <rect width="3" height="44" rx="1.5" fill="#26a269"/>
+      <text x="16" y="20" class="role-label" fill="#26a269">ASSISTANT</text>
+      <text x="16" y="36" class="msg-text">Let me check the configuration file first.</text>
+    </g>
+
+    <!-- Tool Call 1: Read (SELECTED — highlighted border) -->
+    <g transform="translate(24, 225)">
+      <rect width="840" height="44" rx="10" fill="#fff8f0" filter="url(#cardShadow)" stroke="#e66100" stroke-width="1.5"/>
+      <rect width="3" height="44" rx="1.5" fill="#e66100"/>
+      <text x="16" y="28" font-size="14">&#x1F4C4;</text>
+      <text x="38" y="29" class="expander-label">Read</text>
+      <text x="76" y="29" class="expander-summary">&#x2014;  src/config.rs</text>
+      <rect x="700" y="14" width="48" height="18" rx="9" fill="#f0f0f0"/>
+      <text x="724" y="27" text-anchor="middle" font-size="10" fill="#77767b">120ms</text>
+      <text x="810" y="29" class="chevron" text-anchor="middle">&#x25B6;</text>
+    </g>
+
+    <!-- Tool Call 2: Bash (COLLAPSED) -->
+    <g transform="translate(24, 281)">
+      <rect width="840" height="44" rx="10" fill="#ffffff" filter="url(#cardShadow)"/>
+      <rect width="3" height="44" rx="1.5" fill="#e66100"/>
+      <text x="16" y="28" font-size="14">&#x2699;&#xFE0F;</text>
+      <text x="38" y="29" class="expander-label">Bash</text>
+      <text x="76" y="29" class="expander-summary">&#x2014;  cargo test</text>
+      <rect x="700" y="14" width="40" height="18" rx="9" fill="#f0f0f0"/>
+      <text x="720" y="27" text-anchor="middle" font-size="10" fill="#77767b">3.2s</text>
+      <text x="810" y="29" class="chevron" text-anchor="middle">&#x25B6;</text>
+    </g>
+
+    <!-- Message 3: Assistant -->
+    <g transform="translate(24, 337)">
+      <rect width="840" height="56" rx="10" fill="#ffffff" filter="url(#cardShadow)"/>
+      <rect width="3" height="56" rx="1.5" fill="#26a269"/>
+      <text x="16" y="20" class="role-label" fill="#26a269">ASSISTANT</text>
+      <text x="16" y="40" class="msg-text">I found the issue. Let me fix it and run a code review subagent.</text>
+    </g>
+
+    <!-- Tool Call 3: Edit (COLLAPSED) -->
+    <g transform="translate(24, 405)">
+      <rect width="840" height="44" rx="10" fill="#ffffff" filter="url(#cardShadow)"/>
+      <rect width="3" height="44" rx="1.5" fill="#e66100"/>
+      <text x="16" y="28" font-size="14">&#x270F;&#xFE0F;</text>
+      <text x="38" y="29" class="expander-label">Edit</text>
+      <text x="76" y="29" class="expander-summary">&#x2014;  src/config.rs:42  (+3, -1)</text>
+      <rect x="700" y="14" width="48" height="18" rx="9" fill="#f0f0f0"/>
+      <text x="724" y="27" text-anchor="middle" font-size="10" fill="#77767b">85ms</text>
+      <text x="810" y="29" class="chevron" text-anchor="middle">&#x25B6;</text>
+    </g>
+
+    <!-- Tool Call 4: Subagent (EXPANDED with inner tools) -->
+    <g transform="translate(24, 461)">
+      <rect width="840" height="192" rx="10" fill="#ffffff" filter="url(#cardShadow)"/>
+      <rect width="3" height="192" rx="1.5" fill="#613583"/>
+      <text x="16" y="28" font-size="14">&#x1F500;</text>
+      <text x="38" y="29" font-size="13" fill="#613583" font-weight="700">Task</text>
+      <text x="76" y="29" class="expander-summary">&#x2014;  Code review subagent</text>
+      <rect x="668" y="14" width="76" height="18" rx="9" fill="#f3eef8"/>
+      <text x="706" y="27" text-anchor="middle" font-size="10" fill="#613583">3 tool calls</text>
+      <text x="810" y="29" class="chevron" text-anchor="middle">&#x25BC;</text>
+      <line x1="12" y1="44" x2="828" y2="44" stroke="#e0e0e0" stroke-width="1"/>
+      <!-- Prompt -->
+      <text x="16" y="62" class="section-label">PROMPT</text>
+      <text x="16" y="80" font-size="12" fill="#1e1e1e">Review the config changes for correctness and edge cases</text>
+      <!-- Inner tool calls -->
+      <text x="16" y="104" class="section-label">TOOL CALLS</text>
+      <rect x="16" y="112" width="808" height="32" rx="6" fill="#f6f5f4"/>
+      <text x="30" y="132" font-size="12">&#x1F4C4;</text>
+      <text x="50" y="133" class="inner-tool-name">Read</text>
+      <text x="92" y="133" class="inner-tool-desc">src/config.rs</text>
+      <text x="800" y="133" font-size="12" fill="#3584e4" text-anchor="end">&#x203A;</text>
+      <rect x="16" y="148" width="808" height="32" rx="6" fill="#f6f5f4"/>
+      <text x="30" y="168" font-size="12">&#x1F4C4;</text>
+      <text x="50" y="169" class="inner-tool-name">Read</text>
+      <text x="92" y="169" class="inner-tool-desc">src/config_test.rs</text>
+      <text x="800" y="169" font-size="12" fill="#3584e4" text-anchor="end">&#x203A;</text>
+    </g>
+
+    <!-- Message 4: Assistant (final) -->
+    <g transform="translate(24, 665)">
+      <rect width="840" height="56" rx="10" fill="#ffffff" filter="url(#cardShadow)"/>
+      <rect width="3" height="56" rx="1.5" fill="#26a269"/>
+      <text x="16" y="20" class="role-label" fill="#26a269">ASSISTANT</text>
+      <text x="16" y="40" class="msg-text">Done! Config updated with Option&lt;T&gt; defaults, all tests pass.</text>
+    </g>
+
+    <!-- ================================================================ -->
+    <!-- RIGHT: UTILITY PANE (~27%) — AdwOverlaySplitView sidebar         -->
+    <!-- ================================================================ -->
+    <rect x="877" y="47" width="323" height="803" fill="#ffffff"/>
+
+    <!-- Pane header -->
+    <rect x="877" y="47" width="323" height="42" fill="#fdf6ee"/>
+    <line x1="877" y1="89" x2="1200" y2="89" stroke="#e8e6e3" stroke-width="1"/>
+    <text x="893" y="73" font-size="13" font-weight="700" fill="#e66100">&#x1F4C4; Read</text>
+    <!-- Status pill -->
+    <rect x="970" y="60" width="52" height="18" rx="9" fill="#daf5e7"/>
+    <text x="982" y="73" font-size="9" font-weight="500" fill="#26a269">Success</text>
+    <!-- Duration -->
+    <rect x="1028" y="60" width="44" height="18" rx="9" fill="#f0f0f0"/>
+    <text x="1038" y="73" font-size="9" fill="#77767b">120ms</text>
+
+    <!-- Input section -->
+    <g transform="translate(893, 101)">
+      <text x="0" y="14" class="section-label">INPUT</text>
+      <rect x="0" y="22" width="291" height="28" rx="6" fill="#f6f5f4"/>
+      <text x="10" y="40" font-size="11" fill="#1e1e1e" class="mono">file_path: src/config.rs</text>
+    </g>
+
+    <!-- Output section -->
+    <g transform="translate(893, 165)">
+      <text x="0" y="14" class="section-label">OUTPUT</text>
+
+      <!-- Code block -->
+      <rect x="0" y="22" width="291" height="420" rx="8" fill="#2d2d2d"/>
+      <!-- Code header -->
+      <rect x="0" y="22" width="291" height="24" rx="8" fill="#383838"/>
+      <rect x="0" y="34" width="291" height="12" fill="#383838"/>
+      <text x="12" y="39" font-size="10" fill="#9a9996" class="mono">src/config.rs</text>
+      <rect x="249" y="25" width="32" height="16" rx="4" fill="#4a4a4a"/>
+      <text x="256" y="37" font-size="8" fill="#c0bfbc">Copy</text>
+
+      <!-- Code lines -->
+      <text x="10" y="62" font-size="10" class="mono" fill="#6e6e6e"> 1</text>
+      <text x="30" y="62" font-size="10" class="mono" fill="#dcdcdc"><tspan fill="#c678dd">use</tspan> serde::{Deserialize, Serialize};</text>
+
+      <text x="10" y="78" font-size="10" class="mono" fill="#6e6e6e"> 2</text>
+      <text x="30" y="78" font-size="10" class="mono" fill="#dcdcdc"><tspan fill="#c678dd">use</tspan> std::path::PathBuf;</text>
+
+      <text x="10" y="94" font-size="10" class="mono" fill="#6e6e6e"> 3</text>
+
+      <text x="10" y="110" font-size="10" class="mono" fill="#6e6e6e"> 4</text>
+      <text x="30" y="110" font-size="10" class="mono" fill="#dcdcdc">#[<tspan fill="#e5c07b">derive</tspan>(Deserialize, Serialize)]</text>
+
+      <text x="10" y="126" font-size="10" class="mono" fill="#6e6e6e"> 5</text>
+      <text x="30" y="126" font-size="10" class="mono" fill="#dcdcdc"><tspan fill="#c678dd">pub struct</tspan> <tspan fill="#e5c07b">AppConfig</tspan> {</text>
+
+      <text x="10" y="142" font-size="10" class="mono" fill="#6e6e6e"> 6</text>
+      <text x="30" y="142" font-size="10" class="mono" fill="#dcdcdc">    <tspan fill="#c678dd">pub</tspan> database_path: <tspan fill="#e5c07b">PathBuf</tspan>,</text>
+
+      <text x="10" y="158" font-size="10" class="mono" fill="#6e6e6e"> 7</text>
+      <text x="30" y="158" font-size="10" class="mono" fill="#dcdcdc">    <tspan fill="#c678dd">pub</tspan> theme: <tspan fill="#e5c07b">String</tspan>,</text>
+
+      <text x="10" y="174" font-size="10" class="mono" fill="#6e6e6e"> 8</text>
+      <text x="30" y="174" font-size="10" class="mono" fill="#dcdcdc">    <tspan fill="#c678dd">pub</tspan> max_sessions: <tspan fill="#e5c07b">usize</tspan>,</text>
+
+      <text x="10" y="190" font-size="10" class="mono" fill="#6e6e6e"> 9</text>
+      <text x="30" y="190" font-size="10" class="mono" fill="#e06c75">    // BUG: panics if missing</text>
+
+      <text x="10" y="206" font-size="10" class="mono" fill="#6e6e6e">10</text>
+      <text x="30" y="206" font-size="10" class="mono" fill="#dcdcdc">    <tspan fill="#c678dd">pub</tspan> api_key: <tspan fill="#e5c07b">String</tspan>,</text>
+
+      <text x="10" y="222" font-size="10" class="mono" fill="#6e6e6e">11</text>
+      <text x="30" y="222" font-size="10" class="mono" fill="#dcdcdc">}</text>
+
+      <text x="10" y="238" font-size="10" class="mono" fill="#6e6e6e">12</text>
+
+      <text x="10" y="254" font-size="10" class="mono" fill="#6e6e6e">13</text>
+      <text x="30" y="254" font-size="10" class="mono" fill="#dcdcdc"><tspan fill="#c678dd">impl</tspan> <tspan fill="#e5c07b">AppConfig</tspan> {</text>
+
+      <text x="10" y="270" font-size="10" class="mono" fill="#6e6e6e">14</text>
+      <text x="30" y="270" font-size="10" class="mono" fill="#dcdcdc">    <tspan fill="#c678dd">pub fn</tspan> <tspan fill="#61afef">load</tspan>() -&gt; <tspan fill="#e5c07b">Self</tspan> {</text>
+
+      <text x="10" y="286" font-size="10" class="mono" fill="#6e6e6e">15</text>
+      <text x="30" y="286" font-size="10" class="mono" fill="#dcdcdc">        <tspan fill="#c678dd">let</tspan> path = dirs::config_dir()</text>
+
+      <text x="10" y="302" font-size="10" class="mono" fill="#6e6e6e">16</text>
+      <text x="30" y="302" font-size="10" class="mono" fill="#dcdcdc">            .unwrap()</text>
+
+      <text x="10" y="318" font-size="10" class="mono" fill="#6e6e6e">17</text>
+      <text x="30" y="318" font-size="10" class="mono" fill="#dcdcdc">            .join(<tspan fill="#98c379">"myapp.toml"</tspan>);</text>
+
+      <text x="10" y="334" font-size="10" class="mono" fill="#6e6e6e">18</text>
+      <text x="30" y="334" font-size="10" class="mono" fill="#dcdcdc">        <tspan fill="#c678dd">let</tspan> data = std::fs::read_to_string(path)</text>
+
+      <text x="10" y="350" font-size="10" class="mono" fill="#e06c75">19</text>
+      <text x="30" y="350" font-size="10" class="mono" fill="#e06c75">            .unwrap(); // panics here</text>
+
+      <text x="10" y="366" font-size="10" class="mono" fill="#6e6e6e">20</text>
+      <text x="30" y="366" font-size="10" class="mono" fill="#dcdcdc">        toml::from_str(&amp;data).unwrap()</text>
+
+      <text x="10" y="382" font-size="10" class="mono" fill="#6e6e6e">21</text>
+      <text x="30" y="382" font-size="10" class="mono" fill="#dcdcdc">    }</text>
+
+      <text x="10" y="398" font-size="10" class="mono" fill="#6e6e6e">22</text>
+      <text x="30" y="398" font-size="10" class="mono" fill="#dcdcdc">}</text>
+
+      <!-- Scroll indicator -->
+      <rect x="284" y="48" width="3" height="388" fill="transparent"/>
+      <rect x="284" y="48" width="3" height="388" fill="#5a5a5a" rx="1.5" opacity="0.4"/>
+    </g>
+
+    <!-- Bottom navigation: session tool calls -->
+    <line x1="893" y1="616" x2="1184" y2="616" stroke="#e8e6e3" stroke-width="1"/>
+    <text x="893" y="636" class="section-label">SESSION TOOL CALLS</text>
+
+    <g transform="translate(893, 646)">
+      <!-- Read (current/selected) -->
+      <rect width="291" height="30" rx="6" fill="#fde3c8"/>
+      <text x="10" y="20" font-size="11">&#x1F4C4;</text>
+      <text x="30" y="21" font-size="11" fill="#e66100" font-weight="600">Read</text>
+      <text x="66" y="21" font-size="11" fill="#77767b">src/config.rs</text>
+
+      <!-- Bash -->
+      <rect y="34" width="291" height="30" rx="6" fill="#f6f5f4"/>
+      <text x="10" y="54" font-size="11">&#x2699;&#xFE0F;</text>
+      <text x="30" y="55" font-size="11" fill="#1e1e1e" font-weight="500">Bash</text>
+      <text x="66" y="55" font-size="11" fill="#77767b">cargo test</text>
+
+      <!-- Edit -->
+      <rect y="68" width="291" height="30" rx="6" fill="#f6f5f4"/>
+      <text x="10" y="88" font-size="11">&#x270F;&#xFE0F;</text>
+      <text x="30" y="89" font-size="11" fill="#1e1e1e" font-weight="500">Edit</text>
+      <text x="66" y="89" font-size="11" fill="#77767b">src/config.rs:42</text>
+
+      <!-- Task (subagent) -->
+      <rect y="102" width="291" height="30" rx="6" fill="#f6f5f4"/>
+      <text x="10" y="122" font-size="11">&#x1F500;</text>
+      <text x="30" y="123" font-size="11" fill="#613583" font-weight="500">Task</text>
+      <text x="66" y="123" font-size="11" fill="#77767b">Code review</text>
+      <text x="280" y="123" font-size="11" fill="#3584e4" text-anchor="end">&#x203A;</text>
+    </g>
+
+    <!-- Keyboard hint -->
+    <text x="1038" y="810" text-anchor="middle" font-size="9" fill="#9a9996">&#x2191;&#x2193; navigate  |  Click transcript to select</text>
+  </g>
+
+  <!-- ===== ANNOTATION LABEL ===== -->
+  <rect x="330" y="832" width="540" height="18" fill="#3584e4" rx="6" opacity="0.9"/>
+  <text x="600" y="845" font-size="11" font-weight="600" fill="#ffffff" text-anchor="middle">DESIGN F: Utility Pane (wide) -- AdwOverlaySplitView side-by-side, pane shows selected tool</text>
+</svg>
