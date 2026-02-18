@@ -505,3 +505,123 @@ pub fn insert_transcript_item(conn: &Connection, item: &TranscriptItem) -> Resul
     .context("Failed to insert transcript item")?;
     Ok(())
 }
+
+/// Load a single tool call by session_id and id.
+pub fn load_tool_call(
+    db_path: &Path,
+    session_id: &str,
+    tool_call_id: &str,
+) -> Result<Option<ToolCall>> {
+    if !db_path.exists() {
+        return Ok(None);
+    }
+    let db = Connection::open(db_path).context("Failed to open database")?;
+    let mut stmt = db.prepare(
+        "SELECT id, session_id, subagent_id, tool_name, status, title, summary,
+                input_json, output_text, error_text, started_at, ended_at,
+                duration_ms, parser_call_id
+         FROM tool_calls
+         WHERE session_id = ?1 AND id = ?2",
+    )?;
+    let mut rows = stmt
+        .query(rusqlite::params![session_id, tool_call_id])
+        .context("Failed to query tool call")?;
+    if let Some(row) = rows.next()? {
+        let status_str: String = row.get(4)?;
+        Ok(Some(ToolCall {
+            id: row.get(0)?,
+            session_id: row.get(1)?,
+            subagent_id: row.get(2)?,
+            tool_name: row.get(3)?,
+            status: ToolCallStatus::from_storage(&status_str),
+            title: row.get(5)?,
+            summary: row.get(6)?,
+            input_json: row.get(7)?,
+            output_text: row.get(8)?,
+            error_text: row.get(9)?,
+            started_at: row.get(10)?,
+            ended_at: row.get(11)?,
+            duration_ms: row.get(12)?,
+            parser_call_id: row.get(13)?,
+        }))
+    } else {
+        Ok(None)
+    }
+}
+
+/// Load a single subagent by session_id and id.
+pub fn load_subagent(
+    db_path: &Path,
+    session_id: &str,
+    subagent_id: &str,
+) -> Result<Option<Subagent>> {
+    if !db_path.exists() {
+        return Ok(None);
+    }
+    let db = Connection::open(db_path).context("Failed to open database")?;
+    let mut stmt = db.prepare(
+        "SELECT id, session_id, title, prompt, result_summary, child_session_id, parser_ref
+         FROM subagents
+         WHERE session_id = ?1 AND id = ?2",
+    )?;
+    let mut rows = stmt
+        .query(rusqlite::params![session_id, subagent_id])
+        .context("Failed to query subagent")?;
+    if let Some(row) = rows.next()? {
+        Ok(Some(Subagent {
+            id: row.get(0)?,
+            session_id: row.get(1)?,
+            title: row.get(2)?,
+            prompt: row.get(3)?,
+            result_summary: row.get(4)?,
+            child_session_id: row.get(5)?,
+            parser_ref: row.get(6)?,
+        }))
+    } else {
+        Ok(None)
+    }
+}
+
+/// Load all tool calls owned by a subagent, ordered by rowid (insertion order).
+pub fn load_tool_calls_for_subagent(
+    db_path: &Path,
+    session_id: &str,
+    subagent_id: &str,
+) -> Result<Vec<ToolCall>> {
+    if !db_path.exists() {
+        return Ok(Vec::new());
+    }
+    let db = Connection::open(db_path).context("Failed to open database")?;
+    let mut stmt = db.prepare(
+        "SELECT id, session_id, subagent_id, tool_name, status, title, summary,
+                input_json, output_text, error_text, started_at, ended_at,
+                duration_ms, parser_call_id
+         FROM tool_calls
+         WHERE session_id = ?1 AND subagent_id = ?2
+         ORDER BY rowid",
+    )?;
+    let mut rows = stmt
+        .query(rusqlite::params![session_id, subagent_id])
+        .context("Failed to query subagent tool calls")?;
+    let mut tools = Vec::new();
+    while let Some(row) = rows.next()? {
+        let status_str: String = row.get(4)?;
+        tools.push(ToolCall {
+            id: row.get(0)?,
+            session_id: row.get(1)?,
+            subagent_id: row.get(2)?,
+            tool_name: row.get(3)?,
+            status: ToolCallStatus::from_storage(&status_str),
+            title: row.get(5)?,
+            summary: row.get(6)?,
+            input_json: row.get(7)?,
+            output_text: row.get(8)?,
+            error_text: row.get(9)?,
+            started_at: row.get(10)?,
+            ended_at: row.get(11)?,
+            duration_ms: row.get(12)?,
+            parser_call_id: row.get(13)?,
+        });
+    }
+    Ok(tools)
+}
