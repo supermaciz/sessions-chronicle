@@ -264,9 +264,11 @@ Suggested columns:
 - `started_at INTEGER NULL`
 - `ended_at INTEGER NULL`
 - `duration_ms INTEGER NULL`
-- `parser_call_id TEXT NULL` (tool-specific correlation id)
+- `parser_call_id TEXT NULL` (tool-specific correlation id; used by Codex for `call_id` begin/end pairing and by Mistral Vibe for `tool_calls[].id`; `NULL` for Claude and OpenCode)
 
 Primary key: `(session_id, id)`.
+
+`subagent_id` is `NULL` for top-level tool calls; set to the parent subagent's `id` for tool calls owned by a subagent.
 
 Indexes:
 
@@ -366,7 +368,10 @@ Pagination applies to `transcript_items` count (not just messages). A session wi
 - Remove `AppMsg::ResumeFromPane`.
 - Add "Resume in Terminal" `GtkButton` to `AdwHeaderBar`, visible only when `detail_visible == true`. Wire to existing `AppMsg::ResumeSession` using `active_session`.
 - Add `ToolInspectorPane` controller to the existing `pane_stack`.
+  The stack child name for `ToolInspector` mode is `"tool-inspector"`; update `UtilityPaneMode::stack_child_name()` to return it.
 - Add `set_sidebar_position()` calls in `transition_to_detail()` (→ `End`) and `transition_to_list()` (→ `Start`).
+  Call `widgets.overlay_split.set_sidebar_position(...)` inside `update_with_view`; the pure transition helpers remain for unit-testable state logic.
+- `transition_to_detail()` sets `pane_open = false`; the pane opens only when the user triggers an inspect action.
 - Keep F9 shortcut and toggle button behavior unchanged.
 - Set main app `AdwNavigationView` `pop_on_escape = false`; route Esc using the priority contract defined above.
 - Route transcript selection events into pane mode changes and inspector updates.
@@ -403,8 +408,15 @@ enum TranscriptItemInit {
   - tool identity, status, duration
   - input/output/error blocks (monospace)
   - sibling call navigation list
-- Expose outputs for navigation intents (`open child session`, `back to parent session`, sibling selection).
-- Show an explicit empty/placeholder state when no inspector selection exists.
+- Expose outputs for navigation intents:
+  - `ToolInspectorPaneOutput::OpenChildSession(child_session_id)`
+  - `ToolInspectorPaneOutput::ReturnToParentSession`
+  - `ToolInspectorPaneOutput::NavigateToSiblingTool(tool_call_id)`
+- Show "Open full session" only when the inspected subagent has a non-null `child_session_id`.
+  Hide the button in child-session context (when a one-hop parent return context is already active)
+  to prevent recursive child-session navigation at the UI layer.
+- Show an explicit empty/placeholder state when no inspector selection exists
+  (centered label: "Select a tool call or subagent to inspect").
 
 ### Styling (`data/resources/style.css`)
 
