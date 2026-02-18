@@ -915,6 +915,8 @@ impl SimpleComponent for App {
                         }
                         Err(err) => {
                             tracing::error!("Failed to load parent session: {}", err);
+                            self.active_session = None;
+                            self.session_detail.emit(SessionDetailMsg::Clear);
                         }
                     }
                 }
@@ -1155,6 +1157,15 @@ mod tests {
     #[test]
     fn suppressed_pop_signal_is_consumed_without_state_sync() {
         let (should_sync, suppress_next) = detail_pop_sync_decision(true, true);
+        assert!(!should_sync);
+        assert!(!suppress_next);
+    }
+
+    #[test]
+    fn suppressed_pop_signal_is_consumed_even_when_detail_already_hidden() {
+        // Covers the edge case where the suppress flag is set but detail_visible
+        // has already been cleared by another path before the popped signal fires.
+        let (should_sync, suppress_next) = detail_pop_sync_decision(true, false);
         assert!(!should_sync);
         assert!(!suppress_next);
     }

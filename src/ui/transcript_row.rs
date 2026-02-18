@@ -9,6 +9,7 @@ use relm4::gtk;
 
 use crate::database::load_message_full_content;
 use crate::models::{MessagePreview, Role, ToolCallStatus};
+use crate::ui::format::{format_duration_ms, tool_status_css_class, tool_status_label};
 use crate::ui::highlight;
 use crate::ui::markdown;
 
@@ -169,36 +170,6 @@ fn render_content(
     }
 
     match_count
-}
-
-fn format_duration(ms: i64) -> String {
-    if ms < 1000 {
-        format!("{}ms", ms)
-    } else if ms < 60_000 {
-        format!("{:.1}s", ms as f64 / 1000.0)
-    } else {
-        format!("{}m {}s", ms / 60_000, (ms % 60_000) / 1000)
-    }
-}
-
-fn tool_status_label(status: ToolCallStatus) -> &'static str {
-    match status {
-        ToolCallStatus::Pending => "pending",
-        ToolCallStatus::Running => "running",
-        ToolCallStatus::Completed => "done",
-        ToolCallStatus::Error => "error",
-        ToolCallStatus::Unknown => "unknown",
-    }
-}
-
-fn tool_status_css_class(status: ToolCallStatus) -> &'static str {
-    match status {
-        ToolCallStatus::Completed => "status-completed",
-        ToolCallStatus::Error => "status-error",
-        ToolCallStatus::Running => "status-running",
-        ToolCallStatus::Pending => "status-pending",
-        ToolCallStatus::Unknown => "status-unknown",
-    }
 }
 
 impl FactoryComponent for TranscriptRow {
@@ -542,7 +513,7 @@ impl TranscriptRow {
 
         // Duration
         if let Some(ms) = self.tool_duration_ms {
-            let dur_label = gtk::Label::new(Some(&format_duration(ms)));
+            let dur_label = gtk::Label::new(Some(&format_duration_ms(ms)));
             dur_label.add_css_class("caption");
             dur_label.add_css_class("dim-label");
             row.append(&dur_label);

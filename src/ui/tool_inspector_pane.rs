@@ -7,6 +7,7 @@ use relm4::{ComponentParts, ComponentSender, RelmWidgetExt, SimpleComponent, adw
 
 use crate::database::{load_subagent, load_tool_call, load_tool_calls_for_subagent};
 use crate::models::{Subagent, ToolCall, ToolCallStatus};
+use crate::ui::format::{format_duration_ms, status_icon_name};
 
 // ── Selection state ───────────────────────────────────────────────────────────
 
@@ -134,9 +135,20 @@ impl SimpleComponent for ToolInspectorPane {
         let nav_view = adw::NavigationView::new();
         nav_view.set_vexpand(true);
         nav_view.set_hexpand(true);
-        // Inspector nav pop-on-escape is left at its default (true) so that the
-        // drill-down page can be dismissed natively; the app-level Esc contract
-        // handles the outer pane close / back-navigation priority (Phase 5).
+        // `pop_on_escape` is left at its default (true) so that the drill-down
+        // page can be dismissed natively via the Escape key.
+        //
+        // GTK4 event routing: the inner AdwNavigationView uses a widget-scoped
+        // GtkShortcutController (GTK_SHORTCUT_SCOPE_MANAGED).  The app-level
+        // `EscapeAction` accelerator is registered on the GtkApplication and
+        // therefore also has global scope.  When both could fire on the same
+        // Escape keypress, GTK resolves the conflict in favour of the more
+        // specific, widget-level handler — the inner nav pops and the event is
+        // consumed before the window action fires.
+        //
+        // The app-level Esc handler (`AppMsg::Escape`) therefore only runs when
+        // the drill-down page is NOT currently pushed, giving the correct
+        // priority chain: drill-down pop → close inspector pane → navigate back.
 
         // Sync drilled_tool state when the user uses the native back button.
         let popped_sender = sender.input_sender().clone();
@@ -641,26 +653,5 @@ fn format_status_duration(status: ToolCallStatus, duration_ms: Option<i64>) -> S
     match duration_ms {
         Some(ms) if ms > 0 => format!("{}  •  {}", status_str, format_duration_ms(ms)),
         _ => status_str.to_string(),
-    }
-}
-
-fn format_duration_ms(ms: i64) -> String {
-    if ms < 1_000 {
-        format!("{}ms", ms)
-    } else if ms < 60_000 {
-        format!("{:.1}s", ms as f64 / 1_000.0)
-    } else {
-        let secs = ms / 1_000;
-        format!("{}m {}s", secs / 60, secs % 60)
-    }
-}
-
-fn status_icon_name(status: ToolCallStatus) -> &'static str {
-    match status {
-        ToolCallStatus::Completed => "emblem-ok-symbolic",
-        ToolCallStatus::Error => "dialog-error-symbolic",
-        ToolCallStatus::Running => "emblem-synchronizing-symbolic",
-        ToolCallStatus::Pending => "content-loading-symbolic",
-        ToolCallStatus::Unknown => "dialog-question-symbolic",
     }
 }

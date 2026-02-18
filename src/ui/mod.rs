@@ -1,7 +1,6 @@
-pub mod detail_context_pane;
+pub mod format;
 pub mod highlight;
 pub mod markdown;
-pub mod message_row;
 pub mod modals;
 pub mod session_detail;
 pub mod session_list;
