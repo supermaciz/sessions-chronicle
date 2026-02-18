@@ -1,8 +1,8 @@
 # Tool Calls and Subagents Utility Pane Design
 
-**Status:** Proposed
-**Date:** 2026-02-18
-**Based on:** [Tool Calls and Subagents - UI Exploration](2026-02-16-tool-calls-and-subagents-exploration.md) proposal F
+**Status:** Proposed  
+**Date:** 2026-02-18  
+**Based on:** [Tool Calls and Subagents - UI Exploration](2026-02-16-tool-calls-and-subagents-exploration.md) proposal F  
 **Supersedes (for phase 6):** [Tool Calls and Subagents Display](2026-01-30-tool-calls-and-subagents-design.md)
 
 ## Goal
@@ -19,6 +19,7 @@ This design keeps proposal F's core direction and resolves ambiguity identified 
 ## References
 
 - [UI exploration proposal F](2026-02-16-tool-calls-and-subagents-exploration.md)
+- [Session format analysis (Claude/Codex/OpenCode/Mistral)](../SESSION_FORMAT_ANALYSIS.md)
 - [Current app utility pane design](2026-02-08-session-detail-utility-pane-design.md)
 - [GNOME HIG: Utility Panes](https://developer.gnome.org/hig/patterns/containers/utility-panes.html)
 - [GNOME HIG: Dialogs](https://developer.gnome.org/hig/patterns/feedback/dialogs.html)
@@ -149,6 +150,8 @@ Adopt option A.
 - `Subagent(subagent_id)`
 - `SubagentTool(subagent_id, tool_call_id)`
 
+IDs in `InspectorSelection` are resolved in the context of the active `session_id`.
+
 ## Sidebar Position Strategy
 
 The sidebar position changes dynamically with view transitions:
@@ -173,10 +176,21 @@ briefly set `show_sidebar: false` before changing position, then restore visibil
 | Click inspect button (`view-reveal-symbolic`) on tool row | Select tool call; switch pane to `ToolInspector`; open pane if hidden |
 | Click inspect button on subagent row | Select subagent overview; switch pane to `ToolInspector`; open pane if hidden |
 | Click `go-next-symbolic` on inner tool row (inside expanded subagent) | Push detail page in inspector nav stack |
+| Click "Open full session" on a subagent with `child_session_id` | Open child session in detail view (same app detail page), and enable one-hop return to parent session |
+| Click "Back to parent session" (shown after child-session jump) | Return to the originating parent session and clear child-session return context |
 | Click "Resume in Terminal" button in header bar | Resume session in terminal (existing pipeline) |
 | Press F9 | Toggle pane visibility; keep current mode and selection |
-| Press Esc in inspector (overlay mode) | Pop inspector nav page if possible; otherwise close pane |
+| Press Esc in detail view | Pop inspector nav page if possible; otherwise close inspector pane if open; otherwise navigate back to list |
 | Navigate back to session list | Clear inspector selection; switch pane to `Filters`; change sidebar position to `Start` |
+
+### Esc ownership and priority
+
+- Set main app `AdwNavigationView` (`App` level) to `pop_on_escape = false` to avoid conflicts with inspector-level escape handling.
+- Handle Esc with explicit priority while in detail view:
+  1. if inspector nav stack depth > 1, pop inspector page;
+  2. else if utility pane is visible, close pane;
+  3. else trigger normal detail back navigation to list.
+- Keep inspector `AdwNavigationView` `pop_on_escape = true` so drill-down pages feel native.
 
 ### Inspect Action Widget
 
@@ -197,6 +211,13 @@ Notes:
 ## Data Model and Persistence
 
 Search remains backed by `messages` FTS5. Tool/subagent rendering uses dedicated normalized tables.
+
+### Schema policy for current dev phase
+
+- Phase 6 does **not** require in-place DB migrations.
+- On incompatible schema changes, delete the app DB file and rebuild it by reindexing session sources.
+- Keep schema creation idempotent (`CREATE TABLE IF NOT EXISTS`, additive indexes) so a clean rebuild path remains deterministic.
+- Before PRs, verify a full rebuild from fixtures and real session sources succeeds.
 
 ### Sessions table additions
 
@@ -226,7 +247,7 @@ Primary key: `(session_id, item_index)`.
 
 Suggested columns:
 
-- `id TEXT PRIMARY KEY`
+- `id TEXT NOT NULL` (session-scoped tool-call identifier)
 - `session_id TEXT NOT NULL`
 - `subagent_id TEXT NULL`
 - `tool_name TEXT NOT NULL`
@@ -241,6 +262,8 @@ Suggested columns:
 - `duration_ms INTEGER NULL`
 - `parser_call_id TEXT NULL` (tool-specific correlation id)
 
+Primary key: `(session_id, id)`.
+
 Indexes:
 
 - `(session_id, subagent_id)`
@@ -250,7 +273,7 @@ Indexes:
 
 Suggested columns:
 
-- `id TEXT PRIMARY KEY`
+- `id TEXT NOT NULL` (session-scoped subagent identifier)
 - `session_id TEXT NOT NULL`
 - `title TEXT NOT NULL`
 - `prompt TEXT NULL`
@@ -258,7 +281,12 @@ Suggested columns:
 - `child_session_id TEXT NULL`
 - `parser_ref TEXT NULL`
 
-Index: `(session_id)`.
+Primary key: `(session_id, id)`.
+
+Indexes:
+
+- `(session_id)`
+- `(session_id, child_session_id)`
 
 ### Transcript loading query
 
@@ -273,14 +301,23 @@ SELECT ti.item_index, ti.kind, ti.message_index, ti.tool_call_id, ti.subagent_id
 FROM transcript_items ti
 LEFT JOIN messages m ON ti.session_id = m.session_id
                     AND ti.message_index = CAST(m.message_index AS INTEGER)
-LEFT JOIN tool_calls tc ON ti.tool_call_id = tc.id
-LEFT JOIN subagents sa ON ti.subagent_id = sa.id
+LEFT JOIN tool_calls tc ON ti.session_id = tc.session_id
+                       AND ti.tool_call_id = tc.id
+LEFT JOIN subagents sa ON ti.session_id = sa.session_id
+                      AND ti.subagent_id = sa.id
 WHERE ti.session_id = ?1
 ORDER BY ti.item_index
 LIMIT ?3 OFFSET ?4
 ```
 
 Pagination applies to `transcript_items` count (not just messages). A session with 200 messages + 150 tool calls = 350 items; page size stays at 200 items per page.
+
+### Search behavior in transcript (v1)
+
+- Existing FTS and highlight/navigation remain **message-based**.
+- Tool-call and subagent rows do not participate in match counts for v1.
+- Pagination is transcript-item based, while match navigation targets message rows only.
+- Search ranking/indexing for tool output remains out of scope for this phase.
 
 ## Parser Extraction Rules
 
@@ -327,7 +364,9 @@ Pagination applies to `transcript_items` count (not just messages). A session wi
 - Add `ToolInspectorPane` controller to the existing `pane_stack`.
 - Add `set_sidebar_position()` calls in `transition_to_detail()` (→ `End`) and `transition_to_list()` (→ `Start`).
 - Keep F9 shortcut and toggle button behavior unchanged.
+- Set main app `AdwNavigationView` `pop_on_escape = false`; route Esc using the priority contract defined above.
 - Route transcript selection events into pane mode changes and inspector updates.
+- Add one-hop child-session return context in `App` for subagent "Open full session" actions (`child -> parent` only).
 
 ### Session detail transcript (`src/ui/session_detail.rs`)
 
@@ -360,7 +399,8 @@ enum TranscriptItemInit {
   - tool identity, status, duration
   - input/output/error blocks (monospace)
   - sibling call navigation list
-- Expose outputs for navigation intents (e.g., open child session).
+- Expose outputs for navigation intents (`open child session`, `back to parent session`, sibling selection).
+- Show an explicit empty/placeholder state when no inspector selection exists.
 
 ### Styling (`data/resources/style.css`)
 
@@ -383,7 +423,8 @@ Add classes for:
 4. Inspect action emits `TranscriptRowOutput` → forwarded to `AppMsg`.
 5. `App` switches pane mode to `ToolInspector`, changes sidebar position to `End`, ensures pane visibility, and forwards selection to inspector pane.
 6. Inspector pane can request navigation to sibling calls or child sessions.
-7. "Resume in Terminal" is handled by header bar button → `AppMsg::ResumeSession` → existing terminal pipeline.
+7. When opening a child session from the inspector, `App` stores one-hop parent return context and replaces the active detail session with the child session.
+8. "Resume in Terminal" is handled by header bar button → `AppMsg::ResumeSession` → existing terminal pipeline.
 
 ## Performance and Safety
 
@@ -397,7 +438,8 @@ Add classes for:
 
 ### Phase 1 - Schema, models, and fixtures
 
-- Add session columns and new artifact tables via migration.
+- Add session columns and new artifact tables in schema initialization code.
+- Adopt dev-phase schema policy: on incompatible schema updates, delete DB and reindex (no in-place migration path required).
 - Add model structs for transcript items, tool calls, and subagents.
 - Update load/query APIs with the LEFT JOIN transcript query.
 - Create test fixtures with tool calls and subagents for all 4 parser formats, so phases 2-3 can develop against real data shapes.
@@ -421,7 +463,7 @@ Add classes for:
 ### Phase 4 - Inspector pane and drill-down
 
 - Build `ToolInspectorPane` with navigation stack.
-- Add subagent inner-tool drill-down and optional child-session open action.
+- Add subagent inner-tool drill-down and child-session open/return actions.
 
 ### Phase 5 - Polish and grouping heuristic
 
@@ -435,7 +477,7 @@ Add classes for:
 ### Automated
 
 - Unit tests per parser for tool extraction and correlation edge cases.
-- DB tests for schema migration and ordered transcript retrieval.
+- DB tests for schema initialization/rebuild and ordered transcript retrieval.
 - UI component tests for row expansion and inspector routing where practical.
 
 ### Manual
@@ -447,7 +489,9 @@ Add classes for:
   - "Resume in Terminal" button in header bar,
   - split vs overlay adaptation,
   - inspect action semantics (separate from expand),
-  - subagent drill-down navigation.
+  - Esc priority behavior (inspector pop → pane close → detail back),
+  - subagent drill-down navigation,
+  - child-session open + one-hop return to parent session.
 
 ### CI parity before PR
 
@@ -463,6 +507,8 @@ Add classes for:
 - "Resume in Terminal" works from header bar button (no regression from removing `DetailContextPane`).
 - Subagent rows support drill-down to inner tool details.
 - OpenCode child sessions are linkable without polluting default session list.
+- Child-session navigation from inspector supports deterministic one-hop return to parent session.
+- Search highlight/navigation continues to work for message rows without regression while transcript pagination is item-based.
 - No regressions to existing search, list navigation, or session resume behavior.
 
 ## Out of Scope (v1)
