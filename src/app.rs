@@ -388,12 +388,16 @@ impl SimpleComponent for App {
             .build();
         nav_view.add(&session_list_page);
 
-        // Create detail page (but don't push yet)
+        // Register the detail page with the nav_view permanently (add without pushing).
+        // This keeps the page parented to nav_view across push/pop cycles so it can
+        // be safely re-pushed after the user navigates back.  Transient push()-only
+        // pages are unparented on pop(), causing a GTK assertion on the next push().
         let detail_page = adw::NavigationPage::builder()
             .title("Session")
             .tag("detail")
             .child(session_detail.widget())
             .build();
+        nav_view.add(&detail_page);
 
         // Connect popped signal to reset detail_visible when user navigates back
         let popped_sender = sender.input_sender().clone();
