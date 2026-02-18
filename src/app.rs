@@ -81,6 +81,7 @@ pub(super) struct App {
     preferences_dialog: Controller<PreferencesDialog>,
     nav_view: adw::NavigationView,
     detail_page: adw::NavigationPage,
+    suppress_next_detail_pop_sync: bool,
     pane_stack: gtk::Stack,
     toast_overlay: adw::ToastOverlay,
     db_path: PathBuf,
@@ -96,6 +97,9 @@ pub(super) enum AppMsg {
     SearchQueryChanged(String),
     FiltersChanged(Vec<Tool>),
     SessionSelected(String),
+    /// User-requested navigation back from detail to list.
+    RequestNavigateBack,
+    /// Detail page popped signal from `NavigationView`.
     NavigateBack,
     ResumeSession(String, Tool),
     /// Resume the currently active session (triggered from the header bar button).
@@ -182,7 +186,7 @@ impl SimpleComponent for App {
                             set_tooltip_text: Some("Go back"),
                             #[watch]
                             set_visible: model.detail_visible,
-                            connect_clicked => AppMsg::NavigateBack,
+                            connect_clicked => AppMsg::RequestNavigateBack,
                         },
 
                         #[name = "search_toggle"]
@@ -399,7 +403,7 @@ impl SimpleComponent for App {
             .build();
         nav_view.add(&detail_page);
 
-        // Connect popped signal to reset detail_visible when user navigates back
+        // Sync state when detail page is popped natively (e.g. gestures).
         let popped_sender = sender.input_sender().clone();
         nav_view.connect_popped(move |_, page| {
             if page.tag().as_deref() == Some("detail") {
@@ -430,6 +434,7 @@ impl SimpleComponent for App {
             preferences_dialog,
             nav_view: nav_view.clone(),
             detail_page: detail_page.clone(),
+            suppress_next_detail_pop_sync: false,
             pane_stack,
             toast_overlay: adw::ToastOverlay::new(),
             db_path,
@@ -652,24 +657,24 @@ impl SimpleComponent for App {
                 transition_to_detail(&mut self.pane_mode, &mut self.pane_open);
                 self.apply_pane_stack_switch();
             }
-            AppMsg::NavigateBack => {
+            AppMsg::RequestNavigateBack => {
                 if self.detail_visible {
-                    self.detail_visible = false;
-                    if self
-                        .nav_view
-                        .visible_page()
-                        .and_then(|p| p.tag())
-                        .as_deref()
-                        == Some("detail")
-                    {
+                    let visible_page_tag = self.nav_view.visible_page().and_then(|p| p.tag());
+                    if visible_page_tag.as_deref() == Some("detail") {
+                        self.suppress_next_detail_pop_sync = true;
                         self.nav_view.pop();
                     }
-
-                    // Return to filter pane mode; clear child-session context.
-                    self.active_session = None;
-                    self.parent_session = None;
-                    transition_to_list(&mut self.pane_mode);
-                    self.apply_pane_stack_switch();
+                    self.transition_to_session_list_mode();
+                }
+            }
+            AppMsg::NavigateBack => {
+                let (should_sync, suppress_next) = detail_pop_sync_decision(
+                    self.suppress_next_detail_pop_sync,
+                    self.detail_visible,
+                );
+                self.suppress_next_detail_pop_sync = suppress_next;
+                if should_sync {
+                    self.transition_to_session_list_mode();
                 }
             }
             AppMsg::ShowPreferences => {
@@ -923,7 +928,7 @@ impl SimpleComponent for App {
                 {
                     self.pane_open = false;
                 } else if self.detail_visible {
-                    _sender.input(AppMsg::NavigateBack);
+                    _sender.input(AppMsg::RequestNavigateBack);
                 }
             }
         }
@@ -955,7 +960,25 @@ fn transition_to_list(pane_mode: &mut UtilityPaneMode) {
     *pane_mode = UtilityPaneMode::Filters;
 }
 
+fn detail_pop_sync_decision(suppress_next_pop_sync: bool, detail_visible: bool) -> (bool, bool) {
+    if suppress_next_pop_sync {
+        (false, false)
+    } else {
+        (detail_visible, false)
+    }
+}
+
 impl App {
+    /// Reset app state after leaving detail view.
+    fn transition_to_session_list_mode(&mut self) {
+        self.detail_visible = false;
+        self.active_session = None;
+        self.parent_session = None;
+        self.tool_inspector_pane.emit(ToolInspectorPaneMsg::Clear);
+        transition_to_list(&mut self.pane_mode);
+        self.apply_pane_stack_switch();
+    }
+
     /// Apply the current `pane_mode` to the Stack widget, with verification.
     fn apply_pane_stack_switch(&self) {
         let target = self.pane_mode.stack_child_name();
@@ -1127,5 +1150,26 @@ mod tests {
             UtilityPaneMode::ToolInspector.sidebar_position(),
             gtk::PackType::End
         );
+    }
+
+    #[test]
+    fn suppressed_pop_signal_is_consumed_without_state_sync() {
+        let (should_sync, suppress_next) = detail_pop_sync_decision(true, true);
+        assert!(!should_sync);
+        assert!(!suppress_next);
+    }
+
+    #[test]
+    fn unsuppressed_pop_signal_syncs_when_detail_visible() {
+        let (should_sync, suppress_next) = detail_pop_sync_decision(false, true);
+        assert!(should_sync);
+        assert!(!suppress_next);
+    }
+
+    #[test]
+    fn unsuppressed_pop_signal_is_ignored_when_detail_hidden() {
+        let (should_sync, suppress_next) = detail_pop_sync_decision(false, false);
+        assert!(!should_sync);
+        assert!(!suppress_next);
     }
 }

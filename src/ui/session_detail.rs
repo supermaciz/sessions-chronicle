@@ -418,7 +418,7 @@ impl SimpleComponent for SessionDetail {
             }
             SessionDetailMsg::Clear => {
                 self.session = None;
-                self.messages.guard().clear();
+                self.clear_messages_safely();
                 self.loaded_count = 0;
                 self.has_more_messages = false;
                 self.search_query = None;
@@ -531,8 +531,8 @@ impl SessionDetail {
                 self.loaded_count = rows.len();
                 let highlight = self.search_query.clone();
                 let db_path = self.db_path.clone();
+                self.clear_messages_safely();
                 let mut guard = self.messages.guard();
-                guard.clear();
                 for row in rows {
                     guard.push_back(transcript_item_init_from_row(
                         &row,
@@ -548,10 +548,36 @@ impl SessionDetail {
                     session_id,
                     err
                 );
-                self.messages.guard().clear();
+                self.clear_messages_safely();
                 self.loaded_count = 0;
                 self.has_more_messages = false;
             }
+        }
+    }
+
+    /// Clear transcript rows after releasing focus from any currently-focused row widget.
+    fn clear_messages_safely(&mut self) {
+        self.release_focus_from_transcript_if_needed();
+        self.messages.guard().clear();
+    }
+
+    /// Avoid GTK focus traversing a row subtree while it is being replaced.
+    fn release_focus_from_transcript_if_needed(&self) {
+        let messages_widget = self.messages.widget();
+        let Some(window) = messages_widget
+            .ancestor(gtk::Window::static_type())
+            .and_then(|w| w.downcast::<gtk::Window>().ok())
+        else {
+            return;
+        };
+
+        let Some(focus_widget) = gtk::prelude::GtkWindowExt::focus(&window) else {
+            return;
+        };
+
+        if focus_widget.is_ancestor(messages_widget) {
+            tracing::debug!("Clearing window focus before replacing transcript rows");
+            gtk::prelude::GtkWindowExt::set_focus(&window, Option::<&gtk::Widget>::None);
         }
     }
 
