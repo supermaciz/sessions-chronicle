@@ -186,11 +186,15 @@ briefly set `show_sidebar: false` before changing position, then restore visibil
 ### Esc ownership and priority
 
 - Set main app `AdwNavigationView` (`App` level) to `pop_on_escape = false` to avoid conflicts with inspector-level escape handling.
-- Handle Esc with explicit priority while in detail view:
-  1. if inspector nav stack depth > 1, pop inspector page;
+- Keep inspector `AdwNavigationView` `pop_on_escape = true` so drill-down pages feel native.
+  Level 1 (pop inspector page) is handled automatically by libadwaita when the stack depth > 1.
+- For levels 2 and 3, register a `RelmAction<EscapeAction>` using the existing action pattern:
+  `app.set_accelerators_for_action::<EscapeAction>(&["Escape"])`.
+  The action fires only when the inspector nav does not consume Esc (i.e. stack depth == 1).
+  In the action handler, send `AppMsg::Escape` and resolve priority in `update()`:
+  1. *(handled natively by inspector nav)* pop inspector page if stack depth > 1;
   2. else if utility pane is visible, close pane;
   3. else trigger normal detail back navigation to list.
-- Keep inspector `AdwNavigationView` `pop_on_escape = true` so drill-down pages feel native.
 
 ### Inspect Action Widget
 
