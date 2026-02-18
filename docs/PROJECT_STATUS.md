@@ -88,13 +88,13 @@
 - ✅ Load full content on demand from DB with caching
 - ✅ Toggle button replacing static "(content truncated)" badge
 
-**Phase 6: Tool Calls & Subagents** - Future ([design](plans/2026-01-30-tool-calls-and-subagents-design.md))
-- ⬜ Enrich Message model (tool_name, tool_input, parent_message_index)
-- ⬜ Enrich Session model (parent_session_id)
-- ⬜ Parse tool_use/tool_result in Claude Code & OpenCode
-- ⬜ Inline tool badges in transcript
-- ⬜ Tool detail panel (lateral, input/output display)
-- ⬜ Subagent tree view & navigation
+**Phase 6: Tool Calls & Subagents** - Planned ([design](plans/2026-02-18-tool-calls-and-subagents-utility-pane-design.md))
+- Legacy plan kept for history: [2026-01-30-tool-calls-and-subagents-design.md](plans/2026-01-30-tool-calls-and-subagents-design.md) (superseded)
+- ⬜ Add phase 6 schema for transcript artifacts (`parent_session_id`, `is_subagent`, `transcript_items`, `tool_calls`, `subagents`)
+- ⬜ Parse and correlate tool calls/results across Claude Code, Codex, OpenCode, and Mistral Vibe
+- ⬜ Add inline expander rows for tool calls and subagents in SessionDetail
+- ⬜ Add ToolInspector utility pane mode (non-modal inspection + subagent drill-down)
+- ⬜ Add tests for parser correlation, DB ordering, and inspector interaction flows
 
 **Next Features?** - Future
 - Syntax highlighting for code blocks (syntect)
@@ -342,6 +342,6 @@ cargo test
 
 ---
 
-**Last Updated**: 2026-02-16
+**Last Updated**: 2026-02-18
 **Current Phase**: Phase 6 — Tool Calls & Subagents
 **Next Milestone**: Phase 6 — Tool Calls & Subagents
