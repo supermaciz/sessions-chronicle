@@ -676,7 +676,10 @@ pub fn transcript_item_init_from_row(
                 .unwrap_or_else(|| "Subagent".to_string()),
         }),
         TranscriptItemKind::Unknown => {
-            // Should not occur from live data; treat as an empty message row.
+            tracing::warn!(
+                item_index = row.item_index,
+                "transcript item with unknown kind; rendering as empty message"
+            );
             TranscriptItemInit::Message(MessageItemInit {
                 item_index: row.item_index as usize,
                 preview: MessagePreview {
