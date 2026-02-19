@@ -100,13 +100,16 @@
 **Next Features?** - Future
 - Syntax highlighting for code blocks (syntect)
 - Real-time session monitoring (file watching)
+- Permanently delete session files from disk (not just Sessions Chronicle index), with confirmation
 - Session export (Markdown/HTML)
 - Analytics and usage charts
 - Git integration
-- Git-ai integration
+- Git-ai or Agent Trace Spec integration
 - Display reasoning/thinking blocks
 - Semantic search
 - Session summaries (grouped by project or other criteria)
+- Improve ToolInspector (width, markdown rendering, etc.)
+- Reduce RAM usage (streaming DB queries? lazy loading?)
 
 ---
 
