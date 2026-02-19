@@ -1,0 +1,8 @@
+{
+  "id": "part-tc001",
+  "sessionID": "session-tools-child",
+  "messageID": "msg-tc001",
+  "order": 1,
+  "type": "text",
+  "text": "Summarize all markdown files"
+}

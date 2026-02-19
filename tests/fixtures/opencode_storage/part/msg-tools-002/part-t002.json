@@ -1,0 +1,13 @@
+{
+  "id": "part-t002",
+  "sessionID": "session-tools-001",
+  "messageID": "msg-tools-002",
+  "order": 2,
+  "type": "subtask",
+  "description": "Summarize all markdown files",
+  "childSessionID": "session-tools-child",
+  "state": {
+    "status": "completed",
+    "output": "Found 3 markdown files: README.md, CHANGELOG.md, CONTRIBUTING.md"
+  }
+}

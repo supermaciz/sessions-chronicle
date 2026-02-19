@@ -7,9 +7,37 @@ use rusqlite::{Connection, Row, ToSql};
 use std::collections::HashSet;
 use std::path::Path;
 
-use crate::models::{MessagePreview, Role, Session, Tool};
+use crate::models::{
+    MessagePreview, Role, Session, Subagent, Tool, ToolCall, ToolCallStatus, TranscriptItem,
+    TranscriptItemKind,
+};
 
 pub use indexer::SessionIndexer;
+
+/// Flat preview row returned by the transcript LEFT JOIN query.
+/// The caller interprets fields based on `kind`.
+#[derive(Debug, Clone)]
+pub struct TranscriptItemRow {
+    pub item_index: i64,
+    pub kind: TranscriptItemKind,
+    // Message fields
+    pub message_index: Option<i64>,
+    pub role: Option<Role>,
+    pub content_preview: Option<String>,
+    pub content_len: Option<i64>,
+    pub timestamp: Option<i64>,
+    // ToolCall fields
+    pub tool_call_id: Option<String>,
+    pub tool_name: Option<String>,
+    pub tool_status: Option<ToolCallStatus>,
+    pub tool_summary: Option<String>,
+    pub duration_ms: Option<i64>,
+    // Subagent fields
+    pub subagent_id: Option<String>,
+    pub subagent_title: Option<String>,
+    #[allow(dead_code)] // Will be used in Phase 4 inspector pane
+    pub subagent_prompt: Option<String>,
+}
 
 fn session_from_row(row: &Row) -> rusqlite::Result<Session> {
     let tool_value: String = row.get(1)?;
@@ -17,6 +45,7 @@ fn session_from_row(row: &Row) -> rusqlite::Result<Session> {
     let start_time: i64 = row.get(3)?;
     let last_updated: i64 = row.get(6)?;
     let message_count: i64 = row.get(4)?;
+    let is_subagent_int: i64 = row.get(9).unwrap_or(0);
 
     Ok(Session {
         id: row.get(0)?,
@@ -33,6 +62,8 @@ fn session_from_row(row: &Row) -> rusqlite::Result<Session> {
             .single()
             .unwrap_or_else(Utc::now),
         first_prompt: row.get(7)?,
+        parent_session_id: row.get(8)?,
+        is_subagent: is_subagent_int != 0,
     })
 }
 
@@ -111,11 +142,13 @@ fn search_sessions_with_query(
 ) -> Result<Vec<Session>> {
     let (query_sql, tool_strings): (String, Vec<String>) = if tools.len() == Tool::ALL.len() {
         (
-            "SELECT s.id, s.tool, s.project_path, s.start_time, s.message_count, s.file_path, s.last_updated, s.first_prompt,
+            "SELECT s.id, s.tool, s.project_path, s.start_time, s.message_count, s.file_path,
+                    s.last_updated, s.first_prompt, s.parent_session_id, s.is_subagent,
                     bm25(messages) AS rank
              FROM messages
              JOIN sessions s ON s.id = messages.session_id
              WHERE messages MATCH ?1
+               AND s.is_subagent = 0
              ORDER BY rank ASC, s.last_updated DESC"
                 .to_string(),
             vec![],
@@ -125,12 +158,14 @@ fn search_sessions_with_query(
         let tool_strings: Vec<String> = tools.iter().map(|t| t.to_storage()).collect::<Vec<_>>();
         (
             format!(
-                "SELECT s.id, s.tool, s.project_path, s.start_time, s.message_count, s.file_path, s.last_updated, s.first_prompt,
+                "SELECT s.id, s.tool, s.project_path, s.start_time, s.message_count, s.file_path,
+                        s.last_updated, s.first_prompt, s.parent_session_id, s.is_subagent,
                         bm25(messages) AS rank
                  FROM messages
                  JOIN sessions s ON s.id = messages.session_id
                  WHERE messages MATCH ?1
                    AND s.tool IN ({})
+                   AND s.is_subagent = 0
                  ORDER BY rank ASC, s.last_updated DESC",
                 placeholders.join(",")
             ),
@@ -174,8 +209,10 @@ pub fn load_sessions(db_path: &Path, tools: &[Tool]) -> Result<Vec<Session>> {
 
     let (query, tool_strings): (String, Vec<String>) = if tools.len() == Tool::ALL.len() {
         (
-            "SELECT id, tool, project_path, start_time, message_count, file_path, last_updated, first_prompt
+            "SELECT id, tool, project_path, start_time, message_count, file_path,
+                    last_updated, first_prompt, parent_session_id, is_subagent
              FROM sessions
+             WHERE is_subagent = 0
              ORDER BY last_updated DESC"
                 .to_string(),
             vec![],
@@ -185,9 +222,11 @@ pub fn load_sessions(db_path: &Path, tools: &[Tool]) -> Result<Vec<Session>> {
         let tool_strings: Vec<String> = tools.iter().map(|t| t.to_storage()).collect::<Vec<_>>();
         (
             format!(
-                "SELECT id, tool, project_path, start_time, message_count, file_path, last_updated, first_prompt
+                "SELECT id, tool, project_path, start_time, message_count, file_path,
+                        last_updated, first_prompt, parent_session_id, is_subagent
                  FROM sessions
                  WHERE tool IN ({})
+                   AND is_subagent = 0
                  ORDER BY last_updated DESC",
                 placeholders.join(",")
             ),
@@ -208,7 +247,7 @@ pub fn load_sessions(db_path: &Path, tools: &[Tool]) -> Result<Vec<Session>> {
     Ok(sessions)
 }
 
-/// Load a single session by ID.
+/// Load a single session by ID (may be a subagent session).
 pub fn load_session(db_path: &Path, session_id: &str) -> Result<Option<Session>> {
     let start = std::time::Instant::now();
     if !db_path.exists() {
@@ -218,7 +257,8 @@ pub fn load_session(db_path: &Path, session_id: &str) -> Result<Option<Session>>
     let db = Connection::open(db_path).context("Failed to open database")?;
 
     let mut stmt = db.prepare(
-        "SELECT id, tool, project_path, start_time, message_count, file_path, last_updated, first_prompt
+        "SELECT id, tool, project_path, start_time, message_count, file_path,
+                last_updated, first_prompt, parent_session_id, is_subagent
          FROM sessions
          WHERE id = ?1",
     )?;
@@ -265,6 +305,7 @@ pub fn load_message_full_content(
 }
 
 /// Load message previews for a session with pagination and truncation.
+#[allow(dead_code)] // Superseded by load_transcript_items; kept for potential fallback use
 pub fn load_message_previews_for_session(
     db_path: &Path,
     session_id: &str,
@@ -328,4 +369,262 @@ pub fn load_message_previews_for_session(
     );
 
     Ok(previews)
+}
+
+/// Load ordered transcript items for a session with pagination.
+/// Returns preview rows combining message/tool_call/subagent fields via LEFT JOINs.
+pub fn load_transcript_items(
+    db_path: &Path,
+    session_id: &str,
+    limit: i64,
+    offset: i64,
+    preview_len: i64,
+) -> Result<Vec<TranscriptItemRow>> {
+    if !db_path.exists() {
+        return Ok(Vec::new());
+    }
+
+    let db = Connection::open(db_path).context("Failed to open database")?;
+
+    let mut stmt = db.prepare(
+        "SELECT ti.item_index, ti.kind, ti.message_index, ti.tool_call_id, ti.subagent_id,
+                m.role, substr(m.content, 1, ?2) AS content_preview,
+                length(m.content) AS content_len, m.timestamp,
+                tc.tool_name, tc.status, tc.summary, tc.duration_ms,
+                sa.title AS subagent_title, sa.prompt AS subagent_prompt
+         FROM transcript_items ti
+         LEFT JOIN messages m ON ti.session_id = m.session_id
+                             AND ti.message_index = CAST(m.message_index AS INTEGER)
+         LEFT JOIN tool_calls tc ON ti.session_id = tc.session_id
+                                AND ti.tool_call_id = tc.id
+         LEFT JOIN subagents sa ON ti.session_id = sa.session_id
+                               AND ti.subagent_id = sa.id
+         WHERE ti.session_id = ?1
+         ORDER BY ti.item_index
+         LIMIT ?3 OFFSET ?4",
+    )?;
+
+    let mut rows = stmt
+        .query([&session_id as &dyn ToSql, &preview_len, &limit, &offset])
+        .context("Failed to query transcript items")?;
+
+    let mut items = Vec::new();
+    while let Some(row) = rows.next()? {
+        let kind_str: String = row.get(1)?;
+        let kind = TranscriptItemKind::from_storage(&kind_str);
+
+        let role: Option<String> = row.get(5)?;
+        let tool_status: Option<String> = row.get(10)?;
+
+        items.push(TranscriptItemRow {
+            item_index: row.get(0)?,
+            kind,
+            message_index: row.get(2)?,
+            tool_call_id: row.get(3)?,
+            subagent_id: row.get(4)?,
+            role: role.as_deref().and_then(Role::from_storage),
+            content_preview: row.get(6)?,
+            content_len: row.get(7)?,
+            timestamp: row.get(8)?,
+            tool_name: row.get(9)?,
+            tool_status: tool_status.as_deref().map(ToolCallStatus::from_storage),
+            tool_summary: row.get(11)?,
+            duration_ms: row.get(12)?,
+            subagent_title: row.get(13)?,
+            subagent_prompt: row.get(14)?,
+        });
+    }
+
+    Ok(items)
+}
+
+/// Insert a tool call record (upsert by session_id + id).
+pub fn insert_tool_call(conn: &Connection, tc: &ToolCall, session_id: &str) -> Result<()> {
+    conn.execute(
+        "INSERT OR REPLACE INTO tool_calls
+         (id, session_id, subagent_id, tool_name, status, title, summary,
+          input_json, output_text, error_text, started_at, ended_at, duration_ms, parser_call_id)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
+        rusqlite::params![
+            tc.id,
+            session_id,
+            tc.subagent_id,
+            tc.tool_name,
+            tc.status.to_storage(),
+            tc.title,
+            tc.summary,
+            tc.input_json,
+            tc.output_text,
+            tc.error_text,
+            tc.started_at,
+            tc.ended_at,
+            tc.duration_ms,
+            tc.parser_call_id,
+        ],
+    )
+    .context("Failed to insert tool call")?;
+    Ok(())
+}
+
+/// Insert a subagent record (upsert by session_id + id).
+pub fn insert_subagent(conn: &Connection, sa: &Subagent, session_id: &str) -> Result<()> {
+    conn.execute(
+        "INSERT OR REPLACE INTO subagents
+         (id, session_id, title, prompt, result_summary, child_session_id, parser_ref)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+        rusqlite::params![
+            sa.id,
+            session_id,
+            sa.title,
+            sa.prompt,
+            sa.result_summary,
+            sa.child_session_id,
+            sa.parser_ref,
+        ],
+    )
+    .context("Failed to insert subagent")?;
+    Ok(())
+}
+
+/// Insert a transcript item (upsert by session_id + item_index).
+pub fn insert_transcript_item(
+    conn: &Connection,
+    item: &TranscriptItem,
+    session_id: &str,
+) -> Result<()> {
+    conn.execute(
+        "INSERT OR REPLACE INTO transcript_items
+         (session_id, item_index, kind, message_index, tool_call_id, subagent_id)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+        rusqlite::params![
+            session_id,
+            item.item_index,
+            item.kind.to_storage(),
+            item.message_index,
+            item.tool_call_id,
+            item.subagent_id,
+        ],
+    )
+    .context("Failed to insert transcript item")?;
+    Ok(())
+}
+
+/// Load a single tool call by session_id and id.
+pub fn load_tool_call(
+    db_path: &Path,
+    session_id: &str,
+    tool_call_id: &str,
+) -> Result<Option<ToolCall>> {
+    if !db_path.exists() {
+        return Ok(None);
+    }
+    let db = Connection::open(db_path).context("Failed to open database")?;
+    let mut stmt = db.prepare(
+        "SELECT id, session_id, subagent_id, tool_name, status, title, summary,
+                input_json, output_text, error_text, started_at, ended_at,
+                duration_ms, parser_call_id
+         FROM tool_calls
+         WHERE session_id = ?1 AND id = ?2",
+    )?;
+    let mut rows = stmt
+        .query(rusqlite::params![session_id, tool_call_id])
+        .context("Failed to query tool call")?;
+    if let Some(row) = rows.next()? {
+        let status_str: String = row.get(4)?;
+        Ok(Some(ToolCall {
+            id: row.get(0)?,
+            session_id: row.get(1)?,
+            subagent_id: row.get(2)?,
+            tool_name: row.get(3)?,
+            status: ToolCallStatus::from_storage(&status_str),
+            title: row.get(5)?,
+            summary: row.get(6)?,
+            input_json: row.get(7)?,
+            output_text: row.get(8)?,
+            error_text: row.get(9)?,
+            started_at: row.get(10)?,
+            ended_at: row.get(11)?,
+            duration_ms: row.get(12)?,
+            parser_call_id: row.get(13)?,
+        }))
+    } else {
+        Ok(None)
+    }
+}
+
+/// Load a single subagent by session_id and id.
+pub fn load_subagent(
+    db_path: &Path,
+    session_id: &str,
+    subagent_id: &str,
+) -> Result<Option<Subagent>> {
+    if !db_path.exists() {
+        return Ok(None);
+    }
+    let db = Connection::open(db_path).context("Failed to open database")?;
+    let mut stmt = db.prepare(
+        "SELECT id, session_id, title, prompt, result_summary, child_session_id, parser_ref
+         FROM subagents
+         WHERE session_id = ?1 AND id = ?2",
+    )?;
+    let mut rows = stmt
+        .query(rusqlite::params![session_id, subagent_id])
+        .context("Failed to query subagent")?;
+    if let Some(row) = rows.next()? {
+        Ok(Some(Subagent {
+            id: row.get(0)?,
+            session_id: row.get(1)?,
+            title: row.get(2)?,
+            prompt: row.get(3)?,
+            result_summary: row.get(4)?,
+            child_session_id: row.get(5)?,
+            parser_ref: row.get(6)?,
+        }))
+    } else {
+        Ok(None)
+    }
+}
+
+/// Load all tool calls owned by a subagent, ordered by rowid (insertion order).
+pub fn load_tool_calls_for_subagent(
+    db_path: &Path,
+    session_id: &str,
+    subagent_id: &str,
+) -> Result<Vec<ToolCall>> {
+    if !db_path.exists() {
+        return Ok(Vec::new());
+    }
+    let db = Connection::open(db_path).context("Failed to open database")?;
+    let mut stmt = db.prepare(
+        "SELECT id, session_id, subagent_id, tool_name, status, title, summary,
+                input_json, output_text, error_text, started_at, ended_at,
+                duration_ms, parser_call_id
+         FROM tool_calls
+         WHERE session_id = ?1 AND subagent_id = ?2
+         ORDER BY rowid",
+    )?;
+    let mut rows = stmt
+        .query(rusqlite::params![session_id, subagent_id])
+        .context("Failed to query subagent tool calls")?;
+    let mut tools = Vec::new();
+    while let Some(row) = rows.next()? {
+        let status_str: String = row.get(4)?;
+        tools.push(ToolCall {
+            id: row.get(0)?,
+            session_id: row.get(1)?,
+            subagent_id: row.get(2)?,
+            tool_name: row.get(3)?,
+            status: ToolCallStatus::from_storage(&status_str),
+            title: row.get(5)?,
+            summary: row.get(6)?,
+            input_json: row.get(7)?,
+            output_text: row.get(8)?,
+            error_text: row.get(9)?,
+            started_at: row.get(10)?,
+            ended_at: row.get(11)?,
+            duration_ms: row.get(12)?,
+            parser_call_id: row.get(13)?,
+        });
+    }
+    Ok(tools)
 }

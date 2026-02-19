@@ -1,0 +1,8 @@
+{
+  "id": "part-t001",
+  "sessionID": "session-tools-001",
+  "messageID": "msg-tools-001",
+  "order": 1,
+  "type": "text",
+  "text": "Read the config file and analyze the project structure"
+}

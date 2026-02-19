@@ -280,6 +280,8 @@ mod tests {
             file_path: "/tmp/session.jsonl".to_string(),
             last_updated: chrono::Utc::now(),
             first_prompt: None,
+            parent_session_id: None,
+            is_subagent: false,
         };
 
         {
@@ -326,6 +328,8 @@ mod tests {
             file_path: "/tmp/session.jsonl".to_string(),
             last_updated: chrono::Utc::now(),
             first_prompt: None,
+            parent_session_id: None,
+            is_subagent: false,
         };
 
         {

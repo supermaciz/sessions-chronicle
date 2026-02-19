@@ -1,0 +1,6 @@
+{"role":"system","content":"Vibe v2 session system message."}
+{"role":"user","content":"List the files in the project and read the README."}
+{"role":"assistant","content":"","tool_calls":[{"id":"call_vibe_001","type":"function","function":{"name":"list_directory","arguments":"{\"path\":\".\"}"}},{"id":"call_vibe_002","type":"function","function":{"name":"read_file","arguments":"{\"path\":\"README.md\"}"}}]}
+{"role":"tool","tool_call_id":"call_vibe_001","content":"src/\ntests/\nREADME.md\nCargo.toml"}
+{"role":"tool","tool_call_id":"call_vibe_002","content":"# My Project\n\nA Rust project for testing."}
+{"role":"assistant","content":"The project contains src/, tests/, README.md, and Cargo.toml. The README describes it as a Rust project for testing."}

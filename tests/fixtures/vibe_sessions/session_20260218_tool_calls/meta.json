@@ -1,0 +1,8 @@
+{
+  "session_id": "session_20260218_tool_calls",
+  "start_time": "2026-02-18T10:00:00Z",
+  "end_time": "2026-02-18T10:01:30Z",
+  "environment": {
+    "working_directory": "/home/user/myproject"
+  }
+}

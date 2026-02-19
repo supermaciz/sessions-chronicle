@@ -1,0 +1,9 @@
+{
+  "id": "session-tools-child",
+  "directory": "/home/user/myproject",
+  "parentID": "session-tools-001",
+  "time": {
+    "created": 1739872830000,
+    "updated": 1739872850000
+  }
+}

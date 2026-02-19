@@ -209,6 +209,8 @@ mod tests {
             file_path: "/tmp/session.jsonl".to_string(),
             last_updated: now - ChronoDuration::minutes(minutes_ago),
             first_prompt: first_prompt.map(str::to_string),
+            parent_session_id: None,
+            is_subagent: false,
         }
     }
 
