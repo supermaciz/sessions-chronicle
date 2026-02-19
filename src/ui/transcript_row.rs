@@ -675,5 +675,21 @@ pub fn transcript_item_init_from_row(
                 .clone()
                 .unwrap_or_else(|| "Subagent".to_string()),
         }),
+        TranscriptItemKind::Unknown => {
+            // Should not occur from live data; treat as an empty message row.
+            TranscriptItemInit::Message(MessageItemInit {
+                item_index: row.item_index as usize,
+                preview: MessagePreview {
+                    session_id: session_id.to_string(),
+                    message_index: 0,
+                    role: Role::User,
+                    content_preview: String::new(),
+                    content_len: 0,
+                    timestamp: Utc::now(),
+                },
+                highlight_query,
+                db_path,
+            })
+        }
     }
 }

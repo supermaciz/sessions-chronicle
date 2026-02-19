@@ -411,8 +411,7 @@ pub fn load_transcript_items(
     let mut items = Vec::new();
     while let Some(row) = rows.next()? {
         let kind_str: String = row.get(1)?;
-        let kind =
-            TranscriptItemKind::from_storage(&kind_str).unwrap_or(TranscriptItemKind::Message);
+        let kind = TranscriptItemKind::from_storage(&kind_str);
 
         let role: Option<String> = row.get(5)?;
         let tool_status: Option<String> = row.get(10)?;
