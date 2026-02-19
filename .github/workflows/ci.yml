@@ -42,6 +42,52 @@ jobs:
       - name: Run cargo fmt
         run: cargo fmt --all -- --check
 
+  coverage:
+    name: Coverage
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc pkg-config libgtk-4-dev libadwaita-1-dev xvfb
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: llvm-tools-preview
+      - name: Cache cargo dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}-${{ hashFiles('**/Cargo.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}-
+            ${{ runner.os }}-cargo-
+      - name: Cache LLVM coverage data
+        uses: actions/cache@v4
+        with:
+          path: target/llvm-cov-target/
+          key: ${{ runner.os }}-llvm-cov-${{ hashFiles('**/Cargo.lock') }}-${{ hashFiles('**/*.rs') }}
+          restore-keys: |
+            ${{ runner.os }}-llvm-cov-${{ hashFiles('**/Cargo.lock') }}-
+            ${{ runner.os }}-llvm-cov-
+      - name: Install cargo-llvm-cov
+        uses: taiki-e/install-action@cargo-llvm-cov
+      - name: Generate coverage report
+        run: xvfb-run cargo llvm-cov --lcov --output-path lcov.info --no-clean
+      - name: Upload to Codecov
+        uses: codecov/codecov-action@v5
+        env:
+          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+        with:
+          files: lcov.info
+          fail_ci_if_error: true
+
   flatpak:
     name: Flatpak
     runs-on: ubuntu-latest
