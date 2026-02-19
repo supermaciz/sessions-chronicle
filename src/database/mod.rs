@@ -439,7 +439,7 @@ pub fn load_transcript_items(
 }
 
 /// Insert a tool call record (upsert by session_id + id).
-pub fn insert_tool_call(conn: &Connection, tc: &ToolCall) -> Result<()> {
+pub fn insert_tool_call(conn: &Connection, tc: &ToolCall, session_id: &str) -> Result<()> {
     conn.execute(
         "INSERT OR REPLACE INTO tool_calls
          (id, session_id, subagent_id, tool_name, status, title, summary,
@@ -447,7 +447,7 @@ pub fn insert_tool_call(conn: &Connection, tc: &ToolCall) -> Result<()> {
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
         rusqlite::params![
             tc.id,
-            tc.session_id,
+            session_id,
             tc.subagent_id,
             tc.tool_name,
             tc.status.to_storage(),
@@ -467,14 +467,14 @@ pub fn insert_tool_call(conn: &Connection, tc: &ToolCall) -> Result<()> {
 }
 
 /// Insert a subagent record (upsert by session_id + id).
-pub fn insert_subagent(conn: &Connection, sa: &Subagent) -> Result<()> {
+pub fn insert_subagent(conn: &Connection, sa: &Subagent, session_id: &str) -> Result<()> {
     conn.execute(
         "INSERT OR REPLACE INTO subagents
          (id, session_id, title, prompt, result_summary, child_session_id, parser_ref)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
         rusqlite::params![
             sa.id,
-            sa.session_id,
+            session_id,
             sa.title,
             sa.prompt,
             sa.result_summary,
@@ -487,13 +487,17 @@ pub fn insert_subagent(conn: &Connection, sa: &Subagent) -> Result<()> {
 }
 
 /// Insert a transcript item (upsert by session_id + item_index).
-pub fn insert_transcript_item(conn: &Connection, item: &TranscriptItem) -> Result<()> {
+pub fn insert_transcript_item(
+    conn: &Connection,
+    item: &TranscriptItem,
+    session_id: &str,
+) -> Result<()> {
     conn.execute(
         "INSERT OR REPLACE INTO transcript_items
          (session_id, item_index, kind, message_index, tool_call_id, subagent_id)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
         rusqlite::params![
-            item.session_id,
+            session_id,
             item.item_index,
             item.kind.to_storage(),
             item.message_index,

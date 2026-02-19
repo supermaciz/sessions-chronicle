@@ -40,9 +40,6 @@ impl ClaudeCodeParser {
         let mut msg_counter: i64 = 0;
         let mut item_counter: i64 = 0;
 
-        // Placeholder session_id for transcript items; fixed up after the loop
-        let placeholder_sid = String::new();
-
         for line in reader.lines() {
             let line = line.context("Failed to read line")?;
             if line.trim().is_empty() {
@@ -163,7 +160,7 @@ impl ClaudeCodeParser {
                                     timestamp: ts,
                                 });
                                 transcript_items.push(TranscriptItem {
-                                    session_id: placeholder_sid.clone(),
+                                    session_id: String::new(),
                                     item_index: item_counter,
                                     kind: TranscriptItemKind::Message,
                                     message_index: Some(msg_counter),
@@ -201,7 +198,7 @@ impl ClaudeCodeParser {
                         timestamp: ts,
                     });
                     transcript_items.push(TranscriptItem {
-                        session_id: placeholder_sid.clone(),
+                        session_id: String::new(),
                         item_index: item_counter,
                         kind: TranscriptItemKind::Message,
                         message_index: Some(msg_counter),
@@ -240,7 +237,7 @@ impl ClaudeCodeParser {
                             timestamp: ts,
                         });
                         transcript_items.push(TranscriptItem {
-                            session_id: placeholder_sid.clone(),
+                            session_id: String::new(),
                             item_index: item_counter,
                             kind: TranscriptItemKind::Message,
                             message_index: Some(msg_counter),
@@ -294,7 +291,7 @@ impl ClaudeCodeParser {
                                 let sa_idx = subagents.len();
                                 subagents.push(Subagent {
                                     id: tool_use_id.clone(),
-                                    session_id: placeholder_sid.clone(),
+                                    session_id: String::new(),
                                     title,
                                     prompt,
                                     result_summary: None,
@@ -303,7 +300,7 @@ impl ClaudeCodeParser {
                                 });
                                 pending_subagents.insert(tool_use_id.clone(), sa_idx);
                                 transcript_items.push(TranscriptItem {
-                                    session_id: placeholder_sid.clone(),
+                                    session_id: String::new(),
                                     item_index: item_counter,
                                     kind: TranscriptItemKind::Subagent,
                                     message_index: None,
@@ -315,7 +312,7 @@ impl ClaudeCodeParser {
                                 let tc_idx = tool_calls.len();
                                 tool_calls.push(ToolCall {
                                     id: tool_use_id.clone(),
-                                    session_id: placeholder_sid.clone(),
+                                    session_id: String::new(),
                                     subagent_id: None,
                                     tool_name: tool_name.clone(),
                                     status: ToolCallStatus::Pending,
@@ -331,7 +328,7 @@ impl ClaudeCodeParser {
                                 });
                                 pending_calls.insert(tool_use_id.clone(), tc_idx);
                                 transcript_items.push(TranscriptItem {
-                                    session_id: placeholder_sid.clone(),
+                                    session_id: String::new(),
                                     item_index: item_counter,
                                     kind: TranscriptItemKind::ToolCall,
                                     message_index: None,
@@ -359,20 +356,6 @@ impl ClaudeCodeParser {
         let final_session_id = session_id_from_event
             .or(file_stem_id)
             .unwrap_or_else(|| "unknown".to_string());
-
-        // Fix up session_id in all items
-        for message in &mut messages {
-            message.session_id = final_session_id.clone();
-        }
-        for tc in &mut tool_calls {
-            tc.session_id = final_session_id.clone();
-        }
-        for sa in &mut subagents {
-            sa.session_id = final_session_id.clone();
-        }
-        for ti in &mut transcript_items {
-            ti.session_id = final_session_id.clone();
-        }
 
         let last_updated = latest_timestamp.unwrap_or(start_time);
         let first_prompt = crate::parsers::extract_first_prompt(&messages);

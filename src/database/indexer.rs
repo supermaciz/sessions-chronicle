@@ -269,7 +269,7 @@ impl SessionIndexer {
                 "INSERT INTO messages (session_id, message_index, role, content, timestamp)
                  VALUES (?1, ?2, ?3, ?4, ?5)",
                 rusqlite::params![
-                    &msg.session_id,
+                    &session.id,
                     msg.index as i64,
                     format!("{:?}", msg.role).to_lowercase(),
                     &msg.content,
@@ -279,15 +279,15 @@ impl SessionIndexer {
         }
 
         for tc in &parsed.tool_calls {
-            crate::database::insert_tool_call(&tx, tc)?;
+            crate::database::insert_tool_call(&tx, tc, &session.id)?;
         }
 
         for sa in &parsed.subagents {
-            crate::database::insert_subagent(&tx, sa)?;
+            crate::database::insert_subagent(&tx, sa, &session.id)?;
         }
 
         for item in &parsed.transcript_items {
-            crate::database::insert_transcript_item(&tx, item)?;
+            crate::database::insert_transcript_item(&tx, item, &session.id)?;
         }
 
         tx.commit()?;
