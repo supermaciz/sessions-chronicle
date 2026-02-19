@@ -50,7 +50,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - name: Install system dependencies
-        run: dnf install -y gcc pkg-config gtk4-devel libadwaita-devel glib2-devel curl xorg-x11-server-Xvfb
+        run: dnf install -y gcc pkg-config gtk4-devel libadwaita-devel glib2-devel curl git gnupg2 xorg-x11-server-Xvfb
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
         with:
