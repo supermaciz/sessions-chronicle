@@ -45,12 +45,12 @@ jobs:
   coverage:
     name: Coverage
     runs-on: ubuntu-latest
+    container:
+      image: fedora:latest
     steps:
       - uses: actions/checkout@v6
       - name: Install system dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y gcc pkg-config libgtk-4-dev libadwaita-1-dev xvfb
+        run: dnf install -y gcc pkg-config gtk4-devel libadwaita-devel glib2-devel curl xorg-x11-server-Xvfb
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
         with:
