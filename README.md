@@ -3,6 +3,8 @@
 # Sessions Chronicle
 <br clear="left"/>
 
+[![codecov](https://codecov.io/gh/supermaciz/sessions-chronicle/graph/badge.svg?token=)](https://codecov.io/gh/supermaciz/sessions-chronicle)
+
 **A GNOME app for browsing, searching, and resuming AI coding sessions.**
 
 
