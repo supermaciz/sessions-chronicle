@@ -4,7 +4,7 @@
 
 ---
 
-## Current Status: Phase 6 — Tool Calls & Subagents
+## Current Status: Phase 6 — Complete
 
 ### ✅ Completed
 
@@ -27,6 +27,7 @@
 - ✅ Utility pane with filters/session-context modes and in-pane resume action (PR #27)
 - ✅ Session row redesign: first prompt title, project-aware subtitle, relative timestamps, row context menu resume (PR #30)
 - ✅ Inline expand/collapse for truncated messages with on-demand full content loading (PR #35)
+- ✅ Tool calls & subagents inspector: inline expander rows, ToolInspector utility pane, subagent drill-down (PR #36)
 
 **Dependencies**
 - ✅ Relm4 (reactive UI framework)
@@ -88,13 +89,13 @@
 - ✅ Load full content on demand from DB with caching
 - ✅ Toggle button replacing static "(content truncated)" badge
 
-**Phase 6: Tool Calls & Subagents** - Planned ([design](plans/2026-02-18-tool-calls-and-subagents-utility-pane-design.md))
+**Phase 6: Tool Calls & Subagents** - Complete ([design](plans/2026-02-18-tool-calls-and-subagents-utility-pane-design.md), PR #36)
 - Legacy plan kept for history: [2026-01-30-tool-calls-and-subagents-design.md](plans/2026-01-30-tool-calls-and-subagents-design.md) (superseded)
-- ⬜ Add phase 6 schema for transcript artifacts (`parent_session_id`, `is_subagent`, `transcript_items`, `tool_calls`, `subagents`)
-- ⬜ Parse and correlate tool calls/results across Claude Code, Codex, OpenCode, and Mistral Vibe
-- ⬜ Add inline expander rows for tool calls and subagents in SessionDetail
-- ⬜ Add ToolInspector utility pane mode (non-modal inspection + subagent drill-down)
-- ⬜ Add tests for parser correlation, DB ordering, and inspector interaction flows
+- ✅ Add phase 6 schema for transcript artifacts (`parent_session_id`, `is_subagent`, `transcript_items`, `tool_calls`, `subagents`)
+- ✅ Parse and correlate tool calls/results across Claude Code, Codex, OpenCode, and Mistral Vibe
+- ✅ Add inline expander rows for tool calls and subagents in SessionDetail
+- ✅ Add ToolInspector utility pane mode (non-modal inspection + subagent drill-down)
+- ✅ Add tests for parser correlation, DB ordering, and inspector interaction flows
 
 **Next Features?** - Future
 - Syntax highlighting for code blocks (syntect)
@@ -133,7 +134,10 @@ sessions-chronicle/
 │   ├── models/           # Data models
 │   │   ├── session.rs         # Session, Tool
 │   │   ├── message.rs         # Message, Role
-│   │   └── message_preview.rs # MessagePreview for UI
+│   │   ├── message_preview.rs # MessagePreview for UI
+│   │   ├── tool_call.rs       # ToolCall model
+│   │   ├── subagent.rs        # Subagent model
+│   │   └── transcript_item.rs # TranscriptItem (ordered view)
 │   ├── parsers/          # Session file parsers
 │   │   ├── claude_code.rs   # Claude Code JSONL parser
 │   │   ├── codex.rs         # Codex JSONL parser
@@ -144,14 +148,15 @@ sessions-chronicle/
 │   │   ├── indexer.rs    # Index sessions
 │   │   └── mod.rs        # load_session, search_sessions
 │   ├── ui/               # UI components (Relm4)
-│   │   ├── detail_context_pane.rs # Session context utility pane
+│   │   ├── tool_inspector_pane.rs # ToolInspector utility pane (tool calls + subagents)
+│   │   ├── transcript_row.rs      # Transcript row component (messages, tool calls, subagents)
 │   │   ├── highlight.rs  # Search term highlighting helpers
 │   │   ├── markdown.rs   # Markdown parser and GTK renderer
-│   │   ├── message_row.rs # Message row component
-│   │   ├── sidebar.rs    # Tool/project filters
+│   │   ├── format.rs     # Shared formatting helpers
 │   │   ├── session_list.rs  # Session list view
 │   │   ├── session_detail.rs # Session detail/transcript view
 │   │   ├── session_row.rs # Session list row component
+│   │   ├── sidebar.rs    # Tool/project filters
 │   │   ├── modals/
 │   │   │   ├── about.rs      # About dialog
 │   │   │   ├── preferences.rs # Preferences dialog (terminal settings, index reset)
@@ -177,7 +182,7 @@ sessions-chronicle/
 
 ### Database Schema
 
-**sessions** table:
+**sessions** table (v1):
 ```sql
 CREATE TABLE sessions (
     id TEXT PRIMARY KEY,
@@ -187,7 +192,9 @@ CREATE TABLE sessions (
     message_count INTEGER NOT NULL,
     file_path TEXT NOT NULL,
     last_updated INTEGER NOT NULL,
-    first_prompt TEXT
+    first_prompt TEXT,
+    parent_session_id TEXT,           -- added in v1
+    is_subagent INTEGER NOT NULL DEFAULT 0  -- added in v1
 );
 ```
 
@@ -199,6 +206,54 @@ CREATE VIRTUAL TABLE messages USING fts5(
     role UNINDEXED,
     content,              -- searchable
     timestamp UNINDEXED
+);
+```
+
+**transcript_items** table (v1):
+```sql
+CREATE TABLE transcript_items (
+    session_id TEXT NOT NULL,
+    item_index INTEGER NOT NULL,
+    kind TEXT NOT NULL,
+    message_index INTEGER,
+    tool_call_id TEXT,
+    subagent_id TEXT,
+    PRIMARY KEY (session_id, item_index)
+);
+```
+
+**tool_calls** table (v1):
+```sql
+CREATE TABLE tool_calls (
+    id TEXT NOT NULL,
+    session_id TEXT NOT NULL,
+    subagent_id TEXT,
+    tool_name TEXT NOT NULL,
+    status TEXT NOT NULL,
+    title TEXT,
+    summary TEXT,
+    input_json TEXT,
+    output_text TEXT,
+    error_text TEXT,
+    started_at INTEGER,
+    ended_at INTEGER,
+    duration_ms INTEGER,
+    parser_call_id TEXT,
+    PRIMARY KEY (session_id, id)
+);
+```
+
+**subagents** table (v1):
+```sql
+CREATE TABLE subagents (
+    id TEXT NOT NULL,
+    session_id TEXT NOT NULL,
+    title TEXT NOT NULL,
+    prompt TEXT,
+    result_summary TEXT,
+    child_session_id TEXT,
+    parser_ref TEXT,
+    PRIMARY KEY (session_id, id)
 );
 ```
 
@@ -342,6 +397,6 @@ cargo test
 
 ---
 
-**Last Updated**: 2026-02-18
-**Current Phase**: Phase 6 — Tool Calls & Subagents
-**Next Milestone**: Phase 6 — Tool Calls & Subagents
+**Last Updated**: 2026-02-19
+**Current Phase**: Phase 6 — Complete
+**Next Milestone**: See "Next Features?" above

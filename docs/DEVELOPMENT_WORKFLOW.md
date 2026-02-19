@@ -189,6 +189,7 @@ The project uses GitHub Actions for continuous integration and releases. Workflo
 | **Tests** | `cargo test` (under Xvfb for GTK) |
 | **Clippy** | `cargo clippy -- -D warnings` |
 | **Rustfmt** | `cargo fmt --all -- --check` |
+| **Coverage** | `cargo llvm-cov` → LCOV report uploaded to Codecov |
 | **Flatpak** | Builds the dev Flatpak bundle |
 
 ### Release (`release.yml`) — runs when a GitHub release is published
@@ -213,4 +214,4 @@ Two Flatpak manifests exist in `build-aux/`:
 
 ---
 
-**Last Updated**: 2026-02-15
+**Last Updated**: 2026-02-19
