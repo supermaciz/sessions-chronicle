@@ -99,19 +99,10 @@ impl OpenCodeParser {
         let backend = json_backend::JsonBackend::new(&self.storage_root);
         let metadata = backend.parse_session_metadata_from_file(session_path)?;
         let source = SessionSource::JsonFile(session_path.to_path_buf());
-        self.build_parsed_session_with_backend(metadata, &source, &backend)
+        self.build_parsed_session(metadata, &source, &backend)
     }
 
     fn build_parsed_session(
-        &self,
-        metadata: SessionMetadata,
-        source: &SessionSource,
-        backend: &dyn OpenCodeBackend,
-    ) -> Result<ParsedSession> {
-        self.build_parsed_session_with_backend(metadata, source, backend)
-    }
-
-    fn build_parsed_session_with_backend(
         &self,
         metadata: SessionMetadata,
         source: &SessionSource,
