@@ -84,6 +84,10 @@ fn resolve_opencode_db(storage_root: &Path) -> Option<PathBuf> {
         return Some(candidate);
     }
 
+    // In override mode (--sessions-dir), storage_root points to a subdirectory
+    // like `fixtures/opencode_storage/`, but the real OpenCode layout places
+    // opencode.db one level up alongside the storage directory. Check the parent
+    // to support both layouts without special-casing override mode elsewhere.
     storage_root
         .parent()
         .map(|parent| parent.join("opencode.db"))
