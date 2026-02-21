@@ -8,7 +8,8 @@ Analysis of Claude Code, Codex, OpenCode, and Mistral Vibe session file formats 
 
 - ✅ Claude Code parser + indexer implemented
 - ✅ Session date/sort semantics aligned with agent-sessions (Claude: end time = latest message-like event)
-- ✅ OpenCode parser implemented
+- ✅ OpenCode parser implemented (JSON file format only — see ⚠️ below)
+- ⚠️ OpenCode ≥ 2026-02-14 stores sessions in SQLite (`opencode.db`); recent sessions not indexed
 - ✅ Codex parser implemented
 - ✅ Mistral Vibe parser implemented
 - ✅ OpenCode subagent session detection implemented (`parentID` sessions are skipped during indexing)
@@ -24,7 +25,7 @@ Analysis of Claude Code, Codex, OpenCode, and Mistral Vibe session file formats 
 |------|------|--------------|
 | **Claude Code** | `~/.claude/` | Project-specific directories<br>`~/.claude/projects/-Users-alexm-Repository-<project>/UUID.jsonl` |
 | **Codex** | `~/.codex/sessions/` | Date-sharded directories<br>`YYYY/MM/DD/rollout-*.jsonl` |
-| **OpenCode** | `~/.local/share/opencode/storage/` | Multi-directory structure:<br>`session/<project>/ses_xxx.json` (metadata)<br>`message/ses_xxx/` (messages)<br>`part/msg_xxx/` (message parts)<br>`session_diff/ses_xxx.json` (file changes) |
+| **OpenCode** | `~/.local/share/opencode/` | **New (≥ 2026-02-14)**: Single SQLite DB at `opencode.db`; tables: `session`, `message`, `part`, `project`, `todo`, `permission`, `session_share`.<br>**Legacy (pre-migration)**: Multi-directory JSON under `storage/`: `session/<project>/ses_xxx.json`, `message/ses_xxx/`, `part/msg_xxx/`, `session_diff/ses_xxx.json`. Files are retained post-migration (no auto-cleanup). |
 | **Mistral Vibe** | `~/.vibe/logs/session/` | One directory per session:<br>`session_YYYYMMDD_HHMMSS_<shortid>/`<br>Contains `meta.json` + `messages.jsonl`.<br>Default can be overridden via `VIBE_HOME` or `session_logging.save_dir` in `config.toml`. |
 
 ---
@@ -36,10 +37,9 @@ Analysis of Claude Code, Codex, OpenCode, and Mistral Vibe session file formats 
 - UTF-8 encoded
 - Append-only chronological events
 
-**OpenCode** uses **separate JSON files**:
-- One JSON file per session (session metadata)
-- Separate directories for messages and parts
-- Standard JSON format (not line-delimited)
+**OpenCode** uses **SQLite (new)** or **separate JSON files (legacy)**:
+- **New (≥ 2026-02-14)**: Single SQLite WAL-mode database (`opencode.db`). Message and part content stored as JSON blobs in the `data` column.
+- **Legacy**: One JSON file per session (metadata), separate directories for messages and parts, standard JSON format (not line-delimited). Still present on disk after migration for users who have updated.
 
 **Mistral Vibe** uses a **directory-based format**:
 - `meta.json` contains session-level metadata (standard JSON)
@@ -289,6 +289,151 @@ Codex rollout logs are envelope-based JSONL entries (`RolloutLine`).
 
 ### OpenCode
 
+**⚠️ Breaking change (≥ 2026-02-14): OpenCode migrated to SQLite.**
+New sessions are written to `~/.local/share/opencode/opencode.db` (WAL mode). The legacy JSON file tree under `storage/` is retained as-is for users who migrated; it is no longer the write path for new sessions.
+
+### OpenCode — New SQLite Format
+
+**Database path:** `~/.local/share/opencode/opencode.db`
+
+**SQLite tables:**
+
+```sql
+-- Sessions
+CREATE TABLE session (
+  id TEXT PRIMARY KEY,              -- "ses_" prefix
+  project_id TEXT NOT NULL REFERENCES project(id) ON DELETE CASCADE,
+  parent_id TEXT,                   -- set for child/subagent sessions
+  slug TEXT NOT NULL,
+  directory TEXT NOT NULL,
+  title TEXT NOT NULL,
+  version TEXT NOT NULL,
+  share_url TEXT,
+  summary_additions INTEGER,
+  summary_deletions INTEGER,
+  summary_files INTEGER,
+  summary_diffs TEXT,               -- JSON: FileDiff[]
+  revert TEXT,                      -- JSON: {messageID, partID?, snapshot?, diff?}
+  permission TEXT,                  -- JSON: PermissionNext.Ruleset
+  created_at INTEGER,               -- Unix ms
+  updated_at INTEGER,               -- Unix ms
+  time_compacting INTEGER,
+  time_archived INTEGER
+);
+
+-- Messages (data blob holds the full MessageV2.Info minus id/sessionID)
+CREATE TABLE message (
+  id TEXT PRIMARY KEY,              -- "msg_" prefix
+  session_id TEXT NOT NULL REFERENCES session(id) ON DELETE CASCADE,
+  created_at INTEGER,
+  updated_at INTEGER,
+  data TEXT NOT NULL                -- JSON blob (role, model, agent, tokens, cost, …)
+);
+
+-- Parts (data blob holds the full Part minus id/sessionID/messageID)
+CREATE TABLE part (
+  id TEXT PRIMARY KEY,              -- "prt_" prefix (new; old JSON files used "part_")
+  message_id TEXT NOT NULL REFERENCES message(id) ON DELETE CASCADE,
+  session_id TEXT NOT NULL,
+  created_at INTEGER,
+  updated_at INTEGER,
+  data TEXT NOT NULL                -- JSON blob (type, text/tool state/subtask/…)
+);
+
+-- Projects
+CREATE TABLE project (
+  id TEXT PRIMARY KEY,              -- git first-commit hash, or "global"
+  worktree TEXT NOT NULL,
+  vcs TEXT,                         -- "git" or null
+  name TEXT,
+  icon_url TEXT, icon_color TEXT,
+  created_at DATETIME, updated_at DATETIME,
+  time_initialized INTEGER,
+  sandboxes TEXT NOT NULL,          -- JSON: string[]
+  commands TEXT                     -- JSON: {start?: string}
+);
+
+-- Todos, permissions, session shares also stored in the same DB
+```
+
+**Session object fields** (from `data` or top-level columns):
+
+```typescript
+{
+  id: string           // "ses_" prefix
+  slug: string
+  projectID: string    // git first-commit hash, or "global"
+  directory: string
+  parentID?: string    // child/subagent sessions
+  title: string
+  version: string
+  share?: { url: string }
+  summary?: { additions, deletions, files, diffs?: FileDiff[] }
+  revert?: { messageID, partID?, snapshot?, diff? }
+  permission?: PermissionRuleset
+  time: { created, updated, compacting?, archived? }  // Unix ms
+}
+```
+
+**New fields vs previous docs:** `slug`, `share`, `permission`, `revert`, `time.compacting`, `time.archived`, `summary.diffs`.
+
+**Message `data` blob fields** (user):
+
+```typescript
+{
+  role: "user"
+  agent: string
+  model: { providerID: string; modelID: string }
+  format?: { type: "text" } | { type: "json_schema", schema, retryCount? }
+  summary?: { title?, body?, diffs: FileDiff[] }
+  system?: string
+  tools?: Record<string, boolean>
+  variant?: string
+}
+```
+
+**Message `data` blob fields** (assistant):
+
+```typescript
+{
+  role: "assistant"
+  parentID: string      // user message ID this responds to
+  modelID: string
+  providerID: string
+  agent: string
+  mode: string          // @deprecated
+  path: { cwd: string; root: string }
+  cost: number
+  tokens: { total?, input, output, reasoning, cache: { read, write } }
+  summary?: boolean     // true if compaction summary
+  error?: ProviderAuthError | UnknownError | MessageOutputLengthError | …
+  finish?: string
+  structured?: unknown
+  variant?: string
+}
+```
+
+**Part types** (12 total; `type` field in `data` blob):
+
+| Part type | Key `data` fields |
+|-----------|-------------------|
+| `text` | `text`, `synthetic?`, `ignored?`, `time?`, `metadata?` |
+| `reasoning` | `text`, `time`, `metadata?` |
+| `file` | `mime`, `filename?`, `url`, `source?` (FileSource \| SymbolSource \| ResourceSource) |
+| `tool` | `callID`, `tool`, `metadata?`, `state` (pending/running/completed/error) |
+| `step-start` | `snapshot?` |
+| `step-finish` | `reason`, `snapshot?`, `cost`, `tokens` |
+| `snapshot` | `snapshot` (git tree hash) |
+| `patch` | `hash`, `files: string[]` |
+| `agent` | `name`, `source?` |
+| `retry` | `attempt`, `error`, `time.created` |
+| `compaction` | `auto: boolean` |
+| `subtask` | `prompt`, `description`, `agent`, `model?`, `command?` |
+
+**New part types vs previous docs:** `file`, `agent`, `retry`, `patch` (added). Part ID prefix changed from `part_` to `prt_`.
+
+### OpenCode — Legacy JSON Format (pre-2026-02-14)
+
 **Session Metadata File** (`session/<project>/ses_xxx.json`):
 ```json
 {
@@ -319,7 +464,7 @@ Model fields are message-scoped (not session-scoped):
 - User messages: `model.providerID` + `model.modelID`
 - Assistant messages: top-level `providerID` + `modelID`
 
-**Storage Structure:**
+**Storage Structure (legacy):**
 ```
 ~/.local/share/opencode/storage/
 ├── session/<projectID>/ses_xxx.json     # Session metadata
@@ -493,9 +638,11 @@ Goal: determine whether model information is available per message, per turn, an
 - **Claude parser (`src/parsers/claude_code.rs`)**: indexes `type == user|assistant`; ignores `tool_use` blocks and `system` tool-output events.
 - **Codex parser (`src/parsers/codex.rs`)**: indexes only `event_msg.payload.type == user_message|agent_message`; ignores tool/collab event variants.
 - **OpenCode parser (`src/parsers/opencode.rs`)**:
+  - **⚠️ Only reads the legacy JSON file tree** (`storage/session/`, `storage/message/`, `storage/part/`). New sessions (written to `opencode.db` since ≥ 2026-02-14) are **not indexed**.
   - skips sessions with `parentID` (subagents)
   - converts only `part.type == text`
   - skips `tool`, `reasoning`, `step-start`, `step-finish`, `snapshot`, `compaction`, `subtask`
+  - does not read `file`, `agent`, `retry`, `patch` part types (new in SQLite era)
 - **Mistral Vibe parser (`src/parsers/mistral_vibe.rs`)**: indexes `role == user|assistant` text; skips `role == tool` and assistant records that only contain `tool_calls` with empty text.
 - **All parsers currently**: do not persist model metadata into indexed session/message tables (no normalized `model`/`provider` columns yet).
 
@@ -562,20 +709,21 @@ Two patterns:
 
 ### OpenCode
 
-**Multi-Directory Storage:**
+**Storage Migration (≥ 2026-02-14):**
+- New primary storage is `opencode.db` (SQLite WAL mode) at `~/.local/share/opencode/opencode.db`
+- On first run after upgrade OpenCode runs a one-time `JsonMigration` that reads all JSON files from `storage/` and imports them into SQLite
+- The `storage/` directory is **not deleted** after migration; legacy files remain on disk
+- Part ID prefix changed from `part_` to `prt_` in the SQLite era
+
+**Legacy Multi-Directory Storage (JSON):**
 - Session metadata separate from message content
-- Allows independent access to sessions vs full conversation history
 - File change tracking in dedicated `session_diff/` directory
+- Orphaned data risk: deleting session metadata leaves orphaned messages/parts/diffs
 
 **Git-Based Project Organization:**
-- Project identification via git root commit hash
+- Project identification via git root commit hash (`git rev-list --max-parents=0 --all`)
 - Automatic grouping of sessions by repository
-- No manual project configuration needed
-
-**Orphaned Data Risk:**
-- Deleting session metadata file leaves orphaned messages/parts/diffs
-- No built-in cleanup mechanism
-- Manual deletion requires removing multiple related directories
+- In SQLite: `project` table stores `id` (hash), `worktree`, `vcs`, `name`, etc.
 
 **Subtask Metadata:**
 - Delegated work is represented in `subtask` parts on parent-session user messages (`prompt`, `description`, `agent`, optional `model`, optional `command`)
@@ -724,6 +872,11 @@ This is critical for sessions with thousands of messages.
 
 **OpenCode:**
 ```
+# New (≥ 2026-02-14) — SQLite:
+~/.local/share/opencode/opencode.db
+   └── session table: id (ses_…), project_id (git hash), directory, title, …
+
+# Legacy — JSON files:
 ~/.local/share/opencode/storage/session/abc123def456/ses_xxx.json
                                         └─────────┘  └──────┘
                                         Project ID   Session ID
@@ -757,13 +910,9 @@ This is critical for sessions with thousands of messages.
 - Additional event metadata in `event_msg.payload` (tool call IDs, collab thread IDs, etc.)
 
 **OpenCode** (session-level metadata):
-- `id`: Session identifier (commonly `ses_*`, but parser should not hardcode prefix)
-- `projectID`: Git root commit hash
-- `directory`: Working directory path
-- `version`: OpenCode version
-- `title`: User-provided session title
-- `parentID`: Parent session ID (if subagent)
-- Model metadata is message-level (`user.model.{providerID,modelID}` and assistant `providerID`/`modelID`)
+- **SQLite (new)**: top-level columns in `session` table; `project_id` → `project.id` (git first-commit hash); `parent_id` for subagents; `slug`, `title`, `directory`, `version`, `created_at`, `updated_at`
+- **JSON legacy**: `id`, `projectID`, `directory`, `title`, `version`, `parentID`, `time.created`, `time.updated`
+- Model metadata is message-level (`user.model.{providerID,modelID}` and assistant `providerID`/`modelID`); unchanged between formats
 
 **Mistral Vibe** (session-level metadata in `meta.json`):
 - `session_id`: UUID
@@ -826,7 +975,17 @@ fn get_parser(path: &Path) -> Box<dyn SessionParser> {
 
 ### OpenCode-Specific Parser Challenges
 
-**Multi-File Reading:**
+**⚠️ SQLite migration requires a new read path:**
+
+The current multi-file JSON parser (`src/parsers/opencode.rs`) only indexes sessions from the legacy `storage/` directory tree. Sessions created with OpenCode ≥ 2026-02-14 are stored in `opencode.db` and are invisible to the current parser.
+
+To support both formats a dual-read strategy is needed:
+1. **Detect SQLite database**: check for `opencode.db` at `~/.local/share/opencode/opencode.db`
+2. **If present**: open with `rusqlite` and query `session`, `message`, `part` tables; deserialize `data` JSON blobs
+3. **If absent (older install)**: fall back to the existing multi-file JSON reader
+4. **Dedup on migration overlap**: the JSON files and SQLite may contain the same sessions after migration; deduplicate by session `id`
+
+**Multi-File Reading (legacy path — still needed for pre-migration installs):**
 ```rust
 impl OpenCodeParser {
     fn parse_session(&self, session_path: &Path) -> Result<Session> {
@@ -860,6 +1019,11 @@ impl OpenCodeParser {
 ---
 
 ## Open Questions
+
+0. **OpenCode SQLite parser (high priority — recent sessions missing)**:
+   - Implement a SQLite read path for `opencode.db` alongside the existing JSON reader
+   - Decide on deduplication strategy when both storage formats are present (JSON files + SQLite) on a migrated install
+   - `rusqlite` is already a project dependency; the main work is deserializing `message.data` and `part.data` JSON blobs
 
 1. **Tool/Event Indexing Scope**:
    - Should tool calls/results become first-class indexed records (new role/type), or remain transcript-only metadata?
@@ -897,6 +1061,13 @@ impl OpenCodeParser {
 ---
 
 ## Next Steps for Design
+
+0. **OpenCode SQLite parser (unblocks recent session display)**:
+   - Add a `OpenCodeSqliteReader` that opens `opencode.db` with `rusqlite`
+   - Query sessions, messages, parts from their respective tables
+   - Deserialize `data` JSON blobs using the existing part/message type schemas
+   - Keep the JSON file reader as a fallback for pre-migration installs
+   - Deduplicate sessions by `id` when both paths return data
 
 1. **Tool call indexing prototype (Phase 4 candidate)**:
    - Add optional extraction mode in each parser for tool/subtask/collab events
@@ -962,10 +1133,10 @@ impl OpenCodeParser {
 
 - **Claude Code**: JSONL format, tree-structured events, project-based organization; no stable structured per-message/per-session model field observed in sampled logs
 - **Codex**: JSONL rollout envelope (`session_meta`/`event_msg`/`turn_context`/...); model provider can exist at session level, and model slug is captured at turn level (`turn_context.model`)
-- **OpenCode**: Multi-file JSON format with explicit `tool` and `subtask` parts; model metadata is message-level (`user.model.*`, assistant `providerID`/`modelID`), not session-level
+- **OpenCode**: **Breaking change ≥ 2026-02-14** — migrated to SQLite (`opencode.db`). New sessions invisible to the current JSON-only parser. Legacy JSON file tree retained post-migration. Data schema (session/message/part fields) largely unchanged; new part types: `file`, `agent`, `retry`, `patch`; part ID prefix changed to `prt_`. Model metadata still message-level.
 - **Mistral Vibe**: Directory-based session format with `meta.json` + JSONL `messages.jsonl`; model info is session-level via `meta.json.config` snapshot when present, not message-level
 
 ---
 
 **Last Updated**: 2026-02-21
-**Status**: Subagent + tool-call + model-metadata analysis refreshed; parser behavior and remaining scope gaps documented
+**Status**: OpenCode SQLite migration documented (≥ 2026-02-14); subagent + tool-call + model-metadata analysis current; parser behavior and remaining scope gaps documented
