@@ -13,6 +13,7 @@ Analysis of Claude Code, Codex, OpenCode, and Mistral Vibe session file formats 
 - ✅ Mistral Vibe parser implemented
 - ✅ OpenCode subagent session detection implemented (`parentID` sessions are skipped during indexing)
 - ✅ Tool-call wire formats documented for Claude, OpenCode, Mistral Vibe, and Codex rollouts
+- ✅ LLM model metadata availability mapped (per message vs per turn vs per session)
 - ℹ️ Current parser behavior: tool-call/tool-result content is intentionally not indexed yet (Phase 4)
 
 ---
@@ -68,6 +69,7 @@ Analysis of Claude Code, Codex, OpenCode, and Mistral Vibe session file formats 
 | **Identity** | `uuid`, `parentUuid` (tree structure) | Session id at `session_meta.payload.id`; event-specific IDs like `call_id`, `sender_thread_id`, `receiver_thread_id` | `id`, `parentID` (hierarchical sessions) | No message IDs; tool calls have an `id` and tool responses reference it via `tool_call_id` |
 | **Timestamp** | `timestamp` (ISO-8601) | Top-level rollout-line `timestamp` (ISO-8601 string) | `time.created`, `time.updated` (session level) | Session-level only in `meta.json`: `start_time`, `end_time` (ISO-8601). No per-message timestamps |
 | **Content** | Nested: `message.content` | Usually in `event_msg.payload` (for example `message`, command output deltas, MCP results), plus optional `response_item.payload.content[]` blocks | Stored in `message/ses_xxx/` directory + `part/msg_xxx/` | `messages.jsonl` lines with `content`; tool output stored as `role: "tool"` messages |
+| **Model Metadata** | No stable structured model field observed in sampled events (session/event includes `version` but not a canonical model id) | `session_meta.payload.model_provider` (optional provider, session-level) + `turn_context.payload.model` (model slug, per turn); `event_msg.payload.type == "session_configured"` can also carry `model` + `model_provider_id` | Per-message model fields: `user.model.{providerID,modelID}` and assistant `providerID` + `modelID`; `subtask` parts can optionally include delegated model | No model field in `messages.jsonl` records; session-level `meta.json` can include a full `config` snapshot (`active_model`, `providers`, `models`) when logging is enabled |
 
 ### Key Architectural Differences
 
@@ -79,9 +81,9 @@ Analysis of Claude Code, Codex, OpenCode, and Mistral Vibe session file formats 
 
 **Metadata Storage:**
 - **Claude Code**: Rich per-event metadata (`cwd`, `gitBranch`, `version`, `sessionId`)
-- **Codex**: Minimal per-event metadata, model info stored separately
+- **Codex**: Session metadata (`session_meta`) can include provider (`model_provider`), and turn-level metadata (`turn_context`) includes active model slug (`model`)
 - **OpenCode**: Session-level metadata (`projectID`, `directory`, `version`, `title`)
-- **Mistral Vibe**: Session-level `meta.json` includes environment, optional git info, token/tool usage stats, tools snapshot, and agent config snapshot
+- **Mistral Vibe**: Session-level `meta.json` includes environment, optional git info, token/tool usage stats, tools snapshot, and configuration snapshot data
 
 **Content Access:**
 - **Claude Code**: `event.message.content` (nested in JSONL events)
@@ -209,6 +211,35 @@ Codex rollout logs are envelope-based JSONL entries (`RolloutLine`).
 }
 ```
 
+**Turn Context (model captured per turn):**
+```json
+{
+  "timestamp": "2026-01-18T01:01:29.500Z",
+  "type": "turn_context",
+  "payload": {
+    "cwd": "/home/user/project",
+    "approval_policy": "on-request",
+    "sandbox_policy": { "type": "workspace-write" },
+    "model": "gpt-5.1-codex",
+    "summary": "auto"
+  }
+}
+```
+
+**Session Configured Event (can include model + provider):**
+```json
+{
+  "timestamp": "2026-01-18T01:01:28.500Z",
+  "type": "event_msg",
+  "payload": {
+    "type": "session_configured",
+    "session_id": "019bce9f-0a40-79e2-8351-8818e8487fb6",
+    "model": "codex-mini-latest",
+    "model_provider_id": "openai"
+  }
+}
+```
+
 **Tool-Related Events (selected examples):**
 ```json
 {
@@ -284,6 +315,10 @@ Codex rollout logs are envelope-based JSONL entries (`RolloutLine`).
 - `time.updated`: Last update timestamp (Unix epoch milliseconds)
 - `parentID`: Optional - present only for subagent sessions (spawned via task tools)
 
+Model fields are message-scoped (not session-scoped):
+- User messages: `model.providerID` + `model.modelID`
+- Assistant messages: top-level `providerID` + `modelID`
+
 **Storage Structure:**
 ```
 ~/.local/share/opencode/storage/
@@ -296,11 +331,31 @@ Codex rollout logs are envelope-based JSONL entries (`RolloutLine`).
 **Message File** (`message/<sessionID>/msg_xxx.json`):
 ```json
 {
-  "id": "msg_001",
+  "id": "msg_user_001",
   "sessionID": "ses_abc",
-  "role": "assistant",
+  "role": "user",
+  "agent": "assistant",
+  "model": {
+    "providerID": "anthropic",
+    "modelID": "claude-sonnet-4-5"
+  },
   "time": {
     "created": 1704067210000
+  }
+}
+```
+
+```json
+{
+  "id": "msg_asst_001",
+  "sessionID": "ses_abc",
+  "role": "assistant",
+  "parentID": "msg_user_001",
+  "providerID": "anthropic",
+  "modelID": "claude-sonnet-4-5",
+  "time": {
+    "created": 1704067210500,
+    "completed": 1704067211200
   }
 }
 ```
@@ -356,6 +411,8 @@ Codex rollout logs are envelope-based JSONL entries (`RolloutLine`).
 
 - `meta.json` contains session-wide timestamps, environment info, token/tool usage stats, and config snapshots
 - `messages.jsonl` is an OpenAI-style chat transcript (`role`, `content`, optional `tool_calls`)
+- `messages.jsonl` entries do not include a normalized model identifier field
+- Model selection is recoverable from `meta.json` config snapshot when present (`config.active_model`, plus `config.providers` / `config.models`)
 - No stable per-message IDs in `messages.jsonl`; tool call correlation is via `tool_calls[*].id` -> `tool_call_id`
 
 **Tool Call + Result (simplified):**
@@ -412,6 +469,23 @@ Codex rollout logs are envelope-based JSONL entries (`RolloutLine`).
 - Tool outputs are separate `role: "tool"` messages, linked by `tool_call_id`.
 - No dedicated subagent session model observed in current `meta.json` + `messages.jsonl` format.
 
+### LLM Model Metadata Availability (Focused Update)
+
+Goal: determine whether model information is available per message, per turn, and/or per session.
+
+| Tool | Per Message | Per Turn | Per Session | Notes |
+|------|-------------|----------|-------------|-------|
+| **Claude Code** | ❌ Not observed as a stable structured field in sampled `user`/`assistant` records | ❌ No explicit turn-context object in the known JSONL schema | ⚠️ Partial: session/events include `version`, but no canonical `model` key | Model switches may appear as free-text command/system content (for example `/model`) rather than a normalized field. |
+| **Codex** | ⚠️ Not on `user_message` / `agent_message` payloads | ✅ `turn_context.payload.model` (`TurnContextItem.model`) | ✅/⚠️ `session_meta.payload.model_provider` is optional and provider-only (no guaranteed model slug) | `event_msg.payload.type == "session_configured"` can provide `model` + `model_provider_id`; reroutes can be observed via `model_reroute` events. |
+| **OpenCode** | ✅ User message has `model.{providerID,modelID}` and assistant message has `providerID` + `modelID` | N/A (message-centric schema) | ❌ Session metadata has no model field | `subtask` parts can optionally pin delegated model (`model.providerID`, `model.modelID`). |
+| **Mistral Vibe** | ❌ `messages.jsonl` (`LLMMessage`) has no model key | ❌ No separate turn-context model object in logs | ✅ `meta.json` metadata dump can contain `config` snapshot with `active_model`, plus `providers`/`models` arrays | Requires session logging metadata output; minimal/older logs may omit full config snapshot. |
+
+**Primary evidence used for this update:**
+- Codex protocol and recorder code: `codex-rs/protocol/src/protocol.rs` (`SessionMeta`, `TurnContextItem`, `SessionConfiguredEvent`) and `codex-rs/core/src/codex.rs` (`to_turn_context_item` persisted before sampling).
+- OpenCode schemas: `packages/opencode/src/session/message-v2.ts` and generated SDK types (`packages/sdk/js/src/v2/gen/types.gen.ts`).
+- Mistral Vibe logger/types: `vibe/core/session/session_logger.py` and `vibe/core/types.py`.
+- Claude Code format observations from fixtures and existing external format analysis (`agent-sessions` docs).
+
 ### Current Sessions Chronicle Parsing Behavior
 
 **Important:** raw formats above are richer than what is currently indexed.
@@ -423,6 +497,7 @@ Codex rollout logs are envelope-based JSONL entries (`RolloutLine`).
   - converts only `part.type == text`
   - skips `tool`, `reasoning`, `step-start`, `step-finish`, `snapshot`, `compaction`, `subtask`
 - **Mistral Vibe parser (`src/parsers/mistral_vibe.rs`)**: indexes `role == user|assistant` text; skips `role == tool` and assistant records that only contain `tool_calls` with empty text.
+- **All parsers currently**: do not persist model metadata into indexed session/message tables (no normalized `model`/`provider` columns yet).
 
 This is intentional and matches current project scope. Tool/subagent transcript indexing remains a separate follow-up.
 
@@ -511,7 +586,8 @@ Two patterns:
 **Rich Session Metadata:**
 - `meta.json.stats` includes token usage and tool call counters
 - `meta.json.tools_available` captures the set of tools available to the agent for the session
-- `meta.json.agent_config` captures a snapshot of the resolved configuration (providers, models, tool permissions)
+- `meta.json.config` captures a snapshot of resolved configuration (including active model + provider/model catalogs)
+- `meta.json.agent_profile` captures selected profile/override metadata
 
 **Input History (Not a Session Log):**
 - `~/.vibe/vibehistory` stores a JSONL list of user inputs for prompt recall; it does not contain the full assistant/tool transcript
@@ -669,11 +745,15 @@ This is critical for sessions with thousands of messages.
 - `gitBranch`: Git branch name
 - `version`: Claude Code version
 - `userType`: "external" or other
+- No canonical structured `model` field observed in sampled session events
 
 **Codex** (envelope + event payload model):
 - `session_meta.payload.id`: session/thread identifier
 - `session_meta.payload.cwd`: working directory
 - `session_meta.payload.source`: source provenance (`cli`, `vscode`, `subagent_*`, ...)
+- `session_meta.payload.model_provider`: optional session-level provider id
+- `turn_context.payload.model`: active model slug for that turn
+- `event_msg.payload` can include `session_configured` (`model`, `model_provider_id`)
 - Additional event metadata in `event_msg.payload` (tool call IDs, collab thread IDs, etc.)
 
 **OpenCode** (session-level metadata):
@@ -683,12 +763,14 @@ This is critical for sessions with thousands of messages.
 - `version`: OpenCode version
 - `title`: User-provided session title
 - `parentID`: Parent session ID (if subagent)
+- Model metadata is message-level (`user.model.{providerID,modelID}` and assistant `providerID`/`modelID`)
 
 **Mistral Vibe** (session-level metadata in `meta.json`):
 - `session_id`: UUID
 - `start_time`, `end_time`: ISO-8601 strings
 - `environment.working_directory`: working directory
 - Optional git info: `git_commit`, `git_branch`
+- Optional model config snapshot in `meta.json.config` (for example `active_model`, `providers`, `models`)
 - `stats`: token usage, tool call counters, and other session metrics
 
 ---
@@ -852,6 +934,8 @@ impl OpenCodeParser {
 
 ### Codex (Primary Sources)
 - [Codex protocol `RolloutItem`, `SessionMeta`, `EventMsg`](https://github.com/openai/codex/blob/main/codex-rs/protocol/src/protocol.rs)
+- [Codex turn-context persistence (`RolloutItem::TurnContext` before sampling)](https://github.com/openai/codex/blob/main/codex-rs/core/src/codex.rs)
+- [Codex rollout recorder writes `session_meta.model_provider`](https://github.com/openai/codex/blob/main/codex-rs/core/src/rollout/recorder.rs)
 - [Codex app-server thread/item event model](https://github.com/openai/codex/blob/main/codex-rs/app-server/README.md)
 - [Codex TypeScript SDK note on session persistence (`~/.codex/sessions`)](https://github.com/openai/codex/blob/main/sdk/typescript/README.md)
 
@@ -863,6 +947,7 @@ impl OpenCodeParser {
 - [OpenCode `MessageV2` part schemas (`tool`, `subtask`, etc.)](https://github.com/sst/opencode/blob/dev/packages/opencode/src/session/message-v2.ts)
 - [OpenCode task tool creates child sessions with `parentID`](https://github.com/sst/opencode/blob/dev/packages/opencode/src/tool/task.ts)
 - [OpenCode generated v2 SDK types (`Session`, `Part`, `ToolPart`)](https://github.com/sst/opencode/blob/dev/packages/sdk/js/src/v2/gen/types.gen.ts)
+- [OpenCode session schema (session-level fields, no model)](https://github.com/sst/opencode/blob/dev/packages/opencode/src/session/index.ts)
 
 ### Claude Tool-Use References
 - [Claude API tool-use block structure (`tool_use`/`tool_result`)](https://platform.claude.com/docs/en/api/typescript/messages/create)
@@ -870,15 +955,17 @@ impl OpenCodeParser {
 ### Mistral Vibe Information Sources
 - [Mistral Vibe Configuration Docs](https://docs.mistral.ai/mistral-vibe/introduction/configuration) - `VIBE_HOME`, `config.toml` behavior
 - [Mistral Vibe Repository](https://github.com/mistralai/mistral-vibe) - session logging implementation
+- [Mistral Vibe session logger (`meta.json` + `messages.jsonl` + `config` dump)](https://github.com/mistralai/mistral-vibe/blob/main/vibe/core/session/session_logger.py)
+- [Mistral Vibe message/session models (`SessionMetadata`, `LLMMessage`)](https://github.com/mistralai/mistral-vibe/blob/main/vibe/core/types.py)
 
 ### Key Findings Summary
 
-- **Claude Code**: JSONL format, tree-structured events, project-based organization
-- **Codex**: JSONL rollout envelope (`session_meta`/`event_msg`/...), date-sharded storage, event-level tool/collab lifecycle signals
-- **OpenCode**: Multi-file JSON format with explicit `tool` and `subtask` parts, plus session-level parent-child links via `parentID`
-- **Mistral Vibe**: Directory-based session format with `meta.json` + JSONL `messages.jsonl` (including tool call/result pairing)
+- **Claude Code**: JSONL format, tree-structured events, project-based organization; no stable structured per-message/per-session model field observed in sampled logs
+- **Codex**: JSONL rollout envelope (`session_meta`/`event_msg`/`turn_context`/...); model provider can exist at session level, and model slug is captured at turn level (`turn_context.model`)
+- **OpenCode**: Multi-file JSON format with explicit `tool` and `subtask` parts; model metadata is message-level (`user.model.*`, assistant `providerID`/`modelID`), not session-level
+- **Mistral Vibe**: Directory-based session format with `meta.json` + JSONL `messages.jsonl`; model info is session-level via `meta.json.config` snapshot when present, not message-level
 
 ---
 
-**Last Updated**: 2026-02-17
-**Status**: Subagent + tool-call analysis refreshed; parser behavior and remaining scope gaps documented
+**Last Updated**: 2026-02-21
+**Status**: Subagent + tool-call + model-metadata analysis refreshed; parser behavior and remaining scope gaps documented
