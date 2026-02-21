@@ -369,3 +369,855 @@ impl OpenCodeParser {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::{DateTime, Utc};
+    use serde_json::json;
+    use std::fs;
+    use std::path::{Path, PathBuf};
+    use tempfile::TempDir;
+
+    fn write_json_file(path: &Path, value: &serde_json::Value) {
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).unwrap();
+        }
+        fs::write(path, serde_json::to_vec(value).unwrap()).unwrap();
+    }
+
+    fn write_session_file(
+        root: &Path,
+        project: &str,
+        filename: &str,
+        value: serde_json::Value,
+    ) -> PathBuf {
+        let path = root.join("session").join(project).join(filename);
+        write_json_file(&path, &value);
+        path
+    }
+
+    fn write_message_file(
+        root: &Path,
+        session_id: &str,
+        filename: &str,
+        value: serde_json::Value,
+    ) -> PathBuf {
+        let path = root.join("message").join(session_id).join(filename);
+        write_json_file(&path, &value);
+        path
+    }
+
+    fn write_part_file(root: &Path, message_id: &str, filename: &str, value: serde_json::Value) {
+        let path = root.join("part").join(message_id).join(filename);
+        write_json_file(&path, &value);
+    }
+
+    #[test]
+    fn parse_session_metadata_extracts_fields() {
+        let temp_dir = TempDir::new().unwrap();
+        let root = temp_dir.path();
+        let created = 1_704_067_200_000i64;
+        let updated = 1_704_067_260_000i64;
+
+        let session_path = write_session_file(
+            root,
+            "project-a",
+            "session-001.json",
+            json!({
+                "id": "session-001",
+                "directory": "/projects/alpha",
+                "time": { "created": created, "updated": updated }
+            }),
+        );
+
+        let backend = json_backend::JsonBackend::new(root);
+        let metadata = backend
+            .parse_session_metadata_from_file(&session_path)
+            .unwrap();
+
+        assert_eq!(metadata.id, "session-001");
+        assert_eq!(metadata.directory.as_deref(), Some("/projects/alpha"));
+        assert_eq!(
+            metadata.time_created,
+            DateTime::<Utc>::from_timestamp_millis(created).unwrap()
+        );
+        assert_eq!(
+            metadata.time_updated,
+            DateTime::<Utc>::from_timestamp_millis(updated).unwrap()
+        );
+    }
+
+    #[test]
+    fn parse_subagent_session_without_messages_fails() {
+        let temp_dir = TempDir::new().unwrap();
+        let root = temp_dir.path();
+
+        let session_path = write_session_file(
+            root,
+            "project-a",
+            "session-002.json",
+            json!({
+                "id": "session-002",
+                "parentID": "session-001",
+                "time": { "created": 1_704_067_200_000i64, "updated": 1_704_067_260_000i64 }
+            }),
+        );
+
+        let parser = OpenCodeParser::new(root);
+        let result = parser.parse(&session_path);
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn parse_subagent_session_is_indexed_with_flag() {
+        let temp_dir = TempDir::new().unwrap();
+        let root = temp_dir.path();
+
+        let session_path = write_session_file(
+            root,
+            "project-a",
+            "child-session.json",
+            json!({
+                "id": "child-session",
+                "parentID": "parent-session",
+                "directory": "/projects/alpha",
+                "time": { "created": 1_704_067_200_000i64, "updated": 1_704_067_260_000i64 }
+            }),
+        );
+
+        write_message_file(
+            root,
+            "child-session",
+            "msg-001.json",
+            json!({
+                "id": "msg-001",
+                "sessionID": "child-session",
+                "role": "user",
+                "time": { "created": 1_704_067_200_000i64 }
+            }),
+        );
+
+        write_part_file(
+            root,
+            "msg-001",
+            "part-001.json",
+            json!({
+                "id": "part-001",
+                "order": 1,
+                "type": "text",
+                "text": "Do the subtask"
+            }),
+        );
+
+        let parser = OpenCodeParser::new(root);
+        let parsed = parser.parse(&session_path).unwrap();
+
+        assert!(parsed.session.is_subagent);
+        assert_eq!(
+            parsed.session.parent_session_id.as_deref(),
+            Some("parent-session")
+        );
+        assert_eq!(parsed.messages.len(), 1);
+    }
+
+    #[test]
+    fn parse_skips_sessions_without_user_messages() {
+        let temp_dir = TempDir::new().unwrap();
+        let root = temp_dir.path();
+
+        let session_path = write_session_file(
+            root,
+            "project-a",
+            "session-003.json",
+            json!({
+                "id": "session-003",
+                "directory": "/projects/alpha",
+                "time": { "created": 1_704_067_200_000i64, "updated": 1_704_067_260_000i64 }
+            }),
+        );
+
+        write_message_file(
+            root,
+            "session-003",
+            "msg-001.json",
+            json!({
+                "id": "msg-001",
+                "sessionID": "session-003",
+                "role": "assistant",
+                "time": { "created": 1_704_067_200_000i64 }
+            }),
+        );
+
+        write_part_file(
+            root,
+            "msg-001",
+            "part-001.json",
+            json!({
+                "id": "part-001",
+                "type": "text",
+                "text": "Hello"
+            }),
+        );
+
+        let parser = OpenCodeParser::new(root);
+        let result = parser.parse(&session_path);
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn load_parts_handles_missing_files() {
+        let temp_dir = TempDir::new().unwrap();
+        let root = temp_dir.path();
+        let backend = json_backend::JsonBackend::new(root);
+
+        let parts = backend.load_parts("missing-msg").unwrap();
+        assert!(parts.is_empty());
+    }
+
+    #[test]
+    fn message_reconstruction_orders_correctly() {
+        let temp_dir = TempDir::new().unwrap();
+        let root = temp_dir.path();
+
+        let session_path = write_session_file(
+            root,
+            "project-a",
+            "session-004.json",
+            json!({
+                "id": "session-004",
+                "directory": "/projects/alpha",
+                "time": { "created": 1_704_067_200_000i64, "updated": 1_704_067_260_000i64 }
+            }),
+        );
+
+        write_message_file(
+            root,
+            "session-004",
+            "msg-001.json",
+            json!({
+                "id": "msg-001",
+                "sessionID": "session-004",
+                "role": "assistant",
+                "time": { "created": 1_704_067_260_000i64 }
+            }),
+        );
+
+        write_message_file(
+            root,
+            "session-004",
+            "msg-002.json",
+            json!({
+                "id": "msg-002",
+                "sessionID": "session-004",
+                "role": "user",
+                "time": { "created": 1_704_067_200_000i64 }
+            }),
+        );
+
+        write_part_file(
+            root,
+            "msg-002",
+            "part-002.json",
+            json!({
+                "id": "part-002",
+                "order": 2,
+                "type": "text",
+                "text": "Second"
+            }),
+        );
+        write_part_file(
+            root,
+            "msg-002",
+            "part-001.json",
+            json!({
+                "id": "part-001",
+                "order": 1,
+                "type": "text",
+                "text": "First"
+            }),
+        );
+
+        write_part_file(
+            root,
+            "msg-001",
+            "part-001.json",
+            json!({
+                "id": "part-001",
+                "order": 1,
+                "type": "tool",
+                "tool": "grep",
+                "state": { "input": { "pattern": "rust" } }
+            }),
+        );
+
+        let parser = OpenCodeParser::new(root);
+        let parsed = parser.parse(&session_path).unwrap();
+
+        assert_eq!(parsed.messages.len(), 2);
+        assert_eq!(parsed.messages[0].index, 0);
+        assert_eq!(parsed.messages[0].role, Role::User);
+        assert_eq!(parsed.messages[0].content, "First");
+        assert_eq!(parsed.messages[1].index, 1);
+        assert_eq!(parsed.messages[1].role, Role::User);
+        assert_eq!(parsed.messages[1].content, "Second");
+        assert_eq!(parsed.session.first_prompt.as_deref(), Some("First"));
+
+        assert_eq!(parsed.tool_calls.len(), 1);
+        assert_eq!(parsed.tool_calls[0].tool_name, "grep");
+    }
+
+    #[test]
+    fn message_reconstruction_breaks_ties_by_id() {
+        let temp_dir = TempDir::new().unwrap();
+        let root = temp_dir.path();
+
+        let session_path = write_session_file(
+            root,
+            "project-a",
+            "session-005.json",
+            json!({
+                "id": "session-005",
+                "directory": "/projects/alpha",
+                "time": { "created": 1_704_067_200_000i64, "updated": 1_704_067_260_000i64 }
+            }),
+        );
+
+        write_message_file(
+            root,
+            "session-005",
+            "a.json",
+            json!({
+                "id": "msg-002",
+                "sessionID": "session-005",
+                "role": "assistant",
+                "time": { "created": 1_704_067_200_000i64 }
+            }),
+        );
+
+        write_message_file(
+            root,
+            "session-005",
+            "b.json",
+            json!({
+                "id": "msg-001",
+                "sessionID": "session-005",
+                "role": "user",
+                "time": { "created": 1_704_067_200_000i64 }
+            }),
+        );
+
+        write_part_file(
+            root,
+            "msg-001",
+            "part-001.json",
+            json!({
+                "id": "part-001",
+                "order": 1,
+                "type": "text",
+                "text": "First message"
+            }),
+        );
+
+        write_part_file(
+            root,
+            "msg-002",
+            "part-001.json",
+            json!({
+                "id": "part-001",
+                "order": 1,
+                "type": "text",
+                "text": "Second message"
+            }),
+        );
+
+        let parser = OpenCodeParser::new(root);
+        let parsed = parser.parse(&session_path).unwrap();
+
+        assert_eq!(parsed.messages.len(), 2);
+        assert_eq!(parsed.messages[0].role, Role::User);
+        assert_eq!(parsed.messages[0].content, "First message");
+        assert_eq!(parsed.messages[1].role, Role::Assistant);
+        assert_eq!(parsed.messages[1].content, "Second message");
+    }
+
+    #[test]
+    fn message_reconstruction_skips_invalid_entries() {
+        let temp_dir = TempDir::new().unwrap();
+        let root = temp_dir.path();
+
+        let session_path = write_session_file(
+            root,
+            "project-a",
+            "session-006.json",
+            json!({
+                "id": "session-006",
+                "directory": "/projects/alpha",
+                "time": { "created": 1_704_067_200_000i64, "updated": 1_704_067_260_000i64 }
+            }),
+        );
+
+        write_message_file(
+            root,
+            "session-006",
+            "msg-valid.json",
+            json!({
+                "id": "msg-valid",
+                "sessionID": "session-006",
+                "role": "user",
+                "time": { "created": 1_704_067_200_000i64 }
+            }),
+        );
+
+        write_message_file(
+            root,
+            "session-006",
+            "msg-invalid.json",
+            json!({
+                "id": "msg-invalid",
+                "sessionID": "session-006",
+                "role": "assistant"
+            }),
+        );
+
+        write_part_file(
+            root,
+            "msg-valid",
+            "part-valid.json",
+            json!({
+                "id": "part-valid",
+                "order": 1,
+                "type": "text",
+                "text": "Hello"
+            }),
+        );
+
+        write_part_file(
+            root,
+            "msg-valid",
+            "part-invalid.json",
+            json!({
+                "id": "part-invalid",
+                "text": "Ignore"
+            }),
+        );
+
+        let parser = OpenCodeParser::new(root);
+        let parsed = parser.parse(&session_path).unwrap();
+
+        assert_eq!(parsed.messages.len(), 1);
+        assert_eq!(parsed.messages[0].role, Role::User);
+        assert_eq!(parsed.messages[0].content, "Hello");
+    }
+
+    #[test]
+    fn tool_part_produces_tool_call_not_message() {
+        let temp_dir = TempDir::new().unwrap();
+        let root = temp_dir.path();
+
+        let session_path = write_session_file(
+            root,
+            "project-a",
+            "session-007.json",
+            json!({
+                "id": "session-007",
+                "directory": "/projects/alpha",
+                "time": { "created": 1_704_067_200_000i64, "updated": 1_704_067_260_000i64 }
+            }),
+        );
+
+        write_message_file(
+            root,
+            "session-007",
+            "msg-user.json",
+            json!({
+                "id": "msg-user",
+                "sessionID": "session-007",
+                "role": "user",
+                "time": { "created": 1_704_067_200_000i64 }
+            }),
+        );
+
+        write_message_file(
+            root,
+            "session-007",
+            "msg-tool.json",
+            json!({
+                "id": "msg-tool",
+                "sessionID": "session-007",
+                "role": "assistant",
+                "time": { "created": 1_704_067_260_000i64 }
+            }),
+        );
+
+        write_part_file(
+            root,
+            "msg-user",
+            "part-user.json",
+            json!({
+                "id": "part-user",
+                "order": 1,
+                "type": "text",
+                "text": "Run tool"
+            }),
+        );
+
+        write_part_file(
+            root,
+            "msg-tool",
+            "part-tool.json",
+            json!({
+                "id": "part-tool",
+                "order": 1,
+                "type": "tool",
+                "tool": "read",
+                "state": {
+                    "status": "completed",
+                    "input": { "path": "/tmp/test.txt" }
+                }
+            }),
+        );
+
+        let parser = OpenCodeParser::new(root);
+        let parsed = parser.parse(&session_path).unwrap();
+
+        assert_eq!(parsed.messages.len(), 1);
+        assert_eq!(parsed.messages[0].role, Role::User);
+        assert_eq!(parsed.messages[0].content, "Run tool");
+
+        assert_eq!(parsed.tool_calls.len(), 1);
+        assert_eq!(parsed.tool_calls[0].tool_name, "read");
+        assert_eq!(parsed.tool_calls[0].status, ToolCallStatus::Completed);
+    }
+
+    #[test]
+    fn tool_part_with_output_is_extracted() {
+        let temp_dir = TempDir::new().unwrap();
+        let root = temp_dir.path();
+
+        let session_path = write_session_file(
+            root,
+            "project-a",
+            "session-009.json",
+            json!({
+                "id": "session-009",
+                "directory": "/projects/alpha",
+                "time": { "created": 1_704_067_200_000i64, "updated": 1_704_067_260_000i64 }
+            }),
+        );
+
+        write_message_file(
+            root,
+            "session-009",
+            "msg-user.json",
+            json!({
+                "id": "msg-user",
+                "sessionID": "session-009",
+                "role": "user",
+                "time": { "created": 1_704_067_200_000i64 }
+            }),
+        );
+
+        write_message_file(
+            root,
+            "session-009",
+            "msg-tool.json",
+            json!({
+                "id": "msg-tool",
+                "sessionID": "session-009",
+                "role": "assistant",
+                "time": { "created": 1_704_067_260_000i64 }
+            }),
+        );
+
+        write_part_file(
+            root,
+            "msg-user",
+            "part-user.json",
+            json!({
+                "id": "part-user",
+                "order": 1,
+                "type": "text",
+                "text": "Read file"
+            }),
+        );
+
+        write_part_file(
+            root,
+            "msg-tool",
+            "part-tool.json",
+            json!({
+                "id": "part-tool",
+                "order": 1,
+                "type": "tool",
+                "tool": "read",
+                "state": {
+                    "status": "completed",
+                    "input": { "path": "/tmp/test.txt" },
+                    "output": "File contents here\nLine 2\nLine 3"
+                }
+            }),
+        );
+
+        let parser = OpenCodeParser::new(root);
+        let parsed = parser.parse(&session_path).unwrap();
+
+        assert_eq!(parsed.messages.len(), 1);
+        assert_eq!(parsed.messages[0].content, "Read file");
+
+        assert_eq!(parsed.tool_calls.len(), 1);
+        assert_eq!(
+            parsed.tool_calls[0].output_text.as_deref(),
+            Some("File contents here\nLine 2\nLine 3")
+        );
+        assert_eq!(parsed.tool_calls[0].status, ToolCallStatus::Completed);
+    }
+
+    #[test]
+    fn tool_part_with_error_captures_error_text() {
+        let temp_dir = TempDir::new().unwrap();
+        let root = temp_dir.path();
+
+        let session_path = write_session_file(
+            root,
+            "project-a",
+            "session-010.json",
+            json!({
+                "id": "session-010",
+                "directory": "/projects/alpha",
+                "time": { "created": 1_704_067_200_000i64, "updated": 1_704_067_260_000i64 }
+            }),
+        );
+
+        write_message_file(
+            root,
+            "session-010",
+            "msg-user.json",
+            json!({
+                "id": "msg-user",
+                "sessionID": "session-010",
+                "role": "user",
+                "time": { "created": 1_704_067_200_000i64 }
+            }),
+        );
+
+        write_message_file(
+            root,
+            "session-010",
+            "msg-tool.json",
+            json!({
+                "id": "msg-tool",
+                "sessionID": "session-010",
+                "role": "assistant",
+                "time": { "created": 1_704_067_260_000i64 }
+            }),
+        );
+
+        write_part_file(
+            root,
+            "msg-user",
+            "part-user.json",
+            json!({
+                "id": "part-user",
+                "order": 1,
+                "type": "text",
+                "text": "Read file"
+            }),
+        );
+
+        write_part_file(
+            root,
+            "msg-tool",
+            "part-tool.json",
+            json!({
+                "id": "part-tool",
+                "order": 1,
+                "type": "tool",
+                "tool": "read",
+                "state": {
+                    "status": "failed",
+                    "input": { "path": "/tmp/missing.txt" },
+                    "error": "File not found"
+                }
+            }),
+        );
+
+        let parser = OpenCodeParser::new(root);
+        let parsed = parser.parse(&session_path).unwrap();
+
+        assert_eq!(parsed.messages.len(), 1);
+        assert_eq!(parsed.messages[0].content, "Read file");
+
+        assert_eq!(parsed.tool_calls.len(), 1);
+        assert_eq!(parsed.tool_calls[0].status, ToolCallStatus::Error);
+        assert_eq!(
+            parsed.tool_calls[0].error_text.as_deref(),
+            Some("File not found")
+        );
+    }
+
+    #[test]
+    fn subtask_part_produces_subagent_entry() {
+        let temp_dir = TempDir::new().unwrap();
+        let root = temp_dir.path();
+
+        let session_path = write_session_file(
+            root,
+            "project-a",
+            "session-sub.json",
+            json!({
+                "id": "session-sub",
+                "directory": "/projects/alpha",
+                "time": { "created": 1_704_067_200_000i64, "updated": 1_704_067_260_000i64 }
+            }),
+        );
+
+        write_message_file(
+            root,
+            "session-sub",
+            "msg-user.json",
+            json!({
+                "id": "msg-user",
+                "sessionID": "session-sub",
+                "role": "user",
+                "time": { "created": 1_704_067_200_000i64 }
+            }),
+        );
+
+        write_message_file(
+            root,
+            "session-sub",
+            "msg-asst.json",
+            json!({
+                "id": "msg-asst",
+                "sessionID": "session-sub",
+                "role": "assistant",
+                "time": { "created": 1_704_067_260_000i64 }
+            }),
+        );
+
+        write_part_file(
+            root,
+            "msg-user",
+            "part-user.json",
+            json!({
+                "id": "part-user",
+                "order": 1,
+                "type": "text",
+                "text": "Analyse docs"
+            }),
+        );
+
+        write_part_file(
+            root,
+            "msg-asst",
+            "part-subtask.json",
+            json!({
+                "id": "part-subtask",
+                "order": 1,
+                "type": "subtask",
+                "description": "Summarise markdown files",
+                "childSessionID": "session-child-123",
+                "state": {
+                    "status": "completed",
+                    "output": "Found 3 files"
+                }
+            }),
+        );
+
+        let parser = OpenCodeParser::new(root);
+        let parsed = parser.parse(&session_path).unwrap();
+
+        assert_eq!(parsed.messages.len(), 1);
+        assert_eq!(parsed.subagents.len(), 1);
+        assert_eq!(parsed.subagents[0].title, "Summarise markdown files");
+        assert_eq!(
+            parsed.subagents[0].child_session_id.as_deref(),
+            Some("session-child-123")
+        );
+        assert_eq!(
+            parsed.subagents[0].result_summary.as_deref(),
+            Some("Found 3 files")
+        );
+
+        assert_eq!(parsed.transcript_items.len(), 2);
+        assert_eq!(parsed.transcript_items[0].kind, TranscriptItemKind::Message);
+        assert_eq!(
+            parsed.transcript_items[1].kind,
+            TranscriptItemKind::Subagent
+        );
+    }
+
+    #[test]
+    fn missing_role_defaults_to_assistant_for_text_parts() {
+        let temp_dir = TempDir::new().unwrap();
+        let root = temp_dir.path();
+
+        let session_path = write_session_file(
+            root,
+            "project-a",
+            "session-008.json",
+            json!({
+                "id": "session-008",
+                "directory": "/projects/alpha",
+                "time": { "created": 1_704_067_200_000i64, "updated": 1_704_067_260_000i64 }
+            }),
+        );
+
+        write_message_file(
+            root,
+            "session-008",
+            "msg-user.json",
+            json!({
+                "id": "msg-user",
+                "sessionID": "session-008",
+                "role": "user",
+                "time": { "created": 1_704_067_200_000i64 }
+            }),
+        );
+
+        write_message_file(
+            root,
+            "session-008",
+            "msg-missing-role.json",
+            json!({
+                "id": "msg-missing-role",
+                "sessionID": "session-008",
+                "time": { "created": 1_704_067_260_000i64 }
+            }),
+        );
+
+        write_part_file(
+            root,
+            "msg-user",
+            "part-user.json",
+            json!({
+                "id": "part-user",
+                "order": 1,
+                "type": "text",
+                "text": "Hello"
+            }),
+        );
+
+        write_part_file(
+            root,
+            "msg-missing-role",
+            "part-assistant.json",
+            json!({
+                "id": "part-assistant",
+                "order": 1,
+                "type": "text",
+                "text": "I can help"
+            }),
+        );
+
+        let parser = OpenCodeParser::new(root);
+        let parsed = parser.parse(&session_path).unwrap();
+
+        assert_eq!(parsed.messages.len(), 2);
+        assert_eq!(parsed.messages[1].role, Role::Assistant);
+        assert_eq!(parsed.messages[1].content, "I can help");
+    }
+}
