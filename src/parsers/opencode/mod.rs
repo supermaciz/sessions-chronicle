@@ -86,7 +86,7 @@ impl OpenCodeParser {
         }
     }
 
-    pub fn parse_entry(
+    pub(crate) fn parse_entry(
         &self,
         entry: &SessionEntry,
         backend: &dyn OpenCodeBackend,

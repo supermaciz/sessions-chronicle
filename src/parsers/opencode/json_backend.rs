@@ -20,7 +20,10 @@ impl JsonBackend {
         }
     }
 
-    pub fn parse_session_metadata_from_file(&self, session_path: &Path) -> Result<SessionMetadata> {
+    pub(crate) fn parse_session_metadata_from_file(
+        &self,
+        session_path: &Path,
+    ) -> Result<SessionMetadata> {
         let value = read_json(session_path).context("Failed to read session metadata")?;
         let id = value
             .get("id")

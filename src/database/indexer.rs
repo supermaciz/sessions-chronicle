@@ -1,12 +1,16 @@
 use anyhow::{Context, Result};
 use rusqlite::Connection;
+use std::collections::HashSet;
 use std::path::Path;
 
 use crate::parsers::ParsedSession;
 use crate::parsers::claude_code::ClaudeCodeParser;
 use crate::parsers::codex::{CodexParser, ParseError as CodexParseError};
 use crate::parsers::mistral_vibe::{MistralVibeParser, ParseError as MistralVibeParseError};
-use crate::parsers::opencode::{OpenCodeParser, ParseError as OpenCodeParseError};
+use crate::parsers::opencode::{
+    OpenCodeBackend, OpenCodeParser, ParseError as OpenCodeParseError, SessionSource,
+    json_backend::JsonBackend, sqlite_backend::SqliteBackend,
+};
 
 pub struct SessionIndexer {
     db: Connection,
@@ -63,47 +67,126 @@ impl SessionIndexer {
         Ok(count)
     }
 
-    pub fn index_opencode_sessions(&mut self, storage_root: &Path) -> Result<usize> {
-        let sessions_dir = storage_root.join("session");
-
-        if !sessions_dir.exists() {
+    pub fn index_opencode_sessions(
+        &mut self,
+        storage_root: &Path,
+        db_path: Option<&Path>,
+    ) -> Result<usize> {
+        if !storage_root.exists() {
             return Ok(0);
         }
 
         let parser = OpenCodeParser::new(storage_root);
+        let mut indexed_ids: HashSet<String> = HashSet::new();
         let mut count = 0;
 
-        for entry in walkdir::WalkDir::new(&sessions_dir)
-            .max_depth(5)
-            .into_iter()
-            .filter_map(|e| e.ok())
-        {
-            let path = entry.path();
-            if entry.file_type().is_file()
-                && let Some(ext) = path.extension()
-                && ext == "json"
-            {
-                match self.index_opencode_session_file(path, &parser) {
-                    Ok(()) => {
-                        count += 1;
+        if let Some(db_path) = db_path {
+            match SqliteBackend::open(db_path) {
+                Ok(sqlite_backend) => match sqlite_backend.list_sessions() {
+                    Ok(entries) => {
+                        for entry in &entries {
+                            match parser.parse_entry(entry, &sqlite_backend) {
+                                Ok(parsed) => {
+                                    if let Err(err) = self.insert_parsed_session(&parsed, db_path) {
+                                        tracing::warn!(
+                                            "Failed to insert SQLite session {}: {}",
+                                            entry.id,
+                                            err
+                                        );
+                                        continue;
+                                    }
+                                    indexed_ids.insert(entry.id.clone());
+                                    count += 1;
+                                }
+                                Err(err) => {
+                                    if is_opencode_error(&err) {
+                                        tracing::debug!(
+                                            "Skipped SQLite session {}: {}",
+                                            entry.id,
+                                            err
+                                        );
+                                    } else {
+                                        tracing::warn!(
+                                            "Failed to parse SQLite session {}: {}",
+                                            entry.id,
+                                            err
+                                        );
+                                    }
+                                }
+                            }
+                        }
                     }
                     Err(err) => {
-                        if is_opencode_error(&err) {
-                            tracing::debug!("Skipped OpenCode session {}: {}", path.display(), err);
-                            if let Err(remove_err) = self.remove_session_for_file(path) {
+                        tracing::warn!("Failed to list SQLite sessions: {}", err);
+                    }
+                },
+                Err(err) => {
+                    tracing::warn!(
+                        "Failed to open OpenCode DB {}: {} - falling back to JSON only",
+                        db_path.display(),
+                        err
+                    );
+                }
+            }
+        }
+
+        let json_backend = JsonBackend::new(storage_root);
+        match json_backend.list_sessions() {
+            Ok(entries) => {
+                for entry in entries {
+                    if indexed_ids.contains(&entry.id) {
+                        tracing::debug!(
+                            "Skipping JSON session {} (already indexed from SQLite)",
+                            entry.id
+                        );
+                        continue;
+                    }
+
+                    let path = match &entry.source {
+                        SessionSource::JsonFile(path) => path,
+                        SessionSource::SqliteRow { .. } => continue,
+                    };
+
+                    match parser.parse_entry(&entry, &json_backend) {
+                        Ok(parsed) => {
+                            if let Err(err) = self.insert_parsed_session(&parsed, path) {
                                 tracing::warn!(
-                                    "Failed to prune session {}: {}",
-                                    path.display(),
-                                    remove_err
+                                    "Failed to insert JSON session {}: {}",
+                                    entry.id,
+                                    err
                                 );
+                                continue;
                             }
-                        } else {
-                            tracing::warn!("Failed to index {}: {}", path.display(), err);
+                            indexed_ids.insert(entry.id);
+                            count += 1;
+                        }
+                        Err(err) => {
+                            if is_opencode_error(&err) {
+                                tracing::debug!(
+                                    "Skipped OpenCode session {}: {}",
+                                    path.display(),
+                                    err
+                                );
+                                if let Err(remove_err) = self.remove_session_for_file(path) {
+                                    tracing::warn!(
+                                        "Failed to prune session {}: {}",
+                                        path.display(),
+                                        remove_err
+                                    );
+                                }
+                            } else {
+                                tracing::warn!("Failed to index {}: {}", path.display(), err);
+                            }
                         }
                     }
                 }
             }
+            Err(err) => {
+                tracing::warn!("Failed to list JSON OpenCode sessions: {}", err);
+            }
         }
+
+        self.prune_stale_opencode_sessions(&indexed_ids)?;
 
         Ok(count)
     }
@@ -209,16 +292,6 @@ impl SessionIndexer {
     }
 
     fn index_session_file(&mut self, file_path: &Path, parser: &ClaudeCodeParser) -> Result<()> {
-        let parsed = parser.parse(file_path)?;
-        self.insert_parsed_session(&parsed, file_path)?;
-        Ok(())
-    }
-
-    fn index_opencode_session_file(
-        &mut self,
-        file_path: &Path,
-        parser: &OpenCodeParser,
-    ) -> Result<()> {
         let parsed = parser.parse(file_path)?;
         self.insert_parsed_session(&parsed, file_path)?;
         Ok(())
@@ -356,6 +429,38 @@ impl SessionIndexer {
 
         Ok(())
     }
+
+    fn prune_stale_opencode_sessions(&mut self, indexed_ids: &HashSet<String>) -> Result<()> {
+        let existing_ids: Vec<String> = {
+            let mut stmt = self
+                .db
+                .prepare("SELECT id FROM sessions WHERE tool = 'opencode'")?;
+            stmt.query_map([], |row| row.get(0))?
+                .collect::<std::result::Result<Vec<_>, _>>()?
+        };
+
+        for id in existing_ids {
+            if !indexed_ids.contains(&id) {
+                self.remove_session_by_id(&id)?;
+            }
+        }
+
+        Ok(())
+    }
+
+    fn remove_session_by_id(&mut self, session_id: &str) -> Result<()> {
+        let tx = self.db.transaction()?;
+        tx.execute(
+            "DELETE FROM transcript_items WHERE session_id = ?1",
+            [session_id],
+        )?;
+        tx.execute("DELETE FROM tool_calls WHERE session_id = ?1", [session_id])?;
+        tx.execute("DELETE FROM subagents WHERE session_id = ?1", [session_id])?;
+        tx.execute("DELETE FROM messages WHERE session_id = ?1", [session_id])?;
+        tx.execute("DELETE FROM sessions WHERE id = ?1", [session_id])?;
+        tx.commit()?;
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -407,7 +512,9 @@ mod tests {
         let mut indexer = SessionIndexer::new(temp_db.path()).unwrap();
         let storage_root = PathBuf::from("tests/fixtures/opencode_storage");
 
-        let count = indexer.index_opencode_sessions(&storage_root).unwrap();
+        let count = indexer
+            .index_opencode_sessions(&storage_root, None)
+            .unwrap();
         // session-002 has parentID but no messages → NoUserMessages → pruned
         // session-tools-child has parentID and messages → indexed as is_subagent=1
         assert_eq!(count, 4);
@@ -459,8 +566,91 @@ mod tests {
         let mut indexer = SessionIndexer::new(temp_db.path()).unwrap();
         let nonexistent_root = PathBuf::from("tests/fixtures/nonexistent_opencode_storage");
 
-        let count = indexer.index_opencode_sessions(&nonexistent_root).unwrap();
+        let count = indexer
+            .index_opencode_sessions(&nonexistent_root, None)
+            .unwrap();
         assert_eq!(count, 0);
+    }
+
+    #[test]
+    fn opencode_dual_read_indexes_sqlite_and_json() {
+        let temp_db = NamedTempFile::new().unwrap();
+        let mut indexer = SessionIndexer::new(temp_db.path()).unwrap();
+        let storage_root = PathBuf::from("tests/fixtures/opencode_storage");
+        let db_path = storage_root.join("opencode.db");
+
+        let count = indexer
+            .index_opencode_sessions(&storage_root, Some(&db_path))
+            .unwrap();
+
+        assert_eq!(count, 6);
+    }
+
+    #[test]
+    fn opencode_dual_read_prefers_sqlite_over_json() {
+        let temp_db = NamedTempFile::new().unwrap();
+        let mut indexer = SessionIndexer::new(temp_db.path()).unwrap();
+        let storage_root = PathBuf::from("tests/fixtures/opencode_storage");
+        let db_path = storage_root.join("opencode.db");
+
+        indexer
+            .index_opencode_sessions(&storage_root, Some(&db_path))
+            .unwrap();
+
+        let session: (String, Option<String>) = indexer
+            .db
+            .query_row(
+                "SELECT id, first_prompt FROM sessions WHERE id = 'session-001'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+
+        assert_eq!(session.0, "session-001");
+        assert_eq!(
+            session.1.as_deref(),
+            Some("Updated title from SQLite"),
+            "SQLite version should win for duplicate session-001"
+        );
+    }
+
+    #[test]
+    fn opencode_dual_read_discovers_sqlite_only_session() {
+        let temp_db = NamedTempFile::new().unwrap();
+        let mut indexer = SessionIndexer::new(temp_db.path()).unwrap();
+        let storage_root = PathBuf::from("tests/fixtures/opencode_storage");
+        let db_path = storage_root.join("opencode.db");
+
+        indexer
+            .index_opencode_sessions(&storage_root, Some(&db_path))
+            .unwrap();
+
+        let exists: bool = indexer
+            .db
+            .query_row(
+                "SELECT COUNT(*) > 0 FROM sessions WHERE id = 'session-sqlite-only'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+
+        assert!(exists, "SQLite-only session should be indexed");
+    }
+
+    #[test]
+    fn opencode_json_only_fallback_when_no_db() {
+        let temp_db = NamedTempFile::new().unwrap();
+        let mut indexer = SessionIndexer::new(temp_db.path()).unwrap();
+        let storage_root = PathBuf::from("tests/fixtures/opencode_storage");
+
+        let count = indexer
+            .index_opencode_sessions(&storage_root, None)
+            .unwrap();
+
+        assert_eq!(
+            count, 4,
+            "JSON-only should index the same 4 sessions as before"
+        );
     }
 
     #[test]
