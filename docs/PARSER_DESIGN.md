@@ -46,13 +46,15 @@ impl SessionParser for MistralVibeParser {
 
 ```rust
 fn get_parser(path: &Path) -> Box<dyn SessionParser> {
-    if path.starts_with("~/.claude/") {
+    let home = dirs::home_dir().unwrap_or_default();
+
+    if path.starts_with(home.join(".claude")) {
         Box::new(ClaudeCodeParser)
-    } else if path.starts_with("~/.codex/") {
+    } else if path.starts_with(home.join(".codex")) {
         Box::new(CodexParser)
-    } else if path.starts_with("~/.local/share/opencode/") {
+    } else if path.starts_with(home.join(".local/share/opencode")) {
         Box::new(OpenCodeParser)
-    } else if path.starts_with("~/.vibe/logs/session/") {
+    } else if path.starts_with(home.join(".vibe/logs/session")) {
         Box::new(MistralVibeParser)
     } else {
         // Try to detect from file structure
@@ -160,29 +162,32 @@ This is critical for sessions with thousands of messages.
 
 - Raw data can appear in assistant `message.content[]` as `type == "tool_use"`
 - Tool execution output is often represented in `system` events (`subtype == "local_command"`)
-- Current parser behavior: ignores both patterns (indexes only `user`/`assistant` text)
+- Current parser behavior: indexes `tool_use` blocks and correlates `tool_result` blocks by
+  `tool_use_id`; `system/local_command` payloads are still not normalized as tool calls
 
 **Codex:**
 
 - Raw data is emitted via `event_msg.payload.type` variants: `exec_command_*`, `mcp_tool_call_*`,
   `web_search_*`, and collab `collab_*`
 - Tool call correlation typically uses `call_id`
-- Current parser behavior: ignores these events, indexes only `user_message`/`agent_message`
+- Current parser behavior: indexes `exec_command_*` and `mcp_tool_call_*` begin/end pairs as
+  tool calls; `collab_*` events are still not mapped to subagent records
 
 **OpenCode:**
 
 - Tool calls are explicit `part.type == "tool"` records with lifecycle state
   (`pending`/`running`/`completed`/`error`)
 - Delegation markers are explicit `part.type == "subtask"` records
-- Current parser behavior: skips `tool` and `subtask` parts, and skips child sessions with `parentID`
+- Current parser behavior: indexes `tool` parts as tool calls, indexes `subtask` parts as
+  subagent records, and keeps `parentID` sessions as `is_subagent`
 
 **Mistral Vibe:**
 
 - Tool calls appear on assistant messages under `tool_calls[]`
 - Tool outputs are separate messages with `role == "tool"` and `tool_call_id` matching the call id
 - Arguments are stored as JSON-encoded strings (`tool_calls[*].function.arguments`)
-- Current parser behavior: ignores `role == "tool"` records and assistant-only tool-call stubs
-  without text
+- Current parser behavior: indexes assistant `tool_calls[]` entries and correlates
+  `role == "tool"` outputs by `tool_call_id`; uncorrelated outputs are skipped
 
 ---
 
@@ -198,7 +203,9 @@ impl OpenCodeParser {
 
         // 2. Construct message directory path
         let session_id = &metadata.id;
-        let msg_dir = Path::new("~/.local/share/opencode/storage/message")
+        let home = dirs::home_dir().unwrap_or_default();
+        let msg_dir = home
+            .join(".local/share/opencode/storage/message")
             .join(session_id);
 
         // 3. Read all messages from directory

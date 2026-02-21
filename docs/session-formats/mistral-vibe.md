@@ -162,8 +162,8 @@ fn extract_vibe_content(event: &Value) -> Option<String> {
 - Tool outputs are separate messages with `role == "tool"` and `tool_call_id` matching the call id
   (`name` may be present depending on producer)
 - Arguments are stored as JSON-encoded strings (`tool_calls[*].function.arguments`)
-- Current parser behavior: ignores `role == "tool"` records and assistant-only tool-call stubs
-  without text
+- Current parser behavior: indexes assistant `tool_calls[]` entries and correlates
+  `role == "tool"` outputs by `tool_call_id`; uncorrelated outputs are skipped
 
 **Streaming:** Use `BufReader` line-by-line iteration on `messages.jsonl` —
 do not load entire JSONL into memory.

@@ -347,10 +347,10 @@ Current implementation: `src/parsers/opencode.rs`
 **⚠️ Only reads the legacy JSON file tree** (`storage/session/`, `storage/message/`, `storage/part/`).
 New sessions written to `opencode.db` (≥ 2026-02-14) are **not indexed**.
 
-- Skips sessions with `parentID` (subagents)
-- Converts only `part.type == text`
-- Skips `tool`, `reasoning`, `step-start`, `step-finish`, `snapshot`, `compaction`, `subtask`
-- Does not read `file`, `agent`, `retry`, `patch` part types (new in SQLite era)
+- Indexes sessions with `parentID` as subagent sessions (`is_subagent = 1`)
+- Converts `part.type == text` into transcript messages
+- Extracts `part.type == tool` into indexed tool-call records and `part.type == subtask` into subagent records
+- Non-message parts like `reasoning`, `step-start`, `step-finish`, `snapshot`, `compaction`, `file`, `agent`, `retry`, and `patch` are currently not rendered as transcript messages
 
 **Title extraction:** First flattened `text` part attached to a `user` message
 (session metadata `title` is currently not indexed).

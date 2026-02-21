@@ -178,6 +178,7 @@ fn extract_content_claude(event: &Value) -> Option<String> {
 - Tool invocations appear in assistant `message.content[]` as `{type: "tool_use", id, name, input}`.
 - Tool execution output is commonly observable in `system` events (`subtype: "local_command"`)
   with `command`, `stdout`, `stderr` fields.
-- Current parser behavior: ignores both patterns (indexes only `user`/`assistant` text).
+- Current parser behavior: indexes `tool_use` blocks and correlates `tool_result` blocks by
+  `tool_use_id`; `system/local_command` payloads are not yet normalized as tool calls.
 
 **Streaming:** Use `BufReader` line-by-line iteration — do not load entire JSONL into memory.

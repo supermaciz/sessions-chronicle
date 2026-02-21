@@ -21,10 +21,10 @@ Cross-tool comparison of Claude Code, Codex, OpenCode, and Mistral Vibe session 
 - ⚠️ OpenCode ≥ 2026-02-14 stores sessions in SQLite (`opencode.db`); recent sessions not indexed
 - ✅ Codex parser implemented
 - ✅ Mistral Vibe parser implemented
-- ✅ OpenCode subagent session detection implemented (`parentID` sessions are skipped during indexing)
+- ✅ OpenCode parent-child detection implemented (`parentID` sessions are indexed as subagents)
 - ✅ Tool-call wire formats documented for Claude, OpenCode, Mistral Vibe, and Codex rollouts
 - ✅ LLM model metadata availability mapped (per message vs per turn vs per session)
-- ℹ️ Current parser behavior: tool-call/tool-result content is intentionally not indexed yet (Phase 4)
+- ✅ Current parser behavior: tool-call/tool-result content is indexed (Phase 6 delivered)
 
 ---
 
@@ -63,7 +63,7 @@ Cross-tool comparison of Claude Code, Codex, OpenCode, and Mistral Vibe session 
 |------|---------|---------|
 | **Claude Code** | `UUID.jsonl` | `a1b2c3d4-e5f6-7890-abcd-ef1234567890.jsonl` |
 | **Codex** | `rollout-*.jsonl` | `rollout-20250912-164103.jsonl` |
-| **OpenCode** | `ses_*.json` | `ses_66a71b6f4ffeq796jvvOpJQ04m.json` |
+| **OpenCode** | **New (>= 2026-02-14):** `opencode.db`<br>**Legacy:** `ses_*.json` | `opencode.db` (new)<br>`ses_66a71b6f4ffeq796jvvOpJQ04m.json` (legacy) |
 | **Mistral Vibe** | `session_YYYYMMDD_HHMMSS_<shortid>/` | `session_20260123_174305_64883c86/` |
 
 ---
@@ -143,9 +143,9 @@ Goal: determine whether model information is available per message, per turn, an
    - Decide on deduplication strategy when both storage formats are present (JSON files + SQLite) on a migrated install
    - `rusqlite` is already a project dependency; the main work is deserializing `message.data` and `part.data` JSON blobs
 
-1. **Tool/Event Indexing Scope**:
-   - Should tool calls/results become first-class indexed records (new role/type), or remain transcript-only metadata?
-   - If indexed, should we preserve full structured JSON (`input`, `output`, `metadata`, `attachments`) or normalize to text?
+1. **Tool/Event Indexing Scope (post-Phase 6)**:
+   - Which additional event families should be indexed beyond the current tool-call/tool-result/subagent coverage?
+   - Should we keep full structured JSON (`input`, `output`, `metadata`, `attachments`) only, or add normalized text projections for search?
 
 2. **OpenCode Parent-Child Session Display**:
    - Should subagent sessions be shown nested under parents?
@@ -187,9 +187,9 @@ Goal: determine whether model information is available per message, per turn, an
    - Keep the JSON file reader as a fallback for pre-migration installs
    - Deduplicate sessions by `id` when both paths return data
 
-1. **Tool call indexing prototype (Phase 4 candidate)**:
-   - Add optional extraction mode in each parser for tool/subtask/collab events
-   - Keep existing user/assistant indexing unchanged as baseline behavior
+1. **Tool call indexing enhancements (post-Phase 6)**:
+   - Expand extraction coverage for less-common tool/subtask/collab variants per parser
+   - Keep existing user/assistant + current tool/subagent indexing as baseline behavior
 
 2. **Subagent graph model**:
    - Prototype a unified parent-child relation that can represent:

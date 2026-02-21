@@ -237,7 +237,8 @@ fn extract_content_codex_event_msg(event: &Value) -> Option<(Role, String)> {
 - Raw data is emitted via `event_msg.payload.type` variants: `exec_command_*`, `mcp_tool_call_*`,
   `web_search_*`, and collab `collab_*`.
 - Tool call correlation typically uses `call_id`.
-- Current parser behavior: ignores these events, indexes only `user_message`/`agent_message`.
+- Current parser behavior: indexes `exec_command_*` and `mcp_tool_call_*` begin/end pairs as
+  tool calls; `collab_*` events are not yet mapped to subagent records.
 
 **Streaming:** Use `BufReader` line-by-line iteration — do not load entire JSONL into memory.
 
