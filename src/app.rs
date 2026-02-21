@@ -310,7 +310,10 @@ impl SimpleComponent for App {
                     }
                 }
 
-                match idx.index_opencode_sessions(&sources.opencode_storage_root) {
+                match idx.index_opencode_sessions(
+                    &sources.opencode_storage_root,
+                    sources.opencode_db_path.as_deref(),
+                ) {
                     Ok(count) => {
                         tracing::info!(
                             "Indexed {} OpenCode sessions from {}",
@@ -705,7 +708,10 @@ impl SimpleComponent for App {
                             Ok(n) => total += n,
                             Err(err) => tracing::warn!("Claude sessions: {}", err),
                         }
-                        match indexer.index_opencode_sessions(&self.sources.opencode_storage_root) {
+                        match indexer.index_opencode_sessions(
+                            &self.sources.opencode_storage_root,
+                            self.sources.opencode_db_path.as_deref(),
+                        ) {
                             Ok(n) => total += n,
                             Err(err) => tracing::warn!("OpenCode sessions: {}", err),
                         }

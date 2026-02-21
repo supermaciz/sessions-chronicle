@@ -44,7 +44,7 @@ fn opencode_search_finds_text_part_content() {
 
     let mut indexer = SessionIndexer::new(&db.path).expect("Failed to create indexer");
     let indexed_count = indexer
-        .index_opencode_sessions(&storage_root)
+        .index_opencode_sessions(&storage_root, None)
         .expect("Failed to index OpenCode sessions");
 
     assert_eq!(
@@ -78,7 +78,7 @@ fn opencode_search_excludes_tool_output() {
 
     let mut indexer = SessionIndexer::new(&db.path).expect("Failed to create indexer");
     let indexed_count = indexer
-        .index_opencode_sessions(&storage_root)
+        .index_opencode_sessions(&storage_root, None)
         .expect("Failed to index OpenCode sessions");
 
     assert_eq!(
@@ -103,7 +103,7 @@ fn opencode_search_respects_tool_filter() {
 
     let mut indexer = SessionIndexer::new(&db.path).expect("Failed to create indexer");
     indexer
-        .index_opencode_sessions(&storage_root)
+        .index_opencode_sessions(&storage_root, None)
         .expect("Failed to index OpenCode sessions");
 
     let sessions =
