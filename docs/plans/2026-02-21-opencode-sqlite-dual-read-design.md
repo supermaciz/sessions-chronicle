@@ -1,7 +1,7 @@
 # OpenCode SQLite Dual-Read Parser Design
 
-**Date:** 2026-02-21
-**Status:** Approved
+**Date:** 2026-02-21  
+**Status:** Approved  
 **Scope:** Update the OpenCode parser to read from both the new SQLite database
 (`opencode.db`) and the legacy JSON file tree, with deduplication.
 
@@ -64,7 +64,10 @@ enum SessionSource {
 
 ## SQLite Backend
 
-Opens `opencode.db` with `SQLITE_OPEN_READ_ONLY | SQLITE_OPEN_NO_MUTEX`.
+Opens `opencode.db` in read-only mode (`SQLITE_OPEN_READ_ONLY`) and sets
+`busy_timeout` to avoid immediate failures on transient lock contention.
+Avoid URI options that disable change detection (`nolock`, `immutable`) for
+live OpenCode databases.
 
 ### Session Metadata
 
@@ -89,11 +92,11 @@ Role is extracted from `data` JSON blob: `data.role`.
 
 ```sql
 SELECT id, time_created, data FROM part
-  WHERE message_id = ? ORDER BY time_created, id
+  WHERE message_id = ? ORDER BY id
 ```
 
 The entire `data` blob becomes `PartData.raw`. Part type is `data["type"]`.
-No explicit `order` column; ordering uses `time_created` + `id`.
+No explicit `order` column; ordering uses stable part IDs.
 
 ### First Prompt
 
@@ -105,6 +108,16 @@ the title is empty.
 For SQLite-sourced sessions, `file_path` stores the `opencode.db` path. The
 `project_path` (from `session.directory`) is always set for SQLite sessions,
 so `file_path` is only a fallback identifier.
+
+### Pruning Safety
+
+Do **not** prune SQLite-backed sessions by `file_path` because every SQLite
+session points to the same `opencode.db` path. Pruning must be based on the
+set of successfully indexed OpenCode `session.id` values:
+
+1. Collect IDs indexed from SQLite and JSON backends.
+2. Prune OpenCode sessions not present in that ID set.
+3. Keep prune behavior for other tools unchanged.
 
 ---
 
@@ -127,8 +140,10 @@ functions.
 The indexer calls both backends with SQLite first:
 
 1. **SQLite backend** (if `opencode.db` exists): index all sessions,
-   collecting their IDs in a `HashSet`.
+    collecting their IDs in a `HashSet`.
 2. **JSON backend**: index sessions, skipping any ID already seen from SQLite.
+3. **Prune by ID**: remove stale OpenCode sessions by `session.id` set,
+   never by shared SQLite `file_path`.
 
 SQLite is authoritative — when both backends have the same session ID, the
 SQLite version wins because it has newer/complete data.
@@ -156,9 +171,11 @@ pub struct SessionSources {
 }
 ```
 
-- Default mode: `opencode_db_path = Some(~/.local/share/opencode/opencode.db)`
-- Override mode: `Some(override_root/opencode_storage/opencode.db)` if it
-  exists, else `None`
+- Primary candidate in all modes:
+  `opencode_storage_root/opencode.db`.
+- Override compatibility fallback: if the primary candidate does not exist,
+  check `override_root/opencode_storage/opencode.db`.
+- If neither candidate exists, use `None` (JSON-only fallback).
 
 ---
 
