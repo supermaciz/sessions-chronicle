@@ -15,6 +15,7 @@ const VIBE_SUBDIR: &str = "vibe_sessions";
 pub struct SessionSources {
     pub claude_dir: PathBuf,
     pub opencode_storage_root: PathBuf,
+    pub opencode_db_path: Option<PathBuf>,
     pub codex_dir: PathBuf,
     pub vibe_dir: PathBuf,
     pub override_mode: bool,
@@ -44,9 +45,13 @@ impl SessionSources {
             }
         };
 
+        let opencode_storage_root = try_subdir(OPENCODE_SUBDIR);
+        let opencode_db_path = resolve_opencode_db(&opencode_storage_root);
+
         Self {
             claude_dir: try_subdir(CLAUDE_SUBDIR),
-            opencode_storage_root: try_subdir(OPENCODE_SUBDIR),
+            opencode_storage_root,
+            opencode_db_path,
             codex_dir: try_subdir(CODEX_SUBDIR),
             vibe_dir: try_subdir(VIBE_SUBDIR),
             override_mode: true,
@@ -60,13 +65,25 @@ impl SessionSources {
             .map(|p| p.to_path_buf())
             .unwrap_or(opencode_session_dir);
 
+        let opencode_db_path = resolve_opencode_db(&opencode_storage_root);
+
         Self {
             claude_dir: PathBuf::from(Tool::ClaudeCode.session_dir()),
             opencode_storage_root,
+            opencode_db_path,
             codex_dir: PathBuf::from(Tool::Codex.session_dir()),
             vibe_dir: PathBuf::from(Tool::MistralVibe.session_dir()),
             override_mode: false,
         }
+    }
+}
+
+fn resolve_opencode_db(storage_root: &Path) -> Option<PathBuf> {
+    let candidate = storage_root.join("opencode.db");
+    if candidate.exists() {
+        Some(candidate)
+    } else {
+        None
     }
 }
 
@@ -137,5 +154,22 @@ mod tests {
     fn db_filename_changes_in_override_mode() {
         assert_eq!(select_db_filename(false), "sessions.db");
         assert_eq!(select_db_filename(true), "sessions-override.db");
+    }
+
+    #[test]
+    fn resolve_override_finds_opencode_db() {
+        let root = PathBuf::from("tests/fixtures");
+        let sources = SessionSources::resolve(Some(&root));
+        assert_eq!(
+            sources.opencode_db_path,
+            Some(root.join("opencode_storage").join("opencode.db"))
+        );
+    }
+
+    #[test]
+    fn resolve_override_no_db_returns_none() {
+        let root = PathBuf::from("tests/fixtures/claude_sessions");
+        let sources = SessionSources::resolve(Some(&root));
+        assert!(sources.opencode_db_path.is_none());
     }
 }
