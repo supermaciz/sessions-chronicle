@@ -147,16 +147,8 @@ impl SessionIndexer {
                         SessionSource::SqliteRow { .. } => continue,
                     };
 
-                    match parser.parse_entry(&entry, &json_backend) {
-                        Ok(parsed) => {
-                            if let Err(err) = self.insert_parsed_session(&parsed, path) {
-                                tracing::warn!(
-                                    "Failed to insert JSON session {}: {}",
-                                    entry.id,
-                                    err
-                                );
-                                continue;
-                            }
+                    match self.index_opencode_session_file(path, &parser) {
+                        Ok(()) => {
                             indexed_ids.insert(entry.id);
                             count += 1;
                         }
@@ -292,6 +284,16 @@ impl SessionIndexer {
     }
 
     fn index_session_file(&mut self, file_path: &Path, parser: &ClaudeCodeParser) -> Result<()> {
+        let parsed = parser.parse(file_path)?;
+        self.insert_parsed_session(&parsed, file_path)?;
+        Ok(())
+    }
+
+    fn index_opencode_session_file(
+        &mut self,
+        file_path: &Path,
+        parser: &OpenCodeParser,
+    ) -> Result<()> {
         let parsed = parser.parse(file_path)?;
         self.insert_parsed_session(&parsed, file_path)?;
         Ok(())
