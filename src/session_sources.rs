@@ -81,10 +81,13 @@ impl SessionSources {
 fn resolve_opencode_db(storage_root: &Path) -> Option<PathBuf> {
     let candidate = storage_root.join("opencode.db");
     if candidate.exists() {
-        Some(candidate)
-    } else {
-        None
+        return Some(candidate);
     }
+
+    storage_root
+        .parent()
+        .map(|parent| parent.join("opencode.db"))
+        .filter(|candidate| candidate.exists())
 }
 
 /// Select the database filename based on override mode.
@@ -171,5 +174,17 @@ mod tests {
         let root = PathBuf::from("tests/fixtures/claude_sessions");
         let sources = SessionSources::resolve(Some(&root));
         assert!(sources.opencode_db_path.is_none());
+    }
+
+    #[test]
+    fn resolve_opencode_db_falls_back_to_parent_directory() {
+        let temp = tempfile::tempdir().unwrap();
+        let storage_root = temp.path().join("storage");
+        std::fs::create_dir_all(&storage_root).unwrap();
+
+        let parent_db = temp.path().join("opencode.db");
+        std::fs::write(&parent_db, b"").unwrap();
+
+        assert_eq!(resolve_opencode_db(&storage_root), Some(parent_db));
     }
 }
