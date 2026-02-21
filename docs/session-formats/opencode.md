@@ -40,8 +40,8 @@ CREATE TABLE session (
   summary_diffs TEXT,               -- JSON: FileDiff[]
   revert TEXT,                      -- JSON: {messageID, partID?, snapshot?, diff?}
   permission TEXT,                  -- JSON: PermissionNext.Ruleset
-  created_at INTEGER,               -- Unix ms
-  updated_at INTEGER,               -- Unix ms
+  time_created INTEGER NOT NULL,    -- Unix ms
+  time_updated INTEGER NOT NULL,    -- Unix ms
   time_compacting INTEGER,
   time_archived INTEGER
 );
@@ -50,8 +50,8 @@ CREATE TABLE session (
 CREATE TABLE message (
   id TEXT PRIMARY KEY,              -- "msg_" prefix
   session_id TEXT NOT NULL REFERENCES session(id) ON DELETE CASCADE,
-  created_at INTEGER,
-  updated_at INTEGER,
+  time_created INTEGER NOT NULL,
+  time_updated INTEGER NOT NULL,
   data TEXT NOT NULL                -- JSON blob (role, model, agent, tokens, cost, …)
 );
 
@@ -60,8 +60,8 @@ CREATE TABLE part (
   id TEXT PRIMARY KEY,              -- "prt_" prefix (new; old JSON files used "part_")
   message_id TEXT NOT NULL REFERENCES message(id) ON DELETE CASCADE,
   session_id TEXT NOT NULL,
-  created_at INTEGER,
-  updated_at INTEGER,
+  time_created INTEGER NOT NULL,
+  time_updated INTEGER NOT NULL,
   data TEXT NOT NULL                -- JSON blob (type, text/tool state/subtask/…)
 );
 
@@ -72,7 +72,8 @@ CREATE TABLE project (
   vcs TEXT,                         -- "git" or null
   name TEXT,
   icon_url TEXT, icon_color TEXT,
-  created_at DATETIME, updated_at DATETIME,
+  time_created INTEGER NOT NULL,    -- Unix ms
+  time_updated INTEGER NOT NULL,    -- Unix ms
   time_initialized INTEGER,
   sandboxes TEXT NOT NULL,          -- JSON: string[]
   commands TEXT                     -- JSON: {start?: string}

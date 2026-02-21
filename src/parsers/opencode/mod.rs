@@ -1,8 +1,10 @@
+pub mod json_backend;
+pub mod sqlite_backend;
+
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
 use serde_json::Value;
 use std::cmp::Ordering;
-use std::fs;
 use std::path::{Path, PathBuf};
 
 use crate::models::{
@@ -17,37 +19,64 @@ pub enum ParseError {
     NoUserMessages,
 }
 
-pub struct OpenCodeParser {
-    storage_root: PathBuf,
+pub(crate) struct SessionMetadata {
+    pub id: String,
+    pub directory: Option<String>,
+    pub title: Option<String>,
+    pub time_created: DateTime<Utc>,
+    pub time_updated: DateTime<Utc>,
+    pub parent_id: Option<String>,
 }
 
-struct SessionMetadata {
-    id: String,
-    directory: Option<String>,
-    time_created: DateTime<Utc>,
-    time_updated: DateTime<Utc>,
-    parent_id: Option<String>,
+pub(crate) struct MessageMetadata {
+    pub id: String,
+    pub role: Option<Role>,
+    pub time_created: DateTime<Utc>,
 }
 
-struct MessageMetadata {
-    id: String,
-    role: Option<Role>,
-    time_created: DateTime<Utc>,
+pub(crate) struct PartData {
+    pub id: String,
+    pub kind: String,
+    pub order: Option<i64>,
+    pub raw: Value,
 }
 
-struct PartData {
-    id: String,
-    kind: String,
-    order: Option<i64>,
-    /// Raw part JSON for extracting type-specific fields
-    raw: Value,
-}
-
-enum PartOutcome {
+pub(crate) enum PartOutcome {
     Message(Message),
     ToolCall(ToolCall),
     Subagent(Subagent),
     Nothing,
+}
+
+pub(crate) struct SessionEntry {
+    pub id: String,
+    pub source: SessionSource,
+}
+
+pub(crate) enum SessionSource {
+    JsonFile(PathBuf),
+    SqliteRow { db_path: PathBuf },
+}
+
+pub(crate) trait OpenCodeBackend {
+    fn list_sessions(&self) -> Result<Vec<SessionEntry>>;
+    fn load_session_metadata(&self, entry: &SessionEntry) -> Result<SessionMetadata>;
+    fn load_messages(&self, session_id: &str) -> Result<Vec<MessageMetadata>>;
+    fn load_parts(&self, message_id: &str) -> Result<Vec<PartData>>;
+}
+
+pub(crate) fn read_json(path: &Path) -> Result<Value> {
+    let bytes =
+        std::fs::read(path).with_context(|| format!("Failed to read {}", path.display()))?;
+    serde_json::from_slice(&bytes).context("Failed to parse JSON")
+}
+
+pub(crate) fn timestamp_from_millis(value: i64) -> Result<DateTime<Utc>> {
+    DateTime::<Utc>::from_timestamp_millis(value).context("Invalid timestamp")
+}
+
+pub struct OpenCodeParser {
+    storage_root: PathBuf,
 }
 
 impl OpenCodeParser {
@@ -57,13 +86,32 @@ impl OpenCodeParser {
         }
     }
 
-    pub fn parse(&self, session_path: &Path) -> Result<ParsedSession> {
-        let metadata = self.parse_session_metadata(session_path)?;
+    pub(crate) fn parse_entry(
+        &self,
+        entry: &SessionEntry,
+        backend: &dyn OpenCodeBackend,
+    ) -> Result<ParsedSession> {
+        let metadata = backend.load_session_metadata(entry)?;
+        self.build_parsed_session(metadata, &entry.source, backend)
+    }
 
+    pub fn parse(&self, session_path: &Path) -> Result<ParsedSession> {
+        let backend = json_backend::JsonBackend::new(&self.storage_root);
+        let metadata = backend.parse_session_metadata_from_file(session_path)?;
+        let source = SessionSource::JsonFile(session_path.to_path_buf());
+        self.build_parsed_session(metadata, &source, &backend)
+    }
+
+    fn build_parsed_session(
+        &self,
+        metadata: SessionMetadata,
+        source: &SessionSource,
+        backend: &dyn OpenCodeBackend,
+    ) -> Result<ParsedSession> {
         let is_subagent = metadata.parent_id.is_some();
         let parent_session_id = metadata.parent_id.clone();
 
-        let mut messages = self.load_messages(&metadata.id)?;
+        let mut messages = backend.load_messages(&metadata.id)?;
         messages.sort_by(|a, b| {
             a.time_created
                 .cmp(&b.time_created)
@@ -77,7 +125,7 @@ impl OpenCodeParser {
         let mut has_user_message = false;
 
         for message in messages {
-            let mut parts = self.load_parts(&message.id)?;
+            let mut parts = backend.load_parts(&message.id)?;
             parts.sort_by(|a, b| match (a.order, b.order) {
                 (Some(left), Some(right)) => left.cmp(&right).then_with(|| a.id.cmp(&b.id)),
                 (Some(_), None) => Ordering::Less,
@@ -86,7 +134,7 @@ impl OpenCodeParser {
             });
 
             for part in parts {
-                let outcome = self.process_part(
+                let outcome = Self::process_part(
                     &metadata.id,
                     &message.id,
                     message.role,
@@ -146,7 +194,17 @@ impl OpenCodeParser {
             message.index = index;
         }
 
-        let first_prompt = crate::parsers::extract_first_prompt(&flattened);
+        let first_prompt = match &metadata.title {
+            Some(title) if !title.trim().is_empty() => Some(title.clone()),
+            _ => crate::parsers::extract_first_prompt(&flattened),
+        };
+
+        let file_path = match source {
+            SessionSource::JsonFile(path) => path.to_str().unwrap_or_default().to_string(),
+            SessionSource::SqliteRow { db_path } => {
+                db_path.to_str().unwrap_or_default().to_string()
+            }
+        };
 
         let session = Session {
             id: metadata.id.clone(),
@@ -154,7 +212,7 @@ impl OpenCodeParser {
             project_path: metadata.directory.clone(),
             start_time: metadata.time_created,
             message_count: flattened.len(),
-            file_path: session_path.to_str().unwrap_or_default().to_string(),
+            file_path,
             last_updated: metadata.time_updated,
             first_prompt,
             parent_session_id,
@@ -170,206 +228,7 @@ impl OpenCodeParser {
         })
     }
 
-    fn parse_session_metadata(&self, session_path: &Path) -> Result<SessionMetadata> {
-        let value = Self::read_json(session_path).context("Failed to read session metadata")?;
-        let id = value
-            .get("id")
-            .and_then(|v| v.as_str())
-            .map(str::to_string)
-            .or_else(|| {
-                session_path
-                    .file_stem()
-                    .and_then(|s| s.to_str())
-                    .map(str::to_string)
-            })
-            .context("Session id missing")?;
-
-        let directory = value
-            .get("directory")
-            .and_then(|v| v.as_str())
-            .map(str::to_string);
-
-        let parent_id = value
-            .get("parentID")
-            .or_else(|| value.get("parentId"))
-            .and_then(|v| v.as_str())
-            .map(str::to_string);
-
-        let created_ms = value
-            .get("time")
-            .and_then(|v| v.get("created"))
-            .and_then(|v| v.as_i64())
-            .context("Session created time missing")?;
-
-        let updated_ms = value
-            .get("time")
-            .and_then(|v| v.get("updated"))
-            .and_then(|v| v.as_i64())
-            .unwrap_or(created_ms);
-
-        Ok(SessionMetadata {
-            id,
-            directory,
-            time_created: Self::timestamp_from_millis(created_ms)?,
-            time_updated: Self::timestamp_from_millis(updated_ms)?,
-            parent_id,
-        })
-    }
-
-    fn load_messages(&self, session_id: &str) -> Result<Vec<MessageMetadata>> {
-        let messages_dir = self.storage_root.join("message").join(session_id);
-        let entries = match fs::read_dir(&messages_dir) {
-            Ok(entries) => entries,
-            Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
-            Err(err) => return Err(err).context("Failed to read messages directory"),
-        };
-
-        let mut messages = Vec::new();
-        for entry in entries {
-            let entry = entry.context("Failed to read message entry")?;
-            if !entry
-                .file_type()
-                .context("Failed to read message type")?
-                .is_file()
-            {
-                continue;
-            }
-
-            let value = match Self::read_json(&entry.path()) {
-                Ok(value) => value,
-                Err(err) => {
-                    tracing::warn!(
-                        "Failed to parse message {}: {}",
-                        entry.path().display(),
-                        err
-                    );
-                    continue;
-                }
-            };
-
-            let id = value
-                .get("id")
-                .and_then(|v| v.as_str())
-                .map(str::to_string)
-                .or_else(|| {
-                    tracing::warn!("Message id missing in {}", entry.path().display());
-                    None
-                });
-
-            let id = match id {
-                Some(id) => id,
-                None => continue,
-            };
-
-            let role = value.get("role").and_then(|v| v.as_str()).and_then(|role| {
-                match role.to_lowercase().as_str() {
-                    "user" => Some(Role::User),
-                    "assistant" => Some(Role::Assistant),
-                    _ => None,
-                }
-            });
-
-            let created_ms = value
-                .get("time")
-                .and_then(|v| v.get("created"))
-                .and_then(|v| v.as_i64());
-
-            let created_ms = match created_ms {
-                Some(created_ms) => created_ms,
-                None => {
-                    tracing::warn!("Message created time missing in {}", entry.path().display());
-                    continue;
-                }
-            };
-
-            let time_created = match Self::timestamp_from_millis(created_ms) {
-                Ok(timestamp) => timestamp,
-                Err(err) => {
-                    tracing::warn!(
-                        "Invalid message timestamp in {}: {}",
-                        entry.path().display(),
-                        err
-                    );
-                    continue;
-                }
-            };
-
-            messages.push(MessageMetadata {
-                id,
-                role,
-                time_created,
-            });
-        }
-
-        Ok(messages)
-    }
-
-    fn load_parts(&self, message_id: &str) -> Result<Vec<PartData>> {
-        let parts_dir = self.storage_root.join("part").join(message_id);
-        let entries = match fs::read_dir(&parts_dir) {
-            Ok(entries) => entries,
-            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
-                tracing::warn!("Missing parts for message {}", message_id);
-                return Ok(Vec::new());
-            }
-            Err(err) => return Err(err).context("Failed to read parts directory"),
-        };
-
-        let mut parts = Vec::new();
-        for entry in entries {
-            let entry = entry.context("Failed to read part entry")?;
-            if !entry
-                .file_type()
-                .context("Failed to read part type")?
-                .is_file()
-            {
-                continue;
-            }
-
-            let value = match Self::read_json(&entry.path()) {
-                Ok(value) => value,
-                Err(err) => {
-                    tracing::warn!("Failed to parse part {}: {}", entry.path().display(), err);
-                    continue;
-                }
-            };
-
-            let id = value.get("id").and_then(|v| v.as_str()).map(str::to_string);
-
-            let id = match id {
-                Some(id) => id,
-                None => {
-                    tracing::warn!("Part id missing in {}", entry.path().display());
-                    continue;
-                }
-            };
-            let kind = value
-                .get("type")
-                .and_then(|v| v.as_str())
-                .map(str::to_string);
-
-            let kind = match kind {
-                Some(kind) => kind,
-                None => {
-                    tracing::warn!("Part type missing in {}", entry.path().display());
-                    continue;
-                }
-            };
-            let order = value.get("order").and_then(|v| v.as_i64());
-
-            parts.push(PartData {
-                id,
-                kind,
-                order,
-                raw: value,
-            });
-        }
-
-        Ok(parts)
-    }
-
     fn process_part(
-        &self,
         session_id: &str,
         message_id: &str,
         message_role: Option<Role>,
@@ -390,7 +249,7 @@ impl OpenCodeParser {
                         Role::Assistant
                     }
                 };
-                // OpenCode stores text directly on the part, not under content
+
                 let text = part
                     .raw
                     .get("text")
@@ -433,12 +292,10 @@ impl OpenCodeParser {
                 };
 
                 let input_json = state.and_then(|s| s.get("input")).map(|v| v.to_string());
-
                 let output_text = state
                     .and_then(|s| s.get("output"))
                     .and_then(|v| v.as_str())
                     .map(str::to_string);
-
                 let error_text = state
                     .and_then(|s| s.get("error"))
                     .and_then(|v| v.as_str())
@@ -493,7 +350,6 @@ impl OpenCodeParser {
                     parser_ref: None,
                 })
             }
-            // Skip metadata/control parts
             "reasoning" | "step-start" | "step-finish" | "snapshot" | "compaction" => {
                 PartOutcome::Nothing
             }
@@ -502,15 +358,6 @@ impl OpenCodeParser {
                 PartOutcome::Nothing
             }
         }
-    }
-
-    fn read_json(path: &Path) -> Result<Value> {
-        let bytes = fs::read(path).with_context(|| format!("Failed to read {}", path.display()))?;
-        serde_json::from_slice(&bytes).context("Failed to parse JSON")
-    }
-
-    fn timestamp_from_millis(value: i64) -> Result<DateTime<Utc>> {
-        DateTime::<Utc>::from_timestamp_millis(value).context("Invalid timestamp")
     }
 }
 
@@ -575,8 +422,10 @@ mod tests {
             }),
         );
 
-        let parser = OpenCodeParser::new(root);
-        let metadata = parser.parse_session_metadata(&session_path).unwrap();
+        let backend = json_backend::JsonBackend::new(root);
+        let metadata = backend
+            .parse_session_metadata_from_file(&session_path)
+            .unwrap();
 
         assert_eq!(metadata.id, "session-001");
         assert_eq!(metadata.directory.as_deref(), Some("/projects/alpha"));
@@ -592,7 +441,6 @@ mod tests {
 
     #[test]
     fn parse_subagent_session_without_messages_fails() {
-        // Subagent sessions without messages fail with NoUserMessages (not silently skipped)
         let temp_dir = TempDir::new().unwrap();
         let root = temp_dir.path();
 
@@ -615,7 +463,6 @@ mod tests {
 
     #[test]
     fn parse_subagent_session_is_indexed_with_flag() {
-        // Subagent sessions (parentID set) are indexed with is_subagent=true
         let temp_dir = TempDir::new().unwrap();
         let root = temp_dir.path();
 
@@ -715,9 +562,9 @@ mod tests {
     fn load_parts_handles_missing_files() {
         let temp_dir = TempDir::new().unwrap();
         let root = temp_dir.path();
-        let parser = OpenCodeParser::new(root);
+        let backend = json_backend::JsonBackend::new(root);
 
-        let parts = parser.load_parts("missing-msg").unwrap();
+        let parts = backend.load_parts("missing-msg").unwrap();
         assert!(parts.is_empty());
     }
 
@@ -800,7 +647,6 @@ mod tests {
         let parser = OpenCodeParser::new(root);
         let parsed = parser.parse(&session_path).unwrap();
 
-        // Tool part doesn't produce a message — only text parts do
         assert_eq!(parsed.messages.len(), 2);
         assert_eq!(parsed.messages[0].index, 0);
         assert_eq!(parsed.messages[0].role, Role::User);
@@ -810,7 +656,6 @@ mod tests {
         assert_eq!(parsed.messages[1].content, "Second");
         assert_eq!(parsed.session.first_prompt.as_deref(), Some("First"));
 
-        // The tool part produces a ToolCall entry
         assert_eq!(parsed.tool_calls.len(), 1);
         assert_eq!(parsed.tool_calls[0].tool_name, "grep");
     }
@@ -1029,12 +874,10 @@ mod tests {
         let parser = OpenCodeParser::new(root);
         let parsed = parser.parse(&session_path).unwrap();
 
-        // Tool part is not in messages
         assert_eq!(parsed.messages.len(), 1);
         assert_eq!(parsed.messages[0].role, Role::User);
         assert_eq!(parsed.messages[0].content, "Run tool");
 
-        // Tool part is extracted as a ToolCall
         assert_eq!(parsed.tool_calls.len(), 1);
         assert_eq!(parsed.tool_calls[0].tool_name, "read");
         assert_eq!(parsed.tool_calls[0].status, ToolCallStatus::Completed);
@@ -1290,7 +1133,6 @@ mod tests {
             Some("Found 3 files")
         );
 
-        // Transcript: message item + subagent item
         assert_eq!(parsed.transcript_items.len(), 2);
         assert_eq!(parsed.transcript_items[0].kind, TranscriptItemKind::Message);
         assert_eq!(
