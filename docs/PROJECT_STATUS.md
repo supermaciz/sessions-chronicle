@@ -4,7 +4,16 @@
 
 ---
 
-## Current Status: Phase 7 — Complete
+## Current Status: Phase 8 — In Progress
+
+### Legend
+- 📌 Planned (not yet started)
+- 🚧 In progress
+- ✅ Completed
+
+**Next Features Legend:**
+- ✨ Priority (likely to be implemented)
+- 💡 Idea (option for the future)
 
 ### ✅ Completed
 
@@ -102,19 +111,26 @@
 - ✅ SQLite-first parsing with JSON fallback for backward compatibility
 - ✅ Support post-migration installs (no legacy JSON storage root)
 
+**Phase 8: Keyboard Shortcuts & Model Tracking** - In Progress
+- 🚧 Improve keyboard shortcuts: navigation, dismiss search bar
+- 🚧 Track LLM models used per message/session
+  * 🚧 Update parsers to extract model information
+  * 🚧 Add model field to database schema
+  * 🚧 Display model in UI (session detail, tooltips)
+
 **Next Features?** - Future
-- Syntax highlighting for code blocks (syntect)
-- Real-time session monitoring (file watching)
-- Permanently delete session files from disk (not just Sessions Chronicle index), with confirmation
-- Session export (Markdown/HTML)
-- Analytics and usage charts
-- Git integration
-- Git-ai or Agent Trace Spec integration
-- Display reasoning/thinking blocks
-- Semantic search
-- Session summaries (grouped by project or other criteria)
-- Improve ToolInspector (width, markdown rendering, etc.)
-- Reduce RAM usage (streaming DB queries? lazy loading?)
+- ✨ Analytics and usage charts
+- ✨ Display reasoning/thinking blocks
+- ✨ Improve ToolInspector (width, markdown rendering, etc.)
+- 💡 Syntax highlighting for code blocks (syntect)
+- 💡 Real-time session monitoring (file watching)
+- 💡 Permanently delete session files from disk (not just Sessions Chronicle index), with confirmation
+- 💡 Session export (Markdown/HTML)
+- 💡 Git integration
+- 💡 Git-ai or Agent Trace Spec integration
+- 💡 Semantic search
+- 💡 Session summaries (grouped by project or other criteria)
+- 💡 Reduce RAM usage (streaming DB queries? lazy loading?)
 
 ---
 
@@ -406,5 +422,5 @@ cargo test
 ---
 
 **Last Updated**: 2026-02-22
-**Current Phase**: Phase 7 — Complete
+**Current Phase**: Phase 8 — Keyboard Shortcuts & Model Tracking (In Progress)
 **Next Milestone**: See "Next Features?" above
