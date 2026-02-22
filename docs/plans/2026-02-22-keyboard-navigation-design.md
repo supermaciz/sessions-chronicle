@@ -1,7 +1,7 @@
 # Keyboard Navigation Design
 
 **Date:** 2026-02-22
-**Status:** Approved
+**Status:** Approved (revised)
 
 ## Problem
 
@@ -30,8 +30,12 @@ Add SearchBar dismissal as the highest priority in the `AppMsg::Escape` handler.
 4. No-op (if none of the above apply)
 
 Implementation: in `AppMsg::Escape` handler, check `self.search_visible` first
-and call `set_search_mode(false)` on the SearchBar widget via a new message or
-direct widget access.
+and disable search mode before any pane/navigation logic.
+
+When search mode is disabled, focus restoration must be context-aware:
+
+- If `detail_visible == true`: keep focus in detail view (do not force list focus)
+- If `detail_visible == false`: restore focus to session list selection
 
 ### Feature: Keyboard navigation in session list
 
@@ -47,10 +51,19 @@ This gives us natively from GTK4:
 
 **Focus management:**
 
-- On app launch: give focus to the first row in the session list
-- On return from detail view (Escape/back): restore focus to the previously
-  selected row
-- On SearchBar close: return focus to the session list
+- On app launch (or first non-empty load): ensure an initial selection.
+  If no row is selected and the list is non-empty, select the first row.
+- On return from detail view (Escape/back): restore focus to current selection.
+  If selection no longer exists after reload/filter/search changes, select first row.
+- On SearchBar close in list view: focus selected row (same fallback as above).
+
+This requires explicit `SessionList` messages so `App` does not reach into GTK
+row widgets directly.
+
+Recommended additions to `SessionListMsg`:
+
+- `EnsureSelection` (select first row when list non-empty and none selected)
+- `FocusSelection` (focus selected row; fallback to first row)
 
 **Type-to-search coexistence:** Arrow keys do not trigger the SearchBar's
 key capture, so there is no conflict. Letter keys still open search mode as
@@ -66,11 +79,21 @@ Add a "Navigation" section to the `ShortcutsDialog` in `shortcuts.rs`:
 | Enter | Open selected session |
 | Escape | Close search / Close inspector / Go back |
 
+## Implementation notes
+
+- Keep `Type-to-search` unchanged (`SearchBar::set_key_capture_widget(main_window)`).
+- Keep `row-activated` flow unchanged for opening sessions.
+- Prefer handling selection/focus inside `SessionList` to avoid brittle widget
+  references in `App`.
+- Trigger `EnsureSelection` after list reloads and after initial population.
+- Trigger `FocusSelection` when leaving detail view and when search closes in list view.
+
 ## Files to modify
 
 - `src/app.rs` — Escape handler, focus management
-- `src/ui/session_list.rs` — SelectionMode change
+- `src/ui/session_list.rs` — SelectionMode change + selection/focus messages
 - `src/ui/modals/shortcuts.rs` — Navigation section
+- `tests/` — add/update integration tests for Escape priority and list focus behavior
 
 ## What does NOT change
 
