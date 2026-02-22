@@ -3,64 +3,54 @@
 # Sessions Chronicle
 <br clear="left"/>
 
-[![codecov](https://codecov.io/gh/supermaciz/sessions-chronicle/graph/badge.svg?token=)](https://codecov.io/gh/supermaciz/sessions-chronicle)
+[![CI](https://github.com/supermaciz/sessions-chronicle/actions/workflows/ci.yml/badge.svg)](https://github.com/supermaciz/sessions-chronicle/actions/workflows/ci.yml) [![codecov](https://codecov.io/gh/supermaciz/sessions-chronicle/graph/badge.svg)](https://codecov.io/gh/supermaciz/sessions-chronicle)
 
-**A GNOME app for browsing, searching, and resuming AI coding sessions.**
+**Browse, search, and resume your AI coding sessions — on GNOME.**
+
+Sessions Chronicle indexes all your local AI tool sessions into a searchable database,
+so you can find any conversation, inspect tool calls, and pick up where you left off.
 
 
 ## Features
 
-- SQLite database with full-text search (FTS5)
-- Browse and search sessions with filters
-- Session detail view with conversation history
-- Rich markdown rendering (code blocks, tables, task lists, blockquotes)
-- Resume sessions in terminal
-- Support for multiple AI tools: Claude Code, OpenCode, Codex, Mistral Vibe
+- **Find any session instantly** — full-text search across all conversations (SQLite FTS5)
+- **Browse & filter** — sidebar filters by tool, keyword search with highlighted matches
+- **Read conversations comfortably** — rich markdown rendering (code blocks, tables, task lists, blockquotes)
+- **Inspect tool calls** — expand inline tool calls and drill down into subagents in the utility pane
+- **Resume where you left off** — launch sessions directly from the app in your terminal
+- **Supports 4 AI tools** — Claude Code, OpenCode, Codex, Mistral Vibe
+
+
+## Installation
+
+1. Download the latest `.flatpak` file from the [Releases page](https://github.com/supermaciz/sessions-chronicle/releases)
+2. Install it:
+
+```bash
+flatpak install sessions-chronicle-*.flatpak
+```
+
+3. Launch **Sessions Chronicle** from your app menu, or run:
+
+```bash
+flatpak run io.github.supermaciz.sessionschronicle
+```
+
 
 ## Screenshots
 
-**Session List View**  
+**Browse and search your sessions**  
 <img src="docs/screenshots/session_list.png" alt="Session List" width="800"/>
 
-**Session Detail View**  
+**Read conversations with full markdown rendering and tool call inspection**  
 <img src="docs/screenshots/session_detail.png" alt="Session Detail" width="800"/>
 
-## Prerequisites
-
-- `flatpak`
-- `flatpak-builder`
-
-Install via your package manager (e.g., `apt install flatpak flatpak-builder`).
-
-## Building the project
-
-Install the required SDKs, then build:
-
-```bash
-flatpak install --user org.gnome.Sdk//49 org.gnome.Platform//49 org.freedesktop.Sdk.Extension.rust-stable//25.08 org.freedesktop.Sdk.Extension.llvm21//25.08
-flatpak-builder --user flatpak_app build-aux/io.github.supermaciz.sessionschronicle.Devel.json --force-clean
-```
-
-## Running the project
-
-```bash
-flatpak-builder --run flatpak_app build-aux/io.github.supermaciz.sessionschronicle.Devel.json sessions-chronicle
-```
-
-## Testing
-
-```bash
-cargo test
-```
-
-## CI/CD
-
-GitHub Actions run on every push and PR: tests, clippy, rustfmt, and Flatpak build. A separate release workflow builds stable Flatpak bundles when a GitHub release is published.
 
 ## Inspiration
 
-This project was inspired by [agent-sessions](https://github.com/jazzyalex/agent-sessions).
+Inspired by [agent-sessions](https://github.com/jazzyalex/agent-sessions).
+
 
 ## License
 
-Licensed under MIT. See LICENSE file.
+Licensed under MIT. See [LICENSE](LICENSE).
