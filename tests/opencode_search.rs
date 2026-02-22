@@ -44,7 +44,7 @@ fn opencode_search_finds_text_part_content() {
 
     let mut indexer = SessionIndexer::new(&db.path).expect("Failed to create indexer");
     let indexed_count = indexer
-        .index_opencode_sessions(&storage_root)
+        .index_opencode_sessions(&storage_root, None)
         .expect("Failed to index OpenCode sessions");
 
     assert_eq!(
@@ -78,7 +78,7 @@ fn opencode_search_excludes_tool_output() {
 
     let mut indexer = SessionIndexer::new(&db.path).expect("Failed to create indexer");
     let indexed_count = indexer
-        .index_opencode_sessions(&storage_root)
+        .index_opencode_sessions(&storage_root, None)
         .expect("Failed to index OpenCode sessions");
 
     assert_eq!(
@@ -103,7 +103,7 @@ fn opencode_search_respects_tool_filter() {
 
     let mut indexer = SessionIndexer::new(&db.path).expect("Failed to create indexer");
     indexer
-        .index_opencode_sessions(&storage_root)
+        .index_opencode_sessions(&storage_root, None)
         .expect("Failed to index OpenCode sessions");
 
     let sessions =
@@ -114,4 +114,40 @@ fn opencode_search_respects_tool_filter() {
         0,
         "Should not find OpenCode session when filtering for ClaudeCode only"
     );
+}
+
+#[test]
+fn opencode_dual_read_sqlite_only_session_is_searchable() {
+    let db = TempDatabase::new();
+    let storage_root = PathBuf::from("tests/fixtures/opencode_storage");
+    let opencode_db = storage_root.join("opencode.db");
+
+    let mut indexer = SessionIndexer::new(&db.path).expect("Failed to create indexer");
+    indexer
+        .index_opencode_sessions(&storage_root, Some(&opencode_db))
+        .expect("Failed to index");
+
+    let sessions = search_sessions(
+        &db.path,
+        &[Tool::OpenCode],
+        "This session only exists in SQLite",
+    )
+    .expect("Search failed");
+
+    assert_eq!(sessions.len(), 1);
+    assert_eq!(sessions[0].id, "session-sqlite-only");
+}
+
+#[test]
+fn opencode_dual_read_total_session_count() {
+    let db = TempDatabase::new();
+    let storage_root = PathBuf::from("tests/fixtures/opencode_storage");
+    let opencode_db = storage_root.join("opencode.db");
+
+    let mut indexer = SessionIndexer::new(&db.path).expect("Failed to create indexer");
+    let count = indexer
+        .index_opencode_sessions(&storage_root, Some(&opencode_db))
+        .expect("Failed to index");
+
+    assert_eq!(count, 6);
 }
