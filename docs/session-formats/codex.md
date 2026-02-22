@@ -209,8 +209,9 @@ Two patterns:
 
 Current implementation: `src/parsers/codex.rs`
 
-- Indexes only `event_msg.payload.type == user_message|agent_message`
-- Ignores tool/collab event variants
+- Indexes `event_msg.payload.type == user_message|agent_message`
+- Indexes tool lifecycle pairs for `mcp_tool_call_begin|end` and `exec_command_begin|end`
+- Currently does not map `collab_*` events into subagent records
 
 **Title extraction:** First `event_msg.payload.type == "user_message"` event (`payload.message`).
 

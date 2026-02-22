@@ -17,8 +17,7 @@ Cross-tool comparison of Claude Code, Codex, OpenCode, and Mistral Vibe session 
 
 - ✅ Claude Code parser + indexer implemented
 - ✅ Session date/sort semantics aligned with agent-sessions (Claude: end time = latest message-like event)
-- ✅ OpenCode parser implemented (JSON file format only — see ⚠️ below)
-- ⚠️ OpenCode ≥ 2026-02-14 stores sessions in SQLite (`opencode.db`); recent sessions not indexed
+- ✅ OpenCode parser implemented with dual-read indexing (SQLite-first + JSON fallback)
 - ✅ Codex parser implemented
 - ✅ Mistral Vibe parser implemented
 - ✅ OpenCode parent-child detection implemented (`parentID` sessions are indexed as subagents)
@@ -131,17 +130,12 @@ Goal: determine whether model information is available per message, per turn, an
 
 - **Claude Code**: JSONL format, tree-structured events, project-based organization; no stable structured per-message/per-session model field observed in sampled logs
 - **Codex**: JSONL rollout envelope (`session_meta`/`event_msg`/`turn_context`/...); model provider can exist at session level, and model slug is captured at turn level (`turn_context.model`)
-- **OpenCode**: **Breaking change ≥ 2026-02-14** — migrated to SQLite (`opencode.db`). New sessions invisible to the current JSON-only parser. Legacy JSON file tree retained post-migration. Data schema (session/message/part fields) largely unchanged; new part types: `file`, `agent`, `retry`, `patch`; part ID prefix changed to `prt_`. Model metadata still message-level.
+- **OpenCode**: **Breaking change ≥ 2026-02-14** — migrated to SQLite (`opencode.db`). Sessions Chronicle now indexes SQLite sessions first and falls back to legacy JSON storage, deduplicating by session `id` when both sources contain the same session. Legacy JSON file tree remains relevant for pre-migration/compatibility reads. Data schema (session/message/part fields) is largely unchanged; newer part types include `file`, `agent`, `retry`, `patch`; part ID prefix in SQLite era is `prt_`. Model metadata remains message-level.
 - **Mistral Vibe**: Directory-based session format with `meta.json` + JSONL `messages.jsonl`; model info is session-level via `meta.json.config` snapshot when present, not message-level
 
 ---
 
 ## Open Questions
-
-0. **OpenCode SQLite parser (high priority — recent sessions missing)**:
-   - Implement a SQLite read path for `opencode.db` alongside the existing JSON reader
-   - Decide on deduplication strategy when both storage formats are present (JSON files + SQLite) on a migrated install
-   - `rusqlite` is already a project dependency; the main work is deserializing `message.data` and `part.data` JSON blobs
 
 1. **Tool/Event Indexing Scope (post-Phase 6)**:
    - Which additional event families should be indexed beyond the current tool-call/tool-result/subagent coverage?
@@ -179,13 +173,6 @@ Goal: determine whether model information is available per message, per turn, an
 ---
 
 ## Next Steps for Design
-
-0. **OpenCode SQLite parser (unblocks recent session display)**:
-   - Add a `OpenCodeSqliteReader` that opens `opencode.db` with `rusqlite`
-   - Query sessions, messages, parts from their respective tables
-   - Deserialize `data` JSON blobs using the existing part/message type schemas
-   - Keep the JSON file reader as a fallback for pre-migration installs
-   - Deduplicate sessions by `id` when both paths return data
 
 1. **Tool call indexing enhancements (post-Phase 6)**:
    - Expand extraction coverage for less-common tool/subtask/collab variants per parser
@@ -249,5 +236,5 @@ Goal: determine whether model information is available per message, per turn, an
 
 ---
 
-**Last Updated**: 2026-02-21
-**Status**: OpenCode SQLite migration documented (≥ 2026-02-14); subagent + tool-call + model-metadata analysis current; parser behavior and remaining scope gaps documented
+**Last Updated**: 2026-02-22
+**Status**: OpenCode SQLite migration documented and indexed (SQLite-first + JSON fallback); subagent + tool-call + model-metadata analysis current; remaining scope gaps documented

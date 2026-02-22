@@ -166,7 +166,7 @@ sessions-chronicle/
 │   │   ├── claude_code.rs   # Claude Code JSONL parser
 │   │   ├── codex.rs         # Codex JSONL parser
 │   │   ├── mistral_vibe.rs  # Mistral Vibe parser
-│   │   └── opencode.rs      # OpenCode multi-file parser
+│   │   └── opencode/         # OpenCode parser module (JSON + SQLite backends)
 │   ├── database/         # SQLite operations
 │   │   ├── schema.rs     # DB schema + FTS5
 │   │   ├── indexer.rs    # Index sessions

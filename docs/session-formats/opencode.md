@@ -343,18 +343,27 @@ Model metadata is message-scoped (not session-scoped), unchanged between SQLite 
 
 ## Parser Behavior (Sessions Chronicle)
 
-Current implementation: `src/parsers/opencode.rs`
+Current implementation:
 
-**⚠️ Only reads the legacy JSON file tree** (`storage/session/`, `storage/message/`, `storage/part/`).
-New sessions written to `opencode.db` (≥ 2026-02-14) are **not indexed**.
+- Parser core: `src/parsers/opencode/mod.rs`
+- JSON backend: `src/parsers/opencode/json_backend.rs`
+- SQLite backend: `src/parsers/opencode/sqlite_backend.rs`
+- Indexer orchestration: `src/database/indexer.rs` (`index_opencode_sessions`)
+
+Current indexing strategy is **SQLite-first dual-read with JSON fallback**:
+
+1. If `opencode.db` is available, list/parse sessions from SQLite first
+2. Also enumerate legacy JSON storage when present
+3. Deduplicate by session `id` (SQLite wins on overlap)
+4. Support JSON-only and SQLite-only installs
 
 - Indexes sessions with `parentID` as subagent sessions (`is_subagent = 1`)
 - Converts `part.type == text` into transcript messages
 - Extracts `part.type == tool` into indexed tool-call records and `part.type == subtask` into subagent records
 - Non-message parts like `reasoning`, `step-start`, `step-finish`, `snapshot`, `compaction`, `file`, `agent`, `retry`, and `patch` are currently not rendered as transcript messages
 
-**Title extraction:** First flattened `text` part attached to a `user` message
-(session metadata `title` is currently not indexed).
+**Title extraction:** Prefer session metadata `title` (SQLite `session.title`) when present;
+fallback to first flattened `text` part attached to a `user` message.
 
 **Timestamp parsing:** Session timestamps from metadata `time.created` + `time.updated` (ms epoch),
 with per-message `time.created` used for ordering.
@@ -370,17 +379,9 @@ fn extract_opencode_text_part(part: &Value) -> Option<String> {
 }
 ```
 
-**SQLite read path (not yet implemented):**
-
-To support the new format, a dual-read strategy is needed:
-
-1. **Detect SQLite database**: check for `opencode.db` at `~/.local/share/opencode/opencode.db`
-2. **If present**: open with `rusqlite` and query `session`, `message`, `part` tables;
-   deserialize `data` JSON blobs
-3. **If absent (older install)**: fall back to the existing multi-file JSON reader
-4. **Dedup on migration overlap**: deduplicate by session `id`
-
-`rusqlite` is already a project dependency.
+**SQLite read path:** Implemented via `SqliteBackend` (`rusqlite` read-only connection).
+SQLite rows deserialize `message.data` and `part.data` JSON blobs and feed the same parser core
+used by the JSON backend.
 
 ---
 

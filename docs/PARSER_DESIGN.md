@@ -25,16 +25,16 @@ trait SessionParser {
 
 struct ClaudeCodeParser;  // JSONL parser
 struct CodexParser;       // JSONL parser
-struct OpenCodeParser;    // JSON + multi-file parser (+ SQLite path needed)
+struct OpenCodeParser;    // Shared parser core for JSON + SQLite backends
 struct MistralVibeParser; // Directory-based session parser
 
 impl SessionParser for ClaudeCodeParser { /* ... */ }
 impl SessionParser for CodexParser { /* ... */ }
 impl SessionParser for OpenCodeParser {
-    // Special handling: reads session metadata from JSON file
-    // Messages loaded from separate directory structure
+    // Special handling: supports dual-read backends
+    // - SQLite backend (`opencode.db`) for current OpenCode sessions
+    // - Legacy JSON backend (`storage/`) for compatibility
     // Must handle parent-child session relationships
-    // ⚠️ SQLite read path needed for sessions ≥ 2026-02-14
 }
 impl SessionParser for MistralVibeParser {
     // Reads `meta.json` + streams `messages.jsonl`
@@ -71,7 +71,7 @@ fn get_parser(path: &Path) -> Box<dyn SessionParser> {
 |------|-------|
 | **Claude Code** | First parsed `user` message content (assistant/system/summary are ignored by parser). |
 | **Codex** | First `event_msg.payload.type == "user_message"` event (`payload.message`). |
-| **OpenCode** | First flattened `text` part attached to a `user` message (session metadata `title` is currently not indexed). |
+| **OpenCode** | Prefer metadata `title` when available (SQLite), otherwise first flattened `text` part attached to a `user` message. |
 | **Mistral Vibe** | First `messages.jsonl` entry where `role == "user"` and `content` is non-empty. |
 
 ---
@@ -229,17 +229,20 @@ impl OpenCodeParser {
 
 ---
 
-## OpenCode — SQLite Read Path (Needed)
+## OpenCode — SQLite Read Path (Implemented)
 
-For sessions created with OpenCode ≥ 2026-02-14, a dual-read strategy is required:
+For sessions created with OpenCode ≥ 2026-02-14, Sessions Chronicle now uses dual-read indexing:
 
-1. **Detect SQLite database**: check for `opencode.db` at `~/.local/share/opencode/opencode.db`
-2. **If present**: open with `rusqlite` and query `session`, `message`, `part` tables;
-   deserialize `data` JSON blobs
-3. **If absent (older install)**: fall back to the existing multi-file JSON reader
-4. **Dedup on migration overlap**: deduplicate by session `id` when both paths return data
+1. **Detect SQLite database** (`opencode.db`) from resolved sources
+2. **Enumerate/index SQLite sessions first** via `SqliteBackend`
+3. **Enumerate/index legacy JSON sessions** via `JsonBackend` when present
+4. **Deduplicate by session `id`**, keeping SQLite data when both sources overlap
 
-`rusqlite` is already a project dependency.
+Implementation references:
+
+- `src/parsers/opencode/sqlite_backend.rs`
+- `src/parsers/opencode/json_backend.rs`
+- `src/database/indexer.rs` (`index_opencode_sessions`)
 
 ---
 

@@ -155,8 +155,10 @@ rather than a normalized field.
 
 Current implementation: `src/parsers/claude_code.rs`
 
-- Indexes `type == user|assistant`
-- Ignores `tool_use` blocks and `system` tool-output events
+- Indexes `type == user|assistant` text content
+- Extracts `tool_use` blocks as tool calls (and maps `Task` tool uses to subagent records)
+- Correlates `tool_result` blocks by `tool_use_id`
+- Does not currently normalize `system/local_command` events into tool calls
 
 **Title extraction:** First parsed `user` message content (assistant/system/summary are ignored).
 
