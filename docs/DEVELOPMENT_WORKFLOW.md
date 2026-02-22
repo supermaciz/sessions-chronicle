@@ -214,4 +214,4 @@ Two Flatpak manifests exist in `build-aux/`:
 
 ---
 
-**Last Updated**: 2026-02-19
+**Last Updated**: 2026-02-22

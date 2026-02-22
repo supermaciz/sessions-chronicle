@@ -4,7 +4,7 @@
 
 ---
 
-## Current Status: Phase 6 — Complete
+## Current Status: Phase 7 — Complete
 
 ### ✅ Completed
 
@@ -28,6 +28,7 @@
 - ✅ Session row redesign: first prompt title, project-aware subtitle, relative timestamps, row context menu resume (PR #30)
 - ✅ Inline expand/collapse for truncated messages with on-demand full content loading (PR #35)
 - ✅ Tool calls & subagents inspector: inline expander rows, ToolInspector utility pane, subagent drill-down (PR #36)
+- ✅ OpenCode SQLite dual-read indexing: SQLite-first with JSON fallback, supports post-migration installs (PR #37)
 
 **Dependencies**
 - ✅ Relm4 (reactive UI framework)
@@ -96,6 +97,10 @@
 - ✅ Add inline expander rows for tool calls and subagents in SessionDetail
 - ✅ Add ToolInspector utility pane mode (non-modal inspection + subagent drill-down)
 - ✅ Add tests for parser correlation, DB ordering, and inspector interaction flows
+
+**Phase 7: OpenCode SQLite Dual-Read Indexing** - Complete ([design](plans/2026-02-21-opencode-sqlite-dual-read-design.md), PR #37)
+- ✅ SQLite-first parsing with JSON fallback for backward compatibility
+- ✅ Support post-migration installs (no legacy JSON storage root)
 
 **Next Features?** - Future
 - Syntax highlighting for code blocks (syntect)
@@ -400,6 +405,6 @@ cargo test
 
 ---
 
-**Last Updated**: 2026-02-19
-**Current Phase**: Phase 6 — Complete
+**Last Updated**: 2026-02-22
+**Current Phase**: Phase 7 — Complete
 **Next Milestone**: See "Next Features?" above
