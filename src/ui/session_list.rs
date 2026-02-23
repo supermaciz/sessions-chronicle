@@ -69,7 +69,7 @@ impl SimpleComponent for SessionList {
                     #[local_ref]
                     session_list_box -> gtk::ListBox {
                         add_css_class: "boxed-list",
-                        set_selection_mode: gtk::SelectionMode::None,
+                        set_selection_mode: gtk::SelectionMode::Single,
                     }
                 }
             }
@@ -321,6 +321,16 @@ mod tests {
             outputs.as_slice(),
             [SessionListOutput::SessionSelected(id)] if id == "test-session"
         ));
+    }
+
+    #[gtk::test]
+    fn session_list_uses_single_selection_mode() {
+        let temp_db = tempfile::NamedTempFile::new().expect("temp db");
+        let controller = SessionList::builder().launch(temp_db.path().to_path_buf());
+        let root = controller.widget().clone().upcast::<gtk::Widget>();
+        let list_box = find_list_box(&root).expect("list box");
+
+        assert_eq!(list_box.selection_mode(), gtk::SelectionMode::Single);
     }
 
     #[gtk::test]
