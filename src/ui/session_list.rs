@@ -23,6 +23,10 @@ pub enum SessionListMsg {
     SessionActivated(i32),
     ResumeRequested(String, Tool),
     Reload,
+    #[allow(dead_code)]
+    EnsureSelection,
+    #[allow(dead_code)]
+    FocusSelection,
 }
 
 #[derive(Debug)]
@@ -154,6 +158,18 @@ impl SimpleComponent for SessionList {
             }
             SessionListMsg::Reload => {
                 self.reload_sessions();
+            }
+            SessionListMsg::EnsureSelection => {
+                let list_box = self.sessions.widget();
+                if list_box.selected_row().is_none() {
+                    list_box.select_row(list_box.row_at_index(0).as_ref());
+                }
+            }
+            SessionListMsg::FocusSelection => {
+                let list_box = self.sessions.widget();
+                if let Some(row) = list_box.selected_row() {
+                    row.grab_focus();
+                }
             }
         }
     }
