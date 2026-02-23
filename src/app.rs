@@ -705,8 +705,7 @@ impl SimpleComponent for App {
                         self.nav_view.pop();
                     }
                     self.transition_to_session_list_mode();
-                    self.session_list.emit(SessionListMsg::EnsureSelection);
-                    self.session_list.emit(SessionListMsg::FocusSelection);
+                    self.session_list.emit(SessionListMsg::RestoreFocus);
                 }
             }
             AppMsg::NavigateBack => {
@@ -717,8 +716,7 @@ impl SimpleComponent for App {
                 self.suppress_next_detail_pop_sync = suppress_next;
                 if should_sync {
                     self.transition_to_session_list_mode();
-                    self.session_list.emit(SessionListMsg::EnsureSelection);
-                    self.session_list.emit(SessionListMsg::FocusSelection);
+                    self.session_list.emit(SessionListMsg::RestoreFocus);
                 }
             }
             AppMsg::ShowPreferences => {
@@ -994,8 +992,7 @@ impl SimpleComponent for App {
                         self.session_list.emit(list_msg);
                         self.session_detail.emit(detail_msg);
                         if !self.detail_visible {
-                            self.session_list.emit(SessionListMsg::EnsureSelection);
-                            self.session_list.emit(SessionListMsg::FocusSelection);
+                            self.session_list.emit(SessionListMsg::RestoreFocus);
                         }
                     }
                     EscapeResolution::CloseInspector => {

@@ -23,8 +23,8 @@ pub enum SessionListMsg {
     SessionActivated(i32),
     ResumeRequested(String, Tool),
     Reload,
-    EnsureSelection,
-    FocusSelection,
+    /// Ensure a row is selected (defaults to first) and grab keyboard focus.
+    RestoreFocus,
 }
 
 #[derive(Debug)]
@@ -130,8 +130,7 @@ impl SimpleComponent for SessionList {
                 .set_visible_child(&widgets.session_list_scroller);
         }
 
-        sender.input(SessionListMsg::EnsureSelection);
-        sender.input(SessionListMsg::FocusSelection);
+        sender.input(SessionListMsg::RestoreFocus);
 
         ComponentParts { model, widgets }
     }
@@ -160,10 +159,8 @@ impl SimpleComponent for SessionList {
             SessionListMsg::Reload => {
                 self.reload_sessions();
             }
-            SessionListMsg::EnsureSelection => {
+            SessionListMsg::RestoreFocus => {
                 self.ensure_selection();
-            }
-            SessionListMsg::FocusSelection => {
                 let list_box = self.sessions.widget();
                 if let Some(row) = list_box.selected_row() {
                     row.grab_focus();
@@ -365,8 +362,8 @@ mod tests {
             });
         }
 
-        // Simulate EnsureSelection (which reload would send)
-        controller.emit(SessionListMsg::EnsureSelection);
+        // Simulate RestoreFocus (which reload would send)
+        controller.emit(SessionListMsg::RestoreFocus);
 
         let root = controller.widget().clone().upcast::<gtk::Widget>();
         let list_box = find_list_box(&root).expect("list box");
