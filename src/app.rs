@@ -672,6 +672,8 @@ impl SimpleComponent for App {
                         self.nav_view.pop();
                     }
                     self.transition_to_session_list_mode();
+                    self.session_list.emit(SessionListMsg::EnsureSelection);
+                    self.session_list.emit(SessionListMsg::FocusSelection);
                 }
             }
             AppMsg::NavigateBack => {
