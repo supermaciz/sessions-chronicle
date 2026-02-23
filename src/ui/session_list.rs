@@ -23,7 +23,6 @@ pub enum SessionListMsg {
     SessionActivated(i32),
     ResumeRequested(String, Tool),
     Reload,
-    #[allow(dead_code)]
     EnsureSelection,
     #[allow(dead_code)]
     FocusSelection,
@@ -132,6 +131,8 @@ impl SimpleComponent for SessionList {
                 .set_visible_child(&widgets.session_list_scroller);
         }
 
+        sender.input(SessionListMsg::EnsureSelection);
+
         ComponentParts { model, widgets }
     }
 
@@ -160,10 +161,7 @@ impl SimpleComponent for SessionList {
                 self.reload_sessions();
             }
             SessionListMsg::EnsureSelection => {
-                let list_box = self.sessions.widget();
-                if list_box.selected_row().is_none() {
-                    list_box.select_row(list_box.row_at_index(0).as_ref());
-                }
+                self.ensure_selection();
             }
             SessionListMsg::FocusSelection => {
                 let list_box = self.sessions.widget();
@@ -221,6 +219,13 @@ impl SessionList {
         }
     }
 
+    fn ensure_selection(&self) {
+        let list_box = self.sessions.widget();
+        if list_box.selected_row().is_none() {
+            list_box.select_row(list_box.row_at_index(0).as_ref());
+        }
+    }
+
     fn reload_sessions(&mut self) {
         let fetched = Self::fetch_sessions(&self.db_path, &self.active_tools, &self.search_query);
         let mut guard = self.sessions.guard();
@@ -228,6 +233,8 @@ impl SessionList {
         for session in fetched {
             guard.push_back(SessionRowInit { session });
         }
+        drop(guard);
+        self.ensure_selection();
     }
 }
 
@@ -331,6 +338,44 @@ mod tests {
         let list_box = find_list_box(&root).expect("list box");
 
         assert_eq!(list_box.selection_mode(), gtk::SelectionMode::Single);
+    }
+
+    #[gtk::test]
+    fn session_list_selects_first_row_on_init() {
+        let temp_db = tempfile::NamedTempFile::new().expect("temp db");
+        let controller = SessionList::builder().launch(temp_db.path().to_path_buf());
+
+        // Add a row
+        {
+            let mut parts = controller.state().get_mut();
+            let mut guard = parts.model.sessions.guard();
+            guard.push_back(SessionRowInit {
+                session: Session {
+                    id: "sel-test".to_string(),
+                    tool: Tool::ClaudeCode,
+                    project_path: Some("/tmp/p".to_string()),
+                    start_time: chrono::Utc::now(),
+                    message_count: 1,
+                    file_path: "/tmp/s.jsonl".to_string(),
+                    last_updated: chrono::Utc::now(),
+                    first_prompt: None,
+                    parent_session_id: None,
+                    is_subagent: false,
+                },
+            });
+        }
+
+        // Simulate EnsureSelection (which reload would send)
+        controller.emit(SessionListMsg::EnsureSelection);
+
+        let root = controller.widget().clone().upcast::<gtk::Widget>();
+        let list_box = find_list_box(&root).expect("list box");
+        pump_main_context(|| list_box.selected_row().is_some());
+
+        assert!(
+            list_box.selected_row().is_some(),
+            "first row should be selected"
+        );
     }
 
     #[gtk::test]
