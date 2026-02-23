@@ -51,19 +51,30 @@ This gives us natively from GTK4:
 
 **Focus management:**
 
-- On app launch (or first non-empty load): ensure an initial selection.
-  If no row is selected and the list is non-empty, select the first row.
-- On return from detail view (Escape/back): restore focus to current selection.
-  If selection no longer exists after reload/filter/search changes, select first row.
-- On SearchBar close in list view: focus selected row (same fallback as above).
+All focus scenarios share a single fallback rule: if no row is currently
+selected and the list is non-empty, select the first row. This logic lives
+entirely in `EnsureSelection` and is never duplicated at call sites.
+
+Call sites that send `EnsureSelection` (then optionally `FocusSelection`):
+
+- **App launch / first non-empty load:** `EnsureSelection` to guarantee an
+  initial selection.
+- **Return from detail view (Escape/back):** `EnsureSelection` + `FocusSelection`
+  to restore keyboard focus to the current (or first) row.
+- **SearchBar close in list view:** `EnsureSelection` + `FocusSelection` (same
+  sequence as above).
+- **List reload / filter / search change:** `EnsureSelection` to keep a valid
+  selection after the list contents change.
 
 This requires explicit `SessionList` messages so `App` does not reach into GTK
 row widgets directly.
 
 Recommended additions to `SessionListMsg`:
 
-- `EnsureSelection` (select first row when list non-empty and none selected)
-- `FocusSelection` (focus selected row; fallback to first row)
+- `EnsureSelection` — if no row is selected and the list is non-empty, select
+  the first row. This is the **single source of truth** for the fallback rule.
+- `FocusSelection` — grab keyboard focus on the currently selected row (assumes
+  a valid selection already exists; callers send `EnsureSelection` first).
 
 **Type-to-search coexistence:** Arrow keys do not trigger the SearchBar's
 key capture, so there is no conflict. Letter keys still open search mode as
