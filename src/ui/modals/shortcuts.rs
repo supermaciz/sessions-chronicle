@@ -52,6 +52,22 @@ impl SimpleComponent for ShortcutsDialog {
         ));
         widgets.add(view);
 
+        // Navigation section
+        let navigation = adw::ShortcutsSection::new(Some(&gettext("Navigation")));
+        navigation.add(adw::ShortcutsItem::new(
+            &gettext("Select previous/next session"),
+            "Up Down",
+        ));
+        navigation.add(adw::ShortcutsItem::new(
+            &gettext("Open selected session"),
+            "Return",
+        ));
+        navigation.add(adw::ShortcutsItem::new(
+            &gettext("Close search / Close inspector / Go back"),
+            "Escape",
+        ));
+        widgets.add(navigation);
+
         widgets.present(Some(&relm4::main_adw_application().windows()[0]));
         ComponentParts { model, widgets }
     }
