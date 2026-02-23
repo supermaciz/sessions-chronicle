@@ -24,7 +24,6 @@ pub enum SessionListMsg {
     ResumeRequested(String, Tool),
     Reload,
     EnsureSelection,
-    #[allow(dead_code)]
     FocusSelection,
 }
 

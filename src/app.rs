@@ -938,9 +938,22 @@ impl SimpleComponent for App {
                 }
             }
             AppMsg::Escape => {
-                // Priority: inspector nav pop (native, handled by inner AdwNavigationView)
-                // → close inspector pane → navigate back to session list.
-                if self.detail_visible
+                // Priority chain:
+                // 1. Close SearchBar (if search is active)
+                // 2. Close inspector pane (if open in detail view)
+                // 3. Navigate back to session list (if in detail view)
+                // 4. No-op
+                if self.search_visible {
+                    self.search_visible = false;
+                    self.search_query.clear();
+                    let (list_msg, detail_msg) = search_query_update_messages(String::new());
+                    self.session_list.emit(list_msg);
+                    self.session_detail.emit(detail_msg);
+                    if !self.detail_visible {
+                        self.session_list.emit(SessionListMsg::EnsureSelection);
+                        self.session_list.emit(SessionListMsg::FocusSelection);
+                    }
+                } else if self.detail_visible
                     && self.pane_open
                     && self.pane_mode == UtilityPaneMode::ToolInspector
                 {
@@ -953,9 +966,15 @@ impl SimpleComponent for App {
     }
 
     fn post_view(&self, widgets: &mut Self::Widgets) {
-        // Apply sidebar position based on current pane mode:
-        //  - Filters (list view) → Start (left), per GNOME HIG for navigation/filter panes
-        //  - ToolInspector (detail view) → End (right), per GNOME HIG for inspector panes
+        // Sync search bar visibility with model state.
+        // When Escape sets search_visible=false, this closes the GTK widget.
+        // The connect_search_mode_enabled_notify callback fires with enabled=false,
+        // but the guard in SearchModeChanged (self.search_visible != enabled) prevents a loop.
+        if widgets.search_bar.is_search_mode() != self.search_visible {
+            widgets.search_bar.set_search_mode(self.search_visible);
+        }
+
+        // Apply sidebar position based on current pane mode
         widgets
             .overlay_split
             .set_sidebar_position(self.pane_mode.sidebar_position());
