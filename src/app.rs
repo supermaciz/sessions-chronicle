@@ -9,7 +9,7 @@ use gtk::prelude::{
     ActionableExt, ApplicationExt, ButtonExt, Cast, EditableExt, GtkApplicationExt, GtkWindowExt,
     ObjectExt, OrientableExt, SettingsExt, ToggleButtonExt, WidgetExt,
 };
-use gtk::{gio, glib};
+use gtk::{gdk, gio, glib};
 use std::{cell::Cell, fs, path::PathBuf, str::FromStr, sync::Arc};
 
 use crate::config::{APP_ID, PROFILE};
@@ -519,6 +519,38 @@ impl SimpleComponent for App {
                         .send(AppMsg::SearchModeChanged(enabled))
                         .ok();
                 });
+        }
+
+        // Intercept Up/Down in SearchEntry to move session list selection
+        {
+            let session_list_sender = model.session_list.sender().clone();
+            let key_controller = gtk::EventControllerKey::new();
+            key_controller.connect_key_pressed(move |_ctrl, key, _code, _mods| match key {
+                gdk::Key::Up => {
+                    session_list_sender
+                        .send(SessionListMsg::MoveSelection(-1))
+                        .ok();
+                    glib::Propagation::Stop
+                }
+                gdk::Key::Down => {
+                    session_list_sender
+                        .send(SessionListMsg::MoveSelection(1))
+                        .ok();
+                    glib::Propagation::Stop
+                }
+                _ => glib::Propagation::Proceed,
+            });
+            widgets.search_entry.add_controller(key_controller);
+        }
+
+        // Enter in SearchEntry activates the selected session directly
+        {
+            let session_list_sender = model.session_list.sender().clone();
+            widgets.search_entry.connect_activate(move |_| {
+                session_list_sender
+                    .send(SessionListMsg::ActivateSelected)
+                    .ok();
+            });
         }
 
         // Set up OverlaySplitView: sidebar = pane Stack, content = NavigationView
