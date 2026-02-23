@@ -661,6 +661,9 @@ impl SimpleComponent for App {
                         let (list_msg, detail_msg) = search_query_update_messages(String::new());
                         self.session_list.emit(list_msg);
                         self.session_detail.emit(detail_msg);
+                        if !self.detail_visible {
+                            self.session_list.emit(SessionListMsg::RestoreFocus);
+                        }
                     }
                 }
             }
