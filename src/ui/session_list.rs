@@ -131,6 +131,7 @@ impl SimpleComponent for SessionList {
         }
 
         sender.input(SessionListMsg::EnsureSelection);
+        sender.input(SessionListMsg::FocusSelection);
 
         ComponentParts { model, widgets }
     }
