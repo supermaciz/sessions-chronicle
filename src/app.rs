@@ -132,6 +132,14 @@ relm4::new_stateless_action!(TogglePaneAction, WindowActionGroup, "toggle-pane")
 relm4::new_stateless_action!(ShowSearchAction, WindowActionGroup, "show-search");
 relm4::new_stateless_action!(EscapeAction, WindowActionGroup, "escape");
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum EscapeResolution {
+    CloseSearch,
+    CloseInspector,
+    NavigateBack,
+    Noop,
+}
+
 fn active_search_query(query: &str) -> Option<String> {
     let trimmed = query.trim();
     if trimmed.is_empty() {
@@ -152,6 +160,23 @@ fn search_query_update_messages(query: String) -> (SessionListMsg, SessionDetail
 
 fn parent_session_load_failure_messages() -> (SessionDetailMsg, ToolInspectorPaneMsg) {
     (SessionDetailMsg::Clear, ToolInspectorPaneMsg::Clear)
+}
+
+fn resolve_escape_action(
+    search_visible: bool,
+    detail_visible: bool,
+    pane_open: bool,
+    pane_mode: UtilityPaneMode,
+) -> EscapeResolution {
+    if search_visible {
+        EscapeResolution::CloseSearch
+    } else if detail_visible && pane_open && pane_mode == UtilityPaneMode::ToolInspector {
+        EscapeResolution::CloseInspector
+    } else if detail_visible {
+        EscapeResolution::NavigateBack
+    } else {
+        EscapeResolution::Noop
+    }
 }
 
 #[relm4::component(pub)]
@@ -955,24 +980,31 @@ impl SimpleComponent for App {
                 // 2. Close inspector pane (if open in detail view)
                 // 3. Navigate back to session list (if in detail view)
                 // 4. No-op
-                if self.search_visible {
-                    self.search_visible = false;
-                    self.sync_search_bar.set(true);
-                    self.search_query.clear();
-                    let (list_msg, detail_msg) = search_query_update_messages(String::new());
-                    self.session_list.emit(list_msg);
-                    self.session_detail.emit(detail_msg);
-                    if !self.detail_visible {
-                        self.session_list.emit(SessionListMsg::EnsureSelection);
-                        self.session_list.emit(SessionListMsg::FocusSelection);
+                match resolve_escape_action(
+                    self.search_visible,
+                    self.detail_visible,
+                    self.pane_open,
+                    self.pane_mode,
+                ) {
+                    EscapeResolution::CloseSearch => {
+                        self.search_visible = false;
+                        self.sync_search_bar.set(true);
+                        self.search_query.clear();
+                        let (list_msg, detail_msg) = search_query_update_messages(String::new());
+                        self.session_list.emit(list_msg);
+                        self.session_detail.emit(detail_msg);
+                        if !self.detail_visible {
+                            self.session_list.emit(SessionListMsg::EnsureSelection);
+                            self.session_list.emit(SessionListMsg::FocusSelection);
+                        }
                     }
-                } else if self.detail_visible
-                    && self.pane_open
-                    && self.pane_mode == UtilityPaneMode::ToolInspector
-                {
-                    self.pane_open = false;
-                } else if self.detail_visible {
-                    _sender.input(AppMsg::RequestNavigateBack);
+                    EscapeResolution::CloseInspector => {
+                        self.pane_open = false;
+                    }
+                    EscapeResolution::NavigateBack => {
+                        _sender.input(AppMsg::RequestNavigateBack);
+                    }
+                    EscapeResolution::Noop => {}
                 }
             }
         }
@@ -1241,5 +1273,36 @@ mod tests {
         let (should_sync, suppress_next) = detail_pop_sync_decision(false, false);
         assert!(!should_sync);
         assert!(!suppress_next);
+    }
+
+    #[test]
+    fn escape_priority_chain_search_then_inspector_then_back() {
+        let mut search_visible = true;
+        let mut detail_visible = true;
+        let mut pane_open = true;
+        let pane_mode = UtilityPaneMode::ToolInspector;
+
+        assert_eq!(
+            resolve_escape_action(search_visible, detail_visible, pane_open, pane_mode),
+            EscapeResolution::CloseSearch
+        );
+        search_visible = false;
+
+        assert_eq!(
+            resolve_escape_action(search_visible, detail_visible, pane_open, pane_mode),
+            EscapeResolution::CloseInspector
+        );
+        pane_open = false;
+
+        assert_eq!(
+            resolve_escape_action(search_visible, detail_visible, pane_open, pane_mode),
+            EscapeResolution::NavigateBack
+        );
+        detail_visible = false;
+
+        assert_eq!(
+            resolve_escape_action(search_visible, detail_visible, pane_open, pane_mode),
+            EscapeResolution::Noop
+        );
     }
 }
