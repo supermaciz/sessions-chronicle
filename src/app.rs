@@ -10,7 +10,7 @@ use gtk::prelude::{
     ObjectExt, OrientableExt, SettingsExt, ToggleButtonExt, WidgetExt,
 };
 use gtk::{gio, glib};
-use std::{fs, path::PathBuf, str::FromStr, sync::Arc};
+use std::{cell::Cell, fs, path::PathBuf, str::FromStr, sync::Arc};
 
 use crate::config::{APP_ID, PROFILE};
 use crate::database::{SessionIndexer, load_session};
@@ -64,6 +64,13 @@ struct ActiveSessionRef {
 
 pub(super) struct App {
     search_visible: bool,
+    /// Set to `true` when model code changes `search_visible` and the GTK
+    /// SearchBar needs to be updated in `post_view`.  Cleared after sync.
+    /// This avoids unconditionally forcing widget state on every render cycle,
+    /// which could oscillate when GTK signal callbacks enqueue intermediate
+    /// messages (e.g. `SearchQueryChanged` from clearing the entry).
+    /// Uses `Cell` because `post_view` takes `&self`.
+    sync_search_bar: Cell<bool>,
     detail_visible: bool,
     pane_open: bool,
     pane_mode: UtilityPaneMode,
@@ -428,6 +435,7 @@ impl SimpleComponent for App {
         // Create model with a temporary toast_overlay (will be replaced after view_output!)
         let mut model = Self {
             search_visible: false,
+            sync_search_bar: Cell::new(false),
             detail_visible: false,
             pane_open: true,
             pane_mode: UtilityPaneMode::Filters,
@@ -947,6 +955,7 @@ impl SimpleComponent for App {
                 // 4. No-op
                 if self.search_visible {
                     self.search_visible = false;
+                    self.sync_search_bar.set(true);
                     self.search_query.clear();
                     let (list_msg, detail_msg) = search_query_update_messages(String::new());
                     self.session_list.emit(list_msg);
@@ -968,11 +977,14 @@ impl SimpleComponent for App {
     }
 
     fn post_view(&self, widgets: &mut Self::Widgets) {
-        // Sync search bar visibility with model state.
-        // When Escape sets search_visible=false, this closes the GTK widget.
-        // The connect_search_mode_enabled_notify callback fires with enabled=false,
-        // but the guard in SearchModeChanged (self.search_visible != enabled) prevents a loop.
-        if widgets.search_bar.is_search_mode() != self.search_visible {
+        // Only sync the SearchBar when the model explicitly requests it
+        // (e.g. Escape handler).  Unconditional sync would oscillate: closing
+        // the bar clears the entry → SearchQueryChanged fires before
+        // SearchModeChanged(false) → post_view sees the stale
+        // search_visible=true and reopens the bar.
+        if self.sync_search_bar.replace(false)
+            && widgets.search_bar.is_search_mode() != self.search_visible
+        {
             widgets.search_bar.set_search_mode(self.search_visible);
         }
 
