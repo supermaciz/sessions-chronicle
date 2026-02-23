@@ -23,6 +23,12 @@ pub enum SessionListMsg {
     SessionActivated(i32),
     ResumeRequested(String, Tool),
     Reload,
+    /// Ensure a row is selected (defaults to first) and grab keyboard focus.
+    RestoreFocus,
+    /// Move selection by delta rows (−1 = up, +1 = down) without changing focus.
+    MoveSelection(i32),
+    /// Activate the currently selected session (Enter during search).
+    ActivateSelected,
 }
 
 #[derive(Debug)]
@@ -65,7 +71,7 @@ impl SimpleComponent for SessionList {
                     #[local_ref]
                     session_list_box -> gtk::ListBox {
                         add_css_class: "boxed-list",
-                        set_selection_mode: gtk::SelectionMode::None,
+                        set_selection_mode: gtk::SelectionMode::Single,
                     }
                 }
             }
@@ -128,6 +134,8 @@ impl SimpleComponent for SessionList {
                 .set_visible_child(&widgets.session_list_scroller);
         }
 
+        sender.input(SessionListMsg::RestoreFocus);
+
         ComponentParts { model, widgets }
     }
 
@@ -154,6 +162,40 @@ impl SimpleComponent for SessionList {
             }
             SessionListMsg::Reload => {
                 self.reload_sessions();
+            }
+            SessionListMsg::RestoreFocus => {
+                self.ensure_selection();
+                let list_box = self.sessions.widget();
+                if let Some(row) = list_box.selected_row() {
+                    row.grab_focus();
+                }
+            }
+            SessionListMsg::MoveSelection(delta) => {
+                let list_box = self.sessions.widget();
+                let row_count = self.sessions.len() as i32;
+                if row_count == 0 {
+                    return;
+                }
+                let current_index = list_box.selected_row().map(|r| r.index()).unwrap_or(-1);
+                let next_index = if current_index < 0 {
+                    if delta < 0 { row_count - 1 } else { 0 }
+                } else {
+                    (current_index + delta).clamp(0, row_count - 1)
+                };
+                if let Some(row) = list_box.row_at_index(next_index) {
+                    list_box.select_row(Some(&row));
+                    Self::scroll_row_into_view(&row, list_box);
+                }
+            }
+            SessionListMsg::ActivateSelected => {
+                let list_box = self.sessions.widget();
+                if let Some(row) = list_box.selected_row()
+                    && let Some(session_row) = self.sessions.get(row.index() as usize)
+                {
+                    let _ = sender.output(SessionListOutput::SessionSelected(
+                        session_row.session_id().to_owned(),
+                    ));
+                }
             }
         }
     }
@@ -188,6 +230,30 @@ impl SimpleComponent for SessionList {
 }
 
 impl SessionList {
+    /// Scroll the ancestor `ScrolledWindow` so that `row` is fully visible.
+    fn scroll_row_into_view(row: &gtk::ListBoxRow, list_box: &gtk::ListBox) {
+        let Some(sw) = list_box
+            .ancestor(gtk::ScrolledWindow::static_type())
+            .and_then(|w| w.downcast::<gtk::ScrolledWindow>().ok())
+        else {
+            return;
+        };
+        let adj = sw.vadjustment();
+        let src = gtk::graphene::Point::new(0.0, 0.0);
+        let Some(dst) = row.compute_point(list_box, &src) else {
+            return;
+        };
+        let y = dst.y() as f64;
+        let row_height = row.height() as f64;
+        let visible_start = adj.value();
+        let visible_end = visible_start + adj.page_size();
+        if y < visible_start {
+            adj.set_value(y);
+        } else if y + row_height > visible_end {
+            adj.set_value(y + row_height - adj.page_size());
+        }
+    }
+
     fn fetch_sessions(db_path: &Path, tools: &[Tool], query: &str) -> Vec<Session> {
         let query = query.trim();
         let sessions = if query.is_empty() {
@@ -205,6 +271,13 @@ impl SessionList {
         }
     }
 
+    fn ensure_selection(&self) {
+        let list_box = self.sessions.widget();
+        if list_box.selected_row().is_none() {
+            list_box.select_row(list_box.row_at_index(0).as_ref());
+        }
+    }
+
     fn reload_sessions(&mut self) {
         let fetched = Self::fetch_sessions(&self.db_path, &self.active_tools, &self.search_query);
         let mut guard = self.sessions.guard();
@@ -212,6 +285,8 @@ impl SessionList {
         for session in fetched {
             guard.push_back(SessionRowInit { session });
         }
+        drop(guard);
+        self.ensure_selection();
     }
 }
 
@@ -308,6 +383,54 @@ mod tests {
     }
 
     #[gtk::test]
+    fn session_list_uses_single_selection_mode() {
+        let temp_db = tempfile::NamedTempFile::new().expect("temp db");
+        let controller = SessionList::builder().launch(temp_db.path().to_path_buf());
+        let root = controller.widget().clone().upcast::<gtk::Widget>();
+        let list_box = find_list_box(&root).expect("list box");
+
+        assert_eq!(list_box.selection_mode(), gtk::SelectionMode::Single);
+    }
+
+    #[gtk::test]
+    fn session_list_selects_first_row_on_init() {
+        let temp_db = tempfile::NamedTempFile::new().expect("temp db");
+        let controller = SessionList::builder().launch(temp_db.path().to_path_buf());
+
+        // Add a row
+        {
+            let mut parts = controller.state().get_mut();
+            let mut guard = parts.model.sessions.guard();
+            guard.push_back(SessionRowInit {
+                session: Session {
+                    id: "sel-test".to_string(),
+                    tool: Tool::ClaudeCode,
+                    project_path: Some("/tmp/p".to_string()),
+                    start_time: chrono::Utc::now(),
+                    message_count: 1,
+                    file_path: "/tmp/s.jsonl".to_string(),
+                    last_updated: chrono::Utc::now(),
+                    first_prompt: None,
+                    parent_session_id: None,
+                    is_subagent: false,
+                },
+            });
+        }
+
+        // Simulate RestoreFocus (which reload would send)
+        controller.emit(SessionListMsg::RestoreFocus);
+
+        let root = controller.widget().clone().upcast::<gtk::Widget>();
+        let list_box = find_list_box(&root).expect("list box");
+        pump_main_context(|| list_box.selected_row().is_some());
+
+        assert!(
+            list_box.selected_row().is_some(),
+            "first row should be selected"
+        );
+    }
+
+    #[gtk::test]
     fn session_list_forwards_row_resume_action_without_selection() {
         let temp_db = tempfile::NamedTempFile::new().expect("temp db");
         let outputs: Rc<RefCell<Vec<SessionListOutput>>> = Rc::new(RefCell::new(Vec::new()));
@@ -362,5 +485,125 @@ mod tests {
                 .iter()
                 .any(|output| matches!(output, SessionListOutput::SessionSelected(_)))
         );
+    }
+
+    fn make_test_session(id: &str) -> Session {
+        Session {
+            id: id.to_string(),
+            tool: Tool::ClaudeCode,
+            project_path: Some("/tmp/project".to_string()),
+            start_time: chrono::Utc::now(),
+            message_count: 1,
+            file_path: "/tmp/session.jsonl".to_string(),
+            last_updated: chrono::Utc::now(),
+            first_prompt: None,
+            parent_session_id: None,
+            is_subagent: false,
+        }
+    }
+
+    #[gtk::test]
+    fn move_selection_down_advances_index() {
+        let temp_db = tempfile::NamedTempFile::new().expect("temp db");
+        let controller = SessionList::builder().launch(temp_db.path().to_path_buf());
+
+        {
+            let mut parts = controller.state().get_mut();
+            let mut guard = parts.model.sessions.guard();
+            guard.push_back(SessionRowInit {
+                session: make_test_session("s1"),
+            });
+            guard.push_back(SessionRowInit {
+                session: make_test_session("s2"),
+            });
+        }
+
+        let root = controller.widget().clone().upcast::<gtk::Widget>();
+        let list_box = find_list_box(&root).expect("list box");
+
+        // Select first row
+        list_box.select_row(list_box.row_at_index(0).as_ref());
+        pump_main_context(|| list_box.selected_row().is_some());
+
+        controller.emit(SessionListMsg::MoveSelection(1));
+        pump_main_context(|| list_box.selected_row().map(|r| r.index()).unwrap_or(-1) == 1);
+
+        assert_eq!(list_box.selected_row().unwrap().index(), 1);
+    }
+
+    #[gtk::test]
+    fn move_selection_clamps_at_boundaries() {
+        let temp_db = tempfile::NamedTempFile::new().expect("temp db");
+        let controller = SessionList::builder().launch(temp_db.path().to_path_buf());
+
+        {
+            let mut parts = controller.state().get_mut();
+            let mut guard = parts.model.sessions.guard();
+            guard.push_back(SessionRowInit {
+                session: make_test_session("s1"),
+            });
+        }
+
+        let root = controller.widget().clone().upcast::<gtk::Widget>();
+        let list_box = find_list_box(&root).expect("list box");
+
+        list_box.select_row(list_box.row_at_index(0).as_ref());
+        pump_main_context(|| list_box.selected_row().is_some());
+
+        controller.emit(SessionListMsg::MoveSelection(-1));
+        pump_main_context(|| list_box.selected_row().is_some());
+
+        assert_eq!(list_box.selected_row().unwrap().index(), 0);
+    }
+
+    #[gtk::test]
+    fn move_selection_on_empty_list_is_noop() {
+        let temp_db = tempfile::NamedTempFile::new().expect("temp db");
+        let controller = SessionList::builder().launch(temp_db.path().to_path_buf());
+
+        let root = controller.widget().clone().upcast::<gtk::Widget>();
+        let list_box = find_list_box(&root).expect("list box");
+
+        // Should not panic
+        controller.emit(SessionListMsg::MoveSelection(1));
+        pump_main_context(|| true);
+
+        assert!(list_box.selected_row().is_none());
+    }
+
+    #[gtk::test]
+    fn activate_selected_emits_session_selected() {
+        let temp_db = tempfile::NamedTempFile::new().expect("temp db");
+        let outputs: Rc<RefCell<Vec<SessionListOutput>>> = Rc::new(RefCell::new(Vec::new()));
+        let outputs_ref = outputs.clone();
+
+        let controller = SessionList::builder()
+            .launch(temp_db.path().to_path_buf())
+            .connect_receiver(move |_, output| {
+                outputs_ref.borrow_mut().push(output);
+            });
+
+        {
+            let mut parts = controller.state().get_mut();
+            let mut guard = parts.model.sessions.guard();
+            guard.push_back(SessionRowInit {
+                session: make_test_session("activate-test"),
+            });
+        }
+
+        let root = controller.widget().clone().upcast::<gtk::Widget>();
+        let list_box = find_list_box(&root).expect("list box");
+
+        list_box.select_row(list_box.row_at_index(0).as_ref());
+        pump_main_context(|| list_box.selected_row().is_some());
+
+        controller.emit(SessionListMsg::ActivateSelected);
+        pump_main_context(|| !outputs.borrow().is_empty());
+
+        let outputs = outputs.borrow();
+        assert!(matches!(
+            outputs.as_slice(),
+            [SessionListOutput::SessionSelected(id)] if id == "activate-test"
+        ));
     }
 }

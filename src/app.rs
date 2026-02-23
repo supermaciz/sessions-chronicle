@@ -9,8 +9,8 @@ use gtk::prelude::{
     ActionableExt, ApplicationExt, ButtonExt, Cast, EditableExt, GtkApplicationExt, GtkWindowExt,
     ObjectExt, OrientableExt, SettingsExt, ToggleButtonExt, WidgetExt,
 };
-use gtk::{gio, glib};
-use std::{fs, path::PathBuf, str::FromStr, sync::Arc};
+use gtk::{gdk, gio, glib};
+use std::{cell::Cell, fs, path::PathBuf, str::FromStr, sync::Arc};
 
 use crate::config::{APP_ID, PROFILE};
 use crate::database::{SessionIndexer, load_session};
@@ -64,6 +64,13 @@ struct ActiveSessionRef {
 
 pub(super) struct App {
     search_visible: bool,
+    /// Set to `true` when model code changes `search_visible` and the GTK
+    /// SearchBar needs to be updated in `post_view`.  Cleared after sync.
+    /// This avoids unconditionally forcing widget state on every render cycle,
+    /// which could oscillate when GTK signal callbacks enqueue intermediate
+    /// messages (e.g. `SearchQueryChanged` from clearing the entry).
+    /// Uses `Cell` because `post_view` takes `&self`.
+    sync_search_bar: Cell<bool>,
     detail_visible: bool,
     pane_open: bool,
     pane_mode: UtilityPaneMode,
@@ -125,6 +132,14 @@ relm4::new_stateless_action!(TogglePaneAction, WindowActionGroup, "toggle-pane")
 relm4::new_stateless_action!(ShowSearchAction, WindowActionGroup, "show-search");
 relm4::new_stateless_action!(EscapeAction, WindowActionGroup, "escape");
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum EscapeResolution {
+    CloseSearch,
+    CloseInspector,
+    NavigateBack,
+    Noop,
+}
+
 fn active_search_query(query: &str) -> Option<String> {
     let trimmed = query.trim();
     if trimmed.is_empty() {
@@ -145,6 +160,23 @@ fn search_query_update_messages(query: String) -> (SessionListMsg, SessionDetail
 
 fn parent_session_load_failure_messages() -> (SessionDetailMsg, ToolInspectorPaneMsg) {
     (SessionDetailMsg::Clear, ToolInspectorPaneMsg::Clear)
+}
+
+fn resolve_escape_action(
+    search_visible: bool,
+    detail_visible: bool,
+    pane_open: bool,
+    pane_mode: UtilityPaneMode,
+) -> EscapeResolution {
+    if search_visible {
+        EscapeResolution::CloseSearch
+    } else if detail_visible && pane_open && pane_mode == UtilityPaneMode::ToolInspector {
+        EscapeResolution::CloseInspector
+    } else if detail_visible {
+        EscapeResolution::NavigateBack
+    } else {
+        EscapeResolution::Noop
+    }
 }
 
 #[relm4::component(pub)]
@@ -428,6 +460,7 @@ impl SimpleComponent for App {
         // Create model with a temporary toast_overlay (will be replaced after view_output!)
         let mut model = Self {
             search_visible: false,
+            sync_search_bar: Cell::new(false),
             detail_visible: false,
             pane_open: true,
             pane_mode: UtilityPaneMode::Filters,
@@ -486,6 +519,38 @@ impl SimpleComponent for App {
                         .send(AppMsg::SearchModeChanged(enabled))
                         .ok();
                 });
+        }
+
+        // Intercept Up/Down in SearchEntry to move session list selection
+        {
+            let session_list_sender = model.session_list.sender().clone();
+            let key_controller = gtk::EventControllerKey::new();
+            key_controller.connect_key_pressed(move |_ctrl, key, _code, _mods| match key {
+                gdk::Key::Up => {
+                    session_list_sender
+                        .send(SessionListMsg::MoveSelection(-1))
+                        .ok();
+                    glib::Propagation::Stop
+                }
+                gdk::Key::Down => {
+                    session_list_sender
+                        .send(SessionListMsg::MoveSelection(1))
+                        .ok();
+                    glib::Propagation::Stop
+                }
+                _ => glib::Propagation::Proceed,
+            });
+            widgets.search_entry.add_controller(key_controller);
+        }
+
+        // Enter in SearchEntry activates the selected session directly
+        {
+            let session_list_sender = model.session_list.sender().clone();
+            widgets.search_entry.connect_activate(move |_| {
+                session_list_sender
+                    .send(SessionListMsg::ActivateSelected)
+                    .ok();
+            });
         }
 
         // Set up OverlaySplitView: sidebar = pane Stack, content = NavigationView
@@ -596,6 +661,9 @@ impl SimpleComponent for App {
                         let (list_msg, detail_msg) = search_query_update_messages(String::new());
                         self.session_list.emit(list_msg);
                         self.session_detail.emit(detail_msg);
+                        if !self.detail_visible {
+                            self.session_list.emit(SessionListMsg::RestoreFocus);
+                        }
                     }
                 }
             }
@@ -672,6 +740,7 @@ impl SimpleComponent for App {
                         self.nav_view.pop();
                     }
                     self.transition_to_session_list_mode();
+                    self.session_list.emit(SessionListMsg::RestoreFocus);
                 }
             }
             AppMsg::NavigateBack => {
@@ -682,6 +751,7 @@ impl SimpleComponent for App {
                 self.suppress_next_detail_pop_sync = suppress_next;
                 if should_sync {
                     self.transition_to_session_list_mode();
+                    self.session_list.emit(SessionListMsg::RestoreFocus);
                 }
             }
             AppMsg::ShowPreferences => {
@@ -938,24 +1008,53 @@ impl SimpleComponent for App {
                 }
             }
             AppMsg::Escape => {
-                // Priority: inspector nav pop (native, handled by inner AdwNavigationView)
-                // → close inspector pane → navigate back to session list.
-                if self.detail_visible
-                    && self.pane_open
-                    && self.pane_mode == UtilityPaneMode::ToolInspector
-                {
-                    self.pane_open = false;
-                } else if self.detail_visible {
-                    _sender.input(AppMsg::RequestNavigateBack);
+                // Priority chain:
+                // 1. Close SearchBar (if search is active)
+                // 2. Close inspector pane (if open in detail view)
+                // 3. Navigate back to session list (if in detail view)
+                // 4. No-op
+                match resolve_escape_action(
+                    self.search_visible,
+                    self.detail_visible,
+                    self.pane_open,
+                    self.pane_mode,
+                ) {
+                    EscapeResolution::CloseSearch => {
+                        self.search_visible = false;
+                        self.sync_search_bar.set(true);
+                        self.search_query.clear();
+                        let (list_msg, detail_msg) = search_query_update_messages(String::new());
+                        self.session_list.emit(list_msg);
+                        self.session_detail.emit(detail_msg);
+                        if !self.detail_visible {
+                            self.session_list.emit(SessionListMsg::RestoreFocus);
+                        }
+                    }
+                    EscapeResolution::CloseInspector => {
+                        self.pane_open = false;
+                    }
+                    EscapeResolution::NavigateBack => {
+                        _sender.input(AppMsg::RequestNavigateBack);
+                    }
+                    EscapeResolution::Noop => {}
                 }
             }
         }
     }
 
     fn post_view(&self, widgets: &mut Self::Widgets) {
-        // Apply sidebar position based on current pane mode:
-        //  - Filters (list view) → Start (left), per GNOME HIG for navigation/filter panes
-        //  - ToolInspector (detail view) → End (right), per GNOME HIG for inspector panes
+        // Only sync the SearchBar when the model explicitly requests it
+        // (e.g. Escape handler).  Unconditional sync would oscillate: closing
+        // the bar clears the entry → SearchQueryChanged fires before
+        // SearchModeChanged(false) → post_view sees the stale
+        // search_visible=true and reopens the bar.
+        if self.sync_search_bar.replace(false)
+            && widgets.search_bar.is_search_mode() != self.search_visible
+        {
+            widgets.search_bar.set_search_mode(self.search_visible);
+        }
+
+        // Apply sidebar position based on current pane mode
         widgets
             .overlay_split
             .set_sidebar_position(self.pane_mode.sidebar_position());
@@ -1206,5 +1305,36 @@ mod tests {
         let (should_sync, suppress_next) = detail_pop_sync_decision(false, false);
         assert!(!should_sync);
         assert!(!suppress_next);
+    }
+
+    #[test]
+    fn escape_priority_chain_search_then_inspector_then_back() {
+        let mut search_visible = true;
+        let mut detail_visible = true;
+        let mut pane_open = true;
+        let pane_mode = UtilityPaneMode::ToolInspector;
+
+        assert_eq!(
+            resolve_escape_action(search_visible, detail_visible, pane_open, pane_mode),
+            EscapeResolution::CloseSearch
+        );
+        search_visible = false;
+
+        assert_eq!(
+            resolve_escape_action(search_visible, detail_visible, pane_open, pane_mode),
+            EscapeResolution::CloseInspector
+        );
+        pane_open = false;
+
+        assert_eq!(
+            resolve_escape_action(search_visible, detail_visible, pane_open, pane_mode),
+            EscapeResolution::NavigateBack
+        );
+        detail_visible = false;
+
+        assert_eq!(
+            resolve_escape_action(search_visible, detail_visible, pane_open, pane_mode),
+            EscapeResolution::Noop
+        );
     }
 }
