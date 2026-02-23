@@ -692,6 +692,8 @@ impl SimpleComponent for App {
                 self.suppress_next_detail_pop_sync = suppress_next;
                 if should_sync {
                     self.transition_to_session_list_mode();
+                    self.session_list.emit(SessionListMsg::EnsureSelection);
+                    self.session_list.emit(SessionListMsg::FocusSelection);
                 }
             }
             AppMsg::ShowPreferences => {
