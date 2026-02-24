@@ -121,7 +121,11 @@
 - ✨ Analytics and usage charts
 - ✨ Display reasoning/thinking blocks
 - ✨ Improve ToolInspector (width, markdown rendering, etc.)
+- ✨ Skill tool-call compaction: treat `tool_name = Skill` as a first-class call (show skill name + source), collapse SKILL.md payloads by default, and provide "Show full / Copy" actions
+- ✨ Boilerplate folding in transcript: detect pasted skill blocks (e.g. `<skill_content ...>`, `SKILL.md`, "IF A SKILL APPLIES...") and system reminders (e.g. `<system-reminder>`, "Plan Mode - System Reminder"), render as a 1-line stub with expand-on-demand
+- 💡 Workflow detection (simple heuristics): detect common workflows from message/tool-call patterns (e.g. `/gsd:`, `.planning/`, `/opsx:`, `openspec/changes/`, `proposal.md`, `tasks.md`) with a confidence score; surface badges + filtering
 - ✨ Session titles for all tools (currently only OpenCode exposes a title; surface it for Claude Code, Codex, Mistral Vibe)
+- 💡 Session "Skills used" chips: extract skill names from Skill calls + pasted blobs, show in Session header/list and enable filtering/search by skill
 - 💡 Automated analysis & recommendations: detect long sessions, error patterns, costly sessions, peak productivity windows, and prompt improvement suggestions (inspired by Copilot Chronicle's SQLite-based self-analysis)
 - 💡 Syntax highlighting for code blocks (syntect)
 - 💡 Real-time session monitoring (file watching)
