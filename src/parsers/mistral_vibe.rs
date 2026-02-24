@@ -230,6 +230,7 @@ impl MistralVibeParser {
             role,
             content,
             timestamp,
+            model: None,
         });
     }
 

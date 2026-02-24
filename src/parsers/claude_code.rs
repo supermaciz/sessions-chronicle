@@ -158,6 +158,7 @@ impl ClaudeCodeParser {
                                     role: Role::User,
                                     content: text,
                                     timestamp: ts,
+                                    model: None,
                                 });
                                 transcript_items.push(TranscriptItem {
                                     session_id: String::new(),
@@ -196,6 +197,7 @@ impl ClaudeCodeParser {
                         role: Role::User,
                         content: text,
                         timestamp: ts,
+                        model: None,
                     });
                     transcript_items.push(TranscriptItem {
                         session_id: String::new(),
@@ -235,6 +237,7 @@ impl ClaudeCodeParser {
                             role: Role::Assistant,
                             content: text,
                             timestamp: ts,
+                            model: None,
                         });
                         transcript_items.push(TranscriptItem {
                             session_id: String::new(),

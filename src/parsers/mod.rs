@@ -53,6 +53,7 @@ mod tests {
             role,
             content: content.to_string(),
             timestamp: Utc::now(),
+            model: None,
         }
     }
 

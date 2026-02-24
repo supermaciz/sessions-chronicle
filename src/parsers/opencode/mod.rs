@@ -272,6 +272,7 @@ impl OpenCodeParser {
                     role,
                     content: text,
                     timestamp,
+                    model: None,
                 })
             }
             "tool" => {

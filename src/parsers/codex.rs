@@ -154,6 +154,7 @@ impl CodexParser {
                         role: Role::User,
                         content,
                         timestamp: event_ts.unwrap_or_else(Utc::now),
+                        model: None,
                     });
                     transcript_items.push(TranscriptItem {
                         session_id: session_id.clone(),
@@ -178,6 +179,7 @@ impl CodexParser {
                         role: Role::Assistant,
                         content,
                         timestamp: event_ts.unwrap_or_else(Utc::now),
+                        model: None,
                     });
                     transcript_items.push(TranscriptItem {
                         session_id: session_id.clone(),
