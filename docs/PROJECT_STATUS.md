@@ -113,9 +113,11 @@
 
 **Phase 8: Keyboard Shortcuts & Model Tracking** - In Progress
 - ✅ Keyboard navigation polish: single-selection session list, Up/Down selection movement, Enter opens sessions, Escape closes search/inspector or navigates back with focus restore, shortcuts dialog Navigation section
-- 🚧 Track LLM models used per message/session
-   * 🚧 Update parsers to extract model information, add model field to database schema
-   * 🚧 Display model in UI (session detail, tooltips)
+- ✅ Track LLM model per assistant message: parsers + DB schema v2 migration (PR #39)
+  * ✅ `Message.model: Option<String>` field across all parsers
+  * ✅ Shared model normalization helper
+  * ✅ FTS5 `messages` table v2 migration with atomic DDL (`model UNINDEXED`)
+  * 🚧 Display model in UI (session detail, tooltips) — separate PR
 
 **Next Features?** - Future
 - ✨ Analytics and usage charts
@@ -427,5 +429,5 @@ cargo test
 ---
 
 **Last Updated**: 2026-02-24
-**Current Phase**: Phase 8 — Keyboard Shortcuts & Model Tracking (In Progress)
-**Next Milestone**: See "Next Features?" above
+**Current Phase**: Phase 8 — Keyboard Shortcuts & Model Tracking (Parsers + DB complete; UI display pending)
+**Next Milestone**: Model display in UI (badges, tooltips, per-message indicators)

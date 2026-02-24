@@ -95,6 +95,29 @@ This directory contains project documentation, architecture notes, and implement
     - Stable Flatpak manifest and release workflow
     - GitHub Actions CI/CD for release builds
 
+19. **[plans/2026-02-15-expand-collapse-messages-design.md](plans/2026-02-15-expand-collapse-messages-design.md)** ✅
+    - Inline expand/collapse toggle for truncated messages
+    - On-demand full content loading from DB with caching
+
+20. **[plans/2026-02-16-tool-calls-and-subagents-exploration.md](plans/2026-02-16-tool-calls-and-subagents-exploration.md)**
+    - UX exploration for tool calls and subagent display
+
+21. **[plans/2026-02-18-tool-calls-and-subagents-utility-pane-design.md](plans/2026-02-18-tool-calls-and-subagents-utility-pane-design.md)** ✅
+    - ToolInspector utility pane design
+    - Inline expander rows and subagent drill-down
+
+22. **[plans/2026-02-21-opencode-sqlite-dual-read-design.md](plans/2026-02-21-opencode-sqlite-dual-read-design.md)** ✅
+    - OpenCode SQLite-first with JSON fallback
+    - Supports post-migration installs without legacy JSON storage
+
+23. **[plans/2026-02-22-keyboard-navigation-design.md](plans/2026-02-22-keyboard-navigation-design.md)** ✅
+    - Keyboard navigation in session list (Up/Down/Enter/Escape)
+    - Shortcuts dialog Navigation section
+
+24. **[plans/2026-02-24-model-tracking-design.md](plans/2026-02-24-model-tracking-design.md)** ✅ (parsers+DB)
+    - LLM model tracking per assistant message across all 4 tools
+    - DB schema v2 migration, shared normalization helper, parser changes
+
 ---
 
 ## 🎨 Visual Mockups
@@ -147,7 +170,7 @@ All mockups are SVG files in the `mockups/` subfolder (open in browser or image 
 
 ---
 
-**Last Updated**: 2026-02-21
+**Last Updated**: 2026-02-24
 
-**Current Status**: Phase 5 Complete — Phase 6 (Tool Calls & Subagents) is next
-**Next Milestone**: Phase 6 — Enrich Message model, parse tool events, inline tool badges
+**Current Status**: Phase 8 — Keyboard Shortcuts & Model Tracking (Parsers + DB complete; UI display pending)
+**Next Milestone**: Model display in UI (badges, tooltips, per-message indicators)
