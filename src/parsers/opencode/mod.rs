@@ -32,6 +32,7 @@ pub(crate) struct MessageMetadata {
     pub id: String,
     pub role: Option<Role>,
     pub time_created: DateTime<Utc>,
+    pub model: Option<String>,
 }
 
 pub(crate) struct PartData {
@@ -138,6 +139,7 @@ impl OpenCodeParser {
                     &metadata.id,
                     &message.id,
                     message.role,
+                    message.model.as_deref(),
                     message.time_created,
                     &part,
                     &mut has_user_message,
@@ -232,6 +234,7 @@ impl OpenCodeParser {
         session_id: &str,
         message_id: &str,
         message_role: Option<Role>,
+        message_model: Option<&str>,
         timestamp: DateTime<Utc>,
         part: &PartData,
         has_user_message: &mut bool,
@@ -266,13 +269,19 @@ impl OpenCodeParser {
                     *has_user_message = true;
                 }
 
+                let model = if role == Role::User {
+                    None
+                } else {
+                    message_model.map(str::to_string)
+                };
+
                 PartOutcome::Message(Message {
                     session_id: session_id.to_string(),
                     index: 0,
                     role,
                     content: text,
                     timestamp,
-                    model: None,
+                    model,
                 })
             }
             "tool" => {
@@ -1139,6 +1148,29 @@ mod tests {
         assert_eq!(
             parsed.transcript_items[1].kind,
             TranscriptItemKind::Subagent
+        );
+    }
+
+    #[test]
+    fn opencode_assistant_message_gets_model() {
+        use crate::parsers::opencode::json_backend::JsonBackend;
+
+        let storage_root = Path::new("tests/fixtures/opencode_storage");
+        let parser = OpenCodeParser::new(storage_root);
+        let json_backend = JsonBackend::new(storage_root);
+        let entries = json_backend.list_sessions().unwrap();
+        let entry = entries.iter().find(|e| e.id == "session-001").unwrap();
+        let parsed = parser.parse_entry(entry, &json_backend).unwrap();
+
+        let assistant_msgs: Vec<_> = parsed
+            .messages
+            .iter()
+            .filter(|m| m.role == Role::Assistant)
+            .collect();
+        assert!(!assistant_msgs.is_empty());
+        assert_eq!(
+            assistant_msgs[0].model.as_deref(),
+            Some("anthropic/claude-sonnet-4-5")
         );
     }
 
