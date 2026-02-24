@@ -112,11 +112,10 @@
 - ✅ Support post-migration installs (no legacy JSON storage root)
 
 **Phase 8: Keyboard Shortcuts & Model Tracking** - In Progress
-- 🚧 Improve keyboard shortcuts: navigation, dismiss search bar
+- ✅ Keyboard navigation polish: single-selection session list, Up/Down selection movement, Enter opens sessions, Escape closes search/inspector or navigates back with focus restore, shortcuts dialog Navigation section
 - 🚧 Track LLM models used per message/session
-  * 🚧 Update parsers to extract model information
-  * 🚧 Add model field to database schema
-  * 🚧 Display model in UI (session detail, tooltips)
+   * 🚧 Update parsers to extract model information, add model field to database schema
+   * 🚧 Display model in UI (session detail, tooltips)
 
 **Next Features?** - Future
 - ✨ Analytics and usage charts
@@ -423,6 +422,6 @@ cargo test
 
 ---
 
-**Last Updated**: 2026-02-22
+**Last Updated**: 2026-02-24
 **Current Phase**: Phase 8 — Keyboard Shortcuts & Model Tracking (In Progress)
 **Next Milestone**: See "Next Features?" above
