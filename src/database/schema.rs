@@ -7,11 +7,15 @@ use rusqlite::Connection;
 ///   0 – unversioned (pre-phase-1) or brand-new database
 ///   1 – phase-1 schema: sessions gains parent_session_id + is_subagent;
 ///       transcript_items, tool_calls, subagents tables added
+///   2 – messages FTS5 table gains `model UNINDEXED` column
 pub fn initialize_database(conn: &Connection) -> Result<()> {
     let version: i64 = conn.query_row("PRAGMA user_version", [], |row| row.get(0))?;
 
     if version < 1 {
         apply_v1_migration(conn)?;
+    }
+    if version < 2 {
+        apply_v2_migration(conn)?;
     }
 
     Ok(())
@@ -161,4 +165,172 @@ fn apply_v1_migration(conn: &Connection) -> Result<()> {
     conn.execute_batch("PRAGMA user_version = 1")?;
 
     Ok(())
+}
+
+/// Migrate from v1 to v2: recreate the messages FTS5 table with a `model` column.
+///
+/// FTS5 virtual tables do not support ALTER TABLE ADD COLUMN, so the table is
+/// dropped and recreated. Existing indexed messages are lost by design and will
+/// be rebuilt by normal startup re-indexing when parsers run again.
+///
+/// PRAGMA user_version is set AFTER the transaction commits because it is not
+/// transactional in SQLite.
+fn apply_v2_migration(conn: &Connection) -> Result<()> {
+    conn.execute_batch(
+        "BEGIN IMMEDIATE;
+         DROP TABLE IF EXISTS messages;
+         CREATE VIRTUAL TABLE messages USING fts5(
+             session_id UNINDEXED,
+             message_index UNINDEXED,
+             role UNINDEXED,
+             content,
+             timestamp UNINDEXED,
+             model UNINDEXED
+         );
+         COMMIT;",
+    )?;
+    conn.execute_batch("PRAGMA user_version = 2")?;
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rusqlite::Connection;
+
+    #[test]
+    fn fresh_db_initializes_to_v2() {
+        let conn = Connection::open_in_memory().unwrap();
+        initialize_database(&conn).unwrap();
+        let version: i64 = conn
+            .query_row("PRAGMA user_version", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(version, 2);
+    }
+
+    #[test]
+    fn v1_to_v2_migration_recreates_messages_with_model() {
+        let conn = Connection::open_in_memory().unwrap();
+
+        // Manually create a v1 schema
+        conn.execute_batch(
+            "
+            CREATE TABLE sessions (
+                id TEXT PRIMARY KEY,
+                tool TEXT NOT NULL,
+                project_path TEXT,
+                start_time INTEGER NOT NULL,
+                message_count INTEGER NOT NULL,
+                file_path TEXT NOT NULL,
+                last_updated INTEGER NOT NULL,
+                first_prompt TEXT,
+                parent_session_id TEXT,
+                is_subagent INTEGER NOT NULL DEFAULT 0
+            );
+            CREATE VIRTUAL TABLE messages USING fts5(
+                session_id UNINDEXED,
+                message_index UNINDEXED,
+                role UNINDEXED,
+                content,
+                timestamp UNINDEXED
+            );
+            CREATE TABLE IF NOT EXISTS transcript_items (
+                session_id TEXT NOT NULL,
+                item_index INTEGER NOT NULL,
+                kind TEXT NOT NULL,
+                message_index INTEGER,
+                tool_call_id TEXT,
+                subagent_id TEXT,
+                PRIMARY KEY (session_id, item_index)
+            );
+            CREATE TABLE IF NOT EXISTS tool_calls (
+                id TEXT NOT NULL,
+                session_id TEXT NOT NULL,
+                subagent_id TEXT,
+                tool_name TEXT NOT NULL,
+                status TEXT NOT NULL,
+                title TEXT,
+                summary TEXT,
+                input_json TEXT,
+                output_text TEXT,
+                error_text TEXT,
+                started_at INTEGER,
+                ended_at INTEGER,
+                duration_ms INTEGER,
+                parser_call_id TEXT,
+                PRIMARY KEY (session_id, id)
+            );
+            CREATE TABLE IF NOT EXISTS subagents (
+                id TEXT NOT NULL,
+                session_id TEXT NOT NULL,
+                title TEXT NOT NULL,
+                prompt TEXT,
+                result_summary TEXT,
+                child_session_id TEXT,
+                parser_ref TEXT,
+                PRIMARY KEY (session_id, id)
+            );
+            PRAGMA user_version = 1;
+        ",
+        )
+        .unwrap();
+
+        // Insert a message in v1 schema
+        conn.execute(
+            "INSERT INTO messages (session_id, message_index, role, content, timestamp) VALUES (?1,?2,?3,?4,?5)",
+            rusqlite::params!["s1", 0, "user", "hello", 100],
+        )
+        .unwrap();
+
+        // Run migration
+        initialize_database(&conn).unwrap();
+
+        let version: i64 = conn
+            .query_row("PRAGMA user_version", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(version, 2);
+
+        // Old messages are gone (by design — will be re-indexed)
+        let count: i64 = conn
+            .query_row("SELECT count(*) FROM messages", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(count, 0);
+
+        // New schema accepts model column
+        conn.execute(
+            "INSERT INTO messages (session_id, message_index, role, content, timestamp, model) VALUES (?1,?2,?3,?4,?5,?6)",
+            rusqlite::params!["s1", 0, "assistant", "hi", 200, "claude-opus-4-6"],
+        )
+        .unwrap();
+
+        let model: Option<String> = conn
+            .query_row(
+                "SELECT model FROM messages WHERE session_id = 's1'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(model.as_deref(), Some("claude-opus-4-6"));
+    }
+
+    #[test]
+    fn message_insert_roundtrip_preserves_null_model() {
+        let conn = Connection::open_in_memory().unwrap();
+        initialize_database(&conn).unwrap();
+
+        conn.execute(
+            "INSERT INTO messages (session_id, message_index, role, content, timestamp, model) VALUES (?1,?2,?3,?4,?5,?6)",
+            rusqlite::params!["s1", 0, "user", "hello", 100, Option::<String>::None],
+        )
+        .unwrap();
+
+        let model: Option<String> = conn
+            .query_row(
+                "SELECT model FROM messages WHERE session_id = 's1'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert!(model.is_none());
+    }
 }

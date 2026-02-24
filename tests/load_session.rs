@@ -51,56 +51,60 @@ impl TempDatabase {
         // Insert messages in non-sequential order to test ordering
         self.connection
             .execute(
-                "INSERT INTO messages (session_id, message_index, role, content, timestamp)
-                 VALUES (?1, ?2, ?3, ?4, ?5)",
+                "INSERT INTO messages (session_id, message_index, role, content, timestamp, model)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
                 rusqlite::params![
                     "test-session",
                     2_i64,
                     "toolcall",
                     "Calling read_file",
-                    1200_i64
+                    1200_i64,
+                    Option::<String>::None
                 ],
             )
             .expect("Failed to insert message 2");
 
         self.connection
             .execute(
-                "INSERT INTO messages (session_id, message_index, role, content, timestamp)
-                 VALUES (?1, ?2, ?3, ?4, ?5)",
+                "INSERT INTO messages (session_id, message_index, role, content, timestamp, model)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
                 rusqlite::params![
                     "test-session",
                     0_i64,
                     "user",
                     "Hello, please help me",
-                    1000_i64
+                    1000_i64,
+                    Option::<String>::None
                 ],
             )
             .expect("Failed to insert message 0");
 
         self.connection
             .execute(
-                "INSERT INTO messages (session_id, message_index, role, content, timestamp)
-                 VALUES (?1, ?2, ?3, ?4, ?5)",
+                "INSERT INTO messages (session_id, message_index, role, content, timestamp, model)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
                 rusqlite::params![
                     "test-session",
                     3_i64,
                     "toolresult",
                     "File contents here",
-                    1300_i64
+                    1300_i64,
+                    Option::<String>::None
                 ],
             )
             .expect("Failed to insert message 3");
 
         self.connection
             .execute(
-                "INSERT INTO messages (session_id, message_index, role, content, timestamp)
-                 VALUES (?1, ?2, ?3, ?4, ?5)",
+                "INSERT INTO messages (session_id, message_index, role, content, timestamp, model)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
                 rusqlite::params![
                     "test-session",
                     1_i64,
                     "assistant",
                     "I'll help you with that",
-                    1100_i64
+                    1100_i64,
+                    Option::<String>::None
                 ],
             )
             .expect("Failed to insert message 1");

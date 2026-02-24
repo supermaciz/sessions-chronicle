@@ -3,6 +3,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use crate::models::Role;
+use crate::parsers::model::normalize_model;
 
 use super::{
     MessageMetadata, OpenCodeBackend, PartData, SessionEntry, SessionMetadata, SessionSource,
@@ -189,10 +190,14 @@ impl OpenCodeBackend for JsonBackend {
                 }
             };
 
+            let model = normalize_model(value.get("modelID"))
+                .or_else(|| normalize_model(value.get("model").and_then(|m| m.get("modelID"))));
+
             messages.push(MessageMetadata {
                 id,
                 role,
                 time_created,
+                model,
             });
         }
 

@@ -351,14 +351,15 @@ impl SessionIndexer {
 
         for msg in &parsed.messages {
             tx.execute(
-                "INSERT INTO messages (session_id, message_index, role, content, timestamp)
-                 VALUES (?1, ?2, ?3, ?4, ?5)",
+                "INSERT INTO messages (session_id, message_index, role, content, timestamp, model)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
                 rusqlite::params![
                     &session.id,
                     msg.index as i64,
                     format!("{:?}", msg.role).to_lowercase(),
                     &msg.content,
                     msg.timestamp.timestamp(),
+                    &msg.model,
                 ],
             )?;
         }

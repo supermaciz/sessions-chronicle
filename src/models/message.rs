@@ -8,6 +8,7 @@ pub struct Message {
     pub role: Role,
     pub content: String,
     pub timestamp: DateTime<Utc>,
+    pub model: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
