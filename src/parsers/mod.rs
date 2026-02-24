@@ -1,6 +1,7 @@
 pub mod claude_code;
 pub mod codex;
 pub mod mistral_vibe;
+pub mod model;
 pub mod opencode;
 
 use crate::models::{Message, Role, Subagent, ToolCall, TranscriptItem};
