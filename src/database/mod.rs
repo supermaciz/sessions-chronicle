@@ -26,6 +26,7 @@ pub struct TranscriptItemRow {
     pub content_preview: Option<String>,
     pub content_len: Option<i64>,
     pub timestamp: Option<i64>,
+    pub model: Option<String>,
     // ToolCall fields
     pub tool_call_id: Option<String>,
     pub tool_name: Option<String>,
@@ -389,7 +390,7 @@ pub fn load_transcript_items(
     let mut stmt = db.prepare(
         "SELECT ti.item_index, ti.kind, ti.message_index, ti.tool_call_id, ti.subagent_id,
                 m.role, substr(m.content, 1, ?2) AS content_preview,
-                length(m.content) AS content_len, m.timestamp,
+                length(m.content) AS content_len, m.timestamp, m.model,
                 tc.tool_name, tc.status, tc.summary, tc.duration_ms,
                 sa.title AS subagent_title, sa.prompt AS subagent_prompt
          FROM transcript_items ti
@@ -414,7 +415,7 @@ pub fn load_transcript_items(
         let kind = TranscriptItemKind::from_storage(&kind_str);
 
         let role: Option<String> = row.get(5)?;
-        let tool_status: Option<String> = row.get(10)?;
+        let tool_status: Option<String> = row.get(11)?;
 
         items.push(TranscriptItemRow {
             item_index: row.get(0)?,
@@ -426,12 +427,13 @@ pub fn load_transcript_items(
             content_preview: row.get(6)?,
             content_len: row.get(7)?,
             timestamp: row.get(8)?,
-            tool_name: row.get(9)?,
+            model: row.get(9)?,
+            tool_name: row.get(10)?,
             tool_status: tool_status.as_deref().map(ToolCallStatus::from_storage),
-            tool_summary: row.get(11)?,
-            duration_ms: row.get(12)?,
-            subagent_title: row.get(13)?,
-            subagent_prompt: row.get(14)?,
+            tool_summary: row.get(12)?,
+            duration_ms: row.get(13)?,
+            subagent_title: row.get(14)?,
+            subagent_prompt: row.get(15)?,
         });
     }
 
