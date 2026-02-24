@@ -2,6 +2,7 @@
   "id": "msg-002",
   "sessionID": "session-001",
   "role": "assistant",
+  "modelID": "anthropic/claude-sonnet-4-5",
   "time": {
     "created": 1704067210000
   }

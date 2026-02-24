@@ -9,6 +9,7 @@ use std::path::Path;
 use crate::models::{Message, Role, Session, Tool, ToolCall, ToolCallStatus};
 use crate::models::{TranscriptItem, TranscriptItemKind};
 use crate::parsers::ParsedSession;
+use crate::parsers::model::normalize_model;
 
 #[derive(Debug, thiserror::Error)]
 pub enum ParseError {
@@ -97,6 +98,7 @@ impl CodexParser {
 
         let mut msg_counter: i64 = 0;
         let mut item_counter: i64 = 0;
+        let mut current_turn_model: Option<String> = None;
 
         for line in lines {
             let line = line.context("Failed to read line")?;
@@ -113,6 +115,14 @@ impl CodexParser {
             };
 
             let event_type = event.get("type").and_then(|v| v.as_str());
+
+            // Handle top-level turn_context (non-wrapped form)
+            if event_type == Some("turn_context") {
+                current_turn_model =
+                    normalize_model(event.get("payload").and_then(|p| p.get("model")));
+                continue;
+            }
+
             if event_type != Some("event_msg") {
                 continue;
             }
@@ -142,6 +152,10 @@ impl CodexParser {
             let message_type = payload.get("type").and_then(|v| v.as_str());
 
             match message_type {
+                Some("turn_context") => {
+                    current_turn_model = normalize_model(payload.get("model"));
+                }
+
                 Some("user_message") => {
                     let content = match payload.get("message").and_then(|v| v.as_str()) {
                         Some(c) => c.to_string(),
@@ -154,6 +168,7 @@ impl CodexParser {
                         role: Role::User,
                         content,
                         timestamp: event_ts.unwrap_or_else(Utc::now),
+                        model: None,
                     });
                     transcript_items.push(TranscriptItem {
                         session_id: session_id.clone(),
@@ -178,6 +193,7 @@ impl CodexParser {
                         role: Role::Assistant,
                         content,
                         timestamp: event_ts.unwrap_or_else(Utc::now),
+                        model: current_turn_model.clone(),
                     });
                     transcript_items.push(TranscriptItem {
                         session_id: session_id.clone(),
@@ -357,6 +373,36 @@ mod tests {
         assert_eq!(parsed.messages[0].role, Role::User);
         assert_eq!(parsed.messages[0].content, "Summarize the repo");
         assert_eq!(parsed.messages[1].role, Role::Assistant);
+    }
+
+    #[test]
+    fn agent_message_gets_model_from_turn_context() {
+        let parsed = CodexParser
+            .parse(std::path::Path::new(
+                "tests/fixtures/codex_sessions/2026/01/18/rollout-2026-01-18T02-01-28-019bce9f-0a40-79e2-8351-8818e8487fb6.jsonl",
+            ))
+            .unwrap();
+        let assistant_msgs: Vec<_> = parsed
+            .messages
+            .iter()
+            .filter(|m| m.role == Role::Assistant)
+            .collect();
+        assert_eq!(assistant_msgs[0].model.as_deref(), Some("o3-mini"));
+    }
+
+    #[test]
+    fn user_message_has_no_model_codex() {
+        let parsed = CodexParser
+            .parse(std::path::Path::new(
+                "tests/fixtures/codex_sessions/2026/01/18/rollout-2026-01-18T02-01-28-019bce9f-0a40-79e2-8351-8818e8487fb6.jsonl",
+            ))
+            .unwrap();
+        let user_msgs: Vec<_> = parsed
+            .messages
+            .iter()
+            .filter(|m| m.role == Role::User)
+            .collect();
+        assert!(user_msgs[0].model.is_none());
     }
 
     #[test]

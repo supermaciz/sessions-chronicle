@@ -10,6 +10,7 @@ use crate::models::{
     Message, Role, Session, Tool, ToolCall, ToolCallStatus, TranscriptItem, TranscriptItemKind,
 };
 use crate::parsers::ParsedSession;
+use crate::parsers::model::normalize_model;
 
 #[derive(Debug, thiserror::Error)]
 pub enum ParseError {
@@ -47,6 +48,9 @@ impl MistralVibeParser {
             .and_then(|v| v.get("working_directory"))
             .and_then(|v| v.as_str())
             .map(str::to_string);
+
+        let session_model =
+            normalize_model(metadata.get("config").and_then(|c| c.get("active_model")));
 
         let messages_path = session_dir.join("messages.jsonl");
         let file = File::open(&messages_path).context("Failed to open messages.jsonl")?;
@@ -94,6 +98,7 @@ impl MistralVibeParser {
                             Role::User,
                             content,
                             start_time,
+                            None,
                         );
                         transcript_items.push(TranscriptItem {
                             session_id: session_id.clone(),
@@ -116,6 +121,7 @@ impl MistralVibeParser {
                             Role::Assistant,
                             content,
                             start_time,
+                            session_model.clone(),
                         );
                         transcript_items.push(TranscriptItem {
                             session_id: session_id.clone(),
@@ -221,6 +227,7 @@ impl MistralVibeParser {
         role: Role,
         content: String,
         start_time: DateTime<Utc>,
+        model: Option<String>,
     ) {
         let index = messages.len();
         let timestamp = start_time + Duration::seconds(index as i64);
@@ -230,6 +237,7 @@ impl MistralVibeParser {
             role,
             content,
             timestamp,
+            model,
         });
     }
 
@@ -410,6 +418,41 @@ mod tests {
             parsed.transcript_items[1].kind,
             TranscriptItemKind::ToolCall
         );
+    }
+
+    #[test]
+    fn mistral_vibe_assistant_gets_session_model() {
+        let parsed = MistralVibeParser
+            .parse(Path::new(
+                "tests/fixtures/vibe_sessions/session_20260203_191451_b9383361",
+            ))
+            .unwrap();
+        let assistant_msgs: Vec<_> = parsed
+            .messages
+            .iter()
+            .filter(|m| m.role == Role::Assistant)
+            .collect();
+        assert!(!assistant_msgs.is_empty());
+        assert_eq!(
+            assistant_msgs[0].model.as_deref(),
+            Some("mistral-large-latest")
+        );
+    }
+
+    #[test]
+    fn mistral_vibe_user_has_no_model() {
+        let parsed = MistralVibeParser
+            .parse(Path::new(
+                "tests/fixtures/vibe_sessions/session_20260203_191451_b9383361",
+            ))
+            .unwrap();
+        let user_msgs: Vec<_> = parsed
+            .messages
+            .iter()
+            .filter(|m| m.role == Role::User)
+            .collect();
+        assert!(!user_msgs.is_empty());
+        assert!(user_msgs[0].model.is_none());
     }
 
     #[test]

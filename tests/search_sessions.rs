@@ -80,25 +80,46 @@ impl TempDatabase {
 
         self.connection
             .execute(
-                "INSERT INTO messages (session_id, message_index, role, content, timestamp)
-                 VALUES (?1, ?2, ?3, ?4, ?5)",
-                rusqlite::params!["session-a", 0_i64, "user", "alpha alpha alpha", 10_i64],
+                "INSERT INTO messages (session_id, message_index, role, content, timestamp, model)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                rusqlite::params![
+                    "session-a",
+                    0_i64,
+                    "user",
+                    "alpha alpha alpha",
+                    10_i64,
+                    Option::<String>::None
+                ],
             )
             .expect("Failed to insert message A1");
 
         self.connection
             .execute(
-                "INSERT INTO messages (session_id, message_index, role, content, timestamp)
-                 VALUES (?1, ?2, ?3, ?4, ?5)",
-                rusqlite::params!["session-b", 0_i64, "assistant", "alpha beta", 20_i64],
+                "INSERT INTO messages (session_id, message_index, role, content, timestamp, model)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                rusqlite::params![
+                    "session-b",
+                    0_i64,
+                    "assistant",
+                    "alpha beta",
+                    20_i64,
+                    Option::<String>::None
+                ],
             )
             .expect("Failed to insert message B1");
 
         self.connection
             .execute(
-                "INSERT INTO messages (session_id, message_index, role, content, timestamp)
-                 VALUES (?1, ?2, ?3, ?4, ?5)",
-                rusqlite::params!["session-c", 0_i64, "assistant", "gamma", 30_i64],
+                "INSERT INTO messages (session_id, message_index, role, content, timestamp, model)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                rusqlite::params![
+                    "session-c",
+                    0_i64,
+                    "assistant",
+                    "gamma",
+                    30_i64,
+                    Option::<String>::None
+                ],
             )
             .expect("Failed to insert message C1");
     }

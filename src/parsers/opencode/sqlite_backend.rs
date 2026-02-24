@@ -3,6 +3,7 @@ use rusqlite::{Connection, OpenFlags};
 use std::path::{Path, PathBuf};
 
 use crate::models::Role;
+use crate::parsers::model::normalize_model;
 
 use super::{
     MessageMetadata, OpenCodeBackend, PartData, SessionEntry, SessionMetadata, SessionSource,
@@ -125,10 +126,14 @@ impl OpenCodeBackend for SqliteBackend {
                     }
                 };
 
+                let model = normalize_model(data.get("modelID"))
+                    .or_else(|| normalize_model(data.get("model").and_then(|m| m.get("modelID"))));
+
                 Some(MessageMetadata {
                     id,
                     role,
                     time_created,
+                    model,
                 })
             })
             .collect();

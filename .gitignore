@@ -45,3 +45,7 @@ compile_commands.json
 
 # Git worktrees
 .worktrees/
+
+# Claude local config
+.claude/settings.local.json
+.claude/worktrees/

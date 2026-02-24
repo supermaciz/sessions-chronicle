@@ -49,9 +49,16 @@ impl TempDatabase {
     fn insert_message(&self, session_id: &str, index: i64, role: &str, content: &str) {
         self.connection
             .execute(
-                "INSERT INTO messages (session_id, message_index, role, content, timestamp)
-                 VALUES (?1, ?2, ?3, ?4, ?5)",
-                rusqlite::params![session_id, index, role, content, 1000_i64 + index * 100],
+                "INSERT INTO messages (session_id, message_index, role, content, timestamp, model)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                rusqlite::params![
+                    session_id,
+                    index,
+                    role,
+                    content,
+                    1000_i64 + index * 100,
+                    Option::<String>::None
+                ],
             )
             .expect("Failed to insert message");
     }
