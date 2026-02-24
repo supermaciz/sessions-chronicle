@@ -69,14 +69,18 @@ CREATE VIRTUAL TABLE messages USING fts5(
     timestamp UNINDEXED,
     model UNINDEXED
 );
-PRAGMA user_version = 2;
 COMMIT;
+PRAGMA user_version = 2;
 ```
 
 Implementation notes:
 
-- Run inside one transaction; on any failure, rollback and keep previous schema.
-- Set `PRAGMA user_version = 2` only after `CREATE VIRTUAL TABLE` succeeds.
+- Run DDL inside a transaction; on any failure, rollback and keep previous schema.
+- Set `PRAGMA user_version = 2` **after** the transaction commits successfully.
+  `PRAGMA user_version` is not transactional in SQLite (takes effect immediately),
+  so placing it inside the transaction would mark version 2 even if `COMMIT` fails.
+  Setting it after `COMMIT` means a crash between commit and pragma leaves version
+  at 1, which simply re-runs the idempotent migration on next launch.
 - Existing indexed messages are discarded by design and rebuilt by normal startup indexing.
 
 ### Query helpers (for later UI/filter work)
