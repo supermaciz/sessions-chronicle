@@ -296,7 +296,7 @@ mod tests {
     use gtk::glib::prelude::ObjectExt;
     use relm4::Component;
     use relm4::ComponentController;
-    use std::{cell::RefCell, rc::Rc};
+    use std::{cell::RefCell, rc::Rc, time::Duration};
 
     fn find_list_box(widget: &gtk::Widget) -> Option<gtk::ListBox> {
         if let Ok(list_box) = widget.clone().downcast::<gtk::ListBox>() {
@@ -316,12 +316,32 @@ mod tests {
 
     fn pump_main_context(condition: impl Fn() -> bool) {
         let context = gtk::glib::MainContext::default();
-        for _ in 0..50 {
+        let deadline = std::time::Instant::now() + Duration::from_millis(500);
+        while std::time::Instant::now() < deadline {
             if condition() {
-                break;
+                return;
             }
-            context.iteration(false);
+
+            if !context.iteration(false) {
+                std::thread::sleep(Duration::from_millis(2));
+            }
         }
+    }
+
+    #[gtk::test]
+    fn pump_main_context_waits_for_timeout_callbacks() {
+        let done = Rc::new(RefCell::new(false));
+        let done_ref = done.clone();
+        gtk::glib::timeout_add_local_once(Duration::from_millis(10), move || {
+            *done_ref.borrow_mut() = true;
+        });
+
+        pump_main_context(|| *done.borrow());
+
+        assert!(
+            *done.borrow(),
+            "main context pump should wait for timeout work"
+        );
     }
 
     #[gtk::test]
