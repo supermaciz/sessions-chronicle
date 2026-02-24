@@ -328,7 +328,8 @@ pub fn load_message_previews_for_session(
           role,
           substr(content, 1, ?2) AS content_preview,
           length(content) AS content_len,
-          timestamp
+          timestamp,
+          model
         FROM messages
         WHERE session_id = ?1
         ORDER BY CAST(message_index AS INTEGER) ASC
@@ -360,6 +361,7 @@ pub fn load_message_previews_for_session(
                 .timestamp_opt(timestamp, 0)
                 .single()
                 .unwrap_or_else(Utc::now),
+            model: row.get(6)?,
         });
     }
 
