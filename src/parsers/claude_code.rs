@@ -9,6 +9,7 @@ use std::path::Path;
 use crate::models::{Message, Role, Session, Subagent, Tool, ToolCall, ToolCallStatus};
 use crate::models::{TranscriptItem, TranscriptItemKind};
 use crate::parsers::ParsedSession;
+use crate::parsers::model::normalize_model;
 
 pub struct ClaudeCodeParser;
 
@@ -228,6 +229,10 @@ impl ClaudeCodeParser {
                         .unwrap_or("unknown")
                         .to_string();
 
+                    // Extract model from the message object
+                    let model_raw = event.get("message").and_then(|m| m.get("model"));
+                    let model = normalize_model(model_raw);
+
                     // Extract text portion
                     let text = Self::extract_content(content_val).filter(|t| !t.trim().is_empty());
                     if let Some(text) = text {
@@ -237,7 +242,7 @@ impl ClaudeCodeParser {
                             role: Role::Assistant,
                             content: text,
                             timestamp: ts,
-                            model: None,
+                            model,
                         });
                         transcript_items.push(TranscriptItem {
                             session_id: String::new(),
@@ -628,6 +633,41 @@ mod tests {
             parsed.transcript_items[2].kind,
             TranscriptItemKind::Subagent
         );
+    }
+
+    #[test]
+    fn assistant_message_has_model() {
+        let parsed = ClaudeCodeParser
+            .parse(std::path::Path::new(
+                "tests/fixtures/claude_sessions/sample-session.jsonl",
+            ))
+            .unwrap();
+        let assistant_msgs: Vec<_> = parsed
+            .messages
+            .iter()
+            .filter(|m| m.role == Role::Assistant)
+            .collect();
+        assert!(!assistant_msgs.is_empty());
+        assert_eq!(
+            assistant_msgs[0].model.as_deref(),
+            Some("claude-sonnet-4-5-20250514")
+        );
+    }
+
+    #[test]
+    fn user_message_has_no_model() {
+        let parsed = ClaudeCodeParser
+            .parse(std::path::Path::new(
+                "tests/fixtures/claude_sessions/sample-session.jsonl",
+            ))
+            .unwrap();
+        let user_msgs: Vec<_> = parsed
+            .messages
+            .iter()
+            .filter(|m| m.role == Role::User)
+            .collect();
+        assert!(!user_msgs.is_empty());
+        assert!(user_msgs[0].model.is_none());
     }
 
     #[test]

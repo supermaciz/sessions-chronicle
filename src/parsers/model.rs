@@ -10,7 +10,6 @@ use tracing::debug;
 /// 4. Empty string after trimming returns `None`.
 /// 5. The sentinel `<synthetic>` returns `None`.
 /// 6. Otherwise the raw slug is preserved as-is (no case rewrite, no splitting).
-#[allow(dead_code)] // Will be called by individual parsers in upcoming tasks.
 pub fn normalize_model(raw: Option<&Value>) -> Option<String> {
     let value = raw?;
 
