@@ -1,0 +1,109 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="680" height="460" viewBox="0 0 680 460">
+  <defs>
+    <style>
+      .bg { fill: #242424; }
+      .card { fill: #303030; rx: 8; ry: 8; }
+      .card-stroke { stroke: #404040; stroke-width: 1; fill: none; rx: 8; ry: 8; }
+      .border-assistant { fill: #26a269; }
+      .border-user { fill: #3584e4; }
+      .border-anthropic { fill: #26a269; }
+      .border-openai { fill: #a378f2; }
+      .border-mistral { fill: #e66100; }
+      .role-assistant { fill: #26a269; font-family: Cantarell, sans-serif; font-size: 11px; font-weight: 700; }
+      .role-user { fill: #3584e4; font-family: Cantarell, sans-serif; font-size: 11px; font-weight: 700; }
+      .timestamp { fill: #888888; font-family: Cantarell, sans-serif; font-size: 10px; }
+      .content { fill: #deddda; font-family: Cantarell, sans-serif; font-size: 13px; }
+      .content-dim { fill: #9a9996; font-family: Cantarell, sans-serif; font-size: 13px; }
+      .title { fill: #ffffff; font-family: Cantarell, sans-serif; font-size: 14px; font-weight: 700; }
+      .subtitle { fill: #9a9996; font-family: Cantarell, sans-serif; font-size: 11px; }
+      .pill-anthropic { fill: rgba(38,162,105,0.2); stroke: rgba(38,162,105,0.5); stroke-width: 1; }
+      .pill-anthropic-text { fill: #57e389; font-family: monospace; font-size: 10px; }
+      .pill-openai { fill: rgba(163,120,242,0.2); stroke: rgba(163,120,242,0.5); stroke-width: 1; }
+      .pill-openai-text { fill: #c8a8ff; font-family: monospace; font-size: 10px; }
+      .pill-mistral { fill: rgba(230,97,0,0.2); stroke: rgba(230,97,0,0.5); stroke-width: 1; }
+      .pill-mistral-text { fill: #ff9e3d; font-family: monospace; font-size: 10px; }
+      .annotation { fill: #f66151; font-family: Cantarell, sans-serif; font-size: 10px; font-style: italic; }
+      .annotation-line { stroke: #f66151; stroke-width: 1; stroke-dasharray: 4,3; }
+      .annotation-bg { fill: rgba(246,97,81,0.1); rx: 10; ry: 10; }
+      .model-caption { fill: #888888; font-family: Cantarell, sans-serif; font-size: 10px; }
+      .legend-text { fill: #deddda; font-family: Cantarell, sans-serif; font-size: 11px; }
+    </style>
+  </defs>
+
+  <!-- Background -->
+  <rect width="680" height="460" class="bg"/>
+
+  <!-- Title -->
+  <text x="24" y="28" class="title">Proposition 3 : Pill badge colore par provider (Creative)</text>
+  <text x="24" y="44" class="subtitle">Badge arrondi avec couleur semantique par fournisseur de modele</text>
+
+  <!-- Anthropic / Claude message -->
+  <rect x="16" y="60" width="648" height="90" class="card"/>
+  <rect x="16" y="60" width="648" height="90" class="card-stroke"/>
+  <rect x="16" y="60" width="3" height="90" class="border-anthropic" rx="2"/>
+
+  <text x="32" y="82" class="role-assistant">ASSISTANT</text>
+
+  <!-- Anthropic pill badge -->
+  <rect x="106" y="70" width="130" height="18" rx="9" ry="9" class="pill-anthropic"/>
+  <text x="118" y="83" class="pill-anthropic-text">claude-sonnet-4-5</text>
+
+  <text x="580" y="82" class="timestamp">14:32:05</text>
+
+  <text x="32" y="108" class="content">Voici une analyse du code source. Le module principal</text>
+  <text x="32" y="126" class="content">utilise un pattern factory pour gerer les widgets...</text>
+
+  <!-- Annotation -->
+  <line x1="170" y1="62" x2="170" y2="56" class="annotation-line"/>
+  <text x="120" y="54" class="annotation">pill .rounded + couleur provider</text>
+
+  <!-- OpenAI / Codex message -->
+  <rect x="16" y="165" width="648" height="90" class="card"/>
+  <rect x="16" y="165" width="648" height="90" class="card-stroke"/>
+  <rect x="16" y="165" width="3" height="90" class="border-openai" rx="2"/>
+
+  <text x="32" y="187" fill="#a378f2" font-family="Cantarell, sans-serif" font-size="11" font-weight="700">ASSISTANT</text>
+
+  <!-- OpenAI pill badge -->
+  <rect x="106" y="175" width="68" height="18" rx="9" ry="9" class="pill-openai"/>
+  <text x="118" y="188" class="pill-openai-text">o3-mini</text>
+
+  <text x="580" y="187" class="timestamp">15:10:33</text>
+
+  <text x="32" y="213" class="content">I've analyzed the codebase and found the following</text>
+  <text x="32" y="231" class="content">issues with the current implementation...</text>
+
+  <!-- Mistral message -->
+  <rect x="16" y="270" width="648" height="90" class="card"/>
+  <rect x="16" y="270" width="648" height="90" class="card-stroke"/>
+  <rect x="16" y="270" width="3" height="90" class="border-mistral" rx="2"/>
+
+  <text x="32" y="292" fill="#e66100" font-family="Cantarell, sans-serif" font-size="11" font-weight="700">ASSISTANT</text>
+
+  <!-- Mistral pill badge -->
+  <rect x="106" y="280" width="145" height="18" rx="9" ry="9" class="pill-mistral"/>
+  <text x="118" y="293" class="pill-mistral-text">mistral-large-latest</text>
+
+  <text x="580" y="292" class="timestamp">16:05:12</text>
+
+  <text x="32" y="318" class="content">Voici les resultats de l'analyse. Le code semble</text>
+  <text x="32" y="336" class="content">bien structure avec quelques pistes d'amelioration.</text>
+
+  <!-- Legend -->
+  <rect x="16" y="378" width="648" height="70" rx="6" ry="6" fill="#2a2a2a" stroke="#404040" stroke-width="1"/>
+  <text x="32" y="398" class="legend-text">Couleurs par provider :</text>
+
+  <rect x="32" y="408" width="60" height="16" rx="8" ry="8" class="pill-anthropic"/>
+  <text x="42" y="419" class="pill-anthropic-text">Claude</text>
+  <text x="100" y="419" class="model-caption">Anthropic (vert)</text>
+
+  <rect x="220" y="408" width="60" height="16" rx="8" ry="8" class="pill-openai"/>
+  <text x="230" y="419" class="pill-openai-text">OpenAI</text>
+  <text x="288" y="419" class="model-caption">OpenAI (violet)</text>
+
+  <rect x="420" y="408" width="60" height="16" rx="8" ry="8" class="pill-mistral"/>
+  <text x="427" y="419" class="pill-mistral-text">Mistral</text>
+  <text x="488" y="419" class="model-caption">Mistral (orange)</text>
+
+  <text x="32" y="440" class="model-caption">CSS : background alpha() + border 1px + border-radius: 9999px + font-family: monospace</text>
+</svg>

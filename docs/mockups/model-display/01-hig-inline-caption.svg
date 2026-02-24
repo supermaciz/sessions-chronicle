@@ -1,0 +1,74 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="680" height="340" viewBox="0 0 680 340">
+  <defs>
+    <style>
+      .bg { fill: #242424; }
+      .card { fill: #303030; rx: 8; ry: 8; }
+      .card-stroke { stroke: #404040; stroke-width: 1; fill: none; rx: 8; ry: 8; }
+      .border-assistant { fill: #26a269; }
+      .border-user { fill: #3584e4; }
+      .role-assistant { fill: #26a269; font-family: Cantarell, sans-serif; font-size: 11px; font-weight: 700; }
+      .role-user { fill: #3584e4; font-family: Cantarell, sans-serif; font-size: 11px; font-weight: 700; }
+      .model-caption { fill: #888888; font-family: Cantarell, sans-serif; font-size: 10px; font-weight: 400; }
+      .timestamp { fill: #888888; font-family: Cantarell, sans-serif; font-size: 10px; }
+      .content { fill: #deddda; font-family: Cantarell, sans-serif; font-size: 13px; }
+      .content-dim { fill: #9a9996; font-family: Cantarell, sans-serif; font-size: 13px; }
+      .separator-dot { fill: #666666; font-family: Cantarell, sans-serif; font-size: 10px; }
+      .title { fill: #ffffff; font-family: Cantarell, sans-serif; font-size: 14px; font-weight: 700; }
+      .subtitle { fill: #9a9996; font-family: Cantarell, sans-serif; font-size: 11px; }
+      .annotation { fill: #f66151; font-family: Cantarell, sans-serif; font-size: 10px; font-style: italic; }
+      .annotation-line { stroke: #f66151; stroke-width: 1; stroke-dasharray: 4,3; }
+      .annotation-bg { fill: rgba(246,97,81,0.1); rx: 4; ry: 4; }
+    </style>
+  </defs>
+
+  <!-- Background -->
+  <rect width="680" height="340" class="bg"/>
+
+  <!-- Title -->
+  <text x="24" y="28" class="title">Proposition 1 : Caption inline (GNOME HIG)</text>
+  <text x="24" y="44" class="subtitle">Modele affiche comme dim-label entre le role et le timestamp</text>
+
+  <!-- Assistant message row -->
+  <rect x="16" y="60" width="648" height="110" class="card"/>
+  <rect x="16" y="60" width="648" height="110" class="card-stroke"/>
+  <rect x="16" y="60" width="3" height="110" class="border-assistant" rx="2"/>
+
+  <!-- Header row -->
+  <text x="32" y="82" class="role-assistant">ASSISTANT</text>
+  <text x="103" y="82" class="separator-dot">·</text>
+  <text x="113" y="82" class="model-caption">claude-sonnet-4-5-20250514</text>
+  <text x="295" y="82" class="separator-dot">·</text>
+  <text x="305" y="82" class="timestamp">14:32:05</text>
+
+  <!-- Annotation arrow -->
+  <rect x="108" y="69" width="185" height="17" class="annotation-bg"/>
+  <line x1="200" y1="54" x2="200" y2="68" class="annotation-line"/>
+  <text x="143" y="52" class="annotation">dim-label + caption</text>
+
+  <!-- Content -->
+  <text x="32" y="108" class="content">Voici une analyse du code source. Le module principal</text>
+  <text x="32" y="126" class="content">utilise un pattern factory pour gerer les widgets...</text>
+  <text x="32" y="152" class="content-dim">[ 1 245 caracteres ]</text>
+
+  <!-- User message row (no model) -->
+  <rect x="16" y="185" width="648" height="90" class="card"/>
+  <rect x="16" y="185" width="648" height="90" class="card-stroke"/>
+  <rect x="16" y="185" width="3" height="90" class="border-user" rx="2"/>
+
+  <!-- Header row -->
+  <text x="32" y="207" class="role-user">USER</text>
+  <text x="62" y="207" class="separator-dot">·</text>
+  <text x="72" y="207" class="timestamp">14:31:42</text>
+
+  <!-- Content -->
+  <text x="32" y="233" class="content">Peux-tu analyser ce fichier et me dire ce que fait</text>
+  <text x="32" y="251" class="content">la fonction parse_session ?</text>
+
+  <!-- Legend -->
+  <rect x="16" y="292" width="648" height="36" rx="6" ry="6" fill="#2a2a2a" stroke="#404040" stroke-width="1"/>
+  <circle cx="32" cy="310" r="4" fill="#26a269"/>
+  <text x="42" y="314" class="model-caption">= assistant (modele visible)</text>
+  <circle cx="220" cy="310" r="4" fill="#3584e4"/>
+  <text x="230" y="314" class="model-caption">= user (pas de modele)</text>
+  <text x="400" y="314" class="model-caption">Classes CSS : .dim-label .caption .monospace</text>
+</svg>

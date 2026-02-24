@@ -1,0 +1,90 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="680" height="380" viewBox="0 0 680 380">
+  <defs>
+    <style>
+      .bg { fill: #242424; }
+      .card { fill: #303030; rx: 8; ry: 8; }
+      .card-stroke { stroke: #404040; stroke-width: 1; fill: none; rx: 8; ry: 8; }
+      .border-assistant { fill: #26a269; }
+      .border-user { fill: #3584e4; }
+      .role-assistant { fill: #26a269; font-family: Cantarell, sans-serif; font-size: 11px; font-weight: 700; }
+      .role-user { fill: #3584e4; font-family: Cantarell, sans-serif; font-size: 11px; font-weight: 700; }
+      .timestamp { fill: #888888; font-family: Cantarell, sans-serif; font-size: 10px; }
+      .content { fill: #deddda; font-family: Cantarell, sans-serif; font-size: 13px; }
+      .content-dim { fill: #9a9996; font-family: Cantarell, sans-serif; font-size: 13px; }
+      .title { fill: #ffffff; font-family: Cantarell, sans-serif; font-size: 14px; font-weight: 700; }
+      .subtitle { fill: #9a9996; font-family: Cantarell, sans-serif; font-size: 11px; }
+      .tooltip-bg { fill: #1a1a1a; stroke: #555555; stroke-width: 1; }
+      .tooltip-text { fill: #ffffff; font-family: Cantarell, sans-serif; font-size: 11px; }
+      .tooltip-label { fill: #9a9996; font-family: Cantarell, sans-serif; font-size: 10px; }
+      .tooltip-arrow { fill: #1a1a1a; stroke: #555555; stroke-width: 1; }
+      .hover-highlight { fill: rgba(255,255,255,0.05); rx: 4; ry: 4; }
+      .annotation { fill: #f66151; font-family: Cantarell, sans-serif; font-size: 10px; font-style: italic; }
+      .annotation-line { stroke: #f66151; stroke-width: 1; stroke-dasharray: 4,3; }
+      .cursor-icon { fill: #ffffff; }
+      .model-caption { fill: #888888; font-family: Cantarell, sans-serif; font-size: 10px; }
+    </style>
+  </defs>
+
+  <!-- Background -->
+  <rect width="680" height="380" class="bg"/>
+
+  <!-- Title -->
+  <text x="24" y="28" class="title">Proposition 2 : Tooltip progressif (GNOME HIG)</text>
+  <text x="24" y="44" class="subtitle">Modele revele au survol du label de role — disclosure progressive</text>
+
+  <!-- State 1: Normal (no hover) -->
+  <text x="24" y="72" class="annotation">Etat normal :</text>
+
+  <!-- Assistant message row - normal -->
+  <rect x="16" y="80" width="310" height="80" class="card"/>
+  <rect x="16" y="80" width="310" height="80" class="card-stroke"/>
+  <rect x="16" y="80" width="3" height="80" class="border-assistant" rx="2"/>
+  <text x="32" y="100" class="role-assistant">ASSISTANT</text>
+  <text x="280" y="100" class="timestamp">14:32:05</text>
+  <text x="32" y="122" class="content">Voici une analyse du code...</text>
+  <text x="32" y="140" class="content-dim">[ 1 245 car. ]</text>
+
+  <!-- State 2: Hover with tooltip -->
+  <text x="354" y="72" class="annotation">Au survol (hover) :</text>
+
+  <!-- Assistant message row - hovered -->
+  <rect x="346" y="80" width="318" height="80" class="card"/>
+  <rect x="346" y="80" width="318" height="80" class="card-stroke"/>
+  <rect x="346" y="80" width="3" height="80" class="border-assistant" rx="2"/>
+
+  <!-- Hover highlight on role label -->
+  <rect x="358" y="89" width="78" height="16" class="hover-highlight"/>
+  <text x="362" y="100" class="role-assistant">ASSISTANT</text>
+  <text x="610" y="100" class="timestamp">14:32:05</text>
+  <text x="362" y="122" class="content">Voici une analyse du code...</text>
+  <text x="362" y="140" class="content-dim">[ 1 245 car. ]</text>
+
+  <!-- Cursor icon (simplified) -->
+  <path d="M 430 100 l 0 12 l 4 -4 l 3 6 l 3 -1.5 l -3 -6 l 5 -1 z" class="cursor-icon"/>
+
+  <!-- Tooltip -->
+  <!-- Arrow pointing down -->
+  <polygon points="397,77 403,83 391,83" fill="#1a1a1a" stroke="#555555" stroke-width="1"/>
+  <rect x="346" y="34" width="170" height="44" rx="6" ry="6" class="tooltip-bg"/>
+  <!-- Cover arrow top stroke -->
+  <rect x="388" y="77" width="18" height="3" fill="#1a1a1a"/>
+  <text x="358" y="52" class="tooltip-label">Modele</text>
+  <text x="358" y="68" class="tooltip-text">claude-sonnet-4-5-20250514</text>
+
+  <!-- User message row -->
+  <rect x="16" y="180" width="648" height="80" class="card"/>
+  <rect x="16" y="180" width="648" height="80" class="card-stroke"/>
+  <rect x="16" y="180" width="3" height="80" class="border-user" rx="2"/>
+  <text x="32" y="200" class="role-user">USER</text>
+  <text x="280" y="200" class="timestamp">14:31:42</text>
+  <text x="32" y="222" class="content">Peux-tu analyser ce fichier et me dire ce que fait</text>
+  <text x="32" y="240" class="content">la fonction parse_session ?</text>
+
+  <!-- Interaction note -->
+  <rect x="16" y="278" width="648" height="90" rx="6" ry="6" fill="#2a2a2a" stroke="#404040" stroke-width="1"/>
+  <text x="32" y="298" class="tooltip-text">Interaction</text>
+  <text x="32" y="316" class="model-caption">Survol du label "ASSISTANT" → tooltip avec nom complet du modele</text>
+  <text x="32" y="332" class="model-caption">Pas de tooltip sur les messages "USER" (pas de modele)</text>
+  <text x="32" y="348" class="model-caption">GTK : widget.set_tooltip_text(Some("claude-sonnet-4-5-20250514"))</text>
+  <text x="32" y="362" class="model-caption">Aucun espace visuel supplementaire consomme — 0 pixel d'impact</text>
+</svg>
