@@ -31,7 +31,7 @@ Cross-tool comparison of Claude Code, Codex, OpenCode, and Mistral Vibe session 
 
 | Tool | Path | Organization |
 |------|------|--------------|
-| **Claude Code** | `~/.claude/` | Project-specific directories<br>`~/.claude/projects/-Users-alexm-Repository-<project>/UUID.jsonl` |
+| **Claude Code** | `~/.claude/` | Project-specific directories<br>Main session: `~/.claude/projects/-Users-alexm-Repository-<project>/UUID.jsonl`<br>Subagent transcripts also appear as `agent-*.jsonl` (commonly under `<session-id>/subagents/`) |
 | **Codex** | `~/.codex/sessions/` | Date-sharded directories<br>`YYYY/MM/DD/rollout-*.jsonl` |
 | **OpenCode** | `~/.local/share/opencode/` | **New (≥ 2026-02-14)**: Single SQLite DB at `opencode.db`; tables: `session`, `message`, `part`, `project`, `todo`, `permission`, `session_share`.<br>**Legacy (pre-migration)**: Multi-directory JSON under `storage/`: `session/<project>/ses_xxx.json`, `message/ses_xxx/`, `part/msg_xxx/`, `session_diff/ses_xxx.json`. Files are retained post-migration (no auto-cleanup). |
 | **Mistral Vibe** | `~/.vibe/logs/session/` | One directory per session:<br>`session_YYYYMMDD_HHMMSS_<shortid>/`<br>Contains `meta.json` + `messages.jsonl`.<br>Default can be overridden via `VIBE_HOME` or `session_logging.save_dir` in `config.toml`. |
@@ -60,7 +60,7 @@ Cross-tool comparison of Claude Code, Codex, OpenCode, and Mistral Vibe session 
 
 | Tool | Pattern | Example |
 |------|---------|---------|
-| **Claude Code** | `UUID.jsonl` | `a1b2c3d4-e5f6-7890-abcd-ef1234567890.jsonl` |
+| **Claude Code** | `UUID.jsonl` (main), `agent-*.jsonl` (subagent) | `a1b2c3d4-e5f6-7890-abcd-ef1234567890.jsonl`<br>`2a19bf71-3687-49ed-8ae9-8bd15e1522f6/subagents/agent-a60d695.jsonl` |
 | **Codex** | `rollout-*.jsonl` | `rollout-20250912-164103.jsonl` |
 | **OpenCode** | **New (>= 2026-02-14):** `opencode.db`<br>**Legacy:** `ses_*.json` | `opencode.db` (new)<br>`ses_66a71b6f4ffeq796jvvOpJQ04m.json` (legacy) |
 | **Mistral Vibe** | `session_YYYYMMDD_HHMMSS_<shortid>/` | `session_20260123_174305_64883c86/` |
@@ -73,11 +73,11 @@ Cross-tool comparison of Claude Code, Codex, OpenCode, and Mistral Vibe session 
 
 | Field Category | Claude Code | Codex | OpenCode | Mistral Vibe |
 |----------------|-------------|-------|----------|-------------|
-| **Event Type** | `type` (`user`, `assistant`, `system`, `summary`, ...) | Rollout envelope `type` (`session_meta`, `event_msg`, `response_item`, `turn_context`, ...); nested `event_msg.payload.type` (`user_message`, `agent_message`, `exec_command_*`, `mcp_tool_call_*`, `collab_*`, ...) | Session metadata only (messages in separate files) | `role` (`system`, `user`, `assistant`, `tool`) in `messages.jsonl`; tool calls on assistant messages via `tool_calls` |
+| **Event Type** | `type` (`user`, `assistant`, `system`, `summary`, `progress`, `queue-operation`, `saved_hook_context`, `pr-link`, ...) | Rollout envelope `type` (`session_meta`, `event_msg`, `response_item`, `turn_context`, ...); nested `event_msg.payload.type` (`user_message`, `agent_message`, `exec_command_*`, `mcp_tool_call_*`, `collab_*`, ...) | Session metadata only (messages in separate files) | `role` (`system`, `user`, `assistant`, `tool`) in `messages.jsonl`; tool calls on assistant messages via `tool_calls` |
 | **Identity** | `uuid`, `parentUuid` (tree structure) | Session id at `session_meta.payload.id`; event-specific IDs like `call_id`, `sender_thread_id`, `receiver_thread_id` | `id`, `parentID` (hierarchical sessions) | No message IDs; tool calls have an `id` and tool responses reference it via `tool_call_id` |
 | **Timestamp** | `timestamp` (ISO-8601) | Top-level rollout-line `timestamp` (ISO-8601 string) | `time.created`, `time.updated` (session level) | Session-level only in `meta.json`: `start_time`, `end_time` (ISO-8601). No per-message timestamps |
 | **Content** | Nested: `message.content` | Usually in `event_msg.payload` (for example `message`, command output deltas, MCP results), plus optional `response_item.payload.content[]` blocks | Stored in `message/ses_xxx/` directory + `part/msg_xxx/` | `messages.jsonl` lines with `content`; tool output stored as `role: "tool"` messages |
-| **Model Metadata** | No stable structured model field observed in sampled events (session/event includes `version` but not a canonical model id) | `session_meta.payload.model_provider` (optional provider, session-level) + `turn_context.payload.model` (model slug, per turn); `event_msg.payload.type == "session_configured"` can also carry `model` + `model_provider_id` | Per-message model fields: `user.model.{providerID,modelID}` and assistant `providerID` + `modelID`; `subtask` parts can optionally include delegated model | No model field in `messages.jsonl` records; session-level `meta.json` can include a full `config` snapshot (`active_model`, `providers`, `models`) when logging is enabled |
+| **Model Metadata** | Assistant-level `message.model` (slug). In sampled recent logs: present on `assistant`, absent on `user`; `<synthetic>` appears for local synthetic/error assistant messages | `session_meta.payload.model_provider` (optional provider, session-level) + `turn_context.payload.model` (model slug, per turn); `event_msg.payload.type == "session_configured"` can also carry `model` + `model_provider_id` | Per-message model fields: `user.model.{providerID,modelID}` and assistant `providerID` + `modelID`; `subtask` parts can optionally include delegated model | No model field in `messages.jsonl` records; session-level `meta.json` can include a full `config` snapshot (`active_model`, `providers`, `models`) when logging is enabled |
 
 ### Key Architectural Differences
 
@@ -88,7 +88,7 @@ Cross-tool comparison of Claude Code, Codex, OpenCode, and Mistral Vibe session 
 - **Mistral Vibe**: Linear message list in `messages.jsonl`; tool calls are embedded in assistant messages and resolved by subsequent `tool` role messages
 
 **Metadata Storage:**
-- **Claude Code**: Rich per-event metadata (`cwd`, `gitBranch`, `version`, `sessionId`)
+- **Claude Code**: Rich per-event metadata (`cwd`, `gitBranch`, `version`, `sessionId`) plus assistant-level model slug at `message.model`
 - **Codex**: Session metadata (`session_meta`) can include provider (`model_provider`), and turn-level metadata (`turn_context`) includes active model slug (`model`)
 - **OpenCode**: Session-level metadata (`projectID`, `directory`, `version`, `title`)
 - **Mistral Vibe**: Session-level `meta.json` includes environment, optional git info, token/tool usage stats, tools snapshot, and configuration snapshot data
@@ -100,7 +100,7 @@ Cross-tool comparison of Claude Code, Codex, OpenCode, and Mistral Vibe session 
 - **Mistral Vibe**: `messages.jsonl` holds message entries (one JSON object per line)
 
 **File Organization:**
-- **Claude Code**: Single JSONL file per session
+- **Claude Code**: Main `UUID.jsonl` session file plus additional `agent-*.jsonl` subagent transcripts (often nested under `<session-id>/subagents/`)
 - **Codex**: Single JSONL file per session
 - **OpenCode**: Multi-file structure (metadata + message directories + parts + diffs) or single SQLite DB
 - **Mistral Vibe**: Directory-based session (`meta.json` + `messages.jsonl`)
@@ -113,7 +113,7 @@ Goal: determine whether model information is available per message, per turn, an
 
 | Tool | Per Message | Per Turn | Per Session | Notes |
 |------|-------------|----------|-------------|-------|
-| **Claude Code** | ❌ Not observed as a stable structured field in sampled `user`/`assistant` records | ❌ No explicit turn-context object in the known JSONL schema | ⚠️ Partial: session/events include `version`, but no canonical `model` key | Model switches may appear as free-text command/system content (for example `/model`) rather than a normalized field. |
+| **Claude Code** | ✅ On assistant events as `message.model` (slug). Not present on sampled `user` events. | ❌ No explicit turn-context object in the known JSONL schema | ⚠️ Partial: session/events include `version`; model is currently event/message-level, not a dedicated session object | Observed slugs include `claude-opus-4-6`, `claude-sonnet-4-6`, `claude-opus-4-5-20251101`, `claude-sonnet-4-5-20250929`, `claude-haiku-4-5-20251001`; `<synthetic>` appears on generated fallback/error messages. |
 | **Codex** | ⚠️ Not on `user_message` / `agent_message` payloads | ✅ `turn_context.payload.model` (`TurnContextItem.model`) | ✅/⚠️ `session_meta.payload.model_provider` is optional and provider-only (no guaranteed model slug) | `event_msg.payload.type == "session_configured"` can provide `model` + `model_provider_id`; reroutes can be observed via `model_reroute` events. |
 | **OpenCode** | ✅ User message has `model.{providerID,modelID}` and assistant message has `providerID` + `modelID` | N/A (message-centric schema) | ❌ Session metadata has no model field | `subtask` parts can optionally pin delegated model (`model.providerID`, `model.modelID`). |
 | **Mistral Vibe** | ❌ `messages.jsonl` (`LLMMessage`) has no model key | ❌ No separate turn-context model object in logs | ✅ `meta.json` metadata dump can contain `config` snapshot with `active_model`, plus `providers`/`models` arrays | Requires session logging metadata output; minimal/older logs may omit full config snapshot. |
@@ -122,13 +122,13 @@ Goal: determine whether model information is available per message, per turn, an
 - Codex: `codex-rs/protocol/src/protocol.rs` (`SessionMeta`, `TurnContextItem`, `SessionConfiguredEvent`) and `codex-rs/core/src/codex.rs`.
 - OpenCode: `packages/opencode/src/session/message-v2.ts` and `packages/sdk/js/src/v2/gen/types.gen.ts`.
 - Mistral Vibe: `vibe/core/session/session_logger.py` and `vibe/core/types.py`.
-- Claude Code: format observations from fixtures and existing external format analysis.
+- Claude Code: direct `~/.claude/projects/**/*.jsonl` sampling (2026-02-24), fixture comparison, and Anthropic model documentation.
 
 ---
 
 ## Key Findings Summary
 
-- **Claude Code**: JSONL format, tree-structured events, project-based organization; no stable structured per-message/per-session model field observed in sampled logs
+- **Claude Code**: JSONL format, tree-structured events, project-based organization; model slug is available on assistant events (`message.model`) in recent logs
 - **Codex**: JSONL rollout envelope (`session_meta`/`event_msg`/`turn_context`/...); model provider can exist at session level, and model slug is captured at turn level (`turn_context.model`)
 - **OpenCode**: **Breaking change ≥ 2026-02-14** — migrated to SQLite (`opencode.db`). Sessions Chronicle now indexes SQLite sessions first and falls back to legacy JSON storage, deduplicating by session `id` when both sources contain the same session. Legacy JSON file tree remains relevant for pre-migration/compatibility reads. Data schema (session/message/part fields) is largely unchanged; newer part types include `file`, `agent`, `retry`, `patch`; part ID prefix in SQLite era is `prt_`. Model metadata remains message-level.
 - **Mistral Vibe**: Directory-based session format with `meta.json` + JSONL `messages.jsonl`; model info is session-level via `meta.json.config` snapshot when present, not message-level
@@ -225,8 +225,11 @@ Goal: determine whether model information is available per message, per turn, an
 - [OpenCode generated v2 SDK types](https://github.com/sst/opencode/blob/dev/packages/sdk/js/src/v2/gen/types.gen.ts)
 - [OpenCode session schema](https://github.com/sst/opencode/blob/dev/packages/opencode/src/session/index.ts)
 
-### Claude Tool-Use References
+### Claude References
 - [Claude API tool-use block structure](https://platform.claude.com/docs/en/api/typescript/messages/create)
+- [Claude Code model configuration (supported slugs)](https://support.claude.com/en/articles/11940350-claude-code-model-configuration)
+- [Claude Sonnet 4.6 model page](https://www.anthropic.com/claude/sonnet)
+- [Claude Opus 4.6 model page](https://www.anthropic.com/claude/opus)
 
 ### Mistral Vibe
 - [Mistral Vibe Repository](https://github.com/mistralai/mistral-vibe)
@@ -236,5 +239,5 @@ Goal: determine whether model information is available per message, per turn, an
 
 ---
 
-**Last Updated**: 2026-02-22
-**Status**: OpenCode SQLite migration documented and indexed (SQLite-first + JSON fallback); subagent + tool-call + model-metadata analysis current; remaining scope gaps documented
+**Last Updated**: 2026-02-24
+**Status**: OpenCode SQLite migration documented and indexed (SQLite-first + JSON fallback); Claude model-metadata availability refreshed from real-session sampling; remaining scope gaps documented

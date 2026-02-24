@@ -9,15 +9,16 @@ See [SESSION_FORMAT_ANALYSIS.md](../SESSION_FORMAT_ANALYSIS.md) for cross-tool c
 
 | Field   | Value |
 |---------|-------|
-| **Path** | `~/.claude/projects/<project-dir>/UUID.jsonl` |
-| **Pattern** | `UUID.jsonl` |
-| **Example** | `a1b2c3d4-e5f6-7890-abcd-ef1234567890.jsonl` |
+| **Path** | `~/.claude/projects/<project-dir>/UUID.jsonl` (main session)<br>`~/.claude/projects/<project-dir>/<session-id>/subagents/agent-<id>.jsonl` (subagent transcript; commonly observed in newer logs) |
+| **Pattern** | `UUID.jsonl`, `agent-*.jsonl` |
+| **Example** | `a1b2c3d4-e5f6-7890-abcd-ef1234567890.jsonl`<br>`2a19bf71-3687-49ed-8ae9-8bd15e1522f6/subagents/agent-a60d695.jsonl` |
 | **Format** | JSONL (one JSON object per line, UTF-8, append-only) |
 
 **Path encoding:**
 
 ```
 ~/.claude/projects/-Users-alexm-Repository-myproject/UUID.jsonl
+~/.claude/projects/-Users-alexm-Repository-myproject/<session-id>/subagents/agent-a29fd7d.jsonl
                     └──────────────────────────────┘
                            Project path encoding
 ```
@@ -32,7 +33,11 @@ See [SESSION_FORMAT_ANALYSIS.md](../SESSION_FORMAT_ANALYSIS.md) for cross-tool c
   "type": "user",                  // User messages
   "type": "assistant",             // Assistant messages
   "type": "system",                // System events (subtype: local_command)
-  "type": "file-history-snapshot"  // File state tracking
+  "type": "file-history-snapshot", // File state tracking
+  "type": "progress",              // Streaming/progress events
+  "type": "queue-operation",       // Queue orchestration events
+  "type": "saved_hook_context",    // Hook context snapshots
+  "type": "pr-link"                // PR link events
 }
 ```
 
@@ -65,6 +70,7 @@ See [SESSION_FORMAT_ANALYSIS.md](../SESSION_FORMAT_ANALYSIS.md) for cross-tool c
   "type": "assistant",
   "message": {
     "role": "assistant",
+    "model": "claude-sonnet-4-6",
     "content": [
       {
         "type": "tool_use",
@@ -140,14 +146,35 @@ Rich per-event metadata:
 | `cwd` | Working directory |
 | `gitBranch` | Git branch name |
 | `version` | Claude Code version |
+| `message.model` | Assistant model slug (`claude-opus-4-6`, `claude-sonnet-4-5-20250929`, ...) |
 | `userType` | `"external"` or other |
 | `uuid` / `parentUuid` | Tree structure links |
 | `isSidechain` | Subagent/sidechain indicator |
 
-**Model metadata:** No stable structured model field observed in sampled events.
-Session/events include `version` but not a canonical model id.
-Model switches may appear as free-text command/system content (e.g. `/model`)
-rather than a normalized field.
+**Model metadata:** Recent Claude Code logs include a stable structured field at
+`message.model` on `assistant` events.
+
+- Local sample (2026-02-24): `message.model` present on all sampled `assistant` events,
+  absent on sampled `user` events.
+- Observed values in local sessions:
+  - `claude-opus-4-6`
+  - `claude-sonnet-4-6`
+  - `claude-opus-4-5-20251101`
+  - `claude-sonnet-4-5-20250929`
+  - `claude-haiku-4-5-20251001`
+  - `<synthetic>` (sentinel used for locally generated assistant error/limit messages)
+
+### Supported Claude Code Model Slugs
+
+Official Claude Code model configuration currently documents:
+
+| Product name | Slug |
+|-------------|------|
+| Sonnet 4.6 | `claude-sonnet-4-6` |
+| Opus 4.6 | `claude-opus-4-6` |
+| Opus 4.5 | `claude-opus-4-5-20251101` |
+| Haiku 4.5 | `claude-haiku-4-5-20251001` |
+| Sonnet 4.5 | `claude-sonnet-4-5-20250929` |
 
 ---
 
@@ -159,6 +186,7 @@ Current implementation: `src/parsers/claude_code.rs`
 - Extracts `tool_use` blocks as tool calls (and maps `Task` tool uses to subagent records)
 - Correlates `tool_result` blocks by `tool_use_id`
 - Does not currently normalize `system/local_command` events into tool calls
+- Does not currently persist/index `message.model` in Sessions Chronicle database schema
 
 **Title extraction:** First parsed `user` message content (assistant/system/summary are ignored).
 
@@ -184,3 +212,11 @@ fn extract_content_claude(event: &Value) -> Option<String> {
   `tool_use_id`; `system/local_command` payloads are not yet normalized as tool calls.
 
 **Streaming:** Use `BufReader` line-by-line iteration — do not load entire JSONL into memory.
+
+---
+
+## References
+
+- [Claude Code model configuration (support article)](https://support.claude.com/en/articles/11940350-claude-code-model-configuration)
+- [Claude Sonnet 4.6 page (`claude-sonnet-4-6`)](https://www.anthropic.com/claude/sonnet)
+- [Claude Opus 4.6 page (`claude-opus-4-6`)](https://www.anthropic.com/claude/opus)
