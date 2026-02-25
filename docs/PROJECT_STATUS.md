@@ -4,7 +4,7 @@
 
 ---
 
-## Current Status: Phase 8 — In Progress
+## Current Status: Phase 8 — Complete
 
 ### Legend
 - 📌 Planned (not yet started)
@@ -111,13 +111,14 @@
 - ✅ SQLite-first parsing with JSON fallback for backward compatibility
 - ✅ Support post-migration installs (no legacy JSON storage root)
 
-**Phase 8: Keyboard Shortcuts & Model Tracking** - In Progress
+**Phase 8: Keyboard Shortcuts & Model Tracking** - Complete (PR #38, PR #39, PR #41)
 - ✅ Keyboard navigation polish: single-selection session list, Up/Down selection movement, Enter opens sessions, Escape closes search/inspector or navigates back with focus restore, shortcuts dialog Navigation section
 - ✅ Track LLM model per assistant message: parsers + DB schema v2 migration (PR #39)
   * ✅ `Message.model: Option<String>` field across all parsers
   * ✅ Shared model normalization helper
   * ✅ FTS5 `messages` table v2 migration with atomic DDL (`model UNINDEXED`)
-  * 🚧 Display model in UI (session detail, tooltips) — separate PR
+- ✅ Display model in UI (session detail, tooltips) (PR #41)
+  * ✅ Model slug displayed in transcript header for each assistant message
 
 **Next Features?** - Future
 - ✨ Analytics and usage charts
@@ -428,6 +429,6 @@ cargo test
 
 ---
 
-**Last Updated**: 2026-02-24
-**Current Phase**: Phase 8 — Keyboard Shortcuts & Model Tracking (Parsers + DB complete; UI display pending)
-**Next Milestone**: Model display in UI (badges, tooltips, per-message indicators)
+**Last Updated**: 2026-02-25
+**Current Phase**: Phase 8 — Complete
+**Next Milestone**: Phase 9 — TBD (see Next Features)
