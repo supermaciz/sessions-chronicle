@@ -13,6 +13,19 @@ use crate::ui::format::{format_duration_ms, tool_status_css_class, tool_status_l
 use crate::ui::highlight;
 use crate::ui::markdown;
 
+/// Return the model display text for a transcript header.
+/// Only assistant messages with a non-empty model value produce output.
+fn model_label_text(role: Role, model: Option<&str>) -> Option<String> {
+    if role != Role::Assistant {
+        return None;
+    }
+    let text = model?.trim();
+    if text.is_empty() {
+        return None;
+    }
+    Some(text.to_string())
+}
+
 // ---------------------------------------------------------------------------
 // Init types
 // ---------------------------------------------------------------------------
@@ -414,7 +427,7 @@ impl TranscriptRow {
         root.add_css_class(preview.role.css_class());
         root.set_spacing(4);
 
-        // Header: role label + timestamp
+        // Header: role label [· model] · timestamp
         let header = gtk::Box::new(gtk::Orientation::Horizontal, 8);
         let role_label = gtk::Label::new(Some(preview.role.label()));
         role_label.add_css_class("caption");
@@ -422,6 +435,25 @@ impl TranscriptRow {
         role_label.add_css_class(preview.role.css_class());
         role_label.set_halign(gtk::Align::Start);
         header.append(&role_label);
+
+        if let Some(model_text) = model_label_text(preview.role, preview.model.as_deref()) {
+            let sep1 = gtk::Label::new(Some("·"));
+            sep1.add_css_class("caption");
+            sep1.add_css_class("dim-label");
+            header.append(&sep1);
+
+            let model_label = gtk::Label::new(Some(&model_text));
+            model_label.add_css_class("caption");
+            model_label.add_css_class("dim-label");
+            model_label.add_css_class("monospace");
+            model_label.set_halign(gtk::Align::Start);
+            header.append(&model_label);
+        }
+
+        let sep_ts = gtk::Label::new(Some("·"));
+        sep_ts.add_css_class("caption");
+        sep_ts.add_css_class("dim-label");
+        header.append(&sep_ts);
 
         let ts_label = gtk::Label::new(Some(&preview.timestamp.format("%H:%M:%S").to_string()));
         ts_label.add_css_class("caption");
@@ -696,5 +728,30 @@ pub fn transcript_item_init_from_row(
                 db_path,
             })
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn model_label_text_assistant_with_model() {
+        let result = model_label_text(Role::Assistant, Some("claude-sonnet-4-5-20250514"));
+        assert_eq!(result.as_deref(), Some("claude-sonnet-4-5-20250514"));
+    }
+
+    #[test]
+    fn model_label_text_assistant_empty_model() {
+        assert_eq!(model_label_text(Role::Assistant, Some("")), None);
+        assert_eq!(model_label_text(Role::Assistant, Some("  ")), None);
+        assert_eq!(model_label_text(Role::Assistant, None), None);
+    }
+
+    #[test]
+    fn model_label_text_non_assistant_with_model() {
+        assert_eq!(model_label_text(Role::User, Some("o3-mini")), None);
+        assert_eq!(model_label_text(Role::ToolResult, Some("o3-mini")), None);
+        assert_eq!(model_label_text(Role::ToolCall, Some("o3-mini")), None);
     }
 }
