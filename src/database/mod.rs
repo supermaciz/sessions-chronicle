@@ -411,31 +411,49 @@ pub fn load_transcript_items(
         .query([&session_id as &dyn ToSql, &preview_len, &limit, &offset])
         .context("Failed to query transcript items")?;
 
+    // Column indices matching the SELECT order above.
+    const COL_ITEM_INDEX: usize = 0;
+    const COL_KIND: usize = 1;
+    const COL_MSG_INDEX: usize = 2;
+    const COL_TOOL_CALL_ID: usize = 3;
+    const COL_SUBAGENT_ID: usize = 4;
+    const COL_ROLE: usize = 5;
+    const COL_CONTENT_PREVIEW: usize = 6;
+    const COL_CONTENT_LEN: usize = 7;
+    const COL_TIMESTAMP: usize = 8;
+    const COL_MODEL: usize = 9;
+    const COL_TOOL_NAME: usize = 10;
+    const COL_TOOL_STATUS: usize = 11;
+    const COL_TOOL_SUMMARY: usize = 12;
+    const COL_DURATION_MS: usize = 13;
+    const COL_SUBAGENT_TITLE: usize = 14;
+    const COL_SUBAGENT_PROMPT: usize = 15;
+
     let mut items = Vec::new();
     while let Some(row) = rows.next()? {
-        let kind_str: String = row.get(1)?;
+        let kind_str: String = row.get(COL_KIND)?;
         let kind = TranscriptItemKind::from_storage(&kind_str);
 
-        let role: Option<String> = row.get(5)?;
-        let tool_status: Option<String> = row.get(11)?;
+        let role: Option<String> = row.get(COL_ROLE)?;
+        let tool_status: Option<String> = row.get(COL_TOOL_STATUS)?;
 
         items.push(TranscriptItemRow {
-            item_index: row.get(0)?,
+            item_index: row.get(COL_ITEM_INDEX)?,
             kind,
-            message_index: row.get(2)?,
-            tool_call_id: row.get(3)?,
-            subagent_id: row.get(4)?,
+            message_index: row.get(COL_MSG_INDEX)?,
+            tool_call_id: row.get(COL_TOOL_CALL_ID)?,
+            subagent_id: row.get(COL_SUBAGENT_ID)?,
             role: role.as_deref().and_then(Role::from_storage),
-            content_preview: row.get(6)?,
-            content_len: row.get(7)?,
-            timestamp: row.get(8)?,
-            model: row.get(9)?,
-            tool_name: row.get(10)?,
+            content_preview: row.get(COL_CONTENT_PREVIEW)?,
+            content_len: row.get(COL_CONTENT_LEN)?,
+            timestamp: row.get(COL_TIMESTAMP)?,
+            model: row.get(COL_MODEL)?,
+            tool_name: row.get(COL_TOOL_NAME)?,
             tool_status: tool_status.as_deref().map(ToolCallStatus::from_storage),
-            tool_summary: row.get(12)?,
-            duration_ms: row.get(13)?,
-            subagent_title: row.get(14)?,
-            subagent_prompt: row.get(15)?,
+            tool_summary: row.get(COL_TOOL_SUMMARY)?,
+            duration_ms: row.get(COL_DURATION_MS)?,
+            subagent_title: row.get(COL_SUBAGENT_TITLE)?,
+            subagent_prompt: row.get(COL_SUBAGENT_PROMPT)?,
         });
     }
 
