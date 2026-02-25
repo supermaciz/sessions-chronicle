@@ -26,6 +26,7 @@ pub struct TranscriptItemRow {
     pub content_preview: Option<String>,
     pub content_len: Option<i64>,
     pub timestamp: Option<i64>,
+    pub model: Option<String>,
     // ToolCall fields
     pub tool_call_id: Option<String>,
     pub tool_name: Option<String>,
@@ -327,7 +328,8 @@ pub fn load_message_previews_for_session(
           role,
           substr(content, 1, ?2) AS content_preview,
           length(content) AS content_len,
-          timestamp
+          timestamp,
+          model
         FROM messages
         WHERE session_id = ?1
         ORDER BY CAST(message_index AS INTEGER) ASC
@@ -359,6 +361,7 @@ pub fn load_message_previews_for_session(
                 .timestamp_opt(timestamp, 0)
                 .single()
                 .unwrap_or_else(Utc::now),
+            model: row.get(6)?,
         });
     }
 
@@ -389,7 +392,7 @@ pub fn load_transcript_items(
     let mut stmt = db.prepare(
         "SELECT ti.item_index, ti.kind, ti.message_index, ti.tool_call_id, ti.subagent_id,
                 m.role, substr(m.content, 1, ?2) AS content_preview,
-                length(m.content) AS content_len, m.timestamp,
+                length(m.content) AS content_len, m.timestamp, m.model,
                 tc.tool_name, tc.status, tc.summary, tc.duration_ms,
                 sa.title AS subagent_title, sa.prompt AS subagent_prompt
          FROM transcript_items ti
@@ -408,30 +411,49 @@ pub fn load_transcript_items(
         .query([&session_id as &dyn ToSql, &preview_len, &limit, &offset])
         .context("Failed to query transcript items")?;
 
+    // Column indices matching the SELECT order above.
+    const COL_ITEM_INDEX: usize = 0;
+    const COL_KIND: usize = 1;
+    const COL_MSG_INDEX: usize = 2;
+    const COL_TOOL_CALL_ID: usize = 3;
+    const COL_SUBAGENT_ID: usize = 4;
+    const COL_ROLE: usize = 5;
+    const COL_CONTENT_PREVIEW: usize = 6;
+    const COL_CONTENT_LEN: usize = 7;
+    const COL_TIMESTAMP: usize = 8;
+    const COL_MODEL: usize = 9;
+    const COL_TOOL_NAME: usize = 10;
+    const COL_TOOL_STATUS: usize = 11;
+    const COL_TOOL_SUMMARY: usize = 12;
+    const COL_DURATION_MS: usize = 13;
+    const COL_SUBAGENT_TITLE: usize = 14;
+    const COL_SUBAGENT_PROMPT: usize = 15;
+
     let mut items = Vec::new();
     while let Some(row) = rows.next()? {
-        let kind_str: String = row.get(1)?;
+        let kind_str: String = row.get(COL_KIND)?;
         let kind = TranscriptItemKind::from_storage(&kind_str);
 
-        let role: Option<String> = row.get(5)?;
-        let tool_status: Option<String> = row.get(10)?;
+        let role: Option<String> = row.get(COL_ROLE)?;
+        let tool_status: Option<String> = row.get(COL_TOOL_STATUS)?;
 
         items.push(TranscriptItemRow {
-            item_index: row.get(0)?,
+            item_index: row.get(COL_ITEM_INDEX)?,
             kind,
-            message_index: row.get(2)?,
-            tool_call_id: row.get(3)?,
-            subagent_id: row.get(4)?,
+            message_index: row.get(COL_MSG_INDEX)?,
+            tool_call_id: row.get(COL_TOOL_CALL_ID)?,
+            subagent_id: row.get(COL_SUBAGENT_ID)?,
             role: role.as_deref().and_then(Role::from_storage),
-            content_preview: row.get(6)?,
-            content_len: row.get(7)?,
-            timestamp: row.get(8)?,
-            tool_name: row.get(9)?,
+            content_preview: row.get(COL_CONTENT_PREVIEW)?,
+            content_len: row.get(COL_CONTENT_LEN)?,
+            timestamp: row.get(COL_TIMESTAMP)?,
+            model: row.get(COL_MODEL)?,
+            tool_name: row.get(COL_TOOL_NAME)?,
             tool_status: tool_status.as_deref().map(ToolCallStatus::from_storage),
-            tool_summary: row.get(11)?,
-            duration_ms: row.get(12)?,
-            subagent_title: row.get(13)?,
-            subagent_prompt: row.get(14)?,
+            tool_summary: row.get(COL_TOOL_SUMMARY)?,
+            duration_ms: row.get(COL_DURATION_MS)?,
+            subagent_title: row.get(COL_SUBAGENT_TITLE)?,
+            subagent_prompt: row.get(COL_SUBAGENT_PROMPT)?,
         });
     }
 

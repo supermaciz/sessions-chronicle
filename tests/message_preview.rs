@@ -47,6 +47,17 @@ impl TempDatabase {
     }
 
     fn insert_message(&self, session_id: &str, index: i64, role: &str, content: &str) {
+        self.insert_message_with_model(session_id, index, role, content, None);
+    }
+
+    fn insert_message_with_model(
+        &self,
+        session_id: &str,
+        index: i64,
+        role: &str,
+        content: &str,
+        model: Option<&str>,
+    ) {
         self.connection
             .execute(
                 "INSERT INTO messages (session_id, message_index, role, content, timestamp, model)
@@ -57,7 +68,7 @@ impl TempDatabase {
                     role,
                     content,
                     1000_i64 + index * 100,
-                    Option::<String>::None
+                    model
                 ],
             )
             .expect("Failed to insert message");
@@ -143,4 +154,24 @@ fn load_message_previews_respects_pagination() {
 
     assert_eq!(page3.len(), 1);
     assert_eq!(page3[0].content_preview, "Message 4");
+}
+
+#[test]
+fn load_message_previews_keeps_model_slug() {
+    let db = TempDatabase::new();
+    db.insert_session("test-session");
+
+    db.insert_message_with_model("test-session", 0, "assistant", "Hello", Some("o3-mini"));
+    db.insert_message("test-session", 1, "user", "Hi there");
+
+    let previews = load_message_previews_for_session(&db.path, "test-session", 100, 0, 2000)
+        .expect("Failed to load previews");
+
+    assert_eq!(previews.len(), 2);
+    assert_eq!(
+        previews[0].model.as_deref(),
+        Some("o3-mini"),
+        "assistant preview should carry model slug"
+    );
+    assert_eq!(previews[1].model, None, "user preview should have no model");
 }

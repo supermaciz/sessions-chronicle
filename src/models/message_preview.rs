@@ -10,6 +10,7 @@ pub struct MessagePreview {
     pub content_preview: String,
     pub content_len: usize,
     pub timestamp: DateTime<Utc>,
+    pub model: Option<String>,
 }
 
 impl MessagePreview {
