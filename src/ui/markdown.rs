@@ -540,6 +540,95 @@ fn render_block(
     matches
 }
 
+/// Create a `TextTagTable` with all markdown formatting tags.
+fn create_tag_table() -> gtk::TextTagTable {
+    let table = gtk::TextTagTable::new();
+
+    // -- Inline formatting --
+    let bold = gtk::TextTag::new(Some("bold"));
+    bold.set_weight(700); // pango::Weight::Bold
+    table.add(&bold);
+
+    let italic = gtk::TextTag::new(Some("italic"));
+    italic.set_style(gtk::pango::Style::Italic);
+    table.add(&italic);
+
+    let strikethrough = gtk::TextTag::new(Some("strikethrough"));
+    strikethrough.set_strikethrough(true);
+    table.add(&strikethrough);
+
+    let code_inline = gtk::TextTag::new(Some("code-inline"));
+    code_inline.set_family(Some("monospace"));
+    table.add(&code_inline);
+
+    // -- Headings --
+    for (name, scale, above, below) in [
+        ("heading-1", 1.6, 8, 4),
+        ("heading-2", 1.4, 6, 3),
+        ("heading-3", 1.2, 4, 2),
+        ("heading-4", 1.1, 0, 0),
+    ] {
+        let tag = gtk::TextTag::new(Some(name));
+        tag.set_scale(scale);
+        tag.set_weight(700);
+        if above > 0 {
+            tag.set_pixels_above_lines(above);
+        }
+        if below > 0 {
+            tag.set_pixels_below_lines(below);
+        }
+        table.add(&tag);
+    }
+
+    // -- Block-level --
+    let code_block = gtk::TextTag::new(Some("code-block"));
+    code_block.set_family(Some("monospace"));
+    code_block.set_paragraph_background(Some("#1e1e1e"));
+    code_block.set_pixels_above_lines(4);
+    code_block.set_pixels_below_lines(4);
+    code_block.set_left_margin(12);
+    code_block.set_right_margin(12);
+    table.add(&code_block);
+
+    let code_lang = gtk::TextTag::new(Some("code-lang"));
+    code_lang.set_scale(0.85);
+    code_lang.set_foreground(Some("#888888"));
+    table.add(&code_lang);
+
+    let blockquote = gtk::TextTag::new(Some("blockquote"));
+    blockquote.set_left_margin(16);
+    blockquote.set_foreground(Some("#888888"));
+    table.add(&blockquote);
+
+    let list_item = gtk::TextTag::new(Some("list-item"));
+    list_item.set_left_margin(24);
+    list_item.set_indent(-16);
+    table.add(&list_item);
+
+    let table_text = gtk::TextTag::new(Some("table-text"));
+    table_text.set_family(Some("monospace"));
+    table.add(&table_text);
+
+    let table_header = gtk::TextTag::new(Some("table-header"));
+    table_header.set_family(Some("monospace"));
+    table_header.set_weight(700);
+    table.add(&table_header);
+
+    // -- Search highlight --
+    let highlight = gtk::TextTag::new(Some("search-highlight"));
+    highlight.set_background(Some("#fce94f"));
+    highlight.set_foreground(Some("#1e1e1e"));
+    table.add(&highlight);
+
+    // -- Horizontal rule --
+    let hr = gtk::TextTag::new(Some("horizontal-rule"));
+    hr.set_foreground(Some("#888888"));
+    hr.set_justification(gtk::Justification::Center);
+    table.add(&hr);
+
+    table
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
