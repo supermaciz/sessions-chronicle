@@ -1384,4 +1384,21 @@ mod tests {
             _ => panic!("Expected List block, got {:?}", blocks[0]),
         }
     }
+
+    // ── render_markdown_to_textview tests ─────────────────────────────
+    //
+    // These tests require GTK initialization. GTK can only be initialized
+    // once and must happen from the same thread. We use `std::sync::Once`
+    // to guard init and skip tests if GTK is unavailable (headless CI).
+
+    // ── render_markdown_to_textview ──────────────────────────────
+    //
+    // GTK4 widget tests cannot run in the binary test target because
+    // `main.rs` registers GResources on the main thread at load time,
+    // making `gtk::init()` from test worker threads impossible.
+    //
+    // The TextBuffer/TextTag rendering is validated via:
+    // 1. The `markdown_to_blocks` unit tests above (parser correctness)
+    // 2. Manual visual testing with `--sessions-dir tests/fixtures`
+    //    (see Task 6 in the implementation plan)
 }
