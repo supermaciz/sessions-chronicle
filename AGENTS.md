@@ -41,6 +41,14 @@
 - Prefer adding integration tests under `tests/` and running them via `cargo test --all --no-fail-fast`.
 - Run `cargo clippy --all -- -D warnings` and `cargo fmt --all -- --check` before opening a PR.
 
+## Version Bump Checklist
+Update version in all three locations:
+- `Cargo.toml` (package version)
+- `src/config.rs` (`VERSION` constant)
+- `data/io.github.supermaciz.sessionschronicle.metainfo.xml.in.in` (add new `<release>` entry with date)
+
+Then `cargo build` to update `Cargo.lock`.
+
 ## Commit & Pull Request Guidelines
 - Commit messages follow a `type: short summary` pattern (e.g., `feat: ...`, `docs: ...`, `fix: ...`).
 - PRs should include a concise problem/solution description, key verification commands run, and screenshots for UI changes.
