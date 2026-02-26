@@ -103,7 +103,7 @@ fn fold_query_chars(query: &str) -> Vec<char> {
     query.chars().flat_map(char::to_lowercase).collect()
 }
 
-fn find_case_insensitive_matches_in_text(text: &str, query: &str) -> Vec<(usize, usize)> {
+pub fn find_case_insensitive_matches_in_text(text: &str, query: &str) -> Vec<(usize, usize)> {
     let mut folded_units: Vec<(char, usize, usize)> = Vec::new();
     for (start, ch) in text.char_indices() {
         let end = start + ch.len_utf8();
