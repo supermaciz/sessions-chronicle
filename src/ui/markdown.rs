@@ -629,6 +629,402 @@ fn create_tag_table() -> gtk::TextTagTable {
     table
 }
 
+/// Walks pulldown-cmark events and writes formatted text into a `TextBuffer`.
+struct MarkdownBufferWriter<'a> {
+    buffer: &'a gtk::TextBuffer,
+    /// Stack of active inline tag names (e.g. "bold", "italic").
+    tag_stack: Vec<&'static str>,
+    /// True when inside a code block — text goes verbatim, no inline tags.
+    in_code_block: Option<Option<String>>,
+    /// Code block accumulator.
+    code_buf: String,
+    /// List nesting stack: (ordered, item_index, is_task_list).
+    list_stack: Vec<(bool, usize, bool)>,
+    /// Current task-list checked state.
+    current_task_checked: Option<bool>,
+    /// Blockquote nesting depth.
+    blockquote_depth: usize,
+    /// Table state: headers collected, then rows.
+    in_table: bool,
+    in_table_head: bool,
+    table_headers: Vec<String>,
+    table_rows: Vec<Vec<String>>,
+    table_row: Vec<String>,
+    /// Inline text accumulator (used for table cells).
+    inline_buf: String,
+    /// Link URL being collected.
+    link_url: Option<String>,
+    /// Whether any block has been written (for inter-block spacing).
+    has_content: bool,
+}
+
+impl<'a> MarkdownBufferWriter<'a> {
+    fn new(buffer: &'a gtk::TextBuffer) -> Self {
+        Self {
+            buffer,
+            tag_stack: Vec::new(),
+            in_code_block: None,
+            code_buf: String::new(),
+            list_stack: Vec::new(),
+            current_task_checked: None,
+            blockquote_depth: 0,
+            in_table: false,
+            in_table_head: false,
+            table_headers: Vec::new(),
+            table_rows: Vec::new(),
+            table_row: Vec::new(),
+            inline_buf: String::new(),
+            link_url: None,
+            has_content: false,
+        }
+    }
+
+    /// Insert text at the end of the buffer with the given tag names applied.
+    fn insert_with_tags(&self, text: &str, tag_names: &[&str]) {
+        if text.is_empty() {
+            return;
+        }
+        let mut end_iter = self.buffer.end_iter();
+        let start_offset = end_iter.offset();
+        self.buffer.insert(&mut end_iter, text);
+        let start_iter = self.buffer.iter_at_offset(start_offset);
+        let end_iter = self.buffer.end_iter();
+        for name in tag_names {
+            if let Some(tag) = self.buffer.tag_table().lookup(name) {
+                self.buffer.apply_tag(&tag, &start_iter, &end_iter);
+            }
+        }
+    }
+
+    /// Collect current active tags (inline + block context).
+    fn active_tags(&self) -> Vec<&str> {
+        let mut tags: Vec<&str> = self.tag_stack.clone();
+        if self.blockquote_depth > 0 {
+            tags.push("blockquote");
+        }
+        tags
+    }
+
+    /// Insert a newline to separate blocks (only if content has been written).
+    fn block_separator(&mut self) {
+        if self.has_content {
+            self.insert_with_tags("\n", &[]);
+        }
+    }
+
+    fn heading_tag_name(level: pulldown_cmark::HeadingLevel) -> &'static str {
+        match level {
+            pulldown_cmark::HeadingLevel::H1 => "heading-1",
+            pulldown_cmark::HeadingLevel::H2 => "heading-2",
+            pulldown_cmark::HeadingLevel::H3 => "heading-3",
+            _ => "heading-4",
+        }
+    }
+
+    /// Process all pulldown-cmark events from the given markdown content.
+    fn process(&mut self, content: &str) {
+        let mut options = Options::empty();
+        options.insert(Options::ENABLE_TABLES);
+        options.insert(Options::ENABLE_STRIKETHROUGH);
+        options.insert(Options::ENABLE_TASKLISTS);
+
+        let parser = Parser::new_ext(content, options);
+
+        for event in parser {
+            match event {
+                // -- Inline tag starts --
+                Event::Start(Tag::Emphasis) => self.tag_stack.push("italic"),
+                Event::Start(Tag::Strong) => self.tag_stack.push("bold"),
+                Event::Start(Tag::Strikethrough) => self.tag_stack.push("strikethrough"),
+
+                // -- Inline tag ends --
+                Event::End(TagEnd::Emphasis) => {
+                    self.tag_stack.retain(|t| *t != "italic");
+                }
+                Event::End(TagEnd::Strong) => {
+                    self.tag_stack.retain(|t| *t != "bold");
+                }
+                Event::End(TagEnd::Strikethrough) => {
+                    self.tag_stack.retain(|t| *t != "strikethrough");
+                }
+
+                // -- Links --
+                Event::Start(Tag::Link { dest_url, .. }) => {
+                    self.link_url = Some(dest_url.to_string());
+                }
+                Event::End(TagEnd::Link) => {
+                    if let Some(url) = self.link_url.take() {
+                        let tags = self.active_tags();
+                        let tag_refs: Vec<&str> = tags.iter().copied().collect();
+                        self.insert_with_tags(&format!(" ({})", url), &tag_refs);
+                    }
+                }
+
+                // -- Paragraphs --
+                Event::Start(Tag::Paragraph) => {
+                    if self.list_stack.is_empty() && !self.in_table {
+                        self.block_separator();
+                    }
+                }
+                Event::End(TagEnd::Paragraph) => {
+                    if self.list_stack.is_empty() && !self.in_table {
+                        self.insert_with_tags("\n", &[]);
+                        self.has_content = true;
+                    }
+                }
+
+                // -- Headings --
+                Event::Start(Tag::Heading { level, .. }) => {
+                    self.block_separator();
+                    let heading_tag = Self::heading_tag_name(level);
+                    self.tag_stack.push(heading_tag);
+                }
+                Event::End(TagEnd::Heading(level)) => {
+                    self.insert_with_tags("\n", &[]);
+                    self.has_content = true;
+                    let heading_tag = Self::heading_tag_name(level);
+                    self.tag_stack.retain(|t| *t != heading_tag);
+                }
+
+                // -- Code blocks --
+                Event::Start(Tag::CodeBlock(kind)) => {
+                    self.code_buf.clear();
+                    let language = match kind {
+                        CodeBlockKind::Fenced(info) => {
+                            let lang = info.trim().to_string();
+                            if lang.is_empty() { None } else { Some(lang) }
+                        }
+                        CodeBlockKind::Indented => None,
+                    };
+                    self.in_code_block = Some(language);
+                }
+                Event::End(TagEnd::CodeBlock) => {
+                    self.block_separator();
+                    let language = self.in_code_block.take().flatten();
+                    if let Some(ref lang) = language {
+                        self.insert_with_tags(lang, &["code-lang"]);
+                        self.insert_with_tags("\n", &[]);
+                    }
+                    let code = self.code_buf.trim_end_matches('\n').to_string();
+                    self.insert_with_tags(&code, &["code-block"]);
+                    self.insert_with_tags("\n", &[]);
+                    self.has_content = true;
+                }
+
+                // -- Lists --
+                Event::Start(Tag::List(start)) => {
+                    if self.list_stack.is_empty() {
+                        self.block_separator();
+                    }
+                    self.list_stack.push((start.is_some(), 0, false));
+                }
+                Event::End(TagEnd::List(_)) => {
+                    self.list_stack.pop();
+                    if self.list_stack.is_empty() {
+                        self.has_content = true;
+                    }
+                }
+                Event::Start(Tag::Item) => {
+                    if let Some(frame) = self.list_stack.last_mut() {
+                        frame.1 += 1;
+                        if !frame.2 {
+                            // Not a task list — insert marker now
+                            let marker = if frame.0 {
+                                format!("{}. ", frame.1)
+                            } else {
+                                "- ".to_string()
+                            };
+                            let mut tags = self.active_tags();
+                            tags.push("list-item");
+                            let tag_refs: Vec<&str> = tags.iter().copied().collect();
+                            self.insert_with_tags(&marker, &tag_refs);
+                        }
+                    }
+                }
+                Event::End(TagEnd::Item) => {
+                    self.insert_with_tags("\n", &[]);
+                }
+
+                Event::TaskListMarker(checked) => {
+                    if let Some(frame) = self.list_stack.last_mut() {
+                        frame.2 = true; // mark as task list
+                    }
+                    self.current_task_checked = Some(checked);
+
+                    // Insert the task marker
+                    let marker = if checked { "[x] " } else { "[ ] " };
+                    let mut tags = self.active_tags();
+                    tags.push("list-item");
+                    let tag_refs: Vec<&str> = tags.iter().copied().collect();
+                    self.insert_with_tags(marker, &tag_refs);
+                }
+
+                // -- Tables --
+                Event::Start(Tag::Table(_)) => {
+                    self.block_separator();
+                    self.in_table = true;
+                    self.table_headers.clear();
+                    self.table_rows.clear();
+                }
+                Event::End(TagEnd::Table) => {
+                    self.in_table = false;
+                    self.render_table();
+                    self.has_content = true;
+                }
+                Event::Start(Tag::TableHead) => {
+                    self.in_table_head = true;
+                    self.table_row.clear();
+                }
+                Event::End(TagEnd::TableHead) => {
+                    self.table_headers = std::mem::take(&mut self.table_row);
+                    self.in_table_head = false;
+                }
+                Event::Start(Tag::TableRow) => {
+                    self.table_row.clear();
+                }
+                Event::End(TagEnd::TableRow) => {
+                    if !self.in_table_head {
+                        self.table_rows.push(std::mem::take(&mut self.table_row));
+                    }
+                }
+                Event::Start(Tag::TableCell) => {
+                    self.inline_buf.clear();
+                }
+                Event::End(TagEnd::TableCell) => {
+                    self.table_row.push(std::mem::take(&mut self.inline_buf));
+                }
+
+                // -- Blockquotes --
+                Event::Start(Tag::BlockQuote(_)) => {
+                    self.blockquote_depth += 1;
+                }
+                Event::End(TagEnd::BlockQuote(_)) => {
+                    self.blockquote_depth = self.blockquote_depth.saturating_sub(1);
+                }
+
+                // -- Horizontal rule --
+                Event::Rule => {
+                    self.block_separator();
+                    self.insert_with_tags("────────────────────────", &["horizontal-rule"]);
+                    self.insert_with_tags("\n", &[]);
+                    self.has_content = true;
+                }
+
+                // -- Text content --
+                Event::Text(text) => {
+                    if self.in_code_block.is_some() {
+                        self.code_buf.push_str(&text);
+                    } else if self.in_table {
+                        self.inline_buf.push_str(&text);
+                    } else {
+                        self.emit_text(&text);
+                    }
+                }
+                Event::Code(code) => {
+                    if self.in_table {
+                        self.inline_buf.push_str(&code);
+                    } else {
+                        let mut tags = self.active_tags();
+                        tags.push("code-inline");
+                        if !self.list_stack.is_empty() {
+                            tags.push("list-item");
+                        }
+                        let tag_refs: Vec<&str> = tags.iter().copied().collect();
+                        self.insert_with_tags(&code, &tag_refs);
+                    }
+                }
+                Event::SoftBreak | Event::HardBreak => {
+                    if self.in_code_block.is_some() {
+                        self.code_buf.push('\n');
+                    } else if self.in_table {
+                        self.inline_buf.push('\n');
+                    } else {
+                        let tags = self.active_tags();
+                        let tag_refs: Vec<&str> = tags.iter().copied().collect();
+                        self.insert_with_tags("\n", &tag_refs);
+                    }
+                }
+                Event::Html(html) | Event::InlineHtml(html) => {
+                    if self.in_code_block.is_some() {
+                        self.code_buf.push_str(&html);
+                    } else if self.in_table {
+                        self.inline_buf.push_str(&html);
+                    } else {
+                        self.emit_text(&html);
+                    }
+                }
+
+                _ => {}
+            }
+        }
+    }
+
+    /// Emit inline text with current formatting context.
+    fn emit_text(&mut self, text: &str) {
+        let mut tags = self.active_tags();
+        // If inside a list, add list-item tag for indentation
+        if !self.list_stack.is_empty() {
+            tags.push("list-item");
+        }
+        let tag_refs: Vec<&str> = tags.iter().copied().collect();
+        self.insert_with_tags(text, &tag_refs);
+    }
+
+    /// Render collected table data as monospace-aligned text.
+    fn render_table(&mut self) {
+        if self.table_headers.is_empty() {
+            return;
+        }
+
+        let num_cols = self.table_headers.len();
+
+        // Calculate column widths
+        let mut col_widths: Vec<usize> = self.table_headers.iter().map(|h| h.len()).collect();
+        for row in &self.table_rows {
+            for (i, cell) in row.iter().enumerate() {
+                if i < num_cols {
+                    col_widths[i] = col_widths[i].max(cell.len());
+                }
+            }
+        }
+
+        // Render header row
+        let header_line: String = self
+            .table_headers
+            .iter()
+            .enumerate()
+            .map(|(i, h)| format!("{:<width$}", h, width = col_widths[i]))
+            .collect::<Vec<_>>()
+            .join("  ");
+        self.insert_with_tags(&header_line, &["table-header"]);
+        self.insert_with_tags("\n", &[]);
+
+        // Render separator
+        let sep_line: String = col_widths
+            .iter()
+            .map(|w| "─".repeat(*w))
+            .collect::<Vec<_>>()
+            .join("  ");
+        self.insert_with_tags(&sep_line, &["table-text"]);
+        self.insert_with_tags("\n", &[]);
+
+        // Render data rows
+        for row in &self.table_rows {
+            let row_line: String = row
+                .iter()
+                .enumerate()
+                .map(|(i, cell)| {
+                    let width = col_widths.get(i).copied().unwrap_or(cell.len());
+                    format!("{:<width$}", cell, width = width)
+                })
+                .collect::<Vec<_>>()
+                .join("  ");
+            self.insert_with_tags(&row_line, &["table-text"]);
+            self.insert_with_tags("\n", &[]);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
