@@ -28,6 +28,42 @@ pub enum MarkdownBlock {
     HorizontalRule,
 }
 
+/// Per-level state for the list stack used in `markdown_to_blocks`.
+struct ListFrame {
+    ordered: bool,
+    is_task_list: bool,
+    current_task_checked: Option<bool>,
+    items: Vec<String>,
+    task_items: Vec<(bool, String)>,
+    /// The `inline_buf` content of the parent item at the moment this nested
+    /// list started. Restored when the list ends.
+    parent_item_buf: String,
+}
+
+/// Render a nested list as indented plain text appended to the parent item's
+/// Pango-markup string.
+fn format_nested_list_as_text(frame: &ListFrame) -> String {
+    let mut result = String::new();
+    if frame.is_task_list {
+        for (checked, text) in &frame.task_items {
+            result.push('\n');
+            result.push_str(if *checked { "  [x] " } else { "  [ ] " });
+            result.push_str(text);
+        }
+    } else {
+        for (i, item) in frame.items.iter().enumerate() {
+            result.push('\n');
+            if frame.ordered {
+                result.push_str(&format!("  {}. ", i + 1));
+            } else {
+                result.push_str("  - ");
+            }
+            result.push_str(item);
+        }
+    }
+    result
+}
+
 /// Escape characters that are special in Pango markup.
 pub fn pango_escape(s: &str) -> String {
     let mut escaped = String::with_capacity(s.len());
@@ -66,11 +102,7 @@ pub fn markdown_to_blocks(content: &str) -> Vec<MarkdownBlock> {
 
     let mut in_code_block: Option<Option<String>> = None;
     let mut code_buf = String::new();
-    let mut list_ordered: Option<bool> = None;
-    let mut list_items: Vec<String> = Vec::new();
-    let mut task_list_items: Vec<(bool, String)> = Vec::new();
-    let mut is_task_list = false;
-    let mut current_task_checked: Option<bool> = None;
+    let mut list_stack: Vec<ListFrame> = Vec::new();
     let mut in_blockquote = false;
     let mut blockquote_blocks: Vec<MarkdownBlock> = Vec::new();
     let mut table_headers: Vec<String> = Vec::new();
@@ -103,10 +135,15 @@ pub fn markdown_to_blocks(content: &str) -> Vec<MarkdownBlock> {
                 in_code_block = Some(language);
             }
             Event::Start(Tag::List(start)) => {
-                list_ordered = Some(start.is_some());
-                list_items.clear();
-                task_list_items.clear();
-                is_task_list = false;
+                let parent_item_buf = std::mem::take(&mut inline_buf);
+                list_stack.push(ListFrame {
+                    ordered: start.is_some(),
+                    is_task_list: false,
+                    current_task_checked: None,
+                    items: Vec::new(),
+                    task_items: Vec::new(),
+                    parent_item_buf,
+                });
             }
             Event::Start(Tag::Item) => {
                 inline_buf.clear();
@@ -178,15 +215,17 @@ pub fn markdown_to_blocks(content: &str) -> Vec<MarkdownBlock> {
                 }
             }
             Event::TaskListMarker(checked) => {
-                is_task_list = true;
-                current_task_checked = Some(checked);
+                if let Some(frame) = list_stack.last_mut() {
+                    frame.is_task_list = true;
+                    frame.current_task_checked = Some(checked);
+                }
             }
             Event::End(TagEnd::Paragraph) => {
                 // For loose lists (items separated by blank lines), pulldown-cmark
                 // wraps item content in paragraphs. We must NOT drain inline_buf here,
                 // or End(Item) will receive empty text and the paragraph will appear
                 // outside the list. Only emit standalone paragraphs when NOT in a list.
-                if list_ordered.is_none() {
+                if list_stack.is_empty() {
                     let text = std::mem::take(&mut inline_buf);
                     if !text.is_empty() {
                         if in_blockquote {
@@ -221,28 +260,40 @@ pub fn markdown_to_blocks(content: &str) -> Vec<MarkdownBlock> {
             }
             Event::End(TagEnd::Item) => {
                 let text = std::mem::take(&mut inline_buf);
-                if is_task_list {
-                    let checked = current_task_checked.take().unwrap_or(false);
-                    task_list_items.push((checked, text));
-                } else {
-                    list_items.push(text);
+                if let Some(frame) = list_stack.last_mut() {
+                    if frame.is_task_list {
+                        let checked = frame.current_task_checked.take().unwrap_or(false);
+                        frame.task_items.push((checked, text));
+                    } else {
+                        frame.items.push(text);
+                    }
                 }
             }
             Event::End(TagEnd::List(_)) => {
-                let block = if is_task_list {
-                    MarkdownBlock::TaskList(std::mem::take(&mut task_list_items))
-                } else {
-                    MarkdownBlock::List {
-                        ordered: list_ordered.unwrap_or(false),
-                        items: std::mem::take(&mut list_items),
+                if let Some(frame) = list_stack.pop() {
+                    if list_stack.is_empty() {
+                        // Top-level list: emit as a block.
+                        let block = if frame.is_task_list {
+                            MarkdownBlock::TaskList(frame.task_items)
+                        } else {
+                            MarkdownBlock::List {
+                                ordered: frame.ordered,
+                                items: frame.items,
+                            }
+                        };
+                        inline_buf = frame.parent_item_buf;
+                        if in_blockquote {
+                            blockquote_blocks.push(block);
+                        } else {
+                            blocks.push(block);
+                        }
+                    } else {
+                        // Nested list: inline the items into the outer item's text.
+                        let nested_text = format_nested_list_as_text(&frame);
+                        inline_buf = frame.parent_item_buf;
+                        inline_buf.push_str(&nested_text);
                     }
-                };
-                if in_blockquote {
-                    blockquote_blocks.push(block);
-                } else {
-                    blocks.push(block);
                 }
-                list_ordered = None;
             }
             Event::End(TagEnd::BlockQuote(_)) => {
                 in_blockquote = false;
@@ -706,6 +757,50 @@ mod tests {
             && matches!(&inner[0], MarkdownBlock::Paragraph(_))
             && matches!(&inner[1], MarkdownBlock::Heading { level: 2, .. })
             && matches!(&inner[2], MarkdownBlock::Paragraph(_))));
+    }
+
+    #[test]
+    fn nested_unordered_list_rendered_in_parent_item() {
+        let md = "- Parent item\n  - Child item 1\n  - Child item 2\n- Second parent";
+        let blocks = markdown_to_blocks(md);
+        assert_eq!(
+            blocks.len(),
+            1,
+            "Expected single list block, got {:?}",
+            blocks
+        );
+        match &blocks[0] {
+            MarkdownBlock::List { ordered, items } => {
+                assert!(!ordered, "Expected unordered list");
+                assert_eq!(
+                    items.len(),
+                    2,
+                    "Expected 2 top-level items, got {}",
+                    items.len()
+                );
+                assert!(
+                    items[0].contains("Parent item"),
+                    "First item missing 'Parent item': {:?}",
+                    items[0]
+                );
+                assert!(
+                    items[0].contains("Child item 1"),
+                    "First item missing 'Child item 1': {:?}",
+                    items[0]
+                );
+                assert!(
+                    items[0].contains("Child item 2"),
+                    "First item missing 'Child item 2': {:?}",
+                    items[0]
+                );
+                assert!(
+                    items[1].contains("Second parent"),
+                    "Second item missing 'Second parent': {:?}",
+                    items[1]
+                );
+            }
+            _ => panic!("Expected List block, got {:?}", blocks[0]),
+        }
     }
 
     #[test]
