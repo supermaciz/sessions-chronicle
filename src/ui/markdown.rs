@@ -99,6 +99,15 @@ fn create_tag_table() -> gtk::TextTagTable {
     table_header.set_weight(700);
     table.add(&table_header);
 
+    // -- Task list checkboxes --
+    let task_checked = gtk::TextTag::new(Some("task-checked"));
+    task_checked.set_foreground(Some("#2ec27e")); // GNOME green
+    table.add(&task_checked);
+
+    let task_unchecked = gtk::TextTag::new(Some("task-unchecked"));
+    task_unchecked.set_foreground(Some("#888888"));
+    table.add(&task_unchecked);
+
     // -- Search highlight --
     let highlight = gtk::TextTag::new(Some("search-highlight"));
     highlight.set_background(Some("#fce94f"));
@@ -141,6 +150,9 @@ struct MarkdownBufferWriter<'a> {
     link_url: Option<String>,
     /// Whether any block has been written (for inter-block spacing).
     has_content: bool,
+    /// Deferred item marker: true when we entered a list item but haven't
+    /// yet decided whether it's a regular or task-list item.
+    pending_item_marker: bool,
 }
 
 impl<'a> MarkdownBufferWriter<'a> {
@@ -161,6 +173,7 @@ impl<'a> MarkdownBufferWriter<'a> {
             inline_buf: String::new(),
             link_url: None,
             has_content: false,
+            pending_item_marker: false,
         }
     }
 
@@ -300,6 +313,9 @@ impl<'a> MarkdownBufferWriter<'a> {
                 Event::Start(Tag::List(start)) => {
                     if self.list_stack.is_empty() {
                         self.block_separator();
+                    } else {
+                        // Nested list: start on a new line
+                        self.insert_with_tags("\n", &[]);
                     }
                     self.list_stack.push((start.is_some(), 0, false));
                 }
@@ -312,17 +328,11 @@ impl<'a> MarkdownBufferWriter<'a> {
                 Event::Start(Tag::Item) => {
                     if let Some(frame) = self.list_stack.last_mut() {
                         frame.1 += 1;
-                        if !frame.2 {
-                            // Not a task list — insert marker now
-                            let marker = if frame.0 {
-                                format!("{}. ", frame.1)
-                            } else {
-                                "- ".to_string()
-                            };
-                            let mut tags = self.active_tags();
-                            tags.push("list-item");
-                            let tag_refs: Vec<&str> = tags.to_vec();
-                            self.insert_with_tags(&marker, &tag_refs);
+                        if frame.2 {
+                            // Already known to be a task list — skip normal marker
+                        } else {
+                            // Defer marker: TaskListMarker may arrive before first text
+                            self.pending_item_marker = true;
                         }
                     }
                 }
@@ -331,17 +341,24 @@ impl<'a> MarkdownBufferWriter<'a> {
                 }
 
                 Event::TaskListMarker(checked) => {
+                    // Cancel the deferred normal marker — this is a task list
+                    self.pending_item_marker = false;
                     if let Some(frame) = self.list_stack.last_mut() {
                         frame.2 = true; // mark as task list
                     }
                     self.current_task_checked = Some(checked);
 
-                    // Insert the task marker
-                    let marker = if checked { "[x] " } else { "[ ] " };
+                    // Insert styled checkbox symbol
+                    let (symbol, style_tag) = if checked {
+                        ("\u{2611} ", "task-checked")
+                    } else {
+                        ("\u{2610} ", "task-unchecked")
+                    };
                     let mut tags = self.active_tags();
                     tags.push("list-item");
+                    tags.push(style_tag);
                     let tag_refs: Vec<&str> = tags.to_vec();
-                    self.insert_with_tags(marker, &tag_refs);
+                    self.insert_with_tags(symbol, &tag_refs);
                 }
 
                 // -- Tables --
@@ -409,6 +426,7 @@ impl<'a> MarkdownBufferWriter<'a> {
                     if self.in_table {
                         self.inline_buf.push_str(&code);
                     } else {
+                        self.flush_pending_marker();
                         let mut tags = self.active_tags();
                         tags.push("code-inline");
                         if !self.list_stack.is_empty() {
@@ -444,8 +462,27 @@ impl<'a> MarkdownBufferWriter<'a> {
         }
     }
 
+    /// If a list-item marker was deferred, emit it now.
+    fn flush_pending_marker(&mut self) {
+        if self.pending_item_marker {
+            self.pending_item_marker = false;
+            if let Some(frame) = self.list_stack.last() {
+                let marker = if frame.0 {
+                    format!("{}. ", frame.1)
+                } else {
+                    "- ".to_string()
+                };
+                let mut tags = self.active_tags();
+                tags.push("list-item");
+                let tag_refs: Vec<&str> = tags.to_vec();
+                self.insert_with_tags(&marker, &tag_refs);
+            }
+        }
+    }
+
     /// Emit inline text with current formatting context.
     fn emit_text(&mut self, text: &str) {
+        self.flush_pending_marker();
         let mut tags = self.active_tags();
         // If inside a list, add list-item tag for indentation
         if !self.list_stack.is_empty() {
