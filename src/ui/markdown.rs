@@ -1025,6 +1025,75 @@ impl<'a> MarkdownBufferWriter<'a> {
     }
 }
 
+/// Render markdown content as a single selectable `gtk::TextView`.
+///
+/// If `highlight_query` is provided, matches are highlighted with a
+/// background color. Returns the widget and the total number of matches.
+pub fn render_markdown_to_textview(
+    content: &str,
+    highlight_query: Option<&str>,
+) -> (gtk::TextView, usize) {
+    let tag_table = create_tag_table();
+    let buffer = gtk::TextBuffer::new(Some(&tag_table));
+
+    let mut writer = MarkdownBufferWriter::new(&buffer);
+    writer.process(content);
+
+    // Apply search highlighting in a second pass
+    let match_count = if let Some(query) = highlight_query {
+        apply_search_highlight(&buffer, query)
+    } else {
+        0
+    };
+
+    let view = gtk::TextView::with_buffer(&buffer);
+    view.set_editable(false);
+    view.set_cursor_visible(false);
+    view.set_wrap_mode(gtk::WrapMode::WordChar);
+    view.set_hexpand(true);
+    // Remove default TextView padding — the parent message-row provides padding
+    view.set_top_margin(0);
+    view.set_bottom_margin(0);
+    view.set_left_margin(0);
+    view.set_right_margin(0);
+
+    (view, match_count)
+}
+
+/// Find and highlight all case-insensitive matches of `query` in the buffer.
+///
+/// Uses the `search-highlight` tag from the buffer's tag table.
+/// Returns the number of matches found.
+fn apply_search_highlight(buffer: &gtk::TextBuffer, query: &str) -> usize {
+    if query.is_empty() {
+        return 0;
+    }
+
+    let start = buffer.start_iter();
+    let end = buffer.end_iter();
+    let text = buffer.text(&start, &end, false);
+    let text_str = text.as_str();
+
+    let matches = crate::ui::highlight::find_case_insensitive_matches_in_text(text_str, query);
+    let count = matches.len();
+
+    if count == 0 {
+        return 0;
+    }
+
+    // The match positions are byte offsets into the plain text string.
+    // TextBuffer works with char offsets, so convert.
+    for (byte_start, byte_end) in &matches {
+        let char_start = text_str[..*byte_start].chars().count() as i32;
+        let char_end = text_str[..*byte_end].chars().count() as i32;
+        let iter_start = buffer.iter_at_offset(char_start);
+        let iter_end = buffer.iter_at_offset(char_end);
+        buffer.apply_tag_by_name("search-highlight", &iter_start, &iter_end);
+    }
+
+    count
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
