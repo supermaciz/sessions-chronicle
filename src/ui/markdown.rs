@@ -69,8 +69,8 @@ fn create_tag_table() -> gtk::TextTagTable {
     code_block.set_family(Some("monospace"));
     let code_bg = if is_dark_mode() { "#2c2c2c" } else { "#f4f4f4" };
     code_block.set_paragraph_background(Some(code_bg));
-    code_block.set_pixels_above_lines(4);
-    code_block.set_pixels_below_lines(4);
+    code_block.set_pixels_above_lines(0);
+    code_block.set_pixels_below_lines(0);
     code_block.set_left_margin(12);
     code_block.set_right_margin(12);
     table.add(&code_block);
@@ -300,8 +300,8 @@ impl<'a> MarkdownBufferWriter<'a> {
                     self.block_separator();
                     let language = self.in_code_block.take().flatten();
                     if let Some(ref lang) = language {
-                        self.insert_with_tags(lang, &["code-lang"]);
-                        self.insert_with_tags("\n", &[]);
+                        self.insert_with_tags(lang, &["code-block", "code-lang"]);
+                        self.insert_with_tags("\n", &["code-block"]);
                     }
                     let code = self.code_buf.trim_end_matches('\n').to_string();
                     self.insert_with_tags(&code, &["code-block"]);
@@ -614,4 +614,27 @@ fn apply_search_highlight(buffer: &gtk::TextBuffer, query: &str) -> usize {
     }
 
     count
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn has_tag_at(content: &str, tag_name: &str, char_offset: i32) -> bool {
+        gtk::init().ok();
+        let (view, _) = render_markdown_to_textview(content, None);
+        let buffer = view.buffer();
+        let iter = buffer.iter_at_offset(char_offset);
+        iter.tags()
+            .iter()
+            .any(|tag| tag.name().as_deref() == Some(tag_name))
+    }
+
+    #[test]
+    fn code_block_language_line_uses_code_block_tag() {
+        let markdown = "```rust\nfn main() {}\n```";
+
+        assert!(has_tag_at(markdown, "code-lang", 0));
+        assert!(has_tag_at(markdown, "code-block", 0));
+    }
 }
