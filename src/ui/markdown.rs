@@ -1,4 +1,5 @@
 use pulldown_cmark::{CodeBlockKind, Event, Options, Parser, Tag, TagEnd};
+use relm4::adw;
 use relm4::gtk;
 use relm4::gtk::prelude::*;
 
@@ -16,6 +17,11 @@ pub fn pango_escape(s: &str) -> String {
         }
     }
     escaped
+}
+
+/// Returns `true` when the current Adwaita color scheme is dark.
+fn is_dark_mode() -> bool {
+    adw::StyleManager::default().is_dark()
 }
 
 /// Create a `TextTagTable` with all markdown formatting tags.
@@ -61,7 +67,8 @@ fn create_tag_table() -> gtk::TextTagTable {
     // -- Block-level --
     let code_block = gtk::TextTag::new(Some("code-block"));
     code_block.set_family(Some("monospace"));
-    code_block.set_paragraph_background(Some("#1e1e1e"));
+    let code_bg = if is_dark_mode() { "#2c2c2c" } else { "#f4f4f4" };
+    code_block.set_paragraph_background(Some(code_bg));
     code_block.set_pixels_above_lines(4);
     code_block.set_pixels_below_lines(4);
     code_block.set_left_margin(12);

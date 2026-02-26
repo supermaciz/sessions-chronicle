@@ -58,7 +58,7 @@
 /* Markdown rendering styles */
 .code-block {
   font-family: monospace;
-  background-color: alpha(@card_shade_color, 0.5);
+  background-color: alpha(@card_shade_color, 0.15);
   border-radius: 6px;
   padding: 12px;
 }
@@ -146,7 +146,7 @@
 .inspector-code-block {
   font-family: monospace;
   font-size: 0.9em;
-  background-color: alpha(@card_shade_color, 0.5);
+  background-color: alpha(@card_shade_color, 0.15);
   border-radius: 4px;
   padding: 6px 8px;
 }
