@@ -397,6 +397,7 @@ impl<'a> MarkdownBufferWriter<'a> {
                     }
                 }
                 Event::End(TagEnd::Item) => {
+                    self.flush_pending_marker();
                     self.insert_with_tags("\n", &[]);
                 }
 
