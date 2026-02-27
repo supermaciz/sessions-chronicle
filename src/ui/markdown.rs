@@ -299,12 +299,18 @@ impl<'a> MarkdownBufferWriter<'a> {
                 Event::End(TagEnd::CodeBlock) => {
                     self.block_separator();
                     let language = self.in_code_block.take().flatten();
+                    let mut code_tags = vec!["code-block"];
+                    if self.blockquote_depth > 0 {
+                        code_tags.push("blockquote");
+                    }
                     if let Some(ref lang) = language {
-                        self.insert_with_tags(lang, &["code-block", "code-lang"]);
-                        self.insert_with_tags("\n", &["code-block"]);
+                        let mut lang_tags = code_tags.clone();
+                        lang_tags.push("code-lang");
+                        self.insert_with_tags(lang, &lang_tags);
+                        self.insert_with_tags("\n", &code_tags);
                     }
                     let code = self.code_buf.trim_end_matches('\n').to_string();
-                    self.insert_with_tags(&code, &["code-block"]);
+                    self.insert_with_tags(&code, &code_tags);
                     self.insert_with_tags("\n", &[]);
                     self.has_content = true;
                 }
@@ -621,7 +627,6 @@ mod tests {
     use super::*;
 
     fn has_tag_at(content: &str, tag_name: &str, char_offset: i32) -> bool {
-        gtk::init().ok();
         let (view, _) = render_markdown_to_textview(content, None);
         let buffer = view.buffer();
         let iter = buffer.iter_at_offset(char_offset);
@@ -630,11 +635,19 @@ mod tests {
             .any(|tag| tag.name().as_deref() == Some(tag_name))
     }
 
-    #[test]
+    #[gtk::test]
     fn code_block_language_line_uses_code_block_tag() {
         let markdown = "```rust\nfn main() {}\n```";
 
         assert!(has_tag_at(markdown, "code-lang", 0));
+        assert!(has_tag_at(markdown, "code-block", 0));
+    }
+
+    #[gtk::test]
+    fn code_block_inside_blockquote_uses_blockquote_tag() {
+        let markdown = "> ```rust\n> fn main() {}\n> ```";
+
+        assert!(has_tag_at(markdown, "blockquote", 0));
         assert!(has_tag_at(markdown, "code-block", 0));
     }
 }
