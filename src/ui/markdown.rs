@@ -652,9 +652,16 @@ pub fn render_markdown_to_textview(
 
     let style_manager = adw::StyleManager::default();
     let buffer_weak = buffer.downgrade();
-    style_manager.connect_dark_notify(move |manager| {
+    let handler_id = style_manager.connect_dark_notify(move |manager| {
         if let Some(buffer) = buffer_weak.upgrade() {
             apply_theme_palette_to_tags(&buffer.tag_table(), manager.is_dark());
+        }
+    });
+    let sm = style_manager;
+    let handler_id = std::cell::Cell::new(Some(handler_id));
+    view.connect_destroy(move |_| {
+        if let Some(id) = handler_id.take() {
+            sm.disconnect(id);
         }
     });
 
