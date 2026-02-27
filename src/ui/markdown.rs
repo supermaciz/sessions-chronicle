@@ -632,6 +632,9 @@ pub fn render_markdown_to_textview(
     view.set_bottom_margin(0);
     view.set_left_margin(0);
     view.set_right_margin(0);
+    // Make the TextView background transparent so the parent row's
+    // background color shows through uniformly in both light and dark mode.
+    view.add_css_class("markdown-textview");
 
     (view, match_count)
 }
