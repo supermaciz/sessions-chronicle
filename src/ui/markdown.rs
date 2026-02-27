@@ -262,9 +262,14 @@ impl<'a> MarkdownBufferWriter<'a> {
                 }
                 Event::End(TagEnd::Link) => {
                     if let Some(url) = self.link_url.take() {
-                        let tags = self.active_tags();
-                        let tag_refs: Vec<&str> = tags.to_vec();
-                        self.insert_with_tags(&format!(" ({})", url), &tag_refs);
+                        let suffix = format!(" ({})", url);
+                        if self.in_table {
+                            self.inline_buf.push_str(&suffix);
+                        } else {
+                            let tags = self.active_tags();
+                            let tag_refs: Vec<&str> = tags.to_vec();
+                            self.insert_with_tags(&suffix, &tag_refs);
+                        }
                     }
                 }
 
@@ -549,6 +554,8 @@ impl<'a> MarkdownBufferWriter<'a> {
             }
         }
 
+        let in_blockquote = self.blockquote_depth > 0;
+
         // Render header row
         let header_line: String = self
             .table_headers
@@ -557,7 +564,11 @@ impl<'a> MarkdownBufferWriter<'a> {
             .map(|(i, h)| pad_to_width(h, col_widths[i]))
             .collect::<Vec<_>>()
             .join("  ");
-        self.insert_with_tags(&header_line, &["table-header"]);
+        let mut header_tags: Vec<&str> = vec!["table-header"];
+        if in_blockquote {
+            header_tags.push("blockquote");
+        }
+        self.insert_with_tags(&header_line, &header_tags);
         self.insert_with_tags("\n", &[]);
 
         // Render separator
@@ -566,7 +577,11 @@ impl<'a> MarkdownBufferWriter<'a> {
             .map(|w| "─".repeat(*w))
             .collect::<Vec<_>>()
             .join("  ");
-        self.insert_with_tags(&sep_line, &["table-text"]);
+        let mut text_tags: Vec<&str> = vec!["table-text"];
+        if in_blockquote {
+            text_tags.push("blockquote");
+        }
+        self.insert_with_tags(&sep_line, &text_tags);
         self.insert_with_tags("\n", &[]);
 
         // Render data rows
@@ -580,7 +595,7 @@ impl<'a> MarkdownBufferWriter<'a> {
                 })
                 .collect::<Vec<_>>()
                 .join("  ");
-            self.insert_with_tags(&row_line, &["table-text"]);
+            self.insert_with_tags(&row_line, &text_tags);
             self.insert_with_tags("\n", &[]);
         }
     }
@@ -863,5 +878,38 @@ mod tests {
         // "Hello " (6 chars) then "both" has bold+italic
         assert!(has_tag_at("Hello ***both*** world", "bold", 6));
         assert!(has_tag_at("Hello ***both*** world", "italic", 6));
+    }
+
+    // ── Link inside table cell ────────────────────────────────────────
+
+    #[gtk::test]
+    fn textview_table_link_stays_in_cell() {
+        let md = "| Name |\n|------|\n| [Rust](https://rust-lang.org) |";
+        let text = textview_text(md);
+        // The URL suffix must appear on the same line as the cell content,
+        // not leak outside the table.
+        assert!(
+            text.contains("Rust (https://rust-lang.org)"),
+            "link URL should be inside the cell, got: {text}"
+        );
+    }
+
+    // ── Blockquote table styling ──────────────────────────────────────
+
+    #[gtk::test]
+    fn textview_table_inside_blockquote_has_blockquote_tag() {
+        let md = "> | A | B |\n> |---|---|\n> | 1 | 2 |";
+        let text = textview_text(md);
+        // Table should render inside the blockquote
+        assert!(text.contains("A"), "got: {text}");
+        // Find the table header and check it carries the blockquote tag
+        let (view, _) = render_markdown_to_textview(md, None);
+        let buf = view.buffer();
+        let full = buf.text(&buf.start_iter(), &buf.end_iter(), false);
+        let offset = full.find('A').expect("table header 'A' not found") as i32;
+        assert!(
+            has_tag_at(md, "blockquote", offset),
+            "table header inside blockquote should have blockquote tag"
+        );
     }
 }
