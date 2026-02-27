@@ -4,141 +4,20 @@
 
 ---
 
-## Current Status: Phase 8 — Complete
+### Shipped Features
 
-### Legend
-- 📌 Planned (not yet started)
-- 🚧 In progress
-- ✅ Completed
+- Browse and filter sessions across 4 tools (Claude Code, OpenCode, Codex, Mistral Vibe)
+- Full-text search (SQLite FTS5) + in-detail search term highlighting
+- Rich markdown rendering for assistant messages
+- Resume sessions in a configurable terminal emulator + failure toasts
+- Consistent `--sessions-dir` override across tools + isolated override index DB + reset/reindex in Preferences (PR #24)
+- Utility pane with filters/session-context modes and in-pane resume action (PR #27)
+- Session row redesign: first prompt title, project-aware subtitle, relative timestamps, row context menu resume (PR #30)
+- Inline expand/collapse for truncated messages with on-demand full content loading (PR #35)
+- Tool calls & subagents inspector: inline expander rows, ToolInspector utility pane, subagent drill-down (PR #36)
+- OpenCode SQLite dual-read indexing: SQLite-first with JSON fallback, supports post-migration installs (PR #37)
+- Keyboard navigation polish + LLM model tracking and display per assistant message (PR #38, #39, #41)
 
-**Next Features Legend:**
-- ✨ Priority (likely to be implemented)
-- 💡 Idea (option for the future)
-
-### ✅ Completed
-
-**Core Architecture**
-- ✅ Project structure with Rust + GTK4 + Relm4
-- ✅ Data models (`Session`, `Message`, `Tool`)
-- ✅ Database layer with SQLite + FTS5
-- ✅ Claude Code parser (JSONL format, streaming)
-- ✅ OpenCode parser (multi-file format with message parts)
-- ✅ Codex parser (JSONL format, streaming)
-- ✅ Test fixtures in `tests/fixtures/claude_sessions/`, `tests/fixtures/opencode_storage/`, `tests/fixtures/codex_sessions/`, `tests/fixtures/vibe_sessions/`
-- ✅ Basic UI structure (Sidebar, SessionList, SessionDetail)
-
-**Key Shipped Features (high-level)**
-- ✅ Browse and filter sessions across 4 tools (Claude Code, OpenCode, Codex, Mistral Vibe)
-- ✅ Full-text search (SQLite FTS5) + in-detail search term highlighting
-- ✅ Rich markdown rendering for assistant messages
-- ✅ Resume sessions in a configurable terminal emulator + failure toasts
-- ✅ Consistent `--sessions-dir` override across tools + isolated override index DB + reset/reindex in Preferences (PR #24)
-- ✅ Utility pane with filters/session-context modes and in-pane resume action (PR #27)
-- ✅ Session row redesign: first prompt title, project-aware subtitle, relative timestamps, row context menu resume (PR #30)
-- ✅ Inline expand/collapse for truncated messages with on-demand full content loading (PR #35)
-- ✅ Tool calls & subagents inspector: inline expander rows, ToolInspector utility pane, subagent drill-down (PR #36)
-- ✅ OpenCode SQLite dual-read indexing: SQLite-first with JSON fallback, supports post-migration installs (PR #37)
-
-**Dependencies**
-- ✅ Relm4 (reactive UI framework)
-- ✅ Libadwaita (GNOME styling)
-- ✅ rusqlite (SQLite database)
-- ✅ serde/serde_json (JSON parsing)
-- ✅ chrono (date/time handling)
-- ✅ anyhow/thiserror (error handling)
-- ✅ clap (CLI args)
-- ✅ pulldown-cmark (markdown parsing)
-- ✅ In-tree `pango_escape` helper (Pango markup escaping)
-
-
-
-### 📋 Roadmap
-
-**Phase 1: Single Tool (Claude Code)** - Complete
-1. ✅ Add missing dependencies
-2. ✅ Implement CLI args with `--sessions-dir`
-3. ✅ Wire database indexer into App
-4. ✅ Load sessions in SessionList from DB
-5. ✅ Connect sidebar tool filters to SessionList
-6. ✅ Implement search with FTS5 queries
-7. ✅ Add SessionDetail component
-8. ✅ Add session resumption (terminal launch)
-
-**Phase 2: Multi-Tool Support** - Complete
-- ✅ OpenCode parser (multi-file format)
-- ✅ Codex parser (JSONL streaming, encrypted reasoning support)
-- ✅ Filter sessions with no user messages
-- ✅ Message preview model
-- ✅ Mistral Vibe parser (directory-based logs with `meta.json` + `messages.jsonl`)
-- ✅ Tool filters in UI (sidebar checkboxes)
-
-**Phase 3: Markdown Rendering** - Complete ([design](plans/2026-01-30-markdown-rendering-design.md))
-- ✅ Markdown rendering for assistant messages (pulldown-cmark + Pango markup)
-- ✅ Support for headings, code blocks, lists, task lists, blockquotes, tables, horizontal rules
-- ✅ Inline formatting (bold, italic, strikethrough, inline code, links)
-- ✅ Comprehensive test suite (19 unit tests)
-
-**Phase 4: Search Highlighting** - Complete ([design](plans/2026-02-07-search-highlighting-design.md))
-- ✅ Search term highlighting in SessionDetail view
-- ✅ Highlight matching terms when viewing search results
-- ✅ Visual distinction for search matches
-
-**Phase 5: Consolidating Foundations** - Complete
-
-- ✅ Unified `--sessions-dir` behavior across all tools (isolated DB + fixture mapping + single resolver) ([design](plans/2026-02-07-sessions-dir-unified-behavior-design.md), PR #24)
-- ✅ UI refinement
-  * ✅ Utility pane + session detail ([design](plans/2026-02-08-session-detail-utility-pane-design.md)) PR #27
-  * ✅ Improve session row with first-prompt preview + safer markup handling ([design](plans/2026-02-11-session-row-prompt-preview-design.md)) PR #30
-  * ✅ Improve keyboard shortcuts ([design](plans/2026-02-13-keyboard-shortcuts-hig-conformity-design.md)) PR #32
-  * ✅ Fix "About" modal
-- ✅ Basic CI/CD setup with GitHub Actions (automated testing, formatting checks, linting, Flatpak builds)
-- ✅ Stable Flatpak manifest and release workflow ([design](plans/2026-02-14-release-flatpak-workflow-design.md), PR #33)
-
-**Phase 5.5: Expand/Collapse Truncated Messages** - Complete ([design](plans/2026-02-15-expand-collapse-messages-design.md), PR #35)
-- ✅ Inline expand/collapse toggle for truncated messages in transcript view
-- ✅ Load full content on demand from DB with caching
-- ✅ Toggle button replacing static "(content truncated)" badge
-
-**Phase 6: Tool Calls & Subagents** - Complete ([design](plans/2026-02-18-tool-calls-and-subagents-utility-pane-design.md), PR #36)
-- Legacy plan kept for history: [2026-01-30-tool-calls-and-subagents-design.md](plans/2026-01-30-tool-calls-and-subagents-design.md) (superseded)
-- ✅ Add phase 6 schema for transcript artifacts (`parent_session_id`, `is_subagent`, `transcript_items`, `tool_calls`, `subagents`)
-- ✅ Parse and correlate tool calls/results across Claude Code, Codex, OpenCode, and Mistral Vibe
-- ✅ Add inline expander rows for tool calls and subagents in SessionDetail
-- ✅ Add ToolInspector utility pane mode (non-modal inspection + subagent drill-down)
-- ✅ Add tests for parser correlation, DB ordering, and inspector interaction flows
-
-**Phase 7: OpenCode SQLite Dual-Read Indexing** - Complete ([design](plans/2026-02-21-opencode-sqlite-dual-read-design.md), PR #37)
-- ✅ SQLite-first parsing with JSON fallback for backward compatibility
-- ✅ Support post-migration installs (no legacy JSON storage root)
-
-**Phase 8: Keyboard Shortcuts & Model Tracking** - Complete (PR #38, PR #39, PR #41)
-- ✅ Keyboard navigation polish: single-selection session list, Up/Down selection movement, Enter opens sessions, Escape closes search/inspector or navigates back with focus restore, shortcuts dialog Navigation section
-- ✅ Track LLM model per assistant message: parsers + DB schema v2 migration (PR #39)
-  * ✅ `Message.model: Option<String>` field across all parsers
-  * ✅ Shared model normalization helper
-  * ✅ FTS5 `messages` table v2 migration with atomic DDL (`model UNINDEXED`)
-- ✅ Display model in UI (session detail, tooltips) (PR #41)
-  * ✅ Model slug displayed in transcript header for each assistant message
-
-**Next Features?** - Future
-- ✨ Analytics and usage charts
-- ✨ Display reasoning/thinking blocks
-- ✨ Improve ToolInspector (width, markdown rendering, etc.)
-- ✨ Skill tool-call compaction: treat `tool_name = Skill` as a first-class call (show skill name + source), collapse SKILL.md payloads by default, and provide "Show full / Copy" actions
-- ✨ Boilerplate folding in transcript: detect pasted skill blocks (e.g. `<skill_content ...>`, `SKILL.md`, "IF A SKILL APPLIES...") and system reminders (e.g. `<system-reminder>`, "Plan Mode - System Reminder"), render as a 1-line stub with expand-on-demand
-- 💡 Workflow detection (simple heuristics): detect common workflows from message/tool-call patterns (e.g. `/gsd:`, `.planning/`, `/opsx:`, `openspec/changes/`, `proposal.md`, `tasks.md`) with a confidence score; surface badges + filtering
-- ✨ Session titles for all tools (currently only OpenCode exposes a title; surface it for Claude Code, Codex, Mistral Vibe)
-- 💡 Session "Skills used" chips: extract skill names from Skill calls + pasted blobs, show in Session header/list and enable filtering/search by skill
-- 💡 Automated analysis & recommendations: detect long sessions, error patterns, costly sessions, peak productivity windows, and prompt improvement suggestions (inspired by Copilot Chronicle's SQLite-based self-analysis)
-- 💡 Syntax highlighting for code blocks (syntect)
-- 💡 Real-time session monitoring (file watching)
-- 💡 Permanently delete session files from disk (not just Sessions Chronicle index), with confirmation
-- 💡 Session export (Markdown/HTML)
-- 💡 Git integration
-- 💡 Git-ai or Agent Trace Spec integration
-- 💡 Semantic search
-- 💡 Session summaries (grouped by project or other criteria)
-- 💡 Reduce RAM usage (streaming DB queries? lazy loading?)
 
 ---
 
@@ -429,6 +308,5 @@ cargo test
 
 ---
 
-**Last Updated**: 2026-02-25
+**Last Updated**: 2026-02-28
 **Current Phase**: Phase 8 — Complete
-**Next Milestone**: Phase 9 — TBD (see Next Features)
