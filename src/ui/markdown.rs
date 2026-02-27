@@ -25,7 +25,35 @@ fn is_dark_mode() -> bool {
     adw::StyleManager::default().is_dark()
 }
 
+fn apply_theme_palette_to_tags(table: &gtk::TextTagTable, dark: bool) {
+    let code_bg = if dark { "#2c2c2c" } else { "#f4f4f4" };
+    let dim_fg = if dark { "#aaaaaa" } else { "#666666" };
+    let check_fg = if dark { "#57e389" } else { "#2ec27e" };
+
+    if let Some(tag) = table.lookup("code-block") {
+        tag.set_paragraph_background(Some(code_bg));
+    }
+    if let Some(tag) = table.lookup("code-lang") {
+        tag.set_foreground(Some(dim_fg));
+    }
+    if let Some(tag) = table.lookup("blockquote") {
+        tag.set_foreground(Some(dim_fg));
+    }
+    if let Some(tag) = table.lookup("task-checked") {
+        tag.set_foreground(Some(check_fg));
+    }
+    if let Some(tag) = table.lookup("task-unchecked") {
+        tag.set_foreground(Some(dim_fg));
+    }
+    if let Some(tag) = table.lookup("horizontal-rule") {
+        tag.set_foreground(Some(dim_fg));
+    }
+}
+
 /// Create a `TextTagTable` with all markdown formatting tags.
+///
+/// Theme-dependent colors are updated both at creation time and when Adwaita
+/// dark mode changes while the app is running.
 fn create_tag_table() -> gtk::TextTagTable {
     let table = gtk::TextTagTable::new();
 
@@ -66,28 +94,20 @@ fn create_tag_table() -> gtk::TextTagTable {
     }
 
     // -- Block-level --
-    let dark = is_dark_mode();
-
     let code_block = gtk::TextTag::new(Some("code-block"));
     code_block.set_family(Some("monospace"));
-    let code_bg = if dark { "#2c2c2c" } else { "#f4f4f4" };
-    code_block.set_paragraph_background(Some(code_bg));
     code_block.set_pixels_above_lines(0);
     code_block.set_pixels_below_lines(0);
     code_block.set_left_margin(12);
     code_block.set_right_margin(12);
     table.add(&code_block);
 
-    let dim_fg = if dark { "#aaaaaa" } else { "#666666" };
-
     let code_lang = gtk::TextTag::new(Some("code-lang"));
     code_lang.set_scale(0.85);
-    code_lang.set_foreground(Some(dim_fg));
     table.add(&code_lang);
 
     let blockquote = gtk::TextTag::new(Some("blockquote"));
     blockquote.set_left_margin(16);
-    blockquote.set_foreground(Some(dim_fg));
     table.add(&blockquote);
 
     let list_item = gtk::TextTag::new(Some("list-item"));
@@ -106,12 +126,9 @@ fn create_tag_table() -> gtk::TextTagTable {
 
     // -- Task list checkboxes --
     let task_checked = gtk::TextTag::new(Some("task-checked"));
-    let check_fg = if dark { "#57e389" } else { "#2ec27e" };
-    task_checked.set_foreground(Some(check_fg));
     table.add(&task_checked);
 
     let task_unchecked = gtk::TextTag::new(Some("task-unchecked"));
-    task_unchecked.set_foreground(Some(dim_fg));
     table.add(&task_unchecked);
 
     // -- Search highlight --
@@ -122,9 +139,10 @@ fn create_tag_table() -> gtk::TextTagTable {
 
     // -- Horizontal rule --
     let hr = gtk::TextTag::new(Some("horizontal-rule"));
-    hr.set_foreground(Some(dim_fg));
     hr.set_justification(gtk::Justification::Center);
     table.add(&hr);
+
+    apply_theme_palette_to_tags(&table, is_dark_mode());
 
     table
 }
@@ -615,12 +633,8 @@ pub fn render_markdown_to_textview(
     let mut writer = MarkdownBufferWriter::new(&buffer);
     writer.process(content);
 
-    // Apply search highlighting in a second pass
-    let match_count = if let Some(query) = highlight_query {
-        apply_search_highlight(&buffer, query)
-    } else {
-        0
-    };
+    // Apply search highlighting in a second pass.
+    let match_count = apply_search_highlight(&buffer, highlight_query.unwrap_or(""));
 
     let view = gtk::TextView::with_buffer(&buffer);
     view.set_editable(false);
@@ -635,6 +649,14 @@ pub fn render_markdown_to_textview(
     // Make the TextView background transparent so the parent row's
     // background color shows through uniformly in both light and dark mode.
     view.add_css_class("markdown-textview");
+
+    let style_manager = adw::StyleManager::default();
+    let buffer_weak = buffer.downgrade();
+    style_manager.connect_dark_notify(move |manager| {
+        if let Some(buffer) = buffer_weak.upgrade() {
+            apply_theme_palette_to_tags(&buffer.tag_table(), manager.is_dark());
+        }
+    });
 
     (view, match_count)
 }
@@ -914,5 +936,24 @@ mod tests {
             has_tag_at(md, "blockquote", offset),
             "table header inside blockquote should have blockquote tag"
         );
+    }
+
+    #[gtk::test]
+    fn theme_palette_update_refreshes_existing_tags() {
+        let table = create_tag_table();
+
+        apply_theme_palette_to_tags(&table, false);
+        let light_code_bg = table
+            .lookup("code-block")
+            .expect("code-block tag exists")
+            .paragraph_background_rgba();
+
+        apply_theme_palette_to_tags(&table, true);
+        let dark_code_bg = table
+            .lookup("code-block")
+            .expect("code-block tag exists")
+            .paragraph_background_rgba();
+
+        assert_ne!(light_code_bg, dark_code_bg);
     }
 }
