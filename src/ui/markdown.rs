@@ -4,7 +4,18 @@ use relm4::gtk;
 use relm4::gtk::prelude::*;
 use unicode_width::UnicodeWidthStr;
 
+// Theme-dependent color palette (dark / light variants).
+const DARK_CODE_BG: &str = "#2c2c2c";
+const LIGHT_CODE_BG: &str = "#f4f4f4";
+const DARK_DIM_FG: &str = "#aaaaaa";
+const LIGHT_DIM_FG: &str = "#666666";
+const DARK_CHECK_FG: &str = "#57e389";
+const LIGHT_CHECK_FG: &str = "#2ec27e";
+
 /// Escape characters that are special in Pango markup.
+///
+/// Used for User and ToolResult messages which still render via `gtk::Label`
+/// with Pango markup. Assistant messages use `TextBuffer` + `TextTag`s instead.
 pub fn pango_escape(s: &str) -> String {
     let mut escaped = String::with_capacity(s.len());
     for c in s.chars() {
@@ -26,9 +37,9 @@ fn is_dark_mode() -> bool {
 }
 
 fn apply_theme_palette_to_tags(table: &gtk::TextTagTable, dark: bool) {
-    let code_bg = if dark { "#2c2c2c" } else { "#f4f4f4" };
-    let dim_fg = if dark { "#aaaaaa" } else { "#666666" };
-    let check_fg = if dark { "#57e389" } else { "#2ec27e" };
+    let code_bg = if dark { DARK_CODE_BG } else { LIGHT_CODE_BG };
+    let dim_fg = if dark { DARK_DIM_FG } else { LIGHT_DIM_FG };
+    let check_fg = if dark { DARK_CHECK_FG } else { LIGHT_CHECK_FG };
 
     if let Some(tag) = table.lookup("code-block") {
         tag.set_paragraph_background(Some(code_bg));
@@ -285,8 +296,7 @@ impl<'a> MarkdownBufferWriter<'a> {
                             self.inline_buf.push_str(&suffix);
                         } else {
                             let tags = self.active_tags();
-                            let tag_refs: Vec<&str> = tags.to_vec();
-                            self.insert_with_tags(&suffix, &tag_refs);
+                            self.insert_with_tags(&suffix, &tags);
                         }
                     }
                 }
@@ -295,14 +305,12 @@ impl<'a> MarkdownBufferWriter<'a> {
                 Event::Start(Tag::Image { .. }) => {
                     self.in_image = true;
                     let tags = self.active_tags();
-                    let tag_refs: Vec<&str> = tags.to_vec();
-                    self.insert_with_tags("[image: ", &tag_refs);
+                    self.insert_with_tags("[image: ", &tags);
                 }
                 Event::End(TagEnd::Image) => {
                     self.in_image = false;
                     let tags = self.active_tags();
-                    let tag_refs: Vec<&str> = tags.to_vec();
-                    self.insert_with_tags("]", &tag_refs);
+                    self.insert_with_tags("]", &tags);
                 }
 
                 // -- Paragraphs --
@@ -409,8 +417,7 @@ impl<'a> MarkdownBufferWriter<'a> {
                     let mut tags = self.active_tags();
                     tags.push("list-item");
                     tags.push(style_tag);
-                    let tag_refs: Vec<&str> = tags.to_vec();
-                    self.insert_with_tags(symbol, &tag_refs);
+                    self.insert_with_tags(symbol, &tags);
                 }
 
                 // -- Tables --
@@ -484,8 +491,7 @@ impl<'a> MarkdownBufferWriter<'a> {
                         if !self.list_stack.is_empty() {
                             tags.push("list-item");
                         }
-                        let tag_refs: Vec<&str> = tags.to_vec();
-                        self.insert_with_tags(&code, &tag_refs);
+                        self.insert_with_tags(&code, &tags);
                     }
                 }
                 Event::SoftBreak | Event::HardBreak => {
@@ -495,8 +501,7 @@ impl<'a> MarkdownBufferWriter<'a> {
                         self.inline_buf.push('\n');
                     } else {
                         let tags = self.active_tags();
-                        let tag_refs: Vec<&str> = tags.to_vec();
-                        self.insert_with_tags("\n", &tag_refs);
+                        self.insert_with_tags("\n", &tags);
                     }
                 }
                 Event::Html(html) | Event::InlineHtml(html) => {
@@ -509,6 +514,9 @@ impl<'a> MarkdownBufferWriter<'a> {
                     }
                 }
 
+                // Intentionally ignored: FootnoteReference, MetadataBlock,
+                // DefinitionList variants — these are either disabled in parser
+                // options or have no meaningful visual representation.
                 _ => {}
             }
         }
@@ -526,8 +534,7 @@ impl<'a> MarkdownBufferWriter<'a> {
                 };
                 let mut tags = self.active_tags();
                 tags.push("list-item");
-                let tag_refs: Vec<&str> = tags.to_vec();
-                self.insert_with_tags(&marker, &tag_refs);
+                self.insert_with_tags(&marker, &tags);
             }
         }
     }
@@ -540,8 +547,7 @@ impl<'a> MarkdownBufferWriter<'a> {
         if !self.list_stack.is_empty() {
             tags.push("list-item");
         }
-        let tag_refs: Vec<&str> = tags.to_vec();
-        self.insert_with_tags(text, &tag_refs);
+        self.insert_with_tags(text, &tags);
     }
 
     /// Render collected table data as monospace-aligned text.
@@ -944,6 +950,31 @@ mod tests {
             "table header inside blockquote should have blockquote tag"
         );
     }
+
+    // ── Nested lists ──────────────────────────────────────────────────
+
+    #[gtk::test]
+    fn textview_nested_unordered_list() {
+        let md = "- Parent item\n  - Child item 1\n  - Child item 2\n- Second parent";
+        let text = textview_text(md);
+        assert!(text.contains("Parent item"), "got: {text}");
+        assert!(text.contains("Child item 1"), "got: {text}");
+        assert!(text.contains("Child item 2"), "got: {text}");
+        assert!(text.contains("Second parent"), "got: {text}");
+    }
+
+    #[gtk::test]
+    fn textview_loose_list_items_kept_together() {
+        // Loose lists have blank lines between items; pulldown-cmark wraps
+        // each item in Paragraph events. All items must still appear.
+        let md = "- First item\n\n- Second item\n\n- Third item";
+        let text = textview_text(md);
+        assert!(text.contains("First item"), "got: {text}");
+        assert!(text.contains("Second item"), "got: {text}");
+        assert!(text.contains("Third item"), "got: {text}");
+    }
+
+    // ── Theme palette ───────────────────────────────────────────────
 
     #[gtk::test]
     fn theme_palette_update_refreshes_existing_tags() {
