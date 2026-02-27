@@ -2,6 +2,7 @@ use pulldown_cmark::{CodeBlockKind, Event, Options, Parser, Tag, TagEnd};
 use relm4::adw;
 use relm4::gtk;
 use relm4::gtk::prelude::*;
+use unicode_width::UnicodeWidthStr;
 
 /// Escape characters that are special in Pango markup.
 pub fn pango_escape(s: &str) -> String {
@@ -65,9 +66,11 @@ fn create_tag_table() -> gtk::TextTagTable {
     }
 
     // -- Block-level --
+    let dark = is_dark_mode();
+
     let code_block = gtk::TextTag::new(Some("code-block"));
     code_block.set_family(Some("monospace"));
-    let code_bg = if is_dark_mode() { "#2c2c2c" } else { "#f4f4f4" };
+    let code_bg = if dark { "#2c2c2c" } else { "#f4f4f4" };
     code_block.set_paragraph_background(Some(code_bg));
     code_block.set_pixels_above_lines(0);
     code_block.set_pixels_below_lines(0);
@@ -75,14 +78,16 @@ fn create_tag_table() -> gtk::TextTagTable {
     code_block.set_right_margin(12);
     table.add(&code_block);
 
+    let dim_fg = if dark { "#aaaaaa" } else { "#666666" };
+
     let code_lang = gtk::TextTag::new(Some("code-lang"));
     code_lang.set_scale(0.85);
-    code_lang.set_foreground(Some("#888888"));
+    code_lang.set_foreground(Some(dim_fg));
     table.add(&code_lang);
 
     let blockquote = gtk::TextTag::new(Some("blockquote"));
     blockquote.set_left_margin(16);
-    blockquote.set_foreground(Some("#888888"));
+    blockquote.set_foreground(Some(dim_fg));
     table.add(&blockquote);
 
     let list_item = gtk::TextTag::new(Some("list-item"));
@@ -101,11 +106,12 @@ fn create_tag_table() -> gtk::TextTagTable {
 
     // -- Task list checkboxes --
     let task_checked = gtk::TextTag::new(Some("task-checked"));
-    task_checked.set_foreground(Some("#2ec27e")); // GNOME green
+    let check_fg = if dark { "#57e389" } else { "#2ec27e" };
+    task_checked.set_foreground(Some(check_fg));
     table.add(&task_checked);
 
     let task_unchecked = gtk::TextTag::new(Some("task-unchecked"));
-    task_unchecked.set_foreground(Some("#888888"));
+    task_unchecked.set_foreground(Some(dim_fg));
     table.add(&task_unchecked);
 
     // -- Search highlight --
@@ -116,7 +122,7 @@ fn create_tag_table() -> gtk::TextTagTable {
 
     // -- Horizontal rule --
     let hr = gtk::TextTag::new(Some("horizontal-rule"));
-    hr.set_foreground(Some("#888888"));
+    hr.set_foreground(Some(dim_fg));
     hr.set_justification(gtk::Justification::Center);
     table.add(&hr);
 
@@ -148,6 +154,8 @@ struct MarkdownBufferWriter<'a> {
     inline_buf: String,
     /// Link URL being collected.
     link_url: Option<String>,
+    /// True when inside an image — text events become alt text.
+    in_image: bool,
     /// Whether any block has been written (for inter-block spacing).
     has_content: bool,
     /// Deferred item marker: true when we entered a list item but haven't
@@ -172,6 +180,7 @@ impl<'a> MarkdownBufferWriter<'a> {
             table_row: Vec::new(),
             inline_buf: String::new(),
             link_url: None,
+            in_image: false,
             has_content: false,
             pending_item_marker: false,
         }
@@ -201,6 +210,13 @@ impl<'a> MarkdownBufferWriter<'a> {
             tags.push("blockquote");
         }
         tags
+    }
+
+    /// Remove the last occurrence of `tag` from the tag stack (LIFO).
+    fn pop_tag(&mut self, tag: &str) {
+        if let Some(pos) = self.tag_stack.iter().rposition(|t| *t == tag) {
+            self.tag_stack.remove(pos);
+        }
     }
 
     /// Insert a newline to separate blocks (only if content has been written).
@@ -236,15 +252,9 @@ impl<'a> MarkdownBufferWriter<'a> {
                 Event::Start(Tag::Strikethrough) => self.tag_stack.push("strikethrough"),
 
                 // -- Inline tag ends --
-                Event::End(TagEnd::Emphasis) => {
-                    self.tag_stack.retain(|t| *t != "italic");
-                }
-                Event::End(TagEnd::Strong) => {
-                    self.tag_stack.retain(|t| *t != "bold");
-                }
-                Event::End(TagEnd::Strikethrough) => {
-                    self.tag_stack.retain(|t| *t != "strikethrough");
-                }
+                Event::End(TagEnd::Emphasis) => self.pop_tag("italic"),
+                Event::End(TagEnd::Strong) => self.pop_tag("bold"),
+                Event::End(TagEnd::Strikethrough) => self.pop_tag("strikethrough"),
 
                 // -- Links --
                 Event::Start(Tag::Link { dest_url, .. }) => {
@@ -256,6 +266,20 @@ impl<'a> MarkdownBufferWriter<'a> {
                         let tag_refs: Vec<&str> = tags.to_vec();
                         self.insert_with_tags(&format!(" ({})", url), &tag_refs);
                     }
+                }
+
+                // -- Images (rendered as [image: alt_text]) --
+                Event::Start(Tag::Image { .. }) => {
+                    self.in_image = true;
+                    let tags = self.active_tags();
+                    let tag_refs: Vec<&str> = tags.to_vec();
+                    self.insert_with_tags("[image: ", &tag_refs);
+                }
+                Event::End(TagEnd::Image) => {
+                    self.in_image = false;
+                    let tags = self.active_tags();
+                    let tag_refs: Vec<&str> = tags.to_vec();
+                    self.insert_with_tags("]", &tag_refs);
                 }
 
                 // -- Paragraphs --
@@ -280,8 +304,7 @@ impl<'a> MarkdownBufferWriter<'a> {
                 Event::End(TagEnd::Heading(level)) => {
                     self.insert_with_tags("\n", &[]);
                     self.has_content = true;
-                    let heading_tag = Self::heading_tag_name(level);
-                    self.tag_stack.retain(|t| *t != heading_tag);
+                    self.pop_tag(Self::heading_tag_name(level));
                 }
 
                 // -- Code blocks --
@@ -506,13 +529,23 @@ impl<'a> MarkdownBufferWriter<'a> {
 
         let num_cols = self.table_headers.len();
 
-        // Calculate column widths
-        let mut col_widths: Vec<usize> = self.table_headers.iter().map(|h| h.len()).collect();
+        // Calculate column widths using display width (handles CJK/emoji)
+        let mut col_widths: Vec<usize> = self.table_headers.iter().map(|h| h.width()).collect();
         for row in &self.table_rows {
             for (i, cell) in row.iter().enumerate() {
                 if i < num_cols {
-                    col_widths[i] = col_widths[i].max(cell.len());
+                    col_widths[i] = col_widths[i].max(cell.width());
                 }
+            }
+        }
+
+        // Pad a string to a target display width with trailing spaces.
+        fn pad_to_width(s: &str, target: usize) -> String {
+            let current = s.width();
+            if current >= target {
+                s.to_string()
+            } else {
+                format!("{}{}", s, " ".repeat(target - current))
             }
         }
 
@@ -521,7 +554,7 @@ impl<'a> MarkdownBufferWriter<'a> {
             .table_headers
             .iter()
             .enumerate()
-            .map(|(i, h)| format!("{:<width$}", h, width = col_widths[i]))
+            .map(|(i, h)| pad_to_width(h, col_widths[i]))
             .collect::<Vec<_>>()
             .join("  ");
         self.insert_with_tags(&header_line, &["table-header"]);
@@ -542,8 +575,8 @@ impl<'a> MarkdownBufferWriter<'a> {
                 .iter()
                 .enumerate()
                 .map(|(i, cell)| {
-                    let width = col_widths.get(i).copied().unwrap_or(cell.len());
-                    format!("{:<width$}", cell, width = width)
+                    let width = col_widths.get(i).copied().unwrap_or(cell.width());
+                    pad_to_width(cell, width)
                 })
                 .collect::<Vec<_>>()
                 .join("  ");
@@ -609,11 +642,42 @@ fn apply_search_highlight(buffer: &gtk::TextBuffer, query: &str) -> usize {
         return 0;
     }
 
-    // The match positions are byte offsets into the plain text string.
-    // TextBuffer works with char offsets, so convert.
+    // Build a byte-offset → char-offset map in a single forward pass (O(n)).
+    // Collect only the byte offsets we need, then scan once.
+    let mut needed_offsets: Vec<usize> = Vec::with_capacity(matches.len() * 2);
+    for (bs, be) in &matches {
+        needed_offsets.push(*bs);
+        needed_offsets.push(*be);
+    }
+    needed_offsets.sort_unstable();
+    needed_offsets.dedup();
+
+    // Single forward scan converting byte offsets to char offsets
+    let mut byte_to_char: std::collections::HashMap<usize, i32> =
+        std::collections::HashMap::with_capacity(needed_offsets.len());
+    let mut offset_idx = 0;
+    for (char_count, (byte_pos, _)) in (0_i32..).zip(text_str.char_indices()) {
+        while offset_idx < needed_offsets.len() && needed_offsets[offset_idx] == byte_pos {
+            byte_to_char.insert(byte_pos, char_count);
+            offset_idx += 1;
+        }
+        if offset_idx >= needed_offsets.len() {
+            break;
+        }
+    }
+    // Handle offsets at the very end of the string
+    let total_chars = text_str.chars().count() as i32;
+    let text_len = text_str.len();
+    while offset_idx < needed_offsets.len() {
+        byte_to_char.insert(needed_offsets[offset_idx], total_chars);
+        // Only the end-of-string offset should land here
+        debug_assert_eq!(needed_offsets[offset_idx], text_len);
+        offset_idx += 1;
+    }
+
     for (byte_start, byte_end) in &matches {
-        let char_start = text_str[..*byte_start].chars().count() as i32;
-        let char_end = text_str[..*byte_end].chars().count() as i32;
+        let char_start = byte_to_char[byte_start];
+        let char_end = byte_to_char[byte_end];
         let iter_start = buffer.iter_at_offset(char_start);
         let iter_end = buffer.iter_at_offset(char_end);
         buffer.apply_tag_by_name("search-highlight", &iter_start, &iter_end);
@@ -635,10 +699,19 @@ mod tests {
             .any(|tag| tag.name().as_deref() == Some(tag_name))
     }
 
+    /// Helper: extract plain text from a rendered textview.
+    fn textview_text(content: &str) -> String {
+        let (view, _) = render_markdown_to_textview(content, None);
+        let buf = view.buffer();
+        buf.text(&buf.start_iter(), &buf.end_iter(), false)
+            .to_string()
+    }
+
+    // ── Existing regression tests ────────────────────────────────────
+
     #[gtk::test]
     fn code_block_language_line_uses_code_block_tag() {
         let markdown = "```rust\nfn main() {}\n```";
-
         assert!(has_tag_at(markdown, "code-lang", 0));
         assert!(has_tag_at(markdown, "code-block", 0));
     }
@@ -646,8 +719,149 @@ mod tests {
     #[gtk::test]
     fn code_block_inside_blockquote_uses_blockquote_tag() {
         let markdown = "> ```rust\n> fn main() {}\n> ```";
-
         assert!(has_tag_at(markdown, "blockquote", 0));
         assert!(has_tag_at(markdown, "code-block", 0));
+    }
+
+    // ── Plain text & paragraphs ──────────────────────────────────────
+
+    #[gtk::test]
+    fn textview_plain_paragraph() {
+        let text = textview_text("Hello world");
+        assert!(text.contains("Hello world"), "got: {text}");
+    }
+
+    // ── Inline formatting ────────────────────────────────────────────
+
+    #[gtk::test]
+    fn textview_bold_tagged() {
+        assert!(has_tag_at("Hello **bold** world", "bold", 6));
+    }
+
+    #[gtk::test]
+    fn textview_italic_tagged() {
+        assert!(has_tag_at("Hello *italic* world", "italic", 6));
+    }
+
+    #[gtk::test]
+    fn textview_strikethrough_tagged() {
+        assert!(has_tag_at("Hello ~~removed~~ world", "strikethrough", 6));
+    }
+
+    #[gtk::test]
+    fn textview_code_inline_tagged() {
+        assert!(has_tag_at("Use `code` here", "code-inline", 4));
+    }
+
+    // ── Headings ─────────────────────────────────────────────────────
+
+    #[gtk::test]
+    fn textview_heading_1_tagged() {
+        assert!(has_tag_at("# Title", "heading-1", 0));
+    }
+
+    #[gtk::test]
+    fn textview_heading_2_tagged() {
+        assert!(has_tag_at("## Subtitle", "heading-2", 0));
+    }
+
+    // ── Lists ────────────────────────────────────────────────────────
+
+    #[gtk::test]
+    fn textview_unordered_list_contains_marker() {
+        let text = textview_text("- First\n- Second");
+        assert!(text.contains("- First"), "got: {text}");
+        assert!(text.contains("- Second"), "got: {text}");
+    }
+
+    #[gtk::test]
+    fn textview_ordered_list_contains_numbers() {
+        let text = textview_text("1. Alpha\n2. Beta");
+        assert!(text.contains("1."), "got: {text}");
+        assert!(text.contains("2."), "got: {text}");
+    }
+
+    #[gtk::test]
+    fn textview_task_list_contains_checkboxes() {
+        let text = textview_text("- [x] Done\n- [ ] Todo");
+        // U+2611 (checked) and U+2610 (unchecked)
+        assert!(text.contains('\u{2611}'), "got: {text}");
+        assert!(text.contains('\u{2610}'), "got: {text}");
+    }
+
+    // ── Code blocks ──────────────────────────────────────────────────
+
+    #[gtk::test]
+    fn textview_code_block_tagged() {
+        let text = textview_text("```\ncode line\n```");
+        assert!(text.contains("code line"), "got: {text}");
+        assert!(has_tag_at("```\ncode line\n```", "code-block", 0));
+    }
+
+    // ── Search highlighting ──────────────────────────────────────────
+
+    #[gtk::test]
+    fn textview_search_highlight_applied() {
+        let (view, count) = render_markdown_to_textview("Hello world", Some("world"));
+        assert_eq!(count, 1);
+        let buf = view.buffer();
+        // "world" starts at char 6 in "Hello world\n"
+        let iter = buf.iter_at_offset(6);
+        assert!(
+            iter.tags()
+                .iter()
+                .any(|t| t.name().as_deref() == Some("search-highlight"))
+        );
+    }
+
+    #[gtk::test]
+    fn textview_search_no_match_returns_zero() {
+        let (_, count) = render_markdown_to_textview("Hello world", Some("missing"));
+        assert_eq!(count, 0);
+    }
+
+    // ── Tables ───────────────────────────────────────────────────────
+
+    #[gtk::test]
+    fn textview_table_rendered_as_text() {
+        let md = "| A | B |\n|---|---|\n| 1 | 2 |";
+        let text = textview_text(md);
+        assert!(text.contains("A"), "got: {text}");
+        assert!(text.contains("B"), "got: {text}");
+        assert!(text.contains("1"), "got: {text}");
+        assert!(text.contains("2"), "got: {text}");
+        assert!(text.contains('─'), "separator missing, got: {text}");
+    }
+
+    // ── Horizontal rule ──────────────────────────────────────────────
+
+    #[gtk::test]
+    fn textview_horizontal_rule() {
+        let text = textview_text("Above\n\n---\n\nBelow");
+        assert!(text.contains("────"), "got: {text}");
+    }
+
+    // ── Images ───────────────────────────────────────────────────────
+
+    #[gtk::test]
+    fn textview_image_renders_alt_text() {
+        let text = textview_text("![screenshot](https://example.com/img.png)");
+        assert!(text.contains("[image: screenshot]"), "got: {text}");
+    }
+
+    // ── Blockquotes ──────────────────────────────────────────────────
+
+    #[gtk::test]
+    fn textview_blockquote_tagged() {
+        assert!(has_tag_at("> Quoted text", "blockquote", 0));
+    }
+
+    // ── Nested inline formatting ─────────────────────────────────────
+
+    #[gtk::test]
+    fn textview_nested_bold_italic() {
+        // "Hello " (6 chars) then "both" has bold+italic
+        assert!(has_tag_at("Hello ***both*** world", "bold", 6));
+        assert!(has_tag_at("Hello ***both*** world", "italic", 6));
     }
 }
