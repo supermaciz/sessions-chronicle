@@ -65,6 +65,7 @@ fn session_from_row(row: &Row) -> rusqlite::Result<Session> {
         first_prompt: row.get(7)?,
         parent_session_id: row.get(8)?,
         is_subagent: is_subagent_int != 0,
+        token_usage: None,
     })
 }
 

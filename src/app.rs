@@ -706,7 +706,7 @@ impl SimpleComponent for App {
                         });
 
                         self.session_detail.emit(SessionDetailMsg::SetSession {
-                            session,
+                            session: Box::new(session),
                             search_query,
                         });
                     }
@@ -956,7 +956,7 @@ impl SimpleComponent for App {
                             project_name,
                         });
                         self.session_detail.emit(SessionDetailMsg::SetSession {
-                            session,
+                            session: Box::new(session),
                             search_query,
                         });
                         self.tool_inspector_pane.emit(ToolInspectorPaneMsg::Clear);
@@ -983,7 +983,7 @@ impl SimpleComponent for App {
                         Ok(Some(session)) => {
                             self.active_session = Some(parent);
                             self.session_detail.emit(SessionDetailMsg::SetSession {
-                                session,
+                                session: Box::new(session),
                                 search_query,
                             });
                             self.tool_inspector_pane.emit(ToolInspectorPaneMsg::Clear);

@@ -1,6 +1,8 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
+use crate::models::token_usage::TokenUsage;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Session {
     pub id: String,
@@ -16,6 +18,8 @@ pub struct Session {
     pub parent_session_id: Option<String>,
     #[serde(default)]
     pub is_subagent: bool,
+    #[serde(default)]
+    pub token_usage: Option<TokenUsage>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]

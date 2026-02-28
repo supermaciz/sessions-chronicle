@@ -42,7 +42,7 @@ pub enum SessionDetailOutput {
 #[derive(Debug)]
 pub enum SessionDetailMsg {
     SetSession {
-        session: Session,
+        session: Box<Session>,
         search_query: Option<String>,
     },
     #[allow(dead_code)]
@@ -316,6 +316,7 @@ impl SimpleComponent for SessionDetail {
                 self.current_match = 0;
                 self.total_matches = 0;
 
+                let session = *session;
                 let session_id = session.id.clone();
                 self.session = Some(session);
                 self.load_first_page(&session_id);

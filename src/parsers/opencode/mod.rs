@@ -219,6 +219,7 @@ impl OpenCodeParser {
             first_prompt,
             parent_session_id,
             is_subagent,
+            token_usage: None,
         };
 
         Ok(ParsedSession {

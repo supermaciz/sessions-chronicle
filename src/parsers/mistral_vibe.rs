@@ -205,6 +205,7 @@ impl MistralVibeParser {
                 first_prompt,
                 parent_session_id: None,
                 is_subagent: false,
+                token_usage: None,
             },
             messages,
             tool_calls,
