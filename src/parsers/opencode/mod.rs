@@ -8,7 +8,7 @@ use std::cmp::Ordering;
 use std::path::{Path, PathBuf};
 
 use crate::models::{
-    Message, Role, Session, Subagent, Tool, ToolCall, ToolCallStatus, TranscriptItem,
+    Message, Role, Session, Subagent, TokenUsage, Tool, ToolCall, ToolCallStatus, TranscriptItem,
     TranscriptItemKind,
 };
 use crate::parsers::ParsedSession;
@@ -33,6 +33,15 @@ pub(crate) struct MessageMetadata {
     pub role: Option<Role>,
     pub time_created: DateTime<Utc>,
     pub model: Option<String>,
+    pub tokens: Option<MessageTokens>,
+}
+
+pub(crate) struct MessageTokens {
+    pub input: i64,
+    pub output: i64,
+    pub reasoning: Option<i64>,
+    pub cache_read: Option<i64>,
+    pub cache_write: Option<i64>,
 }
 
 pub(crate) struct PartData {
@@ -46,7 +55,40 @@ pub(crate) enum PartOutcome {
     Message(Message),
     ToolCall(ToolCall),
     Subagent(Subagent),
+    StepFinishTokens(MessageTokens),
     Nothing,
+}
+
+pub(crate) fn extract_tokens(tokens_val: &Value) -> Option<MessageTokens> {
+    let input = tokens_val
+        .get("input")
+        .or_else(|| tokens_val.get("prompt"))
+        .and_then(|v| v.as_i64())?;
+    let output = tokens_val
+        .get("output")
+        .or_else(|| tokens_val.get("completion"))
+        .and_then(|v| v.as_i64())?;
+    let reasoning = tokens_val
+        .get("reasoning")
+        .and_then(|v| v.as_i64())
+        .filter(|&v| v > 0);
+    let cache_read = tokens_val
+        .get("cache")
+        .and_then(|c| c.get("read"))
+        .and_then(|v| v.as_i64())
+        .filter(|&v| v > 0);
+    let cache_write = tokens_val
+        .get("cache")
+        .and_then(|c| c.get("write"))
+        .and_then(|v| v.as_i64())
+        .filter(|&v| v > 0);
+    Some(MessageTokens {
+        input,
+        output,
+        reasoning,
+        cache_read,
+        cache_write,
+    })
 }
 
 pub(crate) struct SessionEntry {
@@ -124,8 +166,26 @@ impl OpenCodeParser {
         let mut subagents: Vec<Subagent> = Vec::new();
         let mut transcript_items: Vec<TranscriptItem> = Vec::new();
         let mut has_user_message = false;
+        let mut step_finish_tokens: Vec<MessageTokens> = Vec::new();
+        let mut has_message_level_tokens = false;
+        let mut msg_level_input: i64 = 0;
+        let mut msg_level_output: i64 = 0;
+        let mut msg_level_reasoning: i64 = 0;
+        let mut msg_level_cache_read: i64 = 0;
+        let mut msg_level_cache_write: i64 = 0;
 
-        for message in messages {
+        for message in &messages {
+            if let Some(ref tok) = message.tokens {
+                has_message_level_tokens = true;
+                msg_level_input += tok.input;
+                msg_level_output += tok.output;
+                msg_level_reasoning += tok.reasoning.unwrap_or(0);
+                msg_level_cache_read += tok.cache_read.unwrap_or(0);
+                msg_level_cache_write += tok.cache_write.unwrap_or(0);
+            }
+        }
+
+        for message in &messages {
             let mut parts = backend.load_parts(&message.id)?;
             parts.sort_by(|a, b| match (a.order, b.order) {
                 (Some(left), Some(right)) => left.cmp(&right).then_with(|| a.id.cmp(&b.id)),
@@ -183,6 +243,9 @@ impl OpenCodeParser {
                         });
                         subagents.push(sa);
                     }
+                    PartOutcome::StepFinishTokens(tok) => {
+                        step_finish_tokens.push(tok);
+                    }
                     PartOutcome::Nothing => {}
                 }
             }
@@ -199,6 +262,63 @@ impl OpenCodeParser {
         let first_prompt = match &metadata.title {
             Some(title) if !title.trim().is_empty() => Some(title.clone()),
             _ => crate::parsers::extract_first_prompt(&flattened),
+        };
+
+        // Aggregate token usage: prefer message-level tokens, fall back to step-finish
+        let token_usage = if has_message_level_tokens {
+            Some(TokenUsage {
+                input_tokens: msg_level_input,
+                output_tokens: msg_level_output,
+                reasoning_tokens: if msg_level_reasoning > 0 {
+                    Some(msg_level_reasoning)
+                } else {
+                    None
+                },
+                cache_read_tokens: if msg_level_cache_read > 0 {
+                    Some(msg_level_cache_read)
+                } else {
+                    None
+                },
+                cache_write_tokens: if msg_level_cache_write > 0 {
+                    Some(msg_level_cache_write)
+                } else {
+                    None
+                },
+            })
+        } else if !step_finish_tokens.is_empty() {
+            let mut sf_input: i64 = 0;
+            let mut sf_output: i64 = 0;
+            let mut sf_reasoning: i64 = 0;
+            let mut sf_cache_read: i64 = 0;
+            let mut sf_cache_write: i64 = 0;
+            for tok in &step_finish_tokens {
+                sf_input += tok.input;
+                sf_output += tok.output;
+                sf_reasoning += tok.reasoning.unwrap_or(0);
+                sf_cache_read += tok.cache_read.unwrap_or(0);
+                sf_cache_write += tok.cache_write.unwrap_or(0);
+            }
+            Some(TokenUsage {
+                input_tokens: sf_input,
+                output_tokens: sf_output,
+                reasoning_tokens: if sf_reasoning > 0 {
+                    Some(sf_reasoning)
+                } else {
+                    None
+                },
+                cache_read_tokens: if sf_cache_read > 0 {
+                    Some(sf_cache_read)
+                } else {
+                    None
+                },
+                cache_write_tokens: if sf_cache_write > 0 {
+                    Some(sf_cache_write)
+                } else {
+                    None
+                },
+            })
+        } else {
+            None
         };
 
         let file_path = match source {
@@ -219,7 +339,7 @@ impl OpenCodeParser {
             first_prompt,
             parent_session_id,
             is_subagent,
-            token_usage: None,
+            token_usage: token_usage.clone(),
         };
 
         Ok(ParsedSession {
@@ -228,7 +348,7 @@ impl OpenCodeParser {
             tool_calls,
             subagents,
             transcript_items,
-            token_usage: None,
+            token_usage,
         })
     }
 
@@ -362,9 +482,14 @@ impl OpenCodeParser {
                     parser_ref: None,
                 })
             }
-            "reasoning" | "step-start" | "step-finish" | "snapshot" | "compaction" => {
-                PartOutcome::Nothing
+            "step-finish" => {
+                if let Some(tok) = part.raw.get("tokens").and_then(extract_tokens) {
+                    PartOutcome::StepFinishTokens(tok)
+                } else {
+                    PartOutcome::Nothing
+                }
             }
+            "reasoning" | "step-start" | "snapshot" | "compaction" => PartOutcome::Nothing,
             other => {
                 tracing::debug!("Unhandled part type: {}", other);
                 PartOutcome::Nothing
@@ -1174,6 +1299,150 @@ mod tests {
             assistant_msgs[0].model.as_deref(),
             Some("anthropic/claude-sonnet-4-5")
         );
+    }
+
+    #[test]
+    fn parse_extracts_token_usage_from_message_tokens() {
+        let temp_dir = TempDir::new().unwrap();
+        let root = temp_dir.path();
+
+        let session_path = write_session_file(
+            root,
+            "project-a",
+            "session-tok.json",
+            json!({
+                "id": "session-tok",
+                "directory": "/projects/alpha",
+                "time": { "created": 1_704_067_200_000i64, "updated": 1_704_067_260_000i64 }
+            }),
+        );
+
+        write_message_file(
+            root,
+            "session-tok",
+            "msg-user.json",
+            json!({
+                "id": "msg-user", "sessionID": "session-tok", "role": "user",
+                "time": { "created": 1_704_067_200_000i64 }
+            }),
+        );
+        write_message_file(
+            root,
+            "session-tok",
+            "msg-asst.json",
+            json!({
+                "id": "msg-asst", "sessionID": "session-tok", "role": "assistant",
+                "time": { "created": 1_704_067_260_000i64 },
+                "data": { "tokens": { "input": 1000, "output": 500, "reasoning": 200, "cache": { "read": 300, "write": 50 } } }
+            }),
+        );
+
+        write_part_file(
+            root,
+            "msg-user",
+            "part-user.json",
+            json!({
+                "id": "part-user", "order": 1, "type": "text", "text": "Hello"
+            }),
+        );
+        write_part_file(
+            root,
+            "msg-asst",
+            "part-asst.json",
+            json!({
+                "id": "part-asst", "order": 1, "type": "text", "text": "Hi!"
+            }),
+        );
+
+        let parser = OpenCodeParser::new(root);
+        let parsed = parser.parse(&session_path).unwrap();
+        let usage = parsed.token_usage.expect("should have token_usage");
+        assert_eq!(usage.input_tokens, 1000);
+        assert_eq!(usage.output_tokens, 500);
+        assert_eq!(usage.reasoning_tokens, Some(200));
+        assert_eq!(usage.cache_read_tokens, Some(300));
+        assert_eq!(usage.cache_write_tokens, Some(50));
+    }
+
+    #[test]
+    fn parse_step_finish_fallback_when_no_message_tokens() {
+        let temp_dir = TempDir::new().unwrap();
+        let root = temp_dir.path();
+
+        let session_path = write_session_file(
+            root,
+            "project-a",
+            "session-tok-sf.json",
+            json!({
+                "id": "session-tok-sf",
+                "directory": "/projects/alpha",
+                "time": { "created": 1_704_067_200_000i64, "updated": 1_704_067_260_000i64 }
+            }),
+        );
+
+        write_message_file(
+            root,
+            "session-tok-sf",
+            "msg-user.json",
+            json!({
+                "id": "msg-user", "sessionID": "session-tok-sf", "role": "user",
+                "time": { "created": 1_704_067_200_000i64 }
+            }),
+        );
+        write_message_file(
+            root,
+            "session-tok-sf",
+            "msg-asst.json",
+            json!({
+                "id": "msg-asst", "sessionID": "session-tok-sf", "role": "assistant",
+                "time": { "created": 1_704_067_260_000i64 }
+            }),
+        );
+
+        write_part_file(
+            root,
+            "msg-user",
+            "part-user.json",
+            json!({
+                "id": "part-user", "order": 1, "type": "text", "text": "Hello"
+            }),
+        );
+        write_part_file(
+            root,
+            "msg-asst",
+            "part-sf.json",
+            json!({
+                "id": "part-sf", "order": 1, "type": "step-finish",
+                "tokens": { "input": 800, "output": 400 }
+            }),
+        );
+        write_part_file(
+            root,
+            "msg-asst",
+            "part-text.json",
+            json!({
+                "id": "part-text", "order": 2, "type": "text", "text": "Hi!"
+            }),
+        );
+
+        let parser = OpenCodeParser::new(root);
+        let parsed = parser.parse(&session_path).unwrap();
+        let usage = parsed
+            .token_usage
+            .expect("should have token_usage from step-finish");
+        assert_eq!(usage.input_tokens, 800);
+        assert_eq!(usage.output_tokens, 400);
+    }
+
+    #[test]
+    fn parse_no_tokens_anywhere_yields_none() {
+        let storage_root = std::path::Path::new("tests/fixtures/opencode_storage");
+        let parser = OpenCodeParser::new(storage_root);
+        let json_backend = json_backend::JsonBackend::new(storage_root);
+        let entries = json_backend.list_sessions().unwrap();
+        let entry = entries.iter().find(|e| e.id == "session-001").unwrap();
+        let parsed = parser.parse_entry(entry, &json_backend).unwrap();
+        assert!(parsed.token_usage.is_none());
     }
 
     #[test]

@@ -7,7 +7,7 @@ use crate::parsers::model::normalize_model;
 
 use super::{
     MessageMetadata, OpenCodeBackend, PartData, SessionEntry, SessionMetadata, SessionSource,
-    timestamp_from_millis,
+    extract_tokens, timestamp_from_millis,
 };
 
 pub struct SqliteBackend {
@@ -129,11 +129,17 @@ impl OpenCodeBackend for SqliteBackend {
                 let model = normalize_model(data.get("modelID"))
                     .or_else(|| normalize_model(data.get("model").and_then(|m| m.get("modelID"))));
 
+                let tokens = data
+                    .get("data")
+                    .and_then(|d| d.get("tokens"))
+                    .and_then(extract_tokens);
+
                 Some(MessageMetadata {
                     id,
                     role,
                     time_created,
                     model,
+                    tokens,
                 })
             })
             .collect();
