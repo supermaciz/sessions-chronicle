@@ -160,6 +160,29 @@ impl SimpleComponent for SessionDetail {
                                     },
                                 },
 
+                                // Token usage row
+                                #[name = "token_row"]
+                                gtk::Box {
+                                    set_orientation: gtk::Orientation::Horizontal,
+                                    set_spacing: 6,
+                                    set_halign: gtk::Align::Start,
+                                    #[watch]
+                                    set_visible: model.session.as_ref()
+                                        .and_then(|s| s.token_usage.as_ref())
+                                        .is_some(),
+
+                                    gtk::Label {
+                                        set_label: "Tokens:",
+                                        add_css_class: "dim-label",
+                                    },
+
+                                    #[name = "token_usage_label"]
+                                    gtk::Label {
+                                        add_css_class: "dim-label",
+                                        set_has_tooltip: true,
+                                    },
+                                },
+
                                 gtk::Box {
                                     set_orientation: gtk::Orientation::Horizontal,
                                     set_spacing: 6,
@@ -469,6 +492,15 @@ impl SimpleComponent for SessionDetail {
             widgets.time_label.set_label(&time_str);
 
             widgets.session_id_label.set_label(&session.id);
+
+            if let Some(usage) = &session.token_usage {
+                widgets
+                    .token_usage_label
+                    .set_label(&crate::ui::format::format_token_total(usage));
+                widgets
+                    .token_usage_label
+                    .set_tooltip_text(Some(&crate::ui::format::format_token_tooltip(usage)));
+            }
 
             widgets
                 .content_stack
