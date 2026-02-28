@@ -6,7 +6,7 @@ use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::path::Path;
 
-use crate::models::{Message, Role, Session, Tool, ToolCall, ToolCallStatus};
+use crate::models::{Message, Role, Session, TokenUsage, Tool, ToolCall, ToolCallStatus};
 use crate::models::{TranscriptItem, TranscriptItemKind};
 use crate::parsers::ParsedSession;
 use crate::parsers::model::normalize_model;
@@ -99,6 +99,7 @@ impl CodexParser {
         let mut msg_counter: i64 = 0;
         let mut item_counter: i64 = 0;
         let mut current_turn_model: Option<String> = None;
+        let mut best_snapshot: Option<(i64, TokenUsage)> = None;
 
         for line in lines {
             let line = line.context("Failed to read line")?;
@@ -275,6 +276,51 @@ impl CodexParser {
                     item_counter += 1;
                 }
 
+                Some("token_count") => {
+                    if let Some(info) = payload.get("info")
+                        && !info.is_null()
+                        && let Some(total_usage) = info.get("total_token_usage")
+                    {
+                        let input = total_usage
+                            .get("input_tokens")
+                            .and_then(|v| v.as_i64())
+                            .unwrap_or(0);
+                        let output = total_usage
+                            .get("output_tokens")
+                            .and_then(|v| v.as_i64())
+                            .unwrap_or(0);
+                        let reasoning = total_usage
+                            .get("reasoning_output_tokens")
+                            .and_then(|v| v.as_i64())
+                            .unwrap_or(0);
+                        let cached = total_usage
+                            .get("cached_input_tokens")
+                            .and_then(|v| v.as_i64());
+
+                        let global_total = input + output + reasoning;
+                        let replace = match &best_snapshot {
+                            Some((current_best, _)) => global_total > *current_best,
+                            None => true,
+                        };
+                        if replace {
+                            best_snapshot = Some((
+                                global_total,
+                                TokenUsage {
+                                    input_tokens: input,
+                                    output_tokens: output,
+                                    cache_read_tokens: cached,
+                                    cache_write_tokens: None,
+                                    reasoning_tokens: if reasoning > 0 {
+                                        Some(reasoning)
+                                    } else {
+                                        None
+                                    },
+                                },
+                            ));
+                        }
+                    }
+                }
+
                 Some("mcp_tool_call_end") | Some("exec_command_end") => {
                     let call_id = match payload.get("call_id").and_then(|v| v.as_str()) {
                         Some(id) => id,
@@ -318,6 +364,7 @@ impl CodexParser {
         }
 
         let first_prompt = crate::parsers::extract_first_prompt(&messages);
+        let token_usage = best_snapshot.map(|(_, usage)| usage);
 
         Ok(ParsedSession {
             session: Session {
@@ -331,11 +378,13 @@ impl CodexParser {
                 first_prompt,
                 parent_session_id: None,
                 is_subagent: false,
+                token_usage: None,
             },
             messages,
             tool_calls,
             subagents: Vec::new(),
             transcript_items,
+            token_usage,
         })
     }
 
@@ -455,6 +504,34 @@ mod tests {
         assert_eq!(parsed.tool_calls[1].status, ToolCallStatus::Completed);
         // Transcript: user msg, tool call 1, tool call 2, agent msg
         assert_eq!(parsed.transcript_items.len(), 4);
+    }
+
+    #[test]
+    fn parse_extracts_token_usage_from_highest_snapshot() {
+        let mut file = tempfile::NamedTempFile::new().unwrap();
+        writeln!(file, r#"{{"type":"session_meta","payload":{{"id":"tok-session","timestamp":"2026-01-01T00:00:00Z","cwd":"/tmp"}}}}"#).unwrap();
+        writeln!(file, r#"{{"type":"event_msg","timestamp":"2026-01-01T00:00:01Z","payload":{{"type":"user_message","message":"Hi"}}}}"#).unwrap();
+        writeln!(file, r#"{{"type":"event_msg","timestamp":"2026-01-01T00:00:02Z","payload":{{"type":"token_count","info":{{"total_token_usage":{{"input_tokens":100,"output_tokens":50,"reasoning_output_tokens":30,"cached_input_tokens":80}}}}}}}}"#).unwrap();
+        writeln!(file, r#"{{"type":"event_msg","timestamp":"2026-01-01T00:00:03Z","payload":{{"type":"token_count","info":{{"total_token_usage":{{"input_tokens":500,"output_tokens":200,"reasoning_output_tokens":100,"cached_input_tokens":300}}}}}}}}"#).unwrap();
+        writeln!(file, r#"{{"type":"event_msg","timestamp":"2026-01-01T00:00:04Z","payload":{{"type":"agent_message","message":"Done"}}}}"#).unwrap();
+        let parsed = CodexParser.parse(file.path()).unwrap();
+        let usage = parsed.token_usage.expect("should have token_usage");
+        assert_eq!(usage.input_tokens, 500);
+        assert_eq!(usage.output_tokens, 200);
+        assert_eq!(usage.reasoning_tokens, Some(100));
+        assert_eq!(usage.cache_read_tokens, Some(300));
+        assert_eq!(usage.cache_write_tokens, None);
+    }
+
+    #[test]
+    fn parse_skips_null_info_token_count() {
+        let mut file = tempfile::NamedTempFile::new().unwrap();
+        writeln!(file, r#"{{"type":"session_meta","payload":{{"id":"tok-null","timestamp":"2026-01-01T00:00:00Z","cwd":"/tmp"}}}}"#).unwrap();
+        writeln!(file, r#"{{"type":"event_msg","timestamp":"2026-01-01T00:00:01Z","payload":{{"type":"user_message","message":"Hi"}}}}"#).unwrap();
+        writeln!(file, r#"{{"type":"event_msg","timestamp":"2026-01-01T00:00:02Z","payload":{{"type":"token_count","info":null}}}}"#).unwrap();
+        writeln!(file, r#"{{"type":"event_msg","timestamp":"2026-01-01T00:00:03Z","payload":{{"type":"agent_message","message":"Done"}}}}"#).unwrap();
+        let parsed = CodexParser.parse(file.path()).unwrap();
+        assert!(parsed.token_usage.is_none());
     }
 
     #[derive(Clone, Default)]

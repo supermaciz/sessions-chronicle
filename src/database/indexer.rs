@@ -322,8 +322,9 @@ impl SessionIndexer {
         tx.execute(
             "INSERT OR REPLACE INTO sessions
              (id, tool, project_path, start_time, message_count, file_path, last_updated,
-              first_prompt, parent_session_id, is_subagent)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+              first_prompt, parent_session_id, is_subagent,
+              input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, reasoning_tokens)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
             rusqlite::params![
                 &session.id,
                 session.tool.to_storage(),
@@ -335,6 +336,17 @@ impl SessionIndexer {
                 &session.first_prompt,
                 &session.parent_session_id,
                 session.is_subagent as i64,
+                parsed.token_usage.as_ref().map(|u| u.input_tokens),
+                parsed.token_usage.as_ref().map(|u| u.output_tokens),
+                parsed
+                    .token_usage
+                    .as_ref()
+                    .and_then(|u| u.cache_read_tokens),
+                parsed
+                    .token_usage
+                    .as_ref()
+                    .and_then(|u| u.cache_write_tokens),
+                parsed.token_usage.as_ref().and_then(|u| u.reasoning_tokens),
             ],
         )?;
 
@@ -797,6 +809,41 @@ mod tests {
 
         let count = indexer.index_vibe_sessions(&nonexistent_dir).unwrap();
         assert_eq!(count, 0);
+    }
+
+    #[test]
+    fn claude_indexing_persists_token_usage() {
+        let temp_db = NamedTempFile::new().unwrap();
+        let mut indexer = SessionIndexer::new(temp_db.path()).unwrap();
+        let sessions_dir = PathBuf::from("tests/fixtures/claude_sessions");
+        indexer.index_claude_sessions(&sessions_dir).unwrap();
+
+        let (input, output): (Option<i64>, Option<i64>) = indexer
+            .db
+            .query_row(
+                "SELECT input_tokens, output_tokens FROM sessions WHERE id = 'abc123'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert!(input.is_some(), "input_tokens should be populated");
+        assert!(output.is_some(), "output_tokens should be populated");
+    }
+
+    #[test]
+    fn session_load_roundtrip_includes_token_usage() {
+        let temp_db = NamedTempFile::new().unwrap();
+        let mut indexer = SessionIndexer::new(temp_db.path()).unwrap();
+        let sessions_dir = PathBuf::from("tests/fixtures/claude_sessions");
+        indexer.index_claude_sessions(&sessions_dir).unwrap();
+
+        let session = crate::database::load_session(temp_db.path(), "abc123")
+            .unwrap()
+            .expect("session should exist");
+        assert!(session.token_usage.is_some(), "should have token_usage");
+        let usage = session.token_usage.unwrap();
+        assert!(usage.input_tokens > 0);
+        assert!(usage.output_tokens > 0);
     }
 
     #[test]

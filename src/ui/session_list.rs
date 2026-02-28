@@ -377,6 +377,7 @@ mod tests {
             first_prompt: None,
             parent_session_id: None,
             is_subagent: false,
+            token_usage: None,
         };
 
         {
@@ -433,6 +434,7 @@ mod tests {
                     first_prompt: None,
                     parent_session_id: None,
                     is_subagent: false,
+                    token_usage: None,
                 },
             });
         }
@@ -473,6 +475,7 @@ mod tests {
             first_prompt: None,
             parent_session_id: None,
             is_subagent: false,
+            token_usage: None,
         };
 
         {
@@ -519,6 +522,7 @@ mod tests {
             first_prompt: None,
             parent_session_id: None,
             is_subagent: false,
+            token_usage: None,
         }
     }
 

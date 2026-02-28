@@ -41,30 +41,50 @@ pub struct TranscriptItemRow {
 }
 
 fn session_from_row(row: &Row) -> rusqlite::Result<Session> {
-    let tool_value: String = row.get(1)?;
+    let tool_value: String = row.get("tool")?;
     let tool = Tool::from_storage(&tool_value).unwrap_or(Tool::ClaudeCode);
-    let start_time: i64 = row.get(3)?;
-    let last_updated: i64 = row.get(6)?;
-    let message_count: i64 = row.get(4)?;
-    let is_subagent_int: i64 = row.get(9).unwrap_or(0);
+    let start_time: i64 = row.get("start_time")?;
+    let last_updated: i64 = row.get("last_updated")?;
+    let message_count: i64 = row.get("message_count")?;
+    let is_subagent_int: i64 = row.get("is_subagent").unwrap_or(0);
+
+    let input_tokens: Option<i64> = row.get("input_tokens").unwrap_or(None);
+    let output_tokens: Option<i64> = row.get("output_tokens").unwrap_or(None);
+    let token_usage = match (input_tokens, output_tokens) {
+        (Some(input), Some(output)) => Some(crate::models::TokenUsage {
+            input_tokens: input,
+            output_tokens: output,
+            cache_read_tokens: row.get("cache_read_tokens").unwrap_or(None),
+            cache_write_tokens: row.get("cache_write_tokens").unwrap_or(None),
+            reasoning_tokens: row.get("reasoning_tokens").unwrap_or(None),
+        }),
+        (Some(_), None) | (None, Some(_)) => {
+            tracing::warn!(
+                "Inconsistent token data for session (input xor output), treating as unavailable"
+            );
+            None
+        }
+        (None, None) => None,
+    };
 
     Ok(Session {
-        id: row.get(0)?,
+        id: row.get("id")?,
         tool,
-        project_path: row.get(2)?,
+        project_path: row.get("project_path")?,
         start_time: Utc
             .timestamp_opt(start_time, 0)
             .single()
             .unwrap_or_else(Utc::now),
         message_count: message_count.max(0) as usize,
-        file_path: row.get(5)?,
+        file_path: row.get("file_path")?,
         last_updated: Utc
             .timestamp_opt(last_updated, 0)
             .single()
             .unwrap_or_else(Utc::now),
-        first_prompt: row.get(7)?,
-        parent_session_id: row.get(8)?,
+        first_prompt: row.get("first_prompt")?,
+        parent_session_id: row.get("parent_session_id")?,
         is_subagent: is_subagent_int != 0,
+        token_usage,
     })
 }
 
@@ -145,6 +165,8 @@ fn search_sessions_with_query(
         (
             "SELECT s.id, s.tool, s.project_path, s.start_time, s.message_count, s.file_path,
                     s.last_updated, s.first_prompt, s.parent_session_id, s.is_subagent,
+                    s.input_tokens, s.output_tokens, s.cache_read_tokens,
+                    s.cache_write_tokens, s.reasoning_tokens,
                     bm25(messages) AS rank
              FROM messages
              JOIN sessions s ON s.id = messages.session_id
@@ -161,6 +183,8 @@ fn search_sessions_with_query(
             format!(
                 "SELECT s.id, s.tool, s.project_path, s.start_time, s.message_count, s.file_path,
                         s.last_updated, s.first_prompt, s.parent_session_id, s.is_subagent,
+                        s.input_tokens, s.output_tokens, s.cache_read_tokens,
+                        s.cache_write_tokens, s.reasoning_tokens,
                         bm25(messages) AS rank
                  FROM messages
                  JOIN sessions s ON s.id = messages.session_id
@@ -211,7 +235,9 @@ pub fn load_sessions(db_path: &Path, tools: &[Tool]) -> Result<Vec<Session>> {
     let (query, tool_strings): (String, Vec<String>) = if tools.len() == Tool::ALL.len() {
         (
             "SELECT id, tool, project_path, start_time, message_count, file_path,
-                    last_updated, first_prompt, parent_session_id, is_subagent
+                    last_updated, first_prompt, parent_session_id, is_subagent,
+                    input_tokens, output_tokens, cache_read_tokens,
+                    cache_write_tokens, reasoning_tokens
              FROM sessions
              WHERE is_subagent = 0
              ORDER BY last_updated DESC"
@@ -224,7 +250,9 @@ pub fn load_sessions(db_path: &Path, tools: &[Tool]) -> Result<Vec<Session>> {
         (
             format!(
                 "SELECT id, tool, project_path, start_time, message_count, file_path,
-                        last_updated, first_prompt, parent_session_id, is_subagent
+                        last_updated, first_prompt, parent_session_id, is_subagent,
+                        input_tokens, output_tokens, cache_read_tokens,
+                        cache_write_tokens, reasoning_tokens
                  FROM sessions
                  WHERE tool IN ({})
                    AND is_subagent = 0
@@ -259,7 +287,9 @@ pub fn load_session(db_path: &Path, session_id: &str) -> Result<Option<Session>>
 
     let mut stmt = db.prepare(
         "SELECT id, tool, project_path, start_time, message_count, file_path,
-                last_updated, first_prompt, parent_session_id, is_subagent
+                last_updated, first_prompt, parent_session_id, is_subagent,
+                input_tokens, output_tokens, cache_read_tokens,
+                cache_write_tokens, reasoning_tokens
          FROM sessions
          WHERE id = ?1",
     )?;

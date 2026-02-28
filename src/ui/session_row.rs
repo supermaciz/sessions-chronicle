@@ -211,6 +211,7 @@ mod tests {
             first_prompt: first_prompt.map(str::to_string),
             parent_session_id: None,
             is_subagent: false,
+            token_usage: None,
         }
     }
 

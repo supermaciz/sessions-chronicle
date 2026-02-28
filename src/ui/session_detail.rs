@@ -42,7 +42,7 @@ pub enum SessionDetailOutput {
 #[derive(Debug)]
 pub enum SessionDetailMsg {
     SetSession {
-        session: Session,
+        session: Box<Session>,
         search_query: Option<String>,
     },
     #[allow(dead_code)]
@@ -157,6 +157,55 @@ impl SimpleComponent for SessionDetail {
                                     #[name = "time_label"]
                                     gtk::Label {
                                         add_css_class: "dim-label",
+                                    },
+                                },
+
+                                // Token usage rows
+                                #[name = "token_row"]
+                                gtk::Box {
+                                    set_orientation: gtk::Orientation::Vertical,
+                                    set_spacing: 2,
+                                    set_halign: gtk::Align::Start,
+                                    #[watch]
+                                    set_visible: model.session.as_ref()
+                                        .and_then(|s| s.token_usage.as_ref())
+                                        .is_some(),
+
+                                    gtk::Box {
+                                        set_orientation: gtk::Orientation::Horizontal,
+                                        set_spacing: 6,
+
+                                        gtk::Label {
+                                            set_label: "Tokens:",
+                                            add_css_class: "dim-label",
+                                        },
+
+                                        #[name = "token_details_label"]
+                                        gtk::Label {
+                                            add_css_class: "dim-label",
+                                            set_has_tooltip: true,
+                                        },
+                                    },
+
+                                    gtk::Box {
+                                        set_orientation: gtk::Orientation::Horizontal,
+                                        set_spacing: 6,
+                                        #[watch]
+                                        set_visible: model.session.as_ref()
+                                            .and_then(|s| s.token_usage.as_ref())
+                                            .and_then(crate::ui::format::format_token_cache)
+                                            .is_some(),
+
+                                        gtk::Label {
+                                            set_label: "Cache:",
+                                            add_css_class: "dim-label",
+                                        },
+
+                                        #[name = "token_cache_label"]
+                                        gtk::Label {
+                                            add_css_class: "dim-label",
+                                            set_has_tooltip: true,
+                                        },
                                     },
                                 },
 
@@ -316,6 +365,7 @@ impl SimpleComponent for SessionDetail {
                 self.current_match = 0;
                 self.total_matches = 0;
 
+                let session = *session;
                 let session_id = session.id.clone();
                 self.session = Some(session);
                 self.load_first_page(&session_id);
@@ -468,6 +518,26 @@ impl SimpleComponent for SessionDetail {
             widgets.time_label.set_label(&time_str);
 
             widgets.session_id_label.set_label(&session.id);
+
+            if let Some(usage) = &session.token_usage {
+                widgets
+                    .token_details_label
+                    .set_label(&crate::ui::format::format_token_details(usage));
+                widgets
+                    .token_details_label
+                    .set_tooltip_text(Some(&crate::ui::format::token_details_tooltip(usage)));
+                if let Some(cache_text) = crate::ui::format::format_token_cache(usage) {
+                    widgets.token_cache_label.set_label(&cache_text);
+                    widgets
+                        .token_cache_label
+                        .set_tooltip_text(Some(crate::ui::format::token_cache_tooltip()));
+                }
+            } else {
+                widgets.token_details_label.set_label("");
+                widgets.token_details_label.set_tooltip_text(None);
+                widgets.token_cache_label.set_label("");
+                widgets.token_cache_label.set_tooltip_text(None);
+            }
 
             widgets
                 .content_stack

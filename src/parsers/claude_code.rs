@@ -6,10 +6,17 @@ use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::path::Path;
 
-use crate::models::{Message, Role, Session, Subagent, Tool, ToolCall, ToolCallStatus};
+use crate::models::{Message, Role, Session, Subagent, TokenUsage, Tool, ToolCall, ToolCallStatus};
 use crate::models::{TranscriptItem, TranscriptItemKind};
 use crate::parsers::ParsedSession;
 use crate::parsers::model::normalize_model;
+
+struct UsageEntry {
+    input_tokens: i64,
+    output_tokens: i64,
+    cache_read_tokens: i64,
+    cache_write_tokens: i64,
+}
 
 pub struct ClaudeCodeParser;
 
@@ -40,6 +47,10 @@ impl ClaudeCodeParser {
 
         let mut msg_counter: i64 = 0;
         let mut item_counter: i64 = 0;
+
+        // Token usage tracking: dedup by (requestId, message.id)
+        let mut usage_map: HashMap<(String, String), UsageEntry> = HashMap::new();
+        let mut anonymous_usage: Vec<UsageEntry> = Vec::new();
 
         for line in reader.lines() {
             let line = line.context("Failed to read line")?;
@@ -233,6 +244,59 @@ impl ClaudeCodeParser {
                     let model_raw = event.get("message").and_then(|m| m.get("model"));
                     let model = normalize_model(model_raw);
 
+                    // Extract token usage from message.usage
+                    if let Some(usage) = event.get("message").and_then(|m| m.get("usage")) {
+                        let input = usage
+                            .get("input_tokens")
+                            .and_then(|v| v.as_i64())
+                            .unwrap_or(0);
+                        let output = usage
+                            .get("output_tokens")
+                            .and_then(|v| v.as_i64())
+                            .unwrap_or(0);
+                        let cache_read = usage
+                            .get("cache_read_input_tokens")
+                            .and_then(|v| v.as_i64())
+                            .unwrap_or(0);
+                        let cache_write = usage
+                            .get("cache_creation_input_tokens")
+                            .and_then(|v| v.as_i64())
+                            .unwrap_or(0);
+
+                        let entry = UsageEntry {
+                            input_tokens: input,
+                            output_tokens: output,
+                            cache_read_tokens: cache_read,
+                            cache_write_tokens: cache_write,
+                        };
+
+                        let request_id = event
+                            .get("requestId")
+                            .and_then(|v| v.as_str())
+                            .map(str::to_string);
+                        let message_id = event
+                            .get("message")
+                            .and_then(|m| m.get("id"))
+                            .and_then(|v| v.as_str())
+                            .map(str::to_string);
+
+                        if let (Some(req_id), Some(msg_id)) = (request_id, message_id) {
+                            let key = (req_id, msg_id);
+                            let entry_total = entry.input_tokens + entry.output_tokens;
+                            let replace = match usage_map.get(&key) {
+                                Some(existing) => {
+                                    entry_total > existing.input_tokens + existing.output_tokens
+                                }
+                                None => true,
+                            };
+                            if replace {
+                                usage_map.insert(key, entry);
+                            }
+                        } else {
+                            anonymous_usage.push(entry);
+                        }
+                    }
+
                     // Extract text portion
                     let text = Self::extract_content(content_val).filter(|t| !t.trim().is_empty());
                     if let Some(text) = text {
@@ -353,6 +417,40 @@ impl ClaudeCodeParser {
             }
         }
 
+        // Aggregate token usage from all deduplicated entries
+        let all_entries = usage_map.into_values().chain(anonymous_usage);
+        let mut total_input: i64 = 0;
+        let mut total_output: i64 = 0;
+        let mut total_cache_read: i64 = 0;
+        let mut total_cache_write: i64 = 0;
+        let mut has_usage = false;
+        for entry in all_entries {
+            has_usage = true;
+            total_input += entry.input_tokens;
+            total_output += entry.output_tokens;
+            total_cache_read += entry.cache_read_tokens;
+            total_cache_write += entry.cache_write_tokens;
+        }
+        let token_usage = if has_usage {
+            Some(TokenUsage {
+                input_tokens: total_input,
+                output_tokens: total_output,
+                cache_read_tokens: if total_cache_read > 0 {
+                    Some(total_cache_read)
+                } else {
+                    None
+                },
+                cache_write_tokens: if total_cache_write > 0 {
+                    Some(total_cache_write)
+                } else {
+                    None
+                },
+                reasoning_tokens: None,
+            })
+        } else {
+            None
+        };
+
         let Some(start_time) = earliest_timestamp else {
             anyhow::bail!("Session contains no messages");
         };
@@ -379,6 +477,7 @@ impl ClaudeCodeParser {
             first_prompt,
             parent_session_id: None,
             is_subagent: false,
+            token_usage: None,
         };
 
         Ok(ParsedSession {
@@ -387,6 +486,7 @@ impl ClaudeCodeParser {
             tool_calls,
             subagents,
             transcript_items,
+            token_usage,
         })
     }
 
@@ -668,6 +768,45 @@ mod tests {
             .collect();
         assert!(!user_msgs.is_empty());
         assert!(user_msgs[0].model.is_none());
+    }
+
+    #[test]
+    fn parse_extracts_token_usage_from_assistant_events() {
+        let file = create_temp_session(&[
+            r#"{"type":"user","timestamp":"2024-01-01T00:00:00Z","sessionId":"s1","message":{"content":"Hello"}}"#,
+            r#"{"type":"assistant","timestamp":"2024-01-01T00:00:01Z","sessionId":"s1","requestId":"req1","message":{"id":"msg1","content":"Hi!","usage":{"input_tokens":100,"output_tokens":50,"cache_read_input_tokens":80,"cache_creation_input_tokens":20}}}"#,
+            r#"{"type":"assistant","timestamp":"2024-01-01T00:00:02Z","sessionId":"s1","requestId":"req2","message":{"id":"msg2","content":"More","usage":{"input_tokens":200,"output_tokens":75,"cache_read_input_tokens":150,"cache_creation_input_tokens":10}}}"#,
+        ]);
+        let parsed = ClaudeCodeParser.parse(file.path()).unwrap();
+        let usage = parsed.token_usage.expect("should have token_usage");
+        assert_eq!(usage.input_tokens, 300);
+        assert_eq!(usage.output_tokens, 125);
+        assert_eq!(usage.cache_read_tokens, Some(230));
+        assert_eq!(usage.cache_write_tokens, Some(30));
+        assert_eq!(usage.reasoning_tokens, None);
+    }
+
+    #[test]
+    fn parse_deduplicates_token_usage_by_request_and_message_id() {
+        let file = create_temp_session(&[
+            r#"{"type":"user","timestamp":"2024-01-01T00:00:00Z","sessionId":"s1","message":{"content":"Hello"}}"#,
+            r#"{"type":"assistant","timestamp":"2024-01-01T00:00:01Z","sessionId":"s1","requestId":"req1","message":{"id":"msg1","content":"Hi!","usage":{"input_tokens":100,"output_tokens":50}}}"#,
+            r#"{"type":"assistant","timestamp":"2024-01-01T00:00:02Z","sessionId":"s1","requestId":"req1","message":{"id":"msg1","content":"Hi!","usage":{"input_tokens":120,"output_tokens":60}}}"#,
+        ]);
+        let parsed = ClaudeCodeParser.parse(file.path()).unwrap();
+        let usage = parsed.token_usage.expect("should have token_usage");
+        assert_eq!(usage.input_tokens, 120);
+        assert_eq!(usage.output_tokens, 60);
+    }
+
+    #[test]
+    fn parse_no_usage_blocks_yields_none_token_usage() {
+        let file = create_temp_session(&[
+            r#"{"type":"user","timestamp":"2024-01-01T00:00:00Z","sessionId":"s1","message":{"content":"Hello"}}"#,
+            r#"{"type":"assistant","timestamp":"2024-01-01T00:00:01Z","sessionId":"s1","message":{"content":"Hi!"}}"#,
+        ]);
+        let parsed = ClaudeCodeParser.parse(file.path()).unwrap();
+        assert!(parsed.token_usage.is_none());
     }
 
     #[test]
