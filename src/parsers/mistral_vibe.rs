@@ -7,7 +7,8 @@ use std::io::{BufRead, BufReader};
 use std::path::Path;
 
 use crate::models::{
-    Message, Role, Session, Tool, ToolCall, ToolCallStatus, TranscriptItem, TranscriptItemKind,
+    Message, Role, Session, TokenUsage, Tool, ToolCall, ToolCallStatus, TranscriptItem,
+    TranscriptItemKind,
 };
 use crate::parsers::ParsedSession;
 use crate::parsers::model::normalize_model;
@@ -51,6 +52,18 @@ impl MistralVibeParser {
 
         let session_model =
             normalize_model(metadata.get("config").and_then(|c| c.get("active_model")));
+
+        let token_usage = metadata.get("stats").and_then(|stats| {
+            let prompt = stats.get("session_prompt_tokens")?.as_i64()?;
+            let completion = stats.get("session_completion_tokens")?.as_i64()?;
+            Some(TokenUsage {
+                input_tokens: prompt,
+                output_tokens: completion,
+                cache_read_tokens: None,
+                cache_write_tokens: None,
+                reasoning_tokens: None,
+            })
+        });
 
         let messages_path = session_dir.join("messages.jsonl");
         let file = File::open(&messages_path).context("Failed to open messages.jsonl")?;
@@ -205,13 +218,13 @@ impl MistralVibeParser {
                 first_prompt,
                 parent_session_id: None,
                 is_subagent: false,
-                token_usage: None,
+                token_usage: token_usage.clone(),
             },
             messages,
             tool_calls,
             subagents: Vec::new(),
             transcript_items,
-            token_usage: None,
+            token_usage,
         })
     }
 
@@ -455,6 +468,43 @@ mod tests {
             .collect();
         assert!(!user_msgs.is_empty());
         assert!(user_msgs[0].model.is_none());
+    }
+
+    #[test]
+    fn parse_extracts_token_usage_from_stats() {
+        let temp_dir = TempDir::new().unwrap();
+        let root = temp_dir.path();
+        let meta = json!({
+            "session_id": "tok-session",
+            "start_time": "2026-02-03T19:14:51Z",
+            "end_time": "2026-02-03T19:16:05Z",
+            "environment": { "working_directory": "/tmp/project" },
+            "stats": { "session_prompt_tokens": 5000, "session_completion_tokens": 2000 }
+        });
+        fs::write(root.join("meta.json"), serde_json::to_vec(&meta).unwrap()).unwrap();
+        write_messages(
+            &root.join("messages.jsonl"),
+            &[
+                r#"{"role":"user","content":"Hi"}"#,
+                r#"{"role":"assistant","content":"Hello"}"#,
+            ],
+        );
+        let parsed = MistralVibeParser.parse(root).unwrap();
+        let usage = parsed.token_usage.expect("should have token_usage");
+        assert_eq!(usage.input_tokens, 5000);
+        assert_eq!(usage.output_tokens, 2000);
+        assert_eq!(usage.cache_read_tokens, None);
+        assert_eq!(usage.reasoning_tokens, None);
+    }
+
+    #[test]
+    fn parse_no_stats_yields_none_token_usage() {
+        let temp_dir = create_temp_session_dir(&[
+            r#"{"role":"user","content":"Hi"}"#,
+            r#"{"role":"assistant","content":"Hello"}"#,
+        ]);
+        let parsed = MistralVibeParser.parse(temp_dir.path()).unwrap();
+        assert!(parsed.token_usage.is_none());
     }
 
     #[test]
