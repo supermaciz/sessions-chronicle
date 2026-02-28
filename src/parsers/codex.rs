@@ -279,45 +279,44 @@ impl CodexParser {
                 Some("token_count") => {
                     if let Some(info) = payload.get("info")
                         && !info.is_null()
+                        && let Some(total_usage) = info.get("total_token_usage")
                     {
-                        if let Some(total_usage) = info.get("total_token_usage") {
-                            let input = total_usage
-                                .get("input_tokens")
-                                .and_then(|v| v.as_i64())
-                                .unwrap_or(0);
-                            let output = total_usage
-                                .get("output_tokens")
-                                .and_then(|v| v.as_i64())
-                                .unwrap_or(0);
-                            let reasoning = total_usage
-                                .get("reasoning_output_tokens")
-                                .and_then(|v| v.as_i64())
-                                .unwrap_or(0);
-                            let cached = total_usage
-                                .get("cached_input_tokens")
-                                .and_then(|v| v.as_i64());
+                        let input = total_usage
+                            .get("input_tokens")
+                            .and_then(|v| v.as_i64())
+                            .unwrap_or(0);
+                        let output = total_usage
+                            .get("output_tokens")
+                            .and_then(|v| v.as_i64())
+                            .unwrap_or(0);
+                        let reasoning = total_usage
+                            .get("reasoning_output_tokens")
+                            .and_then(|v| v.as_i64())
+                            .unwrap_or(0);
+                        let cached = total_usage
+                            .get("cached_input_tokens")
+                            .and_then(|v| v.as_i64());
 
-                            let global_total = input + output + reasoning;
-                            let replace = match &best_snapshot {
-                                Some((current_best, _)) => global_total > *current_best,
-                                None => true,
-                            };
-                            if replace {
-                                best_snapshot = Some((
-                                    global_total,
-                                    TokenUsage {
-                                        input_tokens: input,
-                                        output_tokens: output,
-                                        cache_read_tokens: cached,
-                                        cache_write_tokens: None,
-                                        reasoning_tokens: if reasoning > 0 {
-                                            Some(reasoning)
-                                        } else {
-                                            None
-                                        },
+                        let global_total = input + output + reasoning;
+                        let replace = match &best_snapshot {
+                            Some((current_best, _)) => global_total > *current_best,
+                            None => true,
+                        };
+                        if replace {
+                            best_snapshot = Some((
+                                global_total,
+                                TokenUsage {
+                                    input_tokens: input,
+                                    output_tokens: output,
+                                    cache_read_tokens: cached,
+                                    cache_write_tokens: None,
+                                    reasoning_tokens: if reasoning > 0 {
+                                        Some(reasoning)
+                                    } else {
+                                        None
                                     },
-                                ));
-                            }
+                                },
+                            ));
                         }
                     }
                 }
