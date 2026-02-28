@@ -16,7 +16,6 @@ pub struct ParsedSession {
     pub tool_calls: Vec<ToolCall>,
     pub subagents: Vec<Subagent>,
     pub transcript_items: Vec<TranscriptItem>,
-    #[allow(dead_code)] // Will be consumed when the database write path and UI are wired up
     pub token_usage: Option<TokenUsage>,
 }
 

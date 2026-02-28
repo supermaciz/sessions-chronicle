@@ -322,8 +322,9 @@ impl SessionIndexer {
         tx.execute(
             "INSERT OR REPLACE INTO sessions
              (id, tool, project_path, start_time, message_count, file_path, last_updated,
-              first_prompt, parent_session_id, is_subagent)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+              first_prompt, parent_session_id, is_subagent,
+              input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, reasoning_tokens)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
             rusqlite::params![
                 &session.id,
                 session.tool.to_storage(),
@@ -335,6 +336,17 @@ impl SessionIndexer {
                 &session.first_prompt,
                 &session.parent_session_id,
                 session.is_subagent as i64,
+                parsed.token_usage.as_ref().map(|u| u.input_tokens),
+                parsed.token_usage.as_ref().map(|u| u.output_tokens),
+                parsed
+                    .token_usage
+                    .as_ref()
+                    .and_then(|u| u.cache_read_tokens),
+                parsed
+                    .token_usage
+                    .as_ref()
+                    .and_then(|u| u.cache_write_tokens),
+                parsed.token_usage.as_ref().and_then(|u| u.reasoning_tokens),
             ],
         )?;
 
