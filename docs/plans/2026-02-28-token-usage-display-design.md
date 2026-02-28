@@ -1,30 +1,37 @@
-# Token Usage Display in SessionDetail — Design
+# Token Usage Display in SessionDetail - Design
 
 **Date:** 2026-02-28
 **Issue:** [#43](https://github.com/supermaciz/sessions-chronicle/issues/43)
-**Status:** Design approved
+**Status:** Design approved (decisions captured)
 
 ---
 
 ## Goal
 
 Show per-session token usage in the `SessionDetail` header card when data is available.
-Degrade gracefully to hidden when no token data exists for a session.
+When available, show:
+
+- a total token count
+- a best-effort breakdown (`input`, `output`, optional `reasoning`)
+- cache metrics separately when present (`cache read`, `cache write`)
+
+Hide the entire row when no token data exists for a session.
 
 ---
 
 ## Architecture Overview
 
-The feature spans four layers:
+The feature spans five layers:
 
-1. **Parsers** — extract token data during indexing
-2. **Model** — `TokenUsage` struct + `Session.token_usage`
-3. **Database** — 5 new nullable columns in `sessions`, schema migration v3
-4. **UI** — new compact row in the `SessionDetail` metadata card
+1. **Parsers** - extract and aggregate session-level token data during indexing
+2. **Parser output model** - add `token_usage` to `ParsedSession`
+3. **Domain model** - `TokenUsage` struct + `Session.token_usage`
+4. **Database** - 5 new nullable columns in `sessions` table (schema migration v3)
+5. **UI** - compact token row in `SessionDetail` metadata card
 
 ---
 
-## Section 1 — Data Model
+## Section 1 - Data Model
 
 ### New struct: `TokenUsage` (`src/models/token_usage.rs`)
 
@@ -33,11 +40,24 @@ The feature spans four layers:
 pub struct TokenUsage {
     pub input_tokens: i64,
     pub output_tokens: i64,
-    pub cache_read_tokens: Option<i64>,   // Claude Code, Codex, OpenCode
-    pub cache_write_tokens: Option<i64>,  // Claude Code, OpenCode
-    pub reasoning_tokens: Option<i64>,    // Codex only
+    pub cache_read_tokens: Option<i64>,
+    pub cache_write_tokens: Option<i64>,
+    pub reasoning_tokens: Option<i64>, // Codex and OpenCode when present
+}
+
+impl TokenUsage {
+    pub fn display_total_tokens(&self) -> i64 {
+        self.input_tokens + self.output_tokens + self.reasoning_tokens.unwrap_or(0)
+    }
 }
 ```
+
+Notes:
+
+- `input_tokens` + `output_tokens` are required for v1 storage/display.
+- `cache_*` and `reasoning_tokens` are optional.
+- Cache metrics are displayed separately and are **not** added to `display_total_tokens()`
+  because cache semantics differ across providers and can overlap with input accounting.
 
 ### Updated `Session` struct (`src/models/session.rs`)
 
@@ -47,16 +67,18 @@ Add:
 pub token_usage: Option<TokenUsage>,
 ```
 
-`None` means no token data available for this session (hidden in UI).
+`None` means no token data is available for this session (row hidden in UI).
 
-Export `TokenUsage` from `src/models/mod.rs`.
+### Module exports (`src/models/mod.rs`)
+
+- Add `pub mod token_usage;`
+- Re-export with `pub use token_usage::TokenUsage;`
 
 ---
 
-## Section 2 — Database Schema (migration v3)
+## Section 2 - Database Schema (migration v3)
 
-Add 5 nullable `INTEGER` columns to the `sessions` table via `ALTER TABLE ADD COLUMN`.
-This mirrors the v1 migration pattern (same idempotent approach).
+Add 5 nullable `INTEGER` columns to `sessions` via `ALTER TABLE ADD COLUMN`:
 
 ```sql
 ALTER TABLE sessions ADD COLUMN input_tokens INTEGER;
@@ -67,142 +89,179 @@ ALTER TABLE sessions ADD COLUMN reasoning_tokens INTEGER;
 PRAGMA user_version = 3;
 ```
 
-`NULL` in all 5 columns = no token data (maps to `session.token_usage = None`).
-A session with `input_tokens IS NOT NULL` is considered to have token data.
+### Presence rules
+
+- All 5 columns `NULL` => `session.token_usage = None`
+- `input_tokens` and `output_tokens` both non-null => `Some(TokenUsage)`
+- Inconsistent core data (`input` xor `output`) => treat as unavailable (`None`) and log warning
 
 ### Schema migration (`src/database/schema.rs`)
 
-Add `apply_v3_migration()` and call it from `initialize_database()` after the v2 check.
-The migration is idempotent: "duplicate column name" errors from `ALTER TABLE` are silently ignored.
+- Add `apply_v3_migration()` and call it after v2 in `initialize_database()`.
+- Keep migration idempotent by ignoring `duplicate column name` errors.
+- Update schema tests to assert fresh DB initializes at version 3.
 
 ### Read path (`src/database/mod.rs`)
 
-Update `session_from_row()` to read the 5 new columns (indices 10–14) and construct
-`TokenUsage` when `input_tokens IS NOT NULL`.
-
-Update all SELECT queries that return session rows to include the 5 new columns:
-- `load_sessions`
-- `search_sessions_with_query`
-- `load_session`
+- Update `session_from_row()` to read the 5 token columns.
+- Construct `TokenUsage` using the presence rules above.
+- Update all session SELECT queries to include token columns:
+  - `load_sessions`
+  - `search_sessions_with_query`
+  - `load_session`
+- Prefer column index constants in `session_from_row()` to avoid accidental index drift.
 
 ### Write path (`src/database/indexer.rs`)
 
-Update `insert_parsed_session()` to include the 5 token columns in `INSERT OR REPLACE INTO sessions`.
+- Update `insert_parsed_session()` to include token columns in
+  `INSERT OR REPLACE INTO sessions`.
 
 ---
 
-## Section 3 — Parser Changes
+## Section 3 - Parser Changes
 
-Each parser computes session-level token totals during its parse pass and stores them in
-`ParsedSession`. The `ParsedSession` struct gains `token_usage: Option<TokenUsage>`.
+`ParsedSession` gains:
+
+```rust
+pub token_usage: Option<TokenUsage>
+```
+
+Each parser computes a session-level aggregate and fills `ParsedSession.token_usage`.
 
 ### Claude Code (`src/parsers/claude_code.rs`)
 
 **Source:** `message.usage` on `type == "assistant"` events.
 
 **Fields:**
-- `input_tokens` ← sum of `message.usage.input_tokens`
-- `output_tokens` ← sum of `message.usage.output_tokens`
-- `cache_read_tokens` ← sum of `message.usage.cache_read_input_tokens`
-- `cache_write_tokens` ← sum of `message.usage.cache_creation_input_tokens`
-- `reasoning_tokens` ← `None` (not in Claude Code format)
 
-**Deduplication:** Claude Code logs are append-only and can contain multiple assistant events
-for the same underlying request. Deduplicate by the compound key `(requestId, message.id)`,
-keeping only the last seen `usage` record per key before summing.
+- `input_tokens` <- sum of `usage.input_tokens`
+- `output_tokens` <- sum of `usage.output_tokens`
+- `cache_read_tokens` <- sum of `usage.cache_read_input_tokens`
+- `cache_write_tokens` <- sum of `usage.cache_creation_input_tokens`
+- `reasoning_tokens` <- `None`
 
-**Result:** `Some(TokenUsage)` if at least one `usage` block was found; `None` otherwise.
+**Deduplication rule:**
+
+- Dedupe by `(requestId, message.id)` when both identifiers exist.
+- For duplicates, keep the entry with the highest observed usage total for that key
+  (equivalent to "last/max" in append-only logs).
+- If either identifier is missing, do not dedupe that event.
+
+**Result:** `Some(TokenUsage)` if at least one valid usage block was found.
 
 ### Codex (`src/parsers/codex.rs`)
 
 **Source:** `event_msg` entries with `payload.type == "token_count"`.
 
-**Strategy:** `total_token_usage` is a running session total emitted at each turn.
-Take the **last non-null** `info.total_token_usage` seen in the file.
+**Strategy:** `info.total_token_usage` is a running session snapshot.
+Use the **maximum observed** `total_token_usage` across the file (not "last non-null").
 
 **Fields:**
-- `input_tokens` ← `info.total_token_usage.input_tokens`
-- `output_tokens` ← `info.total_token_usage.output_tokens`
-- `cache_read_tokens` ← `info.total_token_usage.cached_input_tokens`
-- `cache_write_tokens` ← `None` (not in Codex format)
-- `reasoning_tokens` ← `info.total_token_usage.reasoning_output_tokens`
 
-**Edge case:** `info: null` → treat as unknown, not zero. Skip that event.
+- `input_tokens` <- `total_token_usage.input_tokens`
+- `output_tokens` <- `total_token_usage.output_tokens`
+- `cache_read_tokens` <- `total_token_usage.cached_input_tokens`
+- `cache_write_tokens` <- `None`
+- `reasoning_tokens` <- `total_token_usage.reasoning_output_tokens`
 
-**Result:** `Some(TokenUsage)` if any non-null `total_token_usage` was seen; `None` otherwise.
+**Edge cases:**
+
+- `info: null` => unknown snapshot, skip
+- out-of-order or duplicated snapshots => max snapshot still wins
+
+**Result:** `Some(TokenUsage)` if any non-null `total_token_usage` was seen.
 
 ### OpenCode (`src/parsers/opencode/`)
 
-**Source:** `message.data.tokens` on assistant messages (JSON blob in the `data` column).
-Prefer message-level tokens. Do **not** additionally accumulate `part.type == "step-finish"` tokens
-to avoid double-counting.
+**Source priority:**
 
-**Fields (from `message.data.tokens`):**
-- `input_tokens` ← sum of `tokens.input` (or `tokens.prompt` in legacy)
-- `output_tokens` ← sum of `tokens.output` (or `tokens.completion` in legacy)
-- `cache_read_tokens` ← sum of `tokens.cache.read` (when present)
-- `cache_write_tokens` ← sum of `tokens.cache.write` (when present)
-- `reasoning_tokens` ← `None`
+1. Assistant message tokens (`message.data.tokens`) - preferred
+2. `part.type == "step-finish".tokens` - fallback only when no message-level tokens exist
 
-Both the JSON backend and the SQLite backend parse the same `message.data` blob,
-so token extraction logic lives in shared message parsing code.
+Do not aggregate both sources in the same session to avoid double-counting.
 
-**Result:** `Some(TokenUsage)` if at least one message had token data; `None` otherwise.
+**Fields:**
+
+- `input_tokens` <- sum of `tokens.input` (fallback `tokens.prompt`)
+- `output_tokens` <- sum of `tokens.output` (fallback `tokens.completion`)
+- `cache_read_tokens` <- sum of `tokens.cache.read` when present
+- `cache_write_tokens` <- sum of `tokens.cache.write` when present
+- `reasoning_tokens` <- sum of `tokens.reasoning` when present
+
+Implementation note:
+
+- Keep extraction shared in `src/parsers/opencode/mod.rs` so SQLite and JSON backends
+  reuse the same token parsing rules.
+
+**Result:** `Some(TokenUsage)` if the selected source yields usable token data.
 
 ### Mistral Vibe (`src/parsers/mistral_vibe.rs`)
 
-**Source:** `meta.json.stats` (session-level only; `messages.jsonl` has no per-message tokens).
+**Source:** `meta.json.stats` (session-level only).
 
 **Fields:**
-- `input_tokens` ← `stats.session_prompt_tokens`
-- `output_tokens` ← `stats.session_completion_tokens`
-- `cache_read_tokens` ← `None` (not in Vibe format)
-- `cache_write_tokens` ← `None`
-- `reasoning_tokens` ← `None`
 
-**Edge case:** `stats: null` or field missing → `None`.
+- `input_tokens` <- `stats.session_prompt_tokens`
+- `output_tokens` <- `stats.session_completion_tokens`
+- `cache_read_tokens` <- `None`
+- `cache_write_tokens` <- `None`
+- `reasoning_tokens` <- `None`
 
-**Result:** `Some(TokenUsage)` if both prompt and completion fields are present; `None` otherwise.
+**Edge case:** `stats: null` or missing required fields => `None`.
+
+**Result:** `Some(TokenUsage)` only when prompt + completion totals are both present.
 
 ---
 
-## Section 4 — UI (SessionDetail header card)
+## Section 4 - UI (SessionDetail header card)
 
 ### Placement
 
-Add a new `gtk::Box` row to the existing metadata card in `src/ui/session_detail.rs`,
-below the tool/message-count/time row and above the Session ID row.
-Controlled by `set_visible` based on whether `session.token_usage.is_some()`.
+Add a new `gtk::Box` row in `src/ui/session_detail.rs`, below the
+tool/message-count/time row and above Session ID.
+
+Visibility is controlled by `session.token_usage.is_some()`.
 
 ### Display format
 
-**Minimum (input + output only):**
-```
-Tokens: 12 345 input · 678 output
+`total = input + output + reasoning(if any)`
+
+Examples:
+
+**Minimum:**
+
+```text
+Tokens: 13 023 total - 12 345 input - 678 output
 ```
 
-**With cache:**
-```
-Tokens: 12 345 input · 678 output · 9 012 cache read · 234 cache write
+**With reasoning:**
+
+```text
+Tokens: 13 479 total - 12 345 input - 678 output - 456 reasoning
 ```
 
-**With reasoning (Codex):**
-```
-Tokens: 12 345 input · 678 output · 456 reasoning · 9 012 cache read
-```
+**With cache metrics:**
 
-Numbers are formatted with thousands separators (locale-aware via a helper).
+```text
+Tokens: 13 479 total - 12 345 input - 678 output - 456 reasoning - 9 012 cache read - 234 cache write
+```
 
 ### Widget structure
 
-```
+```text
 gtk::Box [horizontal, spacing=6, halign=Start]
-  gtk::Label "Tokens:"        [dim-label]
+  gtk::Label "Tokens:" [dim-label]
   #[name="token_usage_label"]
-  gtk::Label "<formatted>"    [dim-label]
+  gtk::Label "<formatted value>" [dim-label]
 ```
 
-The label text is built in `post_view()` from `session.token_usage`.
+### Formatting helpers
+
+- Follow GNOME localization guidance: use locale-provided numeric separators.
+- Implement token count formatting in `src/ui/format.rs` with system locale behavior
+  (for example via `num-format` `SystemLocale`, with deterministic fallback).
+- Add a pure function to build the token usage label text from `TokenUsage`
+  (unit-testable without GTK harness).
 
 ### Hiding when unavailable
 
@@ -213,48 +272,80 @@ set_visible: model.session.as_ref()
     .is_some(),
 ```
 
-No "N/A" placeholder — the entire row is hidden.
+No "N/A" placeholder; hide the full row.
 
 ---
 
-## Section 5 — Error Handling & Edge Cases
+## Section 5 - Error Handling and Edge Cases
 
 | Case | Behavior |
 |------|----------|
-| No token data in file | `token_usage = None`, row hidden |
-| Partial token data (e.g. only input) | Store what is available; display partial |
-| `info: null` in Codex | Skip that `token_count` event |
-| OpenCode step-finish tokens present | Ignored; message-level preferred |
-| Claude duplicate assistant events | Deduplicate by `(requestId, message.id)` before summing |
-| Very large token numbers | `i64` is sufficient (max ~9.2 × 10¹⁸) |
+| No token data in source file | `token_usage = None`, row hidden |
+| Codex `info: null` | Skip snapshot (unknown, not zero) |
+| Codex out-of-order snapshots | Use max observed `total_token_usage` |
+| OpenCode message tokens and step-finish tokens both present | Use message-level only |
+| OpenCode has only step-finish tokens | Use step-finish fallback |
+| Claude duplicate assistant events | Dedupe by `(requestId, message.id)` |
+| Inconsistent DB row (`input` xor `output`) | Log warning and treat as unavailable |
+| Very large numbers | `i64` capacity is sufficient |
 
 ---
 
-## Section 6 — Testing
+## Section 6 - Testing
 
 ### Unit tests
 
-- `TokenUsage` construction and field access
-- Parser tests for each tool using existing fixtures:
-  - Claude Code: verify deduplication and sum correctness
-  - Codex: verify last-non-null `total_token_usage` is used
-  - OpenCode: verify message-level accumulation, no double-counting
-  - Mistral Vibe: verify `stats` extraction and null handling
+- `TokenUsage::display_total_tokens()`
+- token label formatter permutations:
+  - input/output only
+  - with reasoning
+  - with cache
+  - with reasoning + cache
+  - locale-aware grouping fallback behavior
+- parser tests per tool:
+  - Claude: dedupe + aggregate correctness
+  - Codex: **max observed** snapshot selection
+  - OpenCode: message-level aggregation + step-finish fallback + no double-counting
+  - Mistral Vibe: `stats` extraction + null handling
 
 ### Integration tests (`tests/`)
 
-- After indexing fixture sessions, verify `sessions.input_tokens` is populated where expected
-- Verify `sessions.input_tokens IS NULL` for sessions without token data
+- After indexing fixtures, verify token columns in `sessions` are populated for sessions
+  with data and remain `NULL` otherwise.
+- Verify `load_session()` maps DB rows to `Session.token_usage` correctly.
 
-### Schema migration test
+### Schema migration tests
 
-- Verify fresh DB initializes at v3
-- Verify v2 → v3 migration adds the 5 new columns without data loss
+- Fresh DB initializes at v3.
+- v2 -> v3 migration adds all 5 columns without data loss.
+- Re-running migration remains idempotent.
 
 ### Fixture coverage
 
-Existing fixtures may not contain token usage fields.
-Add or extend fixtures with token data for at least Claude Code and Codex.
+Existing fixtures may not include all token shapes.
+Extend fixtures to cover at least:
+
+- Claude usage with duplicate assistant events
+- Codex `token_count` with non-monotonic order and `info: null`
+- OpenCode message-level tokens and step-finish-only fallback
+- Mistral Vibe `stats` present and `stats: null`
+
+---
+
+## Section 7 - Decision Log
+
+1. **Core fields:** strict v1 (`input_tokens` + `output_tokens` required)
+2. **Total semantics:** `total = input + output + reasoning` (cache excluded)
+3. **Number formatting:** GNOME-style locale-aware separators (system locale)
+
+### References for decision 3
+
+- GNOME localization guidance: use locale-provided values
+  - https://developer.gnome.org/documentation/guidelines/localization/practices.html
+- GNOME localization archive note (explicit numeric separator guidance)
+  - https://wiki.gnome.org/TranslationProject(2f)DevGuidelines(2f)Use(20)locale(2d)provided(20)values.html
+- Rust implementation option for system locale formatting
+  - https://docs.rs/num-format
 
 ---
 
@@ -262,8 +353,8 @@ Add or extend fixtures with token data for at least Claude Code and Codex.
 
 - No per-message token breakdown (future feature)
 - No cost estimation (future feature)
-- No sorting/filtering sessions by token count (future feature)
-- No display in the session list row (only `SessionDetail` header)
+- No sorting/filtering by token count (future feature)
+- No token display in session list rows (SessionDetail only)
 
 ---
 
@@ -271,20 +362,23 @@ Add or extend fixtures with token data for at least Claude Code and Codex.
 
 | File | Change |
 |------|--------|
-| `src/models/token_usage.rs` | New file: `TokenUsage` struct |
-| `src/models/mod.rs` | Export `TokenUsage`; add `token_usage` to `Session` |
+| `src/models/token_usage.rs` | New file: `TokenUsage` struct + total helper |
 | `src/models/session.rs` | Add `token_usage: Option<TokenUsage>` |
-| `src/database/schema.rs` | Add `apply_v3_migration()`, update `initialize_database()` |
-| `src/database/mod.rs` | Update `session_from_row()` and all SELECT queries |
-| `src/database/indexer.rs` | Update `insert_parsed_session()` |
+| `src/models/mod.rs` | Export `TokenUsage` module/type |
 | `src/parsers/mod.rs` | Add `token_usage: Option<TokenUsage>` to `ParsedSession` |
-| `src/parsers/claude_code.rs` | Extract and deduplicate `message.usage` |
-| `src/parsers/codex.rs` | Extract last-non-null `total_token_usage` |
-| `src/parsers/opencode/` | Extract message-level `data.tokens` |
-| `src/parsers/mistral_vibe.rs` | Extract `meta.json.stats` |
-| `src/ui/session_detail.rs` | Add `token_usage_label` widget + `post_view()` logic |
-| `tests/` | New/extended integration tests |
-| `tests/fixtures/` | Extend fixtures with token data |
+| `src/parsers/claude_code.rs` | Extract usage + dedupe strategy |
+| `src/parsers/codex.rs` | Extract token snapshots; pick max observed total |
+| `src/parsers/opencode/mod.rs` | Shared token extraction + source priority logic |
+| `src/parsers/opencode/json_backend.rs` | Surface message token metadata for shared extractor |
+| `src/parsers/opencode/sqlite_backend.rs` | Surface message token metadata for shared extractor |
+| `src/parsers/mistral_vibe.rs` | Extract `meta.json.stats` token totals |
+| `src/database/schema.rs` | Add `apply_v3_migration()`, bump schema version |
+| `src/database/mod.rs` | Read token columns in session queries/mapping |
+| `src/database/indexer.rs` | Persist token columns in session upsert |
+| `src/ui/format.rs` | Add token number formatting helper |
+| `src/ui/session_detail.rs` | Add token row + label formatting in metadata header |
+| `tests/` | Add parser, DB migration, and mapping tests |
+| `tests/fixtures/` | Extend fixtures with token coverage |
 
 ---
 
