@@ -44,7 +44,25 @@
   </categories>
   <content_rating type="oars-1.1" />
   <releases>
-    <release version="0.2.2" date="2026-02-26" />
+    <release version="0.3.0" date="2026-02-28">
+      <description>
+        <p>Improves session details and transcript readability.</p>
+        <ul>
+          <li>Show per-session token usage in Session Detail</li>
+          <li>Improve markdown rendering in transcripts</li>
+        </ul>
+      </description>
+    </release>
+    <release version="0.2.2" date="2026-02-26">
+      <description>
+        <p>Improves navigation and model visibility.</p>
+        <ul>
+          <li>Add keyboard navigation in the session list</li>
+          <li>Show assistant model slug in transcript headers</li>
+          <li>Fix nested list rendering in transcripts</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.2.1" date="2026-02-22" />
     <release version="0.2.0" date="2026-02-19" />
     <release version="0.1.1" date="2026-02-17" />
