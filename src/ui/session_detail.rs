@@ -500,6 +500,9 @@ impl SimpleComponent for SessionDetail {
                 widgets
                     .token_usage_label
                     .set_tooltip_text(Some(&crate::ui::format::format_token_tooltip(usage)));
+            } else {
+                widgets.token_usage_label.set_label("");
+                widgets.token_usage_label.set_tooltip_text(None);
             }
 
             widgets

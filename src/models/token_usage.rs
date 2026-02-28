@@ -10,7 +10,6 @@ pub struct TokenUsage {
 }
 
 impl TokenUsage {
-    #[allow(dead_code)] // Will be used in UI token display
     pub fn display_total_tokens(&self) -> i64 {
         self.input_tokens + self.output_tokens + self.reasoning_tokens.unwrap_or(0)
     }

@@ -339,7 +339,7 @@ impl OpenCodeParser {
             first_prompt,
             parent_session_id,
             is_subagent,
-            token_usage: token_usage.clone(),
+            token_usage: None,
         };
 
         Ok(ParsedSession {

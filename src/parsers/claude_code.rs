@@ -477,7 +477,7 @@ impl ClaudeCodeParser {
             first_prompt,
             parent_session_id: None,
             is_subagent: false,
-            token_usage: token_usage.clone(),
+            token_usage: None,
         };
 
         Ok(ParsedSession {
