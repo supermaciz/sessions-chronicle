@@ -812,6 +812,41 @@ mod tests {
     }
 
     #[test]
+    fn claude_indexing_persists_token_usage() {
+        let temp_db = NamedTempFile::new().unwrap();
+        let mut indexer = SessionIndexer::new(temp_db.path()).unwrap();
+        let sessions_dir = PathBuf::from("tests/fixtures/claude_sessions");
+        indexer.index_claude_sessions(&sessions_dir).unwrap();
+
+        let (input, output): (Option<i64>, Option<i64>) = indexer
+            .db
+            .query_row(
+                "SELECT input_tokens, output_tokens FROM sessions WHERE id = 'abc123'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert!(input.is_some(), "input_tokens should be populated");
+        assert!(output.is_some(), "output_tokens should be populated");
+    }
+
+    #[test]
+    fn session_load_roundtrip_includes_token_usage() {
+        let temp_db = NamedTempFile::new().unwrap();
+        let mut indexer = SessionIndexer::new(temp_db.path()).unwrap();
+        let sessions_dir = PathBuf::from("tests/fixtures/claude_sessions");
+        indexer.index_claude_sessions(&sessions_dir).unwrap();
+
+        let session = crate::database::load_session(temp_db.path(), "abc123")
+            .unwrap()
+            .expect("session should exist");
+        assert!(session.token_usage.is_some(), "should have token_usage");
+        let usage = session.token_usage.unwrap();
+        assert!(usage.input_tokens > 0);
+        assert!(usage.output_tokens > 0);
+    }
+
+    #[test]
     fn clear_all_sessions_removes_sessions_and_messages() {
         let temp_db = NamedTempFile::new().unwrap();
         let mut indexer = SessionIndexer::new(temp_db.path()).unwrap();
