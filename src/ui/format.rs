@@ -53,11 +53,11 @@ pub fn tool_status_css_class(status: ToolCallStatus) -> &'static str {
 /// Format an integer with thin-space (U+2009) thousands grouping: 12 345 678
 pub fn format_token_count(n: i64) -> String {
     let negative = n < 0;
-    let abs = if negative { (-n) as u64 } else { n as u64 };
+    let abs = n.unsigned_abs();
     let digits = abs.to_string();
     let mut result = String::with_capacity(digits.len() + digits.len() / 3);
     for (i, ch) in digits.chars().enumerate() {
-        if i > 0 && (digits.len() - i) % 3 == 0 {
+        if i > 0 && (digits.len() - i).is_multiple_of(3) {
             result.push('\u{2009}');
         }
         result.push(ch);

@@ -201,22 +201,23 @@ fn apply_v2_migration(conn: &Connection) -> Result<()> {
 /// Migrate from v2 to v3: add token usage columns to the sessions table.
 ///
 /// Uses individual ALTER TABLE statements; "duplicate column name" errors are
-/// silently ignored so the migration is idempotent (safe after partial runs).
+/// ignored so the migration is idempotent (safe after partial runs).
+/// Any other error is propagated immediately.
 fn apply_v3_migration(conn: &Connection) -> Result<()> {
-    let _ = conn.execute("ALTER TABLE sessions ADD COLUMN input_tokens INTEGER", []);
-    let _ = conn.execute("ALTER TABLE sessions ADD COLUMN output_tokens INTEGER", []);
-    let _ = conn.execute(
+    let columns = [
+        "ALTER TABLE sessions ADD COLUMN input_tokens INTEGER",
+        "ALTER TABLE sessions ADD COLUMN output_tokens INTEGER",
         "ALTER TABLE sessions ADD COLUMN cache_read_tokens INTEGER",
-        [],
-    );
-    let _ = conn.execute(
         "ALTER TABLE sessions ADD COLUMN cache_write_tokens INTEGER",
-        [],
-    );
-    let _ = conn.execute(
         "ALTER TABLE sessions ADD COLUMN reasoning_tokens INTEGER",
-        [],
-    );
+    ];
+    for sql in columns {
+        match conn.execute(sql, []) {
+            Ok(_) => {}
+            Err(e) if e.to_string().contains("duplicate column name") => {}
+            Err(e) => return Err(e.into()),
+        }
+    }
     conn.execute_batch("PRAGMA user_version = 3")?;
     Ok(())
 }
