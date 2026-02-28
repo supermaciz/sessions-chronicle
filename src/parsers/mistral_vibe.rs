@@ -211,6 +211,7 @@ impl MistralVibeParser {
             tool_calls,
             subagents: Vec::new(),
             transcript_items,
+            token_usage: None,
         })
     }
 

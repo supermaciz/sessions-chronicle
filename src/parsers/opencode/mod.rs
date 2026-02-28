@@ -228,6 +228,7 @@ impl OpenCodeParser {
             tool_calls,
             subagents,
             transcript_items,
+            token_usage: None,
         })
     }
 
