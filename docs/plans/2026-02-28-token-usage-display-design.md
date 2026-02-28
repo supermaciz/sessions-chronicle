@@ -29,6 +29,18 @@ The feature spans five layers:
 4. **Database** - 5 new nullable columns in `sessions` table (schema migration v3)
 5. **UI** - compact token row in `SessionDetail` metadata card
 
+### Data flow
+
+```text
+Parser  -->  ParsedSession.token_usage  -->  indexer writes 5 DB columns
+                                                    |
+UI  <--  Session.token_usage  <--  session_from_row() reads 5 DB columns
+```
+
+Parsers populate `ParsedSession.token_usage`. The indexer reads it from there
+(not from `parsed.session`). `Session.token_usage` is only populated when loading
+back from the database.
+
 ---
 
 ## Section 1 - Data Model
@@ -36,7 +48,7 @@ The feature spans five layers:
 ### New struct: `TokenUsage` (`src/models/token_usage.rs`)
 
 ```rust
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TokenUsage {
     pub input_tokens: i64,
     pub output_tokens: i64,
@@ -51,6 +63,8 @@ impl TokenUsage {
     }
 }
 ```
+
+`PartialEq` and `Eq` are derived for use in test assertions (`assert_eq!`).
 
 Notes:
 
@@ -109,12 +123,15 @@ PRAGMA user_version = 3;
   - `load_sessions`
   - `search_sessions_with_query`
   - `load_session`
-- Prefer column index constants in `session_from_row()` to avoid accidental index drift.
+- Use named column access (`row.get::<_, Option<i64>>("input_tokens")`) instead of
+  positional indices to eliminate index drift issues entirely.
 
 ### Write path (`src/database/indexer.rs`)
 
 - Update `insert_parsed_session()` to include token columns in
   `INSERT OR REPLACE INTO sessions`.
+- Token data comes from `parsed.token_usage` (not `parsed.session.token_usage`).
+  The `Session` struct only gains `token_usage` when loaded back from the database.
 
 ---
 
@@ -154,7 +171,9 @@ Each parser computes a session-level aggregate and fills `ParsedSession.token_us
 **Source:** `event_msg` entries with `payload.type == "token_count"`.
 
 **Strategy:** `info.total_token_usage` is a running session snapshot.
-Use the **maximum observed** `total_token_usage` across the file (not "last non-null").
+Pick the snapshot with the **highest global total** (`input + output + reasoning`)
+across the file. Use all fields from that single winning snapshot — do not mix fields
+from different snapshots.
 
 **Fields:**
 
@@ -167,7 +186,7 @@ Use the **maximum observed** `total_token_usage` across the file (not "last non-
 **Edge cases:**
 
 - `info: null` => unknown snapshot, skip
-- out-of-order or duplicated snapshots => max snapshot still wins
+- out-of-order or duplicated snapshots => highest global total still wins
 
 **Result:** `Some(TokenUsage)` if any non-null `total_token_usage` was seen.
 
@@ -224,27 +243,24 @@ Visibility is controlled by `session.token_usage.is_some()`.
 
 ### Display format
 
+**Label** shows only the total:
+
+```text
+Tokens: 13 479
+```
+
+**Tooltip** on hover shows the full breakdown:
+
+```text
+12 345 input · 678 output · 456 reasoning
+Cache: 9 012 read · 234 write
+```
+
+This keeps the header card compact while making the full breakdown discoverable.
+The tooltip is built dynamically: reasoning line only when present, cache line only when
+at least one cache field is non-null.
+
 `total = input + output + reasoning(if any)`
-
-Examples:
-
-**Minimum:**
-
-```text
-Tokens: 13 023 total - 12 345 input - 678 output
-```
-
-**With reasoning:**
-
-```text
-Tokens: 13 479 total - 12 345 input - 678 output - 456 reasoning
-```
-
-**With cache metrics:**
-
-```text
-Tokens: 13 479 total - 12 345 input - 678 output - 456 reasoning - 9 012 cache read - 234 cache write
-```
 
 ### Widget structure
 
@@ -252,16 +268,28 @@ Tokens: 13 479 total - 12 345 input - 678 output - 456 reasoning - 9 012 cache r
 gtk::Box [horizontal, spacing=6, halign=Start]
   gtk::Label "Tokens:" [dim-label]
   #[name="token_usage_label"]
-  gtk::Label "<formatted value>" [dim-label]
+  gtk::Label "<formatted total>" [dim-label, has-tooltip=true, tooltip-text=<breakdown>]
 ```
 
-### Formatting helpers
+### Formatting helpers (`src/ui/format.rs`)
 
-- Follow GNOME localization guidance: use locale-provided numeric separators.
-- Implement token count formatting in `src/ui/format.rs` with system locale behavior
-  (for example via `num-format` `SystemLocale`, with deterministic fallback).
-- Add a pure function to build the token usage label text from `TokenUsage`
-  (unit-testable without GTK harness).
+Use a simple pure-Rust helper with **thin space** (U+2009) as thousands separator.
+This follows the SI/GNOME convention, avoids a new dependency (`num-format` and its
+`localeconv` C call are overkill for integer-only formatting), and is fully
+deterministic across platforms.
+
+```rust
+/// Format an integer with thin-space thousands grouping: 12 345 678
+pub fn format_token_count(n: i64) -> String { ... }
+
+/// Build the total label text from TokenUsage: "13 479"
+pub fn format_token_total(usage: &TokenUsage) -> String { ... }
+
+/// Build the tooltip breakdown text from TokenUsage
+pub fn format_token_tooltip(usage: &TokenUsage) -> String { ... }
+```
+
+All three are pure functions, unit-testable without a GTK harness.
 
 ### Hiding when unavailable
 
@@ -296,15 +324,16 @@ No "N/A" placeholder; hide the full row.
 ### Unit tests
 
 - `TokenUsage::display_total_tokens()`
-- token label formatter permutations:
-  - input/output only
+- `format_token_count()` grouping: `0`, `999`, `1000`, `1234567`, negative
+- `format_token_total()` output string
+- `format_token_tooltip()` permutations:
+  - input/output only (no reasoning line, no cache line)
   - with reasoning
   - with cache
   - with reasoning + cache
-  - locale-aware grouping fallback behavior
 - parser tests per tool:
   - Claude: dedupe + aggregate correctness
-  - Codex: **max observed** snapshot selection
+  - Codex: highest-global-total snapshot selection, not per-field max
   - OpenCode: message-level aggregation + step-finish fallback + no double-counting
   - Mistral Vibe: `stats` extraction + null handling
 
@@ -313,6 +342,12 @@ No "N/A" placeholder; hide the full row.
 - After indexing fixtures, verify token columns in `sessions` are populated for sessions
   with data and remain `NULL` otherwise.
 - Verify `load_session()` maps DB rows to `Session.token_usage` correctly.
+
+### End-to-end test
+
+- For at least one tool (Claude Code): fixture file -> parse -> index -> load_session ->
+  assert `Session.token_usage` matches expected `TokenUsage` values.
+  This catches regressions across the full pipeline.
 
 ### Schema migration tests
 
@@ -336,16 +371,28 @@ Extend fixtures to cover at least:
 
 1. **Core fields:** strict v1 (`input_tokens` + `output_tokens` required)
 2. **Total semantics:** `total = input + output + reasoning` (cache excluded)
-3. **Number formatting:** GNOME-style locale-aware separators (system locale)
+3. **Number formatting:** pure-Rust helper with thin space (U+2009) as thousands separator.
+   No `num-format` dependency — SI/GNOME convention, deterministic, zero platform variance.
+4. **Display strategy:** total in label, full breakdown in tooltip (keeps header compact)
+5. **Codex max:** select the single snapshot with the highest global total, use all its
+   fields as-is (never mix fields from different snapshots)
+6. **Data flow:** parsers write to `ParsedSession.token_usage`; `Session.token_usage` is
+   only populated from the database read path
+7. **Column access:** use named columns (`row.get("input_tokens")`) instead of positional
+   indices to prevent index drift
 
-### References for decision 3
+---
 
-- GNOME localization guidance: use locale-provided values
-  - https://developer.gnome.org/documentation/guidelines/localization/practices.html
-- GNOME localization archive note (explicit numeric separator guidance)
-  - https://wiki.gnome.org/TranslationProject(2f)DevGuidelines(2f)Use(20)locale(2d)provided(20)values.html
-- Rust implementation option for system locale formatting
-  - https://docs.rs/num-format
+## Section 8 - Implementation Order
+
+1. **Model** — `token_usage.rs`, update `session.rs`, `models/mod.rs`
+2. **ParsedSession** — add `token_usage` field to `parsers/mod.rs`, propagate `None` default
+3. **Parsers** — implement extraction in each parser (Claude, Codex, OpenCode, Mistral Vibe)
+4. **Database** — schema v3 migration, update `session_from_row()` + SELECT queries, update indexer
+5. **Fixtures + tests** — extend fixtures with token data, add parser unit tests, DB migration tests, end-to-end test
+6. **UI** — `format.rs` helpers + formatter tests, `session_detail.rs` token row with tooltip
+
+Each step compiles and passes `cargo test` before moving to the next.
 
 ---
 
@@ -362,7 +409,7 @@ Extend fixtures to cover at least:
 
 | File | Change |
 |------|--------|
-| `src/models/token_usage.rs` | New file: `TokenUsage` struct + total helper |
+| `src/models/token_usage.rs` | New file: `TokenUsage` struct (Debug, Clone, PartialEq, Eq) + total helper |
 | `src/models/session.rs` | Add `token_usage: Option<TokenUsage>` |
 | `src/models/mod.rs` | Export `TokenUsage` module/type |
 | `src/parsers/mod.rs` | Add `token_usage: Option<TokenUsage>` to `ParsedSession` |
@@ -375,8 +422,8 @@ Extend fixtures to cover at least:
 | `src/database/schema.rs` | Add `apply_v3_migration()`, bump schema version |
 | `src/database/mod.rs` | Read token columns in session queries/mapping |
 | `src/database/indexer.rs` | Persist token columns in session upsert |
-| `src/ui/format.rs` | Add token number formatting helper |
-| `src/ui/session_detail.rs` | Add token row + label formatting in metadata header |
+| `src/ui/format.rs` | Add `format_token_count`, `format_token_total`, `format_token_tooltip` |
+| `src/ui/session_detail.rs` | Add token row (label + tooltip) in metadata header |
 | `tests/` | Add parser, DB migration, and mapping tests |
 | `tests/fixtures/` | Extend fixtures with token coverage |
 
