@@ -128,10 +128,10 @@ Goal: determine whether model information is available per message, per turn, an
 
 ## Key Findings Summary
 
-- **Claude Code**: JSONL format, tree-structured events, project-based organization; model slug is available on assistant events (`message.model`) in recent logs
-- **Codex**: JSONL rollout envelope (`session_meta`/`event_msg`/`turn_context`/...); model provider can exist at session level, and model slug is captured at turn level (`turn_context.model`)
-- **OpenCode**: **Breaking change ≥ 2026-02-14** — migrated to SQLite (`opencode.db`). Sessions Chronicle now indexes SQLite sessions first and falls back to legacy JSON storage, deduplicating by session `id` when both sources contain the same session. Legacy JSON file tree remains relevant for pre-migration/compatibility reads. Data schema (session/message/part fields) is largely unchanged; newer part types include `file`, `agent`, `retry`, `patch`; part ID prefix in SQLite era is `prt_`. Model metadata remains message-level.
-- **Mistral Vibe**: Directory-based session format with `meta.json` + JSONL `messages.jsonl`; model info is session-level via `meta.json.config` snapshot when present, not message-level
+- **Claude Code**: JSONL format, tree-structured events, project-based organization; model slug is available on assistant events (`message.model`) in recent logs; **token usage is commonly available per assistant message** (`message.usage`, optional and version-dependent)
+- **Codex**: JSONL rollout envelope (`session_meta`/`event_msg`/`turn_context`/...); model provider can exist at session level, and model slug is captured at turn level (`turn_context.model`); **token usage is emitted as `event_msg` `token_count` events** (running totals + last-call deltas)
+- **OpenCode**: **Breaking change ≥ 2026-02-14** — migrated to SQLite (`opencode.db`). Sessions Chronicle now indexes SQLite sessions first and falls back to legacy JSON storage, deduplicating by session `id` when both sources contain the same session. Legacy JSON file tree remains relevant for pre-migration/compatibility reads. Data schema (session/message/part fields) is largely unchanged; newer part types include `file`, `agent`, `retry`, `patch`; part ID prefix in SQLite era is `prt_`. Model metadata remains message-level; **token usage is commonly available per assistant message** (`message.data.tokens`, optional and provider-dependent) and can also appear on step boundaries (`part.type == "step-finish"` includes `tokens`).
+- **Mistral Vibe**: Directory-based session format with `meta.json` + JSONL `messages.jsonl`; model info is session-level via `meta.json.config` snapshot when present, not message-level; **token usage is available when `meta.json.stats` is present** (session totals + last-turn metrics)
 
 ---
 
@@ -169,6 +169,20 @@ Goal: determine whether model information is available per message, per turn, an
    - Should large messages be truncated for display?
    - How to handle sessions with 10,000+ messages?
    - Consider pagination or virtual scrolling in UI
+
+---
+
+## Token Usage Availability (All Supported Parsers)
+
+Sessions Chronicle supports parsing Claude Code, Codex, OpenCode, and Mistral Vibe sessions.
+Each tool can persist token usage metrics, but **the granularity and presence are tool- and version-dependent**.
+
+| Tool | Where tokens appear | Granularity | Notes |
+|------|---------------------|------------|-------|
+| **Claude Code** | `assistant` events: `message.usage` | Per assistant message / request | Often includes `input_tokens`, `output_tokens`, plus cache-related fields (for example `cache_read_input_tokens`). Not present on all historical logs/fixtures. |
+| **Codex** | `event_msg` events: `payload.type == "token_count"` | Running session totals + per-call deltas | `info.total_token_usage` is a running total; `info.last_token_usage` is the last model call. Some events may have `info: null`. |
+| **OpenCode** | Assistant message metadata (`message.data.tokens`) and/or `part.type == "step-finish"` | Per assistant message and/or per step | Presence depends on provider/backends and OpenCode version; avoid double-counting if both are present. |
+| **Mistral Vibe** | `meta.json.stats` | Session totals + last turn | `stats` may be `null` in minimal/older logs or when logging is configured without stats. `messages.jsonl` does not include per-message tokens. |
 
 ---
 

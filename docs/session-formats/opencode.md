@@ -140,6 +140,13 @@ New fields vs previous docs: `slug`, `share`, `permission`, `revert`, `time.comp
 }
 ```
 
+### Token Usage Notes
+
+- `tokens` is commonly present on assistant messages but is **not guaranteed** (provider/backends can omit it).
+- The `part` stream can also include token usage on step boundaries:
+  - `part.type == "step-finish"` includes `tokens` (and `cost`)
+- If both message-level `tokens` and `step-finish.tokens` exist, avoid double-counting when aggregating.
+
 ### Part Types (12 total)
 
 `type` field in `data` blob:

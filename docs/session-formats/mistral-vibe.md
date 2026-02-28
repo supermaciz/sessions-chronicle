@@ -59,6 +59,31 @@ Session-level metadata:
 (`config.active_model`, plus `config.providers`/`config.models`).
 Requires session logging metadata output — minimal/older logs may omit full config snapshot.
 
+### Token Usage / Stats (Optional)
+
+`meta.json.stats` is optional and can be `null` in minimal/older logs or when configured without stats.
+When present, it provides **session-level token totals** plus **last-turn metrics**.
+
+Common fields observed:
+
+- `session_prompt_tokens`, `session_completion_tokens`
+- `session_total_llm_tokens`, `session_cost`
+- `context_tokens`, `last_turn_prompt_tokens`, `last_turn_completion_tokens`, `last_turn_total_tokens`
+
+Example (abridged):
+
+```json
+{
+  "stats": {
+    "session_prompt_tokens": 115968,
+    "session_completion_tokens": 262,
+    "session_total_llm_tokens": 116230,
+    "last_turn_prompt_tokens": 10222,
+    "last_turn_completion_tokens": 41
+  }
+}
+```
+
 ---
 
 ## `messages.jsonl` Format

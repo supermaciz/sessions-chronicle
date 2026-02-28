@@ -205,6 +205,49 @@ Two patterns:
 
 ---
 
+## Token Usage
+
+Codex rollouts can include `event_msg` entries with `payload.type == "token_count"`.
+These provide **token usage totals for the session** and **the last model call**.
+
+Example (abridged):
+
+```json
+{
+  "type": "event_msg",
+  "payload": {
+    "type": "token_count",
+    "info": {
+      "total_token_usage": {
+        "input_tokens": 14329,
+        "cached_input_tokens": 10496,
+        "output_tokens": 540,
+        "reasoning_output_tokens": 477,
+        "total_tokens": 14869
+      },
+      "last_token_usage": {
+        "input_tokens": 15946,
+        "cached_input_tokens": 14720,
+        "output_tokens": 65,
+        "reasoning_output_tokens": 13,
+        "total_tokens": 16011
+      },
+      "model_context_window": 258400
+    }
+  }
+}
+```
+
+Notes:
+
+- `info.total_token_usage` is a running total for the current session/rollout file.
+- `info.last_token_usage` is the usage for the most recent model call.
+- Some `token_count` events can have `info: null` (treat as “unknown”, not zero).
+
+See also: [Codex issue discussion around `token_count` logging](https://github.com/openai/codex/issues/5276).
+
+---
+
 ## Parser Behavior (Sessions Chronicle)
 
 Current implementation: `src/parsers/codex.rs`

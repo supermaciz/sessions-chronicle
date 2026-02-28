@@ -178,6 +178,36 @@ Official Claude Code model configuration currently documents:
 
 ---
 
+## Token Usage
+
+Recent Claude Code session logs can include **per-assistant-message token usage** under
+`message.usage` (not guaranteed in all historical logs/fixtures).
+
+Observed shape (subset):
+
+```json
+{
+  "type": "assistant",
+  "message": {
+    "usage": {
+      "input_tokens": 123,
+      "output_tokens": 456,
+      "cache_read_input_tokens": 789,
+      "cache_creation_input_tokens": 0
+    }
+  }
+}
+```
+
+Notes:
+
+- `usage` is typically present on `type == "assistant"` events and absent on `type == "user"` events.
+- The log is append-only and can contain multiple assistant events for the same underlying request; if you
+  aggregate tokens, deduplicate by a stable identifier such as `requestId` + `message.id` and keep the last
+  (or max) `usage` record per request.
+
+---
+
 ## Parser Behavior (Sessions Chronicle)
 
 Current implementation: `src/parsers/claude_code.rs`
@@ -220,3 +250,4 @@ fn extract_content_claude(event: &Value) -> Option<String> {
 - [Claude Code model configuration (support article)](https://support.claude.com/en/articles/11940350-claude-code-model-configuration)
 - [Claude Sonnet 4.6 page (`claude-sonnet-4-6`)](https://www.anthropic.com/claude/sonnet)
 - [Claude Opus 4.6 page (`claude-opus-4-6`)](https://www.anthropic.com/claude/opus)
+- [Claude Code issue: duplicate entries in session logs](https://github.com/anthropics/claude-code/issues/1524)
