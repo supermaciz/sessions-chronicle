@@ -458,11 +458,27 @@ impl SessionIndexer {
         let tx = self.db.transaction()?;
 
         tx.execute(
-            "INSERT OR REPLACE INTO sessions
+            "INSERT INTO sessions
              (id, tool, project_path, start_time, message_count, file_path, last_updated,
-              first_prompt, parent_session_id, is_subagent,
+              first_prompt, title, parent_session_id, is_subagent,
               input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, reasoning_tokens)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)
+             ON CONFLICT(id) DO UPDATE SET
+               tool = excluded.tool,
+               project_path = excluded.project_path,
+               start_time = excluded.start_time,
+               message_count = excluded.message_count,
+               file_path = excluded.file_path,
+               last_updated = excluded.last_updated,
+               first_prompt = excluded.first_prompt,
+               title = COALESCE(excluded.title, sessions.title),
+               parent_session_id = excluded.parent_session_id,
+               is_subagent = excluded.is_subagent,
+               input_tokens = excluded.input_tokens,
+               output_tokens = excluded.output_tokens,
+               cache_read_tokens = excluded.cache_read_tokens,
+               cache_write_tokens = excluded.cache_write_tokens,
+               reasoning_tokens = excluded.reasoning_tokens",
             rusqlite::params![
                 &session.id,
                 session.tool.to_storage(),
@@ -472,6 +488,7 @@ impl SessionIndexer {
                 file_path.to_str(),
                 session.last_updated.timestamp(),
                 &session.first_prompt,
+                &session.title,
                 &session.parent_session_id,
                 session.is_subagent as i64,
                 parsed.token_usage.as_ref().map(|u| u.input_tokens),
@@ -787,6 +804,7 @@ impl SessionIndexer {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use chrono::Utc;
     use rusqlite::Connection;
     use std::path::PathBuf;
     use tempfile::NamedTempFile;
@@ -858,6 +876,55 @@ mod tests {
             ],
         )
         .unwrap();
+    }
+
+    fn make_parsed_session(session_id: &str, title: Option<&str>) -> ParsedSession {
+        let now = Utc::now();
+        ParsedSession {
+            session: crate::models::Session {
+                id: session_id.to_string(),
+                tool: crate::models::Tool::ClaudeCode,
+                project_path: Some("/tmp/project".to_string()),
+                start_time: now,
+                message_count: 1,
+                file_path: "/tmp/source.jsonl".to_string(),
+                last_updated: now,
+                first_prompt: Some("Updated prompt".to_string()),
+                title: title.map(str::to_string),
+                parent_session_id: None,
+                is_subagent: false,
+                token_usage: None,
+            },
+            messages: Vec::new(),
+            tool_calls: Vec::new(),
+            subagents: Vec::new(),
+            transcript_items: Vec::new(),
+            token_usage: None,
+        }
+    }
+
+    fn seed_session_with_title(indexer: &mut SessionIndexer, session_id: &str, title: &str) {
+        indexer
+            .db
+            .execute(
+                "INSERT INTO sessions (
+                    id, tool, project_path, start_time, message_count, file_path, last_updated,
+                    first_prompt, title, parent_session_id, is_subagent,
+                    input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, reasoning_tokens
+                )
+                VALUES (?1, 'claude_code', ?2, ?3, ?4, ?5, ?6, ?7, ?8, NULL, 0, NULL, NULL, NULL, NULL, NULL)",
+                rusqlite::params![
+                    session_id,
+                    "/tmp/project",
+                    1_700_000_000i64,
+                    1i64,
+                    "/tmp/source.jsonl",
+                    1_700_000_000i64,
+                    "Seed prompt",
+                    title,
+                ],
+            )
+            .unwrap();
     }
 
     #[test]
@@ -984,6 +1051,56 @@ mod tests {
             })
             .unwrap();
         assert_eq!(fingerprint_count, 0);
+    }
+
+    #[test]
+    fn reindex_preserves_existing_title_when_parser_has_none() {
+        let temp_db = NamedTempFile::new().unwrap();
+        let mut indexer = SessionIndexer::new(temp_db.path()).unwrap();
+        let source_file = NamedTempFile::new().unwrap();
+
+        seed_session_with_title(&mut indexer, "session-title-preserve", "Generated title");
+
+        let parsed = make_parsed_session("session-title-preserve", None);
+        indexer
+            .insert_parsed_session(&parsed, source_file.path())
+            .unwrap();
+
+        let title: Option<String> = indexer
+            .db
+            .query_row(
+                "SELECT title FROM sessions WHERE id = 'session-title-preserve'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+
+        assert_eq!(title.as_deref(), Some("Generated title"));
+    }
+
+    #[test]
+    fn native_parser_title_overrides_existing_generated_title() {
+        let temp_db = NamedTempFile::new().unwrap();
+        let mut indexer = SessionIndexer::new(temp_db.path()).unwrap();
+        let source_file = NamedTempFile::new().unwrap();
+
+        seed_session_with_title(&mut indexer, "session-title-override", "Generated title");
+
+        let parsed = make_parsed_session("session-title-override", Some("Native"));
+        indexer
+            .insert_parsed_session(&parsed, source_file.path())
+            .unwrap();
+
+        let title: Option<String> = indexer
+            .db
+            .query_row(
+                "SELECT title FROM sessions WHERE id = 'session-title-override'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+
+        assert_eq!(title.as_deref(), Some("Native"));
     }
 
     #[test]

@@ -92,7 +92,7 @@ fn session_from_row(row: &Row) -> rusqlite::Result<Session> {
             .single()
             .unwrap_or_else(Utc::now),
         first_prompt: row.get("first_prompt")?,
-        title: None,
+        title: row.get("title")?,
         parent_session_id: row.get("parent_session_id")?,
         is_subagent: is_subagent_int != 0,
         token_usage,
@@ -175,7 +175,7 @@ fn search_sessions_with_query(
     let (query_sql, tool_strings): (String, Vec<String>) = if tools.len() == Tool::ALL.len() {
         (
             "SELECT s.id, s.tool, s.project_path, s.start_time, s.message_count, s.file_path,
-                    s.last_updated, s.first_prompt, s.parent_session_id, s.is_subagent,
+                    s.last_updated, s.first_prompt, s.title, s.parent_session_id, s.is_subagent,
                     s.input_tokens, s.output_tokens, s.cache_read_tokens,
                     s.cache_write_tokens, s.reasoning_tokens,
                     bm25(messages) AS rank
@@ -193,7 +193,7 @@ fn search_sessions_with_query(
         (
             format!(
                 "SELECT s.id, s.tool, s.project_path, s.start_time, s.message_count, s.file_path,
-                        s.last_updated, s.first_prompt, s.parent_session_id, s.is_subagent,
+                        s.last_updated, s.first_prompt, s.title, s.parent_session_id, s.is_subagent,
                         s.input_tokens, s.output_tokens, s.cache_read_tokens,
                         s.cache_write_tokens, s.reasoning_tokens,
                         bm25(messages) AS rank
@@ -246,7 +246,7 @@ pub fn load_sessions(db_path: &Path, tools: &[Tool]) -> Result<Vec<Session>> {
     let (query, tool_strings): (String, Vec<String>) = if tools.len() == Tool::ALL.len() {
         (
             "SELECT id, tool, project_path, start_time, message_count, file_path,
-                    last_updated, first_prompt, parent_session_id, is_subagent,
+                    last_updated, first_prompt, title, parent_session_id, is_subagent,
                     input_tokens, output_tokens, cache_read_tokens,
                     cache_write_tokens, reasoning_tokens
              FROM sessions
@@ -261,7 +261,7 @@ pub fn load_sessions(db_path: &Path, tools: &[Tool]) -> Result<Vec<Session>> {
         (
             format!(
                 "SELECT id, tool, project_path, start_time, message_count, file_path,
-                        last_updated, first_prompt, parent_session_id, is_subagent,
+                        last_updated, first_prompt, title, parent_session_id, is_subagent,
                         input_tokens, output_tokens, cache_read_tokens,
                         cache_write_tokens, reasoning_tokens
                  FROM sessions
@@ -298,7 +298,7 @@ pub fn load_session(db_path: &Path, session_id: &str) -> Result<Option<Session>>
 
     let mut stmt = db.prepare(
         "SELECT id, tool, project_path, start_time, message_count, file_path,
-                last_updated, first_prompt, parent_session_id, is_subagent,
+                last_updated, first_prompt, title, parent_session_id, is_subagent,
                 input_tokens, output_tokens, cache_read_tokens,
                 cache_write_tokens, reasoning_tokens
          FROM sessions
