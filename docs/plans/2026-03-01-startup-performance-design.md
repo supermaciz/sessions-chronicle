@@ -2,180 +2,254 @@
 
 ## Problem
 
-App startup is UI-blocking when session directories contain many files.
-All sessions are parsed and indexed synchronously in `App::init`, blocking
-the GTK main thread until done. There is no mtime/size check, so every file
-is re-parsed and re-inserted on every launch.
+Startup is currently UI-blocking on large session datasets.
+`App::init` does path resolution, opens the DB, parses all providers, and
+writes everything before the first usable frame. On repeated launches, the app
+still re-parses unchanged files and rewrites session data.
 
 ## Scope
 
-Three axes from the issue comment:
+This design addresses three axes:
 
-1. **Non-blocking startup** -- show the session list immediately from cached
-   SQLite data, index in a background thread.
-2. **Incremental skip** -- track file fingerprints (mtime + size) to skip
-   unchanged files.
-3. **Reduced write amplification** -- largely solved by axis 2; fingerprint
-   updates are batched into the existing per-session transaction.
+1. **Non-blocking startup**: render session list from cached SQLite data
+   immediately, then index in background.
+2. **Incremental skip**: use file fingerprints (`mtime` + `size`) to skip
+   unchanged inputs.
+3. **Reduced write amplification**: only rewrite changed sessions; update
+   fingerprints in the same transaction as session writes.
 
-Phase 2 (lightweight list parsing + on-demand full parse) is out of scope.
+Out of scope:
+- Phase 2 (lightweight list parse + on-demand full parse).
+- Cross-process distributed indexing.
+
+## Design constraints
+
+- The app root component is a Relm4 `SimpleComponent` (`src/app.rs`).
+  `spawn_oneshot_command` with typed command payloads is not available in the
+  same way as for explicit `Component` command outputs.
+- SQLite WAL supports concurrent readers + one writer, but it can still return
+  `SQLITE_BUSY`; we need `busy_timeout` and a single-writer indexing flow.
 
 ## Approach
 
-**Thread dedié + Relm4 `spawn_oneshot_command`** (pattern already used in
-`transcript_row.rs`). No new dependencies. No async. No thread pool.
+**Dedicated Relm4 Worker for indexing + fingerprint-based incremental indexing**
+
+- Keep `App` as `SimpleComponent`.
+- Add an `IndexingWorker` (`Worker` trait) to run indexing off the UI thread.
+- Worker owns a separate SQLite connection and emits completion/failure back to
+  `App`.
+- App remains responsive and shows cached sessions immediately.
+- Single-flight guard ensures only one indexing job runs at a time.
 
 ---
 
-## 1. Schema: `file_fingerprints` table
-
-New table added in migration v4:
+## 1. Schema: `file_fingerprints` table (migration v4)
 
 ```sql
 CREATE TABLE file_fingerprints (
     file_path TEXT PRIMARY KEY,
-    mtime INTEGER NOT NULL,
+    mtime_ns INTEGER NOT NULL,
     size INTEGER NOT NULL
 );
 ```
 
-Stores the mtime (seconds since epoch) and size (bytes) of each indexed
-source file. Consulted before parsing to decide whether to skip.
+Notes:
+- Use nanosecond precision (`mtime_ns`) to avoid false negatives when files are
+  updated multiple times within one second.
+- Fingerprints are upserted only after successful parse + DB insert.
 
 ---
 
-## 2. Modified startup flow
+## 2. Startup flow (non-blocking)
 
 ```text
 App::init:
-  1. SessionSources::resolve()            -- sync, fast (path resolution)
-  2. SessionIndexer::new(&db_path)         -- sync (open SQLite, run migrations)
-  3. Init UI components (SessionList, etc.)
-     └─ SessionList::fetch_sessions()      -- loads from existing SQLite cache
-  4. Show window immediately
-  5. Show spinner in headerbar
-  6. sender.spawn_oneshot_command(move || {
-         let mut indexer = SessionIndexer::new(&db_path)?;  // own connection
-         indexer.index_all_with_fingerprints(&sources);
-         IndexingComplete  // or IndexingFailed(err)
-     })
-  7. On IndexingComplete:
-     └─ Hide spinner
-     └─ SessionList::reload_sessions()
+  1. SessionSources::resolve()                      (fast path resolution)
+  2. SessionIndexer::new(&db_path)                  (open DB + migrations)
+  3. Initialize SessionList/SessionDetail/sidebar
+     └─ SessionList loads from existing SQLite cache
+  4. Present window immediately
+  5. Set model.indexing = true and show header spinner
+  6. Send IndexingWorkerInput::StartIncremental(sources)
+  7. On IndexingWorkerOutput::Completed:
+     ├─ model.indexing = false
+     └─ SessionList reloads from DB
+  8. On IndexingWorkerOutput::Failed(err):
+     ├─ model.indexing = false
+     └─ Show toast, keep cached list
 ```
 
-Key points:
-- UI shows immediately with data from the previous run's SQLite cache.
-- Background thread opens its own SQLite connection (no shared `Connection`).
-- On first launch (empty DB), list is empty with a spinner; a
-  `adw::StatusPage` placeholder shows "Indexing sessions..." until done.
+Behavior:
+- First launch with empty DB shows an indexing placeholder.
+- Subsequent launches show cached sessions immediately.
 
 ---
 
-## 3. Incremental skip logic
+## 3. Worker API and single-flight behavior
 
-Before parsing each file:
+```rust
+enum IndexingWorkerInput {
+    StartIncremental(SessionSources),
+    StartFullReindex(SessionSources),
+}
+
+enum IndexingWorkerOutput {
+    Completed { indexed: usize, skipped: usize },
+    Failed(String),
+}
+```
+
+Single-flight rules:
+- If a job is already running, new requests are ignored (or queued later if we
+  decide to support queueing).
+- `ReindexRequested` while running shows a short toast: "Indexing already in
+  progress."
+
+---
+
+## 4. Incremental fingerprint logic
+
+Before parsing each candidate source:
 
 ```rust
 fn should_reindex(&self, file_path: &Path) -> Result<bool> {
     let meta = fs::metadata(file_path)?;
-    let current_mtime = meta.modified()?.duration_since(UNIX_EPOCH)?.as_secs() as i64;
-    let current_size = meta.len() as i64;
+    let modified = meta.modified()?.duration_since(UNIX_EPOCH)?;
+    let current_mtime_ns = i64::try_from(modified.as_nanos())?;
+    let current_size = i64::try_from(meta.len())?;
 
     match self.get_fingerprint(file_path)? {
-        Some((stored_mtime, stored_size))
-            if stored_mtime == current_mtime && stored_size == current_size => Ok(false),
+        Some((stored_mtime_ns, stored_size))
+            if stored_mtime_ns == current_mtime_ns && stored_size == current_size => Ok(false),
         _ => Ok(true),
     }
 }
 ```
 
-After successful parse + insert, `update_fingerprint` is called inside the
-same transaction as `insert_parsed_session`.
+After successful parse + write:
+- Upsert fingerprint inside the same transaction as
+  `insert_parsed_session`.
 
-### Per-provider behavior
+### Per-provider fingerprint targets
 
-| Provider | Fingerprint target | Notes |
-|---|---|---|
-| Claude Code | Each `.jsonl` file | Check before `index_session_file` |
-| Codex | Each `rollout-*.jsonl` file | Same pattern |
-| Mistral Vibe | `messages.jsonl` per session dir | Most likely to change |
-| OpenCode SQLite | `opencode.db` file itself | If unchanged, skip entire backend |
-| OpenCode JSON | Each session `.json` file | Per-file check |
+| Provider | Fingerprint target | Parse target | Prune strategy |
+|---|---|---|---|
+| Claude Code | each `.jsonl` file | same file | file-path prune |
+| Codex | each `rollout-*.jsonl` file | same file | file-path prune |
+| Mistral Vibe | `messages.jsonl` inside session dir | session dir parse | dir-path prune (`Session.file_path` remains session dir) |
+| OpenCode SQLite | `opencode.db` | SQLite rows | ID prune only when SQLite backend is enumerated |
+| OpenCode JSON | each session `.json` | same file | file-path prune |
 
-### Orphan cleanup
-
-During pruning (already exists for OpenCode), also delete fingerprints
-whose `file_path` no longer exists on disk.
-
----
-
-## 4. Write amplification
-
-With incremental skip (axis 2), unchanged sessions are never re-parsed, so
-the existing DELETE + INSERT path is only hit for actually-modified sessions.
-
-The only additional optimization: `update_fingerprint` runs inside the
-existing `insert_parsed_session` transaction to avoid an extra SQLite write
-per session.
-
-No incremental diff of messages/tool_calls -- the complexity is not
-justified given that the skip check eliminates most rewrites.
+OpenCode-specific rule:
+- If `opencode.db` fingerprint is unchanged in incremental mode, skip SQLite
+  parse and skip SQLite ID-prune for that run.
 
 ---
 
-## 5. UI: spinner and first-launch placeholder
+## 5. Pruning and fingerprint cleanup
 
-### Spinner
+Pruning happens after indexing:
 
-- `gtk::Spinner` in the `adw::HeaderBar`.
-- New `indexing: bool` field in `App` model, initialized to `true`.
-- Set to `false` on `IndexingComplete`.
-- Spinner visibility bound to `model.indexing`.
+1. **File-path prune (all file-backed sources)**
+   Remove sessions whose `file_path` target no longer exists.
+
+2. **OpenCode SQLite ID prune (conditional)**
+   Keep existing `prune_stale_opencode_sessions(&indexed_ids)` semantics, but
+   only when SQLite backend was actually enumerated.
+
+3. **Fingerprint orphan cleanup**
+   Remove `file_fingerprints` rows whose `file_path` no longer exists.
+
+This avoids accidental OpenCode deletions when SQLite parsing is skipped due to
+unchanged `opencode.db`.
+
+---
+
+## 6. DB concurrency and reliability
+
+For app DB connections:
+
+- `PRAGMA journal_mode=WAL` on writer/indexer connection.
+- `busy_timeout(5s)` on both writer and read connections to reduce transient
+  `SQLITE_BUSY` during concurrent read/write.
+- Keep one writer path (worker); UI thread remains read-only for list/detail
+  loads.
+
+No custom checkpoint tuning in this phase.
+
+---
+
+## 7. UI behavior
+
+### Header spinner
+
+- Add `indexing: bool` to `App` model.
+- Spinner in `adw::HeaderBar`, visible while indexing is running.
 - Tooltip: "Indexing sessions..."
 
 ### First-launch placeholder
 
-- `adw::StatusPage` shown in `SessionList` when the DB is empty and
-  indexing is in progress.
-- Title: "Indexing sessions..."
-- Description: "This may take a moment on first launch."
-- Replaced by the normal session list on `IndexingComplete`.
+- `SessionList` receives indexing state updates.
+- If list is empty and indexing is running, show:
+  - Title: "Indexing sessions..."
+  - Description: "This may take a moment on first launch."
+- Replace with list when data arrives.
+
+### Failure UX
+
+- On worker failure, hide spinner and show toast.
+- Keep existing cached data visible (graceful degradation).
 
 ---
 
-## 6. Error handling and edge cases
+## 8. Manual reindex behavior (`ReindexRequested`)
 
-### Background indexing failure
+- Trigger `IndexingWorkerInput::StartFullReindex`.
+- Full reindex clears:
+  - `sessions`
+  - `messages`
+  - `transcript_items`
+  - `tool_calls`
+  - `subagents`
+  - `file_fingerprints`
+- Then parses all providers without skip checks.
 
-- Thread sends `IndexingFailed(String)` instead of `IndexingComplete`.
-- App hides spinner, shows an `adw::Toast` with the error message.
-- Session list retains data from the last successful run (graceful
-  degradation).
+---
 
-### Deleted files between launches
+## 9. Error handling and edge cases
 
-- Pruning extended to all 4 providers: after indexing, remove DB sessions
-  whose `file_path` no longer exists on disk.
-- Corresponding fingerprints are also deleted.
+- Parse failures remain non-fatal per file/session; indexing continues.
+- If a file disappears between enumeration and parse, log + skip.
+- If DB init fails, keep current behavior (error log + empty list/cached list
+  as available).
+- If indexing fails mid-run, keep previously indexed rows; no destructive
+  rollback of prior successful sessions.
 
-### Manual re-index (`ReindexRequested`)
+---
 
-- Uses the same background mechanism (spinner + thread).
-- Ignores fingerprints (forces full re-parse) to serve as a "force refresh."
+## 10. Test and verification plan
 
-### Concurrent DB access
+1. **Schema tests**
+   - migration v4 creates `file_fingerprints`.
 
-- Background thread opens its own `Connection`.
-- SQLite WAL mode (`PRAGMA journal_mode=WAL`) enabled at connection open.
-- WAL allows concurrent reads (UI thread) during writes (background thread).
+2. **Indexer unit/integration tests**
+   - unchanged file is skipped.
+   - changed file (mtime/size) is reindexed.
+   - full reindex clears fingerprints.
+   - OpenCode incremental skip does not trigger accidental stale-ID prune.
+
+3. **UI behavior checks**
+   - startup renders cached list before background indexing completes.
+   - spinner appears during indexing and hides on completion/failure.
+
+4. **Manual verification command**
+   - `flatpak-builder --run flatpak_app build-aux/io.github.supermaciz.sessionschronicle.Devel.json sessions-chronicle --sessions-dir tests/fixtures`
 
 ---
 
 ## Expected outcome
 
-- Fast "time to first list render" -- the UI appears immediately with
-  cached data.
-- Repeated launches skip unchanged files entirely (mtime + size check).
-- Lower startup CPU/IO churn on subsequent launches.
-- Stable startup time regardless of session volume growth.
+- Fast time-to-first-render from cached SQLite data.
+- Repeated launches avoid reparsing unchanged sources.
+- Lower startup CPU/IO and fewer redundant writes.
+- Stable responsiveness as session volume grows.
