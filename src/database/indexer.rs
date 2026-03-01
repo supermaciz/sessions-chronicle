@@ -1311,7 +1311,7 @@ mod tests {
         let session: (String, Option<String>) = indexer
             .db
             .query_row(
-                "SELECT id, first_prompt FROM sessions WHERE id = 'session-001'",
+                "SELECT id, title FROM sessions WHERE id = 'session-001'",
                 [],
                 |row| Ok((row.get(0)?, row.get(1)?)),
             )

@@ -259,10 +259,8 @@ impl OpenCodeParser {
             message.index = index;
         }
 
-        let first_prompt = match &metadata.title {
-            Some(title) if !title.trim().is_empty() => Some(title.clone()),
-            _ => crate::parsers::extract_first_prompt(&flattened),
-        };
+        let title = metadata.title.clone().filter(|t| !t.trim().is_empty());
+        let first_prompt = crate::parsers::extract_first_prompt(&flattened);
 
         // Aggregate token usage: prefer message-level tokens, fall back to step-finish
         let token_usage = if has_message_level_tokens {
@@ -337,7 +335,7 @@ impl OpenCodeParser {
             file_path,
             last_updated: metadata.time_updated,
             first_prompt,
-            title: None,
+            title,
             parent_session_id,
             is_subagent,
             token_usage: None,
@@ -575,6 +573,54 @@ mod tests {
             metadata.time_updated,
             DateTime::<Utc>::from_timestamp_millis(updated).unwrap()
         );
+    }
+
+    #[test]
+    fn opencode_metadata_title_maps_to_session_title_not_first_prompt() {
+        let temp_dir = TempDir::new().unwrap();
+        let root = temp_dir.path();
+
+        let session_path = write_session_file(
+            root,
+            "project-a",
+            "session-with-title.json",
+            json!({
+                "id": "session-with-title",
+                "directory": "/projects/alpha",
+                "title": "Metadata title",
+                "time": { "created": 1_704_067_200_000i64, "updated": 1_704_067_260_000i64 }
+            }),
+        );
+
+        write_message_file(
+            root,
+            "session-with-title",
+            "msg-001.json",
+            json!({
+                "id": "msg-001",
+                "sessionID": "session-with-title",
+                "role": "user",
+                "time": { "created": 1_704_067_200_000i64 }
+            }),
+        );
+
+        write_part_file(
+            root,
+            "msg-001",
+            "part-001.json",
+            json!({
+                "id": "part-001",
+                "order": 1,
+                "type": "text",
+                "text": "First"
+            }),
+        );
+
+        let parser = OpenCodeParser::new(root);
+        let parsed = parser.parse(&session_path).unwrap();
+
+        assert_eq!(parsed.session.title.as_deref(), Some("Metadata title"));
+        assert_eq!(parsed.session.first_prompt.as_deref(), Some("First"));
     }
 
     #[test]

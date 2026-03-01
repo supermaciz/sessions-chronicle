@@ -51,6 +51,7 @@ impl ClaudeCodeParser {
         // Token usage tracking: dedup by (requestId, message.id)
         let mut usage_map: HashMap<(String, String), UsageEntry> = HashMap::new();
         let mut anonymous_usage: Vec<UsageEntry> = Vec::new();
+        let mut latest_summary: Option<String> = None;
 
         for line in reader.lines() {
             let line = line.context("Failed to read line")?;
@@ -413,6 +414,15 @@ impl ClaudeCodeParser {
                     }
                 }
 
+                Some("summary") => {
+                    if let Some(summary) = event.get("summary").and_then(|v| v.as_str()) {
+                        let summary = summary.trim();
+                        if !summary.is_empty() {
+                            latest_summary = Some(summary.to_string());
+                        }
+                    }
+                }
+
                 _ => {}
             }
         }
@@ -475,7 +485,7 @@ impl ClaudeCodeParser {
             file_path: file_path.to_str().unwrap().to_string(),
             last_updated,
             first_prompt,
-            title: None,
+            title: latest_summary,
             parent_session_id: None,
             is_subagent: false,
             token_usage: None,
@@ -645,6 +655,22 @@ mod tests {
         assert_eq!(parsed.messages[1].content, "Hi!");
 
         assert_eq!(parsed.transcript_items.len(), 2);
+    }
+
+    #[test]
+    fn claude_summary_event_sets_session_title_latest_non_empty() {
+        let file = create_temp_session(&[
+            r#"{"type":"user","timestamp":"2024-01-01T00:00:00Z","sessionId":"session-123","cwd":"/tmp","message":{"content":"Hello"}}"#,
+            r#"{"type":"assistant","timestamp":"2024-01-01T00:00:01Z","sessionId":"session-123","cwd":"/tmp","message":{"content":"Hi!"}}"#,
+            r#"{"type":"summary","summary":"Initial summary"}"#,
+            r#"{"type":"summary","summary":"   "}"#,
+            r#"{"type":"summary","summary":"Latest summary"}"#,
+        ]);
+
+        let parser = ClaudeCodeParser;
+        let parsed = parser.parse(file.path()).unwrap();
+
+        assert_eq!(parsed.session.title.as_deref(), Some("Latest summary"));
     }
 
     #[test]

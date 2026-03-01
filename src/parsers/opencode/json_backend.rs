@@ -43,6 +43,11 @@ impl JsonBackend {
             .and_then(|v| v.as_str())
             .map(str::to_string);
 
+        let title = value
+            .get("title")
+            .and_then(|v| v.as_str())
+            .map(str::to_string);
+
         let parent_id = value
             .get("parentID")
             .or_else(|| value.get("parentId"))
@@ -64,7 +69,7 @@ impl JsonBackend {
         Ok(SessionMetadata {
             id,
             directory,
-            title: None,
+            title,
             time_created: timestamp_from_millis(created_ms)?,
             time_updated: timestamp_from_millis(updated_ms)?,
             parent_id,
