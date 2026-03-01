@@ -344,10 +344,8 @@ impl SimpleComponent for App {
 
         if let Err(err) = fs::create_dir_all(&db_dir) {
             tracing::error!("Failed to create data dir {}: {}", db_dir.display(), err);
-        } else {
-            if let Err(err) = SessionIndexer::new(&db_path) {
-                tracing::error!("Failed to initialize session indexer: {}", err);
-            }
+        } else if let Err(err) = SessionIndexer::new(&db_path) {
+            tracing::error!("Failed to initialize session indexer: {}", err);
         }
         // Initialize child components
         let session_list =
