@@ -31,7 +31,7 @@ impl Worker for IndexingWorker {
     }
 
     fn update(&mut self, message: Self::Input, sender: ComponentSender<Self>) {
-        let result = (|| -> anyhow::Result<crate::database::IndexingStats> {
+        let result = (|| -> anyhow::Result<crate::database::IndexingOutcome> {
             let mut indexer = SessionIndexer::new(&self.db_path)?;
             match message {
                 IndexingWorkerInput::StartIncremental(sources) => {
@@ -44,10 +44,10 @@ impl Worker for IndexingWorker {
         })();
 
         match result {
-            Ok(stats) => {
+            Ok(outcome) => {
                 let _ = sender.output(IndexingWorkerOutput::Completed {
-                    indexed: stats.indexed,
-                    skipped: stats.skipped,
+                    indexed: outcome.stats.indexed,
+                    skipped: outcome.stats.skipped,
                 });
             }
             Err(err) => {

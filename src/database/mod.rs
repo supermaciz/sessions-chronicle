@@ -13,7 +13,8 @@ use crate::models::{
     TranscriptItemKind,
 };
 
-pub use indexer::{IndexingStats, SessionIndexer};
+#[allow(unused_imports)]
+pub use indexer::{IndexingOutcome, IndexingStats, SessionIndexer};
 
 const SQLITE_BUSY_TIMEOUT_SECS: u64 = 5;
 

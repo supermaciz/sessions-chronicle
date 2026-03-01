@@ -315,8 +315,14 @@ mod tests {
 
     #[test]
     fn auto_mode_default_model_mapping_uses_expected_defaults() {
-        assert_eq!(default_model_for(TitleProvider::OpenCode), Some(OPENCODE_DEFAULT_MODEL));
-        assert_eq!(default_model_for(TitleProvider::Claude), Some(CLAUDE_DEFAULT_MODEL));
+        assert_eq!(
+            default_model_for(TitleProvider::OpenCode),
+            Some(OPENCODE_DEFAULT_MODEL)
+        );
+        assert_eq!(
+            default_model_for(TitleProvider::Claude),
+            Some(CLAUDE_DEFAULT_MODEL)
+        );
         assert_eq!(default_model_for(TitleProvider::Auto), None);
     }
 
@@ -334,9 +340,11 @@ mod tests {
         let auto_opencode = build_command(TitleProvider::OpenCode, "Prompt", None, true, false);
         assert_eq!(auto_opencode.program, "opencode");
         assert!(auto_opencode.args.contains(&"--model".to_string()));
-        assert!(auto_opencode
-            .args
-            .contains(&OPENCODE_DEFAULT_MODEL.to_string()));
+        assert!(
+            auto_opencode
+                .args
+                .contains(&OPENCODE_DEFAULT_MODEL.to_string())
+        );
 
         let explicit_opencode = build_command(
             TitleProvider::OpenCode,
@@ -346,15 +354,15 @@ mod tests {
             false,
         );
         assert!(explicit_opencode.args.contains(&"--model".to_string()));
-        assert!(explicit_opencode
-            .args
-            .contains(&"custom-model".to_string()));
+        assert!(explicit_opencode.args.contains(&"custom-model".to_string()));
 
         let explicit_opencode_no_model =
             build_command(TitleProvider::OpenCode, "Prompt", None, false, false);
-        assert!(!explicit_opencode_no_model
-            .args
-            .contains(&"--model".to_string()));
+        assert!(
+            !explicit_opencode_no_model
+                .args
+                .contains(&"--model".to_string())
+        );
 
         let claude = build_command(TitleProvider::Claude, "Prompt", None, true, false);
         assert_eq!(claude.program, "claude");
