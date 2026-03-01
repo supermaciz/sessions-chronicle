@@ -1,104 +1,126 @@
-# AI Session Titles (Issue #48) Implementation Plan
+# AI Session Titles (Issue #48) Revised Implementation Plan
 
-> **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
+## Summary
 
-**Goal:** Add a true AI-generated `title` field (distinct from `first_prompt`) for sessions, with native titles preserved (OpenCode metadata, Claude summary events), and an optional AI fallback generator using auto-detected host CLI tools.
+Add a dedicated nullable `Session.title` field, preserve native titles from source data, and optionally generate missing titles via host CLI tools (`claude`, `opencode`) during indexing.
 
-**Architecture:** Extend the `Session` model and SQLite schema with nullable `title`. Fill `title` from native source data first, then optionally apply a configurable AI fallback generator. The fallback runs synchronously inside the existing Relm4 `IndexingWorker` thread, is guarded by settings (`enabled`, `CLI provider`, `model`), calls host CLI binaries via `std::process::Command` (with `flatpak-spawn --host` when sandboxed), and never blocks indexing on failure.
+Title precedence for display and persistence is:
+1. Native parsed title
+2. AI-generated title (when enabled)
+3. Existing `first_prompt` fallback (UI only)
 
-**Tech Stack:** Rust 2024, rusqlite/SQLite migrations, Relm4 `Worker` trait, libadwaita Preferences dialog, GSettings schema keys, `std::process::Command` with 30s timeout.
+The feature is disabled by default, non-fatal on any generation failure, and runs only inside the existing background indexing worker.
 
----
+## Decision-Locked Scope
 
-## Scope
+In scope:
+- Add `title` to model + SQLite schema (v5 migration)
+- Parse native titles for OpenCode and Claude Code
+- Add global settings (enabled/provider/model)
+- Auto-detect available host CLI providers (`claude` then `opencode`)
+- Generate titles synchronously in `IndexingWorker` after indexing
+- UI title precedence: `title -> first_prompt -> project fallback`
 
-- Implement issue #48 as "real title" behavior (AI-generated title), not only first-prompt preview.
-- **V1 providers:** Claude CLI and OpenCode CLI only.
-- Auto-detect available CLI providers on the host system.
-- Add global settings to control AI title generation:
-  - disabled by default (auto-detection proposes activation when a CLI is found),
-  - selectable CLI provider (`auto`, `claude`, `opencode`),
-  - optional model override string.
-- Preserve native titles where available (OpenCode metadata, Claude summary events).
-- Keep `first_prompt` for search and fallback display.
-- Title generation runs at indexation time only, inside the existing `IndexingWorker`.
+Out of scope:
+- Per-tool or per-workspace policies
+- Manual “regenerate title” actions
+- Async runtime introduction
+- New providers (Codex, Vibe, Ollama)
 
-## Non-goals
+## Important Interfaces and Type Changes
 
-- No per-tool/per-workspace title generation policy (global setting only).
-- No manual "regenerate title" action.
-- No tokio runtime or async — synchronous `std::process::Command` in worker thread.
-- No Codex or Vibe providers (future V2).
-- No Ollama / local model provider (future).
-- No background queue or retry worker beyond the existing indexing worker.
+### Data model
+- `src/models/session.rs`
+  - Add field: `pub title: Option<String>` with `#[serde(default)]`
 
-## Configuration Behavior
+### Database schema
+- `src/database/schema.rs`
+  - Add migration `apply_v5_migration`
+  - `sessions` table gains nullable column `title TEXT`
+  - Bump `PRAGMA user_version` latest migration target to 5
 
-When `ai-title-generation-enabled == false` (default):
-- No CLI title generation runs.
-- Titles come only from native sources (OpenCode metadata, Claude summary) or UI fallback to `first_prompt`.
+### Indexing outputs (required for deterministic candidate selection)
+- `src/database/indexer.rs`
+  - Extend indexing return type to carry IDs of sessions indexed in current run
+  - New type:
+    - `IndexingOutcome { stats: IndexingStats, indexed_session_ids: Vec<String> }`
+  - `index_all_incremental` and `index_all_full_reindex` return `IndexingOutcome`
 
-When `ai-title-generation-enabled == true`:
-- If session has no native title, app calls selected CLI provider to generate one.
-- If provider is `"auto"`, resolve to first available CLI in order: `claude`, `opencode`.
-- If `ai-title-generation-model` is non-empty, pass it to selected CLI with provider-appropriate flag.
-- Any CLI/auth/network failure is non-fatal: leave `title` empty and fallback to existing UI behavior.
+### Worker init
+- `src/indexing_worker.rs`
+  - Replace `type Init = PathBuf` with:
+    - `IndexingWorkerInit { db_path: PathBuf, title_generation: TitleGenerationConfig }`
 
-## Auto-detection
+### Title generation module
+- Create `src/utils/title_generator.rs`
+  - `TitleGenerationConfig { enabled, provider, model_override }`
+  - `TitleProvider { Auto, Claude, OpenCode }`
+  - `detect_available_provider()`
+  - `generate_title(context, config)`
 
-At app startup or when settings are opened:
-- Test CLI availability via `which claude` / `which opencode` (or `flatpak-spawn --host which ...` in sandbox).
-- When provider is `"auto"` (default), resolve to first available CLI in preference order: `claude` > `opencode`.
-- In Preferences UI, show the resolved provider name when in auto mode (e.g., "Auto (Claude detected)").
-- If no CLI is found and feature is enabled, log a warning and skip generation silently.
+### Database write helper
+- `src/database/indexer.rs`
+  - Add `update_session_title(session_id: &str, title: &str) -> Result<()>`
 
-## CLI Option Verification (2026-03-01)
+## Configuration and Defaults
 
-Verified locally in this environment:
+Add keys in `data/io.github.supermaciz.sessionschronicle.gschema.xml.in`:
+- `ai-title-generation-enabled` (`b`) default `false`
+- `ai-title-generation-provider` (`s`) default `"auto"`
+- `ai-title-generation-model` (`s`) default `""`
 
-- `claude 2.1.63 (Claude Code)`
-  - Non-interactive: `-p` / `--print`
-  - Model override: `--model <model>`
-  - Output control: `--output-format text|json|stream-json`
-  - Safer mode: `--permission-mode plan`, optional `--tools ""`
+Accepted provider values are exactly: `auto`, `claude`, `opencode`.
 
-- `opencode 1.2.15`
-  - Non-interactive: `opencode run [message..]`
-  - Model override: `-m, --model provider/model`
-  - Output control: `--format default|json`
-  - Agent selection: `--agent <name>` (can use plan agent if configured)
+Behavior:
+- If disabled: never invoke any CLI generator
+- If enabled and provider is `auto`: resolve provider by detection order `claude > opencode`
+- If enabled and no provider detected: skip generation, log debug/warn
+- If model override is empty: do not pass model flag
 
-## Execution Model
+## Auto-Detection and Host Execution Rules
 
-Title generation runs **synchronously inside the existing `IndexingWorker`** (Relm4 `Worker` trait), which already operates on a dedicated background thread:
+Detection must work both native and Flatpak sandboxed:
+- Native: execute `which <bin>` via `std::process::Command`
+- Flatpak: execute `flatpak-spawn --host which <bin>`
 
-1. `IndexingWorker` receives `StartIncremental` or `StartFullReindex` message.
-2. Indexer parses and persists sessions as before.
-3. After indexing, if AI title generation is enabled, iterate over newly indexed sessions that have no `title`.
-4. For each, call the resolved CLI provider via `std::process::Command` with a 30s timeout.
-5. On success, update the `title` column in SQLite.
-6. On failure (timeout, non-zero exit, empty output), log and skip — indexing continues.
-7. Worker sends `IndexingWorkerOutput::Completed` as before.
+Flatpak detection follows existing project rule used in terminal utils:
+- `/.flatpak-info` exists OR `FLATPAK_ID` env var is set
 
-Sequential processing provides natural throttling — no rate limiting needed.
+Provider resolution order for `auto`:
+1. `claude`
+2. `opencode`
 
-The `TitleGenerationConfig` is passed to the worker via its `Init` payload (extend existing `PathBuf` init to a struct).
+## CLI Invocation Contract
 
-## Title Prompt Specification (OpenCode-aligned)
+### Claude
+Command:
+- `claude -p <prompt> --output-format text --permission-mode plan --tools ""`
+- Add `--model <model>` only when configured
 
-Prompt design follows OpenCode title-generation behavior (`packages/opencode/src/agent/prompt/title.txt`).
+### OpenCode
+Command:
+- `opencode run <prompt> --format default`
+- Add `--model <model>` only when configured
 
-Required rules for our generated-title prompt:
-- Same language as the user request.
-- Single line output only.
-- 50-char target (hard post-guard still applies in app sanitization).
-- No tool names.
-- Focus on retrievability: what user wants to achieve.
-- Keep exact technical terms, numbers, filenames, HTTP codes.
-- Do not output meta text (no "summarizing", no explanations).
-- Always output a meaningful title, even for short conversational input.
+Both providers:
+- hard timeout: 30 seconds per session
+- on timeout: kill process, return `None`
+- on non-zero exit or empty output: return `None`
 
-Canonical prompt template for CLI providers:
+Implementation note:
+- Add dependency `wait-timeout` to implement robust timeout without async runtime
+
+### CLI flags verified locally (2026-03-01)
+
+- `claude 2.1.63`: `-p` (non-interactive), `--output-format text`, `--model <m>`, `--permission-mode plan`, `--tools ""`
+- `opencode 1.2.15`: `run [msg]` (non-interactive), `--format default|json`, `-m/--model provider/model`, `--agent <name>`
+
+## Prompt and Sanitization Contract
+
+Input context for generation is only `session.first_prompt` (trimmed).  
+If missing or empty, skip generation.
+
+Prompt template (single source for all providers):
 
 ```text
 You are a title generator. Output ONLY a session title.
@@ -120,483 +142,148 @@ Conversation context:
 Output only the title.
 ```
 
-Context fed to prompt:
-- Default: first real user message text.
-- Optional enrichment: first assistant response snippet if available, capped to keep prompt short.
-- If context is empty/invalid: skip generation and fallback.
-
----
-
-### Task 1: Add GSettings keys and defaults (feature flag + provider + model)
-
-**Files:**
-- Modify: `data/io.github.supermaciz.sessionschronicle.gschema.xml.in`
-- Test: `src/app.rs` (or a focused settings helper test module if added)
-
-**Step 1: Write the failing test**
-
-Add a test that validates settings defaults and accepted values:
-- `ai-title-generation-enabled` defaults to `false`.
-- `ai-title-generation-provider` defaults to `"auto"`.
-- `ai-title-generation-model` defaults to empty string.
-
-**Step 2: Run test to verify it fails**
-
-Run: `cargo test settings_ -- --nocapture`
-Expected: FAIL because keys are not defined.
-
-**Step 3: Write minimal implementation**
-
-Add keys in `data/io.github.supermaciz.sessionschronicle.gschema.xml.in`:
-- `ai-title-generation-enabled` (`b`, default `false`)
-- `ai-title-generation-provider` (`s`, default `"auto"`)
-- `ai-title-generation-model` (`s`, default `""`)
-
-**Step 4: Run test to verify it passes**
-
-Run: `cargo test settings_ -- --nocapture`
-Expected: PASS.
-
-**Step 5: Commit**
-
-```bash
-git add data/io.github.supermaciz.sessionschronicle.gschema.xml.in
-git commit -m "feat: add settings for configurable ai title generation"
-```
-
----
-
-### Task 2: Expose configuration in Preferences UI
-
-**Files:**
-- Modify: `src/ui/modals/preferences.rs`
-- Modify: `src/app.rs` (if output wiring is needed)
-- Test: `src/ui/modals/preferences.rs` (or existing UI test module)
-
-**Step 1: Write the failing test**
-
-Add test coverage for:
-- toggle persists `ai-title-generation-enabled`,
-- provider combo persists valid provider string,
-- model entry persists free-form model string.
-
-**Step 2: Run test to verify it fails**
-
-Run: `cargo test preferences -- --nocapture`
-Expected: FAIL because controls and wiring do not exist.
-
-**Step 3: Write minimal implementation**
-
-In `src/ui/modals/preferences.rs`, under a new group (e.g. "AI Session Titles"):
-- `SwitchRow`: enable/disable feature.
-- `ComboRow`: provider selection (`Auto`, `Claude`, `OpenCode`).
-- `EntryRow` or `ActionRow + Entry`: model override.
-- When provider is `Auto`, show subtitle with detected provider (e.g., "Claude detected" or "No CLI found").
-
-Persist values with `gio::Settings::set_boolean` and `set_string`.
-
-**Step 4: Run test to verify it passes**
-
-Run: `cargo test preferences -- --nocapture`
-Expected: PASS.
-
-**Step 5: Commit**
-
-```bash
-git add src/ui/modals/preferences.rs src/app.rs
-git commit -m "feat: add preferences controls for ai title provider and model"
-```
-
----
-
-### Task 3: Add `title` to model and database schema (v5)
-
-**Files:**
-- Modify: `src/models/session.rs`
-- Modify: `src/database/schema.rs`
-- Test: `src/database/schema.rs`
-
-**Step 1: Write the failing test**
-
-Add migration test asserting:
-- v4 DB migrates to v5,
-- `sessions` table has `title` column.
-
-**Step 2: Run test to verify it fails**
-
-Run: `cargo test v4_to_v5_migration_adds_session_title_column -- --nocapture`
-Expected: FAIL.
-
-**Step 3: Write minimal implementation**
-
-- Add `title: Option<String>` to `Session` with `#[serde(default)]`.
-- Add `apply_v5_migration` and bump latest schema version.
-- Ensure fresh `sessions` table includes `title`.
-
-**Step 4: Run test to verify it passes**
-
-Run: `cargo test v4_to_v5_migration_adds_session_title_column -- --nocapture`
-Expected: PASS.
-
-**Step 5: Commit**
-
-```bash
-git add src/models/session.rs src/database/schema.rs
-git commit -m "feat: add session title field and v5 migration"
-```
-
----
-
-### Task 4: Persist/load `title` in DB queries and index writes
-
-**Files:**
-- Modify: `src/database/indexer.rs`
-- Modify: `src/database/mod.rs`
-- Test: `tests/load_session.rs`
-- Test: `src/database/indexer.rs`
-
-**Step 1: Write the failing tests**
-
-1) Extend `tests/load_session.rs` to seed and assert `session.title` roundtrip.
-2) Extend indexer tests to query `title` from `sessions` and assert persistence.
-
-**Step 2: Run tests to verify they fail**
-
-Run:
-- `cargo test load_session_returns_existing_session -- --nocapture`
-- `cargo test opencode_dual_read_prefers_sqlite_over_json -- --nocapture`
-
-Expected: FAIL due to missing mapping.
-
-**Step 3: Write minimal implementation**
-
-- Add `title` to insert SQL in `src/database/indexer.rs`.
-- Add `title` to all relevant `SELECT` projections in `src/database/mod.rs`.
-- Map `title` in `session_from_row`.
-
-**Step 4: Run tests to verify they pass**
-
-Run:
-- `cargo test load_session_returns_existing_session -- --nocapture`
-- `cargo test opencode_dual_read_prefers_sqlite_over_json -- --nocapture`
-
-Expected: PASS.
-
-**Step 5: Commit**
-
-```bash
-git add src/database/indexer.rs src/database/mod.rs tests/load_session.rs
-git commit -m "feat: persist and read session titles in sqlite layer"
-```
-
----
-
-### Task 5: Extract native titles from source formats
-
-**Files:**
-- Modify: `src/parsers/claude_code.rs`
-- Modify: `src/parsers/opencode/mod.rs`
-- Test: `src/parsers/claude_code.rs`
-- Test: `src/parsers/opencode/mod.rs`
-
-**Step 1: Write the failing tests**
-
-- Claude: `type == "summary"` must map to `session.title`.
-- OpenCode: metadata title maps to `session.title`, while `first_prompt` remains first user message.
-
-**Step 2: Run tests to verify they fail**
-
-Run:
-- `cargo test claude -- --nocapture`
-- `cargo test opencode -- --nocapture`
-
-Expected: FAIL.
-
-**Step 3: Write minimal implementation**
-
-- Parse and capture Claude summary event as native title.
-- Keep OpenCode title/first_prompt separated.
-
-**Step 4: Run tests to verify they pass**
-
-Run:
-- `cargo test claude -- --nocapture`
-- `cargo test opencode -- --nocapture`
-
-Expected: PASS.
-
-**Step 5: Commit**
-
-```bash
-git add src/parsers/claude_code.rs src/parsers/opencode/mod.rs
-git commit -m "feat: map native source titles to session title"
-```
-
----
-
-### Task 6: Add CLI auto-detection and title generator module
-
-**Files:**
-- Create: `src/utils/title_generator.rs`
-- Modify: `src/utils/mod.rs`
-- Test: `src/utils/title_generator.rs`
-
-**Step 1: Write the failing tests**
-
-Add tests for:
-- CLI auto-detection logic (mock `which` results),
-- provider command building for `claude` and `opencode`,
-- model override flag mapping per provider,
-- prompt template generation matches OpenCode-aligned constraints,
-- output sanitization (single line, max 50 chars, trim whitespace),
-- flatpak-spawn --host wrapping behavior,
-- disabled-feature short-circuit returns `None`,
-- 30s timeout configuration.
-
-**Step 2: Run tests to verify they fail**
-
-Run: `cargo test title_generator -- --nocapture`
-Expected: FAIL (module absent).
-
-**Step 3: Write minimal implementation**
-
-```rust
-pub struct TitleGenerationConfig {
-    pub enabled: bool,
-    pub provider: TitleProvider,
-    pub model_override: Option<String>,
-}
-
-pub enum TitleProvider {
-    Auto,
-    Claude,
-    OpenCode,
-}
-```
-
-Auto-detection helper:
-- `detect_available_provider()` -> `Option<TitleProvider>` via `which` / `flatpak-spawn --host which`.
-- Preference order: `claude` > `opencode`.
-
-Provider-specific command builders:
-- Claude: `claude -p "<prompt>" --output-format text --model <override?> --permission-mode plan --tools ""`
-- OpenCode: `opencode run "<prompt>" --format json --model <override?>`
-
-Execution:
-- `std::process::Command` with `.timeout(Duration::from_secs(30))` (via `wait_timeout` or `kill` after spawn).
-- Returns `Option<String>` — `None` on any failure.
-
-Output sanitization:
-- Take first non-empty line.
-- Trim whitespace.
-- Truncate to 50 chars at word boundary.
-- Strip surrounding quotes if present.
-
-**Step 4: Run tests to verify they pass**
-
-Run: `cargo test title_generator -- --nocapture`
-Expected: PASS.
-
-**Step 5: Commit**
-
-```bash
-git add src/utils/title_generator.rs src/utils/mod.rs
-git commit -m "feat: add cli auto-detection and ai title generator"
-```
-
----
-
-### Task 7: Integrate generator into IndexingWorker
-
-**Files:**
-- Modify: `src/indexing_worker.rs`
-- Modify: `src/database/indexer.rs`
-- Modify: `src/app.rs` (extend worker init payload)
-- Test: `src/database/indexer.rs`
-
-**Step 1: Write the failing test**
-
-Add indexer test cases:
-- disabled setting: no generation call,
-- enabled setting + missing native title: generation attempted,
-- generation failure: indexing still succeeds with `title = None`.
-
-Use injected fake generator (trait or closure) to avoid real CLI execution in tests.
-
-**Step 2: Run test to verify it fails**
-
-Run: `cargo test indexer_generates_ai_title_when_enabled -- --nocapture`
-Expected: FAIL.
-
-**Step 3: Write minimal implementation**
-
-- Extend `IndexingWorker` init from `PathBuf` to a struct including `TitleGenerationConfig`.
-- In `app.rs`, read GSettings and build config before worker init.
-- In worker `update()`, after `indexer.index_all_*()`, iterate newly indexed sessions without titles.
-- For each, call `title_generator::generate()` synchronously (already on worker thread).
-- On success, update title in DB via `indexer.update_session_title(session_id, title)`.
-- On failure, log and continue.
-
-**Step 4: Run test to verify it passes**
-
-Run: `cargo test indexer_generates_ai_title_when_enabled -- --nocapture`
-Expected: PASS.
-
-**Step 5: Commit**
-
-```bash
-git add src/indexing_worker.rs src/database/indexer.rs src/app.rs
-git commit -m "feat: generate ai titles during indexation in worker thread"
-```
-
----
-
-### Task 8: Prioritize `title` in session list display
-
-**Files:**
-- Modify: `src/ui/session_row.rs`
-- Modify: `src/ui/session_list.rs`
-- Test: `src/ui/session_row.rs`
-
-**Step 1: Write the failing tests**
-
-Add precedence assertions:
-- `title` present -> display `title`.
-- no `title`, `first_prompt` present -> display `first_prompt`.
-- neither -> project fallback.
-
-**Step 2: Run tests to verify they fail**
-
-Run: `cargo test session_title_ -- --nocapture`
-Expected: FAIL.
-
-**Step 3: Write minimal implementation**
-
-Update `SessionRow::session_title` precedence logic and test fixtures with `title` field.
-
-**Step 4: Run tests to verify they pass**
-
-Run: `cargo test session_title_ -- --nocapture`
-Expected: PASS.
-
-**Step 5: Commit**
-
-```bash
-git add src/ui/session_row.rs src/ui/session_list.rs
-git commit -m "feat: display session title with fallback to first prompt"
-```
-
----
-
-### Task 9: Update documentation for configurable behavior
-
-**Files:**
-- Modify: `README.md`
-- Modify: `docs/session-formats/claude-code.md`
-- Modify: `docs/session-formats/opencode.md`
-- Modify: `docs/PROJECT_STATUS.md` (if feature tracking section should be updated)
-
-**Step 1: Write doc assertions/checklist**
-
-Define explicit documentation checklist:
-- default disabled behavior,
-- auto-detection mechanism,
-- provider/model selection,
-- fallback order and failure behavior.
-
-**Step 2: Validate existing docs are outdated**
-
-Run: `rg "first_prompt|title" docs README.md`
-Expected: old wording needs updates.
-
-**Step 3: Write minimal doc updates**
-
-Document precedence:
-1. Native source title (OpenCode metadata, Claude summary event),
-2. AI-generated title (if enabled and CLI available),
-3. `first_prompt` fallback.
-
-Document:
-- Auto-detection of CLI providers (claude > opencode).
-- Selected CLI must be installed/authenticated on host.
-- 30s timeout per generation, non-fatal failures.
-
-**Step 4: Verify consistency**
-
-Run: `rg "AI title|auto-detect|provider|model" docs README.md`
-Expected: consistent messaging.
-
-**Step 5: Commit**
-
-```bash
-git add README.md docs/session-formats/claude-code.md docs/session-formats/opencode.md docs/PROJECT_STATUS.md
-git commit -m "docs: describe configurable ai session title generation"
-```
-
----
-
-### Task 10: Final verification before PR
-
-**Files:**
-- Verify only
-
-**Step 1: Formatting**
-
-Run: `cargo fmt --all -- --check`
-Expected: PASS.
-
-**Step 2: Lints**
-
-Run: `cargo clippy --all -- -D warnings`
-Expected: PASS.
-
-**Step 3: Tests**
-
-Run: `cargo test --all --no-fail-fast`
-Expected: PASS.
-
-**Step 4: Flatpak verification**
-
-Run:
-- `flatpak-builder --user flatpak_app build-aux/io.github.supermaciz.sessionschronicle.Devel.json --force-clean`
-- `flatpak-builder --run flatpak_app build-aux/io.github.supermaciz.sessionschronicle.Devel.json sessions-chronicle --sessions-dir tests/fixtures`
-
-Expected: app launches, settings visible, auto-detection works, behavior matches defaults and toggles.
-
-**Step 5: Commit (if needed for final fixes)**
-
-```bash
-git add -A
-git commit -m "test: finalize configurable ai session title feature verification"
-```
-
----
-
-## Acceptance Criteria (Issue #48)
-
-- `Session` has a dedicated `title` field in model + DB.
-- AI title generation is **disabled by default**.
-- Auto-detection identifies available CLI providers (`claude`, `opencode`).
-- User can enable/disable feature in Preferences.
-- User can choose provider (`Auto`, `Claude`, `OpenCode`).
-- User can set model override string.
-- Native titles (OpenCode metadata, Claude summary) are preferred over AI-generated titles.
-- Session-row display precedence is `title` -> `first_prompt` -> project fallback.
-- Title generation runs synchronously in `IndexingWorker` thread with 30s timeout.
-- CLI generation failures never break indexing.
-- Full verification commands pass.
-
-## Future Enhancements (out of scope)
-
-- **Ollama provider**: local model generation without API keys.
-- **Codex / Vibe providers**: extend `TitleProvider` enum and command builders.
-- **Manual re-generation**: button in session detail view to regenerate a title on demand.
-- **Batch re-generation**: regenerate titles for all sessions missing one.
+Sanitization rules in app (always applied):
+1. Take first non-empty line
+2. Trim whitespace and surrounding quotes
+3. Collapse internal whitespace to single spaces
+4. Enforce max 50 chars with safe char-boundary truncation
+5. Reject if resulting title is empty
+
+## Indexing Integration (Decision Complete)
+
+1. Indexing run starts in `IndexingWorker` as today.
+2. Indexer returns `IndexingOutcome` containing `indexed_session_ids`.
+3. If AI generation disabled: finish immediately with existing completion output.
+4. If enabled: iterate only `indexed_session_ids`.
+5. For each session ID:
+   - Load minimal fields (`id`, `title`, `first_prompt`, `is_subagent`) from DB
+   - Skip if `title` already present
+   - Skip subagent sessions (`is_subagent = 1`)
+   - Skip if no valid `first_prompt`
+   - Generate title via resolved provider
+   - Persist via `update_session_title`
+6. Generation failures are logged and ignored.
+7. Worker always emits `Completed` unless indexing itself fails.
+
+Performance guardrail:
+- Hard cap generation attempts per run with constant `MAX_TITLE_GENERATIONS_PER_RUN = 25`
+- Remaining sessions are left for future indexing runs
+
+## Native Title Extraction Rules
+
+### OpenCode
+- Preserve source metadata title in `session.title`
+- Do not populate `first_prompt` from metadata title anymore
+- `first_prompt` continues to be extracted from first user message
+
+### Claude Code
+- Parse `type == "summary"` events and map summary text to `session.title`
+- If multiple summary events exist, keep latest non-empty summary by event order
+- If no summary event, `session.title` remains `None`
+
+## UI and Settings Changes
+
+### Preferences dialog
+`src/ui/modals/preferences.rs` adds a new group "AI Session Titles":
+- Switch row: enable/disable generation
+- Combo row: provider (`Auto`, `Claude`, `OpenCode`)
+- Entry row: optional model override
+- Auto mode subtitle shows detected provider status:
+  - `Auto (Claude detected)`
+  - `Auto (OpenCode detected)`
+  - `Auto (No CLI detected)`
+
+### Session title display
+`src/ui/session_row.rs`:
+- Display precedence becomes:
+  1. non-empty `session.title`
+  2. non-empty `session.first_prompt`
+  3. project-name fallback
+
+## Implementation Steps
+
+1. Schema and model foundation
+- Add `Session.title` and v5 migration
+- Update all SQL projections/inserts to include `title`
+
+2. Parser alignment
+- OpenCode: split metadata title from first prompt
+- Claude: parse summary events into title
+
+3. Indexing plumbing
+- Introduce `IndexingOutcome` and session ID collection
+- Add DB helper to update session title
+
+4. Title generator module
+- Add config/provider types
+- Add provider detection and command builders
+- Add prompt creation, timeout handling, and sanitization
+
+5. Worker and app wiring
+- Extend worker init payload
+- Read settings in `app.rs`, pass `TitleGenerationConfig` to worker
+- Apply capped generation pass after indexing
+
+6. Preferences UI
+- Add rows and settings persistence
+- Add auto-detection status subtitle logic
+
+7. Session row display update
+- Switch to `title -> first_prompt -> fallback`
+
+8. Documentation update
+- Update README and format docs to reflect precedence and settings behavior
+
+## Test Plan
+
+### Unit tests
+- `src/database/schema.rs`
+  - v4 -> v5 migration adds `title` column
+- `src/database/mod.rs` / `src/database/indexer.rs`
+  - session title persists and round-trips
+  - `update_session_title` updates only target session
+- `src/parsers/opencode/mod.rs`
+  - metadata title maps to `session.title`
+  - `first_prompt` still extracted from user message
+- `src/parsers/claude_code.rs`
+  - summary events set `session.title`
+- `src/utils/title_generator.rs`
+  - provider auto-detection order
+  - flatpak host wrapping behavior
+  - command flag mapping (provider/model)
+  - sanitization and 50-char truncation
+  - timeout path returns `None`
+
+### Integration tests
+- `tests/load_session.rs`
+  - loading sessions returns `title` when present
+- `src/ui/session_row.rs` tests
+  - title precedence behavior
+
+### Validation commands
+- `cargo fmt --all -- --check`
+- `cargo clippy --all -- -D warnings`
+- `cargo test --all --no-fail-fast`
+
+Flatpak runtime verification (manual):
+- Build and run devel manifest
+- Confirm Preferences controls
+- Confirm auto-detection messaging
+- Confirm default disabled behavior
 
 ## Risks and Mitigations
 
-- **No CLI found on host** -> auto-detection returns `None`, feature stays inactive, user informed in Preferences UI.
-- **Provider CLI not authenticated** -> non-fatal fallback to existing behavior, logged as warning.
-- **Provider output format drifts over time** -> sanitize output aggressively and keep test fixtures for parser logic.
-- **Slow CLI response** -> 30s timeout per call, sequential processing prevents resource exhaustion.
-- **Migration regressions** -> explicit v4->v5 migration and idempotence tests.
+| Risk | Mitigation |
+|------|------------|
+| No CLI found on host | Auto-detection returns `None`, feature stays inactive, Preferences subtitle shows "No CLI detected" |
+| Provider CLI not authenticated | Non-fatal: generation returns `None`, logged as warning, indexing continues |
+| CLI output format drifts across versions | Aggressive sanitization (first line, trim, 50-char cap) + test fixtures for parser logic |
+| Slow or hanging CLI response | 30s hard timeout per call + `MAX_TITLE_GENERATIONS_PER_RUN = 25` cap |
+| v5 migration regression | Explicit v4->v5 migration test + idempotence guard in schema code |
+
+## Assumptions and Defaults
+
+- Title generation runs only at indexing time, never on session open.
+- Existing sessions are not backfilled immediately unless they are re-indexed.
+- AI-generated titles are skipped for subagent sessions.
+- Failure modes (missing CLI, auth errors, network failures, malformed output) are non-fatal and do not fail indexing.
