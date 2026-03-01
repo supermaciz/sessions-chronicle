@@ -18,6 +18,7 @@
 4. In `auto` provider mode, use ordered fallback `OpenCode -> Claude` per generation attempt when the first provider fails at runtime.
 5. In `auto` provider mode, use default models `opencode/gpt-5-nano` then Claude Haiku when no provider-specific override is set.
 6. Keep all failures non-fatal and keep worker completion behavior unchanged (`Completed` unless indexing fails).
+7. OpenCode `first_prompt` semantic change: previously, OpenCode sessions used metadata title as `first_prompt`. With the new `title` field, metadata title maps to `session.title` and `first_prompt` becomes the actual first user message. This is a deliberate behavioral change — existing indexed OpenCode sessions will show different display text after reindex.
 
 ## Scope
 
@@ -42,7 +43,14 @@ Out of scope:
 **Files:**
 - Modify: `src/models/session.rs`
 - Modify: `src/database/schema.rs`
+- Modify: `src/parsers/claude_code.rs` (add `title: None` stub at line ~469)
+- Modify: `src/parsers/codex.rs` (add `title: None` stub at line ~370)
+- Modify: `src/parsers/opencode/mod.rs` (add `title: None` stub at line ~331)
+- Modify: `src/parsers/mistral_vibe.rs` (add `title: None` stub at line ~210)
+- Modify: `src/ui/session_row.rs` (add `title: None` to `build_session` test helper at line ~197)
 - Test: `src/database/schema.rs`
+
+> **Note:** Adding the `title` field to `Session` will break compilation in all four parsers and the `build_session` test helper. Add trivial `title: None` stubs in this task to keep every commit compilable. The real parser logic comes in Task 3.
 
 **Step 1: Write the failing tests**
 
@@ -89,11 +97,46 @@ fn v4_to_v5_migration_adds_title_column() {
         .unwrap();
     assert!(columns.contains(&"title".to_string()));
 }
+
+#[test]
+fn v5_migration_is_idempotent() {
+    let conn = Connection::open_in_memory().unwrap();
+    conn.execute_batch(
+        "
+        CREATE TABLE sessions (
+            id TEXT PRIMARY KEY,
+            tool TEXT NOT NULL,
+            project_path TEXT,
+            start_time INTEGER NOT NULL,
+            message_count INTEGER NOT NULL,
+            file_path TEXT NOT NULL,
+            last_updated INTEGER NOT NULL,
+            first_prompt TEXT,
+            parent_session_id TEXT,
+            is_subagent INTEGER NOT NULL DEFAULT 0,
+            input_tokens INTEGER,
+            output_tokens INTEGER,
+            cache_read_tokens INTEGER,
+            cache_write_tokens INTEGER,
+            reasoning_tokens INTEGER
+        );
+        PRAGMA user_version = 4;
+        ",
+    )
+    .unwrap();
+
+    initialize_database(&conn).unwrap();
+    // Running again should not error
+    initialize_database(&conn).unwrap();
+
+    let version: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap();
+    assert_eq!(version, 5);
+}
 ```
 
 **Step 2: Run test to verify it fails**
 
-Run: `cargo test v4_to_v5_migration_adds_title_column -- --exact`  
+Run: `cargo test v4_to_v5_migration -- --nocapture`
 Expected: FAIL because user_version is still 4 and `title` column does not exist.
 
 **Step 3: Write minimal implementation**
@@ -121,15 +164,22 @@ fn apply_v5_migration(conn: &Connection) -> Result<()> {
 
 And call it from `initialize_database` when `version < 5`.
 
+Add `title: None` stubs to all Session struct literals to restore compilation:
+- `src/parsers/claude_code.rs` (line ~469)
+- `src/parsers/codex.rs` (line ~370)
+- `src/parsers/opencode/mod.rs` (line ~331)
+- `src/parsers/mistral_vibe.rs` (line ~210)
+- `src/ui/session_row.rs` `build_session` test helper (line ~197)
+
 **Step 4: Run test to verify it passes**
 
-Run: `cargo test v4_to_v5_migration_adds_title_column -- --exact`  
-Expected: PASS.
+Run: `cargo test v4_to_v5_migration -- --nocapture`
+Expected: PASS (both migration and idempotency tests).
 
 **Step 5: Commit**
 
 ```bash
-git add src/models/session.rs src/database/schema.rs
+git add src/models/session.rs src/database/schema.rs src/parsers/claude_code.rs src/parsers/codex.rs src/parsers/opencode/mod.rs src/parsers/mistral_vibe.rs src/ui/session_row.rs
 git commit -m "feat: add session title model field and v5 schema migration"
 ```
 
@@ -197,7 +247,14 @@ ON CONFLICT(id) DO UPDATE SET
   reasoning_tokens = excluded.reasoning_tokens
 ```
 
-Update all `SELECT ... FROM sessions` projections in `src/database/mod.rs` to include `title`, and map it in `session_from_row`.
+Update **all 5** `SELECT ... FROM sessions` projections in `src/database/mod.rs` to include `title`, and map it in `session_from_row`:
+1. `search_sessions_with_query()` without tool filter (line ~176)
+2. `search_sessions_with_query()` with tool filter (line ~194)
+3. `load_sessions()` without tool filter (line ~247)
+4. `load_sessions()` with tool filter (line ~262)
+5. `load_session()` single session by id (line ~299)
+
+> **Important:** The indexer has only one session INSERT in `insert_session_tx()` (line ~461), but ensure the `ON CONFLICT` SQL covers all columns including the new `title` parameter binding.
 
 **Step 4: Run tests to verify they pass**
 
@@ -215,6 +272,8 @@ git commit -m "fix: preserve existing session titles across reindex updates"
 ```
 
 ### Task 3: Parse native titles from OpenCode and Claude
+
+> **Semantic change (V2 decision #7):** OpenCode sessions previously stored the metadata title as `first_prompt`. This task separates them: `session.title` gets the metadata title, `first_prompt` gets the actual first user message. Existing indexed OpenCode sessions will show different display text after a reindex. This is intentional — users gain a proper title field while `first_prompt` now accurately reflects the first message.
 
 **Files:**
 - Modify: `src/parsers/opencode/mod.rs`
@@ -442,6 +501,8 @@ If `wait-timeout` is used, add to `Cargo.toml`:
 wait-timeout = "0.2"
 ```
 
+> **Flatpak build note:** If `wait-timeout` is added, the Flatpak manifest cargo sources must also be regenerated (`build-aux/` vendor script) or the Flatpak build will fail. Run the vendor script after updating `Cargo.lock`.
+
 **Step 4: Run tests to verify they pass**
 
 Run: `cargo test title_generator -- --nocapture`  
@@ -492,6 +553,14 @@ Expected: FAIL because helpers do not exist.
 Add in `src/database/indexer.rs`:
 
 ```rust
+/// A session eligible for title generation.
+#[derive(Debug, Clone)]
+pub struct TitleCandidate {
+    pub session_id: String,
+    pub first_prompt: String,
+    pub project_path: Option<String>,
+}
+
 pub fn update_session_title(&self, session_id: &str, title: &str) -> Result<()> { /* ... */ }
 
 pub fn load_title_candidate(&self, session_id: &str) -> Result<Option<TitleCandidate>> { /* ... */ }
@@ -525,28 +594,42 @@ git add src/database/indexer.rs
 git commit -m "feat: add session title update and candidate query helpers"
 ```
 
-### Task 7: Wire worker pipeline with cap + backlog fill
+### Task 7: Wire worker pipeline with cap + backlog fill and settings dispatch
+
+> **Note:** This task was merged from original Tasks 7 and 8 to keep every commit compilable. Changing `IndexingWorker` input to `IndexingRequest` requires updating `app.rs` call sites in the same commit.
 
 **Files:**
 - Modify: `src/indexing_worker.rs`
 - Modify: `src/database/indexer.rs`
+- Modify: `src/app.rs`
 - Test: `src/indexing_worker.rs` (or pure helper tests)
+- Test: `src/app.rs` (pure mapping tests)
 
 **Step 1: Write failing tests**
 
-Add pure helper tests for selection logic:
+Add pure helper tests for selection logic and settings parsing:
 
 ```rust
+// In src/indexing_worker.rs or a helper module
 #[test]
 fn candidate_selection_prioritizes_indexed_ids_then_backlog_until_cap() {
     // given indexed ids and backlog
     // ensure order + cap behavior
 }
+
+// In src/app.rs
+#[test]
+fn parse_title_provider_defaults_to_auto_on_invalid_value() {
+    assert_eq!(parse_title_provider("invalid"), TitleProvider::Auto);
+}
 ```
 
-**Step 2: Run test to verify it fails**
+**Step 2: Run tests to verify they fail**
 
-Run: `cargo test candidate_selection_prioritizes_indexed_ids_then_backlog_until_cap -- --exact`  
+Run:
+- `cargo test candidate_selection_prioritizes_indexed_ids_then_backlog_until_cap -- --exact`
+- `cargo test parse_title_provider_defaults_to_auto_on_invalid_value -- --exact`
+
 Expected: FAIL because helper logic does not exist.
 
 **Step 3: Write minimal implementation**
@@ -570,42 +653,6 @@ pub struct IndexingRequest {
   3. if attempts < 25, fill from backlog query
   4. ignore generation failures and continue
 
-**Step 4: Run tests to verify they pass**
-
-Run: `cargo test indexing_worker -- --nocapture`  
-Expected: PASS.
-
-**Step 5: Commit**
-
-```bash
-git add src/indexing_worker.rs src/database/indexer.rs
-git commit -m "feat: run bounded title generation after indexing with backlog fill"
-```
-
-### Task 8: Read settings per dispatch in app (no restart required)
-
-**Files:**
-- Modify: `src/app.rs`
-- Test: `src/app.rs` (pure mapping tests)
-
-**Step 1: Write failing tests**
-
-Add tests for provider parsing defaults:
-
-```rust
-#[test]
-fn parse_title_provider_defaults_to_auto_on_invalid_value() {
-    assert_eq!(parse_title_provider("invalid"), TitleProvider::Auto);
-}
-```
-
-**Step 2: Run test to verify it fails**
-
-Run: `cargo test parse_title_provider_defaults_to_auto_on_invalid_value -- --exact`  
-Expected: FAIL because helper does not exist.
-
-**Step 3: Write minimal implementation**
-
 In `src/app.rs`:
 - add helper that reads:
   - `ai-title-generation-enabled`
@@ -617,19 +664,22 @@ In `src/app.rs`:
   - startup incremental
   - full reindex from preferences
 
-**Step 4: Run test to verify it passes**
+**Step 4: Run tests to verify they pass**
 
-Run: `cargo test parse_title_provider_defaults_to_auto_on_invalid_value -- --exact`  
+Run:
+- `cargo test candidate_selection -- --nocapture`
+- `cargo test parse_title_provider -- --nocapture`
+
 Expected: PASS.
 
 **Step 5: Commit**
 
 ```bash
-git add src/app.rs
-git commit -m "fix: read title generation settings at indexing dispatch time"
+git add src/indexing_worker.rs src/database/indexer.rs src/app.rs
+git commit -m "feat: wire worker pipeline with title generation and per-dispatch settings"
 ```
 
-### Task 9: Add GSettings keys and Preferences UI controls
+### Task 8: Add GSettings keys and Preferences UI controls
 
 **Files:**
 - Modify: `data/io.github.supermaciz.sessionschronicle.gschema.xml.in`
@@ -689,7 +739,7 @@ git add data/io.github.supermaciz.sessionschronicle.gschema.xml.in src/ui/modals
 git commit -m "feat: add preferences controls for AI session title generation"
 ```
 
-### Task 10: Update session row precedence and subtitle consistency
+### Task 9: Update session row precedence and subtitle consistency
 
 **Files:**
 - Modify: `src/ui/session_row.rs`
@@ -745,6 +795,8 @@ session.title
 
 - Subtitle location uses project name when either `title` or `first_prompt` is present.
 
+> **Pango safety:** The current session row uses Pango markup for rendering. Title text must be escaped with `glib::markup_escape_text()` before insertion into markup strings to prevent injection from untrusted session data (e.g., a crafted session title containing `<b>` or `&`).
+
 **Step 4: Run tests to verify they pass**
 
 Run: `cargo test session_row -- --nocapture`  
@@ -757,7 +809,7 @@ git add src/ui/session_row.rs
 git commit -m "feat: display session title with title-first precedence"
 ```
 
-### Task 11: Cross-cutting test updates and docs
+### Task 10: Cross-cutting test updates and docs
 
 **Files:**
 - Modify: `tests/load_session.rs`
@@ -824,6 +876,8 @@ Run in order:
 | Auto mode picks unavailable authenticated provider | In `Auto`, attempt providers in priority order `OpenCode -> Claude` and fallback on runtime failure |
 | Flatpak cannot see host CLIs | Use `flatpak-spawn --host` for both detection and execution |
 | Potential `wait-timeout` SIGCHLD caveat | Keep usage isolated; if instability appears, switch to `try_wait` polling loop with explicit deadline |
+| OpenCode `first_prompt` changes meaning after reindex | Deliberate V2 decision #7: metadata title moves to `session.title`, `first_prompt` becomes actual first user message. UI title precedence ensures no visible regression. |
+| Pango markup injection from untrusted titles | Escape all title/prompt text with `glib::markup_escape_text()` before inserting into Pango markup |
 
 ## Assumptions
 
