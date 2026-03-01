@@ -146,6 +146,35 @@ fn load_session_returns_none_for_nonexistent() {
 }
 
 #[test]
+fn load_session_returns_title_when_present() {
+    let db = TempDatabase::new();
+
+    db.connection
+        .execute(
+            "INSERT INTO sessions (id, tool, project_path, start_time, message_count, file_path, last_updated, first_prompt, title)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+            rusqlite::params![
+                "titled-session",
+                "opencode",
+                Some("/projects/titled"),
+                2000_i64,
+                1_i64,
+                "/tmp/titled-session.jsonl",
+                3000_i64,
+                Some("Refactor parser"),
+                Some("Native Session Title"),
+            ],
+        )
+        .expect("Failed to insert titled session");
+
+    let session = load_session(&db.path, "titled-session")
+        .expect("Failed to load titled session")
+        .expect("Titled session should exist");
+
+    assert_eq!(session.title.as_deref(), Some("Native Session Title"));
+}
+
+#[test]
 fn role_from_storage_parses_correctly() {
     assert_eq!(Role::from_storage("user"), Some(Role::User));
     assert_eq!(Role::from_storage("assistant"), Some(Role::Assistant));

@@ -18,8 +18,11 @@ so you can find any conversation, inspect tool calls, and pick up where you left
 - **Read conversations comfortably** — rich markdown rendering (code blocks, tables, task lists, blockquotes)
 - **Inspect tool calls** — expand inline tool calls and drill down into subagents in the utility pane
 - **Resume where you left off** — launch sessions directly from the app in your terminal
+- **Smarter session titles** — native titles are preserved, with display precedence `title -> first_prompt -> project`
 - **Navigate with the keyboard** — Up/Down to move selection, Enter to open, Escape closes search or backs out of detail
 - **Supports 4 AI tools** — Claude Code, OpenCode, Codex, Mistral Vibe
+
+AI title generation is available in Preferences and is disabled by default. In `Auto` mode, provider attempts run as `OpenCode (opencode/gpt-5-nano)` first, then `Claude (claude-3-5-haiku-latest)`.
 
 
 ## Installation

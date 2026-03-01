@@ -52,6 +52,13 @@ When `--sessions-dir` is active, the app uses a separate database file (`session
 
 The Preferences dialog (menu > Preferences > Advanced) includes a **Reset session index** action that clears and rebuilds the active database from the current session sources. This is useful after modifying fixture files or when the index gets out of sync.
 
+### AI session title behavior
+
+- UI title precedence is `title -> first_prompt -> project`.
+- AI title generation is **disabled by default** and runs during indexing when enabled.
+- Provider `auto` mode tries `OpenCode` first (default model `opencode/gpt-5-nano`), then falls back to `Claude` (default model `claude-3-5-haiku-latest`).
+- You can override the model in Preferences (`AI Session Titles` group).
+
 ## Why This Approach?
 
 ### ✅ Advantages
