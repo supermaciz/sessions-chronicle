@@ -1,7 +1,9 @@
 use anyhow::{Context, Result};
 use rusqlite::Connection;
 use std::collections::HashSet;
+use std::fs;
 use std::path::Path;
+use std::time::UNIX_EPOCH;
 
 use crate::parsers::ParsedSession;
 use crate::parsers::claude_code::ClaudeCodeParser;
@@ -395,6 +397,92 @@ impl SessionIndexer {
         Ok(())
     }
 
+    fn get_fingerprint(&self, file_path: &Path) -> Result<Option<(i64, i64)>> {
+        let Some(file_path_str) = file_path.to_str() else {
+            return Ok(None);
+        };
+
+        let mut stmt = self
+            .db
+            .prepare("SELECT mtime_ns, size FROM file_fingerprints WHERE file_path = ?1")?;
+        let mut rows = stmt.query([file_path_str])?;
+
+        if let Some(row) = rows.next()? {
+            let mtime_ns = row.get(0)?;
+            let size = row.get(1)?;
+            Ok(Some((mtime_ns, size)))
+        } else {
+            Ok(None)
+        }
+    }
+
+    fn current_fingerprint(file_path: &Path) -> Result<(i64, i64)> {
+        let metadata = fs::metadata(file_path)?;
+        let modified = metadata
+            .modified()?
+            .duration_since(UNIX_EPOCH)
+            .context("file timestamp predates unix epoch")?;
+
+        let mtime_ns = i64::try_from(modified.as_nanos()).context("mtime nanoseconds overflow")?;
+        let size = i64::try_from(metadata.len()).context("file size overflow")?;
+        Ok((mtime_ns, size))
+    }
+
+    fn should_reindex(&self, file_path: &Path) -> Result<bool> {
+        let current = Self::current_fingerprint(file_path)?;
+        match self.get_fingerprint(file_path)? {
+            Some(stored) if stored == current => Ok(false),
+            _ => Ok(true),
+        }
+    }
+
+    fn upsert_fingerprint_tx(tx: &rusqlite::Transaction<'_>, file_path: &Path) -> Result<()> {
+        let Some(file_path_str) = file_path.to_str() else {
+            return Ok(());
+        };
+
+        let (mtime_ns, size) = Self::current_fingerprint(file_path)?;
+        tx.execute(
+            "INSERT INTO file_fingerprints (file_path, mtime_ns, size)
+             VALUES (?1, ?2, ?3)
+             ON CONFLICT(file_path) DO UPDATE SET
+               mtime_ns = excluded.mtime_ns,
+               size = excluded.size",
+            rusqlite::params![file_path_str, mtime_ns, size],
+        )?;
+        Ok(())
+    }
+
+    fn upsert_fingerprint_for_file(&mut self, file_path: &Path) -> Result<()> {
+        let tx = self.db.transaction()?;
+        Self::upsert_fingerprint_tx(&tx, file_path)?;
+        tx.commit()?;
+        Ok(())
+    }
+
+    fn prune_orphan_fingerprints(&mut self) -> Result<usize> {
+        let file_paths: Vec<String> = {
+            let mut stmt = self.db.prepare("SELECT file_path FROM file_fingerprints")?;
+            stmt.query_map([], |row| row.get(0))?
+                .collect::<std::result::Result<Vec<_>, _>>()?
+        };
+
+        let tx = self.db.transaction()?;
+        let mut removed = 0usize;
+
+        for file_path in file_paths {
+            if !Path::new(&file_path).exists() {
+                removed += tx.execute(
+                    "DELETE FROM file_fingerprints WHERE file_path = ?1",
+                    [file_path],
+                )?;
+            }
+        }
+
+        tx.commit()?;
+        Ok(removed)
+    }
+
     fn is_sidechain_file(file_path: &Path, sessions_dir: &Path) -> bool {
         let is_agent_file = file_path
             .file_stem()
@@ -512,6 +600,39 @@ mod tests {
             .query_row("PRAGMA busy_timeout", [], |row| row.get(0))
             .unwrap();
         assert_eq!(busy_timeout_ms, 5_000);
+    }
+
+    #[test]
+    fn should_reindex_uses_mtime_and_size_fingerprint() {
+        let temp_db = NamedTempFile::new().unwrap();
+        let mut indexer = SessionIndexer::new(temp_db.path()).unwrap();
+        let temp_dir = tempfile::tempdir().unwrap();
+        let session_file = temp_dir.path().join("session.jsonl");
+
+        std::fs::write(&session_file, "{}\n").unwrap();
+        assert!(indexer.should_reindex(&session_file).unwrap());
+
+        indexer.upsert_fingerprint_for_file(&session_file).unwrap();
+        assert!(!indexer.should_reindex(&session_file).unwrap());
+
+        std::fs::write(&session_file, "{}\n{}\n").unwrap();
+        assert!(indexer.should_reindex(&session_file).unwrap());
+    }
+
+    #[test]
+    fn prune_orphan_fingerprints_removes_missing_paths() {
+        let temp_db = NamedTempFile::new().unwrap();
+        let mut indexer = SessionIndexer::new(temp_db.path()).unwrap();
+        let temp_dir = tempfile::tempdir().unwrap();
+        let session_file = temp_dir.path().join("session.jsonl");
+
+        std::fs::write(&session_file, "{}\n").unwrap();
+        indexer.upsert_fingerprint_for_file(&session_file).unwrap();
+
+        std::fs::remove_file(&session_file).unwrap();
+
+        let removed = indexer.prune_orphan_fingerprints().unwrap();
+        assert_eq!(removed, 1);
     }
 
     #[test]
