@@ -122,16 +122,23 @@ impl SessionRow {
     }
 
     fn session_title(session: &Session) -> String {
-        let raw = if let Some(prompt) = session
-            .first_prompt
+        let raw = session
+            .title
             .as_deref()
             .map(str::trim)
-            .filter(|prompt| !prompt.is_empty())
-        {
-            prompt.to_string()
-        } else {
-            Self::project_name(session).unwrap_or_else(|| "Unknown project".to_string())
-        };
+            .filter(|title| !title.is_empty())
+            .map(str::to_string)
+            .or_else(|| {
+                session
+                    .first_prompt
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|prompt| !prompt.is_empty())
+                    .map(str::to_string)
+            })
+            .unwrap_or_else(|| {
+                Self::project_name(session).unwrap_or_else(|| "Unknown project".to_string())
+            });
 
         // ActionRow interprets title as Pango markup by default.
         // Escape special chars (<, >, &) to prevent parse failures.
@@ -148,12 +155,16 @@ impl SessionRow {
     }
 
     fn session_subtitle(session: &Session) -> String {
-        let has_prompt = session
-            .first_prompt
+        let has_title_or_prompt = session
+            .title
             .as_deref()
-            .is_some_and(|p| !p.trim().is_empty());
+            .is_some_and(|title| !title.trim().is_empty())
+            || session
+                .first_prompt
+                .as_deref()
+                .is_some_and(|p| !p.trim().is_empty());
 
-        let location = if has_prompt {
+        let location = if has_title_or_prompt {
             Self::project_name(session).unwrap_or_else(|| "Unknown project".to_string())
         } else {
             session
@@ -196,6 +207,7 @@ mod tests {
 
     fn build_session(
         project_path: Option<&str>,
+        title: Option<&str>,
         first_prompt: Option<&str>,
         minutes_ago: i64,
     ) -> Session {
@@ -209,7 +221,7 @@ mod tests {
             file_path: "/tmp/session.jsonl".to_string(),
             last_updated: now - ChronoDuration::minutes(minutes_ago),
             first_prompt: first_prompt.map(str::to_string),
-            title: None,
+            title: title.map(str::to_string),
             parent_session_id: None,
             is_subagent: false,
             token_usage: None,
@@ -220,6 +232,7 @@ mod tests {
     fn session_title_uses_first_prompt_when_present() {
         let session = build_session(
             Some("/home/user/work/my-project"),
+            None,
             Some("Investigate this failing parser test"),
             10,
         );
@@ -232,8 +245,8 @@ mod tests {
 
     #[test]
     fn session_title_falls_back_to_project_name_then_unknown_project() {
-        let with_project = build_session(Some("/home/user/work/my-project"), None, 10);
-        let without_project = build_session(None, None, 10);
+        let with_project = build_session(Some("/home/user/work/my-project"), None, None, 10);
+        let without_project = build_session(None, None, None, 10);
 
         assert_eq!(SessionRow::session_title(&with_project), "my-project");
         assert_eq!(
@@ -244,7 +257,7 @@ mod tests {
 
     #[test]
     fn session_subtitle_shows_full_path_when_no_prompt() {
-        let session = build_session(Some("/home/user/work/my-project"), None, 5);
+        let session = build_session(Some("/home/user/work/my-project"), None, None, 5);
 
         assert_eq!(
             SessionRow::session_subtitle(&session),
@@ -254,7 +267,12 @@ mod tests {
 
     #[test]
     fn session_subtitle_shows_project_name_when_prompt_present() {
-        let session = build_session(Some("/home/user/work/my-project"), Some("Fix the build"), 5);
+        let session = build_session(
+            Some("/home/user/work/my-project"),
+            None,
+            Some("Fix the build"),
+            5,
+        );
 
         assert_eq!(
             SessionRow::session_subtitle(&session),
@@ -266,6 +284,7 @@ mod tests {
     fn session_title_escapes_markup_special_chars() {
         let session = build_session(
             Some("/home/user/work/my-project"),
+            None,
             Some("<command-message>review</command-message> & fix"),
             10,
         );
@@ -286,5 +305,32 @@ mod tests {
             receiver.recv_sync(),
             Some(SessionRowOutput::ResumeRequested(id, tool)) if id == "session-123" && tool == Tool::OpenCode
         ));
+    }
+
+    #[test]
+    fn session_title_uses_title_before_first_prompt() {
+        let session = build_session(
+            Some("/home/user/work/my-project"),
+            Some("Native title"),
+            Some("Fallback prompt"),
+            10,
+        );
+
+        assert_eq!(SessionRow::session_title(&session), "Native title");
+    }
+
+    #[test]
+    fn session_subtitle_uses_project_name_when_title_present_without_prompt() {
+        let session = build_session(
+            Some("/home/user/work/my-project"),
+            Some("Native title"),
+            None,
+            5,
+        );
+
+        assert_eq!(
+            SessionRow::session_subtitle(&session),
+            "my-project · 7 messages · 5m ago"
+        );
     }
 }
