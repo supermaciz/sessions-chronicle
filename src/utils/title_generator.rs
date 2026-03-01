@@ -145,8 +145,10 @@ fn build_command(
                 "default".to_string(),
             ];
 
+            let auto_default =
+                default_model_for(TitleProvider::OpenCode).unwrap_or(OPENCODE_DEFAULT_MODEL);
             let model = if auto_mode {
-                Some(model_override.unwrap_or(OPENCODE_DEFAULT_MODEL))
+                Some(model_override.unwrap_or(auto_default))
             } else {
                 model_override
             };
@@ -159,7 +161,9 @@ fn build_command(
             wrap_for_host_execution("opencode", &args, flatpak)
         }
         TitleProvider::Claude => {
-            let model = model_override.unwrap_or(CLAUDE_DEFAULT_MODEL);
+            let default_model =
+                default_model_for(TitleProvider::Claude).unwrap_or(CLAUDE_DEFAULT_MODEL);
+            let model = model_override.unwrap_or(default_model);
             let args = vec![
                 "-p".to_string(),
                 prompt.to_string(),

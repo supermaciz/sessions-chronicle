@@ -3,11 +3,12 @@ use adw::prelude::{
     PreferencesGroupExt, PreferencesPageExt,
 };
 use gtk::gio;
-use gtk::prelude::{ButtonExt, SettingsExt};
+use gtk::prelude::{ButtonExt, EditableExt, SettingsExt};
 use relm4::{ComponentParts, ComponentSender, SimpleComponent, adw, gtk};
 
 use crate::config::APP_ID;
 use crate::utils::terminal::Terminal;
+use crate::utils::title_generator::{TitleProvider, detect_available_provider};
 
 const TERMINALS: &[Terminal] = &[
     Terminal::Auto,
@@ -17,6 +18,32 @@ const TERMINALS: &[Terminal] = &[
     Terminal::Alacritty,
     Terminal::Kitty,
 ];
+
+const TITLE_PROVIDER_LABELS: &[&str] = &["Auto", "OpenCode", "Claude"];
+
+fn provider_value_to_index(value: &str) -> u32 {
+    match value {
+        "opencode" => 1,
+        "claude" => 2,
+        _ => 0,
+    }
+}
+
+fn provider_index_to_value(index: u32) -> &'static str {
+    match index {
+        1 => "opencode",
+        2 => "claude",
+        _ => "auto",
+    }
+}
+
+fn auto_provider_subtitle() -> &'static str {
+    match detect_available_provider() {
+        Some(TitleProvider::OpenCode) => "Auto (OpenCode detected)",
+        Some(TitleProvider::Claude) => "Auto (Claude detected)",
+        _ => "Auto (No CLI detected)",
+    }
+}
 
 pub struct PreferencesDialog {
     root: adw::PreferencesDialog,
@@ -75,15 +102,64 @@ impl SimpleComponent for PreferencesDialog {
             .selected(selected_index)
             .build();
 
+        let settings_for_terminal = settings.clone();
         combo_row.connect_selected_notify(move |row| {
             let selected = row.selected();
             if let Some(terminal) = TERMINALS.get(selected as usize) {
-                let _ = settings.set_string("resume-terminal", terminal.to_str());
+                let _ = settings_for_terminal.set_string("resume-terminal", terminal.to_str());
             }
         });
 
         resumption_group.add(&combo_row);
         page.add(&resumption_group);
+
+        let ai_group = adw::PreferencesGroup::builder()
+            .title("AI Session Titles")
+            .build();
+
+        let ai_enabled_row = adw::SwitchRow::builder()
+            .title("Enable title generation")
+            .subtitle("Generate titles for sessions missing native titles")
+            .active(settings.boolean("ai-title-generation-enabled"))
+            .build();
+        let settings_for_enabled = settings.clone();
+        ai_enabled_row.connect_active_notify(move |row| {
+            let _ =
+                settings_for_enabled.set_boolean("ai-title-generation-enabled", row.is_active());
+        });
+
+        let provider_model = gio::ListStore::new::<gtk::StringObject>();
+        for label in TITLE_PROVIDER_LABELS {
+            provider_model.append(&gtk::StringObject::new(label));
+        }
+
+        let selected_provider =
+            provider_value_to_index(settings.string("ai-title-generation-provider").as_str());
+
+        let provider_row = adw::ComboRow::builder()
+            .title("Provider")
+            .subtitle(auto_provider_subtitle())
+            .model(&provider_model)
+            .selected(selected_provider)
+            .build();
+        let settings_for_provider = settings.clone();
+        provider_row.connect_selected_notify(move |row| {
+            let value = provider_index_to_value(row.selected());
+            let _ = settings_for_provider.set_string("ai-title-generation-provider", value);
+        });
+
+        let current_model = settings.string("ai-title-generation-model");
+        let model_row = adw::EntryRow::builder().title("Model override").build();
+        model_row.set_text(current_model.as_str());
+        let settings_for_model = settings.clone();
+        model_row.connect_changed(move |row| {
+            let _ = settings_for_model.set_string("ai-title-generation-model", row.text().as_str());
+        });
+
+        ai_group.add(&ai_enabled_row);
+        ai_group.add(&provider_row);
+        ai_group.add(&model_row);
+        page.add(&ai_group);
 
         // Advanced group with reset button
         let advanced_group = adw::PreferencesGroup::builder().title("Advanced").build();
@@ -147,4 +223,22 @@ impl SimpleComponent for PreferencesDialog {
     }
 
     fn update_view(&self, _widgets: &mut Self::Widgets, _sender: ComponentSender<Self>) {}
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn provider_index_mapping_round_trips() {
+        assert_eq!(provider_value_to_index("auto"), 0);
+        assert_eq!(provider_value_to_index("opencode"), 1);
+        assert_eq!(provider_value_to_index("claude"), 2);
+        assert_eq!(provider_value_to_index("invalid"), 0);
+
+        assert_eq!(provider_index_to_value(0), "auto");
+        assert_eq!(provider_index_to_value(1), "opencode");
+        assert_eq!(provider_index_to_value(2), "claude");
+        assert_eq!(provider_index_to_value(99), "auto");
+    }
 }

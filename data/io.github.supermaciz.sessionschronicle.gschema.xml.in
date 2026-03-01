@@ -18,5 +18,17 @@
       <summary>Terminal emulator for resuming sessions</summary>
       <description>The terminal emulator to use when resuming sessions. Accepted values: auto, ptyxis, ghostty, foot, alacritty, kitty.</description>
     </key>
+    <key name="ai-title-generation-enabled" type="b">
+      <default>false</default>
+      <summary>Enable AI session title generation</summary>
+    </key>
+    <key name="ai-title-generation-provider" type="s">
+      <default>"auto"</default>
+      <summary>AI title generation provider</summary>
+    </key>
+    <key name="ai-title-generation-model" type="s">
+      <default>""</default>
+      <summary>AI title generation model override</summary>
+    </key>
   </schema>
 </schemalist>

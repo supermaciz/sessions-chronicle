@@ -15,7 +15,9 @@ use std::{cell::Cell, fs, path::PathBuf, str::FromStr, sync::Arc};
 
 use crate::config::{APP_ID, PROFILE};
 use crate::database::{SessionIndexer, load_session};
-use crate::indexing_worker::{IndexingWorker, IndexingWorkerInput, IndexingWorkerOutput};
+use crate::indexing_worker::{
+    IndexingRequest, IndexingWorker, IndexingWorkerInput, IndexingWorkerOutput,
+};
 use crate::models::session::Tool;
 use crate::session_sources::{SessionSources, select_db_filename};
 use crate::ui::modals::{
@@ -30,6 +32,7 @@ use crate::ui::{
     tool_inspector_pane::{ToolInspectorPane, ToolInspectorPaneMsg, ToolInspectorPaneOutput},
 };
 use crate::utils::terminal::{self, Terminal};
+use crate::utils::title_generator::{TitleGenerationConfig, TitleProvider};
 
 /// Timeout in seconds for resume failure toast notifications
 const RESUME_FAILURE_TOAST_TIMEOUT_SECS: u32 = 4;
@@ -624,7 +627,10 @@ impl SimpleComponent for App {
         model.session_list.emit(SessionListMsg::SetIndexing(true));
         model
             .indexing_worker
-            .emit(IndexingWorkerInput::StartIncremental(model.sources.clone()));
+            .emit(IndexingWorkerInput::StartIncremental(IndexingRequest {
+                sources: model.sources.clone(),
+                title_generation: read_title_generation_config(),
+            }));
 
         ComponentParts { model, widgets }
     }
@@ -752,7 +758,10 @@ impl SimpleComponent for App {
                     self.pending_reindex_feedback = true;
                     self.session_list.emit(SessionListMsg::SetIndexing(true));
                     self.indexing_worker
-                        .emit(IndexingWorkerInput::StartFullReindex(self.sources.clone()));
+                        .emit(IndexingWorkerInput::StartFullReindex(IndexingRequest {
+                            sources: self.sources.clone(),
+                            title_generation: read_title_generation_config(),
+                        }));
                 }
             },
             AppMsg::IndexingCompleted { indexed, skipped } => {
@@ -1069,6 +1078,50 @@ fn decide_reindex_action(indexing: bool) -> ReindexAction {
     }
 }
 
+fn parse_title_provider(raw: &str) -> TitleProvider {
+    TitleProvider::parse(raw)
+}
+
+fn read_title_generation_config() -> TitleGenerationConfig {
+    let settings = gio::Settings::new(APP_ID);
+    let schema_has_key = |key: &str| {
+        settings
+            .settings_schema()
+            .as_ref()
+            .is_some_and(|schema| schema.has_key(key))
+    };
+
+    let enabled = if schema_has_key("ai-title-generation-enabled") {
+        settings.boolean("ai-title-generation-enabled")
+    } else {
+        false
+    };
+
+    let provider = if schema_has_key("ai-title-generation-provider") {
+        parse_title_provider(settings.string("ai-title-generation-provider").as_str())
+    } else {
+        TitleProvider::Auto
+    };
+
+    let model_override = if schema_has_key("ai-title-generation-model") {
+        let model = settings.string("ai-title-generation-model");
+        let model = model.trim();
+        if model.is_empty() {
+            None
+        } else {
+            Some(model.to_string())
+        }
+    } else {
+        None
+    };
+
+    TitleGenerationConfig {
+        enabled,
+        provider,
+        model_override,
+    }
+}
+
 impl App {
     /// Reset app state after leaving detail view.
     fn transition_to_session_list_mode(&mut self) {
@@ -1379,6 +1432,11 @@ mod tests {
     #[test]
     fn reindex_request_starts_full_reindex_when_idle() {
         assert_eq!(decide_reindex_action(false), ReindexAction::StartFull);
+    }
+
+    #[test]
+    fn parse_title_provider_defaults_to_auto_on_invalid_value() {
+        assert_eq!(parse_title_provider("invalid"), TitleProvider::Auto);
     }
 
     #[test]
