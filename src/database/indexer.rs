@@ -18,6 +18,12 @@ pub struct SessionIndexer {
     db: Connection,
 }
 
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct IndexingStats {
+    pub indexed: usize,
+    pub skipped: usize,
+}
+
 fn is_opencode_error(err: &anyhow::Error) -> bool {
     err.downcast_ref::<OpenCodeParseError>().is_some()
 }
@@ -37,8 +43,26 @@ impl SessionIndexer {
     }
 
     pub fn index_claude_sessions(&mut self, sessions_dir: &Path) -> Result<usize> {
+        Ok(self
+            .index_claude_sessions_internal(sessions_dir, false)?
+            .indexed)
+    }
+
+    #[allow(dead_code)]
+    pub fn index_claude_sessions_incremental(
+        &mut self,
+        sessions_dir: &Path,
+    ) -> Result<IndexingStats> {
+        self.index_claude_sessions_internal(sessions_dir, true)
+    }
+
+    fn index_claude_sessions_internal(
+        &mut self,
+        sessions_dir: &Path,
+        incremental: bool,
+    ) -> Result<IndexingStats> {
         let parser = ClaudeCodeParser;
-        let mut count = 0;
+        let mut stats = IndexingStats::default();
 
         for entry in walkdir::WalkDir::new(sessions_dir)
             .max_depth(5)
@@ -60,15 +84,22 @@ impl SessionIndexer {
                     }
                     continue;
                 }
+
+                if incremental && !self.should_reindex(path)? {
+                    stats.skipped += 1;
+                    continue;
+                }
+
                 if let Err(e) = self.index_session_file(path, &parser) {
                     tracing::warn!("Failed to index {}: {}", path.display(), e);
                 } else {
-                    count += 1;
+                    stats.indexed += 1;
                 }
             }
         }
 
-        Ok(count)
+        self.prune_orphan_fingerprints()?;
+        Ok(stats)
     }
 
     pub fn index_opencode_sessions(
@@ -194,16 +225,36 @@ impl SessionIndexer {
             self.prune_stale_opencode_sessions(&indexed_ids)?;
         }
 
+        self.prune_orphan_fingerprints()?;
+
         Ok(count)
     }
 
     pub fn index_codex_sessions(&mut self, sessions_dir: &Path) -> Result<usize> {
+        Ok(self
+            .index_codex_sessions_internal(sessions_dir, false)?
+            .indexed)
+    }
+
+    #[allow(dead_code)]
+    pub fn index_codex_sessions_incremental(
+        &mut self,
+        sessions_dir: &Path,
+    ) -> Result<IndexingStats> {
+        self.index_codex_sessions_internal(sessions_dir, true)
+    }
+
+    fn index_codex_sessions_internal(
+        &mut self,
+        sessions_dir: &Path,
+        incremental: bool,
+    ) -> Result<IndexingStats> {
         if !sessions_dir.exists() {
-            return Ok(0);
+            return Ok(IndexingStats::default());
         }
 
         let parser = CodexParser;
-        let mut count = 0;
+        let mut stats = IndexingStats::default();
 
         for entry in walkdir::WalkDir::new(sessions_dir)
             .max_depth(5)
@@ -216,9 +267,14 @@ impl SessionIndexer {
                 && file_name.starts_with("rollout-")
                 && file_name.ends_with(".jsonl")
             {
+                if incremental && !self.should_reindex(path)? {
+                    stats.skipped += 1;
+                    continue;
+                }
+
                 match self.index_codex_session_file(path, &parser) {
                     Ok(()) => {
-                        count += 1;
+                        stats.indexed += 1;
                     }
                     Err(err) => {
                         if is_codex_error(&err) {
@@ -238,7 +294,8 @@ impl SessionIndexer {
             }
         }
 
-        Ok(count)
+        self.prune_orphan_fingerprints()?;
+        Ok(stats)
     }
 
     pub fn index_vibe_sessions(&mut self, sessions_dir: &Path) -> Result<usize> {
@@ -294,6 +351,7 @@ impl SessionIndexer {
             }
         }
 
+        self.prune_orphan_fingerprints()?;
         Ok(count)
     }
 
@@ -320,6 +378,15 @@ impl SessionIndexer {
     }
 
     fn insert_parsed_session(&mut self, parsed: &ParsedSession, file_path: &Path) -> Result<()> {
+        self.insert_parsed_session_with_fingerprint(parsed, file_path, file_path)
+    }
+
+    fn insert_parsed_session_with_fingerprint(
+        &mut self,
+        parsed: &ParsedSession,
+        file_path: &Path,
+        fingerprint_path: &Path,
+    ) -> Result<()> {
         let session = &parsed.session;
         let tx = self.db.transaction()?;
 
@@ -392,6 +459,8 @@ impl SessionIndexer {
             crate::database::insert_transcript_item(&tx, item, &session.id)?;
         }
 
+        Self::upsert_fingerprint_tx(&tx, fingerprint_path)?;
+
         tx.commit()?;
 
         Ok(())
@@ -453,6 +522,7 @@ impl SessionIndexer {
         Ok(())
     }
 
+    #[cfg(test)]
     fn upsert_fingerprint_for_file(&mut self, file_path: &Path) -> Result<()> {
         let tx = self.db.transaction()?;
         Self::upsert_fingerprint_tx(&tx, file_path)?;
@@ -633,6 +703,42 @@ mod tests {
 
         let removed = indexer.prune_orphan_fingerprints().unwrap();
         assert_eq!(removed, 1);
+    }
+
+    #[test]
+    fn claude_incremental_skips_unchanged_files() {
+        let temp_db = NamedTempFile::new().unwrap();
+        let mut indexer = SessionIndexer::new(temp_db.path()).unwrap();
+        let sessions_dir = PathBuf::from("tests/fixtures/claude_sessions");
+
+        let first = indexer
+            .index_claude_sessions_incremental(&sessions_dir)
+            .unwrap();
+        assert!(first.indexed > 0);
+
+        let second = indexer
+            .index_claude_sessions_incremental(&sessions_dir)
+            .unwrap();
+        assert_eq!(second.indexed, 0);
+        assert!(second.skipped > 0);
+    }
+
+    #[test]
+    fn codex_incremental_skips_unchanged_rollouts() {
+        let temp_db = NamedTempFile::new().unwrap();
+        let mut indexer = SessionIndexer::new(temp_db.path()).unwrap();
+        let sessions_dir = PathBuf::from("tests/fixtures/codex_sessions");
+
+        let first = indexer
+            .index_codex_sessions_incremental(&sessions_dir)
+            .unwrap();
+        assert!(first.indexed > 0);
+
+        let second = indexer
+            .index_codex_sessions_incremental(&sessions_dir)
+            .unwrap();
+        assert_eq!(second.indexed, 0);
+        assert!(second.skipped > 0);
     }
 
     #[test]
