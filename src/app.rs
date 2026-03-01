@@ -1153,6 +1153,86 @@ impl AppWidgets {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use gtk::prelude::WidgetExt;
+    use relm4::Component;
+    use relm4::ComponentController;
+    use std::path::PathBuf;
+    use std::time::Duration;
+
+    fn find_indexing_spinner(widget: &gtk::Widget) -> Option<gtk::Spinner> {
+        if let Ok(spinner) = widget.clone().downcast::<gtk::Spinner>()
+            && spinner.tooltip_text().as_deref() == Some("Indexing sessions...")
+        {
+            return Some(spinner);
+        }
+
+        let mut child = widget.first_child();
+        while let Some(child_widget) = child {
+            if let Some(found) = find_indexing_spinner(&child_widget) {
+                return Some(found);
+            }
+            child = child_widget.next_sibling();
+        }
+
+        None
+    }
+
+    fn pump_main_context(condition: impl Fn() -> bool) {
+        let context = gtk::glib::MainContext::default();
+        let deadline = std::time::Instant::now() + Duration::from_millis(500);
+        while std::time::Instant::now() < deadline {
+            if condition() {
+                return;
+            }
+
+            if !context.iteration(false) {
+                std::thread::sleep(Duration::from_millis(2));
+            }
+        }
+    }
+
+    #[gtk::test]
+    fn startup_shows_indexing_spinner_during_incremental_indexing() {
+        let schema_available = gio::SettingsSchemaSource::default()
+            .and_then(|source| source.lookup(crate::config::APP_ID, true))
+            .is_some();
+        if !schema_available {
+            return;
+        }
+
+        let controller = App::builder().launch(Some(PathBuf::from("tests/fixtures")));
+
+        {
+            let parts = controller.state().get();
+            assert!(
+                parts.model.indexing,
+                "app should start in indexing mode for background incremental scan"
+            );
+            assert!(
+                parts.model.sources.opencode_db_path.is_some(),
+                "fixtures should resolve an OpenCode SQLite source"
+            );
+        }
+
+        let root = controller.widget().clone().upcast::<gtk::Widget>();
+        let spinner = find_indexing_spinner(&root).expect("indexing spinner should exist");
+
+        assert!(
+            spinner.is_visible(),
+            "header spinner should be visible while incremental indexing is active"
+        );
+
+        controller.emit(AppMsg::IndexingCompleted {
+            indexed: 0,
+            skipped: 0,
+        });
+
+        pump_main_context(|| !spinner.is_visible());
+        assert!(
+            !spinner.is_visible(),
+            "header spinner should hide after indexing completes"
+        );
+    }
 
     #[test]
     fn search_query_update_messages_include_detail_update() {

@@ -2,7 +2,7 @@ use anyhow::{Context, Result};
 use rusqlite::Connection;
 use std::collections::HashSet;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::UNIX_EPOCH;
 
 use crate::parsers::ParsedSession;
@@ -140,7 +140,7 @@ impl SessionIndexer {
         let mut sqlite_enumerated = false;
 
         if let Some(db_path) = db_path {
-            if incremental && !self.should_reindex(db_path)? {
+            if incremental && !self.should_reindex_opencode_sqlite(db_path)? {
                 stats.skipped += 1;
             } else {
                 match SqliteBackend::open(db_path) {
@@ -153,7 +153,9 @@ impl SessionIndexer {
                                     Ok(parsed) => {
                                         if let Err(err) = self
                                             .insert_parsed_session_with_fingerprint(
-                                                &parsed, db_path, db_path,
+                                                &parsed,
+                                                db_path,
+                                                &Self::opencode_sqlite_fingerprint_target(db_path),
                                             )
                                         {
                                             tracing::warn!(
@@ -570,6 +572,34 @@ impl SessionIndexer {
         }
     }
 
+    fn should_reindex_opencode_sqlite(&self, db_path: &Path) -> Result<bool> {
+        if self.should_reindex(db_path)? {
+            return Ok(true);
+        }
+
+        let wal_path = Self::opencode_sqlite_wal_path(db_path);
+        if wal_path.exists() {
+            return self.should_reindex(&wal_path);
+        }
+
+        Ok(self.get_fingerprint(&wal_path)?.is_some())
+    }
+
+    fn opencode_sqlite_wal_path(db_path: &Path) -> PathBuf {
+        let mut wal = db_path.as_os_str().to_os_string();
+        wal.push("-wal");
+        wal.into()
+    }
+
+    fn opencode_sqlite_fingerprint_target(db_path: &Path) -> PathBuf {
+        let wal_path = Self::opencode_sqlite_wal_path(db_path);
+        if wal_path.exists() {
+            wal_path
+        } else {
+            db_path.to_path_buf()
+        }
+    }
+
     fn upsert_fingerprint_tx(tx: &rusqlite::Transaction<'_>, file_path: &Path) -> Result<()> {
         let Some(file_path_str) = file_path.to_str() else {
             return Ok(());
@@ -757,8 +787,78 @@ impl SessionIndexer {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rusqlite::Connection;
     use std::path::PathBuf;
     use tempfile::NamedTempFile;
+
+    fn create_opencode_sqlite_db(db_path: &std::path::Path) -> Connection {
+        let conn = Connection::open(db_path).unwrap();
+        conn.pragma_update(None, "journal_mode", "WAL").unwrap();
+        conn.pragma_update(None, "wal_autocheckpoint", 0).unwrap();
+
+        conn.execute_batch(
+            "
+            CREATE TABLE session (
+                id TEXT PRIMARY KEY,
+                directory TEXT,
+                title TEXT,
+                parent_id TEXT,
+                time_created INTEGER NOT NULL,
+                time_updated INTEGER NOT NULL
+            );
+            CREATE TABLE message (
+                id TEXT PRIMARY KEY,
+                session_id TEXT NOT NULL,
+                time_created INTEGER NOT NULL,
+                data TEXT NOT NULL
+            );
+            CREATE TABLE part (
+                id TEXT PRIMARY KEY,
+                message_id TEXT NOT NULL,
+                data TEXT NOT NULL
+            );
+            ",
+        )
+        .unwrap();
+
+        conn
+    }
+
+    fn insert_opencode_session(conn: &Connection, session_id: &str, ts_ms: i64) {
+        let msg_id = format!("msg-{}", session_id);
+        let part_id = format!("prt-{}", session_id);
+
+        conn.execute(
+            "INSERT INTO session (id, directory, title, parent_id, time_created, time_updated)
+             VALUES (?1, ?2, ?3, NULL, ?4, ?5)",
+            rusqlite::params![
+                session_id,
+                "/tmp/project",
+                format!("Session {}", session_id),
+                ts_ms,
+                ts_ms,
+            ],
+        )
+        .unwrap();
+
+        conn.execute(
+            "INSERT INTO message (id, session_id, time_created, data)
+             VALUES (?1, ?2, ?3, ?4)",
+            rusqlite::params![msg_id, session_id, ts_ms, r#"{"role":"user"}"#],
+        )
+        .unwrap();
+
+        conn.execute(
+            "INSERT INTO part (id, message_id, data)
+             VALUES (?1, ?2, ?3)",
+            rusqlite::params![
+                part_id,
+                format!("msg-{}", session_id),
+                r#"{"type":"text","order":1,"text":"hello"}"#
+            ],
+        )
+        .unwrap();
+    }
 
     #[test]
     fn new_indexer_configures_wal_and_busy_timeout() {
@@ -912,6 +1012,55 @@ mod tests {
             )
             .unwrap();
         assert!(sqlite_only_exists);
+    }
+
+    #[test]
+    fn opencode_incremental_detects_new_rows_in_sqlite_wal() {
+        let temp_app_db = NamedTempFile::new().unwrap();
+        let mut indexer = SessionIndexer::new(temp_app_db.path()).unwrap();
+
+        let source_root = tempfile::tempdir().unwrap();
+        let source_db = source_root.path().join("opencode.db");
+        let writer = create_opencode_sqlite_db(&source_db);
+
+        // Keep the writer connection open so SQLite changes stay in -wal and the
+        // main DB file mtime does not advance between incremental runs.
+        insert_opencode_session(&writer, "session-wal-1", 1_700_000_000_000);
+
+        let missing_storage_root = source_root.path().join("missing-storage");
+        let first = indexer
+            .index_opencode_sessions_incremental(&missing_storage_root, Some(&source_db))
+            .unwrap();
+        assert_eq!(first.indexed, 1);
+
+        let db_mtime_before = std::fs::metadata(&source_db).unwrap().modified().unwrap();
+
+        insert_opencode_session(&writer, "session-wal-2", 1_700_000_100_000);
+
+        let db_mtime_after = std::fs::metadata(&source_db).unwrap().modified().unwrap();
+        assert_eq!(
+            db_mtime_after, db_mtime_before,
+            "DB mtime should stay unchanged while new rows are only in -wal"
+        );
+
+        let second = indexer
+            .index_opencode_sessions_incremental(&missing_storage_root, Some(&source_db))
+            .unwrap();
+
+        assert!(
+            second.indexed > 0,
+            "Second incremental run should re-parse SQLite when WAL changes"
+        );
+
+        let count: i64 = indexer
+            .db
+            .query_row(
+                "SELECT COUNT(*) FROM sessions WHERE tool = 'opencode'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(count, 2);
     }
 
     #[test]
