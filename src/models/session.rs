@@ -15,6 +15,8 @@ pub struct Session {
     #[serde(default)]
     pub first_prompt: Option<String>,
     #[serde(default)]
+    pub title: Option<String>,
+    #[serde(default)]
     pub parent_session_id: Option<String>,
     #[serde(default)]
     pub is_subagent: bool,

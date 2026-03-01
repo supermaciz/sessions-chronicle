@@ -475,6 +475,7 @@ impl ClaudeCodeParser {
             file_path: file_path.to_str().unwrap().to_string(),
             last_updated,
             first_prompt,
+            title: None,
             parent_session_id: None,
             is_subagent: false,
             token_usage: None,

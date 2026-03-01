@@ -216,6 +216,7 @@ impl MistralVibeParser {
                 file_path: session_dir.to_str().unwrap_or_default().to_string(),
                 last_updated: end_time,
                 first_prompt,
+                title: None,
                 parent_session_id: None,
                 is_subagent: false,
                 token_usage: None,

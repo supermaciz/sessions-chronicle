@@ -376,6 +376,7 @@ impl CodexParser {
                 file_path: file_path.to_str().unwrap_or_default().to_string(),
                 last_updated,
                 first_prompt,
+                title: None,
                 parent_session_id: None,
                 is_subagent: false,
                 token_usage: None,

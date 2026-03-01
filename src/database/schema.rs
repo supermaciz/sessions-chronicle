@@ -11,6 +11,7 @@ use rusqlite::Connection;
 ///   3 – sessions gains token usage columns (input_tokens, output_tokens,
 ///       cache_read_tokens, cache_write_tokens, reasoning_tokens)
 ///   4 – file_fingerprints table for incremental indexing
+///   5 – sessions gains nullable title column
 pub fn initialize_database(conn: &Connection) -> Result<()> {
     let version: i64 = conn.query_row("PRAGMA user_version", [], |row| row.get(0))?;
 
@@ -25,6 +26,9 @@ pub fn initialize_database(conn: &Connection) -> Result<()> {
     }
     if version < 4 {
         apply_v4_migration(conn)?;
+    }
+    if version < 5 {
+        apply_v5_migration(conn)?;
     }
 
     Ok(())
@@ -241,19 +245,31 @@ fn apply_v4_migration(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
+/// Migrate from v4 to v5: add a nullable session title column.
+fn apply_v5_migration(conn: &Connection) -> Result<()> {
+    match conn.execute("ALTER TABLE sessions ADD COLUMN title TEXT", []) {
+        Ok(_) => {}
+        Err(e) if e.to_string().contains("duplicate column name") => {}
+        Err(e) => return Err(e.into()),
+    }
+
+    conn.execute_batch("PRAGMA user_version = 5")?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use rusqlite::Connection;
 
     #[test]
-    fn fresh_db_initializes_to_v4() {
+    fn fresh_db_initializes_to_v5() {
         let conn = Connection::open_in_memory().unwrap();
         initialize_database(&conn).unwrap();
         let version: i64 = conn
             .query_row("PRAGMA user_version", [], |r| r.get(0))
             .unwrap();
-        assert_eq!(version, 4);
+        assert_eq!(version, 5);
 
         let table_exists: i64 = conn
             .query_row(
@@ -345,7 +361,7 @@ mod tests {
         let version: i64 = conn
             .query_row("PRAGMA user_version", [], |r| r.get(0))
             .unwrap();
-        assert_eq!(version, 4);
+        assert_eq!(version, 5);
 
         // Old messages are gone (by design — will be re-indexed)
         let count: i64 = conn
@@ -404,7 +420,7 @@ mod tests {
         let version: i64 = conn
             .query_row("PRAGMA user_version", [], |r| r.get(0))
             .unwrap();
-        assert_eq!(version, 4);
+        assert_eq!(version, 5);
 
         conn.execute(
             "UPDATE sessions SET input_tokens = 1000, output_tokens = 500 WHERE id = 's1'",
@@ -423,14 +439,93 @@ mod tests {
     }
 
     #[test]
-    fn v4_migration_is_idempotent() {
+    fn v5_migration_is_idempotent_for_fresh_db() {
         let conn = Connection::open_in_memory().unwrap();
         initialize_database(&conn).unwrap();
         initialize_database(&conn).unwrap();
         let version: i64 = conn
             .query_row("PRAGMA user_version", [], |r| r.get(0))
             .unwrap();
-        assert_eq!(version, 4);
+        assert_eq!(version, 5);
+    }
+
+    #[test]
+    fn v4_to_v5_migration_adds_title_column() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "
+            CREATE TABLE sessions (
+                id TEXT PRIMARY KEY,
+                tool TEXT NOT NULL,
+                project_path TEXT,
+                start_time INTEGER NOT NULL,
+                message_count INTEGER NOT NULL,
+                file_path TEXT NOT NULL,
+                last_updated INTEGER NOT NULL,
+                first_prompt TEXT,
+                parent_session_id TEXT,
+                is_subagent INTEGER NOT NULL DEFAULT 0,
+                input_tokens INTEGER,
+                output_tokens INTEGER,
+                cache_read_tokens INTEGER,
+                cache_write_tokens INTEGER,
+                reasoning_tokens INTEGER
+            );
+            PRAGMA user_version = 4;
+            ",
+        )
+        .unwrap();
+
+        initialize_database(&conn).unwrap();
+
+        let version: i64 = conn
+            .query_row("PRAGMA user_version", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(version, 5);
+
+        let mut stmt = conn.prepare("PRAGMA table_info(sessions)").unwrap();
+        let columns: Vec<String> = stmt
+            .query_map([], |row| row.get::<_, String>(1))
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        assert!(columns.contains(&"title".to_string()));
+    }
+
+    #[test]
+    fn v5_migration_is_idempotent() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "
+            CREATE TABLE sessions (
+                id TEXT PRIMARY KEY,
+                tool TEXT NOT NULL,
+                project_path TEXT,
+                start_time INTEGER NOT NULL,
+                message_count INTEGER NOT NULL,
+                file_path TEXT NOT NULL,
+                last_updated INTEGER NOT NULL,
+                first_prompt TEXT,
+                parent_session_id TEXT,
+                is_subagent INTEGER NOT NULL DEFAULT 0,
+                input_tokens INTEGER,
+                output_tokens INTEGER,
+                cache_read_tokens INTEGER,
+                cache_write_tokens INTEGER,
+                reasoning_tokens INTEGER
+            );
+            PRAGMA user_version = 4;
+            ",
+        )
+        .unwrap();
+
+        initialize_database(&conn).unwrap();
+        initialize_database(&conn).unwrap();
+
+        let version: i64 = conn
+            .query_row("PRAGMA user_version", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(version, 5);
     }
 
     #[test]
@@ -466,7 +561,7 @@ mod tests {
         let version: i64 = conn
             .query_row("PRAGMA user_version", [], |r| r.get(0))
             .unwrap();
-        assert_eq!(version, 4);
+        assert_eq!(version, 5);
 
         let table_exists: i64 = conn
             .query_row(

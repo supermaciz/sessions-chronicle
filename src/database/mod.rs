@@ -92,6 +92,7 @@ fn session_from_row(row: &Row) -> rusqlite::Result<Session> {
             .single()
             .unwrap_or_else(Utc::now),
         first_prompt: row.get("first_prompt")?,
+        title: None,
         parent_session_id: row.get("parent_session_id")?,
         is_subagent: is_subagent_int != 0,
         token_usage,

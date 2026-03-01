@@ -337,6 +337,7 @@ impl OpenCodeParser {
             file_path,
             last_updated: metadata.time_updated,
             first_prompt,
+            title: None,
             parent_session_id,
             is_subagent,
             token_usage: None,
