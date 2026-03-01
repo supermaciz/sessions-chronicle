@@ -6,6 +6,7 @@ use chrono::{TimeZone, Utc};
 use rusqlite::{Connection, Row, ToSql};
 use std::collections::HashSet;
 use std::path::Path;
+use std::time::Duration;
 
 use crate::models::{
     MessagePreview, Role, Session, Subagent, Tool, ToolCall, ToolCallStatus, TranscriptItem,
@@ -13,6 +14,15 @@ use crate::models::{
 };
 
 pub use indexer::SessionIndexer;
+
+const SQLITE_BUSY_TIMEOUT_SECS: u64 = 5;
+
+pub(crate) fn open_read_connection(db_path: &Path) -> Result<Connection> {
+    let conn = Connection::open(db_path).context("Failed to open database")?;
+    conn.busy_timeout(Duration::from_secs(SQLITE_BUSY_TIMEOUT_SECS))
+        .context("Failed to set SQLite busy timeout")?;
+    Ok(conn)
+}
 
 /// Flat preview row returned by the transcript LEFT JOIN query.
 /// The caller interprets fields based on `kind`.
@@ -125,7 +135,7 @@ pub fn search_sessions(db_path: &Path, tools: &[Tool], query: &str) -> Result<Ve
         return load_sessions(db_path, tools);
     }
 
-    let db = Connection::open(db_path).context("Failed to open database")?;
+    let db = open_read_connection(db_path)?;
 
     match search_sessions_with_query(&db, tools, query) {
         Ok(sessions) => Ok(sessions),
@@ -230,7 +240,7 @@ pub fn load_sessions(db_path: &Path, tools: &[Tool]) -> Result<Vec<Session>> {
         return Ok(Vec::new());
     }
 
-    let db = Connection::open(db_path).context("Failed to open database")?;
+    let db = open_read_connection(db_path)?;
 
     let (query, tool_strings): (String, Vec<String>) = if tools.len() == Tool::ALL.len() {
         (
@@ -283,7 +293,7 @@ pub fn load_session(db_path: &Path, session_id: &str) -> Result<Option<Session>>
         return Ok(None);
     }
 
-    let db = Connection::open(db_path).context("Failed to open database")?;
+    let db = open_read_connection(db_path)?;
 
     let mut stmt = db.prepare(
         "SELECT id, tool, project_path, start_time, message_count, file_path,
@@ -314,7 +324,7 @@ pub fn load_message_full_content(
     session_id: &str,
     message_index: usize,
 ) -> Result<String> {
-    let db = Connection::open(db_path).context("Failed to open database")?;
+    let db = open_read_connection(db_path)?;
 
     let mut stmt = db.prepare(
         "SELECT content FROM messages WHERE session_id = ?1 AND CAST(message_index AS INTEGER) = ?2",
@@ -349,7 +359,7 @@ pub fn load_message_previews_for_session(
         return Ok(Vec::new());
     }
 
-    let db = Connection::open(db_path).context("Failed to open database")?;
+    let db = open_read_connection(db_path)?;
 
     let mut stmt = db.prepare(
         "SELECT
@@ -417,7 +427,7 @@ pub fn load_transcript_items(
         return Ok(Vec::new());
     }
 
-    let db = Connection::open(db_path).context("Failed to open database")?;
+    let db = open_read_connection(db_path)?;
 
     let mut stmt = db.prepare(
         "SELECT ti.item_index, ti.kind, ti.message_index, ti.tool_call_id, ti.subagent_id,
@@ -570,7 +580,7 @@ pub fn load_tool_call(
     if !db_path.exists() {
         return Ok(None);
     }
-    let db = Connection::open(db_path).context("Failed to open database")?;
+    let db = open_read_connection(db_path)?;
     let mut stmt = db.prepare(
         "SELECT id, session_id, subagent_id, tool_name, status, title, summary,
                 input_json, output_text, error_text, started_at, ended_at,
@@ -613,7 +623,7 @@ pub fn load_subagent(
     if !db_path.exists() {
         return Ok(None);
     }
-    let db = Connection::open(db_path).context("Failed to open database")?;
+    let db = open_read_connection(db_path)?;
     let mut stmt = db.prepare(
         "SELECT id, session_id, title, prompt, result_summary, child_session_id, parser_ref
          FROM subagents
@@ -646,7 +656,7 @@ pub fn load_tool_calls_for_subagent(
     if !db_path.exists() {
         return Ok(Vec::new());
     }
-    let db = Connection::open(db_path).context("Failed to open database")?;
+    let db = open_read_connection(db_path)?;
     let mut stmt = db.prepare(
         "SELECT id, session_id, subagent_id, tool_name, status, title, summary,
                 input_json, output_text, error_text, started_at, ended_at,

@@ -26,7 +26,9 @@ fn is_codex_error(err: &anyhow::Error) -> bool {
 
 impl SessionIndexer {
     pub fn new(db_path: &Path) -> Result<Self> {
-        let db = Connection::open(db_path).context("Failed to open database")?;
+        let db = crate::database::open_read_connection(db_path)?;
+        db.pragma_update(None, "journal_mode", "WAL")
+            .context("Failed to enable WAL mode")?;
         crate::database::schema::initialize_database(&db)
             .context("Failed to initialize database schema")?;
         Ok(Self { db })
@@ -493,6 +495,24 @@ mod tests {
     use super::*;
     use std::path::PathBuf;
     use tempfile::NamedTempFile;
+
+    #[test]
+    fn new_indexer_configures_wal_and_busy_timeout() {
+        let temp_db = NamedTempFile::new().unwrap();
+        let indexer = SessionIndexer::new(temp_db.path()).unwrap();
+
+        let journal_mode: String = indexer
+            .db
+            .query_row("PRAGMA journal_mode", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(journal_mode.to_ascii_lowercase(), "wal");
+
+        let busy_timeout_ms: i64 = indexer
+            .db
+            .query_row("PRAGMA busy_timeout", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(busy_timeout_ms, 5_000);
+    }
 
     #[test]
     fn is_sidechain_file_detects_agent_prefix() {
