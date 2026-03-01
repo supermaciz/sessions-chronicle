@@ -1,5 +1,6 @@
 use relm4::{
     Component, ComponentController, ComponentParts, ComponentSender, Controller, SimpleComponent,
+    WorkerController,
     actions::{AccelsPlus, RelmAction, RelmActionGroup},
     adw, gtk, main_application,
 };
@@ -14,6 +15,7 @@ use std::{cell::Cell, fs, path::PathBuf, str::FromStr, sync::Arc};
 
 use crate::config::{APP_ID, PROFILE};
 use crate::database::{SessionIndexer, load_session};
+use crate::indexing_worker::{IndexingWorker, IndexingWorkerInput, IndexingWorkerOutput};
 use crate::models::session::Tool;
 use crate::session_sources::{SessionSources, select_db_filename};
 use crate::ui::modals::{
@@ -86,6 +88,8 @@ pub(super) struct App {
     #[allow(dead_code)] // Controller must stay alive to keep the widget
     tool_inspector_pane: Controller<ToolInspectorPane>,
     preferences_dialog: Controller<PreferencesDialog>,
+    #[allow(dead_code)]
+    indexing_worker: WorkerController<IndexingWorker>,
     nav_view: adw::NavigationView,
     detail_page: adw::NavigationPage,
     suppress_next_detail_pop_sync: bool,
@@ -93,6 +97,8 @@ pub(super) struct App {
     toast_overlay: adw::ToastOverlay,
     db_path: PathBuf,
     sources: SessionSources,
+    indexing: bool,
+    pending_reindex_feedback: bool,
 }
 
 #[derive(Debug)]
@@ -121,6 +127,17 @@ pub(super) enum AppMsg {
     Escape,
     ShowPreferences,
     ReindexRequested,
+    IndexingCompleted {
+        indexed: usize,
+        skipped: usize,
+    },
+    IndexingFailed,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ReindexAction {
+    AlreadyRunning,
+    StartFull,
 }
 
 relm4::new_action_group!(pub(super) WindowActionGroup, "win");
@@ -260,6 +277,14 @@ impl SimpleComponent for App {
                             set_active: model.pane_open,
                         },
 
+                        pack_end = &gtk::Spinner {
+                            set_tooltip_text: Some("Indexing sessions..."),
+                            #[watch]
+                            set_visible: model.indexing,
+                            #[watch]
+                            set_spinning: model.indexing,
+                        },
+
                         pack_end = &gtk::MenuButton {
                             set_icon_name: "open-menu-symbolic",
                             set_menu_model: Some(&primary_menu),
@@ -319,71 +344,8 @@ impl SimpleComponent for App {
 
         if let Err(err) = fs::create_dir_all(&db_dir) {
             tracing::error!("Failed to create data dir {}: {}", db_dir.display(), err);
-        } else {
-            let mut indexer: Option<SessionIndexer> = match SessionIndexer::new(&db_path) {
-                Ok(i) => Some(i),
-                Err(err) => {
-                    tracing::error!("Failed to initialize session indexer: {}", err);
-                    None
-                }
-            };
-
-            if let Some(ref mut idx) = indexer {
-                match idx.index_claude_sessions(&sources.claude_dir) {
-                    Ok(count) => {
-                        tracing::info!(
-                            "Indexed {} Claude sessions from {}",
-                            count,
-                            sources.claude_dir.display()
-                        );
-                    }
-                    Err(err) => {
-                        tracing::error!("Failed to index Claude sessions: {}", err);
-                    }
-                }
-
-                match idx.index_opencode_sessions(
-                    &sources.opencode_storage_root,
-                    sources.opencode_db_path.as_deref(),
-                ) {
-                    Ok(count) => {
-                        tracing::info!(
-                            "Indexed {} OpenCode sessions from {}",
-                            count,
-                            sources.opencode_storage_root.display()
-                        );
-                    }
-                    Err(err) => {
-                        tracing::error!("Failed to index OpenCode sessions: {}", err);
-                    }
-                }
-
-                match idx.index_codex_sessions(&sources.codex_dir) {
-                    Ok(count) => {
-                        tracing::info!(
-                            "Indexed {} Codex sessions from {}",
-                            count,
-                            sources.codex_dir.display()
-                        );
-                    }
-                    Err(err) => {
-                        tracing::error!("Failed to index Codex sessions: {}", err);
-                    }
-                }
-
-                match idx.index_vibe_sessions(&sources.vibe_dir) {
-                    Ok(count) => {
-                        tracing::info!(
-                            "Indexed {} Mistral Vibe sessions from {}",
-                            count,
-                            sources.vibe_dir.display()
-                        );
-                    }
-                    Err(err) => {
-                        tracing::error!("Failed to index Mistral Vibe sessions: {}", err);
-                    }
-                }
-            }
+        } else if let Err(err) = SessionIndexer::new(&db_path) {
+            tracing::error!("Failed to initialize session indexer: {}", err);
         }
         // Initialize child components
         let session_list =
@@ -418,6 +380,15 @@ impl SimpleComponent for App {
                 PreferencesOutput::ReindexRequested => AppMsg::ReindexRequested,
             },
         );
+
+        let indexing_worker = IndexingWorker::builder()
+            .detach_worker(db_path.clone())
+            .forward(sender.input_sender(), |output| match output {
+                IndexingWorkerOutput::Completed { indexed, skipped } => {
+                    AppMsg::IndexingCompleted { indexed, skipped }
+                }
+                IndexingWorkerOutput::Failed => AppMsg::IndexingFailed,
+            });
 
         // Create NavigationView and pages before model
         let nav_view = adw::NavigationView::new();
@@ -472,6 +443,7 @@ impl SimpleComponent for App {
             sidebar,
             tool_inspector_pane,
             preferences_dialog,
+            indexing_worker,
             nav_view: nav_view.clone(),
             detail_page: detail_page.clone(),
             suppress_next_detail_pop_sync: false,
@@ -479,6 +451,8 @@ impl SimpleComponent for App {
             toast_overlay: adw::ToastOverlay::new(),
             db_path,
             sources,
+            indexing: true,
+            pending_reindex_feedback: false,
         };
 
         let widgets = view_output!();
@@ -647,6 +621,11 @@ impl SimpleComponent for App {
 
         widgets.load_window_size();
 
+        model.session_list.emit(SessionListMsg::SetIndexing(true));
+        model
+            .indexing_worker
+            .emit(IndexingWorkerInput::StartIncremental(model.sources.clone()));
+
         ComponentParts { model, widgets }
     }
 
@@ -758,61 +737,58 @@ impl SimpleComponent for App {
                 let dialog_widget = self.preferences_dialog.widget();
                 dialog_widget.present(Some(&main_application().windows()[0]));
             }
-            AppMsg::ReindexRequested => {
-                tracing::info!("Reindex requested — clearing and rebuilding index");
-                match SessionIndexer::new(&self.db_path) {
-                    Ok(mut indexer) => {
-                        if let Err(err) = indexer.clear_all_sessions() {
-                            tracing::error!("Failed to clear sessions: {}", err);
-                            self.toast_overlay.add_toast(
-                                adw::Toast::builder()
-                                    .title("Failed to reset index")
-                                    .timeout(3)
-                                    .build(),
-                            );
-                            return;
-                        }
-
-                        let mut total = 0usize;
-                        match indexer.index_claude_sessions(&self.sources.claude_dir) {
-                            Ok(n) => total += n,
-                            Err(err) => tracing::warn!("Claude sessions: {}", err),
-                        }
-                        match indexer.index_opencode_sessions(
-                            &self.sources.opencode_storage_root,
-                            self.sources.opencode_db_path.as_deref(),
-                        ) {
-                            Ok(n) => total += n,
-                            Err(err) => tracing::warn!("OpenCode sessions: {}", err),
-                        }
-                        match indexer.index_codex_sessions(&self.sources.codex_dir) {
-                            Ok(n) => total += n,
-                            Err(err) => tracing::warn!("Codex sessions: {}", err),
-                        }
-                        match indexer.index_vibe_sessions(&self.sources.vibe_dir) {
-                            Ok(n) => total += n,
-                            Err(err) => tracing::warn!("Vibe sessions: {}", err),
-                        }
-
-                        tracing::info!("Reindex complete: {} sessions indexed", total);
-                        self.session_list.emit(SessionListMsg::Reload);
-                        self.toast_overlay.add_toast(
-                            adw::Toast::builder()
-                                .title(format!("Index rebuilt — {} sessions", total))
-                                .timeout(3)
-                                .build(),
-                        );
-                    }
-                    Err(err) => {
-                        tracing::error!("Failed to open indexer for reindex: {}", err);
-                        self.toast_overlay.add_toast(
-                            adw::Toast::builder()
-                                .title("Failed to reset index")
-                                .timeout(3)
-                                .build(),
-                        );
-                    }
+            AppMsg::ReindexRequested => match decide_reindex_action(self.indexing) {
+                ReindexAction::AlreadyRunning => {
+                    self.toast_overlay.add_toast(
+                        adw::Toast::builder()
+                            .title("Indexing already in progress.")
+                            .timeout(3)
+                            .build(),
+                    );
                 }
+                ReindexAction::StartFull => {
+                    tracing::info!("Reindex requested — scheduling full background reindex");
+                    self.indexing = true;
+                    self.pending_reindex_feedback = true;
+                    self.session_list.emit(SessionListMsg::SetIndexing(true));
+                    self.indexing_worker
+                        .emit(IndexingWorkerInput::StartFullReindex(self.sources.clone()));
+                }
+            },
+            AppMsg::IndexingCompleted { indexed, skipped } => {
+                tracing::info!(
+                    "Background indexing complete: indexed={}, skipped={}",
+                    indexed,
+                    skipped
+                );
+                self.indexing = false;
+                self.session_list.emit(SessionListMsg::SetIndexing(false));
+                self.session_list.emit(SessionListMsg::Reload);
+
+                if self.pending_reindex_feedback {
+                    self.pending_reindex_feedback = false;
+                    self.toast_overlay.add_toast(
+                        adw::Toast::builder()
+                            .title(format!("Index rebuilt — {} sessions", indexed))
+                            .timeout(3)
+                            .build(),
+                    );
+                }
+            }
+            AppMsg::IndexingFailed => {
+                tracing::error!("Background indexing failed");
+                self.indexing = false;
+                self.session_list.emit(SessionListMsg::SetIndexing(false));
+
+                let title = if self.pending_reindex_feedback {
+                    self.pending_reindex_feedback = false;
+                    "Failed to reset index"
+                } else {
+                    "Background indexing failed"
+                };
+
+                self.toast_overlay
+                    .add_toast(adw::Toast::builder().title(title).timeout(3).build());
             }
             AppMsg::ResumeSession(session_id, tool) => {
                 tracing::debug!("Resume session requested: {}", session_id);
@@ -1085,6 +1061,14 @@ fn detail_pop_sync_decision(suppress_next_pop_sync: bool, detail_visible: bool) 
     }
 }
 
+fn decide_reindex_action(indexing: bool) -> ReindexAction {
+    if indexing {
+        ReindexAction::AlreadyRunning
+    } else {
+        ReindexAction::StartFull
+    }
+}
+
 impl App {
     /// Reset app state after leaving detail view.
     fn transition_to_session_list_mode(&mut self) {
@@ -1305,6 +1289,16 @@ mod tests {
         let (should_sync, suppress_next) = detail_pop_sync_decision(false, false);
         assert!(!should_sync);
         assert!(!suppress_next);
+    }
+
+    #[test]
+    fn reindex_request_is_ignored_when_indexing_already_running() {
+        assert_eq!(decide_reindex_action(true), ReindexAction::AlreadyRunning);
+    }
+
+    #[test]
+    fn reindex_request_starts_full_reindex_when_idle() {
+        assert_eq!(decide_reindex_action(false), ReindexAction::StartFull);
     }
 
     #[test]

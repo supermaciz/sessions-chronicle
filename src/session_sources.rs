@@ -12,6 +12,7 @@ const VIBE_SUBDIR: &str = "vibe_sessions";
 ///
 /// In override mode every path derives from a single user-supplied root.
 /// In default mode each tool uses its own home-based default.
+#[derive(Debug, Clone)]
 pub struct SessionSources {
     pub claude_dir: PathBuf,
     pub opencode_storage_root: PathBuf,

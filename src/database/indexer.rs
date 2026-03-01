@@ -1,7 +1,9 @@
 use anyhow::{Context, Result};
 use rusqlite::Connection;
 use std::collections::HashSet;
+use std::fs;
 use std::path::Path;
+use std::time::UNIX_EPOCH;
 
 use crate::parsers::ParsedSession;
 use crate::parsers::claude_code::ClaudeCodeParser;
@@ -11,9 +13,16 @@ use crate::parsers::opencode::{
     OpenCodeBackend, OpenCodeParser, ParseError as OpenCodeParseError, SessionSource,
     json_backend::JsonBackend, sqlite_backend::SqliteBackend,
 };
+use crate::session_sources::SessionSources;
 
 pub struct SessionIndexer {
     db: Connection,
+}
+
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct IndexingStats {
+    pub indexed: usize,
+    pub skipped: usize,
 }
 
 fn is_opencode_error(err: &anyhow::Error) -> bool {
@@ -26,15 +35,34 @@ fn is_codex_error(err: &anyhow::Error) -> bool {
 
 impl SessionIndexer {
     pub fn new(db_path: &Path) -> Result<Self> {
-        let db = Connection::open(db_path).context("Failed to open database")?;
+        let db = crate::database::open_connection(db_path)?;
+        db.pragma_update(None, "journal_mode", "WAL")
+            .context("Failed to enable WAL mode")?;
         crate::database::schema::initialize_database(&db)
             .context("Failed to initialize database schema")?;
         Ok(Self { db })
     }
 
     pub fn index_claude_sessions(&mut self, sessions_dir: &Path) -> Result<usize> {
+        Ok(self
+            .index_claude_sessions_internal(sessions_dir, false)?
+            .indexed)
+    }
+
+    pub fn index_claude_sessions_incremental(
+        &mut self,
+        sessions_dir: &Path,
+    ) -> Result<IndexingStats> {
+        self.index_claude_sessions_internal(sessions_dir, true)
+    }
+
+    fn index_claude_sessions_internal(
+        &mut self,
+        sessions_dir: &Path,
+        incremental: bool,
+    ) -> Result<IndexingStats> {
         let parser = ClaudeCodeParser;
-        let mut count = 0;
+        let mut stats = IndexingStats::default();
 
         for entry in walkdir::WalkDir::new(sessions_dir)
             .max_depth(5)
@@ -56,15 +84,22 @@ impl SessionIndexer {
                     }
                     continue;
                 }
+
+                if incremental && !self.should_reindex(path)? {
+                    stats.skipped += 1;
+                    continue;
+                }
+
                 if let Err(e) = self.index_session_file(path, &parser) {
                     tracing::warn!("Failed to index {}: {}", path.display(), e);
                 } else {
-                    count += 1;
+                    stats.indexed += 1;
                 }
             }
         }
 
-        Ok(count)
+        self.prune_orphan_fingerprints()?;
+        Ok(stats)
     }
 
     pub fn index_opencode_sessions(
@@ -72,65 +107,94 @@ impl SessionIndexer {
         storage_root: &Path,
         db_path: Option<&Path>,
     ) -> Result<usize> {
+        Ok(self
+            .index_opencode_sessions_internal(storage_root, db_path, false)?
+            .indexed)
+    }
+
+    pub fn index_opencode_sessions_incremental(
+        &mut self,
+        storage_root: &Path,
+        db_path: Option<&Path>,
+    ) -> Result<IndexingStats> {
+        self.index_opencode_sessions_internal(storage_root, db_path, true)
+    }
+
+    fn index_opencode_sessions_internal(
+        &mut self,
+        storage_root: &Path,
+        db_path: Option<&Path>,
+        incremental: bool,
+    ) -> Result<IndexingStats> {
         let has_storage_root = storage_root.exists();
         let has_db = db_path.is_some_and(|p| p.exists());
 
         if !has_storage_root && !has_db {
-            return Ok(0);
+            return Ok(IndexingStats::default());
         }
 
         let parser = OpenCodeParser::new(storage_root);
         let mut indexed_ids: HashSet<String> = HashSet::new();
-        let mut count = 0;
+        let mut stats = IndexingStats::default();
         let mut enumeration_succeeded = false;
+        let mut sqlite_enumerated = false;
 
         if let Some(db_path) = db_path {
-            match SqliteBackend::open(db_path) {
-                Ok(sqlite_backend) => match sqlite_backend.list_sessions() {
-                    Ok(entries) => {
-                        enumeration_succeeded = true;
-                        for entry in &entries {
-                            match parser.parse_entry(entry, &sqlite_backend) {
-                                Ok(parsed) => {
-                                    if let Err(err) = self.insert_parsed_session(&parsed, db_path) {
-                                        tracing::warn!(
-                                            "Failed to insert SQLite session {}: {}",
-                                            entry.id,
-                                            err
-                                        );
-                                        continue;
+            if incremental && !self.should_reindex(db_path)? {
+                stats.skipped += 1;
+            } else {
+                match SqliteBackend::open(db_path) {
+                    Ok(sqlite_backend) => match sqlite_backend.list_sessions() {
+                        Ok(entries) => {
+                            enumeration_succeeded = true;
+                            sqlite_enumerated = true;
+                            for entry in &entries {
+                                match parser.parse_entry(entry, &sqlite_backend) {
+                                    Ok(parsed) => {
+                                        if let Err(err) = self
+                                            .insert_parsed_session_with_fingerprint(
+                                                &parsed, db_path, db_path,
+                                            )
+                                        {
+                                            tracing::warn!(
+                                                "Failed to insert SQLite session {}: {}",
+                                                entry.id,
+                                                err
+                                            );
+                                            continue;
+                                        }
+                                        indexed_ids.insert(entry.id.clone());
+                                        stats.indexed += 1;
                                     }
-                                    indexed_ids.insert(entry.id.clone());
-                                    count += 1;
-                                }
-                                Err(err) => {
-                                    if is_opencode_error(&err) {
-                                        tracing::debug!(
-                                            "Skipped SQLite session {}: {}",
-                                            entry.id,
-                                            err
-                                        );
-                                    } else {
-                                        tracing::warn!(
-                                            "Failed to parse SQLite session {}: {}",
-                                            entry.id,
-                                            err
-                                        );
+                                    Err(err) => {
+                                        if is_opencode_error(&err) {
+                                            tracing::debug!(
+                                                "Skipped SQLite session {}: {}",
+                                                entry.id,
+                                                err
+                                            );
+                                        } else {
+                                            tracing::warn!(
+                                                "Failed to parse SQLite session {}: {}",
+                                                entry.id,
+                                                err
+                                            );
+                                        }
                                     }
                                 }
                             }
                         }
-                    }
+                        Err(err) => {
+                            tracing::warn!("Failed to list SQLite sessions: {}", err);
+                        }
+                    },
                     Err(err) => {
-                        tracing::warn!("Failed to list SQLite sessions: {}", err);
+                        tracing::warn!(
+                            "Failed to open OpenCode DB {}: {} - falling back to JSON only",
+                            db_path.display(),
+                            err
+                        );
                     }
-                },
-                Err(err) => {
-                    tracing::warn!(
-                        "Failed to open OpenCode DB {}: {} - falling back to JSON only",
-                        db_path.display(),
-                        err
-                    );
                 }
             }
         }
@@ -154,10 +218,16 @@ impl SessionIndexer {
                             SessionSource::SqliteRow { .. } => continue,
                         };
 
+                        if incremental && !self.should_reindex(path)? {
+                            indexed_ids.insert(entry.id.clone());
+                            stats.skipped += 1;
+                            continue;
+                        }
+
                         match self.index_opencode_session_file(path, &parser) {
                             Ok(()) => {
                                 indexed_ids.insert(entry.id);
-                                count += 1;
+                                stats.indexed += 1;
                             }
                             Err(err) => {
                                 if is_opencode_error(&err) {
@@ -186,20 +256,43 @@ impl SessionIndexer {
             }
         }
 
-        if enumeration_succeeded {
+        if incremental {
+            if sqlite_enumerated {
+                self.prune_stale_opencode_sessions(&indexed_ids)?;
+            }
+        } else if enumeration_succeeded {
             self.prune_stale_opencode_sessions(&indexed_ids)?;
         }
 
-        Ok(count)
+        self.prune_orphan_fingerprints()?;
+
+        Ok(stats)
     }
 
     pub fn index_codex_sessions(&mut self, sessions_dir: &Path) -> Result<usize> {
+        Ok(self
+            .index_codex_sessions_internal(sessions_dir, false)?
+            .indexed)
+    }
+
+    pub fn index_codex_sessions_incremental(
+        &mut self,
+        sessions_dir: &Path,
+    ) -> Result<IndexingStats> {
+        self.index_codex_sessions_internal(sessions_dir, true)
+    }
+
+    fn index_codex_sessions_internal(
+        &mut self,
+        sessions_dir: &Path,
+        incremental: bool,
+    ) -> Result<IndexingStats> {
         if !sessions_dir.exists() {
-            return Ok(0);
+            return Ok(IndexingStats::default());
         }
 
         let parser = CodexParser;
-        let mut count = 0;
+        let mut stats = IndexingStats::default();
 
         for entry in walkdir::WalkDir::new(sessions_dir)
             .max_depth(5)
@@ -212,9 +305,14 @@ impl SessionIndexer {
                 && file_name.starts_with("rollout-")
                 && file_name.ends_with(".jsonl")
             {
+                if incremental && !self.should_reindex(path)? {
+                    stats.skipped += 1;
+                    continue;
+                }
+
                 match self.index_codex_session_file(path, &parser) {
                     Ok(()) => {
-                        count += 1;
+                        stats.indexed += 1;
                     }
                     Err(err) => {
                         if is_codex_error(&err) {
@@ -234,16 +332,34 @@ impl SessionIndexer {
             }
         }
 
-        Ok(count)
+        self.prune_orphan_fingerprints()?;
+        Ok(stats)
     }
 
     pub fn index_vibe_sessions(&mut self, sessions_dir: &Path) -> Result<usize> {
+        Ok(self
+            .index_vibe_sessions_internal(sessions_dir, false)?
+            .indexed)
+    }
+
+    pub fn index_vibe_sessions_incremental(
+        &mut self,
+        sessions_dir: &Path,
+    ) -> Result<IndexingStats> {
+        self.index_vibe_sessions_internal(sessions_dir, true)
+    }
+
+    fn index_vibe_sessions_internal(
+        &mut self,
+        sessions_dir: &Path,
+        incremental: bool,
+    ) -> Result<IndexingStats> {
         if !sessions_dir.exists() {
-            return Ok(0);
+            return Ok(IndexingStats::default());
         }
 
         let parser = MistralVibeParser;
-        let mut count = 0;
+        let mut stats = IndexingStats::default();
 
         let entries = std::fs::read_dir(sessions_dir)
             .with_context(|| format!("Failed to read {}", sessions_dir.display()))?;
@@ -262,14 +378,24 @@ impl SessionIndexer {
                 continue;
             }
 
-            if !path.join("meta.json").exists() || !path.join("messages.jsonl").exists() {
+            let fingerprint_target = path.join("messages.jsonl");
+            if !path.join("meta.json").exists() || !fingerprint_target.exists() {
+                continue;
+            }
+
+            if incremental && !self.should_reindex(&fingerprint_target)? {
+                stats.skipped += 1;
                 continue;
             }
 
             match parser.parse(&path) {
                 Ok(parsed) => {
-                    self.insert_parsed_session(&parsed, &path)?;
-                    count += 1;
+                    self.insert_parsed_session_with_fingerprint(
+                        &parsed,
+                        &path,
+                        &fingerprint_target,
+                    )?;
+                    stats.indexed += 1;
                 }
                 Err(err) => {
                     if matches!(
@@ -290,7 +416,8 @@ impl SessionIndexer {
             }
         }
 
-        Ok(count)
+        self.prune_orphan_fingerprints()?;
+        Ok(stats)
     }
 
     fn index_session_file(&mut self, file_path: &Path, parser: &ClaudeCodeParser) -> Result<()> {
@@ -316,6 +443,15 @@ impl SessionIndexer {
     }
 
     fn insert_parsed_session(&mut self, parsed: &ParsedSession, file_path: &Path) -> Result<()> {
+        self.insert_parsed_session_with_fingerprint(parsed, file_path, file_path)
+    }
+
+    fn insert_parsed_session_with_fingerprint(
+        &mut self,
+        parsed: &ParsedSession,
+        file_path: &Path,
+        fingerprint_path: &Path,
+    ) -> Result<()> {
         let session = &parsed.session;
         let tx = self.db.transaction()?;
 
@@ -388,9 +524,98 @@ impl SessionIndexer {
             crate::database::insert_transcript_item(&tx, item, &session.id)?;
         }
 
+        Self::upsert_fingerprint_tx(&tx, fingerprint_path)?;
+
         tx.commit()?;
 
         Ok(())
+    }
+
+    fn get_fingerprint(&self, file_path: &Path) -> Result<Option<(i64, i64)>> {
+        let Some(file_path_str) = file_path.to_str() else {
+            return Ok(None);
+        };
+
+        let mut stmt = self
+            .db
+            .prepare("SELECT mtime_ns, size FROM file_fingerprints WHERE file_path = ?1")?;
+        let mut rows = stmt.query([file_path_str])?;
+
+        if let Some(row) = rows.next()? {
+            let mtime_ns = row.get(0)?;
+            let size = row.get(1)?;
+            Ok(Some((mtime_ns, size)))
+        } else {
+            Ok(None)
+        }
+    }
+
+    fn current_fingerprint(file_path: &Path) -> Result<(i64, i64)> {
+        let metadata = fs::metadata(file_path)?;
+        let modified = metadata
+            .modified()?
+            .duration_since(UNIX_EPOCH)
+            .context("file timestamp predates unix epoch")?;
+
+        let mtime_ns = i64::try_from(modified.as_nanos()).context("mtime nanoseconds overflow")?;
+        let size = i64::try_from(metadata.len()).context("file size overflow")?;
+        Ok((mtime_ns, size))
+    }
+
+    fn should_reindex(&self, file_path: &Path) -> Result<bool> {
+        let current = Self::current_fingerprint(file_path)?;
+        match self.get_fingerprint(file_path)? {
+            Some(stored) if stored == current => Ok(false),
+            _ => Ok(true),
+        }
+    }
+
+    fn upsert_fingerprint_tx(tx: &rusqlite::Transaction<'_>, file_path: &Path) -> Result<()> {
+        let Some(file_path_str) = file_path.to_str() else {
+            return Ok(());
+        };
+
+        let (mtime_ns, size) = Self::current_fingerprint(file_path)?;
+        tx.execute(
+            "INSERT INTO file_fingerprints (file_path, mtime_ns, size)
+             VALUES (?1, ?2, ?3)
+             ON CONFLICT(file_path) DO UPDATE SET
+               mtime_ns = excluded.mtime_ns,
+               size = excluded.size",
+            rusqlite::params![file_path_str, mtime_ns, size],
+        )?;
+        Ok(())
+    }
+
+    #[cfg(test)]
+    fn upsert_fingerprint_for_file(&mut self, file_path: &Path) -> Result<()> {
+        let tx = self.db.transaction()?;
+        Self::upsert_fingerprint_tx(&tx, file_path)?;
+        tx.commit()?;
+        Ok(())
+    }
+
+    fn prune_orphan_fingerprints(&mut self) -> Result<usize> {
+        let file_paths: Vec<String> = {
+            let mut stmt = self.db.prepare("SELECT file_path FROM file_fingerprints")?;
+            stmt.query_map([], |row| row.get(0))?
+                .collect::<std::result::Result<Vec<_>, _>>()?
+        };
+
+        let tx = self.db.transaction()?;
+        let mut removed = 0usize;
+
+        for file_path in file_paths {
+            if !Path::new(&file_path).exists() {
+                removed += tx.execute(
+                    "DELETE FROM file_fingerprints WHERE file_path = ?1",
+                    [file_path],
+                )?;
+            }
+        }
+
+        tx.commit()?;
+        Ok(removed)
     }
 
     fn is_sidechain_file(file_path: &Path, sessions_dir: &Path) -> bool {
@@ -420,8 +645,49 @@ impl SessionIndexer {
         tx.execute("DELETE FROM subagents", [])?;
         tx.execute("DELETE FROM messages", [])?;
         tx.execute("DELETE FROM sessions", [])?;
+        tx.execute("DELETE FROM file_fingerprints", [])?;
         tx.commit()?;
         Ok(())
+    }
+
+    pub fn index_all_incremental(&mut self, sources: &SessionSources) -> Result<IndexingStats> {
+        let mut totals = IndexingStats::default();
+
+        let claude = self.index_claude_sessions_incremental(&sources.claude_dir)?;
+        totals.indexed += claude.indexed;
+        totals.skipped += claude.skipped;
+
+        let opencode = self.index_opencode_sessions_incremental(
+            &sources.opencode_storage_root,
+            sources.opencode_db_path.as_deref(),
+        )?;
+        totals.indexed += opencode.indexed;
+        totals.skipped += opencode.skipped;
+
+        let codex = self.index_codex_sessions_incremental(&sources.codex_dir)?;
+        totals.indexed += codex.indexed;
+        totals.skipped += codex.skipped;
+
+        let vibe = self.index_vibe_sessions_incremental(&sources.vibe_dir)?;
+        totals.indexed += vibe.indexed;
+        totals.skipped += vibe.skipped;
+
+        Ok(totals)
+    }
+
+    pub fn index_all_full_reindex(&mut self, sources: &SessionSources) -> Result<IndexingStats> {
+        self.clear_all_sessions()?;
+
+        let mut totals = IndexingStats::default();
+        totals.indexed += self.index_claude_sessions(&sources.claude_dir)?;
+        totals.indexed += self.index_opencode_sessions(
+            &sources.opencode_storage_root,
+            sources.opencode_db_path.as_deref(),
+        )?;
+        totals.indexed += self.index_codex_sessions(&sources.codex_dir)?;
+        totals.indexed += self.index_vibe_sessions(&sources.vibe_dir)?;
+
+        Ok(totals)
     }
 
     fn remove_session_for_file(&mut self, file_path: &Path) -> Result<()> {
@@ -493,6 +759,160 @@ mod tests {
     use super::*;
     use std::path::PathBuf;
     use tempfile::NamedTempFile;
+
+    #[test]
+    fn new_indexer_configures_wal_and_busy_timeout() {
+        let temp_db = NamedTempFile::new().unwrap();
+        let indexer = SessionIndexer::new(temp_db.path()).unwrap();
+
+        let journal_mode: String = indexer
+            .db
+            .query_row("PRAGMA journal_mode", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(journal_mode.to_ascii_lowercase(), "wal");
+
+        let busy_timeout_ms: i64 = indexer
+            .db
+            .query_row("PRAGMA busy_timeout", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(busy_timeout_ms, 5_000);
+    }
+
+    #[test]
+    fn should_reindex_uses_mtime_and_size_fingerprint() {
+        let temp_db = NamedTempFile::new().unwrap();
+        let mut indexer = SessionIndexer::new(temp_db.path()).unwrap();
+        let temp_dir = tempfile::tempdir().unwrap();
+        let session_file = temp_dir.path().join("session.jsonl");
+
+        std::fs::write(&session_file, "{}\n").unwrap();
+        assert!(indexer.should_reindex(&session_file).unwrap());
+
+        indexer.upsert_fingerprint_for_file(&session_file).unwrap();
+        assert!(!indexer.should_reindex(&session_file).unwrap());
+
+        std::fs::write(&session_file, "{}\n{}\n").unwrap();
+        assert!(indexer.should_reindex(&session_file).unwrap());
+    }
+
+    #[test]
+    fn prune_orphan_fingerprints_removes_missing_paths() {
+        let temp_db = NamedTempFile::new().unwrap();
+        let mut indexer = SessionIndexer::new(temp_db.path()).unwrap();
+        let temp_dir = tempfile::tempdir().unwrap();
+        let session_file = temp_dir.path().join("session.jsonl");
+
+        std::fs::write(&session_file, "{}\n").unwrap();
+        indexer.upsert_fingerprint_for_file(&session_file).unwrap();
+
+        std::fs::remove_file(&session_file).unwrap();
+
+        let removed = indexer.prune_orphan_fingerprints().unwrap();
+        assert_eq!(removed, 1);
+    }
+
+    #[test]
+    fn claude_incremental_skips_unchanged_files() {
+        let temp_db = NamedTempFile::new().unwrap();
+        let mut indexer = SessionIndexer::new(temp_db.path()).unwrap();
+        let sessions_dir = PathBuf::from("tests/fixtures/claude_sessions");
+
+        let first = indexer
+            .index_claude_sessions_incremental(&sessions_dir)
+            .unwrap();
+        assert!(first.indexed > 0);
+
+        let second = indexer
+            .index_claude_sessions_incremental(&sessions_dir)
+            .unwrap();
+        assert_eq!(second.indexed, 0);
+        assert!(second.skipped > 0);
+    }
+
+    #[test]
+    fn codex_incremental_skips_unchanged_rollouts() {
+        let temp_db = NamedTempFile::new().unwrap();
+        let mut indexer = SessionIndexer::new(temp_db.path()).unwrap();
+        let sessions_dir = PathBuf::from("tests/fixtures/codex_sessions");
+
+        let first = indexer
+            .index_codex_sessions_incremental(&sessions_dir)
+            .unwrap();
+        assert!(first.indexed > 0);
+
+        let second = indexer
+            .index_codex_sessions_incremental(&sessions_dir)
+            .unwrap();
+        assert_eq!(second.indexed, 0);
+        assert!(second.skipped > 0);
+    }
+
+    #[test]
+    fn vibe_incremental_uses_messages_jsonl_fingerprint() {
+        let temp_db = NamedTempFile::new().unwrap();
+        let mut indexer = SessionIndexer::new(temp_db.path()).unwrap();
+        let sessions_dir = PathBuf::from("tests/fixtures/vibe_sessions");
+
+        let first = indexer
+            .index_vibe_sessions_incremental(&sessions_dir)
+            .unwrap();
+        assert!(first.indexed > 0);
+
+        let second = indexer
+            .index_vibe_sessions_incremental(&sessions_dir)
+            .unwrap();
+        assert_eq!(second.indexed, 0);
+        assert!(second.skipped > 0);
+    }
+
+    #[test]
+    fn clear_all_sessions_also_clears_fingerprints() {
+        let temp_db = NamedTempFile::new().unwrap();
+        let mut indexer = SessionIndexer::new(temp_db.path()).unwrap();
+        let sessions_dir = PathBuf::from("tests/fixtures/claude_sessions");
+
+        indexer
+            .index_claude_sessions_incremental(&sessions_dir)
+            .unwrap();
+
+        indexer.clear_all_sessions().unwrap();
+
+        let fingerprint_count: i64 = indexer
+            .db
+            .query_row("SELECT COUNT(*) FROM file_fingerprints", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(fingerprint_count, 0);
+    }
+
+    #[test]
+    fn opencode_incremental_skip_keeps_sqlite_only_sessions() {
+        let temp_db = NamedTempFile::new().unwrap();
+        let mut indexer = SessionIndexer::new(temp_db.path()).unwrap();
+        let storage_root = PathBuf::from("tests/fixtures/opencode_storage");
+        let db_path = storage_root.join("opencode.db");
+
+        let first = indexer
+            .index_opencode_sessions_incremental(&storage_root, Some(&db_path))
+            .unwrap();
+        assert!(first.indexed > 0);
+
+        let second = indexer
+            .index_opencode_sessions_incremental(&storage_root, Some(&db_path))
+            .unwrap();
+        assert!(second.skipped > 0);
+
+        let sqlite_only_exists: bool = indexer
+            .db
+            .query_row(
+                "SELECT COUNT(*) > 0 FROM sessions WHERE id = 'session-sqlite-only'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!(sqlite_only_exists);
+    }
 
     #[test]
     fn is_sidechain_file_detects_agent_prefix() {

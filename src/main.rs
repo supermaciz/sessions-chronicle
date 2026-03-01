@@ -2,6 +2,7 @@
 mod config;
 mod app;
 mod database;
+mod indexing_worker;
 mod models;
 mod parsers;
 mod session_sources;
