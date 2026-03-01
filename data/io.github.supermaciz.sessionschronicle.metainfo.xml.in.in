@@ -44,6 +44,14 @@
   </categories>
   <content_rating type="oars-1.1" />
   <releases>
+    <release version="0.3.2" date="2026-03-01">
+      <description>
+        <p>Improves reliability of OpenCode session indexing.</p>
+        <ul>
+          <li>OpenCode sessions are now re-indexed when updated</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.3.1" date="2026-03-01">
       <description>
         <p>Improves startup performance.</p>

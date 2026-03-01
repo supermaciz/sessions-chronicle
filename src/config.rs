@@ -8,4 +8,4 @@ pub const RESOURCES_FILE: &str = concat!(
     "/usr/local/share/sessions-chronicle",
     "/resources.gresource"
 );
-pub const VERSION: &str = "0.3.1";
+pub const VERSION: &str = "0.3.2";
