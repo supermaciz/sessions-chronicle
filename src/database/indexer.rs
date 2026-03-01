@@ -13,6 +13,7 @@ use crate::parsers::opencode::{
     OpenCodeBackend, OpenCodeParser, ParseError as OpenCodeParseError, SessionSource,
     json_backend::JsonBackend, sqlite_backend::SqliteBackend,
 };
+use crate::session_sources::SessionSources;
 
 pub struct SessionIndexer {
     db: Connection,
@@ -651,6 +652,46 @@ impl SessionIndexer {
         tx.execute("DELETE FROM file_fingerprints", [])?;
         tx.commit()?;
         Ok(())
+    }
+
+    pub fn index_all_incremental(&mut self, sources: &SessionSources) -> Result<IndexingStats> {
+        let mut totals = IndexingStats::default();
+
+        let claude = self.index_claude_sessions_incremental(&sources.claude_dir)?;
+        totals.indexed += claude.indexed;
+        totals.skipped += claude.skipped;
+
+        let opencode = self.index_opencode_sessions_incremental(
+            &sources.opencode_storage_root,
+            sources.opencode_db_path.as_deref(),
+        )?;
+        totals.indexed += opencode.indexed;
+        totals.skipped += opencode.skipped;
+
+        let codex = self.index_codex_sessions_incremental(&sources.codex_dir)?;
+        totals.indexed += codex.indexed;
+        totals.skipped += codex.skipped;
+
+        let vibe = self.index_vibe_sessions_incremental(&sources.vibe_dir)?;
+        totals.indexed += vibe.indexed;
+        totals.skipped += vibe.skipped;
+
+        Ok(totals)
+    }
+
+    pub fn index_all_full_reindex(&mut self, sources: &SessionSources) -> Result<IndexingStats> {
+        self.clear_all_sessions()?;
+
+        let mut totals = IndexingStats::default();
+        totals.indexed += self.index_claude_sessions(&sources.claude_dir)?;
+        totals.indexed += self.index_opencode_sessions(
+            &sources.opencode_storage_root,
+            sources.opencode_db_path.as_deref(),
+        )?;
+        totals.indexed += self.index_codex_sessions(&sources.codex_dir)?;
+        totals.indexed += self.index_vibe_sessions(&sources.vibe_dir)?;
+
+        Ok(totals)
     }
 
     fn remove_session_for_file(&mut self, file_path: &Path) -> Result<()> {

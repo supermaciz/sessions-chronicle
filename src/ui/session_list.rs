@@ -13,6 +13,7 @@ pub struct SessionList {
     active_tools: Vec<Tool>,
     search_query: String,
     all_tools_selected: bool,
+    indexing: bool,
     sessions: FactoryVecDeque<SessionRow>,
 }
 
@@ -20,6 +21,7 @@ pub struct SessionList {
 pub enum SessionListMsg {
     SetTools(Vec<Tool>),
     SetSearchQuery(String),
+    SetIndexing(bool),
     SessionActivated(i32),
     ResumeRequested(String, Tool),
     Reload,
@@ -35,6 +37,45 @@ pub enum SessionListMsg {
 pub enum SessionListOutput {
     SessionSelected(String),
     ResumeRequested(String, Tool),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct EmptyStateCopy {
+    title: &'static str,
+    description: &'static str,
+}
+
+fn compute_empty_state(
+    sessions_empty: bool,
+    search_query: &str,
+    all_tools_selected: bool,
+    indexing: bool,
+) -> EmptyStateCopy {
+    if sessions_empty && indexing {
+        return EmptyStateCopy {
+            title: "Indexing sessions...",
+            description: "This may take a moment on first launch.",
+        };
+    }
+
+    if !search_query.trim().is_empty() {
+        return EmptyStateCopy {
+            title: "No sessions match search",
+            description: "Try a different query or adjust filters",
+        };
+    }
+
+    if all_tools_selected {
+        EmptyStateCopy {
+            title: "No Sessions Yet",
+            description: "Your AI coding sessions will appear here",
+        }
+    } else {
+        EmptyStateCopy {
+            title: "No sessions match filters",
+            description: "Try adjusting the tool filters in the sidebar",
+        }
+    }
 }
 
 #[relm4::component(pub)]
@@ -105,6 +146,7 @@ impl SimpleComponent for SessionList {
             active_tools,
             search_query,
             all_tools_selected: true,
+            indexing: false,
             sessions,
         };
 
@@ -149,6 +191,9 @@ impl SimpleComponent for SessionList {
             SessionListMsg::SetSearchQuery(query) => {
                 self.search_query = query;
                 self.reload_sessions();
+            }
+            SessionListMsg::SetIndexing(indexing) => {
+                self.indexing = indexing;
             }
             SessionListMsg::SessionActivated(index) => {
                 if let Some(row) = self.sessions.get(index as usize) {
@@ -202,22 +247,14 @@ impl SimpleComponent for SessionList {
 
     fn post_view(&self, widgets: &mut Self::Widgets) {
         if self.sessions.is_empty() {
-            if !self.search_query.trim().is_empty() {
-                widgets.empty_state.set_title("No sessions match search");
-                widgets
-                    .empty_state
-                    .set_description(Some("Try a different query or adjust filters"));
-            } else if self.all_tools_selected {
-                widgets.empty_state.set_title("No Sessions Yet");
-                widgets
-                    .empty_state
-                    .set_description(Some("Your AI coding sessions will appear here"));
-            } else {
-                widgets.empty_state.set_title("No sessions match filters");
-                widgets
-                    .empty_state
-                    .set_description(Some("Try adjusting the tool filters in the sidebar"));
-            }
+            let empty = compute_empty_state(
+                true,
+                &self.search_query,
+                self.all_tools_selected,
+                self.indexing,
+            );
+            widgets.empty_state.set_title(empty.title);
+            widgets.empty_state.set_description(Some(empty.description));
             widgets
                 .content_stack
                 .set_visible_child(&widgets.empty_state);
@@ -297,6 +334,14 @@ mod tests {
     use relm4::Component;
     use relm4::ComponentController;
     use std::{cell::RefCell, rc::Rc, time::Duration};
+
+    #[test]
+    fn empty_state_prefers_indexing_placeholder_when_loading_and_empty() {
+        let state = compute_empty_state(true, "", true, true);
+
+        assert_eq!(state.title, "Indexing sessions...");
+        assert_eq!(state.description, "This may take a moment on first launch.");
+    }
 
     fn find_list_box(widget: &gtk::Widget) -> Option<gtk::ListBox> {
         if let Ok(list_box) = widget.clone().downcast::<gtk::ListBox>() {
