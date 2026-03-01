@@ -35,7 +35,7 @@ fn is_codex_error(err: &anyhow::Error) -> bool {
 
 impl SessionIndexer {
     pub fn new(db_path: &Path) -> Result<Self> {
-        let db = crate::database::open_read_connection(db_path)?;
+        let db = crate::database::open_connection(db_path)?;
         db.pragma_update(None, "journal_mode", "WAL")
             .context("Failed to enable WAL mode")?;
         crate::database::schema::initialize_database(&db)
@@ -49,7 +49,6 @@ impl SessionIndexer {
             .indexed)
     }
 
-    #[allow(dead_code)]
     pub fn index_claude_sessions_incremental(
         &mut self,
         sessions_dir: &Path,
@@ -113,7 +112,6 @@ impl SessionIndexer {
             .indexed)
     }
 
-    #[allow(dead_code)]
     pub fn index_opencode_sessions_incremental(
         &mut self,
         storage_root: &Path,
@@ -277,7 +275,6 @@ impl SessionIndexer {
             .indexed)
     }
 
-    #[allow(dead_code)]
     pub fn index_codex_sessions_incremental(
         &mut self,
         sessions_dir: &Path,
@@ -345,7 +342,6 @@ impl SessionIndexer {
             .indexed)
     }
 
-    #[allow(dead_code)]
     pub fn index_vibe_sessions_incremental(
         &mut self,
         sessions_dir: &Path,
