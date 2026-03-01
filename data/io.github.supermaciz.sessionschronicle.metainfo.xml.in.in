@@ -44,6 +44,14 @@
   </categories>
   <content_rating type="oars-1.1" />
   <releases>
+    <release version="0.3.1" date="2026-03-01">
+      <description>
+        <p>Improves startup performance.</p>
+        <ul>
+          <li>Speed up startup with background incremental indexing</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.3.0" date="2026-02-28">
       <description>
         <p>Improves session details and transcript readability.</p>
