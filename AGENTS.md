@@ -18,7 +18,31 @@
 - `tests/` contains integration tests; `tests/fixtures/` contains sample sessions for Claude, OpenCode, Codex, and Mistral Vibe.
 - `build-aux/` contains Flatpak manifests (dev and stable) and the vendor script for offline builds.
 - `docs/` hosts architecture notes, design docs, and implementation plans.
+  - `docs/plans/` contains implementation plans following the naming convention `YYYY-MM-DD-feature-name-{design,exploration}.md`.
 - `flatpak_app/` is generated build output; do not edit it directly.
+
+## Plan Types in `docs/plans/`
+
+Implementation plans follow the naming convention `YYYY-MM-DD-feature-name-{design,exploration}.md`:
+
+### `-exploration.md` - Design Exploration
+Created when multiple implementation approaches exist and a decision must be recorded.
+- Compares 2+ alternative designs with trade-offs
+- Includes visual mockups when relevant
+- Ends with a decision and rationale
+- Example: `2026-02-10-session-row-prompt-preview-exploration.md`
+
+### `-design.md` - Implementation Design
+The single source of truth after a decision is made.
+- Problem statement and scope
+- Schema changes (SQL migrations)
+- API signatures and data structures
+- Step-by-step implementation flow
+- UI/UX behavior specifications
+- Test and verification plan
+- Example: `2026-03-01-startup-performance-design.md`
+
+**Process**: Exploration → Decision → Design → Implementation
 
 ## Fast Dev Loop
 - `flatpak-builder --user flatpak_app build-aux/io.github.supermaciz.sessionschronicle.Devel.json --force-clean`: build the GNOME Flatpak bundle.
