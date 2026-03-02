@@ -1,0 +1,247 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="900" height="700" font-family="Cantarell, sans-serif">
+  <defs>
+    <linearGradient id="headerBg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#3c3c3c"/>
+      <stop offset="100%" stop-color="#353535"/>
+    </linearGradient>
+    <filter id="shadow">
+      <feDropShadow dx="0" dy="1" stdDeviation="2" flood-opacity="0.15"/>
+    </filter>
+  </defs>
+
+  <!-- Window background -->
+  <rect width="900" height="700" rx="12" fill="#fafafa"/>
+
+  <!-- Header bar -->
+  <rect width="900" height="47" rx="12" fill="url(#headerBg)"/>
+  <rect y="24" width="900" height="23" fill="url(#headerBg)"/>
+
+  <!-- View Switcher (centered) -->
+  <rect x="300" y="8" width="300" height="31" rx="8" fill="#4a4a4a"/>
+  <!-- Sessions tab (inactive) -->
+  <rect x="304" y="11" width="144" height="25" rx="6" fill="transparent"/>
+  <text x="376" y="28" text-anchor="middle" fill="#aaa" font-size="13" font-weight="500">Sessions</text>
+  <!-- Analytics tab (active) -->
+  <rect x="452" y="11" width="144" height="25" rx="6" fill="#555"/>
+  <text x="524" y="28" text-anchor="middle" fill="#fff" font-size="13" font-weight="600">Analytics</text>
+
+  <!-- Header buttons -->
+  <circle cx="30" cy="24" r="10" fill="#4a4a4a"/>
+  <text x="30" y="28" text-anchor="middle" fill="#aaa" font-size="11">&#x2630;</text>
+  <circle cx="870" cy="24" r="10" fill="#4a4a4a"/>
+  <text x="870" y="28" text-anchor="middle" fill="#aaa" font-size="9">&#x22EE;</text>
+
+  <!-- Analytics content area -->
+  <rect x="16" y="60" width="868" height="624" rx="0" fill="#fafafa"/>
+
+  <!-- Title -->
+  <text x="32" y="92" fill="#1c1c1c" font-size="22" font-weight="700">Analytics</text>
+  <text x="32" y="112" fill="#888" font-size="13">Usage statistics from your indexed sessions</text>
+
+  <!-- Summary cards row -->
+  <rect x="32" y="128" width="200" height="80" rx="12" fill="#fff" filter="url(#shadow)"/>
+  <text x="48" y="152" fill="#888" font-size="11" font-weight="500">TOTAL SESSIONS</text>
+  <text x="48" y="185" fill="#1c1c1c" font-size="28" font-weight="700">247</text>
+
+  <rect x="248" y="128" width="200" height="80" rx="12" fill="#fff" filter="url(#shadow)"/>
+  <text x="264" y="152" fill="#888" font-size="11" font-weight="500">TOTAL MESSAGES</text>
+  <text x="264" y="185" fill="#1c1c1c" font-size="28" font-weight="700">3,842</text>
+
+  <rect x="464" y="128" width="200" height="80" rx="12" fill="#fff" filter="url(#shadow)"/>
+  <text x="480" y="152" fill="#888" font-size="11" font-weight="500">DISTINCT PROJECTS</text>
+  <text x="480" y="185" fill="#1c1c1c" font-size="28" font-weight="700">12</text>
+
+  <rect x="680" y="128" width="200" height="80" rx="12" fill="#fff" filter="url(#shadow)"/>
+  <text x="696" y="152" fill="#888" font-size="11" font-weight="500">ACTIVE DAYS</text>
+  <text x="696" y="185" fill="#1c1c1c" font-size="28" font-weight="700">68</text>
+
+  <!-- Activity Heatmap section -->
+  <rect x="32" y="224" width="848" height="160" rx="12" fill="#fff" filter="url(#shadow)"/>
+  <text x="48" y="250" fill="#1c1c1c" font-size="15" font-weight="600">Activity Heatmap</text>
+  <text x="48" y="268" fill="#888" font-size="11">Sessions per day over the last 6 months</text>
+
+  <!-- Heatmap grid (simplified) -->
+  <g transform="translate(48, 278)">
+    <!-- Week labels -->
+    <text x="-4" y="12" text-anchor="end" fill="#888" font-size="9">Mon</text>
+    <text x="-4" y="28" text-anchor="end" fill="#888" font-size="9">Wed</text>
+    <text x="-4" y="44" text-anchor="end" fill="#888" font-size="9">Fri</text>
+
+    <!-- Heatmap cells (26 weeks x 7 days, sample) -->
+    <!-- Row 1 -->
+    <rect x="0" y="0" width="12" height="12" rx="2" fill="#ebedf0"/>
+    <rect x="16" y="0" width="12" height="12" rx="2" fill="#ebedf0"/>
+    <rect x="32" y="0" width="12" height="12" rx="2" fill="#9be9a8"/>
+    <rect x="48" y="0" width="12" height="12" rx="2" fill="#ebedf0"/>
+    <rect x="64" y="0" width="12" height="12" rx="2" fill="#40c463"/>
+    <rect x="80" y="0" width="12" height="12" rx="2" fill="#ebedf0"/>
+    <rect x="96" y="0" width="12" height="12" rx="2" fill="#9be9a8"/>
+    <rect x="112" y="0" width="12" height="12" rx="2" fill="#ebedf0"/>
+    <rect x="128" y="0" width="12" height="12" rx="2" fill="#ebedf0"/>
+    <rect x="144" y="0" width="12" height="12" rx="2" fill="#30a14e"/>
+    <rect x="160" y="0" width="12" height="12" rx="2" fill="#9be9a8"/>
+    <rect x="176" y="0" width="12" height="12" rx="2" fill="#ebedf0"/>
+    <rect x="192" y="0" width="12" height="12" rx="2" fill="#40c463"/>
+    <rect x="208" y="0" width="12" height="12" rx="2" fill="#ebedf0"/>
+    <rect x="224" y="0" width="12" height="12" rx="2" fill="#9be9a8"/>
+    <rect x="240" y="0" width="12" height="12" rx="2" fill="#ebedf0"/>
+    <rect x="256" y="0" width="12" height="12" rx="2" fill="#ebedf0"/>
+    <rect x="272" y="0" width="12" height="12" rx="2" fill="#40c463"/>
+    <rect x="288" y="0" width="12" height="12" rx="2" fill="#30a14e"/>
+    <rect x="304" y="0" width="12" height="12" rx="2" fill="#ebedf0"/>
+    <rect x="320" y="0" width="12" height="12" rx="2" fill="#9be9a8"/>
+    <rect x="336" y="0" width="12" height="12" rx="2" fill="#ebedf0"/>
+    <rect x="352" y="0" width="12" height="12" rx="2" fill="#40c463"/>
+    <rect x="368" y="0" width="12" height="12" rx="2" fill="#216e39"/>
+    <rect x="384" y="0" width="12" height="12" rx="2" fill="#9be9a8"/>
+    <rect x="400" y="0" width="12" height="12" rx="2" fill="#40c463"/>
+
+    <!-- Row 2 -->
+    <rect x="0" y="16" width="12" height="12" rx="2" fill="#9be9a8"/>
+    <rect x="16" y="16" width="12" height="12" rx="2" fill="#ebedf0"/>
+    <rect x="32" y="16" width="12" height="12" rx="2" fill="#ebedf0"/>
+    <rect x="48" y="16" width="12" height="12" rx="2" fill="#40c463"/>
+    <rect x="64" y="16" width="12" height="12" rx="2" fill="#ebedf0"/>
+    <rect x="80" y="16" width="12" height="12" rx="2" fill="#9be9a8"/>
+    <rect x="96" y="16" width="12" height="12" rx="2" fill="#30a14e"/>
+    <rect x="112" y="16" width="12" height="12" rx="2" fill="#ebedf0"/>
+    <rect x="128" y="16" width="12" height="12" rx="2" fill="#9be9a8"/>
+    <rect x="144" y="16" width="12" height="12" rx="2" fill="#ebedf0"/>
+    <rect x="160" y="16" width="12" height="12" rx="2" fill="#40c463"/>
+    <rect x="176" y="16" width="12" height="12" rx="2" fill="#216e39"/>
+    <rect x="192" y="16" width="12" height="12" rx="2" fill="#ebedf0"/>
+    <rect x="208" y="16" width="12" height="12" rx="2" fill="#9be9a8"/>
+    <rect x="224" y="16" width="12" height="12" rx="2" fill="#ebedf0"/>
+    <rect x="240" y="16" width="12" height="12" rx="2" fill="#40c463"/>
+    <rect x="256" y="16" width="12" height="12" rx="2" fill="#ebedf0"/>
+    <rect x="272" y="16" width="12" height="12" rx="2" fill="#ebedf0"/>
+    <rect x="288" y="16" width="12" height="12" rx="2" fill="#9be9a8"/>
+    <rect x="304" y="16" width="12" height="12" rx="2" fill="#40c463"/>
+    <rect x="320" y="16" width="12" height="12" rx="2" fill="#ebedf0"/>
+    <rect x="336" y="16" width="12" height="12" rx="2" fill="#30a14e"/>
+    <rect x="352" y="16" width="12" height="12" rx="2" fill="#ebedf0"/>
+    <rect x="368" y="16" width="12" height="12" rx="2" fill="#9be9a8"/>
+    <rect x="384" y="16" width="12" height="12" rx="2" fill="#216e39"/>
+    <rect x="400" y="16" width="12" height="12" rx="2" fill="#40c463"/>
+
+    <!-- Row 3 -->
+    <rect x="0" y="32" width="12" height="12" rx="2" fill="#ebedf0"/>
+    <rect x="16" y="32" width="12" height="12" rx="2" fill="#40c463"/>
+    <rect x="32" y="32" width="12" height="12" rx="2" fill="#ebedf0"/>
+    <rect x="48" y="32" width="12" height="12" rx="2" fill="#9be9a8"/>
+    <rect x="64" y="32" width="12" height="12" rx="2" fill="#ebedf0"/>
+    <rect x="80" y="32" width="12" height="12" rx="2" fill="#ebedf0"/>
+    <rect x="96" y="32" width="12" height="12" rx="2" fill="#ebedf0"/>
+    <rect x="112" y="32" width="12" height="12" rx="2" fill="#40c463"/>
+    <rect x="128" y="32" width="12" height="12" rx="2" fill="#ebedf0"/>
+    <rect x="144" y="32" width="12" height="12" rx="2" fill="#9be9a8"/>
+    <rect x="160" y="32" width="12" height="12" rx="2" fill="#ebedf0"/>
+    <rect x="176" y="32" width="12" height="12" rx="2" fill="#ebedf0"/>
+    <rect x="192" y="32" width="12" height="12" rx="2" fill="#30a14e"/>
+    <rect x="208" y="32" width="12" height="12" rx="2" fill="#ebedf0"/>
+    <rect x="224" y="32" width="12" height="12" rx="2" fill="#40c463"/>
+    <rect x="240" y="32" width="12" height="12" rx="2" fill="#ebedf0"/>
+    <rect x="256" y="32" width="12" height="12" rx="2" fill="#9be9a8"/>
+    <rect x="272" y="32" width="12" height="12" rx="2" fill="#ebedf0"/>
+    <rect x="288" y="32" width="12" height="12" rx="2" fill="#ebedf0"/>
+    <rect x="304" y="32" width="12" height="12" rx="2" fill="#9be9a8"/>
+    <rect x="320" y="32" width="12" height="12" rx="2" fill="#40c463"/>
+    <rect x="336" y="32" width="12" height="12" rx="2" fill="#ebedf0"/>
+    <rect x="352" y="32" width="12" height="12" rx="2" fill="#9be9a8"/>
+    <rect x="368" y="32" width="12" height="12" rx="2" fill="#40c463"/>
+    <rect x="384" y="32" width="12" height="12" rx="2" fill="#ebedf0"/>
+    <rect x="400" y="32" width="12" height="12" rx="2" fill="#30a14e"/>
+
+    <!-- Row 4 -->
+    <rect x="0" y="48" width="12" height="12" rx="2" fill="#40c463"/>
+    <rect x="16" y="48" width="12" height="12" rx="2" fill="#ebedf0"/>
+    <rect x="32" y="48" width="12" height="12" rx="2" fill="#9be9a8"/>
+    <rect x="48" y="48" width="12" height="12" rx="2" fill="#ebedf0"/>
+    <rect x="64" y="48" width="12" height="12" rx="2" fill="#216e39"/>
+    <rect x="80" y="48" width="12" height="12" rx="2" fill="#ebedf0"/>
+    <rect x="96" y="48" width="12" height="12" rx="2" fill="#9be9a8"/>
+    <rect x="112" y="48" width="12" height="12" rx="2" fill="#ebedf0"/>
+    <rect x="128" y="48" width="12" height="12" rx="2" fill="#40c463"/>
+    <rect x="144" y="48" width="12" height="12" rx="2" fill="#ebedf0"/>
+    <rect x="160" y="48" width="12" height="12" rx="2" fill="#ebedf0"/>
+    <rect x="176" y="48" width="12" height="12" rx="2" fill="#9be9a8"/>
+    <rect x="192" y="48" width="12" height="12" rx="2" fill="#ebedf0"/>
+    <rect x="208" y="48" width="12" height="12" rx="2" fill="#40c463"/>
+    <rect x="224" y="48" width="12" height="12" rx="2" fill="#ebedf0"/>
+    <rect x="240" y="48" width="12" height="12" rx="2" fill="#9be9a8"/>
+    <rect x="256" y="48" width="12" height="12" rx="2" fill="#40c463"/>
+    <rect x="272" y="48" width="12" height="12" rx="2" fill="#ebedf0"/>
+    <rect x="288" y="48" width="12" height="12" rx="2" fill="#40c463"/>
+    <rect x="304" y="48" width="12" height="12" rx="2" fill="#ebedf0"/>
+    <rect x="320" y="48" width="12" height="12" rx="2" fill="#ebedf0"/>
+    <rect x="336" y="48" width="12" height="12" rx="2" fill="#9be9a8"/>
+    <rect x="352" y="48" width="12" height="12" rx="2" fill="#40c463"/>
+    <rect x="368" y="48" width="12" height="12" rx="2" fill="#ebedf0"/>
+    <rect x="384" y="48" width="12" height="12" rx="2" fill="#9be9a8"/>
+    <rect x="400" y="48" width="12" height="12" rx="2" fill="#ebedf0"/>
+
+    <!-- Legend -->
+    <text x="500" y="12" fill="#888" font-size="9">Less</text>
+    <rect x="524" y="2" width="12" height="12" rx="2" fill="#ebedf0"/>
+    <rect x="540" y="2" width="12" height="12" rx="2" fill="#9be9a8"/>
+    <rect x="556" y="2" width="12" height="12" rx="2" fill="#40c463"/>
+    <rect x="572" y="2" width="12" height="12" rx="2" fill="#30a14e"/>
+    <rect x="588" y="2" width="12" height="12" rx="2" fill="#216e39"/>
+    <text x="606" y="12" fill="#888" font-size="9">More</text>
+  </g>
+
+  <!-- Bottom row: two columns -->
+  <!-- Sessions by Tool -->
+  <rect x="32" y="400" width="410" height="280" rx="12" fill="#fff" filter="url(#shadow)"/>
+  <text x="48" y="428" fill="#1c1c1c" font-size="15" font-weight="600">Sessions by Tool</text>
+
+  <!-- Horizontal bar chart -->
+  <text x="48" y="462" fill="#555" font-size="12">Claude Code</text>
+  <rect x="160" y="450" width="240" height="16" rx="4" fill="#3584e4"/>
+  <text x="408" y="462" fill="#555" font-size="11">182</text>
+
+  <text x="48" y="492" fill="#555" font-size="12">OpenCode</text>
+  <rect x="160" y="480" width="80" height="16" rx="4" fill="#e66100"/>
+  <text x="248" y="492" fill="#555" font-size="11">34</text>
+
+  <text x="48" y="522" fill="#555" font-size="12">Codex</text>
+  <rect x="160" y="510" width="44" height="16" rx="4" fill="#26a269"/>
+  <text x="212" y="522" fill="#555" font-size="11">21</text>
+
+  <text x="48" y="552" fill="#555" font-size="12">Mistral Vibe</text>
+  <rect x="160" y="540" width="20" height="16" rx="4" fill="#c061cb"/>
+  <text x="188" y="552" fill="#555" font-size="11">10</text>
+
+  <!-- Top Projects -->
+  <rect x="458" y="400" width="422" height="280" rx="12" fill="#fff" filter="url(#shadow)"/>
+  <text x="474" y="428" fill="#1c1c1c" font-size="15" font-weight="600">Top Projects</text>
+
+  <!-- Project list as boxed rows -->
+  <rect x="474" y="444" width="390" height="40" rx="8" fill="#f6f5f4"/>
+  <text x="490" y="462" fill="#1c1c1c" font-size="12" font-weight="500">sessions-chronicle</text>
+  <text x="780" y="462" text-anchor="end" fill="#888" font-size="11">89 sessions</text>
+  <text x="848" y="462" text-anchor="end" fill="#888" font-size="11">1.2k msgs</text>
+
+  <rect x="474" y="490" width="390" height="40" rx="8" fill="#f6f5f4"/>
+  <text x="490" y="508" fill="#1c1c1c" font-size="12" font-weight="500">my-web-app</text>
+  <text x="780" y="508" text-anchor="end" fill="#888" font-size="11">52 sessions</text>
+  <text x="848" y="508" text-anchor="end" fill="#888" font-size="11">845 msgs</text>
+
+  <rect x="474" y="536" width="390" height="40" rx="8" fill="#f6f5f4"/>
+  <text x="490" y="554" fill="#1c1c1c" font-size="12" font-weight="500">rust-cli-tool</text>
+  <text x="780" y="554" text-anchor="end" fill="#888" font-size="11">38 sessions</text>
+  <text x="848" y="554" text-anchor="end" fill="#888" font-size="11">612 msgs</text>
+
+  <rect x="474" y="582" width="390" height="40" rx="8" fill="#f6f5f4"/>
+  <text x="490" y="600" fill="#1c1c1c" font-size="12" font-weight="500">dotfiles</text>
+  <text x="780" y="600" text-anchor="end" fill="#888" font-size="11">24 sessions</text>
+  <text x="848" y="600" text-anchor="end" fill="#888" font-size="11">310 msgs</text>
+
+  <rect x="474" y="628" width="390" height="40" rx="8" fill="#f6f5f4"/>
+  <text x="490" y="646" fill="#1c1c1c" font-size="12" font-weight="500">api-server</text>
+  <text x="780" y="646" text-anchor="end" fill="#888" font-size="11">18 sessions</text>
+  <text x="848" y="646" text-anchor="end" fill="#888" font-size="11">289 msgs</text>
+
+  <!-- Label -->
+  <text x="450" y="695" text-anchor="middle" fill="#aaa" font-size="11" font-style="italic">Proposal A: AdwViewSwitcher in header bar - Sessions | Analytics toggle</text>
+</svg>

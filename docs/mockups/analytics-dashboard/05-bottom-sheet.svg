@@ -1,0 +1,257 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="900" height="700" font-family="Cantarell, sans-serif">
+  <defs>
+    <linearGradient id="headerBg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#3c3c3c"/>
+      <stop offset="100%" stop-color="#353535"/>
+    </linearGradient>
+    <filter id="shadow">
+      <feDropShadow dx="0" dy="1" stdDeviation="3" flood-opacity="0.2"/>
+    </filter>
+    <filter id="heavyShadow">
+      <feDropShadow dx="0" dy="-4" stdDeviation="8" flood-opacity="0.25"/>
+    </filter>
+  </defs>
+
+  <!-- Window background (session list dimmed behind) -->
+  <rect width="900" height="700" rx="12" fill="#fafafa"/>
+
+  <!-- Header bar -->
+  <rect width="900" height="47" rx="12" fill="url(#headerBg)"/>
+  <rect y="24" width="900" height="23" fill="url(#headerBg)"/>
+  <text x="450" y="29" text-anchor="middle" fill="#fff" font-size="14" font-weight="600">Sessions Chronicle</text>
+
+  <!-- Dimmed session list behind -->
+  <rect x="0" y="47" width="900" height="653" fill="#fafafa" opacity="0.4"/>
+
+  <!-- Ghost session rows (dimmed) -->
+  <rect x="16" y="60" width="660" height="50" rx="8" fill="#ddd" opacity="0.3"/>
+  <rect x="16" y="118" width="660" height="50" rx="8" fill="#ddd" opacity="0.3"/>
+  <rect x="16" y="176" width="660" height="50" rx="8" fill="#ddd" opacity="0.2"/>
+
+  <!-- Semi-transparent overlay -->
+  <rect x="0" y="47" width="900" height="653" fill="#000" opacity="0.15" rx="0"/>
+
+  <!-- Bottom sheet -->
+  <rect x="0" y="180" width="900" height="520" rx="20" fill="#fff" filter="url(#heavyShadow)"/>
+
+  <!-- Drag handle -->
+  <rect x="420" y="188" width="60" height="4" rx="2" fill="#ccc"/>
+
+  <!-- Sheet header -->
+  <text x="32" y="224" fill="#1c1c1c" font-size="20" font-weight="700">Analytics</text>
+  <!-- Close button -->
+  <circle cx="860" cy="216" r="14" fill="#f0f0f0"/>
+  <text x="860" y="221" text-anchor="middle" fill="#888" font-size="14">&#x2715;</text>
+
+  <!-- Horizontal scrollable stat chips -->
+  <g transform="translate(32, 240)">
+    <rect x="0" y="0" width="120" height="64" rx="12" fill="#e8f0fe"/>
+    <text x="12" y="20" fill="#3584e4" font-size="10" font-weight="500">SESSIONS</text>
+    <text x="12" y="48" fill="#3584e4" font-size="24" font-weight="700">247</text>
+
+    <rect x="130" y="0" width="120" height="64" rx="12" fill="#fce8e0"/>
+    <text x="142" y="20" fill="#e66100" font-size="10" font-weight="500">MESSAGES</text>
+    <text x="142" y="48" fill="#e66100" font-size="24" font-weight="700">3,842</text>
+
+    <rect x="260" y="0" width="120" height="64" rx="12" fill="#e0f2e8"/>
+    <text x="272" y="20" fill="#26a269" font-size="10" font-weight="500">TOKENS</text>
+    <text x="272" y="48" fill="#26a269" font-size="24" font-weight="700">3.2M</text>
+
+    <rect x="390" y="0" width="120" height="64" rx="12" fill="#f4e0f7"/>
+    <text x="402" y="20" fill="#9141ac" font-size="10" font-weight="500">PROJECTS</text>
+    <text x="402" y="48" fill="#9141ac" font-size="24" font-weight="700">12</text>
+
+    <rect x="520" y="0" width="120" height="64" rx="12" fill="#fef3cd"/>
+    <text x="532" y="20" fill="#986a00" font-size="10" font-weight="500">ACTIVE DAYS</text>
+    <text x="532" y="48" fill="#986a00" font-size="24" font-weight="700">68</text>
+
+    <rect x="650" y="0" width="120" height="64" rx="12" fill="#f0f0f0"/>
+    <text x="662" y="20" fill="#555" font-size="10" font-weight="500">SUBAGENTS</text>
+    <text x="662" y="48" fill="#555" font-size="24" font-weight="700">312</text>
+  </g>
+
+  <!-- Tab bar for sections -->
+  <g transform="translate(32, 320)">
+    <rect x="0" y="0" width="70" height="28" rx="14" fill="#1c1c1c"/>
+    <text x="35" y="18" text-anchor="middle" fill="#fff" font-size="11" font-weight="500">Activity</text>
+
+    <rect x="78" y="0" width="56" height="28" rx="14" fill="#f0f0f0"/>
+    <text x="106" y="18" text-anchor="middle" fill="#555" font-size="11">Tools</text>
+
+    <rect x="142" y="0" width="68" height="28" rx="14" fill="#f0f0f0"/>
+    <text x="176" y="18" text-anchor="middle" fill="#555" font-size="11">Projects</text>
+
+    <rect x="218" y="0" width="62" height="28" rx="14" fill="#f0f0f0"/>
+    <text x="249" y="18" text-anchor="middle" fill="#555" font-size="11">Tokens</text>
+
+    <rect x="288" y="0" width="66" height="28" rx="14" fill="#f0f0f0"/>
+    <text x="321" y="18" text-anchor="middle" fill="#555" font-size="11">Models</text>
+
+    <rect x="362" y="0" width="76" height="28" rx="14" fill="#f0f0f0"/>
+    <text x="400" y="18" text-anchor="middle" fill="#555" font-size="11">Sessions</text>
+  </g>
+
+  <!-- Activity tab content: large heatmap -->
+  <g transform="translate(32, 364)">
+    <text x="0" y="14" fill="#888" font-size="11">Sessions per day - Last 6 months</text>
+
+    <!-- Month labels -->
+    <text x="12" y="38" fill="#888" font-size="9">Oct</text>
+    <text x="120" y="38" fill="#888" font-size="9">Nov</text>
+    <text x="232" y="38" fill="#888" font-size="9">Dec</text>
+    <text x="340" y="38" fill="#888" font-size="9">Jan</text>
+    <text x="452" y="38" fill="#888" font-size="9">Feb</text>
+    <text x="564" y="38" fill="#888" font-size="9">Mar</text>
+
+    <!-- Heatmap grid -->
+    <g transform="translate(0, 44)">
+      <!-- Row labels -->
+      <text x="-2" y="10" text-anchor="end" fill="#aaa" font-size="8">Mon</text>
+      <text x="-2" y="24" text-anchor="end" fill="#aaa" font-size="8">Wed</text>
+      <text x="-2" y="38" text-anchor="end" fill="#aaa" font-size="8">Fri</text>
+      <text x="-2" y="52" text-anchor="end" fill="#aaa" font-size="8">Sun</text>
+
+      <!-- 26 weeks x 7 days -->
+      <!-- Week 1 -->
+      <rect x="4" y="0" width="12" height="12" rx="2" fill="#ebedf0"/>
+      <rect x="4" y="14" width="12" height="12" rx="2" fill="#9be9a8"/>
+      <rect x="4" y="28" width="12" height="12" rx="2" fill="#ebedf0"/>
+      <rect x="4" y="42" width="12" height="12" rx="2" fill="#ebedf0"/>
+      <!-- Week 2 -->
+      <rect x="20" y="0" width="12" height="12" rx="2" fill="#40c463"/>
+      <rect x="20" y="14" width="12" height="12" rx="2" fill="#ebedf0"/>
+      <rect x="20" y="28" width="12" height="12" rx="2" fill="#9be9a8"/>
+      <rect x="20" y="42" width="12" height="12" rx="2" fill="#ebedf0"/>
+      <!-- Week 3 -->
+      <rect x="36" y="0" width="12" height="12" rx="2" fill="#ebedf0"/>
+      <rect x="36" y="14" width="12" height="12" rx="2" fill="#30a14e"/>
+      <rect x="36" y="28" width="12" height="12" rx="2" fill="#ebedf0"/>
+      <rect x="36" y="42" width="12" height="12" rx="2" fill="#40c463"/>
+      <!-- Week 4 -->
+      <rect x="52" y="0" width="12" height="12" rx="2" fill="#9be9a8"/>
+      <rect x="52" y="14" width="12" height="12" rx="2" fill="#ebedf0"/>
+      <rect x="52" y="28" width="12" height="12" rx="2" fill="#216e39"/>
+      <rect x="52" y="42" width="12" height="12" rx="2" fill="#ebedf0"/>
+      <!-- Week 5 -->
+      <rect x="68" y="0" width="12" height="12" rx="2" fill="#ebedf0"/>
+      <rect x="68" y="14" width="12" height="12" rx="2" fill="#40c463"/>
+      <rect x="68" y="28" width="12" height="12" rx="2" fill="#ebedf0"/>
+      <rect x="68" y="42" width="12" height="12" rx="2" fill="#9be9a8"/>
+      <!-- Continue pattern... weeks 6-26 -->
+      <rect x="84" y="0" width="12" height="12" rx="2" fill="#9be9a8"/>
+      <rect x="84" y="14" width="12" height="12" rx="2" fill="#ebedf0"/>
+      <rect x="84" y="28" width="12" height="12" rx="2" fill="#40c463"/>
+      <rect x="84" y="42" width="12" height="12" rx="2" fill="#ebedf0"/>
+
+      <rect x="100" y="0" width="12" height="12" rx="2" fill="#ebedf0"/>
+      <rect x="100" y="14" width="12" height="12" rx="2" fill="#216e39"/>
+      <rect x="100" y="28" width="12" height="12" rx="2" fill="#9be9a8"/>
+      <rect x="100" y="42" width="12" height="12" rx="2" fill="#ebedf0"/>
+
+      <rect x="116" y="0" width="12" height="12" rx="2" fill="#40c463"/>
+      <rect x="116" y="14" width="12" height="12" rx="2" fill="#ebedf0"/>
+      <rect x="116" y="28" width="12" height="12" rx="2" fill="#ebedf0"/>
+      <rect x="116" y="42" width="12" height="12" rx="2" fill="#30a14e"/>
+
+      <rect x="132" y="0" width="12" height="12" rx="2" fill="#ebedf0"/>
+      <rect x="132" y="14" width="12" height="12" rx="2" fill="#9be9a8"/>
+      <rect x="132" y="28" width="12" height="12" rx="2" fill="#40c463"/>
+      <rect x="132" y="42" width="12" height="12" rx="2" fill="#ebedf0"/>
+
+      <rect x="148" y="0" width="12" height="12" rx="2" fill="#30a14e"/>
+      <rect x="148" y="14" width="12" height="12" rx="2" fill="#ebedf0"/>
+      <rect x="148" y="28" width="12" height="12" rx="2" fill="#ebedf0"/>
+      <rect x="148" y="42" width="12" height="12" rx="2" fill="#9be9a8"/>
+
+      <rect x="164" y="0" width="12" height="12" rx="2" fill="#ebedf0"/>
+      <rect x="164" y="14" width="12" height="12" rx="2" fill="#40c463"/>
+      <rect x="164" y="28" width="12" height="12" rx="2" fill="#9be9a8"/>
+      <rect x="164" y="42" width="12" height="12" rx="2" fill="#ebedf0"/>
+
+      <rect x="180" y="0" width="12" height="12" rx="2" fill="#216e39"/>
+      <rect x="180" y="14" width="12" height="12" rx="2" fill="#ebedf0"/>
+      <rect x="180" y="28" width="12" height="12" rx="2" fill="#40c463"/>
+      <rect x="180" y="42" width="12" height="12" rx="2" fill="#ebedf0"/>
+
+      <!-- More weeks... -->
+      <rect x="196" y="0" width="12" height="12" rx="2" fill="#ebedf0"/>
+      <rect x="196" y="14" width="12" height="12" rx="2" fill="#9be9a8"/>
+      <rect x="196" y="28" width="12" height="12" rx="2" fill="#ebedf0"/>
+      <rect x="196" y="42" width="12" height="12" rx="2" fill="#30a14e"/>
+
+      <rect x="212" y="0" width="12" height="12" rx="2" fill="#40c463"/>
+      <rect x="212" y="14" width="12" height="12" rx="2" fill="#ebedf0"/>
+      <rect x="212" y="28" width="12" height="12" rx="2" fill="#216e39"/>
+      <rect x="212" y="42" width="12" height="12" rx="2" fill="#ebedf0"/>
+
+      <rect x="228" y="0" width="12" height="12" rx="2" fill="#ebedf0"/>
+      <rect x="228" y="14" width="12" height="12" rx="2" fill="#40c463"/>
+      <rect x="228" y="28" width="12" height="12" rx="2" fill="#ebedf0"/>
+      <rect x="228" y="42" width="12" height="12" rx="2" fill="#9be9a8"/>
+
+      <rect x="244" y="0" width="12" height="12" rx="2" fill="#9be9a8"/>
+      <rect x="244" y="14" width="12" height="12" rx="2" fill="#ebedf0"/>
+      <rect x="244" y="28" width="12" height="12" rx="2" fill="#40c463"/>
+      <rect x="244" y="42" width="12" height="12" rx="2" fill="#ebedf0"/>
+
+      <rect x="260" y="0" width="12" height="12" rx="2" fill="#ebedf0"/>
+      <rect x="260" y="14" width="12" height="12" rx="2" fill="#30a14e"/>
+      <rect x="260" y="28" width="12" height="12" rx="2" fill="#9be9a8"/>
+      <rect x="260" y="42" width="12" height="12" rx="2" fill="#ebedf0"/>
+
+      <rect x="276" y="0" width="12" height="12" rx="2" fill="#40c463"/>
+      <rect x="276" y="14" width="12" height="12" rx="2" fill="#ebedf0"/>
+      <rect x="276" y="28" width="12" height="12" rx="2" fill="#ebedf0"/>
+      <rect x="276" y="42" width="12" height="12" rx="2" fill="#40c463"/>
+
+      <rect x="292" y="0" width="12" height="12" rx="2" fill="#ebedf0"/>
+      <rect x="292" y="14" width="12" height="12" rx="2" fill="#9be9a8"/>
+      <rect x="292" y="28" width="12" height="12" rx="2" fill="#40c463"/>
+      <rect x="292" y="42" width="12" height="12" rx="2" fill="#ebedf0"/>
+
+      <rect x="308" y="0" width="12" height="12" rx="2" fill="#216e39"/>
+      <rect x="308" y="14" width="12" height="12" rx="2" fill="#40c463"/>
+      <rect x="308" y="28" width="12" height="12" rx="2" fill="#ebedf0"/>
+      <rect x="308" y="42" width="12" height="12" rx="2" fill="#9be9a8"/>
+
+      <!-- Legend -->
+      <text x="420" y="10" fill="#888" font-size="9">Less</text>
+      <rect x="444" y="0" width="12" height="12" rx="2" fill="#ebedf0"/>
+      <rect x="460" y="0" width="12" height="12" rx="2" fill="#9be9a8"/>
+      <rect x="476" y="0" width="12" height="12" rx="2" fill="#40c463"/>
+      <rect x="492" y="0" width="12" height="12" rx="2" fill="#30a14e"/>
+      <rect x="508" y="0" width="12" height="12" rx="2" fill="#216e39"/>
+      <text x="526" y="10" fill="#888" font-size="9">More</text>
+    </g>
+
+    <!-- Top sessions list -->
+    <text x="0" y="120" fill="#888" font-size="11" font-weight="500">TOP SESSIONS BY MESSAGES</text>
+
+    <rect x="0" y="130" width="836" height="36" rx="8" fill="#f6f5f4"/>
+    <text x="12" y="147" fill="#888" font-size="11" font-weight="600">1.</text>
+    <text x="28" y="147" fill="#1c1c1c" font-size="11">Refactor database connection pooling</text>
+    <text x="420" y="147" fill="#888" font-size="10">api-server</text>
+    <text x="600" y="147" fill="#888" font-size="10">142 msgs</text>
+    <text x="700" y="147" fill="#888" font-size="10">3h 24m</text>
+    <text x="800" y="147" fill="#3584e4" font-size="10">&#x25B6;</text>
+
+    <rect x="0" y="170" width="836" height="36" rx="8" fill="#f6f5f4"/>
+    <text x="12" y="187" fill="#888" font-size="11" font-weight="600">2.</text>
+    <text x="28" y="187" fill="#1c1c1c" font-size="11">Implement full analytics dashboard</text>
+    <text x="420" y="187" fill="#888" font-size="10">sessions-chronicle</text>
+    <text x="600" y="187" fill="#888" font-size="10">98 msgs</text>
+    <text x="700" y="187" fill="#888" font-size="10">2h 15m</text>
+    <text x="800" y="187" fill="#3584e4" font-size="10">&#x25B6;</text>
+
+    <rect x="0" y="210" width="836" height="36" rx="8" fill="#f6f5f4"/>
+    <text x="12" y="227" fill="#888" font-size="11" font-weight="600">3.</text>
+    <text x="28" y="227" fill="#1c1c1c" font-size="11">Set up CI/CD pipeline with GitHub Actions</text>
+    <text x="420" y="227" fill="#888" font-size="10">my-web-app</text>
+    <text x="600" y="227" fill="#888" font-size="10">87 msgs</text>
+    <text x="700" y="227" fill="#888" font-size="10">1h 52m</text>
+    <text x="800" y="227" fill="#3584e4" font-size="10">&#x25B6;</text>
+  </g>
+
+  <!-- Label -->
+  <text x="450" y="695" text-anchor="middle" fill="#aaa" font-size="11" font-style="italic">Proposal E: Bottom sheet overlay - modal analytics with tabbed sections</text>
+</svg>

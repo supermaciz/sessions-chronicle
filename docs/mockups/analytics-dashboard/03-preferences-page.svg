@@ -1,0 +1,106 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="900" height="700" font-family="Cantarell, sans-serif">
+  <defs>
+    <linearGradient id="headerBg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#3c3c3c"/>
+      <stop offset="100%" stop-color="#353535"/>
+    </linearGradient>
+    <filter id="shadow">
+      <feDropShadow dx="0" dy="1" stdDeviation="2" flood-opacity="0.15"/>
+    </filter>
+  </defs>
+
+  <!-- Window background -->
+  <rect width="900" height="700" rx="12" fill="#ebebeb"/>
+
+  <!-- Header bar -->
+  <rect width="900" height="47" rx="12" fill="url(#headerBg)"/>
+  <rect y="24" width="900" height="23" fill="url(#headerBg)"/>
+
+  <!-- Back button -->
+  <rect x="8" y="10" width="32" height="27" rx="6" fill="#4a4a4a"/>
+  <text x="24" y="28" text-anchor="middle" fill="#ccc" font-size="14">&#x2190;</text>
+
+  <!-- Title -->
+  <text x="450" y="29" text-anchor="middle" fill="#fff" font-size="14" font-weight="600">Analytics</text>
+
+  <!-- AdwPreferencesPage style - centered narrow column -->
+  <!-- Group 1: Overview -->
+  <text x="200" y="76" fill="#888" font-size="11" font-weight="500" letter-spacing="1">OVERVIEW</text>
+
+  <!-- Boxed list group -->
+  <rect x="200" y="86" width="500" height="200" rx="12" fill="#fff" filter="url(#shadow)"/>
+
+  <!-- Row: Total Sessions -->
+  <text x="224" y="116" fill="#1c1c1c" font-size="13">Total Sessions</text>
+  <text x="676" y="116" text-anchor="end" fill="#1c1c1c" font-size="13" font-weight="600">247</text>
+  <line x1="224" y1="130" x2="676" y2="130" stroke="#f0f0f0" stroke-width="1"/>
+
+  <!-- Row: Total Messages -->
+  <text x="224" y="156" fill="#1c1c1c" font-size="13">Total Messages</text>
+  <text x="676" y="156" text-anchor="end" fill="#1c1c1c" font-size="13" font-weight="600">3,842</text>
+  <line x1="224" y1="170" x2="676" y2="170" stroke="#f0f0f0" stroke-width="1"/>
+
+  <!-- Row: Distinct Projects -->
+  <text x="224" y="196" fill="#1c1c1c" font-size="13">Distinct Projects</text>
+  <text x="676" y="196" text-anchor="end" fill="#1c1c1c" font-size="13" font-weight="600">12</text>
+  <line x1="224" y1="210" x2="676" y2="210" stroke="#f0f0f0" stroke-width="1"/>
+
+  <!-- Row: Active Days -->
+  <text x="224" y="236" fill="#1c1c1c" font-size="13">Active Days</text>
+  <text x="676" y="236" text-anchor="end" fill="#1c1c1c" font-size="13" font-weight="600">68</text>
+  <text x="676" y="254" text-anchor="end" fill="#888" font-size="11">out of 90 days tracked</text>
+
+  <!-- Group 2: Sessions by Tool -->
+  <text x="200" y="312" fill="#888" font-size="11" font-weight="500" letter-spacing="1">SESSIONS BY TOOL</text>
+
+  <rect x="200" y="322" width="500" height="200" rx="12" fill="#fff" filter="url(#shadow)"/>
+
+  <!-- Row with icon + bar -->
+  <circle cx="232" cy="352" r="10" fill="#3584e4" opacity="0.2"/>
+  <text x="232" y="356" text-anchor="middle" fill="#3584e4" font-size="10" font-weight="700">C</text>
+  <text x="252" y="348" fill="#1c1c1c" font-size="13">Claude Code</text>
+  <text x="252" y="364" fill="#888" font-size="10">182 sessions (73.7%)</text>
+  <rect x="420" y="344" width="240" height="8" rx="4" fill="#eee"/>
+  <rect x="420" y="344" width="177" height="8" rx="4" fill="#3584e4"/>
+  <line x1="224" y1="378" x2="676" y2="378" stroke="#f0f0f0" stroke-width="1"/>
+
+  <circle cx="232" cy="400" r="10" fill="#e66100" opacity="0.2"/>
+  <text x="232" y="404" text-anchor="middle" fill="#e66100" font-size="10" font-weight="700">O</text>
+  <text x="252" y="396" fill="#1c1c1c" font-size="13">OpenCode</text>
+  <text x="252" y="412" fill="#888" font-size="10">34 sessions (13.8%)</text>
+  <rect x="420" y="392" width="240" height="8" rx="4" fill="#eee"/>
+  <rect x="420" y="392" width="33" height="8" rx="4" fill="#e66100"/>
+  <line x1="224" y1="426" x2="676" y2="426" stroke="#f0f0f0" stroke-width="1"/>
+
+  <circle cx="232" cy="448" r="10" fill="#26a269" opacity="0.2"/>
+  <text x="232" y="452" text-anchor="middle" fill="#26a269" font-size="10" font-weight="700">X</text>
+  <text x="252" y="444" fill="#1c1c1c" font-size="13">Codex</text>
+  <text x="252" y="460" fill="#888" font-size="10">21 sessions (8.5%)</text>
+  <rect x="420" y="440" width="240" height="8" rx="4" fill="#eee"/>
+  <rect x="420" y="440" width="20" height="8" rx="4" fill="#26a269"/>
+  <line x1="224" y1="474" x2="676" y2="474" stroke="#f0f0f0" stroke-width="1"/>
+
+  <circle cx="232" cy="496" r="10" fill="#c061cb" opacity="0.2"/>
+  <text x="232" y="500" text-anchor="middle" fill="#c061cb" font-size="10" font-weight="700">M</text>
+  <text x="252" y="492" fill="#1c1c1c" font-size="13">Mistral Vibe</text>
+  <text x="252" y="508" fill="#888" font-size="10">10 sessions (4.0%)</text>
+  <rect x="420" y="488" width="240" height="8" rx="4" fill="#eee"/>
+  <rect x="420" y="488" width="10" height="8" rx="4" fill="#c061cb"/>
+
+  <!-- Group 3: Subagent Usage -->
+  <text x="200" y="548" fill="#888" font-size="11" font-weight="500" letter-spacing="1">SUBAGENT USAGE</text>
+
+  <rect x="200" y="558" width="500" height="112" rx="12" fill="#fff" filter="url(#shadow)"/>
+
+  <text x="224" y="586" fill="#1c1c1c" font-size="13">Sessions with Subagents</text>
+  <text x="676" y="586" text-anchor="end" fill="#1c1c1c" font-size="13" font-weight="600">47 / 247</text>
+  <text x="676" y="602" text-anchor="end" fill="#888" font-size="11">19.0%</text>
+  <line x1="224" y1="614" x2="676" y2="614" stroke="#f0f0f0" stroke-width="1"/>
+
+  <text x="224" y="640" fill="#1c1c1c" font-size="13">Total Subagent Spawns</text>
+  <text x="676" y="640" text-anchor="end" fill="#1c1c1c" font-size="13" font-weight="600">312</text>
+  <text x="676" y="656" text-anchor="end" fill="#888" font-size="11">avg 6.6 per session</text>
+
+  <!-- Label -->
+  <text x="450" y="695" text-anchor="middle" fill="#aaa" font-size="11" font-style="italic">Proposal C: AdwPreferencesPage layout - centered column with boxed-list groups</text>
+</svg>
