@@ -31,38 +31,19 @@ use crate::ui::{
 };
 use crate::utils::terminal::{self, Terminal};
 
+mod handlers;
+mod helpers;
+mod types;
+
+use helpers::{
+    active_search_query, decide_reindex_action, detail_pop_sync_decision,
+    parent_session_load_failure_messages, resolve_escape_action, search_query_update_messages,
+    transition_to_detail, transition_to_list,
+};
+use types::{ActiveSessionRef, EscapeResolution, ReindexAction, UtilityPaneMode};
+
 /// Timeout in seconds for resume failure toast notifications
 const RESUME_FAILURE_TOAST_TIMEOUT_SECS: u32 = 4;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum UtilityPaneMode {
-    Filters,
-    ToolInspector,
-}
-
-impl UtilityPaneMode {
-    fn stack_child_name(self) -> &'static str {
-        match self {
-            UtilityPaneMode::Filters => "filters",
-            UtilityPaneMode::ToolInspector => "tool-inspector",
-        }
-    }
-
-    fn sidebar_position(self) -> gtk::PackType {
-        match self {
-            UtilityPaneMode::Filters => gtk::PackType::Start,
-            UtilityPaneMode::ToolInspector => gtk::PackType::End,
-        }
-    }
-}
-
-#[derive(Debug, Clone)]
-struct ActiveSessionRef {
-    id: String,
-    tool: Tool,
-    #[allow(dead_code)] // Retained for future pane enrichment
-    project_name: String,
-}
 
 pub(super) struct App {
     search_visible: bool,
@@ -134,12 +115,6 @@ pub(super) enum AppMsg {
     IndexingFailed,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ReindexAction {
-    AlreadyRunning,
-    StartFull,
-}
-
 relm4::new_action_group!(pub(super) WindowActionGroup, "win");
 relm4::new_stateless_action!(PreferencesAction, WindowActionGroup, "preferences");
 relm4::new_stateless_action!(pub(super) ShortcutsAction, WindowActionGroup, "show-help-overlay");
@@ -148,53 +123,6 @@ relm4::new_stateless_action!(QuitAction, WindowActionGroup, "quit");
 relm4::new_stateless_action!(TogglePaneAction, WindowActionGroup, "toggle-pane");
 relm4::new_stateless_action!(ShowSearchAction, WindowActionGroup, "show-search");
 relm4::new_stateless_action!(EscapeAction, WindowActionGroup, "escape");
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum EscapeResolution {
-    CloseSearch,
-    CloseInspector,
-    NavigateBack,
-    Noop,
-}
-
-fn active_search_query(query: &str) -> Option<String> {
-    let trimmed = query.trim();
-    if trimmed.is_empty() {
-        None
-    } else {
-        Some(trimmed.to_string())
-    }
-}
-
-fn search_query_update_messages(query: String) -> (SessionListMsg, SessionDetailMsg) {
-    let detail_query = active_search_query(&query);
-
-    (
-        SessionListMsg::SetSearchQuery(query),
-        SessionDetailMsg::UpdateSearchQuery(detail_query),
-    )
-}
-
-fn parent_session_load_failure_messages() -> (SessionDetailMsg, ToolInspectorPaneMsg) {
-    (SessionDetailMsg::Clear, ToolInspectorPaneMsg::Clear)
-}
-
-fn resolve_escape_action(
-    search_visible: bool,
-    detail_visible: bool,
-    pane_open: bool,
-    pane_mode: UtilityPaneMode,
-) -> EscapeResolution {
-    if search_visible {
-        EscapeResolution::CloseSearch
-    } else if detail_visible && pane_open && pane_mode == UtilityPaneMode::ToolInspector {
-        EscapeResolution::CloseInspector
-    } else if detail_visible {
-        EscapeResolution::NavigateBack
-    } else {
-        EscapeResolution::Noop
-    }
-}
 
 #[relm4::component(pub)]
 impl SimpleComponent for App {
@@ -1038,34 +966,6 @@ impl SimpleComponent for App {
 
     fn shutdown(&mut self, widgets: &mut Self::Widgets, _output: relm4::Sender<Self::Output>) {
         widgets.save_window_size().unwrap();
-    }
-}
-
-/// Pure transition: switch to detail (tool inspector) mode.
-/// The pane stays closed; it opens only when an inspect action fires.
-fn transition_to_detail(pane_mode: &mut UtilityPaneMode, pane_open: &mut bool) {
-    *pane_mode = UtilityPaneMode::ToolInspector;
-    *pane_open = false;
-}
-
-/// Pure transition: switch to list (filters) mode, preserving pane visibility.
-fn transition_to_list(pane_mode: &mut UtilityPaneMode) {
-    *pane_mode = UtilityPaneMode::Filters;
-}
-
-fn detail_pop_sync_decision(suppress_next_pop_sync: bool, detail_visible: bool) -> (bool, bool) {
-    if suppress_next_pop_sync {
-        (false, false)
-    } else {
-        (detail_visible, false)
-    }
-}
-
-fn decide_reindex_action(indexing: bool) -> ReindexAction {
-    if indexing {
-        ReindexAction::AlreadyRunning
-    } else {
-        ReindexAction::StartFull
     }
 }
 
