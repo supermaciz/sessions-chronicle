@@ -11,10 +11,10 @@ use gtk::prelude::{
     ObjectExt, OrientableExt, SettingsExt, ToggleButtonExt, WidgetExt,
 };
 use gtk::{gdk, gio, glib};
-use std::{cell::Cell, fs, path::PathBuf, str::FromStr, sync::Arc};
+use std::{cell::Cell, fs, path::PathBuf, sync::Arc};
 
 use crate::config::{APP_ID, PROFILE};
-use crate::database::{SessionIndexer, load_session};
+use crate::database::SessionIndexer;
 use crate::indexing_worker::{IndexingWorker, IndexingWorkerInput, IndexingWorkerOutput};
 use crate::models::session::Tool;
 use crate::session_sources::{SessionSources, select_db_filename};
@@ -23,46 +23,36 @@ use crate::ui::modals::{
     preferences::{PreferencesDialog, PreferencesOutput},
     shortcuts::ShortcutsDialog,
 };
+#[cfg(test)]
+use crate::ui::session_detail::SessionDetailMsg;
 use crate::ui::{
-    session_detail::{SessionDetail, SessionDetailMsg, SessionDetailOutput},
+    session_detail::{SessionDetail, SessionDetailOutput},
     session_list::{SessionList, SessionListMsg, SessionListOutput},
     sidebar::{Sidebar, SidebarOutput},
     tool_inspector_pane::{ToolInspectorPane, ToolInspectorPaneMsg, ToolInspectorPaneOutput},
 };
-use crate::utils::terminal::{self, Terminal};
+use crate::utils::terminal;
+
+mod handlers;
+mod helpers;
+mod types;
+
+#[cfg(test)]
+use helpers::decide_reindex_action;
+use helpers::transition_to_list;
+#[cfg(test)]
+use helpers::{
+    active_search_query, detail_pop_sync_decision, parent_session_load_failure_messages,
+    resolve_escape_action, search_query_update_messages, transition_to_detail,
+};
+#[cfg(test)]
+use types::EscapeResolution;
+#[cfg(test)]
+use types::ReindexAction;
+use types::{ActiveSessionRef, UtilityPaneMode};
 
 /// Timeout in seconds for resume failure toast notifications
 const RESUME_FAILURE_TOAST_TIMEOUT_SECS: u32 = 4;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum UtilityPaneMode {
-    Filters,
-    ToolInspector,
-}
-
-impl UtilityPaneMode {
-    fn stack_child_name(self) -> &'static str {
-        match self {
-            UtilityPaneMode::Filters => "filters",
-            UtilityPaneMode::ToolInspector => "tool-inspector",
-        }
-    }
-
-    fn sidebar_position(self) -> gtk::PackType {
-        match self {
-            UtilityPaneMode::Filters => gtk::PackType::Start,
-            UtilityPaneMode::ToolInspector => gtk::PackType::End,
-        }
-    }
-}
-
-#[derive(Debug, Clone)]
-struct ActiveSessionRef {
-    id: String,
-    tool: Tool,
-    #[allow(dead_code)] // Retained for future pane enrichment
-    project_name: String,
-}
 
 pub(super) struct App {
     search_visible: bool,
@@ -134,12 +124,6 @@ pub(super) enum AppMsg {
     IndexingFailed,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ReindexAction {
-    AlreadyRunning,
-    StartFull,
-}
-
 relm4::new_action_group!(pub(super) WindowActionGroup, "win");
 relm4::new_stateless_action!(PreferencesAction, WindowActionGroup, "preferences");
 relm4::new_stateless_action!(pub(super) ShortcutsAction, WindowActionGroup, "show-help-overlay");
@@ -148,53 +132,6 @@ relm4::new_stateless_action!(QuitAction, WindowActionGroup, "quit");
 relm4::new_stateless_action!(TogglePaneAction, WindowActionGroup, "toggle-pane");
 relm4::new_stateless_action!(ShowSearchAction, WindowActionGroup, "show-search");
 relm4::new_stateless_action!(EscapeAction, WindowActionGroup, "escape");
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum EscapeResolution {
-    CloseSearch,
-    CloseInspector,
-    NavigateBack,
-    Noop,
-}
-
-fn active_search_query(query: &str) -> Option<String> {
-    let trimmed = query.trim();
-    if trimmed.is_empty() {
-        None
-    } else {
-        Some(trimmed.to_string())
-    }
-}
-
-fn search_query_update_messages(query: String) -> (SessionListMsg, SessionDetailMsg) {
-    let detail_query = active_search_query(&query);
-
-    (
-        SessionListMsg::SetSearchQuery(query),
-        SessionDetailMsg::UpdateSearchQuery(detail_query),
-    )
-}
-
-fn parent_session_load_failure_messages() -> (SessionDetailMsg, ToolInspectorPaneMsg) {
-    (SessionDetailMsg::Clear, ToolInspectorPaneMsg::Clear)
-}
-
-fn resolve_escape_action(
-    search_visible: bool,
-    detail_visible: bool,
-    pane_open: bool,
-    pane_mode: UtilityPaneMode,
-) -> EscapeResolution {
-    if search_visible {
-        EscapeResolution::CloseSearch
-    } else if detail_visible && pane_open && pane_mode == UtilityPaneMode::ToolInspector {
-        EscapeResolution::CloseInspector
-    } else if detail_visible {
-        EscapeResolution::NavigateBack
-    } else {
-        EscapeResolution::Noop
-    }
-}
 
 #[relm4::component(pub)]
 impl SimpleComponent for App {
@@ -629,392 +566,37 @@ impl SimpleComponent for App {
         ComponentParts { model, widgets }
     }
 
-    fn update(&mut self, message: Self::Input, _sender: ComponentSender<Self>) {
+    fn update(&mut self, message: Self::Input, sender: ComponentSender<Self>) {
         match message {
             AppMsg::Quit => main_application().quit(),
-            AppMsg::SearchModeChanged(enabled) => {
-                if self.search_visible != enabled {
-                    self.search_visible = enabled;
-                    if !enabled {
-                        self.search_query.clear();
-                        let (list_msg, detail_msg) = search_query_update_messages(String::new());
-                        self.session_list.emit(list_msg);
-                        self.session_detail.emit(detail_msg);
-                        if !self.detail_visible {
-                            self.session_list.emit(SessionListMsg::RestoreFocus);
-                        }
-                    }
-                }
-            }
-            AppMsg::TogglePane => {
-                self.pane_open = !self.pane_open;
-            }
-            AppMsg::PaneVisibilityChanged(visible) => {
-                if self.pane_open != visible {
-                    self.pane_open = visible;
-                }
-            }
-            AppMsg::SearchQueryChanged(query) => {
-                self.search_query = query.clone();
-                let (list_msg, detail_msg) = search_query_update_messages(query);
-                self.session_list.emit(list_msg);
-                self.session_detail.emit(detail_msg);
-            }
+            AppMsg::SearchModeChanged(enabled) => self.handle_search_mode_changed(enabled),
+            AppMsg::TogglePane => self.handle_toggle_pane(),
+            AppMsg::PaneVisibilityChanged(visible) => self.handle_pane_visibility_changed(visible),
+            AppMsg::SearchQueryChanged(query) => self.handle_search_query_changed(query),
             AppMsg::FiltersChanged(tools) => {
                 self.session_list.emit(SessionListMsg::SetTools(tools));
             }
-            AppMsg::SessionSelected(id) => {
-                tracing::debug!("Session selected: {}", id);
-
-                let search_query = active_search_query(&self.search_query);
-
-                match load_session(&self.db_path, &id) {
-                    Ok(Some(session)) => {
-                        let project_name = session
-                            .project_path
-                            .as_deref()
-                            .and_then(|p| std::path::Path::new(p).file_name())
-                            .and_then(|n| n.to_str())
-                            .unwrap_or("Unknown project")
-                            .to_string();
-
-                        self.active_session = Some(ActiveSessionRef {
-                            id: session.id.clone(),
-                            tool: session.tool,
-                            project_name,
-                        });
-
-                        self.session_detail.emit(SessionDetailMsg::SetSession {
-                            session: Box::new(session),
-                            search_query,
-                        });
-                    }
-                    Ok(None) => {
-                        tracing::warn!("Session not found: {}", id);
-                        self.active_session = None;
-                        self.session_detail.emit(SessionDetailMsg::Clear);
-                    }
-                    Err(err) => {
-                        tracing::error!("Failed to load session: {}", err);
-                        self.active_session = None;
-                        self.session_detail.emit(SessionDetailMsg::Clear);
-                    }
-                }
-
-                // Push the detail page onto the navigation stack
-                if !self.detail_visible {
-                    self.nav_view.push(&self.detail_page);
-                    self.detail_visible = true;
-                }
-
-                // Switch to tool inspector pane mode (pane stays closed until inspect action)
-                transition_to_detail(&mut self.pane_mode, &mut self.pane_open);
-                self.apply_pane_stack_switch();
-            }
-            AppMsg::RequestNavigateBack => {
-                if self.detail_visible {
-                    let visible_page_tag = self.nav_view.visible_page().and_then(|p| p.tag());
-                    if visible_page_tag.as_deref() == Some("detail") {
-                        self.suppress_next_detail_pop_sync = true;
-                        self.nav_view.pop();
-                    }
-                    self.transition_to_session_list_mode();
-                    self.session_list.emit(SessionListMsg::RestoreFocus);
-                }
-            }
-            AppMsg::NavigateBack => {
-                let (should_sync, suppress_next) = detail_pop_sync_decision(
-                    self.suppress_next_detail_pop_sync,
-                    self.detail_visible,
-                );
-                self.suppress_next_detail_pop_sync = suppress_next;
-                if should_sync {
-                    self.transition_to_session_list_mode();
-                    self.session_list.emit(SessionListMsg::RestoreFocus);
-                }
-            }
+            AppMsg::SessionSelected(id) => self.handle_session_selected(id),
+            AppMsg::RequestNavigateBack => self.handle_request_navigate_back(),
+            AppMsg::NavigateBack => self.handle_navigate_back(),
             AppMsg::ShowPreferences => {
                 let dialog_widget = self.preferences_dialog.widget();
                 dialog_widget.present(Some(&main_application().windows()[0]));
             }
-            AppMsg::ReindexRequested => match decide_reindex_action(self.indexing) {
-                ReindexAction::AlreadyRunning => {
-                    self.toast_overlay.add_toast(
-                        adw::Toast::builder()
-                            .title("Indexing already in progress.")
-                            .timeout(3)
-                            .build(),
-                    );
-                }
-                ReindexAction::StartFull => {
-                    tracing::info!("Reindex requested — scheduling full background reindex");
-                    self.indexing = true;
-                    self.pending_reindex_feedback = true;
-                    self.session_list.emit(SessionListMsg::SetIndexing(true));
-                    self.indexing_worker
-                        .emit(IndexingWorkerInput::StartFullReindex(self.sources.clone()));
-                }
-            },
+            AppMsg::ReindexRequested => self.handle_reindex_requested(),
             AppMsg::IndexingCompleted { indexed, skipped } => {
-                tracing::info!(
-                    "Background indexing complete: indexed={}, skipped={}",
-                    indexed,
-                    skipped
-                );
-                self.indexing = false;
-                self.session_list.emit(SessionListMsg::SetIndexing(false));
-                self.session_list.emit(SessionListMsg::Reload);
-
-                if self.pending_reindex_feedback {
-                    self.pending_reindex_feedback = false;
-                    self.toast_overlay.add_toast(
-                        adw::Toast::builder()
-                            .title(format!("Index rebuilt — {} sessions", indexed))
-                            .timeout(3)
-                            .build(),
-                    );
-                }
+                self.handle_indexing_completed(indexed, skipped)
             }
-            AppMsg::IndexingFailed => {
-                tracing::error!("Background indexing failed");
-                self.indexing = false;
-                self.session_list.emit(SessionListMsg::SetIndexing(false));
-
-                let title = if self.pending_reindex_feedback {
-                    self.pending_reindex_feedback = false;
-                    "Failed to reset index"
-                } else {
-                    "Background indexing failed"
-                };
-
-                self.toast_overlay
-                    .add_toast(adw::Toast::builder().title(title).timeout(3).build());
-            }
-            AppMsg::ResumeSession(session_id, tool) => {
-                tracing::debug!("Resume session requested: {}", session_id);
-
-                let session = match load_session(&self.db_path, &session_id) {
-                    Ok(Some(session)) => session,
-                    Ok(None) => {
-                        tracing::error!("Session not found: {}", session_id);
-                        self.show_error_dialog(
-                            "Session Not Found",
-                            "The requested session could not be found in the database.",
-                        );
-                        return;
-                    }
-                    Err(err) => {
-                        tracing::error!("Failed to load session {}: {}", session_id, err);
-                        self.show_error_dialog(
-                            "Failed to Load Session",
-                            &format!("An error occurred while loading the session: {}", err),
-                        );
-                        return;
-                    }
-                };
-
-                let workdir = if let Some(project_path) = &session.project_path {
-                    PathBuf::from(project_path)
-                } else {
-                    match PathBuf::from(&session.file_path).parent() {
-                        Some(dir) => dir.to_path_buf(),
-                        None => {
-                            tracing::error!(
-                                "Cannot determine workdir for session: no project_path and no valid parent directory"
-                            );
-                            self.show_error_dialog(
-                                "Invalid Session",
-                                "The session has no valid working directory.",
-                            );
-                            return;
-                        }
-                    }
-                };
-
-                let settings = gio::Settings::new(APP_ID);
-                let terminal_str = settings.string("resume-terminal");
-                let terminal = match Terminal::from_str(&terminal_str) {
-                    Ok(t) => t,
-                    Err(()) => {
-                        tracing::error!("Invalid terminal preference: {}", terminal_str);
-                        self.show_error_dialog(
-                            "Invalid Terminal Preference",
-                            "Please check your terminal preference in settings.",
-                        );
-                        return;
-                    }
-                };
-
-                match terminal::build_resume_command(tool, &session_id, &workdir) {
-                    Ok(args) => match terminal::spawn_terminal(terminal, &args) {
-                        Ok(_) => {
-                            tracing::info!(
-                                "Successfully launched terminal for session: {}",
-                                session_id
-                            );
-                        }
-                        Err(err) => {
-                            tracing::error!(
-                                "Failed to spawn terminal for session {}: {}",
-                                session_id,
-                                err
-                            );
-                            self.show_resume_failure_toast(&err);
-                        }
-                    },
-                    Err(err) => {
-                        tracing::error!(
-                            "Failed to build resume command for session {}: {}",
-                            session_id,
-                            err
-                        );
-                        self.show_error_dialog(
-                            "Failed to Build Resume Command",
-                            &format!("Could not build the resume command: {}", err),
-                        );
-                    }
-                }
-            }
-            AppMsg::ResumeActiveSession => {
-                if let Some(ref session) = self.active_session {
-                    _sender.input(AppMsg::ResumeSession(session.id.clone(), session.tool));
-                } else {
-                    tracing::warn!("ResumeActiveSession ignored — no active session");
-                }
-            }
-            AppMsg::InspectToolCall(tool_call_id) => {
-                tracing::debug!("Inspect tool call: {}", tool_call_id);
-                if let Some(ref session) = self.active_session {
-                    let session_id = session.id.clone();
-                    self.pane_mode = UtilityPaneMode::ToolInspector;
-                    self.pane_open = true;
-                    self.apply_pane_stack_switch();
-                    self.tool_inspector_pane
-                        .emit(ToolInspectorPaneMsg::SelectToolCall {
-                            session_id,
-                            tool_call_id,
-                        });
-                }
-            }
-            AppMsg::InspectSubagent(subagent_id) => {
-                tracing::debug!("Inspect subagent: {}", subagent_id);
-                if let Some(ref session) = self.active_session {
-                    let session_id = session.id.clone();
-                    self.pane_mode = UtilityPaneMode::ToolInspector;
-                    self.pane_open = true;
-                    self.apply_pane_stack_switch();
-                    self.tool_inspector_pane
-                        .emit(ToolInspectorPaneMsg::SelectSubagent {
-                            session_id,
-                            subagent_id,
-                        });
-                }
-            }
+            AppMsg::IndexingFailed => self.handle_indexing_failed(),
+            AppMsg::ResumeSession(session_id, tool) => self.handle_resume_session(session_id, tool),
+            AppMsg::ResumeActiveSession => self.handle_resume_active_session(&sender),
+            AppMsg::InspectToolCall(tool_call_id) => self.handle_inspect_tool_call(tool_call_id),
+            AppMsg::InspectSubagent(subagent_id) => self.handle_inspect_subagent(subagent_id),
             AppMsg::OpenChildSession(child_session_id) => {
-                tracing::debug!("Open child session: {}", child_session_id);
-                // Store current session as parent for one-hop return.
-                self.parent_session = self.active_session.clone();
-
-                let search_query = active_search_query(&self.search_query);
-                match load_session(&self.db_path, &child_session_id) {
-                    Ok(Some(session)) => {
-                        let project_name = session
-                            .project_path
-                            .as_deref()
-                            .and_then(|p| std::path::Path::new(p).file_name())
-                            .and_then(|n| n.to_str())
-                            .unwrap_or("Unknown project")
-                            .to_string();
-
-                        self.active_session = Some(ActiveSessionRef {
-                            id: session.id.clone(),
-                            tool: session.tool,
-                            project_name,
-                        });
-                        self.session_detail.emit(SessionDetailMsg::SetSession {
-                            session: Box::new(session),
-                            search_query,
-                        });
-                        self.tool_inspector_pane.emit(ToolInspectorPaneMsg::Clear);
-                    }
-                    Ok(None) => {
-                        tracing::warn!("Child session not found: {}", child_session_id);
-                        self.parent_session = None;
-                    }
-                    Err(err) => {
-                        tracing::error!(
-                            "Failed to load child session {}: {}",
-                            child_session_id,
-                            err
-                        );
-                        self.parent_session = None;
-                    }
-                }
+                self.handle_open_child_session(child_session_id)
             }
-            AppMsg::ReturnToParentSession => {
-                tracing::debug!("Return to parent session");
-                if let Some(parent) = self.parent_session.take() {
-                    let search_query = active_search_query(&self.search_query);
-                    match load_session(&self.db_path, &parent.id) {
-                        Ok(Some(session)) => {
-                            self.active_session = Some(parent);
-                            self.session_detail.emit(SessionDetailMsg::SetSession {
-                                session: Box::new(session),
-                                search_query,
-                            });
-                            self.tool_inspector_pane.emit(ToolInspectorPaneMsg::Clear);
-                        }
-                        Ok(None) => {
-                            tracing::warn!("Parent session no longer found; resetting");
-                            self.active_session = None;
-                            let (detail_msg, inspector_msg) =
-                                parent_session_load_failure_messages();
-                            self.session_detail.emit(detail_msg);
-                            self.tool_inspector_pane.emit(inspector_msg);
-                        }
-                        Err(err) => {
-                            tracing::error!("Failed to load parent session: {}", err);
-                            self.active_session = None;
-                            let (detail_msg, inspector_msg) =
-                                parent_session_load_failure_messages();
-                            self.session_detail.emit(detail_msg);
-                            self.tool_inspector_pane.emit(inspector_msg);
-                        }
-                    }
-                }
-            }
-            AppMsg::Escape => {
-                // Priority chain:
-                // 1. Close SearchBar (if search is active)
-                // 2. Close inspector pane (if open in detail view)
-                // 3. Navigate back to session list (if in detail view)
-                // 4. No-op
-                match resolve_escape_action(
-                    self.search_visible,
-                    self.detail_visible,
-                    self.pane_open,
-                    self.pane_mode,
-                ) {
-                    EscapeResolution::CloseSearch => {
-                        self.search_visible = false;
-                        self.sync_search_bar.set(true);
-                        self.search_query.clear();
-                        let (list_msg, detail_msg) = search_query_update_messages(String::new());
-                        self.session_list.emit(list_msg);
-                        self.session_detail.emit(detail_msg);
-                        if !self.detail_visible {
-                            self.session_list.emit(SessionListMsg::RestoreFocus);
-                        }
-                    }
-                    EscapeResolution::CloseInspector => {
-                        self.pane_open = false;
-                    }
-                    EscapeResolution::NavigateBack => {
-                        _sender.input(AppMsg::RequestNavigateBack);
-                    }
-                    EscapeResolution::Noop => {}
-                }
-            }
+            AppMsg::ReturnToParentSession => self.handle_return_to_parent_session(),
+            AppMsg::Escape => self.handle_escape(&sender),
         }
     }
 
@@ -1038,34 +620,6 @@ impl SimpleComponent for App {
 
     fn shutdown(&mut self, widgets: &mut Self::Widgets, _output: relm4::Sender<Self::Output>) {
         widgets.save_window_size().unwrap();
-    }
-}
-
-/// Pure transition: switch to detail (tool inspector) mode.
-/// The pane stays closed; it opens only when an inspect action fires.
-fn transition_to_detail(pane_mode: &mut UtilityPaneMode, pane_open: &mut bool) {
-    *pane_mode = UtilityPaneMode::ToolInspector;
-    *pane_open = false;
-}
-
-/// Pure transition: switch to list (filters) mode, preserving pane visibility.
-fn transition_to_list(pane_mode: &mut UtilityPaneMode) {
-    *pane_mode = UtilityPaneMode::Filters;
-}
-
-fn detail_pop_sync_decision(suppress_next_pop_sync: bool, detail_visible: bool) -> (bool, bool) {
-    if suppress_next_pop_sync {
-        (false, false)
-    } else {
-        (detail_visible, false)
-    }
-}
-
-fn decide_reindex_action(indexing: bool) -> ReindexAction {
-    if indexing {
-        ReindexAction::AlreadyRunning
-    } else {
-        ReindexAction::StartFull
     }
 }
 
