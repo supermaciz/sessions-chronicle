@@ -36,11 +36,14 @@ mod helpers;
 mod types;
 
 use helpers::{
-    active_search_query, decide_reindex_action, detail_pop_sync_decision,
-    parent_session_load_failure_messages, resolve_escape_action, search_query_update_messages,
+    active_search_query, decide_reindex_action, parent_session_load_failure_messages,
     transition_to_detail, transition_to_list,
 };
-use types::{ActiveSessionRef, EscapeResolution, ReindexAction, UtilityPaneMode};
+#[cfg(test)]
+use helpers::{detail_pop_sync_decision, resolve_escape_action, search_query_update_messages};
+#[cfg(test)]
+use types::EscapeResolution;
+use types::{ActiveSessionRef, ReindexAction, UtilityPaneMode};
 
 /// Timeout in seconds for resume failure toast notifications
 const RESUME_FAILURE_TOAST_TIMEOUT_SECS: u32 = 4;
@@ -557,37 +560,13 @@ impl SimpleComponent for App {
         ComponentParts { model, widgets }
     }
 
-    fn update(&mut self, message: Self::Input, _sender: ComponentSender<Self>) {
+    fn update(&mut self, message: Self::Input, sender: ComponentSender<Self>) {
         match message {
             AppMsg::Quit => main_application().quit(),
-            AppMsg::SearchModeChanged(enabled) => {
-                if self.search_visible != enabled {
-                    self.search_visible = enabled;
-                    if !enabled {
-                        self.search_query.clear();
-                        let (list_msg, detail_msg) = search_query_update_messages(String::new());
-                        self.session_list.emit(list_msg);
-                        self.session_detail.emit(detail_msg);
-                        if !self.detail_visible {
-                            self.session_list.emit(SessionListMsg::RestoreFocus);
-                        }
-                    }
-                }
-            }
-            AppMsg::TogglePane => {
-                self.pane_open = !self.pane_open;
-            }
-            AppMsg::PaneVisibilityChanged(visible) => {
-                if self.pane_open != visible {
-                    self.pane_open = visible;
-                }
-            }
-            AppMsg::SearchQueryChanged(query) => {
-                self.search_query = query.clone();
-                let (list_msg, detail_msg) = search_query_update_messages(query);
-                self.session_list.emit(list_msg);
-                self.session_detail.emit(detail_msg);
-            }
+            AppMsg::SearchModeChanged(enabled) => self.handle_search_mode_changed(enabled),
+            AppMsg::TogglePane => self.handle_toggle_pane(),
+            AppMsg::PaneVisibilityChanged(visible) => self.handle_pane_visibility_changed(visible),
+            AppMsg::SearchQueryChanged(query) => self.handle_search_query_changed(query),
             AppMsg::FiltersChanged(tools) => {
                 self.session_list.emit(SessionListMsg::SetTools(tools));
             }
@@ -639,28 +618,8 @@ impl SimpleComponent for App {
                 transition_to_detail(&mut self.pane_mode, &mut self.pane_open);
                 self.apply_pane_stack_switch();
             }
-            AppMsg::RequestNavigateBack => {
-                if self.detail_visible {
-                    let visible_page_tag = self.nav_view.visible_page().and_then(|p| p.tag());
-                    if visible_page_tag.as_deref() == Some("detail") {
-                        self.suppress_next_detail_pop_sync = true;
-                        self.nav_view.pop();
-                    }
-                    self.transition_to_session_list_mode();
-                    self.session_list.emit(SessionListMsg::RestoreFocus);
-                }
-            }
-            AppMsg::NavigateBack => {
-                let (should_sync, suppress_next) = detail_pop_sync_decision(
-                    self.suppress_next_detail_pop_sync,
-                    self.detail_visible,
-                );
-                self.suppress_next_detail_pop_sync = suppress_next;
-                if should_sync {
-                    self.transition_to_session_list_mode();
-                    self.session_list.emit(SessionListMsg::RestoreFocus);
-                }
-            }
+            AppMsg::RequestNavigateBack => self.handle_request_navigate_back(),
+            AppMsg::NavigateBack => self.handle_navigate_back(),
             AppMsg::ShowPreferences => {
                 let dialog_widget = self.preferences_dialog.widget();
                 dialog_widget.present(Some(&main_application().windows()[0]));
@@ -805,7 +764,7 @@ impl SimpleComponent for App {
             }
             AppMsg::ResumeActiveSession => {
                 if let Some(ref session) = self.active_session {
-                    _sender.input(AppMsg::ResumeSession(session.id.clone(), session.tool));
+                    sender.input(AppMsg::ResumeSession(session.id.clone(), session.tool));
                 } else {
                     tracing::warn!("ResumeActiveSession ignored — no active session");
                 }
@@ -911,38 +870,7 @@ impl SimpleComponent for App {
                     }
                 }
             }
-            AppMsg::Escape => {
-                // Priority chain:
-                // 1. Close SearchBar (if search is active)
-                // 2. Close inspector pane (if open in detail view)
-                // 3. Navigate back to session list (if in detail view)
-                // 4. No-op
-                match resolve_escape_action(
-                    self.search_visible,
-                    self.detail_visible,
-                    self.pane_open,
-                    self.pane_mode,
-                ) {
-                    EscapeResolution::CloseSearch => {
-                        self.search_visible = false;
-                        self.sync_search_bar.set(true);
-                        self.search_query.clear();
-                        let (list_msg, detail_msg) = search_query_update_messages(String::new());
-                        self.session_list.emit(list_msg);
-                        self.session_detail.emit(detail_msg);
-                        if !self.detail_visible {
-                            self.session_list.emit(SessionListMsg::RestoreFocus);
-                        }
-                    }
-                    EscapeResolution::CloseInspector => {
-                        self.pane_open = false;
-                    }
-                    EscapeResolution::NavigateBack => {
-                        _sender.input(AppMsg::RequestNavigateBack);
-                    }
-                    EscapeResolution::Noop => {}
-                }
-            }
+            AppMsg::Escape => self.handle_escape(&sender),
         }
     }
 
