@@ -11,10 +11,10 @@ use gtk::prelude::{
     ObjectExt, OrientableExt, SettingsExt, ToggleButtonExt, WidgetExt,
 };
 use gtk::{gdk, gio, glib};
-use std::{cell::Cell, fs, path::PathBuf, str::FromStr, sync::Arc};
+use std::{cell::Cell, fs, path::PathBuf, sync::Arc};
 
 use crate::config::{APP_ID, PROFILE};
-use crate::database::{SessionIndexer, load_session};
+use crate::database::SessionIndexer;
 use crate::indexing_worker::{IndexingWorker, IndexingWorkerInput, IndexingWorkerOutput};
 use crate::models::session::Tool;
 use crate::session_sources::{SessionSources, select_db_filename};
@@ -31,21 +31,25 @@ use crate::ui::{
     sidebar::{Sidebar, SidebarOutput},
     tool_inspector_pane::{ToolInspectorPane, ToolInspectorPaneMsg, ToolInspectorPaneOutput},
 };
-use crate::utils::terminal::{self, Terminal};
+use crate::utils::terminal;
 
 mod handlers;
 mod helpers;
 mod types;
 
 #[cfg(test)]
+use helpers::decide_reindex_action;
+use helpers::transition_to_list;
+#[cfg(test)]
 use helpers::{
     active_search_query, detail_pop_sync_decision, parent_session_load_failure_messages,
     resolve_escape_action, search_query_update_messages, transition_to_detail,
 };
-use helpers::{decide_reindex_action, transition_to_list};
 #[cfg(test)]
 use types::EscapeResolution;
-use types::{ActiveSessionRef, ReindexAction, UtilityPaneMode};
+#[cfg(test)]
+use types::ReindexAction;
+use types::{ActiveSessionRef, UtilityPaneMode};
 
 /// Timeout in seconds for resume failure toast notifications
 const RESUME_FAILURE_TOAST_TIMEOUT_SECS: u32 = 4;
@@ -579,151 +583,13 @@ impl SimpleComponent for App {
                 let dialog_widget = self.preferences_dialog.widget();
                 dialog_widget.present(Some(&main_application().windows()[0]));
             }
-            AppMsg::ReindexRequested => match decide_reindex_action(self.indexing) {
-                ReindexAction::AlreadyRunning => {
-                    self.toast_overlay.add_toast(
-                        adw::Toast::builder()
-                            .title("Indexing already in progress.")
-                            .timeout(3)
-                            .build(),
-                    );
-                }
-                ReindexAction::StartFull => {
-                    tracing::info!("Reindex requested — scheduling full background reindex");
-                    self.indexing = true;
-                    self.pending_reindex_feedback = true;
-                    self.session_list.emit(SessionListMsg::SetIndexing(true));
-                    self.indexing_worker
-                        .emit(IndexingWorkerInput::StartFullReindex(self.sources.clone()));
-                }
-            },
+            AppMsg::ReindexRequested => self.handle_reindex_requested(),
             AppMsg::IndexingCompleted { indexed, skipped } => {
-                tracing::info!(
-                    "Background indexing complete: indexed={}, skipped={}",
-                    indexed,
-                    skipped
-                );
-                self.indexing = false;
-                self.session_list.emit(SessionListMsg::SetIndexing(false));
-                self.session_list.emit(SessionListMsg::Reload);
-
-                if self.pending_reindex_feedback {
-                    self.pending_reindex_feedback = false;
-                    self.toast_overlay.add_toast(
-                        adw::Toast::builder()
-                            .title(format!("Index rebuilt — {} sessions", indexed))
-                            .timeout(3)
-                            .build(),
-                    );
-                }
+                self.handle_indexing_completed(indexed, skipped)
             }
-            AppMsg::IndexingFailed => {
-                tracing::error!("Background indexing failed");
-                self.indexing = false;
-                self.session_list.emit(SessionListMsg::SetIndexing(false));
-
-                let title = if self.pending_reindex_feedback {
-                    self.pending_reindex_feedback = false;
-                    "Failed to reset index"
-                } else {
-                    "Background indexing failed"
-                };
-
-                self.toast_overlay
-                    .add_toast(adw::Toast::builder().title(title).timeout(3).build());
-            }
-            AppMsg::ResumeSession(session_id, tool) => {
-                tracing::debug!("Resume session requested: {}", session_id);
-
-                let session = match load_session(&self.db_path, &session_id) {
-                    Ok(Some(session)) => session,
-                    Ok(None) => {
-                        tracing::error!("Session not found: {}", session_id);
-                        self.show_error_dialog(
-                            "Session Not Found",
-                            "The requested session could not be found in the database.",
-                        );
-                        return;
-                    }
-                    Err(err) => {
-                        tracing::error!("Failed to load session {}: {}", session_id, err);
-                        self.show_error_dialog(
-                            "Failed to Load Session",
-                            &format!("An error occurred while loading the session: {}", err),
-                        );
-                        return;
-                    }
-                };
-
-                let workdir = if let Some(project_path) = &session.project_path {
-                    PathBuf::from(project_path)
-                } else {
-                    match PathBuf::from(&session.file_path).parent() {
-                        Some(dir) => dir.to_path_buf(),
-                        None => {
-                            tracing::error!(
-                                "Cannot determine workdir for session: no project_path and no valid parent directory"
-                            );
-                            self.show_error_dialog(
-                                "Invalid Session",
-                                "The session has no valid working directory.",
-                            );
-                            return;
-                        }
-                    }
-                };
-
-                let settings = gio::Settings::new(APP_ID);
-                let terminal_str = settings.string("resume-terminal");
-                let terminal = match Terminal::from_str(&terminal_str) {
-                    Ok(t) => t,
-                    Err(()) => {
-                        tracing::error!("Invalid terminal preference: {}", terminal_str);
-                        self.show_error_dialog(
-                            "Invalid Terminal Preference",
-                            "Please check your terminal preference in settings.",
-                        );
-                        return;
-                    }
-                };
-
-                match terminal::build_resume_command(tool, &session_id, &workdir) {
-                    Ok(args) => match terminal::spawn_terminal(terminal, &args) {
-                        Ok(_) => {
-                            tracing::info!(
-                                "Successfully launched terminal for session: {}",
-                                session_id
-                            );
-                        }
-                        Err(err) => {
-                            tracing::error!(
-                                "Failed to spawn terminal for session {}: {}",
-                                session_id,
-                                err
-                            );
-                            self.show_resume_failure_toast(&err);
-                        }
-                    },
-                    Err(err) => {
-                        tracing::error!(
-                            "Failed to build resume command for session {}: {}",
-                            session_id,
-                            err
-                        );
-                        self.show_error_dialog(
-                            "Failed to Build Resume Command",
-                            &format!("Could not build the resume command: {}", err),
-                        );
-                    }
-                }
-            }
-            AppMsg::ResumeActiveSession => {
-                if let Some(ref session) = self.active_session {
-                    sender.input(AppMsg::ResumeSession(session.id.clone(), session.tool));
-                } else {
-                    tracing::warn!("ResumeActiveSession ignored — no active session");
-                }
-            }
+            AppMsg::IndexingFailed => self.handle_indexing_failed(),
+            AppMsg::ResumeSession(session_id, tool) => self.handle_resume_session(session_id, tool),
+            AppMsg::ResumeActiveSession => self.handle_resume_active_session(&sender),
             AppMsg::InspectToolCall(tool_call_id) => self.handle_inspect_tool_call(tool_call_id),
             AppMsg::InspectSubagent(subagent_id) => self.handle_inspect_subagent(subagent_id),
             AppMsg::OpenChildSession(child_session_id) => {
