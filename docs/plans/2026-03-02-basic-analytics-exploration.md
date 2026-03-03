@@ -1,7 +1,7 @@
 # Basic Analytics Dashboard - Design Exploration
 
-**Issue:** [#58 - Basic analytics](https://github.com/supermaciz/sessions-chronicle/issues/58)
-**Date:** 2026-03-02
+**Issue:** [#58 - Basic analytics](https://github.com/supermaciz/sessions-chronicle/issues/58)  
+**Date:** 2026-03-02  
 **Status:** Exploration
 
 ## Problem Statement
@@ -28,8 +28,9 @@ subagent usage.
   external JS charting libraries.
 - Must respect light/dark theme via Adwaita's `StyleManager`.
 - Must work within the existing Relm4 component architecture.
-- No new crate dependencies for charting if possible (Cairo drawing is
-  sufficient for heatmaps, bars, histograms).
+- Adding charting dependencies is allowed if it improves implementation
+  velocity or maintainability. `plotters` + `plotters-cairo` is an accepted
+  option alongside direct Cairo drawing.
 
 ## Current Architecture Context
 
@@ -238,7 +239,7 @@ swipe down.
 | Implementation cost | Medium | Low | Low | High | Med-High |
 | Future scalability | ★★★ | ★☆☆ | ★★☆ | ★☆☆ | ★★★ |
 | Adaptive behavior | ★★★ | ★★★ | ★★★ | ★☆☆ | ★★☆ |
-| Custom rendering | Cairo needed | Cairo needed | None | Cairo needed | Cairo needed |
+| Custom rendering | Cairo or Plotters-Cairo | Cairo or Plotters-Cairo | None | Cairo or Plotters-Cairo | Cairo or Plotters-Cairo |
 
 ## Hybrid Possibilities
 
@@ -251,7 +252,7 @@ These proposals are not mutually exclusive. Notable combinations:
 3. **A with C's layout initially, evolving to B's layout:** Ship quickly
    with PreferencesPage, then add charts.
 
-## Rendering Approach: Cairo vs. Widgets
+## Rendering Approach: Cairo / Plotters-Cairo vs. Widgets
 
 | Stat | Widget-only possible? | Cairo needed? |
 |------|:----:|:----:|
@@ -266,8 +267,9 @@ These proposals are not mutually exclusive. Notable combinations:
 | Top sessions | Yes (boxed list) | No |
 
 **Observation:** 6 of 9 stats can be implemented with widgets alone.
-Only the heatmap, histogram, and donut chart require Cairo. A phased
-approach (widgets first, Cairo later) is viable.
+Only the heatmap, histogram, and donut chart require custom chart rendering
+(direct Cairo or `plotters-cairo`). A phased approach (widgets first, charts
+later) is viable.
 
 ## References
 
