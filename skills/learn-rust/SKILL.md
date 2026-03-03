@@ -94,7 +94,11 @@ See PATHS.md for the six guided paths with concrete file references, Rust concep
 
 ## References
 
-- [The Rust Book](https://doc.rust-lang.org/book/title-page.html)
-- [Rust by Example](https://doc.rust-lang.org/rust-by-example/)
+- [The Rust Book](https://doc.rust-lang.org/book/title-page.html) - parcours principal, progressif.
+- [Rust by Example](https://doc.rust-lang.org/rust-by-example/) - exemples courts et executables.
+- [Rustlings](https://rustlings.rust-lang.org/) - exercices pratiques guides.
+- [Rust Standard Library](https://doc.rust-lang.org/std/) - reference quotidienne pour types/traits/API.
+- [GTK4 Rust Book](https://gtk-rs.org/gtk4-rs/stable/latest/book/) - guide GTK-rs oriente usage.
+- [Learning Rust With Entirely Too Many Linked Lists](https://rust-unofficial.github.io/too-many-lists/) - ownership/borrow checker en profondeur.
 - [Relm4 docs](https://docs.rs/crate/relm4/0.10.0)
 - [Relm4 book](https://relm4.org/book/stable/)

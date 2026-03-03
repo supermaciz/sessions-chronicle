@@ -4,6 +4,19 @@ Each path is a guided sequence of short steps.
 The agent asks questions, not dump lectures.
 Steps within a path build on each other; paths can be taken independently.
 
+## Companion References by Path
+
+Use these as optional support material while following the step-by-step exercises.
+
+| Path | Most Relevant Sources |
+|---|---|
+| **A** Bootstrap & App Launch | [The Rust Book](https://doc.rust-lang.org/book/title-page.html), [Rust by Example](https://doc.rust-lang.org/rust-by-example/), [Rustlings](https://rustlings.rust-lang.org/), [Rust Standard Library](https://doc.rust-lang.org/std/), [Too Many Lists](https://rust-unofficial.github.io/too-many-lists/) |
+| **B** Relm4 UI State & Messages | [The Rust Book](https://doc.rust-lang.org/book/title-page.html), [Rust by Example](https://doc.rust-lang.org/rust-by-example/), [GTK4 Rust Book](https://gtk-rs.org/gtk4-rs/stable/latest/book/), [Rust Standard Library](https://doc.rust-lang.org/std/) |
+| **C** Database & Search | [The Rust Book](https://doc.rust-lang.org/book/title-page.html), [Rust by Example](https://doc.rust-lang.org/rust-by-example/), [Rust Standard Library](https://doc.rust-lang.org/std/) |
+| **D** Parsing & Serde | [The Rust Book](https://doc.rust-lang.org/book/title-page.html), [Rust by Example](https://doc.rust-lang.org/rust-by-example/), [Rustlings](https://rustlings.rust-lang.org/), [Rust Standard Library](https://doc.rust-lang.org/std/) |
+| **E** CLI with Clap | [The Rust Book](https://doc.rust-lang.org/book/title-page.html), [Rust by Example](https://doc.rust-lang.org/rust-by-example/), [Rustlings](https://rustlings.rust-lang.org/), [Rust Standard Library](https://doc.rust-lang.org/std/) |
+| **F** Errors & Tracing | [The Rust Book](https://doc.rust-lang.org/book/title-page.html), [Rust by Example](https://doc.rust-lang.org/rust-by-example/), [Rust Standard Library](https://doc.rust-lang.org/std/), [GTK4 Rust Book](https://gtk-rs.org/gtk4-rs/stable/latest/book/), [Too Many Lists](https://rust-unofficial.github.io/too-many-lists/) |
+
 ---
 
 ## PATH A — Bootstrap & App Launch
@@ -30,7 +43,7 @@ Steps within a path build on each other; paths can be taken independently.
 - **File:** `src/app.rs` — `struct App`, `enum AppMsg`
 - **Question:** `App` implements `Component`. What are the associated types it must define?
 - **Rust concepts:** Traits, associated types, `impl Trait for Struct`
-- **Rust Book:** [Ch 10.2 Traits](https://doc.rust-lang.org/book/ch10-02-traits.html), [Ch 19.2 Advanced Traits](https://doc.rust-lang.org/book/ch19-02-advanced-traits.html)
+- **Rust Book:** [Ch 10.2 Traits](https://doc.rust-lang.org/book/ch10-02-traits.html), [Ch 20.2 Advanced Traits](https://doc.rust-lang.org/book/ch20-02-advanced-traits.html)
 - **Exercise:** Find all associated types in `App`'s `Component` impl. Write a comment explaining each.
 - **Verify:** `cargo check`
 
@@ -137,7 +150,7 @@ Steps within a path build on each other; paths can be taken independently.
 - **File:** `src/parsers/claude_code.rs` — `ClaudeCodeParser::parse()`
 - **Question:** The parser uses `BufReader::new(file)` and `reader.lines()`. Why not `fs::read_to_string()`?
 - **Rust concepts:** `BufRead` trait, iterators, lazy evaluation, memory efficiency
-- **Rust Book:** [Ch 13.2 Iterators](https://doc.rust-lang.org/book/ch13-02-iterators.html), [Ch 12.2 Reading a File](https://doc.rust-lang.org/book/ch12-02-reading-to-string.html)
+- **Rust Book:** [Ch 13.2 Iterators](https://doc.rust-lang.org/book/ch13-02-iterators.html), [Ch 12.2 Reading a File](https://doc.rust-lang.org/book/ch12-02-reading-a-file.html)
 - **Exercise:** Find where malformed lines are handled. What happens on `serde_json::from_str` failure?
 - **Verify:** `cargo test --all --no-fail-fast`
 
@@ -146,7 +159,7 @@ Steps within a path build on each other; paths can be taken independently.
 - **Question:** Why parse into `Value` (untyped) instead of a `#[derive(Deserialize)]` struct?
 - **Rust concepts:** Dynamic vs. static typing trade-offs, `Value` enum, indexing with `["key"]`
 - **Rust Book:** [Ch 6.1 Enums](https://doc.rust-lang.org/book/ch06-01-defining-an-enum.html)
-- **Rust by Example:** [Serde](https://doc.rust-lang.org/rust-by-example/serde.html)
+- **Rust by Example:** [Enums](https://doc.rust-lang.org/rust-by-example/custom_types/enum.html)
 - **Exercise:** Find 3 places where `Value` is indexed with `["key"]`. What happens if the key doesn't exist?
 - **Verify:** `cargo check`
 
