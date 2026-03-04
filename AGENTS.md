@@ -17,13 +17,13 @@
 - `data/` holds desktop metadata, GSettings schema, icons, CSS, and UI resources in `data/resources/`.
 - `tests/` contains integration tests; `tests/fixtures/` contains sample sessions for Claude, OpenCode, Codex, and Mistral Vibe.
 - `build-aux/` contains Flatpak manifests (dev and stable) and the vendor script for offline builds.
-- `docs/` hosts architecture notes, design docs, and implementation plans.
-  - `docs/plans/` contains implementation plans following the naming convention `YYYY-MM-DD-feature-name-{design,exploration}.md`.
+- `docs/` hosts architecture notes plus exploration, design, and implementation plans.
+  - `docs/plans/` contains plan files following these naming conventions: `YYYY-MM-DD-feature-name-exploration.md`, `YYYY-MM-DD-feature-name-design.md`, and implementation plans as `YYYY-MM-DD-feature-name.md` (preferred) or `YYYY-MM-DD-feature-name-implementation.md` (optional).
 - `flatpak_app/` is generated build output; do not edit it directly.
 
 ## Plan Types in `docs/plans/`
 
-Implementation plans follow the naming convention `YYYY-MM-DD-feature-name-{design,exploration}.md`:
+There are three plan types in `docs/plans/`:
 
 ### `-exploration.md` - Design Exploration
 Created when multiple implementation approaches exist and a decision must be recorded.
@@ -40,9 +40,17 @@ The single source of truth after a decision is made.
 - Step-by-step implementation flow
 - UI/UX behavior specifications
 - Test and verification plan
+- Produced via the `brainstorming` skill
 - Example: `2026-03-01-startup-performance-design.md`
 
-**Process**: Exploration → Decision → Design → Implementation
+### `.md` (preferred) or `-implementation.md` (optional) - Implementation Plan
+Task-by-task execution plan used to implement a validated design.
+- Produced via the `writing-plans` skill
+- Prefer no suffix for new plans; `-implementation` is acceptable when extra clarity is useful
+- Typically not committed to git
+- Example: `2026-03-04-startup-performance.md`
+
+**Process**: Exploration -> Decision -> Design -> Implementation Plan -> Implementation
 
 ## Fast Dev Loop
 - `flatpak-builder --user flatpak_app build-aux/io.github.supermaciz.sessionschronicle.Devel.json --force-clean`: build the GNOME Flatpak bundle.

@@ -46,6 +46,11 @@ This directory contains project documentation, architecture notes, and implement
 
 ### Plans
 
+Plan file types in `docs/plans/`:
+- `YYYY-MM-DD-feature-name-exploration.md`: exploration plan (compare alternatives and capture decision)
+- `YYYY-MM-DD-feature-name-design.md`: design plan (typically produced via `brainstorming`)
+- `YYYY-MM-DD-feature-name.md` (preferred) or `YYYY-MM-DD-feature-name-implementation.md` (optional): implementation plan (typically produced via `writing-plans`, generally not committed)
+
 7. **[plans/2026-01-26-opencode-parser-design.md](plans/2026-01-26-opencode-parser-design.md)** ✅
    - OpenCode session parser implementation (completed)
    - Multi-file structure handling
@@ -170,7 +175,7 @@ All mockups are SVG files in the `mockups/` subfolder (open in browser or image 
 
 ---
 
-**Last Updated**: 2026-02-24
+**Last Updated**: 2026-03-04
 
 **Current Status**: Phase 8 — Keyboard Shortcuts & Model Tracking (Parsers + DB complete; UI display pending)
 **Next Milestone**: Model display in UI (badges, tooltips, per-message indicators)
