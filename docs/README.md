@@ -119,9 +119,27 @@ Plan file types in `docs/plans/`:
     - Keyboard navigation in session list (Up/Down/Enter/Escape)
     - Shortcuts dialog Navigation section
 
-24. **[plans/2026-02-24-model-tracking-design.md](plans/2026-02-24-model-tracking-design.md)** ✅ (parsers+DB)
+24. **[plans/2026-02-24-model-tracking-design.md](plans/2026-02-24-model-tracking-design.md)** ✅
     - LLM model tracking per assistant message across all 4 tools
     - DB schema v2 migration, shared normalization helper, parser changes
+
+25. **[plans/2026-02-24-model-display-exploration.md](plans/2026-02-24-model-display-exploration.md)** ✅
+    - UI options exploration for displaying per-message model metadata
+
+26. **[plans/2026-02-25-model-display-option1-design.md](plans/2026-02-25-model-display-option1-design.md)** ✅
+    - Chosen model display approach in transcript rows
+
+27. **[plans/2026-02-26-textview-markdown-design.md](plans/2026-02-26-textview-markdown-design.md)**
+    - RichTextView-based markdown renderer exploration/design
+
+28. **[plans/2026-02-28-token-usage-display-design.md](plans/2026-02-28-token-usage-display-design.md)** ✅
+    - Token usage summary line in session detail (input/output/cache/reasoning)
+
+29. **[plans/2026-03-01-startup-performance-design.md](plans/2026-03-01-startup-performance-design.md)** ✅
+    - Incremental indexing startup flow and background worker model
+
+30. **[plans/2026-03-02-basic-analytics-exploration.md](plans/2026-03-02-basic-analytics-exploration.md)**
+    - Dashboard analytics exploration (visualization options and trade-offs)
 
 ---
 
@@ -177,5 +195,5 @@ All mockups are SVG files in the `mockups/` subfolder (open in browser or image 
 
 **Last Updated**: 2026-03-04
 
-**Current Status**: Phase 8 — Keyboard Shortcuts & Model Tracking (Parsers + DB complete; UI display pending)
-**Next Milestone**: Model display in UI (badges, tooltips, per-message indicators)
+**Current Status**: Phase 8 complete, with follow-up improvements in token usage display and startup/indexing performance.
+**Next Milestone**: Analytics dashboard implementation from the 2026-03-02 exploration.

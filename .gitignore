@@ -51,3 +51,5 @@ compile_commands.json
 .claude/worktrees/
 # boom
 .claude/
+.agents/
+.vibe/

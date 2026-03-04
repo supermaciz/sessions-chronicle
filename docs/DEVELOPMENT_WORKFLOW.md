@@ -97,6 +97,12 @@ These use fixtures automatically via the test harness.
 
 Run the full app with test fixtures using the `--sessions-dir` flag shown above.
 
+## Startup Indexing Behavior
+
+- Startup uses background incremental indexing based on file fingerprints.
+- The header spinner indicates indexing is running.
+- Preferences -> Advanced -> Reset session index triggers a full reindex.
+
 ## Adding Test Fixtures
 
 Create new test session files in the appropriate fixture directory:
@@ -128,14 +134,14 @@ RUST_LOG=sessions_chronicle::parsers=trace flatpak-builder --run flatpak_app bui
 ### Unit Tests
 
 ```bash
-cargo test
+cargo test --all --no-fail-fast
 ```
 
 ### Linting
 
 ```bash
-cargo clippy
-cargo fmt --all
+cargo fmt --all -- --check
+cargo clippy --all -- -D warnings
 ```
 
 ## IDE Configuration
@@ -210,8 +216,8 @@ Two Flatpak manifests exist in `build-aux/`:
 - **Build**: `flatpak-builder --user flatpak_app build-aux/io.github.supermaciz.sessionschronicle.Devel.json --force-clean`
 - **Run**: `flatpak-builder --run flatpak_app build-aux/io.github.supermaciz.sessionschronicle.Devel.json sessions-chronicle`
 - **Test Data**: Add `--sessions-dir tests/fixtures` flag
-- **Unit Tests**: `cargo test`
+- **CI parity**: `cargo fmt --all -- --check && cargo clippy --all -- -D warnings && cargo test --all --no-fail-fast`
 
 ---
 
-**Last Updated**: 2026-02-22
+**Last Updated**: 2026-03-04
