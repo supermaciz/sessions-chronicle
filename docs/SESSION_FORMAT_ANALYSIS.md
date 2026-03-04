@@ -10,6 +10,7 @@ Cross-tool comparison of Claude Code, Codex, OpenCode, and Mistral Vibe session 
 - [Mistral Vibe](session-formats/mistral-vibe.md)
 
 **Parser architecture and implementation patterns:** [PARSER_DESIGN.md](PARSER_DESIGN.md)
+**Tool call wire formats and normalization:** [TOOL_CALLS_ANALYSIS.md](TOOL_CALLS_ANALYSIS.md)
 
 ---
 
@@ -253,5 +254,5 @@ Each tool can persist token usage metrics, but **the granularity and presence ar
 
 ---
 
-**Last Updated**: 2026-02-24
-**Status**: OpenCode SQLite migration documented and indexed (SQLite-first + JSON fallback); Claude model-metadata availability refreshed from real-session sampling; remaining scope gaps documented
+**Last Updated**: 2026-03-05
+**Status**: OpenCode SQLite migration documented and indexed (SQLite-first + JSON fallback); Claude model-metadata availability refreshed from real-session sampling; tool call wire format analysis added as companion doc; remaining scope gaps documented
