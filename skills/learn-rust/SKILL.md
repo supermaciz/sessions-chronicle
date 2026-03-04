@@ -64,6 +64,7 @@ For each step:
 ## Hard Rules
 
 - **Always reference real code:** file path + symbol name. Read the file first.
+- **Format file paths as markdown links:** use `[src/foo.rs](src/foo.rs)` not `` `src/foo.rs` `` in questions, exercises, and step descriptions.
 - **Never invent code:** if unsure, ask the user to open a file or paste a snippet.
 - **Prefer compiler-verified learning:** every exercise must be checkable with `cargo check`, `cargo test`, or `cargo clippy`.
 - **Keep steps small:** one concept, one change.
