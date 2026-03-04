@@ -29,8 +29,9 @@ subagent usage.
 - Must respect light/dark theme via Adwaita's `StyleManager`.
 - Must work within the existing Relm4 component architecture.
 - Adding charting dependencies is allowed if it improves implementation
-  velocity or maintainability. `plotters` + `plotters-cairo` is an accepted
-  option alongside direct Cairo drawing.
+  velocity or maintainability. `plotters` + `plotters-cairo` and
+  `plotters-gtk4` are accepted options alongside direct Cairo or
+  `GtkSnapshot`-based drawing.
 
 ## Current Architecture Context
 
@@ -57,7 +58,7 @@ offering two views: **Sessions** and **Analytics**.
 
 **Layout:** The analytics view is a full-width scrollable page with:
 - 4 summary counter cards in a horizontal `FlowBox`
-- Activity heatmap card (Cairo-drawn)
+- Activity heatmap card (custom-rendered via Cairo/Snapshot/Plotters)
 - Two-column bottom section: sessions-by-tool bar chart + top projects list
 
 **Mockup:**
@@ -92,7 +93,7 @@ sessions.
 **Layout:** Full dashboard page with:
 - 2x2 summary cards with colored left borders and week-over-week deltas
 - Token consumption boxed-list with inline stacked bar
-- Models used (donut chart via Cairo) + session length histogram
+- Models used (donut chart via custom rendering) + session length histogram
 
 **Mockup:**
 
@@ -128,7 +129,7 @@ content uses `AdwPreferencesPage` with `AdwPreferencesGroup` sections.
 - "Sessions by Tool" group: rows with inline progress bars
 - "Subagent Usage" group: property rows with percentages
 
-All data presented as boxed-list rows -- no custom Cairo rendering needed.
+All data presented as boxed-list rows -- no custom chart rendering needed.
 
 **Mockup:**
 
@@ -186,7 +187,8 @@ button (chart icon).
 - (-) Not a standard GNOME pattern; may feel alien.
 - (-) Complex adaptive behavior for narrow/mobile.
 - (-) Limited space constrains what can be shown.
-- (-) Sparkline and heatmap require custom Cairo even in compressed form.
+- (-) Sparkline and heatmap still require custom chart rendering even in
+  compressed form.
 
 ---
 
@@ -239,43 +241,74 @@ swipe down.
 | Implementation cost | Medium | Low | Low | High | Med-High |
 | Future scalability | ★★★ | ★☆☆ | ★★☆ | ★☆☆ | ★★★ |
 | Adaptive behavior | ★★★ | ★★★ | ★★★ | ★☆☆ | ★★☆ |
-| Custom rendering | Cairo or Plotters-Cairo | Cairo or Plotters-Cairo | None | Cairo or Plotters-Cairo | Cairo or Plotters-Cairo |
+| Custom rendering | Cairo `draw_func`, `GtkSnapshot`, or Plotters backends (`plotters-cairo` / `plotters-gtk4`) | Cairo `draw_func`, `GtkSnapshot`, or Plotters backends (`plotters-cairo` / `plotters-gtk4`) | None | Cairo `draw_func`, `GtkSnapshot`, or Plotters backends (`plotters-cairo` / `plotters-gtk4`) | Cairo `draw_func`, `GtkSnapshot`, or Plotters backends (`plotters-cairo` / `plotters-gtk4`) |
 
 ## Hybrid Possibilities
 
 These proposals are not mutually exclusive. Notable combinations:
 
 1. **A + C:** ViewSwitcher for navigation, PreferencesPage for the
-   text-heavy stats, with Cairo charts added incrementally later.
+   text-heavy stats, with custom charts added incrementally later.
 2. **B + D:** NavigationPage for the full dashboard, inline widgets as a
    "quick glance" summary in the session list header.
 3. **A with C's layout initially, evolving to B's layout:** Ship quickly
    with PreferencesPage, then add charts.
 
-## Rendering Approach: Cairo / Plotters-Cairo vs. Widgets
+## Rendering Approach: Widgets, Cairo, and GtkSnapshot
 
-| Stat | Widget-only possible? | Cairo needed? |
-|------|:----:|:----:|
-| Summary counters | Yes (labels) | No |
-| Sessions by tool | Yes (progress bars) | No |
-| Top projects | Yes (boxed list) | No |
-| Token consumption | Yes (labels + progress bars) | No |
-| Subagent usage | Yes (labels) | No |
-| Models used | Partial (labels + progress bars) | Donut chart |
-| Activity heatmap | No | Yes (grid of colored rects) |
-| Session length distribution | No | Yes (histogram bars) |
-| Top sessions | Yes (boxed list) | No |
+GTK4 supports two custom-rendering styles in practice:
 
-**Observation:** 6 of 9 stats can be implemented with widgets alone.
-Only the heatmap, histogram, and donut chart require custom chart rendering
-(direct Cairo or `plotters-cairo`). A phased approach (widgets first, charts
-later) is viable.
+1. `gtk::DrawingArea::set_draw_func()` (Cairo callback)
+2. `WidgetImpl::snapshot()` with `gtk::Snapshot` (scene graph / render nodes,
+   optionally using `append_cairo`)
+
+On top of those, Plotters can be integrated via either `plotters-cairo` or
+`plotters-gtk4`:
+
+- `plotters-cairo`: straightforward in `DrawingArea` draw callbacks
+- `plotters-gtk4` snapshot backend: useful when drawing directly in
+  `GtkSnapshot` / custom widgets
+- `plotters-gtk4` paintable backend: useful with `GtkPicture` +
+  `GdkPaintable`
+
+| Option | Best fit | Advantages | Trade-offs |
+|--------|----------|------------|------------|
+| Widgets only (`AdwPreferencesGroup`, lists, progress bars) | Counters and ranked lists | Fastest to ship, best accessibility defaults, minimal dependencies | Limited visual expressiveness (no heatmap / histogram / donut) |
+| `DrawingArea` + Cairo (`set_draw_func`) | First chart iteration | Simple mental model, low code overhead, already common in GTK apps | Imperative drawing path; less reusable if later moving to `Paintable` |
+| Custom widget `snapshot()` + Cairo (`append_cairo`) | Advanced custom charts integrated in custom widgets | Aligns with GTK4 rendering model and scene graph lifecycle | More boilerplate than `DrawingArea`; steeper GTK subclassing complexity |
+| `plotters-cairo` | Reusing Plotters chart primitives in draw callbacks | Rich chart API, avoids hand-writing chart geometry | Extra dependency and adaptation to app theming/colors |
+| `plotters-gtk4` (snapshot or paintable backend) | Plotters charts with GTK4-native targets | Explicit GTK4 backend, supports Snapshot and Paintable workflows | Less battle-tested ecosystem than Cairo path; evaluate maintenance risk |
+
+| Stat | Widget-only possible? | Custom chart needed? | Viable custom rendering paths |
+|------|:----:|:----:|-------------------------------|
+| Summary counters | Yes (labels) | No | N/A |
+| Sessions by tool | Yes (progress bars) | No (optional) | Optional bar chart via Cairo / Snapshot / Plotters |
+| Top projects | Yes (boxed list) | No | N/A |
+| Token consumption | Yes (labels + progress bars) | No (optional) | Optional stacked chart via Cairo / Snapshot / Plotters |
+| Subagent usage | Yes (labels) | No (optional) | Optional chart via Cairo / Snapshot / Plotters |
+| Models used | Partial (labels + progress bars) | Yes (if donut desired) | Cairo `draw_func`, `snapshot()` + `append_cairo`, `plotters-cairo`, or `plotters-gtk4` |
+| Activity heatmap | No | Yes | Cairo `draw_func`, `snapshot()` + `append_cairo`, `plotters-cairo`, or `plotters-gtk4` |
+| Session length distribution | No | Yes | Cairo `draw_func`, `snapshot()` + `append_cairo`, `plotters-cairo`, or `plotters-gtk4` |
+| Top sessions | Yes (boxed list) | No | N/A |
+
+**Observation:** 6 of 9 stats can ship with widgets only.
+The three chart-centric stats (heatmap, histogram, donut) can be implemented
+with either `DrawingArea`+Cairo or a `GtkSnapshot` path (directly or through
+`plotters-gtk4`).
+
+**Pragmatic recommendation:** start with widgets + `DrawingArea`/Cairo for V1,
+then adopt `snapshot()` and/or `plotters-gtk4` only if we need reusable
+paintables, richer chart abstractions, or more advanced chart composition.
 
 ## References
 
 - [GNOME HIG - View Switchers](https://developer.gnome.org/hig/patterns/nav/view-switchers.html)
 - [GNOME HIG - Boxed Lists](https://developer.gnome.org/hig/patterns/containers/boxed-lists.html)
 - [GNOME HIG - Typography](https://developer.gnome.org/hig/guidelines/typography.html)
+- [GTK4 - DrawingArea draw func](https://docs.gtk.org/gtk4/method.DrawingArea.set_draw_func.html)
+- [GTK4 - Drawing model and snapshot](https://docs.gtk.org/gtk4/drawing-model.html)
+- [GTK4 - Migration notes (`draw` -> `snapshot`)](https://docs.gtk.org/gtk4/migrating-3to4.html)
+- [plotters-gtk4](https://github.com/SeaDve/plotters-gtk4)
 - [AgentsView](https://github.com/wesm/agentsview) -- Svelte dashboard
   with heatmaps and velocity metrics
 - [Sniffly](https://github.com/chiphuyen/sniffly) -- Python dashboard with
