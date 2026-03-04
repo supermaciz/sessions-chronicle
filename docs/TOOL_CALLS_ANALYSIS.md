@@ -87,7 +87,7 @@ Two error signals exist in Claude `tool_result`:
 
 ### Subagent detection
 
-Tool calls with `name == "Task"` (or `name == "Agent"`) are treated as subagent invocations,
+Tool calls with `name == "Task"` are treated as subagent invocations,
 not regular tool calls. The parser extracts `input.description` as title and `input.prompt`
 as the subagent prompt. The tool result becomes `result_summary` on the `Subagent` record.
 
@@ -290,7 +290,7 @@ populated by every parser:
 |-------|:-----------:|:--------:|:---------:|:------------:|
 | `id` | `tool_use.id` | `{ses}-{msg}-{part}` | `call_id` | `{ses}-{raw_id}` |
 | `tool_name` | `tool_use.name` | `part.tool` | `payload.tool_name` or `command` | `function.name` |
-| `status` | Pending → Completed | All 4 states | Running → Completed/Error | Pending → Completed |
+| `status` | Pending → Completed | Running / Completed / Error / Unknown (`pending` → Unknown) | Running → Completed/Error | Pending → Completed |
 | `title` | tool_name | — | tool_name | — |
 | `summary` | — | — | — | — |
 | `input_json` | `tool_use.input` (object) | `state.input` (object) | `payload.input` (object) | `function.arguments` (string) |
@@ -323,7 +323,7 @@ populated by every parser:
 
 | Agent | Subagent trigger | Subagent data fields | Child session link |
 |-------|-----------------|---------------------|-------------------|
-| Claude Code | `tool_use.name == "Task"` (or `"Agent"`) | `input.description` (title), `input.prompt` | None (inline in parent JSONL) |
+| Claude Code | `tool_use.name == "Task"` | `input.description` (title), `input.prompt` | None (inline in parent JSONL) |
 | OpenCode | `part.type == "subtask"` | `description`, `prompt`, `agent`, `model`, `command` | `childSessionID` → child `ses_*` |
 | Codex CLI | `collab_agent_spawn_begin/end` | `prompt`, `sender_thread_id`, `new_thread_id` | Thread-based (not yet parsed) |
 | Mistral Vibe | — | — | — |
