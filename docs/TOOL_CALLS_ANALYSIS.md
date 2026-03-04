@@ -18,6 +18,7 @@ Sources used:
 - Sampling real sessions from `~/.claude`, `~/.local/share/opencode`, `~/.codex/sessions`, `~/.vibe/logs/session`
 - Reviewing current parsers in `src/parsers/*.rs`
 - Verifying upstream schemas:
+  - Claude Code: [Anthropic API tool use docs](https://docs.anthropic.com/en/docs/build-with-claude/tool-use/overview)
   - Codex protocol/models: `openai/codex` (`codex-rs/protocol/src/protocol.rs`, `codex-rs/protocol/src/models.rs`)
   - OpenCode MessageV2: `sst/opencode` (`packages/opencode/src/session/message-v2.ts`)
   - Mistral Vibe logger/types: `mistralai/mistral-vibe` (`vibe/core/session/session_logger.py`, `vibe/core/types.py`)
@@ -33,10 +34,11 @@ Local sample size (home directory):
 
 | Agent | Tool invocation | Tool result | Correlation | Input | Output |
 |---|---|---|---|---|---|
-| Claude Code | `assistant.message.content[]` block `type:"tool_use"` | `user.message.content[]` block `type:"tool_result"` | `tool_use.id` -> `tool_result.tool_use_id` | JSON object | string or content-block array |
+| Claude Code | `assistant.message.content[]` block `type:"tool_use"` | `user.message.content[]` block `type:"tool_result"` | `tool_use.id` → `tool_result.tool_use_id` | JSON object | string or content-block array |
 | OpenCode | `part` with `type:"tool"` (state in `state`) | same `part.state` (`completed/error/running`) | internal `callID` + `part` position | JSON object (`state.input`) | string (`state.output`) + optional `attachments[]` |
 | Codex CLI (current) | `response_item.payload.type:"function_call"` (or `custom_tool_call`) | `response_item.payload.type:"function_call_output"` (or `custom_tool_call_output`) | `call_id` | JSON string (arguments) or free-form string (custom input) | usually string (sometimes JSON string) |
-| Mistral Vibe | assistant message with `tool_calls[]` | following message with `role:"tool"` | `tool_calls[i].id` -> `tool_call_id` | JSON string in `function.arguments` | free-form string |
+| Codex CLI (legacy) | `event_msg.payload.type:"mcp_tool_call_begin"` / `"exec_command_begin"` | `event_msg.payload.type:"mcp_tool_call_end"` / `"exec_command_end"` | `call_id` | JSON object (`input`) or synthesized from `command`+`cwd` | string (`output`/`stdout`) |
+| Mistral Vibe | assistant message with `tool_calls[]` | following message with `role:"tool"` | `tool_calls[i].id` → `tool_call_id` | JSON string in `function.arguments` | free-form string |
 
 ---
 
@@ -71,6 +73,23 @@ Local sample size (home directory):
   - `{"type":"image","source":{"type":"base64","data":"..."}}` (rare, but real)
 - `tool_use` sometimes includes `caller`, sometimes not
 - tool names are heterogeneous (`Bash`, `Read`, `Task`, `Skill`, `mcp__...`)
+- `tool_result.is_error` — boolean, `true` when the tool execution itself failed
+  (distinct from a tool that returns an error message in `content`)
+
+### Error detection
+
+Two error signals exist in Claude `tool_result`:
+
+1. **`is_error: true`** — explicit error flag on the `tool_result` block
+   (Currently **not** checked by the parser; status is set to `Completed` whenever a result arrives.)
+2. **Error text in `content`** — some tool results contain error messages in their content
+   without setting `is_error`; these are not distinguishable from normal output without heuristics.
+
+### Subagent detection
+
+Tool calls with `name == "Task"` (or `name == "Agent"`) are treated as subagent invocations,
+not regular tool calls. The parser extracts `input.description` as title and `input.prompt`
+as the subagent prompt. The tool result becomes `result_summary` on the `Subagent` record.
 
 ### Side note
 
@@ -99,25 +118,52 @@ Local sample size (home directory):
 }
 ```
 
-### States and fields
+### State machine
 
-- Observed `status` values: `completed`, `error`, `running`
-- Completed: `input`, `output`, `title`, `metadata`, `time`, `attachments?`
-- Error: `input`, `error`, `time`, `metadata?`
-- Running: `input`, `time`, `metadata?`, sometimes `title`
+```
+pending  →  running  →  completed
+                     →  error
+```
+
+| State | Fields |
+|-------|--------|
+| `pending` | `input`, `raw` |
+| `running` | `input`, optional `title`/`metadata`, `time.start` |
+| `completed` | `input`, `output`, `title`, `metadata`, `time.start/end`, optional `attachments` |
+| `error` | `input`, `error`, optional `metadata`, `time.start/end` |
 
 ### Important variants
 
 - `input` is always a JSON object
-- `output` is a string (often very large)
+- `output` is a string (often very large — can contain full file contents or diffs)
+- `error` is a string when present (on `error` status)
 - `attachments` can contain files (including image data URLs in base64)
-- `part.type == "subtask"` is a separate family (delegation/subagent), useful for a dedicated subagent panel
+- `metadata.exit` carries the process exit code for shell-type tools
+- `time.start`/`time.end` are Unix timestamps in **milliseconds**
+
+### Subagent detection
+
+`part.type == "subtask"` is the subagent family:
+
+```json
+{
+  "type": "subtask",
+  "prompt": "Find all parser files",
+  "description": "Explore parser layout",
+  "agent": "explore",
+  "model": { "providerID": "anthropic", "modelID": "claude-sonnet" },
+  "command": "@explore find parser files",
+  "childSessionID": "ses_child123"
+}
+```
+
+The `childSessionID` field (when present) links to a full child session in the same storage.
 
 ---
 
 ## Codex CLI
 
-## 1) Current format observed in recent sessions
+### 1) Current format observed in recent sessions
 
 Tool activity is now mostly in `response_item` (not `event_msg`):
 
@@ -144,13 +190,15 @@ Tool activity is now mostly in `response_item` (not `event_msg`):
 }
 ```
 
-Other active types:
+Other `response_item` types:
 
 - `custom_tool_call` / `custom_tool_call_output` (example: `apply_patch`)
 - `web_search_call` with `action`:
   - `{"type":"search","query":"...","queries":[...]}`
   - `{"type":"open_page","url":"..."}` (url may be absent)
   - `{"type":"find_in_page","url":"...","pattern":"..."}` (url may be absent)
+- `local_shell_call` — shell tool with `command`, `workdir`, `timeout_ms`, `sandbox_permissions`
+- `image_generation_call` — image generation with `revised_prompt`, `result`
 
 ### Rendering-specific details
 
@@ -159,14 +207,23 @@ Other active types:
   - example `shell`: `{"output":"...","metadata":{"exit_code":0,...}}`
   - example `update_plan`: simple string (`"Plan updated"`)
 
-## 2) Legacy format still present in fixtures/tests
+### 2) Legacy format still present in fixtures/tests
 
-The current parser (`src/parsers/codex.rs`) still indexes `event_msg` begin/end pairs:
+The current parser (`src/parsers/codex.rs`) indexes `event_msg` begin/end pairs:
 
 - `mcp_tool_call_begin` / `mcp_tool_call_end`
 - `exec_command_begin` / `exec_command_end`
 
 This format exists in fixtures, but recent real logs are mostly in `response_item.function_call*`.
+
+### Subagent detection
+
+Codex uses collaboration events for subagent spawning:
+
+- `collab_agent_spawn_begin` / `collab_agent_spawn_end` carry `call_id`, `sender_thread_id`,
+  and `new_thread_id`
+- Additional events: `collab_waiting_*`, `collab_resume_*`, `collab_close_*`
+- Currently **not** mapped to subagent records by the parser.
 
 ---
 
@@ -205,12 +262,77 @@ This format exists in fixtures, but recent real logs are mostly in `response_ite
 - `function.arguments` is a JSON string (should be parsed)
 - `role:"tool".content` is free-form text (shape depends on the tool wrapper)
 - no explicit native status field ("completed" is inferred when the tool message arrives)
+- `name` field on `role:"tool"` messages may or may not be present (not required for correlation)
+
+### Error detection
+
+No explicit error flag in the JSONL log. Errors can only be inferred from:
+- content containing `returncode: <non-zero>` (tool-wrapper specific)
+- absence of a matching `role:"tool"` message (tool call stays `Pending`)
+
+Note: internally, Mistral Vibe has a `ToolResultEvent` with `error: Option[str]`,
+`duration: Option[float]`, and `skipped: bool` fields, but these are **not persisted**
+to the `messages.jsonl` log — only the final `LLMMessage` is serialized.
+
+### Subagent detection
+
+No subagent/subtask mechanism observed in current Mistral Vibe format.
+All tool calls are top-level.
+
+---
+
+## Parser Field Coverage
+
+The parsers normalize each tool call into a common `ToolCall` struct. Not all fields are
+populated by every parser:
+
+| Field | Claude Code | OpenCode | Codex CLI | Mistral Vibe |
+|-------|:-----------:|:--------:|:---------:|:------------:|
+| `id` | `tool_use.id` | `{ses}-{msg}-{part}` | `call_id` | `{ses}-{raw_id}` |
+| `tool_name` | `tool_use.name` | `part.tool` | `payload.tool_name` or `command` | `function.name` |
+| `status` | Pending → Completed | All 4 states | Running → Completed/Error | Pending → Completed |
+| `title` | tool_name | — | tool_name | — |
+| `summary` | — | — | — | — |
+| `input_json` | `tool_use.input` (object) | `state.input` (object) | `payload.input` (object) | `function.arguments` (string) |
+| `output_text` | `tool_result.content` | `state.output` | `payload.output`/`stdout` | `role:tool.content` |
+| `error_text` | — | `state.error` | `payload.stderr` (if non-empty) | — |
+| `started_at` | event timestamp | — | event timestamp | — |
+| `ended_at` | event timestamp | — | event timestamp | — |
+| `duration_ms` | end − start | — | `payload.duration_ms` | — |
+| `parser_call_id` | — | — | `call_id` | — |
+
+**Legend:** `—` = always NULL
+
+### Notable gaps
+
+- **Claude Code**: `is_error` on `tool_result` is not checked — all completed tool calls show
+  status `Completed` even when the tool failed.
+- **OpenCode**: `state.time.start/end` (Unix ms) is available in the raw data but **not extracted**
+  by the parser into `started_at`/`ended_at`/`duration_ms`.
+- **OpenCode**: `state.title` is available but **not extracted** into `ToolCall.title`.
+- **OpenCode**: `state.metadata.exit` (exit code) is available but not surfaced.
+- **Codex CLI**: Only the legacy `event_msg` begin/end format is parsed; the newer
+  `response_item.function_call*` format is **not yet supported**.
+- **Codex CLI**: `collab_*` events are not yet mapped to subagent records.
+- **Mistral Vibe**: No timing information available in the format itself.
+- **All parsers**: `summary` field is never populated.
+
+---
+
+## Subagent Detection — Cross-Tool Summary
+
+| Agent | Subagent trigger | Subagent data fields | Child session link |
+|-------|-----------------|---------------------|-------------------|
+| Claude Code | `tool_use.name == "Task"` (or `"Agent"`) | `input.description` (title), `input.prompt` | None (inline in parent JSONL) |
+| OpenCode | `part.type == "subtask"` | `description`, `prompt`, `agent`, `model`, `command` | `childSessionID` → child `ses_*` |
+| Codex CLI | `collab_agent_spawn_begin/end` | `prompt`, `sender_thread_id`, `new_thread_id` | Thread-based (not yet parsed) |
+| Mistral Vibe | — | — | — |
 
 ---
 
 ## UI Implications (styled rendering)
 
-## Recommended normalization
+### Recommended normalization
 
 For UI rendering, normalize each entry into a common shape:
 
@@ -238,24 +360,26 @@ For UI rendering, normalize each entry into a common shape:
    - If content-block array (Claude): render `text` and `image` blocks
 
 3. **Status**
-   - OpenCode: native status
-   - Claude: `tool_result.is_error` or result presence/absence
-   - Codex: infer from output/error content + call/output pairing
-   - Mistral: infer via `tool_call_id` correlation
+   - OpenCode: native status field (`completed`, `error`, `running`, `pending`)
+   - Claude: check `tool_result.is_error` first; fallback to result presence/absence
+   - Codex: infer from output/error content + `exit_code` + call/output pairing
+   - Mistral: infer via `tool_call_id` correlation (present = completed, absent = pending)
 
 4. **Attachments**
    - OpenCode: `state.attachments[]` supports media in base64 data URLs
-   - Claude: images can appear in `tool_result.content[]`
-   - Add size/memory safeguards
+   - Claude: images can appear in `tool_result.content[]` as `{"type":"image",...}`
+   - Add size/memory safeguards — attachments can be large
 
 ---
 
 ## Watchouts
 
-- Potentially huge outputs (diffs, files, logs)
-- Sensitive data can appear in tool outputs (API keys, tokens, private URLs)
-- Inter-version drift (especially Codex legacy vs current format)
-- Frequent optional fields (do not assume `status`, `url`, `metadata`, etc. always exist)
+- **Huge outputs** — diffs, file contents, and logs can be hundreds of KB; truncate or virtualize in UI
+- **Sensitive data** — API keys, tokens, and private URLs can appear in tool outputs
+- **Inter-version drift** — especially Codex legacy (`event_msg`) vs current (`response_item`) format
+- **Frequent optional fields** — do not assume `status`, `url`, `metadata`, `time`, etc. always exist
+- **Duplicate events** — Claude Code logs are append-only and can contain duplicate entries for the same
+  tool call (see [claude-code#1524](https://github.com/anthropics/claude-code/issues/1524))
 
 ---
 
@@ -263,9 +387,15 @@ For UI rendering, normalize each entry into a common shape:
 
 The 4 agents use different tool-call strategies:
 
-- **Claude/OpenCode**: relatively rich structures, close to stable event models
-- **Mistral Vibe**: simple OpenAI-like format (string arguments/output)
-- **Codex CLI**: recent format centered on `response_item.function_call*` (string-heavy), with additional `custom_tool_call` and `web_search_call` families
+- **Claude Code**: Anthropic API `tool_use`/`tool_result` blocks embedded in messages; rich structure
+  but no native timing data beyond event timestamps
+- **OpenCode**: Self-contained `tool` parts with a full state machine (`pending → running → completed/error`),
+  timing, metadata, and attachments; the richest tool call format
+- **Codex CLI**: Evolving format — legacy `event_msg` begin/end pairs (with precise timing) are being
+  superseded by `response_item.function_call*` (string-heavy); also has `custom_tool_call` and
+  `web_search_call` families
+- **Mistral Vibe**: Simple OpenAI-compatible format (string arguments/output); no timing, no error flag,
+  no subagents
 
 For a polished UI, the key is a normalization layer that:
 
@@ -273,3 +403,14 @@ For a polished UI, the key is a normalization layer that:
 - preserves robust raw-text fallbacks,
 - handles media/attachments safely,
 - and explicitly supports version-specific variants (especially Codex).
+
+---
+
+## References
+
+- [Anthropic API — Tool Use](https://docs.anthropic.com/en/docs/build-with-claude/tool-use/overview)
+- [Codex protocol definitions (`protocol.rs`)](https://github.com/openai/codex/blob/main/codex-rs/protocol/src/protocol.rs)
+- [Codex rollout recorder](https://github.com/openai/codex/blob/main/codex-rs/core/src/rollout/recorder.rs)
+- [OpenCode `MessageV2` part schemas](https://github.com/sst/opencode/blob/dev/packages/opencode/src/session/message-v2.ts)
+- [Mistral Vibe session logger](https://github.com/mistralai/mistral-vibe/blob/main/vibe/core/session/session_logger.py)
+- [Mistral Vibe types](https://github.com/mistralai/mistral-vibe/blob/main/vibe/core/types.py)
