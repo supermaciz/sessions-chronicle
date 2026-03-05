@@ -167,3 +167,17 @@
   letter-spacing: 0.05em;
   opacity: 0.7;
 }
+
+/* Terminal renderer sections */
+.terminal-command {
+  font-family: monospace;
+  font-weight: 600;
+}
+
+.terminal-output {
+  font-family: monospace;
+}
+
+.terminal-exit-nonzero {
+  color: #e01b24;
+}

@@ -1,6 +1,7 @@
 use crate::models::ToolCallStatus;
 
 pub mod generic;
+pub mod terminal;
 
 #[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
