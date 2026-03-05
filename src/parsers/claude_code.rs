@@ -124,11 +124,20 @@ impl ClaudeCodeParser {
                                     .and_then(|v| v.as_str())
                                     .unwrap_or("");
                                 let result_text = Self::extract_tool_result_content(block);
+                                let is_error = block
+                                    .get("is_error")
+                                    .and_then(|v| v.as_bool())
+                                    .unwrap_or(false);
 
                                 if let Some(&tc_idx) = pending_calls.get(tool_use_id) {
                                     if let Some(tc) = tool_calls.get_mut(tc_idx) {
-                                        tc.output_text = Some(result_text);
-                                        tc.status = ToolCallStatus::Completed;
+                                        if is_error {
+                                            tc.error_text = Some(result_text);
+                                            tc.status = ToolCallStatus::Error;
+                                        } else {
+                                            tc.output_text = Some(result_text);
+                                            tc.status = ToolCallStatus::Completed;
+                                        }
                                         if let Some(ts) = event
                                             .get("timestamp")
                                             .and_then(|v| v.as_str())
@@ -703,6 +712,25 @@ mod tests {
         assert_eq!(
             parsed.transcript_items[2].kind,
             TranscriptItemKind::ToolCall
+        );
+    }
+
+    #[test]
+    fn parse_tool_result_is_error_sets_error_status() {
+        let file = create_temp_session(&[
+            r#"{"type":"user","timestamp":"2024-01-01T00:00:00Z","sessionId":"s_err","message":{"content":"Run the command"}}"#,
+            r#"{"type":"assistant","timestamp":"2024-01-01T00:00:01Z","sessionId":"s_err","message":{"content":[{"type":"tool_use","id":"toolu_err_001","name":"Bash","input":{"command":"exit 1"}}]}}"#,
+            r#"{"type":"user","timestamp":"2024-01-01T00:00:02Z","sessionId":"s_err","message":{"content":[{"type":"tool_result","tool_use_id":"toolu_err_001","is_error":true,"content":"command failed"}]}}"#,
+        ]);
+
+        let parser = ClaudeCodeParser;
+        let parsed = parser.parse(file.path()).unwrap();
+
+        assert_eq!(parsed.tool_calls.len(), 1);
+        assert_eq!(parsed.tool_calls[0].status, ToolCallStatus::Error);
+        assert_eq!(
+            parsed.tool_calls[0].error_text.as_deref(),
+            Some("command failed")
         );
     }
 
