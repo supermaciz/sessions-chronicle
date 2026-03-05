@@ -152,6 +152,10 @@ impl CodexParser {
                             }
                         };
 
+                        if call_id_to_tc_idx.contains_key(&call_id) {
+                            continue;
+                        }
+
                         let tool_name = payload
                             .get("name")
                             .or_else(|| payload.get("tool_name"))
@@ -246,11 +250,20 @@ impl CodexParser {
                             tc.error_text = error_text;
                             tc.ended_at = event_ts.map(|t| t.timestamp());
                             tc.duration_ms = payload.get("duration_ms").and_then(|v| v.as_i64());
-                            tc.status = if tc.error_text.is_some() {
-                                ToolCallStatus::Error
-                            } else {
-                                ToolCallStatus::Completed
-                            };
+                            let status = payload
+                                .get("status")
+                                .and_then(|v| v.as_str())
+                                .map(|s| s.to_ascii_lowercase());
+                            tc.status =
+                                if matches!(status.as_deref(), Some("error") | Some("failed")) {
+                                    ToolCallStatus::Error
+                                } else if matches!(status.as_deref(), Some("completed")) {
+                                    ToolCallStatus::Completed
+                                } else if tc.error_text.is_some() {
+                                    ToolCallStatus::Error
+                                } else {
+                                    ToolCallStatus::Completed
+                                };
                         }
                         pending_calls.remove(call_id);
                     }
@@ -344,6 +357,10 @@ impl CodexParser {
                             continue;
                         }
                     };
+
+                    if call_id_to_tc_idx.contains_key(&call_id) {
+                        continue;
+                    }
                     let tool_name = payload
                         .get("tool_name")
                         .or_else(|| payload.get("command"))
@@ -678,6 +695,64 @@ mod tests {
             parsed.tool_calls[0].error_text.as_deref(),
             Some("Permission denied")
         );
+    }
+
+    #[test]
+    fn parse_mixed_stream_same_call_id_does_not_duplicate_tool_call() {
+        let mut file = tempfile::NamedTempFile::new().unwrap();
+        writeln!(file, r#"{{"type":"session_meta","payload":{{"id":"codex-mixed","timestamp":"2026-01-01T00:00:00Z","cwd":"/tmp"}}}}"#).unwrap();
+        writeln!(file, r#"{{"type":"event_msg","timestamp":"2026-01-01T00:00:01Z","payload":{{"type":"user_message","message":"run mixed"}}}}"#).unwrap();
+        writeln!(file, r#"{{"type":"response_item","timestamp":"2026-01-01T00:00:02Z","payload":{{"type":"function_call","name":"exec_command","call_id":"call_shared","arguments":"{{\"cmd\":\"pwd\"}}"}}}}"#).unwrap();
+        writeln!(file, r#"{{"type":"event_msg","timestamp":"2026-01-01T00:00:03Z","payload":{{"type":"exec_command_begin","call_id":"call_shared","command":"pwd","cwd":"/tmp"}}}}"#).unwrap();
+        writeln!(file, r#"{{"type":"response_item","timestamp":"2026-01-01T00:00:04Z","payload":{{"type":"function_call_output","call_id":"call_shared","status":"completed","output":"/tmp"}}}}"#).unwrap();
+
+        let parsed = CodexParser.parse(file.path()).unwrap();
+        assert_eq!(parsed.tool_calls.len(), 1);
+        assert_eq!(parsed.transcript_items.len(), 2);
+        assert_eq!(parsed.tool_calls[0].id, "call_shared");
+        assert_eq!(parsed.tool_calls[0].status, ToolCallStatus::Completed);
+    }
+
+    #[test]
+    fn parse_duplicate_begin_same_call_id_does_not_duplicate_tool_call() {
+        let mut file = tempfile::NamedTempFile::new().unwrap();
+        writeln!(file, r#"{{"type":"session_meta","payload":{{"id":"codex-dup-begin","timestamp":"2026-01-01T00:00:00Z","cwd":"/tmp"}}}}"#).unwrap();
+        writeln!(file, r#"{{"type":"event_msg","timestamp":"2026-01-01T00:00:01Z","payload":{{"type":"user_message","message":"run dup begin"}}}}"#).unwrap();
+        writeln!(file, r#"{{"type":"event_msg","timestamp":"2026-01-01T00:00:02Z","payload":{{"type":"exec_command_begin","call_id":"call_dup","command":"ls","cwd":"/tmp"}}}}"#).unwrap();
+        writeln!(file, r#"{{"type":"event_msg","timestamp":"2026-01-01T00:00:03Z","payload":{{"type":"exec_command_begin","call_id":"call_dup","command":"ls","cwd":"/tmp"}}}}"#).unwrap();
+        writeln!(file, r#"{{"type":"event_msg","timestamp":"2026-01-01T00:00:04Z","payload":{{"type":"exec_command_end","call_id":"call_dup","exit_code":0,"stdout":"ok"}}}}"#).unwrap();
+
+        let parsed = CodexParser.parse(file.path()).unwrap();
+        assert_eq!(parsed.tool_calls.len(), 1);
+        assert_eq!(parsed.transcript_items.len(), 2);
+        assert_eq!(parsed.tool_calls[0].id, "call_dup");
+        assert_eq!(parsed.tool_calls[0].status, ToolCallStatus::Completed);
+    }
+
+    #[test]
+    fn parse_orphan_response_item_output_without_begin_is_ignored() {
+        let mut file = tempfile::NamedTempFile::new().unwrap();
+        writeln!(file, r#"{{"type":"session_meta","payload":{{"id":"codex-orphan-output","timestamp":"2026-01-01T00:00:00Z","cwd":"/tmp"}}}}"#).unwrap();
+        writeln!(file, r#"{{"type":"event_msg","timestamp":"2026-01-01T00:00:01Z","payload":{{"type":"user_message","message":"run orphan output"}}}}"#).unwrap();
+        writeln!(file, r#"{{"type":"response_item","timestamp":"2026-01-01T00:00:02Z","payload":{{"type":"function_call_output","call_id":"missing_begin","status":"completed","output":"ignored"}}}}"#).unwrap();
+
+        let parsed = CodexParser.parse(file.path()).unwrap();
+        assert!(parsed.tool_calls.is_empty());
+        assert_eq!(parsed.transcript_items.len(), 1);
+    }
+
+    #[test]
+    fn parse_response_item_output_status_failed_maps_to_error_without_error_text() {
+        let mut file = tempfile::NamedTempFile::new().unwrap();
+        writeln!(file, r#"{{"type":"session_meta","payload":{{"id":"codex-ri-status","timestamp":"2026-01-01T00:00:00Z","cwd":"/tmp"}}}}"#).unwrap();
+        writeln!(file, r#"{{"type":"event_msg","timestamp":"2026-01-01T00:00:01Z","payload":{{"type":"user_message","message":"run status"}}}}"#).unwrap();
+        writeln!(file, r#"{{"type":"response_item","timestamp":"2026-01-01T00:00:02Z","payload":{{"type":"function_call","name":"exec_command","call_id":"call_status","arguments":"{{\"cmd\":\"false\"}}"}}}}"#).unwrap();
+        writeln!(file, r#"{{"type":"response_item","timestamp":"2026-01-01T00:00:03Z","payload":{{"type":"function_call_output","call_id":"call_status","status":"failed","output":"exit 1"}}}}"#).unwrap();
+
+        let parsed = CodexParser.parse(file.path()).unwrap();
+        assert_eq!(parsed.tool_calls.len(), 1);
+        assert_eq!(parsed.tool_calls[0].status, ToolCallStatus::Error);
+        assert_eq!(parsed.tool_calls[0].error_text, None);
     }
 
     #[test]
