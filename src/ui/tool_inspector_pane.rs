@@ -689,12 +689,7 @@ impl Component for ToolInspectorPane {
                 .set_label(&format_status_duration(tc.status, tc.duration_ms));
             let metadata_line = format_tool_metadata_line(tc);
             apply_optional_line(&self.tool_metadata_label, metadata_line.as_deref());
-            let error_text = tc
-                .error_text
-                .as_deref()
-                .map(str::trim)
-                .filter(|text| !text.is_empty())
-                .or((tc.status == ToolCallStatus::Error).then_some("Tool reported an error."));
+            let error_text = tool_error_message(tc);
             apply_optional_section(&self.tool_error_section, &self.tool_error_label, error_text);
             apply_renderer_stack(&self.tool_renderer_views, tc);
         }
@@ -760,12 +755,7 @@ impl Component for ToolInspectorPane {
                 .set_label(&format_status_duration(tc.status, tc.duration_ms));
             let metadata_line = format_tool_metadata_line(tc);
             apply_optional_line(&self.drill_metadata_label, metadata_line.as_deref());
-            let error_text = tc
-                .error_text
-                .as_deref()
-                .map(str::trim)
-                .filter(|text| !text.is_empty())
-                .or((tc.status == ToolCallStatus::Error).then_some("Tool reported an error."));
+            let error_text = tool_error_message(tc);
             apply_optional_section(
                 &self.drill_error_section,
                 &self.drill_error_label,
@@ -999,9 +989,6 @@ fn format_generic_renderer_text(
     if let Some(output) = rendered.output.as_ref() {
         parts.push(format!("Output\n{}", output_plan_text(output)));
     }
-    if let Some(error) = rendered.error.as_ref() {
-        parts.push(format!("Error\n{}", output_plan_text(error)));
-    }
 
     if parts.is_empty() {
         "No tool details available.".to_string()
@@ -1023,13 +1010,6 @@ fn format_terminal_renderer_text(
         .filter(|text| !text.is_empty())
     {
         parts.push(format!("Output\n{output}"));
-    }
-    if let Some(error) = rendered
-        .error_text
-        .as_deref()
-        .filter(|text| !text.is_empty())
-    {
-        parts.push(format!("Error\n{error}"));
     }
     if let Some(code) = rendered.exit_code {
         parts.push(format!("Exit code: {code}"));
@@ -1075,10 +1055,6 @@ fn format_file_renderer_text(
     if let Some(output) = rendered.output_text.as_deref() {
         parts.push(format!("Output\n{output}"));
     }
-    if let Some(error) = rendered.error_text.as_deref() {
-        parts.push(format!("Error\n{error}"));
-    }
-
     if parts.is_empty() {
         "No file content available.".to_string()
     } else {
@@ -1113,10 +1089,6 @@ fn format_results_renderer_text(
         parts.push(format!("Output\n{output}"));
     }
 
-    if let Some(error) = rendered.error_text.as_deref() {
-        parts.push(format!("Error\n{error}"));
-    }
-
     if !parts.is_empty() {
         return parts.join("\n\n");
     }
@@ -1135,10 +1107,6 @@ fn format_subagent_renderer_text(
     if let Some(result) = rendered.result_text.as_deref() {
         parts.push(format!("Result\n{result}"));
     }
-    if let Some(error) = rendered.error_text.as_deref() {
-        parts.push(format!("Error\n{error}"));
-    }
-
     if parts.is_empty() {
         "Subagent details are available in the dedicated subagent inspector view.".to_string()
     } else {
@@ -1241,6 +1209,15 @@ fn format_tool_metadata_line(tool_call: &ToolCall) -> Option<String> {
     }
 }
 
+fn tool_error_message(tool_call: &ToolCall) -> Option<&str> {
+    tool_call
+        .error_text
+        .as_deref()
+        .map(str::trim)
+        .filter(|text| !text.is_empty())
+        .or((tool_call.status == ToolCallStatus::Error).then_some("Tool reported an error."))
+}
+
 fn format_unix_timestamp(timestamp: i64) -> Option<String> {
     chrono::Utc
         .timestamp_opt(timestamp, 0)
@@ -1251,6 +1228,7 @@ fn format_unix_timestamp(timestamp: i64) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::models::ToolCall;
     use crate::ui::tool_renderers::file::FileRenderedData;
     use crate::ui::tool_renderers::generic::{GenericRenderedData, OutputRenderPlan};
     use crate::ui::tool_renderers::results::ResultsRenderedData;
@@ -1306,7 +1284,7 @@ mod tests {
     }
 
     #[test]
-    fn formatter_renders_output_and_error_sections_for_terminal() {
+    fn formatter_renders_terminal_content_without_error_section_duplication() {
         let rendered = TerminalRenderedData {
             command: Some("cargo test".to_string()),
             output_text: Some("done".to_string()),
@@ -1321,18 +1299,18 @@ mod tests {
         let text = format_terminal_renderer_text(&rendered);
         assert!(text.contains("$ cargo test"));
         assert!(text.contains("Output\ndone"));
-        assert!(text.contains("Error\nwarn"));
+        assert!(!text.contains("Error\nwarn"));
     }
 
     #[test]
-    fn formatter_renders_output_and_error_sections_for_generic_file_results() {
+    fn formatter_renders_generic_file_and_results_content_without_error_duplication() {
         let generic_text = format_generic_renderer_text(&GenericRenderedData {
             input_text: None,
             output: Some(OutputRenderPlan::Markdown("ok".to_string())),
             error: Some(OutputRenderPlan::Markdown("failed".to_string())),
         });
         assert!(generic_text.contains("Output\nok"));
-        assert!(generic_text.contains("Error\nfailed"));
+        assert!(!generic_text.contains("Error\nfailed"));
 
         let file_text = format_file_renderer_text(&FileRenderedData {
             header: Some("src/main.rs".to_string()),
@@ -1342,7 +1320,7 @@ mod tests {
             duration_ms: None,
         });
         assert!(file_text.contains("Output\nfn main() {}"));
-        assert!(file_text.contains("Error\npermission denied"));
+        assert!(!file_text.contains("Error\npermission denied"));
 
         let results_text = format_results_renderer_text(&ResultsRenderedData {
             entries: vec![],
@@ -1352,11 +1330,11 @@ mod tests {
             duration_ms: None,
         });
         assert!(results_text.contains("Output\nraw output"));
-        assert!(results_text.contains("Error\nraw error"));
+        assert!(!results_text.contains("Error\nraw error"));
     }
 
     #[test]
-    fn formatter_renders_subagent_input_and_result_error_channels() {
+    fn formatter_renders_subagent_input_and_result_without_error_duplication() {
         let text = format_subagent_renderer_text(&SubagentRenderedData {
             input_text: Some("{\"prompt\":\"investigate\"}".to_string()),
             result_text: Some("completed".to_string()),
@@ -1365,7 +1343,7 @@ mod tests {
 
         assert!(text.contains("Input\n{\"prompt\":\"investigate\"}"));
         assert!(text.contains("Result\ncompleted"));
-        assert!(text.contains("Error\npartial failure"));
+        assert!(!text.contains("Error\npartial failure"));
     }
 
     #[test]
@@ -1373,5 +1351,82 @@ mod tests {
         let text = format_status_duration(ToolCallStatus::Error, Some(1200));
         assert!(text.contains("Error"));
         assert!(text.contains("1.2s"));
+    }
+
+    #[test]
+    fn metadata_line_includes_call_id_only() {
+        let mut tool_call = sample_tool_call(ToolCallStatus::Completed);
+        tool_call.parser_call_id = Some("call-123".to_string());
+
+        let line = format_tool_metadata_line(&tool_call);
+        assert_eq!(line.as_deref(), Some("Call ID: call-123"));
+    }
+
+    #[test]
+    fn metadata_line_includes_timestamps_only() {
+        let mut tool_call = sample_tool_call(ToolCallStatus::Completed);
+        tool_call.started_at = Some(0);
+        tool_call.ended_at = Some(1);
+
+        let line = format_tool_metadata_line(&tool_call);
+        assert_eq!(
+            line.as_deref(),
+            Some("Start: 1970-01-01 00:00:00 UTC  |  End: 1970-01-01 00:00:01 UTC")
+        );
+    }
+
+    #[test]
+    fn metadata_line_includes_call_id_and_timestamps() {
+        let mut tool_call = sample_tool_call(ToolCallStatus::Completed);
+        tool_call.parser_call_id = Some("call-xyz".to_string());
+        tool_call.started_at = Some(0);
+        tool_call.ended_at = Some(1);
+
+        let line = format_tool_metadata_line(&tool_call);
+        assert_eq!(
+            line.as_deref(),
+            Some(
+                "Call ID: call-xyz  |  Start: 1970-01-01 00:00:00 UTC  |  End: 1970-01-01 00:00:01 UTC"
+            )
+        );
+    }
+
+    #[test]
+    fn metadata_line_omits_empty_values() {
+        let tool_call = sample_tool_call(ToolCallStatus::Completed);
+        assert_eq!(format_tool_metadata_line(&tool_call), None);
+    }
+
+    #[test]
+    fn error_message_falls_back_for_error_status_without_text() {
+        let mut missing = sample_tool_call(ToolCallStatus::Error);
+        missing.error_text = None;
+        assert_eq!(
+            tool_error_message(&missing),
+            Some("Tool reported an error.")
+        );
+
+        let mut blank = sample_tool_call(ToolCallStatus::Error);
+        blank.error_text = Some("   ".to_string());
+        assert_eq!(tool_error_message(&blank), Some("Tool reported an error."));
+    }
+
+    fn sample_tool_call(status: ToolCallStatus) -> ToolCall {
+        ToolCall {
+            id: "tool-1".to_string(),
+            session_id: "session-1".to_string(),
+            subagent_id: None,
+            tool_name: "terminal".to_string(),
+            status,
+            title: None,
+            summary: None,
+            input_json: None,
+            output_text: None,
+            error_text: None,
+            started_at: None,
+            ended_at: None,
+            duration_ms: None,
+            parser_call_id: None,
+        }
     }
 }
