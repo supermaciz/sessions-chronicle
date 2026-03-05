@@ -45,11 +45,11 @@ impl FileRenderer {
 #[allow(dead_code)]
 pub fn format_file_header(path: &str, offset: Option<i64>, limit: Option<i64>) -> String {
     match (offset, limit) {
-        (Some(start), Some(count)) if count > 0 => {
+        (Some(start), Some(count)) if start >= 1 && count >= 1 => {
             let end = start.saturating_add(count.saturating_sub(1));
             format!("{path}:{start}-{end}")
         }
-        (Some(start), _) => format!("{path}:{start}"),
+        (Some(start), _) if start >= 1 => format!("{path}:{start}"),
         _ => path.to_string(),
     }
 }
@@ -74,7 +74,7 @@ fn parse_file_header_from_input(input_json: &str) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::FileRenderer;
+    use super::{FileRenderer, format_file_header};
     use crate::models::ToolCallStatus;
     use crate::ui::tool_renderers::RendererInit;
 
@@ -91,5 +91,36 @@ mod tests {
 
         let rendered = FileRenderer::new(init).render_data();
         assert_eq!(rendered.header.as_deref(), Some("src/main.rs:42-81"));
+    }
+
+    #[test]
+    fn file_renderer_does_not_emit_invalid_ranges() {
+        assert_eq!(
+            format_file_header("src/main.rs", Some(0), Some(40)),
+            "src/main.rs"
+        );
+        assert_eq!(
+            format_file_header("src/main.rs", Some(42), Some(0)),
+            "src/main.rs:42"
+        );
+        assert_eq!(
+            format_file_header("src/main.rs", Some(-5), Some(2)),
+            "src/main.rs"
+        );
+    }
+
+    #[test]
+    fn file_renderer_ignores_invalid_numeric_input_fields() {
+        let init = RendererInit {
+            tool_name: "Read".to_string(),
+            input_json: Some(r#"{"path":"src/main.rs","offset":"oops","limit":-4}"#.to_string()),
+            output_text: Some("fn main() {}".to_string()),
+            error_text: None,
+            status: ToolCallStatus::Completed,
+            duration_ms: Some(12),
+        };
+
+        let rendered = FileRenderer::new(init).render_data();
+        assert_eq!(rendered.header.as_deref(), Some("src/main.rs"));
     }
 }

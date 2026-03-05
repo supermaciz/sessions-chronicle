@@ -36,9 +36,10 @@ impl ResultsRenderer {
             .output_text
             .clone()
             .or_else(|| self.init.error_text.clone());
+        let parse_mode = ResultsParseMode::for_tool_name(&self.init.tool_name);
         let entries = raw_text
             .as_deref()
-            .map(parse_results_lines)
+            .map(|output| parse_results_lines_with_mode(output, parse_mode))
             .unwrap_or_default();
 
         ResultsRenderedData {
@@ -50,15 +51,54 @@ impl ResultsRenderer {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ResultsParseMode {
+    StrictPathLineContent,
+    PathList,
+}
+
+impl ResultsParseMode {
+    fn for_tool_name(tool_name: &str) -> Self {
+        match tool_name.trim().to_ascii_lowercase().as_str() {
+            "grep" | "search" => Self::StrictPathLineContent,
+            _ => Self::PathList,
+        }
+    }
+}
+
 #[allow(dead_code)]
 pub fn parse_results_lines(output: &str) -> Vec<ResultsEntry> {
+    parse_results_lines_with_mode(output, ResultsParseMode::StrictPathLineContent)
+}
+
+fn parse_results_lines_with_mode(output: &str, mode: ResultsParseMode) -> Vec<ResultsEntry> {
     output
         .lines()
-        .filter_map(parse_results_line)
+        .filter_map(|line| parse_results_line(line, mode))
         .collect::<Vec<_>>()
 }
 
-fn parse_results_line(line: &str) -> Option<ResultsEntry> {
+fn parse_results_line(line: &str, mode: ResultsParseMode) -> Option<ResultsEntry> {
+    match mode {
+        ResultsParseMode::StrictPathLineContent => parse_strict_path_line_content(line),
+        ResultsParseMode::PathList => parse_path_list_entry(line),
+    }
+}
+
+fn parse_path_list_entry(line: &str) -> Option<ResultsEntry> {
+    let trimmed = line.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    Some(ResultsEntry {
+        path: trimmed.to_string(),
+        line: None,
+        content: String::new(),
+    })
+}
+
+fn parse_strict_path_line_content(line: &str) -> Option<ResultsEntry> {
     let trimmed = line.trim();
     if trimmed.is_empty() {
         return None;
@@ -70,11 +110,7 @@ fn parse_results_line(line: &str) -> Option<ResultsEntry> {
         .collect::<Vec<_>>();
 
     if colon_positions.len() < 2 {
-        return Some(ResultsEntry {
-            path: trimmed.to_string(),
-            line: None,
-            content: String::new(),
-        });
+        return None;
     }
 
     for split_idx in 0..(colon_positions.len() - 1) {
@@ -90,6 +126,9 @@ fn parse_results_line(line: &str) -> Option<ResultsEntry> {
         let Ok(line_number) = line_part.parse::<i64>() else {
             continue;
         };
+        if line_number <= 0 {
+            continue;
+        }
 
         let content = trimmed[right_colon + 1..].trim().to_string();
         return Some(ResultsEntry {
@@ -99,17 +138,14 @@ fn parse_results_line(line: &str) -> Option<ResultsEntry> {
         });
     }
 
-    // Fallback: keep the line, but preserve that no line number was parsed.
-    Some(ResultsEntry {
-        path: trimmed.to_string(),
-        line: None,
-        content: String::new(),
-    })
+    None
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{ResultsEntry, parse_results_lines};
+    use super::{ResultsEntry, ResultsRenderer, parse_results_lines};
+    use crate::models::ToolCallStatus;
+    use crate::ui::tool_renderers::RendererInit;
 
     #[test]
     fn results_renderer_parses_file_line_entries() {
@@ -130,6 +166,50 @@ mod tests {
                     content: "pub fn run() {}".to_string(),
                 },
             ]
+        );
+    }
+
+    #[test]
+    fn results_renderer_ignores_non_result_text_for_grep_like_tools() {
+        let init = RendererInit {
+            tool_name: "grep".to_string(),
+            input_json: None,
+            output_text: Some("No matches found. Try another query.".to_string()),
+            error_text: None,
+            status: ToolCallStatus::Completed,
+            duration_ms: None,
+        };
+
+        let rendered = ResultsRenderer::new(init).render_data();
+        assert!(rendered.entries.is_empty());
+        assert_eq!(
+            rendered.raw_text.as_deref(),
+            Some("No matches found. Try another query.")
+        );
+    }
+
+    #[test]
+    fn results_renderer_requires_positive_line_numbers() {
+        let init = RendererInit {
+            tool_name: "search".to_string(),
+            input_json: None,
+            output_text: Some(
+                "src/main.rs:0:zero\nsrc/lib.rs:-7:negative\nsrc/bad.rs:not-a-number:oops\nsrc/app.rs:8:valid"
+                    .to_string(),
+            ),
+            error_text: None,
+            status: ToolCallStatus::Completed,
+            duration_ms: None,
+        };
+
+        let rendered = ResultsRenderer::new(init).render_data();
+        assert_eq!(
+            rendered.entries,
+            vec![ResultsEntry {
+                path: "src/app.rs".to_string(),
+                line: Some(8),
+                content: "valid".to_string(),
+            }]
         );
     }
 }
