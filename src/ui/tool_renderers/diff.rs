@@ -124,13 +124,20 @@ fn format_hunk_header(ops: &[DiffOp]) -> String {
         .unwrap_or(new_start);
     let old_count = old_end.saturating_sub(old_start);
     let new_count = new_end.saturating_sub(new_start);
+    let old_header_start = if old_count == 0 {
+        old_start
+    } else {
+        old_start + 1
+    };
+    let new_header_start = if new_count == 0 {
+        new_start
+    } else {
+        new_start + 1
+    };
 
     format!(
         "@@ -{},{} +{},{} @@",
-        old_start + 1,
-        old_count,
-        new_start + 1,
-        new_count
+        old_header_start, old_count, new_header_start, new_count
     )
 }
 
@@ -149,8 +156,24 @@ fn parse_old_new(input_json: Option<&str>) -> (Option<String>, Option<String>) {
     )
 }
 
-const OLD_KEYS: &[&str] = &["old_text", "old", "before", "original", "content"];
-const NEW_KEYS: &[&str] = &["new_text", "new", "after", "updated", "replacement"];
+const OLD_KEYS: &[&str] = &[
+    "old_text",
+    "old_string",
+    "oldString",
+    "old",
+    "before",
+    "original",
+    "content",
+];
+const NEW_KEYS: &[&str] = &[
+    "new_text",
+    "new_string",
+    "newString",
+    "new",
+    "after",
+    "updated",
+    "replacement",
+];
 
 fn extract_text(value: &serde_json::Value, keys: &[&str]) -> Option<String> {
     keys.iter()
@@ -160,7 +183,7 @@ fn extract_text(value: &serde_json::Value, keys: &[&str]) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{DiffLineKind, DiffRenderer};
+    use super::{DiffLineKind, DiffRenderer, build_grouped_hunks};
     use crate::models::ToolCallStatus;
     use crate::ui::tool_renderers::RendererInit;
 
@@ -203,5 +226,54 @@ mod tests {
         assert_eq!(malformed.old_text, None);
         assert_eq!(malformed.new_text, None);
         assert!(malformed.hunks.is_empty());
+    }
+
+    #[test]
+    fn diff_renderer_parses_old_string_new_string_aliases() {
+        let rendered = DiffRenderer::new(init_with_input(Some(
+            r#"{"old_string":"before","new_string":"after"}"#,
+        )))
+        .render_data();
+
+        assert_eq!(rendered.old_text.as_deref(), Some("before"));
+        assert_eq!(rendered.new_text.as_deref(), Some("after"));
+    }
+
+    #[test]
+    fn diff_renderer_formats_zero_length_hunk_headers_for_insertions_and_deletions() {
+        let insertion_hunks = build_grouped_hunks("", "added\n");
+        assert_eq!(insertion_hunks[0].header, "@@ -0,0 +1,1 @@");
+
+        let deletion_hunks = build_grouped_hunks("removed\n", "");
+        assert_eq!(deletion_hunks[0].header, "@@ -1,1 +0,0 @@");
+    }
+
+    #[test]
+    fn diff_renderer_mixed_hunk_line_numbers_match_expected_indices() {
+        let hunks = build_grouped_hunks(
+            "alpha\nbravo\ncharlie\n",
+            "alpha\nbravo-2\ncharlie\ndelta\n",
+        );
+        let lines = &hunks[0].lines;
+
+        assert_eq!(lines[0].kind, DiffLineKind::Context);
+        assert_eq!(lines[0].old_index, Some(1));
+        assert_eq!(lines[0].new_index, Some(1));
+
+        assert_eq!(lines[1].kind, DiffLineKind::Remove);
+        assert_eq!(lines[1].old_index, Some(2));
+        assert_eq!(lines[1].new_index, None);
+
+        assert_eq!(lines[2].kind, DiffLineKind::Add);
+        assert_eq!(lines[2].old_index, None);
+        assert_eq!(lines[2].new_index, Some(2));
+
+        assert_eq!(lines[3].kind, DiffLineKind::Context);
+        assert_eq!(lines[3].old_index, Some(3));
+        assert_eq!(lines[3].new_index, Some(3));
+
+        assert_eq!(lines[4].kind, DiffLineKind::Add);
+        assert_eq!(lines[4].old_index, None);
+        assert_eq!(lines[4].new_index, Some(4));
     }
 }
