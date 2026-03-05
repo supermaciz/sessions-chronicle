@@ -8,6 +8,13 @@ use relm4::{Component, ComponentParts, ComponentSender, RelmWidgetExt, adw, gtk}
 use crate::database::{load_subagent, load_tool_call, load_tool_calls_for_subagent};
 use crate::models::{Subagent, ToolCall, ToolCallStatus};
 use crate::ui::format::{format_duration_ms, status_icon_name};
+use crate::ui::tool_renderers::diff::DiffRenderer;
+use crate::ui::tool_renderers::file::FileRenderer;
+use crate::ui::tool_renderers::generic::{GenericRenderer, OutputRenderPlan};
+use crate::ui::tool_renderers::results::ResultsRenderer;
+use crate::ui::tool_renderers::subagent::SubagentRenderer;
+use crate::ui::tool_renderers::terminal::TerminalRenderer;
+use crate::ui::tool_renderers::{RendererInit, RendererKind, resolve_renderer};
 
 // ── Selection state ───────────────────────────────────────────────────────────
 
@@ -39,6 +46,17 @@ enum LoadState {
     LoadError(String),
 }
 
+#[derive(Clone)]
+struct RendererStackViews {
+    stack: gtk::Stack,
+    generic_label: gtk::Label,
+    terminal_label: gtk::Label,
+    diff_label: gtk::Label,
+    file_label: gtk::Label,
+    results_label: gtk::Label,
+    subagent_label: gtk::Label,
+}
+
 // ── Component ─────────────────────────────────────────────────────────────────
 
 pub struct ToolInspectorPane {
@@ -65,12 +83,7 @@ pub struct ToolInspectorPane {
     // Tool-call detail widgets (inside "tool" stack page)
     tool_name_label: gtk::Label,
     tool_status_label: gtk::Label,
-    tool_input_section: gtk::Box,
-    tool_input_label: gtk::Label,
-    tool_output_section: gtk::Box,
-    tool_output_label: gtk::Label,
-    tool_error_section: gtk::Box,
-    tool_error_label: gtk::Label,
+    tool_renderer_views: RendererStackViews,
 
     // Subagent detail widgets (inside "subagent" stack page)
     subagent_title_label: gtk::Label,
@@ -86,12 +99,7 @@ pub struct ToolInspectorPane {
     drill_page: adw::NavigationPage,
     drill_name_label: gtk::Label,
     drill_status_label: gtk::Label,
-    drill_input_section: gtk::Box,
-    drill_input_label: gtk::Label,
-    drill_output_section: gtk::Box,
-    drill_output_label: gtk::Label,
-    drill_error_section: gtk::Box,
-    drill_error_label: gtk::Label,
+    drill_renderer_views: RendererStackViews,
 
     // Interior-mutable flag: is drill_page currently pushed onto nav_view?
     drill_page_pushed: Cell<bool>,
@@ -248,19 +256,14 @@ impl Component for ToolInspectorPane {
         tool_name_label.add_css_class("monospace");
 
         let tool_status_label = make_caption_label();
-
-        let (tool_input_section, tool_input_label) = make_text_section("Input");
-        let (tool_output_section, tool_output_label) = make_text_section("Output");
-        let (tool_error_section, tool_error_label) = make_text_section("Error");
+        let tool_renderer_views = make_renderer_stack_views();
 
         let tool_outer = gtk::Box::new(gtk::Orientation::Vertical, 12);
         tool_outer.set_margin_all(16);
         tool_outer.append(&tool_name_label);
         tool_outer.append(&tool_status_label);
         tool_outer.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
-        tool_outer.append(&tool_input_section);
-        tool_outer.append(&tool_output_section);
-        tool_outer.append(&tool_error_section);
+        tool_outer.append(&tool_renderer_views.stack);
 
         let tool_scroll = gtk::ScrolledWindow::new();
         tool_scroll.set_vexpand(true);
@@ -319,19 +322,14 @@ impl Component for ToolInspectorPane {
         let drill_name_label = make_title_label();
         drill_name_label.add_css_class("monospace");
         let drill_status_label = make_caption_label();
-
-        let (drill_input_section, drill_input_label) = make_text_section("Input");
-        let (drill_output_section, drill_output_label) = make_text_section("Output");
-        let (drill_error_section, drill_error_label) = make_text_section("Error");
+        let drill_renderer_views = make_renderer_stack_views();
 
         let drill_outer = gtk::Box::new(gtk::Orientation::Vertical, 12);
         drill_outer.set_margin_all(16);
         drill_outer.append(&drill_name_label);
         drill_outer.append(&drill_status_label);
         drill_outer.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
-        drill_outer.append(&drill_input_section);
-        drill_outer.append(&drill_output_section);
-        drill_outer.append(&drill_error_section);
+        drill_outer.append(&drill_renderer_views.stack);
 
         let drill_scroll = gtk::ScrolledWindow::new();
         drill_scroll.set_vexpand(true);
@@ -375,12 +373,7 @@ impl Component for ToolInspectorPane {
             error_label,
             tool_name_label,
             tool_status_label,
-            tool_input_section,
-            tool_input_label,
-            tool_output_section,
-            tool_output_label,
-            tool_error_section,
-            tool_error_label,
+            tool_renderer_views,
             subagent_title_label,
             subagent_prompt_section,
             subagent_prompt_label,
@@ -391,12 +384,7 @@ impl Component for ToolInspectorPane {
             drill_page,
             drill_name_label,
             drill_status_label,
-            drill_input_section,
-            drill_input_label,
-            drill_output_section,
-            drill_output_label,
-            drill_error_section,
-            drill_error_label,
+            drill_renderer_views,
             drill_page_pushed: Cell::new(false),
         };
 
@@ -674,21 +662,7 @@ impl Component for ToolInspectorPane {
             self.tool_name_label.set_label(&tc.tool_name);
             self.tool_status_label
                 .set_label(&format_status_duration(tc.status, tc.duration_ms));
-            apply_optional_section(
-                &self.tool_input_section,
-                &self.tool_input_label,
-                tc.input_json.as_deref(),
-            );
-            apply_optional_section(
-                &self.tool_output_section,
-                &self.tool_output_label,
-                tc.output_text.as_deref(),
-            );
-            apply_optional_section(
-                &self.tool_error_section,
-                &self.tool_error_label,
-                tc.error_text.as_deref(),
-            );
+            apply_renderer_stack(&self.tool_renderer_views, tc);
         }
 
         // 3. Update subagent content widgets.
@@ -750,21 +724,7 @@ impl Component for ToolInspectorPane {
             self.drill_name_label.set_label(&tc.tool_name);
             self.drill_status_label
                 .set_label(&format_status_duration(tc.status, tc.duration_ms));
-            apply_optional_section(
-                &self.drill_input_section,
-                &self.drill_input_label,
-                tc.input_json.as_deref(),
-            );
-            apply_optional_section(
-                &self.drill_output_section,
-                &self.drill_output_label,
-                tc.output_text.as_deref(),
-            );
-            apply_optional_section(
-                &self.drill_error_section,
-                &self.drill_error_label,
-                tc.error_text.as_deref(),
-            );
+            apply_renderer_stack(&self.drill_renderer_views, tc);
 
             if !self.drill_page_pushed.get() {
                 self.nav_view.push(&self.drill_page);
@@ -794,6 +754,76 @@ fn make_caption_label() -> gtk::Label {
     label.add_css_class("dim-label");
     label.add_css_class("caption");
     label.set_halign(gtk::Align::Start);
+    label
+}
+
+fn make_renderer_stack_views() -> RendererStackViews {
+    let stack = gtk::Stack::new();
+    stack.set_transition_type(gtk::StackTransitionType::None);
+
+    let generic_label = make_renderer_label();
+    stack.add_named(
+        &make_renderer_page(&generic_label),
+        Some(RendererKind::Generic.as_str()),
+    );
+
+    let terminal_label = make_renderer_label();
+    stack.add_named(
+        &make_renderer_page(&terminal_label),
+        Some(RendererKind::Terminal.as_str()),
+    );
+
+    let diff_label = make_renderer_label();
+    stack.add_named(
+        &make_renderer_page(&diff_label),
+        Some(RendererKind::Diff.as_str()),
+    );
+
+    let file_label = make_renderer_label();
+    stack.add_named(
+        &make_renderer_page(&file_label),
+        Some(RendererKind::File.as_str()),
+    );
+
+    let results_label = make_renderer_label();
+    stack.add_named(
+        &make_renderer_page(&results_label),
+        Some(RendererKind::Results.as_str()),
+    );
+
+    let subagent_label = make_renderer_label();
+    stack.add_named(
+        &make_renderer_page(&subagent_label),
+        Some(RendererKind::Subagent.as_str()),
+    );
+
+    stack.set_visible_child_name(RendererKind::Generic.as_str());
+
+    RendererStackViews {
+        stack,
+        generic_label,
+        terminal_label,
+        diff_label,
+        file_label,
+        results_label,
+        subagent_label,
+    }
+}
+
+fn make_renderer_page(content: &gtk::Label) -> gtk::Box {
+    let page = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    page.append(content);
+    page
+}
+
+fn make_renderer_label() -> gtk::Label {
+    let label = gtk::Label::new(None);
+    label.add_css_class("monospace");
+    label.set_wrap(true);
+    label.set_wrap_mode(gtk::pango::WrapMode::WordChar);
+    label.set_halign(gtk::Align::Start);
+    label.set_xalign(0.0);
+    label.set_selectable(true);
     label
 }
 
@@ -831,6 +861,169 @@ fn apply_optional_section(section: &gtk::Box, label: &gtk::Label, text: Option<&
         }
         _ => section.set_visible(false),
     }
+}
+
+fn apply_renderer_stack(views: &RendererStackViews, tool_call: &ToolCall) {
+    let init = renderer_init_from_tool_call(tool_call);
+    let renderer_kind = resolve_renderer(&init.tool_name);
+    views.stack.set_visible_child_name(renderer_kind.as_str());
+
+    match renderer_kind {
+        RendererKind::Terminal => {
+            let rendered = TerminalRenderer::new(init).render_data();
+            views
+                .terminal_label
+                .set_label(&format_terminal_renderer_text(&rendered));
+        }
+        RendererKind::Diff => {
+            let rendered = DiffRenderer::new(init).render_data();
+            views
+                .diff_label
+                .set_label(&format_diff_renderer_text(&rendered));
+        }
+        RendererKind::File => {
+            let rendered = FileRenderer::new(init).render_data();
+            views
+                .file_label
+                .set_label(&format_file_renderer_text(&rendered));
+        }
+        RendererKind::Results => {
+            let rendered = ResultsRenderer::new(init).render_data();
+            views
+                .results_label
+                .set_label(&format_results_renderer_text(&rendered));
+        }
+        RendererKind::Subagent => {
+            let rendered = SubagentRenderer::new(init).render_data();
+            views.subagent_label.set_label(&rendered.summary_text);
+        }
+        RendererKind::Generic => {
+            let rendered = GenericRenderer::new(init).render_data();
+            views
+                .generic_label
+                .set_label(&format_generic_renderer_text(&rendered));
+        }
+    }
+}
+
+fn renderer_init_from_tool_call(tool_call: &ToolCall) -> RendererInit {
+    RendererInit {
+        tool_name: tool_call.tool_name.clone(),
+        input_json: tool_call.input_json.clone(),
+        output_text: tool_call.output_text.clone(),
+        error_text: tool_call.error_text.clone(),
+        status: tool_call.status,
+        duration_ms: tool_call.duration_ms,
+    }
+}
+
+fn format_generic_renderer_text(
+    rendered: &crate::ui::tool_renderers::generic::GenericRenderedData,
+) -> String {
+    let mut parts = Vec::new();
+    if let Some(input) = rendered.input_text.as_deref() {
+        parts.push(format!("Input\n{input}"));
+    }
+    if let Some(output) = rendered.output.as_ref() {
+        match output {
+            OutputRenderPlan::PrettyJson(text) | OutputRenderPlan::Markdown(text) => {
+                parts.push(format!("Output\n{text}"));
+            }
+        }
+    }
+
+    if parts.is_empty() {
+        "No tool details available.".to_string()
+    } else {
+        parts.join("\n\n")
+    }
+}
+
+fn format_terminal_renderer_text(
+    rendered: &crate::ui::tool_renderers::terminal::TerminalRenderedData,
+) -> String {
+    let mut parts = Vec::new();
+    if let Some(command) = rendered.command.as_deref() {
+        parts.push(format!("$ {command}"));
+    }
+    if let Some(display) = rendered.display_text.as_deref() {
+        parts.push(display.to_string());
+    }
+    if let Some(code) = rendered.exit_code {
+        parts.push(format!("Exit code: {code}"));
+    }
+
+    if parts.is_empty() {
+        "No terminal output available.".to_string()
+    } else {
+        parts.join("\n\n")
+    }
+}
+
+fn format_diff_renderer_text(
+    rendered: &crate::ui::tool_renderers::diff::DiffRenderedData,
+) -> String {
+    if rendered.hunks.is_empty() {
+        return "No diff hunks available.".to_string();
+    }
+
+    let mut lines = Vec::new();
+    for hunk in &rendered.hunks {
+        lines.push(hunk.header.clone());
+        for line in &hunk.lines {
+            let prefix = match line.kind {
+                crate::ui::tool_renderers::diff::DiffLineKind::Context => " ",
+                crate::ui::tool_renderers::diff::DiffLineKind::Add => "+",
+                crate::ui::tool_renderers::diff::DiffLineKind::Remove => "-",
+            };
+            lines.push(format!("{prefix}{}", line.text));
+        }
+    }
+
+    lines.join("\n")
+}
+
+fn format_file_renderer_text(
+    rendered: &crate::ui::tool_renderers::file::FileRenderedData,
+) -> String {
+    let mut parts = Vec::new();
+    if let Some(header) = rendered.header.as_deref() {
+        parts.push(header.to_string());
+    }
+    if let Some(body) = rendered.body_text.as_deref() {
+        parts.push(body.to_string());
+    }
+
+    if parts.is_empty() {
+        "No file content available.".to_string()
+    } else {
+        parts.join("\n\n")
+    }
+}
+
+fn format_results_renderer_text(
+    rendered: &crate::ui::tool_renderers::results::ResultsRenderedData,
+) -> String {
+    if !rendered.entries.is_empty() {
+        return rendered
+            .entries
+            .iter()
+            .map(|entry| match entry.line {
+                Some(line) if !entry.content.is_empty() => {
+                    format!("{}:{line}:{}", entry.path, entry.content)
+                }
+                Some(line) => format!("{}:{line}", entry.path),
+                None if !entry.content.is_empty() => format!("{}:{}", entry.path, entry.content),
+                None => entry.path.clone(),
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+    }
+
+    rendered
+        .raw_text
+        .clone()
+        .unwrap_or_else(|| "No results available.".to_string())
 }
 
 fn begin_loading_request(active_request_id: &mut u64, load_state: &mut LoadState) -> u64 {

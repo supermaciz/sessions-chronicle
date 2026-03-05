@@ -4,6 +4,7 @@ pub mod diff;
 pub mod file;
 pub mod generic;
 pub mod results;
+pub mod subagent;
 pub mod terminal;
 
 #[allow(dead_code)]
@@ -45,14 +46,24 @@ pub struct RendererInit {
 #[allow(dead_code)]
 pub fn resolve_renderer(tool_name: &str) -> RendererKind {
     let normalized = tool_name.trim().to_ascii_lowercase();
+    let tokenized = normalized.replace('-', "_");
 
-    match normalized.as_str() {
+    let base_kind = match normalized.as_str() {
         "bash" | "shell" | "exec_command" => RendererKind::Terminal,
         "edit" | "apply_patch" => RendererKind::Diff,
         "read" | "write" => RendererKind::File,
         "grep" | "search" | "glob" => RendererKind::Results,
-        "agent" | "task" => RendererKind::Subagent,
         _ => RendererKind::Generic,
+    };
+
+    if base_kind == RendererKind::Generic
+        && (matches!(tokenized.as_str(), "agent" | "task")
+            || tokenized.ends_with("_agent")
+            || tokenized.ends_with("_task"))
+    {
+        RendererKind::Subagent
+    } else {
+        base_kind
     }
 }
 
@@ -89,8 +100,15 @@ mod tests {
     }
 
     #[test]
-    fn resolve_renderer_maps_subagent_aliases_case_insensitive() {
-        for tool_name in ["agent", "Agent", " task ", "TASK"] {
+    fn resolve_renderer_uses_subagent_view_for_task_and_agent_tools() {
+        for tool_name in [
+            "agent",
+            "Agent",
+            " task ",
+            "TASK",
+            "run_task",
+            "delegate_agent",
+        ] {
             assert_eq!(resolve_renderer(tool_name), RendererKind::Subagent);
         }
     }
