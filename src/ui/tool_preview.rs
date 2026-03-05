@@ -15,7 +15,8 @@ pub fn extract_preview(
     let preview = match normalized_tool.as_str() {
         "bash" | "shell" | "exec_command" => parsed.as_ref().and_then(bash_preview),
         "read" => parsed.as_ref().and_then(read_preview),
-        "edit" | "apply_patch" => parsed.as_ref().and_then(edit_preview),
+        "edit" => parsed.as_ref().and_then(edit_preview),
+        "apply_patch" => parsed.as_ref().and_then(apply_patch_preview),
         "grep" | "search" => parsed
             .as_ref()
             .and_then(|value| grep_preview(value, output_text)),
@@ -70,6 +71,52 @@ fn grep_preview(value: &Value, output_text: Option<&str>) -> Option<String> {
         Some(count) => Some(format!("pattern=\"{escaped}\" -> {count} matches")),
         None => Some(format!("pattern=\"{escaped}\"")),
     }
+}
+
+fn apply_patch_preview(value: &Value) -> Option<String> {
+    let patch_text = string_field(value, &["patchText", "patch_text", "patch"])?;
+    let mut added = 0usize;
+    let mut updated = 0usize;
+    let mut deleted = 0usize;
+    let mut first_operation: Option<(&'static str, String)> = None;
+
+    for line in patch_text.lines().map(str::trim) {
+        let (kind, path) = if let Some(path) = line.strip_prefix("*** Add File:") {
+            ("add", path)
+        } else if let Some(path) = line.strip_prefix("*** Update File:") {
+            ("update", path)
+        } else if let Some(path) = line.strip_prefix("*** Delete File:") {
+            ("delete", path)
+        } else {
+            continue;
+        };
+
+        let compact = compact_path(path.trim());
+        if compact.is_empty() {
+            continue;
+        }
+
+        if first_operation.is_none() {
+            first_operation = Some((kind, compact.clone()));
+        }
+
+        match kind {
+            "add" => added += 1,
+            "update" => updated += 1,
+            "delete" => deleted += 1,
+            _ => {}
+        }
+    }
+
+    let total = added + updated + deleted;
+    if total == 0 {
+        return None;
+    }
+    if total == 1 {
+        return first_operation.map(|(kind, path)| format!("{kind} {path}"));
+    }
+
+    Some(format!("{total} files (+{added} ~{updated} -{deleted})"))
 }
 
 fn agent_preview(value: &Value) -> Option<String> {
@@ -180,15 +227,23 @@ fn infer_match_count(output_text: Option<&str>) -> Option<usize> {
         }
     }
 
-    for token in text.split_whitespace() {
-        if token.eq_ignore_ascii_case("match") || token.eq_ignore_ascii_case("matches") {
-            break;
-        }
-        if let Ok(number) = token
-            .trim_matches(|ch: char| !ch.is_ascii_digit())
-            .parse::<usize>()
+    let tokens: Vec<&str> = text.split_whitespace().collect();
+    for (index, token) in tokens.iter().enumerate() {
+        let normalized = token.trim_matches(|ch: char| !ch.is_ascii_alphabetic());
+        if !normalized.eq_ignore_ascii_case("match") && !normalized.eq_ignore_ascii_case("matches")
         {
-            return Some(number);
+            continue;
+        }
+
+        let start = index.saturating_sub(2);
+        let end = (index + 2).min(tokens.len().saturating_sub(1));
+        for candidate in &tokens[start..=end] {
+            if let Ok(number) = candidate
+                .trim_matches(|ch: char| !ch.is_ascii_digit())
+                .parse::<usize>()
+            {
+                return Some(number);
+            }
         }
     }
 
@@ -297,6 +352,71 @@ mod tests {
             None,
         );
         assert_eq!(preview.as_deref(), Some("src/main.rs +1 -0"));
+    }
+
+    #[test]
+    fn extract_preview_for_apply_patch_uses_patch_headers() {
+        let preview = extract_preview(
+            "apply_patch",
+            r#"{"patchText":"*** Begin Patch\n*** Update File: src/main.rs\n@@\n-old\n+new\n*** End Patch"}"#,
+            None,
+        );
+        assert_eq!(preview.as_deref(), Some("update src/main.rs"));
+    }
+
+    #[test]
+    fn extract_preview_for_apply_patch_summarizes_multiple_operations() {
+        let preview = extract_preview(
+            "apply_patch",
+            r#"{"patchText":"*** Begin Patch\n*** Add File: src/new.rs\n+fn main() {}\n*** Update File: src/main.rs\n@@\n-old\n+new\n*** Delete File: src/old.rs\n*** End Patch"}"#,
+            None,
+        );
+        assert_eq!(preview.as_deref(), Some("3 files (+1 ~1 -1)"));
+    }
+
+    #[test]
+    fn extract_preview_for_grep_uses_numeric_count_with_match_signal() {
+        let preview = extract_preview("grep", r#"{"pattern":"TODO"}"#, Some("Found 12 matches"));
+        assert_eq!(preview.as_deref(), Some("pattern=\"TODO\" -> 12 matches"));
+    }
+
+    #[test]
+    fn extract_preview_for_grep_ignores_unrelated_numbers() {
+        let preview = extract_preview(
+            "grep",
+            r#"{"pattern":"TODO"}"#,
+            Some("error code 12\nnext line"),
+        );
+        assert_eq!(preview.as_deref(), Some("pattern=\"TODO\" -> 2 matches"));
+    }
+
+    #[test]
+    fn extract_preview_truncates_to_sixty_chars() {
+        let preview = extract_preview(
+            "agent",
+            r#"{"description":"abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijk"}"#,
+            None,
+        );
+        assert_eq!(
+            preview.as_deref(),
+            Some("abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefg…")
+        );
+    }
+
+    #[test]
+    fn extract_preview_falls_back_to_first_meaningful_string() {
+        let preview = extract_preview("unknown", r#"{"meta":{"title":"  hello preview  "}}"#, None);
+        assert_eq!(preview.as_deref(), Some("hello preview"));
+    }
+
+    #[test]
+    fn extract_preview_falls_back_to_first_output_line() {
+        let preview = extract_preview(
+            "unknown",
+            "{not-json}",
+            Some("\n  first line  \nsecond line"),
+        );
+        assert_eq!(preview.as_deref(), Some("first line"));
     }
 
     #[test]
