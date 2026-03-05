@@ -1,5 +1,6 @@
 use crate::models::ToolCallStatus;
 
+pub mod diff;
 pub mod generic;
 pub mod terminal;
 
