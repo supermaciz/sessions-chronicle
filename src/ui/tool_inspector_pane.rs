@@ -466,7 +466,7 @@ impl Component for ToolInspectorPane {
 
             ToolInspectorPaneMsg::Clear => {
                 self.selection = InspectorSelection::None;
-                self.load_state = LoadState::Idle;
+                clear_active_request(&mut self.active_request_id, &mut self.load_state);
                 self.tool_call = None;
                 self.subagent = None;
                 self.subagent_tools.clear();
@@ -570,11 +570,7 @@ impl Component for ToolInspectorPane {
                 subagent_result,
                 tools_result,
             } => {
-                let request_result = match (&subagent_result, &tools_result) {
-                    (Err(err), _) => Err(err.clone()),
-                    (_, Err(err)) => Err(err.clone()),
-                    _ => Ok(()),
-                };
+                let request_result = subagent_request_result(&subagent_result, &tools_result);
                 if apply_load_result(
                     self.active_request_id,
                     &mut self.load_state,
@@ -843,6 +839,29 @@ fn begin_loading_request(active_request_id: &mut u64, load_state: &mut LoadState
     *active_request_id
 }
 
+fn clear_active_request(active_request_id: &mut u64, load_state: &mut LoadState) {
+    *active_request_id = active_request_id.saturating_add(1);
+    *load_state = LoadState::Idle;
+}
+
+fn subagent_request_result(
+    subagent_result: &Result<Option<Subagent>, String>,
+    tools_result: &Result<Vec<ToolCall>, String>,
+) -> Result<(), String> {
+    if let Err(err) = subagent_result {
+        return Err(err.clone());
+    }
+
+    if let Err(err) = tools_result {
+        tracing::warn!(
+            "Subagent loaded but tools list failed; continuing with empty tools: {}",
+            err
+        );
+    }
+
+    Ok(())
+}
+
 fn apply_load_result(
     active_request_id: u64,
     load_state: &mut LoadState,
@@ -906,5 +925,25 @@ mod tests {
         let transition = apply_load_result(request_id, &mut state, current, Ok(()));
         assert!(transition.is_some());
         assert_eq!(state, LoadState::Ready);
+    }
+
+    #[test]
+    fn clear_invalidates_in_flight_request_results() {
+        let mut request_id = 0;
+        let mut state = LoadState::Idle;
+
+        let in_flight = begin_loading_request(&mut request_id, &mut state);
+        clear_active_request(&mut request_id, &mut state);
+
+        assert!(apply_load_result(request_id, &mut state, in_flight, Ok(())).is_none());
+        assert_eq!(state, LoadState::Idle);
+    }
+
+    #[test]
+    fn subagent_tools_failure_does_not_force_global_load_error() {
+        let state_result =
+            subagent_request_result(&Ok(None), &Err("tools fetch failed".to_string()));
+
+        assert_eq!(state_result, Ok(()));
     }
 }
