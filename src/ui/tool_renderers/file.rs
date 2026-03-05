@@ -5,7 +5,8 @@ use crate::ui::tool_renderers::RendererInit;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FileRenderedData {
     pub header: Option<String>,
-    pub body_text: Option<String>,
+    pub output_text: Option<String>,
+    pub error_text: Option<String>,
     pub status: ToolCallStatus,
     pub duration_ms: Option<i64>,
 }
@@ -31,11 +32,12 @@ impl FileRenderer {
 
         FileRenderedData {
             header,
-            body_text: self
+            output_text: self
                 .init
                 .output_text
                 .clone()
-                .or_else(|| self.init.error_text.clone()),
+                .filter(|text| !text.is_empty()),
+            error_text: self.init.error_text.clone().filter(|text| !text.is_empty()),
             status: self.init.status,
             duration_ms: self.init.duration_ms,
         }
@@ -122,5 +124,21 @@ mod tests {
 
         let rendered = FileRenderer::new(init).render_data();
         assert_eq!(rendered.header.as_deref(), Some("src/main.rs"));
+    }
+
+    #[test]
+    fn file_renderer_preserves_output_and_error_channels() {
+        let init = RendererInit {
+            tool_name: "Read".to_string(),
+            input_json: Some(r#"{"path":"src/main.rs"}"#.to_string()),
+            output_text: Some("fn main() {}".to_string()),
+            error_text: Some("permission denied".to_string()),
+            status: ToolCallStatus::Error,
+            duration_ms: Some(12),
+        };
+
+        let rendered = FileRenderer::new(init).render_data();
+        assert_eq!(rendered.output_text.as_deref(), Some("fn main() {}"));
+        assert_eq!(rendered.error_text.as_deref(), Some("permission denied"));
     }
 }

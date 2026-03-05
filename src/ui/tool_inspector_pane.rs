@@ -895,7 +895,9 @@ fn apply_renderer_stack(views: &RendererStackViews, tool_call: &ToolCall) {
         }
         RendererKind::Subagent => {
             let rendered = SubagentRenderer::new(init).render_data();
-            views.subagent_label.set_label(&rendered.summary_text);
+            views
+                .subagent_label
+                .set_label(&format_subagent_renderer_text(&rendered));
         }
         RendererKind::Generic => {
             let rendered = GenericRenderer::new(init).render_data();
@@ -925,11 +927,10 @@ fn format_generic_renderer_text(
         parts.push(format!("Input\n{input}"));
     }
     if let Some(output) = rendered.output.as_ref() {
-        match output {
-            OutputRenderPlan::PrettyJson(text) | OutputRenderPlan::Markdown(text) => {
-                parts.push(format!("Output\n{text}"));
-            }
-        }
+        parts.push(format!("Output\n{}", output_plan_text(output)));
+    }
+    if let Some(error) = rendered.error.as_ref() {
+        parts.push(format!("Error\n{}", output_plan_text(error)));
     }
 
     if parts.is_empty() {
@@ -946,8 +947,19 @@ fn format_terminal_renderer_text(
     if let Some(command) = rendered.command.as_deref() {
         parts.push(format!("$ {command}"));
     }
-    if let Some(display) = rendered.display_text.as_deref() {
-        parts.push(display.to_string());
+    if let Some(output) = rendered
+        .output_text
+        .as_deref()
+        .filter(|text| !text.is_empty())
+    {
+        parts.push(format!("Output\n{output}"));
+    }
+    if let Some(error) = rendered
+        .error_text
+        .as_deref()
+        .filter(|text| !text.is_empty())
+    {
+        parts.push(format!("Error\n{error}"));
     }
     if let Some(code) = rendered.exit_code {
         parts.push(format!("Exit code: {code}"));
@@ -990,8 +1002,11 @@ fn format_file_renderer_text(
     if let Some(header) = rendered.header.as_deref() {
         parts.push(header.to_string());
     }
-    if let Some(body) = rendered.body_text.as_deref() {
-        parts.push(body.to_string());
+    if let Some(output) = rendered.output_text.as_deref() {
+        parts.push(format!("Output\n{output}"));
+    }
+    if let Some(error) = rendered.error_text.as_deref() {
+        parts.push(format!("Error\n{error}"));
     }
 
     if parts.is_empty() {
@@ -1004,26 +1019,67 @@ fn format_file_renderer_text(
 fn format_results_renderer_text(
     rendered: &crate::ui::tool_renderers::results::ResultsRenderedData,
 ) -> String {
+    let mut parts = Vec::new();
+
     if !rendered.entries.is_empty() {
-        return rendered
-            .entries
-            .iter()
-            .map(|entry| match entry.line {
-                Some(line) if !entry.content.is_empty() => {
-                    format!("{}:{line}:{}", entry.path, entry.content)
-                }
-                Some(line) => format!("{}:{line}", entry.path),
-                None if !entry.content.is_empty() => format!("{}:{}", entry.path, entry.content),
-                None => entry.path.clone(),
-            })
-            .collect::<Vec<_>>()
-            .join("\n");
+        parts.push(
+            rendered
+                .entries
+                .iter()
+                .map(|entry| match entry.line {
+                    Some(line) if !entry.content.is_empty() => {
+                        format!("{}:{line}:{}", entry.path, entry.content)
+                    }
+                    Some(line) => format!("{}:{line}", entry.path),
+                    None if !entry.content.is_empty() => {
+                        format!("{}:{}", entry.path, entry.content)
+                    }
+                    None => entry.path.clone(),
+                })
+                .collect::<Vec<_>>()
+                .join("\n"),
+        );
+    } else if let Some(output) = rendered.output_text.as_deref() {
+        parts.push(format!("Output\n{output}"));
     }
 
-    rendered
-        .raw_text
-        .clone()
-        .unwrap_or_else(|| "No results available.".to_string())
+    if let Some(error) = rendered.error_text.as_deref() {
+        parts.push(format!("Error\n{error}"));
+    }
+
+    if !parts.is_empty() {
+        return parts.join("\n\n");
+    }
+
+    "No results available.".to_string()
+}
+
+fn format_subagent_renderer_text(
+    rendered: &crate::ui::tool_renderers::subagent::SubagentRenderedData,
+) -> String {
+    let mut parts = Vec::new();
+
+    if let Some(input) = rendered.input_text.as_deref() {
+        parts.push(format!("Input\n{input}"));
+    }
+    if let Some(result) = rendered.result_text.as_deref() {
+        parts.push(format!("Result\n{result}"));
+    }
+    if let Some(error) = rendered.error_text.as_deref() {
+        parts.push(format!("Error\n{error}"));
+    }
+
+    if parts.is_empty() {
+        "Subagent details are available in the dedicated subagent inspector view.".to_string()
+    } else {
+        parts.join("\n\n")
+    }
+}
+
+fn output_plan_text(plan: &OutputRenderPlan) -> &str {
+    match plan {
+        OutputRenderPlan::PrettyJson(text) | OutputRenderPlan::Markdown(text) => text,
+    }
 }
 
 fn begin_loading_request(active_request_id: &mut u64, load_state: &mut LoadState) -> u64 {
@@ -1091,6 +1147,11 @@ fn format_status_duration(status: ToolCallStatus, duration_ms: Option<i64>) -> S
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ui::tool_renderers::file::FileRenderedData;
+    use crate::ui::tool_renderers::generic::{GenericRenderedData, OutputRenderPlan};
+    use crate::ui::tool_renderers::results::ResultsRenderedData;
+    use crate::ui::tool_renderers::subagent::SubagentRenderedData;
+    use crate::ui::tool_renderers::terminal::TerminalRenderedData;
 
     #[test]
     fn stale_request_results_are_ignored() {
@@ -1138,5 +1199,68 @@ mod tests {
             subagent_request_result(&Ok(None), &Err("tools fetch failed".to_string()));
 
         assert_eq!(state_result, Ok(()));
+    }
+
+    #[test]
+    fn formatter_renders_output_and_error_sections_for_terminal() {
+        let rendered = TerminalRenderedData {
+            command: Some("cargo test".to_string()),
+            output_text: Some("done".to_string()),
+            error_text: Some("warn".to_string()),
+            display_text: Some("done".to_string()),
+            exit_code: Some(1),
+            is_non_zero_exit: true,
+            status: ToolCallStatus::Error,
+            duration_ms: None,
+        };
+
+        let text = format_terminal_renderer_text(&rendered);
+        assert!(text.contains("$ cargo test"));
+        assert!(text.contains("Output\ndone"));
+        assert!(text.contains("Error\nwarn"));
+    }
+
+    #[test]
+    fn formatter_renders_output_and_error_sections_for_generic_file_results() {
+        let generic_text = format_generic_renderer_text(&GenericRenderedData {
+            input_text: None,
+            output: Some(OutputRenderPlan::Markdown("ok".to_string())),
+            error: Some(OutputRenderPlan::Markdown("failed".to_string())),
+        });
+        assert!(generic_text.contains("Output\nok"));
+        assert!(generic_text.contains("Error\nfailed"));
+
+        let file_text = format_file_renderer_text(&FileRenderedData {
+            header: Some("src/main.rs".to_string()),
+            output_text: Some("fn main() {}".to_string()),
+            error_text: Some("permission denied".to_string()),
+            status: ToolCallStatus::Error,
+            duration_ms: None,
+        });
+        assert!(file_text.contains("Output\nfn main() {}"));
+        assert!(file_text.contains("Error\npermission denied"));
+
+        let results_text = format_results_renderer_text(&ResultsRenderedData {
+            entries: vec![],
+            output_text: Some("raw output".to_string()),
+            error_text: Some("raw error".to_string()),
+            status: ToolCallStatus::Error,
+            duration_ms: None,
+        });
+        assert!(results_text.contains("Output\nraw output"));
+        assert!(results_text.contains("Error\nraw error"));
+    }
+
+    #[test]
+    fn formatter_renders_subagent_input_and_result_error_channels() {
+        let text = format_subagent_renderer_text(&SubagentRenderedData {
+            input_text: Some("{\"prompt\":\"investigate\"}".to_string()),
+            result_text: Some("completed".to_string()),
+            error_text: Some("partial failure".to_string()),
+        });
+
+        assert!(text.contains("Input\n{\"prompt\":\"investigate\"}"));
+        assert!(text.contains("Result\ncompleted"));
+        assert!(text.contains("Error\npartial failure"));
     }
 }

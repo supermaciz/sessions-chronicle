@@ -15,6 +15,7 @@ pub enum OutputRenderPlan {
 pub struct GenericRenderedData {
     pub input_text: Option<String>,
     pub output: Option<OutputRenderPlan>,
+    pub error: Option<OutputRenderPlan>,
 }
 
 #[allow(dead_code)]
@@ -35,10 +36,20 @@ impl GenericRenderer {
             .init
             .output_text
             .as_deref()
-            .or(self.init.error_text.as_deref())
+            .filter(|text| !text.is_empty())
+            .map(output_render_plan_from_text);
+        let error = self
+            .init
+            .error_text
+            .as_deref()
+            .filter(|text| !text.is_empty())
             .map(output_render_plan_from_text);
 
-        GenericRenderedData { input_text, output }
+        GenericRenderedData {
+            input_text,
+            output,
+            error,
+        }
     }
 
     pub fn render_output_textview(&self) -> Option<gtk::TextView> {
@@ -159,8 +170,30 @@ mod tests {
     fn generic_output_falls_back_to_error_text_when_output_missing() {
         let renderer = GenericRenderer::new(init_with_data(None, None, Some("tool failed")));
 
+        assert_eq!(renderer.render_data().output, None);
         assert_eq!(
-            renderer.render_data().output,
+            renderer.render_data().error,
+            Some(OutputRenderPlan::Markdown("tool failed".to_string()))
+        );
+    }
+
+    #[test]
+    fn generic_output_preserves_output_and_error_channels() {
+        let renderer = GenericRenderer::new(init_with_data(
+            None,
+            Some("{\"ok\":true}"),
+            Some("tool failed"),
+        ));
+
+        let rendered = renderer.render_data();
+        assert_eq!(
+            rendered.output,
+            Some(OutputRenderPlan::PrettyJson(
+                "{\n  \"ok\": true\n}".to_string()
+            ))
+        );
+        assert_eq!(
+            rendered.error,
             Some(OutputRenderPlan::Markdown("tool failed".to_string()))
         );
     }

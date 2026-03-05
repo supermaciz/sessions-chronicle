@@ -182,4 +182,20 @@ mod tests {
             Some(1)
         );
     }
+
+    #[test]
+    fn terminal_renderer_preserves_output_and_error_channels() {
+        let init = RendererInit {
+            tool_name: "shell".to_string(),
+            input_json: Some("{\"cmd\":\"run\"}".to_string()),
+            output_text: Some("stdout".to_string()),
+            error_text: Some("stderr".to_string()),
+            status: ToolCallStatus::Error,
+            duration_ms: None,
+        };
+
+        let rendered = TerminalRenderer::new(init).render_data();
+        assert_eq!(rendered.output_text.as_deref(), Some("stdout"));
+        assert_eq!(rendered.error_text.as_deref(), Some("stderr"));
+    }
 }

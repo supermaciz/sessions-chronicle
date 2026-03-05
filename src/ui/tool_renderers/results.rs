@@ -13,7 +13,8 @@ pub struct ResultsEntry {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ResultsRenderedData {
     pub entries: Vec<ResultsEntry>,
-    pub raw_text: Option<String>,
+    pub output_text: Option<String>,
+    pub error_text: Option<String>,
     pub status: ToolCallStatus,
     pub duration_ms: Option<i64>,
 }
@@ -31,20 +32,22 @@ impl ResultsRenderer {
     }
 
     pub fn render_data(&self) -> ResultsRenderedData {
-        let raw_text = self
+        let output_text = self
             .init
             .output_text
             .clone()
-            .or_else(|| self.init.error_text.clone());
+            .filter(|text| !text.is_empty());
+        let error_text = self.init.error_text.clone().filter(|text| !text.is_empty());
         let parse_mode = ResultsParseMode::for_tool_name(&self.init.tool_name);
-        let entries = raw_text
+        let entries = output_text
             .as_deref()
             .map(|output| parse_results_lines_with_mode(output, parse_mode))
             .unwrap_or_default();
 
         ResultsRenderedData {
             entries,
-            raw_text,
+            output_text,
+            error_text,
             status: self.init.status,
             duration_ms: self.init.duration_ms,
         }
@@ -183,7 +186,7 @@ mod tests {
         let rendered = ResultsRenderer::new(init).render_data();
         assert!(rendered.entries.is_empty());
         assert_eq!(
-            rendered.raw_text.as_deref(),
+            rendered.output_text.as_deref(),
             Some("No matches found. Try another query.")
         );
     }
@@ -210,6 +213,33 @@ mod tests {
                 line: Some(8),
                 content: "valid".to_string(),
             }]
+        );
+    }
+
+    #[test]
+    fn results_renderer_preserves_output_and_error_channels() {
+        let init = RendererInit {
+            tool_name: "search".to_string(),
+            input_json: None,
+            output_text: Some("src/app.rs:8:valid".to_string()),
+            error_text: Some("warning: partial results".to_string()),
+            status: ToolCallStatus::Error,
+            duration_ms: None,
+        };
+
+        let rendered = ResultsRenderer::new(init).render_data();
+        assert_eq!(
+            rendered.entries,
+            vec![ResultsEntry {
+                path: "src/app.rs".to_string(),
+                line: Some(8),
+                content: "valid".to_string(),
+            }]
+        );
+        assert_eq!(rendered.output_text.as_deref(), Some("src/app.rs:8:valid"));
+        assert_eq!(
+            rendered.error_text.as_deref(),
+            Some("warning: partial results")
         );
     }
 }
