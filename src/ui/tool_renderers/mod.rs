@@ -1,7 +1,9 @@
 use crate::models::ToolCallStatus;
 
 pub mod diff;
+pub mod file;
 pub mod generic;
+pub mod results;
 pub mod terminal;
 
 #[allow(dead_code)]
