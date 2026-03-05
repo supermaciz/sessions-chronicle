@@ -21,6 +21,20 @@ Adopt **Proposal B (Specialized Views)** with a **component-based architecture**
    async data loading via `CommandOutput`.
 4. Do not add GtkSourceView in this phase.
 
+## Delivery Strategy (Phased)
+
+To reduce regression risk, delivery is split into incremental phases.
+
+- **Phase A (safety foundation)**: async loading migration, explicit inspector
+  load state, stale-result protection.
+- **Phase B (rendering architecture)**: renderer registry + `gtk::Stack`
+  switching + strict fallback behavior.
+- **Phase C (polish and depth)**: diff-quality improvements, richer inline
+  previews, and CSS refinements.
+
+Release gating requires Phase A and Phase B to pass. Phase C can ship
+incrementally if fallback quality remains acceptable.
+
 ## Scope
 
 In scope:
@@ -40,14 +54,15 @@ Out of scope:
 
 ## Parser Prerequisites
 
-The following parser gaps must be addressed before or during implementation for
-the design to function correctly:
+Parser work is explicitly prioritized so lower-impact metadata improvements do
+not block core inspector delivery.
 
-| Parser | Gap | Impact |
-|---|---|---|
-| Claude Code | `is_error` field on `tool_result` messages is not checked | Error tools shown as `Completed` instead of `Error`; error styling never triggers |
-| OpenCode | `state.time.start/end`, `state.title`, `state.metadata.exit` not extracted | `duration_ms` is always NULL; no exit code for Bash tools |
-| Codex CLI | Newer `response_item.function_call*` format not parsed | Recent Codex sessions have invisible tool calls |
+| Parser | Gap | Impact | Priority |
+|---|---|---|---|
+| Claude Code | `is_error` field on `tool_result` messages is not checked | Error tools shown as `Completed` instead of `Error`; error styling never triggers | **Blocking (Phase B)** |
+| Codex CLI | Newer `response_item.function_call*` format not parsed | Recent Codex sessions have invisible tool calls | **Blocking (Phase B)** |
+| OpenCode | `state.time.start/end` and `state.metadata.exit` not extracted | `duration_ms` is often NULL; no exit code badge for Bash tools | Important (Phase C / v1.1) |
+| OpenCode | `state.title` not extracted | Less contextual chip/header labeling | Nice-to-have (Phase C / v1.1) |
 
 These are targeted fixes to existing parser code, not a full parser redesign.
 
@@ -129,6 +144,8 @@ inner tools is preserved:
   (`resolve_renderer` + renderer components) to display the inner tool.
 - The existing `connect_popped` callback and `drill_page_pushed` tracking
   remain for back-button synchronization.
+- Drill-down state is isolated from overview state so reloads in one context do
+  not accidentally overwrite content in the other.
 
 ### 6) Data loading
 
@@ -141,6 +158,21 @@ inner tools is preserved:
 - This requires migrating `ToolInspectorPane` from `SimpleComponent` to
   `Component`.
 
+Load-state contract:
+
+- `Idle`: no active selection.
+- `Loading`: selection is known, async load is in flight.
+- `Ready`: data resolved and view can render normally.
+- `LoadError`: data load failed; show contextual error and retry affordance.
+
+Stale-result protection:
+
+- Each async request carries a monotonically increasing `request_id`.
+- `update_cmd()` applies output only if `request_id` equals current active
+  request.
+- Outdated responses are ignored, preventing race conditions during rapid
+  selection changes.
+
 ### 7) Transcript chip enrichment flow
 
 - Extend transcript row loading to include enough fields for preview extraction
@@ -150,8 +182,8 @@ inner tools is preserved:
 - Keep backwards compatibility by falling back to existing `summary` when no
   preview can be extracted.
 
-This is a parser-light-compatible design: parser changes are optional and not
-required for chip previews.
+Chip preview extraction remains parser-light: parser changes are not required to
+ship preview text because extraction happens in UI mapping.
 
 ## Renderer Registry Specification
 
@@ -166,6 +198,26 @@ required for chip previews.
 | `*` | GenericRenderer | `application-x-addon-symbolic` | raw input/output/error | Pretty JSON + markdown/plain fallback |
 
 Icons are used both in inline transcript chips and in the inspector header.
+
+## Renderer Contract and Degradation Rules
+
+Every renderer consumes the same `RendererInit` input and must tolerate missing
+or malformed fields.
+
+- Renderers must never panic on malformed payloads.
+- Missing required renderer-specific fields triggers a deterministic downgrade.
+- Final fallback is always `GenericRenderer`.
+
+Deterministic degradation examples:
+
+- `DiffRenderer` without valid `old_string/new_string` -> `FileRenderer` when
+  file/text context exists, else `GenericRenderer`.
+- `ResultsRenderer` without parseable query/matches -> `GenericRenderer`.
+- `TerminalRenderer` without command text -> output-focused terminal view,
+  else `GenericRenderer` if output is also unavailable.
+
+All render paths apply bounded initial content rendering to avoid UI freezes
+with very large outputs.
 
 ## Diff Rendering with `similar`
 
@@ -276,23 +328,30 @@ Colors must work with both light and dark GTK themes. Use `@` color references
 
 ## Testing and Verification Plan
 
-1. Unit tests
+1. Phase A verification (async safety)
+   - stale-result protection (`request_id`) ignores outdated command outputs.
+   - `Idle/Loading/Ready/LoadError` transitions are deterministic.
+   - loading failures surface retry-friendly UI state.
+
+2. Unit tests
    - `resolve_renderer` mappings and fallback.
    - `extract_preview` across Bash/Read/Edit/Grep/Agent plus malformed JSON,
      including truncation at 60 chars.
    - diff formatting helper for representative edit payloads using `similar`.
 
-2. Integration tests
+3. Integration tests
    - transcript mapping produces preview-rich tool chips.
    - inspector selects specialized renderer per tool and falls back safely.
    - error scenarios show error styling and sections correctly.
    - async data loading completes without blocking UI.
+   - drill-down navigation preserves state isolation from overview.
 
-3. Manual verification (fixtures)
+4. Manual verification (fixtures)
    - Run app with `--sessions-dir tests/fixtures`.
    - Verify Bash/Edit/Read/Grep/unknown-tool displays.
    - Verify narrow-window overlay behavior and F9 toggle.
    - Verify drill-down navigation for subagent inner tools.
+   - Rapidly switch selections while loading and confirm no stale flashback.
 
 ## Acceptance Criteria
 
@@ -301,10 +360,18 @@ Colors must work with both light and dark GTK themes. Use `@` color references
 - Inspector output is specialized for core tool families and remains readable
   for unknown tools.
 - No crashes or blank states on malformed/partial tool payloads.
-- Inspector data loads asynchronously (no GTK thread blocking).
+- Inspector data loads asynchronously with explicit
+  `Idle/Loading/Ready/LoadError` behavior.
+- Stale async responses never overwrite a newer selection.
 - Diff rendering uses the `similar` crate with Patience algorithm.
 - No DB migration required.
 - No GtkSourceView dependency required.
+
+Release gating:
+
+- Phase A and Phase B criteria must pass before declaring the feature complete.
+- Phase C enhancements are optional for the first merge if all fallback and
+  safety criteria are satisfied.
 
 ## Future Evolution (Non-blocking)
 
