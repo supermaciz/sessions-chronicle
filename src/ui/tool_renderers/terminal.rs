@@ -30,8 +30,12 @@ impl TerminalRenderer {
         let command = extract_command(self.init.input_json.as_deref());
         let output_text = self.init.output_text.clone();
         let error_text = self.init.error_text.clone();
-        let display_text = output_text.clone().or_else(|| error_text.clone());
-        let exit_code = infer_exit_code(output_text.as_deref(), error_text.as_deref());
+        let non_empty_output = output_text.as_deref().filter(|text| !text.is_empty());
+        let non_empty_error = error_text.as_deref().filter(|text| !text.is_empty());
+        let display_text = non_empty_output
+            .map(str::to_string)
+            .or_else(|| non_empty_error.map(str::to_string));
+        let exit_code = infer_exit_code(non_empty_output, non_empty_error);
 
         TerminalRenderedData {
             command,
@@ -76,7 +80,12 @@ pub fn infer_exit_code(output_text: Option<&str>, error_text: Option<&str>) -> O
 fn exit_code_from_text(text: &str) -> Option<i64> {
     let lower = text.to_ascii_lowercase();
 
-    for pattern in ["exit code", "exited with code"] {
+    for pattern in [
+        "exit code",
+        "exited with code",
+        "exit status",
+        "exited with status",
+    ] {
         if let Some(index) = lower.find(pattern) {
             let suffix = &text[index + pattern.len()..];
             if let Some(code) = first_integer(suffix) {
@@ -106,6 +115,7 @@ fn first_integer(text: &str) -> Option<i64> {
 #[cfg(test)]
 mod tests {
     use super::TerminalRenderer;
+    use super::infer_exit_code;
     use crate::models::ToolCallStatus;
     use crate::ui::tool_renderers::RendererInit;
 
@@ -142,5 +152,34 @@ mod tests {
 
         assert_eq!(rendered.exit_code, Some(17));
         assert!(rendered.is_non_zero_exit);
+    }
+
+    #[test]
+    fn terminal_renderer_falls_back_to_stderr_when_stdout_empty() {
+        let init = RendererInit {
+            tool_name: "shell".to_string(),
+            input_json: Some("{\"cmd\":\"false\"}".to_string()),
+            output_text: Some(String::new()),
+            error_text: Some("permission denied".to_string()),
+            status: ToolCallStatus::Error,
+            duration_ms: None,
+        };
+
+        let renderer = TerminalRenderer::new(init);
+        let rendered = renderer.render_data();
+
+        assert_eq!(rendered.display_text.as_deref(), Some("permission denied"));
+    }
+
+    #[test]
+    fn terminal_renderer_infer_exit_code_handles_exit_status_from_output_or_error() {
+        assert_eq!(
+            infer_exit_code(Some("command failed with exit status 1"), None),
+            Some(1)
+        );
+        assert_eq!(
+            infer_exit_code(None, Some("fatal: process exit status 1")),
+            Some(1)
+        );
     }
 }
