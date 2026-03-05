@@ -3,6 +3,7 @@ pub mod database;
 pub mod models;
 pub mod parsers;
 pub mod session_sources;
+pub mod ui;
 pub mod utils;
 
 // Re-export commonly used types
