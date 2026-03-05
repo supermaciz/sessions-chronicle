@@ -174,13 +174,13 @@
 }
 
 .inspector-error-section .inspector-section-heading {
-  color: #e01b24;
+  color: @error_color;
   opacity: 0.95;
 }
 
 .inspector-error-text {
-  border-left: 2px solid alpha(#e01b24, 0.75);
-  background-color: alpha(#e01b24, 0.08);
+  border-left: 2px solid alpha(@error_color, 0.75);
+  background-color: alpha(@error_color, 0.08);
 }
 
 /* Terminal renderer sections */
@@ -194,5 +194,5 @@
 }
 
 .terminal-exit-nonzero {
-  color: #e01b24;
+  color: @error_color;
 }

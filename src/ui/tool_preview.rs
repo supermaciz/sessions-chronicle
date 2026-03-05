@@ -247,8 +247,7 @@ fn infer_match_count(output_text: Option<&str>) -> Option<usize> {
         }
     }
 
-    let lines = text.lines().filter(|line| !line.trim().is_empty()).count();
-    if lines > 0 { Some(lines) } else { None }
+    None
 }
 
 fn first_meaningful_string(value: &Value) -> Option<String> {
@@ -381,13 +380,13 @@ mod tests {
     }
 
     #[test]
-    fn extract_preview_for_grep_ignores_unrelated_numbers() {
+    fn extract_preview_for_grep_without_count_signal_omits_matches() {
         let preview = extract_preview(
             "grep",
             r#"{"pattern":"TODO"}"#,
             Some("error code 12\nnext line"),
         );
-        assert_eq!(preview.as_deref(), Some("pattern=\"TODO\" -> 2 matches"));
+        assert_eq!(preview.as_deref(), Some("pattern=\"TODO\""));
     }
 
     #[test]

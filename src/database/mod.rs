@@ -437,7 +437,10 @@ pub fn load_transcript_items(
         "SELECT ti.item_index, ti.kind, ti.message_index, ti.tool_call_id, ti.subagent_id,
                 m.role, substr(m.content, 1, ?2) AS content_preview,
                 length(m.content) AS content_len, m.timestamp, m.model,
-                tc.tool_name, tc.status, tc.summary, tc.input_json, tc.output_text, tc.duration_ms,
+                tc.tool_name, tc.status, tc.summary,
+                substr(tc.input_json, 1, 512) AS input_json,
+                substr(tc.output_text, 1, 512) AS output_text,
+                tc.duration_ms,
                 sa.title AS subagent_title, sa.prompt AS subagent_prompt
          FROM transcript_items ti
          LEFT JOIN messages m ON ti.session_id = m.session_id
