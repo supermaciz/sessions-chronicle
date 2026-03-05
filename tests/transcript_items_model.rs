@@ -82,6 +82,44 @@ impl TempDatabase {
             )
             .expect("Failed to insert transcript item");
     }
+
+    fn insert_tool_call(
+        &self,
+        session_id: &str,
+        tool_call_id: &str,
+        input_json: &str,
+        output_text: &str,
+    ) {
+        self.connection
+            .execute(
+                "INSERT INTO tool_calls (id, session_id, tool_name, status, input_json, output_text)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                rusqlite::params![
+                    tool_call_id,
+                    session_id,
+                    "Bash",
+                    "completed",
+                    input_json,
+                    output_text,
+                ],
+            )
+            .expect("Failed to insert tool call");
+    }
+
+    fn insert_tool_call_transcript_item(
+        &self,
+        session_id: &str,
+        item_index: i64,
+        tool_call_id: &str,
+    ) {
+        self.connection
+            .execute(
+                "INSERT INTO transcript_items (session_id, item_index, kind, tool_call_id)
+                 VALUES (?1, ?2, ?3, ?4)",
+                rusqlite::params![session_id, item_index, "tool_call", tool_call_id],
+            )
+            .expect("Failed to insert tool call transcript item");
+    }
 }
 
 impl Drop for TempDatabase {
@@ -128,4 +166,23 @@ fn load_transcript_items_exposes_model_for_assistant_only() {
         items[1].model, None,
         "user message should have no model value"
     );
+}
+
+#[test]
+fn load_transcript_items_includes_tool_input_and_output() {
+    let db = TempDatabase::new();
+    let sid = "test-tool-payload-session";
+    db.insert_session(sid);
+
+    let input_json = r#"{"command":"cargo test"}"#;
+    let output_text = "Process completed";
+    db.insert_tool_call(sid, "tool_1", input_json, output_text);
+    db.insert_tool_call_transcript_item(sid, 0, "tool_1");
+
+    let items = load_transcript_items(&db.path, sid, 100, 0, 2000)
+        .expect("Failed to load transcript items");
+
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0].tool_input_json.as_deref(), Some(input_json));
+    assert_eq!(items[0].tool_output_text.as_deref(), Some(output_text));
 }
