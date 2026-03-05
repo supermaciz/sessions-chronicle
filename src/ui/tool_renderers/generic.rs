@@ -35,6 +35,7 @@ impl GenericRenderer {
             .init
             .output_text
             .as_deref()
+            .or(self.init.error_text.as_deref())
             .map(output_render_plan_from_text);
 
         GenericRenderedData { input_text, output }
@@ -92,12 +93,16 @@ mod tests {
     use crate::models::ToolCallStatus;
     use crate::ui::tool_renderers::RendererInit;
 
-    fn init_with_output(output_text: Option<&str>) -> RendererInit {
+    fn init_with_data(
+        input_json: Option<&str>,
+        output_text: Option<&str>,
+        error_text: Option<&str>,
+    ) -> RendererInit {
         RendererInit {
             tool_name: "unknown".to_string(),
-            input_json: None,
+            input_json: input_json.map(str::to_string),
             output_text: output_text.map(str::to_string),
-            error_text: None,
+            error_text: error_text.map(str::to_string),
             status: ToolCallStatus::Completed,
             duration_ms: None,
         }
@@ -112,12 +117,51 @@ mod tests {
 
     #[test]
     fn generic_output_uses_markdown_for_non_json_text() {
-        let renderer = GenericRenderer::new(init_with_output(Some("**done**")));
+        let renderer = GenericRenderer::new(init_with_data(None, Some("**done**"), None));
         let rendered = renderer.render_data();
 
         assert_eq!(
             rendered.output,
             Some(OutputRenderPlan::Markdown("**done**".to_string()))
+        );
+    }
+
+    #[test]
+    fn generic_input_invalid_json_passthrough_unchanged() {
+        let raw = "{not valid json";
+        let renderer = GenericRenderer::new(init_with_data(Some(raw), None, None));
+        let rendered = renderer.render_data();
+
+        assert_eq!(rendered.input_text, Some(raw.to_string()));
+    }
+
+    #[test]
+    fn generic_output_json_uses_pretty_print_path() {
+        let renderer = GenericRenderer::new(init_with_data(None, Some("{\"ok\":true}"), None));
+        let rendered = renderer.render_data();
+
+        assert_eq!(
+            rendered.output,
+            Some(OutputRenderPlan::PrettyJson(
+                "{\n  \"ok\": true\n}".to_string()
+            ))
+        );
+    }
+
+    #[test]
+    fn generic_output_none_when_output_and_error_missing() {
+        let renderer = GenericRenderer::new(init_with_data(None, None, None));
+
+        assert_eq!(renderer.render_data().output, None);
+    }
+
+    #[test]
+    fn generic_output_falls_back_to_error_text_when_output_missing() {
+        let renderer = GenericRenderer::new(init_with_data(None, None, Some("tool failed")));
+
+        assert_eq!(
+            renderer.render_data().output,
+            Some(OutputRenderPlan::Markdown("tool failed".to_string()))
         );
     }
 }
