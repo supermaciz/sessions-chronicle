@@ -1,0 +1,271 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 950" font-family="Cantarell, -apple-system, sans-serif">
+  <title>Proposal B — Specialized Views (per-tool rendering)</title>
+  <defs>
+    <filter id="cardShadowB">
+      <feDropShadow dx="0" dy="1" stdDeviation="2" flood-opacity="0.08"/>
+    </filter>
+    <filter id="paneShadowB">
+      <feDropShadow dx="-1" dy="0" stdDeviation="4" flood-opacity="0.12"/>
+    </filter>
+    <filter id="innerShadow">
+      <feOffset dx="0" dy="1"/>
+      <feGaussianBlur stdDeviation="1"/>
+      <feComposite operator="out" in="SourceGraphic"/>
+      <feComponentTransfer><feFuncA type="linear" slope="0.1"/></feComponentTransfer>
+      <feBlend in="SourceGraphic"/>
+    </filter>
+  </defs>
+
+  <!-- Background -->
+  <rect width="1200" height="950" fill="#fafafa"/>
+
+  <!-- ═══════════════════════════════════════════════════════════════════════ -->
+  <!--  HEADER BAR                                                           -->
+  <!-- ═══════════════════════════════════════════════════════════════════════ -->
+  <rect width="1200" height="47" fill="#f6f5f4" stroke="#d5d3d1" stroke-width="1"/>
+  <text x="20" y="30" font-size="14" font-weight="700" fill="#1e1e1e">Session Detail</text>
+  <text x="530" y="30" font-size="13" fill="#77767b" text-anchor="middle">opencode — 2026-03-04 09:15</text>
+  <!-- Inspector toggle -->
+  <rect x="1140" y="10" width="46" height="28" rx="6" fill="#3584e4" opacity="0.15" stroke="#3584e4" stroke-width="1.5"/>
+  <text x="1163" y="29" font-size="11" fill="#3584e4" text-anchor="middle" font-weight="600">F9</text>
+
+  <!-- ═══════════════════════════════════════════════════════════════════════ -->
+  <!--  LEFT PANE — Transcript (~58%)                                        -->
+  <!-- ═══════════════════════════════════════════════════════════════════════ -->
+
+  <!-- Divider -->
+  <line x1="690" y1="47" x2="690" y2="950" stroke="#d5d3d1" stroke-width="1"/>
+
+  <!-- ── User message ──────────────────────────────────────────────────── -->
+  <rect x="16" y="63" width="658" height="48" rx="10" fill="#ffffff" filter="url(#cardShadowB)"/>
+  <rect x="16" y="63" width="4" height="48" rx="2" fill="#3584e4"/>
+  <text x="32" y="82" font-size="10" font-weight="700" fill="#3584e4" letter-spacing="0.5">USER</text>
+  <text x="32" y="99" font-size="13" fill="#1e1e1e">Find all files containing "parse_tool_call" and fix the error handling</text>
+
+  <!-- ── Assistant ─────────────────────────────────────────────────────── -->
+  <rect x="16" y="123" width="658" height="36" rx="10" fill="#ffffff" filter="url(#cardShadowB)"/>
+  <rect x="16" y="123" width="4" height="36" rx="2" fill="#26a269"/>
+  <text x="32" y="142" font-size="10" font-weight="700" fill="#26a269" letter-spacing="0.5">ASSISTANT</text>
+  <text x="32" y="150" font-size="13" fill="#1e1e1e"></text>
+
+  <!-- ════════════════════════════════════════════════════════════════════ -->
+  <!--  ENRICHED CHIPS — with contextual previews                         -->
+  <!-- ════════════════════════════════════════════════════════════════════ -->
+
+  <!-- ── Chip: Grep (with match count) ─────────────────────────────────── -->
+  <rect x="16" y="171" width="658" height="62" rx="10" fill="#ffffff" filter="url(#cardShadowB)"/>
+  <rect x="16" y="171" width="4" height="62" rx="2" fill="#e66100"/>
+  <!-- Icon -->
+  <rect x="36" y="181" width="32" height="32" rx="16" fill="#fff3e0"/>
+  <text x="52" y="202" font-size="14" text-anchor="middle" fill="#e66100">🔍</text>
+  <!-- Name + preview -->
+  <text x="78" y="196" font-size="13" font-weight="600" fill="#1e1e1e">Grep</text>
+  <text x="78" y="214" font-size="11" fill="#77767b" font-family="Source Code Pro, monospace">pattern="parse_tool_call" → 4 matches in 3 files</text>
+  <!-- Status -->
+  <rect x="574" y="189" width="52" height="20" rx="10" fill="#daf5e7"/>
+  <text x="600" y="203" font-size="10" font-weight="600" fill="#26a269" text-anchor="middle">done</text>
+  <text x="636" y="203" font-size="11" fill="#9a9996">120ms</text>
+
+  <!-- ── Chip: Read (with line range) ──────────────────────────────────── -->
+  <rect x="16" y="245" width="658" height="62" rx="10" fill="#ffffff" filter="url(#cardShadowB)"/>
+  <rect x="16" y="245" width="4" height="62" rx="2" fill="#e66100"/>
+  <rect x="36" y="255" width="32" height="32" rx="16" fill="#fff3e0"/>
+  <text x="52" y="276" font-size="14" text-anchor="middle" fill="#e66100">📄</text>
+  <text x="78" y="270" font-size="13" font-weight="600" fill="#1e1e1e">Read</text>
+  <text x="78" y="288" font-size="11" fill="#77767b" font-family="Source Code Pro, monospace">src/parsers/claude_code.rs:42-80  (39 lines)</text>
+  <rect x="574" y="263" width="52" height="20" rx="10" fill="#daf5e7"/>
+  <text x="600" y="277" font-size="10" font-weight="600" fill="#26a269" text-anchor="middle">done</text>
+  <text x="636" y="277" font-size="11" fill="#9a9996">8ms</text>
+
+  <!-- ── Chip: Edit (SELECTED — orange highlight) ──────────────────────── -->
+  <rect x="16" y="319" width="658" height="62" rx="10" fill="#fff8f0" stroke="#e66100" stroke-width="1.5" filter="url(#cardShadowB)"/>
+  <rect x="16" y="319" width="4" height="62" rx="2" fill="#e66100"/>
+  <rect x="36" y="329" width="32" height="32" rx="16" fill="#fde3c8"/>
+  <text x="52" y="350" font-size="14" text-anchor="middle" fill="#c55700">✏️</text>
+  <text x="78" y="344" font-size="13" font-weight="600" fill="#1e1e1e">Edit</text>
+  <text x="78" y="362" font-size="11" fill="#77767b" font-family="Source Code Pro, monospace">src/parsers/claude_code.rs  +5 −2</text>
+  <rect x="574" y="337" width="52" height="20" rx="10" fill="#daf5e7"/>
+  <text x="600" y="351" font-size="10" font-weight="600" fill="#26a269" text-anchor="middle">done</text>
+  <text x="636" y="351" font-size="11" fill="#9a9996">15ms</text>
+
+  <!-- ── Chip: Bash (with command + exit code) ─────────────────────────── -->
+  <rect x="16" y="393" width="658" height="62" rx="10" fill="#ffffff" filter="url(#cardShadowB)"/>
+  <rect x="16" y="393" width="4" height="62" rx="2" fill="#e66100"/>
+  <rect x="36" y="403" width="32" height="32" rx="16" fill="#fff3e0"/>
+  <text x="52" y="423" font-size="12" text-anchor="middle" fill="#e66100" font-family="Source Code Pro, monospace" font-weight="700">$</text>
+  <text x="78" y="418" font-size="13" font-weight="600" fill="#1e1e1e">Bash</text>
+  <text x="78" y="436" font-size="11" fill="#77767b" font-family="Source Code Pro, monospace">cargo test --all --no-fail-fast</text>
+  <rect x="540" y="411" width="30" height="20" rx="10" fill="#f0f0f0"/>
+  <text x="555" y="425" font-size="10" font-weight="600" fill="#77767b" text-anchor="middle">⇥0</text>
+  <rect x="574" y="411" width="52" height="20" rx="10" fill="#daf5e7"/>
+  <text x="600" y="425" font-size="10" font-weight="600" fill="#26a269" text-anchor="middle">done</text>
+  <text x="636" y="425" font-size="11" fill="#9a9996">14.2s</text>
+
+  <!-- ── Chip: Bash (ERROR state) ──────────────────────────────────────── -->
+  <rect x="16" y="467" width="658" height="62" rx="10" fill="#ffffff" filter="url(#cardShadowB)"/>
+  <rect x="16" y="467" width="4" height="62" rx="2" fill="#e01b24"/>
+  <rect x="36" y="477" width="32" height="32" rx="16" fill="#fce8e8"/>
+  <text x="52" y="497" font-size="12" text-anchor="middle" fill="#e01b24" font-family="Source Code Pro, monospace" font-weight="700">$</text>
+  <text x="78" y="492" font-size="13" font-weight="600" fill="#1e1e1e">Bash</text>
+  <text x="78" y="510" font-size="11" fill="#e01b24" font-family="Source Code Pro, monospace">cargo clippy — exit 1</text>
+  <rect x="540" y="485" width="30" height="20" rx="10" fill="#fce8e8"/>
+  <text x="555" y="499" font-size="10" font-weight="600" fill="#e01b24" text-anchor="middle">⇥1</text>
+  <rect x="574" y="485" width="52" height="20" rx="10" fill="#fce8e8"/>
+  <text x="600" y="499" font-size="10" font-weight="600" fill="#e01b24" text-anchor="middle">error</text>
+  <text x="636" y="499" font-size="11" fill="#9a9996">2.1s</text>
+
+  <!-- ═══════════════════════════════════════════════════════════════════════ -->
+  <!--  RIGHT PANE — Specialized Edit View                                   -->
+  <!-- ═══════════════════════════════════════════════════════════════════════ -->
+  <rect x="691" y="47" width="509" height="903" fill="#fafafa" filter="url(#paneShadowB)"/>
+
+  <!-- Pane header with breadcrumb -->
+  <rect x="691" y="47" width="509" height="44" fill="#fdf6ee"/>
+  <line x1="691" y1="91" x2="1200" y2="91" stroke="#e8ddd0" stroke-width="1"/>
+
+  <!-- Breadcrumb: tool type + file -->
+  <rect x="707" y="56" width="22" height="22" rx="4" fill="#fff3e0"/>
+  <text x="718" y="72" font-size="12" text-anchor="middle" fill="#e66100">✏️</text>
+  <text x="739" y="74" font-size="14" font-weight="700" fill="#1e1e1e">Edit</text>
+  <text x="776" y="74" font-size="12" fill="#9a9996">·</text>
+  <text x="790" y="74" font-size="12" fill="#77767b" font-family="Source Code Pro, monospace">src/parsers/claude_code.rs</text>
+  <!-- Status + duration -->
+  <rect x="1070" y="58" width="52" height="20" rx="10" fill="#daf5e7"/>
+  <text x="1096" y="72" font-size="10" font-weight="600" fill="#26a269" text-anchor="middle">done</text>
+  <text x="1132" y="72" font-size="11" fill="#9a9996">15ms</text>
+  <!-- Close -->
+  <text x="1180" y="74" font-size="14" fill="#77767b" text-anchor="middle">✕</text>
+
+  <!-- ── DIFF VIEW (specialized for Edit) ─────────────────────────────── -->
+  <text x="707" y="116" font-size="10" font-weight="700" fill="#77767b" letter-spacing="0.8">DIFF</text>
+
+  <!-- Diff stats bar -->
+  <rect x="700" y="124" width="490" height="28" rx="6" fill="#f6f5f4"/>
+  <text x="716" y="142" font-size="11" fill="#77767b" font-family="Source Code Pro, monospace">src/parsers/claude_code.rs</text>
+  <rect x="1060" y="130" width="14" height="14" rx="2" fill="#26a269"/>
+  <text x="1080" y="142" font-size="11" fill="#26a269">+5</text>
+  <rect x="1100" y="130" width="14" height="14" rx="2" fill="#e01b24"/>
+  <text x="1120" y="142" font-size="11" fill="#e01b24">−2</text>
+
+  <!-- Unified diff -->
+  <rect x="700" y="158" width="490" height="260" rx="8" fill="#2d2d2d"/>
+  <!-- Header -->
+  <rect x="700" y="158" width="490" height="24" rx="8" fill="#383838"/>
+  <text x="716" y="174" font-size="11" fill="#9a9996" font-family="Source Code Pro, monospace">@@ -42,8 +42,11 @@ fn parse_tool_call</text>
+
+  <!-- Context lines -->
+  <text x="716" y="200" font-size="11" fill="#b0b0b0" font-family="Source Code Pro, monospace"> 42 │ <tspan fill="#c678dd">fn</tspan> <tspan fill="#61afef">parse_tool_call</tspan>(<tspan fill="#e5c07b">block</tspan>: &amp;<tspan fill="#e5c07b">Value</tspan>) -&gt; <tspan fill="#e5c07b">Result</tspan>&lt;..&gt; {</text>
+  <text x="716" y="218" font-size="11" fill="#b0b0b0" font-family="Source Code Pro, monospace"> 43 │     <tspan fill="#c678dd">let</tspan> name = block[<tspan fill="#98c379">"name"</tspan>]</text>
+
+  <!-- Deleted lines (red background) -->
+  <rect x="700" y="224" width="490" height="36" fill="#3d1e1e" opacity="0.6"/>
+  <text x="716" y="242" font-size="11" fill="#e06c75" font-family="Source Code Pro, monospace">-44 │         .<tspan fill="#61afef">as_str</tspan>()</text>
+  <text x="716" y="258" font-size="11" fill="#e06c75" font-family="Source Code Pro, monospace">-45 │         .<tspan fill="#61afef">unwrap</tspan>();</text>
+
+  <!-- Added lines (green background) -->
+  <rect x="700" y="262" width="490" height="72" fill="#1e3d1e" opacity="0.6"/>
+  <text x="716" y="280" font-size="11" fill="#98c379" font-family="Source Code Pro, monospace">+44 │         .<tspan fill="#61afef">as_str</tspan>()</text>
+  <text x="716" y="298" font-size="11" fill="#98c379" font-family="Source Code Pro, monospace">+45 │         .<tspan fill="#61afef">ok_or_else</tspan>(|| {</text>
+  <text x="716" y="316" font-size="11" fill="#98c379" font-family="Source Code Pro, monospace">+46 │             <tspan fill="#e5c07b">ParseError</tspan>::<tspan fill="#61afef">missing_field</tspan>(<tspan fill="#98c379">"name"</tspan>)</text>
+  <text x="716" y="334" font-size="11" fill="#98c379" font-family="Source Code Pro, monospace">+47 │         })?;</text>
+
+  <!-- Context after -->
+  <text x="716" y="358" font-size="11" fill="#b0b0b0" font-family="Source Code Pro, monospace"> 48 │     <tspan fill="#c678dd">let</tspan> id = block[<tspan fill="#98c379">"id"</tspan>]</text>
+  <text x="716" y="376" font-size="11" fill="#b0b0b0" font-family="Source Code Pro, monospace"> 49 │         .<tspan fill="#61afef">as_str</tspan>()</text>
+  <text x="716" y="394" font-size="11" fill="#b0b0b0" font-family="Source Code Pro, monospace"> 50 │         .<tspan fill="#61afef">ok_or_else</tspan>(|| {</text>
+  <text x="716" y="412" font-size="11" fill="#b0b0b0" font-family="Source Code Pro, monospace"> 51 │ …</text>
+
+  <!-- ── INPUT JSON (collapsed) ────────────────────────────────────────── -->
+  <text x="707" y="448" font-size="10" font-weight="700" fill="#77767b" letter-spacing="0.8">INPUT (JSON)</text>
+
+  <rect x="700" y="456" width="490" height="36" rx="8" fill="#ffffff" filter="url(#cardShadowB)"/>
+  <text x="716" y="478" font-size="12" fill="#77767b" font-family="Source Code Pro, monospace">{ file_path: "src/parsers/claude_code.rs", old_string: "...", … }</text>
+  <text x="1170" y="478" font-size="14" fill="#77767b" text-anchor="middle">▸</text>
+
+  <!-- ═══════════════════════════════════════════════════════════════════════ -->
+  <!--  ADDITIONAL SPECIALIZED VIEWS (small examples below)                  -->
+  <!-- ═══════════════════════════════════════════════════════════════════════ -->
+
+  <!-- Divider -->
+  <line x1="700" y1="510" x2="1190" y2="510" stroke="#d5d3d1" stroke-dasharray="4"/>
+  <text x="945" y="530" font-size="10" font-weight="700" fill="#3584e4" text-anchor="middle" letter-spacing="0.8">OTHER SPECIALIZED VIEWS (shown when relevant tool selected)</text>
+
+  <!-- ── Mini: Bash terminal view ──────────────────────────────────────── -->
+  <rect x="700" y="544" width="235" height="120" rx="8" fill="#2d2d2d"/>
+  <rect x="700" y="544" width="235" height="22" rx="8" fill="#383838"/>
+  <text x="716" y="558" font-size="9" font-weight="600" fill="#77767b">BASH — exit 0  •  14.2s</text>
+  <text x="716" y="580" font-size="10" fill="#98c379" font-family="Source Code Pro, monospace">$ cargo test --all</text>
+  <text x="716" y="596" font-size="10" fill="#b0b0b0" font-family="Source Code Pro, monospace">   Compiling sc v0.5.0</text>
+  <text x="716" y="612" font-size="10" fill="#b0b0b0" font-family="Source Code Pro, monospace">     Running tests</text>
+  <text x="716" y="628" font-size="10" fill="#98c379" font-family="Source Code Pro, monospace">test result: ok.</text>
+  <text x="716" y="648" font-size="10" fill="#9a9996" font-family="Source Code Pro, monospace">42 passed; 0 failed</text>
+
+  <!-- ── Mini: Grep results view ───────────────────────────────────────── -->
+  <rect x="955" y="544" width="235" height="120" rx="8" fill="#ffffff" filter="url(#cardShadowB)"/>
+  <rect x="955" y="544" width="235" height="22" rx="8" fill="#f6f5f4"/>
+  <text x="971" y="558" font-size="9" font-weight="600" fill="#77767b">GREP — 4 matches in 3 files</text>
+  <!-- Result entries -->
+  <text x="971" y="580" font-size="10" font-family="Source Code Pro, monospace"><tspan fill="#3584e4">claude_code.rs</tspan><tspan fill="#9a9996">:42</tspan></text>
+  <text x="971" y="594" font-size="10" fill="#77767b" font-family="Source Code Pro, monospace">  fn <tspan fill="#e66100" font-weight="700">parse_tool_call</tspan>(…</text>
+  <text x="971" y="612" font-size="10" font-family="Source Code Pro, monospace"><tspan fill="#3584e4">codex.rs</tspan><tspan fill="#9a9996">:87</tspan></text>
+  <text x="971" y="626" font-size="10" fill="#77767b" font-family="Source Code Pro, monospace">  fn <tspan fill="#e66100" font-weight="700">parse_tool_call</tspan>(…</text>
+  <text x="971" y="648" font-size="10" font-family="Source Code Pro, monospace"><tspan fill="#3584e4">mistral_vibe.rs</tspan><tspan fill="#9a9996">:55, 112</tspan></text>
+
+  <!-- ── Mini: Read file view ──────────────────────────────────────────── -->
+  <rect x="700" y="678" width="235" height="120" rx="8" fill="#ffffff" filter="url(#cardShadowB)"/>
+  <rect x="700" y="678" width="235" height="22" rx="8" fill="#f6f5f4"/>
+  <text x="716" y="692" font-size="9" font-weight="600" fill="#77767b">READ — src/main.rs:1-20</text>
+  <!-- Line numbers + code -->
+  <rect x="700" y="700" width="28" height="98" fill="#f0f0f0"/>
+  <text x="722" y="716" font-size="10" fill="#9a9996" text-anchor="end" font-family="Source Code Pro, monospace">1</text>
+  <text x="722" y="730" font-size="10" fill="#9a9996" text-anchor="end" font-family="Source Code Pro, monospace">2</text>
+  <text x="722" y="744" font-size="10" fill="#9a9996" text-anchor="end" font-family="Source Code Pro, monospace">3</text>
+  <text x="722" y="758" font-size="10" fill="#9a9996" text-anchor="end" font-family="Source Code Pro, monospace">4</text>
+  <text x="722" y="772" font-size="10" fill="#9a9996" text-anchor="end" font-family="Source Code Pro, monospace">5</text>
+  <text x="736" y="716" font-size="10" fill="#1e1e1e" font-family="Source Code Pro, monospace"><tspan fill="#c678dd">use</tspan> std::fs;</text>
+  <text x="736" y="730" font-size="10" fill="#1e1e1e" font-family="Source Code Pro, monospace"><tspan fill="#c678dd">use</tspan> std::path::Path;</text>
+  <text x="736" y="744" font-size="10" fill="#1e1e1e" font-family="Source Code Pro, monospace"><tspan fill="#c678dd">use</tspan> std::io::Read;</text>
+  <text x="736" y="758" font-size="10" fill="#1e1e1e" font-family="Source Code Pro, monospace"></text>
+  <text x="736" y="772" font-size="10" fill="#1e1e1e" font-family="Source Code Pro, monospace"><tspan fill="#c678dd">fn</tspan> <tspan fill="#61afef">main</tspan>() {</text>
+
+  <!-- ── Mini: Generic/Unknown JSON view ───────────────────────────────── -->
+  <rect x="955" y="678" width="235" height="120" rx="8" fill="#ffffff" filter="url(#cardShadowB)"/>
+  <rect x="955" y="678" width="235" height="22" rx="8" fill="#f6f5f4"/>
+  <text x="971" y="692" font-size="9" font-weight="600" fill="#77767b">GENERIC — mcp__context7__query</text>
+  <text x="971" y="716" font-size="10" fill="#1e1e1e" font-family="Source Code Pro, monospace">{</text>
+  <text x="971" y="730" font-size="10" font-family="Source Code Pro, monospace">  <tspan fill="#c678dd">"libraryId"</tspan>: <tspan fill="#98c379">"/ver…"</tspan>,</text>
+  <text x="971" y="744" font-size="10" font-family="Source Code Pro, monospace">  <tspan fill="#c678dd">"query"</tspan>: <tspan fill="#98c379">"How to…"</tspan></text>
+  <text x="971" y="758" font-size="10" fill="#1e1e1e" font-family="Source Code Pro, monospace">}</text>
+  <line x1="963" y1="770" x2="1182" y2="770" stroke="#ebebeb"/>
+  <text x="971" y="786" font-size="10" fill="#9a9996" font-family="Source Code Pro, monospace">Output: 2,847 chars (mono)</text>
+
+  <!-- ═══════════════════════════════════════════════════════════════════════ -->
+  <!--  ANNOTATIONS                                                          -->
+  <!-- ═══════════════════════════════════════════════════════════════════════ -->
+  <rect x="16" y="544" width="658" height="90" rx="8" fill="#e8f0fe" stroke="#3584e4" stroke-width="1" stroke-dasharray="4"/>
+  <text x="32" y="564" font-size="11" font-weight="700" fill="#3584e4">DESIGN NOTES — Specialized Views</text>
+  <text x="32" y="582" font-size="11" fill="#1e1e1e">• Each tool type gets its own renderer: Bash→terminal, Edit→diff, Read→file, Grep→results</text>
+  <text x="32" y="598" font-size="11" fill="#1e1e1e">• Generic fallback: pretty JSON input + monospace output for unrecognized tools (MCP, etc.)</text>
+  <text x="32" y="614" font-size="11" fill="#1e1e1e">• Registry pattern: HashMap&lt;tool_name, Box&lt;dyn ToolRenderer&gt;&gt; — extensible for new tools</text>
+
+  <rect x="16" y="646" width="658" height="74" rx="8" fill="#e8f0fe" stroke="#3584e4" stroke-width="1" stroke-dasharray="4"/>
+  <text x="32" y="666" font-size="11" font-weight="700" fill="#3584e4">DESIGN NOTES — Enriched Chips</text>
+  <text x="32" y="684" font-size="11" fill="#1e1e1e">• Command/file preview extracted from input_json: Bash→"$ cmd", Read→"file:lines", Edit→"file +N −M"</text>
+  <text x="32" y="700" font-size="11" fill="#1e1e1e">• Error chips: red left border, red icon circle, "exit N" badge</text>
+  <text x="32" y="716" font-size="11" fill="#1e1e1e">• Grep chips: match count suffix (→ N matches)</text>
+
+  <rect x="16" y="732" width="658" height="58" rx="8" fill="#fef3e0" stroke="#e66100" stroke-width="1" stroke-dasharray="4"/>
+  <text x="32" y="752" font-size="11" font-weight="700" fill="#e66100">DIFF GENERATION</text>
+  <text x="32" y="770" font-size="11" fill="#1e1e1e">• For Edit: compute unified diff from old_string/new_string in input_json at render time</text>
+  <text x="32" y="786" font-size="11" fill="#1e1e1e">• No DB schema change needed — diff is derived from existing stored data</text>
+
+  <!-- Label -->
+  <text x="600" y="830" font-size="18" font-weight="700" fill="#1e1e1e" text-anchor="middle">Proposal B — Specialized Views (per-tool rendering)</text>
+  <text x="600" y="852" font-size="12" fill="#77767b" text-anchor="middle">Edit→diff • Bash→terminal • Read→file viewer • Grep→results list • Generic→JSON+mono fallback</text>
+
+  <!-- Tool type registry -->
+  <rect x="16" y="870" width="1168" height="68" rx="8" fill="#f6f5f4" stroke="#d5d3d1"/>
+  <text x="32" y="890" font-size="11" font-weight="700" fill="#1e1e1e">Tool Type Registry</text>
+  <text x="32" y="908" font-size="11" fill="#77767b" font-family="Source Code Pro, monospace">Bash/shell → TerminalView  |  Read → FileView  |  Edit → DiffView  |  Grep/Search → ResultsView</text>
+  <text x="32" y="924" font-size="11" fill="#77767b" font-family="Source Code Pro, monospace">Write → FileView  |  Glob → FileListView  |  Agent/Task → SubagentView  |  * → GenericJsonView</text>
+</svg>

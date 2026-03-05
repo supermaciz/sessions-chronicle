@@ -1,0 +1,283 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 950" font-family="Cantarell, -apple-system, sans-serif">
+  <title>Proposal C — Stacked Phase Cards (creative approach)</title>
+  <defs>
+    <filter id="cardShadowC">
+      <feDropShadow dx="0" dy="1" stdDeviation="2" flood-opacity="0.08"/>
+    </filter>
+    <filter id="elevatedShadow">
+      <feDropShadow dx="0" dy="2" stdDeviation="4" flood-opacity="0.14"/>
+    </filter>
+    <filter id="paneShadowC">
+      <feDropShadow dx="-2" dy="0" stdDeviation="5" flood-opacity="0.12"/>
+    </filter>
+    <linearGradient id="termGrad" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#353535"/>
+      <stop offset="100%" stop-color="#2a2a2a"/>
+    </linearGradient>
+    <linearGradient id="phaseGrad" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#ffffff"/>
+      <stop offset="100%" stop-color="#fcfcfc"/>
+    </linearGradient>
+    <!-- Fade-out gradient for truncation -->
+    <linearGradient id="fadeOut" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#2d2d2d" stop-opacity="0"/>
+      <stop offset="100%" stop-color="#2d2d2d" stop-opacity="1"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Background -->
+  <rect width="1200" height="950" fill="#fafafa"/>
+
+  <!-- ═══════════════════════════════════════════════════════════════════════ -->
+  <!--  HEADER BAR                                                           -->
+  <!-- ═══════════════════════════════════════════════════════════════════════ -->
+  <rect width="1200" height="47" fill="#f6f5f4" stroke="#d5d3d1" stroke-width="1"/>
+  <text x="20" y="30" font-size="14" font-weight="700" fill="#1e1e1e">Session Detail</text>
+  <text x="530" y="30" font-size="13" fill="#77767b" text-anchor="middle">claude-code — 2026-03-04 14:32</text>
+  <rect x="1140" y="10" width="46" height="28" rx="6" fill="#3584e4" opacity="0.15" stroke="#3584e4" stroke-width="1.5"/>
+  <text x="1163" y="29" font-size="11" fill="#3584e4" text-anchor="middle" font-weight="600">F9</text>
+
+  <!-- ═══════════════════════════════════════════════════════════════════════ -->
+  <!--  LEFT PANE — Transcript with pill chips (~55%)                        -->
+  <!-- ═══════════════════════════════════════════════════════════════════════ -->
+  <line x1="660" y1="47" x2="660" y2="950" stroke="#d5d3d1" stroke-width="1"/>
+
+  <!-- User message -->
+  <rect x="16" y="63" width="628" height="48" rx="10" fill="#ffffff" filter="url(#cardShadowC)"/>
+  <rect x="16" y="63" width="4" height="48" rx="2" fill="#3584e4"/>
+  <text x="32" y="82" font-size="10" font-weight="700" fill="#3584e4" letter-spacing="0.5">USER</text>
+  <text x="32" y="99" font-size="13" fill="#1e1e1e">Run the tests and show me the output of cargo test</text>
+
+  <!-- Assistant -->
+  <rect x="16" y="123" width="628" height="36" rx="10" fill="#ffffff" filter="url(#cardShadowC)"/>
+  <rect x="16" y="123" width="4" height="36" rx="2" fill="#26a269"/>
+  <text x="32" y="146" font-size="10" font-weight="700" fill="#26a269" letter-spacing="0.5">ASSISTANT</text>
+
+  <!-- ═══════════════════════════════════════════════════════════════ -->
+  <!--  CREATIVE CHIPS — Pill-shaped with hover tooltip preview      -->
+  <!-- ═══════════════════════════════════════════════════════════════ -->
+
+  <!-- Chip: Bash (pill shape, selected) -->
+  <rect x="32" y="175" width="280" height="38" rx="19" fill="#fff8f0" stroke="#e66100" stroke-width="1.5" filter="url(#cardShadowC)"/>
+  <rect x="42" y="184" width="20" height="20" rx="10" fill="#e66100"/>
+  <text x="52" y="198" font-size="10" text-anchor="middle" fill="#ffffff" font-family="Source Code Pro, monospace" font-weight="700">$</text>
+  <text x="72" y="198" font-size="12" font-weight="600" fill="#1e1e1e">Bash</text>
+  <text x="108" y="198" font-size="11" fill="#77767b" font-family="Source Code Pro, monospace">cargo test --all</text>
+  <rect x="265" y="184" width="36" height="20" rx="10" fill="#daf5e7"/>
+  <text x="283" y="198" font-size="9" font-weight="600" fill="#26a269" text-anchor="middle">14s</text>
+
+  <!-- Chip: Read (pill, not selected) -->
+  <rect x="322" y="175" width="220" height="38" rx="19" fill="#ffffff" filter="url(#cardShadowC)"/>
+  <rect x="332" y="184" width="20" height="20" rx="10" fill="#e66100"/>
+  <text x="342" y="198" font-size="10" text-anchor="middle" fill="#ffffff">📄</text>
+  <text x="362" y="198" font-size="12" font-weight="600" fill="#1e1e1e">Read</text>
+  <text x="398" y="198" font-size="11" fill="#77767b" font-family="Source Code Pro, monospace">Cargo.toml</text>
+  <rect x="501" y="184" width="30" height="20" rx="10" fill="#daf5e7"/>
+  <text x="516" y="198" font-size="9" font-weight="600" fill="#26a269" text-anchor="middle">5ms</text>
+
+  <!-- Second row of pills -->
+  <rect x="32" y="221" width="250" height="38" rx="19" fill="#ffffff" filter="url(#cardShadowC)"/>
+  <rect x="42" y="230" width="20" height="20" rx="10" fill="#e66100"/>
+  <text x="52" y="244" font-size="10" text-anchor="middle" fill="#ffffff">✏️</text>
+  <text x="72" y="244" font-size="12" font-weight="600" fill="#1e1e1e">Edit</text>
+  <text x="108" y="244" font-size="11" fill="#77767b" font-family="Source Code Pro, monospace">src/lib.rs +3 −1</text>
+  <rect x="243" y="230" width="30" height="20" rx="10" fill="#daf5e7"/>
+  <text x="258" y="244" font-size="9" font-weight="600" fill="#26a269" text-anchor="middle">8ms</text>
+
+  <!-- Subagent pill (purple) -->
+  <rect x="292" y="221" width="260" height="38" rx="19" fill="#ffffff" filter="url(#cardShadowC)"/>
+  <rect x="302" y="230" width="20" height="20" rx="10" fill="#813d9c"/>
+  <text x="312" y="244" font-size="10" text-anchor="middle" fill="#ffffff">🤖</text>
+  <text x="332" y="244" font-size="12" font-weight="600" fill="#1e1e1e">Agent</text>
+  <text x="374" y="244" font-size="11" fill="#77767b">Explore codebase</text>
+  <rect x="498" y="230" width="22" height="20" rx="10" fill="#f0ecfe"/>
+  <text x="509" y="244" font-size="9" font-weight="600" fill="#813d9c" text-anchor="middle">×3</text>
+  <rect x="524" y="230" width="18" height="20" rx="10" fill="#daf5e7"/>
+  <text x="533" y="244" font-size="9" font-weight="600" fill="#26a269" text-anchor="middle">✓</text>
+
+  <!-- Tooltip preview (shown on hover for the Bash pill) -->
+  <rect x="32" y="268" width="290" height="60" rx="8" fill="#333333" filter="url(#elevatedShadow)"/>
+  <!-- Tooltip arrow -->
+  <polygon points="80,268 90,258 100,268" fill="#333333"/>
+  <text x="48" y="288" font-size="10" fill="#98c379" font-family="Source Code Pro, monospace">$ cargo test --all --no-fail-fast</text>
+  <text x="48" y="304" font-size="10" fill="#b0b0b0" font-family="Source Code Pro, monospace">test result: ok. 42 passed</text>
+  <text x="48" y="318" font-size="10" fill="#77767b" font-family="Source Code Pro, monospace">exit 0 • 14.2s</text>
+
+  <!-- Assistant response -->
+  <rect x="16" y="340" width="628" height="60" rx="10" fill="#ffffff" filter="url(#cardShadowC)"/>
+  <rect x="16" y="340" width="4" height="60" rx="2" fill="#26a269"/>
+  <text x="32" y="359" font-size="10" font-weight="700" fill="#26a269" letter-spacing="0.5">ASSISTANT</text>
+  <text x="32" y="380" font-size="13" fill="#1e1e1e">All 42 tests pass. I've also fixed the unused import warning in src/lib.rs.</text>
+
+  <!-- ═══════════════════════════════════════════════════════════════════════ -->
+  <!--  RIGHT PANE — Stacked Phase Cards                                     -->
+  <!-- ═══════════════════════════════════════════════════════════════════════ -->
+  <rect x="661" y="47" width="539" height="903" fill="#f8f7f6" filter="url(#paneShadowC)"/>
+
+  <!-- Pane header -->
+  <rect x="661" y="47" width="539" height="44" fill="#fdf6ee"/>
+  <line x1="661" y1="91" x2="1200" y2="91" stroke="#e8ddd0" stroke-width="1"/>
+  <text x="681" y="74" font-size="14" font-weight="700" fill="#1e1e1e">Bash</text>
+  <text x="730" y="74" font-size="12" fill="#9a9996">·</text>
+  <text x="744" y="74" font-size="12" fill="#77767b" font-family="Source Code Pro, monospace">cargo test --all --no-fail-fast</text>
+  <text x="1180" y="74" font-size="14" fill="#77767b" text-anchor="middle">✕</text>
+
+  <!-- ════════════════════════════════════════════════════════════════ -->
+  <!--  PHASE 1: IDENTITY CARD                                        -->
+  <!-- ════════════════════════════════════════════════════════════════ -->
+  <rect x="677" y="107" width="507" height="68" rx="12" fill="url(#phaseGrad)" filter="url(#elevatedShadow)"/>
+  <!-- Phase indicator -->
+  <rect x="677" y="107" width="5" height="68" rx="2.5" fill="#e66100"/>
+  <!-- Tool type large icon -->
+  <rect x="697" y="119" width="44" height="44" rx="22" fill="#fff3e0"/>
+  <text x="719" y="148" font-size="22" text-anchor="middle" fill="#e66100" font-family="Source Code Pro, monospace" font-weight="700">$</text>
+  <!-- Tool info -->
+  <text x="755" y="135" font-size="16" font-weight="700" fill="#1e1e1e">Bash</text>
+  <text x="800" y="135" font-size="12" fill="#77767b">Shell command execution</text>
+  <!-- Status + Duration -->
+  <rect x="755" y="147" width="56" height="20" rx="10" fill="#daf5e7"/>
+  <text x="783" y="161" font-size="10" font-weight="600" fill="#26a269" text-anchor="middle">done</text>
+  <text x="820" y="161" font-size="11" fill="#9a9996">14.2s</text>
+  <!-- Agent source -->
+  <text x="880" y="161" font-size="10" fill="#9a9996">Claude Code</text>
+
+  <!-- Connection line between cards -->
+  <line x1="930" y1="175" x2="930" y2="191" stroke="#d5d3d1" stroke-width="2" stroke-dasharray="3"/>
+  <circle cx="930" cy="183" r="3" fill="#e66100"/>
+
+  <!-- ════════════════════════════════════════════════════════════════ -->
+  <!--  PHASE 2: INPUT CARD                                           -->
+  <!-- ════════════════════════════════════════════════════════════════ -->
+  <rect x="677" y="191" width="507" height="72" rx="12" fill="url(#phaseGrad)" filter="url(#cardShadowC)"/>
+  <rect x="677" y="191" width="5" height="72" rx="2.5" fill="#3584e4"/>
+
+  <text x="697" y="212" font-size="10" font-weight="700" fill="#3584e4" letter-spacing="0.8">COMMAND</text>
+
+  <!-- Terminal-style command display -->
+  <rect x="697" y="220" width="471" height="30" rx="6" fill="#f6f5f4"/>
+  <text x="713" y="240" font-size="12" fill="#1e1e1e" font-family="Source Code Pro, monospace"><tspan fill="#e66100" font-weight="700">$</tspan> cargo test --all --no-fail-fast</text>
+
+  <!-- Connection -->
+  <line x1="930" y1="263" x2="930" y2="279" stroke="#d5d3d1" stroke-width="2" stroke-dasharray="3"/>
+  <circle cx="930" cy="271" r="3" fill="#e66100"/>
+
+  <!-- ════════════════════════════════════════════════════════════════ -->
+  <!--  PHASE 3: OUTPUT CARD (the main event — elevated)              -->
+  <!-- ════════════════════════════════════════════════════════════════ -->
+  <rect x="677" y="279" width="507" height="310" rx="12" fill="url(#phaseGrad)" filter="url(#elevatedShadow)"/>
+  <rect x="677" y="279" width="5" height="310" rx="2.5" fill="#26a269"/>
+
+  <text x="697" y="300" font-size="10" font-weight="700" fill="#26a269" letter-spacing="0.8">OUTPUT</text>
+  <!-- Copy button -->
+  <rect x="1140" y="287" width="28" height="20" rx="4" fill="#f6f5f4"/>
+  <text x="1154" y="301" font-size="10" fill="#77767b" text-anchor="middle">📋</text>
+
+  <!-- Dark terminal block -->
+  <rect x="697" y="308" width="471" height="230" rx="8" fill="url(#termGrad)"/>
+  <!-- Terminal header bar -->
+  <rect x="697" y="308" width="471" height="24" rx="8" fill="#383838"/>
+  <circle cx="712" cy="320" r="4" fill="#e01b24"/>
+  <circle cx="726" cy="320" r="4" fill="#f5c211"/>
+  <circle cx="740" cy="320" r="4" fill="#26a269"/>
+  <text x="850" y="324" font-size="10" fill="#77767b" text-anchor="middle" font-family="Source Code Pro, monospace">cargo test --all --no-fail-fast</text>
+
+  <!-- Terminal content -->
+  <text x="713" y="352" font-size="11" fill="#98c379" font-family="Source Code Pro, monospace">   Compiling</text>
+  <text x="811" y="352" font-size="11" fill="#b0b0b0" font-family="Source Code Pro, monospace">sessions-chronicle v0.5.0</text>
+  <text x="713" y="370" font-size="11" fill="#b0b0b0" font-family="Source Code Pro, monospace">    Finished `test` profile [unoptimized + debuginfo]</text>
+  <text x="713" y="388" font-size="11" fill="#98c379" font-family="Source Code Pro, monospace">     Running</text>
+  <text x="800" y="388" font-size="11" fill="#b0b0b0" font-family="Source Code Pro, monospace">unittests src/lib.rs</text>
+  <text x="713" y="412" font-size="11" fill="#b0b0b0" font-family="Source Code Pro, monospace">running 42 tests</text>
+  <text x="713" y="430" font-size="11" fill="#98c379" font-family="Source Code Pro, monospace">test database::tests::test_index ... ok</text>
+  <text x="713" y="448" font-size="11" fill="#98c379" font-family="Source Code Pro, monospace">test parsers::claude_code::tests ... ok</text>
+  <text x="713" y="466" font-size="11" fill="#98c379" font-family="Source Code Pro, monospace">test parsers::codex::tests ... ok</text>
+  <text x="713" y="484" font-size="11" fill="#98c379" font-family="Source Code Pro, monospace">test parsers::mistral_vibe::tests ... ok</text>
+  <text x="713" y="508" font-size="11" fill="#b0b0b0" font-family="Source Code Pro, monospace">test result: <tspan fill="#98c379" font-weight="700">ok</tspan>. 42 passed; 0 failed; 0 ignored</text>
+
+  <!-- Truncation fade (if content is longer) -->
+  <!-- <rect x="697" y="510" width="471" height="28" rx="0" fill="url(#fadeOut)"/> -->
+
+  <!-- Connection -->
+  <line x1="930" y1="589" x2="930" y2="605" stroke="#d5d3d1" stroke-width="2" stroke-dasharray="3"/>
+  <circle cx="930" cy="597" r="3" fill="#e66100"/>
+
+  <!-- ════════════════════════════════════════════════════════════════ -->
+  <!--  PHASE 4: METADATA CARD                                        -->
+  <!-- ════════════════════════════════════════════════════════════════ -->
+  <rect x="677" y="605" width="507" height="64" rx="12" fill="url(#phaseGrad)" filter="url(#cardShadowC)"/>
+  <rect x="677" y="605" width="5" height="64" rx="2.5" fill="#9a9996"/>
+
+  <text x="697" y="626" font-size="10" font-weight="700" fill="#9a9996" letter-spacing="0.8">METADATA</text>
+
+  <!-- Metadata pills row -->
+  <rect x="697" y="636" width="72" height="22" rx="11" fill="#f6f5f4"/>
+  <text x="733" y="651" font-size="10" fill="#77767b" text-anchor="middle">exit: 0</text>
+
+  <rect x="779" y="636" width="85" height="22" rx="11" fill="#f6f5f4"/>
+  <text x="821" y="651" font-size="10" fill="#77767b" text-anchor="middle">14,231 ms</text>
+
+  <rect x="874" y="636" width="115" height="22" rx="11" fill="#f6f5f4"/>
+  <text x="931" y="651" font-size="10" fill="#77767b" text-anchor="middle">output: 1,248 chars</text>
+
+  <rect x="999" y="636" width="90" height="22" rx="11" fill="#f6f5f4"/>
+  <text x="1044" y="651" font-size="10" fill="#77767b" text-anchor="middle">no timeout</text>
+
+  <!-- ═══════════════════════════════════════════════════════════════════════ -->
+  <!--  ANNOTATIONS                                                          -->
+  <!-- ═══════════════════════════════════════════════════════════════════════ -->
+
+  <rect x="16" y="420" width="628" height="108" rx="8" fill="#e8f0fe" stroke="#3584e4" stroke-width="1" stroke-dasharray="4"/>
+  <text x="32" y="440" font-size="11" font-weight="700" fill="#3584e4">DESIGN NOTES — Stacked Phase Cards</text>
+  <text x="32" y="458" font-size="11" fill="#1e1e1e">• Each phase of tool execution is a separate card: Identity → Input → Output → Metadata</text>
+  <text x="32" y="474" font-size="11" fill="#1e1e1e">• Cards connected by dashed lines with dots — visual timeline of execution flow</text>
+  <text x="32" y="490" font-size="11" fill="#1e1e1e">• Active/main phase card gets elevated shadow — draws eye to the output</text>
+  <text x="32" y="506" font-size="11" fill="#1e1e1e">• Color-coded left borders: blue=input, green=output, orange=identity, grey=metadata</text>
+  <text x="32" y="522" font-size="11" fill="#1e1e1e">• Specialized rendering INSIDE the output card (terminal, diff, file, or mono text)</text>
+
+  <rect x="16" y="540" width="628" height="76" rx="8" fill="#e8f0fe" stroke="#3584e4" stroke-width="1" stroke-dasharray="4"/>
+  <text x="32" y="560" font-size="11" font-weight="700" fill="#3584e4">DESIGN NOTES — Pill Chips</text>
+  <text x="32" y="578" font-size="11" fill="#1e1e1e">• Compact pill shapes (rx=19) flow naturally like tags — wrapping across lines</text>
+  <text x="32" y="594" font-size="11" fill="#1e1e1e">• Colored circle icon prefix: orange for tools, purple for subagents</text>
+  <text x="32" y="610" font-size="11" fill="#1e1e1e">• Tooltip on hover shows 3-line preview (command, first output line, timing)</text>
+
+  <rect x="16" y="628" width="628" height="58" rx="8" fill="#fef3e0" stroke="#e66100" stroke-width="1" stroke-dasharray="4"/>
+  <text x="32" y="648" font-size="11" font-weight="700" fill="#e66100">GENERIC / UNRECOGNIZED FALLBACK</text>
+  <text x="32" y="666" font-size="11" fill="#1e1e1e">• Identity card shows raw tool_name; Input card shows pretty JSON; Output card shows mono text</text>
+  <text x="32" y="682" font-size="11" fill="#1e1e1e">• Metadata card always shows available fields (duration, output size, parser info)</text>
+
+  <!-- Label -->
+  <text x="600" y="720" font-size="18" font-weight="700" fill="#1e1e1e" text-anchor="middle">Proposal C — Stacked Phase Cards (creative)</text>
+  <text x="600" y="742" font-size="12" fill="#77767b" text-anchor="middle">Identity → Input → Output → Metadata cards • Phase timeline • Pill chips with tooltip preview</text>
+
+  <!-- Error state example -->
+  <rect x="677" y="690" width="507" height="100" rx="12" fill="#fff8f8" stroke="#e01b24" stroke-width="1" stroke-dasharray="4"/>
+  <text x="693" y="710" font-size="10" font-weight="700" fill="#e01b24" letter-spacing="0.8">ERROR STATE EXAMPLE</text>
+  <rect x="693" y="718" width="475" height="60" rx="8" fill="#ffffff" filter="url(#cardShadowC)"/>
+  <rect x="693" y="718" width="5" height="60" rx="2.5" fill="#e01b24"/>
+  <text x="713" y="738" font-size="10" font-weight="700" fill="#e01b24" letter-spacing="0.8">ERROR</text>
+  <rect x="713" y="746" width="439" height="24" rx="4" fill="#fce8e8"/>
+  <text x="729" y="762" font-size="11" fill="#e01b24" font-family="Source Code Pro, monospace">error[E0433]: failed to resolve: use of undeclared crate `tokio`</text>
+
+  <!-- Scroll hint -->
+  <text x="930" y="820" font-size="11" fill="#9a9996" text-anchor="middle">↕ Scroll within each card independently</text>
+
+  <!-- Phase diagram -->
+  <rect x="677" y="840" width="507" height="50" rx="8" fill="#f6f5f4" stroke="#d5d3d1"/>
+  <text x="693" y="860" font-size="10" font-weight="700" fill="#1e1e1e">PHASE FLOW</text>
+  <!-- Phase boxes -->
+  <rect x="700" y="866" width="70" height="18" rx="4" fill="#fff3e0" stroke="#e66100" stroke-width="0.5"/>
+  <text x="735" y="878" font-size="9" fill="#e66100" text-anchor="middle">Identity</text>
+  <text x="780" y="878" font-size="11" fill="#d5d3d1">→</text>
+  <rect x="792" y="866" width="55" height="18" rx="4" fill="#e8f0fe" stroke="#3584e4" stroke-width="0.5"/>
+  <text x="819" y="878" font-size="9" fill="#3584e4" text-anchor="middle">Input</text>
+  <text x="857" y="878" font-size="11" fill="#d5d3d1">→</text>
+  <rect x="869" y="866" width="60" height="18" rx="4" fill="#daf5e7" stroke="#26a269" stroke-width="0.5"/>
+  <text x="899" y="878" font-size="9" fill="#26a269" text-anchor="middle">Output</text>
+  <text x="939" y="878" font-size="11" fill="#d5d3d1">→</text>
+  <rect x="951" y="866" width="55" height="18" rx="4" fill="#f6f5f4" stroke="#d5d3d1" stroke-width="0.5"/>
+  <text x="978" y="878" font-size="9" fill="#9a9996" text-anchor="middle">Meta</text>
+  <!-- Optional -->
+  <text x="1016" y="878" font-size="11" fill="#d5d3d1">→</text>
+  <rect x="1028" y="866" width="55" height="18" rx="4" fill="#fce8e8" stroke="#e01b24" stroke-width="0.5" stroke-dasharray="2"/>
+  <text x="1055" y="878" font-size="9" fill="#e01b24" text-anchor="middle">Error?</text>
+</svg>
