@@ -467,6 +467,9 @@ impl SimpleComponent for App {
         // Set up OverlaySplitView: sidebar = pane Stack, content = NavigationView
         widgets.overlay_split.set_sidebar(Some(&model.pane_stack));
         widgets.overlay_split.set_content(Some(&nav_view));
+        widgets.overlay_split.set_min_sidebar_width(360.0);
+        widgets.overlay_split.set_max_sidebar_width(720.0);
+        widgets.overlay_split.set_sidebar_width_fraction(0.4);
 
         // Wire notify::show-sidebar for bidirectional sync (gestures, collapse)
         let visibility_sender = sender.input_sender().clone();

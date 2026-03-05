@@ -3,6 +3,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use adw::prelude::*;
+use chrono::TimeZone;
 use relm4::{Component, ComponentParts, ComponentSender, RelmWidgetExt, adw, gtk};
 
 use crate::database::{load_subagent, load_tool_call, load_tool_calls_for_subagent};
@@ -83,6 +84,9 @@ pub struct ToolInspectorPane {
     // Tool-call detail widgets (inside "tool" stack page)
     tool_name_label: gtk::Label,
     tool_status_label: gtk::Label,
+    tool_metadata_label: gtk::Label,
+    tool_error_section: gtk::Box,
+    tool_error_label: gtk::Label,
     tool_renderer_views: RendererStackViews,
 
     // Subagent detail widgets (inside "subagent" stack page)
@@ -99,6 +103,9 @@ pub struct ToolInspectorPane {
     drill_page: adw::NavigationPage,
     drill_name_label: gtk::Label,
     drill_status_label: gtk::Label,
+    drill_metadata_label: gtk::Label,
+    drill_error_section: gtk::Box,
+    drill_error_label: gtk::Label,
     drill_renderer_views: RendererStackViews,
 
     // Interior-mutable flag: is drill_page currently pushed onto nav_view?
@@ -256,12 +263,18 @@ impl Component for ToolInspectorPane {
         tool_name_label.add_css_class("monospace");
 
         let tool_status_label = make_caption_label();
+        let tool_metadata_label = make_metadata_label();
+        let (tool_error_section, tool_error_label) = make_text_section("Error");
+        tool_error_section.add_css_class("inspector-error-section");
+        tool_error_label.add_css_class("inspector-error-text");
         let tool_renderer_views = make_renderer_stack_views();
 
         let tool_outer = gtk::Box::new(gtk::Orientation::Vertical, 12);
         tool_outer.set_margin_all(16);
         tool_outer.append(&tool_name_label);
         tool_outer.append(&tool_status_label);
+        tool_outer.append(&tool_metadata_label);
+        tool_outer.append(&tool_error_section);
         tool_outer.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
         tool_outer.append(&tool_renderer_views.stack);
 
@@ -322,12 +335,18 @@ impl Component for ToolInspectorPane {
         let drill_name_label = make_title_label();
         drill_name_label.add_css_class("monospace");
         let drill_status_label = make_caption_label();
+        let drill_metadata_label = make_metadata_label();
+        let (drill_error_section, drill_error_label) = make_text_section("Error");
+        drill_error_section.add_css_class("inspector-error-section");
+        drill_error_label.add_css_class("inspector-error-text");
         let drill_renderer_views = make_renderer_stack_views();
 
         let drill_outer = gtk::Box::new(gtk::Orientation::Vertical, 12);
         drill_outer.set_margin_all(16);
         drill_outer.append(&drill_name_label);
         drill_outer.append(&drill_status_label);
+        drill_outer.append(&drill_metadata_label);
+        drill_outer.append(&drill_error_section);
         drill_outer.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
         drill_outer.append(&drill_renderer_views.stack);
 
@@ -373,6 +392,9 @@ impl Component for ToolInspectorPane {
             error_label,
             tool_name_label,
             tool_status_label,
+            tool_metadata_label,
+            tool_error_section,
+            tool_error_label,
             tool_renderer_views,
             subagent_title_label,
             subagent_prompt_section,
@@ -384,6 +406,9 @@ impl Component for ToolInspectorPane {
             drill_page,
             drill_name_label,
             drill_status_label,
+            drill_metadata_label,
+            drill_error_section,
+            drill_error_label,
             drill_renderer_views,
             drill_page_pushed: Cell::new(false),
         };
@@ -662,6 +687,15 @@ impl Component for ToolInspectorPane {
             self.tool_name_label.set_label(&tc.tool_name);
             self.tool_status_label
                 .set_label(&format_status_duration(tc.status, tc.duration_ms));
+            let metadata_line = format_tool_metadata_line(tc);
+            apply_optional_line(&self.tool_metadata_label, metadata_line.as_deref());
+            let error_text = tc
+                .error_text
+                .as_deref()
+                .map(str::trim)
+                .filter(|text| !text.is_empty())
+                .or((tc.status == ToolCallStatus::Error).then_some("Tool reported an error."));
+            apply_optional_section(&self.tool_error_section, &self.tool_error_label, error_text);
             apply_renderer_stack(&self.tool_renderer_views, tc);
         }
 
@@ -724,6 +758,19 @@ impl Component for ToolInspectorPane {
             self.drill_name_label.set_label(&tc.tool_name);
             self.drill_status_label
                 .set_label(&format_status_duration(tc.status, tc.duration_ms));
+            let metadata_line = format_tool_metadata_line(tc);
+            apply_optional_line(&self.drill_metadata_label, metadata_line.as_deref());
+            let error_text = tc
+                .error_text
+                .as_deref()
+                .map(str::trim)
+                .filter(|text| !text.is_empty())
+                .or((tc.status == ToolCallStatus::Error).then_some("Tool reported an error."));
+            apply_optional_section(
+                &self.drill_error_section,
+                &self.drill_error_label,
+                error_text,
+            );
             apply_renderer_stack(&self.drill_renderer_views, tc);
 
             if !self.drill_page_pushed.get() {
@@ -754,6 +801,19 @@ fn make_caption_label() -> gtk::Label {
     label.add_css_class("dim-label");
     label.add_css_class("caption");
     label.set_halign(gtk::Align::Start);
+    label
+}
+
+fn make_metadata_label() -> gtk::Label {
+    let label = gtk::Label::new(None);
+    label.add_css_class("dim-label");
+    label.add_css_class("caption");
+    label.add_css_class("inspector-metadata-line");
+    label.set_halign(gtk::Align::Start);
+    label.set_xalign(0.0);
+    label.set_wrap(true);
+    label.set_wrap_mode(gtk::pango::WrapMode::WordChar);
+    label.set_visible(false);
     label
 }
 
@@ -860,6 +920,16 @@ fn apply_optional_section(section: &gtk::Box, label: &gtk::Label, text: Option<&
             section.set_visible(true);
         }
         _ => section.set_visible(false),
+    }
+}
+
+fn apply_optional_line(label: &gtk::Label, text: Option<&str>) {
+    match text {
+        Some(value) if !value.is_empty() => {
+            label.set_label(value);
+            label.set_visible(true);
+        }
+        _ => label.set_visible(false),
     }
 }
 
@@ -1144,6 +1214,40 @@ fn format_status_duration(status: ToolCallStatus, duration_ms: Option<i64>) -> S
     }
 }
 
+fn format_tool_metadata_line(tool_call: &ToolCall) -> Option<String> {
+    let mut parts = Vec::new();
+
+    if let Some(parser_call_id) = tool_call
+        .parser_call_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|text| !text.is_empty())
+    {
+        parts.push(format!("Call ID: {parser_call_id}"));
+    }
+
+    if let Some(started) = tool_call.started_at.and_then(format_unix_timestamp) {
+        parts.push(format!("Start: {started}"));
+    }
+
+    if let Some(ended) = tool_call.ended_at.and_then(format_unix_timestamp) {
+        parts.push(format!("End: {ended}"));
+    }
+
+    if parts.is_empty() {
+        None
+    } else {
+        Some(parts.join("  |  "))
+    }
+}
+
+fn format_unix_timestamp(timestamp: i64) -> Option<String> {
+    chrono::Utc
+        .timestamp_opt(timestamp, 0)
+        .single()
+        .map(|dt| dt.format("%Y-%m-%d %H:%M:%S UTC").to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1262,5 +1366,12 @@ mod tests {
         assert!(text.contains("Input\n{\"prompt\":\"investigate\"}"));
         assert!(text.contains("Result\ncompleted"));
         assert!(text.contains("Error\npartial failure"));
+    }
+
+    #[test]
+    fn format_status_duration_keeps_error_label_with_duration() {
+        let text = format_status_duration(ToolCallStatus::Error, Some(1200));
+        assert!(text.contains("Error"));
+        assert!(text.contains("1.2s"));
     }
 }
