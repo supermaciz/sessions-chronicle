@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use adw::prelude::*;
-use relm4::{ComponentParts, ComponentSender, RelmWidgetExt, SimpleComponent, adw, gtk};
+use relm4::{Component, ComponentParts, ComponentSender, RelmWidgetExt, adw, gtk};
 
 use crate::database::{load_subagent, load_tool_call, load_tool_calls_for_subagent};
 use crate::models::{Subagent, ToolCall, ToolCallStatus};
@@ -30,15 +30,27 @@ enum InspectorSelection {
     },
 }
 
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+enum LoadState {
+    #[default]
+    Idle,
+    Loading,
+    Ready,
+    LoadError(String),
+}
+
 // ── Component ─────────────────────────────────────────────────────────────────
 
 pub struct ToolInspectorPane {
     db_path: Arc<PathBuf>,
     selection: InspectorSelection,
+    load_state: LoadState,
+    active_request_id: u64,
     tool_call: Option<ToolCall>,
     subagent: Option<Subagent>,
     subagent_tools: Vec<ToolCall>,
     drilled_tool: Option<ToolCall>,
+    pending_drill_tool_id: Option<String>,
 
     // Sender for attaching to dynamically-created inner-tool row callbacks.
     sender: ComponentSender<ToolInspectorPane>,
@@ -48,6 +60,7 @@ pub struct ToolInspectorPane {
 
     // Overview content switcher: "empty" / "tool" / "subagent"
     content_stack: gtk::Stack,
+    error_label: gtk::Label,
 
     // Tool-call detail widgets (inside "tool" stack page)
     tool_name_label: gtk::Label,
@@ -108,13 +121,36 @@ pub enum ToolInspectorPaneOutput {
     OpenChildSession(String),
 }
 
-// ── SimpleComponent impl ──────────────────────────────────────────────────────
+#[derive(Debug)]
+pub enum ToolInspectorPaneCmd {
+    ToolCall {
+        request_id: u64,
+        session_id: String,
+        tool_call_id: String,
+        result: Result<Option<ToolCall>, String>,
+    },
+    Subagent {
+        request_id: u64,
+        session_id: String,
+        subagent_id: String,
+        subagent_result: Result<Option<Subagent>, String>,
+        tools_result: Result<Vec<ToolCall>, String>,
+    },
+    DrillTool {
+        session_id: String,
+        tool_call_id: String,
+        result: Result<Option<ToolCall>, String>,
+    },
+}
+
+// ── Component impl ────────────────────────────────────────────────────────────
 
 #[relm4::component(pub)]
-impl SimpleComponent for ToolInspectorPane {
+impl Component for ToolInspectorPane {
     type Init = Arc<PathBuf>;
     type Input = ToolInspectorPaneMsg;
     type Output = ToolInspectorPaneOutput;
+    type CommandOutput = ToolInspectorPaneCmd;
     type Widgets = ToolInspectorPaneWidgets;
 
     /// Minimal root widget — the real widget tree is built imperatively in init().
@@ -178,6 +214,34 @@ impl SimpleComponent for ToolInspectorPane {
         empty_label.set_justify(gtk::Justification::Center);
         empty_box.append(&empty_label);
         content_stack.add_named(&empty_box, Some("empty"));
+
+        // — Loading state ————————————————————————————————————————————————————
+        let loading_box = gtk::Box::new(gtk::Orientation::Vertical, 12);
+        loading_box.set_halign(gtk::Align::Center);
+        loading_box.set_valign(gtk::Align::Center);
+        loading_box.set_margin_all(24);
+        let spinner = gtk::Spinner::new();
+        spinner.start();
+        loading_box.append(&spinner);
+        let loading_label = gtk::Label::new(Some("Loading inspector details..."));
+        loading_label.add_css_class("dim-label");
+        loading_box.append(&loading_label);
+        content_stack.add_named(&loading_box, Some("loading"));
+
+        // — Load error state ——————————————————————————————————————————————————
+        let error_box = gtk::Box::new(gtk::Orientation::Vertical, 8);
+        error_box.set_halign(gtk::Align::Center);
+        error_box.set_valign(gtk::Align::Center);
+        error_box.set_margin_all(24);
+        let error_title = gtk::Label::new(Some("Failed to load inspector details"));
+        error_title.add_css_class("heading");
+        error_box.append(&error_title);
+        let error_label = gtk::Label::new(None);
+        error_label.add_css_class("dim-label");
+        error_label.set_wrap(true);
+        error_label.set_justify(gtk::Justification::Center);
+        error_box.append(&error_label);
+        content_stack.add_named(&error_box, Some("error"));
 
         // — Tool-call detail ——————————————————————————————————————————————————
         let tool_name_label = make_title_label();
@@ -298,13 +362,17 @@ impl SimpleComponent for ToolInspectorPane {
         let model = ToolInspectorPane {
             db_path,
             selection: InspectorSelection::None,
+            load_state: LoadState::Idle,
+            active_request_id: 0,
             tool_call: None,
             subagent: None,
             subagent_tools: Vec::new(),
             drilled_tool: None,
+            pending_drill_tool_id: None,
             sender: sender.clone(),
             nav_view,
             content_stack,
+            error_label,
             tool_name_label,
             tool_status_label,
             tool_input_section,
@@ -336,7 +404,7 @@ impl SimpleComponent for ToolInspectorPane {
         ComponentParts { model, widgets }
     }
 
-    fn update(&mut self, message: Self::Input, sender: ComponentSender<Self>) {
+    fn update(&mut self, message: Self::Input, sender: ComponentSender<Self>, _root: &Self::Root) {
         match message {
             ToolInspectorPaneMsg::SelectToolCall {
                 session_id,
@@ -346,11 +414,139 @@ impl SimpleComponent for ToolInspectorPane {
                     session_id: session_id.clone(),
                     tool_call_id: tool_call_id.clone(),
                 };
+                let request_id =
+                    begin_loading_request(&mut self.active_request_id, &mut self.load_state);
                 self.drilled_tool = None;
+                self.pending_drill_tool_id = None;
+                self.tool_call = None;
                 self.subagent = None;
                 self.subagent_tools.clear();
 
-                match load_tool_call(&self.db_path, &session_id, &tool_call_id) {
+                let db_path = self.db_path.clone();
+                sender.spawn_oneshot_command(move || ToolInspectorPaneCmd::ToolCall {
+                    request_id,
+                    session_id: session_id.clone(),
+                    tool_call_id: tool_call_id.clone(),
+                    result: load_tool_call(db_path.as_path(), &session_id, &tool_call_id)
+                        .map_err(|err| err.to_string()),
+                });
+            }
+
+            ToolInspectorPaneMsg::SelectSubagent {
+                session_id,
+                subagent_id,
+            } => {
+                self.selection = InspectorSelection::Subagent {
+                    session_id: session_id.clone(),
+                    subagent_id: subagent_id.clone(),
+                };
+                let request_id =
+                    begin_loading_request(&mut self.active_request_id, &mut self.load_state);
+                self.drilled_tool = None;
+                self.pending_drill_tool_id = None;
+                self.tool_call = None;
+                self.subagent = None;
+                self.subagent_tools.clear();
+
+                let db_path = self.db_path.clone();
+                sender.spawn_oneshot_command(move || ToolInspectorPaneCmd::Subagent {
+                    request_id,
+                    session_id: session_id.clone(),
+                    subagent_id: subagent_id.clone(),
+                    subagent_result: load_subagent(db_path.as_path(), &session_id, &subagent_id)
+                        .map_err(|err| err.to_string()),
+                    tools_result: load_tool_calls_for_subagent(
+                        db_path.as_path(),
+                        &session_id,
+                        &subagent_id,
+                    )
+                    .map_err(|err| err.to_string()),
+                });
+            }
+
+            ToolInspectorPaneMsg::Clear => {
+                self.selection = InspectorSelection::None;
+                self.load_state = LoadState::Idle;
+                self.tool_call = None;
+                self.subagent = None;
+                self.subagent_tools.clear();
+                self.drilled_tool = None;
+                self.pending_drill_tool_id = None;
+            }
+
+            ToolInspectorPaneMsg::DrillDownTool(tool_call_id) => {
+                // Prefer already-loaded subagent_tools cache; fall back to DB.
+                let cached = self
+                    .subagent_tools
+                    .iter()
+                    .find(|t| t.id == tool_call_id)
+                    .cloned();
+
+                if let Some(tc) = cached {
+                    self.drilled_tool = Some(tc);
+                    self.pending_drill_tool_id = None;
+                } else if let InspectorSelection::Subagent { ref session_id, .. } = self.selection {
+                    self.pending_drill_tool_id = Some(tool_call_id.clone());
+                    let selection_session_id = session_id.clone();
+                    let db_path = self.db_path.clone();
+                    sender.spawn_oneshot_command(move || ToolInspectorPaneCmd::DrillTool {
+                        session_id: selection_session_id.clone(),
+                        tool_call_id: tool_call_id.clone(),
+                        result: load_tool_call(
+                            db_path.as_path(),
+                            &selection_session_id,
+                            &tool_call_id,
+                        )
+                        .map_err(|err| err.to_string()),
+                    });
+                }
+            }
+
+            ToolInspectorPaneMsg::PopDrillDown => {
+                // Native back button already popped the page; sync model state.
+                self.drilled_tool = None;
+                self.pending_drill_tool_id = None;
+                self.drill_page_pushed.set(false);
+            }
+
+            ToolInspectorPaneMsg::OpenChildSession => {
+                if let Some(ref sa) = self.subagent
+                    && let Some(ref child_id) = sa.child_session_id
+                {
+                    sender
+                        .output(ToolInspectorPaneOutput::OpenChildSession(child_id.clone()))
+                        .ok();
+                }
+            }
+        }
+    }
+
+    fn update_cmd(
+        &mut self,
+        message: Self::CommandOutput,
+        _sender: ComponentSender<Self>,
+        _root: &Self::Root,
+    ) {
+        match message {
+            ToolInspectorPaneCmd::ToolCall {
+                request_id,
+                session_id,
+                tool_call_id,
+                result,
+            } => {
+                let request_result = result.as_ref().map(|_| ()).map_err(Clone::clone);
+                if apply_load_result(
+                    self.active_request_id,
+                    &mut self.load_state,
+                    request_id,
+                    request_result,
+                )
+                .is_none()
+                {
+                    return;
+                }
+
+                match result {
                     Ok(tc) => {
                         if tc.is_none() {
                             tracing::warn!(
@@ -367,19 +563,30 @@ impl SimpleComponent for ToolInspectorPane {
                     }
                 }
             }
-
-            ToolInspectorPaneMsg::SelectSubagent {
+            ToolInspectorPaneCmd::Subagent {
+                request_id,
                 session_id,
                 subagent_id,
+                subagent_result,
+                tools_result,
             } => {
-                self.selection = InspectorSelection::Subagent {
-                    session_id: session_id.clone(),
-                    subagent_id: subagent_id.clone(),
+                let request_result = match (&subagent_result, &tools_result) {
+                    (Err(err), _) => Err(err.clone()),
+                    (_, Err(err)) => Err(err.clone()),
+                    _ => Ok(()),
                 };
-                self.drilled_tool = None;
-                self.tool_call = None;
+                if apply_load_result(
+                    self.active_request_id,
+                    &mut self.load_state,
+                    request_id,
+                    request_result,
+                )
+                .is_none()
+                {
+                    return;
+                }
 
-                match load_subagent(&self.db_path, &session_id, &subagent_id) {
+                match subagent_result {
                     Ok(sa) => {
                         if sa.is_none() {
                             tracing::warn!(
@@ -396,7 +603,7 @@ impl SimpleComponent for ToolInspectorPane {
                     }
                 }
 
-                match load_tool_calls_for_subagent(&self.db_path, &session_id, &subagent_id) {
+                match tools_result {
                     Ok(tools) => self.subagent_tools = tools,
                     Err(err) => {
                         tracing::error!(
@@ -408,48 +615,31 @@ impl SimpleComponent for ToolInspectorPane {
                     }
                 }
             }
-
-            ToolInspectorPaneMsg::Clear => {
-                self.selection = InspectorSelection::None;
-                self.tool_call = None;
-                self.subagent = None;
-                self.subagent_tools.clear();
-                self.drilled_tool = None;
-            }
-
-            ToolInspectorPaneMsg::DrillDownTool(tool_call_id) => {
-                // Prefer already-loaded subagent_tools cache; fall back to DB.
-                let cached = self
-                    .subagent_tools
-                    .iter()
-                    .find(|t| t.id == tool_call_id)
-                    .cloned();
-
-                if let Some(tc) = cached {
-                    self.drilled_tool = Some(tc);
-                } else if let InspectorSelection::Subagent { ref session_id, .. } = self.selection {
-                    match load_tool_call(&self.db_path, session_id, &tool_call_id) {
-                        Ok(tc) => self.drilled_tool = tc,
-                        Err(err) => {
-                            tracing::error!("Failed to load drill tool {}: {}", tool_call_id, err);
-                        }
-                    }
+            ToolInspectorPaneCmd::DrillTool {
+                session_id,
+                tool_call_id,
+                result,
+            } => {
+                if !matches!(
+                    self.selection,
+                    InspectorSelection::Subagent {
+                        session_id: ref active_session,
+                        ..
+                    } if active_session == &session_id
+                ) {
+                    return;
                 }
-            }
 
-            ToolInspectorPaneMsg::PopDrillDown => {
-                // Native back button already popped the page; sync model state.
-                self.drilled_tool = None;
-                self.drill_page_pushed.set(false);
-            }
+                if self.pending_drill_tool_id.as_deref() != Some(tool_call_id.as_str()) {
+                    return;
+                }
 
-            ToolInspectorPaneMsg::OpenChildSession => {
-                if let Some(ref sa) = self.subagent
-                    && let Some(ref child_id) = sa.child_session_id
-                {
-                    sender
-                        .output(ToolInspectorPaneOutput::OpenChildSession(child_id.clone()))
-                        .ok();
+                self.pending_drill_tool_id = None;
+                match result {
+                    Ok(tc) => self.drilled_tool = tc,
+                    Err(err) => {
+                        tracing::error!("Failed to load drill tool {}: {}", tool_call_id, err);
+                    }
                 }
             }
         }
@@ -457,8 +647,13 @@ impl SimpleComponent for ToolInspectorPane {
 
     fn post_view(&self, _widgets: &mut Self::Widgets) {
         // 1. Switch overview content stack to the appropriate page.
-        self.content_stack
-            .set_visible_child_name(match &self.selection {
+        let visible_page = match &self.load_state {
+            LoadState::Loading => "loading",
+            LoadState::LoadError(message) => {
+                self.error_label.set_label(message);
+                "error"
+            }
+            LoadState::Idle | LoadState::Ready => match &self.selection {
                 InspectorSelection::None => "empty",
                 InspectorSelection::ToolCall { .. } => {
                     if self.tool_call.is_some() {
@@ -474,7 +669,9 @@ impl SimpleComponent for ToolInspectorPane {
                         "empty"
                     }
                 }
-            });
+            },
+        };
+        self.content_stack.set_visible_child_name(visible_page);
 
         // 2. Update tool-call content widgets.
         if let Some(ref tc) = self.tool_call {
@@ -640,6 +837,29 @@ fn apply_optional_section(section: &gtk::Box, label: &gtk::Label, text: Option<&
     }
 }
 
+fn begin_loading_request(active_request_id: &mut u64, load_state: &mut LoadState) -> u64 {
+    *active_request_id = active_request_id.saturating_add(1);
+    *load_state = LoadState::Loading;
+    *active_request_id
+}
+
+fn apply_load_result(
+    active_request_id: u64,
+    load_state: &mut LoadState,
+    request_id: u64,
+    result: Result<(), String>,
+) -> Option<()> {
+    if request_id != active_request_id {
+        return None;
+    }
+
+    *load_state = match result {
+        Ok(()) => LoadState::Ready,
+        Err(message) => LoadState::LoadError(message),
+    };
+    Some(())
+}
+
 // ── Formatting helpers ────────────────────────────────────────────────────────
 
 fn format_status_duration(status: ToolCallStatus, duration_ms: Option<i64>) -> String {
@@ -653,5 +873,38 @@ fn format_status_duration(status: ToolCallStatus, duration_ms: Option<i64>) -> S
     match duration_ms {
         Some(ms) if ms > 0 => format!("{}  •  {}", status_str, format_duration_ms(ms)),
         _ => status_str.to_string(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn stale_request_results_are_ignored() {
+        let mut request_id = 0;
+        let mut state = LoadState::Idle;
+
+        let first = begin_loading_request(&mut request_id, &mut state);
+        let second = begin_loading_request(&mut request_id, &mut state);
+
+        assert!(apply_load_result(request_id, &mut state, first, Ok(())).is_none());
+        assert_eq!(state, LoadState::Loading);
+
+        assert!(apply_load_result(request_id, &mut state, second, Ok(())).is_some());
+        assert_eq!(state, LoadState::Ready);
+    }
+
+    #[test]
+    fn load_state_transitions_idle_loading_ready() {
+        let mut request_id = 0;
+        let mut state = LoadState::Idle;
+
+        let current = begin_loading_request(&mut request_id, &mut state);
+        assert_eq!(state, LoadState::Loading);
+
+        let transition = apply_load_result(request_id, &mut state, current, Ok(()));
+        assert!(transition.is_some());
+        assert_eq!(state, LoadState::Ready);
     }
 }
