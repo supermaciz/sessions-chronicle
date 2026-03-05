@@ -11,13 +11,14 @@ the best direction.
 
 ## Decision
 
-Adopt **Proposal B (Specialized Views)** with a **hybrid architecture**:
+Adopt **Proposal B (Specialized Views)** with a **component-based architecture**:
 
 1. Keep existing app/container structure (`AdwOverlaySplitView`, right-side
    utility pane, F9 toggle).
-2. Add a renderer registry and specialized views in the inspector.
-3. Keep implementation lightweight by starting with renderer modules/functions,
-   while defining clear boundaries so we can migrate to child components later.
+2. Each renderer is a Relm4 `SimpleComponent` in its own module, orchestrated
+   by a `gtk::Stack` in the inspector pane.
+3. Migrate `ToolInspectorPane` from `SimpleComponent` to `Component` to support
+   async data loading via `CommandOutput`.
 4. Do not add GtkSourceView in this phase.
 
 ## Scope
@@ -28,17 +29,32 @@ In scope:
 - Contextual inline chip previews derived from tool input/output.
 - Responsive pane width tuning for code-heavy content.
 - Stable generic fallback for unknown/custom/MCP tools.
+- Per-tool-type icons in chips and inspector header.
 
 Out of scope:
 
 - DB schema changes.
-- Full parser redesign.
+- Full parser redesign (targeted parser fixes are in scope as prerequisites).
 - Full markdown feature parity expansion beyond current renderer.
 - New heavy rendering dependency (GtkSourceView).
 
+## Parser Prerequisites
+
+The following parser gaps must be addressed before or during implementation for
+the design to function correctly:
+
+| Parser | Gap | Impact |
+|---|---|---|
+| Claude Code | `is_error` field on `tool_result` messages is not checked | Error tools shown as `Completed` instead of `Error`; error styling never triggers |
+| OpenCode | `state.time.start/end`, `state.title`, `state.metadata.exit` not extracted | `duration_ms` is always NULL; no exit code for Bash tools |
+| Codex CLI | Newer `response_item.function_call*` format not parsed | Recent Codex sessions have invisible tool calls |
+
+These are targeted fixes to existing parser code, not a full parser redesign.
+
 ## Constraints
 
-- Respect current Relm4 architecture and existing `SimpleComponent` boundaries.
+- Respect current Relm4 architecture; use `SimpleComponent` for renderers and
+  `Component` (with `CommandOutput`) for the inspector pane.
 - Keep parser/storage compatibility across Claude Code, OpenCode, Codex, and
   Mistral Vibe.
 - Treat tool payloads as untrusted data; rendering must be robust to malformed
@@ -52,27 +68,80 @@ Out of scope:
 - Keep inspector on the right (`UtilityPaneMode::ToolInspector` in
   `src/app/types.rs`).
 - Keep existing F9 toggle behavior and overlay-on-narrow-window behavior.
-- Tune pane width policies (`min/max/fraction`) for better readability of diff
-  and terminal outputs.
+- Set pane width constraints for code-heavy content readability:
+  - `min-sidebar-width`: 360 (compact JSON and short previews)
+  - `max-sidebar-width`: 720 (~90 monospace columns)
+  - `sidebar-width-fraction`: 0.4
 
 ### 2) Inspector rendering layer
 
-- Keep `ToolInspectorPane` in `src/ui/tool_inspector_pane.rs` as the orchestration
-  component.
-- Add an internal rendering layer (new module, e.g. `src/ui/tool_rendering.rs`):
-  - `RendererKind`
-  - `resolve_renderer(tool_name: &str) -> RendererKind`
-  - per-renderer widget builders (`render_terminal_view`, `render_diff_view`,
-    `render_file_view`, `render_results_view`, `render_generic_view`)
-  - helper parsers/formatters for previews and metadata
-- Inspector layout becomes:
-  - Header (icon + tool name + compact context)
-  - Specialized view area
-  - Collapsible input JSON section
-  - Metadata section
-  - Error section (conditional)
+- Migrate `ToolInspectorPane` to `Component` (from `SimpleComponent`) to support
+  async DB loading via `CommandOutput`.
+- Replace imperative widget building with a `gtk::Stack` holding one
+  `Controller<T>` per renderer type.
+- Renderer components live in `src/ui/tool_renderers/`:
 
-### 3) Transcript chip enrichment flow
+```
+src/ui/tool_renderers/
+  mod.rs           // RendererKind, RendererInit, resolve_renderer()
+  terminal.rs      // TerminalRenderer (SimpleComponent)
+  diff.rs          // DiffRenderer (SimpleComponent)
+  file.rs          // FileRenderer (SimpleComponent)
+  results.rs       // ResultsRenderer (SimpleComponent)
+  generic.rs       // GenericRenderer (SimpleComponent)
+```
+
+- All renderers share a common `RendererInit` struct containing: `tool_name`,
+  `input_json`, `output_text`, `error_text`, `status`, `duration_ms`.
+- `resolve_renderer(tool_name) -> RendererKind` selects the renderer; the
+  inspector calls `stack.set_visible_child_name(kind.as_str())` to switch.
+
+### 3) Inspector layout
+
+The inspector pane layout for a tool call:
+
+- **Header**: tool-type icon + tool name + status badge + duration.
+- **Specialized view**: the active renderer's widget. This **replaces** the
+  current raw input/output sections with structured, tool-aware content.
+- **Raw JSON** (collapsed): `AdwExpanderRow` containing pretty-printed
+  `input_json`, collapsed by default. Provides access to raw data for
+  debugging and power users.
+- **Metadata**: `parser_call_id` (if present), start/end timestamps.
+- **Error section** (conditional): shown when `status == Error`, `error_text`
+  is non-empty, or a non-zero exit signal is detected.
+
+### 4) SubagentView — refactoring existing view
+
+The current inspector already has a full subagent view (prompt, result summary,
+inner tools list, "Open Full Session" button). `SubagentView` is a **refactoring
+of this existing view** into a `SimpleComponent`, not a new creation. It is
+integrated into the `gtk::Stack` alongside other renderers.
+
+### 5) Drill-down navigation
+
+The existing `AdwNavigationView` push/pop mechanism for inspecting a subagent's
+inner tools is preserved:
+
+- The overview page contains the `gtk::Stack` of renderers.
+- When the user clicks an inner tool in `SubagentView`, a drill-down page is
+  pushed onto the `AdwNavigationView`.
+- The drill-down page reuses the same renderer selection logic
+  (`resolve_renderer` + renderer components) to display the inner tool.
+- The existing `connect_popped` callback and `drill_page_pushed` tracking
+  remain for back-button synchronization.
+
+### 6) Data loading
+
+- `ToolInspectorPane::update()` no longer queries the DB synchronously on the
+  GTK thread.
+- On receiving `SelectToolCall` or `SelectSubagent`, the component spawns a
+  `Command` (async task) that loads data from SQLite off the main thread.
+- The command result arrives via `update_cmd()` as a `CommandOutput` variant,
+  which updates the model and triggers `post_view()` to refresh widgets.
+- This requires migrating `ToolInspectorPane` from `SimpleComponent` to
+  `Component`.
+
+### 7) Transcript chip enrichment flow
 
 - Extend transcript row loading to include enough fields for preview extraction
   (at minimum `input_json`; optionally `output_text` for result count hints).
@@ -82,19 +151,35 @@ Out of scope:
   preview can be extracted.
 
 This is a parser-light-compatible design: parser changes are optional and not
-required for the initial design outcome.
+required for chip previews.
 
 ## Renderer Registry Specification
 
-| Tool pattern | Renderer | Primary source fields | Output style |
-|---|---|---|---|
-| `Bash`, `shell`, `exec_command` | TerminalView | `input_json.command`, `output_text`, `error_text` | Monospace terminal block + exit metadata |
-| `Edit`, `apply_patch` | DiffView | `input_json.old_string`, `input_json.new_string`, `input_json.file_path` | Unified diff with `+/-` line styling |
-| `Read` | FileView | `input_json.file_path`, `input_json.offset/limit`, `output_text` | File-like text with contextual header |
-| `Write` | FileView | `input_json.file_path`, written content fields | File-like text marked as written content |
-| `Grep`, `Search`, `Glob` | ResultsView | `input_json.pattern`, `output_text` | Structured match/result list |
-| `Agent`, `Task` | SubagentView | Existing subagent fields | Existing subagent inspector view |
-| `*` | GenericJsonView | raw input/output/error | Pretty JSON + markdown/plain fallback |
+| Tool pattern | Renderer | Icon | Primary source fields | Output style |
+|---|---|---|---|---|
+| `Bash`, `shell`, `exec_command` | TerminalRenderer | `utilities-terminal-symbolic` | `input_json.command`, `output_text`, `error_text` | Monospace terminal block + exit metadata |
+| `Edit`, `apply_patch` | DiffRenderer | `document-edit-symbolic` | `input_json.old_string`, `input_json.new_string`, `input_json.file_path` | Unified diff with `+/-` line styling |
+| `Read` | FileRenderer | `document-open-symbolic` | `input_json.file_path`, `input_json.offset/limit`, `output_text` | File-like text with contextual header |
+| `Write` | FileRenderer | `document-open-symbolic` | `input_json.file_path`, written content fields | File-like text marked as written content |
+| `Grep`, `Search`, `Glob` | ResultsRenderer | `system-search-symbolic` | `input_json.pattern`, `output_text` | Structured match/result list |
+| `Agent`, `Task` | SubagentView | `system-run-symbolic` | Existing subagent fields | Refactored existing subagent inspector view |
+| `*` | GenericRenderer | `application-x-addon-symbolic` | raw input/output/error | Pretty JSON + markdown/plain fallback |
+
+Icons are used both in inline transcript chips and in the inspector header.
+
+## Diff Rendering with `similar`
+
+The `DiffRenderer` computes diffs from `input_json.old_string` and
+`input_json.new_string` using the `similar` crate:
+
+- Use `TextDiff::from_lines(old_string, new_string)` for line-by-line diff.
+- Use `Algorithm::Patience` (better for code than default Myers; same as
+  `git diff --patience`).
+- Set `timeout(Duration::from_millis(500))` to protect against very large diffs.
+- Use `grouped_ops(3)` to get hunks with 3 lines of context for custom
+  rendering (not `unified_diff()` which produces flat text).
+- Enable the `inline` cargo feature for `iter_inline_changes()` to support
+  intra-line change highlighting in future iterations.
 
 ## Rendering Rules and Fallbacks
 
@@ -103,7 +188,7 @@ Rendering order:
 1. Resolve renderer from `tool_name`.
 2. Attempt specialized parse/render.
 3. If specialized data is missing or invalid, downgrade to nearest safe view.
-4. Final fallback is always `GenericJsonView`.
+4. Final fallback is always `GenericRenderer`.
 
 Generic fallback behavior:
 
@@ -111,8 +196,7 @@ Generic fallback behavior:
   render raw text.
 - Output: if JSON-looking text parses, pretty-print; otherwise reuse
   `render_markdown_to_textview(output_text, None)`.
-- Unknown tool names are displayed as-is; MCP names can be formatted for
-  readability (`server > tool`) without changing stored values.
+- Unknown tool names are displayed as-is.
 
 ## Inline Chip Preview Extraction
 
@@ -129,7 +213,13 @@ Preview rules:
 - Agent/Task: `<description>` truncated
 - Fallback: first meaningful short string field
 
-Preview extraction is best-effort and must never fail rendering.
+Constraints:
+
+- Maximum preview length: 60 characters. Truncate with ellipsis (`…`) when
+  exceeded.
+- Preview extraction is best-effort and must never fail rendering.
+- File paths in previews show only the basename + parent directory when the
+  full path exceeds the length limit.
 
 ## Error and Status Model
 
@@ -140,6 +230,28 @@ Preview extraction is best-effort and must never fail rendering.
 - Error section is shown even if normal output exists.
 - Shell-like tools may show exit code badge in chips and metadata row.
 
+Note: error detection depends on the parser prerequisites listed above.
+Until the Claude Code `is_error` fix is applied, Claude Code tool errors
+will not trigger error styling.
+
+## CSS Specifications
+
+New CSS classes required beyond the existing `.inspector-code-block` and
+`.inspector-section-heading`:
+
+| Class | Purpose | Key properties |
+|---|---|---|
+| `.diff-added` | Added lines in DiffRenderer | Green text or green-tinted background |
+| `.diff-removed` | Removed lines in DiffRenderer | Red text or red-tinted background |
+| `.diff-context` | Unchanged context lines | Default text, slightly dimmed |
+| `.diff-hunk-header` | Hunk separator (`@@ ... @@`) | Monospace, dimmed, italic |
+| `.terminal-output` | Terminal output in TerminalRenderer | Monospace, dark background |
+| `.file-header` | File path header in FileRenderer/DiffRenderer | Monospace, bold, card background |
+| `.preview-label` | Preview text on inline chips | Dimmed, ellipsized, smaller font |
+
+Colors must work with both light and dark GTK themes. Use `@` color references
+(e.g., `alpha(@success_color, 0.15)`) rather than hardcoded hex values.
+
 ## Performance and Data Safety
 
 - Compute diffs lazily (only when an inspected item is rendered).
@@ -147,45 +259,57 @@ Preview extraction is best-effort and must never fail rendering.
 - Protect UI against very large outputs via bounded initial render and optional
   expansion pattern.
 - Do not mutate or reinterpret source data beyond view-level parsing.
+- Load inspector data asynchronously via `CommandOutput` to avoid blocking the
+  GTK main thread.
 
 ## Relm4 and GNOME Alignment
 
-- Use existing Relm4 component boundaries; avoid unnecessary controller churn.
+- Each renderer is a `SimpleComponent`; the inspector pane is a `Component`
+  (for async command support).
 - Keep utility-pane behavior aligned with GNOME HIG:
   - right-side subordinate pane
   - overlay behavior in constrained width
   - F9 shortcut for pane visibility
 - Keep keyboard navigation and accessibility labels intact.
+- Use `gtk::Stack` for renderer switching (idiomatic GTK pattern for
+  mutually exclusive views).
 
 ## Testing and Verification Plan
 
 1. Unit tests
    - `resolve_renderer` mappings and fallback.
-   - `extract_preview` across Bash/Read/Edit/Grep/Agent plus malformed JSON.
-   - diff formatting helper for representative edit payloads.
+   - `extract_preview` across Bash/Read/Edit/Grep/Agent plus malformed JSON,
+     including truncation at 60 chars.
+   - diff formatting helper for representative edit payloads using `similar`.
 
 2. Integration tests
    - transcript mapping produces preview-rich tool chips.
    - inspector selects specialized renderer per tool and falls back safely.
    - error scenarios show error styling and sections correctly.
+   - async data loading completes without blocking UI.
 
 3. Manual verification (fixtures)
    - Run app with `--sessions-dir tests/fixtures`.
    - Verify Bash/Edit/Read/Grep/unknown-tool displays.
    - Verify narrow-window overlay behavior and F9 toggle.
+   - Verify drill-down navigation for subagent inner tools.
 
 ## Acceptance Criteria
 
-- Chips provide meaningful contextual previews for common tool calls.
-- Inspector output is specialized for core tool families and remains readable for
-  unknown tools.
+- Chips provide meaningful contextual previews (max 60 chars) for common tool
+  calls, with per-tool-type icons.
+- Inspector output is specialized for core tool families and remains readable
+  for unknown tools.
 - No crashes or blank states on malformed/partial tool payloads.
+- Inspector data loads asynchronously (no GTK thread blocking).
+- Diff rendering uses the `similar` crate with Patience algorithm.
 - No DB migration required.
 - No GtkSourceView dependency required.
 
 ## Future Evolution (Non-blocking)
 
-- Promote renderer modules into dedicated child components if complexity grows.
+- Add intra-line change highlighting in DiffRenderer using
+  `similar::iter_inline_changes()` (feature `inline`).
 - Add optional syntax highlighting backend later if needed.
 - Add optional secret-redaction pass before rendering sensitive outputs.
 
