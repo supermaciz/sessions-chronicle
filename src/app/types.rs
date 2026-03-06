@@ -22,6 +22,20 @@ impl UtilityPaneMode {
             UtilityPaneMode::ToolInspector => PackType::End,
         }
     }
+
+    pub(super) fn sidebar_min_width(self) -> f64 {
+        match self {
+            UtilityPaneMode::Filters => 200.0,
+            UtilityPaneMode::ToolInspector => 360.0,
+        }
+    }
+
+    pub(super) fn sidebar_width_fraction(self) -> f64 {
+        match self {
+            UtilityPaneMode::Filters => 0.18,
+            UtilityPaneMode::ToolInspector => 0.4,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]

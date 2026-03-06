@@ -159,6 +159,12 @@
   padding: 6px 8px;
 }
 
+.inspector-markdown-block {
+  background-color: alpha(@card_shade_color, 0.15);
+  border-radius: 4px;
+  padding: 6px 8px;
+}
+
 /* Inspector pane heading labels */
 .inspector-section-heading {
   font-weight: bold;
@@ -166,4 +172,69 @@
   text-transform: uppercase;
   letter-spacing: 0.05em;
   opacity: 0.7;
+}
+
+.inspector-metadata-line {
+  opacity: 0.85;
+  line-height: 1.35;
+}
+
+.inspector-error-section .inspector-section-heading {
+  color: @error_color;
+  opacity: 0.95;
+}
+
+.inspector-error-text {
+  border-left: 2px solid alpha(@error_color, 0.75);
+  background-color: alpha(@error_color, 0.08);
+}
+
+/* Terminal renderer sections */
+.terminal-command {
+  font-family: monospace;
+  font-weight: 600;
+}
+
+.terminal-output {
+  font-family: monospace;
+}
+
+.terminal-exit-nonzero {
+  color: @error_color;
+}
+
+/* Diff renderer styling */
+.diff-added {
+  color: @success_color;
+  background-color: alpha(@success_color, 0.1);
+}
+
+.diff-removed {
+  color: @error_color;
+  background-color: alpha(@error_color, 0.1);
+}
+
+.diff-context {
+  opacity: 0.85;
+}
+
+.diff-hunk-header {
+  font-family: monospace;
+  font-style: italic;
+  opacity: 0.7;
+}
+
+/* File renderer header */
+.file-header {
+  font-family: monospace;
+  font-weight: bold;
+  background-color: alpha(@card_shade_color, 0.3);
+  padding: 6px 8px;
+  border-radius: 4px;
+}
+
+/* Preview label for inline chips */
+.preview-label {
+  opacity: 0.7;
+  font-size: 0.9em;
 }

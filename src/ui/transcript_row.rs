@@ -42,6 +42,7 @@ pub struct ToolCallItemInit {
     pub tool_call_id: String,
     pub tool_name: String,
     pub status: ToolCallStatus,
+    pub preview: Option<String>,
     pub summary: Option<String>,
     pub duration_ms: Option<i64>,
 }
@@ -120,6 +121,7 @@ pub struct TranscriptRow {
     tool_call_id: Option<String>,
     tool_name: Option<String>,
     tool_status: Option<ToolCallStatus>,
+    tool_preview: Option<String>,
     tool_summary: Option<String>,
     tool_duration_ms: Option<i64>,
 
@@ -214,6 +216,7 @@ impl FactoryComponent for TranscriptRow {
                 tool_call_id: None,
                 tool_name: None,
                 tool_status: None,
+                tool_preview: None,
                 tool_summary: None,
                 tool_duration_ms: None,
                 subagent_id: None,
@@ -232,6 +235,7 @@ impl FactoryComponent for TranscriptRow {
                 tool_call_id: Some(tc.tool_call_id),
                 tool_name: Some(tc.tool_name),
                 tool_status: Some(tc.status),
+                tool_preview: tc.preview,
                 tool_summary: tc.summary,
                 tool_duration_ms: tc.duration_ms,
                 subagent_id: None,
@@ -250,6 +254,7 @@ impl FactoryComponent for TranscriptRow {
                 tool_call_id: None,
                 tool_name: None,
                 tool_status: None,
+                tool_preview: None,
                 tool_summary: None,
                 tool_duration_ms: None,
                 subagent_id: Some(sa.subagent_id),
@@ -566,16 +571,21 @@ impl TranscriptRow {
 
         root.append(&row);
 
-        // Summary line (optional)
-        if let Some(ref summary) = self.tool_summary {
-            let summary_label = gtk::Label::new(Some(summary));
-            summary_label.add_css_class("caption");
-            summary_label.add_css_class("dim-label");
-            summary_label.set_halign(gtk::Align::Start);
-            summary_label.set_margin_start(32);
-            summary_label.set_margin_bottom(4);
-            summary_label.set_ellipsize(gtk::pango::EllipsizeMode::End);
-            root.append(&summary_label);
+        // Preview line (optional)
+        if let Some(preview) = self
+            .tool_preview
+            .as_deref()
+            .or(self.tool_summary.as_deref())
+        {
+            let preview_label = gtk::Label::new(Some(preview));
+            preview_label.add_css_class("caption");
+            preview_label.add_css_class("dim-label");
+            preview_label.add_css_class("preview-label");
+            preview_label.set_halign(gtk::Align::Start);
+            preview_label.set_margin_start(32);
+            preview_label.set_margin_bottom(4);
+            preview_label.set_ellipsize(gtk::pango::EllipsizeMode::End);
+            root.append(&preview_label);
         }
 
         // Return dummy widgets struct (nothing dynamic for tool calls in Phase 3)
@@ -697,6 +707,12 @@ pub fn transcript_item_init_from_row(
                 .clone()
                 .unwrap_or_else(|| "unknown".to_string()),
             status: row.tool_status.unwrap_or(ToolCallStatus::Unknown),
+            preview: crate::ui::tool_preview::extract_preview(
+                row.tool_name.as_deref().unwrap_or("unknown"),
+                row.tool_input_json.as_deref().unwrap_or(""),
+                row.tool_output_text.as_deref(),
+            )
+            .or_else(|| row.tool_summary.clone()),
             summary: row.tool_summary.clone(),
             duration_ms: row.duration_ms,
         }),
@@ -735,6 +751,50 @@ pub fn transcript_item_init_from_row(
 mod tests {
     use super::*;
 
+    fn tool_row(
+        item_index: i64,
+        tool_name: &str,
+        input_json: &str,
+        output_text: Option<&str>,
+        summary: Option<&str>,
+    ) -> crate::database::TranscriptItemRow {
+        crate::database::TranscriptItemRow {
+            item_index,
+            kind: crate::models::TranscriptItemKind::ToolCall,
+            message_index: None,
+            role: None,
+            content_preview: None,
+            content_len: None,
+            timestamp: None,
+            model: None,
+            tool_call_id: Some(format!("call-{item_index}")),
+            tool_name: Some(tool_name.to_string()),
+            tool_status: Some(ToolCallStatus::Completed),
+            tool_summary: summary.map(str::to_string),
+            tool_input_json: Some(input_json.to_string()),
+            tool_output_text: output_text.map(str::to_string),
+            duration_ms: Some(25),
+            subagent_id: None,
+            subagent_title: None,
+            subagent_prompt: None,
+        }
+    }
+
+    fn preview_from_row(row: &crate::database::TranscriptItemRow) -> Option<String> {
+        let init = transcript_item_init_from_row(
+            row,
+            "session-1",
+            None,
+            Arc::new(PathBuf::from("/tmp/sessions-chronicle-test.db")),
+        );
+
+        let TranscriptItemInit::ToolCall(tool_init) = init else {
+            panic!("expected tool call init");
+        };
+
+        tool_init.preview
+    }
+
     #[test]
     fn model_label_text_assistant_with_model() {
         let result = model_label_text(Role::Assistant, Some("claude-sonnet-4-5-20250514"));
@@ -753,5 +813,103 @@ mod tests {
         assert_eq!(model_label_text(Role::User, Some("o3-mini")), None);
         assert_eq!(model_label_text(Role::ToolResult, Some("o3-mini")), None);
         assert_eq!(model_label_text(Role::ToolCall, Some("o3-mini")), None);
+    }
+
+    #[test]
+    fn transcript_item_init_prefers_extracted_preview_over_summary() {
+        let row = crate::database::TranscriptItemRow {
+            item_index: 1,
+            kind: crate::models::TranscriptItemKind::ToolCall,
+            message_index: None,
+            role: None,
+            content_preview: None,
+            content_len: None,
+            timestamp: None,
+            model: None,
+            tool_call_id: Some("call-1".to_string()),
+            tool_name: Some("bash".to_string()),
+            tool_status: Some(ToolCallStatus::Completed),
+            tool_summary: Some("summary fallback".to_string()),
+            tool_input_json: Some(r#"{"command":"ls -la"}"#.to_string()),
+            tool_output_text: None,
+            duration_ms: Some(12),
+            subagent_id: None,
+            subagent_title: None,
+            subagent_prompt: None,
+        };
+
+        let init = transcript_item_init_from_row(
+            &row,
+            "session-1",
+            None,
+            Arc::new(PathBuf::from("/tmp/test.db")),
+        );
+
+        let TranscriptItemInit::ToolCall(tool_init) = init else {
+            panic!("expected tool call init");
+        };
+
+        assert_eq!(tool_init.preview.as_deref(), Some("$ ls -la"));
+    }
+
+    #[test]
+    fn transcript_tool_items_emit_representative_preview_shapes() {
+        let bash_row = tool_row(
+            1,
+            "bash",
+            r#"{"command":"cargo test --all && cargo clippy --all"}"#,
+            Some("Process exited with code 0"),
+            Some("bash summary"),
+        );
+        let read_row = tool_row(
+            2,
+            "read",
+            r#"{"file_path":"src/ui/transcript_row.rs","offset":42,"limit":20}"#,
+            None,
+            Some("read summary"),
+        );
+        let edit_row = tool_row(
+            3,
+            "edit",
+            r#"{"file_path":"src/ui/tool_preview.rs","old_string":"a\nb","new_string":"a\nb\nc"}"#,
+            None,
+            Some("edit summary"),
+        );
+        let grep_row = tool_row(
+            4,
+            "grep",
+            r#"{"pattern":"transcript_item_init_from_row"}"#,
+            Some("Found 4 matches"),
+            Some("grep summary"),
+        );
+
+        let bash_preview = preview_from_row(&bash_row).expect("bash preview should exist");
+        assert!(bash_preview.starts_with("$ cargo test --all"));
+
+        let read_preview = preview_from_row(&read_row).expect("read preview should exist");
+        assert!(read_preview.contains("transcript_row.rs:42-61"));
+
+        let edit_preview = preview_from_row(&edit_row).expect("edit preview should exist");
+        assert!(edit_preview.contains("tool_preview.rs +1 -0"));
+
+        let grep_preview = preview_from_row(&grep_row).expect("grep preview should exist");
+        assert!(grep_preview.contains("pattern=\"transcript_item_init_from_row\""));
+        assert!(grep_preview.contains("4 matches"));
+    }
+
+    #[test]
+    fn transcript_tool_item_preview_falls_back_to_summary_when_extractor_returns_none() {
+        let row = tool_row(
+            5,
+            "bash",
+            "{not-json}",
+            None,
+            Some("fallback summary from db"),
+        );
+
+        assert_eq!(
+            preview_from_row(&row).as_deref(),
+            Some("fallback summary from db")
+        );
     }
 }

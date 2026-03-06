@@ -117,17 +117,6 @@ impl CodexParser {
 
             let event_type = event.get("type").and_then(|v| v.as_str());
 
-            // Handle top-level turn_context (non-wrapped form)
-            if event_type == Some("turn_context") {
-                current_turn_model =
-                    normalize_model(event.get("payload").and_then(|p| p.get("model")));
-                continue;
-            }
-
-            if event_type != Some("event_msg") {
-                continue;
-            }
-
             let event_ts = event
                 .get("timestamp")
                 .and_then(|v| v.as_str())
@@ -143,6 +132,156 @@ impl CodexParser {
                 && ts > last_updated
             {
                 last_updated = ts;
+            }
+
+            if event_type == Some("response_item") {
+                let payload = match event.get("payload") {
+                    Some(p) => p,
+                    None => continue,
+                };
+
+                match payload.get("type").and_then(|v| v.as_str()) {
+                    Some("function_call") | Some("custom_tool_call") => {
+                        let call_id = match payload.get("call_id").and_then(|v| v.as_str()) {
+                            Some(id) if !id.is_empty() => id.to_string(),
+                            _ => {
+                                tracing::warn!(
+                                    "response_item call begin missing call_id, skipping"
+                                );
+                                continue;
+                            }
+                        };
+
+                        if call_id_to_tc_idx.contains_key(&call_id) {
+                            continue;
+                        }
+
+                        let tool_name = payload
+                            .get("name")
+                            .or_else(|| payload.get("tool_name"))
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("unknown")
+                            .to_string();
+
+                        let input_json = payload
+                            .get("arguments")
+                            .or_else(|| payload.get("input"))
+                            .map(|v| {
+                                v.as_str()
+                                    .map(str::to_string)
+                                    .unwrap_or_else(|| v.to_string())
+                            });
+
+                        let tc_idx = tool_calls.len();
+                        tool_calls.push(ToolCall {
+                            id: call_id.clone(),
+                            session_id: session_id.clone(),
+                            subagent_id: None,
+                            tool_name: tool_name.clone(),
+                            status: ToolCallStatus::Running,
+                            title: Some(tool_name),
+                            summary: None,
+                            input_json,
+                            output_text: None,
+                            error_text: None,
+                            started_at: event_ts.map(|t| t.timestamp()),
+                            ended_at: None,
+                            duration_ms: None,
+                            parser_call_id: Some(call_id.clone()),
+                        });
+                        call_id_to_tc_idx.insert(call_id.clone(), tc_idx);
+                        transcript_items.push(TranscriptItem {
+                            session_id: session_id.clone(),
+                            item_index: item_counter,
+                            kind: TranscriptItemKind::ToolCall,
+                            message_index: None,
+                            tool_call_id: Some(call_id.clone()),
+                            subagent_id: None,
+                        });
+                        item_counter += 1;
+
+                        pending_calls.insert(
+                            call_id,
+                            PendingCall {
+                                tool_name: tool_calls[tc_idx].tool_name.clone(),
+                                input_json: tool_calls[tc_idx].input_json.clone(),
+                                started_at: tool_calls[tc_idx].started_at,
+                            },
+                        );
+                    }
+                    Some("function_call_output") | Some("custom_tool_call_output") => {
+                        let call_id = match payload.get("call_id").and_then(|v| v.as_str()) {
+                            Some(id) if !id.is_empty() => id,
+                            _ => {
+                                tracing::warn!(
+                                    "response_item call output missing call_id, skipping"
+                                );
+                                continue;
+                            }
+                        };
+
+                        if let Some(&tc_idx) = call_id_to_tc_idx.get(call_id)
+                            && let Some(tc) = tool_calls.get_mut(tc_idx)
+                        {
+                            let output_text = payload.get("output").and_then(|v| {
+                                if let Some(s) = v.as_str() {
+                                    Some(s.to_string())
+                                } else if v.is_null() {
+                                    None
+                                } else {
+                                    Some(v.to_string())
+                                }
+                            });
+                            let error_text = payload.get("error").and_then(|v| {
+                                if let Some(s) = v.as_str() {
+                                    if s.is_empty() {
+                                        None
+                                    } else {
+                                        Some(s.to_string())
+                                    }
+                                } else if v.is_null() {
+                                    None
+                                } else {
+                                    Some(v.to_string())
+                                }
+                            });
+
+                            tc.output_text = output_text;
+                            tc.error_text = error_text;
+                            tc.ended_at = event_ts.map(|t| t.timestamp());
+                            tc.duration_ms = payload.get("duration_ms").and_then(|v| v.as_i64());
+                            let status = payload
+                                .get("status")
+                                .and_then(|v| v.as_str())
+                                .map(|s| s.to_ascii_lowercase());
+                            tc.status =
+                                if matches!(status.as_deref(), Some("error") | Some("failed")) {
+                                    ToolCallStatus::Error
+                                } else if matches!(status.as_deref(), Some("completed")) {
+                                    ToolCallStatus::Completed
+                                } else if tc.error_text.is_some() {
+                                    ToolCallStatus::Error
+                                } else {
+                                    ToolCallStatus::Completed
+                                };
+                        }
+                        pending_calls.remove(call_id);
+                    }
+                    _ => {}
+                }
+
+                continue;
+            }
+
+            // Handle top-level turn_context (non-wrapped form)
+            if event_type == Some("turn_context") {
+                current_turn_model =
+                    normalize_model(event.get("payload").and_then(|p| p.get("model")));
+                continue;
+            }
+
+            if event_type != Some("event_msg") {
+                continue;
             }
 
             let payload = match event.get("payload") {
@@ -218,6 +357,10 @@ impl CodexParser {
                             continue;
                         }
                     };
+
+                    if call_id_to_tc_idx.contains_key(&call_id) {
+                        continue;
+                    }
                     let tool_name = payload
                         .get("tool_name")
                         .or_else(|| payload.get("command"))
@@ -504,6 +647,112 @@ mod tests {
         assert_eq!(parsed.tool_calls[1].status, ToolCallStatus::Completed);
         // Transcript: user msg, tool call 1, tool call 2, agent msg
         assert_eq!(parsed.transcript_items.len(), 4);
+    }
+
+    #[test]
+    fn parse_response_item_function_call_flow_extracts_tool_call() {
+        let mut file = tempfile::NamedTempFile::new().unwrap();
+        writeln!(file, r#"{{"type":"session_meta","payload":{{"id":"codex-ri","timestamp":"2026-01-01T00:00:00Z","cwd":"/tmp"}}}}"#).unwrap();
+        writeln!(file, r#"{{"type":"event_msg","timestamp":"2026-01-01T00:00:01Z","payload":{{"type":"user_message","message":"run tests"}}}}"#).unwrap();
+        writeln!(file, r#"{{"type":"response_item","timestamp":"2026-01-01T00:00:02Z","payload":{{"type":"function_call","name":"exec_command","call_id":"call_123","arguments":"{{\"cmd\":\"cargo test\"}}"}}}}"#).unwrap();
+        writeln!(file, r#"{{"type":"response_item","timestamp":"2026-01-01T00:00:03Z","payload":{{"type":"function_call_output","call_id":"call_123","output":"Process exited with code 0"}}}}"#).unwrap();
+
+        let parsed = CodexParser.parse(file.path()).unwrap();
+        assert_eq!(parsed.tool_calls.len(), 1);
+        assert_eq!(parsed.tool_calls[0].id, "call_123");
+        assert_eq!(parsed.tool_calls[0].tool_name, "exec_command");
+        assert_eq!(
+            parsed.tool_calls[0].input_json.as_deref(),
+            Some("{\"cmd\":\"cargo test\"}")
+        );
+        assert_eq!(parsed.tool_calls[0].status, ToolCallStatus::Completed);
+        assert_eq!(
+            parsed.tool_calls[0].output_text.as_deref(),
+            Some("Process exited with code 0")
+        );
+        assert_eq!(parsed.tool_calls[0].error_text, None);
+    }
+
+    #[test]
+    fn parse_response_item_custom_tool_call_output_sets_error_status() {
+        let mut file = tempfile::NamedTempFile::new().unwrap();
+        writeln!(file, r#"{{"type":"session_meta","payload":{{"id":"codex-ri-custom","timestamp":"2026-01-01T00:00:00Z","cwd":"/tmp"}}}}"#).unwrap();
+        writeln!(file, r#"{{"type":"event_msg","timestamp":"2026-01-01T00:00:01Z","payload":{{"type":"user_message","message":"run custom"}}}}"#).unwrap();
+        writeln!(file, r#"{{"type":"response_item","timestamp":"2026-01-01T00:00:02Z","payload":{{"type":"custom_tool_call","name":"my_tool","call_id":"call_456","input":"{{\"path\":\"src/main.rs\"}}"}}}}"#).unwrap();
+        writeln!(file, r#"{{"type":"response_item","timestamp":"2026-01-01T00:00:03Z","payload":{{"type":"custom_tool_call_output","call_id":"call_456","error":"Permission denied"}}}}"#).unwrap();
+
+        let parsed = CodexParser.parse(file.path()).unwrap();
+        assert_eq!(parsed.tool_calls.len(), 1);
+        assert_eq!(parsed.tool_calls[0].id, "call_456");
+        assert_eq!(parsed.tool_calls[0].tool_name, "my_tool");
+        assert_eq!(
+            parsed.tool_calls[0].input_json.as_deref(),
+            Some("{\"path\":\"src/main.rs\"}")
+        );
+        assert_eq!(parsed.tool_calls[0].status, ToolCallStatus::Error);
+        assert_eq!(parsed.tool_calls[0].output_text, None);
+        assert_eq!(
+            parsed.tool_calls[0].error_text.as_deref(),
+            Some("Permission denied")
+        );
+    }
+
+    #[test]
+    fn parse_mixed_stream_same_call_id_does_not_duplicate_tool_call() {
+        let mut file = tempfile::NamedTempFile::new().unwrap();
+        writeln!(file, r#"{{"type":"session_meta","payload":{{"id":"codex-mixed","timestamp":"2026-01-01T00:00:00Z","cwd":"/tmp"}}}}"#).unwrap();
+        writeln!(file, r#"{{"type":"event_msg","timestamp":"2026-01-01T00:00:01Z","payload":{{"type":"user_message","message":"run mixed"}}}}"#).unwrap();
+        writeln!(file, r#"{{"type":"response_item","timestamp":"2026-01-01T00:00:02Z","payload":{{"type":"function_call","name":"exec_command","call_id":"call_shared","arguments":"{{\"cmd\":\"pwd\"}}"}}}}"#).unwrap();
+        writeln!(file, r#"{{"type":"event_msg","timestamp":"2026-01-01T00:00:03Z","payload":{{"type":"exec_command_begin","call_id":"call_shared","command":"pwd","cwd":"/tmp"}}}}"#).unwrap();
+        writeln!(file, r#"{{"type":"response_item","timestamp":"2026-01-01T00:00:04Z","payload":{{"type":"function_call_output","call_id":"call_shared","status":"completed","output":"/tmp"}}}}"#).unwrap();
+
+        let parsed = CodexParser.parse(file.path()).unwrap();
+        assert_eq!(parsed.tool_calls.len(), 1);
+        assert_eq!(parsed.transcript_items.len(), 2);
+        assert_eq!(parsed.tool_calls[0].id, "call_shared");
+        assert_eq!(parsed.tool_calls[0].status, ToolCallStatus::Completed);
+    }
+
+    #[test]
+    fn parse_duplicate_begin_same_call_id_does_not_duplicate_tool_call() {
+        let mut file = tempfile::NamedTempFile::new().unwrap();
+        writeln!(file, r#"{{"type":"session_meta","payload":{{"id":"codex-dup-begin","timestamp":"2026-01-01T00:00:00Z","cwd":"/tmp"}}}}"#).unwrap();
+        writeln!(file, r#"{{"type":"event_msg","timestamp":"2026-01-01T00:00:01Z","payload":{{"type":"user_message","message":"run dup begin"}}}}"#).unwrap();
+        writeln!(file, r#"{{"type":"event_msg","timestamp":"2026-01-01T00:00:02Z","payload":{{"type":"exec_command_begin","call_id":"call_dup","command":"ls","cwd":"/tmp"}}}}"#).unwrap();
+        writeln!(file, r#"{{"type":"event_msg","timestamp":"2026-01-01T00:00:03Z","payload":{{"type":"exec_command_begin","call_id":"call_dup","command":"ls","cwd":"/tmp"}}}}"#).unwrap();
+        writeln!(file, r#"{{"type":"event_msg","timestamp":"2026-01-01T00:00:04Z","payload":{{"type":"exec_command_end","call_id":"call_dup","exit_code":0,"stdout":"ok"}}}}"#).unwrap();
+
+        let parsed = CodexParser.parse(file.path()).unwrap();
+        assert_eq!(parsed.tool_calls.len(), 1);
+        assert_eq!(parsed.transcript_items.len(), 2);
+        assert_eq!(parsed.tool_calls[0].id, "call_dup");
+        assert_eq!(parsed.tool_calls[0].status, ToolCallStatus::Completed);
+    }
+
+    #[test]
+    fn parse_orphan_response_item_output_without_begin_is_ignored() {
+        let mut file = tempfile::NamedTempFile::new().unwrap();
+        writeln!(file, r#"{{"type":"session_meta","payload":{{"id":"codex-orphan-output","timestamp":"2026-01-01T00:00:00Z","cwd":"/tmp"}}}}"#).unwrap();
+        writeln!(file, r#"{{"type":"event_msg","timestamp":"2026-01-01T00:00:01Z","payload":{{"type":"user_message","message":"run orphan output"}}}}"#).unwrap();
+        writeln!(file, r#"{{"type":"response_item","timestamp":"2026-01-01T00:00:02Z","payload":{{"type":"function_call_output","call_id":"missing_begin","status":"completed","output":"ignored"}}}}"#).unwrap();
+
+        let parsed = CodexParser.parse(file.path()).unwrap();
+        assert!(parsed.tool_calls.is_empty());
+        assert_eq!(parsed.transcript_items.len(), 1);
+    }
+
+    #[test]
+    fn parse_response_item_output_status_failed_maps_to_error_without_error_text() {
+        let mut file = tempfile::NamedTempFile::new().unwrap();
+        writeln!(file, r#"{{"type":"session_meta","payload":{{"id":"codex-ri-status","timestamp":"2026-01-01T00:00:00Z","cwd":"/tmp"}}}}"#).unwrap();
+        writeln!(file, r#"{{"type":"event_msg","timestamp":"2026-01-01T00:00:01Z","payload":{{"type":"user_message","message":"run status"}}}}"#).unwrap();
+        writeln!(file, r#"{{"type":"response_item","timestamp":"2026-01-01T00:00:02Z","payload":{{"type":"function_call","name":"exec_command","call_id":"call_status","arguments":"{{\"cmd\":\"false\"}}"}}}}"#).unwrap();
+        writeln!(file, r#"{{"type":"response_item","timestamp":"2026-01-01T00:00:03Z","payload":{{"type":"function_call_output","call_id":"call_status","status":"failed","output":"exit 1"}}}}"#).unwrap();
+
+        let parsed = CodexParser.parse(file.path()).unwrap();
+        assert_eq!(parsed.tool_calls.len(), 1);
+        assert_eq!(parsed.tool_calls[0].status, ToolCallStatus::Error);
+        assert_eq!(parsed.tool_calls[0].error_text, None);
     }
 
     #[test]

@@ -42,6 +42,10 @@ pub struct TranscriptItemRow {
     pub tool_name: Option<String>,
     pub tool_status: Option<ToolCallStatus>,
     pub tool_summary: Option<String>,
+    #[allow(dead_code)] // Will be used in Task 5 transcript chip preview mapping
+    pub tool_input_json: Option<String>,
+    #[allow(dead_code)] // Will be used in Task 5 transcript chip preview mapping
+    pub tool_output_text: Option<String>,
     pub duration_ms: Option<i64>,
     // Subagent fields
     pub subagent_id: Option<String>,
@@ -433,7 +437,10 @@ pub fn load_transcript_items(
         "SELECT ti.item_index, ti.kind, ti.message_index, ti.tool_call_id, ti.subagent_id,
                 m.role, substr(m.content, 1, ?2) AS content_preview,
                 length(m.content) AS content_len, m.timestamp, m.model,
-                tc.tool_name, tc.status, tc.summary, tc.duration_ms,
+                tc.tool_name, tc.status, tc.summary,
+                substr(tc.input_json, 1, 512) AS input_json,
+                substr(tc.output_text, 1, 512) AS output_text,
+                tc.duration_ms,
                 sa.title AS subagent_title, sa.prompt AS subagent_prompt
          FROM transcript_items ti
          LEFT JOIN messages m ON ti.session_id = m.session_id
@@ -465,9 +472,11 @@ pub fn load_transcript_items(
     const COL_TOOL_NAME: usize = 10;
     const COL_TOOL_STATUS: usize = 11;
     const COL_TOOL_SUMMARY: usize = 12;
-    const COL_DURATION_MS: usize = 13;
-    const COL_SUBAGENT_TITLE: usize = 14;
-    const COL_SUBAGENT_PROMPT: usize = 15;
+    const COL_TOOL_INPUT_JSON: usize = 13;
+    const COL_TOOL_OUTPUT_TEXT: usize = 14;
+    const COL_DURATION_MS: usize = 15;
+    const COL_SUBAGENT_TITLE: usize = 16;
+    const COL_SUBAGENT_PROMPT: usize = 17;
 
     let mut items = Vec::new();
     while let Some(row) = rows.next()? {
@@ -491,6 +500,8 @@ pub fn load_transcript_items(
             tool_name: row.get(COL_TOOL_NAME)?,
             tool_status: tool_status.as_deref().map(ToolCallStatus::from_storage),
             tool_summary: row.get(COL_TOOL_SUMMARY)?,
+            tool_input_json: row.get(COL_TOOL_INPUT_JSON)?,
+            tool_output_text: row.get(COL_TOOL_OUTPUT_TEXT)?,
             duration_ms: row.get(COL_DURATION_MS)?,
             subagent_title: row.get(COL_SUBAGENT_TITLE)?,
             subagent_prompt: row.get(COL_SUBAGENT_PROMPT)?,
