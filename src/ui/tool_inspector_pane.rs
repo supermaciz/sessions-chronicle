@@ -65,6 +65,12 @@ struct MarkdownSectionViews {
     content: gtk::Box,
 }
 
+#[derive(Clone)]
+struct TextSectionViews {
+    section: gtk::Box,
+    label: gtk::Label,
+}
+
 // ── Component ─────────────────────────────────────────────────────────────────
 
 pub struct ToolInspectorPane {
@@ -92,7 +98,7 @@ pub struct ToolInspectorPane {
     tool_name_label: gtk::Label,
     tool_status_label: gtk::Label,
     tool_metadata_label: gtk::Label,
-    tool_error_views: MarkdownSectionViews,
+    tool_error_views: TextSectionViews,
     tool_renderer_views: RendererStackViews,
 
     // Subagent detail widgets (inside "subagent" stack page)
@@ -108,7 +114,7 @@ pub struct ToolInspectorPane {
     drill_name_label: gtk::Label,
     drill_status_label: gtk::Label,
     drill_metadata_label: gtk::Label,
-    drill_error_views: MarkdownSectionViews,
+    drill_error_views: TextSectionViews,
     drill_renderer_views: RendererStackViews,
 
     // Interior-mutable flag: is drill_page currently pushed onto nav_view?
@@ -267,13 +273,11 @@ impl Component for ToolInspectorPane {
 
         let tool_status_label = make_caption_label();
         let tool_metadata_label = make_metadata_label();
-        let tool_error_views = make_markdown_section("Error");
+        let tool_error_views = make_text_section("Error");
         tool_error_views
             .section
             .add_css_class("inspector-error-section");
-        tool_error_views
-            .content
-            .add_css_class("inspector-error-text");
+        tool_error_views.label.add_css_class("inspector-error-text");
         let tool_renderer_views = make_renderer_stack_views();
 
         let tool_outer = gtk::Box::new(gtk::Orientation::Vertical, 12);
@@ -343,12 +347,12 @@ impl Component for ToolInspectorPane {
         drill_name_label.add_css_class("monospace");
         let drill_status_label = make_caption_label();
         let drill_metadata_label = make_metadata_label();
-        let drill_error_views = make_markdown_section("Error");
+        let drill_error_views = make_text_section("Error");
         drill_error_views
             .section
             .add_css_class("inspector-error-section");
         drill_error_views
-            .content
+            .label
             .add_css_class("inspector-error-text");
         let drill_renderer_views = make_renderer_stack_views();
 
@@ -697,7 +701,7 @@ impl Component for ToolInspectorPane {
             let metadata_line = format_tool_metadata_line(tc);
             apply_optional_line(&self.tool_metadata_label, metadata_line.as_deref());
             let error_text = tool_error_message(tc);
-            apply_optional_markdown_section(&self.tool_error_views, error_text);
+            apply_optional_text_section(&self.tool_error_views, error_text);
             apply_renderer_stack(&self.tool_renderer_views, tc);
         }
 
@@ -758,7 +762,7 @@ impl Component for ToolInspectorPane {
             let metadata_line = format_tool_metadata_line(tc);
             apply_optional_line(&self.drill_metadata_label, metadata_line.as_deref());
             let error_text = tool_error_message(tc);
-            apply_optional_markdown_section(&self.drill_error_views, error_text);
+            apply_optional_text_section(&self.drill_error_views, error_text);
             apply_renderer_stack(&self.drill_renderer_views, tc);
 
             if !self.drill_page_pushed.get() {
@@ -870,15 +874,45 @@ fn make_renderer_container() -> gtk::Box {
     container
 }
 
+fn make_mono_label() -> gtk::Label {
+    let label = gtk::Label::new(None);
+    label.add_css_class("monospace");
+    label.set_wrap(true);
+    label.set_wrap_mode(gtk::pango::WrapMode::WordChar);
+    label.set_halign(gtk::Align::Start);
+    label.set_xalign(0.0);
+    label.set_selectable(true);
+    label
+}
+
+fn make_text_section(title: &str) -> TextSectionViews {
+    let section = gtk::Box::new(gtk::Orientation::Vertical, 4);
+    section.set_valign(gtk::Align::Start);
+
+    let header = gtk::Label::new(Some(title));
+    header.add_css_class("inspector-section-heading");
+    header.set_halign(gtk::Align::Start);
+
+    let label = make_mono_label();
+    label.add_css_class("inspector-code-block");
+
+    section.append(&header);
+    section.append(&label);
+    section.set_visible(false);
+
+    TextSectionViews { section, label }
+}
+
 fn make_markdown_section(title: &str) -> MarkdownSectionViews {
     let section = gtk::Box::new(gtk::Orientation::Vertical, 4);
+    section.set_valign(gtk::Align::Start);
     let header = gtk::Label::new(Some(title));
     header.add_css_class("inspector-section-heading");
     header.set_halign(gtk::Align::Start);
 
     let content = gtk::Box::new(gtk::Orientation::Vertical, 0);
-    content.add_css_class("inspector-markdown-block");
     content.set_hexpand(true);
+    content.set_valign(gtk::Align::Start);
 
     section.append(&header);
     section.append(&content);
@@ -891,8 +925,24 @@ fn apply_optional_markdown_section(views: &MarkdownSectionViews, text: Option<&s
     clear_container(&views.content);
     match text {
         Some(value) if !value.is_empty() => {
+            let wrapper = gtk::Box::new(gtk::Orientation::Vertical, 0);
+            wrapper.add_css_class("inspector-markdown-block");
+            wrapper.set_valign(gtk::Align::Start);
             let (markdown_view, _) = markdown::render_markdown_to_textview(value, None);
-            views.content.append(&markdown_view);
+            markdown_view.set_valign(gtk::Align::Start);
+            markdown_view.set_vexpand(false);
+            wrapper.append(&markdown_view);
+            views.content.append(&wrapper);
+            views.section.set_visible(true);
+        }
+        _ => views.section.set_visible(false),
+    }
+}
+
+fn apply_optional_text_section(views: &TextSectionViews, text: Option<&str>) {
+    match text {
+        Some(value) if !value.is_empty() => {
+            views.label.set_label(value);
             views.section.set_visible(true);
         }
         _ => views.section.set_visible(false),
@@ -1510,6 +1560,42 @@ mod tests {
         let mut blank = sample_tool_call(ToolCallStatus::Error);
         blank.error_text = Some("   ".to_string());
         assert_eq!(tool_error_message(&blank), Some("Tool reported an error."));
+    }
+
+    #[gtk::test]
+    fn markdown_sections_pin_content_to_top() {
+        let views = make_markdown_section("Error");
+
+        assert_eq!(views.section.valign(), gtk::Align::Start);
+        assert_eq!(views.content.valign(), gtk::Align::Start);
+    }
+
+    #[gtk::test]
+    fn markdown_sections_wrap_rendered_content_in_styled_child() {
+        let views = make_markdown_section("Error");
+        apply_optional_markdown_section(&views, Some("permission denied while opening the file"));
+
+        assert!(!views.content.has_css_class("inspector-markdown-block"));
+
+        let wrapper = views
+            .content
+            .first_child()
+            .and_then(|child| child.downcast::<gtk::Box>().ok())
+            .expect("markdown section should wrap rendered content in a box");
+        assert!(wrapper.has_css_class("inspector-markdown-block"));
+    }
+
+    #[gtk::test]
+    fn text_sections_use_selectable_labels() {
+        let views = make_text_section("Error");
+        apply_optional_text_section(&views, Some("permission denied while opening the file"));
+
+        assert!(views.section.is_visible());
+        assert_eq!(
+            views.label.label(),
+            "permission denied while opening the file"
+        );
+        assert!(views.label.is_selectable());
     }
 
     fn sample_tool_call(status: ToolCallStatus) -> ToolCall {
