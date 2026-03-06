@@ -11,7 +11,7 @@ use crate::models::{Subagent, ToolCall, ToolCallStatus};
 use crate::ui::format::{format_duration_ms, status_icon_name};
 use crate::ui::tool_renderers::diff::DiffRenderer;
 use crate::ui::tool_renderers::file::FileRenderer;
-use crate::ui::tool_renderers::generic::{GenericRenderer, OutputRenderPlan};
+use crate::ui::tool_renderers::generic::GenericRenderer;
 use crate::ui::tool_renderers::results::ResultsRenderer;
 use crate::ui::tool_renderers::subagent::SubagentRenderer;
 use crate::ui::tool_renderers::terminal::TerminalRenderer;
@@ -50,12 +50,12 @@ enum LoadState {
 #[derive(Clone)]
 struct RendererStackViews {
     stack: gtk::Stack,
-    generic_label: gtk::Label,
-    terminal_label: gtk::Label,
-    diff_label: gtk::Label,
-    file_label: gtk::Label,
-    results_label: gtk::Label,
-    subagent_label: gtk::Label,
+    generic_container: gtk::Box,
+    terminal_container: gtk::Box,
+    diff_container: gtk::Box,
+    file_container: gtk::Box,
+    results_container: gtk::Box,
+    subagent_container: gtk::Box,
 }
 
 // ── Component ─────────────────────────────────────────────────────────────────
@@ -811,39 +811,39 @@ fn make_renderer_stack_views() -> RendererStackViews {
     let stack = gtk::Stack::new();
     stack.set_transition_type(gtk::StackTransitionType::None);
 
-    let generic_label = make_renderer_label();
+    let generic_container = make_renderer_container();
     stack.add_named(
-        &make_renderer_page(&generic_label),
+        &make_renderer_page(&generic_container),
         Some(RendererKind::Generic.as_str()),
     );
 
-    let terminal_label = make_renderer_label();
+    let terminal_container = make_renderer_container();
     stack.add_named(
-        &make_renderer_page(&terminal_label),
+        &make_renderer_page(&terminal_container),
         Some(RendererKind::Terminal.as_str()),
     );
 
-    let diff_label = make_renderer_label();
+    let diff_container = make_renderer_container();
     stack.add_named(
-        &make_renderer_page(&diff_label),
+        &make_renderer_page(&diff_container),
         Some(RendererKind::Diff.as_str()),
     );
 
-    let file_label = make_renderer_label();
+    let file_container = make_renderer_container();
     stack.add_named(
-        &make_renderer_page(&file_label),
+        &make_renderer_page(&file_container),
         Some(RendererKind::File.as_str()),
     );
 
-    let results_label = make_renderer_label();
+    let results_container = make_renderer_container();
     stack.add_named(
-        &make_renderer_page(&results_label),
+        &make_renderer_page(&results_container),
         Some(RendererKind::Results.as_str()),
     );
 
-    let subagent_label = make_renderer_label();
+    let subagent_container = make_renderer_container();
     stack.add_named(
-        &make_renderer_page(&subagent_label),
+        &make_renderer_page(&subagent_container),
         Some(RendererKind::Subagent.as_str()),
     );
 
@@ -851,30 +851,25 @@ fn make_renderer_stack_views() -> RendererStackViews {
 
     RendererStackViews {
         stack,
-        generic_label,
-        terminal_label,
-        diff_label,
-        file_label,
-        results_label,
-        subagent_label,
+        generic_container,
+        terminal_container,
+        diff_container,
+        file_container,
+        results_container,
+        subagent_container,
     }
 }
 
-fn make_renderer_page(content: &gtk::Label) -> gtk::Box {
+fn make_renderer_page(content: &gtk::Box) -> gtk::Box {
     let page = gtk::Box::new(gtk::Orientation::Vertical, 0);
     page.append(content);
     page
 }
 
-fn make_renderer_label() -> gtk::Label {
-    let label = gtk::Label::new(None);
-    label.add_css_class("monospace");
-    label.set_wrap(true);
-    label.set_wrap_mode(gtk::pango::WrapMode::WordChar);
-    label.set_halign(gtk::Align::Start);
-    label.set_xalign(0.0);
-    label.set_selectable(true);
-    label
+fn make_renderer_container() -> gtk::Box {
+    let container = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    container.set_margin_all(12);
+    container
 }
 
 fn make_mono_label() -> gtk::Label {
@@ -931,40 +926,46 @@ fn apply_renderer_stack(views: &RendererStackViews, tool_call: &ToolCall) {
     match renderer_kind {
         RendererKind::Terminal => {
             let rendered = TerminalRenderer::new(init).render_data();
-            views
-                .terminal_label
-                .set_label(&format_terminal_renderer_text(&rendered));
+            let widget = build_terminal_widget(&rendered);
+            clear_container(&views.terminal_container);
+            views.terminal_container.append(&widget);
         }
         RendererKind::Diff => {
             let rendered = DiffRenderer::new(init).render_data();
-            views
-                .diff_label
-                .set_label(&format_diff_renderer_text(&rendered));
+            let widget = build_diff_widget(&rendered);
+            clear_container(&views.diff_container);
+            views.diff_container.append(&widget);
         }
         RendererKind::File => {
             let rendered = FileRenderer::new(init).render_data();
-            views
-                .file_label
-                .set_label(&format_file_renderer_text(&rendered));
+            let widget = build_file_widget(&rendered);
+            clear_container(&views.file_container);
+            views.file_container.append(&widget);
         }
         RendererKind::Results => {
             let rendered = ResultsRenderer::new(init).render_data();
-            views
-                .results_label
-                .set_label(&format_results_renderer_text(&rendered));
+            let widget = build_results_widget(&rendered);
+            clear_container(&views.results_container);
+            views.results_container.append(&widget);
         }
         RendererKind::Subagent => {
             let rendered = SubagentRenderer::new(init).render_data();
-            views
-                .subagent_label
-                .set_label(&format_subagent_renderer_text(&rendered));
+            let widget = build_subagent_widget(&rendered);
+            clear_container(&views.subagent_container);
+            views.subagent_container.append(&widget);
         }
         RendererKind::Generic => {
             let rendered = GenericRenderer::new(init).render_data();
-            views
-                .generic_label
-                .set_label(&format_generic_renderer_text(&rendered));
+            let widget = build_generic_widget(&rendered);
+            clear_container(&views.generic_container);
+            views.generic_container.append(&widget);
         }
+    }
+}
+
+fn clear_container(container: &gtk::Box) {
+    while let Some(child) = container.first_child() {
+        container.remove(&child);
     }
 }
 
@@ -979,145 +980,302 @@ fn renderer_init_from_tool_call(tool_call: &ToolCall) -> RendererInit {
     }
 }
 
-fn format_generic_renderer_text(
+// ── Widget builders ───────────────────────────────────────────────────────────
+
+fn build_generic_widget(
     rendered: &crate::ui::tool_renderers::generic::GenericRenderedData,
-) -> String {
-    let mut parts = Vec::new();
+) -> gtk::Widget {
+    let container = gtk::Box::new(gtk::Orientation::Vertical, 8);
+
     if let Some(input) = rendered.input_text.as_deref() {
-        parts.push(format!("Input\n{input}"));
+        let header = gtk::Label::new(Some("Input"));
+        header.add_css_class("inspector-section-heading");
+        header.set_halign(gtk::Align::Start);
+        container.append(&header);
+
+        let content = gtk::TextView::new();
+        content.buffer().set_text(input);
+        content.set_editable(false);
+        content.set_cursor_visible(false);
+        content.set_wrap_mode(gtk::WrapMode::WordChar);
+        content.set_monospace(true);
+        content.add_css_class("inspector-code-block");
+        content.set_vexpand(true);
+        container.append(&content);
     }
+
     if let Some(output) = rendered.output.as_ref() {
-        parts.push(format!("Output\n{}", output_plan_text(output)));
+        let header = gtk::Label::new(Some("Output"));
+        header.add_css_class("inspector-section-heading");
+        header.set_halign(gtk::Align::Start);
+        container.append(&header);
+
+        let text = match output {
+            crate::ui::tool_renderers::generic::OutputRenderPlan::PrettyJson(t) => t.as_str(),
+            crate::ui::tool_renderers::generic::OutputRenderPlan::Markdown(t) => t.as_str(),
+        };
+
+        let content = gtk::TextView::new();
+        content.buffer().set_text(text);
+        content.set_editable(false);
+        content.set_cursor_visible(false);
+        content.set_wrap_mode(gtk::WrapMode::WordChar);
+        content.set_monospace(true);
+        content.add_css_class("inspector-code-block");
+        content.set_vexpand(true);
+        container.append(&content);
     }
 
-    if parts.is_empty() {
-        "No tool details available.".to_string()
-    } else {
-        parts.join("\n\n")
-    }
+    container.upcast()
 }
 
-fn format_terminal_renderer_text(
+fn build_terminal_widget(
     rendered: &crate::ui::tool_renderers::terminal::TerminalRenderedData,
-) -> String {
-    let mut parts = Vec::new();
+) -> gtk::Widget {
+    let container = gtk::Box::new(gtk::Orientation::Vertical, 8);
+
     if let Some(command) = rendered.command.as_deref() {
-        parts.push(format!("$ {command}"));
-    }
-    if let Some(output) = rendered
-        .output_text
-        .as_deref()
-        .filter(|text| !text.is_empty())
-    {
-        parts.push(format!("Output\n{output}"));
-    }
-    if let Some(code) = rendered.exit_code {
-        parts.push(format!("Exit code: {code}"));
+        let header = gtk::Label::new(Some("Command"));
+        header.add_css_class("inspector-section-heading");
+        header.set_halign(gtk::Align::Start);
+        container.append(&header);
+
+        let command_label = gtk::Label::new(Some(&format!("$ {}", command)));
+        command_label.add_css_class("terminal-command");
+        command_label.add_css_class("monospace");
+        command_label.set_halign(gtk::Align::Start);
+        command_label.set_wrap(true);
+        command_label.set_wrap_mode(gtk::pango::WrapMode::WordChar);
+        command_label.set_xalign(0.0);
+        command_label.set_selectable(true);
+        container.append(&command_label);
     }
 
-    if parts.is_empty() {
-        "No terminal output available.".to_string()
-    } else {
-        parts.join("\n\n")
-    }
-}
+    if let Some(output) = rendered.output_text.as_deref().filter(|t| !t.is_empty()) {
+        let header = gtk::Label::new(Some("Output"));
+        header.add_css_class("inspector-section-heading");
+        header.set_halign(gtk::Align::Start);
+        container.append(&header);
 
-fn format_diff_renderer_text(
-    rendered: &crate::ui::tool_renderers::diff::DiffRenderedData,
-) -> String {
-    if rendered.hunks.is_empty() {
-        return "No diff hunks available.".to_string();
+        let output_view = gtk::TextView::new();
+        output_view.buffer().set_text(output);
+        output_view.set_editable(false);
+        output_view.set_cursor_visible(false);
+        output_view.set_wrap_mode(gtk::WrapMode::WordChar);
+        output_view.set_monospace(true);
+        output_view.add_css_class("terminal-output");
+        output_view.add_css_class("inspector-code-block");
+        output_view.set_vexpand(true);
+        container.append(&output_view);
     }
 
-    let mut lines = Vec::new();
-    for hunk in &rendered.hunks {
-        lines.push(hunk.header.clone());
-        for line in &hunk.lines {
-            let prefix = match line.kind {
-                crate::ui::tool_renderers::diff::DiffLineKind::Context => " ",
-                crate::ui::tool_renderers::diff::DiffLineKind::Add => "+",
-                crate::ui::tool_renderers::diff::DiffLineKind::Remove => "-",
-            };
-            lines.push(format!("{prefix}{}", line.text));
+    if rendered.is_non_zero_exit {
+        if let Some(code) = rendered.exit_code {
+            let exit_label = gtk::Label::new(Some(&format!("Exit code: {}", code)));
+            exit_label.add_css_class("terminal-exit-nonzero");
+            exit_label.set_halign(gtk::Align::Start);
+            container.append(&exit_label);
         }
     }
 
-    lines.join("\n")
+    container.upcast()
 }
 
-fn format_file_renderer_text(
-    rendered: &crate::ui::tool_renderers::file::FileRenderedData,
-) -> String {
-    let mut parts = Vec::new();
+fn build_diff_widget(rendered: &crate::ui::tool_renderers::diff::DiffRenderedData) -> gtk::Widget {
+    let container = gtk::Box::new(gtk::Orientation::Vertical, 4);
+
+    if rendered.hunks.is_empty() {
+        let empty_label = gtk::Label::new(Some("No diff content available."));
+        empty_label.add_css_class("dim-label");
+        empty_label.set_halign(gtk::Align::Center);
+        empty_label.set_margin_all(24);
+        container.append(&empty_label);
+        return container.upcast();
+    }
+
+    for hunk in &rendered.hunks {
+        let hunk_box = gtk::Box::new(gtk::Orientation::Vertical, 0);
+
+        let header = gtk::Label::new(Some(&hunk.header));
+        header.add_css_class("diff-hunk-header");
+        header.set_halign(gtk::Align::Start);
+        header.set_selectable(true);
+        hunk_box.append(&header);
+
+        for line in &hunk.lines {
+            let line_label = gtk::Label::new(Some(&line.text));
+            line_label.set_halign(gtk::Align::Start);
+            line_label.set_xalign(0.0);
+            line_label.set_wrap(true);
+            line_label.set_wrap_mode(gtk::pango::WrapMode::WordChar);
+            line_label.set_selectable(true);
+            line_label.add_css_class("monospace");
+
+            match line.kind {
+                crate::ui::tool_renderers::diff::DiffLineKind::Add => {
+                    line_label.add_css_class("diff-added");
+                }
+                crate::ui::tool_renderers::diff::DiffLineKind::Remove => {
+                    line_label.add_css_class("diff-removed");
+                }
+                crate::ui::tool_renderers::diff::DiffLineKind::Context => {
+                    line_label.add_css_class("diff-context");
+                }
+            }
+
+            hunk_box.append(&line_label);
+        }
+
+        container.append(&hunk_box);
+    }
+
+    let scroll = gtk::ScrolledWindow::new();
+    scroll.set_child(Some(&container));
+    scroll.set_vexpand(true);
+    scroll.set_hscrollbar_policy(gtk::PolicyType::Never);
+    scroll.upcast()
+}
+
+fn build_file_widget(rendered: &crate::ui::tool_renderers::file::FileRenderedData) -> gtk::Widget {
+    let container = gtk::Box::new(gtk::Orientation::Vertical, 8);
+
     if let Some(header) = rendered.header.as_deref() {
-        parts.push(header.to_string());
+        let header_label = gtk::Label::new(Some(header));
+        header_label.add_css_class("file-header");
+        header_label.set_halign(gtk::Align::Start);
+        header_label.set_selectable(true);
+        container.append(&header_label);
     }
+
     if let Some(output) = rendered.output_text.as_deref() {
-        parts.push(format!("Output\n{output}"));
+        let content = gtk::TextView::new();
+        content.buffer().set_text(output);
+        content.set_editable(false);
+        content.set_cursor_visible(false);
+        content.set_wrap_mode(gtk::WrapMode::WordChar);
+        content.set_monospace(true);
+        content.add_css_class("inspector-code-block");
+        content.set_vexpand(true);
+        container.append(&content);
     }
-    if parts.is_empty() {
-        "No file content available.".to_string()
-    } else {
-        parts.join("\n\n")
+
+    if rendered.output_text.is_none() && rendered.header.is_none() {
+        let empty_label = gtk::Label::new(Some("No file content available."));
+        empty_label.add_css_class("dim-label");
+        empty_label.set_halign(gtk::Align::Center);
+        empty_label.set_margin_all(24);
+        container.append(&empty_label);
     }
+
+    container.upcast()
 }
 
-fn format_results_renderer_text(
+fn build_results_widget(
     rendered: &crate::ui::tool_renderers::results::ResultsRenderedData,
-) -> String {
-    let mut parts = Vec::new();
+) -> gtk::Widget {
+    let container = gtk::Box::new(gtk::Orientation::Vertical, 6);
+    container.set_margin_top(8);
+    container.set_margin_bottom(8);
 
     if !rendered.entries.is_empty() {
-        parts.push(
-            rendered
-                .entries
-                .iter()
-                .map(|entry| match entry.line {
-                    Some(line) if !entry.content.is_empty() => {
-                        format!("{}:{line}:{}", entry.path, entry.content)
-                    }
-                    Some(line) => format!("{}:{line}", entry.path),
-                    None if !entry.content.is_empty() => {
-                        format!("{}:{}", entry.path, entry.content)
-                    }
-                    None => entry.path.clone(),
-                })
-                .collect::<Vec<_>>()
-                .join("\n"),
-        );
+        for entry in &rendered.entries {
+            let row = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+
+            let path_label = gtk::Label::new(Some(&entry.path));
+            path_label.add_css_class("monospace");
+            path_label.set_halign(gtk::Align::Start);
+            row.append(&path_label);
+
+            if let Some(line_num) = entry.line {
+                let line_label = gtk::Label::new(Some(&format!(":{}", line_num)));
+                line_label.add_css_class("monospace");
+                line_label.add_css_class("dim-label");
+                row.append(&line_label);
+            }
+
+            if !entry.content.is_empty() {
+                let content_label = gtk::Label::new(Some(&format!("  {}", entry.content)));
+                content_label.set_halign(gtk::Align::Start);
+                content_label.set_xalign(0.0);
+                content_label.set_hexpand(true);
+                content_label.set_wrap(true);
+                content_label.set_wrap_mode(gtk::pango::WrapMode::WordChar);
+                row.append(&content_label);
+            }
+
+            container.append(&row);
+        }
     } else if let Some(output) = rendered.output_text.as_deref() {
-        parts.push(format!("Output\n{output}"));
+        let output_view = gtk::TextView::new();
+        output_view.buffer().set_text(output);
+        output_view.set_editable(false);
+        output_view.set_cursor_visible(false);
+        output_view.set_wrap_mode(gtk::WrapMode::WordChar);
+        output_view.add_css_class("inspector-code-block");
+        output_view.set_vexpand(true);
+        container.append(&output_view);
+    } else {
+        let empty_label = gtk::Label::new(Some("No results available."));
+        empty_label.add_css_class("dim-label");
+        empty_label.set_halign(gtk::Align::Center);
+        empty_label.set_margin_all(24);
+        container.append(&empty_label);
     }
 
-    if !parts.is_empty() {
-        return parts.join("\n\n");
-    }
-
-    "No results available.".to_string()
+    let scroll = gtk::ScrolledWindow::new();
+    scroll.set_child(Some(&container));
+    scroll.set_vexpand(true);
+    scroll.set_hscrollbar_policy(gtk::PolicyType::Never);
+    scroll.upcast()
 }
 
-fn format_subagent_renderer_text(
+fn build_subagent_widget(
     rendered: &crate::ui::tool_renderers::subagent::SubagentRenderedData,
-) -> String {
-    let mut parts = Vec::new();
+) -> gtk::Widget {
+    let container = gtk::Box::new(gtk::Orientation::Vertical, 8);
 
     if let Some(input) = rendered.input_text.as_deref() {
-        parts.push(format!("Input\n{input}"));
-    }
-    if let Some(result) = rendered.result_text.as_deref() {
-        parts.push(format!("Result\n{result}"));
-    }
-    if parts.is_empty() {
-        "Subagent details are available in the dedicated subagent inspector view.".to_string()
-    } else {
-        parts.join("\n\n")
-    }
-}
+        let header = gtk::Label::new(Some("Input"));
+        header.add_css_class("inspector-section-heading");
+        header.set_halign(gtk::Align::Start);
+        container.append(&header);
 
-fn output_plan_text(plan: &OutputRenderPlan) -> &str {
-    match plan {
-        OutputRenderPlan::PrettyJson(text) | OutputRenderPlan::Markdown(text) => text,
+        let content = gtk::TextView::new();
+        content.buffer().set_text(input);
+        content.set_editable(false);
+        content.set_cursor_visible(false);
+        content.set_wrap_mode(gtk::WrapMode::WordChar);
+        content.set_monospace(true);
+        content.add_css_class("inspector-code-block");
+        container.append(&content);
     }
+
+    if let Some(result) = rendered.result_text.as_deref() {
+        let header = gtk::Label::new(Some("Result"));
+        header.add_css_class("inspector-section-heading");
+        header.set_halign(gtk::Align::Start);
+        container.append(&header);
+
+        let content = gtk::TextView::new();
+        content.buffer().set_text(result);
+        content.set_editable(false);
+        content.set_cursor_visible(false);
+        content.set_wrap_mode(gtk::WrapMode::WordChar);
+        content.add_css_class("inspector-code-block");
+        container.append(&content);
+    }
+
+    if container.first_child().is_none() {
+        let empty_label = gtk::Label::new(Some(
+            "Subagent details are available in the dedicated subagent inspector view.",
+        ));
+        empty_label.add_css_class("dim-label");
+        empty_label.set_halign(gtk::Align::Center);
+        empty_label.set_margin_all(24);
+        container.append(&empty_label);
+    }
+
+    container.upcast()
 }
 
 fn begin_loading_request(active_request_id: &mut u64, load_state: &mut LoadState) -> u64 {
