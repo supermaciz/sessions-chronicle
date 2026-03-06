@@ -977,6 +977,7 @@ fn build_generic_widget(
     rendered: &crate::ui::tool_renderers::generic::GenericRenderedData,
 ) -> gtk::Widget {
     let container = gtk::Box::new(gtk::Orientation::Vertical, 8);
+    let has_input = rendered.input_text.as_deref().is_some();
 
     if let Some(input) = rendered.input_text.as_deref() {
         let header = gtk::Label::new(Some("Input"));
@@ -999,6 +1000,9 @@ fn build_generic_widget(
         let header = gtk::Label::new(Some("Output"));
         header.add_css_class("inspector-section-heading");
         header.set_halign(gtk::Align::Start);
+        if has_input {
+            header.set_margin_top(4);
+        }
         container.append(&header);
 
         container.append(&build_output_render_plan_widget(output));
@@ -1036,6 +1040,7 @@ fn build_terminal_widget(
     rendered: &crate::ui::tool_renderers::terminal::TerminalRenderedData,
 ) -> gtk::Widget {
     let container = gtk::Box::new(gtk::Orientation::Vertical, 8);
+    let has_command = rendered.command.as_deref().is_some();
 
     if let Some(command) = rendered.command.as_deref() {
         let header = gtk::Label::new(Some("Command"));
@@ -1058,6 +1063,9 @@ fn build_terminal_widget(
         let header = gtk::Label::new(Some("Output"));
         header.add_css_class("inspector-section-heading");
         header.set_halign(gtk::Align::Start);
+        if has_command {
+            header.set_margin_top(4);
+        }
         container.append(&header);
 
         let output_view = gtk::TextView::new();

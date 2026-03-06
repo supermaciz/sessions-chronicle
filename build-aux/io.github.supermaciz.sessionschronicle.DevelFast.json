@@ -41,7 +41,7 @@
         {
           "type": "git",
           "path": "../",
-          "branch": "main"
+          "branch": "feat/tool-inspector-improvements"
         }
       ]
     }
