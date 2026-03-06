@@ -1069,13 +1069,13 @@ fn build_terminal_widget(
         container.append(&output_view);
     }
 
-    if rendered.is_non_zero_exit {
-        if let Some(code) = rendered.exit_code {
-            let exit_label = gtk::Label::new(Some(&format!("Exit code: {}", code)));
-            exit_label.add_css_class("terminal-exit-nonzero");
-            exit_label.set_halign(gtk::Align::Start);
-            container.append(&exit_label);
-        }
+    if rendered.is_non_zero_exit
+        && let Some(code) = rendered.exit_code
+    {
+        let exit_label = gtk::Label::new(Some(&format!("Exit code: {}", code)));
+        exit_label.add_css_class("terminal-exit-nonzero");
+        exit_label.set_halign(gtk::Align::Start);
+        container.append(&exit_label);
     }
 
     container.upcast()
