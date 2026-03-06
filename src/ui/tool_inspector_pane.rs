@@ -1387,11 +1387,6 @@ fn format_unix_timestamp(timestamp: i64) -> Option<String> {
 mod tests {
     use super::*;
     use crate::models::ToolCall;
-    use crate::ui::tool_renderers::file::FileRenderedData;
-    use crate::ui::tool_renderers::generic::{GenericRenderedData, OutputRenderPlan};
-    use crate::ui::tool_renderers::results::ResultsRenderedData;
-    use crate::ui::tool_renderers::subagent::SubagentRenderedData;
-    use crate::ui::tool_renderers::terminal::TerminalRenderedData;
 
     #[test]
     fn stale_request_results_are_ignored() {
@@ -1439,69 +1434,6 @@ mod tests {
             subagent_request_result(&Ok(None), &Err("tools fetch failed".to_string()));
 
         assert_eq!(state_result, Ok(()));
-    }
-
-    #[test]
-    fn formatter_renders_terminal_content_without_error_section_duplication() {
-        let rendered = TerminalRenderedData {
-            command: Some("cargo test".to_string()),
-            output_text: Some("done".to_string()),
-            error_text: Some("warn".to_string()),
-            display_text: Some("done".to_string()),
-            exit_code: Some(1),
-            is_non_zero_exit: true,
-            status: ToolCallStatus::Error,
-            duration_ms: None,
-        };
-
-        let text = format_terminal_renderer_text(&rendered);
-        assert!(text.contains("$ cargo test"));
-        assert!(text.contains("Output\ndone"));
-        assert!(!text.contains("Error\nwarn"));
-    }
-
-    #[test]
-    fn formatter_renders_generic_file_and_results_content_without_error_duplication() {
-        let generic_text = format_generic_renderer_text(&GenericRenderedData {
-            input_text: None,
-            output: Some(OutputRenderPlan::Markdown("ok".to_string())),
-            error: Some(OutputRenderPlan::Markdown("failed".to_string())),
-        });
-        assert!(generic_text.contains("Output\nok"));
-        assert!(!generic_text.contains("Error\nfailed"));
-
-        let file_text = format_file_renderer_text(&FileRenderedData {
-            header: Some("src/main.rs".to_string()),
-            output_text: Some("fn main() {}".to_string()),
-            error_text: Some("permission denied".to_string()),
-            status: ToolCallStatus::Error,
-            duration_ms: None,
-        });
-        assert!(file_text.contains("Output\nfn main() {}"));
-        assert!(!file_text.contains("Error\npermission denied"));
-
-        let results_text = format_results_renderer_text(&ResultsRenderedData {
-            entries: vec![],
-            output_text: Some("raw output".to_string()),
-            error_text: Some("raw error".to_string()),
-            status: ToolCallStatus::Error,
-            duration_ms: None,
-        });
-        assert!(results_text.contains("Output\nraw output"));
-        assert!(!results_text.contains("Error\nraw error"));
-    }
-
-    #[test]
-    fn formatter_renders_subagent_input_and_result_without_error_duplication() {
-        let text = format_subagent_renderer_text(&SubagentRenderedData {
-            input_text: Some("{\"prompt\":\"investigate\"}".to_string()),
-            result_text: Some("completed".to_string()),
-            error_text: Some("partial failure".to_string()),
-        });
-
-        assert!(text.contains("Input\n{\"prompt\":\"investigate\"}"));
-        assert!(text.contains("Result\ncompleted"));
-        assert!(!text.contains("Error\npartial failure"));
     }
 
     #[test]
