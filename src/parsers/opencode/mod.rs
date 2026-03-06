@@ -476,7 +476,11 @@ impl OpenCodeParser {
                     id: format!("{}-{}-{}", session_id, message_id, part.id),
                     session_id: session_id.to_string(),
                     title,
-                    prompt: None,
+                    prompt: part
+                        .raw
+                        .get("prompt")
+                        .and_then(|v| v.as_str())
+                        .map(str::to_string),
                     result_summary,
                     child_session_id,
                     parser_ref: None,
@@ -1247,6 +1251,7 @@ mod tests {
                 "order": 1,
                 "type": "subtask",
                 "description": "Summarise markdown files",
+                "prompt": "## Review\n\n- inspect parser\n- report issues",
                 "childSessionID": "session-child-123",
                 "state": {
                     "status": "completed",
@@ -1261,6 +1266,10 @@ mod tests {
         assert_eq!(parsed.messages.len(), 1);
         assert_eq!(parsed.subagents.len(), 1);
         assert_eq!(parsed.subagents[0].title, "Summarise markdown files");
+        assert_eq!(
+            parsed.subagents[0].prompt.as_deref(),
+            Some("## Review\n\n- inspect parser\n- report issues")
+        );
         assert_eq!(
             parsed.subagents[0].child_session_id.as_deref(),
             Some("session-child-123")

@@ -185,6 +185,31 @@ State fields:
 | `completed` | `input`, `output`, `title`, `metadata`, `time.start/end`, optional `attachments` |
 | `error` | `input`, `error`, optional `metadata`, `time.start/end` |
 
+### Useful SQLite Queries
+
+Open the database read-only:
+
+```bash
+sqlite3 'file:~/.local/share/opencode/opencode.db?mode=ro&immutable=1'
+```
+
+Find sessions containing at least one tool part with `state.status == "error"`:
+
+```sql
+SELECT
+  s.id,
+  s.title,
+  s.directory,
+  COUNT(*) AS error_parts,
+  datetime(MAX(p.time_created) / 1000, 'unixepoch') AS last_error_utc
+FROM part p
+JOIN session s ON s.id = p.session_id
+WHERE json_extract(p.data, '$.type') = 'tool'
+  AND json_extract(p.data, '$.state.status') = 'error'
+GROUP BY s.id, s.title, s.directory
+ORDER BY MAX(p.time_created) DESC;
+```
+
 ---
 
 ## Legacy Format — JSON Files (pre-2026-02-14)

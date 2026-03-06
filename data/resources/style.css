@@ -159,6 +159,12 @@
   padding: 6px 8px;
 }
 
+.inspector-markdown-block {
+  background-color: alpha(@card_shade_color, 0.15);
+  border-radius: 4px;
+  padding: 6px 8px;
+}
+
 /* Inspector pane heading labels */
 .inspector-section-heading {
   font-weight: bold;

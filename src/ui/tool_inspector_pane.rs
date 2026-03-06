@@ -9,6 +9,7 @@ use relm4::{Component, ComponentParts, ComponentSender, RelmWidgetExt, adw, gtk}
 use crate::database::{load_subagent, load_tool_call, load_tool_calls_for_subagent};
 use crate::models::{Subagent, ToolCall, ToolCallStatus};
 use crate::ui::format::{format_duration_ms, status_icon_name};
+use crate::ui::markdown;
 use crate::ui::tool_renderers::diff::DiffRenderer;
 use crate::ui::tool_renderers::file::FileRenderer;
 use crate::ui::tool_renderers::generic::GenericRenderer;
@@ -58,6 +59,12 @@ struct RendererStackViews {
     subagent_container: gtk::Box,
 }
 
+#[derive(Clone)]
+struct MarkdownSectionViews {
+    section: gtk::Box,
+    content: gtk::Box,
+}
+
 // ── Component ─────────────────────────────────────────────────────────────────
 
 pub struct ToolInspectorPane {
@@ -85,16 +92,13 @@ pub struct ToolInspectorPane {
     tool_name_label: gtk::Label,
     tool_status_label: gtk::Label,
     tool_metadata_label: gtk::Label,
-    tool_error_section: gtk::Box,
-    tool_error_label: gtk::Label,
+    tool_error_views: MarkdownSectionViews,
     tool_renderer_views: RendererStackViews,
 
     // Subagent detail widgets (inside "subagent" stack page)
     subagent_title_label: gtk::Label,
-    subagent_prompt_section: gtk::Box,
-    subagent_prompt_label: gtk::Label,
-    subagent_result_section: gtk::Box,
-    subagent_result_label: gtk::Label,
+    subagent_prompt_views: MarkdownSectionViews,
+    subagent_result_views: MarkdownSectionViews,
     subagent_tools_list: gtk::ListBox,
     open_session_button: gtk::Button,
 
@@ -104,8 +108,7 @@ pub struct ToolInspectorPane {
     drill_name_label: gtk::Label,
     drill_status_label: gtk::Label,
     drill_metadata_label: gtk::Label,
-    drill_error_section: gtk::Box,
-    drill_error_label: gtk::Label,
+    drill_error_views: MarkdownSectionViews,
     drill_renderer_views: RendererStackViews,
 
     // Interior-mutable flag: is drill_page currently pushed onto nav_view?
@@ -264,9 +267,13 @@ impl Component for ToolInspectorPane {
 
         let tool_status_label = make_caption_label();
         let tool_metadata_label = make_metadata_label();
-        let (tool_error_section, tool_error_label) = make_text_section("Error");
-        tool_error_section.add_css_class("inspector-error-section");
-        tool_error_label.add_css_class("inspector-error-text");
+        let tool_error_views = make_markdown_section("Error");
+        tool_error_views
+            .section
+            .add_css_class("inspector-error-section");
+        tool_error_views
+            .content
+            .add_css_class("inspector-error-text");
         let tool_renderer_views = make_renderer_stack_views();
 
         let tool_outer = gtk::Box::new(gtk::Orientation::Vertical, 12);
@@ -274,7 +281,7 @@ impl Component for ToolInspectorPane {
         tool_outer.append(&tool_name_label);
         tool_outer.append(&tool_status_label);
         tool_outer.append(&tool_metadata_label);
-        tool_outer.append(&tool_error_section);
+        tool_outer.append(&tool_error_views.section);
         tool_outer.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
         tool_outer.append(&tool_renderer_views.stack);
 
@@ -287,8 +294,8 @@ impl Component for ToolInspectorPane {
         // — Subagent detail ———————————————————————————————————————————————————
         let subagent_title_label = make_title_label();
 
-        let (subagent_prompt_section, subagent_prompt_label) = make_text_section("Prompt");
-        let (subagent_result_section, subagent_result_label) = make_text_section("Result");
+        let subagent_prompt_views = make_markdown_section("Prompt");
+        let subagent_result_views = make_markdown_section("Result");
 
         let inner_tools_header = gtk::Label::new(Some("Inner Tools"));
         inner_tools_header.add_css_class("heading");
@@ -310,8 +317,8 @@ impl Component for ToolInspectorPane {
         subagent_outer.set_margin_all(16);
         subagent_outer.append(&subagent_title_label);
         subagent_outer.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
-        subagent_outer.append(&subagent_prompt_section);
-        subagent_outer.append(&subagent_result_section);
+        subagent_outer.append(&subagent_prompt_views.section);
+        subagent_outer.append(&subagent_result_views.section);
         subagent_outer.append(&inner_tools_header);
         subagent_outer.append(&subagent_tools_list);
         subagent_outer.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
@@ -336,9 +343,13 @@ impl Component for ToolInspectorPane {
         drill_name_label.add_css_class("monospace");
         let drill_status_label = make_caption_label();
         let drill_metadata_label = make_metadata_label();
-        let (drill_error_section, drill_error_label) = make_text_section("Error");
-        drill_error_section.add_css_class("inspector-error-section");
-        drill_error_label.add_css_class("inspector-error-text");
+        let drill_error_views = make_markdown_section("Error");
+        drill_error_views
+            .section
+            .add_css_class("inspector-error-section");
+        drill_error_views
+            .content
+            .add_css_class("inspector-error-text");
         let drill_renderer_views = make_renderer_stack_views();
 
         let drill_outer = gtk::Box::new(gtk::Orientation::Vertical, 12);
@@ -346,7 +357,7 @@ impl Component for ToolInspectorPane {
         drill_outer.append(&drill_name_label);
         drill_outer.append(&drill_status_label);
         drill_outer.append(&drill_metadata_label);
-        drill_outer.append(&drill_error_section);
+        drill_outer.append(&drill_error_views.section);
         drill_outer.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
         drill_outer.append(&drill_renderer_views.stack);
 
@@ -393,22 +404,18 @@ impl Component for ToolInspectorPane {
             tool_name_label,
             tool_status_label,
             tool_metadata_label,
-            tool_error_section,
-            tool_error_label,
+            tool_error_views,
             tool_renderer_views,
             subagent_title_label,
-            subagent_prompt_section,
-            subagent_prompt_label,
-            subagent_result_section,
-            subagent_result_label,
+            subagent_prompt_views,
+            subagent_result_views,
             subagent_tools_list,
             open_session_button,
             drill_page,
             drill_name_label,
             drill_status_label,
             drill_metadata_label,
-            drill_error_section,
-            drill_error_label,
+            drill_error_views,
             drill_renderer_views,
             drill_page_pushed: Cell::new(false),
         };
@@ -690,21 +697,16 @@ impl Component for ToolInspectorPane {
             let metadata_line = format_tool_metadata_line(tc);
             apply_optional_line(&self.tool_metadata_label, metadata_line.as_deref());
             let error_text = tool_error_message(tc);
-            apply_optional_section(&self.tool_error_section, &self.tool_error_label, error_text);
+            apply_optional_markdown_section(&self.tool_error_views, error_text);
             apply_renderer_stack(&self.tool_renderer_views, tc);
         }
 
         // 3. Update subagent content widgets.
         if let Some(ref sa) = self.subagent {
             self.subagent_title_label.set_label(&sa.title);
-            apply_optional_section(
-                &self.subagent_prompt_section,
-                &self.subagent_prompt_label,
-                sa.prompt.as_deref(),
-            );
-            apply_optional_section(
-                &self.subagent_result_section,
-                &self.subagent_result_label,
+            apply_optional_markdown_section(&self.subagent_prompt_views, sa.prompt.as_deref());
+            apply_optional_markdown_section(
+                &self.subagent_result_views,
                 sa.result_summary.as_deref(),
             );
 
@@ -756,11 +758,7 @@ impl Component for ToolInspectorPane {
             let metadata_line = format_tool_metadata_line(tc);
             apply_optional_line(&self.drill_metadata_label, metadata_line.as_deref());
             let error_text = tool_error_message(tc);
-            apply_optional_section(
-                &self.drill_error_section,
-                &self.drill_error_label,
-                error_text,
-            );
+            apply_optional_markdown_section(&self.drill_error_views, error_text);
             apply_renderer_stack(&self.drill_renderer_views, tc);
 
             if !self.drill_page_pushed.get() {
@@ -872,39 +870,32 @@ fn make_renderer_container() -> gtk::Box {
     container
 }
 
-fn make_mono_label() -> gtk::Label {
-    let label = gtk::Label::new(None);
-    label.add_css_class("monospace");
-    label.set_wrap(true);
-    label.set_wrap_mode(gtk::pango::WrapMode::WordChar);
-    label.set_halign(gtk::Align::Start);
-    label.set_xalign(0.0);
-    label.set_selectable(true);
-    label
-}
-
-/// Build a section box (heading label + mono content label), hidden by default.
-fn make_text_section(title: &str) -> (gtk::Box, gtk::Label) {
+fn make_markdown_section(title: &str) -> MarkdownSectionViews {
     let section = gtk::Box::new(gtk::Orientation::Vertical, 4);
     let header = gtk::Label::new(Some(title));
     header.add_css_class("inspector-section-heading");
     header.set_halign(gtk::Align::Start);
-    let content = make_mono_label();
-    content.add_css_class("inspector-code-block");
+
+    let content = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    content.add_css_class("inspector-markdown-block");
+    content.set_hexpand(true);
+
     section.append(&header);
     section.append(&content);
     section.set_visible(false);
-    (section, content)
+
+    MarkdownSectionViews { section, content }
 }
 
-/// Show or hide a section based on whether `text` is non-empty.
-fn apply_optional_section(section: &gtk::Box, label: &gtk::Label, text: Option<&str>) {
+fn apply_optional_markdown_section(views: &MarkdownSectionViews, text: Option<&str>) {
+    clear_container(&views.content);
     match text {
-        Some(t) if !t.is_empty() => {
-            label.set_label(t);
-            section.set_visible(true);
+        Some(value) if !value.is_empty() => {
+            let (markdown_view, _) = markdown::render_markdown_to_textview(value, None);
+            views.content.append(&markdown_view);
+            views.section.set_visible(true);
         }
-        _ => section.set_visible(false),
+        _ => views.section.set_visible(false),
     }
 }
 
@@ -1010,23 +1001,35 @@ fn build_generic_widget(
         header.set_halign(gtk::Align::Start);
         container.append(&header);
 
-        let text = match output {
-            crate::ui::tool_renderers::generic::OutputRenderPlan::PrettyJson(t) => t.as_str(),
-            crate::ui::tool_renderers::generic::OutputRenderPlan::Markdown(t) => t.as_str(),
-        };
-
-        let content = gtk::TextView::new();
-        content.buffer().set_text(text);
-        content.set_editable(false);
-        content.set_cursor_visible(false);
-        content.set_wrap_mode(gtk::WrapMode::WordChar);
-        content.set_monospace(true);
-        content.add_css_class("inspector-code-block");
-        content.set_vexpand(true);
-        container.append(&content);
+        container.append(&build_output_render_plan_widget(output));
     }
 
     container.upcast()
+}
+
+fn build_output_render_plan_widget(
+    output: &crate::ui::tool_renderers::generic::OutputRenderPlan,
+) -> gtk::Widget {
+    match output {
+        crate::ui::tool_renderers::generic::OutputRenderPlan::PrettyJson(text) => {
+            let content = gtk::TextView::new();
+            content.buffer().set_text(text);
+            content.set_editable(false);
+            content.set_cursor_visible(false);
+            content.set_wrap_mode(gtk::WrapMode::WordChar);
+            content.set_monospace(true);
+            content.add_css_class("inspector-code-block");
+            content.set_vexpand(true);
+            content.upcast()
+        }
+        crate::ui::tool_renderers::generic::OutputRenderPlan::Markdown(text) => {
+            let wrapper = gtk::Box::new(gtk::Orientation::Vertical, 0);
+            wrapper.add_css_class("inspector-markdown-block");
+            let (markdown_view, _) = markdown::render_markdown_to_textview(text, None);
+            wrapper.append(&markdown_view);
+            wrapper.upcast()
+        }
+    }
 }
 
 fn build_terminal_widget(
