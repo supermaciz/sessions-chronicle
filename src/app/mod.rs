@@ -467,9 +467,7 @@ impl SimpleComponent for App {
         // Set up OverlaySplitView: sidebar = pane Stack, content = NavigationView
         widgets.overlay_split.set_sidebar(Some(&model.pane_stack));
         widgets.overlay_split.set_content(Some(&nav_view));
-        widgets.overlay_split.set_min_sidebar_width(360.0);
         widgets.overlay_split.set_max_sidebar_width(720.0);
-        widgets.overlay_split.set_sidebar_width_fraction(0.4);
 
         // Wire notify::show-sidebar for bidirectional sync (gestures, collapse)
         let visibility_sender = sender.input_sender().clone();
@@ -615,10 +613,16 @@ impl SimpleComponent for App {
             widgets.search_bar.set_search_mode(self.search_visible);
         }
 
-        // Apply sidebar position based on current pane mode
+        // Apply sidebar position and width based on current pane mode
         widgets
             .overlay_split
             .set_sidebar_position(self.pane_mode.sidebar_position());
+        widgets
+            .overlay_split
+            .set_min_sidebar_width(self.pane_mode.sidebar_min_width());
+        widgets
+            .overlay_split
+            .set_sidebar_width_fraction(self.pane_mode.sidebar_width_fraction());
     }
 
     fn shutdown(&mut self, widgets: &mut Self::Widgets, _output: relm4::Sender<Self::Output>) {
