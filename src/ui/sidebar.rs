@@ -94,18 +94,6 @@ impl SimpleComponent for Sidebar {
                 },
             },
 
-            gtk::Separator {
-                set_margin_top: 12,
-                set_margin_bottom: 12,
-            },
-
-            gtk::Label {
-                set_label: "Projects",
-                set_halign: gtk::Align::Start,
-                add_css_class: "heading",
-                set_margin_bottom: 6,
-            },
-
             gtk::ScrolledWindow {
                 set_vexpand: true,
                 set_hscrollbar_policy: gtk::PolicyType::Never,
