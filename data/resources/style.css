@@ -196,3 +196,39 @@
 .terminal-exit-nonzero {
   color: @error_color;
 }
+
+/* Diff renderer styling */
+.diff-added {
+  color: @success_color;
+  background-color: alpha(@success_color, 0.1);
+}
+
+.diff-removed {
+  color: @error_color;
+  background-color: alpha(@error_color, 0.1);
+}
+
+.diff-context {
+  opacity: 0.85;
+}
+
+.diff-hunk-header {
+  font-family: monospace;
+  font-style: italic;
+  opacity: 0.7;
+}
+
+/* File renderer header */
+.file-header {
+  font-family: monospace;
+  font-weight: bold;
+  background-color: alpha(@card_shade_color, 0.3);
+  padding: 6px 8px;
+  border-radius: 4px;
+}
+
+/* Preview label for inline chips */
+.preview-label {
+  opacity: 0.7;
+  font-size: 0.9em;
+}
