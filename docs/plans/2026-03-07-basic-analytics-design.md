@@ -14,9 +14,10 @@ This design targets a low-risk V1 analytics page that fits the current Sessions 
 | Product framing | Analytics is a secondary top-level view focused on glanceable usage insights |
 | V1 scope | Summary counters, activity heatmap, sessions by tool, token consumption, session span distribution |
 | Navigation | `AdwViewSwitcher` with `Sessions` and `Analytics`, justified as two peer workspaces |
-| Rendering strategy | Widget-first UI, with only one required custom visualization in V1 |
+| Rendering strategy | Widget-first UI; heatmap is the only custom visualization in V1 |
 | Data layer | Dedicated `src/database/analytics.rs` query module |
 | Loading | Background Relm4 worker returning one aggregated `AnalyticsData` payload |
+| Time grouping | Local time via SQLite `'localtime'` modifier |
 | Theme behavior | Follow libadwaita appearance, with chart colors derived for light/dark modes |
 | Non-goals for V1 | Models used, top projects, subagent breakdown, date filters, week-over-week deltas |
 
@@ -49,9 +50,11 @@ This uses:
 - `AdwViewSwitcher` in the header bar on wide windows
 - `AdwViewSwitcherBar` on narrow windows
 
-Although GNOME HIG generally positions view switchers as strongest with three to five views, this design still uses one because `Sessions` and `Analytics` are true peers: one is the operational browsing workspace, the other is the observational insights workspace.
+Although GNOME HIG recommends three to five views as a rule of thumb, two views are justified here because `Sessions` and `Analytics` are true peers: one is the operational browsing workspace, the other is the observational insights workspace. The V1 content (five sections including a custom heatmap) is substantial enough to warrant its own top-level page rather than a pushed detail view.
 
-To keep this choice justified, the Analytics page must feel substantial enough to deserve top-level placement. If the content is reduced to a few textual rows, the design should fall back to a pushed page instead of a top-level view.
+This choice also scales naturally: a future "Projects" or "Models" view would bring the count to three, which is squarely within the HIG recommendation.
+
+**Fallback:** If the V1 content proves too thin at implementation time, migrating to a pushed `NavigationPage` is trivial — the analytics content moves unchanged, and the `ViewStack` is removed.
 
 ## Header Bar Behavior
 
@@ -119,13 +122,16 @@ This section should prioritize correctness and comparability over visual flouris
 
 ### 5. Session Span Distribution
 
-A final section shows the distribution of session spans across a small set of fixed buckets.
+A final section shows the distribution of session spans across a small set of fixed buckets using **native widgets only** — no custom rendering.
 
-This can initially be presented either as:
-- a simple native grouped summary, or
-- a lightweight histogram if the heatmap implementation proves maintainable
+Each bucket is an `AdwActionRow` (or equivalent) with:
+- bucket label (e.g. "< 5 min", "5–15 min", "15–30 min", "30–60 min", "> 1 hour")
+- session count
+- a `GtkProgressBar` or `GtkLevelBar` showing the relative proportion
 
-The important design constraint is that this metric appears clearly labeled as session span, not active work duration.
+This keeps V1 limited to a single custom widget (the heatmap). A histogram visualization may replace this section in a later version if the heatmap implementation proves maintainable.
+
+The important design constraint is that this metric appears clearly labeled as **session span**, not active work duration.
 
 ## Responsive Behavior
 
@@ -183,25 +189,38 @@ A later version may add explicit subagent analytics as its own section.
 
 ### Time Interpretation
 
-Daily activity is based on the session start date.
+Daily activity is grouped by the session start date in **local time**.
 
-The design must explicitly choose whether dates are grouped in:
-- local time, or
-- UTC
+Users interpret activity as part of their own calendar: a session started at 23:30 on Tuesday should appear on Tuesday, not Wednesday. Timestamps are stored as UTC epoch values, so the conversion happens at query time using SQLite's `'localtime'` modifier:
 
-V1 should use local time because users interpret activity as part of their own calendar, not as storage timestamps.
+```sql
+date(start_time, 'unixepoch', 'localtime')
+```
 
-This choice should be documented in the analytics query layer and reflected consistently in tests.
+Timezone changes (e.g. travel) are a negligible edge case for a personal desktop tool and do not warrant storing per-session timezone offsets in V1.
+
+This choice must be documented in `src/database/analytics.rs` and reflected consistently in tests.
 
 ### Token Semantics
 
 Token totals must distinguish:
-- known zero values
-- unknown or missing values
-- unavailable values for tools or sessions that do not report tokens
+- known zero values (a session explicitly reported 0 tokens)
+- unknown or missing values (a session exists but has no token data)
+- unavailable values (a tool never reports tokens)
 
-The UI must never silently treat missing token data as zero.  
-Where completeness is partial, the design should communicate this with supporting text rather than presenting deceptively precise totals.
+The UI must never silently treat missing token data as zero.
+
+**User-facing copy for partial availability:**
+
+- **Section subtitle** when some sessions lack data:
+  "Based on N of M sessions that report token usage"
+- **Per-tool display** when a tool never reports tokens:
+  Show "—" instead of "0", with a tooltip: "Token data not available for [tool]"
+- **Entire section empty** (no tool reports tokens):
+  Replace the section content with a single descriptive row:
+  "Token data is not available for the indexed sessions"
+
+This copy is intentionally factual and non-alarmiste — it explains scope, not failure.
 
 ### Project Semantics
 
@@ -231,9 +250,9 @@ V1 uses a widget-first rendering strategy.
 That means:
 - built-in libadwaita widgets for counters and ranked breakdowns
 - a custom-rendered heatmap as the only required bespoke visualization
-- a second custom visualization only if the first implementation remains clearly maintainable
+- native widgets (`AdwActionRow`, `GtkProgressBar`) for all other sections including session span distribution
 
-This keeps the first release visually meaningful without forcing the design to depend on three new custom widgets at once.
+This keeps the first release visually meaningful without forcing the design to depend on multiple new custom widgets at once.
 
 ### Why Not Three Custom Widgets in V1
 
@@ -322,16 +341,16 @@ These are intentionally deferred because they either:
 - require additional UI controls or drill-down
 - increase the dashboard surface before the V1 information architecture is proven
 
-## Open Questions
+## Resolved Design Questions
 
-The design intentionally leaves a small number of questions to validate before implementation:
+The following questions were raised during the initial design draft and have been resolved:
 
-1. Is the Analytics page substantial enough to justify top-level placement with a two-view `AdwViewSwitcher`?
-2. Should the session activity heatmap group days in local time or UTC?
-3. Should V1 include one custom visualization only, or also a second lightweight chart if the first proves maintainable?
-4. What user-facing copy should explain partial token availability without making the dashboard feel unreliable?
-
-These questions should be resolved in the final reviewed design text before implementation planning begins.
+| # | Question | Decision | Rationale |
+|---|----------|----------|-----------|
+| 1 | Is a two-view `AdwViewSwitcher` justified? | **Yes** | V1 content (5 sections + heatmap) is substantial; scales to 3+ views later; fallback to `NavigationPage` is trivial |
+| 2 | Local time or UTC for daily grouping? | **Local time** | Users interpret activity in their own calendar; use SQLite `'localtime'` modifier at query time |
+| 3 | How many custom visualizations in V1? | **One (heatmap only)** | Session span distribution uses native `AdwActionRow` + `GtkProgressBar`; a histogram may replace it in V2 |
+| 4 | How to communicate partial token data? | **Contextual copy** | Section subtitle: "Based on N of M sessions that report token usage"; per-tool "—" with tooltip when unavailable |
 
 ## Final Recommendation
 
