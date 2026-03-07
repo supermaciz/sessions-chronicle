@@ -1,3 +1,4 @@
+pub mod analytics;
 pub mod indexer;
 pub mod schema;
 

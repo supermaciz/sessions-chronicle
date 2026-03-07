@@ -1,0 +1,41 @@
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct AnalyticsData {
+    pub overview: AnalyticsOverview,
+    pub activity_days: Vec<ActivityDay>,
+    pub sessions_by_tool: Vec<ToolSessionCount>,
+    pub token_usage_by_tool: Vec<ToolTokenUsage>,
+    pub session_span_buckets: Vec<SessionSpanBucket>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct AnalyticsOverview {
+    pub total_sessions: i64,
+    pub total_messages: i64,
+    pub distinct_projects: i64,
+    pub active_days: i64,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ActivityDay {
+    pub day: String,
+    pub session_count: i64,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ToolSessionCount {
+    pub tool: String,
+    pub session_count: i64,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ToolTokenUsage {
+    pub tool: String,
+    pub input_tokens: Option<i64>,
+    pub output_tokens: Option<i64>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct SessionSpanBucket {
+    pub bucket: String,
+    pub session_count: i64,
+}
