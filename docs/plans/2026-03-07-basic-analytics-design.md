@@ -1,376 +1,355 @@
 # Basic Analytics Dashboard - Design
 
-**Issue:** [#58 - Basic analytics](https://github.com/supermaciz/sessions-chronicle/issues/58)
-**Date:** 2026-03-07
-**Status:** Design
+**Issue:** [#58 - Basic analytics](https://github.com/supermaciz/sessions-chronicle/issues/58)  
+**Date:** 2026-03-07  
+**Status:** Design  
 **Based on:** Proposition A from `2026-03-02-basic-analytics-exploration.md`
 
 ## Decision Summary
 
+This design targets a low-risk V1 analytics page that fits the current Sessions Chronicle architecture and can evolve incrementally.
+
 | Decision | Choice |
 |----------|--------|
-| Navigation | AdwViewSwitcher (Sessions / Analytics) |
-| Chart rendering | Pure GtkSnapshot (append_color, append_fill, append_stroke, append_layout) |
-| V1 scope | Heatmap + histogram + bar chart (donut deferred to V2) |
-| Data layer | Dedicated `database/analytics.rs` module |
-| Loading | Async Relm4 Worker |
-| Theming | Hardcoded Adwaita palette + light/dark detection via StyleManager |
-| Extra dependencies | None (no plotters-gtk4) |
+| Product framing | Analytics is a secondary top-level view focused on glanceable usage insights |
+| V1 scope | Summary counters, activity heatmap, sessions by tool, token consumption, session span distribution |
+| Navigation | `AdwViewSwitcher` with `Sessions` and `Analytics`, justified as two peer workspaces |
+| Rendering strategy | Widget-first UI, with only one required custom visualization in V1 |
+| Data layer | Dedicated `src/database/analytics.rs` query module |
+| Loading | Background Relm4 worker returning one aggregated `AnalyticsData` payload |
+| Theme behavior | Follow libadwaita appearance, with chart colors derived for light/dark modes |
+| Non-goals for V1 | Models used, top projects, subagent breakdown, date filters, week-over-week deltas |
 
-## Navigation: AdwViewSwitcher
+## Product Goal
 
-The current plain header title is replaced by an `AdwViewSwitcher` offering two
-top-level views: **Sessions** and **Analytics**.
+The Analytics view gives users a quick understanding of how they use Sessions Chronicle data over time, without turning the app into a full reporting tool.
 
-### Widget Hierarchy
+V1 is intentionally narrow:
+- answer "how much", "when", and "with which tool"
+- stay readable on desktop and narrow windows
+- avoid a dashboard architecture that requires multiple custom chart widgets before the first release
 
-```
-AdwApplicationWindow
-  AdwToastOverlay
-    AdwToolbarView
-      [top_bar] AdwHeaderBar
-        [title_widget] AdwViewSwitcher        // NEW
-          page: "Sessions"  (icon: view-list-symbolic)
-          page: "Analytics" (icon: chart-line-symbolic)
-        [pack_start] search_toggle            // visible on Sessions only
-        [pack_end] pane_toggle, menu_button, spinner
-      [content] gtk::Box (vertical)
-        SearchBar                             // visible on Sessions only
-        AdwViewStack                          // NEW
-          page "sessions":
-            AdwOverlaySplitView               // existing session list + pane
-          page "analytics":
-            AnalyticsDashboard                // NEW Relm4 component
-```
+## Why This Scope
 
-### Adaptive Behavior
+Issue `#58` describes a broader analytics surface, but not every metric needs to land in the first dashboard version.  
+For V1, the design prioritizes:
+- high-signal metrics already available in the database
+- visuals that remain understandable without filters or drill-down
+- low rendering complexity
+- clear semantics for incomplete or missing token data
 
-An `AdwViewSwitcherBar` at the bottom of the window takes over when the window
-is too narrow. This is the standard GNOME pattern.
+This keeps the first release useful while leaving room to extend the page later without redesigning the navigation model.
 
-### Impact on Existing Code
+## Navigation
 
-- `SearchBar` and `pane_toggle` are hidden when on the Analytics page.
-- `back_button`, `resume_button`, `parent_session_button` remain tied to the
-  `NavigationView` inside the Sessions page.
-- The existing `NavigationView` moves inside the "sessions" page of the
-  `ViewStack`.
+The app gains a top-level `Analytics` view alongside `Sessions`.
+
+This uses:
+- `AdwViewStack` for the two top-level pages
+- `AdwViewSwitcher` in the header bar on wide windows
+- `AdwViewSwitcherBar` on narrow windows
+
+Although GNOME HIG generally positions view switchers as strongest with three to five views, this design still uses one because `Sessions` and `Analytics` are true peers: one is the operational browsing workspace, the other is the observational insights workspace.
+
+To keep this choice justified, the Analytics page must feel substantial enough to deserve top-level placement. If the content is reduced to a few textual rows, the design should fall back to a pushed page instead of a top-level view.
+
+## Header Bar Behavior
+
+When the visible page is `Sessions`, the current session-oriented controls remain unchanged.
+
+When the visible page is `Analytics`:
+- the session search UI is hidden
+- pane-related controls are hidden
+- detail-only actions are hidden
+- indexing progress remains visible because it affects analytics freshness too
+
+This keeps the header bar semantically aligned with the active workspace instead of carrying session-only actions into analytics.
 
 ## Dashboard Layout
 
-The analytics view is a `gtk::ScrolledWindow` containing a vertical `gtk::Box`.
-Width is constrained via `set_halign(Center)` + `set_size_request(max_width)`
-to avoid stretching on wide displays.
+The Analytics page is a vertically scrollable view built for readability first, not density first.
 
-### Sections (Top to Bottom)
+The root layout is:
+- `gtk::ScrolledWindow`
+- containing an `AdwClampScrollable` or equivalent clamped content container
+- with a single vertical content column
+- grouped into clearly separated sections
 
-#### 1. Summary Counters
+This avoids overly wide dashboard rows on desktop while keeping the page comfortable on narrow windows.
 
-4 cards in a horizontal `gtk::FlowBox`:
+## Section Order
 
+The V1 page is organized from highest signal to lowest interpretation cost.
+
+### 1. Overview
+
+A compact overview section shows four key counters:
 - Total sessions
 - Total messages
 - Distinct projects
 - Active days
 
-Each card is an `AdwActionRow` inside a `gtk::Frame` with CSS class `.card`.
-Value as `title` (large), label as `subtitle` (small). Pure Adwaita widgets.
-
-#### 2. Activity Heatmap (Custom GtkSnapshot)
-
-GitHub-style grid: 52 columns (weeks) x 7 rows (days of week).
-Cells colored by intensity (sessions/day).
-Labels: months on top, weekday abbreviations on the left.
-Contained in an `AdwPreferencesGroup` titled "Activity".
-
-#### 3-4. Two-Column Row
-
-Left: **Sessions by Tool** (custom `BarChartWidget`)
-Right: **Token Consumption** (Adwaita widgets)
-
-On narrow windows, stacks vertically via `FlowBox` or breakpoint.
-
-**Sessions by Tool:** Horizontal bars, one per tool. Color per tool. Labels left,
-values right. Contained in `AdwPreferencesGroup`.
-
-**Token Consumption:** `AdwPreferencesGroup` with `AdwActionRow` per tool.
-Each row: tool name, input/output tokens in subtitle. Optional inline progress
-bar for relative proportion.
-
-#### 5. Session Length Distribution (Custom GtkSnapshot)
-
-Vertical histogram with duration buckets: 0-5 min, 5-15 min, 15-30 min,
-30-60 min, 1h+.
-Bars with bucket labels at bottom, count at top.
-Contained in `AdwPreferencesGroup` titled "Session Length".
-
-### Mockup
-
-```
-+--------------------------------------------------+
-| [Total Sessions] [Messages] [Projects] [Days]    |
-+--------------------------------------------------+
-| Activity                                          |
-| Mo  [][][][][][][][][][][][][][][]...[][][][]      |
-| Tu  [][][][][][][][][][][][][][][]...[][][][]      |
-| ...                                               |
-| Su  [][][][][][][][][][][][][][][]...[][][][]      |
-+--------------------------------------------------+
-| Sessions by Tool          | Token Consumption     |
-| Claude    ████████████ 42 | Claude  120k / 80k    |
-| OpenCode  █████ 15        | OpenCode 30k / 20k    |
-| Codex     ██ 6            | ...                   |
-| Vibe      █ 3             |                       |
-+--------------------------------------------------+
-| Session Length                                    |
-|    ██                                             |
-| ██ ██                                             |
-| ██ ██ ██ █                                        |
-| 0-5 5-15 15-30 30-60 1h+                         |
-+--------------------------------------------------+
-```
-
-## Custom GtkSnapshot Widgets
-
-Three custom widgets, each implementing `WidgetImpl::snapshot()`.
-
-### HeatmapWidget (`src/ui/analytics/heatmap.rs`)
-
-- Subclass of `gtk::Widget` via `glib::wrapper!`
-- Data: `Vec<(NaiveDate, u32)>` (date, count)
-- `snapshot()`: iterates 52x7 grid, `append_color()` per cell with intensity-
-  interpolated color
-- Month labels: `append_layout()` with `pango::Layout`
-- `measure()`: returns fixed size based on `cell_size * grid + padding`
-- Tooltip on hover via `set_has_tooltip(true)` + `query-tooltip` signal
-  showing "X sessions on YYYY-MM-DD"
-
-### BarChartWidget (`src/ui/analytics/bar_chart.rs`)
-
-- Subclass of `gtk::Widget`
-- Data: `Vec<(String, u32, gdk::RGBA)>` (label, value, color)
-- `snapshot()`: horizontal bars via `append_color()`, labels via
-  `append_layout()`
-- Bars proportional to max value
-- Height: `n_bars * (bar_height + spacing)`
-
-### HistogramWidget (`src/ui/analytics/histogram.rs`)
-
-- Subclass of `gtk::Widget`
-- Data: `Vec<(String, u32)>` (bucket_label, count)
-- `snapshot()`: vertical bars via `append_color()`, bucket labels at bottom
-  and counts at top via `append_layout()`
-- Width: `n_buckets * (bar_width + spacing)`
-
-### Common Widget Pattern
-
-```rust
-mod imp {
-    use gtk::subclass::prelude::*;
-    use std::cell::RefCell;
-
-    #[derive(Default)]
-    pub struct HeatmapWidget {
-        pub(super) data: RefCell<Vec<(chrono::NaiveDate, u32)>>,
-    }
-
-    #[glib::object_subclass]
-    impl ObjectSubclass for HeatmapWidget {
-        const NAME: &'static str = "ScHeatmapWidget";
-        type Type = super::HeatmapWidget;
-        type ParentType = gtk::Widget;
-    }
-
-    impl ObjectImpl for HeatmapWidget {}
-
-    impl WidgetImpl for HeatmapWidget {
-        fn snapshot(&self, snapshot: &gtk::Snapshot) {
-            // Pure GtkSnapshot drawing:
-            // append_color() for cells
-            // append_layout() for labels
-        }
-
-        fn measure(
-            &self,
-            orientation: gtk::Orientation,
-            _for_size: i32,
-        ) -> (i32, i32, i32, i32) {
-            // Return (minimum, natural, min_baseline, nat_baseline)
-        }
-    }
-}
-```
-
-## Theming: `src/ui/analytics/colors.rs`
-
-```rust
-pub struct ChartColors {
-    pub heatmap_levels: [gdk::RGBA; 5],  // transparent -> green_5
-    pub tool_colors: HashMap<Tool, gdk::RGBA>,
-    pub histogram_bar: gdk::RGBA,
-    pub text: gdk::RGBA,
-    pub text_dim: gdk::RGBA,
-}
-
-pub fn chart_palette(is_dark: bool) -> ChartColors;
-```
-
-- Heatmap: 5 green levels from the Adwaita palette
-- Bar chart: per-tool colors (blue for Claude, teal for OpenCode, etc.)
-- Dark mode detection via `adw::StyleManager::default().is_dark()`
-- Reconnect to `notify::dark` signal to call `queue_draw()` on theme change
-
-## Data Layer: `src/database/analytics.rs`
-
-### Types
-
-```rust
-pub struct SummaryCounters {
-    pub total_sessions: u32,
-    pub total_messages: u32,
-    pub distinct_projects: u32,
-    pub active_days: u32,
-}
-
-pub struct ToolBreakdown {
-    pub tool: Tool,
-    pub session_count: u32,
-}
-
-pub struct DailyActivity {
-    pub date: NaiveDate,
-    pub session_count: u32,
-}
-
-pub struct TokenBreakdown {
-    pub tool: Tool,
-    pub input_tokens: u64,
-    pub output_tokens: u64,
-}
-
-pub struct LengthBucket {
-    pub label: String,
-    pub min_seconds: u64,
-    pub max_seconds: u64,
-    pub count: u32,
-}
-```
-
-### Query Functions
-
-```rust
-pub fn get_summary_counters(conn: &Connection) -> Result<SummaryCounters>;
-pub fn get_sessions_by_tool(conn: &Connection) -> Result<Vec<ToolBreakdown>>;
-pub fn get_daily_activity(conn: &Connection, days: u32) -> Result<Vec<DailyActivity>>;
-pub fn get_token_consumption(conn: &Connection) -> Result<Vec<TokenBreakdown>>;
-pub fn get_session_length_distribution(conn: &Connection) -> Result<Vec<LengthBucket>>;
-```
-
-### Key SQL
-
-- **Summary:** `SELECT COUNT(*), SUM(message_count), COUNT(DISTINCT project_path), COUNT(DISTINCT date(start_time, 'unixepoch')) FROM sessions WHERE is_subagent = 0`
-- **By tool:** `SELECT tool, COUNT(*) FROM sessions WHERE is_subagent = 0 GROUP BY tool ORDER BY COUNT(*) DESC`
-- **Daily activity:** `SELECT date(start_time, 'unixepoch') as d, COUNT(*) FROM sessions WHERE is_subagent = 0 AND start_time >= ? GROUP BY d`
-- **Token consumption:** `SELECT tool, SUM(input_tokens), SUM(output_tokens) FROM sessions WHERE is_subagent = 0 GROUP BY tool`
-- **Session length:** `SELECT (last_updated - start_time) as duration_secs FROM sessions WHERE is_subagent = 0` then bucket in Rust
-
-All queries filter `is_subagent = 0` to count only top-level sessions.
-Heatmap covers the last 365 days by default.
-Duration buckets are defined in Rust for flexibility.
-
-## Async Worker: `src/analytics_worker.rs`
-
-Follows the same pattern as `IndexingWorker`:
-
-```rust
-pub enum AnalyticsWorkerInput {
-    LoadData(PathBuf),
-}
-
-pub enum AnalyticsWorkerOutput {
-    DataReady(AnalyticsData),
-    Failed,
-}
-
-pub struct AnalyticsData {
-    pub counters: SummaryCounters,
-    pub tools: Vec<ToolBreakdown>,
-    pub activity: Vec<DailyActivity>,
-    pub tokens: Vec<TokenBreakdown>,
-    pub length_dist: Vec<LengthBucket>,
-}
-```
-
-## Analytics Dashboard Component
-
-`src/ui/analytics/mod.rs` -- Relm4 `SimpleComponent`.
-
-- **Init:** receives `PathBuf` (db_path)
-- **Model:** `Option<AnalyticsData>` + `loading: bool`
-- **Messages:**
-  - `Refresh` -- sends `LoadData` to worker
-  - `DataReady(AnalyticsData)` -- updates model, calls `queue_draw()`
-  - `LoadFailed` -- shows error toast
-
-### Lifecycle
-
-1. User switches to Analytics view -> `App` sends `Refresh`
-2. Dashboard shows a spinner
-3. Worker executes all 5 SQL queries in one pass
-4. `DataReady` arrives, spinner hides, widgets update
-5. Data is cached in model -- no re-query on view switch without changes
-
-### Cache Invalidation
-
-After `IndexingCompleted` in `App`, if the user is on the Analytics view,
-a `Refresh` is automatically triggered.
-
-## File Structure
-
-```
-src/ui/analytics/
-  mod.rs              -- AnalyticsDashboard component
-  heatmap.rs          -- HeatmapWidget (GtkSnapshot)
-  bar_chart.rs        -- BarChartWidget (GtkSnapshot)
-  histogram.rs        -- HistogramWidget (GtkSnapshot)
-  colors.rs           -- Adwaita palette + dark mode detection
-src/analytics_worker.rs  -- Async worker
-src/database/analytics.rs -- SQL queries
-```
-
-## Testing
-
-### Unit Tests (`src/database/analytics.rs`)
-
-Each query function tested with an in-memory SQLite database.
-Fixture: insert sessions with different tools, dates, tokens, durations.
-Verify counters, breakdowns, and buckets.
-
-### Integration Tests (`tests/`)
-
-End-to-end: load existing fixtures (`tests/fixtures/`), run analytics queries,
-verify invariants (total sessions > 0, known tools present).
-
-No UI tests for GtkSnapshot widgets (headless GTK is too complex).
-Manual verification with `--sessions-dir tests/fixtures`.
-
-### Manual Verification
-
-- `flatpak-builder --run ... sessions-chronicle --sessions-dir tests/fixtures`
-  and switch to Analytics view
-- Verify light/dark theming by toggling via GNOME Settings
-- Verify adaptive behavior by resizing the window
-  (ViewSwitcher -> ViewSwitcherBar transition)
-
-### CI
-
-Existing checks (`cargo fmt`, `cargo clippy`, `cargo test`) cover the new code
-without additional configuration.
-
-## V2 Scope (Deferred)
-
-- Donut chart for models used
-- Top projects list
-- Subagent usage breakdown
-- Week-over-week deltas on summary counters
-- Date range filtering
+These are presented as static summary cards, not interactive rows.  
+They should read as dashboard metrics, not as settings or navigation targets.
+
+### 2. Activity
+
+A single activity visualization shows session counts over time using a heatmap.
+
+This is the primary custom visualization in V1 because it communicates longitudinal usage at a glance and adds clear product value that is hard to reproduce with built-in rows alone.
+
+### 3. Tool Breakdown
+
+A tool usage section shows sessions by tool using native widgets first:
+- one row per tool
+- count displayed explicitly
+- optional progress bar for relative proportion
+
+If a visual chart is still desired in V1, this section may become the second custom graphic later, but it is not required for the initial design target.
+
+### 4. Token Consumption
+
+A token section shows totals by tool in a boxed-list style presentation:
+- tool name
+- input tokens
+- output tokens
+- optional note when token data is partially unavailable
+
+This section should prioritize correctness and comparability over visual flourish.
+
+### 5. Session Span Distribution
+
+A final section shows the distribution of session spans across a small set of fixed buckets.
+
+This can initially be presented either as:
+- a simple native grouped summary, or
+- a lightweight histogram if the heatmap implementation proves maintainable
+
+The important design constraint is that this metric appears clearly labeled as session span, not active work duration.
+
+## Responsive Behavior
+
+The layout must degrade gracefully without bespoke mobile redesign.
+
+Behavior:
+- overview cards wrap naturally into multiple rows
+- lower sections collapse into a single vertical column
+- no section should rely on side-by-side placement to remain understandable
+- custom visualizations must have a minimum readable size and should not compress below that threshold
+
+The design should prefer vertical stacking over dense two-column compositions for V1.  
+A two-column row may look attractive on large screens, but it increases layout complexity and often collapses awkwardly when mixed with custom-drawn widgets.
+
+## Loading, Empty, and Error States
+
+The Analytics page needs explicit states instead of only showing or hiding a spinner.
+
+### Loading
+
+When analytics data is being computed:
+- show the page shell immediately
+- render section placeholders or a centered loading state
+- avoid large layout jumps when data arrives
+
+### Empty
+
+If the database has no indexed top-level sessions yet:
+- show an `AdwStatusPage`
+- explain that analytics appears after sessions are indexed
+
+### Error
+
+If analytics loading fails:
+- show an in-page error state for the analytics content area
+- allow retry
+- optionally pair this with a toast, but the page itself must remain understandable after the toast disappears
+
+This is especially important because analytics is a whole workspace, not a transient panel.
+
+## Data Semantics
+
+The analytics design must define metric meaning explicitly so the UI does not imply false precision.
+
+### Session Filtering
+
+All V1 analytics are computed from top-level sessions only.
+
+Subagent sessions are excluded from headline metrics and charts because:
+- they are implementation detail for many workflows
+- they would distort user-facing counts
+- the current product primarily presents top-level sessions as the main unit of browsing
+
+A later version may add explicit subagent analytics as its own section.
+
+### Time Interpretation
+
+Daily activity is based on the session start date.
+
+The design must explicitly choose whether dates are grouped in:
+- local time, or
+- UTC
+
+V1 should use local time because users interpret activity as part of their own calendar, not as storage timestamps.
+
+This choice should be documented in the analytics query layer and reflected consistently in tests.
+
+### Token Semantics
+
+Token totals must distinguish:
+- known zero values
+- unknown or missing values
+- unavailable values for tools or sessions that do not report tokens
+
+The UI must never silently treat missing token data as zero.  
+Where completeness is partial, the design should communicate this with supporting text rather than presenting deceptively precise totals.
+
+### Project Semantics
+
+If project-based counters or lists are added later, the design should define whether the displayed label is:
+- full path
+- basename only
+- a normalized friendly project name
+
+V1 avoids this ambiguity by not making project ranking a first-class section.
+
+### Duration Semantics
+
+The metric currently derivable from stored fields is elapsed session span:
+`last_updated - start_time`
+
+This is useful, but it is not a true measure of focused active work.  
+Therefore the dashboard should label it as:
+- Session span, or
+- Elapsed session duration
+
+It should not be labeled simply as "session length" without clarification.
+
+## Rendering Strategy
+
+V1 uses a widget-first rendering strategy.
+
+That means:
+- built-in libadwaita widgets for counters and ranked breakdowns
+- a custom-rendered heatmap as the only required bespoke visualization
+- a second custom visualization only if the first implementation remains clearly maintainable
+
+This keeps the first release visually meaningful without forcing the design to depend on three new custom widgets at once.
+
+### Why Not Three Custom Widgets in V1
+
+GTK4 `snapshot()` rendering is valid and powerful, but it increases:
+- widget subclassing complexity
+- measurement and sizing complexity
+- accessibility work
+- maintenance burden for theme changes and responsive behavior
+
+For a V1 simple target, custom rendering should be reserved for the one chart that most clearly benefits from it.
+
+### Heatmap Recommendation
+
+The heatmap is the strongest candidate for custom rendering because:
+- it adds high information density
+- it is difficult to reproduce with native rows
+- it visually differentiates the analytics view from the rest of the app
+
+If the heatmap proves too expensive to maintain, the fallback should be a textual activity summary rather than immediately adding more custom charts elsewhere.
+
+## Architecture Fit
+
+The design remains aligned with the current application structure:
+- analytics queries are isolated from existing browsing and search queries
+- background loading follows the existing Relm4 worker pattern already used for indexing
+- the Analytics workspace sits beside Sessions without changing the internal session detail navigation model
+
+At the component level, the page should receive one aggregated `AnalyticsData` payload rather than refreshing each section independently.
+
+This keeps the view stable, limits UI churn, and matches the current model where heavier work is performed off the UI thread.
+
+## Cache and Refresh Behavior
+
+If cached analytics data exists and indexing has not changed the underlying dataset, switching back to the Analytics page should reuse the cached payload immediately.
+
+After indexing completes, analytics data should be marked stale and refreshed on next view entry, or refreshed immediately if the Analytics page is currently visible.
+
+This preserves perceived performance while keeping the dashboard trustworthy.
+
+## Accessibility Expectations
+
+Custom visualizations must not rely on color alone.
+
+V1 should guarantee:
+- explicit labels for all summary metrics
+- textual counts next to tool breakdowns
+- tooltip or accessible description support for heatmap cells
+- a readable non-chart interpretation of every custom visualization nearby in the layout
+
+The design does not need full assistive-technology implementation detail yet, but it must state that charts are supplementary, not the only source of meaning.
+
+## Testing Strategy
+
+Because custom-drawn GTK widgets are harder to test directly, V1 testing should focus on data transformation correctness.
+
+Priority test areas:
+- summary counter aggregation
+- top-level session filtering
+- daily grouping behavior under the chosen timezone rule
+- token completeness handling
+- session span bucketization
+- heatmap normalization from sparse daily data into a full calendar grid
+
+Manual verification should then confirm:
+- theme behavior in light and dark modes
+- chart readability at narrow widths
+- correct empty, loading, and error states
+- refresh behavior after indexing completes
+
+This keeps the design honest: correctness is proven mostly in data logic, while rendering is verified as presentation.
+
+## Deferred Scope
+
+The following items are explicitly out of scope for V1:
+
+- model distribution
+- top projects ranking
+- subagent usage breakdown
+- week-over-week deltas
+- date range filtering
+- export features
+- cost estimation
+
+These are intentionally deferred because they either:
+- add semantic ambiguity
+- require additional UI controls or drill-down
+- increase the dashboard surface before the V1 information architecture is proven
+
+## Open Questions
+
+The design intentionally leaves a small number of questions to validate before implementation:
+
+1. Is the Analytics page substantial enough to justify top-level placement with a two-view `AdwViewSwitcher`?
+2. Should the session activity heatmap group days in local time or UTC?
+3. Should V1 include one custom visualization only, or also a second lightweight chart if the first proves maintainable?
+4. What user-facing copy should explain partial token availability without making the dashboard feel unreliable?
+
+These questions should be resolved in the final reviewed design text before implementation planning begins.
+
+## Final Recommendation
+
+Proceed with a conservative V1 analytics dashboard built around:
+- top-level `Sessions` and `Analytics` workspaces
+- a narrow, readable, vertically stacked page layout
+- native libadwaita widgets for most sections
+- one high-value custom heatmap visualization
+- explicit metric semantics for time, tokens, and session filtering
+
+This design gives the product a meaningful analytics surface while keeping risk concentrated in one place instead of spreading it across navigation, rendering, and data semantics simultaneously.
+
+## Success Criteria
+
+The V1 design is successful if it delivers all of the following:
+
+- users can understand their overall usage at a glance
+- the page feels native to the existing GNOME/libadwaita application
+- metrics are semantically clear and do not imply false precision
+- the dashboard remains readable on narrow windows
+- the design can grow later without reworking the navigation model
