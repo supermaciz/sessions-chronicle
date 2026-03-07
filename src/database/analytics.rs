@@ -1,9 +1,11 @@
 use anyhow::{Context, Result};
+use chrono::NaiveDate;
+use std::collections::BTreeMap;
 use std::path::Path;
 
 use crate::models::{
     AnalyticsData, AnalyticsOverview,
-    analytics::{SessionSpanBucket, ToolSessionCount},
+    analytics::{ActivityDay, HeatmapData, HeatmapWeek, SessionSpanBucket, ToolSessionCount},
 };
 
 pub fn load_analytics(db_path: &Path) -> Result<AnalyticsData> {
@@ -13,11 +15,15 @@ pub fn load_analytics(db_path: &Path) -> Result<AnalyticsData> {
 
     let db = super::open_connection(db_path)?;
     let overview = load_overview(&db)?;
+    let activity_days = load_activity_days(&db)?;
+    let heatmap = build_heatmap(&activity_days)?;
     let sessions_by_tool = load_sessions_by_tool(&db)?;
     let session_span_buckets = load_session_span_buckets(&db)?;
 
     Ok(AnalyticsData {
         overview,
+        activity_days,
+        heatmap,
         sessions_by_tool,
         session_span_buckets,
         ..AnalyticsData::default()
@@ -25,25 +31,104 @@ pub fn load_analytics(db_path: &Path) -> Result<AnalyticsData> {
 }
 
 fn load_overview(db: &rusqlite::Connection) -> Result<AnalyticsOverview> {
-    db.query_row(
+    let sql = format!(
         "SELECT
             COUNT(*) AS total_sessions,
             COALESCE(SUM(MAX(message_count, 0)), 0) AS total_messages,
             COUNT(DISTINCT NULLIF(project_path, '')) AS distinct_projects,
-            COUNT(DISTINCT date(start_time, 'unixepoch', 'localtime')) AS active_days
+            COUNT(DISTINCT {}) AS active_days
          FROM sessions
          WHERE is_subagent = 0",
-        [],
-        |row| {
-            Ok(AnalyticsOverview {
-                total_sessions: row.get("total_sessions")?,
-                total_messages: row.get("total_messages")?,
-                distinct_projects: row.get("distinct_projects")?,
-                active_days: row.get("active_days")?,
-            })
-        },
-    )
+        activity_group_date_sql()
+    );
+
+    db.query_row(&sql, [], |row| {
+        Ok(AnalyticsOverview {
+            total_sessions: row.get("total_sessions")?,
+            total_messages: row.get("total_messages")?,
+            distinct_projects: row.get("distinct_projects")?,
+            active_days: row.get("active_days")?,
+        })
+    })
     .context("Failed to load analytics overview")
+}
+
+fn activity_group_date_sql() -> &'static str {
+    "date(start_time, 'unixepoch', 'localtime')"
+}
+
+fn load_activity_days(db: &rusqlite::Connection) -> Result<Vec<ActivityDay>> {
+    let sql = format!(
+        "SELECT {} AS day, COUNT(*) AS session_count
+         FROM sessions
+         WHERE is_subagent = 0
+         GROUP BY day
+         ORDER BY day ASC",
+        activity_group_date_sql()
+    );
+
+    let mut stmt = db
+        .prepare(&sql)
+        .context("Failed to prepare activity-days query")?;
+
+    let rows = stmt
+        .query_map([], |row| {
+            Ok(ActivityDay {
+                day: row.get("day")?,
+                session_count: row.get("session_count")?,
+            })
+        })
+        .context("Failed to map activity-days rows")?;
+
+    rows.collect::<rusqlite::Result<Vec<_>>>()
+        .context("Failed to collect activity-days rows")
+}
+
+fn build_heatmap(activity_days: &[ActivityDay]) -> Result<HeatmapData> {
+    if activity_days.is_empty() {
+        return Ok(HeatmapData::default());
+    }
+
+    let first_day = NaiveDate::parse_from_str(&activity_days[0].day, "%Y-%m-%d")
+        .context("Failed to parse first activity day")?;
+    let last_day =
+        NaiveDate::parse_from_str(&activity_days[activity_days.len() - 1].day, "%Y-%m-%d")
+            .context("Failed to parse last activity day")?;
+
+    let lookup = activity_days
+        .iter()
+        .map(|day| (day.day.clone(), day.session_count))
+        .collect::<BTreeMap<_, _>>();
+
+    let mut normalized_days = Vec::new();
+    let mut day_cursor = first_day;
+    while day_cursor <= last_day {
+        let day = day_cursor.format("%Y-%m-%d").to_string();
+        normalized_days.push(ActivityDay {
+            session_count: lookup.get(&day).copied().unwrap_or(0),
+            day,
+        });
+        day_cursor = day_cursor
+            .succ_opt()
+            .context("Failed to increment heatmap day cursor")?;
+    }
+
+    let max_sessions_in_a_day = normalized_days
+        .iter()
+        .map(|day| day.session_count)
+        .max()
+        .unwrap_or(0);
+    let weeks = normalized_days
+        .chunks(7)
+        .map(|week_days| HeatmapWeek {
+            days: week_days.to_vec(),
+        })
+        .collect();
+
+    Ok(HeatmapData {
+        weeks,
+        max_sessions_in_a_day,
+    })
 }
 
 fn load_sessions_by_tool(db: &rusqlite::Connection) -> Result<Vec<ToolSessionCount>> {
@@ -119,4 +204,14 @@ fn load_session_span_buckets(db: &rusqlite::Connection) -> Result<Vec<SessionSpa
             session_count: counts.4,
         },
     ])
+}
+
+#[cfg(test)]
+mod tests {
+    use super::activity_group_date_sql;
+
+    #[test]
+    fn activity_group_sql_uses_localtime_modifier() {
+        assert!(activity_group_date_sql().contains("'localtime'"));
+    }
 }

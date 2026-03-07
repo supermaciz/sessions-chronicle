@@ -2,6 +2,7 @@
 pub struct AnalyticsData {
     pub overview: AnalyticsOverview,
     pub activity_days: Vec<ActivityDay>,
+    pub heatmap: HeatmapData,
     pub sessions_by_tool: Vec<ToolSessionCount>,
     pub token_usage_by_tool: Vec<ToolTokenUsage>,
     pub session_span_buckets: Vec<SessionSpanBucket>,
@@ -19,6 +20,17 @@ pub struct AnalyticsOverview {
 pub struct ActivityDay {
     pub day: String,
     pub session_count: i64,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct HeatmapWeek {
+    pub days: Vec<ActivityDay>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct HeatmapData {
+    pub weeks: Vec<HeatmapWeek>,
+    pub max_sessions_in_a_day: i64,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]

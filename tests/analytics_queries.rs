@@ -276,3 +276,74 @@ fn session_span_buckets_use_fixed_labels_and_clamp_negative_spans() {
         ]
     );
 }
+
+#[test]
+fn activity_days_are_grouped_and_heatmap_is_zero_filled() {
+    let db = TempDatabase::new();
+
+    db.connection
+        .execute(
+            "INSERT INTO sessions (id, tool, project_path, start_time, message_count, file_path, last_updated, is_subagent)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            rusqlite::params![
+                "activity-a",
+                "claude_code",
+                Some("/projects/activity"),
+                1_709_251_200_i64,
+                4_i64,
+                "/tmp/activity-a.jsonl",
+                1_709_251_800_i64,
+                0_i64,
+            ],
+        )
+        .expect("Failed to insert activity-a");
+
+    db.connection
+        .execute(
+            "INSERT INTO sessions (id, tool, project_path, start_time, message_count, file_path, last_updated, is_subagent)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            rusqlite::params![
+                "activity-b",
+                "opencode",
+                Some("/projects/activity"),
+                1_709_424_000_i64,
+                2_i64,
+                "/tmp/activity-b.jsonl",
+                1_709_424_400_i64,
+                0_i64,
+            ],
+        )
+        .expect("Failed to insert activity-b");
+
+    db.connection
+        .execute(
+            "INSERT INTO sessions (id, tool, project_path, start_time, message_count, file_path, last_updated, is_subagent)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            rusqlite::params![
+                "activity-c",
+                "codex",
+                Some("/projects/activity"),
+                1_709_424_600_i64,
+                1_i64,
+                "/tmp/activity-c.jsonl",
+                1_709_424_900_i64,
+                0_i64,
+            ],
+        )
+        .expect("Failed to insert activity-c");
+
+    let analytics = load_analytics(&db.path).expect("Failed to load analytics");
+
+    assert_eq!(analytics.activity_days.len(), 2);
+    assert_eq!(analytics.activity_days[0].session_count, 1);
+    assert_eq!(analytics.activity_days[1].session_count, 2);
+    assert_eq!(analytics.heatmap.max_sessions_in_a_day, 2);
+    assert!(
+        analytics
+            .heatmap
+            .weeks
+            .iter()
+            .flat_map(|week| week.days.iter())
+            .any(|day| day.session_count == 0)
+    );
+}
