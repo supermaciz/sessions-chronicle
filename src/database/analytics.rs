@@ -3,7 +3,7 @@ use std::path::Path;
 
 use crate::models::{AnalyticsData, AnalyticsOverview};
 
-pub fn load_analytics_data(db_path: &Path) -> Result<AnalyticsData> {
+pub fn load_analytics(db_path: &Path) -> Result<AnalyticsData> {
     if !db_path.exists() {
         return Ok(AnalyticsData::default());
     }
@@ -21,7 +21,7 @@ fn load_overview(db: &rusqlite::Connection) -> Result<AnalyticsOverview> {
     db.query_row(
         "SELECT
             COUNT(*) AS total_sessions,
-            COALESCE(SUM(message_count), 0) AS total_messages,
+            COALESCE(SUM(MAX(message_count, 0)), 0) AS total_messages,
             COUNT(DISTINCT NULLIF(project_path, '')) AS distinct_projects,
             COUNT(DISTINCT date(start_time, 'unixepoch', 'localtime')) AS active_days
          FROM sessions

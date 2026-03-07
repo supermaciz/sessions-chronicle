@@ -2,7 +2,7 @@ use rusqlite::Connection;
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use sessions_chronicle::database::analytics::load_analytics_data;
+use sessions_chronicle::database::analytics::load_analytics;
 use sessions_chronicle::database::schema::initialize_database;
 
 struct TempDatabase {
@@ -128,10 +128,58 @@ fn overview_counts_exclude_subagents() {
     let db = TempDatabase::new();
     db.seed_sessions();
 
-    let analytics = load_analytics_data(&db.path).expect("Failed to load analytics");
+    let analytics = load_analytics(&db.path).expect("Failed to load analytics");
 
     assert_eq!(analytics.overview.total_sessions, 3);
     assert_eq!(analytics.overview.total_messages, 10);
     assert_eq!(analytics.overview.distinct_projects, 2);
     assert_eq!(analytics.overview.active_days, 2);
+}
+
+#[test]
+fn missing_database_path_returns_default_analytics() {
+    let mut missing_path = std::env::temp_dir();
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    missing_path.push(format!(
+        "sessions-chronicle-missing-analytics-{}-{}.db",
+        std::process::id(),
+        nanos
+    ));
+
+    let analytics = load_analytics(&missing_path).expect("Failed to load analytics");
+
+    assert_eq!(
+        analytics,
+        sessions_chronicle::models::AnalyticsData::default()
+    );
+}
+
+#[test]
+fn overview_total_messages_clamps_negative_values_to_zero() {
+    let db = TempDatabase::new();
+
+    db.connection
+        .execute(
+            "INSERT INTO sessions (id, tool, project_path, start_time, message_count, file_path, last_updated, is_subagent)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            rusqlite::params![
+                "root-negative",
+                "claude_code",
+                Some("/projects/negative"),
+                1_700_000_000_i64,
+                -25_i64,
+                "/tmp/root-negative.jsonl",
+                1_700_000_100_i64,
+                0_i64,
+            ],
+        )
+        .expect("Failed to insert root-negative");
+
+    let analytics = load_analytics(&db.path).expect("Failed to load analytics");
+
+    assert_eq!(analytics.overview.total_sessions, 1);
+    assert_eq!(analytics.overview.total_messages, 0);
 }
