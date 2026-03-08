@@ -26,10 +26,16 @@ impl App {
     }
 
     pub(crate) fn handle_toggle_pane(&mut self) {
+        if self.active_workspace.is_analytics() {
+            return;
+        }
         self.pane_open = !self.pane_open;
     }
 
     pub(crate) fn handle_pane_visibility_changed(&mut self, visible: bool) {
+        if self.active_workspace.is_analytics() {
+            return;
+        }
         if self.pane_open != visible {
             self.pane_open = visible;
         }

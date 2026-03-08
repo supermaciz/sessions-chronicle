@@ -1,5 +1,6 @@
 #[rustfmt::skip]
 mod config;
+mod analytics_worker;
 mod app;
 mod database;
 mod indexing_worker;

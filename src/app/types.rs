@@ -59,3 +59,44 @@ pub(super) enum EscapeResolution {
     NavigateBack,
     Noop,
 }
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Workspace {
+    Sessions,
+    Analytics,
+}
+
+impl Workspace {
+    pub(super) fn stack_name(self) -> &'static str {
+        match self {
+            Workspace::Sessions => "sessions",
+            Workspace::Analytics => "analytics",
+        }
+    }
+
+    pub(super) fn from_stack_name(name: &str) -> Option<Self> {
+        match name {
+            "sessions" => Some(Workspace::Sessions),
+            "analytics" => Some(Workspace::Analytics),
+            _ => None,
+        }
+    }
+
+    pub(super) fn is_analytics(self) -> bool {
+        self == Workspace::Analytics
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) struct WorkspaceHeaderVisibility {
+    pub(super) search_ui_visible: bool,
+    pub(super) pane_controls_visible: bool,
+    pub(super) detail_actions_visible: bool,
+    pub(super) indexing_progress_visible: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) struct AnalyticsIndexingOutcome {
+    pub(super) mark_stale: bool,
+    pub(super) refresh_immediately: bool,
+}

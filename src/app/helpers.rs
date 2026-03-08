@@ -3,7 +3,10 @@ use crate::ui::{
     tool_inspector_pane::ToolInspectorPaneMsg,
 };
 
-use super::types::{EscapeResolution, ReindexAction, UtilityPaneMode};
+use super::types::{
+    AnalyticsIndexingOutcome, EscapeResolution, ReindexAction, UtilityPaneMode, Workspace,
+    WorkspaceHeaderVisibility,
+};
 
 pub(super) fn active_search_query(query: &str) -> Option<String> {
     let trimmed = query.trim();
@@ -69,5 +72,36 @@ pub(super) fn decide_reindex_action(indexing: bool) -> ReindexAction {
         ReindexAction::AlreadyRunning
     } else {
         ReindexAction::StartFull
+    }
+}
+
+pub(super) fn workspace_header_visibility(
+    workspace: Workspace,
+    detail_visible: bool,
+    parent_session_present: bool,
+) -> WorkspaceHeaderVisibility {
+    if workspace.is_analytics() {
+        WorkspaceHeaderVisibility {
+            search_ui_visible: false,
+            pane_controls_visible: false,
+            detail_actions_visible: false,
+            indexing_progress_visible: true,
+        }
+    } else {
+        WorkspaceHeaderVisibility {
+            search_ui_visible: true,
+            pane_controls_visible: true,
+            detail_actions_visible: detail_visible || parent_session_present,
+            indexing_progress_visible: true,
+        }
+    }
+}
+
+pub(super) fn analytics_indexing_completion_outcome(
+    active_workspace: Workspace,
+) -> AnalyticsIndexingOutcome {
+    AnalyticsIndexingOutcome {
+        mark_stale: true,
+        refresh_immediately: active_workspace.is_analytics(),
     }
 }
