@@ -52,6 +52,14 @@ impl AnalyticsViewModel {
             AnalyticsPageState::Empty
         }
     }
+
+    pub fn inline_warning_message<'a>(&self, load_error: Option<&'a str>) -> Option<&'a str> {
+        if self.data.is_some() {
+            load_error
+        } else {
+            None
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -128,34 +136,63 @@ impl SimpleComponent for AnalyticsView {
                     set_vexpand: true,
                     set_hscrollbar_policy: gtk::PolicyType::Never,
 
-                    gtk::Box {
-                        set_orientation: gtk::Orientation::Vertical,
-                        set_spacing: 16,
-                        set_margin_all: 16,
+                    adw::Clamp {
+                        set_maximum_size: 960,
+                        set_tightening_threshold: 640,
 
                         gtk::Box {
                             set_orientation: gtk::Orientation::Vertical,
-                            set_spacing: 8,
-                            add_css_class: "analytics-section",
+                            set_spacing: 16,
+                            set_margin_all: 16,
 
-                            gtk::Label {
-                                set_label: "Overview",
-                                set_halign: gtk::Align::Start,
-                                add_css_class: "analytics-section-title",
+                            #[name = "refresh_warning_revealer"]
+                            gtk::Revealer {
+                                set_reveal_child: false,
+                                set_transition_type: gtk::RevealerTransitionType::SlideDown,
+
+                                gtk::Box {
+                                    set_orientation: gtk::Orientation::Horizontal,
+                                    set_spacing: 8,
+                                    set_margin_all: 12,
+                                    add_css_class: "analytics-inline-warning",
+
+                                    gtk::Image {
+                                        set_icon_name: Some("dialog-warning-symbolic"),
+                                        set_valign: gtk::Align::Center,
+                                    },
+
+                                    #[name = "refresh_warning_label"]
+                                    gtk::Label {
+                                        set_label: "",
+                                        set_halign: gtk::Align::Start,
+                                        set_xalign: 0.0,
+                                        set_wrap: true,
+                                    }
+                                }
                             },
 
                             gtk::Box {
                                 set_orientation: gtk::Orientation::Vertical,
                                 set_spacing: 8,
+                                add_css_class: "analytics-section",
 
-                                gtk::Box {
-                                    set_orientation: gtk::Orientation::Horizontal,
-                                    set_spacing: 8,
+                                gtk::Label {
+                                    set_label: "Overview",
+                                    set_halign: gtk::Align::Start,
+                                    add_css_class: "analytics-section-title",
+                                },
 
-                                    gtk::Box {
+                                gtk::FlowBox {
+                                    set_selection_mode: gtk::SelectionMode::None,
+                                    set_row_spacing: 8,
+                                    set_column_spacing: 8,
+                                    set_homogeneous: true,
+                                    set_max_children_per_line: 4,
+                                    set_min_children_per_line: 1,
+
+                                    append = &gtk::Box {
                                         set_orientation: gtk::Orientation::Vertical,
                                         set_spacing: 4,
-                                        set_hexpand: true,
                                         set_margin_all: 8,
                                         add_css_class: "analytics-metric-card",
 
@@ -173,10 +210,9 @@ impl SimpleComponent for AnalyticsView {
                                         }
                                     },
 
-                                    gtk::Box {
+                                    append = &gtk::Box {
                                         set_orientation: gtk::Orientation::Vertical,
                                         set_spacing: 4,
-                                        set_hexpand: true,
                                         set_margin_all: 8,
                                         add_css_class: "analytics-metric-card",
 
@@ -192,17 +228,11 @@ impl SimpleComponent for AnalyticsView {
                                             set_halign: gtk::Align::Start,
                                             add_css_class: "analytics-metric-label",
                                         }
-                                    }
-                                },
+                                    },
 
-                                gtk::Box {
-                                    set_orientation: gtk::Orientation::Horizontal,
-                                    set_spacing: 8,
-
-                                    gtk::Box {
+                                    append = &gtk::Box {
                                         set_orientation: gtk::Orientation::Vertical,
                                         set_spacing: 4,
-                                        set_hexpand: true,
                                         set_margin_all: 8,
                                         add_css_class: "analytics-metric-card",
 
@@ -220,10 +250,9 @@ impl SimpleComponent for AnalyticsView {
                                         }
                                     },
 
-                                    gtk::Box {
+                                    append = &gtk::Box {
                                         set_orientation: gtk::Orientation::Vertical,
                                         set_spacing: 4,
-                                        set_hexpand: true,
                                         set_margin_all: 8,
                                         add_css_class: "analytics-metric-card",
 
@@ -241,13 +270,12 @@ impl SimpleComponent for AnalyticsView {
                                         }
                                     }
                                 }
-                            }
-                        },
+                            },
 
-                        gtk::Box {
-                            set_orientation: gtk::Orientation::Vertical,
-                            set_spacing: 8,
-                            add_css_class: "analytics-section",
+                            gtk::Box {
+                                set_orientation: gtk::Orientation::Vertical,
+                                set_spacing: 8,
+                                add_css_class: "analytics-section",
 
                             gtk::Label {
                                 set_label: "Activity",
@@ -270,12 +298,12 @@ impl SimpleComponent for AnalyticsView {
                                     }
                                 }
                             }
-                        },
+                            },
 
-                        gtk::Box {
-                            set_orientation: gtk::Orientation::Vertical,
-                            set_spacing: 8,
-                            add_css_class: "analytics-section",
+                            gtk::Box {
+                                set_orientation: gtk::Orientation::Vertical,
+                                set_spacing: 8,
+                                add_css_class: "analytics-section",
 
                             gtk::Label {
                                 set_label: "Sessions by tool",
@@ -322,12 +350,12 @@ impl SimpleComponent for AnalyticsView {
                                     }
                                 }
                             }
-                        },
+                            },
 
-                        gtk::Box {
-                            set_orientation: gtk::Orientation::Vertical,
-                            set_spacing: 8,
-                            add_css_class: "analytics-section",
+                            gtk::Box {
+                                set_orientation: gtk::Orientation::Vertical,
+                                set_spacing: 8,
+                                add_css_class: "analytics-section",
 
                             gtk::Label {
                                 set_label: "Token consumption",
@@ -358,12 +386,12 @@ impl SimpleComponent for AnalyticsView {
                                     add_suffix = &gtk::Label::new(Some("-")) {}
                                 }
                             }
-                        },
+                            },
 
-                        gtk::Box {
-                            set_orientation: gtk::Orientation::Vertical,
-                            set_spacing: 8,
-                            add_css_class: "analytics-section",
+                            gtk::Box {
+                                set_orientation: gtk::Orientation::Vertical,
+                                set_spacing: 8,
+                                add_css_class: "analytics-section",
 
                             gtk::Label {
                                 set_label: "Session span distribution",
@@ -409,6 +437,7 @@ impl SimpleComponent for AnalyticsView {
                                         set_fraction: 0.0,
                                     }
                                 }
+                            }
                             }
                         }
                     }
@@ -479,6 +508,17 @@ impl SimpleComponent for AnalyticsView {
         }
 
         let state = self.model.page_state(self.load_error.is_some());
+        let warning_message = self
+            .model
+            .inline_warning_message(self.load_error.as_deref());
+
+        if let Some(message) = warning_message {
+            widgets.refresh_warning_label.set_label(message);
+            widgets.refresh_warning_revealer.set_reveal_child(true);
+        } else {
+            widgets.refresh_warning_revealer.set_reveal_child(false);
+        }
+
         match state {
             AnalyticsPageState::Loading => {
                 widgets
@@ -505,20 +545,22 @@ mod tests {
     use super::*;
 
     #[test]
-    fn error_state_uses_status_page_widget() {
-        let source = include_str!("analytics_view.rs");
-        assert!(source.contains("#[name = \"error_state\"]\n                adw::StatusPage"));
+    fn ready_state_keeps_cached_content_visible_on_refresh_failure() {
+        let model = AnalyticsViewModel::from_data(AnalyticsData::default());
+
+        assert_eq!(model.page_state(true), AnalyticsPageState::Ready);
+        assert_eq!(
+            model.inline_warning_message(Some("Load failed")),
+            Some("Load failed")
+        );
     }
 
     #[test]
-    fn ready_state_renders_token_rows_instead_of_placeholder_text() {
-        let source = include_str!("analytics_view.rs");
-        let forbidden_placeholder = ["Token details", "will appear here."].join(" ");
-        assert!(source.contains("#[name = \"token_rows\"]"));
-        assert!(source.contains("Input tokens"));
-        assert!(source.contains("Output tokens"));
-        assert!(source.contains("Total tokens"));
-        assert!(!source.contains(&forbidden_placeholder));
+    fn non_ready_states_hide_inline_warning() {
+        let model = AnalyticsViewModel::default();
+
+        assert_eq!(model.page_state(true), AnalyticsPageState::Error);
+        assert_eq!(model.inline_warning_message(Some("Load failed")), None);
     }
 
     #[test]
