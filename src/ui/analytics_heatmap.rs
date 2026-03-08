@@ -9,6 +9,8 @@ use crate::models::analytics::{ActivityDay, HeatmapData, HeatmapWeek};
 const CELL_SIZE: f32 = 12.0;
 const CELL_GAP: f32 = 3.0;
 const PADDING: f32 = 6.0;
+const DAY_LABEL_WIDTH: f32 = 30.0;
+const MONTH_LABEL_HEIGHT: f32 = 16.0;
 
 pub(crate) fn cell_accessible_label(day: &ActivityDay) -> String {
     if day.session_count == 0 {
@@ -173,14 +175,13 @@ mod imp {
                 .unwrap_or(7)
                 .max(1);
 
-            let width = (PADDING * 2.0
-                + (week_count as f32 * CELL_SIZE)
-                + ((week_count.saturating_sub(1)) as f32 * CELL_GAP))
-                as i32;
-            let height = (PADDING * 2.0
-                + (row_count as f32 * CELL_SIZE)
-                + ((row_count.saturating_sub(1)) as f32 * CELL_GAP))
-                as i32;
+            let grid_width = (week_count as f32 * CELL_SIZE)
+                + ((week_count.saturating_sub(1)) as f32 * CELL_GAP);
+            let grid_height =
+                (row_count as f32 * CELL_SIZE) + ((row_count.saturating_sub(1)) as f32 * CELL_GAP);
+
+            let width = (PADDING * 2.0 + DAY_LABEL_WIDTH + grid_width) as i32;
+            let height = (PADDING * 2.0 + MONTH_LABEL_HEIGHT + grid_height) as i32;
 
             match orientation {
                 gtk::Orientation::Horizontal => (width, width, -1, -1),
