@@ -276,4 +276,56 @@ mod tests {
             "Heatmap summary: 4 sessions across 2 active days (3 days shown); peak 3 sessions/day. Range: 2026-03-01: no sessions to 2026-03-03: 3 sessions."
         );
     }
+
+    #[test]
+    fn summarize_heatmap_returns_no_activity_when_no_days_are_shown() {
+        let summary = summarize_heatmap(&HeatmapData {
+            weeks: vec![],
+            max_sessions_in_a_day: 0,
+        });
+
+        assert_eq!(summary, "No activity data");
+    }
+
+    #[test]
+    fn summarize_heatmap_uses_singular_peak_wording_for_one_session_day() {
+        let summary = summarize_heatmap(&HeatmapData {
+            weeks: vec![HeatmapWeek {
+                days: vec![
+                    ActivityDay {
+                        day: "2026-03-04".to_string(),
+                        session_count: 1,
+                    },
+                    ActivityDay {
+                        day: "2026-03-05".to_string(),
+                        session_count: 0,
+                    },
+                ],
+            }],
+            max_sessions_in_a_day: 1,
+        });
+
+        assert_eq!(
+            summary,
+            "Heatmap summary: 1 sessions across 1 active days (2 days shown); peak 1 session/day. Range: 2026-03-04: 1 session to 2026-03-05: no sessions."
+        );
+    }
+
+    #[test]
+    fn summarize_heatmap_formats_single_day_range_without_to_separator() {
+        let summary = summarize_heatmap(&HeatmapData {
+            weeks: vec![HeatmapWeek {
+                days: vec![ActivityDay {
+                    day: "2026-03-06".to_string(),
+                    session_count: 2,
+                }],
+            }],
+            max_sessions_in_a_day: 2,
+        });
+
+        assert_eq!(
+            summary,
+            "Heatmap summary: 2 sessions across 1 active days (1 days shown); peak 2 sessions/day. Range: 2026-03-06: 2 sessions."
+        );
+    }
 }
