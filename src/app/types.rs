@@ -1,6 +1,6 @@
 use relm4::gtk::PackType;
 
-use crate::models::session::Tool;
+use crate::{icon_names, models::session::Tool};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum UtilityPaneMode {
@@ -77,7 +77,7 @@ impl Workspace {
     pub(super) fn icon_name(self) -> &'static str {
         match self {
             Workspace::Sessions => "document-open-recent-symbolic",
-            Workspace::Analytics => "view-grid-symbolic",
+            Workspace::Analytics => icon_names::GRAPH,
         }
     }
 
@@ -96,6 +96,8 @@ impl Workspace {
 
 #[cfg(test)]
 mod tests {
+    use crate::icon_names;
+
     use super::Workspace;
 
     #[test]
@@ -104,7 +106,7 @@ mod tests {
             Workspace::Sessions.icon_name(),
             "document-open-recent-symbolic"
         );
-        assert_eq!(Workspace::Analytics.icon_name(), "view-grid-symbolic");
+        assert_eq!(Workspace::Analytics.icon_name(), icon_names::GRAPH);
         assert_ne!(
             Workspace::Sessions.icon_name(),
             Workspace::Analytics.icon_name()

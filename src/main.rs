@@ -3,6 +3,10 @@ mod config;
 mod analytics_worker;
 mod app;
 mod database;
+mod icon_names {
+    pub use shipped::*;
+    include!(concat!(env!("OUT_DIR"), "/icon_names.rs"));
+}
 mod indexing_worker;
 mod models;
 mod parsers;
@@ -37,6 +41,7 @@ fn main() {
     let args = Args::parse();
 
     gtk::init().unwrap();
+    relm4_icons::initialize_icons(icon_names::GRESOURCE_BYTES, icon_names::RESOURCE_PREFIX);
 
     // Enable logging
     tracing_subscriber::fmt()
