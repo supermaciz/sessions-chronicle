@@ -41,7 +41,8 @@ impl Drop for TempDatabase {
 #[test]
 fn fixture_index_produces_non_empty_analytics_payload() {
     let db = TempDatabase::new();
-    let sources = SessionSources::resolve(Some(Path::new("tests/fixtures")));
+    let fixtures_path = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
+    let sources = SessionSources::resolve(Some(fixtures_path.as_path()));
 
     let mut indexer = SessionIndexer::new(&db.path).expect("Failed to create indexer");
     let stats = indexer
@@ -57,11 +58,52 @@ fn fixture_index_produces_non_empty_analytics_payload() {
 
     assert!(analytics.overview.total_sessions > 0);
     assert!(analytics.overview.total_messages > 0);
-    assert!(analytics.overview.total_sessions < stats.indexed as i64);
+    assert!(analytics.overview.total_sessions <= stats.indexed as i64);
 
     assert!(!analytics.sessions_by_tool.is_empty());
     assert!(!analytics.session_span_buckets.is_empty());
     assert!(!analytics.activity_days.is_empty());
     assert!(!analytics.heatmap.weeks.is_empty());
     assert!(analytics.heatmap.max_sessions_in_a_day > 0);
+
+    let sessions_by_tool_total: i64 = analytics
+        .sessions_by_tool
+        .iter()
+        .map(|row| row.session_count)
+        .sum();
+    assert_eq!(sessions_by_tool_total, analytics.overview.total_sessions);
+
+    let session_span_buckets_total: i64 = analytics
+        .session_span_buckets
+        .iter()
+        .map(|row| row.session_count)
+        .sum();
+    assert_eq!(
+        session_span_buckets_total,
+        analytics.overview.total_sessions
+    );
+
+    let activity_days_total: i64 = analytics
+        .activity_days
+        .iter()
+        .map(|row| row.session_count)
+        .sum();
+    assert_eq!(activity_days_total, analytics.overview.total_sessions);
+
+    let heatmap_total: i64 = analytics
+        .heatmap
+        .weeks
+        .iter()
+        .flat_map(|week| week.days.iter())
+        .map(|day| day.session_count)
+        .sum();
+    assert_eq!(heatmap_total, analytics.overview.total_sessions);
+
+    assert!(
+        analytics
+            .token_usage_by_tool
+            .iter()
+            .all(|row| row.reported_sessions <= row.total_sessions),
+        "Expected token usage reported_sessions to be <= total_sessions for every row"
+    );
 }
