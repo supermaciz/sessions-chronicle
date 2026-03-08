@@ -5,7 +5,9 @@ use std::path::Path;
 
 use crate::models::{
     AnalyticsData, AnalyticsOverview,
-    analytics::{ActivityDay, HeatmapData, HeatmapWeek, SessionSpanBucket, ToolSessionCount},
+    analytics::{
+        ActivityDay, HeatmapData, HeatmapWeek, SessionSpanBucket, ToolSessionCount, ToolTokenUsage,
+    },
 };
 
 pub fn load_analytics(db_path: &Path) -> Result<AnalyticsData> {
@@ -19,6 +21,7 @@ pub fn load_analytics(db_path: &Path) -> Result<AnalyticsData> {
     let heatmap = build_heatmap(&activity_days)?;
     let sessions_by_tool = load_sessions_by_tool(&db)?;
     let session_span_buckets = load_session_span_buckets(&db)?;
+    let token_usage_by_tool = load_token_usage(&db)?;
 
     Ok(AnalyticsData {
         overview,
@@ -26,7 +29,7 @@ pub fn load_analytics(db_path: &Path) -> Result<AnalyticsData> {
         heatmap,
         sessions_by_tool,
         session_span_buckets,
-        ..AnalyticsData::default()
+        token_usage_by_tool,
     })
 }
 
@@ -222,6 +225,36 @@ fn load_session_span_buckets(db: &rusqlite::Connection) -> Result<Vec<SessionSpa
             session_count: counts.4,
         },
     ])
+}
+
+fn load_token_usage(db: &rusqlite::Connection) -> Result<Vec<ToolTokenUsage>> {
+    let mut stmt = db.prepare(
+        "SELECT
+            tool,
+            COUNT(*) AS total_sessions,
+            SUM(CASE WHEN input_tokens IS NOT NULL AND output_tokens IS NOT NULL THEN 1 ELSE 0 END) AS reported_sessions,
+            SUM(CASE WHEN input_tokens IS NOT NULL AND output_tokens IS NOT NULL THEN input_tokens ELSE 0 END) AS input_sum,
+            SUM(CASE WHEN input_tokens IS NOT NULL AND output_tokens IS NOT NULL THEN output_tokens ELSE 0 END) AS output_sum
+         FROM sessions
+         WHERE is_subagent = 0
+         GROUP BY tool
+         ORDER BY total_sessions DESC, tool ASC",
+    )?;
+
+    let rows = stmt.query_map([], |row| {
+        let tool_value: String = row.get(0)?;
+        let reported_sessions: i64 = row.get(2)?;
+        Ok(ToolTokenUsage {
+            tool: tool_value,
+            total_sessions: row.get::<_, i64>(1)?,
+            reported_sessions,
+            input_tokens: (reported_sessions > 0).then(|| row.get::<_, i64>(3).unwrap_or(0)),
+            output_tokens: (reported_sessions > 0).then(|| row.get::<_, i64>(4).unwrap_or(0)),
+        })
+    })?;
+
+    rows.collect::<rusqlite::Result<Vec<_>>>()
+        .map_err(Into::into)
 }
 
 #[cfg(test)]

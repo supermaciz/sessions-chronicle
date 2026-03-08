@@ -42,6 +42,8 @@ pub struct ToolSessionCount {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ToolTokenUsage {
     pub tool: String,
+    pub total_sessions: i64,
+    pub reported_sessions: i64,
     pub input_tokens: Option<i64>,
     pub output_tokens: Option<i64>,
 }

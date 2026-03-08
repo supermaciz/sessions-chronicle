@@ -457,3 +457,59 @@ fn heatmap_weeks_are_calendar_aligned_and_full_weeks() {
         .expect("Failed to parse last heatmap day");
     assert_eq!(last_week_last_day.weekday(), chrono::Weekday::Sun);
 }
+
+#[test]
+fn token_totals_preserve_missing_vs_zero() {
+    let db = TempDatabase::new();
+
+    // Session with explicit 0 tokens (known zero values)
+    db.connection.execute(
+        "INSERT INTO sessions (
+            id, tool, project_path, start_time, message_count, file_path, last_updated,
+            is_subagent, input_tokens, output_tokens
+         ) VALUES ('session-a', 'claude_code', '/projects/alpha', 10, 4, '/tmp/a.jsonl', 20, 0, 0, 0)",
+        [],
+    ).unwrap();
+
+    // Session with partial coverage (has token data)
+    db.connection.execute(
+        "INSERT INTO sessions (
+            id, tool, project_path, start_time, message_count, file_path, last_updated,
+            is_subagent, input_tokens, output_tokens
+         ) VALUES ('session-b', 'claude_code', '/projects/alpha', 30, 2, '/tmp/b.jsonl', 40, 0, 120, 45)",
+        [],
+    ).unwrap();
+
+    // Session with no token coverage (NULL values - unavailable)
+    db.connection.execute(
+        "INSERT INTO sessions (
+            id, tool, project_path, start_time, message_count, file_path, last_updated,
+            is_subagent, input_tokens, output_tokens
+         ) VALUES ('session-c', 'codex', '/projects/beta', 50, 1, '/tmp/c.jsonl', 60, 0, NULL, NULL)",
+        [],
+    ).unwrap();
+
+    let analytics = load_analytics(&db.path).expect("analytics should load");
+
+    // Claude Code: 2 sessions, both report tokens (one with 0, one with values)
+    let claude = analytics
+        .token_usage_by_tool
+        .iter()
+        .find(|row| row.tool == "claude_code")
+        .unwrap();
+    assert_eq!(claude.total_sessions, 2);
+    assert_eq!(claude.reported_sessions, 2);
+    assert_eq!(claude.input_tokens, Some(120));
+    assert_eq!(claude.output_tokens, Some(45));
+
+    // Codex: 1 session, no token data reported
+    let codex = analytics
+        .token_usage_by_tool
+        .iter()
+        .find(|row| row.tool == "codex")
+        .unwrap();
+    assert_eq!(codex.total_sessions, 1);
+    assert_eq!(codex.reported_sessions, 0);
+    assert_eq!(codex.input_tokens, None);
+    assert_eq!(codex.output_tokens, None);
+}
