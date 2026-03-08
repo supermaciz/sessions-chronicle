@@ -273,3 +273,9 @@
   padding-top: 4px;
   padding-bottom: 4px;
 }
+
+.analytics-inline-warning {
+  background-color: alpha(@warning_bg_color, 0.25);
+  border-radius: 8px;
+  padding: 8px;
+}
