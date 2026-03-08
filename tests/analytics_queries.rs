@@ -196,15 +196,15 @@ fn sessions_by_tool_aggregates_top_level_sessions_only() {
         analytics.sessions_by_tool,
         vec![
             sessions_chronicle::models::analytics::ToolSessionCount {
-                tool: "claude_code".to_string(),
+                tool: "Claude Code".to_string(),
                 session_count: 1,
             },
             sessions_chronicle::models::analytics::ToolSessionCount {
-                tool: "codex".to_string(),
+                tool: "Codex".to_string(),
                 session_count: 1,
             },
             sessions_chronicle::models::analytics::ToolSessionCount {
-                tool: "opencode".to_string(),
+                tool: "OpenCode".to_string(),
                 session_count: 1,
             },
         ]
@@ -495,7 +495,7 @@ fn token_totals_preserve_missing_vs_zero() {
     let claude = analytics
         .token_usage_by_tool
         .iter()
-        .find(|row| row.tool == "claude_code")
+        .find(|row| row.tool == "Claude Code")
         .unwrap();
     assert_eq!(claude.total_sessions, 2);
     assert_eq!(claude.reported_sessions, 2);
@@ -515,7 +515,7 @@ fn token_totals_preserve_missing_vs_zero() {
     let codex = analytics
         .token_usage_by_tool
         .iter()
-        .find(|row| row.tool == "codex")
+        .find(|row| row.tool == "Codex")
         .unwrap();
     assert_eq!(codex.total_sessions, 1);
     assert_eq!(codex.reported_sessions, 0);

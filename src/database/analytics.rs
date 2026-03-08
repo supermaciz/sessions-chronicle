@@ -11,6 +11,12 @@ use crate::models::{
     session::AiAssistant,
 };
 
+fn tool_display_name(storage_name: String) -> String {
+    AiAssistant::from_storage(&storage_name)
+        .map(|a| a.display_name().to_string())
+        .unwrap_or(storage_name)
+}
+
 pub fn load_analytics(db_path: &Path) -> Result<AnalyticsData> {
     if !db_path.exists() {
         return Ok(AnalyticsData::default());
@@ -166,13 +172,8 @@ fn load_sessions_by_tool(db: &rusqlite::Connection) -> Result<Vec<ToolSessionCou
 
     let rows = stmt
         .query_map([], |row| {
-            let tool_storage_name: String = row.get("tool")?;
-            let tool_display_name = AiAssistant::from_storage(&tool_storage_name)
-                .map(|assistant| assistant.display_name().to_string())
-                .unwrap_or(tool_storage_name);
-
             Ok(ToolSessionCount {
-                tool: tool_display_name,
+                tool: tool_display_name(row.get("tool")?),
                 session_count: row.get("session_count")?,
             })
         })
@@ -254,13 +255,9 @@ fn load_token_usage(db: &rusqlite::Connection) -> Result<Vec<ToolTokenUsage>> {
 
     let rows = stmt
         .query_map([], |row| {
-            let tool_storage_name: String = row.get(0)?;
-            let tool_display_name = AiAssistant::from_storage(&tool_storage_name)
-                .map(|assistant| assistant.display_name().to_string())
-                .unwrap_or(tool_storage_name);
             let reported_sessions: i64 = row.get(2)?;
             Ok(ToolTokenUsage {
-                tool: tool_display_name,
+                tool: tool_display_name(row.get(0)?),
                 total_sessions: row.get::<_, i64>(1)?,
                 reported_sessions,
                 input_tokens: (reported_sessions > 0).then(|| row.get::<_, i64>(3).unwrap_or(0)),
