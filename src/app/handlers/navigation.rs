@@ -4,16 +4,23 @@ use relm4::{ComponentController, ComponentSender};
 use crate::ui::session_list::SessionListMsg;
 
 use super::super::helpers::{
-    detail_pop_sync_decision, resolve_escape_action, search_query_update_messages,
+    detail_pop_sync_decision, resolve_escape_action, resolve_search_mode_change,
+    search_query_update_messages, workspace_allows_search,
 };
 use super::super::types::EscapeResolution;
 use super::super::{App, AppMsg};
 
 impl App {
     pub(crate) fn handle_search_mode_changed(&mut self, enabled: bool) {
-        if self.search_visible != enabled {
-            self.search_visible = enabled;
-            if !enabled {
+        let resolved_enabled = resolve_search_mode_change(self.active_workspace, enabled);
+
+        if enabled && !workspace_allows_search(self.active_workspace) {
+            self.sync_search_bar.set(true);
+        }
+
+        if self.search_visible != resolved_enabled {
+            self.search_visible = resolved_enabled;
+            if !resolved_enabled {
                 self.search_query.clear();
                 let (list_msg, detail_msg) = search_query_update_messages(String::new());
                 self.session_list.emit(list_msg);

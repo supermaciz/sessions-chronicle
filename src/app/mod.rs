@@ -41,13 +41,13 @@ mod types;
 
 #[cfg(test)]
 use helpers::decide_reindex_action;
-use helpers::transition_to_list;
 #[cfg(test)]
 use helpers::{
     active_search_query, analytics_indexing_completion_outcome, detail_pop_sync_decision,
-    parent_session_load_failure_messages, resolve_escape_action, search_query_update_messages,
-    transition_to_detail, workspace_header_visibility,
+    parent_session_load_failure_messages, resolve_escape_action, resolve_search_mode_change,
+    search_query_update_messages, transition_to_detail, workspace_header_visibility,
 };
+use helpers::{transition_to_list, workspace_allows_search};
 #[cfg(test)]
 use types::EscapeResolution;
 #[cfg(test)]
@@ -608,7 +608,18 @@ impl SimpleComponent for App {
         let show_search_action = {
             let search_bar = widgets.search_bar.clone();
             let search_entry = widgets.search_entry.clone();
+            let workspace_stack = workspace_stack.clone();
             RelmAction::<ShowSearchAction>::new_stateless(move |_| {
+                let workspace = workspace_stack
+                    .visible_child_name()
+                    .as_deref()
+                    .and_then(Workspace::from_stack_name)
+                    .unwrap_or(Workspace::Sessions);
+
+                if !workspace_allows_search(workspace) {
+                    return;
+                }
+
                 search_bar.set_search_mode(true);
                 search_entry.grab_focus();
             })
@@ -1085,6 +1096,19 @@ mod tests {
         assert!(sessions.pane_controls_visible);
         assert!(sessions.detail_actions_visible);
         assert!(sessions.indexing_progress_visible);
+    }
+
+    #[test]
+    fn search_is_disabled_in_analytics_workspace() {
+        assert!(!workspace_allows_search(Workspace::Analytics));
+        assert!(!resolve_search_mode_change(Workspace::Analytics, true));
+    }
+
+    #[test]
+    fn search_mode_change_preserves_sessions_workspace_behavior() {
+        assert!(workspace_allows_search(Workspace::Sessions));
+        assert!(resolve_search_mode_change(Workspace::Sessions, true));
+        assert!(!resolve_search_mode_change(Workspace::Sessions, false));
     }
 
     #[test]

@@ -26,6 +26,14 @@ pub(super) fn search_query_update_messages(query: String) -> (SessionListMsg, Se
     )
 }
 
+pub(super) fn workspace_allows_search(workspace: Workspace) -> bool {
+    !workspace.is_analytics()
+}
+
+pub(super) fn resolve_search_mode_change(workspace: Workspace, enabled: bool) -> bool {
+    workspace_allows_search(workspace) && enabled
+}
+
 pub(super) fn parent_session_load_failure_messages() -> (SessionDetailMsg, ToolInspectorPaneMsg) {
     (SessionDetailMsg::Clear, ToolInspectorPaneMsg::Clear)
 }
