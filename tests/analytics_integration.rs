@@ -1,0 +1,67 @@
+use rusqlite::Connection;
+use std::path::{Path, PathBuf};
+use std::time::{SystemTime, UNIX_EPOCH};
+
+use sessions_chronicle::database::SessionIndexer;
+use sessions_chronicle::database::analytics::load_analytics;
+use sessions_chronicle::database::schema::initialize_database;
+use sessions_chronicle::session_sources::SessionSources;
+
+struct TempDatabase {
+    path: PathBuf,
+}
+
+impl TempDatabase {
+    fn new() -> Self {
+        let mut path = std::env::temp_dir();
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        path.push(format!(
+            "sessions-chronicle-analytics-integration-{}-{}.db",
+            std::process::id(),
+            nanos
+        ));
+
+        let connection = Connection::open(&path).expect("Failed to open temp database");
+        initialize_database(&connection).expect("Failed to initialize database");
+        drop(connection);
+
+        Self { path }
+    }
+}
+
+impl Drop for TempDatabase {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.path);
+    }
+}
+
+#[test]
+fn fixture_index_produces_non_empty_analytics_payload() {
+    let db = TempDatabase::new();
+    let sources = SessionSources::resolve(Some(Path::new("tests/fixtures")));
+
+    let mut indexer = SessionIndexer::new(&db.path).expect("Failed to create indexer");
+    let stats = indexer
+        .index_all_incremental(&sources)
+        .expect("Failed to index fixture sessions");
+
+    assert!(
+        stats.indexed > 0,
+        "Expected fixtures to index at least one session"
+    );
+
+    let analytics = load_analytics(&db.path).expect("Analytics should load");
+
+    assert!(analytics.overview.total_sessions > 0);
+    assert!(analytics.overview.total_messages > 0);
+    assert!(analytics.overview.total_sessions < stats.indexed as i64);
+
+    assert!(!analytics.sessions_by_tool.is_empty());
+    assert!(!analytics.session_span_buckets.is_empty());
+    assert!(!analytics.activity_days.is_empty());
+    assert!(!analytics.heatmap.weeks.is_empty());
+    assert!(analytics.heatmap.max_sessions_in_a_day > 0);
+}
