@@ -282,7 +282,7 @@ impl SimpleComponent for App {
 
                         #[name = "workspace_switcher_bar"]
                         adw::ViewSwitcherBar {
-                            set_reveal: true,
+                            set_reveal: false,
                         },
                     },
                 },
@@ -581,6 +581,12 @@ impl SimpleComponent for App {
             adw::LengthUnit::Sp,
         ));
         breakpoint.add_setter(&widgets.overlay_split, "collapsed", Some(&true.into()));
+        breakpoint.add_setter(&widgets.workspace_switcher, "visible", Some(&false.into()));
+        breakpoint.add_setter(
+            &widgets.workspace_switcher_bar,
+            "reveal",
+            Some(&true.into()),
+        );
         root.add_breakpoint(breakpoint);
 
         let app = root.application().unwrap();

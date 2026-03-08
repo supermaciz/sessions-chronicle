@@ -3,7 +3,178 @@ use relm4::adw::prelude::ActionRowExt;
 use relm4::{ComponentParts, ComponentSender, RelmWidgetExt, SimpleComponent, adw, gtk};
 
 use crate::models::AnalyticsData;
+use crate::models::analytics::{SessionSpanBucket, ToolSessionCount, ToolTokenUsage};
 use crate::ui::analytics_heatmap::AnalyticsHeatmap;
+use crate::ui::format::format_token_count;
+
+const TOKEN_SECTION_NO_DATA_COPY: &str = "Token data is not available for the indexed sessions";
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct TokenSectionState {
+    subtitle: Option<String>,
+    empty_message: Option<String>,
+}
+
+fn token_section_state(rows: &[ToolTokenUsage]) -> TokenSectionState {
+    let total_sessions = rows
+        .iter()
+        .map(|row| row.total_sessions.max(0))
+        .sum::<i64>();
+    let reported_sessions = rows
+        .iter()
+        .map(|row| row.reported_sessions.max(0))
+        .sum::<i64>();
+
+    if reported_sessions == 0 {
+        return TokenSectionState {
+            subtitle: None,
+            empty_message: Some(TOKEN_SECTION_NO_DATA_COPY.to_string()),
+        };
+    }
+
+    let subtitle = (reported_sessions < total_sessions).then(|| {
+        format!(
+            "Based on {} of {} sessions that report token usage",
+            reported_sessions, total_sessions
+        )
+    });
+
+    TokenSectionState {
+        subtitle,
+        empty_message: None,
+    }
+}
+
+fn clear_box_children(container: &gtk::Box) {
+    while let Some(child) = container.first_child() {
+        container.remove(&child);
+    }
+}
+
+fn clear_listbox_children(container: &gtk::ListBox) {
+    while let Some(child) = container.first_child() {
+        container.remove(&child);
+    }
+}
+
+fn progress_fraction(value: i64, total: i64) -> f64 {
+    if total <= 0 {
+        0.0
+    } else {
+        (value.max(0) as f64 / total as f64).clamp(0.0, 1.0)
+    }
+}
+
+fn build_progress_row(label: &str, value: i64, total: i64) -> gtk::Box {
+    let row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    row.add_css_class("analytics-progress-row");
+
+    let name = gtk::Label::new(Some(label));
+    name.set_width_chars(14);
+    name.set_halign(gtk::Align::Start);
+    name.set_xalign(0.0);
+    row.append(&name);
+
+    let progress = gtk::ProgressBar::new();
+    progress.set_hexpand(true);
+    progress.set_fraction(progress_fraction(value, total));
+    row.append(&progress);
+
+    let value_label = gtk::Label::new(Some(&value.to_string()));
+    value_label.set_halign(gtk::Align::End);
+    value_label.set_xalign(1.0);
+    row.append(&value_label);
+
+    row
+}
+
+fn render_sessions_by_tool_rows(
+    container: &gtk::Box,
+    rows: &[ToolSessionCount],
+    total_sessions: i64,
+) {
+    clear_box_children(container);
+    for row in rows {
+        container.append(&build_progress_row(
+            &row.tool,
+            row.session_count,
+            total_sessions,
+        ));
+    }
+}
+
+fn render_span_bucket_rows(container: &gtk::Box, rows: &[SessionSpanBucket], total_sessions: i64) {
+    clear_box_children(container);
+    for row in rows {
+        container.append(&build_progress_row(
+            &row.bucket,
+            row.session_count,
+            total_sessions,
+        ));
+    }
+}
+
+fn token_row_subtitle(row: &ToolTokenUsage) -> String {
+    if row.reported_sessions == row.total_sessions {
+        format!("{} sessions report token usage", row.reported_sessions)
+    } else {
+        format!(
+            "{} of {} sessions report token usage",
+            row.reported_sessions, row.total_sessions
+        )
+    }
+}
+
+fn render_token_usage_rows(
+    container: &gtk::ListBox,
+    subtitle_label: &gtk::Label,
+    rows: &[ToolTokenUsage],
+) {
+    clear_listbox_children(container);
+
+    let state = token_section_state(rows);
+    if let Some(subtitle) = &state.subtitle {
+        subtitle_label.set_label(subtitle);
+        subtitle_label.set_visible(true);
+    } else {
+        subtitle_label.set_visible(false);
+    }
+
+    if let Some(message) = state.empty_message {
+        let row = adw::ActionRow::builder().title(message).build();
+        container.append(&row);
+        return;
+    }
+
+    for usage in rows {
+        let row = adw::ActionRow::builder()
+            .title(&usage.tool)
+            .subtitle(token_row_subtitle(usage))
+            .build();
+
+        let value = if usage.reported_sessions == 0 {
+            let label = gtk::Label::new(Some("—"));
+            label.set_tooltip_text(Some(&format!(
+                "Token data not available for {}",
+                usage.tool
+            )));
+            label
+        } else {
+            let input = usage.input_tokens.unwrap_or(0);
+            let output = usage.output_tokens.unwrap_or(0);
+            let total = input + output;
+            gtk::Label::new(Some(&format!(
+                "{} in / {} out / {} total",
+                format_token_count(input),
+                format_token_count(output),
+                format_token_count(total)
+            )))
+        };
+
+        row.add_suffix(&value);
+        container.append(&row);
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AnalyticsPageState {
@@ -380,44 +551,10 @@ impl SimpleComponent for AnalyticsView {
                                 add_css_class: "analytics-section-title",
                             },
 
-                            #[name = "tool_progress_placeholder"]
+                            #[name = "tool_progress_rows"]
                             gtk::Box {
                                 set_orientation: gtk::Orientation::Vertical,
                                 set_spacing: 6,
-
-                                gtk::Box {
-                                    set_orientation: gtk::Orientation::Horizontal,
-                                    set_spacing: 8,
-                                    add_css_class: "analytics-progress-row",
-
-                                    gtk::Label {
-                                        set_label: "Claude Code",
-                                        set_width_chars: 14,
-                                        set_halign: gtk::Align::Start,
-                                    },
-
-                                    gtk::ProgressBar {
-                                        set_hexpand: true,
-                                        set_fraction: 0.0,
-                                    }
-                                },
-
-                                gtk::Box {
-                                    set_orientation: gtk::Orientation::Horizontal,
-                                    set_spacing: 8,
-                                    add_css_class: "analytics-progress-row",
-
-                                    gtk::Label {
-                                        set_label: "OpenCode",
-                                        set_width_chars: 14,
-                                        set_halign: gtk::Align::Start,
-                                    },
-
-                                    gtk::ProgressBar {
-                                        set_hexpand: true,
-                                        set_fraction: 0.0,
-                                    }
-                                }
                             }
                             },
 
@@ -432,28 +569,20 @@ impl SimpleComponent for AnalyticsView {
                                 add_css_class: "analytics-section-title",
                             },
 
+                            #[name = "token_section_subtitle"]
+                            gtk::Label {
+                                set_label: "",
+                                set_halign: gtk::Align::Start,
+                                set_xalign: 0.0,
+                                set_wrap: true,
+                                set_visible: false,
+                                add_css_class: "caption",
+                            },
+
                             #[name = "token_rows"]
                             gtk::ListBox {
                                 add_css_class: "boxed-list",
                                 set_selection_mode: gtk::SelectionMode::None,
-
-                                append = &adw::ActionRow::builder()
-                                    .title("Input tokens")
-                                    .build() {
-                                    add_suffix = &gtk::Label::new(Some("-")) {}
-                                },
-
-                                append = &adw::ActionRow::builder()
-                                    .title("Output tokens")
-                                    .build() {
-                                    add_suffix = &gtk::Label::new(Some("-")) {}
-                                },
-
-                                append = &adw::ActionRow::builder()
-                                    .title("Total tokens")
-                                    .build() {
-                                    add_suffix = &gtk::Label::new(Some("-")) {}
-                                }
                             }
                             },
 
@@ -468,44 +597,10 @@ impl SimpleComponent for AnalyticsView {
                                 add_css_class: "analytics-section-title",
                             },
 
-                            #[name = "span_progress_placeholder"]
+                            #[name = "span_progress_rows"]
                             gtk::Box {
                                 set_orientation: gtk::Orientation::Vertical,
                                 set_spacing: 6,
-
-                                gtk::Box {
-                                    set_orientation: gtk::Orientation::Horizontal,
-                                    set_spacing: 8,
-                                    add_css_class: "analytics-progress-row",
-
-                                    gtk::Label {
-                                        set_label: "< 5 min",
-                                        set_width_chars: 14,
-                                        set_halign: gtk::Align::Start,
-                                    },
-
-                                    gtk::ProgressBar {
-                                        set_hexpand: true,
-                                        set_fraction: 0.0,
-                                    }
-                                },
-
-                                gtk::Box {
-                                    set_orientation: gtk::Orientation::Horizontal,
-                                    set_spacing: 8,
-                                    add_css_class: "analytics-progress-row",
-
-                                    gtk::Label {
-                                        set_label: "5-15 min",
-                                        set_width_chars: 14,
-                                        set_halign: gtk::Align::Start,
-                                    },
-
-                                    gtk::ProgressBar {
-                                        set_hexpand: true,
-                                        set_fraction: 0.0,
-                                    }
-                                }
                             }
                             }
                         }
@@ -577,6 +672,21 @@ impl SimpleComponent for AnalyticsView {
             widgets
                 .activity_heatmap
                 .set_heatmap_data(data.heatmap.clone());
+            render_sessions_by_tool_rows(
+                &widgets.tool_progress_rows,
+                &data.sessions_by_tool,
+                data.overview.total_sessions,
+            );
+            render_token_usage_rows(
+                &widgets.token_rows,
+                &widgets.token_section_subtitle,
+                &data.token_usage_by_tool,
+            );
+            render_span_bucket_rows(
+                &widgets.span_progress_rows,
+                &data.session_span_buckets,
+                data.overview.total_sessions,
+            );
         }
 
         let state = self.model.page_state(self.load_error.is_some());
@@ -615,6 +725,7 @@ impl SimpleComponent for AnalyticsView {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::models::analytics::ToolTokenUsage;
 
     #[test]
     fn ready_state_keeps_cached_content_visible_on_refresh_failure() {
@@ -656,5 +767,60 @@ mod tests {
         assert!(model.refresh_in_flight);
         assert_eq!(model.data, Some(data));
         assert_eq!(model.page_state(false), AnalyticsPageState::Ready);
+    }
+
+    #[test]
+    fn token_section_state_shows_partial_coverage_copy() {
+        let rows = vec![
+            ToolTokenUsage {
+                tool: "Claude Code".to_string(),
+                total_sessions: 8,
+                reported_sessions: 5,
+                input_tokens: Some(1200),
+                output_tokens: Some(800),
+            },
+            ToolTokenUsage {
+                tool: "OpenCode".to_string(),
+                total_sessions: 4,
+                reported_sessions: 0,
+                input_tokens: None,
+                output_tokens: None,
+            },
+        ];
+
+        let state = token_section_state(&rows);
+
+        assert_eq!(
+            state.subtitle,
+            Some("Based on 5 of 12 sessions that report token usage".to_string())
+        );
+        assert!(state.empty_message.is_none());
+    }
+
+    #[test]
+    fn token_section_state_shows_no_data_copy_when_unavailable() {
+        let rows = vec![
+            ToolTokenUsage {
+                tool: "Claude Code".to_string(),
+                total_sessions: 6,
+                reported_sessions: 0,
+                input_tokens: None,
+                output_tokens: None,
+            },
+            ToolTokenUsage {
+                tool: "OpenCode".to_string(),
+                total_sessions: 3,
+                reported_sessions: 0,
+                input_tokens: None,
+                output_tokens: None,
+            },
+        ];
+
+        let state = token_section_state(&rows);
+
+        assert_eq!(
+            state.empty_message,
+            Some("Token data is not available for the indexed sessions".to_string())
+        );
     }
 }
