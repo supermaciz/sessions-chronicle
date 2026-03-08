@@ -446,10 +446,14 @@ impl SimpleComponent for App {
         let widgets = view_output!();
 
         // Get the actual ToastOverlay from the root window's content
-        model.toast_overlay = root
+        if let Some(toast_overlay) = root
             .content()
             .and_then(|w| w.downcast::<adw::ToastOverlay>().ok())
-            .expect("Root content should be a ToastOverlay");
+        {
+            model.toast_overlay = toast_overlay;
+        } else {
+            tracing::warn!("Root content is not a ToastOverlay; toasts will be dropped");
+        }
 
         // Enable type-to-search: keystrokes captured from main window open SearchBar
         widgets
@@ -521,25 +525,44 @@ impl SimpleComponent for App {
         widgets.overlay_split.set_max_sidebar_width(720.0);
 
         // Build top-level workspace stack and switchers.
-        model.workspace_stack.add_titled(
-            &widgets.overlay_split,
-            Some(Workspace::Sessions.stack_name()),
-            "Sessions",
-        );
+        let sessions_workspace_added = if let Some(parent) = widgets.overlay_split.parent() {
+            if let Ok(content_box) = parent.downcast::<gtk::Box>() {
+                widgets.overlay_split.unparent();
+
+                if widgets.overlay_split.parent().is_none() {
+                    content_box.insert_child_after(
+                        &model.workspace_stack,
+                        Some(&widgets.search_bar.clone().upcast::<gtk::Widget>()),
+                    );
+                    model.workspace_stack.add_titled(
+                        &widgets.overlay_split,
+                        Some(Workspace::Sessions.stack_name()),
+                        "Sessions",
+                    );
+                    true
+                } else {
+                    tracing::warn!(
+                        "overlay_split remained parented after unparent(); skipping sessions workspace page"
+                    );
+                    false
+                }
+            } else {
+                tracing::warn!(
+                    "overlay_split parent was not gtk::Box; skipping sessions workspace page setup"
+                );
+                false
+            }
+        } else {
+            tracing::warn!(
+                "overlay_split has no parent during workspace setup; skipping sessions workspace page"
+            );
+            false
+        };
+
         model.workspace_stack.add_titled(
             model.analytics_view.widget(),
             Some(Workspace::Analytics.stack_name()),
             "Analytics",
-        );
-        let content_box = widgets
-            .overlay_split
-            .parent()
-            .and_then(|parent| parent.downcast::<gtk::Box>().ok())
-            .expect("overlay split should be inside the main content box");
-        content_box.remove(&widgets.overlay_split);
-        content_box.insert_child_after(
-            &model.workspace_stack,
-            Some(&widgets.search_bar.clone().upcast::<gtk::Widget>()),
         );
         widgets
             .workspace_switcher
@@ -547,9 +570,17 @@ impl SimpleComponent for App {
         widgets
             .workspace_switcher_bar
             .set_stack(Some(&model.workspace_stack));
-        model
-            .workspace_stack
-            .set_visible_child_name(Workspace::Sessions.stack_name());
+
+        if sessions_workspace_added {
+            model
+                .workspace_stack
+                .set_visible_child_name(Workspace::Sessions.stack_name());
+        } else {
+            model.active_workspace = Workspace::Analytics;
+            model
+                .workspace_stack
+                .set_visible_child_name(Workspace::Analytics.stack_name());
+        }
 
         let workspace_sender = sender.input_sender().clone();
         model
