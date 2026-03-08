@@ -106,4 +106,34 @@ fn fixture_index_produces_non_empty_analytics_payload() {
             .all(|row| row.reported_sessions <= row.total_sessions),
         "Expected token usage reported_sessions to be <= total_sessions for every row"
     );
+
+    // Verify that tool names use display names instead of storage names
+    let display_names = ["Claude Code", "OpenCode", "Codex", "Mistral Vibe"];
+    let storage_names = ["claude_code", "opencode", "codex", "mistral_vibe"];
+
+    for tool_data in &analytics.sessions_by_tool {
+        assert!(
+            display_names.contains(&tool_data.tool.as_str()),
+            "Tool name '{}' should be a display name, not a storage name",
+            tool_data.tool
+        );
+        assert!(
+            !storage_names.contains(&tool_data.tool.as_str()),
+            "Tool name '{}' should not be a storage name",
+            tool_data.tool
+        );
+    }
+
+    for tool_data in &analytics.token_usage_by_tool {
+        assert!(
+            display_names.contains(&tool_data.tool.as_str()),
+            "Tool name '{}' should be a display name, not a storage name",
+            tool_data.tool
+        );
+        assert!(
+            !storage_names.contains(&tool_data.tool.as_str()),
+            "Tool name '{}' should not be a storage name",
+            tool_data.tool
+        );
+    }
 }

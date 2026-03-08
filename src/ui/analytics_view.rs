@@ -546,7 +546,7 @@ impl SimpleComponent for AnalyticsView {
                                 add_css_class: "analytics-section",
 
                             gtk::Label {
-                                set_label: "Sessions by tool",
+                                set_label: "Sessions by AI assistant",
                                 set_halign: gtk::Align::Start,
                                 add_css_class: "analytics-section-title",
                             },
