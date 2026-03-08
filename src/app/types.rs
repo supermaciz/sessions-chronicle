@@ -74,6 +74,13 @@ impl Workspace {
         }
     }
 
+    pub(super) fn icon_name(self) -> &'static str {
+        match self {
+            Workspace::Sessions => "document-open-recent-symbolic",
+            Workspace::Analytics => "view-grid-symbolic",
+        }
+    }
+
     pub(super) fn from_stack_name(name: &str) -> Option<Self> {
         match name {
             "sessions" => Some(Workspace::Sessions),
@@ -84,6 +91,24 @@ impl Workspace {
 
     pub(super) fn is_analytics(self) -> bool {
         self == Workspace::Analytics
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Workspace;
+
+    #[test]
+    fn workspaces_expose_distinct_view_switcher_icons() {
+        assert_eq!(
+            Workspace::Sessions.icon_name(),
+            "document-open-recent-symbolic"
+        );
+        assert_eq!(Workspace::Analytics.icon_name(), "view-grid-symbolic");
+        assert_ne!(
+            Workspace::Sessions.icon_name(),
+            Workspace::Analytics.icon_name()
+        );
     }
 }
 

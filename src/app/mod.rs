@@ -534,10 +534,11 @@ impl SimpleComponent for App {
                         &model.workspace_stack,
                         Some(&widgets.search_bar.clone().upcast::<gtk::Widget>()),
                     );
-                    model.workspace_stack.add_titled(
+                    model.workspace_stack.add_titled_with_icon(
                         &widgets.overlay_split,
                         Some(Workspace::Sessions.stack_name()),
                         "Sessions",
+                        Workspace::Sessions.icon_name(),
                     );
                     true
                 } else {
@@ -559,10 +560,11 @@ impl SimpleComponent for App {
             false
         };
 
-        model.workspace_stack.add_titled(
+        model.workspace_stack.add_titled_with_icon(
             model.analytics_view.widget(),
             Some(Workspace::Analytics.stack_name()),
             "Analytics",
+            Workspace::Analytics.icon_name(),
         );
         widgets
             .workspace_switcher
