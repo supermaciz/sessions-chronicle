@@ -4,7 +4,7 @@ use gtk::subclass::prelude::*;
 use relm4::gtk;
 use std::cell::RefCell;
 
-use crate::models::analytics::{ActivityDay, HeatmapData};
+use crate::models::analytics::{ActivityDay, HeatmapData, HeatmapWeek};
 
 const CELL_SIZE: f32 = 12.0;
 const CELL_GAP: f32 = 3.0;
@@ -90,6 +90,36 @@ fn intensity_color(class: &str) -> gtk::gdk::RGBA {
         "heatmap-cell-high" => gtk::gdk::RGBA::new(0.16, 0.53, 0.20, 1.0),
         _ => gtk::gdk::RGBA::new(0.72, 0.72, 0.72, 0.45),
     }
+}
+
+#[allow(dead_code)]
+pub(crate) const MONTH_NAMES: [&str; 12] = [
+    "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+];
+
+/// Returns `(week_index, month_abbrev)` pairs for each month boundary.
+///
+/// A new label is placed at the first week column whose first day belongs
+/// to a month not yet seen.
+#[allow(dead_code)]
+pub(crate) fn month_boundary_labels(weeks: &[HeatmapWeek]) -> Vec<(usize, &'static str)> {
+    let mut labels = Vec::new();
+    let mut last_month: Option<u32> = None;
+
+    for (week_index, week) in weeks.iter().enumerate() {
+        if let Some(first_day) = week.days.first()
+            && first_day.day.len() >= 7
+            && let Ok(month) = first_day.day[5..7].parse::<u32>()
+            && last_month != Some(month)
+        {
+            last_month = Some(month);
+            if (1..=12).contains(&month) {
+                labels.push((week_index, MONTH_NAMES[(month - 1) as usize]));
+            }
+        }
+    }
+
+    labels
 }
 
 fn draw_heatmap(widget: &AnalyticsHeatmap, snapshot: &gtk::Snapshot, data: &HeatmapData) {
@@ -197,7 +227,7 @@ impl Default for AnalyticsHeatmap {
 
 #[cfg(test)]
 mod tests {
-    use super::{cell_accessible_label, intensity_class, summarize_heatmap};
+    use super::{cell_accessible_label, intensity_class, month_boundary_labels, summarize_heatmap};
     use crate::models::analytics::{ActivityDay, HeatmapData, HeatmapWeek};
 
     #[test]
@@ -327,5 +357,157 @@ mod tests {
             summary,
             "Heatmap summary: 2 sessions across 1 active days (1 days shown); peak 2 sessions/day. Range: 2026-03-06: 2 sessions."
         );
+    }
+
+    #[test]
+    fn month_labels_detects_boundaries_across_weeks() {
+        let weeks = vec![
+            HeatmapWeek {
+                days: vec![
+                    ActivityDay {
+                        day: "2026-01-26".into(),
+                        session_count: 0,
+                    },
+                    ActivityDay {
+                        day: "2026-01-27".into(),
+                        session_count: 0,
+                    },
+                    ActivityDay {
+                        day: "2026-01-28".into(),
+                        session_count: 0,
+                    },
+                    ActivityDay {
+                        day: "2026-01-29".into(),
+                        session_count: 0,
+                    },
+                    ActivityDay {
+                        day: "2026-01-30".into(),
+                        session_count: 0,
+                    },
+                    ActivityDay {
+                        day: "2026-01-31".into(),
+                        session_count: 0,
+                    },
+                    ActivityDay {
+                        day: "2026-02-01".into(),
+                        session_count: 0,
+                    },
+                ],
+            },
+            HeatmapWeek {
+                days: vec![
+                    ActivityDay {
+                        day: "2026-02-02".into(),
+                        session_count: 0,
+                    },
+                    ActivityDay {
+                        day: "2026-02-03".into(),
+                        session_count: 0,
+                    },
+                    ActivityDay {
+                        day: "2026-02-04".into(),
+                        session_count: 0,
+                    },
+                    ActivityDay {
+                        day: "2026-02-05".into(),
+                        session_count: 0,
+                    },
+                    ActivityDay {
+                        day: "2026-02-06".into(),
+                        session_count: 0,
+                    },
+                    ActivityDay {
+                        day: "2026-02-07".into(),
+                        session_count: 0,
+                    },
+                    ActivityDay {
+                        day: "2026-02-08".into(),
+                        session_count: 0,
+                    },
+                ],
+            },
+            HeatmapWeek {
+                days: vec![
+                    ActivityDay {
+                        day: "2026-02-09".into(),
+                        session_count: 0,
+                    },
+                    ActivityDay {
+                        day: "2026-02-10".into(),
+                        session_count: 0,
+                    },
+                    ActivityDay {
+                        day: "2026-02-11".into(),
+                        session_count: 0,
+                    },
+                    ActivityDay {
+                        day: "2026-02-12".into(),
+                        session_count: 0,
+                    },
+                    ActivityDay {
+                        day: "2026-02-13".into(),
+                        session_count: 0,
+                    },
+                    ActivityDay {
+                        day: "2026-02-14".into(),
+                        session_count: 0,
+                    },
+                    ActivityDay {
+                        day: "2026-02-15".into(),
+                        session_count: 0,
+                    },
+                ],
+            },
+        ];
+
+        let labels = month_boundary_labels(&weeks);
+        // Week 0 first day is Jan 26 → label "Jan" at column 0
+        // Week 1 first day is Feb 02 → label "Feb" at column 1
+        assert_eq!(labels, vec![(0, "Jan"), (1, "Feb")]);
+    }
+
+    #[test]
+    fn month_labels_returns_empty_for_no_weeks() {
+        let labels = month_boundary_labels(&[]);
+        assert!(labels.is_empty());
+    }
+
+    #[test]
+    fn month_labels_single_month_produces_one_label() {
+        let weeks = vec![HeatmapWeek {
+            days: vec![
+                ActivityDay {
+                    day: "2026-03-02".into(),
+                    session_count: 0,
+                },
+                ActivityDay {
+                    day: "2026-03-03".into(),
+                    session_count: 0,
+                },
+                ActivityDay {
+                    day: "2026-03-04".into(),
+                    session_count: 0,
+                },
+                ActivityDay {
+                    day: "2026-03-05".into(),
+                    session_count: 0,
+                },
+                ActivityDay {
+                    day: "2026-03-06".into(),
+                    session_count: 0,
+                },
+                ActivityDay {
+                    day: "2026-03-07".into(),
+                    session_count: 0,
+                },
+                ActivityDay {
+                    day: "2026-03-08".into(),
+                    session_count: 0,
+                },
+            ],
+        }];
+
+        let labels = month_boundary_labels(&weeks);
+        assert_eq!(labels, vec![(0, "Mar")]);
     }
 }
