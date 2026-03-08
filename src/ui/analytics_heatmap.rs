@@ -108,8 +108,8 @@ pub(crate) fn month_boundary_labels(weeks: &[HeatmapWeek]) -> Vec<(usize, &'stat
 
     for (week_index, week) in weeks.iter().enumerate() {
         if let Some(first_day) = week.days.first()
-            && first_day.day.len() >= 7
-            && let Ok(month) = first_day.day[5..7].parse::<u32>()
+            && let Some(month_str) = first_day.day.get(5..7)
+            && let Ok(month) = month_str.parse::<u32>()
             && last_month != Some(month)
         {
             last_month = Some(month);
@@ -470,6 +470,47 @@ mod tests {
     fn month_labels_returns_empty_for_no_weeks() {
         let labels = month_boundary_labels(&[]);
         assert!(labels.is_empty());
+    }
+
+    #[test]
+    fn month_labels_skips_malformed_day_strings() {
+        let weeks = vec![
+            HeatmapWeek {
+                days: vec![ActivityDay {
+                    day: "bad".into(),
+                    session_count: 0,
+                }],
+            },
+            HeatmapWeek {
+                days: vec![ActivityDay {
+                    day: "2026-03-08".into(),
+                    session_count: 0,
+                }],
+            },
+        ];
+        // Malformed first week is skipped; March label appears at column 1
+        let labels = month_boundary_labels(&weeks);
+        assert_eq!(labels, vec![(1, "Mar")]);
+    }
+
+    #[test]
+    fn month_labels_handles_year_rollover() {
+        let weeks = vec![
+            HeatmapWeek {
+                days: vec![ActivityDay {
+                    day: "2025-12-29".into(),
+                    session_count: 0,
+                }],
+            },
+            HeatmapWeek {
+                days: vec![ActivityDay {
+                    day: "2026-01-05".into(),
+                    session_count: 0,
+                }],
+            },
+        ];
+        let labels = month_boundary_labels(&weeks);
+        assert_eq!(labels, vec![(0, "Dec"), (1, "Jan")]);
     }
 
     #[test]
