@@ -288,7 +288,10 @@ impl Default for AnalyticsHeatmap {
 
 #[cfg(test)]
 mod tests {
-    use super::{cell_accessible_label, intensity_class, month_boundary_labels, summarize_heatmap};
+    use super::{
+        DAY_LABELS, cell_accessible_label, intensity_class, month_boundary_labels,
+        summarize_heatmap,
+    };
     use crate::models::analytics::{ActivityDay, HeatmapData, HeatmapWeek};
 
     #[test]
@@ -572,6 +575,11 @@ mod tests {
         ];
         let labels = month_boundary_labels(&weeks);
         assert_eq!(labels, vec![(0, "Dec"), (1, "Jan")]);
+    }
+
+    #[test]
+    fn day_labels_are_mon_wed_fri_at_rows_0_2_4() {
+        assert_eq!(DAY_LABELS, [(0, "Mon"), (2, "Wed"), (4, "Fri")]);
     }
 
     #[test]
