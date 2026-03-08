@@ -238,3 +238,38 @@
   opacity: 0.7;
   font-size: 0.9em;
 }
+
+/* Analytics dashboard shell */
+.analytics-page {
+  padding: 0;
+}
+
+.analytics-section {
+  background-color: alpha(@card_bg_color, 0.5);
+  border-radius: 12px;
+  padding: 12px;
+}
+
+.analytics-metric-card {
+  background-color: @card_bg_color;
+  border-radius: 10px;
+}
+
+.analytics-metric-value {
+  font-size: 1.6em;
+  font-weight: 700;
+}
+
+.analytics-metric-label {
+  opacity: 0.75;
+}
+
+.analytics-section-title {
+  font-weight: 700;
+  font-size: 1.05em;
+}
+
+.analytics-progress-row {
+  padding-top: 4px;
+  padding-bottom: 4px;
+}
