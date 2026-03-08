@@ -4,10 +4,10 @@ use std::collections::BTreeMap;
 use std::path::Path;
 
 use crate::models::{
-    AnalyticsData, AnalyticsOverview,
     analytics::{
         ActivityDay, HeatmapData, HeatmapWeek, SessionSpanBucket, ToolSessionCount, ToolTokenUsage,
     },
+    AnalyticsData, AnalyticsOverview,
 };
 
 pub fn load_analytics(db_path: &Path) -> Result<AnalyticsData> {
@@ -228,8 +228,12 @@ fn load_session_span_buckets(db: &rusqlite::Connection) -> Result<Vec<SessionSpa
 }
 
 fn load_token_usage(db: &rusqlite::Connection) -> Result<Vec<ToolTokenUsage>> {
-    let mut stmt = db.prepare(
-        "SELECT
+    // Semantics note: BOTH input_tokens AND output_tokens must be non-NULL
+    // to count as a "reported" session with token data. This prevents
+    // counting sessions that have only partial token coverage.
+    let mut stmt = db
+        .prepare(
+            "SELECT
             tool,
             COUNT(*) AS total_sessions,
             SUM(CASE WHEN input_tokens IS NOT NULL AND output_tokens IS NOT NULL THEN 1 ELSE 0 END) AS reported_sessions,
@@ -239,22 +243,25 @@ fn load_token_usage(db: &rusqlite::Connection) -> Result<Vec<ToolTokenUsage>> {
          WHERE is_subagent = 0
          GROUP BY tool
          ORDER BY total_sessions DESC, tool ASC",
-    )?;
+        )
+        .context("Failed to prepare token-usage query")?;
 
-    let rows = stmt.query_map([], |row| {
-        let tool_value: String = row.get(0)?;
-        let reported_sessions: i64 = row.get(2)?;
-        Ok(ToolTokenUsage {
-            tool: tool_value,
-            total_sessions: row.get::<_, i64>(1)?,
-            reported_sessions,
-            input_tokens: (reported_sessions > 0).then(|| row.get::<_, i64>(3).unwrap_or(0)),
-            output_tokens: (reported_sessions > 0).then(|| row.get::<_, i64>(4).unwrap_or(0)),
+    let rows = stmt
+        .query_map([], |row| {
+            let tool_value: String = row.get(0)?;
+            let reported_sessions: i64 = row.get(2)?;
+            Ok(ToolTokenUsage {
+                tool: tool_value,
+                total_sessions: row.get::<_, i64>(1)?,
+                reported_sessions,
+                input_tokens: (reported_sessions > 0).then(|| row.get::<_, i64>(3).unwrap_or(0)),
+                output_tokens: (reported_sessions > 0).then(|| row.get::<_, i64>(4).unwrap_or(0)),
+            })
         })
-    })?;
+        .context("Failed to map token-usage rows")?;
 
     rows.collect::<rusqlite::Result<Vec<_>>>()
-        .map_err(Into::into)
+        .context("Failed to collect token-usage rows")
 }
 
 #[cfg(test)]

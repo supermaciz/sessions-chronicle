@@ -339,14 +339,12 @@ fn activity_days_are_grouped_and_heatmap_is_zero_filled() {
     assert_eq!(analytics.activity_days[0].session_count, 1);
     assert_eq!(analytics.activity_days[1].session_count, 2);
     assert_eq!(analytics.heatmap.max_sessions_in_a_day, 2);
-    assert!(
-        analytics
-            .heatmap
-            .weeks
-            .iter()
-            .flat_map(|week| week.days.iter())
-            .any(|day| day.session_count == 0)
-    );
+    assert!(analytics
+        .heatmap
+        .weeks
+        .iter()
+        .flat_map(|week| week.days.iter())
+        .any(|day| day.session_count == 0));
 }
 
 #[test]
@@ -435,13 +433,11 @@ fn heatmap_weeks_are_calendar_aligned_and_full_weeks() {
     let analytics = load_analytics(&db.path).expect("Failed to load analytics");
 
     assert!(!analytics.heatmap.weeks.is_empty());
-    assert!(
-        analytics
-            .heatmap
-            .weeks
-            .iter()
-            .all(|week| week.days.len() == 7)
-    );
+    assert!(analytics
+        .heatmap
+        .weeks
+        .iter()
+        .all(|week| week.days.len() == 7));
 
     let first_week_first_day =
         NaiveDate::parse_from_str(&analytics.heatmap.weeks[0].days[0].day, "%Y-%m-%d")
@@ -499,8 +495,17 @@ fn token_totals_preserve_missing_vs_zero() {
         .unwrap();
     assert_eq!(claude.total_sessions, 2);
     assert_eq!(claude.reported_sessions, 2);
-    assert_eq!(claude.input_tokens, Some(120));
-    assert_eq!(claude.output_tokens, Some(45));
+    // Aggregation: 0 + 120 = 120 input tokens, 0 + 45 = 45 output tokens
+    assert_eq!(
+        claude.input_tokens,
+        Some(120),
+        "input_tokens should sum to 0 + 120 = 120"
+    );
+    assert_eq!(
+        claude.output_tokens,
+        Some(45),
+        "output_tokens should sum to 0 + 45 = 45"
+    );
 
     // Codex: 1 session, no token data reported
     let codex = analytics
@@ -512,4 +517,77 @@ fn token_totals_preserve_missing_vs_zero() {
     assert_eq!(codex.reported_sessions, 0);
     assert_eq!(codex.input_tokens, None);
     assert_eq!(codex.output_tokens, None);
+}
+
+#[test]
+fn tool_with_all_null_tokens_appears_in_results() {
+    let db = TempDatabase::new();
+
+    // Tool A with NULL tokens
+    db.connection.execute(
+        "INSERT INTO sessions (
+            id, tool, project_path, start_time, message_count, file_path, last_updated,
+            is_subagent, input_tokens, output_tokens
+         ) VALUES ('session-1', 'tool_a', '/projects/test', 10, 4, '/tmp/1.jsonl', 20, 0, NULL, NULL)",
+        [],
+    ).unwrap();
+
+    db.connection.execute(
+        "INSERT INTO sessions (
+            id, tool, project_path, start_time, message_count, file_path, last_updated,
+            is_subagent, input_tokens, output_tokens
+         ) VALUES ('session-2', 'tool_a', '/projects/test', 30, 2, '/tmp/2.jsonl', 40, 0, NULL, NULL)",
+        [],
+    ).unwrap();
+
+    // Tool B with actual token data
+    db.connection
+        .execute(
+            "INSERT INTO sessions (
+            id, tool, project_path, start_time, message_count, file_path, last_updated,
+            is_subagent, input_tokens, output_tokens
+         ) VALUES ('session-3', 'tool_b', '/projects/test', 50, 1, '/tmp/3.jsonl', 60, 0, 100, 50)",
+            [],
+        )
+        .unwrap();
+
+    let analytics = load_analytics(&db.path).expect("analytics should load");
+
+    // Both tools should appear in results, even tool_a with all NULL tokens
+    assert_eq!(
+        analytics.token_usage_by_tool.len(),
+        2,
+        "both tools should appear in results"
+    );
+
+    // Tool A: appears with NULL token sums
+    let tool_a = analytics
+        .token_usage_by_tool
+        .iter()
+        .find(|row| row.tool == "tool_a")
+        .expect("tool_a should be in results");
+    assert_eq!(tool_a.total_sessions, 2);
+    assert_eq!(
+        tool_a.reported_sessions, 0,
+        "sessions with NULL tokens are not reported"
+    );
+    assert_eq!(
+        tool_a.input_tokens, None,
+        "NULL input tokens when no reported sessions"
+    );
+    assert_eq!(
+        tool_a.output_tokens, None,
+        "NULL output tokens when no reported sessions"
+    );
+
+    // Tool B: has token data
+    let tool_b = analytics
+        .token_usage_by_tool
+        .iter()
+        .find(|row| row.tool == "tool_b")
+        .expect("tool_b should be in results");
+    assert_eq!(tool_b.total_sessions, 1);
+    assert_eq!(tool_b.reported_sessions, 1);
+    assert_eq!(tool_b.input_tokens, Some(100));
+    assert_eq!(tool_b.output_tokens, Some(50));
 }
