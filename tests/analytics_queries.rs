@@ -1,3 +1,4 @@
+use chrono::{Datelike, NaiveDate};
 use rusqlite::Connection;
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -346,4 +347,113 @@ fn activity_days_are_grouped_and_heatmap_is_zero_filled() {
             .flat_map(|week| week.days.iter())
             .any(|day| day.session_count == 0)
     );
+}
+
+#[test]
+fn analytics_loading_ignores_invalid_grouped_activity_day_rows() {
+    let db = TempDatabase::new();
+
+    db.connection
+        .execute(
+            "INSERT INTO sessions (id, tool, project_path, start_time, message_count, file_path, last_updated, is_subagent)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            rusqlite::params![
+                "activity-valid",
+                "claude_code",
+                Some("/projects/activity"),
+                1_709_251_200_i64,
+                1_i64,
+                "/tmp/activity-valid.jsonl",
+                1_709_251_800_i64,
+                0_i64,
+            ],
+        )
+        .expect("Failed to insert activity-valid");
+
+    db.connection
+        .execute(
+            "INSERT INTO sessions (id, tool, project_path, start_time, message_count, file_path, last_updated, is_subagent)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            rusqlite::params![
+                "activity-invalid",
+                "opencode",
+                Some("/projects/activity"),
+                "not-a-timestamp",
+                1_i64,
+                "/tmp/activity-invalid.jsonl",
+                1_709_251_900_i64,
+                0_i64,
+            ],
+        )
+        .expect("Failed to insert activity-invalid");
+
+    let analytics = load_analytics(&db.path).expect("Failed to load analytics");
+
+    assert_eq!(analytics.activity_days.len(), 1);
+    assert_eq!(analytics.activity_days[0].session_count, 1);
+    assert_eq!(analytics.overview.total_sessions, 2);
+}
+
+#[test]
+fn heatmap_weeks_are_calendar_aligned_and_full_weeks() {
+    let db = TempDatabase::new();
+
+    db.connection
+        .execute(
+            "INSERT INTO sessions (id, tool, project_path, start_time, message_count, file_path, last_updated, is_subagent)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            rusqlite::params![
+                "week-start",
+                "claude_code",
+                Some("/projects/heatmap"),
+                1_709_510_400_i64,
+                1_i64,
+                "/tmp/week-start.jsonl",
+                1_709_510_800_i64,
+                0_i64,
+            ],
+        )
+        .expect("Failed to insert week-start");
+
+    db.connection
+        .execute(
+            "INSERT INTO sessions (id, tool, project_path, start_time, message_count, file_path, last_updated, is_subagent)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            rusqlite::params![
+                "week-end",
+                "opencode",
+                Some("/projects/heatmap"),
+                1_709_683_200_i64,
+                1_i64,
+                "/tmp/week-end.jsonl",
+                1_709_683_600_i64,
+                0_i64,
+            ],
+        )
+        .expect("Failed to insert week-end");
+
+    let analytics = load_analytics(&db.path).expect("Failed to load analytics");
+
+    assert!(!analytics.heatmap.weeks.is_empty());
+    assert!(
+        analytics
+            .heatmap
+            .weeks
+            .iter()
+            .all(|week| week.days.len() == 7)
+    );
+
+    let first_week_first_day =
+        NaiveDate::parse_from_str(&analytics.heatmap.weeks[0].days[0].day, "%Y-%m-%d")
+            .expect("Failed to parse first heatmap day");
+    assert_eq!(first_week_first_day.weekday(), chrono::Weekday::Mon);
+
+    let last_week = analytics
+        .heatmap
+        .weeks
+        .last()
+        .expect("Missing last heatmap week");
+    let last_week_last_day = NaiveDate::parse_from_str(&last_week.days[6].day, "%Y-%m-%d")
+        .expect("Failed to parse last heatmap day");
+    assert_eq!(last_week_last_day.weekday(), chrono::Weekday::Sun);
 }

@@ -1,5 +1,5 @@
 use anyhow::{Context, Result};
-use chrono::NaiveDate;
+use chrono::{Datelike, Duration, NaiveDate};
 use std::collections::BTreeMap;
 use std::path::Path;
 
@@ -73,15 +73,22 @@ fn load_activity_days(db: &rusqlite::Connection) -> Result<Vec<ActivityDay>> {
 
     let rows = stmt
         .query_map([], |row| {
-            Ok(ActivityDay {
-                day: row.get("day")?,
-                session_count: row.get("session_count")?,
-            })
+            Ok((
+                row.get::<_, Option<String>>("day")?,
+                row.get::<_, i64>("session_count")?,
+            ))
         })
         .context("Failed to map activity-days rows")?;
 
     rows.collect::<rusqlite::Result<Vec<_>>>()
         .context("Failed to collect activity-days rows")
+        .map(|rows| {
+            rows.into_iter()
+                .filter_map(|(day, session_count)| {
+                    day.map(|day| ActivityDay { day, session_count })
+                })
+                .collect()
+        })
 }
 
 fn build_heatmap(activity_days: &[ActivityDay]) -> Result<HeatmapData> {
@@ -100,9 +107,20 @@ fn build_heatmap(activity_days: &[ActivityDay]) -> Result<HeatmapData> {
         .map(|day| (day.day.clone(), day.session_count))
         .collect::<BTreeMap<_, _>>();
 
+    let aligned_start = first_day
+        .checked_sub_signed(Duration::days(
+            first_day.weekday().num_days_from_monday() as i64
+        ))
+        .context("Failed to align first heatmap day to Monday")?;
+    let aligned_end = last_day
+        .checked_add_signed(Duration::days(
+            (6 - last_day.weekday().num_days_from_monday()) as i64,
+        ))
+        .context("Failed to align last heatmap day to Sunday")?;
+
     let mut normalized_days = Vec::new();
-    let mut day_cursor = first_day;
-    while day_cursor <= last_day {
+    let mut day_cursor = aligned_start;
+    while day_cursor <= aligned_end {
         let day = day_cursor.format("%Y-%m-%d").to_string();
         normalized_days.push(ActivityDay {
             session_count: lookup.get(&day).copied().unwrap_or(0),
