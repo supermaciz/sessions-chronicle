@@ -3,6 +3,7 @@ use relm4::adw::prelude::ActionRowExt;
 use relm4::{ComponentParts, ComponentSender, RelmWidgetExt, SimpleComponent, adw, gtk};
 
 use crate::models::AnalyticsData;
+use crate::ui::analytics_heatmap::AnalyticsHeatmap;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AnalyticsPageState {
@@ -277,27 +278,95 @@ impl SimpleComponent for AnalyticsView {
                                 set_spacing: 8,
                                 add_css_class: "analytics-section",
 
-                            gtk::Label {
-                                set_label: "Activity",
-                                set_halign: gtk::Align::Start,
-                                add_css_class: "analytics-section-title",
-                            },
-
-                            gtk::Frame {
-                                set_hexpand: true,
-                                set_vexpand: false,
-                                set_margin_top: 4,
-                                set_margin_bottom: 4,
+                                gtk::Label {
+                                    set_label: "Activity",
+                                    set_halign: gtk::Align::Start,
+                                    add_css_class: "analytics-section-title",
+                                },
 
                                 gtk::Box {
-                                    set_margin_all: 12,
+                                    set_orientation: gtk::Orientation::Horizontal,
+                                    set_spacing: 12,
+                                    set_valign: gtk::Align::Start,
 
-                                    gtk::Label {
-                                        set_label: "Heatmap coming in Task 6",
+                                    #[name = "activity_heatmap"]
+                                    AnalyticsHeatmap {
                                         set_halign: gtk::Align::Start,
+                                        set_vexpand: false,
+                                        set_hexpand: false,
+                                    },
+
+                                    gtk::Box {
+                                        set_orientation: gtk::Orientation::Vertical,
+                                        set_spacing: 6,
+
+                                        gtk::Label {
+                                            set_label: "Legend",
+                                            set_halign: gtk::Align::Start,
+                                            add_css_class: "caption",
+                                        },
+
+                                        gtk::Box {
+                                            set_orientation: gtk::Orientation::Horizontal,
+                                            set_spacing: 8,
+
+                                            gtk::Box {
+                                                add_css_class: "analytics-heatmap-legend-swatch",
+                                                add_css_class: "heatmap-cell-empty",
+                                            },
+
+                                            gtk::Label {
+                                                set_label: "No sessions",
+                                                set_halign: gtk::Align::Start,
+                                            }
+                                        },
+
+                                        gtk::Box {
+                                            set_orientation: gtk::Orientation::Horizontal,
+                                            set_spacing: 8,
+
+                                            gtk::Box {
+                                                add_css_class: "analytics-heatmap-legend-swatch",
+                                                add_css_class: "heatmap-cell-low",
+                                            },
+
+                                            gtk::Label {
+                                                set_label: "Low",
+                                                set_halign: gtk::Align::Start,
+                                            }
+                                        },
+
+                                        gtk::Box {
+                                            set_orientation: gtk::Orientation::Horizontal,
+                                            set_spacing: 8,
+
+                                            gtk::Box {
+                                                add_css_class: "analytics-heatmap-legend-swatch",
+                                                add_css_class: "heatmap-cell-medium",
+                                            },
+
+                                            gtk::Label {
+                                                set_label: "Medium",
+                                                set_halign: gtk::Align::Start,
+                                            }
+                                        },
+
+                                        gtk::Box {
+                                            set_orientation: gtk::Orientation::Horizontal,
+                                            set_spacing: 8,
+
+                                            gtk::Box {
+                                                add_css_class: "analytics-heatmap-legend-swatch",
+                                                add_css_class: "heatmap-cell-high",
+                                            },
+
+                                            gtk::Label {
+                                                set_label: "High",
+                                                set_halign: gtk::Align::Start,
+                                            }
+                                        }
                                     }
                                 }
-                            }
                             },
 
                             gtk::Box {
@@ -505,6 +574,9 @@ impl SimpleComponent for AnalyticsView {
             widgets
                 .active_days_value
                 .set_label(&data.overview.active_days.to_string());
+            widgets
+                .activity_heatmap
+                .set_heatmap_data(data.heatmap.clone());
         }
 
         let state = self.model.page_state(self.load_error.is_some());

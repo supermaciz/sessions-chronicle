@@ -279,3 +279,25 @@
   border-radius: 8px;
   padding: 8px;
 }
+
+.analytics-heatmap-legend-swatch {
+  min-width: 12px;
+  min-height: 12px;
+  border-radius: 3px;
+}
+
+.heatmap-cell-empty {
+  background-color: alpha(@shade_color, 0.45);
+}
+
+.heatmap-cell-low {
+  background-color: #8bc791;
+}
+
+.heatmap-cell-medium {
+  background-color: #4fab59;
+}
+
+.heatmap-cell-high {
+  background-color: #2a8733;
+}
