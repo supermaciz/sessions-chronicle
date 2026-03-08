@@ -1,4 +1,5 @@
 use gtk::prelude::*;
+use relm4::adw::prelude::ActionRowExt;
 use relm4::{ComponentParts, ComponentSender, RelmWidgetExt, SimpleComponent, adw, gtk};
 
 use crate::models::AnalyticsData;
@@ -108,23 +109,13 @@ impl SimpleComponent for AnalyticsView {
                 },
 
                 #[name = "error_state"]
-                gtk::Box {
-                    set_orientation: gtk::Orientation::Vertical,
-                    set_spacing: 12,
-                    set_valign: gtk::Align::Center,
-                    set_halign: gtk::Align::Center,
+                adw::StatusPage {
+                    set_title: "Unable to load analytics",
+                    set_description: Some("Try refreshing to load analytics again."),
+                    set_icon_name: Some("dialog-warning-symbolic"),
 
-                    gtk::Label {
-                        set_label: "Unable to load analytics",
-                        add_css_class: "title-3",
-                    },
-
-                    gtk::Label {
-                        set_label: "Try refreshing to load analytics again.",
-                        add_css_class: "dim-label",
-                    },
-
-                    gtk::Button {
+                    #[wrap(Some)]
+                    set_child = &gtk::Button {
                         set_label: "Retry",
                         connect_clicked[sender] => move |_| {
                             sender.input(AnalyticsViewMsg::Retry);
@@ -344,9 +335,28 @@ impl SimpleComponent for AnalyticsView {
                                 add_css_class: "analytics-section-title",
                             },
 
-                            gtk::Label {
-                                set_label: "Token details will appear here.",
-                                set_halign: gtk::Align::Start,
+                            #[name = "token_rows"]
+                            gtk::ListBox {
+                                add_css_class: "boxed-list",
+                                set_selection_mode: gtk::SelectionMode::None,
+
+                                append = &adw::ActionRow::builder()
+                                    .title("Input tokens")
+                                    .build() {
+                                    add_suffix = &gtk::Label::new(Some("-")) {}
+                                },
+
+                                append = &adw::ActionRow::builder()
+                                    .title("Output tokens")
+                                    .build() {
+                                    add_suffix = &gtk::Label::new(Some("-")) {}
+                                },
+
+                                append = &adw::ActionRow::builder()
+                                    .title("Total tokens")
+                                    .build() {
+                                    add_suffix = &gtk::Label::new(Some("-")) {}
+                                }
                             }
                         },
 
@@ -493,6 +503,23 @@ impl SimpleComponent for AnalyticsView {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn error_state_uses_status_page_widget() {
+        let source = include_str!("analytics_view.rs");
+        assert!(source.contains("#[name = \"error_state\"]\n                adw::StatusPage"));
+    }
+
+    #[test]
+    fn ready_state_renders_token_rows_instead_of_placeholder_text() {
+        let source = include_str!("analytics_view.rs");
+        let forbidden_placeholder = ["Token details", "will appear here."].join(" ");
+        assert!(source.contains("#[name = \"token_rows\"]"));
+        assert!(source.contains("Input tokens"));
+        assert!(source.contains("Output tokens"));
+        assert!(source.contains("Total tokens"));
+        assert!(!source.contains(&forbidden_placeholder));
+    }
 
     #[test]
     fn entered_requests_refresh_when_empty() {
