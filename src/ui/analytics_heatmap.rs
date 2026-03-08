@@ -13,9 +13,61 @@ const PADDING: f32 = 6.0;
 pub(crate) fn cell_accessible_label(day: &ActivityDay) -> String {
     if day.session_count == 0 {
         format!("{}: no sessions", day.day)
+    } else if day.session_count == 1 {
+        format!("{}: 1 session", day.day)
     } else {
         format!("{}: {} sessions", day.day, day.session_count)
     }
+}
+
+pub(crate) fn summarize_heatmap(data: &HeatmapData) -> String {
+    let mut shown_days = 0;
+    let mut active_days = 0;
+    let mut total_sessions = 0;
+    let mut first_day: Option<&ActivityDay> = None;
+    let mut last_day: Option<&ActivityDay> = None;
+
+    for day in data.weeks.iter().flat_map(|week| week.days.iter()) {
+        if first_day.is_none() {
+            first_day = Some(day);
+        }
+        last_day = Some(day);
+        shown_days += 1;
+        if day.session_count > 0 {
+            active_days += 1;
+            total_sessions += day.session_count;
+        }
+    }
+
+    if shown_days == 0 {
+        return "No activity data".to_string();
+    }
+
+    let peak_text = if data.max_sessions_in_a_day == 1 {
+        "peak 1 session/day".to_string()
+    } else {
+        format!("peak {} sessions/day", data.max_sessions_in_a_day)
+    };
+
+    let mut summary = format!(
+        "Heatmap summary: {} sessions across {} active days ({} days shown); {}.",
+        total_sessions, active_days, shown_days, peak_text
+    );
+
+    if let Some(first_day) = first_day {
+        summary.push(' ');
+        summary.push_str("Range: ");
+        summary.push_str(&cell_accessible_label(first_day));
+        if let Some(last_day) = last_day
+            && first_day.day != last_day.day
+        {
+            summary.push_str(" to ");
+            summary.push_str(&cell_accessible_label(last_day));
+        }
+        summary.push('.');
+    }
+
+    summary
 }
 
 pub(crate) fn intensity_class(session_count: i64, max_day: i64) -> &'static str {
@@ -31,6 +83,7 @@ pub(crate) fn intensity_class(session_count: i64, max_day: i64) -> &'static str 
 }
 
 fn intensity_color(class: &str) -> gtk::gdk::RGBA {
+    // Keep these colors synchronized with the legend CSS classes in data/resources/style.css.
     match class {
         "heatmap-cell-low" => gtk::gdk::RGBA::new(0.55, 0.78, 0.58, 1.0),
         "heatmap-cell-medium" => gtk::gdk::RGBA::new(0.31, 0.68, 0.35, 1.0),
@@ -125,21 +178,12 @@ impl AnalyticsHeatmap {
     }
 
     pub fn set_heatmap_data(&self, data: HeatmapData) {
-        let summary = data
-            .weeks
-            .iter()
-            .flat_map(|week| week.days.iter())
-            .map(cell_accessible_label)
-            .collect::<Vec<_>>()
-            .join("; ");
+        let summary = summarize_heatmap(&data);
 
         let imp = self.imp();
         imp.data.replace(data);
-        if summary.is_empty() {
-            self.set_tooltip_text(Some("No activity data"));
-        } else {
-            self.set_tooltip_text(Some(&summary));
-        }
+        self.set_tooltip_text(Some(&summary));
+        self.update_property(&[gtk::accessible::Property::Label(&summary)]);
         self.queue_draw();
         self.queue_resize();
     }
@@ -153,8 +197,8 @@ impl Default for AnalyticsHeatmap {
 
 #[cfg(test)]
 mod tests {
-    use super::{cell_accessible_label, intensity_class};
-    use crate::models::analytics::ActivityDay;
+    use super::{cell_accessible_label, intensity_class, summarize_heatmap};
+    use crate::models::analytics::{ActivityDay, HeatmapData, HeatmapWeek};
 
     #[test]
     fn accessible_label_describes_empty_and_non_empty_cells() {
@@ -168,9 +212,16 @@ mod tests {
         assert_eq!(
             cell_accessible_label(&ActivityDay {
                 day: "2026-03-02".to_string(),
+                session_count: 1,
+            }),
+            "2026-03-02: 1 session"
+        );
+        assert_eq!(
+            cell_accessible_label(&ActivityDay {
+                day: "2026-03-03".to_string(),
                 session_count: 3,
             }),
-            "2026-03-02: 3 sessions"
+            "2026-03-03: 3 sessions"
         );
     }
 
@@ -178,6 +229,51 @@ mod tests {
     fn intensity_class_scales_against_max_day() {
         assert_eq!(intensity_class(0, 4), "heatmap-cell-empty");
         assert_eq!(intensity_class(1, 4), "heatmap-cell-low");
+        assert_eq!(intensity_class(2, 4), "heatmap-cell-medium");
+        assert_eq!(intensity_class(3, 4), "heatmap-cell-high");
         assert_eq!(intensity_class(4, 4), "heatmap-cell-high");
+    }
+
+    #[test]
+    fn intensity_class_handles_threshold_boundaries() {
+        assert_eq!(intensity_class(3, 8), "heatmap-cell-low");
+        assert_eq!(intensity_class(4, 8), "heatmap-cell-medium");
+        assert_eq!(intensity_class(5, 8), "heatmap-cell-medium");
+        assert_eq!(intensity_class(6, 8), "heatmap-cell-high");
+        assert_eq!(intensity_class(2, 5), "heatmap-cell-low");
+        assert_eq!(intensity_class(3, 5), "heatmap-cell-medium");
+        assert_eq!(intensity_class(4, 5), "heatmap-cell-high");
+    }
+
+    #[test]
+    fn summarize_heatmap_is_concise_and_aggregated() {
+        let summary = summarize_heatmap(&HeatmapData {
+            weeks: vec![
+                HeatmapWeek {
+                    days: vec![
+                        ActivityDay {
+                            day: "2026-03-01".to_string(),
+                            session_count: 0,
+                        },
+                        ActivityDay {
+                            day: "2026-03-02".to_string(),
+                            session_count: 1,
+                        },
+                    ],
+                },
+                HeatmapWeek {
+                    days: vec![ActivityDay {
+                        day: "2026-03-03".to_string(),
+                        session_count: 3,
+                    }],
+                },
+            ],
+            max_sessions_in_a_day: 3,
+        });
+
+        assert_eq!(
+            summary,
+            "Heatmap summary: 4 sessions across 2 active days (3 days shown); peak 3 sessions/day. Range: 2026-03-01: no sessions to 2026-03-03: 3 sessions."
+        );
     }
 }
