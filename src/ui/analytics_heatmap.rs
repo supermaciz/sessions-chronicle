@@ -2,6 +2,7 @@ use gtk::glib;
 use gtk::prelude::*;
 use gtk::subclass::prelude::*;
 use relm4::gtk;
+use relm4::gtk::pango;
 use std::cell::RefCell;
 
 use crate::models::analytics::{ActivityDay, HeatmapData, HeatmapWeek};
@@ -124,17 +125,44 @@ pub(crate) fn month_boundary_labels(weeks: &[HeatmapWeek]) -> Vec<(usize, &'stat
     labels
 }
 
+const DAY_LABELS: [(usize, &str); 3] = [(0, "Mon"), (2, "Wed"), (4, "Fri")];
+
+fn draw_day_labels(widget: &AnalyticsHeatmap, snapshot: &gtk::Snapshot, grid_y_offset: f32) {
+    let label_color = gtk::gdk::RGBA::new(0.5, 0.5, 0.5, 0.8);
+
+    for &(row, text) in &DAY_LABELS {
+        let layout = widget.create_pango_layout(Some(text));
+        let font_desc = pango::FontDescription::from_string("9");
+        layout.set_font_description(Some(&font_desc));
+
+        let (_ink, logical) = layout.pixel_extents();
+        let cell_center_y =
+            grid_y_offset + (row as f32 * (CELL_SIZE + CELL_GAP)) + (CELL_SIZE / 2.0);
+        let text_y = cell_center_y - (logical.height() as f32 / 2.0);
+
+        snapshot.save();
+        snapshot.translate(&gtk::graphene::Point::new(PADDING, text_y));
+        snapshot.append_layout(&layout, &label_color);
+        snapshot.restore();
+    }
+}
+
 fn draw_heatmap(widget: &AnalyticsHeatmap, snapshot: &gtk::Snapshot, data: &HeatmapData) {
     let width = widget.width() as f32;
     let height = widget.height() as f32;
     let clip = gtk::graphene::Rect::new(0.0, 0.0, width.max(1.0), height.max(1.0));
     snapshot.push_clip(&clip);
 
+    let grid_x_offset = PADDING + DAY_LABEL_WIDTH;
+    let grid_y_offset = PADDING + MONTH_LABEL_HEIGHT;
+
+    draw_day_labels(widget, snapshot, grid_y_offset);
+
     for (week_index, week) in data.weeks.iter().enumerate() {
-        let x = PADDING + (week_index as f32 * (CELL_SIZE + CELL_GAP));
+        let x = grid_x_offset + (week_index as f32 * (CELL_SIZE + CELL_GAP));
 
         for (day_index, day) in week.days.iter().enumerate() {
-            let y = PADDING + (day_index as f32 * (CELL_SIZE + CELL_GAP));
+            let y = grid_y_offset + (day_index as f32 * (CELL_SIZE + CELL_GAP));
             let class = intensity_class(day.session_count, data.max_sessions_in_a_day);
             let color = intensity_color(class);
             let rect = gtk::graphene::Rect::new(x, y, CELL_SIZE, CELL_SIZE);
