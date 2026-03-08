@@ -339,12 +339,14 @@ fn activity_days_are_grouped_and_heatmap_is_zero_filled() {
     assert_eq!(analytics.activity_days[0].session_count, 1);
     assert_eq!(analytics.activity_days[1].session_count, 2);
     assert_eq!(analytics.heatmap.max_sessions_in_a_day, 2);
-    assert!(analytics
-        .heatmap
-        .weeks
-        .iter()
-        .flat_map(|week| week.days.iter())
-        .any(|day| day.session_count == 0));
+    assert!(
+        analytics
+            .heatmap
+            .weeks
+            .iter()
+            .flat_map(|week| week.days.iter())
+            .any(|day| day.session_count == 0)
+    );
 }
 
 #[test]
@@ -433,11 +435,13 @@ fn heatmap_weeks_are_calendar_aligned_and_full_weeks() {
     let analytics = load_analytics(&db.path).expect("Failed to load analytics");
 
     assert!(!analytics.heatmap.weeks.is_empty());
-    assert!(analytics
-        .heatmap
-        .weeks
-        .iter()
-        .all(|week| week.days.len() == 7));
+    assert!(
+        analytics
+            .heatmap
+            .weeks
+            .iter()
+            .all(|week| week.days.len() == 7)
+    );
 
     let first_week_first_day =
         NaiveDate::parse_from_str(&analytics.heatmap.weeks[0].days[0].day, "%Y-%m-%d")

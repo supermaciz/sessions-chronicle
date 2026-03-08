@@ -4,10 +4,10 @@ use std::collections::BTreeMap;
 use std::path::Path;
 
 use crate::models::{
+    AnalyticsData, AnalyticsOverview,
     analytics::{
         ActivityDay, HeatmapData, HeatmapWeek, SessionSpanBucket, ToolSessionCount, ToolTokenUsage,
     },
-    AnalyticsData, AnalyticsOverview,
 };
 
 pub fn load_analytics(db_path: &Path) -> Result<AnalyticsData> {
