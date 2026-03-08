@@ -95,7 +95,6 @@ fn intensity_color(class: &str) -> gtk::gdk::RGBA {
     }
 }
 
-#[allow(dead_code)]
 pub(crate) const MONTH_NAMES: [&str; 12] = [
     "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
 ];
@@ -104,7 +103,6 @@ pub(crate) const MONTH_NAMES: [&str; 12] = [
 ///
 /// A new label is placed at the first week column whose first day belongs
 /// to a month not yet seen.
-#[allow(dead_code)]
 pub(crate) fn month_boundary_labels(weeks: &[HeatmapWeek]) -> Vec<(usize, &'static str)> {
     let mut labels = Vec::new();
     let mut last_month: Option<u32> = None;
@@ -147,6 +145,39 @@ fn draw_day_labels(widget: &AnalyticsHeatmap, snapshot: &gtk::Snapshot, grid_y_o
     }
 }
 
+fn draw_month_labels(
+    widget: &AnalyticsHeatmap,
+    snapshot: &gtk::Snapshot,
+    data: &HeatmapData,
+    grid_x_offset: f32,
+) {
+    let label_color = gtk::gdk::RGBA::new(0.5, 0.5, 0.5, 0.8);
+    let labels = month_boundary_labels(&data.weeks);
+    let mut last_label_end_x: f32 = 0.0;
+
+    for (week_index, month_text) in labels {
+        let x = grid_x_offset + (week_index as f32 * (CELL_SIZE + CELL_GAP));
+
+        // Skip if this label would overlap the previous one
+        if x < last_label_end_x {
+            continue;
+        }
+
+        let layout = widget.create_pango_layout(Some(month_text));
+        let font_desc = pango::FontDescription::from_string("9");
+        layout.set_font_description(Some(&font_desc));
+
+        let (_ink, logical) = layout.pixel_extents();
+
+        snapshot.save();
+        snapshot.translate(&gtk::graphene::Point::new(x, PADDING));
+        snapshot.append_layout(&layout, &label_color);
+        snapshot.restore();
+
+        last_label_end_x = x + logical.width() as f32 + CELL_GAP;
+    }
+}
+
 fn draw_heatmap(widget: &AnalyticsHeatmap, snapshot: &gtk::Snapshot, data: &HeatmapData) {
     let width = widget.width() as f32;
     let height = widget.height() as f32;
@@ -157,6 +188,7 @@ fn draw_heatmap(widget: &AnalyticsHeatmap, snapshot: &gtk::Snapshot, data: &Heat
     let grid_y_offset = PADDING + MONTH_LABEL_HEIGHT;
 
     draw_day_labels(widget, snapshot, grid_y_offset);
+    draw_month_labels(widget, snapshot, data, grid_x_offset);
 
     for (week_index, week) in data.weeks.iter().enumerate() {
         let x = grid_x_offset + (week_index as f32 * (CELL_SIZE + CELL_GAP));
