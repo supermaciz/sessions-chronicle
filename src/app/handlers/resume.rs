@@ -7,7 +7,7 @@ use relm4::{
 
 use crate::config::APP_ID;
 use crate::database::load_session;
-use crate::models::session::Tool;
+use crate::models::session::AiAssistant;
 use crate::utils::terminal::{self, Terminal};
 
 use super::super::{App, AppMsg};
@@ -23,7 +23,7 @@ impl App {
             .map(|dir| dir.to_path_buf())
     }
 
-    pub(crate) fn handle_resume_session(&self, session_id: String, tool: Tool) {
+    pub(crate) fn handle_resume_session(&self, session_id: String, tool: AiAssistant) {
         tracing::debug!("Resume session requested: {}", session_id);
 
         let session = match load_session(&self.db_path, &session_id) {

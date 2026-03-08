@@ -6,7 +6,7 @@ use crate::models::token_usage::TokenUsage;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Session {
     pub id: String,
-    pub tool: Tool,
+    pub tool: AiAssistant,
     pub project_path: Option<String>,
     pub start_time: DateTime<Utc>,
     pub message_count: usize,
@@ -22,76 +22,81 @@ pub struct Session {
     pub token_usage: Option<TokenUsage>,
 }
 
+/// AI coding assistant whose sessions are tracked by this application.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
-pub enum Tool {
+pub enum AiAssistant {
+    /// Anthropic's Claude Code CLI agent.
     ClaudeCode,
+    /// OpenCode terminal-based AI coding agent.
     OpenCode,
+    /// OpenAI Codex CLI agent.
     Codex,
+    /// Mistral Vibe coding assistant.
     MistralVibe,
 }
 
-impl Tool {
-    pub const ALL: &'static [Tool] = &[
-        Tool::ClaudeCode,
-        Tool::OpenCode,
-        Tool::Codex,
-        Tool::MistralVibe,
+impl AiAssistant {
+    pub const ALL: &'static [AiAssistant] = &[
+        AiAssistant::ClaudeCode,
+        AiAssistant::OpenCode,
+        AiAssistant::Codex,
+        AiAssistant::MistralVibe,
     ];
 
     #[allow(dead_code)]
     pub fn color(&self) -> &'static str {
         match self {
-            Tool::ClaudeCode => "#3584e4",
-            Tool::OpenCode => "#26a269",
-            Tool::Codex => "#e66100",
-            Tool::MistralVibe => "#1c71d8",
+            AiAssistant::ClaudeCode => "#3584e4",
+            AiAssistant::OpenCode => "#26a269",
+            AiAssistant::Codex => "#e66100",
+            AiAssistant::MistralVibe => "#1c71d8",
         }
     }
 
     pub fn icon_name(&self) -> &'static str {
         match self {
-            Tool::ClaudeCode => "claude-code-symbolic",
-            Tool::OpenCode => "opencode-symbolic",
-            Tool::Codex => "codex-symbolic",
-            Tool::MistralVibe => "mistral-vibe-symbolic",
+            AiAssistant::ClaudeCode => "claude-code-symbolic",
+            AiAssistant::OpenCode => "opencode-symbolic",
+            AiAssistant::Codex => "codex-symbolic",
+            AiAssistant::MistralVibe => "mistral-vibe-symbolic",
         }
     }
 
     pub fn display_name(&self) -> &'static str {
         match self {
-            Tool::ClaudeCode => "Claude Code",
-            Tool::OpenCode => "OpenCode",
-            Tool::Codex => "Codex",
-            Tool::MistralVibe => "Mistral Vibe",
+            AiAssistant::ClaudeCode => "Claude Code",
+            AiAssistant::OpenCode => "OpenCode",
+            AiAssistant::Codex => "Codex",
+            AiAssistant::MistralVibe => "Mistral Vibe",
         }
     }
 
     pub fn from_storage(value: &str) -> Option<Self> {
         match value {
-            "claude_code" => Some(Tool::ClaudeCode),
-            "opencode" => Some(Tool::OpenCode),
-            "codex" => Some(Tool::Codex),
-            "mistral_vibe" => Some(Tool::MistralVibe),
+            "claude_code" => Some(AiAssistant::ClaudeCode),
+            "opencode" => Some(AiAssistant::OpenCode),
+            "codex" => Some(AiAssistant::Codex),
+            "mistral_vibe" => Some(AiAssistant::MistralVibe),
             _ => None,
         }
     }
 
     pub fn to_storage(self) -> String {
         match self {
-            Tool::ClaudeCode => "claude_code".to_string(),
-            Tool::OpenCode => "opencode".to_string(),
-            Tool::Codex => "codex".to_string(),
-            Tool::MistralVibe => "mistral_vibe".to_string(),
+            AiAssistant::ClaudeCode => "claude_code".to_string(),
+            AiAssistant::OpenCode => "opencode".to_string(),
+            AiAssistant::Codex => "codex".to_string(),
+            AiAssistant::MistralVibe => "mistral_vibe".to_string(),
         }
     }
 
     pub fn session_dir(&self) -> String {
         let home = std::env::var("HOME").unwrap_or_else(|_| String::from("/home/user"));
         match self {
-            Tool::ClaudeCode => format!("{}/.claude/projects", home),
-            Tool::OpenCode => format!("{}/.local/share/opencode/storage/session", home),
-            Tool::Codex => format!("{}/.codex/sessions", home),
-            Tool::MistralVibe => std::env::var("VIBE_HOME")
+            AiAssistant::ClaudeCode => format!("{}/.claude/projects", home),
+            AiAssistant::OpenCode => format!("{}/.local/share/opencode/storage/session", home),
+            AiAssistant::Codex => format!("{}/.codex/sessions", home),
+            AiAssistant::MistralVibe => std::env::var("VIBE_HOME")
                 .map(|vibe_home| format!("{}/logs/session", vibe_home))
                 .unwrap_or_else(|_| format!("{}/.vibe/logs/session", home)),
         }

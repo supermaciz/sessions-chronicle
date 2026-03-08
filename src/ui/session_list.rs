@@ -4,13 +4,13 @@ use relm4::{ComponentParts, ComponentSender, SimpleComponent, adw, gtk};
 use std::path::{Path, PathBuf};
 
 use crate::database::{load_sessions, search_sessions};
-use crate::models::{Session, Tool};
+use crate::models::{AiAssistant, Session};
 use crate::ui::session_row::{SessionRow, SessionRowInit, SessionRowOutput};
 
 #[derive(Debug)]
 pub struct SessionList {
     db_path: PathBuf,
-    active_tools: Vec<Tool>,
+    active_tools: Vec<AiAssistant>,
     search_query: String,
     all_tools_selected: bool,
     indexing: bool,
@@ -19,11 +19,11 @@ pub struct SessionList {
 
 #[derive(Debug)]
 pub enum SessionListMsg {
-    SetTools(Vec<Tool>),
+    SetTools(Vec<AiAssistant>),
     SetSearchQuery(String),
     SetIndexing(bool),
     SessionActivated(i32),
-    ResumeRequested(String, Tool),
+    ResumeRequested(String, AiAssistant),
     Reload,
     /// Ensure a row is selected (defaults to first) and grab keyboard focus.
     RestoreFocus,
@@ -36,7 +36,7 @@ pub enum SessionListMsg {
 #[derive(Debug)]
 pub enum SessionListOutput {
     SessionSelected(String),
-    ResumeRequested(String, Tool),
+    ResumeRequested(String, AiAssistant),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -125,10 +125,10 @@ impl SimpleComponent for SessionList {
         sender: ComponentSender<Self>,
     ) -> ComponentParts<Self> {
         let active_tools = vec![
-            Tool::ClaudeCode,
-            Tool::OpenCode,
-            Tool::Codex,
-            Tool::MistralVibe,
+            AiAssistant::ClaudeCode,
+            AiAssistant::OpenCode,
+            AiAssistant::Codex,
+            AiAssistant::MistralVibe,
         ];
         let search_query = String::new();
         let fetched = Self::fetch_sessions(&db_path, &active_tools, &search_query);
@@ -185,7 +185,7 @@ impl SimpleComponent for SessionList {
         match message {
             SessionListMsg::SetTools(tools) => {
                 self.active_tools = tools.clone();
-                self.all_tools_selected = tools.len() == Tool::ALL.len();
+                self.all_tools_selected = tools.len() == AiAssistant::ALL.len();
                 self.reload_sessions();
             }
             SessionListMsg::SetSearchQuery(query) => {
@@ -291,7 +291,7 @@ impl SessionList {
         }
     }
 
-    fn fetch_sessions(db_path: &Path, tools: &[Tool], query: &str) -> Vec<Session> {
+    fn fetch_sessions(db_path: &Path, tools: &[AiAssistant], query: &str) -> Vec<Session> {
         let query = query.trim();
         let sessions = if query.is_empty() {
             load_sessions(db_path, tools)
@@ -413,7 +413,7 @@ mod tests {
 
         let session = Session {
             id: "test-session".to_string(),
-            tool: Tool::ClaudeCode,
+            tool: AiAssistant::ClaudeCode,
             project_path: Some("/tmp/project".to_string()),
             start_time: chrono::Utc::now(),
             message_count: 1,
@@ -470,7 +470,7 @@ mod tests {
             guard.push_back(SessionRowInit {
                 session: Session {
                     id: "sel-test".to_string(),
-                    tool: Tool::ClaudeCode,
+                    tool: AiAssistant::ClaudeCode,
                     project_path: Some("/tmp/p".to_string()),
                     start_time: chrono::Utc::now(),
                     message_count: 1,
@@ -511,7 +511,7 @@ mod tests {
 
         let session = Session {
             id: "resume-session".to_string(),
-            tool: Tool::OpenCode,
+            tool: AiAssistant::OpenCode,
             project_path: Some("/tmp/project".to_string()),
             start_time: chrono::Utc::now(),
             message_count: 1,
@@ -546,7 +546,7 @@ mod tests {
         assert_eq!(outputs.len(), 1);
         assert!(matches!(
             outputs.as_slice(),
-            [SessionListOutput::ResumeRequested(id, tool)] if id == "resume-session" && *tool == Tool::OpenCode
+            [SessionListOutput::ResumeRequested(id, tool)] if id == "resume-session" && *tool == AiAssistant::OpenCode
         ));
         assert!(
             !outputs
@@ -558,7 +558,7 @@ mod tests {
     fn make_test_session(id: &str) -> Session {
         Session {
             id: id.to_string(),
-            tool: Tool::ClaudeCode,
+            tool: AiAssistant::ClaudeCode,
             project_path: Some("/tmp/project".to_string()),
             start_time: chrono::Utc::now(),
             message_count: 1,

@@ -17,7 +17,7 @@ use crate::analytics_worker::{AnalyticsWorker, AnalyticsWorkerOutput};
 use crate::config::{APP_ID, PROFILE};
 use crate::database::SessionIndexer;
 use crate::indexing_worker::{IndexingWorker, IndexingWorkerInput, IndexingWorkerOutput};
-use crate::models::session::Tool;
+use crate::models::session::AiAssistant;
 use crate::session_sources::{SessionSources, select_db_filename};
 use crate::ui::modals::{
     about::AboutDialog,
@@ -107,13 +107,13 @@ pub(super) enum AppMsg {
     PaneVisibilityChanged(bool),
     SearchQueryChanged(String),
     WorkspaceChanged(Workspace),
-    FiltersChanged(Vec<Tool>),
+    FiltersChanged(Vec<AiAssistant>),
     SessionSelected(String),
     /// User-requested navigation back from detail to list.
     RequestNavigateBack,
     /// Detail page popped signal from `NavigationView`.
     NavigateBack,
-    ResumeSession(String, Tool),
+    ResumeSession(String, AiAssistant),
     /// Resume the currently active session (triggered from the header bar button).
     ResumeActiveSession,
     InspectToolCall(String),

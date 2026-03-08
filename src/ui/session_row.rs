@@ -6,7 +6,7 @@ use relm4::{adw, gtk};
 
 use adw::prelude::ActionRowExt;
 
-use crate::models::{Session, Tool};
+use crate::models::{AiAssistant, Session};
 use gtk::glib;
 
 /// Data passed to initialize each factory row.
@@ -23,10 +23,10 @@ pub struct SessionRow {
 
 #[derive(Debug)]
 pub enum SessionRowOutput {
-    ResumeRequested(String, Tool),
+    ResumeRequested(String, AiAssistant),
 }
 
-fn emit_resume(sender: &relm4::Sender<SessionRowOutput>, id: &str, tool: Tool) {
+fn emit_resume(sender: &relm4::Sender<SessionRowOutput>, id: &str, tool: AiAssistant) {
     let _ = sender.send(SessionRowOutput::ResumeRequested(id.to_string(), tool));
 }
 
@@ -202,7 +202,7 @@ mod tests {
         let now = Utc::now();
         Session {
             id: "session-id".to_string(),
-            tool: Tool::ClaudeCode,
+            tool: AiAssistant::ClaudeCode,
             project_path: project_path.map(str::to_string),
             start_time: now,
             message_count: 7,
@@ -279,11 +279,11 @@ mod tests {
     fn emit_resume_sends_resume_requested_output() {
         let (sender, receiver) = relm4::channel();
 
-        emit_resume(&sender, "session-123", Tool::OpenCode);
+        emit_resume(&sender, "session-123", AiAssistant::OpenCode);
 
         assert!(matches!(
             receiver.recv_sync(),
-            Some(SessionRowOutput::ResumeRequested(id, tool)) if id == "session-123" && tool == Tool::OpenCode
+            Some(SessionRowOutput::ResumeRequested(id, tool)) if id == "session-123" && tool == AiAssistant::OpenCode
         ));
     }
 }

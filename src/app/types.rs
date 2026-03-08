@@ -1,6 +1,6 @@
 use relm4::gtk::PackType;
 
-use crate::{icon_names, models::session::Tool};
+use crate::{icon_names, models::session::AiAssistant};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum UtilityPaneMode {
@@ -41,7 +41,7 @@ impl UtilityPaneMode {
 #[derive(Debug, Clone)]
 pub(super) struct ActiveSessionRef {
     pub(super) id: String,
-    pub(super) tool: Tool,
+    pub(super) tool: AiAssistant,
     #[allow(dead_code)]
     pub(super) project_name: String,
 }

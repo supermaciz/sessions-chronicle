@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 
-use crate::models::session::Tool;
+use crate::models::session::AiAssistant;
 
 /// Known subdirectory names used when resolving an override root.
 const CLAUDE_SUBDIR: &str = "claude_sessions";
@@ -60,7 +60,7 @@ impl SessionSources {
     }
 
     fn resolve_defaults() -> Self {
-        let opencode_session_dir = PathBuf::from(Tool::OpenCode.session_dir());
+        let opencode_session_dir = PathBuf::from(AiAssistant::OpenCode.session_dir());
         let opencode_storage_root = opencode_session_dir
             .parent()
             .map(|p| p.to_path_buf())
@@ -69,11 +69,11 @@ impl SessionSources {
         let opencode_db_path = resolve_opencode_db(&opencode_storage_root);
 
         Self {
-            claude_dir: PathBuf::from(Tool::ClaudeCode.session_dir()),
+            claude_dir: PathBuf::from(AiAssistant::ClaudeCode.session_dir()),
             opencode_storage_root,
             opencode_db_path,
-            codex_dir: PathBuf::from(Tool::Codex.session_dir()),
-            vibe_dir: PathBuf::from(Tool::MistralVibe.session_dir()),
+            codex_dir: PathBuf::from(AiAssistant::Codex.session_dir()),
+            vibe_dir: PathBuf::from(AiAssistant::MistralVibe.session_dir()),
             override_mode: false,
         }
     }
@@ -144,16 +144,19 @@ mod tests {
         assert!(!sources.override_mode);
         assert_eq!(
             sources.claude_dir,
-            PathBuf::from(Tool::ClaudeCode.session_dir())
+            PathBuf::from(AiAssistant::ClaudeCode.session_dir())
         );
-        assert_eq!(sources.codex_dir, PathBuf::from(Tool::Codex.session_dir()));
+        assert_eq!(
+            sources.codex_dir,
+            PathBuf::from(AiAssistant::Codex.session_dir())
+        );
         assert_eq!(
             sources.vibe_dir,
-            PathBuf::from(Tool::MistralVibe.session_dir())
+            PathBuf::from(AiAssistant::MistralVibe.session_dir())
         );
 
         // OpenCode storage root is the parent of the session dir.
-        let expected_opencode = PathBuf::from(Tool::OpenCode.session_dir());
+        let expected_opencode = PathBuf::from(AiAssistant::OpenCode.session_dir());
         let expected_root = expected_opencode.parent().unwrap();
         assert_eq!(sources.opencode_storage_root, expected_root);
     }

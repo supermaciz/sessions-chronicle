@@ -8,8 +8,8 @@ use std::cmp::Ordering;
 use std::path::{Path, PathBuf};
 
 use crate::models::{
-    Message, Role, Session, Subagent, TokenUsage, Tool, ToolCall, ToolCallStatus, TranscriptItem,
-    TranscriptItemKind,
+    AiAssistant, Message, Role, Session, Subagent, TokenUsage, ToolCall, ToolCallStatus,
+    TranscriptItem, TranscriptItemKind,
 };
 use crate::parsers::ParsedSession;
 
@@ -330,7 +330,7 @@ impl OpenCodeParser {
 
         let session = Session {
             id: metadata.id.clone(),
-            tool: Tool::OpenCode,
+            tool: AiAssistant::OpenCode,
             project_path: metadata.directory.clone(),
             start_time: metadata.time_created,
             message_count: flattened.len(),
