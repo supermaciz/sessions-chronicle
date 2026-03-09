@@ -1,7 +1,7 @@
 use gtk::prelude::*;
 use relm4::{ComponentParts, ComponentSender, RelmWidgetExt, SimpleComponent, gtk};
 
-use crate::models::session::Tool;
+use crate::models::session::AiAssistant;
 
 #[derive(Debug)]
 pub struct Sidebar {
@@ -13,12 +13,12 @@ pub struct Sidebar {
 
 #[derive(Debug)]
 pub enum SidebarMsg {
-    ToolToggled(Tool, bool),
+    ToolToggled(AiAssistant, bool),
 }
 
 #[derive(Debug)]
 pub enum SidebarOutput {
-    FiltersChanged(Vec<Tool>),
+    FiltersChanged(Vec<AiAssistant>),
 }
 
 #[relm4::component(pub)]
@@ -62,7 +62,7 @@ impl SimpleComponent for Sidebar {
                     set_label: Some("Claude Code"),
                     set_active: true,
                     connect_toggled[sender] => move |btn| {
-                        sender.input(SidebarMsg::ToolToggled(Tool::ClaudeCode, btn.is_active()));
+                        sender.input(SidebarMsg::ToolToggled(AiAssistant::ClaudeCode, btn.is_active()));
                     },
                 },
 
@@ -71,7 +71,7 @@ impl SimpleComponent for Sidebar {
                     set_label: Some("OpenCode"),
                     set_active: true,
                     connect_toggled[sender] => move |btn| {
-                        sender.input(SidebarMsg::ToolToggled(Tool::OpenCode, btn.is_active()));
+                        sender.input(SidebarMsg::ToolToggled(AiAssistant::OpenCode, btn.is_active()));
                     },
                 },
 
@@ -80,7 +80,7 @@ impl SimpleComponent for Sidebar {
                     set_label: Some("Codex"),
                     set_active: true,
                     connect_toggled[sender] => move |btn| {
-                        sender.input(SidebarMsg::ToolToggled(Tool::Codex, btn.is_active()));
+                        sender.input(SidebarMsg::ToolToggled(AiAssistant::Codex, btn.is_active()));
                     },
                 },
 
@@ -89,7 +89,7 @@ impl SimpleComponent for Sidebar {
                     set_label: Some("Mistral Vibe"),
                     set_active: true,
                     connect_toggled[sender] => move |btn| {
-                        sender.input(SidebarMsg::ToolToggled(Tool::MistralVibe, btn.is_active()));
+                        sender.input(SidebarMsg::ToolToggled(AiAssistant::MistralVibe, btn.is_active()));
                     },
                 },
             },
@@ -126,10 +126,10 @@ impl SimpleComponent for Sidebar {
         let widgets = view_output!();
 
         let _ = sender.output(SidebarOutput::FiltersChanged(vec![
-            Tool::ClaudeCode,
-            Tool::OpenCode,
-            Tool::Codex,
-            Tool::MistralVibe,
+            AiAssistant::ClaudeCode,
+            AiAssistant::OpenCode,
+            AiAssistant::Codex,
+            AiAssistant::MistralVibe,
         ]));
 
         ComponentParts { model, widgets }
@@ -139,24 +139,24 @@ impl SimpleComponent for Sidebar {
         match message {
             SidebarMsg::ToolToggled(tool, active) => {
                 match tool {
-                    Tool::ClaudeCode => self.claude_enabled = active,
-                    Tool::OpenCode => self.opencode_enabled = active,
-                    Tool::Codex => self.codex_enabled = active,
-                    Tool::MistralVibe => self.mistral_vibe_enabled = active,
+                    AiAssistant::ClaudeCode => self.claude_enabled = active,
+                    AiAssistant::OpenCode => self.opencode_enabled = active,
+                    AiAssistant::Codex => self.codex_enabled = active,
+                    AiAssistant::MistralVibe => self.mistral_vibe_enabled = active,
                 }
 
                 let mut tools = Vec::new();
                 if self.claude_enabled {
-                    tools.push(Tool::ClaudeCode);
+                    tools.push(AiAssistant::ClaudeCode);
                 }
                 if self.opencode_enabled {
-                    tools.push(Tool::OpenCode);
+                    tools.push(AiAssistant::OpenCode);
                 }
                 if self.codex_enabled {
-                    tools.push(Tool::Codex);
+                    tools.push(AiAssistant::Codex);
                 }
                 if self.mistral_vibe_enabled {
-                    tools.push(Tool::MistralVibe);
+                    tools.push(AiAssistant::MistralVibe);
                 }
 
                 let _ = sender.output(SidebarOutput::FiltersChanged(tools));

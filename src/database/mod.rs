@@ -1,3 +1,4 @@
+pub mod analytics;
 pub mod indexer;
 pub mod schema;
 
@@ -9,7 +10,7 @@ use std::path::Path;
 use std::time::Duration;
 
 use crate::models::{
-    MessagePreview, Role, Session, Subagent, Tool, ToolCall, ToolCallStatus, TranscriptItem,
+    AiAssistant, MessagePreview, Role, Session, Subagent, ToolCall, ToolCallStatus, TranscriptItem,
     TranscriptItemKind,
 };
 
@@ -56,7 +57,7 @@ pub struct TranscriptItemRow {
 
 fn session_from_row(row: &Row) -> rusqlite::Result<Session> {
     let tool_value: String = row.get("tool")?;
-    let tool = Tool::from_storage(&tool_value).unwrap_or(Tool::ClaudeCode);
+    let tool = AiAssistant::from_storage(&tool_value).unwrap_or(AiAssistant::ClaudeCode);
     let start_time: i64 = row.get("start_time")?;
     let last_updated: i64 = row.get("last_updated")?;
     let message_count: i64 = row.get("message_count")?;
@@ -125,7 +126,7 @@ fn sanitize_search_query(raw: &str) -> Option<String> {
     }
 }
 
-pub fn search_sessions(db_path: &Path, tools: &[Tool], query: &str) -> Result<Vec<Session>> {
+pub fn search_sessions(db_path: &Path, tools: &[AiAssistant], query: &str) -> Result<Vec<Session>> {
     if !db_path.exists() {
         return Ok(Vec::new());
     }
@@ -172,10 +173,11 @@ pub fn search_sessions(db_path: &Path, tools: &[Tool], query: &str) -> Result<Ve
 
 fn search_sessions_with_query(
     db: &Connection,
-    tools: &[Tool],
+    tools: &[AiAssistant],
     query: &str,
 ) -> Result<Vec<Session>> {
-    let (query_sql, tool_strings): (String, Vec<String>) = if tools.len() == Tool::ALL.len() {
+    let (query_sql, tool_strings): (String, Vec<String>) = if tools.len() == AiAssistant::ALL.len()
+    {
         (
             "SELECT s.id, s.tool, s.project_path, s.start_time, s.message_count, s.file_path,
                     s.last_updated, s.first_prompt, s.parent_session_id, s.is_subagent,
@@ -235,7 +237,7 @@ fn search_sessions_with_query(
     Ok(sessions)
 }
 
-pub fn load_sessions(db_path: &Path, tools: &[Tool]) -> Result<Vec<Session>> {
+pub fn load_sessions(db_path: &Path, tools: &[AiAssistant]) -> Result<Vec<Session>> {
     if !db_path.exists() {
         return Ok(Vec::new());
     }
@@ -246,7 +248,7 @@ pub fn load_sessions(db_path: &Path, tools: &[Tool]) -> Result<Vec<Session>> {
 
     let db = open_connection(db_path)?;
 
-    let (query, tool_strings): (String, Vec<String>) = if tools.len() == Tool::ALL.len() {
+    let (query, tool_strings): (String, Vec<String>) = if tools.len() == AiAssistant::ALL.len() {
         (
             "SELECT id, tool, project_path, start_time, message_count, file_path,
                     last_updated, first_prompt, parent_session_id, is_subagent,

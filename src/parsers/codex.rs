@@ -6,7 +6,7 @@ use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::path::Path;
 
-use crate::models::{Message, Role, Session, TokenUsage, Tool, ToolCall, ToolCallStatus};
+use crate::models::{AiAssistant, Message, Role, Session, TokenUsage, ToolCall, ToolCallStatus};
 use crate::models::{TranscriptItem, TranscriptItemKind};
 use crate::parsers::ParsedSession;
 use crate::parsers::model::normalize_model;
@@ -512,7 +512,7 @@ impl CodexParser {
         Ok(ParsedSession {
             session: Session {
                 id: session_id,
-                tool: Tool::Codex,
+                tool: AiAssistant::Codex,
                 project_path,
                 start_time,
                 message_count: messages.len(),

@@ -1,10 +1,11 @@
 use relm4::{ComponentController, adw};
 
 use crate::indexing_worker::IndexingWorkerInput;
+use crate::ui::analytics_view::AnalyticsViewMsg;
 use crate::ui::session_list::SessionListMsg;
 
 use super::super::App;
-use super::super::helpers::decide_reindex_action;
+use super::super::helpers::{analytics_indexing_completion_outcome, decide_reindex_action};
 use super::super::types::ReindexAction;
 
 impl App {
@@ -38,6 +39,14 @@ impl App {
         self.indexing = false;
         self.session_list.emit(SessionListMsg::SetIndexing(false));
         self.session_list.emit(SessionListMsg::Reload);
+
+        let analytics_outcome = analytics_indexing_completion_outcome(self.active_workspace);
+        if analytics_outcome.mark_stale {
+            self.analytics_view.emit(AnalyticsViewMsg::MarkStale);
+        }
+        if analytics_outcome.refresh_immediately {
+            self.analytics_view.emit(AnalyticsViewMsg::Entered);
+        }
 
         if self.pending_reindex_feedback {
             self.pending_reindex_feedback = false;

@@ -17,7 +17,7 @@ Use when the user asks for:
 - learning through A/B implementation choices
 - review coaching focused on Rust, Relm4, SQLite, or parser decisions
 
-Do not use when user asks for direct refactoring or direct bugfix implementation.
+Do not use when user asks for direct refactoring or direct bugfix implementation or a simple code review.
 
 ## Workflow
 

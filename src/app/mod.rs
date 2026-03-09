@@ -5,18 +5,19 @@ use relm4::{
     adw, gtk, main_application,
 };
 
-use adw::prelude::{AdwApplicationWindowExt, AdwDialogExt, AlertDialogExt, NavigationPageExt};
+use adw::prelude::*;
 use gtk::prelude::{
-    ActionableExt, ApplicationExt, ButtonExt, Cast, EditableExt, GtkApplicationExt, GtkWindowExt,
-    ObjectExt, OrientableExt, SettingsExt, ToggleButtonExt, WidgetExt,
+    ActionableExt, ApplicationExt, BoxExt, ButtonExt, Cast, EditableExt, GtkApplicationExt,
+    GtkWindowExt, ObjectExt, OrientableExt, SettingsExt, ToggleButtonExt, WidgetExt,
 };
 use gtk::{gdk, gio, glib};
 use std::{cell::Cell, fs, path::PathBuf, sync::Arc};
 
+use crate::analytics_worker::{AnalyticsWorker, AnalyticsWorkerOutput};
 use crate::config::{APP_ID, PROFILE};
 use crate::database::SessionIndexer;
 use crate::indexing_worker::{IndexingWorker, IndexingWorkerInput, IndexingWorkerOutput};
-use crate::models::session::Tool;
+use crate::models::session::AiAssistant;
 use crate::session_sources::{SessionSources, select_db_filename};
 use crate::ui::modals::{
     about::AboutDialog,
@@ -26,6 +27,7 @@ use crate::ui::modals::{
 #[cfg(test)]
 use crate::ui::session_detail::SessionDetailMsg;
 use crate::ui::{
+    analytics_view::{AnalyticsView, AnalyticsViewOutput},
     session_detail::{SessionDetail, SessionDetailOutput},
     session_list::{SessionList, SessionListMsg, SessionListOutput},
     sidebar::{Sidebar, SidebarOutput},
@@ -39,17 +41,18 @@ mod types;
 
 #[cfg(test)]
 use helpers::decide_reindex_action;
-use helpers::transition_to_list;
 #[cfg(test)]
 use helpers::{
-    active_search_query, detail_pop_sync_decision, parent_session_load_failure_messages,
-    resolve_escape_action, search_query_update_messages, transition_to_detail,
+    active_search_query, analytics_indexing_completion_outcome, detail_pop_sync_decision,
+    parent_session_load_failure_messages, resolve_escape_action, resolve_search_mode_change,
+    search_query_update_messages, transition_to_detail, workspace_header_visibility,
 };
+use helpers::{transition_to_list, workspace_allows_search};
 #[cfg(test)]
 use types::EscapeResolution;
 #[cfg(test)]
 use types::ReindexAction;
-use types::{ActiveSessionRef, UtilityPaneMode};
+use types::{ActiveSessionRef, UtilityPaneMode, Workspace};
 
 /// Timeout in seconds for resume failure toast notifications
 const RESUME_FAILURE_TOAST_TIMEOUT_SECS: u32 = 4;
@@ -72,6 +75,7 @@ pub(super) struct App {
     parent_session: Option<ActiveSessionRef>,
     search_query: String,
     session_list: Controller<SessionList>,
+    analytics_view: Controller<AnalyticsView>,
     session_detail: Controller<SessionDetail>,
     #[allow(dead_code)] // Controller must stay alive to keep the widget
     sidebar: Controller<Sidebar>,
@@ -80,6 +84,9 @@ pub(super) struct App {
     preferences_dialog: Controller<PreferencesDialog>,
     #[allow(dead_code)]
     indexing_worker: WorkerController<IndexingWorker>,
+    #[allow(dead_code)]
+    analytics_worker: WorkerController<AnalyticsWorker>,
+    workspace_stack: adw::ViewStack,
     nav_view: adw::NavigationView,
     detail_page: adw::NavigationPage,
     suppress_next_detail_pop_sync: bool,
@@ -89,6 +96,7 @@ pub(super) struct App {
     sources: SessionSources,
     indexing: bool,
     pending_reindex_feedback: bool,
+    active_workspace: Workspace,
 }
 
 #[derive(Debug)]
@@ -98,13 +106,14 @@ pub(super) enum AppMsg {
     TogglePane,
     PaneVisibilityChanged(bool),
     SearchQueryChanged(String),
-    FiltersChanged(Vec<Tool>),
+    WorkspaceChanged(Workspace),
+    FiltersChanged(Vec<AiAssistant>),
     SessionSelected(String),
     /// User-requested navigation back from detail to list.
     RequestNavigateBack,
     /// Detail page popped signal from `NavigationView`.
     NavigateBack,
-    ResumeSession(String, Tool),
+    ResumeSession(String, AiAssistant),
     /// Resume the currently active session (triggered from the header bar button).
     ResumeActiveSession,
     InspectToolCall(String),
@@ -122,6 +131,9 @@ pub(super) enum AppMsg {
         skipped: usize,
     },
     IndexingFailed,
+    AnalyticsRefreshRequested,
+    AnalyticsLoaded(crate::models::AnalyticsData),
+    AnalyticsLoadFailed(String),
 }
 
 relm4::new_action_group!(pub(super) WindowActionGroup, "win");
@@ -169,13 +181,20 @@ impl SimpleComponent for App {
             set_content = &adw::ToastOverlay {
                 #[wrap(Some)]
                 set_child = &adw::ToolbarView {
+                    #[name = "header_bar"]
                     add_top_bar = &adw::HeaderBar {
+                        #[name = "workspace_switcher"]
+                        #[wrap(Some)]
+                        set_title_widget = &adw::ViewSwitcher {
+                            set_policy: adw::ViewSwitcherPolicy::Wide,
+                        },
+
                         #[name = "back_button"]
                         pack_start = &gtk::Button {
                             set_icon_name: "go-previous-symbolic",
                             set_tooltip_text: Some("Go back"),
                             #[watch]
-                            set_visible: model.detail_visible,
+                            set_visible: model.detail_visible && model.are_detail_actions_visible(),
                             connect_clicked => AppMsg::RequestNavigateBack,
                         },
 
@@ -183,6 +202,8 @@ impl SimpleComponent for App {
                         pack_start = &gtk::ToggleButton {
                             set_icon_name: "system-search-symbolic",
                             set_tooltip_text: Some("Search sessions"),
+                            #[watch]
+                            set_visible: model.is_search_ui_visible(),
                         },
 
                         #[name = "parent_session_button"]
@@ -191,7 +212,7 @@ impl SimpleComponent for App {
                             set_tooltip_text: Some("Return to the parent session"),
                             add_css_class: "flat",
                             #[watch]
-                            set_visible: model.parent_session.is_some() && model.detail_visible,
+                            set_visible: model.parent_session.is_some() && model.detail_visible && model.are_detail_actions_visible(),
                             connect_clicked => AppMsg::ReturnToParentSession,
                         },
 
@@ -201,7 +222,7 @@ impl SimpleComponent for App {
                             set_tooltip_text: Some("Resume session in terminal"),
                             add_css_class: "suggested-action",
                             #[watch]
-                            set_visible: model.detail_visible,
+                            set_visible: model.detail_visible && model.are_detail_actions_visible(),
                             connect_clicked => AppMsg::ResumeActiveSession,
                         },
 
@@ -212,6 +233,8 @@ impl SimpleComponent for App {
                             set_action_name: Some("win.toggle-pane"),
                             #[watch]
                             set_active: model.pane_open,
+                            #[watch]
+                            set_visible: model.is_pane_controls_visible(),
                         },
 
                         pack_end = &gtk::Spinner {
@@ -235,6 +258,8 @@ impl SimpleComponent for App {
 
                         #[name = "search_bar"]
                         gtk::SearchBar {
+                            #[watch]
+                            set_visible: model.is_search_ui_visible(),
                             #[name = "search_entry"]
                             #[wrap(Some)]
                             set_child = &gtk::SearchEntry {
@@ -253,6 +278,11 @@ impl SimpleComponent for App {
                             set_show_sidebar: model.pane_open,
                             set_enable_show_gesture: true,
                             set_enable_hide_gesture: true,
+                        },
+
+                        #[name = "workspace_switcher_bar"]
+                        adw::ViewSwitcherBar {
+                            set_reveal: false,
                         },
                     },
                 },
@@ -292,6 +322,12 @@ impl SimpleComponent for App {
                     SessionListOutput::SessionSelected(id) => AppMsg::SessionSelected(id),
                     SessionListOutput::ResumeRequested(id, tool) => AppMsg::ResumeSession(id, tool),
                 });
+        let analytics_view =
+            AnalyticsView::builder()
+                .launch(None)
+                .forward(sender.input_sender(), |output| match output {
+                    AnalyticsViewOutput::RefreshRequested => AppMsg::AnalyticsRefreshRequested,
+                });
         let session_detail = SessionDetail::builder().launch(db_path.clone()).forward(
             sender.input_sender(),
             |msg| match msg {
@@ -325,6 +361,13 @@ impl SimpleComponent for App {
                     AppMsg::IndexingCompleted { indexed, skipped }
                 }
                 IndexingWorkerOutput::Failed => AppMsg::IndexingFailed,
+            });
+
+        let analytics_worker = AnalyticsWorker::builder()
+            .detach_worker(db_path.clone())
+            .forward(sender.input_sender(), |output| match output {
+                AnalyticsWorkerOutput::Loaded(data) => AppMsg::AnalyticsLoaded(data),
+                AnalyticsWorkerOutput::Failed(error) => AppMsg::AnalyticsLoadFailed(error),
             });
 
         // Create NavigationView and pages before model
@@ -365,6 +408,10 @@ impl SimpleComponent for App {
         pane_stack.add_named(tool_inspector_pane.widget(), Some("tool-inspector"));
         pane_stack.set_visible_child_name("filters");
 
+        let workspace_stack = adw::ViewStack::new();
+        workspace_stack.set_vexpand(true);
+        workspace_stack.set_hexpand(true);
+
         // Create model with a temporary toast_overlay (will be replaced after view_output!)
         let mut model = Self {
             search_visible: false,
@@ -376,11 +423,14 @@ impl SimpleComponent for App {
             parent_session: None,
             search_query: String::new(),
             session_list,
+            analytics_view,
             session_detail,
             sidebar,
             tool_inspector_pane,
             preferences_dialog,
             indexing_worker,
+            analytics_worker,
+            workspace_stack: workspace_stack.clone(),
             nav_view: nav_view.clone(),
             detail_page: detail_page.clone(),
             suppress_next_detail_pop_sync: false,
@@ -390,15 +440,20 @@ impl SimpleComponent for App {
             sources,
             indexing: true,
             pending_reindex_feedback: false,
+            active_workspace: Workspace::Sessions,
         };
 
         let widgets = view_output!();
 
         // Get the actual ToastOverlay from the root window's content
-        model.toast_overlay = root
+        if let Some(toast_overlay) = root
             .content()
             .and_then(|w| w.downcast::<adw::ToastOverlay>().ok())
-            .expect("Root content should be a ToastOverlay");
+        {
+            model.toast_overlay = toast_overlay;
+        } else {
+            tracing::warn!("Root content is not a ToastOverlay; toasts will be dropped");
+        }
 
         // Enable type-to-search: keystrokes captured from main window open SearchBar
         widgets
@@ -469,6 +524,79 @@ impl SimpleComponent for App {
         widgets.overlay_split.set_content(Some(&nav_view));
         widgets.overlay_split.set_max_sidebar_width(720.0);
 
+        // Build top-level workspace stack and switchers.
+        let sessions_workspace_added = if let Some(parent) = widgets.overlay_split.parent() {
+            if let Ok(content_box) = parent.downcast::<gtk::Box>() {
+                widgets.overlay_split.unparent();
+
+                if widgets.overlay_split.parent().is_none() {
+                    content_box.insert_child_after(
+                        &model.workspace_stack,
+                        Some(&widgets.search_bar.clone().upcast::<gtk::Widget>()),
+                    );
+                    model.workspace_stack.add_titled_with_icon(
+                        &widgets.overlay_split,
+                        Some(Workspace::Sessions.stack_name()),
+                        "Sessions",
+                        Workspace::Sessions.icon_name(),
+                    );
+                    true
+                } else {
+                    tracing::warn!(
+                        "overlay_split remained parented after unparent(); skipping sessions workspace page"
+                    );
+                    false
+                }
+            } else {
+                tracing::warn!(
+                    "overlay_split parent was not gtk::Box; skipping sessions workspace page setup"
+                );
+                false
+            }
+        } else {
+            tracing::warn!(
+                "overlay_split has no parent during workspace setup; skipping sessions workspace page"
+            );
+            false
+        };
+
+        model.workspace_stack.add_titled_with_icon(
+            model.analytics_view.widget(),
+            Some(Workspace::Analytics.stack_name()),
+            "Analytics",
+            Workspace::Analytics.icon_name(),
+        );
+        widgets
+            .workspace_switcher
+            .set_stack(Some(&model.workspace_stack));
+        widgets
+            .workspace_switcher_bar
+            .set_stack(Some(&model.workspace_stack));
+
+        if sessions_workspace_added {
+            model
+                .workspace_stack
+                .set_visible_child_name(Workspace::Sessions.stack_name());
+        } else {
+            model.active_workspace = Workspace::Analytics;
+            model
+                .workspace_stack
+                .set_visible_child_name(Workspace::Analytics.stack_name());
+        }
+
+        let workspace_sender = sender.input_sender().clone();
+        model
+            .workspace_stack
+            .connect_visible_child_name_notify(move |stack| {
+                if let Some(name) = stack.visible_child_name().as_deref()
+                    && let Some(workspace) = Workspace::from_stack_name(name)
+                {
+                    workspace_sender
+                        .send(AppMsg::WorkspaceChanged(workspace))
+                        .ok();
+                }
+            });
+
         // Wire notify::show-sidebar for bidirectional sync (gestures, collapse)
         let visibility_sender = sender.input_sender().clone();
         widgets
@@ -486,6 +614,12 @@ impl SimpleComponent for App {
             adw::LengthUnit::Sp,
         ));
         breakpoint.add_setter(&widgets.overlay_split, "collapsed", Some(&true.into()));
+        breakpoint.add_setter(&widgets.workspace_switcher, "visible", Some(&false.into()));
+        breakpoint.add_setter(
+            &widgets.workspace_switcher_bar,
+            "reveal",
+            Some(&true.into()),
+        );
         root.add_breakpoint(breakpoint);
 
         let app = root.application().unwrap();
@@ -513,7 +647,18 @@ impl SimpleComponent for App {
         let show_search_action = {
             let search_bar = widgets.search_bar.clone();
             let search_entry = widgets.search_entry.clone();
+            let workspace_stack = workspace_stack.clone();
             RelmAction::<ShowSearchAction>::new_stateless(move |_| {
+                let workspace = workspace_stack
+                    .visible_child_name()
+                    .as_deref()
+                    .and_then(Workspace::from_stack_name)
+                    .unwrap_or(Workspace::Sessions);
+
+                if !workspace_allows_search(workspace) {
+                    return;
+                }
+
                 search_bar.set_search_mode(true);
                 search_entry.grab_focus();
             })
@@ -574,6 +719,7 @@ impl SimpleComponent for App {
             AppMsg::TogglePane => self.handle_toggle_pane(),
             AppMsg::PaneVisibilityChanged(visible) => self.handle_pane_visibility_changed(visible),
             AppMsg::SearchQueryChanged(query) => self.handle_search_query_changed(query),
+            AppMsg::WorkspaceChanged(workspace) => self.handle_workspace_changed(workspace),
             AppMsg::FiltersChanged(tools) => {
                 self.session_list.emit(SessionListMsg::SetTools(tools));
             }
@@ -589,6 +735,9 @@ impl SimpleComponent for App {
                 self.handle_indexing_completed(indexed, skipped)
             }
             AppMsg::IndexingFailed => self.handle_indexing_failed(),
+            AppMsg::AnalyticsRefreshRequested => self.handle_analytics_refresh_requested(),
+            AppMsg::AnalyticsLoaded(data) => self.handle_analytics_loaded(data),
+            AppMsg::AnalyticsLoadFailed(error) => self.handle_analytics_load_failed(error),
             AppMsg::ResumeSession(session_id, tool) => self.handle_resume_session(session_id, tool),
             AppMsg::ResumeActiveSession => self.handle_resume_active_session(&sender),
             AppMsg::InspectToolCall(tool_call_id) => self.handle_inspect_tool_call(tool_call_id),
@@ -971,5 +1120,44 @@ mod tests {
             resolve_escape_action(search_visible, detail_visible, pane_open, pane_mode),
             EscapeResolution::Noop
         );
+    }
+
+    #[test]
+    fn analytics_workspace_hides_session_specific_header_controls() {
+        let analytics = workspace_header_visibility(Workspace::Analytics, true, true);
+        assert!(!analytics.search_ui_visible);
+        assert!(!analytics.pane_controls_visible);
+        assert!(!analytics.detail_actions_visible);
+        assert!(analytics.indexing_progress_visible);
+
+        let sessions = workspace_header_visibility(Workspace::Sessions, true, true);
+        assert!(sessions.search_ui_visible);
+        assert!(sessions.pane_controls_visible);
+        assert!(sessions.detail_actions_visible);
+        assert!(sessions.indexing_progress_visible);
+    }
+
+    #[test]
+    fn search_is_disabled_in_analytics_workspace() {
+        assert!(!workspace_allows_search(Workspace::Analytics));
+        assert!(!resolve_search_mode_change(Workspace::Analytics, true));
+    }
+
+    #[test]
+    fn search_mode_change_preserves_sessions_workspace_behavior() {
+        assert!(workspace_allows_search(Workspace::Sessions));
+        assert!(resolve_search_mode_change(Workspace::Sessions, true));
+        assert!(!resolve_search_mode_change(Workspace::Sessions, false));
+    }
+
+    #[test]
+    fn indexing_completion_marks_analytics_stale_and_refreshes_when_visible() {
+        let hidden = analytics_indexing_completion_outcome(Workspace::Sessions);
+        assert!(hidden.mark_stale);
+        assert!(!hidden.refresh_immediately);
+
+        let visible = analytics_indexing_completion_outcome(Workspace::Analytics);
+        assert!(visible.mark_stale);
+        assert!(visible.refresh_immediately);
     }
 }

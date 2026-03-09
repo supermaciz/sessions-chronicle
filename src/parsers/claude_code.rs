@@ -6,7 +6,9 @@ use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::path::Path;
 
-use crate::models::{Message, Role, Session, Subagent, TokenUsage, Tool, ToolCall, ToolCallStatus};
+use crate::models::{
+    AiAssistant, Message, Role, Session, Subagent, TokenUsage, ToolCall, ToolCallStatus,
+};
 use crate::models::{TranscriptItem, TranscriptItemKind};
 use crate::parsers::ParsedSession;
 use crate::parsers::model::normalize_model;
@@ -477,7 +479,7 @@ impl ClaudeCodeParser {
 
         let session = Session {
             id: final_session_id,
-            tool: Tool::ClaudeCode,
+            tool: AiAssistant::ClaudeCode,
             project_path,
             start_time,
             message_count: messages.len(),

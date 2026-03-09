@@ -7,7 +7,7 @@ use std::io::{BufRead, BufReader};
 use std::path::Path;
 
 use crate::models::{
-    Message, Role, Session, TokenUsage, Tool, ToolCall, ToolCallStatus, TranscriptItem,
+    AiAssistant, Message, Role, Session, TokenUsage, ToolCall, ToolCallStatus, TranscriptItem,
     TranscriptItemKind,
 };
 use crate::parsers::ParsedSession;
@@ -209,7 +209,7 @@ impl MistralVibeParser {
         Ok(ParsedSession {
             session: Session {
                 id: session_id.clone(),
-                tool: Tool::MistralVibe,
+                tool: AiAssistant::MistralVibe,
                 project_path,
                 start_time,
                 message_count: messages.len(),

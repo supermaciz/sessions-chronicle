@@ -1,3 +1,5 @@
+pub mod analytics_heatmap;
+pub mod analytics_view;
 pub mod format;
 pub mod highlight;
 pub mod markdown;
