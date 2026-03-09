@@ -1,4 +1,3 @@
-#[allow(dead_code)] // Task 1 analytics scaffold is intentionally not wired yet
 pub mod analytics;
 pub mod message;
 pub mod message_preview;

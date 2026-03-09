@@ -1,5 +1,4 @@
 pub mod analytics_heatmap;
-#[allow(dead_code)] // Analytics shell will be wired in app integration task
 pub mod analytics_view;
 pub mod format;
 pub mod highlight;

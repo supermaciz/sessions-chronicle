@@ -37,7 +37,7 @@ impl Worker for AnalyticsWorker {
                 }
                 Err(err) => {
                     tracing::error!("Analytics worker failed: {}", err);
-                    let _ = sender.output(AnalyticsWorkerOutput::Failed(err.to_string()));
+                    let _ = sender.output(AnalyticsWorkerOutput::Failed(format!("{err:#}")));
                 }
             },
         }

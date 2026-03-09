@@ -545,45 +545,17 @@ impl SimpleComponent for AnalyticsView {
                                 set_spacing: 8,
                                 add_css_class: "analytics-section",
 
-                            gtk::Label {
-                                set_label: "Sessions by AI assistant",
-                                set_halign: gtk::Align::Start,
-                                add_css_class: "analytics-section-title",
-                            },
+                                gtk::Label {
+                                    set_label: "Sessions by AI assistant",
+                                    set_halign: gtk::Align::Start,
+                                    add_css_class: "analytics-section-title",
+                                },
 
-                            #[name = "tool_progress_rows"]
-                            gtk::Box {
-                                set_orientation: gtk::Orientation::Vertical,
-                                set_spacing: 6,
-                            }
-                            },
-
-                            gtk::Box {
-                                set_orientation: gtk::Orientation::Vertical,
-                                set_spacing: 8,
-                                add_css_class: "analytics-section",
-
-                            gtk::Label {
-                                set_label: "Token consumption",
-                                set_halign: gtk::Align::Start,
-                                add_css_class: "analytics-section-title",
-                            },
-
-                            #[name = "token_section_subtitle"]
-                            gtk::Label {
-                                set_label: "",
-                                set_halign: gtk::Align::Start,
-                                set_xalign: 0.0,
-                                set_wrap: true,
-                                set_visible: false,
-                                add_css_class: "caption",
-                            },
-
-                            #[name = "token_rows"]
-                            gtk::ListBox {
-                                add_css_class: "boxed-list",
-                                set_selection_mode: gtk::SelectionMode::None,
-                            }
+                                #[name = "tool_progress_rows"]
+                                gtk::Box {
+                                    set_orientation: gtk::Orientation::Vertical,
+                                    set_spacing: 6,
+                                },
                             },
 
                             gtk::Box {
@@ -591,17 +563,45 @@ impl SimpleComponent for AnalyticsView {
                                 set_spacing: 8,
                                 add_css_class: "analytics-section",
 
-                            gtk::Label {
-                                set_label: "Session span distribution",
-                                set_halign: gtk::Align::Start,
-                                add_css_class: "analytics-section-title",
+                                gtk::Label {
+                                    set_label: "Token consumption",
+                                    set_halign: gtk::Align::Start,
+                                    add_css_class: "analytics-section-title",
+                                },
+
+                                #[name = "token_section_subtitle"]
+                                gtk::Label {
+                                    set_label: "",
+                                    set_halign: gtk::Align::Start,
+                                    set_xalign: 0.0,
+                                    set_wrap: true,
+                                    set_visible: false,
+                                    add_css_class: "caption",
+                                },
+
+                                #[name = "token_rows"]
+                                gtk::ListBox {
+                                    add_css_class: "boxed-list",
+                                    set_selection_mode: gtk::SelectionMode::None,
+                                },
                             },
 
-                            #[name = "span_progress_rows"]
                             gtk::Box {
                                 set_orientation: gtk::Orientation::Vertical,
-                                set_spacing: 6,
-                            }
+                                set_spacing: 8,
+                                add_css_class: "analytics-section",
+
+                                gtk::Label {
+                                    set_label: "Session span distribution",
+                                    set_halign: gtk::Align::Start,
+                                    add_css_class: "analytics-section-title",
+                                },
+
+                                #[name = "span_progress_rows"]
+                                gtk::Box {
+                                    set_orientation: gtk::Orientation::Vertical,
+                                    set_spacing: 6,
+                                },
                             }
                         }
                     }
@@ -638,6 +638,7 @@ impl SimpleComponent for AnalyticsView {
             }
             AnalyticsViewMsg::Loaded(data) => {
                 self.model.data = Some(data);
+                self.model.stale = false;
                 self.model.refresh_in_flight = false;
                 self.load_error = None;
             }
@@ -768,6 +769,22 @@ mod tests {
         assert!(model.refresh_in_flight);
         assert_eq!(model.data, Some(data));
         assert_eq!(model.page_state(false), AnalyticsPageState::Ready);
+    }
+
+    #[test]
+    fn loaded_clears_stale_flag() {
+        let mut model = AnalyticsViewModel::from_data(AnalyticsData::default());
+        model.mark_stale();
+        assert!(model.stale);
+
+        // Simulate what update() does on Loaded
+        model.data = Some(AnalyticsData::default());
+        model.stale = false;
+        model.refresh_in_flight = false;
+
+        assert!(!model.stale);
+        // Should not request refresh on next enter
+        assert!(!model.on_entered());
     }
 
     #[test]

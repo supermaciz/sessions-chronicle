@@ -52,9 +52,31 @@ pub(crate) fn summarize_heatmap(data: &HeatmapData) -> String {
         format!("peak {} sessions/day", data.max_sessions_in_a_day)
     };
 
+    let sessions_word = if total_sessions == 1 {
+        "session"
+    } else {
+        "sessions"
+    };
+    let active_days_word = if active_days == 1 {
+        "active day"
+    } else {
+        "active days"
+    };
+    let shown_days_word = if shown_days == 1 {
+        "day shown"
+    } else {
+        "days shown"
+    };
+
     let mut summary = format!(
-        "Heatmap summary: {} sessions across {} active days ({} days shown); {}.",
-        total_sessions, active_days, shown_days, peak_text
+        "Heatmap summary: {} {} across {} {} ({} {}); {}.",
+        total_sessions,
+        sessions_word,
+        active_days,
+        active_days_word,
+        shown_days,
+        shown_days_word,
+        peak_text
     );
 
     if let Some(first_day) = first_day {
@@ -367,7 +389,7 @@ mod tests {
 
         assert_eq!(
             summary,
-            "Heatmap summary: 4 sessions across 2 active days (3 days shown); peak 3 sessions/day. Range: 2026-03-01: no sessions to 2026-03-03: 3 sessions."
+            "Heatmap summary: 4 sessions across 2 active days (3 days shown); peak 3 sessions/day. Range: 2026-03-01: no sessions to 2026-03-03: 3 sessions.",
         );
     }
 
@@ -401,7 +423,7 @@ mod tests {
 
         assert_eq!(
             summary,
-            "Heatmap summary: 1 sessions across 1 active days (2 days shown); peak 1 session/day. Range: 2026-03-04: 1 session to 2026-03-05: no sessions."
+            "Heatmap summary: 1 session across 1 active day (2 days shown); peak 1 session/day. Range: 2026-03-04: 1 session to 2026-03-05: no sessions."
         );
     }
 
@@ -419,7 +441,7 @@ mod tests {
 
         assert_eq!(
             summary,
-            "Heatmap summary: 2 sessions across 1 active days (1 days shown); peak 2 sessions/day. Range: 2026-03-06: 2 sessions."
+            "Heatmap summary: 2 sessions across 1 active day (1 day shown); peak 2 sessions/day. Range: 2026-03-06: 2 sessions."
         );
     }
 
