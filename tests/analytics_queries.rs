@@ -195,15 +195,15 @@ fn sessions_by_tool_aggregates_top_level_sessions_only() {
     assert_eq!(
         analytics.sessions_by_tool,
         vec![
-            sessions_chronicle::models::analytics::ToolSessionCount {
+            sessions_chronicle::models::analytics::AiAssistantSessionCount {
                 tool: "Claude Code".to_string(),
                 session_count: 1,
             },
-            sessions_chronicle::models::analytics::ToolSessionCount {
+            sessions_chronicle::models::analytics::AiAssistantSessionCount {
                 tool: "Codex".to_string(),
                 session_count: 1,
             },
-            sessions_chronicle::models::analytics::ToolSessionCount {
+            sessions_chronicle::models::analytics::AiAssistantSessionCount {
                 tool: "OpenCode".to_string(),
                 session_count: 1,
             },

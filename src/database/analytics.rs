@@ -9,7 +9,8 @@ const HEATMAP_WINDOW_MONTHS: u32 = 6;
 use crate::models::{
     AnalyticsData, AnalyticsOverview,
     analytics::{
-        ActivityDay, HeatmapData, HeatmapWeek, SessionSpanBucket, ToolSessionCount, ToolTokenUsage,
+        ActivityDay, AiAssistantSessionCount, AiAssistantTokenUsage, HeatmapData, HeatmapWeek,
+        SessionSpanBucket,
     },
     session::AiAssistant,
 };
@@ -178,7 +179,7 @@ fn build_heatmap(activity_days: &[ActivityDay]) -> Result<HeatmapData> {
     })
 }
 
-fn load_sessions_by_tool(db: &rusqlite::Connection) -> Result<Vec<ToolSessionCount>> {
+fn load_sessions_by_tool(db: &rusqlite::Connection) -> Result<Vec<AiAssistantSessionCount>> {
     let mut stmt = db
         .prepare(
             "SELECT tool, COUNT(*) AS session_count
@@ -191,7 +192,7 @@ fn load_sessions_by_tool(db: &rusqlite::Connection) -> Result<Vec<ToolSessionCou
 
     let rows = stmt
         .query_map([], |row| {
-            Ok(ToolSessionCount {
+            Ok(AiAssistantSessionCount {
                 tool: tool_display_name(row.get("tool")?),
                 session_count: row.get("session_count")?,
             })
@@ -253,7 +254,7 @@ fn load_session_span_buckets(db: &rusqlite::Connection) -> Result<Vec<SessionSpa
     ])
 }
 
-fn load_token_usage(db: &rusqlite::Connection) -> Result<Vec<ToolTokenUsage>> {
+fn load_token_usage(db: &rusqlite::Connection) -> Result<Vec<AiAssistantTokenUsage>> {
     // Semantics note: BOTH input_tokens AND output_tokens must be non-NULL
     // to count as a "reported" session with token data. This prevents
     // counting sessions that have only partial token coverage.
@@ -275,7 +276,7 @@ fn load_token_usage(db: &rusqlite::Connection) -> Result<Vec<ToolTokenUsage>> {
     let rows = stmt
         .query_map([], |row| {
             let reported_sessions: i64 = row.get(2)?;
-            Ok(ToolTokenUsage {
+            Ok(AiAssistantTokenUsage {
                 tool: tool_display_name(row.get(0)?),
                 total_sessions: row.get::<_, i64>(1)?,
                 reported_sessions,

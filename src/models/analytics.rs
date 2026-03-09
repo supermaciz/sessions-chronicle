@@ -3,8 +3,8 @@ pub struct AnalyticsData {
     pub overview: AnalyticsOverview,
     pub activity_days: Vec<ActivityDay>,
     pub heatmap: HeatmapData,
-    pub sessions_by_tool: Vec<ToolSessionCount>,
-    pub token_usage_by_tool: Vec<ToolTokenUsage>,
+    pub sessions_by_tool: Vec<AiAssistantSessionCount>,
+    pub token_usage_by_tool: Vec<AiAssistantTokenUsage>,
     pub session_span_buckets: Vec<SessionSpanBucket>,
 }
 
@@ -36,13 +36,13 @@ pub struct HeatmapData {
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct ToolSessionCount {
+pub struct AiAssistantSessionCount {
     pub tool: String,
     pub session_count: i64,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct ToolTokenUsage {
+pub struct AiAssistantTokenUsage {
     pub tool: String,
     pub total_sessions: i64,
     pub reported_sessions: i64,

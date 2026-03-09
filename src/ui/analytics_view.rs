@@ -4,7 +4,7 @@ use relm4::adw::prelude::ActionRowExt;
 use relm4::{ComponentParts, ComponentSender, RelmWidgetExt, SimpleComponent, adw, gtk};
 
 use crate::models::AnalyticsData;
-use crate::models::analytics::{SessionSpanBucket, ToolSessionCount, ToolTokenUsage};
+use crate::models::analytics::{AiAssistantSessionCount, AiAssistantTokenUsage, SessionSpanBucket};
 use crate::ui::analytics_heatmap::AnalyticsHeatmap;
 use crate::ui::format::format_token_count;
 
@@ -16,7 +16,7 @@ struct TokenSectionState {
     empty_message: Option<String>,
 }
 
-fn token_section_state(rows: &[ToolTokenUsage]) -> TokenSectionState {
+fn token_section_state(rows: &[AiAssistantTokenUsage]) -> TokenSectionState {
     let total_sessions = rows
         .iter()
         .map(|row| row.total_sessions.max(0))
@@ -105,7 +105,7 @@ fn build_progress_row(label: &str, value: i64, total: i64) -> gtk::Box {
 
 fn render_sessions_by_tool_rows(
     container: &gtk::Box,
-    rows: &[ToolSessionCount],
+    rows: &[AiAssistantSessionCount],
     total_sessions: i64,
 ) {
     clear_box_children(container);
@@ -129,7 +129,7 @@ fn render_span_bucket_rows(container: &gtk::Box, rows: &[SessionSpanBucket], tot
     }
 }
 
-fn token_row_subtitle(row: &ToolTokenUsage) -> String {
+fn token_row_subtitle(row: &AiAssistantTokenUsage) -> String {
     if row.reported_sessions == row.total_sessions {
         format!("{} sessions report token usage", row.reported_sessions)
     } else {
@@ -143,7 +143,7 @@ fn token_row_subtitle(row: &ToolTokenUsage) -> String {
 fn render_token_usage_rows(
     container: &gtk::ListBox,
     subtitle_label: &gtk::Label,
-    rows: &[ToolTokenUsage],
+    rows: &[AiAssistantTokenUsage],
 ) {
     clear_listbox_children(container);
 
@@ -760,7 +760,7 @@ impl SimpleComponent for AnalyticsView {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::models::analytics::ToolTokenUsage;
+    use crate::models::analytics::AiAssistantTokenUsage;
 
     #[test]
     fn ready_state_keeps_cached_content_visible_on_refresh_failure() {
@@ -823,14 +823,14 @@ mod tests {
     #[test]
     fn token_section_state_shows_partial_coverage_copy() {
         let rows = vec![
-            ToolTokenUsage {
+            AiAssistantTokenUsage {
                 tool: "Claude Code".to_string(),
                 total_sessions: 8,
                 reported_sessions: 5,
                 input_tokens: Some(1200),
                 output_tokens: Some(800),
             },
-            ToolTokenUsage {
+            AiAssistantTokenUsage {
                 tool: "OpenCode".to_string(),
                 total_sessions: 4,
                 reported_sessions: 0,
@@ -851,14 +851,14 @@ mod tests {
     #[test]
     fn token_section_state_shows_no_data_copy_when_unavailable() {
         let rows = vec![
-            ToolTokenUsage {
+            AiAssistantTokenUsage {
                 tool: "Claude Code".to_string(),
                 total_sessions: 6,
                 reported_sessions: 0,
                 input_tokens: None,
                 output_tokens: None,
             },
-            ToolTokenUsage {
+            AiAssistantTokenUsage {
                 tool: "OpenCode".to_string(),
                 total_sessions: 3,
                 reported_sessions: 0,
