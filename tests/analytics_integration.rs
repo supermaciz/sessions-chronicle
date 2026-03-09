@@ -65,6 +65,8 @@ fn fixture_index_produces_non_empty_analytics_payload() {
     assert!(!analytics.activity_days.is_empty());
     assert!(!analytics.heatmap.weeks.is_empty());
     assert!(analytics.heatmap.max_sessions_in_a_day > 0);
+    assert!(analytics.heatmap.display_start_day.is_some());
+    assert!(analytics.heatmap.display_end_day.is_some());
 
     let sessions_by_tool_total: i64 = analytics
         .sessions_by_tool
@@ -97,7 +99,7 @@ fn fixture_index_produces_non_empty_analytics_payload() {
         .flat_map(|week| week.days.iter())
         .map(|day| day.session_count)
         .sum();
-    assert_eq!(heatmap_total, analytics.overview.total_sessions);
+    assert!(heatmap_total <= analytics.overview.total_sessions);
 
     assert!(
         analytics
