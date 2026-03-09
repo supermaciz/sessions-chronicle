@@ -3,6 +3,9 @@ use chrono::{Datelike, Duration, Months, NaiveDate};
 use std::collections::BTreeMap;
 use std::path::Path;
 
+/// Maximum number of months shown in the activity heatmap.
+const HEATMAP_WINDOW_MONTHS: u32 = 6;
+
 use crate::models::{
     AnalyticsData, AnalyticsOverview,
     analytics::{
@@ -120,7 +123,7 @@ fn build_heatmap(activity_days: &[ActivityDay]) -> Result<HeatmapData> {
 
     // Calculate the 6-month window ending at the last activity day
     let window_end = last_day;
-    let window_start = window_end - Months::new(6);
+    let window_start = window_end - Months::new(HEATMAP_WINDOW_MONTHS);
 
     // Clamp the visible range: use max(first_activity_day, window_start)
     let visible_start = first_day.max(window_start);

@@ -74,33 +74,29 @@ pub(crate) fn summarize_heatmap(data: &HeatmapData) -> String {
     );
 
     // Use explicit display range metadata if available, otherwise infer from rendered cells
-    let range_start = data.display_start_day.as_ref().and_then(|d| {
-        ActivityDay {
-            day: d.clone(),
-            session_count: 0,
-        }
-        .into()
+    let range_start = data.display_start_day.as_ref().map(|d| ActivityDay {
+        day: d.clone(),
+        session_count: 0,
     });
-    let range_end = data.display_end_day.as_ref().and_then(|d| {
-        ActivityDay {
-            day: d.clone(),
-            session_count: 0,
-        }
-        .into()
+    let range_end = data.display_end_day.as_ref().map(|d| ActivityDay {
+        day: d.clone(),
+        session_count: 0,
     });
 
-    // Fall back to inferring from weeks when display range is not available
-    let mut inferred_first: Option<&ActivityDay> = None;
-    let mut inferred_last: Option<&ActivityDay> = None;
-    for day in data.weeks.iter().flat_map(|week| week.days.iter()) {
-        if inferred_first.is_none() {
-            inferred_first = Some(day);
+    let (first_day_ref, last_day_ref) = if range_start.is_some() {
+        (range_start.as_ref(), range_end.as_ref())
+    } else {
+        // Fall back to inferring from weeks when display range is not available
+        let mut inferred_first: Option<&ActivityDay> = None;
+        let mut inferred_last: Option<&ActivityDay> = None;
+        for day in data.weeks.iter().flat_map(|week| week.days.iter()) {
+            if inferred_first.is_none() {
+                inferred_first = Some(day);
+            }
+            inferred_last = Some(day);
         }
-        inferred_last = Some(day);
-    }
-
-    let first_day_ref = range_start.as_ref().or(inferred_first);
-    let last_day_ref = range_end.as_ref().or(inferred_last);
+        (inferred_first, inferred_last)
+    };
 
     if let Some(first_day) = first_day_ref {
         summary.push(' ');
@@ -478,6 +474,8 @@ mod tests {
 
     #[test]
     fn summarize_heatmap_uses_explicit_display_range_when_available() {
+        // Display dates (Apr-Oct) intentionally don't overlap with week data (Mar)
+        // to verify explicit range overrides inference from rendered cells.
         let summary = summarize_heatmap(&HeatmapData {
             weeks: vec![
                 HeatmapWeek {

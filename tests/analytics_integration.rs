@@ -99,6 +99,7 @@ fn fixture_index_produces_non_empty_analytics_payload() {
         .flat_map(|week| week.days.iter())
         .map(|day| day.session_count)
         .sum();
+    // Bounded heatmap may exclude old activity outside the visible window
     assert!(heatmap_total <= analytics.overview.total_sessions);
 
     assert!(
