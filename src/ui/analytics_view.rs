@@ -1,3 +1,4 @@
+use chrono::NaiveDate;
 use gtk::prelude::*;
 use relm4::adw::prelude::ActionRowExt;
 use relm4::{ComponentParts, ComponentSender, RelmWidgetExt, SimpleComponent, adw, gtk};
@@ -42,6 +43,20 @@ fn token_section_state(rows: &[ToolTokenUsage]) -> TokenSectionState {
     TokenSectionState {
         subtitle,
         empty_message: None,
+    }
+}
+
+fn format_heatmap_range_label(start_day: Option<&str>, end_day: Option<&str>) -> Option<String> {
+    let start_day = NaiveDate::parse_from_str(start_day?, "%Y-%m-%d").ok()?;
+    let end_day = NaiveDate::parse_from_str(end_day?, "%Y-%m-%d").ok()?;
+
+    let start = start_day.format("%b %Y").to_string();
+    let end = end_day.format("%b %Y").to_string();
+
+    if start == end {
+        Some(start)
+    } else {
+        Some(format!("{start} - {end}"))
     }
 }
 
@@ -455,6 +470,15 @@ impl SimpleComponent for AnalyticsView {
                                     add_css_class: "analytics-section-title",
                                 },
 
+                                #[name = "activity_range_label"]
+                                gtk::Label {
+                                    set_label: "",
+                                    set_halign: gtk::Align::Start,
+                                    set_xalign: 0.0,
+                                    set_visible: false,
+                                    add_css_class: "caption",
+                                },
+
                                 gtk::Box {
                                     set_orientation: gtk::Orientation::Horizontal,
                                     set_spacing: 12,
@@ -674,6 +698,15 @@ impl SimpleComponent for AnalyticsView {
             widgets
                 .activity_heatmap
                 .set_heatmap_data(data.heatmap.clone());
+            if let Some(range) = format_heatmap_range_label(
+                data.heatmap.display_start_day.as_deref(),
+                data.heatmap.display_end_day.as_deref(),
+            ) {
+                widgets.activity_range_label.set_label(&range);
+                widgets.activity_range_label.set_visible(true);
+            } else {
+                widgets.activity_range_label.set_visible(false);
+            }
             render_sessions_by_tool_rows(
                 &widgets.tool_progress_rows,
                 &data.sessions_by_tool,
@@ -839,6 +872,28 @@ mod tests {
         assert_eq!(
             state.empty_message,
             Some("Token data is not available for the indexed sessions".to_string())
+        );
+    }
+
+    #[test]
+    fn heatmap_range_formats_same_month_as_single_label() {
+        let range = format_heatmap_range_label(Some("2026-03-02"), Some("2026-03-29"));
+        assert_eq!(range, Some("Mar 2026".to_string()));
+    }
+
+    #[test]
+    fn heatmap_range_formats_cross_month_with_dash() {
+        let range = format_heatmap_range_label(Some("2025-10-13"), Some("2026-03-22"));
+        assert_eq!(range, Some("Oct 2025 - Mar 2026".to_string()));
+    }
+
+    #[test]
+    fn heatmap_range_returns_none_for_missing_or_invalid_bounds() {
+        assert_eq!(format_heatmap_range_label(None, Some("2026-03-22")), None);
+        assert_eq!(format_heatmap_range_label(Some("2025-10-13"), None), None);
+        assert_eq!(
+            format_heatmap_range_label(Some("bad-date"), Some("2026-03-22")),
+            None
         );
     }
 }
