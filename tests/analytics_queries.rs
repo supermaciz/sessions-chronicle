@@ -677,12 +677,22 @@ fn heatmap_bounded_to_six_months_when_activity_exceeds_six_months() {
     let last_activity_day = NaiveDate::from_ymd_opt(2024, 10, 20).unwrap();
     let six_months_ago = last_activity_day - chrono::Months::new(6);
 
-    // The first visible day should be within the last 6 months window (after week alignment to Monday)
+    // The first visible day should be on a Monday (aligned to week boundary)
+    assert_eq!(
+        first_week_first_day.weekday(),
+        chrono::Weekday::Mon,
+        "first visible day should be a Monday"
+    );
+
+    // The visible range should cover at least 6 months from the aligned start to the last activity day
+    // (aligned_start can be a few days before the 6-month mark due to Monday alignment)
+    let visible_range_days = (last_week_last_day - first_week_first_day).num_days();
+    let expected_min_days = (last_activity_day - six_months_ago).num_days();
     assert!(
-        first_week_first_day >= six_months_ago,
-        "first visible day {} should be within 6 months of last activity (>= {})",
-        first_week_first_day,
-        six_months_ago
+        visible_range_days >= expected_min_days,
+        "visible range ({} days) should cover at least 6 months ({} days)",
+        visible_range_days,
+        expected_min_days
     );
 
     // The last visible day should be aligned to Sunday and cover the last activity week

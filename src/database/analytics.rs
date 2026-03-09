@@ -1,5 +1,5 @@
 use anyhow::{Context, Result};
-use chrono::{Datelike, Duration, NaiveDate};
+use chrono::{Datelike, Duration, Months, NaiveDate};
 use std::collections::BTreeMap;
 use std::path::Path;
 
@@ -112,22 +112,32 @@ fn build_heatmap(activity_days: &[ActivityDay]) -> Result<HeatmapData> {
         NaiveDate::parse_from_str(&activity_days[activity_days.len() - 1].day, "%Y-%m-%d")
             .context("Failed to parse last activity day")?;
 
+    // Build lookup from day string to session count
     let lookup = activity_days
         .iter()
         .map(|day| (day.day.clone(), day.session_count))
         .collect::<BTreeMap<_, _>>();
 
-    let aligned_start = first_day
+    // Calculate the 6-month window ending at the last activity day
+    let window_end = last_day;
+    let window_start = window_end - Months::new(6);
+
+    // Clamp the visible range: use max(first_activity_day, window_start)
+    let visible_start = first_day.max(window_start);
+
+    // Align to full weeks (Monday start, Sunday end)
+    let aligned_start = visible_start
         .checked_sub_signed(Duration::days(
-            first_day.weekday().num_days_from_monday() as i64
+            visible_start.weekday().num_days_from_monday() as i64,
         ))
         .context("Failed to align first heatmap day to Monday")?;
-    let aligned_end = last_day
+    let aligned_end = window_end
         .checked_add_signed(Duration::days(
-            (6 - last_day.weekday().num_days_from_monday()) as i64,
+            (6 - window_end.weekday().num_days_from_monday()) as i64,
         ))
         .context("Failed to align last heatmap day to Sunday")?;
 
+    // Build normalized days only for the bounded visible range
     let mut normalized_days = Vec::new();
     let mut day_cursor = aligned_start;
     while day_cursor <= aligned_end {
@@ -153,11 +163,15 @@ fn build_heatmap(activity_days: &[ActivityDay]) -> Result<HeatmapData> {
         })
         .collect();
 
+    // Populate display range metadata
+    let display_start_day = Some(aligned_start.format("%Y-%m-%d").to_string());
+    let display_end_day = Some(aligned_end.format("%Y-%m-%d").to_string());
+
     Ok(HeatmapData {
         weeks,
         max_sessions_in_a_day,
-        display_start_day: None,
-        display_end_day: None,
+        display_start_day,
+        display_end_day,
     })
 }
 
