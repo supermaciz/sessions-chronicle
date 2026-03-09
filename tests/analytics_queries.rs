@@ -595,3 +595,251 @@ fn tool_with_all_null_tokens_appears_in_results() {
     assert_eq!(tool_b.input_tokens, Some(100));
     assert_eq!(tool_b.output_tokens, Some(50));
 }
+
+#[test]
+fn heatmap_bounded_to_six_months_when_activity_exceeds_six_months() {
+    let db = TempDatabase::new();
+
+    // Create sessions spanning more than 6 months (about 7 months apart)
+    // Old session: March 2024
+    let old_timestamp = NaiveDate::from_ymd_opt(2024, 3, 15)
+        .unwrap()
+        .and_hms_opt(10, 0, 0)
+        .unwrap()
+        .and_local_timezone(chrono::Local)
+        .unwrap()
+        .timestamp();
+
+    // Recent session: October 2024 (about 7 months later)
+    let recent_timestamp = NaiveDate::from_ymd_opt(2024, 10, 20)
+        .unwrap()
+        .and_hms_opt(10, 0, 0)
+        .unwrap()
+        .and_local_timezone(chrono::Local)
+        .unwrap()
+        .timestamp();
+
+    db.connection
+        .execute(
+            "INSERT INTO sessions (id, tool, project_path, start_time, message_count, file_path, last_updated, is_subagent)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            rusqlite::params![
+                "old-session",
+                "claude_code",
+                Some("/projects/old"),
+                old_timestamp,
+                1_i64,
+                "/tmp/old.jsonl",
+                old_timestamp + 300,
+                0_i64,
+            ],
+        )
+        .expect("Failed to insert old session");
+
+    db.connection
+        .execute(
+            "INSERT INTO sessions (id, tool, project_path, start_time, message_count, file_path, last_updated, is_subagent)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            rusqlite::params![
+                "recent-session",
+                "opencode",
+                Some("/projects/recent"),
+                recent_timestamp,
+                1_i64,
+                "/tmp/recent.jsonl",
+                recent_timestamp + 300,
+                0_i64,
+            ],
+        )
+        .expect("Failed to insert recent session");
+
+    let analytics = load_analytics(&db.path).expect("Failed to load analytics");
+
+    assert!(
+        !analytics.heatmap.weeks.is_empty(),
+        "heatmap should have weeks"
+    );
+
+    // Get the first and last visible days in the heatmap
+    let first_week_first_day =
+        NaiveDate::parse_from_str(&analytics.heatmap.weeks[0].days[0].day, "%Y-%m-%d")
+            .expect("Failed to parse first heatmap day");
+
+    let last_week = analytics
+        .heatmap
+        .weeks
+        .last()
+        .expect("Missing last heatmap week");
+    let last_week_last_day = NaiveDate::parse_from_str(&last_week.days[6].day, "%Y-%m-%d")
+        .expect("Failed to parse last heatmap day");
+
+    // Calculate the expected window: 6 months before the last activity day
+    let last_activity_day = NaiveDate::from_ymd_opt(2024, 10, 20).unwrap();
+    let six_months_ago = last_activity_day - chrono::Months::new(6);
+
+    // The first visible day should be within the last 6 months window (after week alignment to Monday)
+    assert!(
+        first_week_first_day >= six_months_ago,
+        "first visible day {} should be within 6 months of last activity (>= {})",
+        first_week_first_day,
+        six_months_ago
+    );
+
+    // The last visible day should be aligned to Sunday and cover the last activity week
+    assert!(
+        last_week_last_day >= last_activity_day,
+        "last visible day {} should cover the last activity day {}",
+        last_week_last_day,
+        last_activity_day
+    );
+    assert_eq!(last_week_last_day.weekday(), chrono::Weekday::Sun);
+
+    // Old activity (March 2024) should not be represented in the heatmap
+    let old_activity_day = NaiveDate::from_ymd_opt(2024, 3, 15).unwrap();
+    let all_heatmap_days: Vec<_> = analytics
+        .heatmap
+        .weeks
+        .iter()
+        .flat_map(|week| week.days.iter())
+        .filter(|day| day.session_count > 0)
+        .map(|day| NaiveDate::parse_from_str(&day.day, "%Y-%m-%d").unwrap())
+        .collect();
+
+    assert!(
+        !all_heatmap_days.contains(&old_activity_day),
+        "old activity day {} should not appear in heatmap days with sessions",
+        old_activity_day
+    );
+
+    // Verify that display range metadata is populated for non-empty heatmaps
+    assert!(
+        analytics.heatmap.display_start_day.is_some(),
+        "display_start_day should be populated for non-empty heatmap"
+    );
+    assert!(
+        analytics.heatmap.display_end_day.is_some(),
+        "display_end_day should be populated for non-empty heatmap"
+    );
+
+    let display_start = NaiveDate::parse_from_str(
+        analytics.heatmap.display_start_day.as_ref().unwrap(),
+        "%Y-%m-%d",
+    )
+    .expect("Failed to parse display_start_day");
+    let display_end = NaiveDate::parse_from_str(
+        analytics.heatmap.display_end_day.as_ref().unwrap(),
+        "%Y-%m-%d",
+    )
+    .expect("Failed to parse display_end_day");
+
+    // display_start_day should match the first visible heatmap day
+    assert_eq!(
+        display_start, first_week_first_day,
+        "display_start_day should match the first visible heatmap day"
+    );
+
+    // display_end_day should match the last visible heatmap day
+    assert_eq!(
+        display_end, last_week_last_day,
+        "display_end_day should match the last visible heatmap day"
+    );
+}
+
+#[test]
+fn heatmap_shows_full_range_when_activity_less_than_six_months() {
+    let db = TempDatabase::new();
+
+    // Create sessions spanning less than 6 months (about 2 months apart)
+    // First session: August 2024
+    let first_timestamp = NaiveDate::from_ymd_opt(2024, 8, 10)
+        .unwrap()
+        .and_hms_opt(10, 0, 0)
+        .unwrap()
+        .and_local_timezone(chrono::Local)
+        .unwrap()
+        .timestamp();
+
+    // Second session: October 2024 (about 2 months later)
+    let second_timestamp = NaiveDate::from_ymd_opt(2024, 10, 15)
+        .unwrap()
+        .and_hms_opt(10, 0, 0)
+        .unwrap()
+        .and_local_timezone(chrono::Local)
+        .unwrap()
+        .timestamp();
+
+    db.connection
+        .execute(
+            "INSERT INTO sessions (id, tool, project_path, start_time, message_count, file_path, last_updated, is_subagent)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            rusqlite::params![
+                "first-session",
+                "claude_code",
+                Some("/projects/first"),
+                first_timestamp,
+                1_i64,
+                "/tmp/first.jsonl",
+                first_timestamp + 300,
+                0_i64,
+            ],
+        )
+        .expect("Failed to insert first session");
+
+    db.connection
+        .execute(
+            "INSERT INTO sessions (id, tool, project_path, start_time, message_count, file_path, last_updated, is_subagent)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            rusqlite::params![
+                "second-session",
+                "opencode",
+                Some("/projects/second"),
+                second_timestamp,
+                1_i64,
+                "/tmp/second.jsonl",
+                second_timestamp + 300,
+                0_i64,
+            ],
+        )
+        .expect("Failed to insert second session");
+
+    let analytics = load_analytics(&db.path).expect("Failed to load analytics");
+
+    assert!(
+        !analytics.heatmap.weeks.is_empty(),
+        "heatmap should have weeks"
+    );
+
+    // Get the first visible day in the heatmap
+    let first_week_first_day =
+        NaiveDate::parse_from_str(&analytics.heatmap.weeks[0].days[0].day, "%Y-%m-%d")
+            .expect("Failed to parse first heatmap day");
+
+    // The earliest real activity day (August 10, 2024) should still be included
+    let first_activity_day = NaiveDate::from_ymd_opt(2024, 8, 10).unwrap();
+
+    // The heatmap should cover from before the first activity day (aligned to Monday)
+    // The first heatmap day should be <= the first activity day
+    assert!(
+        first_week_first_day <= first_activity_day,
+        "first visible day {} should be <= first activity day {}",
+        first_week_first_day,
+        first_activity_day
+    );
+
+    // The first activity day should be within the heatmap range
+    let last_week = analytics
+        .heatmap
+        .weeks
+        .last()
+        .expect("Missing last heatmap week");
+    let last_week_last_day = NaiveDate::parse_from_str(&last_week.days[6].day, "%Y-%m-%d")
+        .expect("Failed to parse last heatmap day");
+
+    assert!(
+        first_activity_day >= first_week_first_day && first_activity_day <= last_week_last_day,
+        "first activity day {} should be within heatmap range [{}, {}]",
+        first_activity_day,
+        first_week_first_day,
+        last_week_last_day
+    );
+}

@@ -156,6 +156,8 @@ fn build_heatmap(activity_days: &[ActivityDay]) -> Result<HeatmapData> {
     Ok(HeatmapData {
         weeks,
         max_sessions_in_a_day,
+        display_start_day: None,
+        display_end_day: None,
     })
 }
 

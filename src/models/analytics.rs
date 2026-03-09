@@ -31,6 +31,8 @@ pub struct HeatmapWeek {
 pub struct HeatmapData {
     pub weeks: Vec<HeatmapWeek>,
     pub max_sessions_in_a_day: i64,
+    pub display_start_day: Option<String>,
+    pub display_end_day: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
