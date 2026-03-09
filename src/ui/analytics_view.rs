@@ -637,7 +637,8 @@ impl SimpleComponent for AnalyticsView {
                 self.load_error = None;
             }
             AnalyticsViewMsg::Loaded(data) => {
-                self.model = AnalyticsViewModel::from_data(data);
+                self.model.data = Some(data);
+                self.model.refresh_in_flight = false;
                 self.load_error = None;
             }
             AnalyticsViewMsg::LoadFailed(error) => {
