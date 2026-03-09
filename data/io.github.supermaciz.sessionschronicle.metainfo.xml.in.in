@@ -23,6 +23,11 @@
             >https://raw.githubusercontent.com/supermaciz/sessions-chronicle/main/docs/screenshots/session_detail.png</image>
       <caption>Session detail view</caption>
     </screenshot>
+    <screenshot>
+      <image
+            >https://raw.githubusercontent.com/supermaciz/sessions-chronicle/main/docs/screenshots/analytics.png</image>
+      <caption>Analytics dashboard with usage statistics</caption>
+    </screenshot>
   </screenshots>
   <url type="homepage">https://github.com/supermaciz/sessions-chronicle</url>
   <url
@@ -44,6 +49,17 @@
   </categories>
   <content_rating type="oars-1.1" />
   <releases>
+    <release version="0.3.3" date="2026-03-09">
+      <description>
+        <p>Adds an analytics dashboard and improves the tool call inspector.</p>
+        <ul>
+          <li>Add basic analytics dashboard with usage charts</li>
+          <li
+                    >Upgrade tool call inspector with specialized renderers and rich previews</li>
+          <li>Fix token semantics error handling</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.3.2" date="2026-03-01">
       <description>
         <p>Improves reliability of OpenCode session indexing.</p>

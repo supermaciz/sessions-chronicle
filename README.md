@@ -47,6 +47,9 @@ flatpak run io.github.supermaciz.sessionschronicle
 **Read conversations with full markdown rendering and tool call inspection**  
 <img src="docs/screenshots/session_detail.png" alt="Session Detail" width="800"/>
 
+**Analytics**  
+<img src="docs/screenshots/analytics.png" alt="Analytics Dashboard" width="800"/>
+
 
 ## Inspiration
 
