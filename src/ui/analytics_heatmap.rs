@@ -27,14 +27,8 @@ pub(crate) fn summarize_heatmap(data: &HeatmapData) -> String {
     let mut shown_days = 0;
     let mut active_days = 0;
     let mut total_sessions = 0;
-    let mut first_day: Option<&ActivityDay> = None;
-    let mut last_day: Option<&ActivityDay> = None;
 
     for day in data.weeks.iter().flat_map(|week| week.days.iter()) {
-        if first_day.is_none() {
-            first_day = Some(day);
-        }
-        last_day = Some(day);
         shown_days += 1;
         if day.session_count > 0 {
             active_days += 1;
@@ -79,11 +73,40 @@ pub(crate) fn summarize_heatmap(data: &HeatmapData) -> String {
         peak_text
     );
 
-    if let Some(first_day) = first_day {
+    // Use explicit display range metadata if available, otherwise infer from rendered cells
+    let range_start = data.display_start_day.as_ref().and_then(|d| {
+        ActivityDay {
+            day: d.clone(),
+            session_count: 0,
+        }
+        .into()
+    });
+    let range_end = data.display_end_day.as_ref().and_then(|d| {
+        ActivityDay {
+            day: d.clone(),
+            session_count: 0,
+        }
+        .into()
+    });
+
+    // Fall back to inferring from weeks when display range is not available
+    let mut inferred_first: Option<&ActivityDay> = None;
+    let mut inferred_last: Option<&ActivityDay> = None;
+    for day in data.weeks.iter().flat_map(|week| week.days.iter()) {
+        if inferred_first.is_none() {
+            inferred_first = Some(day);
+        }
+        inferred_last = Some(day);
+    }
+
+    let first_day_ref = range_start.as_ref().or(inferred_first);
+    let last_day_ref = range_end.as_ref().or(inferred_last);
+
+    if let Some(first_day) = first_day_ref {
         summary.push(' ');
         summary.push_str("Range: ");
         summary.push_str(&cell_accessible_label(first_day));
-        if let Some(last_day) = last_day
+        if let Some(last_day) = last_day_ref
             && first_day.day != last_day.day
         {
             summary.push_str(" to ");
@@ -385,6 +408,8 @@ mod tests {
                 },
             ],
             max_sessions_in_a_day: 3,
+            display_start_day: None,
+            display_end_day: None,
         });
 
         assert_eq!(
@@ -398,6 +423,8 @@ mod tests {
         let summary = summarize_heatmap(&HeatmapData {
             weeks: vec![],
             max_sessions_in_a_day: 0,
+            display_start_day: None,
+            display_end_day: None,
         });
 
         assert_eq!(summary, "No activity data");
@@ -419,6 +446,8 @@ mod tests {
                 ],
             }],
             max_sessions_in_a_day: 1,
+            display_start_day: None,
+            display_end_day: None,
         });
 
         assert_eq!(
@@ -437,11 +466,48 @@ mod tests {
                 }],
             }],
             max_sessions_in_a_day: 2,
+            display_start_day: None,
+            display_end_day: None,
         });
 
         assert_eq!(
             summary,
             "Heatmap summary: 2 sessions across 1 active day (1 day shown); peak 2 sessions/day. Range: 2026-03-06: 2 sessions."
+        );
+    }
+
+    #[test]
+    fn summarize_heatmap_uses_explicit_display_range_when_available() {
+        let summary = summarize_heatmap(&HeatmapData {
+            weeks: vec![
+                HeatmapWeek {
+                    days: vec![
+                        ActivityDay {
+                            day: "2026-03-01".to_string(),
+                            session_count: 0,
+                        },
+                        ActivityDay {
+                            day: "2026-03-02".to_string(),
+                            session_count: 1,
+                        },
+                    ],
+                },
+                HeatmapWeek {
+                    days: vec![ActivityDay {
+                        day: "2026-03-03".to_string(),
+                        session_count: 3,
+                    }],
+                },
+            ],
+            max_sessions_in_a_day: 3,
+            display_start_day: Some("2026-04-15".to_string()),
+            display_end_day: Some("2026-10-20".to_string()),
+        });
+
+        // Should use the explicit display range, not the inferred range from weeks
+        assert_eq!(
+            summary,
+            "Heatmap summary: 4 sessions across 2 active days (3 days shown); peak 3 sessions/day. Range: 2026-04-15: no sessions to 2026-10-20: no sessions.",
         );
     }
 
