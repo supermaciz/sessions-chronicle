@@ -1,9 +1,9 @@
 # Parser Design Guide
 
 Architecture and implementation patterns for Sessions Chronicle parsers.
-See [SESSION_FORMAT_ANALYSIS.md](SESSION_FORMAT_ANALYSIS.md) for cross-tool format comparison.
+See [SESSION_FORMAT_ANALYSIS.md](SESSION_FORMAT_ANALYSIS.md) for cross-assistant format comparison.
 
-Per-tool format details:
+Per-assistant format details:
 - [Claude Code](session-formats/claude-code.md)
 - [Codex](session-formats/codex.md)
 - [OpenCode](session-formats/opencode.md)
@@ -67,8 +67,8 @@ fn get_parser(path: &Path) -> Box<dyn SessionParser> {
 
 ## Title Extraction Strategy
 
-| Tool | Logic |
-|------|-------|
+| AI assistant | Logic |
+|--------------|-------|
 | **Claude Code** | First parsed `user` message content (assistant/system/summary are ignored by parser). |
 | **Codex** | First `event_msg.payload.type == "user_message"` event (`payload.message`). |
 | **OpenCode** | Prefer metadata `title` when available (SQLite), otherwise first flattened `text` part attached to a `user` message. |
@@ -78,8 +78,8 @@ fn get_parser(path: &Path) -> Box<dyn SessionParser> {
 
 ## Timestamp Parsing
 
-| Tool | Approach |
-|------|----------|
+| AI assistant | Approach |
+|--------------|----------|
 | **Claude Code** | Track earliest/latest across `type in {user, assistant}` using per-event `timestamp` (ISO-8601). |
 | **Codex** | `start_time` from first-line `session_meta.payload.timestamp`; `last_updated` from max `event.timestamp` seen in `event_msg` lines. |
 | **OpenCode** | Session timestamps from metadata `time.created` + `time.updated` (ms epoch), with per-message `time.created` used for ordering. |

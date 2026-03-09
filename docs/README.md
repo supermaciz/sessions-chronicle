@@ -1,6 +1,6 @@
 # Sessions Chronicle - Documentation Index
 
-This directory contains project documentation, architecture notes, and implementation plans for **Sessions Chronicle**, a GNOME app for browsing AI coding sessions.
+This directory contains project documentation, architecture notes, and implementation plans for **Sessions Chronicle**, a GNOME app for browsing AI coding assistant sessions.
 
 ---
 
@@ -15,14 +15,14 @@ This directory contains project documentation, architecture notes, and implement
    - Development workflow and best practices
 
 2. **[SESSION_FORMAT_ANALYSIS.md](SESSION_FORMAT_ANALYSIS.md)** 📄
-   - Cross-tool comparison tables (storage, file format, event structure, model metadata)
+   - Cross-assistant comparison tables (storage, file format, event structure, model metadata)
    - Implementation status, open questions, next steps
-   - Per-tool format details: [session-formats/](session-formats/)
+   - Per-assistant format details: [session-formats/](session-formats/)
      - [claude-code.md](session-formats/claude-code.md), [codex.md](session-formats/codex.md), [opencode.md](session-formats/opencode.md), [mistral-vibe.md](session-formats/mistral-vibe.md)
 
 3. **[PARSER_DESIGN.md](PARSER_DESIGN.md)** 🦀
    - Trait-based parser architecture and factory pattern
-   - Title extraction, timestamp parsing, content extraction per tool
+   - Title extraction, timestamp parsing, content extraction per assistant
    - JSONL streaming, tool call handling, error handling recommendations
    - OpenCode multi-file (legacy) and SQLite read paths
 
@@ -120,7 +120,7 @@ Plan file types in `docs/plans/`:
     - Shortcuts dialog Navigation section
 
 24. **[plans/2026-02-24-model-tracking-design.md](plans/2026-02-24-model-tracking-design.md)** ✅
-    - LLM model tracking per assistant message across all 4 tools
+     - LLM model tracking per assistant message across all 4 AI assistants
     - DB schema v2 migration, shared normalization helper, parser changes
 
 25. **[plans/2026-02-24-model-display-exploration.md](plans/2026-02-24-model-display-exploration.md)** ✅
@@ -189,7 +189,7 @@ All mockups are SVG files in the `mockups/` subfolder (open in browser or image 
 2. **GNOME HIG** - Follow platform conventions
 3. **Performance** - Fast search, responsive UI
 4. **Privacy** - All local, no telemetry
-5. **Extensible** - Easy to add more AI tools later
+5. **Extensible** - Easy to add more AI assistants later
 
 ---
 

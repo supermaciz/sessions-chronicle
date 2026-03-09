@@ -12,7 +12,7 @@ flatpak-builder --user flatpak_app build-aux/io.github.supermaciz.sessionschroni
 flatpak-builder --run flatpak_app build-aux/io.github.supermaciz.sessionschronicle.Devel.json sessions-chronicle
 ```
 
-This indexes sessions from all supported tools:
+This indexes sessions from all supported AI assistants:
 - Claude Code: `~/.claude/projects/`
 - OpenCode: `~/.local/share/opencode/storage/`
 - Codex: `~/.codex/sessions/`
@@ -20,27 +20,27 @@ This indexes sessions from all supported tools:
 
 ## Using Test Fixtures
 
-The `--sessions-dir` flag overrides session source paths **for all tools**. It maps known fixture subdirectories automatically:
+The `--sessions-dir` flag overrides session source paths **for all assistants**. It maps known fixture subdirectories automatically:
 
 ```bash
-# Override with the full fixture root — maps all four tools
+# Override with the full fixture root — maps all four assistants
 flatpak-builder --run flatpak_app build-aux/io.github.supermaciz.sessionschronicle.Devel.json sessions-chronicle --sessions-dir tests/fixtures
 ```
 
 This maps to:
-| Tool | Resolved path |
-|------|--------------|
+| AI assistant | Resolved path |
+|--------------|---------------|
 | Claude Code | `tests/fixtures/claude_sessions/` |
 | OpenCode | `tests/fixtures/opencode_storage/` |
 | Codex | `tests/fixtures/codex_sessions/` |
 | Mistral Vibe | `tests/fixtures/vibe_sessions/` |
 
-If a known subdirectory is missing, the override root itself is used as a fallback for that tool.
+If a known subdirectory is missing, the override root itself is used as a fallback for that assistant.
 
-You can also point to a single tool's directory:
+You can also point to a single assistant's directory:
 
 ```bash
-# Override with Claude-only data — all tools fall back to this path
+# Override with Claude-only data — all assistants fall back to this path
 flatpak-builder --run flatpak_app build-aux/io.github.supermaciz.sessionschronicle.Devel.json sessions-chronicle --sessions-dir tests/fixtures/claude_sessions
 ```
 
@@ -51,6 +51,12 @@ When `--sessions-dir` is active, the app uses a separate database file (`session
 ### Resetting the index
 
 The Preferences dialog (menu > Preferences > Advanced) includes a **Reset session index** action that clears and rebuilds the active database from the current session sources. This is useful after modifying fixture files or when the index gets out of sync.
+
+## Terminology
+
+- `AI assistant` refers to a session source such as Claude Code, OpenCode, Codex, or Mistral Vibe.
+- `tool call` refers to an action invoked within a transcript.
+- When docs mention a literal field, API key, or legacy storage name called `tool`, that wording is kept intentionally.
 
 ## Why This Approach?
 
@@ -115,7 +121,7 @@ cat > tests/fixtures/claude_sessions/another-session.jsonl << 'EOF'
 EOF
 ```
 
-See `tests/fixtures/README.md` for format details on all supported tools.
+See `tests/fixtures/README.md` for format details on all supported AI assistants.
 
 ## Debugging
 

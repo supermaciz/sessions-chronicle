@@ -5,17 +5,22 @@
 - `docs/DEVELOPMENT_WORKFLOW.md`: fixture-driven runs (`--sessions-dir`), debugging, and CI details.
 - `docs/PROJECT_STATUS.md`: current roadmap, phase status, and design references.
 
+## Terminology
+- Use `AI assistant` for Claude Code, OpenCode, Codex, and Mistral Vibe when they are session sources.
+- Use `tool call` for actions invoked inside transcripts.
+- Avoid `tool` alone in prose unless you are referring to a literal historical field/schema name or an external format that uses that term.
+
 ## Project Structure & Module Organization
 - `src/` contains the Rust app:
   - `main.rs` and `app.rs` wire app startup and top-level Relm4 flow.
-  - `session_sources.rs` resolves per-tool session paths and `--sessions-dir` overrides.
+  - `session_sources.rs` resolves per-assistant session paths and `--sessions-dir` overrides.
   - `ui/` holds Relm4 widgets, with dialogs under `ui/modals/`.
   - `database/` owns SQLite schema, indexing, and search.
-  - `parsers/` handles tool-specific session formats.
+  - `parsers/` handles assistant-specific session formats.
   - `models/` defines domain types.
   - `utils/` contains shared helpers (for example terminal integration).
 - `data/` holds desktop metadata, GSettings schema, icons, CSS, and UI resources in `data/resources/`.
-- `tests/` contains integration tests; `tests/fixtures/` contains sample sessions for Claude, OpenCode, Codex, and Mistral Vibe.
+- `tests/` contains integration tests; `tests/fixtures/` contains sample sessions for Claude Code, OpenCode, Codex, and Mistral Vibe.
 - `build-aux/` contains Flatpak manifests (dev and stable) and the vendor script for offline builds.
 - `docs/` hosts architecture notes plus exploration, design, and implementation plans.
   - `docs/plans/` contains plan files following these naming conventions: `YYYY-MM-DD-feature-name-exploration.md`, `YYYY-MM-DD-feature-name-design.md`, and implementation plans as `YYYY-MM-DD-feature-name.md` (preferred) or `YYYY-MM-DD-feature-name-implementation.md` (optional).

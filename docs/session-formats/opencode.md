@@ -1,7 +1,7 @@
 # OpenCode — Session Format Reference
 
 Format reference for OpenCode session files.
-See [SESSION_FORMAT_ANALYSIS.md](../SESSION_FORMAT_ANALYSIS.md) for cross-tool comparison tables.
+See [SESSION_FORMAT_ANALYSIS.md](../SESSION_FORMAT_ANALYSIS.md) for cross-assistant comparison tables.
 
 > **⚠️ Breaking change (≥ 2026-02-14):** OpenCode migrated to SQLite.
 > New sessions are written to `opencode.db` — the legacy JSON file tree is retained but no longer the write path.

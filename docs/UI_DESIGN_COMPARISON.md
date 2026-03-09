@@ -25,7 +25,7 @@
 
 - ✅ **Visual appeal** - More modern, colorful
 - ✅ **Room for metadata** - Can show more info per session (tags, previews)
-- ✅ **Visual grouping** - Color-coded by AI tool
+- ✅ **Visual grouping** - Color-coded by AI assistant
 - ✅ **Touch-friendly** - Better for tablets (if that matters)
 
 ### Cons
@@ -55,7 +55,7 @@
 
 ## Color Coding
 
-Both views use accent colors for AI tools:
+Both views use accent colors for AI assistants:
 - **Claude Code**: Blue (#3584e4) - GNOME accent blue
 - **OpenCode**: Green (#26a269) - GNOME success green
 - **Codex**: Orange (#e66100) - Distinct from blue/green

@@ -1,7 +1,7 @@
 # Claude Code — Session Format Reference
 
 Format reference for Claude Code session files.
-See [SESSION_FORMAT_ANALYSIS.md](../SESSION_FORMAT_ANALYSIS.md) for cross-tool comparison tables.
+See [SESSION_FORMAT_ANALYSIS.md](../SESSION_FORMAT_ANALYSIS.md) for cross-assistant comparison tables.
 
 ---
 

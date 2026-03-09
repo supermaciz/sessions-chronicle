@@ -5,15 +5,21 @@ Branch snapshot: `main` (`v0.3.2` lineage)
 
 ## Current Product State
 
-Sessions Chronicle is a GNOME desktop app that indexes local AI coding sessions and provides:
+Sessions Chronicle is a GNOME desktop app that indexes local AI coding assistant sessions and provides:
 
-- Cross-tool session browsing and filtering (Claude Code, OpenCode, Codex, Mistral Vibe)
+- Cross-assistant session browsing and filtering (Claude Code, OpenCode, Codex, Mistral Vibe)
 - Full-text search via SQLite FTS5 with in-transcript highlighting
 - Session detail views with markdown rendering, inline tool calls, and subagent inspection
 - Resume-in-terminal flows from list and detail views
 - Keyboard navigation and search shortcuts aligned with GNOME patterns
 - Token usage display in session detail (input/output, optional reasoning, optional cache read/write)
 - Incremental indexing with file fingerprints and startup background indexing feedback
+
+## Terminology
+
+- `AI assistant` refers to a session source such as Claude Code, OpenCode, Codex, or Mistral Vibe.
+- `tool call` refers to an action invoked within a transcript.
+- `tool` may still appear as a literal historical storage or schema name, such as the `sessions.tool` column.
 
 ## Recently Landed Work
 
@@ -47,7 +53,7 @@ sessions-chronicle/
 |  |- indexing_worker.rs         # background indexing worker
 |  |- session_sources.rs         # source path resolution + --sessions-dir behavior
 |  |- database/                  # schema, search, indexing logic
-|  |- parsers/                   # per-tool parsers
+|  |- parsers/                   # per-assistant parsers
 |  |- models/                    # sessions/messages/tool calls/subagents/token usage
 |  |- ui/                        # list/detail/sidebar/inspector components
 |  `- utils/terminal.rs          # terminal detection/spawn for resume
@@ -63,7 +69,7 @@ Current migration level is `PRAGMA user_version = 4`.
 ### Core Tables
 
 - `sessions`
-  - identity and metadata per session (`id`, `tool`, `project_path`, timestamps)
+  - identity and metadata per session (`id`, `tool`, `project_path`, timestamps); here `tool` is the historical storage column name for the assistant
   - hierarchy fields (`parent_session_id`, `is_subagent`)
   - token usage aggregates (`input_tokens`, `output_tokens`, `cache_read_tokens`, `cache_write_tokens`, `reasoning_tokens`)
 - `messages` (FTS5 virtual table)

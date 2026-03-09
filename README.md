@@ -5,22 +5,22 @@
 
 [![CI](https://github.com/supermaciz/sessions-chronicle/actions/workflows/ci.yml/badge.svg)](https://github.com/supermaciz/sessions-chronicle/actions/workflows/ci.yml) [![codecov](https://codecov.io/gh/supermaciz/sessions-chronicle/graph/badge.svg)](https://codecov.io/gh/supermaciz/sessions-chronicle)
 
-**Browse, search, and resume your AI coding sessions — on GNOME.**
+**Browse, search, and resume your AI assistant sessions**
 
-Sessions Chronicle indexes all your local AI tool sessions into a searchable database,
+Sessions Chronicle indexes all your local AI assistant sessions into a searchable database,
 so you can find any conversation, inspect tool calls, and pick up where you left off.
 
 
 ## Features
 
 - **Find any session instantly** — full-text search across all conversations (SQLite FTS5)
-- **Browse & filter** — sidebar filters by tool, keyword search with highlighted matches
+- **Browse & filter** — sidebar filters by assistant, keyword search with highlighted matches
 - **Read conversations comfortably** — rich markdown rendering (code blocks, tables, task lists, blockquotes)
 - **Inspect tool calls** — expand inline tool calls and drill down into subagents in the utility pane
 - **Track token usage** — see per-session token breakdowns in the detail view
 - **Resume where you left off** — launch sessions directly from the app in your terminal
 - **Navigate with the keyboard** — Up/Down to move selection, Enter to open, Escape closes search or backs out of detail
-- **Supports 4 AI tools** — Claude Code, OpenCode, Codex, Mistral Vibe
+- **Supports 4 AI assistants** — Claude Code, OpenCode, Codex, Mistral Vibe
 
 
 ## Installation

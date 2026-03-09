@@ -33,7 +33,7 @@ The FilterEngine checks in priority order:
 
 - Text query (full-text search in transcripts)
 - Date range
-- AI tool (Codex/Claude/etc.)
+- AI assistant (Codex/Claude/etc.)
 - Model type
 - Session kind (user/assistant/tool)
 - Project path
