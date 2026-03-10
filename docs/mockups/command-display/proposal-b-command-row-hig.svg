@@ -1,0 +1,93 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="900" height="650" viewBox="0 0 900 650">
+  <defs>
+    <style>
+      text { font-family: Cantarell, sans-serif; }
+      .mono { font-family: Source Code Pro, monospace; }
+      .msg-text { font-size: 13px; fill: #1e1e1e; }
+      .role-label { font-size: 11px; fill: #636363; font-weight: 700; letter-spacing: 0.5px; }
+      .cmd-label { font-size: 13px; fill: #1e1e1e; font-weight: 700; }
+      .cmd-detail { font-size: 12px; fill: #636363; }
+    </style>
+    <filter id="cardShadow" x="-2%" y="-2%" width="104%" height="108%">
+      <feDropShadow dx="0" dy="1" stdDeviation="1.5" flood-color="#000000" flood-opacity="0.08"/>
+    </filter>
+  </defs>
+
+  <!-- Background -->
+  <rect width="900" height="650" fill="#fafafa" rx="12"/>
+
+  <!-- Title -->
+  <text x="32" y="30" font-size="15" font-weight="600" fill="#1e1e1e" opacity="0.6">PROPOSAL B — Dedicated Command Row (GNOME HIG)</text>
+  <text x="32" y="50" font-size="12" fill="#888888">Commands as distinct transcript items with terminal icon, similar to tool call rows</text>
+
+  <!-- ===== HEADERBAR ===== -->
+  <rect y="64" width="900" height="47" fill="#303030" rx="12"/>
+  <rect y="76" width="900" height="35" fill="#303030"/>
+  <circle cx="24" cy="87" r="7" fill="#e04040" opacity="0.85"/>
+  <circle cx="46" cy="87" r="7" fill="#e8a828" opacity="0.85"/>
+  <circle cx="68" cy="87" r="7" fill="#2eb840" opacity="0.85"/>
+  <text x="450" y="93" text-anchor="middle" font-size="15" font-weight="700" fill="#ffffff">Sessions Chronicle</text>
+
+  <!-- ===== Message 1: Normal user ===== -->
+  <g transform="translate(32, 127)">
+    <rect width="836" height="64" rx="10" fill="#ffffff" filter="url(#cardShadow)"/>
+    <rect width="3" height="64" rx="1.5" fill="#3584e4"/>
+    <text x="18" y="22" class="role-label" fill="#3584e4">USER</text>
+    <text x="18" y="46" class="msg-text">Can you help me learn Rust?</text>
+  </g>
+
+  <!-- ===== Command Row: /learn-rust ===== -->
+  <g transform="translate(32, 205)">
+    <rect width="836" height="50" rx="10" fill="#ffffff" filter="url(#cardShadow)"/>
+    <rect width="3" height="50" rx="1.5" fill="#986a44"/>
+    <!-- Terminal icon -->
+    <rect x="14" y="12" width="26" height="26" rx="6" fill="#986a44" opacity="0.12"/>
+    <text x="27" y="31" text-anchor="middle" font-size="14" fill="#986a44">⌘</text>
+    <!-- Command name -->
+    <text x="50" y="31" class="cmd-label">/learn-rust</text>
+    <!-- Args -->
+    <text x="140" y="31" class="cmd-detail">PATH B</text>
+  </g>
+
+  <!-- ===== Message 2: Assistant ===== -->
+  <g transform="translate(32, 269)">
+    <rect width="836" height="72" rx="10" fill="#ffffff" filter="url(#cardShadow)"/>
+    <rect width="3" height="72" rx="1.5" fill="#26a269"/>
+    <text x="18" y="22" class="role-label" fill="#26a269">ASSISTANT</text>
+    <text x="18" y="50" class="msg-text">Great choice! Let's explore PATH B — Ownership and Borrowing…</text>
+  </g>
+
+  <!-- ===== Command Row: /model (with stdout result) ===== -->
+  <g transform="translate(32, 355)">
+    <rect width="836" height="76" rx="10" fill="#ffffff" filter="url(#cardShadow)"/>
+    <rect width="3" height="76" rx="1.5" fill="#986a44"/>
+    <!-- Terminal icon -->
+    <rect x="14" y="12" width="26" height="26" rx="6" fill="#986a44" opacity="0.12"/>
+    <text x="27" y="31" text-anchor="middle" font-size="14" fill="#986a44">⌘</text>
+    <!-- Command name + args -->
+    <text x="50" y="31" class="cmd-label">/model</text>
+    <text x="102" y="31" class="cmd-detail">opus</text>
+    <!-- Result below -->
+    <rect x="14" y="46" width="808" height="22" rx="4" fill="#f6f6f6"/>
+    <text x="22" y="62" class="mono" font-size="11" fill="#888888">→ Set model to opus (claude-opus-4-6)</text>
+  </g>
+
+  <!-- ===== Command Row: /brainstorming (with multiline args) ===== -->
+  <g transform="translate(32, 445)">
+    <rect width="836" height="96" rx="10" fill="#ffffff" filter="url(#cardShadow)"/>
+    <rect width="3" height="96" rx="1.5" fill="#986a44"/>
+    <!-- Terminal icon -->
+    <rect x="14" y="12" width="26" height="26" rx="6" fill="#986a44" opacity="0.12"/>
+    <text x="27" y="31" text-anchor="middle" font-size="14" fill="#986a44">⌘</text>
+    <!-- Command name -->
+    <text x="50" y="31" class="cmd-label">/superpowers-extended-cc:brainstorming</text>
+    <!-- Multiline args below -->
+    <text x="50" y="54" class="msg-text" font-size="12" fill="#636363">Je veux créer un design plan pour les analytics</text>
+    <text x="50" y="72" class="msg-text" font-size="12" fill="#636363">docs/plans/2026-03-02-basic-analytics-exploration.md proposition A</text>
+    <text x="50" y="86" class="msg-text" font-size="12" fill="#999999">…</text>
+  </g>
+
+  <!-- Annotation -->
+  <text x="450" y="575" text-anchor="middle" font-size="11" fill="#999999">Type de transcript dédié « Command » avec accent brun · Icône ⌘ · Résultat stdout intégré</text>
+  <text x="450" y="592" text-anchor="middle" font-size="11" fill="#999999">Pattern similaire aux tool call rows (même hauteur collapsed) · Séparation claire user/command</text>
+</svg>

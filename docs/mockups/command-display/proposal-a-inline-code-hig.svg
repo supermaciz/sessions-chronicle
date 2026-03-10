@@ -1,0 +1,79 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="900" height="620" viewBox="0 0 900 620">
+  <defs>
+    <style>
+      text { font-family: Cantarell, sans-serif; }
+      .mono { font-family: Source Code Pro, monospace; }
+      .msg-text { font-size: 13px; fill: #1e1e1e; }
+      .role-label { font-size: 11px; fill: #636363; font-weight: 700; letter-spacing: 0.5px; }
+    </style>
+    <filter id="cardShadow" x="-2%" y="-2%" width="104%" height="108%">
+      <feDropShadow dx="0" dy="1" stdDeviation="1.5" flood-color="#000000" flood-opacity="0.08"/>
+    </filter>
+  </defs>
+
+  <!-- Background -->
+  <rect width="900" height="620" fill="#fafafa" rx="12"/>
+
+  <!-- Title -->
+  <text x="32" y="30" font-size="15" font-weight="600" fill="#1e1e1e" opacity="0.6">PROPOSAL A — Inline Code Block (GNOME HIG)</text>
+  <text x="32" y="50" font-size="12" fill="#888888">Commands parsed and rendered as monospace code within the user message bubble</text>
+
+  <!-- ===== HEADERBAR ===== -->
+  <rect y="64" width="900" height="47" fill="#303030" rx="12"/>
+  <rect y="76" width="900" height="35" fill="#303030"/>
+  <circle cx="24" cy="87" r="7" fill="#e04040" opacity="0.85"/>
+  <circle cx="46" cy="87" r="7" fill="#e8a828" opacity="0.85"/>
+  <circle cx="68" cy="87" r="7" fill="#2eb840" opacity="0.85"/>
+  <text x="450" y="93" text-anchor="middle" font-size="15" font-weight="700" fill="#ffffff">Sessions Chronicle</text>
+  <text x="108" y="93" font-size="14" fill="#aaaaaa" font-family="Cantarell, sans-serif">◀  Session Detail</text>
+
+  <!-- ===== Message 1: Normal user message ===== -->
+  <g transform="translate(32, 127)">
+    <rect width="836" height="64" rx="10" fill="#ffffff" filter="url(#cardShadow)"/>
+    <rect width="3" height="64" rx="1.5" fill="#3584e4"/>
+    <text x="18" y="22" class="role-label" fill="#3584e4">USER</text>
+    <text x="18" y="46" class="msg-text">Can you help me learn Rust?</text>
+  </g>
+
+  <!-- ===== Message 2: Command — rendered as inline code ===== -->
+  <g transform="translate(32, 205)">
+    <rect width="836" height="64" rx="10" fill="#ffffff" filter="url(#cardShadow)"/>
+    <rect width="3" height="64" rx="1.5" fill="#3584e4"/>
+    <text x="18" y="22" class="role-label" fill="#3584e4">USER</text>
+    <!-- Code block background -->
+    <rect x="14" y="30" width="200" height="24" rx="6" fill="#f0f0f0"/>
+    <text x="22" y="47" class="mono" font-size="13" fill="#613583">/learn-rust PATH B</text>
+  </g>
+
+  <!-- ===== Message 3: Assistant response ===== -->
+  <g transform="translate(32, 283)">
+    <rect width="836" height="72" rx="10" fill="#ffffff" filter="url(#cardShadow)"/>
+    <rect width="3" height="72" rx="1.5" fill="#26a269"/>
+    <text x="18" y="22" class="role-label" fill="#26a269">ASSISTANT</text>
+    <text x="18" y="50" class="msg-text">Great choice! Let's explore PATH B — Ownership and Borrowing…</text>
+  </g>
+
+  <!-- ===== Message 4: /model command — rendered as inline code ===== -->
+  <g transform="translate(32, 369)">
+    <rect width="836" height="64" rx="10" fill="#ffffff" filter="url(#cardShadow)"/>
+    <rect width="3" height="64" rx="1.5" fill="#3584e4"/>
+    <text x="18" y="22" class="role-label" fill="#3584e4">USER</text>
+    <rect x="14" y="30" width="130" height="24" rx="6" fill="#f0f0f0"/>
+    <text x="22" y="47" class="mono" font-size="13" fill="#613583">/model opus</text>
+  </g>
+
+  <!-- ===== Message 5: Command with long args ===== -->
+  <g transform="translate(32, 447)">
+    <rect width="836" height="90" rx="10" fill="#ffffff" filter="url(#cardShadow)"/>
+    <rect width="3" height="90" rx="1.5" fill="#3584e4"/>
+    <text x="18" y="22" class="role-label" fill="#3584e4">USER</text>
+    <rect x="14" y="30" width="340" height="24" rx="6" fill="#f0f0f0"/>
+    <text x="22" y="47" class="mono" font-size="13" fill="#613583">/superpowers-extended-cc:brainstorming</text>
+    <!-- Args displayed below as normal text -->
+    <text x="18" y="72" class="msg-text" fill="#636363">Je veux créer un design plan pour les analytics…</text>
+  </g>
+
+  <!-- Annotation -->
+  <text x="450" y="565" text-anchor="middle" font-size="11" fill="#999999">Tags XML extraits · Commande en monospace sur fond gris · Args en texte normal en-dessous</text>
+  <text x="450" y="582" text-anchor="middle" font-size="11" fill="#999999">Traitement minimal : regex strip des tags, affichage comme code inline</text>
+</svg>
