@@ -11,7 +11,7 @@ Use these as optional support material while following the step-by-step exercise
 | Path | Most Relevant Sources |
 |---|---|
 | **A** Bootstrap & App Launch | [The Rust Book](https://doc.rust-lang.org/book/title-page.html), [Rust by Example](https://doc.rust-lang.org/rust-by-example/), [Rustlings](https://rustlings.rust-lang.org/), [Rust Standard Library](https://doc.rust-lang.org/std/), [Too Many Lists](https://rust-unofficial.github.io/too-many-lists/) |
-| **B** Relm4 UI State & Messages | [The Rust Book](https://doc.rust-lang.org/book/title-page.html), [Rust by Example](https://doc.rust-lang.org/rust-by-example/), [GTK4 Rust Book](https://gtk-rs.org/gtk4-rs/stable/latest/book/), [Rust Standard Library](https://doc.rust-lang.org/std/) |
+| **B** Relm4 UI State & Messages | [Relm4 Book](https://relm4.org/book/stable/), [Relm4 docs.rs](https://docs.rs/crate/relm4/0.10.0), [The Rust Book](https://doc.rust-lang.org/book/title-page.html), [Rust by Example](https://doc.rust-lang.org/rust-by-example/), [GTK4 Rust Book](https://gtk-rs.org/gtk4-rs/stable/latest/book/), [Rust Standard Library](https://doc.rust-lang.org/std/) |
 | **C** Database & Search | [The Rust Book](https://doc.rust-lang.org/book/title-page.html), [Rust by Example](https://doc.rust-lang.org/rust-by-example/), [Rust Standard Library](https://doc.rust-lang.org/std/) |
 | **D** Parsing & Serde | [The Rust Book](https://doc.rust-lang.org/book/title-page.html), [Rust by Example](https://doc.rust-lang.org/rust-by-example/), [Rustlings](https://rustlings.rust-lang.org/), [Rust Standard Library](https://doc.rust-lang.org/std/) |
 | **E** CLI with Clap | [The Rust Book](https://doc.rust-lang.org/book/title-page.html), [Rust by Example](https://doc.rust-lang.org/rust-by-example/), [Rustlings](https://rustlings.rust-lang.org/), [Rust Standard Library](https://doc.rust-lang.org/std/) |
@@ -66,6 +66,7 @@ Use these as optional support material while following the step-by-step exercise
 - **Question:** This struct has `sessions: FactoryVecDeque<SessionRow>`. What is a `FactoryVecDeque` and why not a plain `Vec`?
 - **Rust concepts:** Structs, generic containers, owned vs. managed collections
 - **Rust Book:** [Ch 5.1 Structs](https://doc.rust-lang.org/book/ch05-01-defining-structs.html), [Ch 8.1 Vectors](https://doc.rust-lang.org/book/ch08-01-vectors.html)
+- **Relm4 Book:** [Factories](https://relm4.org/book/stable/efficient_ui/factory.html), [Model](https://relm4.org/book/stable/basic_concepts/model.html)
 - **Exercise:** List every field of `SessionList` and its type. Identify which are primitives, which are collections, which are smart pointers.
 - **Verify:** `cargo check`
 
@@ -74,6 +75,7 @@ Use these as optional support material while following the step-by-step exercise
 - **Question:** What's the difference between `SessionListMsg` (input) and `SessionListOutput` (output)? Which direction does each flow?
 - **Rust concepts:** Enums with data, enum variants as messages, type-safe communication
 - **Rust Book:** [Ch 6.1 Enums](https://doc.rust-lang.org/book/ch06-01-defining-an-enum.html), [Ch 6.2 Match](https://doc.rust-lang.org/book/ch06-02-match.html)
+- **Relm4 Book:** [Input messages](https://relm4.org/book/stable/basic_concepts/messages/input.html), [Output messages](https://relm4.org/book/stable/basic_concepts/messages/output.html)
 - **Exercise:** Add a new `SessionListMsg::DebugPrint` variant. Handle it in `update()` with a `tracing::debug!` call.
 - **Verify:** `cargo check && cargo clippy --all -- -D warnings`
 
@@ -82,6 +84,7 @@ Use these as optional support material while following the step-by-step exercise
 - **Question:** Find the `match msg { ... }` block. How does Rust guarantee every variant is handled?
 - **Rust concepts:** Pattern matching, exhaustiveness checking, `match` arms
 - **Rust Book:** [Ch 6.2 Match](https://doc.rust-lang.org/book/ch06-02-match.html), [Ch 18.3 Pattern Syntax](https://doc.rust-lang.org/book/ch18-03-pattern-syntax.html)
+- **Relm4 Book:** [Components](https://relm4.org/book/stable/basic_concepts/components.html), [The component macro](https://relm4.org/book/stable/component_macro.html)
 - **Exercise:** Comment out one `match` arm and observe the compiler error. What does it say?
 - **Verify:** `cargo check` (expect error, then restore)
 
@@ -90,6 +93,7 @@ Use these as optional support material while following the step-by-step exercise
 - **Question:** What does `#[watch]` do on a widget property? How does it differ from a property set once at init?
 - **Rust concepts:** Procedural macros, attribute macros, reactive UI patterns
 - **Rust Book:** [Ch 19.5 Macros](https://doc.rust-lang.org/book/ch19-06-macros.html)
+- **Relm4 Book:** [The component macro](https://relm4.org/book/stable/component_macro.html), [Tracker](https://relm4.org/book/stable/efficient_ui/tracker.html)
 - **Exercise:** Find a `#[watch]` usage in `session_detail.rs`. Trace what model field it depends on.
 - **Verify:** `cargo check`
 
@@ -98,6 +102,7 @@ Use these as optional support material while following the step-by-step exercise
 - **Question:** `post_view` takes `&self` (immutable). How can it modify `scroll_to_item`?
 - **Rust concepts:** `Cell<T>`, interior mutability, borrow checker escape hatches
 - **Rust Book:** [Ch 15.5 RefCell](https://doc.rust-lang.org/book/ch15-05-interior-mutability.html)
+- **Relm4 Book:** [Components](https://relm4.org/book/stable/components.html), [Efficient UI updates](https://relm4.org/book/stable/efficient_ui/index.html)
 - **Exercise:** Find every `Cell` usage in `session_detail.rs`. Explain why `Cell` is needed instead of `&mut self`.
 - **Verify:** `cargo check`
 
