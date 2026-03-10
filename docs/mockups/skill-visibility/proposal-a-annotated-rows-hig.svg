@@ -1,0 +1,172 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="920" height="980" viewBox="0 0 920 980">
+  <defs>
+    <style>
+      text { font-family: Cantarell, sans-serif; }
+      .mono { font-family: Source Code Pro, monospace; }
+      .msg-text { font-size: 13px; fill: #1e1e1e; }
+      .role-label { font-size: 11px; fill: #636363; font-weight: 700; letter-spacing: 0.5px; }
+      .cmd-label { font-size: 13px; fill: #1e1e1e; font-weight: 700; }
+      .cmd-detail { font-size: 12px; fill: #636363; }
+      .chip { font-size: 10px; font-weight: 600; letter-spacing: 0.3px; }
+      .section-title { font-size: 13px; font-weight: 700; fill: #555555; letter-spacing: 1px; }
+      .dim { font-size: 11px; fill: #999999; }
+    </style>
+    <filter id="cardShadow" x="-2%" y="-2%" width="104%" height="108%">
+      <feDropShadow dx="0" dy="1" stdDeviation="1.5" flood-color="#000000" flood-opacity="0.08"/>
+    </filter>
+  </defs>
+
+  <!-- Background -->
+  <rect width="920" height="980" fill="#fafafa" rx="12"/>
+
+  <!-- Title -->
+  <text x="32" y="28" font-size="15" font-weight="600" fill="#1e1e1e" opacity="0.6">PROPOSAL A — Annotated Transcript Rows (GNOME HIG)</text>
+  <text x="32" y="46" font-size="12" fill="#888888">Each skill event becomes a distinct row type, with boilerplate folded and session-level chips</text>
+
+  <!-- ═══════════════════════════════════════════════════════ -->
+  <!-- SECTION 1: TRANSCRIPT DETAIL VIEW                      -->
+  <!-- ═══════════════════════════════════════════════════════ -->
+  <text x="32" y="76" class="section-title">TRANSCRIPT VIEW</text>
+  <line x1="32" y1="82" x2="888" y2="82" stroke="#dddddd" stroke-width="1"/>
+
+  <!-- ===== HEADERBAR ===== -->
+  <rect y="94" width="920" height="47" fill="#303030" rx="12"/>
+  <rect y="106" width="920" height="35" fill="#303030"/>
+  <circle cx="24" cy="117" r="7" fill="#e04040" opacity="0.85"/>
+  <circle cx="46" cy="117" r="7" fill="#e8a828" opacity="0.85"/>
+  <circle cx="68" cy="117" r="7" fill="#2eb840" opacity="0.85"/>
+  <text x="460" y="123" text-anchor="middle" font-size="15" font-weight="700" fill="#ffffff">Sessions Chronicle</text>
+  <text x="108" y="123" font-size="14" fill="#aaaaaa">&#9664;  Session Detail</text>
+
+  <!-- ===== Row 1: Normal user message ===== -->
+  <g transform="translate(32, 157)">
+    <rect width="856" height="58" rx="10" fill="#ffffff" filter="url(#cardShadow)"/>
+    <rect width="3" height="58" rx="1.5" fill="#3584e4"/>
+    <text x="18" y="20" class="role-label" fill="#3584e4">USER</text>
+    <text x="18" y="42" class="msg-text">I want to explore the heatmap width issue</text>
+  </g>
+
+  <!-- ===== Row 2: Skill Command Row ===== -->
+  <g transform="translate(32, 227)">
+    <rect width="856" height="50" rx="10" fill="#ffffff" filter="url(#cardShadow)"/>
+    <rect width="3" height="50" rx="1.5" fill="#986a44"/>
+    <!-- Skill icon -->
+    <rect x="14" y="12" width="26" height="26" rx="6" fill="#986a44" opacity="0.12"/>
+    <text x="27" y="30" text-anchor="middle" font-size="13" fill="#986a44">&#9881;</text>
+    <!-- Skill name -->
+    <text x="50" y="30" class="cmd-label">/brainstorming</text>
+    <!-- Source badge -->
+    <rect x="155" y="18" width="118" height="18" rx="9" fill="#986a44" opacity="0.10"/>
+    <text x="164" y="31" class="chip" fill="#986a44">superpowers-extended-cc</text>
+    <!-- Args snippet -->
+    <text x="286" y="30" class="cmd-detail">heatmap width limit exploration…</text>
+  </g>
+
+  <!-- ===== Row 3: Folded skill payload (boilerplate) ===== -->
+  <g transform="translate(32, 289)">
+    <rect width="856" height="36" rx="8" fill="#f4f0ec" opacity="0.7"/>
+    <rect width="2" height="36" rx="1" fill="#c8b8a4"/>
+    <!-- Collapse chevron -->
+    <text x="14" y="24" font-size="12" fill="#986a44">&#9654;</text>
+    <text x="32" y="24" class="dim" fill="#8a7560">Skill content: brainstorming (2.4 KB)</text>
+    <text x="275" y="24" class="dim">— collapsed by default</text>
+  </g>
+
+  <!-- ===== Row 4: Skill tool call (enhanced) ===== -->
+  <g transform="translate(32, 337)">
+    <rect width="856" height="44" rx="8" fill="#ffffff" filter="url(#cardShadow)"/>
+    <rect width="3" height="44" rx="1.5" fill="#e5a50a"/>
+    <!-- Tool icon -->
+    <rect x="12" y="10" width="24" height="24" rx="5" fill="#e5a50a" opacity="0.12"/>
+    <text x="24" y="27" text-anchor="middle" font-size="11" fill="#e5a50a">&#9881;</text>
+    <!-- Enhanced skill name instead of generic "Skill" -->
+    <text x="44" y="28" class="mono" font-size="12" fill="#1e1e1e">Skill</text>
+    <text x="76" y="28" font-size="12" fill="#636363">&#8594;</text>
+    <text x="94" y="28" font-size="12" font-weight="600" fill="#986a44">brainstorming</text>
+    <!-- Status -->
+    <rect x="756" y="13" width="50" height="18" rx="9" fill="#26a269" opacity="0.12"/>
+    <text x="765" y="26" class="chip" fill="#26a269">loaded</text>
+    <!-- Duration -->
+    <text x="818" y="27" class="dim">42ms</text>
+  </g>
+
+  <!-- ===== Row 5: Another folded system-reminder ===== -->
+  <g transform="translate(32, 393)">
+    <rect width="856" height="36" rx="8" fill="#f0eff4" opacity="0.7"/>
+    <rect width="2" height="36" rx="1" fill="#b0a8c0"/>
+    <text x="14" y="24" font-size="12" fill="#8070a0">&#9654;</text>
+    <text x="32" y="24" class="dim" fill="#8070a0">System reminder: skill checklist + available skills (4.1 KB)</text>
+  </g>
+
+  <!-- ===== Row 6: Assistant response ===== -->
+  <g transform="translate(32, 441)">
+    <rect width="856" height="72" rx="10" fill="#ffffff" filter="url(#cardShadow)"/>
+    <rect width="3" height="72" rx="1.5" fill="#26a269"/>
+    <text x="18" y="20" class="role-label" fill="#26a269">ASSISTANT</text>
+    <text x="18" y="46" class="msg-text">I'll use the brainstorming skill to explore the heatmap width limit…</text>
+  </g>
+
+  <!-- ═══════════════════════════════════════════════════════ -->
+  <!-- SECTION 2: FOLDED STATE — EXPANDED EXAMPLE            -->
+  <!-- ═══════════════════════════════════════════════════════ -->
+  <text x="32" y="548" class="section-title">EXPANDED BOILERPLATE ROW</text>
+  <line x1="32" y1="554" x2="888" y2="554" stroke="#dddddd" stroke-width="1"/>
+
+  <g transform="translate(32, 566)">
+    <rect width="856" height="120" rx="8" fill="#f4f0ec" opacity="0.9"/>
+    <rect width="2" height="120" rx="1" fill="#c8b8a4"/>
+    <!-- Expanded chevron -->
+    <text x="14" y="24" font-size="12" fill="#986a44">&#9660;</text>
+    <text x="32" y="24" class="dim" fill="#8a7560">Skill content: brainstorming (2.4 KB)</text>
+    <!-- Copy button -->
+    <rect x="790" y="8" width="50" height="22" rx="6" fill="#ffffff" opacity="0.6"/>
+    <text x="800" y="24" font-size="11" fill="#986a44">Copy</text>
+    <!-- Truncated content preview -->
+    <text x="22" y="50" class="mono" font-size="11" fill="#666666"># Brainstorming Ideas Into Designs</text>
+    <text x="22" y="66" class="mono" font-size="11" fill="#666666">## Overview</text>
+    <text x="22" y="82" class="mono" font-size="11" fill="#666666">Help turn ideas into fully formed designs and specs through</text>
+    <text x="22" y="98" class="mono" font-size="11" fill="#666666">natural collaborative dialogue…</text>
+    <text x="22" y="114" class="dim">[ 48 more lines ]</text>
+  </g>
+
+  <!-- ═══════════════════════════════════════════════════════ -->
+  <!-- SECTION 3: SESSION LIST WITH SKILL CHIPS               -->
+  <!-- ═══════════════════════════════════════════════════════ -->
+  <text x="32" y="720" class="section-title">SESSION LIST — SKILL CHIPS</text>
+  <line x1="32" y1="726" x2="888" y2="726" stroke="#dddddd" stroke-width="1"/>
+
+  <!-- Session row 1 -->
+  <g transform="translate(32, 738)">
+    <rect width="856" height="68" rx="10" fill="#ffffff" filter="url(#cardShadow)"/>
+    <!-- Title -->
+    <text x="16" y="24" font-size="14" font-weight="600" fill="#1e1e1e">Heatmap width limit exploration</text>
+    <!-- Subtitle line: project · time · message count -->
+    <text x="16" y="42" class="dim">sessions-chronicle · 14:32 · 24 messages</text>
+    <!-- Skill chips -->
+    <rect x="16" y="48" width="88" height="16" rx="8" fill="#986a44" opacity="0.12"/>
+    <text x="25" y="60" class="chip" fill="#986a44">brainstorming</text>
+    <rect x="112" y="48" width="82" height="16" rx="8" fill="#986a44" opacity="0.12"/>
+    <text x="121" y="60" class="chip" fill="#986a44">writing-plans</text>
+  </g>
+
+  <!-- Session row 2 -->
+  <g transform="translate(32, 818)">
+    <rect width="856" height="68" rx="10" fill="#ffffff" filter="url(#cardShadow)"/>
+    <text x="16" y="24" font-size="14" font-weight="600" fill="#1e1e1e">Fix analytics dashboard rendering bug</text>
+    <text x="16" y="42" class="dim">sessions-chronicle · 11:05 · 42 messages</text>
+    <rect x="16" y="48" width="68" height="16" rx="8" fill="#986a44" opacity="0.12"/>
+    <text x="25" y="60" class="chip" fill="#986a44">debugging</text>
+    <rect x="92" y="48" width="30" height="16" rx="8" fill="#986a44" opacity="0.12"/>
+    <text x="101" y="60" class="chip" fill="#986a44">TDD</text>
+  </g>
+
+  <!-- Session row 3: no skills -->
+  <g transform="translate(32, 898)">
+    <rect width="856" height="52" rx="10" fill="#ffffff" filter="url(#cardShadow)"/>
+    <text x="16" y="24" font-size="14" font-weight="600" fill="#1e1e1e">Help me refactor this code</text>
+    <text x="16" y="42" class="dim">my-project · 09:20 · 8 messages</text>
+  </g>
+
+  <!-- Annotation -->
+  <text x="460" y="972" text-anchor="middle" font-size="11" fill="#999999">Each event type gets its own row · Boilerplate collapsed by default · Skills as chips in session list</text>
+</svg>
