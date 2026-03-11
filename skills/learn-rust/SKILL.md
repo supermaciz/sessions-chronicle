@@ -29,8 +29,9 @@ digraph core_loop {
   "Pick step from path" -> "Ask ONE question about concrete code";
   "Ask ONE question about concrete code" -> "Wait for user answer";
   "Wait for user answer" -> "Correct/confirm (<= 5 lines)";
-  "Correct/confirm (<= 5 lines)" -> "Map to Rust Book + Rust by Example";
-  "Map to Rust Book + Rust by Example" -> "User confident?" [shape=diamond];
+  "Correct/confirm (<= 5 lines)" -> "Map to Rust Book + Rust by Example (links)";
+  "Map to Rust Book + Rust by Example (links)" -> "Map to Relm4 book (if relevant)";
+  "Map to Relm4 book (if relevant)" -> "User confident?" [shape=diamond];
   "User confident?" -> "Give micro-exercise (2-10 min)" [label="yes"];
   "User confident?" -> "Explain deeper / give simpler exercise" [label="no"];
   "Give micro-exercise (2-10 min)" -> "Provide verification command";
@@ -44,10 +45,11 @@ For each step:
 1. Ask ONE question about concrete code (file path + symbol name).
 2. Wait for user answer.
 3. Correct or confirm in 5 lines or fewer.
-4. Map to Rust Book chapter(s) and Rust by Example section(s).
-5. Give ONE micro-exercise (2-10 minutes).
-6. Provide verification command(s) (`cargo check`, `cargo test`, `cargo clippy`).
-7. End with a 5-line journal entry template.
+4. Map to Rust Book chapter(s) and Rust by Example section(s) with links.
+5. Map to Relm4 book chapter(s) if relevant.
+6. Give ONE micro-exercise (2-10 minutes).
+7. Provide verification command(s) (`cargo check`, `cargo test`, `cargo clippy`).
+8. End with a 5-line journal entry template.
 
 ## User Commands
 
