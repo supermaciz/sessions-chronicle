@@ -148,6 +148,66 @@ No dedicated subagent session model observed in current format.
 
 ---
 
+## Skills / Slash Commands
+
+Mistral Vibe skills are discovered from skill directories and surfaced to the
+AI assistant through the system prompt. In sampled logs, skill loading does
+**not** use a dedicated native skill event.
+
+### Upstream Behavior
+
+Primary source findings:
+
+- `vibe/core/system_prompt.py` injects an `<available_skills>` section with
+  skill `name`, `description`, and `path`, plus the instruction to read the
+  full `SKILL.md` when a task matches a skill.
+- `vibe/cli/textual_ui/app.py` exposes `/<skill-name>` completions for
+  `user_invocable` skills.
+- That same handler only matches the **exact** skill name after the slash. If
+  the user types additional arguments (for example `/learn-rust path B`), the
+  input falls through as a normal user message instead of being intercepted as a
+  dedicated slash command action.
+- `vibe/core/session/session_logger.py` persists only generic `LLMMessage`
+  entries and ordinary `tool_calls`.
+
+### Observed Local Session Pattern
+
+Observed on session `b6999d83-6ddd-48ec-9766-fb12395b1158`
+(`session_20260304_125746_b6999d83/`):
+
+```json
+{"role":"user","content":"/learn-rust path B (en français)"}
+{"role":"assistant","tool_calls":[
+  {"function":{"name":"read_file","arguments":"{\"path\": \"skills/learn-rust/SKILL.md\"}"}}
+]}
+{"role":"tool","name":"read_file","content":"path: .../skills/learn-rust/SKILL.md\ncontent: ---\nname: learn-rust\n..."}
+{"role":"assistant","tool_calls":[
+  {"function":{"name":"read_file","arguments":"{\"path\": \"skills/learn-rust/PATHS.md\"}"}}
+]}
+```
+
+### Recommended Detection Heuristic
+
+Best current marker of a **loaded** Mistral Vibe skill:
+
+- assistant `tool_calls[*].function.name == "read_file"`
+- and `tool_calls[*].function.arguments` points to `skills/<skill-name>/SKILL.md`
+
+Useful secondary evidence:
+
+- subsequent reads from the same skill directory (for example `PATHS.md`)
+- nearby user message starting with `/<skill-name>`
+- `role == "tool"` result containing the resolved `SKILL.md` path and body
+
+What not to rely on:
+
+- the leading slash command alone
+- `meta.json.tools_available`
+- any dedicated native skill `tool call` marker, because none was observed in
+  sampled local logs or in the upstream session schema
+
+---
+
 ## Input History (Not a Session Log)
 
 `~/.vibe/vibehistory` stores a JSONL list of user inputs for prompt recall.
@@ -201,3 +261,5 @@ do not load entire JSONL into memory.
 - [Mistral Vibe session logger (`meta.json` + `messages.jsonl` + config dump)](https://github.com/mistralai/mistral-vibe/blob/main/vibe/core/session/session_logger.py)
 - [Mistral Vibe message/session models (`SessionMetadata`, `LLMMessage`)](https://github.com/mistralai/mistral-vibe/blob/main/vibe/core/types.py)
 - [Mistral Vibe Configuration Docs](https://docs.mistral.ai/mistral-vibe/introduction/configuration)
+- [Mistral Vibe system prompt skill section (`<available_skills>`)](https://github.com/mistralai/mistral-vibe/blob/main/vibe/core/system_prompt.py)
+- [Mistral Vibe CLI skill slash-command handler](https://github.com/mistralai/mistral-vibe/blob/main/vibe/cli/textual_ui/app.py)

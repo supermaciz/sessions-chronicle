@@ -104,7 +104,9 @@ Cross-tool comparison of Claude Code, Codex, OpenCode, and Mistral Vibe session 
   `response_item` user messages wrapped in `<skill>...</skill>`
 - **OpenCode**: Message content lives in `message`/`part`; skill loading has a
   structural marker via `part.type == "tool"` and `part.tool == "skill"`
-- **Mistral Vibe**: `messages.jsonl` holds message entries (one JSON object per line)
+- **Mistral Vibe**: `messages.jsonl` holds message entries (one JSON object per
+  line); loaded skills are not tagged separately in sampled logs, but can be
+  inferred from assistant `read_file` tool calls to `skills/<name>/SKILL.md`
 
 **File Organization:**
 - **Claude Code**: Main `UUID.jsonl` session file plus additional `agent-*.jsonl` subagent transcripts (often nested under `<session-id>/subagents/`)
@@ -148,7 +150,15 @@ Goal: determine whether model information is available per message, per turn, an
   available in `state.metadata.name` and `state.input.name`; the injected
   Markdown in the parent user message is display payload, not the primary
   detection signal.
-- **Mistral Vibe**: Directory-based session format with `meta.json` + JSONL `messages.jsonl`; model info is session-level via `meta.json.config` snapshot when present, not message-level; **token usage is available when `meta.json.stats` is present** (session totals + last-turn metrics)
+- **Mistral Vibe**: Directory-based session format with `meta.json` + JSONL
+  `messages.jsonl`; model info is session-level via `meta.json.config` snapshot
+  when present, not message-level; **token usage is available when
+  `meta.json.stats` is present** (session totals + last-turn metrics)
+- **Mistral Vibe skills**: In sampled local sessions, skill loading appears as
+  ordinary assistant `tool_calls` to `read_file` on
+  `skills/<skill-name>/SKILL.md` (and related files such as `PATHS.md`), not as
+  a dedicated native skill event. A leading slash command such as
+  `/learn-rust path B` is not sufficient proof of loading by itself.
 
 ---
 
@@ -267,6 +277,8 @@ Each tool can persist token usage metrics, but **the granularity and presence ar
 - [Mistral Vibe Configuration Docs](https://docs.mistral.ai/mistral-vibe/introduction/configuration)
 - [Mistral Vibe session logger](https://github.com/mistralai/mistral-vibe/blob/main/vibe/core/session/session_logger.py)
 - [Mistral Vibe message/session models](https://github.com/mistralai/mistral-vibe/blob/main/vibe/core/types.py)
+- [Mistral Vibe system prompt skill section](https://github.com/mistralai/mistral-vibe/blob/main/vibe/core/system_prompt.py)
+- [Mistral Vibe CLI skill slash-command handler](https://github.com/mistralai/mistral-vibe/blob/main/vibe/cli/textual_ui/app.py)
 
 ---
 

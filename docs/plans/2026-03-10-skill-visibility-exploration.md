@@ -178,7 +178,39 @@ description: ...
 
 ### Mistral Vibe
 
-Not checked yet. Need investigation.
+Mistral Vibe does not expose a dedicated skill-loading `tool call` in the
+sampled session format.
+
+Observed local session:
+- Session `b6999d83-6ddd-48ec-9766-fb12395b1158`
+  (`~/.vibe/logs/session/session_20260304_125746_b6999d83/`)
+- First user message is `/learn-rust path B (en français)`
+- Assistant then emits ordinary `tool_calls` for:
+  - `read_file(path="skills/learn-rust/SKILL.md")`
+  - `read_file(path="skills/learn-rust/PATHS.md")`
+- Corresponding `role == "tool"` messages contain the file contents
+
+Upstream source corroboration:
+- `vibe/core/system_prompt.py` injects an `<available_skills>` section into the
+  system prompt and tells the AI assistant to read `SKILL.md` when a task
+  matches a skill.
+- `vibe/cli/textual_ui/app.py` exposes `/<skill-name>` autocompletion for
+  `user_invocable` skills, but the handler only matches the exact skill name.
+  A prompt like `/learn-rust path B` therefore falls through as a normal user
+  message and is not expanded client-side.
+- Session logs (`vibe/core/session/session_logger.py`, `vibe/core/types.py`)
+  only persist generic `LLMMessage` entries plus ordinary `tool_calls`.
+
+Implications:
+- The best marker of a **loaded** Mistral Vibe skill in current observed logs is
+  an assistant `tool_call` with `function.name == "read_file"` and arguments
+  pointing to `skills/<skill-name>/SKILL.md`.
+- Additional reads from the same directory (for example `PATHS.md`) should be
+  grouped into the same skill activity, but are secondary evidence.
+- A leading `/skill-name` user message is useful context, but it is not enough
+  on its own to prove that a skill was loaded.
+- No native Mistral Vibe skill `tool call` marker was found in the sampled
+  sessions or the upstream logging schema.
 
 ---
 
