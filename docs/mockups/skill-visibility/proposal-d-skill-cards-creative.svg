@@ -1,0 +1,211 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="920" height="1020" viewBox="0 0 920 1020">
+  <defs>
+    <style>
+      text { font-family: Cantarell, sans-serif; }
+      .mono { font-family: Source Code Pro, monospace; }
+      .msg-text { font-size: 13px; fill: #1e1e1e; }
+      .role-label { font-size: 11px; fill: #636363; font-weight: 700; letter-spacing: 0.5px; }
+      .chip { font-size: 10px; font-weight: 600; letter-spacing: 0.3px; }
+      .section-title { font-size: 13px; font-weight: 700; fill: #555555; letter-spacing: 1px; }
+      .dim { font-size: 11px; fill: #999999; }
+    </style>
+    <filter id="cardShadow" x="-2%" y="-2%" width="104%" height="108%">
+      <feDropShadow dx="0" dy="1" stdDeviation="1.5" flood-color="#000000" flood-opacity="0.08"/>
+    </filter>
+    <linearGradient id="skillHeaderGrad" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#986a44" stop-opacity="0.14"/>
+      <stop offset="100%" stop-color="#986a44" stop-opacity="0.04"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Background -->
+  <rect width="920" height="1020" fill="#fafafa" rx="12"/>
+
+  <!-- Title -->
+  <text x="32" y="28" font-size="15" font-weight="600" fill="#1e1e1e" opacity="0.6">PROPOSAL D — Skill Cards (Creative)</text>
+  <text x="32" y="46" font-size="12" fill="#888888">Each skill invocation is a visually distinct card with gradient header, prompt zone, and collapsible payload</text>
+
+  <!-- ═══════════════════════════════════════════════════════ -->
+  <!-- SECTION 1: TRANSCRIPT — CLAUDE CODE                     -->
+  <!-- ═══════════════════════════════════════════════════════ -->
+  <text x="32" y="76" class="section-title">TRANSCRIPT VIEW — CLAUDE CODE</text>
+  <line x1="32" y1="82" x2="888" y2="82" stroke="#dddddd" stroke-width="1"/>
+
+  <!-- Headerbar -->
+  <rect y="94" width="920" height="47" fill="#303030" rx="12"/>
+  <rect y="106" width="920" height="35" fill="#303030"/>
+  <circle cx="24" cy="117" r="7" fill="#e04040" opacity="0.85"/>
+  <circle cx="46" cy="117" r="7" fill="#e8a828" opacity="0.85"/>
+  <circle cx="68" cy="117" r="7" fill="#2eb840" opacity="0.85"/>
+  <text x="460" y="123" text-anchor="middle" font-size="15" font-weight="700" fill="#ffffff">Sessions Chronicle</text>
+
+  <!-- Row 1: User message -->
+  <g transform="translate(32, 157)">
+    <rect width="856" height="52" rx="10" fill="#ffffff" filter="url(#cardShadow)"/>
+    <rect width="3" height="52" rx="1.5" fill="#3584e4"/>
+    <text x="18" y="20" class="role-label" fill="#3584e4">USER</text>
+    <text x="18" y="40" class="msg-text">I want to explore the heatmap width issue</text>
+  </g>
+
+  <!-- ===== SKILL CARD ===== -->
+  <g transform="translate(32, 221)">
+    <!-- Card outer -->
+    <rect width="856" height="146" rx="12" fill="#fefcfa" stroke="#e0d0c0" stroke-width="1.5"/>
+
+    <!-- Gradient header -->
+    <rect width="856" height="42" rx="12" fill="url(#skillHeaderGrad)"/>
+    <rect y="30" width="856" height="12" fill="url(#skillHeaderGrad)"/>
+
+    <!-- Left accent -->
+    <rect width="4" height="146" rx="2" fill="#986a44"/>
+
+    <!-- Icon -->
+    <rect x="16" y="7" width="28" height="28" rx="8" fill="#986a44" opacity="0.2"/>
+    <text x="30" y="26" text-anchor="middle" font-size="15" fill="#986a44">&#9881;</text>
+
+    <!-- Name + metadata -->
+    <text x="54" y="20" font-size="14" font-weight="700" fill="#5c3d1e">brainstorming</text>
+    <text x="54" y="36" font-size="11" fill="#986a44">superpowers-extended-cc · Claude Code</text>
+
+    <!-- Status pill -->
+    <rect x="766" y="10" width="72" height="22" rx="11" fill="#26a269" opacity="0.12"/>
+    <text x="780" y="25" font-size="11" font-weight="600" fill="#26a269">&#10003; loaded</text>
+
+    <!-- Prompt zone -->
+    <g transform="translate(16, 50)">
+      <rect width="824" height="34" rx="6" fill="#ffffff" opacity="0.6"/>
+      <text x="10" y="14" font-size="11" font-weight="600" fill="#888888">PROMPT</text>
+      <text x="10" y="28" font-size="12" fill="#1e1e1e">heatmap width limit exploration</text>
+    </g>
+
+    <!-- Collapsed payload -->
+    <g transform="translate(16, 96)">
+      <rect width="824" height="38" rx="6" fill="#f4f0ec" opacity="0.5"/>
+      <text x="10" y="16" font-size="11" fill="#986a44">&#9654;</text>
+      <text x="28" y="16" font-size="11" fill="#8a7560">Skill definition (2.4 KB) + system reminders (4.1 KB)</text>
+      <rect x="330" y="4" width="66" height="20" rx="6" fill="#ffffff" stroke="#dddddd" stroke-width="1"/>
+      <text x="342" y="18" font-size="11" fill="#986a44">Show full</text>
+      <rect x="402" y="4" width="46" height="20" rx="6" fill="#ffffff" stroke="#dddddd" stroke-width="1"/>
+      <text x="414" y="18" font-size="11" fill="#986a44">Copy</text>
+      <text x="756" y="16" class="dim">14:32:05</text>
+    </g>
+  </g>
+
+  <!-- Row 3: Assistant -->
+  <g transform="translate(32, 379)">
+    <rect width="856" height="58" rx="10" fill="#ffffff" filter="url(#cardShadow)"/>
+    <rect width="3" height="58" rx="1.5" fill="#26a269"/>
+    <text x="18" y="20" class="role-label" fill="#26a269">ASSISTANT</text>
+    <text x="18" y="42" class="msg-text">I'll use the brainstorming skill to explore the heatmap width limit…</text>
+  </g>
+
+  <!-- ═══════════════════════════════════════════════════════ -->
+  <!-- SECTION 2: OTHER ASSISTANT VARIANTS                     -->
+  <!-- ═══════════════════════════════════════════════════════ -->
+  <text x="32" y="472" class="section-title">CODEX VARIANT</text>
+  <line x1="32" y1="478" x2="460" y2="478" stroke="#dddddd" stroke-width="1"/>
+
+  <g transform="translate(32, 490)">
+    <rect width="420" height="100" rx="12" fill="#fefcfa" stroke="#e0d0c0" stroke-width="1.5"/>
+    <rect width="420" height="42" rx="12" fill="url(#skillHeaderGrad)"/>
+    <rect y="30" width="420" height="12" fill="url(#skillHeaderGrad)"/>
+    <rect width="4" height="100" rx="2" fill="#986a44"/>
+
+    <rect x="16" y="7" width="28" height="28" rx="8" fill="#986a44" opacity="0.2"/>
+    <text x="30" y="26" text-anchor="middle" font-size="15" fill="#986a44">&#9881;</text>
+    <text x="54" y="20" font-size="14" font-weight="700" fill="#5c3d1e">logseq</text>
+    <text x="54" y="36" font-size="11" fill="#986a44">Codex</text>
+
+    <g transform="translate(16, 50)">
+      <rect width="388" height="28" rx="6" fill="#ffffff" opacity="0.6"/>
+      <text x="10" y="12" font-size="11" font-weight="600" fill="#888888">PROMPT</text>
+      <text x="10" y="24" font-size="12" fill="#1e1e1e">un fichier markdown</text>
+    </g>
+
+    <g transform="translate(16, 84)">
+      <text x="10" y="10" font-size="11" fill="#986a44">&#9654;</text>
+      <text x="28" y="10" font-size="11" fill="#8a7560">Skill content (1.8 KB)</text>
+    </g>
+  </g>
+
+  <text x="480" y="472" class="section-title">MISTRAL VIBE VARIANT</text>
+  <line x1="480" y1="478" x2="888" y2="478" stroke="#dddddd" stroke-width="1"/>
+
+  <g transform="translate(480, 490)">
+    <rect width="408" height="100" rx="12" fill="#fefcfa" stroke="#e0d0c0" stroke-width="1.5"/>
+    <rect width="408" height="42" rx="12" fill="url(#skillHeaderGrad)"/>
+    <rect y="30" width="408" height="12" fill="url(#skillHeaderGrad)"/>
+    <rect width="4" height="100" rx="2" fill="#986a44"/>
+
+    <rect x="16" y="7" width="28" height="28" rx="8" fill="#986a44" opacity="0.2"/>
+    <text x="30" y="26" text-anchor="middle" font-size="15" fill="#986a44">&#9881;</text>
+    <text x="54" y="20" font-size="14" font-weight="700" fill="#5c3d1e">learn-rust</text>
+    <text x="54" y="36" font-size="11" fill="#986a44">Mistral Vibe · read_file</text>
+
+    <g transform="translate(16, 50)">
+      <rect width="376" height="28" rx="6" fill="#ffffff" opacity="0.6"/>
+      <text x="10" y="12" font-size="11" font-weight="600" fill="#888888">PROMPT</text>
+      <text x="10" y="24" font-size="12" fill="#1e1e1e">path B (en français)</text>
+    </g>
+
+    <g transform="translate(16, 84)">
+      <text x="10" y="10" font-size="11" fill="#986a44">&#9654;</text>
+      <text x="28" y="10" font-size="11" fill="#8a7560">SKILL.md + PATHS.md (3.1 KB)</text>
+    </g>
+  </g>
+
+  <!-- ═══════════════════════════════════════════════════════ -->
+  <!-- SECTION 3: EXPANDED CARD                                -->
+  <!-- ═══════════════════════════════════════════════════════ -->
+  <text x="32" y="626" class="section-title">EXPANDED PAYLOAD</text>
+  <line x1="32" y1="632" x2="888" y2="632" stroke="#dddddd" stroke-width="1"/>
+
+  <g transform="translate(32, 644)">
+    <rect width="856" height="140" rx="6" fill="#f4f0ec" opacity="0.9"/>
+    <rect width="2" height="140" rx="1" fill="#c8b8a4"/>
+    <text x="14" y="20" font-size="11" fill="#986a44">&#9660;</text>
+    <text x="30" y="20" font-size="11" font-weight="600" fill="#8a7560">Skill definition: brainstorming (2.4 KB)</text>
+    <rect x="790" y="6" width="50" height="20" rx="6" fill="#ffffff" opacity="0.6"/>
+    <text x="800" y="20" font-size="11" fill="#986a44">Copy</text>
+
+    <text x="22" y="44" class="mono" font-size="11" fill="#666666"># Brainstorming Ideas Into Designs</text>
+    <text x="22" y="60" class="mono" font-size="11" fill="#666666">## Overview</text>
+    <text x="22" y="76" class="mono" font-size="11" fill="#666666">Help turn ideas into fully formed designs and specs</text>
+    <text x="22" y="92" class="mono" font-size="11" fill="#666666">through natural collaborative dialogue.</text>
+
+    <line x1="16" y1="104" x2="840" y2="104" stroke="#e0d6ca" stroke-width="1" stroke-dasharray="4"/>
+    <text x="22" y="120" font-size="11" font-weight="600" fill="#8070a0">System reminders (4.1 KB)</text>
+    <text x="200" y="120" class="dim">available skills, checklist, session context…</text>
+  </g>
+
+  <!-- ═══════════════════════════════════════════════════════ -->
+  <!-- SECTION 4: SESSION LIST                                 -->
+  <!-- ═══════════════════════════════════════════════════════ -->
+  <text x="32" y="820" class="section-title">SESSION LIST — ICON BADGES + CHIPS</text>
+  <line x1="32" y1="826" x2="888" y2="826" stroke="#dddddd" stroke-width="1"/>
+
+  <g transform="translate(32, 838)">
+    <rect width="856" height="68" rx="10" fill="#ffffff" filter="url(#cardShadow)"/>
+    <rect x="12" y="10" width="28" height="28" rx="7" fill="#986a44" opacity="0.12"/>
+    <text x="26" y="29" text-anchor="middle" font-size="14" fill="#986a44">&#9881;</text>
+    <text x="50" y="24" font-size="14" font-weight="600" fill="#1e1e1e">Heatmap width limit exploration</text>
+    <text x="50" y="40" class="dim">sessions-chronicle · 14:32 · 24 messages</text>
+    <rect x="50" y="48" width="88" height="16" rx="8" fill="#986a44" opacity="0.12"/>
+    <text x="59" y="60" class="chip" fill="#986a44">brainstorming</text>
+    <rect x="146" y="48" width="82" height="16" rx="8" fill="#986a44" opacity="0.12"/>
+    <text x="155" y="60" class="chip" fill="#986a44">writing-plans</text>
+  </g>
+
+  <g transform="translate(32, 918)">
+    <rect width="856" height="68" rx="10" fill="#ffffff" filter="url(#cardShadow)"/>
+    <rect x="12" y="10" width="28" height="28" rx="7" fill="#986a44" opacity="0.12"/>
+    <text x="26" y="29" text-anchor="middle" font-size="14" fill="#986a44">&#9881;</text>
+    <text x="50" y="24" font-size="14" font-weight="600" fill="#1e1e1e">Fix analytics dashboard rendering bug</text>
+    <text x="50" y="40" class="dim">sessions-chronicle · 11:05 · 42 messages</text>
+    <rect x="50" y="48" width="68" height="16" rx="8" fill="#986a44" opacity="0.12"/>
+    <text x="59" y="60" class="chip" fill="#986a44">debugging</text>
+  </g>
+
+  <!-- Annotation -->
+  <text x="460" y="1010" text-anchor="middle" font-size="11" fill="#999999">Skill card = visual landmark · Gradient header · Prompt zone · Collapsible payload · Icon badges in session list</text>
+</svg>

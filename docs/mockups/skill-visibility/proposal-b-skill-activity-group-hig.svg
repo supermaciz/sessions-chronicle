@@ -1,4 +1,4 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="920" height="980" viewBox="0 0 920 980">
+<svg xmlns="http://www.w3.org/2000/svg" width="920" height="1020" viewBox="0 0 920 1020">
   <defs>
     <style>
       text { font-family: Cantarell, sans-serif; }
@@ -15,14 +15,14 @@
   </defs>
 
   <!-- Background -->
-  <rect width="920" height="980" fill="#fafafa" rx="12"/>
+  <rect width="920" height="1020" fill="#fafafa" rx="12"/>
 
   <!-- Title -->
   <text x="32" y="28" font-size="15" font-weight="600" fill="#1e1e1e" opacity="0.6">PROPOSAL B — Skill Activity Group (GNOME HIG)</text>
-  <text x="32" y="46" font-size="12" fill="#888888">Related skill events grouped into a single collapsible block with summary header</text>
+  <text x="32" y="46" font-size="12" fill="#888888">All skill events grouped into one GtkExpander block; collapsed = 1 line; expanded = event timeline</text>
 
   <!-- ═══════════════════════════════════════════════════════ -->
-  <!-- SECTION 1: TRANSCRIPT — COLLAPSED STATE                -->
+  <!-- SECTION 1: COLLAPSED (DEFAULT)                          -->
   <!-- ═══════════════════════════════════════════════════════ -->
   <text x="32" y="76" class="section-title">TRANSCRIPT — COLLAPSED (DEFAULT)</text>
   <line x1="32" y1="82" x2="888" y2="82" stroke="#dddddd" stroke-width="1"/>
@@ -35,166 +35,182 @@
   <circle cx="68" cy="117" r="7" fill="#2eb840" opacity="0.85"/>
   <text x="460" y="123" text-anchor="middle" font-size="15" font-weight="700" fill="#ffffff">Sessions Chronicle</text>
 
-  <!-- Row 1: Normal user message -->
+  <!-- Row 1: User message -->
   <g transform="translate(32, 157)">
-    <rect width="856" height="58" rx="10" fill="#ffffff" filter="url(#cardShadow)"/>
-    <rect width="3" height="58" rx="1.5" fill="#3584e4"/>
+    <rect width="856" height="52" rx="10" fill="#ffffff" filter="url(#cardShadow)"/>
+    <rect width="3" height="52" rx="1.5" fill="#3584e4"/>
     <text x="18" y="20" class="role-label" fill="#3584e4">USER</text>
-    <text x="18" y="42" class="msg-text">I want to explore the heatmap width issue</text>
+    <text x="18" y="40" class="msg-text">I want to explore the heatmap width issue</text>
   </g>
 
   <!-- Row 2: SKILL ACTIVITY GROUP — collapsed -->
-  <g transform="translate(32, 227)">
-    <!-- Group container with subtle background -->
-    <rect width="856" height="56" rx="10" fill="#faf6f1" stroke="#e8ddd0" stroke-width="1"/>
-    <rect width="4" height="56" rx="2" fill="#986a44"/>
+  <g transform="translate(32, 221)">
+    <rect width="856" height="50" rx="10" fill="#faf6f1" stroke="#e8ddd0" stroke-width="1"/>
+    <rect width="4" height="50" rx="2" fill="#986a44"/>
 
-    <!-- Collapse chevron -->
-    <text x="16" y="35" font-size="14" fill="#986a44">&#9654;</text>
+    <!-- Chevron -->
+    <text x="16" y="32" font-size="13" fill="#986a44">&#9654;</text>
 
-    <!-- Skill icon -->
-    <rect x="36" y="14" width="28" height="28" rx="7" fill="#986a44" opacity="0.15"/>
-    <text x="50" y="33" text-anchor="middle" font-size="14" fill="#986a44">&#9881;</text>
+    <!-- Icon -->
+    <rect x="34" y="12" width="26" height="26" rx="7" fill="#986a44" opacity="0.15"/>
+    <text x="47" y="30" text-anchor="middle" font-size="13" fill="#986a44">&#9881;</text>
 
-    <!-- Skill name and source -->
-    <text x="74" y="26" font-size="14" font-weight="700" fill="#1e1e1e">brainstorming</text>
-    <text x="180" y="26" font-size="12" fill="#888888">superpowers-extended-cc</text>
+    <!-- Name + source -->
+    <text x="68" y="24" font-size="13" font-weight="700" fill="#1e1e1e">/brainstorming</text>
+    <rect x="172" y="12" width="78" height="18" rx="9" fill="#986a44" opacity="0.10"/>
+    <text x="181" y="25" class="chip" fill="#986a44">superpowers</text>
 
-    <!-- Args preview -->
-    <text x="74" y="44" font-size="12" fill="#888888">heatmap width limit exploration…</text>
+    <!-- Args -->
+    <text x="262" y="24" font-size="12" fill="#888888">heatmap width limit exploration</text>
 
-    <!-- Right side: event count + time -->
-    <text x="726" y="26" class="dim">3 events</text>
-    <text x="726" y="44" class="dim">14:32:05</text>
-
-    <!-- Expand hint icon -->
-    <rect x="806" y="16" width="36" height="24" rx="6" fill="#986a44" opacity="0.08"/>
-    <text x="814" y="33" font-size="12" fill="#986a44">&#8942;</text>
+    <!-- Right: event count + time -->
+    <text x="710" y="20" class="dim">3 events · 6.5 KB</text>
+    <text x="710" y="38" class="dim">14:32:05</text>
   </g>
 
-  <!-- Row 3: Assistant response -->
-  <g transform="translate(32, 295)">
-    <rect width="856" height="72" rx="10" fill="#ffffff" filter="url(#cardShadow)"/>
-    <rect width="3" height="72" rx="1.5" fill="#26a269"/>
+  <!-- Row 3: Assistant -->
+  <g transform="translate(32, 283)">
+    <rect width="856" height="58" rx="10" fill="#ffffff" filter="url(#cardShadow)"/>
+    <rect width="3" height="58" rx="1.5" fill="#26a269"/>
     <text x="18" y="20" class="role-label" fill="#26a269">ASSISTANT</text>
-    <text x="18" y="46" class="msg-text">I'll use the brainstorming skill to explore the heatmap width limit…</text>
+    <text x="18" y="42" class="msg-text">I'll use the brainstorming skill to explore the heatmap width limit…</text>
   </g>
 
   <!-- ═══════════════════════════════════════════════════════ -->
-  <!-- SECTION 2: TRANSCRIPT — EXPANDED STATE                 -->
+  <!-- SECTION 2: EXPANDED                                     -->
   <!-- ═══════════════════════════════════════════════════════ -->
-  <text x="32" y="402" class="section-title">TRANSCRIPT — EXPANDED</text>
-  <line x1="32" y1="408" x2="888" y2="408" stroke="#dddddd" stroke-width="1"/>
+  <text x="32" y="376" class="section-title">TRANSCRIPT — EXPANDED</text>
+  <line x1="32" y1="382" x2="888" y2="382" stroke="#dddddd" stroke-width="1"/>
 
-  <!-- Skill Activity Group — expanded -->
-  <g transform="translate(32, 420)">
-    <!-- Expanded group container -->
-    <rect width="856" height="244" rx="10" fill="#faf6f1" stroke="#e8ddd0" stroke-width="1"/>
-    <rect width="4" height="244" rx="2" fill="#986a44"/>
+  <g transform="translate(32, 394)">
+    <rect width="856" height="230" rx="10" fill="#faf6f1" stroke="#e8ddd0" stroke-width="1"/>
+    <rect width="4" height="230" rx="2" fill="#986a44"/>
 
-    <!-- Expanded chevron -->
-    <text x="16" y="35" font-size="14" fill="#986a44">&#9660;</text>
-
-    <!-- Skill icon + name -->
-    <rect x="36" y="14" width="28" height="28" rx="7" fill="#986a44" opacity="0.15"/>
-    <text x="50" y="33" text-anchor="middle" font-size="14" fill="#986a44">&#9881;</text>
-    <text x="74" y="26" font-size="14" font-weight="700" fill="#1e1e1e">brainstorming</text>
-    <text x="180" y="26" font-size="12" fill="#888888">superpowers-extended-cc</text>
-    <text x="74" y="44" font-size="12" fill="#888888">heatmap width limit exploration…</text>
+    <!-- Header -->
+    <text x="16" y="32" font-size="13" fill="#986a44">&#9660;</text>
+    <rect x="34" y="12" width="26" height="26" rx="7" fill="#986a44" opacity="0.15"/>
+    <text x="47" y="30" text-anchor="middle" font-size="13" fill="#986a44">&#9881;</text>
+    <text x="68" y="24" font-size="13" font-weight="700" fill="#1e1e1e">/brainstorming</text>
+    <rect x="172" y="12" width="78" height="18" rx="9" fill="#986a44" opacity="0.10"/>
+    <text x="181" y="25" class="chip" fill="#986a44">superpowers</text>
+    <text x="262" y="24" font-size="12" fill="#888888">heatmap width limit exploration</text>
 
     <!-- Separator -->
-    <line x1="20" y1="58" x2="836" y2="58" stroke="#e0d6ca" stroke-width="1"/>
+    <line x1="16" y1="48" x2="840" y2="48" stroke="#e0d6ca" stroke-width="1"/>
 
-    <!-- Event 1: Command invocation -->
-    <g transform="translate(20, 68)">
+    <!-- Event 1: Command parsed -->
+    <g transform="translate(16, 58)">
       <circle cx="8" cy="10" r="4" fill="#986a44" opacity="0.5"/>
       <text x="22" y="14" font-size="12" font-weight="600" fill="#986a44">/brainstorming</text>
-      <text x="138" y="14" font-size="12" fill="#888888">heatmap width limit exploration…</text>
-      <text x="748" y="14" class="dim">14:32:05</text>
+      <text x="138" y="14" font-size="12" fill="#888888">heatmap width limit exploration</text>
+      <text x="756" y="14" class="dim">14:32:05</text>
     </g>
 
     <!-- Event 2: Skill content loaded -->
-    <g transform="translate(20, 96)">
+    <g transform="translate(16, 86)">
       <circle cx="8" cy="10" r="4" fill="#e5a50a" opacity="0.5"/>
       <text x="22" y="14" font-size="12" fill="#636363">Skill content loaded</text>
-      <text x="148" y="14" class="dim">(2.4 KB)</text>
-      <!-- Show full button -->
-      <rect x="206" y="0" width="72" height="20" rx="6" fill="#ffffff" stroke="#dddddd" stroke-width="1"/>
-      <text x="218" y="14" font-size="11" fill="#986a44">Show full</text>
-      <rect x="282" y="0" width="50" height="20" rx="6" fill="#ffffff" stroke="#dddddd" stroke-width="1"/>
-      <text x="292" y="14" font-size="11" fill="#986a44">Copy</text>
-      <text x="748" y="14" class="dim">14:32:05</text>
+      <text x="150" y="14" class="dim">(2.4 KB)</text>
+      <rect x="206" y="0" width="66" height="20" rx="6" fill="#ffffff" stroke="#dddddd" stroke-width="1"/>
+      <text x="216" y="14" font-size="11" fill="#986a44">Show full</text>
+      <rect x="278" y="0" width="46" height="20" rx="6" fill="#ffffff" stroke="#dddddd" stroke-width="1"/>
+      <text x="288" y="14" font-size="11" fill="#986a44">Copy</text>
+      <text x="756" y="14" class="dim">14:32:05</text>
     </g>
 
-    <!-- Event 3: System reminder -->
-    <g transform="translate(20, 124)">
+    <!-- Event 3: System reminders -->
+    <g transform="translate(16, 114)">
       <circle cx="8" cy="10" r="4" fill="#8070a0" opacity="0.5"/>
       <text x="22" y="14" font-size="12" fill="#636363">System reminder</text>
-      <text x="126" y="14" class="dim">skill checklist + available skills (4.1 KB)</text>
-      <rect x="376" y="0" width="72" height="20" rx="6" fill="#ffffff" stroke="#dddddd" stroke-width="1"/>
-      <text x="388" y="14" font-size="11" fill="#8070a0">Show full</text>
-      <text x="748" y="14" class="dim">14:32:05</text>
+      <text x="126" y="14" class="dim">available skills + checklist (4.1 KB)</text>
+      <rect x="350" y="0" width="66" height="20" rx="6" fill="#ffffff" stroke="#dddddd" stroke-width="1"/>
+      <text x="360" y="14" font-size="11" fill="#8070a0">Show full</text>
+      <text x="756" y="14" class="dim">14:32:05</text>
     </g>
 
     <!-- Event 4: Skill tool call -->
-    <g transform="translate(20, 152)">
+    <g transform="translate(16, 142)">
       <circle cx="8" cy="10" r="4" fill="#26a269" opacity="0.5"/>
       <text x="22" y="14" font-size="12" fill="#636363">Skill tool call</text>
       <text x="116" y="14" class="dim">&#8594; brainstorming loaded in 42ms</text>
-      <rect x="346" y="0" width="52" height="20" rx="6" fill="#26a269" opacity="0.12"/>
-      <text x="356" y="14" class="chip" fill="#26a269">loaded</text>
-      <text x="748" y="14" class="dim">14:32:06</text>
+      <rect x="340" y="0" width="52" height="18" rx="9" fill="#26a269" opacity="0.12"/>
+      <text x="350" y="13" class="chip" fill="#26a269">loaded</text>
+      <text x="756" y="14" class="dim">14:32:06</text>
     </g>
 
     <!-- Separator -->
-    <line x1="20" y1="178" x2="836" y2="178" stroke="#e0d6ca" stroke-width="1"/>
+    <line x1="16" y1="170" x2="840" y2="170" stroke="#e0d6ca" stroke-width="1"/>
 
-    <!-- OpenCode variant note -->
-    <g transform="translate(20, 190)">
-      <rect width="816" height="42" rx="6" fill="#ffffff" opacity="0.5"/>
-      <text x="12" y="16" font-size="11" font-weight="600" fill="#888888">OPENCODE VARIANT</text>
-      <text x="12" y="34" font-size="11" fill="#888888">Same grouping — skill content detected via heading pattern (# Skill Name) in first user message</text>
+    <!-- Cross-assistant note -->
+    <g transform="translate(16, 182)">
+      <rect width="824" height="38" rx="6" fill="#ffffff" opacity="0.5"/>
+      <text x="12" y="14" font-size="11" font-weight="600" fill="#888888">CROSS-ASSISTANT</text>
+      <text x="12" y="30" font-size="11" fill="#888888">Same group layout for OpenCode (tool=="skill" part), Codex ($skill + &lt;skill&gt; payload), Mistral Vibe (SKILL.md injection / read_file)</text>
     </g>
   </g>
 
   <!-- ═══════════════════════════════════════════════════════ -->
-  <!-- SECTION 3: SESSION LIST WITH SKILL CHIPS               -->
+  <!-- SECTION 3: OTHER ASSISTANTS — COLLAPSED EXAMPLES        -->
   <!-- ═══════════════════════════════════════════════════════ -->
-  <text x="32" y="700" class="section-title">SESSION LIST — SKILL CHIPS</text>
-  <line x1="32" y1="706" x2="888" y2="706" stroke="#dddddd" stroke-width="1"/>
+  <text x="32" y="660" class="section-title">OTHER ASSISTANTS — COLLAPSED</text>
+  <line x1="32" y1="666" x2="888" y2="666" stroke="#dddddd" stroke-width="1"/>
 
-  <!-- Session row 1 -->
-  <g transform="translate(32, 718)">
-    <rect width="856" height="68" rx="10" fill="#ffffff" filter="url(#cardShadow)"/>
-    <text x="16" y="24" font-size="14" font-weight="600" fill="#1e1e1e">Heatmap width limit exploration</text>
-    <text x="16" y="42" class="dim">sessions-chronicle · 14:32 · 24 messages</text>
-    <!-- Skill chips -->
-    <rect x="16" y="48" width="88" height="16" rx="8" fill="#986a44" opacity="0.12"/>
-    <text x="25" y="60" class="chip" fill="#986a44">brainstorming</text>
-    <rect x="112" y="48" width="82" height="16" rx="8" fill="#986a44" opacity="0.12"/>
-    <text x="121" y="60" class="chip" fill="#986a44">writing-plans</text>
+  <!-- Codex collapsed -->
+  <g transform="translate(32, 678)">
+    <rect width="420" height="44" rx="10" fill="#faf6f1" stroke="#e8ddd0" stroke-width="1"/>
+    <rect width="4" height="44" rx="2" fill="#986a44"/>
+    <text x="14" y="28" font-size="12" fill="#986a44">&#9654;</text>
+    <rect x="32" y="10" width="24" height="24" rx="6" fill="#986a44" opacity="0.15"/>
+    <text x="44" y="27" text-anchor="middle" font-size="12" fill="#986a44">&#9881;</text>
+    <text x="64" y="22" font-size="12" font-weight="700" fill="#1e1e1e">$logseq</text>
+    <text x="120" y="22" font-size="11" fill="#888888">Codex</text>
+    <text x="64" y="38" font-size="11" fill="#888888">un fichier markdown</text>
+    <text x="340" y="28" class="dim">2 events</text>
   </g>
 
-  <!-- Session row 2 -->
-  <g transform="translate(32, 798)">
-    <rect width="856" height="68" rx="10" fill="#ffffff" filter="url(#cardShadow)"/>
-    <text x="16" y="24" font-size="14" font-weight="600" fill="#1e1e1e">Fix analytics dashboard rendering bug</text>
-    <text x="16" y="42" class="dim">sessions-chronicle · 11:05 · 42 messages</text>
-    <rect x="16" y="48" width="68" height="16" rx="8" fill="#986a44" opacity="0.12"/>
-    <text x="25" y="60" class="chip" fill="#986a44">debugging</text>
-    <rect x="92" y="48" width="30" height="16" rx="8" fill="#986a44" opacity="0.12"/>
-    <text x="101" y="60" class="chip" fill="#986a44">TDD</text>
+  <!-- Mistral Vibe collapsed -->
+  <g transform="translate(468, 678)">
+    <rect width="420" height="44" rx="10" fill="#faf6f1" stroke="#e8ddd0" stroke-width="1"/>
+    <rect width="4" height="44" rx="2" fill="#986a44"/>
+    <text x="14" y="28" font-size="12" fill="#986a44">&#9654;</text>
+    <rect x="32" y="10" width="24" height="24" rx="6" fill="#986a44" opacity="0.15"/>
+    <text x="44" y="27" text-anchor="middle" font-size="12" fill="#986a44">&#9881;</text>
+    <text x="64" y="22" font-size="12" font-weight="700" fill="#1e1e1e">/learn-rust</text>
+    <text x="136" y="22" font-size="11" fill="#888888">Mistral Vibe</text>
+    <text x="64" y="38" font-size="11" fill="#888888">path B (en français)</text>
+    <text x="340" y="28" class="dim">3 events</text>
   </g>
 
-  <!-- Session row 3: OpenCode session with skill -->
-  <g transform="translate(32, 878)">
-    <rect width="856" height="68" rx="10" fill="#ffffff" filter="url(#cardShadow)"/>
-    <text x="16" y="24" font-size="14" font-weight="600" fill="#1e1e1e">Executing plans: heatmap width limit</text>
-    <text x="16" y="42" class="dim">sessions-chronicle · OpenCode · 10:22 · 18 messages</text>
-    <rect x="16" y="48" width="96" height="16" rx="8" fill="#986a44" opacity="0.12"/>
-    <text x="25" y="60" class="chip" fill="#986a44">executing-plans</text>
+  <!-- ═══════════════════════════════════════════════════════ -->
+  <!-- SECTION 4: SESSION LIST                                 -->
+  <!-- ═══════════════════════════════════════════════════════ -->
+  <text x="32" y="758" class="section-title">SESSION LIST — SKILL CHIPS</text>
+  <line x1="32" y1="764" x2="888" y2="764" stroke="#dddddd" stroke-width="1"/>
+
+  <g transform="translate(32, 776)">
+    <rect width="856" height="62" rx="10" fill="#ffffff" filter="url(#cardShadow)"/>
+    <text x="16" y="22" font-size="14" font-weight="600" fill="#1e1e1e">Heatmap width limit exploration</text>
+    <text x="16" y="38" class="dim">sessions-chronicle · Claude Code · 14:32 · 24 messages</text>
+    <rect x="16" y="44" width="88" height="16" rx="8" fill="#986a44" opacity="0.12"/>
+    <text x="25" y="56" class="chip" fill="#986a44">brainstorming</text>
+    <rect x="112" y="44" width="82" height="16" rx="8" fill="#986a44" opacity="0.12"/>
+    <text x="121" y="56" class="chip" fill="#986a44">writing-plans</text>
+  </g>
+
+  <g transform="translate(32, 850)">
+    <rect width="856" height="62" rx="10" fill="#ffffff" filter="url(#cardShadow)"/>
+    <text x="16" y="22" font-size="14" font-weight="600" fill="#1e1e1e">Executing plans: heatmap width</text>
+    <text x="16" y="38" class="dim">sessions-chronicle · OpenCode · 10:22 · 18 messages</text>
+    <rect x="16" y="44" width="96" height="16" rx="8" fill="#986a44" opacity="0.12"/>
+    <text x="25" y="56" class="chip" fill="#986a44">executing-plans</text>
+  </g>
+
+  <g transform="translate(32, 924)">
+    <rect width="856" height="46" rx="10" fill="#ffffff" filter="url(#cardShadow)"/>
+    <text x="16" y="22" font-size="14" font-weight="600" fill="#1e1e1e">Help me refactor this code</text>
+    <text x="16" y="38" class="dim">my-project · 09:20 · 8 messages</text>
   </g>
 
   <!-- Annotation -->
-  <text x="460" y="968" text-anchor="middle" font-size="11" fill="#999999">All skill events grouped into one collapsible block · Collapsed by default · Expand to see timeline</text>
+  <text x="460" y="1012" text-anchor="middle" font-size="11" fill="#999999">All skill events → one GtkExpander block · 1 line collapsed · Event timeline on expand · Works for all 4 assistants</text>
 </svg>

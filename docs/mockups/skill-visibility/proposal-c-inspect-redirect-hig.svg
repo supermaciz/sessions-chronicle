@@ -1,0 +1,146 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="920" height="920" viewBox="0 0 920 920">
+  <defs>
+    <style>
+      text { font-family: Cantarell, sans-serif; }
+      .mono { font-family: Source Code Pro, monospace; }
+      .msg-text { font-size: 13px; fill: #1e1e1e; }
+      .role-label { font-size: 11px; fill: #636363; font-weight: 700; letter-spacing: 0.5px; }
+      .chip { font-size: 10px; font-weight: 600; letter-spacing: 0.3px; }
+      .section-title { font-size: 13px; font-weight: 700; fill: #555555; letter-spacing: 1px; }
+      .dim { font-size: 11px; fill: #999999; }
+    </style>
+    <filter id="cardShadow" x="-2%" y="-2%" width="104%" height="108%">
+      <feDropShadow dx="0" dy="1" stdDeviation="1.5" flood-color="#000000" flood-opacity="0.08"/>
+    </filter>
+  </defs>
+
+  <!-- Background -->
+  <rect width="920" height="920" fill="#fafafa" rx="12"/>
+
+  <!-- Title -->
+  <text x="32" y="28" font-size="15" font-weight="600" fill="#1e1e1e" opacity="0.6">PROPOSAL C — Inspect Redirect (GNOME HIG)</text>
+  <text x="32" y="46" font-size="12" fill="#888888">Skill content hidden from transcript; compact indicator row opens content in Tool Inspector pane</text>
+
+  <!-- ═══════════════════════════════════════════════════════ -->
+  <!-- SECTION 1: TRANSCRIPT — CLEAN VIEW                      -->
+  <!-- ═══════════════════════════════════════════════════════ -->
+  <text x="32" y="76" class="section-title">TRANSCRIPT — CLEAN (DEFAULT)</text>
+  <line x1="32" y1="82" x2="888" y2="82" stroke="#dddddd" stroke-width="1"/>
+
+  <!-- Headerbar -->
+  <rect y="94" width="920" height="47" fill="#303030" rx="12"/>
+  <rect y="106" width="920" height="35" fill="#303030"/>
+  <circle cx="24" cy="117" r="7" fill="#e04040" opacity="0.85"/>
+  <circle cx="46" cy="117" r="7" fill="#e8a828" opacity="0.85"/>
+  <circle cx="68" cy="117" r="7" fill="#2eb840" opacity="0.85"/>
+  <text x="460" y="123" text-anchor="middle" font-size="15" font-weight="700" fill="#ffffff">Sessions Chronicle</text>
+
+  <!-- Row 1: User message -->
+  <g transform="translate(32, 157)">
+    <rect width="856" height="52" rx="10" fill="#ffffff" filter="url(#cardShadow)"/>
+    <rect width="3" height="52" rx="1.5" fill="#3584e4"/>
+    <text x="18" y="20" class="role-label" fill="#3584e4">USER</text>
+    <text x="18" y="40" class="msg-text">I want to explore the heatmap width issue</text>
+  </g>
+
+  <!-- Row 2: Skill indicator — compact, clickable -->
+  <g transform="translate(32, 221)">
+    <rect width="856" height="36" rx="8" fill="#faf6f1" stroke="#e8ddd0" stroke-width="1"/>
+    <rect width="3" height="36" rx="1.5" fill="#986a44"/>
+
+    <!-- Icon -->
+    <rect x="12" y="6" width="24" height="24" rx="6" fill="#986a44" opacity="0.15"/>
+    <text x="24" y="23" text-anchor="middle" font-size="12" fill="#986a44">&#9881;</text>
+
+    <!-- Label -->
+    <text x="44" y="23" font-size="12" font-weight="600" fill="#986a44">/brainstorming</text>
+    <text x="148" y="23" font-size="12" fill="#888888">superpowers · 2.4 KB + 4.1 KB reminders</text>
+
+    <!-- Inspect button on right -->
+    <rect x="772" y="6" width="72" height="24" rx="6" fill="#986a44" opacity="0.10"/>
+    <text x="786" y="22" font-size="11" font-weight="600" fill="#986a44">Inspect &#8594;</text>
+  </g>
+
+  <!-- Row 3: Assistant response (NO visible skill noise between user and assistant) -->
+  <g transform="translate(32, 269)">
+    <rect width="856" height="58" rx="10" fill="#ffffff" filter="url(#cardShadow)"/>
+    <rect width="3" height="58" rx="1.5" fill="#26a269"/>
+    <text x="18" y="20" class="role-label" fill="#26a269">ASSISTANT</text>
+    <text x="18" y="42" class="msg-text">I'll use the brainstorming skill to explore the heatmap width limit…</text>
+  </g>
+
+  <!-- Row 4: More conversation continues cleanly -->
+  <g transform="translate(32, 339)">
+    <rect width="856" height="52" rx="10" fill="#ffffff" filter="url(#cardShadow)"/>
+    <rect width="3" height="52" rx="1.5" fill="#3584e4"/>
+    <text x="18" y="20" class="role-label" fill="#3584e4">USER</text>
+    <text x="18" y="40" class="msg-text">What about proposal A from the exploration doc?</text>
+  </g>
+
+  <!-- ═══════════════════════════════════════════════════════ -->
+  <!-- SECTION 2: INSPECTOR PANE (opened via Inspect button)   -->
+  <!-- ═══════════════════════════════════════════════════════ -->
+  <text x="32" y="426" class="section-title">TOOL INSPECTOR PANE — SKILL CONTENT</text>
+  <line x1="32" y1="432" x2="888" y2="432" stroke="#dddddd" stroke-width="1"/>
+
+  <!-- Inspector pane mockup -->
+  <g transform="translate(32, 444)">
+    <rect width="856" height="280" rx="10" fill="#ffffff" stroke="#dddddd" stroke-width="1"/>
+
+    <!-- Inspector header -->
+    <rect width="856" height="40" rx="10" fill="#f5f5f5"/>
+    <rect y="30" width="856" height="10" fill="#f5f5f5"/>
+    <text x="16" y="26" font-size="13" font-weight="700" fill="#1e1e1e">Skill: brainstorming</text>
+    <text x="172" y="26" font-size="12" fill="#888888">superpowers-extended-cc</text>
+
+    <!-- Tab-like sections -->
+    <rect x="16" y="52" width="96" height="24" rx="6" fill="#986a44" opacity="0.12"/>
+    <text x="32" y="68" font-size="11" font-weight="600" fill="#986a44">Skill Content</text>
+    <rect x="120" y="52" width="120" height="24" rx="6" fill="transparent"/>
+    <text x="136" y="68" font-size="11" fill="#888888">System Reminders</text>
+    <rect x="248" y="52" width="72" height="24" rx="6" fill="transparent"/>
+    <text x="264" y="68" font-size="11" fill="#888888">Tool Call</text>
+
+    <!-- Content area -->
+    <g transform="translate(16, 88)">
+      <text x="0" y="14" class="mono" font-size="12" fill="#555555">---</text>
+      <text x="0" y="30" class="mono" font-size="12" fill="#555555">name: brainstorming</text>
+      <text x="0" y="46" class="mono" font-size="12" fill="#555555">description: Use before any creative work</text>
+      <text x="0" y="62" class="mono" font-size="12" fill="#555555">---</text>
+      <text x="0" y="86" class="mono" font-size="12" fill="#333333"># Brainstorming Ideas Into Designs</text>
+      <text x="0" y="106" class="mono" font-size="12" fill="#555555">## Overview</text>
+      <text x="0" y="126" class="mono" font-size="12" fill="#555555">Help turn ideas into fully formed designs and specs</text>
+      <text x="0" y="146" class="mono" font-size="12" fill="#555555">through natural collaborative dialogue.</text>
+      <text x="0" y="170" class="dim">[ 48 more lines — scroll to view ]</text>
+    </g>
+
+    <!-- Copy button -->
+    <rect x="776" y="52" width="64" height="24" rx="6" fill="#f5f5f5" stroke="#dddddd" stroke-width="1"/>
+    <text x="792" y="68" font-size="11" fill="#636363">Copy</text>
+  </g>
+
+  <!-- ═══════════════════════════════════════════════════════ -->
+  <!-- SECTION 3: SESSION LIST                                 -->
+  <!-- ═══════════════════════════════════════════════════════ -->
+  <text x="32" y="760" class="section-title">SESSION LIST — SKILL CHIPS</text>
+  <line x1="32" y1="766" x2="888" y2="766" stroke="#dddddd" stroke-width="1"/>
+
+  <g transform="translate(32, 778)">
+    <rect width="856" height="62" rx="10" fill="#ffffff" filter="url(#cardShadow)"/>
+    <text x="16" y="22" font-size="14" font-weight="600" fill="#1e1e1e">Heatmap width limit exploration</text>
+    <text x="16" y="38" class="dim">sessions-chronicle · 14:32 · 24 messages</text>
+    <rect x="16" y="44" width="88" height="16" rx="8" fill="#986a44" opacity="0.12"/>
+    <text x="25" y="56" class="chip" fill="#986a44">brainstorming</text>
+    <rect x="112" y="44" width="82" height="16" rx="8" fill="#986a44" opacity="0.12"/>
+    <text x="121" y="56" class="chip" fill="#986a44">writing-plans</text>
+  </g>
+
+  <g transform="translate(32, 852)">
+    <rect width="856" height="46" rx="10" fill="#ffffff" filter="url(#cardShadow)"/>
+    <text x="16" y="22" font-size="14" font-weight="600" fill="#1e1e1e">Help me refactor this code</text>
+    <text x="16" y="38" class="dim">my-project · 09:20 · 8 messages</text>
+  </g>
+
+  <!-- Annotation -->
+  <text x="460" y="916" text-anchor="middle" font-size="11" fill="#999999">Skill content never inline · 1-line indicator row · Full content in Inspector pane with tabs · Zero noise in transcript</text>
+</svg>

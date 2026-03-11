@@ -1,0 +1,199 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="920" height="1020" viewBox="0 0 920 1020">
+  <defs>
+    <style>
+      text { font-family: Cantarell, sans-serif; }
+      .mono { font-family: Source Code Pro, monospace; }
+      .msg-text { font-size: 13px; fill: #1e1e1e; }
+      .role-label { font-size: 11px; fill: #636363; font-weight: 700; letter-spacing: 0.5px; }
+      .cmd-label { font-size: 13px; fill: #1e1e1e; font-weight: 700; }
+      .cmd-detail { font-size: 12px; fill: #636363; }
+      .chip { font-size: 10px; font-weight: 600; letter-spacing: 0.3px; }
+      .section-title { font-size: 13px; font-weight: 700; fill: #555555; letter-spacing: 1px; }
+      .dim { font-size: 11px; fill: #999999; }
+    </style>
+    <filter id="cardShadow" x="-2%" y="-2%" width="104%" height="108%">
+      <feDropShadow dx="0" dy="1" stdDeviation="1.5" flood-color="#000000" flood-opacity="0.08"/>
+    </filter>
+  </defs>
+
+  <!-- Background -->
+  <rect width="920" height="1020" fill="#fafafa" rx="12"/>
+
+  <!-- Title -->
+  <text x="32" y="28" font-size="15" font-weight="600" fill="#1e1e1e" opacity="0.6">PROPOSAL A — Folded Rows (GNOME HIG)</text>
+  <text x="32" y="46" font-size="12" fill="#888888">Each skill artifact is a distinct compact row; content folded by default; no grouping</text>
+
+  <!-- ═══════════════════════════════════════════════════════ -->
+  <!-- SECTION 1: TRANSCRIPT — CLAUDE CODE                     -->
+  <!-- ═══════════════════════════════════════════════════════ -->
+  <text x="32" y="76" class="section-title">TRANSCRIPT — CLAUDE CODE</text>
+  <line x1="32" y1="82" x2="888" y2="82" stroke="#dddddd" stroke-width="1"/>
+
+  <!-- Headerbar -->
+  <rect y="94" width="920" height="47" fill="#303030" rx="12"/>
+  <rect y="106" width="920" height="35" fill="#303030"/>
+  <circle cx="24" cy="117" r="7" fill="#e04040" opacity="0.85"/>
+  <circle cx="46" cy="117" r="7" fill="#e8a828" opacity="0.85"/>
+  <circle cx="68" cy="117" r="7" fill="#2eb840" opacity="0.85"/>
+  <text x="460" y="123" text-anchor="middle" font-size="15" font-weight="700" fill="#ffffff">Sessions Chronicle</text>
+  <text x="108" y="123" font-size="14" fill="#aaaaaa">&#9664;  Session Detail</text>
+
+  <!-- Row 1: Normal user message -->
+  <g transform="translate(32, 157)">
+    <rect width="856" height="52" rx="10" fill="#ffffff" filter="url(#cardShadow)"/>
+    <rect width="3" height="52" rx="1.5" fill="#3584e4"/>
+    <text x="18" y="20" class="role-label" fill="#3584e4">USER</text>
+    <text x="18" y="40" class="msg-text">I want to explore the heatmap width issue</text>
+  </g>
+
+  <!-- Row 2: Skill command row (cleaned from XML tags) -->
+  <g transform="translate(32, 221)">
+    <rect width="856" height="44" rx="10" fill="#ffffff" filter="url(#cardShadow)"/>
+    <rect width="3" height="44" rx="1.5" fill="#986a44"/>
+    <!-- Skill icon -->
+    <rect x="14" y="10" width="24" height="24" rx="6" fill="#986a44" opacity="0.12"/>
+    <text x="26" y="27" text-anchor="middle" font-size="12" fill="#986a44">&#9881;</text>
+    <!-- Skill name -->
+    <text x="48" y="28" class="cmd-label">/brainstorming</text>
+    <!-- Source badge -->
+    <rect x="155" y="15" width="78" height="18" rx="9" fill="#986a44" opacity="0.10"/>
+    <text x="164" y="28" class="chip" fill="#986a44">superpowers</text>
+    <!-- Args snippet -->
+    <text x="246" y="28" class="cmd-detail">heatmap width limit exploration</text>
+  </g>
+
+  <!-- Row 3: Folded skill content -->
+  <g transform="translate(32, 277)">
+    <rect width="856" height="32" rx="8" fill="#f4f0ec" opacity="0.7"/>
+    <rect width="2" height="32" rx="1" fill="#c8b8a4"/>
+    <text x="14" y="21" font-size="11" fill="#986a44">&#9654;</text>
+    <text x="30" y="21" class="dim" fill="#8a7560">Skill content: brainstorming (2.4 KB)</text>
+  </g>
+
+  <!-- Row 4: Folded system reminder -->
+  <g transform="translate(32, 317)">
+    <rect width="856" height="32" rx="8" fill="#f0eff4" opacity="0.7"/>
+    <rect width="2" height="32" rx="1" fill="#b0a8c0"/>
+    <text x="14" y="21" font-size="11" fill="#8070a0">&#9654;</text>
+    <text x="30" y="21" class="dim" fill="#8070a0">System reminder: available skills + checklist (4.1 KB)</text>
+  </g>
+
+  <!-- Row 5: Enhanced Skill tool call -->
+  <g transform="translate(32, 357)">
+    <rect width="856" height="40" rx="8" fill="#ffffff" filter="url(#cardShadow)"/>
+    <rect width="3" height="40" rx="1.5" fill="#e5a50a"/>
+    <rect x="12" y="8" width="24" height="24" rx="5" fill="#e5a50a" opacity="0.12"/>
+    <text x="24" y="25" text-anchor="middle" font-size="11" fill="#e5a50a">&#9881;</text>
+    <text x="44" y="25" class="mono" font-size="12" fill="#1e1e1e">Skill</text>
+    <text x="76" y="25" font-size="12" fill="#636363">&#8594;</text>
+    <text x="94" y="25" font-size="12" font-weight="600" fill="#986a44">brainstorming</text>
+    <rect x="756" y="11" width="50" height="18" rx="9" fill="#26a269" opacity="0.12"/>
+    <text x="765" y="24" class="chip" fill="#26a269">loaded</text>
+    <text x="818" y="24" class="dim">42ms</text>
+  </g>
+
+  <!-- Row 6: Assistant response -->
+  <g transform="translate(32, 409)">
+    <rect width="856" height="58" rx="10" fill="#ffffff" filter="url(#cardShadow)"/>
+    <rect width="3" height="58" rx="1.5" fill="#26a269"/>
+    <text x="18" y="20" class="role-label" fill="#26a269">ASSISTANT</text>
+    <text x="18" y="42" class="msg-text">I'll use the brainstorming skill to explore the heatmap width limit…</text>
+  </g>
+
+  <!-- ═══════════════════════════════════════════════════════ -->
+  <!-- SECTION 2: CODEX / MISTRAL VIBE VARIANTS               -->
+  <!-- ═══════════════════════════════════════════════════════ -->
+  <text x="32" y="500" class="section-title">CODEX VARIANT</text>
+  <line x1="32" y1="506" x2="440" y2="506" stroke="#dddddd" stroke-width="1"/>
+
+  <!-- Codex: command row -->
+  <g transform="translate(32, 518)">
+    <rect width="400" height="40" rx="8" fill="#ffffff" filter="url(#cardShadow)"/>
+    <rect width="3" height="40" rx="1.5" fill="#986a44"/>
+    <rect x="12" y="8" width="24" height="24" rx="6" fill="#986a44" opacity="0.12"/>
+    <text x="24" y="25" text-anchor="middle" font-size="12" fill="#986a44">&#9881;</text>
+    <text x="44" y="25" class="cmd-label">$logseq</text>
+    <text x="102" y="25" class="cmd-detail">un fichier markdown</text>
+  </g>
+
+  <!-- Codex: folded skill payload -->
+  <g transform="translate(32, 566)">
+    <rect width="400" height="32" rx="8" fill="#f4f0ec" opacity="0.7"/>
+    <rect width="2" height="32" rx="1" fill="#c8b8a4"/>
+    <text x="14" y="21" font-size="11" fill="#986a44">&#9654;</text>
+    <text x="30" y="21" class="dim" fill="#8a7560">Skill content: logseq (1.8 KB)</text>
+  </g>
+
+  <text x="480" y="500" class="section-title">MISTRAL VIBE VARIANT</text>
+  <line x1="480" y1="506" x2="888" y2="506" stroke="#dddddd" stroke-width="1"/>
+
+  <!-- Vibe: folded skill content (was the entire user message) -->
+  <g transform="translate(480, 518)">
+    <rect width="408" height="40" rx="8" fill="#ffffff" filter="url(#cardShadow)"/>
+    <rect width="3" height="40" rx="1.5" fill="#986a44"/>
+    <rect x="12" y="8" width="24" height="24" rx="6" fill="#986a44" opacity="0.12"/>
+    <text x="24" y="25" text-anchor="middle" font-size="12" fill="#986a44">&#9881;</text>
+    <text x="44" y="25" class="cmd-label">/learn-rust</text>
+    <text x="126" y="25" class="cmd-detail">path B (en français)</text>
+  </g>
+
+  <!-- Vibe: read_file tool call shown as skill load -->
+  <g transform="translate(480, 566)">
+    <rect width="408" height="32" rx="8" fill="#f4f0ec" opacity="0.7"/>
+    <rect width="2" height="32" rx="1" fill="#c8b8a4"/>
+    <text x="14" y="21" font-size="11" fill="#986a44">&#9654;</text>
+    <text x="30" y="21" class="dim" fill="#8a7560">Skill content: learn-rust/SKILL.md (3.1 KB)</text>
+  </g>
+
+  <!-- ═══════════════════════════════════════════════════════ -->
+  <!-- SECTION 3: EXPANDED CONTENT EXAMPLE                     -->
+  <!-- ═══════════════════════════════════════════════════════ -->
+  <text x="32" y="632" class="section-title">EXPANDED SKILL CONTENT ROW</text>
+  <line x1="32" y1="638" x2="888" y2="638" stroke="#dddddd" stroke-width="1"/>
+
+  <g transform="translate(32, 650)">
+    <rect width="856" height="110" rx="8" fill="#f4f0ec" opacity="0.9"/>
+    <rect width="2" height="110" rx="1" fill="#c8b8a4"/>
+    <text x="14" y="21" font-size="11" fill="#986a44">&#9660;</text>
+    <text x="30" y="21" class="dim" fill="#8a7560">Skill content: brainstorming (2.4 KB)</text>
+    <rect x="790" y="6" width="50" height="20" rx="6" fill="#ffffff" opacity="0.6"/>
+    <text x="800" y="20" font-size="11" fill="#986a44">Copy</text>
+    <text x="22" y="44" class="mono" font-size="11" fill="#666666"># Brainstorming Ideas Into Designs</text>
+    <text x="22" y="60" class="mono" font-size="11" fill="#666666">## Overview</text>
+    <text x="22" y="76" class="mono" font-size="11" fill="#666666">Help turn ideas into fully formed designs…</text>
+    <text x="22" y="96" class="dim">[ 48 more lines ]</text>
+  </g>
+
+  <!-- ═══════════════════════════════════════════════════════ -->
+  <!-- SECTION 4: SESSION LIST                                 -->
+  <!-- ═══════════════════════════════════════════════════════ -->
+  <text x="32" y="795" class="section-title">SESSION LIST — SKILL CHIPS</text>
+  <line x1="32" y1="801" x2="888" y2="801" stroke="#dddddd" stroke-width="1"/>
+
+  <g transform="translate(32, 813)">
+    <rect width="856" height="62" rx="10" fill="#ffffff" filter="url(#cardShadow)"/>
+    <text x="16" y="22" font-size="14" font-weight="600" fill="#1e1e1e">Heatmap width limit exploration</text>
+    <text x="16" y="38" class="dim">sessions-chronicle · 14:32 · 24 messages</text>
+    <rect x="16" y="44" width="88" height="16" rx="8" fill="#986a44" opacity="0.12"/>
+    <text x="25" y="56" class="chip" fill="#986a44">brainstorming</text>
+    <rect x="112" y="44" width="82" height="16" rx="8" fill="#986a44" opacity="0.12"/>
+    <text x="121" y="56" class="chip" fill="#986a44">writing-plans</text>
+  </g>
+
+  <g transform="translate(32, 887)">
+    <rect width="856" height="62" rx="10" fill="#ffffff" filter="url(#cardShadow)"/>
+    <text x="16" y="22" font-size="14" font-weight="600" fill="#1e1e1e">Fix analytics dashboard rendering bug</text>
+    <text x="16" y="38" class="dim">sessions-chronicle · 11:05 · 42 messages</text>
+    <rect x="16" y="44" width="68" height="16" rx="8" fill="#986a44" opacity="0.12"/>
+    <text x="25" y="56" class="chip" fill="#986a44">debugging</text>
+  </g>
+
+  <g transform="translate(32, 961)">
+    <rect width="856" height="46" rx="10" fill="#ffffff" filter="url(#cardShadow)"/>
+    <text x="16" y="22" font-size="14" font-weight="600" fill="#1e1e1e">Help me refactor this code</text>
+    <text x="16" y="38" class="dim">my-project · 09:20 · 8 messages</text>
+  </g>
+
+  <!-- Annotation -->
+  <text x="460" y="1016" text-anchor="middle" font-size="11" fill="#999999">Each skill artifact → distinct row · Boilerplate folded by default · No grouping logic needed</text>
+</svg>

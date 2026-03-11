@@ -27,7 +27,15 @@ Chronicle treats them as raw data. This produces four visible problems:
 
 ## Data Format — Cross-Assistant
 
-Skills appear differently depending on the assistant:
+Skills appear differently depending on the assistant. The table below
+summarizes the primary detection markers and the noise sources:
+
+| Assistant | Invocation marker | Loaded skill marker | Noise source(s) |
+|-----------|------------------|---------------------|-----------------|
+| Claude Code | `<command-name>/skill</command-name>` in user message | `Skill` tool call with `input.skill` | Injected skill markdown + system reminders as user messages |
+| OpenCode | (implicit — user message triggers skill) | `tool == "skill"` part with `state.metadata.name` | Injected skill markdown as first `text` part of user message |
+| Codex | `$skill-name` token in `user_message` | `<skill><name>…</name></skill>` wrapper in `response_item` | Injected `<skill>` payload as separate user-role message |
+| Mistral Vibe | `/<skill-name>` user input | Full `SKILL.md` body as user message (exact path) or `read_file` tool call (free-form path) | Entire user message replaced by SKILL.md content |
 
 ### Claude Code
 
@@ -77,21 +85,19 @@ Three data events per skill invocation:
 
 ### OpenCode
 
-OpenCode exposes a **structural skill-loading marker** in assistant `part`
-records, plus the injected markdown payload in the parent user message.
+Two data events per skill invocation:
 
-**1. User message** — skill markdown injected as the first user text part:
+**1. User message** — skill markdown injected as the first user text part
+(the reliable marker is the **assistant-side** `skill` tool part, not the
+user text):
 
 ```
 # Executing Plans
-
 ## Overview
-
 Load plan, review critically, execute tasks in batches…
 ```
 
-**2. Assistant skill tool call** — native OpenCode `tool` part:
-
+**2. Assistant skill tool part** — native OpenCode `tool` part:
 ```json
 {
   "type": "tool",
@@ -109,29 +115,16 @@ Load plan, review critically, execute tasks in batches…
 }
 ```
 
-- The reliable detection marker is `part.data.type == "tool"` plus
-  `part.data.tool == "skill"`.
-- Skill identity should come from `state.metadata.name`, with
-  `state.input.name` as fallback.
-- The injected markdown should be treated as payload for display, not as the
-  proof that a skill was loaded.
-- To associate the payload with the skill invocation, follow the assistant
-  message carrying the `skill` tool part back to its `message.data.parentID`
-  user message.
-- Local sampling found hundreds of `tool == "skill"` parts across hundreds of
-  sessions, making this a much stronger signal than a Markdown heading
-  heuristic.
-- A `# Heading` pattern may still be useful as a fallback for incomplete or
-  older data, but should not be the primary parser strategy.
+- Detect with `part.data.type == "tool"` and `part.data.tool == "skill"`.
+- Skill identity from `state.metadata.name`, fallback `state.input.name`.
+- The parent user message (via `message.data.parentID`) contains the injected
+  markdown as payload.
 
 ### Codex
 
-Codex CLI persists skill usage as an explicit user invocation plus a separate
-injected user-side payload. Unlike OpenCode, the injected skill is **not**
-recorded as a dedicated tool call.
+Two data events per skill invocation:
 
 **1. User message** — explicit `$skill-name` invocation:
-
 ```json
 {
   "type": "event_msg",
@@ -139,17 +132,13 @@ recorded as a dedicated tool call.
     "type": "user_message",
     "message": "$logseq un fichier markdown",
     "text_elements": [
-      {
-        "byte_range": { "start": 0, "end": 7 },
-        "placeholder": "$logseq"
-      }
+      { "byte_range": { "start": 0, "end": 7 }, "placeholder": "$logseq" }
     ]
   }
 }
 ```
 
 **2. Injected skill payload** — separate `response_item` user message:
-
 ```xml
 <skill>
 <name>logseq</name>
@@ -162,107 +151,84 @@ description: ...
 </skill>
 ```
 
-- The best marker for a **loaded** Codex skill is the injected `<skill>`
-  wrapper in a `response_item` with `role == "user"`.
-- The explicit invocation is visible in `event_msg.payload.type ==
-  "user_message"` as `$skill-name ...`.
-- `text_elements[].placeholder` sometimes preserves the exact `$skill-name`
-  token, but is not consistently populated, so it should be treated as
-  auxiliary metadata.
-- For extraction, prefer `<name>...</name>` from the injected payload, with
-  fallback to parsing the leading `$skill-name` token from the user message.
-- In local sampling, every observed Codex skill injection was preceded by an
-  explicit `$skill-name` user message.
-- There is no separate Codex-native `tool call` event for skill loading in the
-  sampled rollouts.
+- Best marker: `<skill>` wrapper in a `response_item` with `role == "user"`.
+- Extract name from `<name>…</name>`, fallback to leading `$skill-name` token.
+- No dedicated Codex-native `tool call` for skill loading.
 
 ### Mistral Vibe
 
-Mistral Vibe does not expose a dedicated native skill-loading `tool call` in
-the sampled session format, but it does have two distinct observed loading
-paths.
+Two loading paths, neither has a dedicated skill event:
 
-Observed local sessions:
-- Session `5ef4776f-7545-4e13-a25d-0ce2eb58a0ac`
-  (`~/.vibe/logs/session/session_20260311_113459_5ef4776f/`)
-  shows the **normal exact slash-command path**:
-  - the user triggers `/<skill-name>` exactly
-  - the first persisted `role == "user"` message is the full `SKILL.md` body
-  - the session title is therefore polluted by the injected skill content
-  - the assistant may then read companion files such as `PATHS.md`
-- Session `b6999d83-6ddd-48ec-9766-fb12395b1158`
-  (`~/.vibe/logs/session/session_20260304_125746_b6999d83/`)
-  shows the **free-form / slash-with-arguments path**:
-  - First user message is `/learn-rust path B (en français)`
-  - Assistant then emits ordinary `tool_calls` for:
-    - `read_file(path="skills/learn-rust/SKILL.md")`
-    - `read_file(path="skills/learn-rust/PATHS.md")`
-- Corresponding `role == "tool"` messages contain the file contents
+**Exact slash path** — `/<skill-name>`:
+- The first persisted `role == "user"` message is the full `SKILL.md` body.
+- Session title is polluted by the injected content.
 
-Upstream source corroboration:
-- `vibe/core/system_prompt.py` injects an `<available_skills>` section into the
-  system prompt and tells the AI assistant to read `SKILL.md` when a task
-  matches a skill.
-- `vibe/cli/textual_ui/app.py` exposes `/<skill-name>` autocompletion for
-  `user_invocable` skills, and the handler matches only the exact skill name.
-  `/<skill-name>` is expanded client-side into the full `SKILL.md` body, while
-  a prompt like `/learn-rust path B` falls through as a normal user message and
-  is not expanded client-side.
-- Session logs (`vibe/core/session/session_logger.py`, `vibe/core/types.py`)
-  only persist generic `LLMMessage` entries plus ordinary `tool_calls`.
+**Free-form path** — `/<skill-name> args`:
+- User message is `/<skill-name> args` literally.
+- Assistant reads `skills/<skill-name>/SKILL.md` via `read_file` tool call.
 
-Implications:
-- Exact `/<skill-name>` invocation has a strong client-side marker: the first
-  persisted `role == "user"` message is the full `SKILL.md` content.
-- Free-form invocations do not have that marker; there the best signal of a
-  **loaded** skill is an assistant `tool_call` with `function.name ==
-  "read_file"` and arguments pointing to `skills/<skill-name>/SKILL.md`.
-- Additional reads from the same directory (for example `PATHS.md`) should be
-  grouped into the same skill activity, but are secondary evidence.
-- A leading `/skill-name ...` user message is useful context, but it is not
-  enough on its own to prove that a skill was loaded unless it resolves to the
-  injected `SKILL.md` body in the persisted user message.
-- No native Mistral Vibe skill `tool call` marker was found in the sampled
-  sessions or the upstream logging schema.
+- No native Mistral Vibe skill `tool call` marker exists.
+- Best detection: user message is SKILL.md body (exact path) or `read_file`
+  pointing to `skills/<skill-name>/SKILL.md` (free-form path).
+
+---
+
+## Current UI Patterns
+
+Before proposing changes, here is how the relevant UI works today:
+
+- **Transcript rows** use `TranscriptRow` factory components with role-colored
+  left borders: blue (user), green (assistant), orange (tool call).
+- **Tool call rows** are compact: icon + name (monospace) + status badge +
+  duration + inspect button + optional preview line.
+- **Expand/collapse** exists for long messages (button-based toggle, loads full
+  content from DB on demand). No native `GtkExpander` or `AdwExpanderRow` used.
+- **Tool Inspector pane** shows full tool call details with tab-like renderer
+  types (terminal, diff, file, generic, subagent).
+- **Session list** uses `adw::ActionRow` with title, subtitle, and no skill
+  metadata currently.
+- **GTK4 `GtkExpander`** is the recommended widget for collapsible content in
+  dynamic lists (not `AdwExpanderRow`, which targets static boxed lists).
 
 ---
 
 ## Proposals
 
-### A — Annotated Transcript Rows (GNOME HIG)
+### A — Folded Rows (GNOME HIG)
 
-![Proposal A](../mockups/skill-visibility/proposal-a-annotated-rows-hig.svg)
+![Proposal A](../mockups/skill-visibility/proposal-a-folded-rows-hig.svg)
 
 Each skill lifecycle event becomes a **distinct, typed row** in the transcript.
-Follows existing patterns (message rows, tool call rows) without introducing
-new layout concepts.
+Boilerplate rows are collapsed by default. Extends existing `TranscriptRow`
+patterns without introducing new layout concepts.
 
 | Component | Treatment |
 |-----------|-----------|
 | Slash command | Dedicated command row — brown `#986a44` accent, gear icon, skill name bold, source badge, args as subtitle |
-| Skill content | Folded row — muted background, 1-line stub (`Skill content: brainstorming (2.4 KB)`), expand on demand |
-| System reminders | Folded row — purple-grey tint, same expand pattern |
+| Skill content | Folded row — muted `#f4f0ec` background, 1-line stub (`Skill content: brainstorming (2.4 KB)`), expand on click |
+| System reminders | Folded row — purple-grey `#f0eff4` tint, same expand pattern |
 | Skill tool call | Enhanced tool call row — shows `Skill → brainstorming` instead of generic `Skill` |
 | Session list | Skill chips below subtitle line |
 
 **Pros:**
-- Lowest conceptual overhead — every element maps to an existing row pattern.
-- Folded boilerplate rows are individually expandable, so power users can
-  inspect any single piece.
-- Incremental implementation: each row type can ship independently.
+- Lowest implementation cost — each row type can ship independently.
+- No new widget types: extends existing `TranscriptRow` + CSS classes.
+- Individually expandable rows for power users who want to inspect any piece.
 
 **Cons:**
-- A single skill invocation can still produce multiple visible rows in the
-  transcript (for example command + injected payload + tool call), even when
-  collapsed.
-- The connection between related rows is implicit — nothing visually groups
-  "these 4 rows are all part of the same skill invocation."
-- More visual noise than proposals B/C for transcript-heavy sessions.
+- A single skill invocation still produces 3-4 visible rows even when
+  collapsed (command + folded content + folded reminders + tool call).
+- No visual grouping — the connection between rows is implicit.
+- More visual noise than proposals B-D for sessions with frequent skill use.
 
-**Analysis:** The safest, most conservative option. Works well if skill
-invocations are infrequent in a session (1-2 per session). Becomes cluttered
-for sessions with many skill invocations. Good first step that can evolve
-toward proposal B later.
+**Implementation notes:**
+- New `TranscriptItemInit` variants: `SkillCommand`, `FoldedContent`.
+- CSS: `.skill-command-row`, `.folded-content-row`, `.folded-reminder-row`.
+- Parser: detect skill artifacts during indexing and tag them with metadata.
+
+**Analysis:** The safest starting point. Works well for sessions with 1-2
+skill invocations. Becomes cluttered with heavy skill use (5+ per session).
+Good first step that can evolve toward Proposal B.
 
 ---
 
@@ -271,84 +237,145 @@ toward proposal B later.
 ![Proposal B](../mockups/skill-visibility/proposal-b-skill-activity-group-hig.svg)
 
 All events for a single skill invocation are **grouped into one collapsible
-block** with a summary header. Collapsed by default — the entire skill
-lifecycle appears as a single line in the transcript.
+`GtkExpander` block** with a summary header. Collapsed by default — the entire
+skill lifecycle appears as a single line in the transcript.
 
 | Component | Treatment |
 |-----------|-----------|
-| Group header (collapsed) | Brown accent, gear icon, skill name + source, args preview, event count, timestamp |
-| Group body (expanded) | Timeline of events: command, skill content loaded, system reminders, tool call status |
-| Skill content | "Show full" / "Copy" buttons inline in the expanded timeline |
+| Group header (collapsed) | Brown accent, gear icon, skill name + source badge, args preview, event count, byte size, timestamp |
+| Group body (expanded) | Timeline of events: command, skill content loaded (with Show full / Copy), system reminders (with Show full), tool call status |
 | Session list | Skill chips below subtitle line |
+
+**Grouping heuristic per assistant:**
+
+| Assistant | Group anchor | Group members |
+|-----------|-------------|---------------|
+| Claude Code | `<command-name>` user message | Following system-reminder user messages + next `Skill` tool call |
+| OpenCode | `tool == "skill"` assistant part | Parent user message (skill markdown) via `parentID` |
+| Codex | `$skill-name` user message | Following `<skill>` payload user message |
+| Mistral Vibe | `SKILL.md`-body user message (exact) or `read_file(SKILL.md)` tool call (free-form) | Associated `read_file` tool calls for same skill directory |
 
 **Pros:**
 - Maximum noise reduction — an entire skill invocation occupies one line
   when collapsed.
 - Clear visual grouping — no ambiguity about which events belong together.
 - The expanded timeline provides full forensic detail when needed.
-- Works identically for Claude Code and OpenCode (different internal events,
-  same group header).
+- Identical collapsed appearance across all four assistants.
 
 **Cons:**
-- Requires grouping logic in the parser/indexer — must correlate command,
-  system reminders, and Skill tool call as belonging to the same invocation.
-- New UI concept (grouped rows) not used elsewhere in the transcript.
-- Grouping still needs edge-case handling when multiple skills are loaded for
-  one assistant reply.
+- Requires grouping logic in the parser/indexer — must correlate events
+  across messages per assistant.
+- New UI pattern (`GtkExpander` inside factory) not used elsewhere yet.
+- Edge cases: multiple skills loaded in one assistant reply, partial skill
+  loads (invoked but not loaded).
+
+**Implementation notes:**
+- New `TranscriptItemInit::SkillGroup` variant wrapping child events.
+- Uses `gtk4::Expander` inside `TranscriptRow` for collapse/expand.
+- Deferred content: build child widgets only on first expand.
+- Parser emits `SkillInvocation` records during indexing; UI groups them.
 
 **Analysis:** The strongest option for daily use. Treats skills as a semantic
-unit rather than a sequence of raw events. The grouping heuristic for Claude
-Code is straightforward (command → following system reminders → next Skill
-tool call). For OpenCode, the primary anchor should be the assistant `skill`
-tool part, then the parent user message provides the injected markdown
-payload. For Codex, the explicit `$skill-name` user message plus the following
-`<skill>` injected payload forms the semantic unit, without a dedicated skill
-tool call. The expanded timeline view serves as a debugging tool
-for skill issues. New UI pattern, but follows GNOME HIG expander/group
-conventions.
+unit. The grouping heuristic for Claude Code is the most complex (3 events
+across messages); OpenCode's is the cleanest (single `tool == "skill"` part).
+New UI pattern, but `GtkExpander` follows GTK4 conventions and integrates
+naturally into the existing factory-based transcript.
 
 ---
 
-### C — Skill Cards with Progressive Disclosure (Creative)
+### C — Inspect Redirect (GNOME HIG)
 
-![Proposal C](../mockups/skill-visibility/proposal-c-skill-cards-creative.svg)
+![Proposal C](../mockups/skill-visibility/proposal-c-inspect-redirect-hig.svg)
 
-Each skill invocation becomes a **visually distinct card** — a bordered,
-gradient-shaded container that stands apart from regular message and tool
-call rows. The card header shows skill identity, and the body provides
-progressive disclosure of content.
+Skill content is **not displayed inline** in the transcript at all. Instead,
+a single compact **indicator row** replaces all skill noise. Clicking the
+row opens the full skill content in the existing **Tool Inspector pane**,
+which already handles multi-tab detail views.
 
 | Component | Treatment |
 |-----------|-----------|
-| Card header | Gradient band — skill icon (large), bold name, source label, status pill |
-| Prompt section | User's args displayed in a clean inset box |
-| Payload section | Collapsed stub showing total skill content size, "Show full" / "Copy" actions |
+| Indicator row | Compact 36px row — brown accent, gear icon, skill name, byte size summary, "Inspect →" button |
+| Inspector pane | Tabbed view: "Skill Content" tab (full markdown), "System Reminders" tab, "Tool Call" tab (status/timing) |
+| Transcript | Zero noise — only the indicator row sits between user message and assistant reply |
+| Session list | Skill chips below subtitle line |
+
+**Pros:**
+- Absolute minimum noise in the transcript — one 36px row per invocation.
+- Leverages the existing Tool Inspector pane (already built, with renderers
+  for markdown, terminal output, diffs, etc.).
+- No inline expansion — keeps the transcript flow perfectly clean.
+- Inspector tabs give structured access to each piece independently.
+
+**Cons:**
+- Skill content is not visible without opening the inspector — less
+  discoverable for users who don't know the inspector exists.
+- Requires the inspector pane to be open (or auto-opened on click).
+- Users who prefer inline content must learn a new interaction pattern.
+
+**Implementation notes:**
+- New `TranscriptItemInit::SkillIndicator` variant (minimal data).
+- New inspector renderer: `SkillRenderer` with tabs for content, reminders,
+  tool call metadata.
+- Parser: same skill extraction as other proposals, but UI only emits one
+  row per invocation.
+- Click handler sends `OpenInspector(skill_id)` message.
+
+**Analysis:** The most aggressive noise reduction. Ideal for users who treat
+skills as plumbing and just want to read the conversation. The inspector
+already supports rich content rendering, so the skill content would be
+displayed with full markdown formatting, syntax highlighting, and copy
+support. Risk: users who don't use the inspector regularly might miss skill
+details entirely.
+
+---
+
+### D — Skill Cards (Creative)
+
+![Proposal D](../mockups/skill-visibility/proposal-d-skill-cards-creative.svg)
+
+Each skill invocation becomes a **visually distinct card** — a bordered,
+gradient-shaded container that stands apart from regular message and tool
+call rows. Progressive disclosure: header → prompt → collapsed payload.
+
+| Component | Treatment |
+|-----------|-----------|
+| Card header | Gradient band (`#986a44` 14% → 4% opacity), gear icon (large), bold skill name, source label, status pill |
+| Prompt zone | User's args displayed in a clean inset box |
+| Payload zone | Collapsed stub showing skill definition + reminders byte sizes, "Show full" / "Copy" actions, expand on click |
 | Session list | Gear icon badge on sessions that use skills, plus skill name chips |
 
 **Pros:**
 - Strongest visual distinction — skills are immediately recognizable as a
   different kind of interaction, not just another message.
-- The gradient header and card border create a clear "landmark" when scrolling
-  through long transcripts.
+- The gradient header creates a clear "landmark" when scrolling through
+  long transcripts.
 - Progressive disclosure is natural: header → prompt → payload, each level
   adds detail.
-- The icon badge in the session list provides instant visual scanning.
+- Works identically for all four assistants (different internal events,
+  same card rendering).
 
 **Cons:**
-- Most visually opinionated — the gradient and card styling may clash with
-  GNOME HIG's flat aesthetic.
+- Most visually opinionated — the gradient styling may clash with GNOME
+  HIG's flat aesthetic in some themes.
 - Card layout is a new visual pattern not used by messages or tool calls,
-  potentially inconsistent.
-- The "prompt" section may feel redundant if the user's actual message already
+  introducing visual inconsistency.
+- The "prompt" zone may feel redundant if the user's actual message already
   appears as a separate row before the card.
+- Visual weight may overwhelm in sessions with many skill invocations
+  (5+ cards among regular messages).
 
-**Analysis:** The most distinctive option. Works best if skills are treated as
-*landmark events* in a session — visual anchors that structure the
-conversation history. The gradient header is a strong visual signal but may
-need toning down for HIG compliance (solid color instead of gradient). The
-icon badge in the session list is independently valuable and could be adopted
-by any proposal. Risk: visual weight may overwhelm in sessions with many
-skill invocations.
+**Implementation notes:**
+- New `TranscriptItemInit::SkillCard` variant.
+- CSS: `.skill-card`, `.skill-card-header` (gradient), `.skill-card-prompt`,
+  `.skill-card-payload` (collapsible).
+- Same grouping logic as Proposal B (one card absorbs all skill events).
+- Expand/collapse for payload zone uses existing button-based toggle pattern.
+
+**Analysis:** The most distinctive option. Treats skills as *landmark events*
+that structure the conversation. The gradient header is a strong visual signal
+but should be tunable (solid color fallback for HIG-strict themes). The icon
+badge in the session list is independently valuable and could be adopted by
+any proposal. Risk: visual weight may dominate in skill-heavy sessions.
 
 ---
 
@@ -359,11 +386,12 @@ becomes the session title as raw XML. All proposals require the same title
 parsing:
 
 1. Detect `<command-name>` tags (Claude Code), the first OpenCode
-   `tool == "skill"` marker, or the first Codex `$skill-name` / `<skill>`
-   pair associated with the opening message span.
+   `tool == "skill"` marker, the first Codex `$skill-name` / `<skill>`
+   pair, or the first Mistral Vibe `SKILL.md` body associated with the
+   opening message span.
 2. Extract the skill/command name and args.
 3. Display as readable text (e.g., `brainstorming: heatmap width limit`)
-   instead of raw tags.
+   instead of raw tags or SKILL.md frontmatter.
 
 This is independent of the transcript rendering proposal chosen.
 
@@ -376,12 +404,26 @@ All proposals share the same **skill name extraction** logic:
 | Claude Code `<command-name>` | Strip `/` prefix, split on `:` for namespaced skills |
 | Claude Code `Skill` tool call | Read `input.skill` field |
 | OpenCode `tool == "skill"` part | Read `state.metadata.name`, fallback `state.input.name` |
-| Codex injected `<skill>` payload | Read `<name>...</name>`, fallback leading `$skill-name` |
+| Codex injected `<skill>` payload | Read `<name>…</name>`, fallback leading `$skill-name` |
+| Mistral Vibe exact path | Parse SKILL.md frontmatter `name:` field from user message |
+| Mistral Vibe free-form path | Extract `skills/<name>/SKILL.md` from `read_file` arguments |
 
 Extracted skill names are stored in the database and used for:
 - Session list chips / badges
 - Search and filtering (`skill:brainstorming`)
 - Analytics (most-used skills over time)
+
+## Cross-Cutting: Incremental Path
+
+Proposals A through D are not mutually exclusive. A viable incremental path:
+
+1. **Phase 1 — Extraction:** Implement skill name extraction and session list
+   chips. Title cleaning. These are shared by all proposals and provide
+   immediate value.
+2. **Phase 2 — Transcript:** Implement one of the transcript proposals (A, B,
+   C, or D). Proposal A is the simplest start; B is the recommended target.
+3. **Phase 3 — Enhancement:** Add the inspector skill renderer (useful for
+   both B and C). Add skill-based search filtering.
 
 ---
 
@@ -389,13 +431,14 @@ Extracted skill names are stored in the database and used for:
 
 | Proposal | Style | Noise reduction | Grouping | New UI patterns | Complexity |
 |----------|-------|----------------|----------|----------------|------------|
-| A — Annotated rows | Conservative HIG | Medium (folding) | None (implicit) | Folded row | Low |
-| B — Activity group | Structured HIG | High (single line) | Explicit | Grouped block | Medium |
-| C — Skill cards | Creative | High (card) | Explicit | Card + gradient | Medium-High |
+| A — Folded rows | Conservative HIG | Medium (folding) | None (implicit) | Folded row CSS | Low |
+| B — Activity group | Structured HIG | High (single line) | Explicit | GtkExpander in factory | Medium |
+| C — Inspect redirect | Aggressive HIG | Maximum (no inline) | N/A (1 row) | Inspector skill renderer | Medium |
+| D — Skill cards | Creative | High (card) | Explicit | Card + gradient CSS | Medium-High |
 
 All proposals share: skill chips in session list, title parsing, skill name
 extraction, and assistant-specific detection rules for Claude Code, OpenCode,
-and Codex.
+Codex, and Mistral Vibe.
 
 ---
 
