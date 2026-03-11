@@ -133,6 +133,59 @@ thread-spawn variants, etc.
 
 Other tool-related `event_msg.payload.type` variants: `exec_command_*`, `web_search_*`.
 
+### Skill Invocation Format
+
+Codex CLI skill usage is persisted as an explicit user invocation plus a
+separate injected payload. In sampled rollouts, there is no dedicated
+Codex-native skill tool-call event analogous to OpenCode's `tool == "skill"`.
+
+**1. Explicit invocation** — `user_message`:
+
+```json
+{
+  "type": "event_msg",
+  "payload": {
+    "type": "user_message",
+    "message": "$logseq un fichier markdown",
+    "text_elements": [
+      {
+        "byte_range": { "start": 0, "end": 7 },
+        "placeholder": "$logseq"
+      }
+    ]
+  }
+}
+```
+
+**2. Injected skill payload** — `response_item` user message:
+
+```xml
+<skill>
+<name>logseq</name>
+<path>/home/user/project/skills/logseq/SKILL.md</path>
+---
+name: logseq
+description: ...
+---
+...
+</skill>
+```
+
+Observed semantics:
+
+- Explicit invocation appears in `event_msg.payload.type == "user_message"`
+  with a leading `$skill-name`
+- The loaded skill payload is injected as `response_item.payload.type ==
+  "message"` with `role == "user"`
+- The injected payload uses a `<skill>` wrapper with `<name>` and `<path>`
+  headers, followed by the skill frontmatter/body
+- `text_elements[].placeholder` can preserve the exact `$skill-name` token but
+  is not consistently populated
+- In sampled local sessions, every injected `<skill>` payload was preceded by
+  an explicit `$skill-name` user message
+- If Codex reports that a named skill is unavailable, the rollout can contain
+  the `$skill-name` user message without a following `<skill>` payload
+
 ### Collaboration / Subagent Events
 
 ```json
@@ -194,6 +247,7 @@ Two patterns:
 | `session_meta.payload.model_provider` | Optional session-level provider id |
 | `turn_context.payload.model` | Active model slug for that turn |
 | `event_msg` `session_configured` | Can provide `model` + `model_provider_id` |
+| Skill invocation | Explicit `$skill-name` `user_message` plus injected `<skill>` payload |
 
 **Model metadata:**
 
@@ -255,6 +309,8 @@ Current implementation: `src/parsers/codex.rs`
 - Indexes `event_msg.payload.type == user_message|agent_message`
 - Indexes tool lifecycle pairs for `mcp_tool_call_begin|end` and `exec_command_begin|end`
 - Currently does not map `collab_*` events into subagent records
+- Does not yet extract Codex skill invocations from `$skill-name` / `<skill>`
+  pairs
 
 **Title extraction:** First `event_msg.payload.type == "user_message"` event (`payload.message`).
 

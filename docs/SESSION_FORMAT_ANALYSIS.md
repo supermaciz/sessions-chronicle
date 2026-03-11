@@ -77,7 +77,7 @@ Cross-tool comparison of Claude Code, Codex, OpenCode, and Mistral Vibe session 
 | **Event Type** | `type` (`user`, `assistant`, `system`, `summary`, `progress`, `queue-operation`, `saved_hook_context`, `pr-link`, ...) | Rollout envelope `type` (`session_meta`, `event_msg`, `response_item`, `turn_context`, ...); nested `event_msg.payload.type` (`user_message`, `agent_message`, `exec_command_*`, `mcp_tool_call_*`, `collab_*`, ...) | Session metadata only (messages in separate files) | `role` (`system`, `user`, `assistant`, `tool`) in `messages.jsonl`; tool calls on assistant messages via `tool_calls` |
 | **Identity** | `uuid`, `parentUuid` (tree structure) | Session id at `session_meta.payload.id`; event-specific IDs like `call_id`, `sender_thread_id`, `receiver_thread_id` | `id`, `parentID` (hierarchical sessions) | No message IDs; tool calls have an `id` and tool responses reference it via `tool_call_id` |
 | **Timestamp** | `timestamp` (ISO-8601) | Top-level rollout-line `timestamp` (ISO-8601 string) | `time.created`, `time.updated` (session level) | Session-level only in `meta.json`: `start_time`, `end_time` (ISO-8601). No per-message timestamps |
-| **Content** | Nested: `message.content` | Usually in `event_msg.payload` (for example `message`, command output deltas, MCP results), plus optional `response_item.payload.content[]` blocks | Stored in `message/ses_xxx/` directory + `part/msg_xxx/` | `messages.jsonl` lines with `content`; tool output stored as `role: "tool"` messages |
+| **Content** | Nested: `message.content` | Usually in `event_msg.payload` (for example `message`, command output deltas, MCP results), plus optional `response_item.payload.content[]` blocks; skills can also be injected as `response_item` user messages wrapped in `<skill>...</skill>` | Stored in `message/ses_xxx/` directory + `part/msg_xxx/` | `messages.jsonl` lines with `content`; tool output stored as `role: "tool"` messages |
 | **Model Metadata** | Assistant-level `message.model` (slug). In sampled recent logs: present on `assistant`, absent on `user`; `<synthetic>` appears for local synthetic/error assistant messages | `session_meta.payload.model_provider` (optional provider, session-level) + `turn_context.payload.model` (model slug, per turn); `event_msg.payload.type == "session_configured"` can also carry `model` + `model_provider_id` | Per-message model fields: `user.model.{providerID,modelID}` and assistant `providerID` + `modelID`; `subtask` parts can optionally include delegated model | No model field in `messages.jsonl` records; session-level `meta.json` can include a full `config` snapshot (`active_model`, `providers`, `models`) when logging is enabled |
 
 ### Key Architectural Differences
@@ -91,12 +91,17 @@ Cross-tool comparison of Claude Code, Codex, OpenCode, and Mistral Vibe session 
 **Metadata Storage:**
 - **Claude Code**: Rich per-event metadata (`cwd`, `gitBranch`, `version`, `sessionId`) plus assistant-level model slug at `message.model`
 - **Codex**: Session metadata (`session_meta`) can include provider (`model_provider`), and turn-level metadata (`turn_context`) includes active model slug (`model`)
+- **Codex skills**: Explicit invocation appears as `$skill-name` in
+  `event_msg.payload.message`; loaded skill content is injected as a separate
+  `response_item` user message wrapped in `<skill>...</skill>`
 - **OpenCode**: Session-level metadata (`projectID`, `directory`, `version`, `title`)
 - **Mistral Vibe**: Session-level `meta.json` includes environment, optional git info, token/tool usage stats, tools snapshot, and configuration snapshot data
 
 **Content Access:**
 - **Claude Code**: `event.message.content` (nested in JSONL events)
-- **Codex**: `event_msg.payload.message` for user/assistant text; tool/collab info in event-specific payload fields
+- **Codex**: `event_msg.payload.message` for user/assistant text; tool/collab
+  info in event-specific payload fields; loaded skills can appear as injected
+  `response_item` user messages wrapped in `<skill>...</skill>`
 - **OpenCode**: Message content lives in `message`/`part`; skill loading has a
   structural marker via `part.type == "tool"` and `part.tool == "skill"`
 - **Mistral Vibe**: `messages.jsonl` holds message entries (one JSON object per line)
@@ -132,6 +137,11 @@ Goal: determine whether model information is available per message, per turn, an
 
 - **Claude Code**: JSONL format, tree-structured events, project-based organization; model slug is available on assistant events (`message.model`) in recent logs; **token usage is commonly available per assistant message** (`message.usage`, optional and version-dependent)
 - **Codex**: JSONL rollout envelope (`session_meta`/`event_msg`/`turn_context`/...); model provider can exist at session level, and model slug is captured at turn level (`turn_context.model`); **token usage is emitted as `event_msg` `token_count` events** (running totals + last-call deltas)
+- **Codex skills**: Sampled local rollouts show explicit `$skill-name`
+  `user_message` events followed by injected `<skill>` payloads in
+  `response_item` user messages. The injected payload includes `<name>` and
+  `<path>` headers plus the skill body; unavailable skills can appear as a
+  `$skill-name` invocation without a following `<skill>` payload.
 - **OpenCode**: **Breaking change ≥ 2026-02-14** — migrated to SQLite (`opencode.db`). Sessions Chronicle now indexes SQLite sessions first and falls back to legacy JSON storage, deduplicating by session `id` when both sources contain the same session. Legacy JSON file tree remains relevant for pre-migration/compatibility reads. Data schema (session/message/part fields) is largely unchanged; newer part types include `file`, `agent`, `retry`, `patch`; part ID prefix in SQLite era is `prt_`. Model metadata remains message-level; **token usage is commonly available per assistant message** (`message.data.tokens`, optional and provider-dependent) and can also appear on step boundaries (`part.type == "step-finish"` includes `tokens`).
 - **OpenCode skills**: Skill invocations have a reliable structural marker in
   `part.type == "tool"` with `part.tool == "skill"`. Skill identity is

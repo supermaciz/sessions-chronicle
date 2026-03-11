@@ -124,7 +124,59 @@ Load plan, review critically, execute tasks in batches…
 - A `# Heading` pattern may still be useful as a fallback for incomplete or
   older data, but should not be the primary parser strategy.
 
-### Codex / Mistral Vibe
+### Codex
+
+Codex CLI persists skill usage as an explicit user invocation plus a separate
+injected user-side payload. Unlike OpenCode, the injected skill is **not**
+recorded as a dedicated tool call.
+
+**1. User message** — explicit `$skill-name` invocation:
+
+```json
+{
+  "type": "event_msg",
+  "payload": {
+    "type": "user_message",
+    "message": "$logseq un fichier markdown",
+    "text_elements": [
+      {
+        "byte_range": { "start": 0, "end": 7 },
+        "placeholder": "$logseq"
+      }
+    ]
+  }
+}
+```
+
+**2. Injected skill payload** — separate `response_item` user message:
+
+```xml
+<skill>
+<name>logseq</name>
+<path>/home/user/project/skills/logseq/SKILL.md</path>
+---
+name: logseq
+description: ...
+---
+...
+</skill>
+```
+
+- The best marker for a **loaded** Codex skill is the injected `<skill>`
+  wrapper in a `response_item` with `role == "user"`.
+- The explicit invocation is visible in `event_msg.payload.type ==
+  "user_message"` as `$skill-name ...`.
+- `text_elements[].placeholder` sometimes preserves the exact `$skill-name`
+  token, but is not consistently populated, so it should be treated as
+  auxiliary metadata.
+- For extraction, prefer `<name>...</name>` from the injected payload, with
+  fallback to parsing the leading `$skill-name` token from the user message.
+- In local sampling, every observed Codex skill injection was preceded by an
+  explicit `$skill-name` user message.
+- There is no separate Codex-native `tool call` event for skill loading in the
+  sampled rollouts.
+
+### Mistral Vibe
 
 Not checked yet. Need investigation.
 
@@ -155,8 +207,9 @@ new layout concepts.
 - Incremental implementation: each row type can ship independently.
 
 **Cons:**
-- A single skill invocation still produces 3-4 visible rows in the transcript
-  (command + 1-2 folded + tool call), even when collapsed.
+- A single skill invocation can still produce multiple visible rows in the
+  transcript (for example command + injected payload + tool call), even when
+  collapsed.
 - The connection between related rows is implicit — nothing visually groups
   "these 4 rows are all part of the same skill invocation."
 - More visual noise than proposals B/C for transcript-heavy sessions.
@@ -203,7 +256,9 @@ unit rather than a sequence of raw events. The grouping heuristic for Claude
 Code is straightforward (command → following system reminders → next Skill
 tool call). For OpenCode, the primary anchor should be the assistant `skill`
 tool part, then the parent user message provides the injected markdown
-payload. The expanded timeline view serves as a debugging tool
+payload. For Codex, the explicit `$skill-name` user message plus the following
+`<skill>` injected payload forms the semantic unit, without a dedicated skill
+tool call. The expanded timeline view serves as a debugging tool
 for skill issues. New UI pattern, but follows GNOME HIG expander/group
 conventions.
 
@@ -258,8 +313,9 @@ When a slash command is the **first message** in a session, it currently
 becomes the session title as raw XML. All proposals require the same title
 parsing:
 
-1. Detect `<command-name>` tags (Claude Code) or the first OpenCode
-   `tool == "skill"` marker associated with the opening message span.
+1. Detect `<command-name>` tags (Claude Code), the first OpenCode
+   `tool == "skill"` marker, or the first Codex `$skill-name` / `<skill>`
+   pair associated with the opening message span.
 2. Extract the skill/command name and args.
 3. Display as readable text (e.g., `brainstorming: heatmap width limit`)
    instead of raw tags.
@@ -275,6 +331,7 @@ All proposals share the same **skill name extraction** logic:
 | Claude Code `<command-name>` | Strip `/` prefix, split on `:` for namespaced skills |
 | Claude Code `Skill` tool call | Read `input.skill` field |
 | OpenCode `tool == "skill"` part | Read `state.metadata.name`, fallback `state.input.name` |
+| Codex injected `<skill>` payload | Read `<name>...</name>`, fallback leading `$skill-name` |
 
 Extracted skill names are stored in the database and used for:
 - Session list chips / badges
@@ -292,7 +349,8 @@ Extracted skill names are stored in the database and used for:
 | C — Skill cards | Creative | High (card) | Explicit | Card + gradient | Medium-High |
 
 All proposals share: skill chips in session list, title parsing, skill name
-extraction, and the same detection heuristics for Claude Code and OpenCode.
+extraction, and assistant-specific detection rules for Claude Code, OpenCode,
+and Codex.
 
 ---
 
