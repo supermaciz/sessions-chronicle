@@ -444,4 +444,4 @@ Codex, and Mistral Vibe.
 
 ## Decision
 
-*Pending — awaiting review of mockups and discussion.*
+Proposal A
