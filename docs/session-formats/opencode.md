@@ -185,6 +185,47 @@ State fields:
 | `completed` | `input`, `output`, `title`, `metadata`, `time.start/end`, optional `attachments` |
 | `error` | `input`, `error`, optional `metadata`, `time.start/end` |
 
+### Skill Invocation Marker
+
+OpenCode skill loading is not just implied by Markdown headings in user text.
+It has a native `tool` part marker that should be treated as the primary
+detection signal.
+
+**Primary marker:**
+
+```json
+{
+  "type": "tool",
+  "tool": "skill",
+  "state": {
+    "status": "completed",
+    "input": { "name": "brainstorming" },
+    "metadata": {
+      "name": "brainstorming",
+      "dir": "/home/user/.config/opencode/skills/superpowers/brainstorming",
+      "truncated": false
+    },
+    "title": "Loaded skill: brainstorming"
+  }
+}
+```
+
+**Observed semantics:**
+
+- Detect skill loading with `json_extract(part.data, '$.type') = 'tool'` and
+  `json_extract(part.data, '$.tool') = 'skill'`
+- Extract the skill name from `$.state.metadata.name`, fallback
+  `$.state.input.name`
+- `$.state.metadata.dir` identifies the loaded skill directory
+- `$.state.title` is a readable summary such as `Loaded skill: brainstorming`
+- The assistant message carrying this part links back to the source user
+  message via `message.data.parentID`
+- That parent user message often contains the injected skill markdown as a
+  `text` part; treat it as payload for display, not as the proof that a skill
+  was invoked
+- One assistant reply can load multiple skills, so grouping should not assume
+  exactly one skill per user message
+
 ### Useful SQLite Queries
 
 Open the database read-only:
@@ -208,6 +249,23 @@ WHERE json_extract(p.data, '$.type') = 'tool'
   AND json_extract(p.data, '$.state.status') = 'error'
 GROUP BY s.id, s.title, s.directory
 ORDER BY MAX(p.time_created) DESC;
+```
+
+Find recent skill invocations:
+
+```sql
+SELECT
+  p.session_id,
+  p.message_id,
+  json_extract(p.data, '$.state.metadata.name') AS skill_name,
+  json_extract(p.data, '$.state.metadata.dir') AS skill_dir,
+  json_extract(p.data, '$.state.title') AS title,
+  datetime(p.time_created / 1000, 'unixepoch') AS created_utc
+FROM part p
+WHERE json_extract(p.data, '$.type') = 'tool'
+  AND lower(json_extract(p.data, '$.tool')) = 'skill'
+ORDER BY p.time_created DESC
+LIMIT 50;
 ```
 
 ---

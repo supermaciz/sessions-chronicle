@@ -77,7 +77,10 @@ Three data events per skill invocation:
 
 ### OpenCode
 
-**Single event** — skill content injected as the first user text part:
+OpenCode exposes a **structural skill-loading marker** in assistant `part`
+records, plus the injected markdown payload in the parent user message.
+
+**1. User message** — skill markdown injected as the first user text part:
 
 ```
 # Executing Plans
@@ -87,14 +90,43 @@ Three data events per skill invocation:
 Load plan, review critically, execute tasks in batches…
 ```
 
-- No XML tags, no special metadata fields.
-- Detected by heading pattern: first user message text starts with `# Skill Name`.
-- 26 sessions in the local database use this pattern (brainstorming,
-  writing-plans, executing-plans, debugging, writing-skills, etc.).
+**2. Assistant skill tool call** — native OpenCode `tool` part:
+
+```json
+{
+  "type": "tool",
+  "tool": "skill",
+  "state": {
+    "status": "completed",
+    "input": { "name": "brainstorming" },
+    "metadata": {
+      "name": "brainstorming",
+      "dir": "/home/user/.config/opencode/skills/superpowers/brainstorming",
+      "truncated": false
+    },
+    "title": "Loaded skill: brainstorming"
+  }
+}
+```
+
+- The reliable detection marker is `part.data.type == "tool"` plus
+  `part.data.tool == "skill"`.
+- Skill identity should come from `state.metadata.name`, with
+  `state.input.name` as fallback.
+- The injected markdown should be treated as payload for display, not as the
+  proof that a skill was loaded.
+- To associate the payload with the skill invocation, follow the assistant
+  message carrying the `skill` tool part back to its `message.data.parentID`
+  user message.
+- Local sampling found hundreds of `tool == "skill"` parts across hundreds of
+  sessions, making this a much stronger signal than a Markdown heading
+  heuristic.
+- A `# Heading` pattern may still be useful as a fallback for incomplete or
+  older data, but should not be the primary parser strategy.
 
 ### Codex / Mistral Vibe
 
-No skill system — these assistants are unaffected.
+Not checked yet. Need investigation.
 
 ---
 
@@ -163,14 +195,15 @@ lifecycle appears as a single line in the transcript.
 - Requires grouping logic in the parser/indexer — must correlate command,
   system reminders, and Skill tool call as belonging to the same invocation.
 - New UI concept (grouped rows) not used elsewhere in the transcript.
-- Heuristic grouping may misfire on edge cases (e.g., skill content injected
-  before or after the command).
+- Grouping still needs edge-case handling when multiple skills are loaded for
+  one assistant reply.
 
 **Analysis:** The strongest option for daily use. Treats skills as a semantic
 unit rather than a sequence of raw events. The grouping heuristic for Claude
 Code is straightforward (command → following system reminders → next Skill
-tool call), and for OpenCode even simpler (first user message matching
-`# Heading` pattern). The expanded timeline view serves as a debugging tool
+tool call). For OpenCode, the primary anchor should be the assistant `skill`
+tool part, then the parent user message provides the injected markdown
+payload. The expanded timeline view serves as a debugging tool
 for skill issues. New UI pattern, but follows GNOME HIG expander/group
 conventions.
 
@@ -225,8 +258,8 @@ When a slash command is the **first message** in a session, it currently
 becomes the session title as raw XML. All proposals require the same title
 parsing:
 
-1. Detect `<command-name>` tags (Claude Code) or `# Heading` pattern
-   (OpenCode) in the first message.
+1. Detect `<command-name>` tags (Claude Code) or the first OpenCode
+   `tool == "skill"` marker associated with the opening message span.
 2. Extract the skill/command name and args.
 3. Display as readable text (e.g., `brainstorming: heatmap width limit`)
    instead of raw tags.
@@ -241,7 +274,7 @@ All proposals share the same **skill name extraction** logic:
 |--------|-----------|
 | Claude Code `<command-name>` | Strip `/` prefix, split on `:` for namespaced skills |
 | Claude Code `Skill` tool call | Read `input.skill` field |
-| OpenCode first user message | Parse `# Heading` from first text part |
+| OpenCode `tool == "skill"` part | Read `state.metadata.name`, fallback `state.input.name` |
 
 Extracted skill names are stored in the database and used for:
 - Session list chips / badges

@@ -97,7 +97,8 @@ Cross-tool comparison of Claude Code, Codex, OpenCode, and Mistral Vibe session 
 **Content Access:**
 - **Claude Code**: `event.message.content` (nested in JSONL events)
 - **Codex**: `event_msg.payload.message` for user/assistant text; tool/collab info in event-specific payload fields
-- **OpenCode**: Separate file system (messages not in session metadata file)
+- **OpenCode**: Message content lives in `message`/`part`; skill loading has a
+  structural marker via `part.type == "tool"` and `part.tool == "skill"`
 - **Mistral Vibe**: `messages.jsonl` holds message entries (one JSON object per line)
 
 **File Organization:**
@@ -132,6 +133,11 @@ Goal: determine whether model information is available per message, per turn, an
 - **Claude Code**: JSONL format, tree-structured events, project-based organization; model slug is available on assistant events (`message.model`) in recent logs; **token usage is commonly available per assistant message** (`message.usage`, optional and version-dependent)
 - **Codex**: JSONL rollout envelope (`session_meta`/`event_msg`/`turn_context`/...); model provider can exist at session level, and model slug is captured at turn level (`turn_context.model`); **token usage is emitted as `event_msg` `token_count` events** (running totals + last-call deltas)
 - **OpenCode**: **Breaking change ≥ 2026-02-14** — migrated to SQLite (`opencode.db`). Sessions Chronicle now indexes SQLite sessions first and falls back to legacy JSON storage, deduplicating by session `id` when both sources contain the same session. Legacy JSON file tree remains relevant for pre-migration/compatibility reads. Data schema (session/message/part fields) is largely unchanged; newer part types include `file`, `agent`, `retry`, `patch`; part ID prefix in SQLite era is `prt_`. Model metadata remains message-level; **token usage is commonly available per assistant message** (`message.data.tokens`, optional and provider-dependent) and can also appear on step boundaries (`part.type == "step-finish"` includes `tokens`).
+- **OpenCode skills**: Skill invocations have a reliable structural marker in
+  `part.type == "tool"` with `part.tool == "skill"`. Skill identity is
+  available in `state.metadata.name` and `state.input.name`; the injected
+  Markdown in the parent user message is display payload, not the primary
+  detection signal.
 - **Mistral Vibe**: Directory-based session format with `meta.json` + JSONL `messages.jsonl`; model info is session-level via `meta.json.config` snapshot when present, not message-level; **token usage is available when `meta.json.stats` is present** (session totals + last-turn metrics)
 
 ---
