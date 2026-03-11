@@ -1,5 +1,9 @@
 # Command Display — UI Exploration
 
+> Superseded by [2026-03-10-skill-visibility-exploration.md](./2026-03-10-skill-visibility-exploration.md).  
+> This document is kept as historical context for the earlier, narrower
+> command-display exploration.
+
 Visual exploration of how to display Claude Code slash commands (`/learn-rust`,
 `/model`, `/brainstorming`, etc.) in Sessions Chronicle's session list and
 transcript detail views.
