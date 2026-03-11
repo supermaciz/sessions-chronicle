@@ -152,7 +152,8 @@ No dedicated subagent session model observed in current format.
 
 Mistral Vibe skills are discovered from skill directories and surfaced to the
 AI assistant through the system prompt. In sampled logs, skill loading does
-**not** use a dedicated native skill event.
+**not** use a dedicated native skill event, but two distinct persisted patterns
+were observed.
 
 ### Upstream Behavior
 
@@ -163,17 +164,29 @@ Primary source findings:
   full `SKILL.md` when a task matches a skill.
 - `vibe/cli/textual_ui/app.py` exposes `/<skill-name>` completions for
   `user_invocable` skills.
-- That same handler only matches the **exact** skill name after the slash. If
-  the user types additional arguments (for example `/learn-rust path B`), the
-  input falls through as a normal user message instead of being intercepted as a
-  dedicated slash command action.
+- That same handler only matches the **exact** skill name after the slash:
+  - `/<skill-name>` is intercepted client-side and replaced with the full
+    `SKILL.md` body as the outgoing user message
+  - if the user types additional arguments (for example `/learn-rust path B`),
+    the input falls through as a normal user message instead of being
+    intercepted as a dedicated slash command action
 - `vibe/core/session/session_logger.py` persists only generic `LLMMessage`
   entries and ordinary `tool_calls`.
 
 ### Observed Local Session Pattern
 
+Observed on session `5ef4776f-7545-4e13-a25d-0ce2eb58a0ac`
+(`session_20260311_113459_5ef4776f/`) for the exact slash-command path:
+
+```json
+{"role":"user","content":"---\nname: learn-rust\ndescription: ..."}
+{"role":"assistant","tool_calls":[
+  {"function":{"name":"read_file","arguments":"{\"path\": \"skills/learn-rust/PATHS.md\"}"}}
+]}
+```
+
 Observed on session `b6999d83-6ddd-48ec-9766-fb12395b1158`
-(`session_20260304_125746_b6999d83/`):
+(`session_20260304_125746_b6999d83/`) for the slash-with-arguments path:
 
 ```json
 {"role":"user","content":"/learn-rust path B (en français)"}
@@ -188,10 +201,14 @@ Observed on session `b6999d83-6ddd-48ec-9766-fb12395b1158`
 
 ### Recommended Detection Heuristic
 
-Best current marker of a **loaded** Mistral Vibe skill:
+Best current markers of a **loaded** Mistral Vibe skill:
 
-- assistant `tool_calls[*].function.name == "read_file"`
-- and `tool_calls[*].function.arguments` points to `skills/<skill-name>/SKILL.md`
+- Exact `/<skill-name>` path:
+  - persisted `role == "user"` message is the full `SKILL.md` body
+  - the session title is often derived from that injected content
+- Free-form / slash-with-arguments path:
+  - assistant `tool_calls[*].function.name == "read_file"`
+  - and `tool_calls[*].function.arguments` points to `skills/<skill-name>/SKILL.md`
 
 Useful secondary evidence:
 
@@ -201,7 +218,8 @@ Useful secondary evidence:
 
 What not to rely on:
 
-- the leading slash command alone
+- the leading slash command alone, unless it resolves to the injected
+  `SKILL.md` body in the persisted `role == "user"` message
 - `meta.json.tools_available`
 - any dedicated native skill `tool call` marker, because none was observed in
   sampled local logs or in the upstream session schema

@@ -105,8 +105,9 @@ Cross-tool comparison of Claude Code, Codex, OpenCode, and Mistral Vibe session 
 - **OpenCode**: Message content lives in `message`/`part`; skill loading has a
   structural marker via `part.type == "tool"` and `part.tool == "skill"`
 - **Mistral Vibe**: `messages.jsonl` holds message entries (one JSON object per
-  line); loaded skills are not tagged separately in sampled logs, but can be
-  inferred from assistant `read_file` tool calls to `skills/<name>/SKILL.md`
+  line); exact `/<skill-name>` invocations can appear as injected `SKILL.md`
+  user messages, while free-form skill loading can be inferred from assistant
+  `read_file` tool calls to `skills/<name>/SKILL.md`
 
 **File Organization:**
 - **Claude Code**: Main `UUID.jsonl` session file plus additional `agent-*.jsonl` subagent transcripts (often nested under `<session-id>/subagents/`)
@@ -154,11 +155,12 @@ Goal: determine whether model information is available per message, per turn, an
   `messages.jsonl`; model info is session-level via `meta.json.config` snapshot
   when present, not message-level; **token usage is available when
   `meta.json.stats` is present** (session totals + last-turn metrics)
-- **Mistral Vibe skills**: In sampled local sessions, skill loading appears as
-  ordinary assistant `tool_calls` to `read_file` on
-  `skills/<skill-name>/SKILL.md` (and related files such as `PATHS.md`), not as
-  a dedicated native skill event. A leading slash command such as
-  `/learn-rust path B` is not sufficient proof of loading by itself.
+- **Mistral Vibe skills**: Two patterns were observed locally. Exact
+  `/<skill-name>` invocation is expanded client-side into a `role == "user"`
+  message containing the full `SKILL.md` body. Free-form or slash-with-args
+  prompts can instead lead to ordinary assistant `tool_calls` to `read_file` on
+  `skills/<skill-name>/SKILL.md` (and related files such as `PATHS.md`). No
+  dedicated native skill event was found.
 
 ---
 
