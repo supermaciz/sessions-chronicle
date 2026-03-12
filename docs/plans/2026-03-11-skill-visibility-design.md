@@ -48,56 +48,89 @@ Out of scope:
 ```sql
 CREATE TABLE session_skills (
     session_id TEXT NOT NULL,
-    skill_name TEXT NOT NULL,
-    source TEXT NOT NULL,           -- "command" | "tool_call" | "injection"
-    PRIMARY KEY (session_id, skill_name),
+    normalized_skill_name TEXT NOT NULL,
+    PRIMARY KEY (session_id, normalized_skill_name),
     FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
 );
 
-CREATE INDEX idx_session_skills_name ON session_skills(skill_name);
+CREATE INDEX idx_session_skills_name ON session_skills(normalized_skill_name);
 ```
 
-Stores the set of distinct skill names used in each session. Populated during
-indexing. Used for session list chips and future search filtering.
+Stores the distinct set of skills detected in each session. Populated during
+indexing. Used for session-level skill display and future search/filter
+features.
 
-The `source` column records how the skill was detected (for diagnostics, not
-displayed in the UI). If the same skill appears as both a command and a tool
-call, the earliest detected source wins (primary key prevents duplicates on
-`(session_id, skill_name)`).
+`normalized_skill_name` is the parser-normalized skill identifier persisted in
+the database. UI-facing labels such as a short display name or an optional
+qualifier badge are derived at runtime from this stored value and are not
+persisted separately.
 
-### 1.2 `transcript_items` — new `skill_kind` column
+If the same skill appears multiple times in one session, transcript rows keep
+each occurrence, while `session_skills` stores only the deduplicated
+session-level set.
+
+### 1.2 `transcript_items` — new skill metadata columns
 
 ```sql
 ALTER TABLE transcript_items
-    ADD COLUMN skill_kind TEXT;          -- NULL | "command" | "content" | "reminder"
+    ADD COLUMN skill_kind TEXT;                    -- NULL | "command" | "content" | "reminder"
 ALTER TABLE transcript_items
-    ADD COLUMN skill_name TEXT;          -- NULL or extracted skill name
+    ADD COLUMN normalized_skill_name TEXT;         -- NULL or parser-normalized skill name
 ```
 
-Existing rows keep `skill_kind = NULL` (regular items). New skill-tagged
-rows get one of three values:
+Existing rows keep `skill_kind = NULL` and continue to render exactly as they
+do today.
+
+New skill-tagged rows use:
 
 | `skill_kind` | Meaning | Row rendering |
 |--------------|---------|---------------|
-| `"command"` | Slash command message | Skill command row (brown accent) |
-| `"content"` | Injected skill markdown | Folded content row (tan background) |
-| `"reminder"` | System reminder with skill checklist | Folded reminder row (purple-grey) |
+| `"command"` | Explicit skill invocation command | Skill command row |
+| `"content"` | Injected skill definition or body | Folded content row |
+| `"reminder"` | Injected system reminder/checklist | Folded reminder row |
 | `NULL` | Regular message / tool call / subagent | Unchanged |
 
-`skill_name` stores the extracted name (e.g. `"brainstorming"`,
-`"writing-plans"`) for display in the command row and for the enhanced tool
-call row. For `"content"` and `"reminder"` kinds, it links the folded row
-to its originating skill.
+`normalized_skill_name` links a transcript item to the detected skill identity
+when classification succeeds. If parsing is ambiguous or no stable skill name
+can be produced, the row keeps `NULL` and falls back to the existing
+rendering.
 
-### 1.3 `tool_calls` — new `skill_name` column
+### 1.3 `tool_calls` — new skill metadata column
 
 ```sql
-ALTER TABLE tool_calls ADD COLUMN skill_name TEXT;  -- NULL or skill name
+ALTER TABLE tool_calls
+    ADD COLUMN normalized_skill_name TEXT;         -- NULL or parser-normalized skill name
 ```
 
-Set when `tool_name == "Skill"` (Claude Code) or `tool == "skill"`
-(OpenCode). Allows the tool call row to display `Skill → brainstorming`
-instead of generic `Skill`.
+Set when a tool call explicitly represents skill loading, such as Claude Code
+`Skill` calls or OpenCode `skill` parts.
+
+This allows the transcript to display `Skill -> brainstorming` instead of a
+generic `Skill`, while keeping the existing tool call rendering path unchanged
+for all non-skill calls.
+
+### 1.4 Persistence boundary
+
+No display-only skill fields are stored in the database. In particular:
+
+- `normalized_skill_name` is persisted
+- `display_name` is derived at runtime
+- an optional qualifier badge is derived at runtime when the normalized name
+  includes a prefix
+
+This keeps the schema minimal and avoids storing duplicated presentation data.
+
+### 1.5 Migration behavior
+
+Migration v5 is additive only:
+
+- new columns are nullable
+- existing transcript rows remain valid
+- existing tool call rows remain valid
+- existing sessions require reindexing before skill metadata appears
+
+Until reindexing populates the new fields, all rows continue to use the
+current non-skill rendering.
 
 No changes to `messages`, `sessions`, `subagents`, or `file_fingerprints`.
 
@@ -105,78 +138,137 @@ No changes to `messages`, `sessions`, `subagents`, or `file_fingerprints`.
 
 ## 2. Skill extraction — parser changes
 
-Each parser must detect skill artifacts during indexing and populate the new
-schema columns. Extraction is best-effort: if detection fails, the row falls
-back to its existing rendering (no data loss).
+Each parser detects skill artifacts during indexing and populates the new skill
+metadata columns when confidence is high enough.
 
-### 2.1 Claude Code
+Extraction is conservative by design: false positives are treated as a higher
+risk than missed detections. If detection is ambiguous, the item keeps its
+current message or tool call rendering and no skill metadata is stored.
 
-Three events per skill invocation:
+### 2.1 Detection precedence
 
-| Event | Detection | `skill_kind` | `skill_name` extraction |
-|-------|-----------|--------------|------------------------|
-| User message with XML tags | `<command-name>/` prefix in content | `"command"` | Strip `/` prefix from `<command-name>` value; split on `:` for namespaced skills (e.g. `superpowers-extended-cc:brainstorming` → `brainstorming`) |
-| Following user message(s) with `<system-reminder>` | Content starts with `<system-reminder>` and follows a command message | `"reminder"` | Inherit `skill_name` from preceding command |
-| `Skill` tool call | `tool_use` with `name == "Skill"` | N/A (tool call row) | Read `input.skill` from tool call input JSON |
+Detection precedence is strict:
 
-**Injected skill content detection:**
-Between a command message and the Skill tool call, user messages whose content
-does *not* start with `<system-reminder>` but follows a command message are
-tagged `skill_kind = "content"`. Heuristic: the message is within 3 positions
-of the command and has content length > 500 characters (skill definitions are
-typically 2–5 KB).
+1. Structural signals  
+   Parent/child links, explicit tool metadata, explicit file paths, or other
+   parser-native references.
+2. Explicit syntax parsing  
+   Well-delimited formats such as XML tags, YAML frontmatter, or wrapped skill
+   payloads.
+3. Heuristic proximity rules  
+   Relative position, content size, adjacency to other skill artifacts.
 
-**Args extraction:**
-`<command-args>` value from the command message, stored as the message content
-for display as subtitle in the command row.
+A lower-confidence detector must not override a higher-confidence result.
 
-### 2.2 OpenCode
+A row is only tagged as a skill artifact when the parser can also produce a
+stable `normalized_skill_name`. If no stable skill name can be produced, the
+row falls back to existing rendering.
 
-Two events per skill invocation:
+### 2.2 Claude Code
 
-| Event | Detection | `skill_kind` | `skill_name` extraction |
-|-------|-----------|--------------|------------------------|
-| User message (skill markdown as first text part) | Parent of a `tool == "skill"` assistant part (via `parentID`) | `"content"` | Inherit from tool part's `state.metadata.name` |
-| Assistant `tool == "skill"` part | `part.data.tool == "skill"` | N/A (tool call row) | `state.metadata.name`, fallback `state.input.name` |
+Claude Code skill invocations may surface through three related artifacts:
 
-OpenCode has no separate command row — the user's original message is
-replaced by the skill markdown. The tool call row carries the skill name.
+| Event | Preferred detection | `skill_kind` | `normalized_skill_name` source |
+|-------|----------------------|--------------|--------------------------------|
+| User command message | Explicit command XML tags | `"command"` | Parsed from `<command-name>` or another explicit command field |
+| Injected reminder message | Explicit `<system-reminder>` wrapper following a detected skill command | `"reminder"` | Inherited from the associated command |
+| `Skill` tool call | Tool call with `name == "Skill"` | N/A (tool call row) | `input.skill` from tool input |
 
-### 2.3 Codex
+**Preferred strategy:**  
+Use explicit command metadata and the `Skill` tool call as the primary
+anchors.
 
-Two events per skill invocation:
+**Heuristic fallback:**  
+If injected skill content appears between a detected command and the
+corresponding `Skill` tool call, nearby long user messages may be tagged as
+`"content"` only when they are strongly bounded by those explicit anchors.
 
-| Event | Detection | `skill_kind` | `skill_name` extraction |
-|-------|-----------|--------------|------------------------|
-| User message with `$skill-name` | `text_elements[].placeholder` starts with `$` | `"command"` | Strip `$` prefix from placeholder value |
-| Following user message with `<skill>` wrapper | Content contains `<skill>` root element | `"content"` | Extract `<name>…</name>` from `<skill>` wrapper |
+Heuristics such as message distance or minimum content length are fallback-only
+and must not be the sole basis for reclassifying otherwise normal-looking user
+content.
 
-### 2.4 Mistral Vibe
+**Args extraction:**  
+`<command-args>` from the command message is used as the subtitle shown in the
+skill command row when present.
 
-Two loading paths:
+### 2.3 OpenCode
+
+OpenCode provides the strongest structural linkage of the four assistants.
+
+| Event | Preferred detection | `skill_kind` | `normalized_skill_name` source |
+|-------|----------------------|--------------|--------------------------------|
+| User message containing injected skill body | Structural parent link to a `tool == "skill"` assistant part | `"content"` | Inherited from the linked tool part metadata |
+| Assistant skill tool part | `part.data.tool == "skill"` | N/A (tool call row) | `state.metadata.name`, fallback `state.input.name` |
+
+OpenCode has no separate skill command row in the currently observed format.
+The transcript therefore surfaces skill visibility through the folded content
+row and the enriched tool call row.
+
+Because OpenCode exposes both a structural relation and explicit skill
+metadata, these signals should be treated as high confidence.
+
+### 2.4 Codex
+
+Codex may expose skill usage through a command placeholder and a wrapped skill
+payload.
+
+| Event | Preferred detection | `skill_kind` | `normalized_skill_name` source |
+|-------|----------------------|--------------|--------------------------------|
+| User command message | Placeholder value beginning with `$` | `"command"` | Placeholder value with the leading `$` removed |
+| Injected skill content | Content parses as a `<skill>` wrapper payload | `"content"` | Extracted from `<name>...</name>` inside the wrapper |
+
+The `<skill>` wrapper should be treated as an explicit syntax signal only when
+it can be parsed as a structured wrapper, not by substring matching alone.
+
+If wrapper parsing fails, the row falls back to regular message rendering.
+
+### 2.5 Mistral Vibe
+
+Mistral Vibe appears to expose skill loading through multiple patterns, which
+should be handled conservatively.
 
 **Exact slash path** (`/<skill-name>`):
 
-| Event | Detection | `skill_kind` | `skill_name` extraction |
-|-------|-----------|--------------|------------------------|
-| User message is SKILL.md body | First user message content matches SKILL.md frontmatter pattern (`---\nname:`) | `"content"` | Parse `name:` from YAML frontmatter |
+| Event | Preferred detection | `skill_kind` | `normalized_skill_name` source |
+|-------|----------------------|--------------|--------------------------------|
+| Injected SKILL.md body | Content parses as YAML frontmatter-backed SKILL content | `"content"` | `name:` from frontmatter |
 
-**Free-form path** (`/<skill-name> args`):
+Frontmatter-based detection should only apply when the content shape matches
+an actual skill file structure strongly enough to avoid classifying arbitrary
+markdown with frontmatter as a skill definition.
 
-| Event | Detection | `skill_kind` | `skill_name` extraction |
-|-------|-----------|--------------|------------------------|
-| User message `/<skill-name> args` | Content starts with `/` and matches known skill pattern | `"command"` | Extract name after `/` prefix |
-| `read_file` tool call targeting `skills/*/SKILL.md` | `read_file` input path matches `skills/<name>/SKILL.md` | N/A (tool call, `skill_name` set) | Extract `<name>` from path segment |
+**Free-form invocation form:**
 
-### 2.5 `session_skills` population
+| Event | Preferred detection | `skill_kind` | `normalized_skill_name` source |
+|-------|----------------------|--------------|--------------------------------|
+| User command message | Explicit slash-command form with an extractable skill token | `"command"` | Command token after `/` |
+| File-read tool call for a skill file | Tool input path resolving to `skills/<name>/SKILL.md` | N/A (tool call row) | `<name>` extracted from the path |
 
-After parsing all transcript items for a session, collect distinct
-`skill_name` values from:
-- Transcript items where `skill_kind IS NOT NULL`
-- Tool calls where `skill_name IS NOT NULL`
+Any looser pattern matching should be avoided unless the parser has a
+concrete, testable source of truth for known skill names.
 
-Insert into `session_skills` with the `source` value from the first detection
-point (command > tool_call > injection priority).
+### 2.6 `session_skills` population
+
+After parsing all transcript items and tool calls for a session, collect
+distinct `normalized_skill_name` values from:
+
+- transcript items where `skill_kind IS NOT NULL`
+- tool calls where `normalized_skill_name IS NOT NULL`
+
+Insert the deduplicated set into `session_skills`.
+
+Repeated invocations of the same skill remain visible in the transcript, but
+only one session-level entry is stored.
+
+### 2.7 Fallback guarantee
+
+Skill extraction is best-effort and non-destructive:
+
+- if explicit detection succeeds, store skill metadata
+- if detection is ambiguous, do not store skill metadata
+- if extraction fails, preserve the current rendering path
+- no parser should reclassify content as a skill artifact unless it can
+  produce a stable `normalized_skill_name`
 
 ---
 
@@ -197,14 +289,13 @@ pub enum TranscriptItemInit {
 
 ```rust
 pub struct SkillCommandInit {
-    pub skill_name: String,           // e.g. "brainstorming"
-    pub namespace: Option<String>,    // e.g. "superpowers-extended-cc"
+    pub normalized_skill_name: String,
     pub args: Option<String>,         // e.g. "heatmap width limit exploration"
-    pub assistant: AiAssistant,       // source badge
+    pub assistant: AiAssistant,       // assistant badge
 }
 
 pub struct FoldedContentInit {
-    pub skill_name: String,
+    pub normalized_skill_name: String,
     pub content_kind: FoldedContentKind,
     pub byte_size: usize,            // for display: "2.4 KB"
     pub content_preview: String,     // first ~200 chars for DB preview
@@ -220,7 +311,7 @@ pub enum FoldedContentKind {
 
 ### 3.2 Enhanced `ToolCallItemInit`
 
-The existing `ToolCallItemInit` gains an optional `skill_name`:
+The existing `ToolCallItemInit` gains an optional `normalized_skill_name`:
 
 ```rust
 pub struct ToolCallItemInit {
@@ -233,7 +324,7 @@ pub struct ToolCallItemInit {
     pub duration_ms: Option<i64>,
     pub preview: Option<String>,
     // New:
-    pub skill_name: Option<String>,
+    pub normalized_skill_name: Option<String>,
 }
 ```
 
@@ -242,7 +333,7 @@ pub struct ToolCallItemInit {
 ```rust
 pub struct Session {
     // ... existing fields ...
-    pub skills: Vec<String>,         // populated from session_skills table
+    pub skills: Vec<String>,         // normalized skill names from session_skills
 }
 ```
 
@@ -257,10 +348,13 @@ match (row.kind, row.skill_kind) {
     ("message", Some("content"))  => FoldedContent(... SkillDefinition)
     ("message", Some("reminder")) => FoldedContent(... SystemReminder)
     ("message", None)             => Message(...)           // unchanged
-    ("tool_call", _)              => ToolCall(...)           // skill_name passed through
+    ("tool_call", _)              => ToolCall(...)           // normalized_skill_name passed through
     ("subagent", _)               => Subagent(...)           // unchanged
 }
 ```
+
+UI-facing display labels are derived from `normalized_skill_name` at runtime.
+The database and row init types do not persist separate display-only fields.
 
 ---
 
@@ -268,17 +362,17 @@ match (row.kind, row.skill_kind) {
 
 ### 4.1 `load_transcript_items()` — extended SELECT
 
-Add `skill_kind`, `skill_name` from `transcript_items` and `skill_name`
-from `tool_calls` to the existing LEFT JOIN query:
+Add `skill_kind`, `normalized_skill_name` from `transcript_items` and
+`normalized_skill_name` from `tool_calls` to the existing LEFT JOIN query:
 
 ```sql
 SELECT ti.item_index, ti.kind,
-       ti.skill_kind, ti.skill_name AS ti_skill_name,    -- NEW
+       ti.skill_kind, ti.normalized_skill_name AS ti_skill_name, -- NEW
        ti.message_index, ti.tool_call_id, ti.subagent_id,
        m.role, substr(m.content, 1, ?2) AS content_preview,
        length(m.content) AS content_len, m.timestamp, m.model,
        tc.tool_name, tc.status, tc.summary,
-       tc.skill_name AS tc_skill_name,                    -- NEW
+       tc.normalized_skill_name AS tc_skill_name,         -- NEW
        substr(tc.input_json, 1, 512) AS input_json,
        substr(tc.output_text, 1, 512) AS output_text,
        tc.duration_ms,
@@ -294,168 +388,225 @@ LIMIT ?3 OFFSET ?4
 
 ### 4.2 `load_sessions()` — skill chips
 
-After loading sessions, batch-load skills:
+After loading sessions, batch-load normalized skill names:
 
 ```sql
-SELECT session_id, skill_name
+SELECT session_id, normalized_skill_name
 FROM session_skills
 WHERE session_id IN (?, ?, ...)
-ORDER BY session_id, skill_name
+ORDER BY session_id, normalized_skill_name
 ```
 
 Group results by `session_id` and attach to each `Session.skills` vector.
+
+Transcript loading remains the primary deliverable for this design. Session
+chips are useful secondary context, but they should not complicate the core
+transcript path if `SessionRow` changes prove more invasive than expected.
 
 ---
 
 ## 5. UI rendering
 
-### 5.1 Skill command row
+### 5.1 Rendering priorities
 
-Layout (44px height):
+The primary UI goal of this design is transcript readability. Skill-aware
+transcript rendering is the core deliverable.
 
-```
-[gear-icon]  /brainstorming  [superpowers]  heatmap width limit exploration
-  ↑ brown      ↑ bold 13px     ↑ chip          ↑ dim 12px subtitle
-  #986a44
-```
+Session-level skill chips are useful secondary context, but they should not
+complicate or delay the core transcript experience if the required
+`SessionRow` changes prove more invasive than expected.
 
-- Left border: 3px solid `#986a44` (brown).
-- Background: `alpha(@card_bg_color, 0.5)` (same as message rows).
-- Gear icon: `emblem-system-symbolic` at 16px in a rounded container with
-  `#986a44` at 12% opacity.
-- Skill name: bold label, 13px. Prefixed with `/` for display.
-- Source badge (namespace): only shown if namespace is present. Brown chip
-  with `#986a44` at 10% opacity, 11px label.
-- Args: dim label, 12px, `opacity: 0.6`. Truncated to 80 chars with
-  ellipsis. Only shown when args are non-empty.
+### 5.2 Skill command row
+
+A skill command row represents an explicit user-visible skill invocation.
+
+It should remain visually close to existing transcript rows, while clearly
+distinguishable from normal user messages.
+
+Recommended display elements:
+
+- skill icon
+- short skill display name
+- optional qualifier badge when the normalized skill name includes a prefix
+- optional argument subtitle when arguments are present
+
+The row shows the UI-facing display name, not the full stored
+`normalized_skill_name`.
+
+If the normalized name includes a qualifier such as `namespace:name`, the row
+derives:
+
+- `display_name = name`
+- `qualifier_badge = namespace`
+
+If no qualifier exists, only the display name is shown.
 
 CSS class: `.skill-command-row`
 
-### 5.2 Folded content row
+### 5.3 Folded content row
 
-Layout (32px height, collapsed):
+Folded content rows represent injected skill boilerplate that would otherwise
+flood the transcript.
 
-```
-[▶]  Skill content: brainstorming (2.4 KB)
- ↑     ↑ dim 11px
- brown
-```
+There are two folded row subtypes:
 
-- Left border: 2px solid `#986a44` (skill definition) or `#9141ac` (system
-  reminder).
-- Background:
-  - Skill definition: `#f4f0ec` at 70% opacity (tan).
-  - System reminder: `#f0eff4` at 70% opacity (purple-grey).
-- Collapse indicator: `▶` (collapsed) / `▼` (expanded), 11px, matching
-  accent color.
-- Label: `"Skill content: {skill_name} ({byte_size})"` or
-  `"System reminder: available skills + checklist ({byte_size})"`.
-- Byte size: formatted as `X.X KB` (divide by 1024, one decimal).
+- skill definition or injected skill body
+- system reminder or checklist content
 
-**Expanded state** (variable height, up to 200px with scroll):
+Both are collapsed by default.
 
-```
-[▼]  Skill content: brainstorming (2.4 KB)                    [Copy]
-     # Brainstorming Ideas Into Designs
-     ## Overview
-     Help turn ideas into fully formed designs…
-     [ 48 more lines ]
-```
+The user-facing interaction pattern should match the existing long-message
+expand/collapse behavior:
 
-- Full content loaded from DB on first expand (same pattern as existing
-  message expand/collapse).
-- Content displayed in a `gtk::TextView` (read-only, monospace, no markdown
-  rendering) with max height 200px and vertical scrolling.
-- "Copy" button in top-right corner (flat button, `edit-copy-symbolic`).
-- "X more lines" indicator at bottom if content exceeds visible area.
+- collapsed by default
+- expandable on click
+- keyboard-toggleable when focused
+- full content loaded on first expansion
+- cached after first load
+
+However, these rows remain their own transcript row type. They should not be
+modeled as ordinary message rows with special CSS alone.
+
+Expanded content is displayed in a read-only `gtk::TextView` with a bounded
+height and vertical scrolling. A copy action is available in expanded state.
 
 CSS classes: `.folded-content-row`, `.folded-reminder-row`
 
-### 5.3 Enhanced Skill tool call row
+### 5.4 Enhanced skill tool call row
 
-Same layout as existing tool call rows, with one change:
+Skill-aware tool call rows preserve the existing tool call layout and
+behavior.
 
-- **Tool name label** displays `Skill → brainstorming` instead of `Skill`
-  when `skill_name` is set.
-- The `→` is a literal arrow character (dim, not bold).
-- No other changes to the tool call row layout, status badge, duration, or
-  inspect button.
+The only behavior change is the title label:
 
-This is a minimal change in `transcript_row.rs` where the tool name label
-is built: check `skill_name` and format accordingly.
+- generic form: `Skill`
+- skill-aware form: `Skill -> brainstorming`
 
-### 5.4 Session list skill chips
+This is intentionally minimal. It improves readability without introducing a
+new interaction model or inspector path.
 
-Below the subtitle line in `SessionRow`, display skill name chips:
+The displayed skill label is derived from the stored normalized name and uses
+the short display name.
 
-```
-Heatmap width limit exploration
-sessions-chronicle · 14:32 · 24 messages
-[brainstorming] [writing-plans]
-```
+### 5.5 Session list skill chips
 
-- Each chip: `gtk::Label` inside a `gtk::Box` with:
-  - Background: `#986a44` at 10% opacity.
-  - Text: skill name, 10px, `#986a44` color.
-  - Border-radius: 4px.
-  - Padding: 2px 6px.
-  - Margin-right: 4px between chips.
-- Container: horizontal `gtk::FlowBox` or `gtk::Box`, max 4 chips visible.
-  If more than 4, show `+N` overflow indicator.
-- If `session.skills` is empty, no chip row is added (no extra spacing).
+If session chips remain in scope, they appear as lightweight secondary metadata
+below the existing session subtitle.
+
+They communicate only the deduplicated session-level set of detected skills.
+They do not attempt to show invocation count or ordering.
+
+Important constraint: the current `SessionRow` is based on a compact
+`adw::ActionRow` layout. Adding a dedicated chip row may require extending or
+partially restructuring that layout, rather than simply attaching a suffix
+widget.
+
+If implemented, the container shows at most four chips and then a `+N`
+overflow indicator.
 
 CSS class: `.skill-chip`
 
-### 5.5 Dark mode compatibility
+### 5.6 Theme and accessibility behavior
 
-All hardcoded colors use `alpha()` over theme colors where possible.
-The accent colors (`#986a44` brown, `#9141ac` purple) are used at low
-opacity for backgrounds, which adapts naturally to dark themes. The text
-accent colors remain fixed (readable on both light and dark backgrounds).
+Skill-aware rows remain compatible with both light and dark themes.
 
-The folded row backgrounds (`#f4f0ec`, `#f0eff4`) should switch to darker
-tones in dark mode. Use `@theme_bg_color` with a brown/purple tint via
-`mix()` or define two CSS rules gated by the `.dark` style class:
+Visual differentiation relies on subtle accenting, distinct row styling, and
+consistent spacing and affordances, not on strong background fills alone.
 
-```css
-.folded-content-row {
-    background-color: alpha(#986a44, 0.08);
-}
-.folded-reminder-row {
-    background-color: alpha(#9141ac, 0.06);
-}
-```
+Accessibility expectations:
 
-Using `alpha()` over the accent color automatically adapts to the theme
-background.
+- folded rows can receive focus
+- Enter and Space toggle expansion
+- copy actions remain keyboard reachable
+- visual distinction does not rely only on color
+
+### 5.7 Rendering fallback rule
+
+Rows with no skill metadata render exactly as they do today.
+
+Skill-aware rendering is additive only. It must never make unsupported or
+ambiguously parsed transcripts less readable than the current UI.
 
 ---
 
 ## 6. Session title cleaning
 
-When the first message in a session is a skill command, the `first_prompt`
-field currently contains raw XML tags or SKILL.md content. Cleaning rules:
+### 6.1 Goal
+
+Session title cleaning exists to prevent raw skill boilerplate or command
+markup from becoming the visible session title.
+
+The goal is not to perfectly reconstruct every original invocation form. The
+goal is to produce a short, readable title when the first session artifact is
+confidently identified as skill-related.
+
+### 6.2 Confidence rule
+
+Title cleaning only applies when the first prompt is identified as a skill
+artifact with high confidence.
+
+If the first message is ambiguous, malformed, or cannot be linked to a stable
+`normalized_skill_name`, the existing `first_prompt` behavior remains
+unchanged.
+
+### 6.3 Stored vs displayed values
+
+The cleaned session title is a display-oriented summary. It uses the same
+derived UI-facing skill label as the transcript:
+
+- unqualified normalized name -> display directly
+- qualified normalized name -> display the short name, not the full qualified
+  form
+
+Arguments may be appended when they are clearly extractable and short enough
+to improve readability.
+
+Examples:
 
 | Assistant | Raw `first_prompt` | Cleaned `first_prompt` |
-|-----------|-------------------|----------------------|
+|-----------|-------------------|------------------------|
 | Claude Code | `<command-message>brainstorming</command-message>\n<command-name>/brainstorming</command-name>\n<command-args>heatmap width</command-args>` | `brainstorming: heatmap width` |
 | Codex | `$logseq un fichier markdown` | `logseq: un fichier markdown` |
-| Mistral Vibe (exact) | Full SKILL.md body (2+ KB) | `learn-rust` (from frontmatter `name:`) |
+| Mistral Vibe (exact) | Full SKILL.md body (2+ KB) | `learn-rust` |
 | Mistral Vibe (free-form) | `/<skill-name> args` | `<skill-name>: args` |
-| OpenCode | Skill markdown body | `brainstorming` (from tool part metadata) |
+| OpenCode | Skill markdown body | `brainstorming` |
+
+The cleaned title does not expose raw XML tags, full SKILL.md bodies, or
+internal wrapper syntax.
+
+### 6.4 Assistant-specific expectation
+
+Different assistants may require different extraction paths, but they all
+follow the same output rule:
+
+- extract a stable normalized skill name when possible
+- derive a short display label from it
+- include short args only when they are explicit and useful
+- otherwise fall back to existing title behavior
+
+### 6.5 Search and source preservation
 
 Cleaning happens during parsing, before writing `first_prompt` to the
-`sessions` table. The cleaning function is shared across parsers:
+`sessions` table.
 
 ```rust
 pub fn clean_skill_prompt(raw: &str, assistant: AiAssistant) -> Option<String> {
-    // Returns Some(cleaned) if skill detected, None otherwise
+    // Returns Some(cleaned) if a skill artifact is detected with high confidence
 }
 ```
 
-If the first message is a skill command, `first_prompt` is set to the
-cleaned version. The original content remains in the `messages` FTS5 table
-for full-text search.
+The cleaned `first_prompt` is used for display, while the original underlying
+message content remains available through normal indexed message storage. This
+preserves search behavior and avoids lossy rewriting of transcript history.
+
+### 6.6 Failure mode
+
+If title cleaning fails:
+
+- indexing continues
+- the session remains visible
+- the title falls back to current behavior
+- no transcript data is discarded
 
 ---
 
@@ -476,6 +627,9 @@ Folded content rows reuse the existing expand/collapse pattern from
 The `▶`/`▼` indicator updates on toggle. The "Copy" button is only visible
 in expanded state.
 
+Folded rows share the loading pattern used by long message rows, but remain a
+distinct transcript row type with their own semantics and styling.
+
 **Keyboard accessibility:**
 - Tab/Shift-Tab navigates between rows (existing behavior).
 - Enter or Space toggles expand/collapse on focused folded rows.
@@ -485,20 +639,95 @@ in expanded state.
 
 ## 8. Error handling and edge cases
 
-- **Partial detection:** If a skill command is detected but no matching
-  content/reminder follows, the command row is still rendered (standalone).
-  Missing content means no folded rows — no error.
-- **Unknown skill format:** If XML tag parsing or frontmatter extraction
-  fails, the message falls back to regular rendering (`skill_kind = NULL`).
-- **Multiple skills in one session:** Each skill invocation generates its own
-  set of rows. `session_skills` stores all distinct names.
-- **Namespaced skills:** `superpowers-extended-cc:brainstorming` displays as
-  `brainstorming` with a `superpowers-extended-cc` source badge. The full
-  name is stored in `session_skills`; the display name strips the namespace.
-- **Empty args:** The args subtitle is hidden (not shown as empty string).
-- **Migration on existing data:** The v5 migration adds nullable columns.
-  Existing data has `skill_kind = NULL` and is unaffected. A full reindex
-  populates the new columns for all sessions.
+Skill detection is conservative. A false positive that hides or reframes
+normal conversation content is considered worse than a missed detection.
+
+### 8.1 Fallback behavior
+
+- If a skill artifact is detected with sufficient confidence, store skill
+  metadata and use the corresponding skill-aware rendering.
+- If detection is ambiguous, do not store skill metadata.
+- If parsing fails at any step, the row falls back to the existing message or
+  tool call rendering.
+- Existing sessions that have not yet been reindexed continue to render
+  without skill-specific behavior.
+
+### 8.2 Partial detection
+
+Partial detection is valid and should not be treated as an error.
+
+Examples:
+
+- a skill command is detected, but no matching injected content follows
+- a skill tool call is detected, but no matching folded content row can be
+  linked
+- a folded content candidate is found, but no stable
+  `normalized_skill_name` can be produced
+
+In these cases, only the confidently detected artifacts are surfaced. No
+synthetic or inferred rows are created to "complete" a skill lifecycle when
+the source data does not support it.
+
+### 8.3 False positive prevention
+
+Ambiguous content remains a regular transcript row.
+
+This includes:
+
+- long markdown messages that are not skill definitions
+- messages with YAML frontmatter unrelated to skills
+- XML-like content that only partially resembles a skill wrapper
+- slash-prefixed user commands that are not known to represent a skill
+  invocation in the parsed source format
+
+The parser prefers under-classification over over-classification.
+
+### 8.4 Repeated and mixed skill usage
+
+- Multiple invocations of the same skill in one session create multiple
+  transcript artifacts where detected.
+- `session_skills` stores only the deduplicated session-level set.
+- Different assistants may express the same visible skill through different
+  raw formats, but the parser normalizes them to the same
+  `normalized_skill_name` when confidence is high enough.
+- If two raw forms cannot be normalized confidently to the same identity, they
+  remain distinct rather than being merged speculatively.
+
+### 8.5 Qualified skill names
+
+If a detected skill name includes a qualifier such as `namespace:name`, the
+full normalized value is stored.
+
+UI presentation derives:
+
+- a short display name
+- an optional qualifier badge
+
+If no qualifier is present, the full normalized value is used directly as the
+display name.
+
+### 8.6 Migration and reindex behavior
+
+Migration v5 is additive and does not invalidate existing transcript data.
+
+After migration:
+
+- rows with `NULL` skill metadata continue to render unchanged
+- skill-aware rendering appears only after reindexing populates the new
+  columns
+- partial reindex states are acceptable and must not break transcript loading
+
+### 8.7 Unknown or evolving source formats
+
+Assistant transcript formats are treated as untrusted and subject to change.
+
+If a source format evolves and a parser can no longer extract skill metadata
+reliably:
+
+- indexing continues where possible
+- affected rows fall back to regular rendering
+- the application does not fail transcript loading solely because skill
+  extraction failed
 
 ---
 
@@ -589,44 +818,106 @@ in expanded state.
 
 ### 10.1 Schema tests
 
-- Migration v5 adds `skill_kind` and `skill_name` to `transcript_items`.
-- Migration v5 adds `skill_name` to `tool_calls`.
-- Migration v5 creates `session_skills` table with correct indexes.
-- Existing data survives migration (nullable columns, no data loss).
+- Migration v5 adds `skill_kind` and `normalized_skill_name` to
+  `transcript_items`.
+- Migration v5 adds `normalized_skill_name` to `tool_calls`.
+- Migration v5 creates `session_skills` with the expected primary key and
+  index.
+- Existing v4 data migrates without data loss.
+- Rows with no skill metadata remain queryable and renderable after migration.
 
-### 10.2 Parser tests (per assistant)
+### 10.2 Parser tests - positive cases
 
-- **Claude Code:** session with `/brainstorming` command produces transcript
-  items with `skill_kind = "command"`, `"content"`, `"reminder"` and correct
-  `skill_name`. Skill tool call has `skill_name` set.
-- **OpenCode:** session with `tool == "skill"` part produces `"content"`
-  tagged user message and tool call with `skill_name`.
-- **Codex:** session with `$logseq` produces `"command"` and `"content"`
-  items.
-- **Mistral Vibe:** exact path session produces `"content"` item; free-form
-  path produces `"command"` item and tool call with `skill_name`.
-- **Title cleaning:** `first_prompt` is cleaned for all assistant types.
-- **session_skills populated:** all test sessions have correct skill entries.
+- **Claude Code:** explicit skill command produces a `"command"` transcript
+  item and a matching skill-aware tool call.
+- **Claude Code:** injected reminder content linked to a detected command
+  produces a `"reminder"` row only when bounded strongly enough by explicit
+  anchors.
+- **OpenCode:** `tool == "skill"` metadata produces a tool call row with
+  `normalized_skill_name`, and linked injected content produces a `"content"`
+  row.
+- **Codex:** `$skill-name` command produces a `"command"` row; wrapped skill
+  payload produces a `"content"` row when parsing succeeds.
+- **Mistral Vibe:** SKILL.md-style content with parseable frontmatter produces
+  a `"content"` row.
+- **Mistral Vibe:** skill file path reads produce skill-aware tool call
+  metadata when the path shape is explicit.
+- **Title cleaning:** skill-driven `first_prompt` cleanup works only for
+  high-confidence detections.
+- **Session aggregation:** `session_skills` contains the deduplicated set of
+  detected skills for a session.
 
-### 10.3 UI tests (manual)
+### 10.3 Parser tests - negative cases
 
-- Skill command row displays with brown accent, gear icon, skill name, args.
-- Folded content row is collapsed by default; click expands with full text.
-- Folded reminder row uses purple-grey styling.
-- Skill tool call row shows `Skill → brainstorming`.
-- Session list shows skill chips; sessions without skills show no chips.
-- Dark mode: all rows are readable, folded backgrounds adapt.
-- Keyboard: Enter/Space toggles folded rows.
+- Long non-skill markdown does not become a folded skill row.
+- Generic YAML frontmatter does not become skill content unless the full skill
+  shape matches.
+- Partial XML or malformed wrappers do not produce skill rows.
+- Slash commands unrelated to skill loading do not produce skill metadata.
+- Ambiguous content near a real skill invocation does not get classified as
+  skill content unless the detection rule is strong enough.
+- Failed extraction preserves the existing row type and rendering path.
 
-### 10.4 Fixture data
+### 10.4 Normalization tests
 
-Add skill invocation samples to existing test fixtures:
+- Equivalent raw forms normalize to the same `normalized_skill_name` when
+  expected.
+- Qualified names preserve their full normalized value.
+- Display-oriented derivation is stable:
+  - unqualified name -> no qualifier badge
+  - qualified name -> short display name plus qualifier badge
+- No UI-only field is required to reconstruct the expected display label from
+  stored data.
+
+### 10.5 Transcript/UI behavior tests
+
+- Skill command rows render differently from regular message rows.
+- Folded content rows are collapsed by default.
+- Folded reminder rows use distinct styling from folded skill definition rows.
+- Expanding a folded row loads full content and preserves subsequent toggle
+  behavior.
+- Skill-aware tool call rows display a specific skill label instead of generic
+  `Skill`.
+- Rows with no skill metadata render exactly as they did before v5.
+
+### 10.6 Session-level UI tests
+
+- Sessions with detected skills display chips.
+- Sessions without detected skills display no extra row or spacing.
+- Repeated invocations of the same skill still produce a single chip.
+- Qualified names display a readable short label.
+
+### 10.7 Fixture coverage
+
+Add or extend fixtures so that each assistant has:
+
+- at least one positive skill-detection sample
+- at least one negative near-miss sample
+- at least one case where fallback rendering is intentionally preserved
+
+This is especially important for assistants whose detection depends partly on
+syntax parsing or heuristics.
+
+### 10.8 Existing fixture paths
+
+Extend skill invocation coverage in existing test fixtures:
 
 - `tests/fixtures/claude-code/`: session with `/brainstorming` command.
 - `tests/fixtures/codex/`: session with `$skill-name` invocation.
 - `tests/fixtures/mistral-vibe/`: session with `/<skill-name>` invocation.
 
-### 10.5 Verification command
+### 10.9 Verification goal
+
+Manual verification should confirm:
+
+- raw boilerplate no longer dominates the transcript in supported cases
+- ambiguous content is not incorrectly folded away
+- transcript rendering remains stable for unsupported or partially supported
+  sessions
+- skill-aware rendering improves readability without hiding recoverable source
+  content
+
+### 10.10 Verification command
 
 ```bash
 flatpak-builder --run flatpak_app \
@@ -644,5 +935,4 @@ flatpak-builder --run flatpak_app \
 - Skill tool calls show which skill was loaded.
 - Session list surfaces skill usage at a glance via chips.
 - Session titles are clean when the first message is a slash command.
-- No new widget patterns introduced — extends existing `TranscriptRow`
-  factory and CSS classes.
+- Existing non-skill sessions keep their current rendering paths unchanged.
