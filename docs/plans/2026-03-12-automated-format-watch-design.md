@@ -63,6 +63,44 @@ Out of scope for the first implementation:
 - The project should be able to start inside GitHub Actions and keep the option
   open for a future external bot or agent orchestrator.
 
+## Source accessibility
+
+Not all upstream assistants expose their persistence code equally. The watch
+system must account for this and adapt its extraction strategy per assistant.
+
+| Assistant | Repo | Source code access | Extraction strategy |
+|-----------|------|--------------------|---------------------|
+| OpenCode | [sst/opencode](https://github.com/sst/opencode) (branch `dev`) | Full — open-source TypeScript, Drizzle ORM schema, session types | Direct: shallow clone, extract types and schema from source |
+| Codex | [openai/codex](https://github.com/openai/codex) | Full — open-source Rust, protocol types in crate | Direct: shallow clone, extract enum variants and struct fields |
+| Mistral Vibe | [mistralai/mistral-vibe](https://github.com/mistralai/mistral-vibe) | Full — open-source Python, session/message classes | Direct: shallow clone, extract dataclass/class fields |
+| Claude Code | [anthropics/claude-code](https://github.com/anthropics/claude-code) | Partial — repo is public but does not contain source code; persistence format is not in the repo | Indirect: npm package diffing after updates, changelog keyword scanning, SDK type changes |
+
+### Claude Code extraction strategy
+
+The `anthropics/claude-code` GitHub repository contains documentation, plugins,
+and issue tracking but not the application source code. The persistence layer
+(JSONL event types, storage paths, message schemas) is embedded in the compiled
+npm package `@anthropic-ai/claude-code`.
+
+Available signals for Claude Code:
+
+1. **npm package diffing**: after a version update, extract the installed
+   package contents and diff bundled type definitions or generated schemas
+   against the previous version snapshot.
+2. **Changelog and release notes**: scan the repository's CHANGELOG.md and
+   GitHub releases for keywords such as `session`, `storage`, `format`,
+   `migration`, `JSONL`.
+3. **SDK type changes**: the official TypeScript and Python SDKs expose
+   `listSessions` and `getSessionMessages` functions with typed return values.
+   Changes to those return types signal persistence format evolution.
+4. **Local session diffing**: compare newly generated session files against
+   existing fixtures after a Claude Code update to detect structural drift.
+
+Because code-level extraction is not possible, Claude Code relies more heavily
+on the documentation evidence extractor and on local session diffing than the
+other assistants. Risk scores for Claude Code should reflect this reduced
+confidence.
+
 ## Approach
 
 Use a two-stage hybrid pipeline.
@@ -114,13 +152,101 @@ Each assistant entry should define:
 - risk heuristics
 - output mapping to relevant Sessions Chronicle files
 
-Example source categories:
+Example registry (abbreviated):
 
-- schema definitions
-- storage migrations
-- persistence models and typed protocol definitions
-- release notes or migration notes
-- path-resolution code for session storage locations
+```yaml
+assistants:
+  opencode:
+    watch_level: critical
+    upstream:
+      repo: sst/opencode
+      branch: dev
+    sensitive_paths:
+      - "packages/opencode/src/session/index.ts"
+      - "packages/opencode/src/session/message-v2.ts"
+      - "packages/opencode/src/**/*.sql.ts"
+    extractors:
+      - family: structured_type
+        language: typescript
+        targets:
+          - file: "packages/opencode/src/session/index.ts"
+            types: ["Info"]
+          - file: "packages/opencode/src/session/message-v2.ts"
+            types: ["Part"]
+      - family: sqlite_schema
+        source: drizzle
+        targets: ["session", "message", "part", "project"]
+    impact_mapping:
+      docs: docs/session-formats/opencode.md
+      parser: src/parsers/opencode/
+      fixtures: tests/fixtures/opencode_storage/
+
+  codex:
+    watch_level: critical
+    upstream:
+      repo: openai/codex
+      branch: main
+    sensitive_paths:
+      - "codex-rs/protocol/src/protocol.rs"
+      - "codex-rs/core/src/rollout/recorder.rs"
+    extractors:
+      - family: structured_type
+        language: rust
+        targets:
+          - file: "codex-rs/protocol/src/protocol.rs"
+            types: ["RolloutItem", "EventMsg", "SessionMeta"]
+    impact_mapping:
+      docs: docs/session-formats/codex.md
+      parser: src/parsers/codex.rs
+      fixtures: tests/fixtures/codex_sessions/
+
+  claude-code:
+    watch_level: critical
+    upstream:
+      repo: anthropics/claude-code
+      branch: main
+      # Repo does not contain source code. See "Claude Code extraction
+      # strategy" for the indirect approach.
+    sensitive_paths:
+      - "CHANGELOG.md"
+    extractors:
+      - family: documentation
+        targets:
+          - path: "CHANGELOG.md"
+            keywords: ["session", "storage", "format", "migration", "JSONL"]
+      - family: sdk_types
+        packages:
+          - name: "@anthropic-ai/claude-code"
+            registry: npm
+          - name: "claude-code-sdk"
+            registry: pypi
+      - family: local_session_diff
+        fixture_path: tests/fixtures/claude_sessions/
+    impact_mapping:
+      docs: docs/session-formats/claude-code.md
+      parser: src/parsers/claude_code.rs
+      fixtures: tests/fixtures/claude_sessions/
+
+  mistral-vibe:
+    watch_level: critical
+    upstream:
+      repo: mistralai/mistral-vibe
+      branch: main
+    sensitive_paths:
+      - "vibe/core/session.py"
+      - "vibe/**/*message*"
+      - "vibe/**/*log*"
+    extractors:
+      - family: structured_type
+        language: python
+        targets:
+          - file: "vibe/core/session.py"
+            types: []  # to be refined after source inspection
+    impact_mapping:
+      docs: docs/session-formats/mistral-vibe.md
+      parser: src/parsers/mistral_vibe.rs
+      fixtures: tests/fixtures/vibe_sessions/
+```
 
 ### 2. Baselines
 
@@ -142,6 +268,54 @@ upstream code. Typical fields include:
   markers
 - source evidence references (repo, path, commit)
 
+Example baseline (OpenCode, abbreviated):
+
+```json
+{
+  "assistant": "opencode",
+  "source_commit": "abc1234def",
+  "source_branch": "dev",
+  "extracted_at": "2026-03-12T10:00:00Z",
+  "session_schema": {
+    "fields": {
+      "id": { "type": "string", "required": true, "note": "Descending ULID" },
+      "slug": { "type": "string", "required": true },
+      "projectID": { "type": "string", "required": true },
+      "workspaceID": { "type": "string", "required": false },
+      "parentID": { "type": "string", "required": false },
+      "title": { "type": "string", "required": true },
+      "version": { "type": "string", "required": true },
+      "summary": { "type": "object", "required": false },
+      "share": { "type": "object", "required": false },
+      "revert": { "type": "object", "required": false },
+      "permission": { "type": "array", "required": false },
+      "time": { "type": "object", "required": true }
+    }
+  },
+  "part_types": [
+    "text", "reasoning", "file", "tool", "step-start", "step-finish",
+    "snapshot", "patch", "agent", "retry", "compaction", "subtask"
+  ],
+  "sqlite_tables": {
+    "session": [
+      "id", "project_id", "parentID", "slug", "title", "version",
+      "summary_additions", "summary_deletions", "summary_files",
+      "summary_diffs", "permission", "created_at", "updated_at"
+    ],
+    "message": ["id", "session_id", "data"],
+    "part": ["id", "message_id", "type", "data"]
+  },
+  "storage_paths": {
+    "root": "~/.local/share/opencode/",
+    "db_file": "opencode.db",
+    "db_mode": "WAL"
+  },
+  "id_prefix_convention": {
+    "part": "prt_"
+  }
+}
+```
+
 ### 3. Reports
 
 Scheduled runs should generate a normalized Markdown report that summarizes:
@@ -151,7 +325,11 @@ Scheduled runs should generate a normalized Markdown report that summarizes:
 - why it matters
 - risk level
 - likely impacted repository files
+- potentially stale fixtures with specific mismatch details
 - recommended next action
+
+Reports are committed in `data/format-watch/reports/YYYY-MM-DD.md`. Reports
+older than 6 months may be removed during routine cleanup.
 
 ## Watch levels
 
@@ -184,9 +362,49 @@ Exploratory findings should usually land as reports or issues, not automatic PRs
 
 ## Extractors and signatures
 
-The detection stage should combine several extractor families.
+The detection stage combines several extractor families. Each assistant uses a
+specific combination of extractors defined in the source registry.
 
-### SQLite schema extractor
+### Per-assistant extractor mapping
+
+**OpenCode** (full source access):
+- Structured type extractor on `packages/opencode/src/session/index.ts` for
+  `Session.Info` fields
+- Structured type extractor on `packages/opencode/src/session/message-v2.ts`
+  for the 12 part types
+- SQLite schema extractor on Drizzle `*.sql.ts` files for tables `session`,
+  `message`, `part`, `project`, `todo`, `permission`, `session_share`
+- Path extractor for `~/.local/share/opencode/opencode.db`
+
+**Codex** (full source access):
+- Structured type extractor on `codex-rs/protocol/src/protocol.rs` for
+  `RolloutItem` variants (`SessionMeta`, `EventMsg`, `ResponseItem`,
+  `TurnContext`, `Compacted`) and `EventMsg` variants (`UserMessage`,
+  `AgentMessage`, `TurnStarted`, `TurnEnded`, `ExecCommandBegin`,
+  `ExecCommandEnd`, `ApprovalRequest`, `TurnDiffEvent`)
+- Path extractor for `~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl`
+- Documentation extractor on release notes
+
+**Mistral Vibe** (full source access):
+- Structured type extractor on session/message Python classes for roles
+  (`system`, `user`, `assistant`, `tool`) and message fields
+- Path extractor for `~/.vibe/logs/session/` with pattern
+  `{prefix}_{id}_{timestamp}.jsonl`
+- Documentation extractor on config schema (`[session_logging]`)
+
+**Claude Code** (no source access):
+- Documentation extractor on `CHANGELOG.md` and GitHub releases for storage
+  and format keywords
+- SDK type extractor on `@anthropic-ai/claude-code` npm package and
+  `claude-code-sdk` PyPI package for return types of `listSessions` and
+  `getSessionMessages`
+- Local session diff extractor comparing fresh session files against fixtures
+  in `tests/fixtures/claude_sessions/`
+- Path extractor for `~/.claude/projects/<encoded-cwd>/*.jsonl`
+
+### Extractor families
+
+#### SQLite schema extractor
 
 Used for assistants that persist data in SQLite or embed schema migrations.
 Output examples:
@@ -197,7 +415,7 @@ Output examples:
 - indexes
 - foreign-key relationships
 
-### Structured type extractor
+#### Structured type extractor
 
 Used on TypeScript, Rust, Python, or JSON schema definitions that describe
 persisted session records. Output examples:
@@ -207,7 +425,7 @@ persisted session records. Output examples:
 - enum or tagged-union variants
 - known nested objects relevant to parsing
 
-### Path and naming extractor
+#### Path and naming extractor
 
 Captures parser-relevant storage conventions:
 
@@ -216,11 +434,37 @@ Captures parser-relevant storage conventions:
 - multi-file directory structures
 - known overrides or environment variables
 
-### Documentation evidence extractor
+#### Documentation evidence extractor
 
 Parses official migration notes, changelogs, and docs pages for explicit storage
 or format statements. This extractor is lower confidence than code/schema
 evidence but useful for contextual scoring.
+
+#### SDK type extractor
+
+Specific to assistants whose source code is not public. Monitors typed SDK
+packages for changes to session-related return types and function signatures.
+
+#### Local session diff extractor
+
+Compares freshly generated session files from a locally installed assistant
+against existing test fixtures. Useful as a supplementary signal for assistants
+without public source code.
+
+### Extractor output contract
+
+All extractors must produce a normalized JSON object conforming to the baseline
+schema so that the comparison and scoring stages are assistant-agnostic. The
+output must include:
+
+- `assistant`: assistant identifier
+- `source_commit` or `source_version`: provenance reference
+- `extracted_at`: ISO 8601 timestamp
+- Zero or more of the baseline sections (`session_schema`, `part_types`,
+  `sqlite_tables`, `storage_paths`, `event_variants`)
+
+The scoring stage diffs the extractor output against the stored baseline using
+field-level comparison.
 
 ## Risk scoring
 
@@ -268,8 +512,9 @@ Output:
 
 ### Signal aggregation rule
 
-Multiple medium signals for the same assistant in the same run may be promoted
-to high risk when they converge on the same format area.
+Two or more medium-risk deltas affecting the same domain (schema, storage paths,
+or event/part types) in a single run are promoted to high risk. Domains are
+defined per-assistant in the source registry.
 
 ## Data flow
 
@@ -277,10 +522,11 @@ to high risk when they converge on the same format area.
 Scheduled workflow
   -> load source registry
   -> fetch upstream evidence
-  -> run extractors
+  -> run extractors (per-assistant adapter)
+  -> normalize output to baseline schema
   -> compare with baselines
   -> score deltas
-  -> emit watch report
+  -> emit watch report (including stale fixture hints)
   -> if score >= threshold: invoke qualifier with evidence dossier
   -> qualifier chooses issue or limited PR
 ```
@@ -332,7 +578,10 @@ external bot.
 
 - Official code, migrations, or typed protocol definitions are primary evidence.
 - Official docs and release notes are secondary evidence.
+- SDK type definitions are secondary evidence when source code is unavailable.
 - Third-party analysis is supporting evidence only.
+- Local session diffing is supporting evidence only, useful for confirmation
+  but not sufficient to trigger automatic repository changes alone.
 
 ### Failure handling
 
@@ -353,6 +602,51 @@ Automatic PRs are allowed only when all of the following are true:
 
 Otherwise the system opens an issue with evidence and recommendations.
 
+## Baseline bootstrap
+
+Before the watch system can run its first comparison, baselines must be created.
+
+### Initial creation
+
+1. For each assistant with source access (OpenCode, Codex, Mistral Vibe): run
+   the extractors against the current upstream commit and produce the first
+   `baselines/<assistant>.json`.
+2. For Claude Code: manually assemble the baseline from current fixture
+   analysis, SDK type inspection, and existing documentation in
+   `docs/session-formats/claude-code.md`.
+3. Cross-validate each baseline against the corresponding format documentation
+   in `docs/session-formats/<assistant>.md`. Any divergence indicates either
+   stale documentation or an incorrect extractor.
+4. Commit validated baselines into the repository.
+
+### Re-baseline after confirmed changes
+
+After a confirmed upstream change has been fully integrated (parser updated,
+fixtures updated, documentation updated), the maintainer updates the baseline:
+
+```bash
+./scripts/update-baseline.sh <assistant>
+```
+
+This re-runs the extractors and overwrites the stored baseline with the new
+snapshot. The updated baseline is committed alongside the parser and fixture
+changes so that subsequent watch runs do not re-flag the already-handled change.
+
+## Operational parameters
+
+- **Schedule**: weekly (Sunday 02:00 UTC)
+- **GitHub Actions budget**: approximately 10 minutes per run (4 shallow clones
+  plus extractors plus diff)
+- **LLM budget (Stage B)**: approximately 1–2 qualifier calls per month,
+  triggered only on high-risk signals
+- **Retry policy**: 1 automatic retry after 5 minutes on network failure; mark
+  source as `unreachable` after the second failure
+- **Report retention**: reports committed in `data/format-watch/reports/`;
+  reports older than 6 months may be removed
+- **Health check**: if no report has been generated in 14 days, the workflow
+  opens a self-diagnostic issue to flag possible scheduling problems (GitHub
+  Actions disables scheduled workflows after 60 days of repository inactivity)
+
 ## Testing strategy
 
 The watch system itself needs deterministic tests.
@@ -363,6 +657,7 @@ The watch system itself needs deterministic tests.
 - baseline comparison logic
 - scoring rules for optional vs required field changes
 - dossier generation
+- extractor output contract validation
 
 ### Fixture-style tests
 
@@ -370,26 +665,30 @@ The watch system itself needs deterministic tests.
 - fake enum additions
 - fake path migration examples
 - fake documentation-only changes
+- medium-to-high promotion with converging signals
 
 ### Output tests
 
 - stable Markdown report rendering
 - clear mapping from detected deltas to repository impact hints
+- fixture staleness hints in report output
 
 ## Rollout phases
 
 ### Phase 1
 
 - critical watchlist only
-- deterministic detection only
+- deterministic detection only (Stage A)
+- baseline bootstrap for all 4 assistants
 - scheduled report output
 - issue creation on strong deterministic signals
 - no PR automation
 
 ### Phase 2
 
-- enable agentic qualification for high-risk signals
-- allow limited automatic PRs for docs, fixtures, baselines, and regression tests
+- enable agentic qualification for high-risk signals (Stage B)
+- allow limited automatic PRs for docs, fixtures, baselines, and regression
+  tests
 
 ### Phase 3
 
@@ -398,7 +697,8 @@ The watch system itself needs deterministic tests.
 
 ### Phase 4
 
-- add optional external bot orchestration if GitHub Actions becomes too limiting
+- add optional external bot orchestration (such as OpenClaw or Moltis) if
+  GitHub Actions becomes too limiting for real-time or conversational workflows
 - keep the same registry, baseline, and evidence dossier contract
 
 ## Expected outcome
