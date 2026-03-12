@@ -444,4 +444,6 @@ Codex, and Mistral Vibe.
 
 ## Decision
 
-Proposal A
+~~Proposal A~~
+
+I gave up. I'll work on command display instead.
