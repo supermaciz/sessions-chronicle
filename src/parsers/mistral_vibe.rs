@@ -204,7 +204,8 @@ impl MistralVibeParser {
             return Err(ParseError::NoUserMessages.into());
         }
 
-        let first_prompt = crate::parsers::extract_first_prompt(&messages);
+        let first_prompt =
+            crate::parsers::extract_first_prompt(AiAssistant::MistralVibe, &messages);
 
         Ok(ParsedSession {
             session: Session {

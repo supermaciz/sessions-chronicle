@@ -506,7 +506,7 @@ impl CodexParser {
             return Err(ParseError::NoUserMessages.into());
         }
 
-        let first_prompt = crate::parsers::extract_first_prompt(&messages);
+        let first_prompt = crate::parsers::extract_first_prompt(AiAssistant::Codex, &messages);
         let token_usage = best_snapshot.map(|(_, usage)| usage);
 
         Ok(ParsedSession {

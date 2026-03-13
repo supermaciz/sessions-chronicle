@@ -261,7 +261,7 @@ impl OpenCodeParser {
 
         let first_prompt = match &metadata.title {
             Some(title) if !title.trim().is_empty() => Some(title.clone()),
-            _ => crate::parsers::extract_first_prompt(&flattened),
+            _ => crate::parsers::extract_first_prompt(AiAssistant::OpenCode, &flattened),
         };
 
         // Aggregate token usage: prefer message-level tokens, fall back to step-finish

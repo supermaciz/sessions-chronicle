@@ -4,7 +4,7 @@ pub mod mistral_vibe;
 pub mod model;
 pub mod opencode;
 
-use crate::models::{Message, Role, Subagent, TokenUsage, ToolCall, TranscriptItem};
+use crate::models::{AiAssistant, Message, Role, Subagent, TokenUsage, ToolCall, TranscriptItem};
 use regex::Regex;
 use std::sync::LazyLock;
 
@@ -29,31 +29,50 @@ static RE_COMMAND_ARGS: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"(?s)<command-args>(.*?)</command-args>").unwrap());
 static RE_COMMAND_FRAGMENT: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"</?command-(name|message|args)>").unwrap());
+static RE_SYSTEM_REMINDER_WRAPPER: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?s)^<system-reminder>.*</system-reminder>$").unwrap());
+static RE_COMMAND_OUTPUT_WRAPPER: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?s)^<command-output>.*</command-output>$").unwrap());
 
 fn strip_command_tags(content: &str) -> String {
+    let trimmed = content.trim();
+
     // Fast path: no command tags present.
-    if !content.contains("<command-name>") {
+    if !trimmed.contains("<command-name>") {
+        return content.to_string();
+    }
+
+    // Only Claude's synthetic slash-command wrapper starts with command metadata.
+    if !trimmed.starts_with("<command-") {
         return content.to_string();
     }
 
     // Require exactly one <command-name> block.
-    let name_matches: Vec<_> = RE_COMMAND_NAME.find_iter(content).collect();
+    let name_matches: Vec<_> = RE_COMMAND_NAME.find_iter(trimmed).collect();
     if name_matches.len() != 1 {
         return content.to_string();
     }
 
     // Extract the command name (e.g. "/brainstorming").
-    let name_cap = RE_COMMAND_NAME.captures(content).unwrap();
+    let name_cap = RE_COMMAND_NAME.captures(trimmed).unwrap();
     let command = name_cap[1].to_string();
+
+    // Literal text that merely embeds a command-name tag should not be rewritten.
+    let has_metadata_context = trimmed.contains("<command-message>")
+        || trimmed.contains("<command-args>")
+        || RE_COMMAND_NAME.find(trimmed).unwrap().as_str() == trimmed;
+    if !has_metadata_context {
+        return content.to_string();
+    }
 
     // Extract optional args (trimmed, may be empty).
     let args = RE_COMMAND_ARGS
-        .captures(content)
+        .captures(trimmed)
         .map(|cap| cap[1].trim().to_string())
         .filter(|a| !a.is_empty());
 
     // Remove all fully matched tag blocks to find residual text.
-    let residual = RE_COMMAND_NAME.replace_all(content, "");
+    let residual = RE_COMMAND_NAME.replace_all(trimmed, "");
     let residual = RE_COMMAND_MESSAGE.replace_all(&residual, "");
     let residual = RE_COMMAND_ARGS.replace_all(&residual, "");
 
@@ -78,26 +97,54 @@ fn strip_command_tags(content: &str) -> String {
     title
 }
 
-pub(crate) fn extract_first_prompt(messages: &[Message]) -> Option<String> {
+pub(crate) fn extract_first_prompt(assistant: AiAssistant, messages: &[Message]) -> Option<String> {
     messages
         .iter()
         .filter(|message| message.role == Role::User)
-        .filter(|message| !is_system_injected(&message.content))
-        .map(|message| normalize_prompt(&message.content))
+        .filter(|message| !is_system_injected(assistant, &message.content))
+        .map(|message| normalize_prompt(assistant, &message.content))
         .find(|prompt| !prompt.is_empty())
 }
 
 /// Returns `true` when the message content is system-injected noise rather
 /// than something the user actually typed.
-fn is_system_injected(content: &str) -> bool {
+fn is_system_injected(assistant: AiAssistant, content: &str) -> bool {
+    if assistant != AiAssistant::ClaudeCode {
+        return false;
+    }
+
     let trimmed = content.trim();
-    trimmed.starts_with("<local-command-")
-        || trimmed.starts_with("<system-reminder>")
-        || trimmed.starts_with("<command-output>")
+    is_exact_local_command_wrapper(trimmed)
+        || RE_SYSTEM_REMINDER_WRAPPER.is_match(trimmed)
+        || RE_COMMAND_OUTPUT_WRAPPER.is_match(trimmed)
 }
 
-fn normalize_prompt(content: &str) -> String {
-    let cleaned = strip_command_tags(content);
+fn is_exact_local_command_wrapper(content: &str) -> bool {
+    let Some(rest) = content.strip_prefix("<local-command-") else {
+        return false;
+    };
+
+    let Some((tag_name, body_and_close)) = rest.split_once('>') else {
+        return false;
+    };
+
+    if tag_name.is_empty()
+        || !tag_name
+            .bytes()
+            .all(|byte| byte.is_ascii_lowercase() || byte == b'-')
+    {
+        return false;
+    }
+
+    let closing_tag = format!("</local-command-{tag_name}>");
+    body_and_close.ends_with(&closing_tag)
+}
+
+fn normalize_prompt(assistant: AiAssistant, content: &str) -> String {
+    let cleaned = match assistant {
+        AiAssistant::ClaudeCode => strip_command_tags(content),
+        _ => content.to_string(),
+    };
     let normalized = cleaned.split_whitespace().collect::<Vec<_>>().join(" ");
     truncate_chars(&normalized, FIRST_PROMPT_MAX_CHARS)
 }
@@ -136,7 +183,7 @@ mod tests {
         ];
 
         assert_eq!(
-            extract_first_prompt(&messages),
+            extract_first_prompt(AiAssistant::ClaudeCode, &messages),
             Some("second prompt".to_string())
         );
     }
@@ -150,7 +197,7 @@ mod tests {
         )];
 
         assert_eq!(
-            extract_first_prompt(&messages),
+            extract_first_prompt(AiAssistant::ClaudeCode, &messages),
             Some("hello world from parser".to_string())
         );
     }
@@ -160,18 +207,24 @@ mod tests {
         let exactly_200 = "a".repeat(200);
         let exactly_201 = "b".repeat(201);
 
-        assert_eq!(normalize_prompt(&exactly_200), exactly_200);
+        assert_eq!(
+            normalize_prompt(AiAssistant::ClaudeCode, &exactly_200),
+            exactly_200
+        );
 
         let mut expected = "b".repeat(200);
         expected.push('\u{2026}');
-        assert_eq!(normalize_prompt(&exactly_201), expected);
+        assert_eq!(
+            normalize_prompt(AiAssistant::ClaudeCode, &exactly_201),
+            expected
+        );
     }
 
     #[test]
     fn normalize_prompt_truncates_multibyte_chars_safely() {
         let multibyte = "é".repeat(201);
 
-        let truncated = normalize_prompt(&multibyte);
+        let truncated = normalize_prompt(AiAssistant::ClaudeCode, &multibyte);
         let mut expected = "é".repeat(200);
         expected.push('\u{2026}');
         assert_eq!(truncated, expected);
@@ -200,8 +253,36 @@ mod tests {
         ];
 
         assert_eq!(
-            extract_first_prompt(&messages),
+            extract_first_prompt(AiAssistant::ClaudeCode, &messages),
             Some("Review last commit".to_string())
+        );
+    }
+
+    #[test]
+    fn extract_first_prompt_keeps_non_claude_tag_like_text() {
+        let messages = vec![message(
+            0,
+            Role::User,
+            "<command-output>foo</command-output> appears in my log, explain it",
+        )];
+
+        assert_eq!(
+            extract_first_prompt(AiAssistant::Codex, &messages),
+            Some("<command-output>foo</command-output> appears in my log, explain it".to_string())
+        );
+    }
+
+    #[test]
+    fn extract_first_prompt_keeps_literal_local_command_text_with_suffix() {
+        let messages = vec![message(
+            0,
+            Role::User,
+            "<local-command-stdout>foo</local-command-stdout> appears in my log",
+        )];
+
+        assert_eq!(
+            extract_first_prompt(AiAssistant::ClaudeCode, &messages),
+            Some("<local-command-stdout>foo</local-command-stdout> appears in my log".to_string())
         );
     }
 
@@ -250,6 +331,18 @@ mod tests {
     fn strip_command_tags_no_tags_passthrough() {
         let input = "just a normal user message";
         assert_eq!(strip_command_tags(input), "just a normal user message");
+    }
+
+    #[test]
+    fn strip_command_tags_keeps_literal_embedded_command_name_text() {
+        let input = "Why does <command-name>/review</command-name> show up in my transcript?";
+        assert_eq!(strip_command_tags(input), input);
+    }
+
+    #[test]
+    fn strip_command_tags_keeps_literal_command_name_with_trailing_text() {
+        let input = "<command-name>/review</command-name> show up in my transcript?";
+        assert_eq!(strip_command_tags(input), input);
     }
 
     #[test]
