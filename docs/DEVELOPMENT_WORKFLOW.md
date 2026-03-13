@@ -35,6 +35,11 @@ This maps to:
 | Codex | `tests/fixtures/codex_sessions/` |
 | Mistral Vibe | `tests/fixtures/vibe_sessions/` |
 
+OpenCode database resolution in override mode:
+- Checks `tests/fixtures/opencode_storage/opencode.db` first
+- Falls back to `tests/fixtures/opencode.db` (parent directory) when present
+- Uses JSON storage fallback if no SQLite database is found
+
 If a known subdirectory is missing, the override root itself is used as a fallback for that assistant.
 
 You can also point to a single assistant's directory:
@@ -89,16 +94,6 @@ let sessions_dir = if std::path::Path::new("tests/fixtures/claude_sessions").exi
 
 ## Testing Workflow
 
-### Unit Tests
-
-Run unit tests (when implemented):
-
-```bash
-cargo test
-```
-
-These use fixtures automatically via the test harness.
-
 ### Integration Testing
 
 Run the full app with test fixtures using the `--sessions-dir` flag shown above.
@@ -136,8 +131,6 @@ RUST_LOG=sessions_chronicle::parsers=trace flatpak-builder --run flatpak_app bui
 ```
 
 ## Testing
-
-### Unit Tests
 
 ```bash
 cargo test --all --no-fail-fast
@@ -226,4 +219,4 @@ Two Flatpak manifests exist in `build-aux/`:
 
 ---
 
-**Last Updated**: 2026-03-04
+**Last Updated**: 2026-03-13

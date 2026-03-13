@@ -2,7 +2,7 @@
 
 **Issue:** [#58 - Basic analytics](https://github.com/supermaciz/sessions-chronicle/issues/58)  
 **Date:** 2026-03-07  
-**Status:** Design  
+**Status:** Implemented [#74](https://github.com/supermaciz/sessions-chronicle/pull/74)  
 **Based on:** Proposition A from `2026-03-02-basic-analytics-exploration.md`
 
 ## Decision Summary

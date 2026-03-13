@@ -21,6 +21,7 @@ so you can find any conversation, inspect tool calls, and pick up where you left
 - **Resume where you left off** — launch sessions directly from the app in your terminal
 - **Navigate with the keyboard** — Up/Down to move selection, Enter to open, Escape closes search or backs out of detail
 - **Supports 4 AI assistants** — Claude Code, OpenCode, Codex, Mistral Vibe
+- **Analytics** — see your most-used assistants, most-active days, and more
 
 
 ## Installation

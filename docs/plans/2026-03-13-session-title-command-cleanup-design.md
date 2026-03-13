@@ -1,5 +1,7 @@
 # Session Title Command Cleanup — Design
 
+**Status:** Implemented [#78](https://github.com/supermaciz/sessions-chronicle/pull/78)
+
 Strip Claude Code command tags from session titles, replacing raw
 `<command-name>`, `<command-message>`, and `<command-args>` markup with clean
 `/command args` text.

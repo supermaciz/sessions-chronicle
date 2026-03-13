@@ -12,8 +12,11 @@ tests/fixtures/
 │   └── 2026/01/18/...
 ├── vibe_sessions/          # Mistral Vibe session samples (meta.json + JSONL)
 │   └── session_20260203_191451_b9383361/
-└── opencode_storage/       # OpenCode session samples (JSON format)
-    └── ...
+├── opencode.db             # OpenCode SQLite fixture (preferred backend)
+└── opencode_storage/       # OpenCode legacy JSON storage fixture (fallback backend)
+    ├── session/
+    ├── message/
+    └── part/
 ```
 
 ## Purpose
@@ -55,11 +58,12 @@ Each session directory includes:
 
 ## OpenCode Session Format
 
-Files are in JSON (not JSONL) format, with a single JSON document per file.
+OpenCode parsing is SQLite-first, with legacy JSON storage fallback:
 
-Fixtures added for OpenCode parsing coverage:
+- Preferred: `tests/fixtures/opencode.db` (SQLite backend)
+- Fallback: `tests/fixtures/opencode_storage/` (legacy JSON storage backend)
 
-- `tests/fixtures/opencode_storage/`
+This mirrors runtime behavior where `opencode.db` is used when available and legacy JSON storage is still supported for older data layouts.
 
 ## Adding Fixtures
 

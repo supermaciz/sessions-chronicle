@@ -1,8 +1,8 @@
 # Token Usage Display in SessionDetail - Design
 
-**Date:** 2026-02-28
-**Issue:** [#43](https://github.com/supermaciz/sessions-chronicle/issues/43)
-**Status:** Design approved (decisions captured)
+**Date:** 2026-02-28  
+**Issue:** [#43](https://github.com/supermaciz/sessions-chronicle/issues/43)  
+**Status:** Implemented [#56](https://github.com/supermaciz/sessions-chronicle/pull/56)
 
 ---
 

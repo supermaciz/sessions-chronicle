@@ -1,7 +1,7 @@
 # Heatmap Width Limit - Design
 
 **Date:** 2026-03-09  
-**Status:** Design  
+**Status:** Implemented [#74](https://github.com/supermaciz/sessions-chronicle/pull/74)  
 **Parent:** `2026-03-07-basic-analytics-design.md`
 
 ## Problem

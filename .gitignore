@@ -53,3 +53,7 @@ compile_commands.json
 .claude/
 .agents/
 .vibe/
+
+
+flatpak_app/
+.flatpak-builder/

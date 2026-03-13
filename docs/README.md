@@ -141,6 +141,18 @@ Plan file types in `docs/plans/`:
 30. **[plans/2026-03-02-basic-analytics-exploration.md](plans/2026-03-02-basic-analytics-exploration.md)**
     - Dashboard analytics exploration (visualization options and trade-offs)
 
+31. **[plans/2026-03-05-tool-inspector-design.md](plans/2026-03-05-tool-inspector-design.md)** ✅
+    - Tool inspector utility pane behavior and renderer strategy
+
+32. **[plans/2026-03-07-basic-analytics-design.md](plans/2026-03-07-basic-analytics-design.md)** ✅
+    - Implemented analytics dashboard scope and SQL/query contracts
+
+33. **[plans/2026-03-11-skill-visibility-design.md](plans/2026-03-11-skill-visibility-design.md)** ⛔
+    - Skill visibility behavior and transcript presentation refinements
+
+34. **[plans/2026-03-13-session-title-command-cleanup-design.md](plans/2026-03-13-session-title-command-cleanup-design.md)** ✅
+    - Session-title normalization for command-tag-heavy prompts
+
 ---
 
 ## 🎨 Visual Mockups
@@ -193,7 +205,7 @@ All mockups are SVG files in the `mockups/` subfolder (open in browser or image 
 
 ---
 
-**Last Updated**: 2026-03-04
+**Last Updated**: 2026-03-13
 
-**Current Status**: Phase 8 complete, with follow-up improvements in token usage display and startup/indexing performance.
-**Next Milestone**: Analytics dashboard implementation from the 2026-03-02 exploration.
+**Current Status**: Analytics workspace is implemented, alongside token usage display and startup incremental indexing improvements.  
+**Next Milestone**: Ongoing UX/documentation polish and follow-up refinements tracked in newer files under `docs/plans/`.

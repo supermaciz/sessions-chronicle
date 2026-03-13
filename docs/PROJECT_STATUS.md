@@ -1,7 +1,7 @@
 # Sessions Chronicle - Project Status
 
-Last updated: 2026-03-04  
-Branch snapshot: `main` (`v0.3.2` lineage)
+Last updated: 2026-03-13  
+Branch snapshot: `main` (`v0.3.3` lineage)
 
 ## Current Product State
 
@@ -25,8 +25,9 @@ Sessions Chronicle is a GNOME desktop app that indexes local AI coding assistant
 
 - App update logic refactored into modular handlers under `src/app/handlers/`
 - Background indexing worker (`src/indexing_worker.rs`) used for incremental and full reindex runs
-- Schema migration to `user_version = 4` with fingerprint-based incremental indexing support
+- Schema migration to `user_version = 5` with fingerprint-based incremental indexing support and a one-time fingerprint reset
 - OpenCode indexing stability improvements (including WAL-aware reindex behavior)
+- Analytics workspace with overview cards, activity heatmap, session span buckets, and token usage breakdowns
 - Documentation and skills updates for planning/review workflows
 
 ## Technical Architecture
@@ -64,7 +65,7 @@ sessions-chronicle/
 
 ## Database Snapshot
 
-Current migration level is `PRAGMA user_version = 4`.
+Current migration level is `PRAGMA user_version = 5`.
 
 ### Core Tables
 
@@ -109,8 +110,8 @@ cargo test --all --no-fail-fast
 
 ## Known Gaps / Active Exploration
 
-- Analytics dashboard is in exploration/design phase (`docs/plans/2026-03-02-basic-analytics-exploration.md`)
 - Markdown rendering still has practical GTK constraints (for example, link interactivity remains limited)
+- Ongoing UX refinements continue under newer plans in `docs/plans/` (for example command-title cleanup and analytics polish)
 
 ## Reference Docs
 
