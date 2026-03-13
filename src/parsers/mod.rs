@@ -22,11 +22,11 @@ pub struct ParsedSession {
 }
 
 static RE_COMMAND_NAME: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"<command-name>(.*?)</command-name>").unwrap());
+    LazyLock::new(|| Regex::new(r"(?s)<command-name>(.*?)</command-name>").unwrap());
 static RE_COMMAND_MESSAGE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"<command-message>(.*?)</command-message>").unwrap());
+    LazyLock::new(|| Regex::new(r"(?s)<command-message>(.*?)</command-message>").unwrap());
 static RE_COMMAND_ARGS: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"<command-args>(.*?)</command-args>").unwrap());
+    LazyLock::new(|| Regex::new(r"(?s)<command-args>(.*?)</command-args>").unwrap());
 static RE_COMMAND_FRAGMENT: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"</?command-(name|message|args)>").unwrap());
 
@@ -238,6 +238,17 @@ mod tests {
         assert_eq!(
             strip_command_tags(input),
             "<command-name>/review</command-name><command-name>/model</command-name>"
+        );
+    }
+
+    #[test]
+    fn strip_command_tags_multiline_args() {
+        let input = "<command-message>superpowers-extended-cc:brainstorming</command-message>\n\
+                      <command-name>/superpowers-extended-cc:brainstorming</command-name>\n\
+                      <command-args>\n\nJe veux retravailler sur le plan</command-args>";
+        assert_eq!(
+            strip_command_tags(input),
+            "/superpowers-extended-cc:brainstorming Je veux retravailler sur le plan"
         );
     }
 
