@@ -107,4 +107,86 @@ mod tests {
         assert_eq!(truncated, expected);
         assert_eq!(truncated.chars().count(), 201); // 200 chars + ellipsis
     }
+
+    #[test]
+    fn strip_command_tags_command_only() {
+        let input = "<command-message>brainstorming</command-message>\
+                      <command-name>/brainstorming</command-name>";
+        assert_eq!(strip_command_tags(input), "/brainstorming");
+    }
+
+    #[test]
+    fn strip_command_tags_command_with_args() {
+        let input = "<command-name>/learn-rust</command-name>\
+                      <command-message>learn-rust</command-message>\
+                      <command-args>PATH B</command-args>";
+        assert_eq!(strip_command_tags(input), "/learn-rust PATH B");
+    }
+
+    #[test]
+    fn strip_command_tags_command_with_empty_args() {
+        let input = "<command-name>/model</command-name>\
+                      <command-message>model</command-message>\
+                      <command-args></command-args>";
+        assert_eq!(strip_command_tags(input), "/model");
+    }
+
+    #[test]
+    fn strip_command_tags_command_with_trailing_text() {
+        let input = "<command-message>review</command-message>\
+                      <command-name>/review</command-name> fix the auth bug";
+        assert_eq!(
+            strip_command_tags(input),
+            "/review \u{2014} fix the auth bug"
+        );
+    }
+
+    #[test]
+    fn strip_command_tags_whitespace_variation() {
+        let input = "  <command-name>/review</command-name>  \n\
+                      <command-message>review</command-message>  \n\
+                      <command-args>  #36  </command-args>  ";
+        assert_eq!(strip_command_tags(input), "/review #36");
+    }
+
+    #[test]
+    fn strip_command_tags_no_tags_passthrough() {
+        let input = "just a normal user message";
+        assert_eq!(strip_command_tags(input), "just a normal user message");
+    }
+
+    #[test]
+    fn strip_command_tags_partial_command_name_tag() {
+        let input = "<command-name>/review";
+        assert_eq!(strip_command_tags(input), "<command-name>/review");
+    }
+
+    #[test]
+    fn strip_command_tags_partial_command_args_tag() {
+        let input = "<command-name>/review</command-name>\
+                      <command-args>some args";
+        assert_eq!(
+            strip_command_tags(input),
+            "<command-name>/review</command-name><command-args>some args"
+        );
+    }
+
+    #[test]
+    fn strip_command_tags_multiple_command_blocks_unchanged() {
+        let input = "<command-name>/review</command-name>\
+                      <command-name>/model</command-name>";
+        assert_eq!(
+            strip_command_tags(input),
+            "<command-name>/review</command-name><command-name>/model</command-name>"
+        );
+    }
+
+    #[test]
+    fn strip_command_tags_qualified_command_name() {
+        let input = "<command-name>/superpowers-extended-cc:brainstorming</command-name>";
+        assert_eq!(
+            strip_command_tags(input),
+            "/superpowers-extended-cc:brainstorming"
+        );
+    }
 }
