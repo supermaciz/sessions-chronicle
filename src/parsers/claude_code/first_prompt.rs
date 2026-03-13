@@ -36,17 +36,19 @@ fn strip_command_tags(content: &str) -> String {
         return content.to_string();
     }
 
-    let name_matches: Vec<_> = RE_COMMAND_NAME.find_iter(trimmed).collect();
-    if name_matches.len() != 1 {
+    // Collect captures (not just matches) to reuse them
+    let name_captures: Vec<_> = RE_COMMAND_NAME.captures_iter(trimmed).collect();
+    if name_captures.len() != 1 {
         return content.to_string();
     }
 
-    let name_cap = RE_COMMAND_NAME.captures(trimmed).unwrap();
+    let name_cap = &name_captures[0];
     let command = name_cap[1].to_string();
+    let name_match = name_cap.get(0).expect("capture group 0 always exists");
 
     let has_metadata_context = trimmed.contains("<command-message>")
         || trimmed.contains("<command-args>")
-        || RE_COMMAND_NAME.find(trimmed).unwrap().as_str() == trimmed;
+        || name_match.as_str() == trimmed;
     if !has_metadata_context {
         return content.to_string();
     }
