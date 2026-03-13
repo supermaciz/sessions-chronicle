@@ -11,6 +11,8 @@ use rusqlite::Connection;
 ///   3 – sessions gains token usage columns (input_tokens, output_tokens,
 ///       cache_read_tokens, cache_write_tokens, reasoning_tokens)
 ///   4 – file_fingerprints table for incremental indexing
+///   5 – clear file_fingerprints to force re-index after parser changes
+///       (strip_command_tags in normalize_prompt)
 pub fn initialize_database(conn: &Connection) -> Result<()> {
     let version: i64 = conn.query_row("PRAGMA user_version", [], |row| row.get(0))?;
 
@@ -25,6 +27,9 @@ pub fn initialize_database(conn: &Connection) -> Result<()> {
     }
     if version < 4 {
         apply_v4_migration(conn)?;
+    }
+    if version < 5 {
+        apply_v5_migration(conn)?;
     }
 
     Ok(())
@@ -241,6 +246,18 @@ fn apply_v4_migration(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
+/// Migrate from v4 to v5.
+///
+/// Clears `file_fingerprints` so the next incremental index becomes a full
+/// re-index.  This is needed because `normalize_prompt` now calls
+/// `strip_command_tags`, and previously cached `first_prompt` values may
+/// contain raw command-tag markup.
+fn apply_v5_migration(conn: &Connection) -> Result<()> {
+    conn.execute("DELETE FROM file_fingerprints", [])?;
+    conn.execute_batch("PRAGMA user_version = 5")?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -253,7 +270,7 @@ mod tests {
         let version: i64 = conn
             .query_row("PRAGMA user_version", [], |r| r.get(0))
             .unwrap();
-        assert_eq!(version, 4);
+        assert_eq!(version, 5);
 
         let table_exists: i64 = conn
             .query_row(
@@ -345,7 +362,7 @@ mod tests {
         let version: i64 = conn
             .query_row("PRAGMA user_version", [], |r| r.get(0))
             .unwrap();
-        assert_eq!(version, 4);
+        assert_eq!(version, 5);
 
         // Old messages are gone (by design — will be re-indexed)
         let count: i64 = conn
@@ -404,7 +421,7 @@ mod tests {
         let version: i64 = conn
             .query_row("PRAGMA user_version", [], |r| r.get(0))
             .unwrap();
-        assert_eq!(version, 4);
+        assert_eq!(version, 5);
 
         conn.execute(
             "UPDATE sessions SET input_tokens = 1000, output_tokens = 500 WHERE id = 's1'",
@@ -430,7 +447,7 @@ mod tests {
         let version: i64 = conn
             .query_row("PRAGMA user_version", [], |r| r.get(0))
             .unwrap();
-        assert_eq!(version, 4);
+        assert_eq!(version, 5);
     }
 
     #[test]
@@ -466,7 +483,7 @@ mod tests {
         let version: i64 = conn
             .query_row("PRAGMA user_version", [], |r| r.get(0))
             .unwrap();
-        assert_eq!(version, 4);
+        assert_eq!(version, 5);
 
         let table_exists: i64 = conn
             .query_row(
@@ -476,6 +493,35 @@ mod tests {
             )
             .unwrap();
         assert_eq!(table_exists, 1);
+    }
+
+    #[test]
+    fn v4_to_v5_migration_clears_file_fingerprints() {
+        let conn = Connection::open_in_memory().unwrap();
+
+        // Set up a v4 database with a fingerprint row.
+        initialize_database(&conn).unwrap();
+        conn.execute_batch("PRAGMA user_version = 4").unwrap();
+        conn.execute(
+            "INSERT INTO file_fingerprints (file_path, mtime_ns, size) VALUES ('a.jsonl', 1, 100)",
+            [],
+        )
+        .unwrap();
+        let count: i64 = conn
+            .query_row("SELECT count(*) FROM file_fingerprints", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(count, 1);
+
+        // Re-run migrations — v5 should clear the table.
+        initialize_database(&conn).unwrap();
+        let version: i64 = conn
+            .query_row("PRAGMA user_version", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(version, 5);
+        let count: i64 = conn
+            .query_row("SELECT count(*) FROM file_fingerprints", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(count, 0);
     }
 
     #[test]

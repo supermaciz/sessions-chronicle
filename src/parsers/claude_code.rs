@@ -6,6 +6,8 @@ use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::path::Path;
 
+mod first_prompt;
+
 use crate::models::{
     AiAssistant, Message, Role, Session, Subagent, TokenUsage, ToolCall, ToolCallStatus,
 };
@@ -475,7 +477,7 @@ impl ClaudeCodeParser {
             .unwrap_or_else(|| "unknown".to_string());
 
         let last_updated = latest_timestamp.unwrap_or(start_time);
-        let first_prompt = crate::parsers::extract_first_prompt(&messages);
+        let first_prompt = first_prompt::extract_first_prompt(&messages);
 
         let session = Session {
             id: final_session_id,

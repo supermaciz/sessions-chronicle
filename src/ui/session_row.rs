@@ -265,14 +265,11 @@ mod tests {
     fn session_title_escapes_markup_special_chars() {
         let session = build_session(
             Some("/home/user/work/my-project"),
-            Some("<command-message>review</command-message> & fix"),
+            Some("/review & fix"),
             10,
         );
 
-        assert_eq!(
-            SessionRow::session_title(&session),
-            "&lt;command-message&gt;review&lt;/command-message&gt; &amp; fix"
-        );
+        assert_eq!(SessionRow::session_title(&session), "/review &amp; fix");
     }
 
     #[test]

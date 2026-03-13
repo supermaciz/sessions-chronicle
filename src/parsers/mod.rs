@@ -27,7 +27,7 @@ pub(crate) fn extract_first_prompt(messages: &[Message]) -> Option<String> {
         .find(|prompt| !prompt.is_empty())
 }
 
-fn normalize_prompt(content: &str) -> String {
+pub(crate) fn normalize_prompt(content: &str) -> String {
     let normalized = content.split_whitespace().collect::<Vec<_>>().join(" ");
     truncate_chars(&normalized, FIRST_PROMPT_MAX_CHARS)
 }
