@@ -5,6 +5,8 @@ pub mod model;
 pub mod opencode;
 
 use crate::models::{Message, Role, Subagent, TokenUsage, ToolCall, TranscriptItem};
+use regex::Regex;
+use std::sync::LazyLock;
 
 const FIRST_PROMPT_MAX_CHARS: usize = 200;
 
@@ -19,6 +21,63 @@ pub struct ParsedSession {
     pub token_usage: Option<TokenUsage>,
 }
 
+static RE_COMMAND_NAME: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"<command-name>(.*?)</command-name>").unwrap());
+static RE_COMMAND_MESSAGE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"<command-message>(.*?)</command-message>").unwrap());
+static RE_COMMAND_ARGS: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"<command-args>(.*?)</command-args>").unwrap());
+static RE_COMMAND_FRAGMENT: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"</?command-(name|message|args)>").unwrap());
+
+fn strip_command_tags(content: &str) -> String {
+    // Fast path: no command tags present.
+    if !content.contains("<command-name>") {
+        return content.to_string();
+    }
+
+    // Require exactly one <command-name> block.
+    let name_matches: Vec<_> = RE_COMMAND_NAME.find_iter(content).collect();
+    if name_matches.len() != 1 {
+        return content.to_string();
+    }
+
+    // Extract the command name (e.g. "/brainstorming").
+    let name_cap = RE_COMMAND_NAME.captures(content).unwrap();
+    let command = name_cap[1].to_string();
+
+    // Extract optional args (trimmed, may be empty).
+    let args = RE_COMMAND_ARGS
+        .captures(content)
+        .map(|cap| cap[1].trim().to_string())
+        .filter(|a| !a.is_empty());
+
+    // Remove all fully matched tag blocks to find residual text.
+    let residual = RE_COMMAND_NAME.replace_all(content, "");
+    let residual = RE_COMMAND_MESSAGE.replace_all(&residual, "");
+    let residual = RE_COMMAND_ARGS.replace_all(&residual, "");
+
+    // If unmatched tag fragments remain, the input is malformed — return unchanged.
+    if RE_COMMAND_FRAGMENT.is_match(&residual) {
+        return content.to_string();
+    }
+
+    // Collapse whitespace in residual and treat non-empty result as trailing text.
+    let trailing: String = residual.split_whitespace().collect::<Vec<_>>().join(" ");
+
+    // Rebuild the clean title.
+    let mut title = command;
+    if let Some(a) = args {
+        title.push(' ');
+        title.push_str(&a);
+    }
+    if !trailing.is_empty() {
+        title.push_str(" \u{2014} ");
+        title.push_str(&trailing);
+    }
+    title
+}
+
 pub(crate) fn extract_first_prompt(messages: &[Message]) -> Option<String> {
     messages
         .iter()
@@ -28,7 +87,8 @@ pub(crate) fn extract_first_prompt(messages: &[Message]) -> Option<String> {
 }
 
 fn normalize_prompt(content: &str) -> String {
-    let normalized = content.split_whitespace().collect::<Vec<_>>().join(" ");
+    let cleaned = strip_command_tags(content);
+    let normalized = cleaned.split_whitespace().collect::<Vec<_>>().join(" ");
     truncate_chars(&normalized, FIRST_PROMPT_MAX_CHARS)
 }
 
