@@ -49,6 +49,16 @@
   </categories>
   <content_rating type="oars-1.1" />
   <releases>
+    <release version="0.3.4" date="2026-03-14">
+      <description>
+        <p>Adds token cache analytics and cleans up session titles.</p>
+        <ul>
+          <li>Show cache creation, read, and reasoning tokens in analytics</li>
+          <li>Strip command tags from session titles for cleaner display</li>
+          <li>Filters pane now stays open by default on the session list</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.3.3" date="2026-03-09">
       <description>
         <p>Adds an analytics dashboard and improves the tool call inspector.</p>
