@@ -6,9 +6,12 @@ use relm4::{ComponentParts, ComponentSender, RelmWidgetExt, SimpleComponent, adw
 use crate::models::AnalyticsData;
 use crate::models::analytics::{AiAssistantSessionCount, AiAssistantTokenUsage, SessionSpanBucket};
 use crate::ui::analytics_heatmap::AnalyticsHeatmap;
-use crate::ui::format::format_token_count;
+use crate::ui::format::{
+    format_analytics_token_primary, format_analytics_token_secondary, token_semantics_help_tooltip,
+};
 
 const TOKEN_SECTION_NO_DATA_COPY: &str = "Token data is not available for the indexed sessions";
+const TOKEN_ROW_MAX_WIDTH_CHARS: i32 = 46;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct TokenSectionState {
@@ -140,6 +143,25 @@ fn token_row_subtitle(row: &AiAssistantTokenUsage) -> String {
     }
 }
 
+fn token_row_primary_text(row: &AiAssistantTokenUsage) -> String {
+    format_analytics_token_primary(
+        row.input_tokens.unwrap_or(0),
+        row.output_tokens.unwrap_or(0),
+    )
+}
+
+fn token_row_secondary_text(row: &AiAssistantTokenUsage) -> Option<String> {
+    if row.reported_sessions == 0 {
+        None
+    } else {
+        format_analytics_token_secondary(
+            row.cache_read_tokens,
+            row.cache_write_tokens,
+            row.reasoning_tokens,
+        )
+    }
+}
+
 fn render_token_usage_rows(
     container: &gtk::ListBox,
     subtitle_label: &gtk::Label,
@@ -167,23 +189,35 @@ fn render_token_usage_rows(
             .subtitle(token_row_subtitle(usage))
             .build();
 
-        let value = if usage.reported_sessions == 0 {
+        let value: gtk::Widget = if usage.reported_sessions == 0 {
             let label = gtk::Label::new(Some("—"));
             label.set_tooltip_text(Some(&format!(
                 "Token data not available for {}",
                 usage.tool
             )));
-            label
+            label.upcast()
         } else {
-            let input = usage.input_tokens.unwrap_or(0);
-            let output = usage.output_tokens.unwrap_or(0);
-            let total = input + output;
-            gtk::Label::new(Some(&format!(
-                "{} in / {} out / {} total",
-                format_token_count(input),
-                format_token_count(output),
-                format_token_count(total)
-            )))
+            let value_box = gtk::Box::new(gtk::Orientation::Vertical, 2);
+
+            let primary = gtk::Label::new(Some(&token_row_primary_text(usage)));
+            primary.set_halign(gtk::Align::End);
+            primary.set_xalign(1.0);
+            primary.set_ellipsize(gtk::pango::EllipsizeMode::End);
+            primary.set_max_width_chars(TOKEN_ROW_MAX_WIDTH_CHARS);
+            value_box.append(&primary);
+
+            if let Some(secondary_text) = token_row_secondary_text(usage) {
+                let secondary = gtk::Label::new(Some(&secondary_text));
+                secondary.add_css_class("caption");
+                secondary.set_halign(gtk::Align::End);
+                secondary.set_xalign(1.0);
+                secondary.set_ellipsize(gtk::pango::EllipsizeMode::End);
+                secondary.set_max_width_chars(TOKEN_ROW_MAX_WIDTH_CHARS);
+                secondary.set_tooltip_text(Some(token_semantics_help_tooltip()));
+                value_box.append(&secondary);
+            }
+
+            value_box.upcast()
         };
 
         row.add_suffix(&value);
@@ -603,6 +637,16 @@ impl SimpleComponent for AnalyticsView {
                                     add_css_class: "caption",
                                 },
 
+                                gtk::Label {
+                                    set_label: "Input/output are totals; cache may overlap with input depending on assistant/provider.",
+                                    set_halign: gtk::Align::Start,
+                                    set_xalign: 0.0,
+                                    set_wrap: true,
+                                    set_has_tooltip: true,
+                                    set_tooltip_text: Some(token_semantics_help_tooltip()),
+                                    add_css_class: "caption",
+                                },
+
                                 #[name = "token_rows"]
                                 gtk::ListBox {
                                     add_css_class: "boxed-list",
@@ -762,6 +806,26 @@ mod tests {
     use super::*;
     use crate::models::analytics::AiAssistantTokenUsage;
 
+    fn token_row(
+        reported_sessions: i64,
+        input_tokens: Option<i64>,
+        output_tokens: Option<i64>,
+        cache_read_tokens: Option<i64>,
+        cache_write_tokens: Option<i64>,
+        reasoning_tokens: Option<i64>,
+    ) -> AiAssistantTokenUsage {
+        AiAssistantTokenUsage {
+            tool: "OpenCode".to_string(),
+            total_sessions: 10,
+            reported_sessions,
+            input_tokens,
+            output_tokens,
+            cache_read_tokens,
+            cache_write_tokens,
+            reasoning_tokens,
+        }
+    }
+
     #[test]
     fn ready_state_keeps_cached_content_visible_on_refresh_failure() {
         let model = AnalyticsViewModel::from_data(AnalyticsData::default());
@@ -829,6 +893,9 @@ mod tests {
                 reported_sessions: 5,
                 input_tokens: Some(1200),
                 output_tokens: Some(800),
+                cache_read_tokens: None,
+                cache_write_tokens: None,
+                reasoning_tokens: None,
             },
             AiAssistantTokenUsage {
                 tool: "OpenCode".to_string(),
@@ -836,6 +903,9 @@ mod tests {
                 reported_sessions: 0,
                 input_tokens: None,
                 output_tokens: None,
+                cache_read_tokens: None,
+                cache_write_tokens: None,
+                reasoning_tokens: None,
             },
         ];
 
@@ -857,6 +927,9 @@ mod tests {
                 reported_sessions: 0,
                 input_tokens: None,
                 output_tokens: None,
+                cache_read_tokens: None,
+                cache_write_tokens: None,
+                reasoning_tokens: None,
             },
             AiAssistantTokenUsage {
                 tool: "OpenCode".to_string(),
@@ -864,6 +937,9 @@ mod tests {
                 reported_sessions: 0,
                 input_tokens: None,
                 output_tokens: None,
+                cache_read_tokens: None,
+                cache_write_tokens: None,
+                reasoning_tokens: None,
             },
         ];
 
@@ -894,6 +970,48 @@ mod tests {
         assert_eq!(
             format_heatmap_range_label(Some("bad-date"), Some("2026-03-22")),
             None
+        );
+    }
+
+    #[test]
+    fn token_row_primary_text_uses_input_and_output_totals() {
+        let row = token_row(0, Some(1), Some(2), Some(100), Some(20), Some(5));
+        assert_eq!(token_row_primary_text(&row), "1 input / 2 output / 3 total");
+    }
+
+    #[test]
+    fn token_row_primary_text_formats_input_output_total() {
+        let row = token_row(3, Some(1200), Some(34), None, None, None);
+        assert_eq!(
+            token_row_primary_text(&row),
+            "1\u{2009}200 input / 34 output / 1\u{2009}234 total"
+        );
+    }
+
+    #[test]
+    fn token_row_secondary_text_formats_cache_read_only() {
+        let row = token_row(2, Some(100), Some(20), Some(90), None, None);
+        assert_eq!(
+            token_row_secondary_text(&row),
+            Some("cache: 90 read".to_string())
+        );
+    }
+
+    #[test]
+    fn token_row_secondary_text_formats_cache_and_reasoning() {
+        let row = token_row(2, Some(100), Some(20), Some(90), Some(10), Some(4));
+        assert_eq!(
+            token_row_secondary_text(&row),
+            Some("cache: 90 read \u{00b7} 10 write \u{00b7} reasoning: 4".to_string())
+        );
+    }
+
+    #[test]
+    fn token_row_secondary_text_formats_reasoning_only() {
+        let row = token_row(2, Some(100), Some(20), None, None, Some(8));
+        assert_eq!(
+            token_row_secondary_text(&row),
+            Some("reasoning: 8".to_string())
         );
     }
 }
