@@ -1,0 +1,123 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 700" style="font-family: -apple-system, Cantarell, sans-serif;">
+  <!-- Window frame -->
+  <rect width="1000" height="700" fill="#f6f5f4" rx="12"/>
+
+  <!-- Header Bar -->
+  <rect width="1000" height="46" fill="#ffffff" rx="12"/>
+  <rect y="12" width="1000" height="34" fill="#ffffff"/>
+
+  <!-- View switcher (centered) -->
+  <rect x="370" y="8" width="90" height="30" fill="#3584e4" rx="6"/>
+  <text x="390" y="28" font-size="12" font-weight="600" fill="#ffffff">Sessions</text>
+  <rect x="465" y="8" width="80" height="30" fill="#e8e6e3" rx="6"/>
+  <text x="478" y="28" font-size="12" fill="#636260">Analytics</text>
+
+  <!-- Search button right -->
+  <circle cx="960" cy="23" r="14" fill="#e8e6e3"/>
+  <text x="953" y="28" font-size="14" fill="#636260">&#x1F50D;</text>
+
+  <!-- === PROJECT SIDEBAR (NavigationSplitView left pane) === -->
+  <rect x="0" y="46" width="240" height="654" fill="#fafafa"/>
+  <line x1="240" y1="46" x2="240" y2="700" stroke="#d5d3d0" stroke-width="1"/>
+
+  <!-- Sidebar header -->
+  <text x="16" y="74" font-size="11" font-weight="700" fill="#77767b" letter-spacing="1">PROJECTS</text>
+
+  <!-- All Sessions row (selected) -->
+  <rect x="8" y="84" width="224" height="36" fill="#3584e4" rx="8"/>
+  <text x="20" y="107" font-size="13" font-weight="500" fill="#ffffff">All Sessions</text>
+  <text x="196" y="107" font-size="12" fill="rgba(255,255,255,0.7)">42</text>
+
+  <!-- Project rows -->
+  <rect x="8" y="124" width="224" height="52" fill="transparent" rx="8"/>
+  <rect x="20" y="132" width="8" height="8" fill="#3584e4" rx="4"/>
+  <text x="34" y="141" font-size="13" font-weight="500" fill="#1c1c1c">sessions-chronicle</text>
+  <text x="34" y="157" font-size="11" fill="#77767b">~/Projets/sessions-chronicle</text>
+  <text x="196" y="148" font-size="12" fill="#77767b">18</text>
+
+  <rect x="8" y="178" width="224" height="52" fill="transparent" rx="8"/>
+  <rect x="20" y="186" width="8" height="8" fill="#26a269" rx="4"/>
+  <text x="34" y="195" font-size="13" font-weight="500" fill="#1c1c1c">my-web-app</text>
+  <text x="34" y="211" font-size="11" fill="#77767b">~/Projets/my-web-app</text>
+  <text x="196" y="202" font-size="12" fill="#77767b">12</text>
+
+  <rect x="8" y="232" width="224" height="52" fill="transparent" rx="8"/>
+  <rect x="20" y="240" width="8" height="8" fill="#e66100" rx="4"/>
+  <text x="34" y="249" font-size="13" font-weight="500" fill="#1c1c1c">dotfiles</text>
+  <text x="34" y="265" font-size="11" fill="#77767b">~/dotfiles</text>
+  <text x="196" y="256" font-size="12" fill="#77767b">7</text>
+
+  <rect x="8" y="286" width="224" height="52" fill="transparent" rx="8"/>
+  <rect x="20" y="294" width="8" height="8" fill="#9141ac" rx="4"/>
+  <text x="34" y="303" font-size="13" font-weight="500" fill="#1c1c1c">api-gateway</text>
+  <text x="34" y="319" font-size="11" fill="#77767b">~/work/api-gateway</text>
+  <text x="196" y="310" font-size="12" fill="#77767b">5</text>
+
+  <!-- Sidebar separator -->
+  <line x1="16" y1="350" x2="224" y2="350" stroke="#d5d3d0" stroke-width="1"/>
+
+  <!-- Tools section -->
+  <text x="16" y="374" font-size="11" font-weight="700" fill="#77767b" letter-spacing="1">TOOLS</text>
+
+  <!-- Tool filters with checkboxes -->
+  <rect x="20" y="386" width="12" height="12" fill="#3584e4" rx="2"/>
+  <text x="19" y="397" font-size="11" fill="#ffffff" font-weight="700">&#x2713;</text>
+  <text x="38" y="397" font-size="12" fill="#1c1c1c">Claude Code</text>
+
+  <rect x="20" y="408" width="12" height="12" fill="#26a269" rx="2"/>
+  <text x="19" y="419" font-size="11" fill="#ffffff" font-weight="700">&#x2713;</text>
+  <text x="38" y="419" font-size="12" fill="#1c1c1c">OpenCode</text>
+
+  <rect x="20" y="430" width="12" height="12" fill="#e66100" rx="2"/>
+  <text x="19" y="441" font-size="11" fill="#ffffff" font-weight="700">&#x2713;</text>
+  <text x="38" y="441" font-size="12" fill="#1c1c1c">Codex</text>
+
+  <rect x="20" y="452" width="12" height="12" fill="#1c71d8" rx="2"/>
+  <text x="19" y="463" font-size="11" fill="#ffffff" font-weight="700">&#x2713;</text>
+  <text x="38" y="463" font-size="12" fill="#1c1c1c">Mistral Vibe</text>
+
+  <!-- === MAIN SESSION LIST (right pane) === -->
+  <rect x="252" y="54" width="736" height="638" fill="#ffffff" rx="8"/>
+
+  <!-- Session row 1 -->
+  <rect x="264" y="66" width="712" height="72" fill="#ffffff" rx="6"/>
+  <rect x="268" y="72" width="3" height="60" fill="#3584e4" rx="1.5"/>
+  <text x="282" y="90" font-size="14" font-weight="600" fill="#1c1c1c">Add project detection to parsers</text>
+  <text x="282" y="108" font-size="12" fill="#77767b">sessions-chronicle</text>
+  <text x="282" y="124" font-size="11" fill="#9a9996">2h ago  &#183;  Claude Code  &#183;  34 messages</text>
+  <text x="946" y="96" font-size="14" fill="#d5d3d0">&#x203A;</text>
+
+  <line x1="268" y1="138" x2="964" y2="138" stroke="#f0eeec" stroke-width="1"/>
+
+  <!-- Session row 2 -->
+  <rect x="264" y="142" width="712" height="72" fill="#ffffff" rx="6"/>
+  <rect x="268" y="148" width="3" height="60" fill="#3584e4" rx="1.5"/>
+  <text x="282" y="166" font-size="14" font-weight="600" fill="#1c1c1c">Fix token caching in analytics</text>
+  <text x="282" y="184" font-size="12" fill="#77767b">sessions-chronicle</text>
+  <text x="282" y="200" font-size="11" fill="#9a9996">Yesterday  &#183;  Claude Code  &#183;  18 messages</text>
+  <text x="946" y="172" font-size="14" fill="#d5d3d0">&#x203A;</text>
+
+  <line x1="268" y1="214" x2="964" y2="214" stroke="#f0eeec" stroke-width="1"/>
+
+  <!-- Session row 3 -->
+  <rect x="264" y="218" width="712" height="72" fill="#ffffff" rx="6"/>
+  <rect x="268" y="224" width="3" height="60" fill="#26a269" rx="1.5"/>
+  <text x="282" y="242" font-size="14" font-weight="600" fill="#1c1c1c">Refactor auth middleware</text>
+  <text x="282" y="260" font-size="12" fill="#77767b">sessions-chronicle</text>
+  <text x="282" y="276" font-size="11" fill="#9a9996">2d ago  &#183;  OpenCode  &#183;  52 messages</text>
+  <text x="946" y="248" font-size="14" fill="#d5d3d0">&#x203A;</text>
+
+  <line x1="268" y1="290" x2="964" y2="290" stroke="#f0eeec" stroke-width="1"/>
+
+  <!-- Session row 4 -->
+  <rect x="264" y="294" width="712" height="72" fill="#ffffff" rx="6"/>
+  <rect x="268" y="300" width="3" height="60" fill="#e66100" rx="1.5"/>
+  <text x="282" y="318" font-size="14" font-weight="600" fill="#1c1c1c">Bootstrap unit tests for API</text>
+  <text x="282" y="336" font-size="12" fill="#77767b">sessions-chronicle</text>
+  <text x="282" y="352" font-size="11" fill="#9a9996">3d ago  &#183;  Codex  &#183;  8 messages</text>
+  <text x="946" y="324" font-size="14" fill="#d5d3d0">&#x203A;</text>
+
+  <!-- Label -->
+  <rect x="300" y="640" width="400" height="30" fill="#f6f5f4" rx="6"/>
+  <text x="345" y="660" font-size="13" font-weight="600" fill="#77767b">Option A  &#8212;  Project Sidebar (GNOME HIG)</text>
+</svg>

@@ -1,0 +1,117 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 700" style="font-family: -apple-system, Cantarell, sans-serif;">
+  <!-- Window frame -->
+  <rect width="1000" height="700" fill="#f6f5f4" rx="12"/>
+
+  <!-- Header Bar -->
+  <rect width="1000" height="46" fill="#ffffff" rx="12"/>
+  <rect y="12" width="1000" height="34" fill="#ffffff"/>
+
+  <!-- View switcher -->
+  <rect x="370" y="8" width="90" height="30" fill="#3584e4" rx="6"/>
+  <text x="390" y="28" font-size="12" font-weight="600" fill="#ffffff">Sessions</text>
+  <rect x="465" y="8" width="80" height="30" fill="#e8e6e3" rx="6"/>
+  <text x="478" y="28" font-size="12" fill="#636260">Analytics</text>
+
+  <!-- Search + toggle -->
+  <circle cx="960" cy="23" r="14" fill="#e8e6e3"/>
+  <text x="953" y="28" font-size="14" fill="#636260">&#x1F50D;</text>
+
+  <!-- Main content area -->
+  <rect x="20" y="54" width="960" height="638" fill="#ffffff" rx="8"/>
+
+  <!-- === FILTER CHIP BAR === -->
+  <rect x="20" y="54" width="960" height="48" fill="#fafafa" rx="8"/>
+  <rect x="20" y="78" width="960" height="24" fill="#fafafa"/>
+
+  <!-- "All" chip (not selected) -->
+  <rect x="32" y="64" width="42" height="28" fill="#e8e6e3" rx="14" stroke="#d5d3d0" stroke-width="1"/>
+  <text x="43" y="83" font-size="11" fill="#636260">All</text>
+
+  <!-- Project chip: sessions-chronicle (SELECTED) -->
+  <rect x="82" y="64" width="162" height="28" fill="#3584e4" rx="14"/>
+  <text x="96" y="83" font-size="11" font-weight="500" fill="#ffffff">sessions-chronicle  (18)</text>
+  <!-- x button -->
+  <circle cx="230" cy="78" r="8" fill="rgba(255,255,255,0.3)"/>
+  <text x="227" y="82" font-size="10" fill="#ffffff">&#x2715;</text>
+
+  <!-- Project chip: my-web-app -->
+  <rect x="252" y="64" width="120" height="28" fill="#ffffff" rx="14" stroke="#d5d3d0" stroke-width="1"/>
+  <text x="266" y="83" font-size="11" fill="#636260">my-web-app  (12)</text>
+
+  <!-- Project chip: dotfiles -->
+  <rect x="380" y="64" width="96" height="28" fill="#ffffff" rx="14" stroke="#d5d3d0" stroke-width="1"/>
+  <text x="394" y="83" font-size="11" fill="#636260">dotfiles  (7)</text>
+
+  <!-- Project chip: api-gateway -->
+  <rect x="484" y="64" width="116" height="28" fill="#ffffff" rx="14" stroke="#d5d3d0" stroke-width="1"/>
+  <text x="498" y="83" font-size="11" fill="#636260">api-gateway  (5)</text>
+
+  <!-- Separator -->
+  <rect x="612" y="68" width="1" height="20" fill="#d5d3d0"/>
+
+  <!-- Tool chips (smaller, icons) -->
+  <rect x="624" y="66" width="26" height="24" fill="#3584e4" rx="4"/>
+  <text x="629" y="82" font-size="10" fill="#ffffff">CC</text>
+
+  <rect x="656" y="66" width="26" height="24" fill="#26a269" rx="4"/>
+  <text x="661" y="82" font-size="10" fill="#ffffff">OC</text>
+
+  <rect x="688" y="66" width="26" height="24" fill="#e66100" rx="4"/>
+  <text x="694" y="82" font-size="10" fill="#ffffff">Cx</text>
+
+  <rect x="720" y="66" width="26" height="24" fill="#1c71d8" rx="4"/>
+  <text x="725" y="82" font-size="10" fill="#ffffff">MV</text>
+
+  <!-- === FILTERED SESSION LIST === -->
+  <!-- Active filter indicator -->
+  <rect x="32" y="108" width="936" height="24" fill="#eef6ff" rx="4"/>
+  <text x="44" y="124" font-size="11" fill="#3584e4">Showing 18 sessions in sessions-chronicle</text>
+  <text x="926" y="124" font-size="11" fill="#3584e4" text-decoration="underline" cursor="pointer">Clear</text>
+
+  <!-- Session row 1 -->
+  <rect x="36" y="140" width="920" height="72" fill="#ffffff" rx="6"/>
+  <rect x="40" y="146" width="3" height="60" fill="#3584e4" rx="1.5"/>
+  <text x="54" y="166" font-size="14" font-weight="600" fill="#1c1c1c">Add project detection to parsers</text>
+  <text x="54" y="186" font-size="11" fill="#9a9996">2h ago  &#183;  Claude Code  &#183;  34 messages</text>
+  <text x="932" y="172" font-size="14" fill="#d5d3d0">&#x203A;</text>
+
+  <line x1="54" y1="212" x2="944" y2="212" stroke="#f0eeec" stroke-width="1"/>
+
+  <!-- Session row 2 -->
+  <rect x="36" y="216" width="920" height="72" fill="#ffffff" rx="6"/>
+  <rect x="40" y="222" width="3" height="60" fill="#3584e4" rx="1.5"/>
+  <text x="54" y="242" font-size="14" font-weight="600" fill="#1c1c1c">Fix token caching in analytics</text>
+  <text x="54" y="262" font-size="11" fill="#9a9996">Yesterday  &#183;  Claude Code  &#183;  18 messages</text>
+  <text x="932" y="248" font-size="14" fill="#d5d3d0">&#x203A;</text>
+
+  <line x1="54" y1="288" x2="944" y2="288" stroke="#f0eeec" stroke-width="1"/>
+
+  <!-- Session row 3 -->
+  <rect x="36" y="292" width="920" height="72" fill="#ffffff" rx="6"/>
+  <rect x="40" y="298" width="3" height="60" fill="#26a269" rx="1.5"/>
+  <text x="54" y="318" font-size="14" font-weight="600" fill="#1c1c1c">Refactor sidebar filters</text>
+  <text x="54" y="338" font-size="11" fill="#9a9996">2d ago  &#183;  OpenCode  &#183;  52 messages</text>
+  <text x="932" y="324" font-size="14" fill="#d5d3d0">&#x203A;</text>
+
+  <line x1="54" y1="364" x2="944" y2="364" stroke="#f0eeec" stroke-width="1"/>
+
+  <!-- Session row 4 -->
+  <rect x="36" y="368" width="920" height="72" fill="#ffffff" rx="6"/>
+  <rect x="40" y="374" width="3" height="60" fill="#e66100" rx="1.5"/>
+  <text x="54" y="394" font-size="14" font-weight="600" fill="#1c1c1c">Bootstrap unit tests for API</text>
+  <text x="54" y="414" font-size="11" fill="#9a9996">3d ago  &#183;  Codex  &#183;  8 messages</text>
+  <text x="932" y="400" font-size="14" fill="#d5d3d0">&#x203A;</text>
+
+  <line x1="54" y1="440" x2="944" y2="440" stroke="#f0eeec" stroke-width="1"/>
+
+  <!-- Session row 5 -->
+  <rect x="36" y="444" width="920" height="72" fill="#ffffff" rx="6"/>
+  <rect x="40" y="450" width="3" height="60" fill="#3584e4" rx="1.5"/>
+  <text x="54" y="470" font-size="14" font-weight="600" fill="#1c1c1c">Design project-aware UI exploration</text>
+  <text x="54" y="490" font-size="11" fill="#9a9996">5d ago  &#183;  Claude Code  &#183;  63 messages</text>
+  <text x="932" y="476" font-size="14" fill="#d5d3d0">&#x203A;</text>
+
+  <!-- Label -->
+  <rect x="300" y="646" width="400" height="30" fill="#f6f5f4" rx="6"/>
+  <text x="346" y="666" font-size="13" font-weight="600" fill="#77767b">Option C  &#8212;  Project Filter Chips</text>
+</svg>

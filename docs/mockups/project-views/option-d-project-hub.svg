@@ -1,0 +1,156 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 700" style="font-family: -apple-system, Cantarell, sans-serif;">
+  <!-- Window frame -->
+  <rect width="1000" height="700" fill="#f6f5f4" rx="12"/>
+
+  <!-- Header Bar -->
+  <rect width="1000" height="46" fill="#ffffff" rx="12"/>
+  <rect y="12" width="1000" height="34" fill="#ffffff"/>
+
+  <!-- View switcher (3 tabs now) -->
+  <rect x="330" y="8" width="90" height="30" fill="#e8e6e3" rx="6"/>
+  <text x="350" y="28" font-size="12" fill="#636260">Sessions</text>
+  <rect x="425" y="8" width="80" height="30" fill="#3584e4" rx="6"/>
+  <text x="440" y="28" font-size="12" font-weight="600" fill="#ffffff">Projects</text>
+  <rect x="510" y="8" width="80" height="30" fill="#e8e6e3" rx="6"/>
+  <text x="523" y="28" font-size="12" fill="#636260">Analytics</text>
+
+  <!-- Search -->
+  <circle cx="960" cy="23" r="14" fill="#e8e6e3"/>
+  <text x="953" y="28" font-size="14" fill="#636260">&#x1F50D;</text>
+
+  <!-- === PROJECT CARDS GRID === -->
+
+  <!-- Card 1: sessions-chronicle -->
+  <rect x="20" y="58" width="472" height="200" fill="#ffffff" rx="12" stroke="#e8e6e3" stroke-width="1"/>
+  <!-- Color accent top -->
+  <rect x="20" y="58" width="472" height="6" fill="#3584e4" rx="3"/>
+  <rect x="20" y="61" width="472" height="3" fill="#3584e4"/>
+
+  <text x="36" y="90" font-size="16" font-weight="700" fill="#1c1c1c">sessions-chronicle</text>
+  <text x="36" y="108" font-size="11" fill="#77767b">~/Projets/sessions-chronicle</text>
+
+  <!-- Stats row -->
+  <text x="36" y="136" font-size="24" font-weight="700" fill="#3584e4">18</text>
+  <text x="36" y="150" font-size="10" fill="#77767b">sessions</text>
+
+  <text x="96" y="136" font-size="24" font-weight="700" fill="#1c1c1c">482</text>
+  <text x="96" y="150" font-size="10" fill="#77767b">messages</text>
+
+  <text x="170" y="136" font-size="24" font-weight="700" fill="#1c1c1c">14d</text>
+  <text x="170" y="150" font-size="10" fill="#77767b">active</text>
+
+  <!-- Mini activity sparkline -->
+  <polyline points="36,190 66,185 96,192 126,178 156,182 186,170 216,176 246,165 276,172 306,160 336,168 366,155 396,162 426,148 456,152"
+    fill="none" stroke="#3584e4" stroke-width="2" stroke-linecap="round"/>
+  <text x="36" y="210" font-size="9" fill="#9a9996">Last 30 days</text>
+
+  <!-- Tool badges -->
+  <rect x="350" y="94" width="56" height="20" fill="#3584e4" rx="4"/>
+  <text x="358" y="108" font-size="9" fill="#ffffff">Claude  14</text>
+  <rect x="410" y="94" width="60" height="20" fill="#26a269" rx="4"/>
+  <text x="416" y="108" font-size="9" fill="#ffffff">OpenCode  3</text>
+  <rect x="350" y="118" width="48" height="20" fill="#e66100" rx="4"/>
+  <text x="358" y="132" font-size="9" fill="#ffffff">Codex  1</text>
+
+  <!-- Last session -->
+  <text x="350" y="160" font-size="10" fill="#77767b">Last session:</text>
+  <text x="350" y="174" font-size="11" fill="#1c1c1c">Add project detection</text>
+  <text x="350" y="188" font-size="10" fill="#9a9996">2h ago</text>
+
+  <!-- Card 2: my-web-app -->
+  <rect x="508" y="58" width="472" height="200" fill="#ffffff" rx="12" stroke="#e8e6e3" stroke-width="1"/>
+  <rect x="508" y="58" width="472" height="6" fill="#26a269" rx="3"/>
+  <rect x="508" y="61" width="472" height="3" fill="#26a269"/>
+
+  <text x="524" y="90" font-size="16" font-weight="700" fill="#1c1c1c">my-web-app</text>
+  <text x="524" y="108" font-size="11" fill="#77767b">~/Projets/my-web-app</text>
+
+  <text x="524" y="136" font-size="24" font-weight="700" fill="#26a269">12</text>
+  <text x="524" y="150" font-size="10" fill="#77767b">sessions</text>
+
+  <text x="584" y="136" font-size="24" font-weight="700" fill="#1c1c1c">318</text>
+  <text x="584" y="150" font-size="10" fill="#77767b">messages</text>
+
+  <text x="658" y="136" font-size="24" font-weight="700" fill="#1c1c1c">9d</text>
+  <text x="658" y="150" font-size="10" fill="#77767b">active</text>
+
+  <polyline points="524,192 554,188 584,194 614,186 644,190 674,184 704,188 734,180 764,186 794,178 824,184 854,176 884,182 914,172 944,178"
+    fill="none" stroke="#26a269" stroke-width="2" stroke-linecap="round"/>
+  <text x="524" y="210" font-size="9" fill="#9a9996">Last 30 days</text>
+
+  <rect x="838" y="94" width="56" height="20" fill="#3584e4" rx="4"/>
+  <text x="846" y="108" font-size="9" fill="#ffffff">Claude  8</text>
+  <rect x="898" y="94" width="60" height="20" fill="#e66100" rx="4"/>
+  <text x="908" y="108" font-size="9" fill="#ffffff">Codex  4</text>
+
+  <text x="838" y="160" font-size="10" fill="#77767b">Last session:</text>
+  <text x="838" y="174" font-size="11" fill="#1c1c1c">Scaffold dashboard</text>
+  <text x="838" y="188" font-size="10" fill="#9a9996">5h ago</text>
+
+  <!-- Card 3: dotfiles -->
+  <rect x="20" y="274" width="472" height="200" fill="#ffffff" rx="12" stroke="#e8e6e3" stroke-width="1"/>
+  <rect x="20" y="274" width="472" height="6" fill="#e66100" rx="3"/>
+  <rect x="20" y="277" width="472" height="3" fill="#e66100"/>
+
+  <text x="36" y="306" font-size="16" font-weight="700" fill="#1c1c1c">dotfiles</text>
+  <text x="36" y="324" font-size="11" fill="#77767b">~/dotfiles</text>
+
+  <text x="36" y="352" font-size="24" font-weight="700" fill="#e66100">7</text>
+  <text x="36" y="366" font-size="10" fill="#77767b">sessions</text>
+
+  <text x="76" y="352" font-size="24" font-weight="700" fill="#1c1c1c">89</text>
+  <text x="76" y="366" font-size="10" fill="#77767b">messages</text>
+
+  <text x="130" y="352" font-size="24" font-weight="700" fill="#1c1c1c">5d</text>
+  <text x="130" y="366" font-size="10" fill="#77767b">active</text>
+
+  <polyline points="36,408 66,412 96,406 126,414 156,410 186,416 216,408 246,414 276,412 306,416 336,410 366,418 396,412 426,416 456,414"
+    fill="none" stroke="#e66100" stroke-width="2" stroke-linecap="round"/>
+  <text x="36" y="426" font-size="9" fill="#9a9996">Last 30 days</text>
+
+  <rect x="350" y="310" width="56" height="20" fill="#3584e4" rx="4"/>
+  <text x="358" y="324" font-size="9" fill="#ffffff">Claude  5</text>
+  <rect x="410" y="310" width="60" height="20" fill="#1c71d8" rx="4"/>
+  <text x="418" y="324" font-size="9" fill="#ffffff">Mistral  2</text>
+
+  <text x="350" y="376" font-size="10" fill="#77767b">Last session:</text>
+  <text x="350" y="390" font-size="11" fill="#1c1c1c">Update zsh config</text>
+  <text x="350" y="404" font-size="10" fill="#9a9996">1w ago</text>
+
+  <!-- Card 4: api-gateway -->
+  <rect x="508" y="274" width="472" height="200" fill="#ffffff" rx="12" stroke="#e8e6e3" stroke-width="1"/>
+  <rect x="508" y="274" width="472" height="6" fill="#9141ac" rx="3"/>
+  <rect x="508" y="277" width="472" height="3" fill="#9141ac"/>
+
+  <text x="524" y="306" font-size="16" font-weight="700" fill="#1c1c1c">api-gateway</text>
+  <text x="524" y="324" font-size="11" fill="#77767b">~/work/api-gateway</text>
+
+  <text x="524" y="352" font-size="24" font-weight="700" fill="#9141ac">5</text>
+  <text x="524" y="366" font-size="10" fill="#77767b">sessions</text>
+
+  <text x="564" y="352" font-size="24" font-weight="700" fill="#1c1c1c">156</text>
+  <text x="564" y="366" font-size="10" fill="#77767b">messages</text>
+
+  <text x="638" y="352" font-size="24" font-weight="700" fill="#1c1c1c">3d</text>
+  <text x="638" y="366" font-size="10" fill="#77767b">active</text>
+
+  <polyline points="524,416 554,412 584,408 614,410 644,404 674,408 704,402 734,406 764,400 794,404 824,396 854,400 884,394 914,398 944,392"
+    fill="none" stroke="#9141ac" stroke-width="2" stroke-linecap="round"/>
+  <text x="524" y="426" font-size="9" fill="#9a9996">Last 30 days</text>
+
+  <rect x="838" y="310" width="56" height="20" fill="#3584e4" rx="4"/>
+  <text x="846" y="324" font-size="9" fill="#ffffff">Claude  3</text>
+  <rect x="898" y="310" width="60" height="20" fill="#26a269" rx="4"/>
+  <text x="906" y="324" font-size="9" fill="#ffffff">OpenCode 2</text>
+
+  <text x="838" y="376" font-size="10" fill="#77767b">Last session:</text>
+  <text x="838" y="390" font-size="11" fill="#1c1c1c">Rate limiter config</text>
+  <text x="838" y="404" font-size="10" fill="#9a9996">4d ago</text>
+
+  <!-- Hint text -->
+  <text x="380" y="520" font-size="12" fill="#77767b" font-style="italic">Click a card to see its sessions</text>
+
+  <!-- Label -->
+  <rect x="280" y="646" width="440" height="30" fill="#f6f5f4" rx="6"/>
+  <text x="310" y="666" font-size="13" font-weight="600" fill="#77767b">Option D  &#8212;  Project Hub (New Workspace)</text>
+</svg>

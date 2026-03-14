@@ -1,0 +1,155 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 700" style="font-family: -apple-system, Cantarell, sans-serif;">
+  <!-- Window frame -->
+  <rect width="1000" height="700" fill="#f6f5f4" rx="12"/>
+
+  <!-- Header Bar -->
+  <rect width="1000" height="46" fill="#ffffff" rx="12"/>
+  <rect y="12" width="1000" height="34" fill="#ffffff"/>
+
+  <!-- View switcher -->
+  <rect x="370" y="8" width="90" height="30" fill="#3584e4" rx="6"/>
+  <text x="390" y="28" font-size="12" font-weight="600" fill="#ffffff">Sessions</text>
+  <rect x="465" y="8" width="80" height="30" fill="#e8e6e3" rx="6"/>
+  <text x="478" y="28" font-size="12" fill="#636260">Analytics</text>
+
+  <!-- Main area -->
+  <rect x="20" y="54" width="960" height="638" fill="#ffffff" rx="8"/>
+
+  <!-- === TIMELINE HEADER === -->
+  <!-- Date axis -->
+  <text x="36" y="80" font-size="11" font-weight="600" fill="#77767b">PROJECT TIMELINE</text>
+
+  <!-- Date labels -->
+  <text x="160" y="80" font-size="10" fill="#9a9996">Mar 8</text>
+  <text x="290" y="80" font-size="10" fill="#9a9996">Mar 9</text>
+  <text x="420" y="80" font-size="10" fill="#9a9996">Mar 10</text>
+  <text x="550" y="80" font-size="10" fill="#9a9996">Mar 11</text>
+  <text x="680" y="80" font-size="10" fill="#9a9996">Mar 12</text>
+  <text x="810" y="80" font-size="10" fill="#9a9996">Mar 13</text>
+  <text x="920" y="80" font-size="10" font-weight="600" fill="#3584e4">Today</text>
+
+  <!-- Grid lines -->
+  <line x1="160" y1="88" x2="160" y2="580" stroke="#f0eeec" stroke-width="1" stroke-dasharray="4,4"/>
+  <line x1="290" y1="88" x2="290" y2="580" stroke="#f0eeec" stroke-width="1" stroke-dasharray="4,4"/>
+  <line x1="420" y1="88" x2="420" y2="580" stroke="#f0eeec" stroke-width="1" stroke-dasharray="4,4"/>
+  <line x1="550" y1="88" x2="550" y2="580" stroke="#f0eeec" stroke-width="1" stroke-dasharray="4,4"/>
+  <line x1="680" y1="88" x2="680" y2="580" stroke="#f0eeec" stroke-width="1" stroke-dasharray="4,4"/>
+  <line x1="810" y1="88" x2="810" y2="580" stroke="#f0eeec" stroke-width="1" stroke-dasharray="4,4"/>
+
+  <!-- === PROJECT SWIM LANES === -->
+
+  <!-- Lane 1: sessions-chronicle -->
+  <rect x="32" y="96" width="110" height="100" fill="#f6f5f4" rx="6"/>
+  <text x="42" y="118" font-size="12" font-weight="700" fill="#1c1c1c">sessions-</text>
+  <text x="42" y="132" font-size="12" font-weight="700" fill="#1c1c1c">chronicle</text>
+  <text x="42" y="152" font-size="10" fill="#77767b">18 sessions</text>
+  <text x="42" y="166" font-size="10" fill="#77767b">482 messages</text>
+  <rect x="42" y="176" width="8" height="8" fill="#3584e4" rx="2"/>
+  <rect x="54" y="176" width="8" height="8" fill="#26a269" rx="2"/>
+  <rect x="66" y="176" width="8" height="8" fill="#e66100" rx="2"/>
+
+  <!-- Session bubbles on timeline -->
+  <!-- Day Mar 8 -->
+  <circle cx="190" cy="130" r="12" fill="#3584e4" opacity="0.8"/>
+  <text x="185" y="134" font-size="9" fill="#ffffff" font-weight="600">34</text>
+  <circle cx="190" cy="160" r="8" fill="#26a269" opacity="0.8"/>
+  <text x="186" y="164" font-size="8" fill="#ffffff">12</text>
+  <!-- Day Mar 9 -->
+  <circle cx="320" cy="135" r="10" fill="#3584e4" opacity="0.8"/>
+  <text x="316" y="139" font-size="8" fill="#ffffff">18</text>
+  <!-- Day Mar 10 -->
+  <circle cx="450" cy="126" r="14" fill="#3584e4" opacity="0.8"/>
+  <text x="445" y="131" font-size="9" fill="#ffffff" font-weight="600">52</text>
+  <!-- Day Mar 12 -->
+  <circle cx="710" cy="130" r="8" fill="#e66100" opacity="0.8"/>
+  <text x="707" y="134" font-size="8" fill="#ffffff">8</text>
+  <!-- Today -->
+  <circle cx="940" cy="126" r="14" fill="#3584e4" opacity="0.9"/>
+  <text x="935" y="131" font-size="9" fill="#ffffff" font-weight="600">34</text>
+
+  <!-- Connection lines -->
+  <line x1="202" y1="130" x2="310" y2="135" stroke="#3584e4" stroke-width="1" opacity="0.3"/>
+  <line x1="330" y1="135" x2="436" y2="126" stroke="#3584e4" stroke-width="1" opacity="0.3"/>
+  <line x1="464" y1="126" x2="702" y2="130" stroke="#e66100" stroke-width="1" opacity="0.2" stroke-dasharray="4,4"/>
+  <line x1="718" y1="130" x2="926" y2="126" stroke="#3584e4" stroke-width="1" opacity="0.3"/>
+
+  <line x1="32" y1="206" x2="960" y2="206" stroke="#e8e6e3" stroke-width="1"/>
+
+  <!-- Lane 2: my-web-app -->
+  <rect x="32" y="216" width="110" height="100" fill="#f6f5f4" rx="6"/>
+  <text x="42" y="238" font-size="12" font-weight="700" fill="#1c1c1c">my-web-app</text>
+  <text x="42" y="272" font-size="10" fill="#77767b">12 sessions</text>
+  <text x="42" y="286" font-size="10" fill="#77767b">318 messages</text>
+  <rect x="42" y="296" width="8" height="8" fill="#3584e4" rx="2"/>
+  <rect x="54" y="296" width="8" height="8" fill="#e66100" rx="2"/>
+
+  <!-- Session bubbles -->
+  <circle cx="220" cy="260" r="10" fill="#e66100" opacity="0.8"/>
+  <text x="216" y="264" font-size="8" fill="#ffffff">15</text>
+  <circle cx="380" cy="250" r="12" fill="#3584e4" opacity="0.8"/>
+  <text x="375" y="254" font-size="9" fill="#ffffff" font-weight="600">27</text>
+  <circle cx="500" cy="256" r="8" fill="#e66100" opacity="0.8"/>
+  <text x="497" y="260" font-size="8" fill="#ffffff">9</text>
+  <circle cx="750" cy="252" r="10" fill="#3584e4" opacity="0.8"/>
+  <text x="746" y="256" font-size="8" fill="#ffffff">21</text>
+  <circle cx="900" cy="248" r="12" fill="#e66100" opacity="0.8"/>
+  <text x="895" y="252" font-size="9" fill="#ffffff" font-weight="600">12</text>
+
+  <line x1="230" y1="260" x2="368" y2="250" stroke="#3584e4" stroke-width="1" opacity="0.3"/>
+  <line x1="392" y1="250" x2="492" y2="256" stroke="#e66100" stroke-width="1" opacity="0.3"/>
+  <line x1="508" y1="256" x2="740" y2="252" stroke="#3584e4" stroke-width="1" opacity="0.2" stroke-dasharray="4,4"/>
+  <line x1="760" y1="252" x2="888" y2="248" stroke="#e66100" stroke-width="1" opacity="0.3"/>
+
+  <line x1="32" y1="326" x2="960" y2="326" stroke="#e8e6e3" stroke-width="1"/>
+
+  <!-- Lane 3: dotfiles -->
+  <rect x="32" y="336" width="110" height="100" fill="#f6f5f4" rx="6"/>
+  <text x="42" y="358" font-size="12" font-weight="700" fill="#1c1c1c">dotfiles</text>
+  <text x="42" y="392" font-size="10" fill="#77767b">7 sessions</text>
+  <text x="42" y="406" font-size="10" fill="#77767b">89 messages</text>
+  <rect x="42" y="416" width="8" height="8" fill="#3584e4" rx="2"/>
+  <rect x="54" y="416" width="8" height="8" fill="#1c71d8" rx="2"/>
+
+  <circle cx="250" cy="380" r="8" fill="#3584e4" opacity="0.8"/>
+  <text x="247" y="384" font-size="8" fill="#ffffff">6</text>
+  <circle cx="580" cy="374" r="10" fill="#1c71d8" opacity="0.8"/>
+  <text x="576" y="378" font-size="8" fill="#ffffff">14</text>
+
+  <line x1="258" y1="380" x2="570" y2="374" stroke="#1c71d8" stroke-width="1" opacity="0.2" stroke-dasharray="4,4"/>
+
+  <line x1="32" y1="446" x2="960" y2="446" stroke="#e8e6e3" stroke-width="1"/>
+
+  <!-- Lane 4: api-gateway -->
+  <rect x="32" y="456" width="110" height="100" fill="#f6f5f4" rx="6"/>
+  <text x="42" y="478" font-size="12" font-weight="700" fill="#1c1c1c">api-gateway</text>
+  <text x="42" y="512" font-size="10" fill="#77767b">5 sessions</text>
+  <text x="42" y="526" font-size="10" fill="#77767b">156 messages</text>
+  <rect x="42" y="536" width="8" height="8" fill="#3584e4" rx="2"/>
+  <rect x="54" y="536" width="8" height="8" fill="#26a269" rx="2"/>
+
+  <circle cx="350" cy="500" r="14" fill="#3584e4" opacity="0.8"/>
+  <text x="345" y="504" font-size="9" fill="#ffffff" font-weight="600">48</text>
+  <circle cx="630" cy="494" r="12" fill="#26a269" opacity="0.8"/>
+  <text x="625" y="498" font-size="9" fill="#ffffff" font-weight="600">32</text>
+  <circle cx="850" cy="490" r="10" fill="#3584e4" opacity="0.8"/>
+  <text x="846" y="494" font-size="8" fill="#ffffff">22</text>
+
+  <line x1="364" y1="500" x2="618" y2="494" stroke="#26a269" stroke-width="1" opacity="0.3"/>
+  <line x1="642" y1="494" x2="840" y2="490" stroke="#3584e4" stroke-width="1" opacity="0.3"/>
+
+  <!-- Legend -->
+  <rect x="32" y="580" width="936" height="32" fill="#f6f5f4" rx="6"/>
+  <text x="48" y="600" font-size="10" fill="#77767b">Bubble size = message count  &#183;  Color = AI assistant  &#183;  Click to open session</text>
+
+  <!-- Tooltip example (hovering over a bubble) -->
+  <rect x="414" y="86" width="200" height="56" fill="#1c1c1c" rx="6" opacity="0.92"/>
+  <text x="424" y="104" font-size="11" font-weight="600" fill="#ffffff">Refactor sidebar filters</text>
+  <text x="424" y="120" font-size="10" fill="#9a9996">OpenCode  &#183;  52 messages</text>
+  <text x="424" y="134" font-size="10" fill="#9a9996">Mar 10 at 14:32</text>
+  <!-- Tooltip arrow -->
+  <polygon points="450,142 460,142 455,148" fill="#1c1c1c" opacity="0.92"/>
+
+  <!-- Label -->
+  <rect x="280" y="646" width="440" height="30" fill="#f6f5f4" rx="6"/>
+  <text x="310" y="666" font-size="13" font-weight="600" fill="#77767b">Option E  &#8212;  Project Timeline Ribbon</text>
+</svg>

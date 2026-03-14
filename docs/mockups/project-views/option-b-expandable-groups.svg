@@ -1,0 +1,114 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 700" style="font-family: -apple-system, Cantarell, sans-serif;">
+  <!-- Window frame -->
+  <rect width="1000" height="700" fill="#f6f5f4" rx="12"/>
+
+  <!-- Header Bar -->
+  <rect width="1000" height="46" fill="#ffffff" rx="12"/>
+  <rect y="12" width="1000" height="34" fill="#ffffff"/>
+
+  <!-- View switcher -->
+  <rect x="370" y="8" width="90" height="30" fill="#3584e4" rx="6"/>
+  <text x="390" y="28" font-size="12" font-weight="600" fill="#ffffff">Sessions</text>
+  <rect x="465" y="8" width="80" height="30" fill="#e8e6e3" rx="6"/>
+  <text x="478" y="28" font-size="12" fill="#636260">Analytics</text>
+
+  <!-- Utility pane toggle + search -->
+  <circle cx="960" cy="23" r="14" fill="#e8e6e3"/>
+  <text x="953" y="28" font-size="14" fill="#636260">&#x1F50D;</text>
+  <circle cx="924" cy="23" r="14" fill="#e8e6e3"/>
+  <text x="918" y="28" font-size="12" fill="#636260">&#x2630;</text>
+
+  <!-- Main content area -->
+  <rect x="20" y="54" width="960" height="638" fill="#ffffff" rx="8"/>
+
+  <!-- "Group by: Project" toggle in top-right -->
+  <text x="730" y="78" font-size="11" fill="#77767b">Group by:</text>
+  <rect x="788" y="64" width="72" height="22" fill="#3584e4" rx="4"/>
+  <text x="800" y="79" font-size="11" font-weight="500" fill="#ffffff">Project</text>
+  <rect x="864" y="64" width="56" height="22" fill="#e8e6e3" rx="4"/>
+  <text x="877" y="79" font-size="11" fill="#636260">Date</text>
+  <rect x="924" y="64" width="48" height="22" fill="#e8e6e3" rx="4"/>
+  <text x="935" y="79" font-size="11" fill="#636260">None</text>
+
+  <!-- === Group 1: sessions-chronicle (expanded) === -->
+  <rect x="32" y="94" width="936" height="40" fill="#f6f5f4" rx="8"/>
+  <text x="56" y="119" font-size="13" fill="#636260">&#x25BC;</text>
+  <rect x="72" y="106" width="8" height="8" fill="#3584e4" rx="4"/>
+  <text x="86" y="119" font-size="14" font-weight="600" fill="#1c1c1c">sessions-chronicle</text>
+  <text x="250" y="119" font-size="11" fill="#77767b">~/Projets/sessions-chronicle</text>
+  <!-- Badge -->
+  <rect x="900" y="102" width="36" height="20" fill="#3584e4" rx="10"/>
+  <text x="912" y="116" font-size="11" font-weight="600" fill="#ffffff">18</text>
+
+  <!-- Session row 1.1 -->
+  <rect x="52" y="140" width="908" height="64" fill="#ffffff" rx="6"/>
+  <rect x="56" y="146" width="3" height="52" fill="#3584e4" rx="1.5"/>
+  <text x="70" y="164" font-size="13" font-weight="500" fill="#1c1c1c">Add project detection to parsers</text>
+  <text x="70" y="182" font-size="11" fill="#9a9996">2h ago  &#183;  Claude Code  &#183;  34 messages</text>
+  <text x="936" y="170" font-size="14" fill="#d5d3d0">&#x203A;</text>
+
+  <line x1="70" y1="204" x2="948" y2="204" stroke="#f0eeec" stroke-width="1"/>
+
+  <!-- Session row 1.2 -->
+  <rect x="52" y="208" width="908" height="64" fill="#ffffff" rx="6"/>
+  <rect x="56" y="214" width="3" height="52" fill="#3584e4" rx="1.5"/>
+  <text x="70" y="232" font-size="13" font-weight="500" fill="#1c1c1c">Fix token caching in analytics</text>
+  <text x="70" y="250" font-size="11" fill="#9a9996">Yesterday  &#183;  Claude Code  &#183;  18 messages</text>
+  <text x="936" y="238" font-size="14" fill="#d5d3d0">&#x203A;</text>
+
+  <line x1="70" y1="272" x2="948" y2="272" stroke="#f0eeec" stroke-width="1"/>
+
+  <!-- Session row 1.3 -->
+  <rect x="52" y="276" width="908" height="64" fill="#ffffff" rx="6"/>
+  <rect x="56" y="282" width="3" height="52" fill="#26a269" rx="1.5"/>
+  <text x="70" y="300" font-size="13" font-weight="500" fill="#1c1c1c">Refactor sidebar filters</text>
+  <text x="70" y="318" font-size="11" fill="#9a9996">2d ago  &#183;  OpenCode  &#183;  52 messages</text>
+  <text x="936" y="306" font-size="14" fill="#d5d3d0">&#x203A;</text>
+
+  <!-- === Group 2: my-web-app (expanded) === -->
+  <rect x="32" y="352" width="936" height="40" fill="#f6f5f4" rx="8"/>
+  <text x="56" y="377" font-size="13" fill="#636260">&#x25BC;</text>
+  <rect x="72" y="364" width="8" height="8" fill="#26a269" rx="4"/>
+  <text x="86" y="377" font-size="14" font-weight="600" fill="#1c1c1c">my-web-app</text>
+  <text x="200" y="377" font-size="11" fill="#77767b">~/Projets/my-web-app</text>
+  <rect x="900" y="360" width="36" height="20" fill="#26a269" rx="10"/>
+  <text x="912" y="374" font-size="11" font-weight="600" fill="#ffffff">12</text>
+
+  <!-- Session row 2.1 -->
+  <rect x="52" y="398" width="908" height="64" fill="#ffffff" rx="6"/>
+  <rect x="56" y="404" width="3" height="52" fill="#e66100" rx="1.5"/>
+  <text x="70" y="422" font-size="13" font-weight="500" fill="#1c1c1c">Scaffold user dashboard component</text>
+  <text x="70" y="440" font-size="11" fill="#9a9996">5h ago  &#183;  Codex  &#183;  12 messages</text>
+  <text x="936" y="428" font-size="14" fill="#d5d3d0">&#x203A;</text>
+
+  <line x1="70" y1="462" x2="948" y2="462" stroke="#f0eeec" stroke-width="1"/>
+
+  <!-- Session row 2.2 -->
+  <rect x="52" y="466" width="908" height="64" fill="#ffffff" rx="6"/>
+  <rect x="56" y="472" width="3" height="52" fill="#3584e4" rx="1.5"/>
+  <text x="70" y="490" font-size="13" font-weight="500" fill="#1c1c1c">Fix CORS configuration</text>
+  <text x="70" y="508" font-size="11" fill="#9a9996">3d ago  &#183;  Claude Code  &#183;  27 messages</text>
+  <text x="936" y="496" font-size="14" fill="#d5d3d0">&#x203A;</text>
+
+  <!-- === Group 3: dotfiles (collapsed) === -->
+  <rect x="32" y="542" width="936" height="40" fill="#f6f5f4" rx="8"/>
+  <text x="56" y="567" font-size="13" fill="#636260">&#x25B6;</text>
+  <rect x="72" y="554" width="8" height="8" fill="#e66100" rx="4"/>
+  <text x="86" y="567" font-size="14" font-weight="600" fill="#1c1c1c">dotfiles</text>
+  <text x="155" y="567" font-size="11" fill="#77767b">~/dotfiles</text>
+  <rect x="900" y="550" width="36" height="20" fill="#e66100" rx="10"/>
+  <text x="916" y="564" font-size="11" font-weight="600" fill="#ffffff">7</text>
+
+  <!-- === Group 4: api-gateway (collapsed) === -->
+  <rect x="32" y="590" width="936" height="40" fill="#f6f5f4" rx="8"/>
+  <text x="56" y="615" font-size="13" fill="#636260">&#x25B6;</text>
+  <rect x="72" y="602" width="8" height="8" fill="#9141ac" rx="4"/>
+  <text x="86" y="615" font-size="14" font-weight="600" fill="#1c1c1c">api-gateway</text>
+  <text x="190" y="615" font-size="11" fill="#77767b">~/work/api-gateway</text>
+  <rect x="900" y="598" width="36" height="20" fill="#9141ac" rx="10"/>
+  <text x="916" y="612" font-size="11" font-weight="600" fill="#ffffff">5</text>
+
+  <!-- Label -->
+  <rect x="280" y="646" width="440" height="30" fill="#f6f5f4" rx="6"/>
+  <text x="310" y="666" font-size="13" font-weight="600" fill="#77767b">Option B  &#8212;  Expandable Project Groups</text>
+</svg>
