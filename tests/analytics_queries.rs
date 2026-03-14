@@ -597,6 +597,114 @@ fn tool_with_all_null_tokens_appears_in_results() {
 }
 
 #[test]
+fn token_aggregates_include_cache_and_reasoning_for_reported_sessions() {
+    let db = TempDatabase::new();
+
+    // Reported session with full token coverage.
+    db.connection.execute(
+        "INSERT INTO sessions (
+            id, tool, project_path, start_time, message_count, file_path, last_updated,
+            is_subagent, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, reasoning_tokens
+         ) VALUES ('oc-reported-a', 'opencode', '/projects/tokens', 10, 4, '/tmp/oc-a.jsonl', 20, 0, 100, 40, 60, 10, 5)",
+        [],
+    ).unwrap();
+
+    // Reported session with partial optional token fields.
+    db.connection.execute(
+        "INSERT INTO sessions (
+            id, tool, project_path, start_time, message_count, file_path, last_updated,
+            is_subagent, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, reasoning_tokens
+         ) VALUES ('oc-reported-b', 'opencode', '/projects/tokens', 30, 2, '/tmp/oc-b.jsonl', 40, 0, 30, 20, 15, NULL, NULL)",
+        [],
+    ).unwrap();
+
+    // Non-reported session: should not affect token sums.
+    db.connection.execute(
+        "INSERT INTO sessions (
+            id, tool, project_path, start_time, message_count, file_path, last_updated,
+            is_subagent, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, reasoning_tokens
+         ) VALUES ('oc-unreported', 'opencode', '/projects/tokens', 50, 1, '/tmp/oc-c.jsonl', 60, 0, NULL, NULL, 999, 999, 999)",
+        [],
+    ).unwrap();
+
+    // Tool with no reported token sessions should keep optional sums as None.
+    db.connection.execute(
+        "INSERT INTO sessions (
+            id, tool, project_path, start_time, message_count, file_path, last_updated,
+            is_subagent, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, reasoning_tokens
+         ) VALUES ('codex-unreported', 'codex', '/projects/tokens', 70, 1, '/tmp/cx-a.jsonl', 80, 0, NULL, NULL, 12, 8, 3)",
+        [],
+    ).unwrap();
+
+    let analytics = load_analytics(&db.path).expect("analytics should load");
+
+    let opencode = analytics
+        .token_usage_by_tool
+        .iter()
+        .find(|row| row.tool == "OpenCode")
+        .expect("OpenCode should be present");
+    assert_eq!(opencode.total_sessions, 3);
+    assert_eq!(opencode.reported_sessions, 2);
+    assert_eq!(opencode.input_tokens, Some(130));
+    assert_eq!(opencode.output_tokens, Some(60));
+    assert_eq!(opencode.cache_read_tokens, Some(75));
+    assert_eq!(opencode.cache_write_tokens, Some(10));
+    assert_eq!(opencode.reasoning_tokens, Some(5));
+
+    let codex = analytics
+        .token_usage_by_tool
+        .iter()
+        .find(|row| row.tool == "Codex")
+        .expect("Codex should be present");
+    assert_eq!(codex.total_sessions, 1);
+    assert_eq!(codex.reported_sessions, 0);
+    assert_eq!(codex.input_tokens, None);
+    assert_eq!(codex.output_tokens, None);
+    assert_eq!(codex.cache_read_tokens, None);
+    assert_eq!(codex.cache_write_tokens, None);
+    assert_eq!(codex.reasoning_tokens, None);
+}
+
+#[test]
+fn token_optional_aggregates_remain_none_when_not_reported() {
+    let db = TempDatabase::new();
+
+    db.connection
+        .execute(
+            "INSERT INTO sessions (
+            id, tool, project_path, start_time, message_count, file_path, last_updated,
+            is_subagent, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, reasoning_tokens
+         ) VALUES ('oc-null-optionals-a', 'opencode', '/projects/tokens', 10, 1, '/tmp/a.jsonl', 20, 0, 50, 10, NULL, NULL, NULL)",
+            [],
+        )
+        .unwrap();
+
+    db.connection
+        .execute(
+            "INSERT INTO sessions (
+            id, tool, project_path, start_time, message_count, file_path, last_updated,
+            is_subagent, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, reasoning_tokens
+         ) VALUES ('oc-null-optionals-b', 'opencode', '/projects/tokens', 30, 1, '/tmp/b.jsonl', 40, 0, 0, 0, NULL, NULL, NULL)",
+            [],
+        )
+        .unwrap();
+
+    let analytics = load_analytics(&db.path).expect("analytics should load");
+    let opencode = analytics
+        .token_usage_by_tool
+        .iter()
+        .find(|row| row.tool == "OpenCode")
+        .expect("OpenCode should be present");
+
+    assert_eq!(opencode.reported_sessions, 2);
+    assert_eq!(opencode.input_tokens, Some(50));
+    assert_eq!(opencode.output_tokens, Some(10));
+    assert_eq!(opencode.cache_read_tokens, None);
+    assert_eq!(opencode.cache_write_tokens, None);
+    assert_eq!(opencode.reasoning_tokens, None);
+}
+
+#[test]
 fn heatmap_bounded_to_six_months_when_activity_exceeds_six_months() {
     let db = TempDatabase::new();
 

@@ -265,7 +265,10 @@ fn load_token_usage(db: &rusqlite::Connection) -> Result<Vec<AiAssistantTokenUsa
             COUNT(*) AS total_sessions,
             SUM(CASE WHEN input_tokens IS NOT NULL AND output_tokens IS NOT NULL THEN 1 ELSE 0 END) AS reported_sessions,
             SUM(CASE WHEN input_tokens IS NOT NULL AND output_tokens IS NOT NULL THEN input_tokens ELSE 0 END) AS input_sum,
-            SUM(CASE WHEN input_tokens IS NOT NULL AND output_tokens IS NOT NULL THEN output_tokens ELSE 0 END) AS output_sum
+            SUM(CASE WHEN input_tokens IS NOT NULL AND output_tokens IS NOT NULL THEN output_tokens ELSE 0 END) AS output_sum,
+            SUM(CASE WHEN input_tokens IS NOT NULL AND output_tokens IS NOT NULL THEN cache_read_tokens ELSE NULL END) AS cache_read_sum,
+            SUM(CASE WHEN input_tokens IS NOT NULL AND output_tokens IS NOT NULL THEN cache_write_tokens ELSE NULL END) AS cache_write_sum,
+            SUM(CASE WHEN input_tokens IS NOT NULL AND output_tokens IS NOT NULL THEN reasoning_tokens ELSE NULL END) AS reasoning_sum
          FROM sessions
          WHERE is_subagent = 0
          GROUP BY tool
@@ -282,6 +285,9 @@ fn load_token_usage(db: &rusqlite::Connection) -> Result<Vec<AiAssistantTokenUsa
                 reported_sessions,
                 input_tokens: (reported_sessions > 0).then(|| row.get::<_, i64>(3).unwrap_or(0)),
                 output_tokens: (reported_sessions > 0).then(|| row.get::<_, i64>(4).unwrap_or(0)),
+                cache_read_tokens: row.get::<_, Option<i64>>(5)?,
+                cache_write_tokens: row.get::<_, Option<i64>>(6)?,
+                reasoning_tokens: row.get::<_, Option<i64>>(7)?,
             })
         })
         .context("Failed to map token-usage rows")?;
