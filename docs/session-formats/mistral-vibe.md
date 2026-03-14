@@ -84,6 +84,11 @@ Example (abridged):
 }
 ```
 
+Current observed limitation:
+
+- No separate cache-token counters were observed in `meta.json.stats`.
+- No separate reasoning-token counter was observed either; current logs expose aggregate prompt/completion totals.
+
 ---
 
 ## `messages.jsonl` Format

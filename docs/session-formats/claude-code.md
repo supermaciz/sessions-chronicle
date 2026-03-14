@@ -202,6 +202,8 @@ Observed shape (subset):
 Notes:
 
 - `usage` is typically present on `type == "assistant"` events and absent on `type == "user"` events.
+- Anthropic-style cache accounting keeps `cache_read_input_tokens` and `cache_creation_input_tokens`
+  separate from `input_tokens`, so `input_tokens` represents the uncached input portion.
 - The log is append-only and can contain multiple assistant events for the same underlying request; if you
   aggregate tokens, deduplicate by a stable identifier such as `requestId` + `message.id` and keep the last
   (or max) `usage` record per request.
@@ -247,6 +249,7 @@ fn extract_content_claude(event: &Value) -> Option<String> {
 
 ## References
 
+- [Anthropic prompt caching docs (`cache_read_input_tokens`, `cache_creation_input_tokens`, `input_tokens`)](https://docs.anthropic.com/en/docs/build-with-claude/prompt-caching)
 - [Claude Code model configuration (support article)](https://support.claude.com/en/articles/11940350-claude-code-model-configuration)
 - [Claude Sonnet 4.6 page (`claude-sonnet-4-6`)](https://www.anthropic.com/claude/sonnet)
 - [Claude Opus 4.6 page (`claude-opus-4-6`)](https://www.anthropic.com/claude/opus)

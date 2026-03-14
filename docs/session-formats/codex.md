@@ -296,6 +296,9 @@ Notes:
 
 - `info.total_token_usage` is a running total for the current session/rollout file.
 - `info.last_token_usage` is the usage for the most recent model call.
+- `cached_input_tokens` is the cached subset of `input_tokens`, not an extra bucket to add on top.
+- `reasoning_output_tokens` is exposed as a separate field in the payload and is normalized separately by
+  Sessions Chronicle.
 - Some `token_count` events can have `info: null` (treat as “unknown”, not zero).
 
 See also: [Codex issue discussion around `token_count` logging](https://github.com/openai/codex/issues/5276).
@@ -350,3 +353,4 @@ fn extract_content_codex_event_msg(event: &Value) -> Option<(Role, String)> {
 - [Codex turn-context persistence](https://github.com/openai/codex/blob/main/codex-rs/core/src/codex.rs)
 - [Codex rollout recorder](https://github.com/openai/codex/blob/main/codex-rs/core/src/rollout/recorder.rs)
 - [Codex app-server thread/item event model](https://github.com/openai/codex/blob/main/codex-rs/app-server/README.md)
+- [OpenAI Prompt Caching guide (`cached_tokens` is part of prompt/input usage)](https://developers.openai.com/api/docs/guides/prompt-caching)

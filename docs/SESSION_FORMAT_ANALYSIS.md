@@ -138,8 +138,8 @@ Goal: determine whether model information is available per message, per turn, an
 
 ## Key Findings Summary
 
-- **Claude Code**: JSONL format, tree-structured events, project-based organization; model slug is available on assistant events (`message.model`) in recent logs; **token usage is commonly available per assistant message** (`message.usage`, optional and version-dependent)
-- **Codex**: JSONL rollout envelope (`session_meta`/`event_msg`/`turn_context`/...); model provider can exist at session level, and model slug is captured at turn level (`turn_context.model`); **token usage is emitted as `event_msg` `token_count` events** (running totals + last-call deltas)
+- **Claude Code**: JSONL format, tree-structured events, project-based organization; model slug is available on assistant events (`message.model`) in recent logs; **token usage is commonly available per assistant message** (`message.usage`, optional and version-dependent), with cache fields reported separately from uncached input
+- **Codex**: JSONL rollout envelope (`session_meta`/`event_msg`/`turn_context`/...); model provider can exist at session level, and model slug is captured at turn level (`turn_context.model`); **token usage is emitted as `event_msg` `token_count` events** (running totals + last-call deltas), where cached input is a subset of `input_tokens`
 - **Codex skills**: Sampled local rollouts show explicit `$skill-name`
   `user_message` events followed by injected `<skill>` payloads in
   `response_item` user messages. The injected payload includes `<name>` and
@@ -208,10 +208,18 @@ Each tool can persist token usage metrics, but **the granularity and presence ar
 
 | Tool | Where tokens appear | Granularity | Notes |
 |------|---------------------|------------|-------|
-| **Claude Code** | `assistant` events: `message.usage` | Per assistant message / request | Often includes `input_tokens`, `output_tokens`, plus cache-related fields (for example `cache_read_input_tokens`). Not present on all historical logs/fixtures. |
-| **Codex** | `event_msg` events: `payload.type == "token_count"` | Running session totals + per-call deltas | `info.total_token_usage` is a running total; `info.last_token_usage` is the last model call. Some events may have `info: null`. |
-| **OpenCode** | Assistant message metadata (`message.data.tokens`) and/or `part.type == "step-finish"` | Per assistant message and/or per step | Presence depends on provider/backends and OpenCode version; avoid double-counting if both are present. |
-| **Mistral Vibe** | `meta.json.stats` | Session totals + last turn | `stats` may be `null` in minimal/older logs or when logging is configured without stats. `messages.jsonl` does not include per-message tokens. |
+| **Claude Code** | `assistant` events: `message.usage` | Per assistant message / request | Often includes `input_tokens`, `output_tokens`, plus `cache_read_input_tokens` / `cache_creation_input_tokens`. Anthropic reports cache separately, so `input_tokens` is the uncached portion only. Not present on all historical logs/fixtures. |
+| **Codex** | `event_msg` events: `payload.type == "token_count"` | Running session totals + per-call deltas | `info.total_token_usage` is a running total; `info.last_token_usage` is the last model call. `cached_input_tokens` is the cached subset of `input_tokens`, while `reasoning_output_tokens` is exposed as a separate field in the payload. Some events may have `info: null`. |
+| **OpenCode** | Assistant message metadata (`message.data.tokens`) and/or `part.type == "step-finish"` | Per assistant message and/or per step | Presence depends on provider/backends and OpenCode version; avoid double-counting if both are present. `tokens.cache.read` / `tokens.cache.write` are separate fields, but whether `tokens.input` already includes cache is provider-dependent. |
+| **Mistral Vibe** | `meta.json.stats` | Session totals + last turn | `stats` may be `null` in minimal/older logs or when logging is configured without stats. `messages.jsonl` does not include per-message tokens, and no separate cache/reasoning counters were observed. |
+
+### Cross-provider token semantics
+
+- `TokenUsage` is a useful normalized shape, but the fields are not perfectly equivalent across assistants.
+- `Claude Code`: cache is explicit and separate from uncached `input_tokens`.
+- `Codex`: `cached_input_tokens` is included in `input_tokens` as a subset; do not add it on top.
+- `OpenCode`: token shape is close to Sessions Chronicle's model, but cache/input overlap depends on the underlying provider.
+- `Mistral Vibe`: only prompt/completion aggregates are exposed in current logs.
 
 ---
 
@@ -257,6 +265,7 @@ Each tool can persist token usage metrics, but **the granularity and presence ar
 - [Codex rollout recorder writes `session_meta.model_provider`](https://github.com/openai/codex/blob/main/codex-rs/core/src/rollout/recorder.rs)
 - [Codex app-server thread/item event model](https://github.com/openai/codex/blob/main/codex-rs/app-server/README.md)
 - [Codex TypeScript SDK note on session persistence](https://github.com/openai/codex/blob/main/sdk/typescript/README.md)
+- [OpenAI Prompt Caching guide (`cached_tokens` within prompt/input usage)](https://developers.openai.com/api/docs/guides/prompt-caching)
 
 ### OpenCode
 - [Agent Sessions GitHub Repository](https://github.com/jazzyalex/agent-sessions)
@@ -270,6 +279,7 @@ Each tool can persist token usage metrics, but **the granularity and presence ar
 
 ### Claude References
 - [Claude API tool-use block structure](https://platform.claude.com/docs/en/api/typescript/messages/create)
+- [Anthropic prompt caching docs (`cache_read_input_tokens`, `cache_creation_input_tokens`, `input_tokens`)](https://docs.anthropic.com/en/docs/build-with-claude/prompt-caching)
 - [Claude Code model configuration (supported slugs)](https://support.claude.com/en/articles/11940350-claude-code-model-configuration)
 - [Claude Sonnet 4.6 model page](https://www.anthropic.com/claude/sonnet)
 - [Claude Opus 4.6 model page](https://www.anthropic.com/claude/opus)

@@ -446,6 +446,8 @@ impl CodexParser {
                             None => true,
                         };
                         if replace {
+                            // Codex/OpenAI reports cached_input_tokens as the cached subset
+                            // of input_tokens, not as an extra bucket to add on top.
                             best_snapshot = Some((
                                 global_total,
                                 TokenUsage {

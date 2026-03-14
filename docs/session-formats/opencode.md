@@ -146,6 +146,8 @@ New fields vs previous docs: `slug`, `share`, `permission`, `revert`, `time.comp
 - The `part` stream can also include token usage on step boundaries:
   - `part.type == "step-finish"` includes `tokens` (and `cost`)
 - If both message-level `tokens` and `step-finish.tokens` exist, avoid double-counting when aggregating.
+- `tokens.cache.read` / `tokens.cache.write` are structurally separate, but whether `tokens.input`
+  already includes cached tokens is provider-dependent rather than guaranteed by OpenCode itself.
 
 ### Part Types (12 total)
 

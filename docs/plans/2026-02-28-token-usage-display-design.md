@@ -230,6 +230,24 @@ Implementation note:
 
 **Result:** `Some(TokenUsage)` only when prompt + completion totals are both present.
 
+### Cross-provider semantics reference
+
+`TokenUsage` is a shared storage/display shape, not a guarantee that every source uses
+identical token accounting semantics.
+
+| Assistant | `input_tokens` semantics | Separate cache fields? | `reasoning_tokens`? | Notes |
+|------|----------|------------------------|----------------------|-------|
+| Claude Code | `input_tokens` is the uncached input; cache is reported separately | Yes | No | Anthropic reports `cache_read_input_tokens` and `cache_creation_input_tokens` separately, so cache is not folded into `input_tokens`. |
+| Codex | `input_tokens` is the full session input total; `cached_input_tokens` is the cached subset of that total | Yes | Yes | OpenAI/Codex usage formats treat cached input as a breakdown of input tokens, not an extra bucket to add on top. |
+| OpenCode | Provider-dependent; `input` is normalized directly and may or may not overlap with cache | Yes, when present | Yes, when present | OpenCode stores separate `cache.read` / `cache.write` values, but semantics depend on the underlying provider/backend. |
+| Mistral Vibe | Only session prompt/completion totals are currently normalized into `TokenUsage` | No | No | No separate cache or reasoning counters are exposed in the session metadata currently parsed. |
+
+Design implication:
+
+- `cache_*` values stay outside `display_total_tokens()` because some providers report
+  cache as additional metrics while others may expose cache counts that overlap with
+  prompt/input totals.
+
 ---
 
 ## Section 4 - UI (SessionDetail header card)
