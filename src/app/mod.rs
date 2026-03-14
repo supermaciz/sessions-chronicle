@@ -786,7 +786,7 @@ impl App {
         self.active_session = None;
         self.parent_session = None;
         self.tool_inspector_pane.emit(ToolInspectorPaneMsg::Clear);
-        transition_to_list(&mut self.pane_mode);
+        transition_to_list(&mut self.pane_mode, &mut self.pane_open);
         self.apply_pane_stack_switch();
     }
 
@@ -993,10 +993,12 @@ mod tests {
     }
 
     #[test]
-    fn transition_to_list_sets_filters_preserving_visibility() {
+    fn transition_to_list_sets_filters_and_reopens_pane() {
         let mut mode = UtilityPaneMode::ToolInspector;
-        transition_to_list(&mut mode);
+        let mut open = false;
+        transition_to_list(&mut mode, &mut open);
         assert_eq!(mode, UtilityPaneMode::Filters);
+        assert!(open);
     }
 
     #[test]

@@ -60,8 +60,9 @@ pub(super) fn transition_to_detail(pane_mode: &mut UtilityPaneMode, pane_open: &
     *pane_open = false;
 }
 
-pub(super) fn transition_to_list(pane_mode: &mut UtilityPaneMode) {
+pub(super) fn transition_to_list(pane_mode: &mut UtilityPaneMode, pane_open: &mut bool) {
     *pane_mode = UtilityPaneMode::Filters;
+    *pane_open = true;
 }
 
 pub(super) fn detail_pop_sync_decision(
