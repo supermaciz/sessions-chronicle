@@ -180,4 +180,8 @@ These options are not mutually exclusive. Some natural pairings:
 
 ## Decision
 
-*Pending user review.*
+Choose **A + D** as the long-term direction, starting with **A** only.
+
+- **Option A first**: lowest implementation cost, fits the existing filters pane, and solves the immediate need for project-based session filtering.
+- **Option D later**: complements filtering with a true project overview, without overloading the filter UI.
+- **Why this combination**: project filtering and project overview are distinct needs, so they should not be forced into a single UI pattern.
