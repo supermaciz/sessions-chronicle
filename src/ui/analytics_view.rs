@@ -11,6 +11,7 @@ use crate::ui::format::{
 };
 
 const TOKEN_SECTION_NO_DATA_COPY: &str = "Token data is not available for the indexed sessions";
+const TOKEN_ROW_MAX_WIDTH_CHARS: i32 = 46;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct TokenSectionState {
@@ -202,7 +203,7 @@ fn render_token_usage_rows(
             primary.set_halign(gtk::Align::End);
             primary.set_xalign(1.0);
             primary.set_ellipsize(gtk::pango::EllipsizeMode::End);
-            primary.set_max_width_chars(46);
+            primary.set_max_width_chars(TOKEN_ROW_MAX_WIDTH_CHARS);
             value_box.append(&primary);
 
             if let Some(secondary_text) = token_row_secondary_text(usage) {
@@ -211,7 +212,7 @@ fn render_token_usage_rows(
                 secondary.set_halign(gtk::Align::End);
                 secondary.set_xalign(1.0);
                 secondary.set_ellipsize(gtk::pango::EllipsizeMode::End);
-                secondary.set_max_width_chars(46);
+                secondary.set_max_width_chars(TOKEN_ROW_MAX_WIDTH_CHARS);
                 secondary.set_tooltip_text(Some(token_semantics_help_tooltip()));
                 value_box.append(&secondary);
             }
