@@ -569,15 +569,106 @@ mod tests {
     }
 
     #[test]
-    fn v5_to_v6_migration_adds_projects_and_project_id() {
+    fn v5_to_v6_migration_uses_authentic_fixture_and_is_idempotent() {
         let conn = Connection::open_in_memory().unwrap();
-        initialize_database(&conn).unwrap();
-        conn.execute_batch("PRAGMA user_version = 5").unwrap();
+
+        // Build an authentic v5 schema fixture.
+        conn.execute_batch(
+            "
+            CREATE TABLE sessions (
+                id TEXT PRIMARY KEY,
+                tool TEXT NOT NULL,
+                project_path TEXT,
+                start_time INTEGER NOT NULL,
+                message_count INTEGER NOT NULL,
+                file_path TEXT NOT NULL,
+                last_updated INTEGER NOT NULL,
+                first_prompt TEXT,
+                parent_session_id TEXT,
+                is_subagent INTEGER NOT NULL DEFAULT 0,
+                input_tokens INTEGER,
+                output_tokens INTEGER,
+                cache_read_tokens INTEGER,
+                cache_write_tokens INTEGER,
+                reasoning_tokens INTEGER
+            );
+            CREATE VIRTUAL TABLE messages USING fts5(
+                session_id UNINDEXED,
+                message_index UNINDEXED,
+                role UNINDEXED,
+                content,
+                timestamp UNINDEXED,
+                model UNINDEXED
+            );
+            CREATE TABLE transcript_items (
+                session_id TEXT NOT NULL,
+                item_index INTEGER NOT NULL,
+                kind TEXT NOT NULL,
+                message_index INTEGER,
+                tool_call_id TEXT,
+                subagent_id TEXT,
+                PRIMARY KEY (session_id, item_index)
+            );
+            CREATE TABLE tool_calls (
+                id TEXT NOT NULL,
+                session_id TEXT NOT NULL,
+                subagent_id TEXT,
+                tool_name TEXT NOT NULL,
+                status TEXT NOT NULL,
+                title TEXT,
+                summary TEXT,
+                input_json TEXT,
+                output_text TEXT,
+                error_text TEXT,
+                started_at INTEGER,
+                ended_at INTEGER,
+                duration_ms INTEGER,
+                parser_call_id TEXT,
+                PRIMARY KEY (session_id, id)
+            );
+            CREATE TABLE subagents (
+                id TEXT NOT NULL,
+                session_id TEXT NOT NULL,
+                title TEXT NOT NULL,
+                prompt TEXT,
+                result_summary TEXT,
+                child_session_id TEXT,
+                parser_ref TEXT,
+                PRIMARY KEY (session_id, id)
+            );
+            CREATE TABLE file_fingerprints (
+                file_path TEXT PRIMARY KEY,
+                mtime_ns INTEGER NOT NULL,
+                size INTEGER NOT NULL
+            );
+            PRAGMA user_version = 5;
+            ",
+        )
+        .unwrap();
+
         conn.execute(
             "INSERT INTO file_fingerprints (file_path, mtime_ns, size) VALUES ('x.jsonl', 1, 1)",
             [],
         )
         .unwrap();
+
+        let projects_exists_before: i64 = conn
+            .query_row(
+                "SELECT count(*) FROM sqlite_master WHERE type='table' AND name='projects'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(projects_exists_before, 0);
+
+        let project_id_columns_before: i64 = conn
+            .query_row(
+                "SELECT count(*) FROM pragma_table_info('sessions') WHERE name = 'project_id'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(project_id_columns_before, 0);
 
         initialize_database(&conn).unwrap();
 
@@ -604,10 +695,50 @@ mod tests {
         };
         assert!(sessions_columns.iter().any(|name| name == "project_id"));
 
+        let project_id_columns_after: i64 = conn
+            .query_row(
+                "SELECT count(*) FROM pragma_table_info('sessions') WHERE name = 'project_id'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(project_id_columns_after, 1);
+
         let fingerprint_count: i64 = conn
             .query_row("SELECT count(*) FROM file_fingerprints", [], |r| r.get(0))
             .unwrap();
         assert_eq!(fingerprint_count, 0);
+
+        // Re-running initialize_database should keep schema stable at v6.
+        initialize_database(&conn).unwrap();
+
+        let version_after_second_run: i64 = conn
+            .query_row("PRAGMA user_version", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(version_after_second_run, 6);
+
+        let projects_exists_after_second_run: i64 = conn
+            .query_row(
+                "SELECT count(*) FROM sqlite_master WHERE type='table' AND name='projects'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(projects_exists_after_second_run, 1);
+
+        let project_id_columns_after_second_run: i64 = conn
+            .query_row(
+                "SELECT count(*) FROM pragma_table_info('sessions') WHERE name = 'project_id'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(project_id_columns_after_second_run, 1);
+
+        let fingerprint_count_after_second_run: i64 = conn
+            .query_row("SELECT count(*) FROM file_fingerprints", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(fingerprint_count_after_second_run, 0);
     }
 
     #[test]
