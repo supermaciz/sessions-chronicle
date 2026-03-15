@@ -123,7 +123,10 @@ CREATE INDEX idx_sessions_project_id ON sessions(project_id);
 3. Create `idx_sessions_project_id`.
 4. Clear `file_fingerprints` to force full re-index (same pattern as v5).
 5. `PRAGMA user_version = 6`.
-6. Re-index sessions so `projects` and `sessions.project_id` are populated.
+
+Clearing `file_fingerprints` in step 4 causes the normal startup re-index to
+reprocess every session file, which populates `projects` and
+`sessions.project_id` automatically — no additional migration step is needed.
 
 ### Foreign Key Semantics
 
