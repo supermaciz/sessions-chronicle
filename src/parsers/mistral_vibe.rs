@@ -211,6 +211,7 @@ impl MistralVibeParser {
                 id: session_id.clone(),
                 tool: AiAssistant::MistralVibe,
                 project_path,
+                project_id: None,
                 start_time,
                 message_count: messages.len(),
                 file_path: session_dir.to_str().unwrap_or_default().to_string(),

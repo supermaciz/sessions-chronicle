@@ -86,6 +86,7 @@ fn session_from_row(row: &Row) -> rusqlite::Result<Session> {
         id: row.get("id")?,
         tool,
         project_path: row.get("project_path")?,
+        project_id: row.get("project_id").unwrap_or(None),
         start_time: Utc
             .timestamp_opt(start_time, 0)
             .single()
@@ -179,7 +180,7 @@ fn search_sessions_with_query(
     let (query_sql, tool_strings): (String, Vec<String>) = if tools.len() == AiAssistant::ALL.len()
     {
         (
-            "SELECT s.id, s.tool, s.project_path, s.start_time, s.message_count, s.file_path,
+            "SELECT s.id, s.tool, s.project_path, s.project_id, s.start_time, s.message_count, s.file_path,
                     s.last_updated, s.first_prompt, s.parent_session_id, s.is_subagent,
                     s.input_tokens, s.output_tokens, s.cache_read_tokens,
                     s.cache_write_tokens, s.reasoning_tokens,
@@ -197,7 +198,7 @@ fn search_sessions_with_query(
         let tool_strings: Vec<String> = tools.iter().map(|t| t.to_storage()).collect::<Vec<_>>();
         (
             format!(
-                "SELECT s.id, s.tool, s.project_path, s.start_time, s.message_count, s.file_path,
+                "SELECT s.id, s.tool, s.project_path, s.project_id, s.start_time, s.message_count, s.file_path,
                         s.last_updated, s.first_prompt, s.parent_session_id, s.is_subagent,
                         s.input_tokens, s.output_tokens, s.cache_read_tokens,
                         s.cache_write_tokens, s.reasoning_tokens,
@@ -250,7 +251,7 @@ pub fn load_sessions(db_path: &Path, tools: &[AiAssistant]) -> Result<Vec<Sessio
 
     let (query, tool_strings): (String, Vec<String>) = if tools.len() == AiAssistant::ALL.len() {
         (
-            "SELECT id, tool, project_path, start_time, message_count, file_path,
+            "SELECT id, tool, project_path, project_id, start_time, message_count, file_path,
                     last_updated, first_prompt, parent_session_id, is_subagent,
                     input_tokens, output_tokens, cache_read_tokens,
                     cache_write_tokens, reasoning_tokens
@@ -265,7 +266,7 @@ pub fn load_sessions(db_path: &Path, tools: &[AiAssistant]) -> Result<Vec<Sessio
         let tool_strings: Vec<String> = tools.iter().map(|t| t.to_storage()).collect::<Vec<_>>();
         (
             format!(
-                "SELECT id, tool, project_path, start_time, message_count, file_path,
+                "SELECT id, tool, project_path, project_id, start_time, message_count, file_path,
                         last_updated, first_prompt, parent_session_id, is_subagent,
                         input_tokens, output_tokens, cache_read_tokens,
                         cache_write_tokens, reasoning_tokens
@@ -302,7 +303,7 @@ pub fn load_session(db_path: &Path, session_id: &str) -> Result<Option<Session>>
     let db = open_connection(db_path)?;
 
     let mut stmt = db.prepare(
-        "SELECT id, tool, project_path, start_time, message_count, file_path,
+        "SELECT id, tool, project_path, project_id, start_time, message_count, file_path,
                 last_updated, first_prompt, parent_session_id, is_subagent,
                 input_tokens, output_tokens, cache_read_tokens,
                 cache_write_tokens, reasoning_tokens

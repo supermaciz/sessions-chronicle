@@ -456,17 +456,19 @@ impl SessionIndexer {
     ) -> Result<()> {
         let session = &parsed.session;
         let tx = self.db.transaction()?;
+        let resolved_project_id = Self::upsert_project_tx(&tx, session.project_path.as_deref())?;
 
         tx.execute(
             "INSERT OR REPLACE INTO sessions
-             (id, tool, project_path, start_time, message_count, file_path, last_updated,
+             (id, tool, project_path, project_id, start_time, message_count, file_path, last_updated,
               first_prompt, parent_session_id, is_subagent,
               input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, reasoning_tokens)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
             rusqlite::params![
                 &session.id,
                 session.tool.to_storage(),
                 &session.project_path,
+                resolved_project_id,
                 session.start_time.timestamp(),
                 session.message_count as i64,
                 file_path.to_str(),
@@ -531,6 +533,33 @@ impl SessionIndexer {
         tx.commit()?;
 
         Ok(())
+    }
+
+    fn upsert_project_tx(
+        tx: &rusqlite::Transaction<'_>,
+        raw_project_path: Option<&str>,
+    ) -> Result<Option<i64>> {
+        let Some(raw_project_path) = raw_project_path else {
+            return Ok(None);
+        };
+
+        let resolved_path = crate::project_resolver::resolve_project_path(raw_project_path);
+        let project_name = Path::new(&resolved_path)
+            .file_name()
+            .and_then(|name| name.to_str())
+            .filter(|name| !name.is_empty())
+            .unwrap_or(&resolved_path)
+            .to_string();
+
+        let id = tx.query_row(
+            "INSERT INTO projects (path, name) VALUES (?1, ?2)
+             ON CONFLICT(path) DO UPDATE SET name = excluded.name
+             RETURNING id",
+            rusqlite::params![&resolved_path, project_name],
+            |row| row.get(0),
+        )?;
+
+        Ok(Some(id))
     }
 
     fn get_fingerprint(&self, file_path: &Path) -> Result<Option<(i64, i64)>> {
@@ -858,6 +887,97 @@ mod tests {
             ],
         )
         .unwrap();
+    }
+
+    fn parsed_session(session_id: &str, project_path: Option<&str>) -> ParsedSession {
+        let now = chrono::Utc::now();
+
+        ParsedSession {
+            session: crate::models::Session {
+                id: session_id.to_string(),
+                tool: crate::models::AiAssistant::ClaudeCode,
+                project_path: project_path.map(str::to_string),
+                project_id: None,
+                start_time: now,
+                message_count: 1,
+                file_path: format!("/tmp/{}.jsonl", session_id),
+                last_updated: now,
+                first_prompt: Some("hello".to_string()),
+                parent_session_id: None,
+                is_subagent: false,
+                token_usage: None,
+            },
+            messages: vec![],
+            tool_calls: vec![],
+            subagents: vec![],
+            transcript_items: vec![],
+            token_usage: None,
+        }
+    }
+
+    #[test]
+    fn insert_parsed_session_leaves_project_id_null_when_project_path_is_missing() {
+        let temp_db = NamedTempFile::new().unwrap();
+        let mut indexer = SessionIndexer::new(temp_db.path()).unwrap();
+        let fingerprint = NamedTempFile::new().unwrap();
+        let parsed = parsed_session("no-project", None);
+
+        indexer
+            .insert_parsed_session_with_fingerprint(&parsed, fingerprint.path(), fingerprint.path())
+            .unwrap();
+
+        let project_id: Option<i64> = indexer
+            .db
+            .query_row(
+                "SELECT project_id FROM sessions WHERE id = 'no-project'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(project_id, None);
+    }
+
+    #[test]
+    fn insert_parsed_session_reuses_project_row_for_same_repo_root() {
+        let temp_db = NamedTempFile::new().unwrap();
+        let mut indexer = SessionIndexer::new(temp_db.path()).unwrap();
+        let temp = tempfile::tempdir().unwrap();
+        let repo = temp.path().join("repo");
+
+        std::fs::create_dir_all(repo.join("src")).unwrap();
+        std::fs::create_dir_all(repo.join("src/generated")).unwrap();
+        std::fs::create_dir(repo.join(".git")).unwrap();
+
+        let first_file = NamedTempFile::new().unwrap();
+        let second_file = NamedTempFile::new().unwrap();
+        let first = parsed_session("one", Some(repo.join("src").to_str().unwrap()));
+        let second = parsed_session("two", Some(repo.join("src/generated").to_str().unwrap()));
+
+        indexer
+            .insert_parsed_session_with_fingerprint(&first, first_file.path(), first_file.path())
+            .unwrap();
+        indexer
+            .insert_parsed_session_with_fingerprint(&second, second_file.path(), second_file.path())
+            .unwrap();
+
+        let project_count: i64 = indexer
+            .db
+            .query_row("SELECT COUNT(*) FROM projects", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(project_count, 1);
+
+        let project_ids: Vec<Option<i64>> = indexer
+            .db
+            .prepare("SELECT project_id FROM sessions WHERE id IN ('one', 'two') ORDER BY id")
+            .unwrap()
+            .query_map([], |row| row.get(0))
+            .unwrap()
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .unwrap();
+
+        assert_eq!(project_ids.len(), 2);
+        assert!(project_ids[0].is_some());
+        assert_eq!(project_ids[0], project_ids[1]);
     }
 
     #[test]

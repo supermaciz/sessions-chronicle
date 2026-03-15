@@ -516,6 +516,7 @@ impl CodexParser {
                 id: session_id,
                 tool: AiAssistant::Codex,
                 project_path,
+                project_id: None,
                 start_time,
                 message_count: messages.len(),
                 file_path: file_path.to_str().unwrap_or_default().to_string(),
