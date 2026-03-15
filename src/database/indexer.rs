@@ -462,7 +462,7 @@ impl SessionIndexer {
             "INSERT OR REPLACE INTO sessions
              (id, tool, project_path, project_id, start_time, message_count, file_path, last_updated,
               first_prompt, parent_session_id, is_subagent,
-               input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, reasoning_tokens)
+              input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, reasoning_tokens)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
             rusqlite::params![
                 &session.id,
@@ -551,15 +551,11 @@ impl SessionIndexer {
             .unwrap_or(&resolved_path)
             .to_string();
 
-        tx.execute(
-            "INSERT INTO projects (path, name) VALUES (?1, ?2)
-             ON CONFLICT(path) DO UPDATE SET name = excluded.name",
-            rusqlite::params![&resolved_path, project_name],
-        )?;
-
         let id = tx.query_row(
-            "SELECT id FROM projects WHERE path = ?1",
-            [&resolved_path],
+            "INSERT INTO projects (path, name) VALUES (?1, ?2)
+             ON CONFLICT(path) DO UPDATE SET name = excluded.name
+             RETURNING id",
+            rusqlite::params![&resolved_path, project_name],
             |row| row.get(0),
         )?;
 
