@@ -2,6 +2,7 @@ pub mod config;
 pub mod database;
 pub mod models;
 pub mod parsers;
+pub mod project_resolver;
 pub mod session_sources;
 pub mod utils;
 

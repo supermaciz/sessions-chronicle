@@ -10,6 +10,7 @@ mod icon_names {
 mod indexing_worker;
 mod models;
 mod parsers;
+mod project_resolver;
 mod session_sources;
 mod ui;
 mod utils;
