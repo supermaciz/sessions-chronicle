@@ -2,8 +2,6 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 pub fn resolve_project_path(cwd: &str) -> String {
-    let raw_path = Path::new(cwd);
-
     let Some(existing) = nearest_existing_ancestor(Path::new(cwd)) else {
         return cwd.to_string();
     };
@@ -14,10 +12,6 @@ pub fn resolve_project_path(cwd: &str) -> String {
 
     if let Some(repo_root) = find_git_directory_root(&canonical_existing) {
         return repo_root.to_string_lossy().into_owned();
-    }
-
-    if !raw_path.exists() && is_root_child(&canonical_existing) {
-        return cwd.to_string();
     }
 
     canonical_existing.to_string_lossy().into_owned()
@@ -31,10 +25,6 @@ fn nearest_existing_ancestor(path: &Path) -> Option<PathBuf> {
 
 fn is_filesystem_root(path: &Path) -> bool {
     path.parent().is_none()
-}
-
-fn is_root_child(path: &Path) -> bool {
-    path.parent().is_some_and(is_filesystem_root)
 }
 
 fn find_git_directory_root(path: &Path) -> Option<PathBuf> {
