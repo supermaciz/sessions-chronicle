@@ -35,7 +35,7 @@ fn find_git_directory_root(path: &Path) -> Option<PathBuf> {
         }
 
         if dot_git.is_file() {
-            return resolve_gitfile_root(&dot_git);
+            return resolve_gitfile_root(&dot_git).or_else(|| Some(ancestor.to_path_buf()));
         }
     }
 
@@ -163,6 +163,21 @@ mod tests {
 
         assert_eq!(
             resolve_project_path(worktree.join("src").to_str().unwrap()),
+            path_string(&repo.canonicalize().unwrap())
+        );
+    }
+
+    #[test]
+    fn falls_back_to_gitfile_ancestor_when_mapping_is_unrecognized() {
+        let temp = tempdir().unwrap();
+        let repo = temp.path().join("repo");
+        let nested = repo.join("src/lib");
+
+        fs::create_dir_all(&nested).unwrap();
+        fs::write(repo.join(".git"), "gitdir: not-a-recognized-layout\n").unwrap();
+
+        assert_eq!(
+            resolve_project_path(nested.to_str().unwrap()),
             path_string(&repo.canonicalize().unwrap())
         );
     }
