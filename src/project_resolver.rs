@@ -24,7 +24,8 @@ fn nearest_existing_ancestor(path: &Path) -> Option<PathBuf> {
 
 fn find_git_directory_root(path: &Path) -> Option<PathBuf> {
     for ancestor in path.ancestors() {
-        if ancestor.join(".git").is_dir() {
+        let git_marker = ancestor.join(".git");
+        if git_marker.is_dir() || git_marker.is_file() {
             return Some(ancestor.to_path_buf());
         }
     }
@@ -49,6 +50,20 @@ mod tests {
         let nested = repo.join("src/lib");
         fs::create_dir_all(&nested).unwrap();
         fs::create_dir(repo.join(".git")).unwrap();
+
+        assert_eq!(
+            resolve_project_path(nested.to_str().unwrap()),
+            path_string(&repo.canonicalize().unwrap())
+        );
+    }
+
+    #[test]
+    fn resolves_repo_root_when_git_file_marker_exists() {
+        let temp = tempdir().unwrap();
+        let repo = temp.path().join("repo");
+        let nested = repo.join("src/lib");
+        fs::create_dir_all(&nested).unwrap();
+        fs::write(repo.join(".git"), "gitdir: /tmp/worktrees/repo").unwrap();
 
         assert_eq!(
             resolve_project_path(nested.to_str().unwrap()),
