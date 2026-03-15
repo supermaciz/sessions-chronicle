@@ -483,6 +483,7 @@ impl ClaudeCodeParser {
             id: final_session_id,
             tool: AiAssistant::ClaudeCode,
             project_path,
+            project_id: None,
             start_time,
             message_count: messages.len(),
             file_path: file_path.to_str().unwrap().to_string(),

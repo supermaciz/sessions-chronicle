@@ -204,6 +204,7 @@ mod tests {
             id: "session-id".to_string(),
             tool: AiAssistant::ClaudeCode,
             project_path: project_path.map(str::to_string),
+            project_id: None,
             start_time: now,
             message_count: 7,
             file_path: "/tmp/session.jsonl".to_string(),

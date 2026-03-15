@@ -8,6 +8,8 @@ pub struct Session {
     pub id: String,
     pub tool: AiAssistant,
     pub project_path: Option<String>,
+    #[serde(default)]
+    pub project_id: Option<i64>,
     pub start_time: DateTime<Utc>,
     pub message_count: usize,
     pub file_path: String,

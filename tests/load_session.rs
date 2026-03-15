@@ -30,15 +30,23 @@ impl TempDatabase {
     }
 
     fn seed_with_messages(&self) {
+        self.connection
+            .execute(
+                "INSERT INTO projects (id, path, name) VALUES (?1, ?2, ?3)",
+                rusqlite::params![42_i64, "/projects/test", "test"],
+            )
+            .expect("Failed to insert project");
+
         // Insert a session
         self.connection
             .execute(
-                "INSERT INTO sessions (id, tool, project_path, start_time, message_count, file_path, last_updated, first_prompt)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                "INSERT INTO sessions (id, tool, project_path, project_id, start_time, message_count, file_path, last_updated, first_prompt)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
                 rusqlite::params![
                     "test-session",
                     "claude_code",
                     Some("/projects/test"),
+                    Some(42_i64),
                     1000_i64,
                     4_i64,
                     "/tmp/test-session.jsonl",
@@ -128,6 +136,7 @@ fn load_session_returns_existing_session() {
 
     assert_eq!(session.id, "test-session");
     assert_eq!(session.project_path, Some("/projects/test".to_string()));
+    assert_eq!(session.project_id, Some(42));
     assert_eq!(session.message_count, 4);
     assert_eq!(
         session.first_prompt.as_deref(),

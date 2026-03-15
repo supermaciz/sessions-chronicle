@@ -332,6 +332,7 @@ impl OpenCodeParser {
             id: metadata.id.clone(),
             tool: AiAssistant::OpenCode,
             project_path: metadata.directory.clone(),
+            project_id: None,
             start_time: metadata.time_created,
             message_count: flattened.len(),
             file_path,
