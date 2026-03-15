@@ -13,6 +13,8 @@ use rusqlite::Connection;
 ///   4 – file_fingerprints table for incremental indexing
 ///   5 – clear file_fingerprints to force re-index after parser changes
 ///       (strip_command_tags in normalize_prompt)
+///   6 – add projects table + sessions.project_id and clear file_fingerprints
+///       to backfill canonical project IDs during re-index
 pub fn initialize_database(conn: &Connection) -> Result<()> {
     let version: i64 = conn.query_row("PRAGMA user_version", [], |row| row.get(0))?;
 
@@ -30,6 +32,9 @@ pub fn initialize_database(conn: &Connection) -> Result<()> {
     }
     if version < 5 {
         apply_v5_migration(conn)?;
+    }
+    if version < 6 {
+        apply_v6_migration(conn)?;
     }
 
     Ok(())
@@ -258,19 +263,58 @@ fn apply_v5_migration(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
+/// Migrate from v5 to v6.
+///
+/// Adds canonical project storage and links sessions to projects via
+/// `sessions.project_id`. Clears `file_fingerprints` to force re-index so
+/// existing sessions can be backfilled with canonical project IDs.
+fn apply_v6_migration(conn: &Connection) -> Result<()> {
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS projects (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            path TEXT NOT NULL UNIQUE,
+            name TEXT NOT NULL
+        )",
+        [],
+    )?;
+
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_projects_name ON projects(name)",
+        [],
+    )?;
+
+    match conn.execute(
+        "ALTER TABLE sessions ADD COLUMN project_id INTEGER REFERENCES projects(id)",
+        [],
+    ) {
+        Ok(_) => {}
+        Err(err) if err.to_string().contains("duplicate column name") => {}
+        Err(err) => return Err(err.into()),
+    }
+
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_sessions_project_id ON sessions(project_id)",
+        [],
+    )?;
+
+    conn.execute("DELETE FROM file_fingerprints", [])?;
+    conn.execute_batch("PRAGMA user_version = 6")?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use rusqlite::Connection;
 
     #[test]
-    fn fresh_db_initializes_to_v4() {
+    fn fresh_db_initializes_to_v6() {
         let conn = Connection::open_in_memory().unwrap();
         initialize_database(&conn).unwrap();
         let version: i64 = conn
             .query_row("PRAGMA user_version", [], |r| r.get(0))
             .unwrap();
-        assert_eq!(version, 5);
+        assert_eq!(version, 6);
 
         let table_exists: i64 = conn
             .query_row(
@@ -362,7 +406,7 @@ mod tests {
         let version: i64 = conn
             .query_row("PRAGMA user_version", [], |r| r.get(0))
             .unwrap();
-        assert_eq!(version, 5);
+        assert_eq!(version, 6);
 
         // Old messages are gone (by design — will be re-indexed)
         let count: i64 = conn
@@ -421,7 +465,7 @@ mod tests {
         let version: i64 = conn
             .query_row("PRAGMA user_version", [], |r| r.get(0))
             .unwrap();
-        assert_eq!(version, 5);
+        assert_eq!(version, 6);
 
         conn.execute(
             "UPDATE sessions SET input_tokens = 1000, output_tokens = 500 WHERE id = 's1'",
@@ -447,7 +491,7 @@ mod tests {
         let version: i64 = conn
             .query_row("PRAGMA user_version", [], |r| r.get(0))
             .unwrap();
-        assert_eq!(version, 5);
+        assert_eq!(version, 6);
     }
 
     #[test]
@@ -483,7 +527,7 @@ mod tests {
         let version: i64 = conn
             .query_row("PRAGMA user_version", [], |r| r.get(0))
             .unwrap();
-        assert_eq!(version, 5);
+        assert_eq!(version, 6);
 
         let table_exists: i64 = conn
             .query_row(
@@ -517,11 +561,53 @@ mod tests {
         let version: i64 = conn
             .query_row("PRAGMA user_version", [], |r| r.get(0))
             .unwrap();
-        assert_eq!(version, 5);
+        assert_eq!(version, 6);
         let count: i64 = conn
             .query_row("SELECT count(*) FROM file_fingerprints", [], |r| r.get(0))
             .unwrap();
         assert_eq!(count, 0);
+    }
+
+    #[test]
+    fn v5_to_v6_migration_adds_projects_and_project_id() {
+        let conn = Connection::open_in_memory().unwrap();
+        initialize_database(&conn).unwrap();
+        conn.execute_batch("PRAGMA user_version = 5").unwrap();
+        conn.execute(
+            "INSERT INTO file_fingerprints (file_path, mtime_ns, size) VALUES ('x.jsonl', 1, 1)",
+            [],
+        )
+        .unwrap();
+
+        initialize_database(&conn).unwrap();
+
+        let version: i64 = conn
+            .query_row("PRAGMA user_version", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(version, 6);
+
+        let projects_exists: i64 = conn
+            .query_row(
+                "SELECT count(*) FROM sqlite_master WHERE type='table' AND name='projects'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(projects_exists, 1);
+
+        let sessions_columns: Vec<String> = {
+            let mut stmt = conn.prepare("PRAGMA table_info(sessions)").unwrap();
+            stmt.query_map([], |row| row.get(1))
+                .unwrap()
+                .collect::<Result<Vec<_>, _>>()
+                .unwrap()
+        };
+        assert!(sessions_columns.iter().any(|name| name == "project_id"));
+
+        let fingerprint_count: i64 = conn
+            .query_row("SELECT count(*) FROM file_fingerprints", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(fingerprint_count, 0);
     }
 
     #[test]
