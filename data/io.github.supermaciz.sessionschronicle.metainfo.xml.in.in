@@ -49,6 +49,14 @@
   </categories>
   <content_rating type="oars-1.1" />
   <releases>
+    <release version="0.3.5" date="2026-03-15">
+      <description>
+        <p>Fixes Codex session resumption.</p>
+        <ul>
+          <li>Fix resuming Codex sessions from the session detail view</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.3.4" date="2026-03-14">
       <description>
         <p>Adds token cache analytics and cleans up session titles.</p>

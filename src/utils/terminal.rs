@@ -163,7 +163,7 @@ pub fn build_resume_command(
     let tool_cmd = match tool {
         AiAssistant::ClaudeCode => "claude -r \"$2\"".to_string(),
         AiAssistant::OpenCode => "opencode --session \"$2\"".to_string(),
-        AiAssistant::Codex => "codex \"$2\"".to_string(),
+        AiAssistant::Codex => "codex resume \"$2\"".to_string(),
         AiAssistant::MistralVibe => "vibe --resume \"$2\"".to_string(),
     };
 
@@ -311,7 +311,7 @@ mod tests {
         assert_eq!(cmd.len(), 6);
         assert_eq!(cmd[0], "bash");
         assert_eq!(cmd[1], "-lc");
-        assert!(cmd[2].contains("codex \"$2\""));
+        assert!(cmd[2].contains("codex resume \"$2\""));
         assert_eq!(cmd[3], "--");
         assert!(cmd[4].ends_with("test-project"));
         assert_eq!(cmd[5], "test-session-id");
