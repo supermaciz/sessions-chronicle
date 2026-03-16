@@ -227,4 +227,4 @@ Projects and tools are both rendered as toggle-able pill tags in a `gtk::FlowBox
 
 ## Decision
 
-*Pending.*
+A, maybe C later.
