@@ -35,10 +35,13 @@ Sidebar
           │
           │ SidebarOutput::FiltersChanged { tools, project_filter }
           ▼
-App (router) ──► SessionListMsg::SetFilters { tools, project_filter }
+ App (owner of FilterState)
+  ├ update filter state
+  ├ refresh sidebar project counts
+  └ SessionListMsg::SetFilters { tools, project_filter }
           │
           ▼
-SessionList
+ SessionList
   ├ fetch_sessions(db, tools, project_filter)
   └ Session rows
 ```
@@ -49,14 +52,24 @@ SessionList
 - `Project(i64)` -- filter on a specific project_id
 - `Unassigned` -- filter on `project_id IS NULL`
 
+**Ownership:**
+
+- `App` owns the canonical `FilterState { tools, project_filter }`
+- `Sidebar` is a UI component only: it renders rows and emits user interactions
+- Database queries for project counts stay in the app/database layer, not in the sidebar
+
 **Flow:**
 
 1. User clicks a project row in the ListBox
 2. Sidebar emits `FiltersChanged` with active tools AND project filter
-3. App routes to SessionList
-4. SessionList executes the SQL query with both filters
+3. App updates its canonical filter state
+4. App refreshes sidebar project counts from the DB using the active AI assistant filters
+5. App routes the full filter state to SessionList
+6. SessionList executes the SQL query with both filters
 
 Each change (AI assistant toggle OR project selection) emits a complete `FiltersChanged` with both filter axes. No separate messages -- avoids inconsistent intermediate states.
+
+The important constraint is that one user action produces one coordinated app-level refresh: App recalculates sidebar data and session-list data from the same filter state, instead of letting the sidebar query the DB independently.
 
 ---
 
@@ -78,8 +91,14 @@ pub enum ProjectFilter {
 ```rust
 pub enum SidebarMsg {
     AiAssistantToggled(AiAssistant, bool),
-    ProjectSelected(ProjectFilter),           // NEW
-    ProjectsLoaded(Vec<ProjectInfo>),         // NEW -- loaded from DB
+    ProjectSelected(ProjectFilter),
+    ProjectsLoaded {
+        projects: Vec<ProjectInfo>,
+        all_sessions_count: usize,
+        unassigned_count: usize,
+        show_unassigned: bool,
+        selected_filter: ProjectFilter,
+    },
 }
 
 pub enum SidebarOutput {
@@ -104,6 +123,11 @@ pub struct ProjectInfo {
 ### App modifications
 
 ```rust
+pub struct FilterState {
+    pub tools: Vec<AiAssistant>,
+    pub project_filter: ProjectFilter,
+}
+
 pub enum AppMsg {
     FiltersChanged {
         tools: Vec<AiAssistant>,
@@ -132,18 +156,18 @@ pub enum SessionListMsg {
 
 ### Load projects with dynamic counts
 
-Badge counts reflect the active AI assistant filters. The sidebar calls this query on every AI filter change.
+Badge counts reflect the active AI assistant filters. App runs the query and sends the resulting rows to the sidebar. Project rows remain visible even when their current count is `0`.
 
 ```sql
 -- Projects with session count filtered by AI assistants
 SELECT p.id, p.name, p.path, COUNT(s.id) AS session_count
 FROM projects p
-INNER JOIN sessions s ON s.project_id = p.id
-WHERE s.tool IN (?, ?, ...)          -- active AI filters
-  AND s.is_subagent = 0
+LEFT JOIN sessions s
+  ON s.project_id = p.id
+ AND s.tool IN (?, ?, ...)           -- active AI filters
+ AND s.is_subagent = 0
 GROUP BY p.id
-HAVING session_count > 0             -- hide projects with no visible sessions
-ORDER BY MAX(s.last_updated) DESC    -- most recently active project first
+ORDER BY MAX(s.last_updated) DESC, p.name COLLATE NOCASE ASC
 
 -- Count for "Unassigned"
 SELECT COUNT(*) FROM sessions
@@ -187,6 +211,8 @@ Same logic -- add `project_id = ?` or `project_id IS NULL` clauses to the existi
 When all AI assistants are checked, omit the `tool IN (...)` clause (as today).
 When `AllSessions`, omit the `project_id` clause.
 
+The project query still uses a `LEFT JOIN` in the all-tools case so projects with zero visible sessions remain in the list.
+
 ---
 
 ## 4. Sidebar UI -- ListBox & Rows
@@ -208,7 +234,7 @@ When `AllSessions`, omit the `project_id` clause.
 │ │ All Sessions  [42] │ │  ← gtk::ListBoxRow, bold, selected by default
 │ │▌sessions-chr… [15] │ │  ← adw::ActionRow, accent when selected
 │ │ my-api         [8] │ │  ← adw::ActionRow
-│ │ Unassigned     [3] │ │  ← gtk::ListBoxRow, italic, only if count > 0
+│ │ Unassigned     [3] │ │  ← gtk::ListBoxRow, italic, shown if unassigned exists in DB
 │ └────────────────────┘ │
 └────────────────────────┘
 ```
@@ -221,7 +247,7 @@ When `AllSessions`, omit the `project_id` clause.
   - Title: `project.name`
   - Subtitle: `project.path` (truncated with ellipsis natively by GTK)
   - Suffix: badge count in a `gtk::Label` with CSS class `project-badge`
-- **"Unassigned":** `gtk::ListBoxRow` with italic label + badge count. Shown only when count > 0.
+- **"Unassigned":** `gtk::ListBoxRow` with italic label + badge count. Shown when at least one unassigned session exists in the database, even if the current AI assistant filter makes its visible count `0`.
 - **ScrolledWindow:** The ListBox sits in a `gtk::ScrolledWindow` with `vexpand: true` to fill remaining space.
 
 ### Selection behavior
@@ -253,9 +279,10 @@ When `AllSessions`, omit the `project_id` clause.
 
 ### When to load the project list
 
-1. **At startup** -- after initial indexing, the App sends `SidebarMsg::ProjectsLoaded(projects)` with project list and counts.
+1. **At startup** -- after initial indexing, App sends `SidebarMsg::ProjectsLoaded { ... }` with project rows, counts, and the selected filter.
 2. **After each indexation** -- when the indexer finishes (new sessions detected), the App reloads projects and resends `ProjectsLoaded`. This updates counts and surfaces new projects.
-3. **On each AI assistant toggle** -- the sidebar recalculates dynamic counts internally (lightweight DB query) before emitting `FiltersChanged`.
+3. **On each AI assistant toggle** -- App recalculates dynamic counts and resends `ProjectsLoaded`.
+4. **On each project selection** -- no sidebar DB work; App only updates the selected row mirror if needed.
 
 ### Refresh flow
 
@@ -263,26 +290,37 @@ When `AllSessions`, omit the `project_id` clause.
 App::init()
   -> Indexer finished
   -> App loads projects from DB (with counts filtered by active tools)
-  -> SidebarMsg::ProjectsLoaded(Vec<ProjectInfo>)
+  -> SidebarMsg::ProjectsLoaded { ... }
   -> Sidebar rebuilds the ListBox
+```
+
+For an AI assistant toggle, App follows the same pattern from a single canonical filter state:
+
+```
+SidebarOutput::FiltersChanged { tools, project_filter }
+  -> App updates FilterState
+  -> App loads project counts for tools
+  -> App emits SidebarMsg::ProjectsLoaded { ... selected_filter: project_filter }
+  -> App emits SessionListMsg::SetFilters { tools, project_filter }
 ```
 
 ### Handling selected project after refresh
 
 - If the selected project still exists -> keep the selection
-- If the selected project disappeared (count dropped to 0 after AI toggle) -> revert to "All Sessions" and emit `FiltersChanged`
-- "Unassigned" disappears if its count drops to 0
+- If the selected project count drops to `0` after an AI toggle -> keep the selection; the session list becomes empty until the user changes filters
+- Project rows do not disappear just because their current visible count is `0`
+- `Unassigned` remains visible as long as unassigned sessions exist in the database
 
 ### Init change
 
-The sidebar needs `db_path` to execute count queries. Its init changes from `()` to `PathBuf`.
+The sidebar does not need `db_path`. Its init remains lightweight, and App remains responsible for DB-backed refreshes.
 
 ---
 
 ## 6. Edge Cases & Error Handling
 
 **No projects in database:**
-The Projects section shows only "All Sessions" with the total count. No "Unassigned" row (pointless if everything is unassigned). UX is identical to today.
+The Projects section shows "All Sessions" with the total count. If unassigned sessions exist, show `Unassigned` too; otherwise there are no project-specific rows.
 
 **All AI assistants unchecked:**
 Existing behavior unchanged: session list is empty. All project badges show 0. No project selection change.
@@ -296,6 +334,9 @@ The subtitle (path) disambiguates them. Example: two "api" projects with paths `
 **DB error loading projects:**
 Log the error, keep the previous list. No crash, no popup.
 
+**Selected project with 0 visible sessions:**
+Keep the row selected and show an empty session list state. Do not auto-reset to `All Sessions`; the empty result accurately reflects the active filter combination.
+
 **Indexing in progress:**
 The project list may be incomplete. The post-indexation refresh corrects this. No special handling needed.
 
@@ -307,15 +348,16 @@ The project list may be incomplete. The post-indexation refresh corrects this. N
 
 - **DB project queries** -- `load_projects(db_path, &tools)` returns projects sorted by `last_updated DESC` with correct counts. Test with existing fixtures.
 - **Dynamic counts** -- verify count changes when filtering by AI assistant. Example: a project with 3 Claude sessions + 2 OpenCode sessions -> count = 3 when only Claude is checked.
+- **Zero-count visibility** -- verify a project remains in the sidebar with badge `0` when filtered out by the active AI assistant filter.
 - **Unassigned filter** -- `load_sessions(db, tools, Unassigned)` returns only sessions with `project_id IS NULL`.
 - **Project filter** -- `load_sessions(db, tools, Project(id))` returns only sessions from that project.
 - **Cross-filter** -- `Project(id)` + single AI assistant -> correct intersection.
-- **Disappeared project** -- a project with 0 sessions after AI filter does not appear in the list.
+- **Selection preservation** -- verify the selected project stays selected when its count drops to `0` after an AI assistant toggle.
 
 ### Manual verification (flatpak with fixtures)
 
 - `flatpak-builder --run ... sessions-chronicle --sessions-dir tests/fixtures`
-- Verify: project selection filters sessions, dynamic badges, "Unassigned" appears/disappears, scroll works with multiple projects, keyboard navigation (Up/Down), re-selecting "All Sessions" resets the filter.
+- Verify: project selection filters sessions, dynamic badges update, zero-count project rows remain visible, `Unassigned` appears when present in DB, scroll works with multiple projects, keyboard navigation (Up/Down), re-selecting `All Sessions` resets the filter.
 
 ### CI (unchanged)
 
