@@ -1,0 +1,145 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 720" style="font-family: Cantarell, -apple-system, sans-serif;">
+  <!-- Window frame -->
+  <rect width="1000" height="720" fill="#f6f5f4" rx="12"/>
+
+  <!-- Header Bar -->
+  <rect width="1000" height="46" fill="#ffffff" rx="12"/>
+  <rect y="12" width="1000" height="34" fill="#ffffff"/>
+
+  <!-- View switcher -->
+  <rect x="370" y="8" width="90" height="30" fill="#3584e4" rx="6"/>
+  <text x="390" y="28" font-size="12" font-weight="600" fill="#ffffff">Sessions</text>
+  <rect x="465" y="8" width="80" height="30" fill="#e8e6e3" rx="6"/>
+  <text x="478" y="28" font-size="12" fill="#636260">Analytics</text>
+
+  <!-- Search button -->
+  <circle cx="960" cy="23" r="14" fill="#e8e6e3"/>
+  <text x="953" y="28" font-size="14" fill="#636260">&#x1F50D;</text>
+
+  <!-- === SIDEBAR (wider: 280px) === -->
+  <rect x="0" y="46" width="280" height="674" fill="#fafafa"/>
+  <line x1="280" y1="46" x2="280" y2="720" stroke="#d5d3d0" stroke-width="1"/>
+
+  <!-- Projects heading -->
+  <text x="16" y="74" font-size="11" font-weight="700" fill="#77767b" letter-spacing="1">PROJECTS</text>
+
+  <!-- All Sessions mini-row -->
+  <rect x="8" y="84" width="264" height="30" fill="transparent" rx="6"/>
+  <text x="20" y="103" font-size="12" fill="#77767b">All Sessions (42)</text>
+
+  <!-- Project card: sessions-chronicle (SELECTED) -->
+  <rect x="8" y="120" width="264" height="80" fill="#3584e4" rx="10"/>
+  <!-- Card content -->
+  <text x="18" y="142" font-size="14" font-weight="600" fill="#ffffff">sessions-chronicle</text>
+  <text x="18" y="158" font-size="10" fill="rgba(255,255,255,0.7)">~/Projets/sessions-chronicle</text>
+  <!-- Stats row -->
+  <text x="18" y="188" font-size="10" fill="rgba(255,255,255,0.8)">18 sessions</text>
+  <text x="90" y="188" font-size="10" fill="rgba(255,255,255,0.8)">342 msgs</text>
+  <text x="155" y="188" font-size="10" fill="rgba(255,255,255,0.8)">12 days</text>
+  <!-- Tool dots -->
+  <rect x="228" y="176" width="8" height="8" fill="rgba(255,255,255,0.9)" rx="4"/>
+  <rect x="240" y="176" width="8" height="8" fill="rgba(255,255,255,0.5)" rx="4"/>
+  <rect x="252" y="176" width="8" height="8" fill="rgba(255,255,255,0.3)" rx="4"/>
+  <!-- Activity sparkline (mini bar chart) -->
+  <rect x="228" y="140" width="3" height="10" fill="rgba(255,255,255,0.4)" rx="1"/>
+  <rect x="233" y="136" width="3" height="14" fill="rgba(255,255,255,0.5)" rx="1"/>
+  <rect x="238" y="142" width="3" height="8" fill="rgba(255,255,255,0.4)" rx="1"/>
+  <rect x="243" y="130" width="3" height="20" fill="rgba(255,255,255,0.6)" rx="1"/>
+  <rect x="248" y="134" width="3" height="16" fill="rgba(255,255,255,0.5)" rx="1"/>
+  <rect x="253" y="138" width="3" height="12" fill="rgba(255,255,255,0.7)" rx="1"/>
+  <rect x="258" y="128" width="3" height="22" fill="rgba(255,255,255,0.9)" rx="1"/>
+
+  <!-- Project card: my-web-app -->
+  <rect x="8" y="208" width="264" height="80" fill="#ffffff" rx="10" stroke="#e8e6e3" stroke-width="1"/>
+  <text x="18" y="230" font-size="14" font-weight="600" fill="#1c1c1c">my-web-app</text>
+  <text x="18" y="246" font-size="10" fill="#77767b">~/Projets/my-web-app</text>
+  <text x="18" y="276" font-size="10" fill="#9a9996">12 sessions</text>
+  <text x="90" y="276" font-size="10" fill="#9a9996">180 msgs</text>
+  <text x="155" y="276" font-size="10" fill="#9a9996">8 days</text>
+  <!-- Tool dots -->
+  <rect x="228" y="264" width="8" height="8" fill="#26a269" rx="4"/>
+  <rect x="240" y="264" width="8" height="8" fill="#3584e4" rx="4"/>
+  <!-- Sparkline -->
+  <rect x="228" y="232" width="3" height="6" fill="#d5d3d0" rx="1"/>
+  <rect x="233" y="228" width="3" height="10" fill="#d5d3d0" rx="1"/>
+  <rect x="238" y="226" width="3" height="12" fill="#d5d3d0" rx="1"/>
+  <rect x="243" y="230" width="3" height="8" fill="#d5d3d0" rx="1"/>
+  <rect x="248" y="224" width="3" height="14" fill="#d5d3d0" rx="1"/>
+  <rect x="253" y="228" width="3" height="10" fill="#d5d3d0" rx="1"/>
+  <rect x="258" y="232" width="3" height="6" fill="#d5d3d0" rx="1"/>
+
+  <!-- Project card: dotfiles -->
+  <rect x="8" y="296" width="264" height="80" fill="#ffffff" rx="10" stroke="#e8e6e3" stroke-width="1"/>
+  <text x="18" y="318" font-size="14" font-weight="600" fill="#1c1c1c">dotfiles</text>
+  <text x="18" y="334" font-size="10" fill="#77767b">~/dotfiles</text>
+  <text x="18" y="364" font-size="10" fill="#9a9996">7 sessions</text>
+  <text x="90" y="364" font-size="10" fill="#9a9996">45 msgs</text>
+  <text x="155" y="364" font-size="10" fill="#9a9996">3 days</text>
+  <rect x="228" y="352" width="8" height="8" fill="#e66100" rx="4"/>
+
+  <!-- Project card: api-gateway -->
+  <rect x="8" y="384" width="264" height="80" fill="#ffffff" rx="10" stroke="#e8e6e3" stroke-width="1"/>
+  <text x="18" y="406" font-size="14" font-weight="600" fill="#1c1c1c">api-gateway</text>
+  <text x="18" y="422" font-size="10" fill="#77767b">~/work/api-gateway</text>
+  <text x="18" y="452" font-size="10" fill="#9a9996">5 sessions</text>
+  <text x="90" y="452" font-size="10" fill="#9a9996">28 msgs</text>
+  <text x="155" y="452" font-size="10" fill="#9a9996">2 days</text>
+  <rect x="228" y="440" width="8" height="8" fill="#9141ac" rx="4"/>
+
+  <!-- Separator -->
+  <line x1="16" y1="480" x2="264" y2="480" stroke="#d5d3d0" stroke-width="1"/>
+
+  <!-- Tools heading -->
+  <text x="16" y="504" font-size="11" font-weight="700" fill="#77767b" letter-spacing="1">TOOLS</text>
+
+  <rect x="20" y="516" width="12" height="12" fill="#3584e4" rx="2"/>
+  <text x="19" y="527" font-size="11" fill="#ffffff" font-weight="700">&#x2713;</text>
+  <text x="38" y="527" font-size="12" fill="#1c1c1c">Claude Code</text>
+
+  <rect x="20" y="538" width="12" height="12" fill="#26a269" rx="2"/>
+  <text x="19" y="549" font-size="11" fill="#ffffff" font-weight="700">&#x2713;</text>
+  <text x="38" y="549" font-size="12" fill="#1c1c1c">OpenCode</text>
+
+  <rect x="20" y="560" width="12" height="12" fill="#e66100" rx="2"/>
+  <text x="19" y="571" font-size="11" fill="#ffffff" font-weight="700">&#x2713;</text>
+  <text x="38" y="571" font-size="12" fill="#1c1c1c">Codex</text>
+
+  <rect x="20" y="582" width="12" height="12" fill="#1c71d8" rx="2"/>
+  <text x="19" y="593" font-size="11" fill="#ffffff" font-weight="700">&#x2713;</text>
+  <text x="38" y="593" font-size="12" fill="#1c1c1c">Mistral Vibe</text>
+
+  <!-- === MAIN SESSION LIST === -->
+  <rect x="292" y="54" width="696" height="658" fill="#ffffff" rx="8"/>
+
+  <!-- Filter info bar -->
+  <rect x="304" y="62" width="672" height="28" fill="#edf5fd" rx="6"/>
+  <text x="316" y="81" font-size="11" fill="#3584e4">Showing 18 sessions in sessions-chronicle</text>
+
+  <!-- Session rows -->
+  <rect x="304" y="98" width="672" height="72" fill="#ffffff" rx="6"/>
+  <rect x="308" y="104" width="3" height="60" fill="#3584e4" rx="1.5"/>
+  <text x="322" y="122" font-size="14" font-weight="600" fill="#1c1c1c">Add project detection to parsers</text>
+  <text x="322" y="140" font-size="12" fill="#77767b">sessions-chronicle &#183; 34 messages</text>
+  <text x="322" y="156" font-size="11" fill="#9a9996">2h ago &#183; Claude Code</text>
+  <text x="946" y="128" font-size="14" fill="#d5d3d0">&#x203A;</text>
+  <line x1="308" y1="170" x2="964" y2="170" stroke="#f0eeec" stroke-width="1"/>
+
+  <rect x="304" y="174" width="672" height="72" fill="#ffffff" rx="6"/>
+  <rect x="308" y="180" width="3" height="60" fill="#3584e4" rx="1.5"/>
+  <text x="322" y="198" font-size="14" font-weight="600" fill="#1c1c1c">Fix token caching in analytics</text>
+  <text x="322" y="216" font-size="12" fill="#77767b">sessions-chronicle &#183; 18 messages</text>
+  <text x="322" y="232" font-size="11" fill="#9a9996">Yesterday &#183; Claude Code</text>
+  <text x="946" y="204" font-size="14" fill="#d5d3d0">&#x203A;</text>
+  <line x1="308" y1="246" x2="964" y2="246" stroke="#f0eeec" stroke-width="1"/>
+
+  <rect x="304" y="250" width="672" height="72" fill="#ffffff" rx="6"/>
+  <rect x="308" y="256" width="3" height="60" fill="#26a269" rx="1.5"/>
+  <text x="322" y="274" font-size="14" font-weight="600" fill="#1c1c1c">Refactor auth middleware</text>
+  <text x="322" y="292" font-size="12" fill="#77767b">sessions-chronicle &#183; 52 messages</text>
+  <text x="322" y="308" font-size="11" fill="#9a9996">2d ago &#183; OpenCode</text>
+  <text x="946" y="280" font-size="14" fill="#d5d3d0">&#x203A;</text>
+
+  <!-- Label -->
+  <rect x="300" y="660" width="400" height="30" fill="#f6f5f4" rx="6"/>
+  <text x="330" y="680" font-size="13" font-weight="600" fill="#77767b">Proposition D &#8212; Rich Project Cards (Creative)</text>
+</svg>

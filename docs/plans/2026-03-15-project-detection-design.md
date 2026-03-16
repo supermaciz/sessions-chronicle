@@ -2,7 +2,7 @@
 
 **Issue:** [#67](https://github.com/supermaciz/sessions-chronicle/issues/67)  
 **Date:** 2026-03-15  
-**Status:** Accepted  
+**Status:** Implemented [#80](https://github.com/supermaciz/sessions-chronicle/pull/80)  
 **Prerequisite for:** [Option A — Project Sidebar](2026-03-14-project-views-exploration.md)
 
 ## Problem

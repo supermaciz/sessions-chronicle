@@ -1,0 +1,126 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 720" style="font-family: Cantarell, -apple-system, sans-serif;">
+  <!-- Window frame -->
+  <rect width="1000" height="720" fill="#f6f5f4" rx="12"/>
+
+  <!-- Header Bar -->
+  <rect width="1000" height="46" fill="#ffffff" rx="12"/>
+  <rect y="12" width="1000" height="34" fill="#ffffff"/>
+
+  <!-- View switcher -->
+  <rect x="370" y="8" width="90" height="30" fill="#3584e4" rx="6"/>
+  <text x="390" y="28" font-size="12" font-weight="600" fill="#ffffff">Sessions</text>
+  <rect x="465" y="8" width="80" height="30" fill="#e8e6e3" rx="6"/>
+  <text x="478" y="28" font-size="12" fill="#636260">Analytics</text>
+
+  <!-- Search button -->
+  <circle cx="960" cy="23" r="14" fill="#e8e6e3"/>
+  <text x="953" y="28" font-size="14" fill="#636260">&#x1F50D;</text>
+
+  <!-- === SIDEBAR === -->
+  <rect x="0" y="46" width="240" height="674" fill="#fafafa"/>
+  <line x1="240" y1="46" x2="240" y2="720" stroke="#d5d3d0" stroke-width="1"/>
+
+  <!-- Projects heading -->
+  <text x="16" y="74" font-size="11" font-weight="700" fill="#77767b" letter-spacing="1">PROJECTS</text>
+
+  <!-- Pill tags: wrapping flow layout -->
+  <!-- Row 1 -->
+  <!-- "All" pill (unselected) -->
+  <rect x="12" y="84" width="36" height="26" fill="#e8e6e3" rx="13"/>
+  <text x="22" y="101" font-size="11" fill="#636260">All</text>
+
+  <!-- sessions-chronicle pill (SELECTED - accent color) -->
+  <rect x="54" y="84" width="148" height="26" fill="#3584e4" rx="13"/>
+  <text x="64" y="101" font-size="11" font-weight="500" fill="#ffffff">sessions-chronicle</text>
+  <rect x="174" y="90" width="20" height="14" fill="rgba(255,255,255,0.25)" rx="7"/>
+  <text x="179" y="101" font-size="9" fill="#ffffff">18</text>
+
+  <!-- Row 2 -->
+  <!-- my-web-app pill -->
+  <rect x="12" y="116" width="106" height="26" fill="#ffffff" rx="13" stroke="#d5d3d0" stroke-width="1"/>
+  <text x="22" y="133" font-size="11" fill="#1c1c1c">my-web-app</text>
+  <rect x="96" y="122" width="16" height="14" fill="#e8e6e3" rx="7"/>
+  <text x="99" y="133" font-size="9" fill="#77767b">12</text>
+
+  <!-- dotfiles pill -->
+  <rect x="124" y="116" width="78" height="26" fill="#ffffff" rx="13" stroke="#d5d3d0" stroke-width="1"/>
+  <text x="134" y="133" font-size="11" fill="#1c1c1c">dotfiles</text>
+  <rect x="182" y="122" width="14" height="14" fill="#e8e6e3" rx="7"/>
+  <text x="185" y="133" font-size="9" fill="#77767b">7</text>
+
+  <!-- Row 3 -->
+  <!-- api-gateway pill -->
+  <rect x="12" y="148" width="105" height="26" fill="#ffffff" rx="13" stroke="#d5d3d0" stroke-width="1"/>
+  <text x="22" y="165" font-size="11" fill="#1c1c1c">api-gateway</text>
+  <rect x="97" y="154" width="14" height="14" fill="#e8e6e3" rx="7"/>
+  <text x="100" y="165" font-size="9" fill="#77767b">5</text>
+
+  <!-- Separator -->
+  <line x1="16" y1="190" x2="224" y2="190" stroke="#d5d3d0" stroke-width="1"/>
+
+  <!-- Tools heading -->
+  <text x="16" y="214" font-size="11" font-weight="700" fill="#77767b" letter-spacing="1">TOOLS</text>
+
+  <!-- Tool pills (smaller, with color dots) -->
+  <!-- Row 1 of tools -->
+  <rect x="12" y="226" width="108" height="24" fill="#ffffff" rx="12" stroke="#3584e4" stroke-width="1.5"/>
+  <rect x="20" y="234" width="8" height="8" fill="#3584e4" rx="4"/>
+  <text x="32" y="242" font-size="10" fill="#3584e4">Claude Code</text>
+
+  <rect x="126" y="226" width="88" height="24" fill="#ffffff" rx="12" stroke="#26a269" stroke-width="1.5"/>
+  <rect x="134" y="234" width="8" height="8" fill="#26a269" rx="4"/>
+  <text x="146" y="242" font-size="10" fill="#26a269">OpenCode</text>
+
+  <!-- Row 2 of tools -->
+  <rect x="12" y="256" width="66" height="24" fill="#ffffff" rx="12" stroke="#e66100" stroke-width="1.5"/>
+  <rect x="20" y="264" width="8" height="8" fill="#e66100" rx="4"/>
+  <text x="32" y="272" font-size="10" fill="#e66100">Codex</text>
+
+  <rect x="84" y="256" width="104" height="24" fill="#ffffff" rx="12" stroke="#1c71d8" stroke-width="1.5"/>
+  <rect x="92" y="264" width="8" height="8" fill="#1c71d8" rx="4"/>
+  <text x="104" y="272" font-size="10" fill="#1c71d8">Mistral Vibe</text>
+
+  <!-- Separator -->
+  <line x1="16" y1="296" x2="224" y2="296" stroke="#d5d3d0" stroke-width="1"/>
+
+  <!-- Active filters summary -->
+  <text x="16" y="316" font-size="10" fill="#9a9996">Active: 1 project, 4 tools</text>
+
+  <!-- Clear all link -->
+  <text x="16" y="334" font-size="10" fill="#3584e4" text-decoration="underline">Clear all filters</text>
+
+  <!-- === MAIN SESSION LIST === -->
+  <rect x="252" y="54" width="736" height="658" fill="#ffffff" rx="8"/>
+
+  <!-- Filter info bar -->
+  <rect x="264" y="62" width="712" height="28" fill="#edf5fd" rx="6"/>
+  <text x="276" y="81" font-size="11" fill="#3584e4">Showing 18 sessions in sessions-chronicle</text>
+
+  <!-- Session rows -->
+  <rect x="264" y="98" width="712" height="72" fill="#ffffff" rx="6"/>
+  <rect x="268" y="104" width="3" height="60" fill="#3584e4" rx="1.5"/>
+  <text x="282" y="122" font-size="14" font-weight="600" fill="#1c1c1c">Add project detection to parsers</text>
+  <text x="282" y="140" font-size="12" fill="#77767b">sessions-chronicle &#183; 34 messages</text>
+  <text x="282" y="156" font-size="11" fill="#9a9996">2h ago &#183; Claude Code</text>
+  <text x="946" y="128" font-size="14" fill="#d5d3d0">&#x203A;</text>
+  <line x1="268" y1="170" x2="964" y2="170" stroke="#f0eeec" stroke-width="1"/>
+
+  <rect x="264" y="174" width="712" height="72" fill="#ffffff" rx="6"/>
+  <rect x="268" y="180" width="3" height="60" fill="#3584e4" rx="1.5"/>
+  <text x="282" y="198" font-size="14" font-weight="600" fill="#1c1c1c">Fix token caching in analytics</text>
+  <text x="282" y="216" font-size="12" fill="#77767b">sessions-chronicle &#183; 18 messages</text>
+  <text x="282" y="232" font-size="11" fill="#9a9996">Yesterday &#183; Claude Code</text>
+  <text x="946" y="204" font-size="14" fill="#d5d3d0">&#x203A;</text>
+  <line x1="268" y1="246" x2="964" y2="246" stroke="#f0eeec" stroke-width="1"/>
+
+  <rect x="264" y="250" width="712" height="72" fill="#ffffff" rx="6"/>
+  <rect x="268" y="256" width="3" height="60" fill="#26a269" rx="1.5"/>
+  <text x="282" y="274" font-size="14" font-weight="600" fill="#1c1c1c">Refactor auth middleware</text>
+  <text x="282" y="292" font-size="12" fill="#77767b">sessions-chronicle &#183; 52 messages</text>
+  <text x="282" y="308" font-size="11" fill="#9a9996">2d ago &#183; OpenCode</text>
+  <text x="946" y="280" font-size="14" fill="#d5d3d0">&#x203A;</text>
+
+  <!-- Label -->
+  <rect x="280" y="660" width="440" height="30" fill="#f6f5f4" rx="6"/>
+  <text x="312" y="680" font-size="13" font-weight="600" fill="#77767b">Proposition E &#8212; Pill Tags Compact (Creative)</text>
+</svg>

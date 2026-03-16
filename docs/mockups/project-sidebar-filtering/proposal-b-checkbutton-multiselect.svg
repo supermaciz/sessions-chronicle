@@ -1,0 +1,111 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 720" style="font-family: Cantarell, -apple-system, sans-serif;">
+  <!-- Window frame -->
+  <rect width="1000" height="720" fill="#f6f5f4" rx="12"/>
+
+  <!-- Header Bar -->
+  <rect width="1000" height="46" fill="#ffffff" rx="12"/>
+  <rect y="12" width="1000" height="34" fill="#ffffff"/>
+
+  <!-- View switcher -->
+  <rect x="370" y="8" width="90" height="30" fill="#3584e4" rx="6"/>
+  <text x="390" y="28" font-size="12" font-weight="600" fill="#ffffff">Sessions</text>
+  <rect x="465" y="8" width="80" height="30" fill="#e8e6e3" rx="6"/>
+  <text x="478" y="28" font-size="12" fill="#636260">Analytics</text>
+
+  <!-- Search button -->
+  <circle cx="960" cy="23" r="14" fill="#e8e6e3"/>
+  <text x="953" y="28" font-size="14" fill="#636260">&#x1F50D;</text>
+
+  <!-- === SIDEBAR === -->
+  <rect x="0" y="46" width="240" height="674" fill="#fafafa"/>
+  <line x1="240" y1="46" x2="240" y2="720" stroke="#d5d3d0" stroke-width="1"/>
+
+  <!-- Tools heading (FIRST now) -->
+  <text x="16" y="74" font-size="11" font-weight="700" fill="#77767b" letter-spacing="1">TOOLS</text>
+
+  <rect x="20" y="86" width="12" height="12" fill="#3584e4" rx="2"/>
+  <text x="19" y="97" font-size="11" fill="#ffffff" font-weight="700">&#x2713;</text>
+  <text x="38" y="97" font-size="12" fill="#1c1c1c">Claude Code</text>
+
+  <rect x="20" y="108" width="12" height="12" fill="#26a269" rx="2"/>
+  <text x="19" y="119" font-size="11" fill="#ffffff" font-weight="700">&#x2713;</text>
+  <text x="38" y="119" font-size="12" fill="#1c1c1c">OpenCode</text>
+
+  <rect x="20" y="130" width="12" height="12" fill="#e66100" rx="2"/>
+  <text x="19" y="141" font-size="11" fill="#ffffff" font-weight="700">&#x2713;</text>
+  <text x="38" y="141" font-size="12" fill="#1c1c1c">Codex</text>
+
+  <rect x="20" y="152" width="12" height="12" fill="#1c71d8" rx="2"/>
+  <text x="19" y="163" font-size="11" fill="#ffffff" font-weight="700">&#x2713;</text>
+  <text x="38" y="163" font-size="12" fill="#1c1c1c">Mistral Vibe</text>
+
+  <!-- Separator -->
+  <line x1="16" y1="182" x2="224" y2="182" stroke="#d5d3d0" stroke-width="1"/>
+
+  <!-- Projects heading with Select All link -->
+  <text x="16" y="206" font-size="11" font-weight="700" fill="#77767b" letter-spacing="1">PROJECTS</text>
+  <text x="178" y="206" font-size="10" fill="#3584e4" text-decoration="underline">Select all</text>
+
+  <!-- Project checkboxes -->
+  <rect x="20" y="218" width="12" height="12" fill="#3584e4" rx="2"/>
+  <text x="19" y="229" font-size="11" fill="#ffffff" font-weight="700">&#x2713;</text>
+  <text x="38" y="229" font-size="12" fill="#1c1c1c">sessions-chronicle</text>
+  <text x="208" y="229" font-size="10" fill="#77767b">18</text>
+
+  <rect x="20" y="242" width="12" height="12" fill="#3584e4" rx="2"/>
+  <text x="19" y="253" font-size="11" fill="#ffffff" font-weight="700">&#x2713;</text>
+  <text x="38" y="253" font-size="12" fill="#1c1c1c">my-web-app</text>
+  <text x="208" y="253" font-size="10" fill="#77767b">12</text>
+
+  <!-- Unchecked project -->
+  <rect x="20" y="266" width="12" height="12" fill="transparent" rx="2" stroke="#9a9996" stroke-width="1.5"/>
+  <text x="38" y="277" font-size="12" fill="#77767b">dotfiles</text>
+  <text x="212" y="277" font-size="10" fill="#9a9996">7</text>
+
+  <rect x="20" y="290" width="12" height="12" fill="transparent" rx="2" stroke="#9a9996" stroke-width="1.5"/>
+  <text x="38" y="301" font-size="12" fill="#77767b">api-gateway</text>
+  <text x="212" y="301" font-size="10" fill="#9a9996">5</text>
+
+  <!-- === MAIN SESSION LIST === -->
+  <rect x="252" y="54" width="736" height="658" fill="#ffffff" rx="8"/>
+
+  <!-- Filter info bar showing multi-project -->
+  <rect x="264" y="62" width="712" height="28" fill="#edf5fd" rx="6"/>
+  <text x="276" y="81" font-size="11" fill="#3584e4">Showing 30 sessions in 2 projects</text>
+
+  <!-- Session rows -->
+  <rect x="264" y="98" width="712" height="72" fill="#ffffff" rx="6"/>
+  <rect x="268" y="104" width="3" height="60" fill="#3584e4" rx="1.5"/>
+  <text x="282" y="122" font-size="14" font-weight="600" fill="#1c1c1c">Add project detection to parsers</text>
+  <text x="282" y="140" font-size="12" fill="#77767b">sessions-chronicle &#183; 34 messages</text>
+  <text x="282" y="156" font-size="11" fill="#9a9996">2h ago &#183; Claude Code</text>
+  <text x="946" y="128" font-size="14" fill="#d5d3d0">&#x203A;</text>
+  <line x1="268" y1="170" x2="964" y2="170" stroke="#f0eeec" stroke-width="1"/>
+
+  <rect x="264" y="174" width="712" height="72" fill="#ffffff" rx="6"/>
+  <rect x="268" y="180" width="3" height="60" fill="#26a269" rx="1.5"/>
+  <text x="282" y="198" font-size="14" font-weight="600" fill="#1c1c1c">Deploy staging environment</text>
+  <text x="282" y="216" font-size="12" fill="#77767b">my-web-app &#183; 22 messages</text>
+  <text x="282" y="232" font-size="11" fill="#9a9996">3h ago &#183; OpenCode</text>
+  <text x="946" y="204" font-size="14" fill="#d5d3d0">&#x203A;</text>
+  <line x1="268" y1="246" x2="964" y2="246" stroke="#f0eeec" stroke-width="1"/>
+
+  <rect x="264" y="250" width="712" height="72" fill="#ffffff" rx="6"/>
+  <rect x="268" y="256" width="3" height="60" fill="#3584e4" rx="1.5"/>
+  <text x="282" y="274" font-size="14" font-weight="600" fill="#1c1c1c">Fix token caching in analytics</text>
+  <text x="282" y="292" font-size="12" fill="#77767b">sessions-chronicle &#183; 18 messages</text>
+  <text x="282" y="308" font-size="11" fill="#9a9996">Yesterday &#183; Claude Code</text>
+  <text x="946" y="280" font-size="14" fill="#d5d3d0">&#x203A;</text>
+  <line x1="268" y1="322" x2="964" y2="322" stroke="#f0eeec" stroke-width="1"/>
+
+  <rect x="264" y="326" width="712" height="72" fill="#ffffff" rx="6"/>
+  <rect x="268" y="332" width="3" height="60" fill="#e66100" rx="1.5"/>
+  <text x="282" y="350" font-size="14" font-weight="600" fill="#1c1c1c">Add REST endpoints for users</text>
+  <text x="282" y="368" font-size="12" fill="#77767b">my-web-app &#183; 15 messages</text>
+  <text x="282" y="384" font-size="11" fill="#9a9996">2d ago &#183; Codex</text>
+  <text x="946" y="356" font-size="14" fill="#d5d3d0">&#x203A;</text>
+
+  <!-- Label -->
+  <rect x="280" y="660" width="440" height="30" fill="#f6f5f4" rx="6"/>
+  <text x="300" y="680" font-size="13" font-weight="600" fill="#77767b">Proposition B &#8212; CheckButton Multi-Select (GNOME HIG)</text>
+</svg>
