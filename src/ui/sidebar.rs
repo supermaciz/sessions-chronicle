@@ -13,7 +13,7 @@ pub struct Sidebar {
 
 #[derive(Debug)]
 pub enum SidebarMsg {
-    ToolToggled(AiAssistant, bool),
+    AiAssistantToggled(AiAssistant, bool),
 }
 
 #[derive(Debug)]
@@ -47,7 +47,7 @@ impl SimpleComponent for Sidebar {
             },
 
             gtk::Label {
-                set_label: "Tools",
+                set_label: "AI Assistants",
                 set_halign: gtk::Align::Start,
                 add_css_class: "heading",
                 set_margin_bottom: 6,
@@ -62,7 +62,7 @@ impl SimpleComponent for Sidebar {
                     set_label: Some("Claude Code"),
                     set_active: true,
                     connect_toggled[sender] => move |btn| {
-                        sender.input(SidebarMsg::ToolToggled(AiAssistant::ClaudeCode, btn.is_active()));
+                        sender.input(SidebarMsg::AiAssistantToggled(AiAssistant::ClaudeCode, btn.is_active()));
                     },
                 },
 
@@ -71,7 +71,7 @@ impl SimpleComponent for Sidebar {
                     set_label: Some("OpenCode"),
                     set_active: true,
                     connect_toggled[sender] => move |btn| {
-                        sender.input(SidebarMsg::ToolToggled(AiAssistant::OpenCode, btn.is_active()));
+                        sender.input(SidebarMsg::AiAssistantToggled(AiAssistant::OpenCode, btn.is_active()));
                     },
                 },
 
@@ -80,7 +80,7 @@ impl SimpleComponent for Sidebar {
                     set_label: Some("Codex"),
                     set_active: true,
                     connect_toggled[sender] => move |btn| {
-                        sender.input(SidebarMsg::ToolToggled(AiAssistant::Codex, btn.is_active()));
+                        sender.input(SidebarMsg::AiAssistantToggled(AiAssistant::Codex, btn.is_active()));
                     },
                 },
 
@@ -89,7 +89,7 @@ impl SimpleComponent for Sidebar {
                     set_label: Some("Mistral Vibe"),
                     set_active: true,
                     connect_toggled[sender] => move |btn| {
-                        sender.input(SidebarMsg::ToolToggled(AiAssistant::MistralVibe, btn.is_active()));
+                        sender.input(SidebarMsg::AiAssistantToggled(AiAssistant::MistralVibe, btn.is_active()));
                     },
                 },
             },
@@ -137,7 +137,7 @@ impl SimpleComponent for Sidebar {
 
     fn update(&mut self, message: Self::Input, sender: ComponentSender<Self>) {
         match message {
-            SidebarMsg::ToolToggled(tool, active) => {
+            SidebarMsg::AiAssistantToggled(tool, active) => {
                 match tool {
                     AiAssistant::ClaudeCode => self.claude_enabled = active,
                     AiAssistant::OpenCode => self.opencode_enabled = active,
