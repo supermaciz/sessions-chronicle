@@ -718,7 +718,9 @@ impl SimpleComponent for App {
 
         widgets.load_window_size();
 
-        model.refresh_sidebar_projects();
+        if model.refresh_sidebar_projects() {
+            model.emit_session_list_filters();
+        }
 
         model.session_list.emit(SessionListMsg::SetIndexing(true));
         model
@@ -740,13 +742,10 @@ impl SimpleComponent for App {
                 tools,
                 project_filter,
             } => {
-                self.filter_state.tools = tools.clone();
-                self.filter_state.project_filter = project_filter.clone();
+                self.filter_state.tools = tools;
+                self.filter_state.project_filter = project_filter;
                 self.refresh_sidebar_projects();
-                self.session_list.emit(SessionListMsg::SetFilters {
-                    tools,
-                    project_filter,
-                });
+                self.emit_session_list_filters();
             }
             AppMsg::SessionSelected(id) => self.handle_session_selected(id),
             AppMsg::RequestNavigateBack => self.handle_request_navigate_back(),
@@ -856,7 +855,14 @@ impl App {
         self.toast_overlay.add_toast(toast);
     }
 
-    fn refresh_sidebar_projects(&mut self) {
+    fn emit_session_list_filters(&self) {
+        self.session_list.emit(SessionListMsg::SetFilters {
+            tools: self.filter_state.tools.clone(),
+            project_filter: self.filter_state.project_filter.clone(),
+        });
+    }
+
+    fn refresh_sidebar_projects(&mut self) -> bool {
         let tools = self.filter_state.tools.clone();
         let projects = match load_projects(&self.db_path, &tools) {
             Ok(projects) => projects,
@@ -895,7 +901,8 @@ impl App {
             &projects,
             show_unassigned,
         );
-        if selected_filter != self.filter_state.project_filter {
+        let filter_changed = selected_filter != self.filter_state.project_filter;
+        if filter_changed {
             self.filter_state.project_filter = selected_filter.clone();
         }
 
@@ -906,6 +913,8 @@ impl App {
             show_unassigned,
             selected_filter,
         });
+
+        filter_changed
     }
 }
 

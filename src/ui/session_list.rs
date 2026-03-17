@@ -20,8 +20,6 @@ pub struct SessionList {
 
 #[derive(Debug)]
 pub enum SessionListMsg {
-    SetTools(Vec<AiAssistant>),
-    #[allow(dead_code)]
     SetFilters {
         tools: Vec<AiAssistant>,
         project_filter: ProjectFilter,
@@ -30,7 +28,6 @@ pub enum SessionListMsg {
     SetIndexing(bool),
     SessionActivated(i32),
     ResumeRequested(String, AiAssistant),
-    Reload,
     /// Ensure a row is selected (defaults to first) and grab keyboard focus.
     RestoreFocus,
     /// Move selection by delta rows (−1 = up, +1 = down) without changing focus.
@@ -192,11 +189,6 @@ impl SimpleComponent for SessionList {
 
     fn update(&mut self, message: Self::Input, sender: ComponentSender<Self>) {
         match message {
-            SessionListMsg::SetTools(tools) => {
-                self.all_tools_selected = tools.len() == AiAssistant::ALL.len();
-                self.active_tools = tools;
-                self.reload_sessions();
-            }
             SessionListMsg::SetFilters {
                 tools,
                 project_filter,
@@ -222,9 +214,6 @@ impl SimpleComponent for SessionList {
             }
             SessionListMsg::ResumeRequested(id, tool) => {
                 let _ = sender.output(SessionListOutput::ResumeRequested(id, tool));
-            }
-            SessionListMsg::Reload => {
-                self.reload_sessions();
             }
             SessionListMsg::RestoreFocus => {
                 self.ensure_selection();
