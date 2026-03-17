@@ -15,9 +15,12 @@ use std::{cell::Cell, fs, path::PathBuf, sync::Arc};
 
 use crate::analytics_worker::{AnalyticsWorker, AnalyticsWorkerOutput};
 use crate::config::{APP_ID, PROFILE};
-use crate::database::SessionIndexer;
+use crate::database::{
+    SessionIndexer, count_all_sessions, count_unassigned_sessions, has_unassigned_sessions,
+    load_projects,
+};
 use crate::indexing_worker::{IndexingWorker, IndexingWorkerInput, IndexingWorkerOutput};
-use crate::models::session::AiAssistant;
+use crate::models::{ProjectFilter, session::AiAssistant};
 use crate::session_sources::{SessionSources, select_db_filename};
 use crate::ui::modals::{
     about::AboutDialog,
@@ -30,7 +33,7 @@ use crate::ui::{
     analytics_view::{AnalyticsView, AnalyticsViewOutput},
     session_detail::{SessionDetail, SessionDetailOutput},
     session_list::{SessionList, SessionListMsg, SessionListOutput},
-    sidebar::{Sidebar, SidebarOutput},
+    sidebar::{Sidebar, SidebarMsg, SidebarOutput},
     tool_inspector_pane::{ToolInspectorPane, ToolInspectorPaneMsg, ToolInspectorPaneOutput},
 };
 use crate::utils::terminal;
@@ -47,12 +50,12 @@ use helpers::{
     parent_session_load_failure_messages, resolve_escape_action, resolve_search_mode_change,
     search_query_update_messages, transition_to_detail, workspace_header_visibility,
 };
-use helpers::{transition_to_list, workspace_allows_search};
+use helpers::{retained_project_filter, transition_to_list, workspace_allows_search};
 #[cfg(test)]
 use types::EscapeResolution;
 #[cfg(test)]
 use types::ReindexAction;
-use types::{ActiveSessionRef, UtilityPaneMode, Workspace};
+use types::{ActiveSessionRef, FilterState, UtilityPaneMode, Workspace};
 
 /// Timeout in seconds for resume failure toast notifications
 const RESUME_FAILURE_TOAST_TIMEOUT_SECS: u32 = 4;
@@ -92,6 +95,7 @@ pub(super) struct App {
     suppress_next_detail_pop_sync: bool,
     pane_stack: gtk::Stack,
     toast_overlay: adw::ToastOverlay,
+    filter_state: FilterState,
     db_path: PathBuf,
     sources: SessionSources,
     indexing: bool,
@@ -107,7 +111,10 @@ pub(super) enum AppMsg {
     PaneVisibilityChanged(bool),
     SearchQueryChanged(String),
     WorkspaceChanged(Workspace),
-    FiltersChanged(Vec<AiAssistant>),
+    FiltersChanged {
+        tools: Vec<AiAssistant>,
+        project_filter: ProjectFilter,
+    },
     SessionSelected(String),
     /// User-requested navigation back from detail to list.
     RequestNavigateBack,
@@ -338,7 +345,13 @@ impl SimpleComponent for App {
         let sidebar = Sidebar::builder()
             .launch(())
             .forward(sender.input_sender(), |output| match output {
-                SidebarOutput::FiltersChanged(tools) => AppMsg::FiltersChanged(tools),
+                SidebarOutput::FiltersChanged {
+                    tools,
+                    project_filter,
+                } => AppMsg::FiltersChanged {
+                    tools,
+                    project_filter,
+                },
             });
         let tool_inspector_pane = ToolInspectorPane::builder()
             .launch(Arc::new(db_path.clone()))
@@ -436,6 +449,7 @@ impl SimpleComponent for App {
             suppress_next_detail_pop_sync: false,
             pane_stack,
             toast_overlay: adw::ToastOverlay::new(),
+            filter_state: FilterState::default(),
             db_path,
             sources,
             indexing: true,
@@ -704,6 +718,8 @@ impl SimpleComponent for App {
 
         widgets.load_window_size();
 
+        model.refresh_sidebar_projects();
+
         model.session_list.emit(SessionListMsg::SetIndexing(true));
         model
             .indexing_worker
@@ -720,8 +736,17 @@ impl SimpleComponent for App {
             AppMsg::PaneVisibilityChanged(visible) => self.handle_pane_visibility_changed(visible),
             AppMsg::SearchQueryChanged(query) => self.handle_search_query_changed(query),
             AppMsg::WorkspaceChanged(workspace) => self.handle_workspace_changed(workspace),
-            AppMsg::FiltersChanged(tools) => {
-                self.session_list.emit(SessionListMsg::SetTools(tools));
+            AppMsg::FiltersChanged {
+                tools,
+                project_filter,
+            } => {
+                self.filter_state.tools = tools.clone();
+                self.filter_state.project_filter = project_filter.clone();
+                self.refresh_sidebar_projects();
+                self.session_list.emit(SessionListMsg::SetFilters {
+                    tools,
+                    project_filter,
+                });
             }
             AppMsg::SessionSelected(id) => self.handle_session_selected(id),
             AppMsg::RequestNavigateBack => self.handle_request_navigate_back(),
@@ -829,6 +854,58 @@ impl App {
         }
 
         self.toast_overlay.add_toast(toast);
+    }
+
+    fn refresh_sidebar_projects(&mut self) {
+        let tools = self.filter_state.tools.clone();
+        let projects = match load_projects(&self.db_path, &tools) {
+            Ok(projects) => projects,
+            Err(err) => {
+                tracing::warn!("Failed to load projects for sidebar: {}", err);
+                Vec::new()
+            }
+        };
+
+        let all_sessions_count = match count_all_sessions(&self.db_path, &tools) {
+            Ok(count) => count,
+            Err(err) => {
+                tracing::warn!("Failed to count all sessions for sidebar: {}", err);
+                0
+            }
+        };
+
+        let unassigned_count = match count_unassigned_sessions(&self.db_path, &tools) {
+            Ok(count) => count,
+            Err(err) => {
+                tracing::warn!("Failed to count unassigned sessions for sidebar: {}", err);
+                0
+            }
+        };
+
+        let show_unassigned = match has_unassigned_sessions(&self.db_path) {
+            Ok(value) => value,
+            Err(err) => {
+                tracing::warn!("Failed to determine unassigned sidebar visibility: {}", err);
+                false
+            }
+        };
+
+        let selected_filter = retained_project_filter(
+            &self.filter_state.project_filter,
+            &projects,
+            show_unassigned,
+        );
+        if selected_filter != self.filter_state.project_filter {
+            self.filter_state.project_filter = selected_filter.clone();
+        }
+
+        self.sidebar.emit(SidebarMsg::ProjectsLoaded {
+            projects,
+            all_sessions_count,
+            unassigned_count,
+            show_unassigned,
+            selected_filter,
+        });
     }
 }
 

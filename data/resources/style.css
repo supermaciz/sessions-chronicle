@@ -301,3 +301,18 @@
 .heatmap-cell-high {
   background-color: #2a8733;
 }
+
+.project-badge {
+  min-width: 1.8em;
+  padding: 1px 8px;
+  border-radius: 999px;
+  font-size: 0.82em;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  background-color: alpha(@accent_bg_color, 0.2);
+}
+
+.unassigned-label {
+  font-style: italic;
+  opacity: 0.85;
+}
