@@ -5,8 +5,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use sessions_chronicle::database::schema::initialize_database;
 use sessions_chronicle::database::{
     count_all_sessions, count_unassigned_sessions, has_unassigned_sessions, load_projects,
+    load_sessions_for_filter, search_sessions_for_filter,
 };
-use sessions_chronicle::models::AiAssistant;
+use sessions_chronicle::models::{AiAssistant, ProjectFilter};
 
 struct TempDatabase {
     path: PathBuf,
@@ -122,6 +123,137 @@ impl TempDatabase {
             )
             .expect("Failed to insert opencode beta session");
     }
+
+    fn seed_project_sidebar_fixture(&self) {
+        self.connection
+            .execute(
+                "INSERT INTO projects (id, path, name) VALUES (?1, ?2, ?3)",
+                rusqlite::params![1_i64, "/projects/alpha", "alpha"],
+            )
+            .expect("Failed to insert project alpha");
+
+        self.connection
+            .execute(
+                "INSERT INTO projects (id, path, name) VALUES (?1, ?2, ?3)",
+                rusqlite::params![2_i64, "/projects/beta", "beta"],
+            )
+            .expect("Failed to insert project beta");
+
+        self.connection
+            .execute(
+                "INSERT INTO sessions (id, tool, project_path, project_id, start_time, message_count, file_path, last_updated)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                rusqlite::params![
+                    "alpha-claude-old",
+                    "claude_code",
+                    Some("/projects/alpha"),
+                    Some(1_i64),
+                    10_i64,
+                    2_i64,
+                    "/tmp/alpha-claude-old.jsonl",
+                    100_i64,
+                ],
+            )
+            .expect("Failed to insert alpha old claude session");
+
+        self.connection
+            .execute(
+                "INSERT INTO sessions (id, tool, project_path, project_id, start_time, message_count, file_path, last_updated)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                rusqlite::params![
+                    "alpha-claude-new",
+                    "claude_code",
+                    Some("/projects/alpha"),
+                    Some(1_i64),
+                    20_i64,
+                    3_i64,
+                    "/tmp/alpha-claude-new.jsonl",
+                    200_i64,
+                ],
+            )
+            .expect("Failed to insert alpha new claude session");
+
+        self.connection
+            .execute(
+                "INSERT INTO sessions (id, tool, project_path, project_id, start_time, message_count, file_path, last_updated)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                rusqlite::params![
+                    "alpha-opencode",
+                    "opencode",
+                    Some("/projects/alpha"),
+                    Some(1_i64),
+                    30_i64,
+                    2_i64,
+                    "/tmp/alpha-opencode.jsonl",
+                    300_i64,
+                ],
+            )
+            .expect("Failed to insert alpha opencode session");
+
+        self.connection
+            .execute(
+                "INSERT INTO sessions (id, tool, project_path, project_id, start_time, message_count, file_path, last_updated)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                rusqlite::params![
+                    "unassigned-claude",
+                    "claude_code",
+                    Option::<String>::None,
+                    Option::<i64>::None,
+                    40_i64,
+                    1_i64,
+                    "/tmp/unassigned-claude.jsonl",
+                    400_i64,
+                ],
+            )
+            .expect("Failed to insert unassigned claude session");
+
+        self.connection
+            .execute(
+                "INSERT INTO sessions (id, tool, project_path, project_id, start_time, message_count, file_path, last_updated)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                rusqlite::params![
+                    "beta-claude",
+                    "claude_code",
+                    Some("/projects/beta"),
+                    Some(2_i64),
+                    50_i64,
+                    1_i64,
+                    "/tmp/beta-claude.jsonl",
+                    500_i64,
+                ],
+            )
+            .expect("Failed to insert beta claude session");
+
+        self.connection
+            .execute(
+                "INSERT INTO messages (session_id, message_index, role, content, timestamp, model)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                rusqlite::params![
+                    "unassigned-claude",
+                    0_i64,
+                    "user",
+                    "this session is lonely",
+                    1_i64,
+                    Option::<String>::None,
+                ],
+            )
+            .expect("Failed to insert message for unassigned claude session");
+
+        self.connection
+            .execute(
+                "INSERT INTO messages (session_id, message_index, role, content, timestamp, model)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                rusqlite::params![
+                    "alpha-claude-new",
+                    0_i64,
+                    "user",
+                    "alpha topic",
+                    2_i64,
+                    Option::<String>::None,
+                ],
+            )
+            .expect("Failed to insert message for alpha claude session");
+    }
 }
 
 impl Drop for TempDatabase {
@@ -227,4 +359,38 @@ fn project_sidebar_counts_include_unassigned_visibility_flag() {
 
     let has_unassigned = has_unassigned_sessions(&db.path).expect("Has unassigned check failed");
     assert!(has_unassigned);
+}
+
+#[test]
+fn load_sessions_for_filter_returns_project_and_tool_intersection() {
+    let db = TempDatabase::new();
+    db.seed_project_sidebar_fixture();
+
+    let sessions = load_sessions_for_filter(
+        &db.path,
+        &[AiAssistant::ClaudeCode],
+        &ProjectFilter::Project(1),
+    )
+    .expect("load sessions");
+
+    let ids: Vec<&str> = sessions.iter().map(|session| session.id.as_str()).collect();
+    assert_eq!(ids, vec!["alpha-claude-new", "alpha-claude-old"]);
+}
+
+#[test]
+fn search_sessions_for_filter_returns_only_unassigned_matches() {
+    let db = TempDatabase::new();
+    db.seed_project_sidebar_fixture();
+
+    let sessions = search_sessions_for_filter(
+        &db.path,
+        &[AiAssistant::ClaudeCode],
+        &ProjectFilter::Unassigned,
+        "lonely",
+    )
+    .expect("search sessions");
+
+    assert_eq!(sessions.len(), 1);
+    assert_eq!(sessions[0].id, "unassigned-claude");
+    assert_eq!(sessions[0].project_id, None);
 }
