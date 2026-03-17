@@ -11,7 +11,6 @@ pub mod transcript_item;
 pub use analytics::{AnalyticsData, AnalyticsOverview};
 pub use message::{Message, Role};
 pub use message_preview::MessagePreview;
-#[allow(unused_imports)] // Used by upcoming project sidebar wiring tasks.
 pub use project_filter::{ProjectFilter, ProjectInfo};
 pub use session::{AiAssistant, Session};
 pub use subagent::Subagent;

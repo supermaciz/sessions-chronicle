@@ -197,19 +197,20 @@ fn search_sessions_with_query(
     let (query_sql, tool_strings): (String, Vec<String>) = if tools.len() == AiAssistant::ALL.len()
     {
         (
-            "SELECT s.id, s.tool, s.project_path, s.project_id, s.start_time, s.message_count, s.file_path,
-                    s.last_updated, s.first_prompt, s.parent_session_id, s.is_subagent,
-                    s.input_tokens, s.output_tokens, s.cache_read_tokens,
-                    s.cache_write_tokens, s.reasoning_tokens,
-                    bm25(messages) AS rank
-             FROM messages
-             JOIN sessions s ON s.id = messages.session_id
-             WHERE messages MATCH ?
-               AND s.is_subagent = 0
-               {project_clause}
-             ORDER BY rank ASC, s.last_updated DESC"
-                .to_string()
-                .replace("{project_clause}", &project_clause),
+            format!(
+                "SELECT s.id, s.tool, s.project_path, s.project_id, s.start_time, s.message_count, s.file_path,
+                        s.last_updated, s.first_prompt, s.parent_session_id, s.is_subagent,
+                        s.input_tokens, s.output_tokens, s.cache_read_tokens,
+                        s.cache_write_tokens, s.reasoning_tokens,
+                        bm25(messages) AS rank
+                 FROM messages
+                 JOIN sessions s ON s.id = messages.session_id
+                 WHERE messages MATCH ?
+                   AND s.is_subagent = 0
+                   {}
+                 ORDER BY rank ASC, s.last_updated DESC",
+                project_clause
+            ),
             vec![],
         )
     } else {
@@ -294,16 +295,17 @@ pub fn load_sessions_for_filter(
 
     let (query, tool_strings): (String, Vec<String>) = if tools.len() == AiAssistant::ALL.len() {
         (
-            "SELECT id, tool, project_path, project_id, start_time, message_count, file_path,
-                    last_updated, first_prompt, parent_session_id, is_subagent,
-                    input_tokens, output_tokens, cache_read_tokens,
-                    cache_write_tokens, reasoning_tokens
-             FROM sessions
-             WHERE is_subagent = 0
-             {project_clause}
-             ORDER BY last_updated DESC"
-                .to_string()
-                .replace("{project_clause}", &project_clause),
+            format!(
+                "SELECT id, tool, project_path, project_id, start_time, message_count, file_path,
+                        last_updated, first_prompt, parent_session_id, is_subagent,
+                        input_tokens, output_tokens, cache_read_tokens,
+                        cache_write_tokens, reasoning_tokens
+                 FROM sessions
+                 WHERE is_subagent = 0
+                   {}
+                 ORDER BY last_updated DESC",
+                project_clause
+            ),
             vec![],
         )
     } else {
@@ -350,7 +352,6 @@ pub fn load_sessions_for_filter(
     Ok(sessions)
 }
 
-#[allow(dead_code)] // Used by upcoming project sidebar wiring tasks.
 pub fn load_projects(db_path: &Path, tools: &[AiAssistant]) -> Result<Vec<ProjectInfo>> {
     if !db_path.exists() {
         return Ok(Vec::new());
@@ -417,7 +418,6 @@ pub fn load_projects(db_path: &Path, tools: &[AiAssistant]) -> Result<Vec<Projec
     Ok(projects)
 }
 
-#[allow(dead_code)] // Used by upcoming project sidebar wiring tasks.
 pub fn count_all_sessions(db_path: &Path, tools: &[AiAssistant]) -> Result<usize> {
     if !db_path.exists() {
         return Ok(0);
@@ -453,7 +453,6 @@ pub fn count_all_sessions(db_path: &Path, tools: &[AiAssistant]) -> Result<usize
     Ok(count.max(0) as usize)
 }
 
-#[allow(dead_code)] // Used by upcoming project sidebar wiring tasks.
 pub fn count_unassigned_sessions(db_path: &Path, tools: &[AiAssistant]) -> Result<usize> {
     if !db_path.exists() {
         return Ok(0);
@@ -495,7 +494,10 @@ pub fn count_unassigned_sessions(db_path: &Path, tools: &[AiAssistant]) -> Resul
     Ok(count.max(0) as usize)
 }
 
-#[allow(dead_code)] // Used by upcoming project sidebar wiring tasks.
+/// Check whether any unassigned (no project) non-subagent session exists in the database.
+/// This is intentionally tool-agnostic: the "Unassigned" sidebar row stays visible even
+/// when a tool filter makes its visible count zero, so users always know unassigned
+/// sessions exist.
 pub fn has_unassigned_sessions(db_path: &Path) -> Result<bool> {
     if !db_path.exists() {
         return Ok(false);
