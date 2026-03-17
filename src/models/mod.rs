@@ -1,6 +1,7 @@
 pub mod analytics;
 pub mod message;
 pub mod message_preview;
+pub mod project_filter;
 pub mod session;
 pub mod subagent;
 pub mod token_usage;
@@ -10,6 +11,8 @@ pub mod transcript_item;
 pub use analytics::{AnalyticsData, AnalyticsOverview};
 pub use message::{Message, Role};
 pub use message_preview::MessagePreview;
+#[allow(unused_imports)] // Used by upcoming project sidebar wiring tasks.
+pub use project_filter::{ProjectFilter, ProjectInfo};
 pub use session::{AiAssistant, Session};
 pub use subagent::Subagent;
 pub use token_usage::TokenUsage;

@@ -10,8 +10,8 @@ use std::path::Path;
 use std::time::Duration;
 
 use crate::models::{
-    AiAssistant, MessagePreview, Role, Session, Subagent, ToolCall, ToolCallStatus, TranscriptItem,
-    TranscriptItemKind,
+    AiAssistant, MessagePreview, ProjectInfo, Role, Session, Subagent, ToolCall, ToolCallStatus,
+    TranscriptItem, TranscriptItemKind,
 };
 
 pub use indexer::{IndexingStats, SessionIndexer};
@@ -291,6 +291,171 @@ pub fn load_sessions(db_path: &Path, tools: &[AiAssistant]) -> Result<Vec<Sessio
         .context("Failed to load sessions")?;
 
     Ok(sessions)
+}
+
+#[allow(dead_code)] // Used by upcoming project sidebar wiring tasks.
+pub fn load_projects(db_path: &Path, tools: &[AiAssistant]) -> Result<Vec<ProjectInfo>> {
+    if !db_path.exists() {
+        return Ok(Vec::new());
+    }
+
+    let db = open_connection(db_path)?;
+
+    let (query, tool_strings): (String, Vec<String>) = if tools.is_empty() {
+        (
+            "SELECT p.id, p.name, p.path, 0 AS session_count
+             FROM projects p
+             ORDER BY p.name ASC"
+                .to_string(),
+            vec![],
+        )
+    } else if tools.len() == AiAssistant::ALL.len() {
+        (
+            "SELECT p.id, p.name, p.path, COUNT(s.id) AS session_count, MAX(s.last_updated) AS project_last_updated
+             FROM projects p
+             LEFT JOIN sessions s ON s.project_id = p.id
+                                AND s.is_subagent = 0
+             GROUP BY p.id, p.name, p.path
+             ORDER BY CASE WHEN COUNT(s.id) > 0 THEN 0 ELSE 1 END,
+                      project_last_updated DESC,
+                      p.name ASC"
+                .to_string(),
+            vec![],
+        )
+    } else {
+        let placeholders: Vec<String> = tools.iter().map(|_| "?".to_string()).collect();
+        let tool_strings: Vec<String> = tools.iter().map(|t| t.to_storage()).collect::<Vec<_>>();
+        (
+            format!(
+                "SELECT p.id, p.name, p.path, COUNT(s.id) AS session_count, MAX(s.last_updated) AS project_last_updated
+                 FROM projects p
+                 LEFT JOIN sessions s ON s.project_id = p.id
+                                    AND s.is_subagent = 0
+                                    AND s.tool IN ({})
+                 GROUP BY p.id, p.name, p.path
+                 ORDER BY CASE WHEN COUNT(s.id) > 0 THEN 0 ELSE 1 END,
+                          project_last_updated DESC,
+                          p.name ASC",
+                placeholders.join(",")
+            ),
+            tool_strings,
+        )
+    };
+
+    let mut stmt = db.prepare(&query)?;
+    let tool_refs: Vec<&dyn ToSql> = tool_strings.iter().map(|s| s as &dyn ToSql).collect();
+    let mut rows = stmt.query(tool_refs.as_slice())?;
+
+    let mut projects = Vec::new();
+    while let Some(row) = rows.next()? {
+        let session_count: i64 = row.get(3)?;
+        projects.push(ProjectInfo {
+            id: row.get(0)?,
+            name: row.get(1)?,
+            path: row.get(2)?,
+            session_count: session_count.max(0) as usize,
+        });
+    }
+
+    Ok(projects)
+}
+
+#[allow(dead_code)] // Used by upcoming project sidebar wiring tasks.
+pub fn count_all_sessions(db_path: &Path, tools: &[AiAssistant]) -> Result<usize> {
+    if !db_path.exists() {
+        return Ok(0);
+    }
+
+    if tools.is_empty() {
+        return Ok(0);
+    }
+
+    let db = open_connection(db_path)?;
+
+    let (query, tool_strings): (String, Vec<String>) = if tools.len() == AiAssistant::ALL.len() {
+        (
+            "SELECT COUNT(*) FROM sessions WHERE is_subagent = 0".to_string(),
+            vec![],
+        )
+    } else {
+        let placeholders: Vec<String> = tools.iter().map(|_| "?".to_string()).collect();
+        let tool_strings: Vec<String> = tools.iter().map(|t| t.to_storage()).collect::<Vec<_>>();
+        (
+            format!(
+                "SELECT COUNT(*) FROM sessions WHERE is_subagent = 0 AND tool IN ({})",
+                placeholders.join(",")
+            ),
+            tool_strings,
+        )
+    };
+
+    let mut stmt = db.prepare(&query)?;
+    let tool_refs: Vec<&dyn ToSql> = tool_strings.iter().map(|s| s as &dyn ToSql).collect();
+    let count: i64 = stmt.query_row(tool_refs.as_slice(), |row| row.get(0))?;
+
+    Ok(count.max(0) as usize)
+}
+
+#[allow(dead_code)] // Used by upcoming project sidebar wiring tasks.
+pub fn count_unassigned_sessions(db_path: &Path, tools: &[AiAssistant]) -> Result<usize> {
+    if !db_path.exists() {
+        return Ok(0);
+    }
+
+    if tools.is_empty() {
+        return Ok(0);
+    }
+
+    let db = open_connection(db_path)?;
+
+    let (query, tool_strings): (String, Vec<String>) = if tools.len() == AiAssistant::ALL.len() {
+        (
+            "SELECT COUNT(*) FROM sessions
+             WHERE project_id IS NULL
+               AND is_subagent = 0"
+                .to_string(),
+            vec![],
+        )
+    } else {
+        let placeholders: Vec<String> = tools.iter().map(|_| "?".to_string()).collect();
+        let tool_strings: Vec<String> = tools.iter().map(|t| t.to_storage()).collect::<Vec<_>>();
+        (
+            format!(
+                "SELECT COUNT(*) FROM sessions
+                 WHERE project_id IS NULL
+                   AND is_subagent = 0
+                   AND tool IN ({})",
+                placeholders.join(",")
+            ),
+            tool_strings,
+        )
+    };
+
+    let mut stmt = db.prepare(&query)?;
+    let tool_refs: Vec<&dyn ToSql> = tool_strings.iter().map(|s| s as &dyn ToSql).collect();
+    let count: i64 = stmt.query_row(tool_refs.as_slice(), |row| row.get(0))?;
+
+    Ok(count.max(0) as usize)
+}
+
+#[allow(dead_code)] // Used by upcoming project sidebar wiring tasks.
+pub fn has_unassigned_sessions(db_path: &Path) -> Result<bool> {
+    if !db_path.exists() {
+        return Ok(false);
+    }
+
+    let db = open_connection(db_path)?;
+    let mut stmt = db.prepare(
+        "SELECT EXISTS(
+             SELECT 1
+             FROM sessions
+             WHERE project_id IS NULL
+               AND is_subagent = 0
+         )",
+    )?;
+    let exists: i64 = stmt.query_row([], |row| row.get(0))?;
+
+    Ok(exists != 0)
 }
 
 /// Load a single session by ID (may be a subagent session).
