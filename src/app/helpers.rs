@@ -1,3 +1,4 @@
+use crate::models::{ProjectFilter, ProjectInfo};
 use crate::ui::{
     session_detail::SessionDetailMsg, session_list::SessionListMsg,
     tool_inspector_pane::ToolInspectorPaneMsg,
@@ -112,5 +113,58 @@ pub(super) fn analytics_indexing_completion_outcome(
     AnalyticsIndexingOutcome {
         mark_stale: true,
         refresh_immediately: active_workspace.is_analytics(),
+    }
+}
+
+pub(super) fn retained_project_filter(
+    selected: &ProjectFilter,
+    projects: &[ProjectInfo],
+    show_unassigned: bool,
+) -> ProjectFilter {
+    match selected {
+        ProjectFilter::AllSessions => ProjectFilter::AllSessions,
+        ProjectFilter::Unassigned => {
+            if show_unassigned {
+                ProjectFilter::Unassigned
+            } else {
+                ProjectFilter::AllSessions
+            }
+        }
+        ProjectFilter::Project(project_id) => {
+            if projects.iter().any(|project| project.id == *project_id) {
+                ProjectFilter::Project(*project_id)
+            } else {
+                ProjectFilter::AllSessions
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::models::{ProjectFilter, ProjectInfo};
+
+    #[test]
+    fn project_sidebar_retained_project_filter_keeps_zero_count_selection() {
+        let projects = vec![
+            ProjectInfo {
+                id: 1,
+                name: "alpha".to_string(),
+                path: "/tmp/alpha".to_string(),
+                session_count: 4,
+            },
+            ProjectInfo {
+                id: 2,
+                name: "beta".to_string(),
+                path: "/tmp/beta".to_string(),
+                session_count: 0,
+            },
+        ];
+
+        assert_eq!(
+            retained_project_filter(&ProjectFilter::Project(2), &projects, false),
+            ProjectFilter::Project(2)
+        );
     }
 }

@@ -1,6 +1,9 @@
 use relm4::gtk::PackType;
 
-use crate::{icon_names, models::session::AiAssistant};
+use crate::{
+    icon_names,
+    models::{ProjectFilter, session::AiAssistant},
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum UtilityPaneMode {
@@ -126,4 +129,19 @@ pub(super) struct WorkspaceHeaderVisibility {
 pub(super) struct AnalyticsIndexingOutcome {
     pub(super) mark_stale: bool,
     pub(super) refresh_immediately: bool,
+}
+
+#[derive(Debug, Clone)]
+pub(super) struct FilterState {
+    pub(super) tools: Vec<AiAssistant>,
+    pub(super) project_filter: ProjectFilter,
+}
+
+impl Default for FilterState {
+    fn default() -> Self {
+        Self {
+            tools: AiAssistant::ALL.to_vec(),
+            project_filter: ProjectFilter::AllSessions,
+        }
+    }
 }

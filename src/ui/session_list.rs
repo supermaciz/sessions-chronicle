@@ -3,14 +3,15 @@ use relm4::factory::FactoryVecDeque;
 use relm4::{ComponentParts, ComponentSender, SimpleComponent, adw, gtk};
 use std::path::{Path, PathBuf};
 
-use crate::database::{load_sessions, search_sessions};
-use crate::models::{AiAssistant, Session};
+use crate::database::{load_sessions_for_filter, search_sessions_for_filter};
+use crate::models::{AiAssistant, ProjectFilter, Session};
 use crate::ui::session_row::{SessionRow, SessionRowInit, SessionRowOutput};
 
 #[derive(Debug)]
 pub struct SessionList {
     db_path: PathBuf,
     active_tools: Vec<AiAssistant>,
+    project_filter: ProjectFilter,
     search_query: String,
     all_tools_selected: bool,
     indexing: bool,
@@ -19,12 +20,14 @@ pub struct SessionList {
 
 #[derive(Debug)]
 pub enum SessionListMsg {
-    SetTools(Vec<AiAssistant>),
+    SetFilters {
+        tools: Vec<AiAssistant>,
+        project_filter: ProjectFilter,
+    },
     SetSearchQuery(String),
     SetIndexing(bool),
     SessionActivated(i32),
     ResumeRequested(String, AiAssistant),
-    Reload,
     /// Ensure a row is selected (defaults to first) and grab keyboard focus.
     RestoreFocus,
     /// Move selection by delta rows (−1 = up, +1 = down) without changing focus.
@@ -50,6 +53,7 @@ fn compute_empty_state(
     search_query: &str,
     all_tools_selected: bool,
     indexing: bool,
+    project_filter_active: bool,
 ) -> EmptyStateCopy {
     if sessions_empty && indexing {
         return EmptyStateCopy {
@@ -65,7 +69,7 @@ fn compute_empty_state(
         };
     }
 
-    if all_tools_selected {
+    if all_tools_selected && !project_filter_active {
         EmptyStateCopy {
             title: "No Sessions Yet",
             description: "Your AI coding sessions will appear here",
@@ -131,7 +135,8 @@ impl SimpleComponent for SessionList {
             AiAssistant::MistralVibe,
         ];
         let search_query = String::new();
-        let fetched = Self::fetch_sessions(&db_path, &active_tools, &search_query);
+        let project_filter = ProjectFilter::AllSessions;
+        let fetched = Self::fetch_sessions(&db_path, &active_tools, &project_filter, &search_query);
 
         let sessions: FactoryVecDeque<SessionRow> = FactoryVecDeque::builder()
             .launch_default()
@@ -144,6 +149,7 @@ impl SimpleComponent for SessionList {
         let mut model = Self {
             db_path,
             active_tools,
+            project_filter,
             search_query,
             all_tools_selected: true,
             indexing: false,
@@ -183,8 +189,12 @@ impl SimpleComponent for SessionList {
 
     fn update(&mut self, message: Self::Input, sender: ComponentSender<Self>) {
         match message {
-            SessionListMsg::SetTools(tools) => {
+            SessionListMsg::SetFilters {
+                tools,
+                project_filter,
+            } => {
                 self.active_tools = tools.clone();
+                self.project_filter = project_filter;
                 self.all_tools_selected = tools.len() == AiAssistant::ALL.len();
                 self.reload_sessions();
             }
@@ -204,9 +214,6 @@ impl SimpleComponent for SessionList {
             }
             SessionListMsg::ResumeRequested(id, tool) => {
                 let _ = sender.output(SessionListOutput::ResumeRequested(id, tool));
-            }
-            SessionListMsg::Reload => {
-                self.reload_sessions();
             }
             SessionListMsg::RestoreFocus => {
                 self.ensure_selection();
@@ -252,6 +259,7 @@ impl SimpleComponent for SessionList {
                 &self.search_query,
                 self.all_tools_selected,
                 self.indexing,
+                self.project_filter != ProjectFilter::AllSessions,
             );
             widgets.empty_state.set_title(empty.title);
             widgets.empty_state.set_description(Some(empty.description));
@@ -291,12 +299,17 @@ impl SessionList {
         }
     }
 
-    fn fetch_sessions(db_path: &Path, tools: &[AiAssistant], query: &str) -> Vec<Session> {
+    fn fetch_sessions(
+        db_path: &Path,
+        tools: &[AiAssistant],
+        project_filter: &ProjectFilter,
+        query: &str,
+    ) -> Vec<Session> {
         let query = query.trim();
         let sessions = if query.is_empty() {
-            load_sessions(db_path, tools)
+            load_sessions_for_filter(db_path, tools, project_filter)
         } else {
-            search_sessions(db_path, tools, query)
+            search_sessions_for_filter(db_path, tools, project_filter, query)
         };
 
         match sessions {
@@ -316,7 +329,12 @@ impl SessionList {
     }
 
     fn reload_sessions(&mut self) {
-        let fetched = Self::fetch_sessions(&self.db_path, &self.active_tools, &self.search_query);
+        let fetched = Self::fetch_sessions(
+            &self.db_path,
+            &self.active_tools,
+            &self.project_filter,
+            &self.search_query,
+        );
         let mut guard = self.sessions.guard();
         guard.clear();
         for session in fetched {
@@ -330,17 +348,168 @@ impl SessionList {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::database::schema::initialize_database;
+    use crate::models::ProjectFilter;
     use gtk::glib::prelude::ObjectExt;
     use relm4::Component;
     use relm4::ComponentController;
-    use std::{cell::RefCell, rc::Rc, time::Duration};
+    use rusqlite::Connection;
+    use std::{
+        cell::RefCell,
+        path::PathBuf,
+        rc::Rc,
+        time::{Duration, SystemTime, UNIX_EPOCH},
+    };
+
+    struct TempDatabase {
+        path: PathBuf,
+        connection: Connection,
+    }
+
+    impl TempDatabase {
+        fn new() -> Self {
+            let mut path = std::env::temp_dir();
+            let nanos = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos();
+            path.push(format!(
+                "sessions-chronicle-session-list-test-{}-{}.db",
+                std::process::id(),
+                nanos
+            ));
+
+            let connection = Connection::open(&path).expect("Failed to open temp database");
+            initialize_database(&connection).expect("Failed to initialize database");
+
+            Self { path, connection }
+        }
+
+        fn seed_project_sidebar_fixture(&self) {
+            self.connection
+                .execute(
+                    "INSERT INTO projects (id, path, name) VALUES (?1, ?2, ?3)",
+                    rusqlite::params![1_i64, "/projects/alpha", "alpha"],
+                )
+                .expect("Failed to insert project alpha");
+
+            self.connection
+                .execute(
+                    "INSERT INTO projects (id, path, name) VALUES (?1, ?2, ?3)",
+                    rusqlite::params![2_i64, "/projects/beta", "beta"],
+                )
+                .expect("Failed to insert project beta");
+
+            self.connection
+                .execute(
+                    "INSERT INTO sessions (id, tool, project_path, project_id, start_time, message_count, file_path, last_updated)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                    rusqlite::params![
+                        "alpha-claude-old",
+                        "claude_code",
+                        Some("/projects/alpha"),
+                        Some(1_i64),
+                        10_i64,
+                        2_i64,
+                        "/tmp/alpha-claude-old.jsonl",
+                        100_i64,
+                    ],
+                )
+                .expect("Failed to insert alpha old claude session");
+
+            self.connection
+                .execute(
+                    "INSERT INTO sessions (id, tool, project_path, project_id, start_time, message_count, file_path, last_updated)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                    rusqlite::params![
+                        "alpha-claude-new",
+                        "claude_code",
+                        Some("/projects/alpha"),
+                        Some(1_i64),
+                        20_i64,
+                        3_i64,
+                        "/tmp/alpha-claude-new.jsonl",
+                        200_i64,
+                    ],
+                )
+                .expect("Failed to insert alpha new claude session");
+
+            self.connection
+                .execute(
+                    "INSERT INTO sessions (id, tool, project_path, project_id, start_time, message_count, file_path, last_updated)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                    rusqlite::params![
+                        "alpha-opencode",
+                        "opencode",
+                        Some("/projects/alpha"),
+                        Some(1_i64),
+                        30_i64,
+                        2_i64,
+                        "/tmp/alpha-opencode.jsonl",
+                        300_i64,
+                    ],
+                )
+                .expect("Failed to insert alpha opencode session");
+
+            self.connection
+                .execute(
+                    "INSERT INTO sessions (id, tool, project_path, project_id, start_time, message_count, file_path, last_updated)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                    rusqlite::params![
+                        "unassigned-claude",
+                        "claude_code",
+                        Option::<String>::None,
+                        Option::<i64>::None,
+                        40_i64,
+                        1_i64,
+                        "/tmp/unassigned-claude.jsonl",
+                        400_i64,
+                    ],
+                )
+                .expect("Failed to insert unassigned claude session");
+
+            self.connection
+                .execute(
+                    "INSERT INTO sessions (id, tool, project_path, project_id, start_time, message_count, file_path, last_updated)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                    rusqlite::params![
+                        "beta-claude",
+                        "claude_code",
+                        Some("/projects/beta"),
+                        Some(2_i64),
+                        50_i64,
+                        1_i64,
+                        "/tmp/beta-claude.jsonl",
+                        500_i64,
+                    ],
+                )
+                .expect("Failed to insert beta claude session");
+        }
+    }
+
+    impl Drop for TempDatabase {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_file(&self.path);
+        }
+    }
 
     #[test]
     fn empty_state_prefers_indexing_placeholder_when_loading_and_empty() {
-        let state = compute_empty_state(true, "", true, true);
+        let state = compute_empty_state(true, "", true, true, false);
 
         assert_eq!(state.title, "Indexing sessions...");
         assert_eq!(state.description, "This may take a moment on first launch.");
+    }
+
+    #[test]
+    fn project_sidebar_empty_state_treats_project_selection_as_active_filter() {
+        let state = compute_empty_state(true, "", true, false, true);
+
+        assert_eq!(state.title, "No sessions match filters");
+        assert_eq!(
+            state.description,
+            "Try adjusting the tool filters in the sidebar"
+        );
     }
 
     fn find_list_box(widget: &gtk::Widget) -> Option<gtk::ListBox> {
@@ -497,6 +666,34 @@ mod tests {
             list_box.selected_row().is_some(),
             "first row should be selected"
         );
+    }
+
+    #[gtk::test]
+    fn project_sidebar_session_list_set_filters_reloads_project_intersection() {
+        let temp_db = TempDatabase::new();
+        temp_db.seed_project_sidebar_fixture();
+
+        let controller = SessionList::builder().launch(temp_db.path.clone());
+
+        controller.emit(SessionListMsg::SetFilters {
+            tools: vec![AiAssistant::ClaudeCode],
+            project_filter: ProjectFilter::Project(1),
+        });
+
+        pump_main_context(|| {
+            let parts = controller.state().get();
+            parts.model.sessions.len() == 2
+        });
+
+        let ids: Vec<String> = {
+            let parts = controller.state().get();
+            (0..parts.model.sessions.len())
+                .filter_map(|index| parts.model.sessions.get(index))
+                .map(|row| row.session_id().to_string())
+                .collect()
+        };
+
+        assert_eq!(ids, vec!["alpha-claude-new", "alpha-claude-old"]);
     }
 
     #[gtk::test]

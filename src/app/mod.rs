@@ -6,18 +6,27 @@ use relm4::{
 };
 
 use adw::prelude::*;
+use anyhow::Context;
 use gtk::prelude::{
     ActionableExt, ApplicationExt, BoxExt, ButtonExt, Cast, EditableExt, GtkApplicationExt,
     GtkWindowExt, ObjectExt, OrientableExt, SettingsExt, ToggleButtonExt, WidgetExt,
 };
 use gtk::{gdk, gio, glib};
-use std::{cell::Cell, fs, path::PathBuf, sync::Arc};
+use std::{
+    cell::Cell,
+    fs,
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 
 use crate::analytics_worker::{AnalyticsWorker, AnalyticsWorkerOutput};
 use crate::config::{APP_ID, PROFILE};
-use crate::database::SessionIndexer;
+use crate::database::{
+    SessionIndexer, count_all_sessions, count_unassigned_sessions, has_unassigned_sessions,
+    load_projects,
+};
 use crate::indexing_worker::{IndexingWorker, IndexingWorkerInput, IndexingWorkerOutput};
-use crate::models::session::AiAssistant;
+use crate::models::{ProjectFilter, ProjectInfo, session::AiAssistant};
 use crate::session_sources::{SessionSources, select_db_filename};
 use crate::ui::modals::{
     about::AboutDialog,
@@ -30,7 +39,7 @@ use crate::ui::{
     analytics_view::{AnalyticsView, AnalyticsViewOutput},
     session_detail::{SessionDetail, SessionDetailOutput},
     session_list::{SessionList, SessionListMsg, SessionListOutput},
-    sidebar::{Sidebar, SidebarOutput},
+    sidebar::{Sidebar, SidebarMsg, SidebarOutput},
     tool_inspector_pane::{ToolInspectorPane, ToolInspectorPaneMsg, ToolInspectorPaneOutput},
 };
 use crate::utils::terminal;
@@ -47,15 +56,42 @@ use helpers::{
     parent_session_load_failure_messages, resolve_escape_action, resolve_search_mode_change,
     search_query_update_messages, transition_to_detail, workspace_header_visibility,
 };
-use helpers::{transition_to_list, workspace_allows_search};
+use helpers::{retained_project_filter, transition_to_list, workspace_allows_search};
 #[cfg(test)]
 use types::EscapeResolution;
 #[cfg(test)]
 use types::ReindexAction;
-use types::{ActiveSessionRef, UtilityPaneMode, Workspace};
+use types::{ActiveSessionRef, FilterState, UtilityPaneMode, Workspace};
 
 /// Timeout in seconds for resume failure toast notifications
 const RESUME_FAILURE_TOAST_TIMEOUT_SECS: u32 = 4;
+
+struct SidebarProjectData {
+    projects: Vec<ProjectInfo>,
+    all_sessions_count: usize,
+    unassigned_count: usize,
+    show_unassigned: bool,
+}
+
+fn load_sidebar_project_data(
+    db_path: &Path,
+    tools: &[AiAssistant],
+) -> anyhow::Result<SidebarProjectData> {
+    let projects = load_projects(db_path, tools).context("load projects for sidebar")?;
+    let all_sessions_count =
+        count_all_sessions(db_path, tools).context("count all sessions for sidebar")?;
+    let unassigned_count = count_unassigned_sessions(db_path, tools)
+        .context("count unassigned sessions for sidebar")?;
+    let show_unassigned =
+        has_unassigned_sessions(db_path).context("determine unassigned sidebar visibility")?;
+
+    Ok(SidebarProjectData {
+        projects,
+        all_sessions_count,
+        unassigned_count,
+        show_unassigned,
+    })
+}
 
 pub(super) struct App {
     search_visible: bool,
@@ -92,6 +128,7 @@ pub(super) struct App {
     suppress_next_detail_pop_sync: bool,
     pane_stack: gtk::Stack,
     toast_overlay: adw::ToastOverlay,
+    filter_state: FilterState,
     db_path: PathBuf,
     sources: SessionSources,
     indexing: bool,
@@ -107,7 +144,10 @@ pub(super) enum AppMsg {
     PaneVisibilityChanged(bool),
     SearchQueryChanged(String),
     WorkspaceChanged(Workspace),
-    FiltersChanged(Vec<AiAssistant>),
+    FiltersChanged {
+        tools: Vec<AiAssistant>,
+        project_filter: ProjectFilter,
+    },
     SessionSelected(String),
     /// User-requested navigation back from detail to list.
     RequestNavigateBack,
@@ -276,6 +316,12 @@ impl SimpleComponent for App {
                             set_vexpand: true,
                             #[watch]
                             set_show_sidebar: model.pane_open,
+                            #[watch]
+                            set_sidebar_position: model.pane_mode.sidebar_position(),
+                            #[watch]
+                            set_min_sidebar_width: model.pane_mode.sidebar_min_width(),
+                            #[watch]
+                            set_sidebar_width_fraction: model.pane_mode.sidebar_width_fraction(),
                             set_enable_show_gesture: true,
                             set_enable_hide_gesture: true,
                         },
@@ -338,7 +384,13 @@ impl SimpleComponent for App {
         let sidebar = Sidebar::builder()
             .launch(())
             .forward(sender.input_sender(), |output| match output {
-                SidebarOutput::FiltersChanged(tools) => AppMsg::FiltersChanged(tools),
+                SidebarOutput::FiltersChanged {
+                    tools,
+                    project_filter,
+                } => AppMsg::FiltersChanged {
+                    tools,
+                    project_filter,
+                },
             });
         let tool_inspector_pane = ToolInspectorPane::builder()
             .launch(Arc::new(db_path.clone()))
@@ -436,6 +488,7 @@ impl SimpleComponent for App {
             suppress_next_detail_pop_sync: false,
             pane_stack,
             toast_overlay: adw::ToastOverlay::new(),
+            filter_state: FilterState::default(),
             db_path,
             sources,
             indexing: true,
@@ -704,6 +757,10 @@ impl SimpleComponent for App {
 
         widgets.load_window_size();
 
+        if model.refresh_sidebar_projects() {
+            model.emit_session_list_filters();
+        }
+
         model.session_list.emit(SessionListMsg::SetIndexing(true));
         model
             .indexing_worker
@@ -720,8 +777,14 @@ impl SimpleComponent for App {
             AppMsg::PaneVisibilityChanged(visible) => self.handle_pane_visibility_changed(visible),
             AppMsg::SearchQueryChanged(query) => self.handle_search_query_changed(query),
             AppMsg::WorkspaceChanged(workspace) => self.handle_workspace_changed(workspace),
-            AppMsg::FiltersChanged(tools) => {
-                self.session_list.emit(SessionListMsg::SetTools(tools));
+            AppMsg::FiltersChanged {
+                tools,
+                project_filter,
+            } => {
+                self.filter_state.tools = tools;
+                self.filter_state.project_filter = project_filter;
+                self.refresh_sidebar_projects();
+                self.emit_session_list_filters();
             }
             AppMsg::SessionSelected(id) => self.handle_session_selected(id),
             AppMsg::RequestNavigateBack => self.handle_request_navigate_back(),
@@ -761,17 +824,6 @@ impl SimpleComponent for App {
         {
             widgets.search_bar.set_search_mode(self.search_visible);
         }
-
-        // Apply sidebar position and width based on current pane mode
-        widgets
-            .overlay_split
-            .set_sidebar_position(self.pane_mode.sidebar_position());
-        widgets
-            .overlay_split
-            .set_min_sidebar_width(self.pane_mode.sidebar_min_width());
-        widgets
-            .overlay_split
-            .set_sidebar_width_fraction(self.pane_mode.sidebar_width_fraction());
     }
 
     fn shutdown(&mut self, widgets: &mut Self::Widgets, _output: relm4::Sender<Self::Output>) {
@@ -829,6 +881,44 @@ impl App {
         }
 
         self.toast_overlay.add_toast(toast);
+    }
+
+    fn emit_session_list_filters(&self) {
+        self.session_list.emit(SessionListMsg::SetFilters {
+            tools: self.filter_state.tools.clone(),
+            project_filter: self.filter_state.project_filter.clone(),
+        });
+    }
+
+    fn refresh_sidebar_projects(&mut self) -> bool {
+        let tools = self.filter_state.tools.clone();
+        let sidebar_data = match load_sidebar_project_data(&self.db_path, &tools) {
+            Ok(data) => data,
+            Err(err) => {
+                tracing::warn!("Failed to load sidebar project data: {err:#}");
+                return false;
+            }
+        };
+
+        let selected_filter = retained_project_filter(
+            &self.filter_state.project_filter,
+            &sidebar_data.projects,
+            sidebar_data.show_unassigned,
+        );
+        let filter_changed = selected_filter != self.filter_state.project_filter;
+        if filter_changed {
+            self.filter_state.project_filter = selected_filter.clone();
+        }
+
+        self.sidebar.emit(SidebarMsg::ProjectsLoaded {
+            projects: sidebar_data.projects,
+            all_sessions_count: sidebar_data.all_sessions_count,
+            unassigned_count: sidebar_data.unassigned_count,
+            show_unassigned: sidebar_data.show_unassigned,
+            selected_filter,
+        });
+
+        filter_changed
     }
 }
 
@@ -1161,5 +1251,17 @@ mod tests {
         let visible = analytics_indexing_completion_outcome(Workspace::Analytics);
         assert!(visible.mark_stale);
         assert!(visible.refresh_immediately);
+    }
+
+    #[test]
+    fn project_sidebar_refresh_data_returns_error_for_directory_path() {
+        let db_path = std::env::temp_dir();
+
+        let result = load_sidebar_project_data(&db_path, AiAssistant::ALL);
+
+        assert!(
+            result.is_err(),
+            "expected loading sidebar project data to fail for a directory path"
+        );
     }
 }

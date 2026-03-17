@@ -38,7 +38,8 @@ impl App {
         );
         self.indexing = false;
         self.session_list.emit(SessionListMsg::SetIndexing(false));
-        self.session_list.emit(SessionListMsg::Reload);
+        self.refresh_sidebar_projects();
+        self.emit_session_list_filters();
 
         let analytics_outcome = analytics_indexing_completion_outcome(self.active_workspace);
         if analytics_outcome.mark_stale {
