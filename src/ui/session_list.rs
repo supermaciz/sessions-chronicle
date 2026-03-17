@@ -21,6 +21,7 @@ pub struct SessionList {
 #[derive(Debug)]
 pub enum SessionListMsg {
     SetTools(Vec<AiAssistant>),
+    #[allow(dead_code)]
     SetFilters {
         tools: Vec<AiAssistant>,
         project_filter: ProjectFilter,
@@ -192,8 +193,8 @@ impl SimpleComponent for SessionList {
     fn update(&mut self, message: Self::Input, sender: ComponentSender<Self>) {
         match message {
             SessionListMsg::SetTools(tools) => {
-                self.active_tools = tools.clone();
                 self.all_tools_selected = tools.len() == AiAssistant::ALL.len();
+                self.active_tools = tools;
                 self.reload_sessions();
             }
             SessionListMsg::SetFilters {
