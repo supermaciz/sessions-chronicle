@@ -312,6 +312,21 @@
   background-color: alpha(@accent_bg_color, 0.2);
 }
 
+/* Blend project list rows into sidebar background. */
+.project-sidebar-list {
+  background-color: transparent;
+}
+
+.project-sidebar-list > row:not(:selected):not(:hover):not(:focus-within) {
+  background-color: transparent;
+}
+
+.project-sidebar-list > row:not(:selected):not(:hover):not(:focus-within) > .activatable {
+  background-color: transparent;
+  border-radius: 0;
+  box-shadow: none;
+}
+
 .unassigned-label {
   font-style: italic;
   opacity: 0.85;

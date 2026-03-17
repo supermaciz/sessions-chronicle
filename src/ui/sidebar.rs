@@ -124,7 +124,7 @@ impl SimpleComponent for Sidebar {
 
                 #[name = "projects_list"]
                 gtk::ListBox {
-                    add_css_class: "boxed-list",
+                    add_css_class: "project-sidebar-list",
                     set_selection_mode: gtk::SelectionMode::Single,
                     connect_row_selected[sender] => move |_, row| {
                         if let Some(row) = row {
@@ -427,5 +427,16 @@ mod tests {
             outputs.borrow().is_empty(),
             "project row rebuild should not emit synthetic filters output"
         );
+    }
+
+    #[gtk::test]
+    fn project_sidebar_list_uses_dedicated_css_class() {
+        let controller = Sidebar::builder().launch(());
+
+        let parts = controller.state().get();
+        let projects_list = &parts.widgets.projects_list;
+
+        assert!(projects_list.has_css_class("project-sidebar-list"));
+        assert!(!projects_list.has_css_class("boxed-list"));
     }
 }
