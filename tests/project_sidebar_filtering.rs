@@ -135,6 +135,20 @@ fn load_projects_orders_by_activity_and_keeps_zero_count_rows() {
     let db = TempDatabase::new();
     db.seed();
 
+    db.connection
+        .execute(
+            "INSERT INTO projects (id, path, name) VALUES (?1, ?2, ?3)",
+            rusqlite::params![4_i64, "/projects/Delta", "Delta"],
+        )
+        .expect("Failed to insert project Delta");
+
+    db.connection
+        .execute(
+            "INSERT INTO projects (id, path, name) VALUES (?1, ?2, ?3)",
+            rusqlite::params![5_i64, "/projects/aardvark", "aardvark"],
+        )
+        .expect("Failed to insert project aardvark");
+
     let projects =
         load_projects(&db.path, &[AiAssistant::ClaudeCode]).expect("Load projects failed");
     let names: Vec<&str> = projects
@@ -146,8 +160,40 @@ fn load_projects_orders_by_activity_and_keeps_zero_count_rows() {
         .map(|project| project.session_count)
         .collect();
 
-    assert_eq!(names, vec!["alpha", "beta", "gamma"]);
-    assert_eq!(counts, vec![2, 0, 0]);
+    assert_eq!(names, vec!["alpha", "aardvark", "beta", "Delta", "gamma"]);
+    assert_eq!(counts, vec![2, 0, 0, 0, 0]);
+
+    let all_projects = load_projects(&db.path, AiAssistant::ALL).expect("Load all projects failed");
+    let all_names: Vec<&str> = all_projects
+        .iter()
+        .map(|project| project.name.as_str())
+        .collect();
+    let all_counts: Vec<usize> = all_projects
+        .iter()
+        .map(|project| project.session_count)
+        .collect();
+
+    assert_eq!(
+        all_names,
+        vec!["beta", "alpha", "aardvark", "Delta", "gamma"]
+    );
+    assert_eq!(all_counts, vec![1, 2, 0, 0, 0]);
+
+    let empty_projects = load_projects(&db.path, &[]).expect("Load empty tool projects failed");
+    let empty_names: Vec<&str> = empty_projects
+        .iter()
+        .map(|project| project.name.as_str())
+        .collect();
+    let empty_counts: Vec<usize> = empty_projects
+        .iter()
+        .map(|project| project.session_count)
+        .collect();
+
+    assert_eq!(
+        empty_names,
+        vec!["aardvark", "alpha", "beta", "Delta", "gamma"]
+    );
+    assert_eq!(empty_counts, vec![0, 0, 0, 0, 0]);
 }
 
 #[test]
@@ -159,9 +205,25 @@ fn project_sidebar_counts_include_unassigned_visibility_flag() {
         .expect("Count all sessions failed");
     assert_eq!(all_count, 3);
 
+    let all_tools_count = count_all_sessions(&db.path, AiAssistant::ALL)
+        .expect("Count all sessions with all tools failed");
+    assert_eq!(all_tools_count, 4);
+
+    let no_tools_count =
+        count_all_sessions(&db.path, &[]).expect("Count all sessions with empty tools failed");
+    assert_eq!(no_tools_count, 0);
+
     let unassigned_count = count_unassigned_sessions(&db.path, &[AiAssistant::ClaudeCode])
         .expect("Count unassigned sessions failed");
     assert_eq!(unassigned_count, 1);
+
+    let all_tools_unassigned = count_unassigned_sessions(&db.path, AiAssistant::ALL)
+        .expect("Count unassigned sessions with all tools failed");
+    assert_eq!(all_tools_unassigned, 1);
+
+    let no_tools_unassigned = count_unassigned_sessions(&db.path, &[])
+        .expect("Count unassigned sessions with empty tools failed");
+    assert_eq!(no_tools_unassigned, 0);
 
     let has_unassigned = has_unassigned_sessions(&db.path).expect("Has unassigned check failed");
     assert!(has_unassigned);

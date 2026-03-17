@@ -305,7 +305,7 @@ pub fn load_projects(db_path: &Path, tools: &[AiAssistant]) -> Result<Vec<Projec
         (
             "SELECT p.id, p.name, p.path, 0 AS session_count
              FROM projects p
-             ORDER BY p.name ASC"
+             ORDER BY p.name COLLATE NOCASE ASC"
                 .to_string(),
             vec![],
         )
@@ -318,7 +318,7 @@ pub fn load_projects(db_path: &Path, tools: &[AiAssistant]) -> Result<Vec<Projec
              GROUP BY p.id, p.name, p.path
              ORDER BY CASE WHEN COUNT(s.id) > 0 THEN 0 ELSE 1 END,
                       project_last_updated DESC,
-                      p.name ASC"
+                       p.name COLLATE NOCASE ASC"
                 .to_string(),
             vec![],
         )
@@ -335,7 +335,7 @@ pub fn load_projects(db_path: &Path, tools: &[AiAssistant]) -> Result<Vec<Projec
                  GROUP BY p.id, p.name, p.path
                  ORDER BY CASE WHEN COUNT(s.id) > 0 THEN 0 ELSE 1 END,
                           project_last_updated DESC,
-                          p.name ASC",
+                           p.name COLLATE NOCASE ASC",
                 placeholders.join(",")
             ),
             tool_strings,
