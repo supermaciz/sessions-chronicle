@@ -6,12 +6,18 @@ use relm4::{
 };
 
 use adw::prelude::*;
+use anyhow::Context;
 use gtk::prelude::{
     ActionableExt, ApplicationExt, BoxExt, ButtonExt, Cast, EditableExt, GtkApplicationExt,
     GtkWindowExt, ObjectExt, OrientableExt, SettingsExt, ToggleButtonExt, WidgetExt,
 };
 use gtk::{gdk, gio, glib};
-use std::{cell::Cell, fs, path::PathBuf, sync::Arc};
+use std::{
+    cell::Cell,
+    fs,
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 
 use crate::analytics_worker::{AnalyticsWorker, AnalyticsWorkerOutput};
 use crate::config::{APP_ID, PROFILE};
@@ -20,7 +26,7 @@ use crate::database::{
     load_projects,
 };
 use crate::indexing_worker::{IndexingWorker, IndexingWorkerInput, IndexingWorkerOutput};
-use crate::models::{ProjectFilter, session::AiAssistant};
+use crate::models::{ProjectFilter, ProjectInfo, session::AiAssistant};
 use crate::session_sources::{SessionSources, select_db_filename};
 use crate::ui::modals::{
     about::AboutDialog,
@@ -59,6 +65,33 @@ use types::{ActiveSessionRef, FilterState, UtilityPaneMode, Workspace};
 
 /// Timeout in seconds for resume failure toast notifications
 const RESUME_FAILURE_TOAST_TIMEOUT_SECS: u32 = 4;
+
+struct SidebarProjectData {
+    projects: Vec<ProjectInfo>,
+    all_sessions_count: usize,
+    unassigned_count: usize,
+    show_unassigned: bool,
+}
+
+fn load_sidebar_project_data(
+    db_path: &Path,
+    tools: &[AiAssistant],
+) -> anyhow::Result<SidebarProjectData> {
+    let projects = load_projects(db_path, tools).context("load projects for sidebar")?;
+    let all_sessions_count =
+        count_all_sessions(db_path, tools).context("count all sessions for sidebar")?;
+    let unassigned_count = count_unassigned_sessions(db_path, tools)
+        .context("count unassigned sessions for sidebar")?;
+    let show_unassigned =
+        has_unassigned_sessions(db_path).context("determine unassigned sidebar visibility")?;
+
+    Ok(SidebarProjectData {
+        projects,
+        all_sessions_count,
+        unassigned_count,
+        show_unassigned,
+    })
+}
 
 pub(super) struct App {
     search_visible: bool,
@@ -864,42 +897,18 @@ impl App {
 
     fn refresh_sidebar_projects(&mut self) -> bool {
         let tools = self.filter_state.tools.clone();
-        let projects = match load_projects(&self.db_path, &tools) {
-            Ok(projects) => projects,
+        let sidebar_data = match load_sidebar_project_data(&self.db_path, &tools) {
+            Ok(data) => data,
             Err(err) => {
-                tracing::warn!("Failed to load projects for sidebar: {}", err);
-                Vec::new()
-            }
-        };
-
-        let all_sessions_count = match count_all_sessions(&self.db_path, &tools) {
-            Ok(count) => count,
-            Err(err) => {
-                tracing::warn!("Failed to count all sessions for sidebar: {}", err);
-                0
-            }
-        };
-
-        let unassigned_count = match count_unassigned_sessions(&self.db_path, &tools) {
-            Ok(count) => count,
-            Err(err) => {
-                tracing::warn!("Failed to count unassigned sessions for sidebar: {}", err);
-                0
-            }
-        };
-
-        let show_unassigned = match has_unassigned_sessions(&self.db_path) {
-            Ok(value) => value,
-            Err(err) => {
-                tracing::warn!("Failed to determine unassigned sidebar visibility: {}", err);
-                false
+                tracing::warn!("Failed to load sidebar project data: {err:#}");
+                return false;
             }
         };
 
         let selected_filter = retained_project_filter(
             &self.filter_state.project_filter,
-            &projects,
-            show_unassigned,
+            &sidebar_data.projects,
+            sidebar_data.show_unassigned,
         );
         let filter_changed = selected_filter != self.filter_state.project_filter;
         if filter_changed {
@@ -907,10 +916,10 @@ impl App {
         }
 
         self.sidebar.emit(SidebarMsg::ProjectsLoaded {
-            projects,
-            all_sessions_count,
-            unassigned_count,
-            show_unassigned,
+            projects: sidebar_data.projects,
+            all_sessions_count: sidebar_data.all_sessions_count,
+            unassigned_count: sidebar_data.unassigned_count,
+            show_unassigned: sidebar_data.show_unassigned,
             selected_filter,
         });
 
@@ -1247,5 +1256,17 @@ mod tests {
         let visible = analytics_indexing_completion_outcome(Workspace::Analytics);
         assert!(visible.mark_stale);
         assert!(visible.refresh_immediately);
+    }
+
+    #[test]
+    fn project_sidebar_refresh_data_returns_error_for_directory_path() {
+        let db_path = std::env::temp_dir();
+
+        let result = load_sidebar_project_data(&db_path, AiAssistant::ALL);
+
+        assert!(
+            result.is_err(),
+            "expected loading sidebar project data to fail for a directory path"
+        );
     }
 }
