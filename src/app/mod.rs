@@ -316,6 +316,12 @@ impl SimpleComponent for App {
                             set_vexpand: true,
                             #[watch]
                             set_show_sidebar: model.pane_open,
+                            #[watch]
+                            set_sidebar_position: model.pane_mode.sidebar_position(),
+                            #[watch]
+                            set_min_sidebar_width: model.pane_mode.sidebar_min_width(),
+                            #[watch]
+                            set_sidebar_width_fraction: model.pane_mode.sidebar_width_fraction(),
                             set_enable_show_gesture: true,
                             set_enable_hide_gesture: true,
                         },
@@ -818,17 +824,6 @@ impl SimpleComponent for App {
         {
             widgets.search_bar.set_search_mode(self.search_visible);
         }
-
-        // Apply sidebar position and width based on current pane mode
-        widgets
-            .overlay_split
-            .set_sidebar_position(self.pane_mode.sidebar_position());
-        widgets
-            .overlay_split
-            .set_min_sidebar_width(self.pane_mode.sidebar_min_width());
-        widgets
-            .overlay_split
-            .set_sidebar_width_fraction(self.pane_mode.sidebar_width_fraction());
     }
 
     fn shutdown(&mut self, widgets: &mut Self::Widgets, _output: relm4::Sender<Self::Output>) {
