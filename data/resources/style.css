@@ -1,4 +1,4 @@
-.title-header{
+.title-header {
   font-size: 36px;
   font-weight: bold;
 }
@@ -106,13 +106,13 @@
 
 /* Expand/collapse toggle for truncated messages */
 .message-row .expand-toggle {
-    padding: 2px 8px;
-    min-height: 0;
-    font-size: 0.85em;
+  padding: 2px 8px;
+  min-height: 0;
+  font-size: 0.85em;
 }
 
 .message-row .expand-toggle:disabled {
-    opacity: 0.7;
+  opacity: 0.7;
 }
 
 /* Inline transcript rows for tool calls and subagents */
@@ -304,9 +304,10 @@
 
 .project-badge {
   min-width: 1.8em;
-  padding: 1px 8px;
+  min-height: 0;
+  padding: 0 6px;
   border-radius: 999px;
-  font-size: 0.82em;
+  font-size: 0.8em;
   font-weight: 600;
   font-variant-numeric: tabular-nums;
   background-color: alpha(@accent_bg_color, 0.2);
@@ -321,7 +322,9 @@
   background-color: transparent;
 }
 
-.project-sidebar-list > row:not(:selected):not(:hover):not(:focus-within) > .activatable {
+.project-sidebar-list
+  > row:not(:selected):not(:hover):not(:focus-within)
+  > .activatable {
   background-color: transparent;
   border-radius: 0;
   box-shadow: none;

@@ -266,6 +266,8 @@ impl Sidebar {
 
         let badge = gtk::Label::new(Some(&badge_count.to_string()));
         badge.add_css_class("project-badge");
+        badge.set_valign(gtk::Align::Center);
+        badge.set_height_request(29);
         action_row.add_suffix(&badge);
 
         let row = gtk::ListBoxRow::new();
