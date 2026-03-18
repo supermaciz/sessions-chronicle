@@ -1,6 +1,6 @@
 # Sessions Chronicle - Project Status
 
-Last updated: 2026-03-13  
+Last updated: 2026-03-18
 Branch snapshot: `main` (`v0.3.3` lineage)
 
 ## Current Product State
@@ -8,6 +8,7 @@ Branch snapshot: `main` (`v0.3.3` lineage)
 Sessions Chronicle is a GNOME desktop app that indexes local AI coding assistant sessions and provides:
 
 - Cross-assistant session browsing and filtering (Claude Code, OpenCode, Codex, Mistral Vibe)
+- Project sidebar filtering with cross-filtered session queries
 - Full-text search via SQLite FTS5 with in-transcript highlighting
 - Session detail views with markdown rendering, inline tool calls, and subagent inspection
 - Resume-in-terminal flows from list and detail views
@@ -23,12 +24,14 @@ Sessions Chronicle is a GNOME desktop app that indexes local AI coding assistant
 
 ## Recently Landed Work
 
+- Project detection and indexing: git-root resolution, `projects` table, and `project_id` FK on sessions (schema `user_version = 6`)
+- Project sidebar filtering with cross-filtered session queries; sidebar shows project list alongside AI assistant filters (#81)
+- App init extracted into `src/app/init.rs`; `analytics_worker.rs` and `project_resolver.rs` added as dedicated modules
 - App update logic refactored into modular handlers under `src/app/handlers/`
 - Background indexing worker (`src/indexing_worker.rs`) used for incremental and full reindex runs
 - Schema migration to `user_version = 5` with fingerprint-based incremental indexing support and a one-time fingerprint reset
 - OpenCode indexing stability improvements (including WAL-aware reindex behavior)
 - Analytics workspace with overview cards, activity heatmap, session span buckets, and token usage breakdowns
-- Documentation and skills updates for planning/review workflows
 
 ## Technical Architecture
 
@@ -46,17 +49,24 @@ Sessions Chronicle is a GNOME desktop app that indexes local AI coding assistant
 sessions-chronicle/
 |- src/
 |  |- main.rs                    # startup, args, Relm4 app launch
+|  |- lib.rs                     # crate root (re-exports for tests)
+|  |- config.rs / config.rs.in   # build-time config constants
 |  |- app/                       # top-level app component + update handlers
 |  |  |- mod.rs
+|  |  |- init.rs                 # app initialization logic
 |  |  |- handlers/
 |  |  |- helpers.rs
 |  |  `- types.rs
 |  |- indexing_worker.rs         # background indexing worker
+|  |- analytics_worker.rs        # background analytics computation worker
+|  |- project_resolver.rs        # git-root and worktree-aware project detection
 |  |- session_sources.rs         # source path resolution + --sessions-dir behavior
-|  |- database/                  # schema, search, indexing logic
+|  |- database/                  # schema, search, indexing, analytics queries
 |  |- parsers/                   # per-assistant parsers
 |  |- models/                    # sessions/messages/tool calls/subagents/token usage
-|  |- ui/                        # list/detail/sidebar/inspector components
+|  |- ui/                        # list/detail/sidebar/inspector/analytics components
+|  |  |- tool_renderers/         # per-tool-call type renderers
+|  |  `- modals/                 # dialogs (about, preferences, shortcuts)
 |  `- utils/terminal.rs          # terminal detection/spawn for resume
 |- data/resources/               # UI templates and CSS
 |- tests/                        # integration and behavior tests
@@ -65,7 +75,7 @@ sessions-chronicle/
 
 ## Database Snapshot
 
-Current migration level is `PRAGMA user_version = 5`.
+Current migration level is `PRAGMA user_version = 6`.
 
 ### Core Tables
 
@@ -73,6 +83,9 @@ Current migration level is `PRAGMA user_version = 5`.
   - identity and metadata per session (`id`, `tool`, `project_path`, timestamps); here `tool` is the historical storage column name for the assistant
   - hierarchy fields (`parent_session_id`, `is_subagent`)
   - token usage aggregates (`input_tokens`, `output_tokens`, `cache_read_tokens`, `cache_write_tokens`, `reasoning_tokens`)
+  - `project_id` FK → `projects(id)` (added in v6)
+- `projects`
+  - canonical project records (`id`, `path`, `name`); path is the git root, name is the directory basename
 - `messages` (FTS5 virtual table)
   - searchable message content and unindexed metadata (`session_id`, `message_index`, `role`, `timestamp`, `model`)
 - `transcript_items`

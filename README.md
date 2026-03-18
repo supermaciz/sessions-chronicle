@@ -14,7 +14,7 @@ so you can find any conversation, inspect tool calls, and pick up where you left
 ## Features
 
 - **Find any session instantly** — full-text search across all conversations (SQLite FTS5)
-- **Browse & filter** — sidebar filters by assistant, keyword search with highlighted matches
+- **Browse & filter** — sidebar filters by project and assistant, keyword search with highlighted matches
 - **Read conversations comfortably** — rich markdown rendering (code blocks, tables, task lists, blockquotes)
 - **Inspect tool calls** — expand inline tool calls and drill down into subagents in the utility pane
 - **Track token usage** — see per-session token breakdowns in the detail view
