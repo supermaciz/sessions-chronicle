@@ -1,62 +1,58 @@
 use relm4::{
-    Component, ComponentController, ComponentParts, ComponentSender, Controller, SimpleComponent,
-    WorkerController,
-    actions::{AccelsPlus, RelmAction, RelmActionGroup},
-    adw, gtk, main_application,
+    ComponentController, ComponentParts, ComponentSender, Controller, SimpleComponent,
+    WorkerController, adw, gtk, main_application,
 };
 
 use adw::prelude::*;
 use anyhow::Context;
 use gtk::prelude::{
-    ActionableExt, ApplicationExt, BoxExt, ButtonExt, Cast, EditableExt, GtkApplicationExt,
-    GtkWindowExt, ObjectExt, OrientableExt, SettingsExt, ToggleButtonExt, WidgetExt,
+    ActionableExt, ApplicationExt, ButtonExt, Cast, EditableExt, GtkApplicationExt, GtkWindowExt,
+    OrientableExt, SettingsExt, ToggleButtonExt, WidgetExt,
 };
-use gtk::{gdk, gio, glib};
+use gtk::{gio, glib};
 use std::{
     cell::Cell,
     fs,
     path::{Path, PathBuf},
-    sync::Arc,
 };
 
-use crate::analytics_worker::{AnalyticsWorker, AnalyticsWorkerOutput};
+use crate::analytics_worker::AnalyticsWorker;
 use crate::config::{APP_ID, PROFILE};
 use crate::database::{
     SessionIndexer, count_all_sessions, count_unassigned_sessions, has_unassigned_sessions,
     load_projects,
 };
-use crate::indexing_worker::{IndexingWorker, IndexingWorkerInput, IndexingWorkerOutput};
+use crate::indexing_worker::{IndexingWorker, IndexingWorkerInput};
 use crate::models::{ProjectFilter, ProjectInfo, session::AiAssistant};
 use crate::session_sources::{SessionSources, select_db_filename};
-use crate::ui::modals::{
-    about::AboutDialog,
-    preferences::{PreferencesDialog, PreferencesOutput},
-    shortcuts::ShortcutsDialog,
-};
+use crate::ui::modals::preferences::PreferencesDialog;
 #[cfg(test)]
 use crate::ui::session_detail::SessionDetailMsg;
 use crate::ui::{
-    analytics_view::{AnalyticsView, AnalyticsViewOutput},
-    session_detail::{SessionDetail, SessionDetailOutput},
-    session_list::{SessionList, SessionListMsg, SessionListOutput},
-    sidebar::{Sidebar, SidebarMsg, SidebarOutput},
-    tool_inspector_pane::{ToolInspectorPane, ToolInspectorPaneMsg, ToolInspectorPaneOutput},
+    analytics_view::AnalyticsView,
+    session_detail::SessionDetail,
+    session_list::{SessionList, SessionListMsg},
+    sidebar::{Sidebar, SidebarMsg},
+    tool_inspector_pane::{ToolInspectorPane, ToolInspectorPaneMsg},
 };
 use crate::utils::terminal;
 
 mod handlers;
 mod helpers;
+mod init;
 mod types;
 
 #[cfg(test)]
 use helpers::decide_reindex_action;
+#[cfg(test)]
+use helpers::workspace_allows_search;
 #[cfg(test)]
 use helpers::{
     active_search_query, analytics_indexing_completion_outcome, detail_pop_sync_decision,
     parent_session_load_failure_messages, resolve_escape_action, resolve_search_mode_change,
     search_query_update_messages, transition_to_detail, workspace_header_visibility,
 };
-use helpers::{retained_project_filter, transition_to_list, workspace_allows_search};
+use helpers::{retained_project_filter, transition_to_list};
 #[cfg(test)]
 use types::EscapeResolution;
 #[cfg(test)]
@@ -341,6 +337,7 @@ impl SimpleComponent for App {
         root: Self::Root,
         sender: ComponentSender<Self>,
     ) -> ComponentParts<Self> {
+        // Resolve session sources and database path
         let sources = SessionSources::resolve(sessions_dir.as_deref());
         let db_dir = glib::user_data_dir().join(APP_ID);
         let db_path = db_dir.join(select_db_filename(sources.override_mode));
@@ -360,105 +357,16 @@ impl SimpleComponent for App {
         } else if let Err(err) = SessionIndexer::new(&db_path) {
             tracing::error!("Failed to initialize session indexer: {}", err);
         }
-        // Initialize child components
-        let session_list =
-            SessionList::builder()
-                .launch(db_path.clone())
-                .forward(sender.input_sender(), |msg| match msg {
-                    SessionListOutput::SessionSelected(id) => AppMsg::SessionSelected(id),
-                    SessionListOutput::ResumeRequested(id, tool) => AppMsg::ResumeSession(id, tool),
-                });
-        let analytics_view =
-            AnalyticsView::builder()
-                .launch(None)
-                .forward(sender.input_sender(), |output| match output {
-                    AnalyticsViewOutput::RefreshRequested => AppMsg::AnalyticsRefreshRequested,
-                });
-        let session_detail = SessionDetail::builder().launch(db_path.clone()).forward(
-            sender.input_sender(),
-            |msg| match msg {
-                SessionDetailOutput::InspectToolCall(id) => AppMsg::InspectToolCall(id),
-                SessionDetailOutput::InspectSubagent(id) => AppMsg::InspectSubagent(id),
-            },
+
+        // Build child components, navigation, and workspace stack
+        let components = init::init_child_components(&db_path, &sender);
+        let nav_setup = init::build_navigation(
+            components.session_list.widget(),
+            components.session_detail.widget(),
+            components.sidebar.widget(),
+            components.tool_inspector_pane.widget(),
+            &sender,
         );
-        let sidebar = Sidebar::builder()
-            .launch(())
-            .forward(sender.input_sender(), |output| match output {
-                SidebarOutput::FiltersChanged {
-                    tools,
-                    project_filter,
-                } => AppMsg::FiltersChanged {
-                    tools,
-                    project_filter,
-                },
-            });
-        let tool_inspector_pane = ToolInspectorPane::builder()
-            .launch(Arc::new(db_path.clone()))
-            .forward(sender.input_sender(), |output| match output {
-                ToolInspectorPaneOutput::OpenChildSession(id) => AppMsg::OpenChildSession(id),
-            });
-
-        // Create preferences dialog once, with forwarded outputs
-        let preferences_dialog = PreferencesDialog::builder().launch(()).forward(
-            sender.input_sender(),
-            |msg| match msg {
-                PreferencesOutput::ReindexRequested => AppMsg::ReindexRequested,
-            },
-        );
-
-        let indexing_worker = IndexingWorker::builder()
-            .detach_worker(db_path.clone())
-            .forward(sender.input_sender(), |output| match output {
-                IndexingWorkerOutput::Completed { indexed, skipped } => {
-                    AppMsg::IndexingCompleted { indexed, skipped }
-                }
-                IndexingWorkerOutput::Failed => AppMsg::IndexingFailed,
-            });
-
-        let analytics_worker = AnalyticsWorker::builder()
-            .detach_worker(db_path.clone())
-            .forward(sender.input_sender(), |output| match output {
-                AnalyticsWorkerOutput::Loaded(data) => AppMsg::AnalyticsLoaded(data),
-                AnalyticsWorkerOutput::Failed(error) => AppMsg::AnalyticsLoadFailed(error),
-            });
-
-        // Create NavigationView and pages before model
-        let nav_view = adw::NavigationView::new();
-        // Esc is routed via EscapeAction; disable native pop to avoid conflicts.
-        nav_view.set_pop_on_escape(false);
-
-        let session_list_page = adw::NavigationPage::builder()
-            .title("Sessions")
-            .tag("sessions")
-            .child(session_list.widget())
-            .build();
-        nav_view.add(&session_list_page);
-
-        // Register the detail page with the nav_view permanently (add without pushing).
-        // This keeps the page parented to nav_view across push/pop cycles so it can
-        // be safely re-pushed after the user navigates back.  Transient push()-only
-        // pages are unparented on pop(), causing a GTK assertion on the next push().
-        let detail_page = adw::NavigationPage::builder()
-            .title("Session")
-            .tag("detail")
-            .child(session_detail.widget())
-            .build();
-        nav_view.add(&detail_page);
-
-        // Sync state when detail page is popped natively (e.g. gestures).
-        let popped_sender = sender.input_sender().clone();
-        nav_view.connect_popped(move |_, page| {
-            if page.tag().as_deref() == Some("detail") {
-                popped_sender.send(AppMsg::NavigateBack).ok();
-            }
-        });
-
-        // Build the utility pane Stack (sidebar content switcher)
-        let pane_stack = gtk::Stack::new();
-        pane_stack.set_transition_type(gtk::StackTransitionType::None);
-        pane_stack.add_named(sidebar.widget(), Some("filters"));
-        pane_stack.add_named(tool_inspector_pane.widget(), Some("tool-inspector"));
-        pane_stack.set_visible_child_name("filters");
 
         let workspace_stack = adw::ViewStack::new();
         workspace_stack.set_vexpand(true);
@@ -474,19 +382,19 @@ impl SimpleComponent for App {
             active_session: None,
             parent_session: None,
             search_query: String::new(),
-            session_list,
-            analytics_view,
-            session_detail,
-            sidebar,
-            tool_inspector_pane,
-            preferences_dialog,
-            indexing_worker,
-            analytics_worker,
+            session_list: components.session_list,
+            analytics_view: components.analytics_view,
+            session_detail: components.session_detail,
+            sidebar: components.sidebar,
+            tool_inspector_pane: components.tool_inspector_pane,
+            preferences_dialog: components.preferences_dialog,
+            indexing_worker: components.indexing_worker,
+            analytics_worker: components.analytics_worker,
             workspace_stack: workspace_stack.clone(),
-            nav_view: nav_view.clone(),
-            detail_page: detail_page.clone(),
+            nav_view: nav_setup.nav_view.clone(),
+            detail_page: nav_setup.detail_page.clone(),
             suppress_next_detail_pop_sync: false,
-            pane_stack,
+            pane_stack: nav_setup.pane_stack,
             toast_overlay: adw::ToastOverlay::new(),
             filter_state: FilterState::default(),
             db_path,
@@ -496,6 +404,7 @@ impl SimpleComponent for App {
             active_workspace: Workspace::Sessions,
         };
 
+        // view_output!() must stay in the SimpleComponent impl (Relm4 macro requirement)
         let widgets = view_output!();
 
         // Get the actual ToastOverlay from the root window's content
@@ -508,253 +417,43 @@ impl SimpleComponent for App {
             tracing::warn!("Root content is not a ToastOverlay; toasts will be dropped");
         }
 
-        // Enable type-to-search: keystrokes captured from main window open SearchBar
-        widgets
-            .search_bar
-            .set_key_capture_widget(Some(&widgets.main_window));
-
-        // Bidirectional binding: ToggleButton.active <-> SearchBar.search-mode-enabled
-        widgets
-            .search_bar
-            .bind_property("search-mode-enabled", &widgets.search_toggle, "active")
-            .bidirectional()
-            .sync_create()
-            .build();
-
-        // Sync SearchBar state changes (Escape, type-to-search, ToggleButton) back to model
-        {
-            let search_mode_sender = sender.input_sender().clone();
-            let search_entry = widgets.search_entry.clone();
-            widgets
-                .search_bar
-                .connect_search_mode_enabled_notify(move |bar| {
-                    let enabled = bar.is_search_mode();
-                    if enabled {
-                        search_entry.grab_focus();
-                    } else {
-                        search_entry.set_text("");
-                    }
-                    search_mode_sender
-                        .send(AppMsg::SearchModeChanged(enabled))
-                        .ok();
-                });
-        }
-
-        // Intercept Up/Down in SearchEntry to move session list selection
-        {
-            let session_list_sender = model.session_list.sender().clone();
-            let key_controller = gtk::EventControllerKey::new();
-            key_controller.connect_key_pressed(move |_ctrl, key, _code, _mods| match key {
-                gdk::Key::Up => {
-                    session_list_sender
-                        .send(SessionListMsg::MoveSelection(-1))
-                        .ok();
-                    glib::Propagation::Stop
-                }
-                gdk::Key::Down => {
-                    session_list_sender
-                        .send(SessionListMsg::MoveSelection(1))
-                        .ok();
-                    glib::Propagation::Stop
-                }
-                _ => glib::Propagation::Proceed,
-            });
-            widgets.search_entry.add_controller(key_controller);
-        }
-
-        // Enter in SearchEntry activates the selected session directly
-        {
-            let session_list_sender = model.session_list.sender().clone();
-            widgets.search_entry.connect_activate(move |_| {
-                session_list_sender
-                    .send(SessionListMsg::ActivateSelected)
-                    .ok();
-            });
-        }
-
-        // Set up OverlaySplitView: sidebar = pane Stack, content = NavigationView
-        widgets.overlay_split.set_sidebar(Some(&model.pane_stack));
-        widgets.overlay_split.set_content(Some(&nav_view));
-        widgets.overlay_split.set_max_sidebar_width(720.0);
-
-        // Build top-level workspace stack and switchers.
-        let sessions_workspace_added = if let Some(parent) = widgets.overlay_split.parent() {
-            if let Ok(content_box) = parent.downcast::<gtk::Box>() {
-                widgets.overlay_split.unparent();
-
-                if widgets.overlay_split.parent().is_none() {
-                    content_box.insert_child_after(
-                        &model.workspace_stack,
-                        Some(&widgets.search_bar.clone().upcast::<gtk::Widget>()),
-                    );
-                    model.workspace_stack.add_titled_with_icon(
-                        &widgets.overlay_split,
-                        Some(Workspace::Sessions.stack_name()),
-                        "Sessions",
-                        Workspace::Sessions.icon_name(),
-                    );
-                    true
-                } else {
-                    tracing::warn!(
-                        "overlay_split remained parented after unparent(); skipping sessions workspace page"
-                    );
-                    false
-                }
-            } else {
-                tracing::warn!(
-                    "overlay_split parent was not gtk::Box; skipping sessions workspace page setup"
-                );
-                false
-            }
-        } else {
-            tracing::warn!(
-                "overlay_split has no parent during workspace setup; skipping sessions workspace page"
-            );
-            false
-        };
-
-        model.workspace_stack.add_titled_with_icon(
-            model.analytics_view.widget(),
-            Some(Workspace::Analytics.stack_name()),
-            "Analytics",
-            Workspace::Analytics.icon_name(),
+        // Wire up search bar, workspace stack, breakpoints, and actions
+        init::wire_search_bar(
+            &widgets.search_bar,
+            &widgets.search_entry,
+            &widgets.search_toggle,
+            &widgets.main_window,
+            &sender,
+            model.session_list.sender(),
         );
-        widgets
-            .workspace_switcher
-            .set_stack(Some(&model.workspace_stack));
-        widgets
-            .workspace_switcher_bar
-            .set_stack(Some(&model.workspace_stack));
 
-        if sessions_workspace_added {
-            model
-                .workspace_stack
-                .set_visible_child_name(Workspace::Sessions.stack_name());
-        } else {
-            model.active_workspace = Workspace::Analytics;
-            model
-                .workspace_stack
-                .set_visible_child_name(Workspace::Analytics.stack_name());
-        }
-
-        let workspace_sender = sender.input_sender().clone();
-        model
-            .workspace_stack
-            .connect_visible_child_name_notify(move |stack| {
-                if let Some(name) = stack.visible_child_name().as_deref()
-                    && let Some(workspace) = Workspace::from_stack_name(name)
-                {
-                    workspace_sender
-                        .send(AppMsg::WorkspaceChanged(workspace))
-                        .ok();
-                }
-            });
-
-        // Wire notify::show-sidebar for bidirectional sync (gestures, collapse)
-        let visibility_sender = sender.input_sender().clone();
-        widgets
-            .overlay_split
-            .connect_show_sidebar_notify(move |split| {
-                visibility_sender
-                    .send(AppMsg::PaneVisibilityChanged(split.shows_sidebar()))
-                    .ok();
-            });
-
-        // Add responsive collapse breakpoint
-        let breakpoint = adw::Breakpoint::new(adw::BreakpointCondition::new_length(
-            adw::BreakpointConditionLengthType::MaxWidth,
-            400.0,
-            adw::LengthUnit::Sp,
-        ));
-        breakpoint.add_setter(&widgets.overlay_split, "collapsed", Some(&true.into()));
-        breakpoint.add_setter(&widgets.workspace_switcher, "visible", Some(&false.into()));
-        breakpoint.add_setter(
+        init::setup_workspace_stack(
+            &mut model,
+            &widgets.overlay_split,
+            &widgets.search_bar,
+            &widgets.workspace_switcher,
             &widgets.workspace_switcher_bar,
-            "reveal",
-            Some(&true.into()),
+            &nav_setup.nav_view,
+            &sender,
         );
-        root.add_breakpoint(breakpoint);
 
-        let app = root.application().unwrap();
-        let mut actions = RelmActionGroup::<WindowActionGroup>::new();
+        init::setup_breakpoints(
+            &root,
+            &widgets.overlay_split,
+            &widgets.workspace_switcher,
+            &widgets.workspace_switcher_bar,
+        );
 
-        let preferences_action = {
-            let sender = sender.clone();
-            RelmAction::<PreferencesAction>::new_stateless(move |_| {
-                sender.input(AppMsg::ShowPreferences);
-            })
-        };
+        init::register_actions(
+            &root,
+            &widgets.main_window,
+            &sender,
+            &widgets.search_bar,
+            &widgets.search_entry,
+            &workspace_stack,
+        );
 
-        let shortcuts_action = {
-            RelmAction::<ShortcutsAction>::new_stateless(move |_| {
-                ShortcutsDialog::builder().launch(()).detach();
-            })
-        };
-
-        let about_action = {
-            RelmAction::<AboutAction>::new_stateless(move |_| {
-                AboutDialog::builder().launch(()).detach();
-            })
-        };
-
-        let show_search_action = {
-            let search_bar = widgets.search_bar.clone();
-            let search_entry = widgets.search_entry.clone();
-            let workspace_stack = workspace_stack.clone();
-            RelmAction::<ShowSearchAction>::new_stateless(move |_| {
-                let workspace = workspace_stack
-                    .visible_child_name()
-                    .as_deref()
-                    .and_then(Workspace::from_stack_name)
-                    .unwrap_or(Workspace::Sessions);
-
-                if !workspace_allows_search(workspace) {
-                    return;
-                }
-
-                search_bar.set_search_mode(true);
-                search_entry.grab_focus();
-            })
-        };
-
-        let toggle_pane_action = {
-            let sender = sender.clone();
-            RelmAction::<TogglePaneAction>::new_stateless(move |_| {
-                sender.input(AppMsg::TogglePane);
-            })
-        };
-
-        let quit_action = {
-            let sender = sender.clone();
-            RelmAction::<QuitAction>::new_stateless(move |_| {
-                sender.input(AppMsg::Quit);
-            })
-        };
-
-        let escape_action = {
-            let sender = sender.clone();
-            RelmAction::<EscapeAction>::new_stateless(move |_| {
-                sender.input(AppMsg::Escape);
-            })
-        };
-
-        // Connect actions with hotkeys
-        app.set_accelerators_for_action::<QuitAction>(&["<Control>q"]);
-        app.set_accelerators_for_action::<TogglePaneAction>(&["F9"]);
-        app.set_accelerators_for_action::<ShowSearchAction>(&["<Control>f"]);
-        app.set_accelerators_for_action::<ShortcutsAction>(&["<Control>question"]);
-        app.set_accelerators_for_action::<PreferencesAction>(&["<Control>comma"]);
-        app.set_accelerators_for_action::<EscapeAction>(&["Escape"]);
-
-        actions.add_action(preferences_action);
-        actions.add_action(shortcuts_action);
-        actions.add_action(about_action);
-        actions.add_action(show_search_action);
-        actions.add_action(toggle_pane_action);
-        actions.add_action(quit_action);
-        actions.add_action(escape_action);
-        actions.register_for_widget(&widgets.main_window);
-
+        // Startup: load window size, refresh sidebar, kick off indexing
         widgets.load_window_size();
 
         if model.refresh_sidebar_projects() {
