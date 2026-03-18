@@ -7,7 +7,6 @@ pub mod results;
 pub mod subagent;
 pub mod terminal;
 
-#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RendererKind {
     Terminal,
@@ -19,7 +18,6 @@ pub enum RendererKind {
 }
 
 impl RendererKind {
-    #[allow(dead_code)]
     pub fn as_str(&self) -> &'static str {
         match self {
             Self::Terminal => "terminal",
@@ -32,7 +30,6 @@ impl RendererKind {
     }
 }
 
-#[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RendererInit {
     pub tool_name: String,
@@ -43,7 +40,6 @@ pub struct RendererInit {
     pub duration_ms: Option<i64>,
 }
 
-#[allow(dead_code)]
 pub fn resolve_renderer(tool_name: &str) -> RendererKind {
     let normalized = tool_name.trim().to_ascii_lowercase();
     let tokenized = normalized.replace('-', "_");

@@ -1,7 +1,6 @@
 use crate::models::ToolCallStatus;
 use crate::ui::tool_renderers::RendererInit;
 
-#[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TerminalRenderedData {
     pub command: Option<String>,
@@ -14,13 +13,11 @@ pub struct TerminalRenderedData {
     pub duration_ms: Option<i64>,
 }
 
-#[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TerminalRenderer {
     init: RendererInit,
 }
 
-#[allow(dead_code)]
 impl TerminalRenderer {
     pub fn new(init: RendererInit) -> Self {
         Self { init }
@@ -50,7 +47,6 @@ impl TerminalRenderer {
     }
 }
 
-#[allow(dead_code)]
 pub fn extract_command(input_json: Option<&str>) -> Option<String> {
     let raw = input_json?;
     let value = serde_json::from_str::<serde_json::Value>(raw).ok()?;
@@ -69,7 +65,6 @@ pub fn extract_command(input_json: Option<&str>) -> Option<String> {
     None
 }
 
-#[allow(dead_code)]
 pub fn infer_exit_code(output_text: Option<&str>, error_text: Option<&str>) -> Option<i64> {
     [output_text, error_text]
         .into_iter()

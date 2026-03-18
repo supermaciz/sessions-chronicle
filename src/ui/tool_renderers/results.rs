@@ -1,7 +1,6 @@
 use crate::models::ToolCallStatus;
 use crate::ui::tool_renderers::RendererInit;
 
-#[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ResultsEntry {
     pub path: String,
@@ -9,7 +8,6 @@ pub struct ResultsEntry {
     pub content: String,
 }
 
-#[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ResultsRenderedData {
     pub entries: Vec<ResultsEntry>,
@@ -19,13 +17,11 @@ pub struct ResultsRenderedData {
     pub duration_ms: Option<i64>,
 }
 
-#[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ResultsRenderer {
     init: RendererInit,
 }
 
-#[allow(dead_code)]
 impl ResultsRenderer {
     pub fn new(init: RendererInit) -> Self {
         Self { init }

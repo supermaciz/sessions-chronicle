@@ -45,7 +45,6 @@ pub enum SessionDetailMsg {
         session: Box<Session>,
         search_query: Option<String>,
     },
-    #[allow(dead_code)]
     UpdateSearchQuery(Option<String>),
     LoadMore,
     PrevMatch,
@@ -53,7 +52,6 @@ pub enum SessionDetailMsg {
     ClearSearch,
     MatchCount(usize, usize),
     ShowExpandLoadFailure,
-    #[allow(dead_code)]
     Clear,
     InspectToolCall(String),
     InspectSubagent(String),

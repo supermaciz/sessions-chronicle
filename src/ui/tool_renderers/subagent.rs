@@ -1,6 +1,5 @@
 use crate::ui::tool_renderers::RendererInit;
 
-#[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SubagentRenderedData {
     pub input_text: Option<String>,
@@ -8,13 +7,11 @@ pub struct SubagentRenderedData {
     pub error_text: Option<String>,
 }
 
-#[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SubagentRenderer {
     init: RendererInit,
 }
 
-#[allow(dead_code)]
 impl SubagentRenderer {
     pub fn new(init: RendererInit) -> Self {
         Self { init }

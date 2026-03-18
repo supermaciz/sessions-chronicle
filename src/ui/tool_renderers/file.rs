@@ -1,7 +1,6 @@
 use crate::models::ToolCallStatus;
 use crate::ui::tool_renderers::RendererInit;
 
-#[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FileRenderedData {
     pub header: Option<String>,
@@ -11,13 +10,11 @@ pub struct FileRenderedData {
     pub duration_ms: Option<i64>,
 }
 
-#[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FileRenderer {
     init: RendererInit,
 }
 
-#[allow(dead_code)]
 impl FileRenderer {
     pub fn new(init: RendererInit) -> Self {
         Self { init }
@@ -44,7 +41,6 @@ impl FileRenderer {
     }
 }
 
-#[allow(dead_code)]
 pub fn format_file_header(path: &str, offset: Option<i64>, limit: Option<i64>) -> String {
     match (offset, limit) {
         (Some(start), Some(count)) if start >= 1 && count >= 1 => {

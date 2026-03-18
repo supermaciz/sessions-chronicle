@@ -33,7 +33,6 @@ enum InspectorSelection {
     },
     Subagent {
         session_id: String,
-        // Retained for potential future reload.
         #[allow(dead_code)]
         subagent_id: String,
     },

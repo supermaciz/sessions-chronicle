@@ -10,7 +10,6 @@ pub enum ToolCallStatus {
 }
 
 impl ToolCallStatus {
-    #[allow(dead_code)]
     pub fn from_storage(value: &str) -> Self {
         match value {
             "pending" => Self::Pending,

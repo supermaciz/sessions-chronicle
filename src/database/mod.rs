@@ -43,15 +43,13 @@ pub struct TranscriptItemRow {
     pub tool_name: Option<String>,
     pub tool_status: Option<ToolCallStatus>,
     pub tool_summary: Option<String>,
-    #[allow(dead_code)] // Will be used in Task 5 transcript chip preview mapping
     pub tool_input_json: Option<String>,
-    #[allow(dead_code)] // Will be used in Task 5 transcript chip preview mapping
     pub tool_output_text: Option<String>,
     pub duration_ms: Option<i64>,
     // Subagent fields
     pub subagent_id: Option<String>,
     pub subagent_title: Option<String>,
-    #[allow(dead_code)] // Will be used in Phase 4 inspector pane
+    #[allow(dead_code)]
     pub subagent_prompt: Option<String>,
 }
 
@@ -577,7 +575,7 @@ pub fn load_message_full_content(
 }
 
 /// Load message previews for a session with pagination and truncation.
-#[allow(dead_code)] // Superseded by load_transcript_items; kept for potential fallback use
+#[allow(dead_code)]
 pub fn load_message_previews_for_session(
     db_path: &Path,
     session_id: &str,

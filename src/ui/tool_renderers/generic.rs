@@ -3,14 +3,12 @@ use crate::ui::tool_renderers::RendererInit;
 use relm4::gtk;
 use relm4::gtk::prelude::*;
 
-#[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum OutputRenderPlan {
     PrettyJson(String),
     Markdown(String),
 }
 
-#[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GenericRenderedData {
     pub input_text: Option<String>,
@@ -18,13 +16,11 @@ pub struct GenericRenderedData {
     pub error: Option<OutputRenderPlan>,
 }
 
-#[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GenericRenderer {
     init: RendererInit,
 }
 
-#[allow(dead_code)]
 impl GenericRenderer {
     pub fn new(init: RendererInit) -> Self {
         Self { init }
@@ -52,6 +48,7 @@ impl GenericRenderer {
         }
     }
 
+    #[allow(dead_code)]
     pub fn render_output_textview(&self) -> Option<gtk::TextView> {
         match self.render_data().output {
             Some(OutputRenderPlan::PrettyJson(text)) => Some(plain_text_to_textview(&text)),
@@ -64,12 +61,10 @@ impl GenericRenderer {
     }
 }
 
-#[allow(dead_code)]
 pub fn pretty_or_raw_json(text: &str) -> String {
     try_pretty_json(text).unwrap_or_else(|| text.to_string())
 }
 
-#[allow(dead_code)]
 fn output_render_plan_from_text(text: &str) -> OutputRenderPlan {
     match try_pretty_json(text) {
         Some(pretty) => OutputRenderPlan::PrettyJson(pretty),
@@ -77,7 +72,6 @@ fn output_render_plan_from_text(text: &str) -> OutputRenderPlan {
     }
 }
 
-#[allow(dead_code)]
 fn try_pretty_json(text: &str) -> Option<String> {
     serde_json::from_str::<serde_json::Value>(text)
         .ok()

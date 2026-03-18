@@ -114,9 +114,7 @@ pub(super) struct App {
     #[allow(dead_code)] // Controller must stay alive to keep the widget
     tool_inspector_pane: Controller<ToolInspectorPane>,
     preferences_dialog: Controller<PreferencesDialog>,
-    #[allow(dead_code)]
     indexing_worker: WorkerController<IndexingWorker>,
-    #[allow(dead_code)]
     analytics_worker: WorkerController<AnalyticsWorker>,
     workspace_stack: adw::ViewStack,
     nav_view: adw::NavigationView,

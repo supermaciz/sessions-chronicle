@@ -2,7 +2,6 @@ use crate::ui::tool_renderers::RendererInit;
 use similar::{Algorithm, ChangeTag, DiffOp, TextDiff};
 use std::time::Duration;
 
-#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DiffLineKind {
     Context,
@@ -10,7 +9,6 @@ pub enum DiffLineKind {
     Remove,
 }
 
-#[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DiffLine {
     pub kind: DiffLineKind,
@@ -19,14 +17,12 @@ pub struct DiffLine {
     pub text: String,
 }
 
-#[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DiffHunk {
     pub header: String,
     pub lines: Vec<DiffLine>,
 }
 
-#[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DiffRenderedData {
     pub old_text: Option<String>,
@@ -34,13 +30,11 @@ pub struct DiffRenderedData {
     pub hunks: Vec<DiffHunk>,
 }
 
-#[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DiffRenderer {
     init: RendererInit,
 }
 
-#[allow(dead_code)]
 impl DiffRenderer {
     pub fn new(init: RendererInit) -> Self {
         Self { init }

@@ -80,8 +80,8 @@ pub enum TranscriptRowOutput {
         item_index: usize,
         count: usize,
     },
-    #[allow(dead_code)]
     ExpandLoadFailed {
+        #[allow(dead_code)]
         item_index: usize,
     },
     InspectToolCall(String),
