@@ -1,9 +1,9 @@
 # Project Sidebar Filtering: Design
 
-**Parent:** [Project Sidebar Filtering Exploration](2026-03-16-project-sidebar-filtering-exploration.md) — Proposition A
-**Issue:** [#66](https://github.com/supermaciz/sessions-chronicle/issues/66)
-**Date:** 2026-03-16
-**Status:** Validated
+**Parent:** [Project Sidebar Filtering Exploration](2026-03-16-project-sidebar-filtering-exploration.md) — Proposition A  
+**Issue:** [#66](https://github.com/supermaciz/sessions-chronicle/issues/66)  
+**Date:** 2026-03-16  
+**Status:** Implemented [#81](https://github.com/supermaciz/sessions-chronicle/pull/81)
 
 ## Problem Statement
 
