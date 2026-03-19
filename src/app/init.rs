@@ -167,17 +167,26 @@ pub(super) fn build_navigation(
     });
 
     // Build the utility pane Stack (sidebar content switcher)
-    let pane_stack = gtk::Stack::new();
-    pane_stack.set_transition_type(gtk::StackTransitionType::None);
-    pane_stack.add_named(sidebar_widget, Some("filters"));
-    pane_stack.add_named(tool_inspector_widget, Some("tool-inspector"));
-    pane_stack.set_visible_child_name("filters");
+    let pane_stack = build_pane_stack(sidebar_widget, tool_inspector_widget);
 
     NavigationSetup {
         nav_view,
         detail_page,
         pane_stack,
     }
+}
+
+pub(super) fn build_pane_stack(
+    sidebar_widget: &impl IsA<gtk::Widget>,
+    tool_inspector_widget: &impl IsA<gtk::Widget>,
+) -> gtk::Stack {
+    let pane_stack = gtk::Stack::new();
+    pane_stack.set_transition_type(gtk::StackTransitionType::None);
+    pane_stack.set_hhomogeneous(false);
+    pane_stack.add_named(sidebar_widget, Some("filters"));
+    pane_stack.add_named(tool_inspector_widget, Some("tool-inspector"));
+    pane_stack.set_visible_child_name("filters");
+    pane_stack
 }
 
 pub(super) fn wire_search_bar(

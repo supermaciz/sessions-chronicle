@@ -840,6 +840,17 @@ mod tests {
         );
     }
 
+    #[gtk::test]
+    fn pane_stack_sizes_to_visible_child_instead_of_widest_child() {
+        let filters = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        let inspector = gtk::Box::new(gtk::Orientation::Vertical, 0);
+
+        let pane_stack = init::build_pane_stack(&filters, &inspector);
+
+        assert!(!pane_stack.is_hhomogeneous());
+        assert_eq!(pane_stack.visible_child_name().as_deref(), Some("filters"));
+    }
+
     #[test]
     fn suppressed_pop_signal_is_consumed_without_state_sync() {
         let (should_sync, suppress_next) = detail_pop_sync_decision(true, true);
