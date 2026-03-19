@@ -93,12 +93,11 @@ pub(super) fn init_child_components(
         });
 
     // Create preferences dialog once, with forwarded outputs
-    let preferences_dialog =
-        PreferencesDialog::builder()
-            .launch(())
-            .forward(sender.input_sender(), |msg| match msg {
-                PreferencesOutput::ReindexRequested => AppMsg::ReindexRequested,
-            });
+    let preferences_dialog = PreferencesDialog::builder()
+        .launch(db_path.to_path_buf())
+        .forward(sender.input_sender(), |msg| match msg {
+            PreferencesOutput::ReindexRequested => AppMsg::ReindexRequested,
+        });
 
     let indexing_worker = IndexingWorker::builder()
         .detach_worker(db_path.to_path_buf())

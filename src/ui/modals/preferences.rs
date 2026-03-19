@@ -1,9 +1,12 @@
+use std::path::PathBuf;
+
 use adw::prelude::{
     ActionRowExt, AdwDialogExt, AlertDialogExt, ComboRowExt, PreferencesDialogExt,
     PreferencesGroupExt, PreferencesPageExt,
 };
 use gtk::gio;
-use gtk::prelude::{ButtonExt, SettingsExt};
+use gtk::glib;
+use gtk::prelude::{ButtonExt, DisplayExt, SettingsExt, WidgetExt};
 use relm4::{ComponentParts, ComponentSender, SimpleComponent, adw, gtk};
 
 use crate::config::APP_ID;
@@ -34,7 +37,7 @@ pub enum PreferencesOutput {
 }
 
 impl SimpleComponent for PreferencesDialog {
-    type Init = ();
+    type Init = PathBuf;
     type Widgets = ();
     type Input = PreferencesInput;
     type Output = PreferencesOutput;
@@ -45,7 +48,7 @@ impl SimpleComponent for PreferencesDialog {
     }
 
     fn init(
-        _: Self::Init,
+        db_path: Self::Init,
         root: Self::Root,
         sender: ComponentSender<Self>,
     ) -> ComponentParts<Self> {
@@ -85,8 +88,42 @@ impl SimpleComponent for PreferencesDialog {
         resumption_group.add(&combo_row);
         page.add(&resumption_group);
 
-        // Advanced group with reset button
+        // Advanced group
         let advanced_group = adw::PreferencesGroup::builder().title("Advanced").build();
+
+        // Database location row with copy button
+        let db_path_str = db_path.to_string_lossy().to_string();
+        let db_row = adw::ActionRow::builder()
+            .title("Database Location")
+            .subtitle(format!(
+                "<tt>{}</tt>",
+                glib::markup_escape_text(&db_path_str)
+            ))
+            .subtitle_lines(1)
+            .activatable(false)
+            .build();
+
+        let copy_button = gtk::Button::builder()
+            .icon_name("edit-copy-symbolic")
+            .valign(gtk::Align::Center)
+            .tooltip_text("Copy path to clipboard")
+            .css_classes(["flat"])
+            .build();
+
+        {
+            let db_path_str = db_path_str.clone();
+            let root = root.clone();
+            copy_button.connect_clicked(move |button| {
+                let clipboard = button.display().clipboard();
+                clipboard.set_text(&db_path_str);
+                let toast = adw::Toast::new("Path copied to clipboard");
+                toast.set_timeout(2);
+                root.add_toast(toast);
+            });
+        }
+
+        db_row.add_suffix(&copy_button);
+        advanced_group.add(&db_row);
 
         let reset_row = adw::ActionRow::builder()
             .title("Reset session index")
