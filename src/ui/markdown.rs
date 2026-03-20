@@ -321,13 +321,21 @@ impl MarkdownBufferWriter {
                 // -- Images (rendered as [image: alt_text]) --
                 Event::Start(Tag::Image { .. }) => {
                     self.in_image = true;
-                    let tags = self.active_tags();
-                    self.insert_with_tags("[image: ", &tags);
+                    if self.in_table {
+                        self.inline_buf.push_str("[image: ");
+                    } else {
+                        let tags = self.active_tags();
+                        self.insert_with_tags("[image: ", &tags);
+                    }
                 }
                 Event::End(TagEnd::Image) => {
                     self.in_image = false;
-                    let tags = self.active_tags();
-                    self.insert_with_tags("]", &tags);
+                    if self.in_table {
+                        self.inline_buf.push(']');
+                    } else {
+                        let tags = self.active_tags();
+                        self.insert_with_tags("]", &tags);
+                    }
                 }
 
                 // -- Paragraphs --
