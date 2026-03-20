@@ -25,12 +25,19 @@ use std::{env, path::PathBuf};
 use app::App;
 
 use clap::Parser;
+use session_sources::{SessionSources, select_db_filename};
 
 #[derive(Parser)]
 struct Args {
+    /// Override session source root directory.
     #[arg(long, value_name = "DIR")]
     sessions_dir: Option<PathBuf>,
 
+    /// Print the resolved SQLite database path and exit.
+    #[arg(long)]
+    print_db_path: bool,
+
+    /// Unknown arguments or everything after -- gets passed through to GTK.
     #[arg(allow_hyphen_values = true, trailing_var_arg = true)]
     gtk_options: Vec<String>,
 }
@@ -40,6 +47,15 @@ relm4::new_stateless_action!(QuitAction, AppActionGroup, "quit");
 
 fn main() {
     let args = Args::parse();
+
+    if args.print_db_path {
+        let sources = SessionSources::resolve(args.sessions_dir.as_deref());
+        let db_path = glib::user_data_dir()
+            .join(APP_ID)
+            .join(select_db_filename(sources.override_mode));
+        println!("{}", db_path.display());
+        return;
+    }
 
     gtk::init().unwrap();
     relm4_icons::initialize_icons(icon_names::GRESOURCE_BYTES, icon_names::RESOURCE_PREFIX);
