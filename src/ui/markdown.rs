@@ -565,11 +565,8 @@ impl<'a> MarkdownBufferWriter<'a> {
         let label = gtk::Label::new(None);
         label.set_use_markup(true);
         label.set_markup(&markup);
-        label.set_wrap(true);
-        label.set_wrap_mode(gtk::pango::WrapMode::WordChar);
         label.set_xalign(0.0);
         label.set_halign(gtk::Align::Start);
-        label.set_hexpand(true);
         label.add_css_class("markdown-table-cell");
         if is_header {
             label.add_css_class("markdown-table-header");
@@ -612,22 +609,14 @@ impl<'a> MarkdownBufferWriter<'a> {
             }
         }
 
-        let table_widget = gtk::ScrolledWindow::builder()
-            .hexpand(true)
-            .propagate_natural_width(true)
-            .hscrollbar_policy(gtk::PolicyType::Automatic)
-            .vscrollbar_policy(gtk::PolicyType::Never)
-            .child(&grid)
-            .build();
-
         if self.blockquote_depth > 0 {
-            table_widget.add_css_class("markdown-blockquote");
+            grid.add_css_class("markdown-blockquote");
         }
 
         self.table_match_count += table_match_count;
 
         self.pending_table_widgets
-            .push((anchor, table_widget.upcast::<gtk::Widget>()));
+            .push((anchor, grid.upcast::<gtk::Widget>()));
         self.insert_with_tags("\n", &[]);
     }
 }
@@ -1045,6 +1034,103 @@ mod tests {
                     .any(|widget| widget_tree_has_css_class(widget, "markdown-blockquote"))
             }),
             "expected blockquote table widget tree to include a widget with the blockquote css class"
+        );
+    }
+
+    // ── Table column structure ────────────────────────────────────────
+
+    #[gtk::test]
+    fn textview_table_two_columns_has_correct_labels() {
+        let md = "| A | B |\n|---|---|\n| 1 | 2 |";
+        let (view, _) = render_markdown_to_textview(md, None);
+        let anchors = table_anchors(&view);
+        let label_texts: Vec<String> = anchors.iter().flat_map(attached_label_text).collect();
+
+        assert!(
+            label_texts.contains(&"A".to_string()),
+            "expected header 'A' in labels, got: {label_texts:?}"
+        );
+        assert!(
+            label_texts.contains(&"B".to_string()),
+            "expected header 'B' in labels, got: {label_texts:?}"
+        );
+        assert!(
+            label_texts.contains(&"1".to_string()),
+            "expected cell '1' in labels, got: {label_texts:?}"
+        );
+        assert!(
+            label_texts.contains(&"2".to_string()),
+            "expected cell '2' in labels, got: {label_texts:?}"
+        );
+        // Ensure we have exactly 4 labels (2 headers + 2 cells), not counting separator
+        let non_empty: Vec<_> = label_texts.iter().filter(|t| !t.is_empty()).collect();
+        assert_eq!(
+            non_empty.len(),
+            4,
+            "expected 4 labels (2 headers + 2 data cells), got: {non_empty:?}"
+        );
+    }
+
+    /// Walk a widget tree and collect (column, row) for every gtk::Label
+    /// that is a direct child of a Grid.
+    fn grid_label_positions(anchor: &gtk::TextChildAnchor) -> Vec<(String, i32, i32)> {
+        let mut results = Vec::new();
+        for widget in anchor.widgets() {
+            collect_grid_positions(&widget, &mut results);
+        }
+        results
+    }
+
+    fn collect_grid_positions(widget: &gtk::Widget, out: &mut Vec<(String, i32, i32)>) {
+        if let Some(grid) = widget.parent().and_then(|p| p.downcast::<gtk::Grid>().ok()) {
+            if let Ok(label) = widget.clone().downcast::<gtk::Label>() {
+                let col = grid
+                    .layout_manager()
+                    .unwrap()
+                    .layout_child(widget)
+                    .downcast::<gtk::GridLayoutChild>()
+                    .unwrap()
+                    .column();
+                let row = grid
+                    .layout_manager()
+                    .unwrap()
+                    .layout_child(widget)
+                    .downcast::<gtk::GridLayoutChild>()
+                    .unwrap()
+                    .row();
+                out.push((label.text().to_string(), col, row));
+            }
+        }
+        let mut child = widget.first_child();
+        while let Some(c) = child {
+            collect_grid_positions(&c, out);
+            child = c.next_sibling();
+        }
+    }
+
+    #[gtk::test]
+    fn textview_table_grid_positions_correct() {
+        let md = "| A | B |\n|---|---|\n| 1 | 2 |";
+        let (view, _) = render_markdown_to_textview(md, None);
+        let anchors = table_anchors(&view);
+        assert_eq!(anchors.len(), 1);
+        let positions = grid_label_positions(&anchors[0]);
+        // Should have: A at (0,0), B at (1,0), 1 at (0,2), 2 at (1,2)
+        assert!(
+            positions.contains(&("A".to_string(), 0, 0)),
+            "expected A at (0,0), got: {positions:?}"
+        );
+        assert!(
+            positions.contains(&("B".to_string(), 1, 0)),
+            "expected B at (1,0), got: {positions:?}"
+        );
+        assert!(
+            positions.contains(&("1".to_string(), 0, 2)),
+            "expected 1 at (0,2), got: {positions:?}"
+        );
+        assert!(
+            positions.contains(&("2".to_string(), 1, 2)),
+            "expected 2 at (1,2), got: {positions:?}"
         );
     }
 
