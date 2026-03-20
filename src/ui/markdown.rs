@@ -698,7 +698,7 @@ fn apply_search_highlight(buffer: &gtk::TextBuffer, query: &str) -> usize {
 
     let start = buffer.start_iter();
     let end = buffer.end_iter();
-    let text = buffer.text(&start, &end, false);
+    let text = buffer.slice(&start, &end, false);
     let text_str = text.as_str();
 
     let matches = crate::ui::highlight::find_case_insensitive_matches_in_text(text_str, query);
