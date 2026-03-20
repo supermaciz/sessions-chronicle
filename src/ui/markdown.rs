@@ -1,6 +1,7 @@
 use pulldown_cmark::{CodeBlockKind, Event, Options, Parser, Tag, TagEnd};
 use relm4::adw;
 use relm4::gtk;
+use relm4::gtk::glib;
 use relm4::gtk::prelude::*;
 // Theme-dependent color palette (dark / light variants).
 const DARK_CODE_BG: &str = "#2c2c2c";
@@ -123,15 +124,6 @@ fn create_tag_table() -> gtk::TextTagTable {
     list_item.set_left_margin(24);
     list_item.set_indent(-16);
     table.add(&list_item);
-
-    let table_text = gtk::TextTag::new(Some("table-text"));
-    table_text.set_family(Some("monospace"));
-    table.add(&table_text);
-
-    let table_header = gtk::TextTag::new(Some("table-header"));
-    table_header.set_family(Some("monospace"));
-    table_header.set_weight(700);
-    table.add(&table_header);
 
     // -- Task list checkboxes --
     let task_checked = gtk::TextTag::new(Some("task-checked"));
@@ -562,17 +554,24 @@ impl MarkdownBufferWriter {
     }
 
     fn create_table_label(text: &str, query: &str, is_header: bool) -> (gtk::Label, usize) {
-        let (markup, match_count) = crate::ui::highlight::highlight_text(text, query);
-
         let label = gtk::Label::new(None);
-        label.set_use_markup(true);
-        label.set_markup(&markup);
         label.set_xalign(0.0);
         label.set_halign(gtk::Align::Start);
         label.add_css_class("markdown-table-cell");
         if is_header {
             label.add_css_class("markdown-table-header");
         }
+
+        let match_count = if query.is_empty() {
+            label.set_text(text);
+            0
+        } else {
+            let (markup, count) = crate::ui::highlight::highlight_text(text, query);
+            label.set_use_markup(true);
+            label.set_markup(&markup);
+            count
+        };
+
         (label, match_count)
     }
 
@@ -645,6 +644,21 @@ impl MarkdownBufferWriter {
     }
 }
 
+/// Connect a `destroy` signal on `widget` that disconnects the given
+/// `StyleManager` signal handler, preventing leaked theme-change callbacks.
+fn attach_theme_cleanup(
+    widget: &impl IsA<gtk::Widget>,
+    sm: adw::StyleManager,
+    handler: glib::SignalHandlerId,
+) {
+    let handler_id = std::cell::Cell::new(Some(handler));
+    widget.connect_destroy(move |_| {
+        if let Some(id) = handler_id.take() {
+            sm.disconnect(id);
+        }
+    });
+}
+
 /// Create a non-editable, transparent `gtk::TextView` from a buffer.
 fn make_textview(buffer: &gtk::TextBuffer) -> gtk::TextView {
     let view = gtk::TextView::with_buffer(buffer);
@@ -692,39 +706,18 @@ pub fn render_markdown_to_textview(
 
     // Fast path: no tables — return a single TextView (common case).
     if !has_tables {
-        // All segments are Text; in practice there's exactly one.
         let mut match_count = table_match_count;
-        let container = gtk::Box::new(gtk::Orientation::Vertical, 0);
-        for segment in segments {
-            if let MarkdownSegment::Text(buffer) = segment {
-                match_count += apply_search_highlight(&buffer, query);
-                let view = make_textview(&buffer);
-                container.append(&view);
-            }
+        // All segments are Text; in practice there's exactly one.
+        if let Some(MarkdownSegment::Text(buffer)) = segments.into_iter().next() {
+            match_count += apply_search_highlight(&buffer, query);
+            let view = make_textview(&buffer);
+            attach_theme_cleanup(&view, style_manager, theme_handler);
+            return (view.upcast(), match_count);
         }
-        // Unwrap the single child to avoid an unnecessary Box wrapper.
-        if let Some(only_child) = container
-            .first_child()
-            .filter(|c| container.last_child().as_ref() == Some(c))
-        {
-            container.remove(&only_child);
-            let sm = style_manager;
-            let handler_id = std::cell::Cell::new(Some(theme_handler));
-            only_child.connect_destroy(move |_| {
-                if let Some(id) = handler_id.take() {
-                    sm.disconnect(id);
-                }
-            });
-            return (only_child, match_count);
-        }
-        let sm = style_manager;
-        let handler_id = std::cell::Cell::new(Some(theme_handler));
-        container.connect_destroy(move |_| {
-            if let Some(id) = handler_id.take() {
-                sm.disconnect(id);
-            }
-        });
-        return (container.upcast(), match_count);
+        // Empty content — return an empty widget.
+        let empty = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        attach_theme_cleanup(&empty, style_manager, theme_handler);
+        return (empty.upcast(), match_count);
     }
 
     // Multiple segments with tables: build a vertical Box.
@@ -744,13 +737,7 @@ pub fn render_markdown_to_textview(
         }
     }
 
-    let sm = style_manager;
-    let handler_id = std::cell::Cell::new(Some(theme_handler));
-    container.connect_destroy(move |_| {
-        if let Some(id) = handler_id.take() {
-            sm.disconnect(id);
-        }
-    });
+    attach_theme_cleanup(&container, style_manager, theme_handler);
 
     (container.upcast(), total_matches)
 }
@@ -1164,21 +1151,17 @@ mod tests {
     fn collect_grid_positions(widget: &gtk::Widget, out: &mut Vec<(String, i32, i32)>) {
         if let Some(grid) = widget.parent().and_then(|p| p.downcast::<gtk::Grid>().ok()) {
             if let Ok(label) = widget.clone().downcast::<gtk::Label>() {
-                let col = grid
+                let layout_child = grid
                     .layout_manager()
                     .unwrap()
                     .layout_child(widget)
                     .downcast::<gtk::GridLayoutChild>()
-                    .unwrap()
-                    .column();
-                let row = grid
-                    .layout_manager()
-                    .unwrap()
-                    .layout_child(widget)
-                    .downcast::<gtk::GridLayoutChild>()
-                    .unwrap()
-                    .row();
-                out.push((label.text().to_string(), col, row));
+                    .unwrap();
+                out.push((
+                    label.text().to_string(),
+                    layout_child.column(),
+                    layout_child.row(),
+                ));
             }
         }
         let mut child = widget.first_child();
