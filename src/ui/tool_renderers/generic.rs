@@ -49,12 +49,14 @@ impl GenericRenderer {
     }
 
     #[allow(dead_code)]
-    pub fn render_output_textview(&self) -> Option<gtk::TextView> {
+    pub fn render_output_textview(&self) -> Option<gtk::Widget> {
         match self.render_data().output {
-            Some(OutputRenderPlan::PrettyJson(text)) => Some(plain_text_to_textview(&text)),
+            Some(OutputRenderPlan::PrettyJson(text)) => {
+                Some(plain_text_to_textview(&text).upcast())
+            }
             Some(OutputRenderPlan::Markdown(text)) => {
-                let (view, _) = markdown::render_markdown_to_textview(&text, None);
-                Some(view)
+                let (widget, _) = markdown::render_markdown_to_textview(&text, None);
+                Some(widget)
             }
             None => None,
         }

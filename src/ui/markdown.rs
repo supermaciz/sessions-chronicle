@@ -156,9 +156,16 @@ fn create_tag_table() -> gtk::TextTagTable {
     table
 }
 
+/// A rendered segment: either styled text in a buffer or a table widget.
+enum MarkdownSegment {
+    Text(gtk::TextBuffer),
+    Table(gtk::Widget),
+}
+
 /// Walks pulldown-cmark events and writes formatted text into a `TextBuffer`.
-struct MarkdownBufferWriter<'a> {
-    buffer: &'a gtk::TextBuffer,
+struct MarkdownBufferWriter {
+    tag_table: gtk::TextTagTable,
+    buffer: gtk::TextBuffer,
     /// Stack of active inline tag names (e.g. "bold", "italic").
     tag_stack: Vec<&'static str>,
     /// True when inside a code block — text goes verbatim, no inline tags.
@@ -191,15 +198,17 @@ struct MarkdownBufferWriter<'a> {
     /// Search query used for markdown highlight; table widgets will use this
     /// in a follow-up task.
     highlight_query: Option<String>,
-    /// Deferred table widgets to attach after TextView creation.
-    pending_table_widgets: Vec<(gtk::TextChildAnchor, gtk::Widget)>,
+    /// Completed segments (text buffers and table widgets) in order.
+    segments: Vec<MarkdownSegment>,
     /// Search match count found inside table widgets.
     table_match_count: usize,
 }
 
-impl<'a> MarkdownBufferWriter<'a> {
-    fn new(buffer: &'a gtk::TextBuffer, highlight_query: Option<&str>) -> Self {
+impl MarkdownBufferWriter {
+    fn new(tag_table: gtk::TextTagTable, highlight_query: Option<&str>) -> Self {
+        let buffer = gtk::TextBuffer::new(Some(&tag_table));
         Self {
+            tag_table,
             buffer,
             tag_stack: Vec::new(),
             in_code_block: None,
@@ -218,7 +227,7 @@ impl<'a> MarkdownBufferWriter<'a> {
             has_content: false,
             pending_item_marker: false,
             highlight_query: highlight_query.map(str::to_owned),
-            pending_table_widgets: Vec::new(),
+            segments: Vec::new(),
             table_match_count: 0,
         }
     }
@@ -574,15 +583,23 @@ impl<'a> MarkdownBufferWriter<'a> {
         (label, match_count)
     }
 
-    /// Defer table rendering by inserting a child anchor and table widget.
+    /// Flush the current buffer as a text segment and store the table widget.
     fn render_table(&mut self) {
         if self.table_headers.is_empty() {
             return;
         }
 
-        let mut end_iter = self.buffer.end_iter();
-        let anchor = self.buffer.create_child_anchor(&mut end_iter);
+        // Flush current text buffer into a segment (if it has content).
+        if self.buffer.char_count() > 0 {
+            let old_buffer = std::mem::replace(
+                &mut self.buffer,
+                gtk::TextBuffer::new(Some(&self.tag_table)),
+            );
+            self.segments.push(MarkdownSegment::Text(old_buffer));
+            self.has_content = false;
+        }
 
+        // Build the table grid.
         let grid = gtk::Grid::new();
         grid.set_hexpand(true);
         grid.add_css_class("markdown-table");
@@ -609,71 +626,140 @@ impl<'a> MarkdownBufferWriter<'a> {
             }
         }
 
+        // Wrap in ScrolledWindow for horizontal scrolling of wide tables.
+        let table_widget = gtk::ScrolledWindow::builder()
+            .hexpand(true)
+            .hscrollbar_policy(gtk::PolicyType::Automatic)
+            .vscrollbar_policy(gtk::PolicyType::Never)
+            .child(&grid)
+            .build();
+
         if self.blockquote_depth > 0 {
-            grid.add_css_class("markdown-blockquote");
+            table_widget.add_css_class("markdown-blockquote");
         }
 
         self.table_match_count += table_match_count;
+        self.segments
+            .push(MarkdownSegment::Table(table_widget.upcast::<gtk::Widget>()));
+    }
 
-        self.pending_table_widgets
-            .push((anchor, grid.upcast::<gtk::Widget>()));
-        self.insert_with_tags("\n", &[]);
+    /// Finalize and return all segments plus table match count.
+    fn finalize(mut self) -> (Vec<MarkdownSegment>, usize) {
+        if self.buffer.char_count() > 0 {
+            self.segments.push(MarkdownSegment::Text(self.buffer));
+        }
+        (self.segments, self.table_match_count)
     }
 }
 
-/// Render markdown content as a single selectable `gtk::TextView`.
+/// Create a non-editable, transparent `gtk::TextView` from a buffer.
+fn make_textview(buffer: &gtk::TextBuffer) -> gtk::TextView {
+    let view = gtk::TextView::with_buffer(buffer);
+    view.set_editable(false);
+    view.set_cursor_visible(false);
+    view.set_wrap_mode(gtk::WrapMode::WordChar);
+    view.set_hexpand(true);
+    view.set_top_margin(0);
+    view.set_bottom_margin(0);
+    view.set_left_margin(0);
+    view.set_right_margin(0);
+    view.add_css_class("markdown-textview");
+    view
+}
+
+/// Render markdown content into a widget (single `TextView` or a `Box`
+/// containing `TextView` segments interleaved with table widgets).
 ///
 /// If `highlight_query` is provided, matches are highlighted with a
 /// background color. Returns the widget and the total number of matches.
 pub fn render_markdown_to_textview(
     content: &str,
     highlight_query: Option<&str>,
-) -> (gtk::TextView, usize) {
+) -> (gtk::Widget, usize) {
     let tag_table = create_tag_table();
-    let buffer = gtk::TextBuffer::new(Some(&tag_table));
+    let query = highlight_query.unwrap_or("");
 
-    let mut writer = MarkdownBufferWriter::new(&buffer, highlight_query);
+    let mut writer = MarkdownBufferWriter::new(tag_table.clone(), highlight_query);
     writer.process(content);
-    let pending_table_widgets = std::mem::take(&mut writer.pending_table_widgets);
-    let table_match_count = writer.table_match_count;
+    let (segments, table_match_count) = writer.finalize();
 
-    // Apply search highlighting in a second pass.
-    let buffer_match_count = apply_search_highlight(&buffer, highlight_query.unwrap_or(""));
-
-    let view = gtk::TextView::with_buffer(&buffer);
-    view.set_editable(false);
-    view.set_cursor_visible(false);
-    view.set_wrap_mode(gtk::WrapMode::WordChar);
-    view.set_hexpand(true);
-    // Remove default TextView padding — the parent message-row provides padding
-    view.set_top_margin(0);
-    view.set_bottom_margin(0);
-    view.set_left_margin(0);
-    view.set_right_margin(0);
-    // Make the TextView background transparent so the parent row's
-    // background color shows through uniformly in both light and dark mode.
-    view.add_css_class("markdown-textview");
-
-    for (anchor, widget) in pending_table_widgets {
-        view.add_child_at_anchor(&widget, &anchor);
-    }
-
+    // Wire up theme-change listener that updates tag colours. Since all
+    // buffers share the same tag_table, one handler covers everything.
     let style_manager = adw::StyleManager::default();
-    let buffer_weak = buffer.downgrade();
-    let handler_id = style_manager.connect_dark_notify(move |manager| {
-        if let Some(buffer) = buffer_weak.upgrade() {
-            apply_theme_palette_to_tags(&buffer.tag_table(), manager.is_dark());
+    let tt_weak = tag_table.downgrade();
+    let theme_handler = style_manager.connect_dark_notify(move |manager| {
+        if let Some(tt) = tt_weak.upgrade() {
+            apply_theme_palette_to_tags(&tt, manager.is_dark());
         }
     });
+
+    let has_tables = segments
+        .iter()
+        .any(|s| matches!(s, MarkdownSegment::Table(_)));
+
+    // Fast path: no tables — return a single TextView (common case).
+    if !has_tables {
+        // All segments are Text; in practice there's exactly one.
+        let mut match_count = table_match_count;
+        let container = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        for segment in segments {
+            if let MarkdownSegment::Text(buffer) = segment {
+                match_count += apply_search_highlight(&buffer, query);
+                let view = make_textview(&buffer);
+                container.append(&view);
+            }
+        }
+        // Unwrap the single child to avoid an unnecessary Box wrapper.
+        if let Some(only_child) = container
+            .first_child()
+            .filter(|c| container.last_child().as_ref() == Some(c))
+        {
+            container.remove(&only_child);
+            let sm = style_manager;
+            let handler_id = std::cell::Cell::new(Some(theme_handler));
+            only_child.connect_destroy(move |_| {
+                if let Some(id) = handler_id.take() {
+                    sm.disconnect(id);
+                }
+            });
+            return (only_child, match_count);
+        }
+        let sm = style_manager;
+        let handler_id = std::cell::Cell::new(Some(theme_handler));
+        container.connect_destroy(move |_| {
+            if let Some(id) = handler_id.take() {
+                sm.disconnect(id);
+            }
+        });
+        return (container.upcast(), match_count);
+    }
+
+    // Multiple segments with tables: build a vertical Box.
+    let container = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    let mut total_matches = table_match_count;
+
+    for segment in segments {
+        match segment {
+            MarkdownSegment::Text(buffer) => {
+                total_matches += apply_search_highlight(&buffer, query);
+                let view = make_textview(&buffer);
+                container.append(&view);
+            }
+            MarkdownSegment::Table(widget) => {
+                container.append(&widget);
+            }
+        }
+    }
+
     let sm = style_manager;
-    let handler_id = std::cell::Cell::new(Some(handler_id));
-    view.connect_destroy(move |_| {
+    let handler_id = std::cell::Cell::new(Some(theme_handler));
+    container.connect_destroy(move |_| {
         if let Some(id) = handler_id.take() {
             sm.disconnect(id);
         }
     });
 
-    (view, buffer_match_count + table_match_count)
+    (container.upcast(), total_matches)
 }
 
 /// Find and highlight all case-insensitive matches of `query` in the buffer.
@@ -745,23 +831,15 @@ fn apply_search_highlight(buffer: &gtk::TextBuffer, query: &str) -> usize {
 mod tests {
     use super::*;
 
-    fn table_anchors(view: &gtk::TextView) -> Vec<gtk::TextChildAnchor> {
-        let buffer = view.buffer();
-        let mut iter = buffer.start_iter();
-        let mut anchors = Vec::new();
-
-        loop {
-            if let Some(anchor) = iter.child_anchor() {
-                anchors.push(anchor);
-            }
-            if !iter.forward_char() {
-                break;
-            }
-        }
-
-        anchors
+    /// Downcast the rendered widget to a single TextView (for non-table content).
+    fn as_textview(widget: &gtk::Widget) -> gtk::TextView {
+        widget
+            .clone()
+            .downcast::<gtk::TextView>()
+            .expect("expected a single TextView (no tables)")
     }
 
+    /// Collect all label texts from a widget tree (recursive).
     fn collect_label_text_from_widget_tree(widget: &gtk::Widget) -> Vec<String> {
         let mut texts = Vec::new();
 
@@ -778,12 +856,27 @@ mod tests {
         texts
     }
 
-    fn attached_label_text(anchor: &gtk::TextChildAnchor) -> Vec<String> {
-        let mut texts = Vec::new();
-        for widget in anchor.widgets() {
-            texts.extend(collect_label_text_from_widget_tree(&widget));
+    /// Collect all table widgets (ScrolledWindows containing Grids) from
+    /// the rendered output. For the Box-based layout, these are direct
+    /// children that are ScrolledWindows.
+    fn find_table_widgets(widget: &gtk::Widget) -> Vec<gtk::Widget> {
+        let mut tables = Vec::new();
+        let mut child = widget.first_child();
+        while let Some(c) = child {
+            if c.clone().downcast::<gtk::ScrolledWindow>().is_ok() {
+                tables.push(c.clone());
+            }
+            child = c.next_sibling();
         }
-        texts
+        tables
+    }
+
+    /// Collect label texts from all table widgets in the rendered output.
+    fn table_label_texts(widget: &gtk::Widget) -> Vec<String> {
+        find_table_widgets(widget)
+            .iter()
+            .flat_map(collect_label_text_from_widget_tree)
+            .collect()
     }
 
     fn widget_tree_has_css_class(widget: &gtk::Widget, class_name: &str) -> bool {
@@ -803,17 +896,19 @@ mod tests {
     }
 
     fn has_tag_at(content: &str, tag_name: &str, char_offset: i32) -> bool {
-        let (view, _) = render_markdown_to_textview(content, None);
+        let (widget, _) = render_markdown_to_textview(content, None);
+        let view = as_textview(&widget);
         let buffer = view.buffer();
         let iter = buffer.iter_at_offset(char_offset);
         iter.tags()
             .iter()
-            .any(|tag| tag.name().as_deref() == Some(tag_name))
+            .any(|tag: &gtk::TextTag| tag.name().as_deref() == Some(tag_name))
     }
 
     /// Helper: extract plain text from a rendered textview.
     fn textview_text(content: &str) -> String {
-        let (view, _) = render_markdown_to_textview(content, None);
+        let (widget, _) = render_markdown_to_textview(content, None);
+        let view = as_textview(&widget);
         let buf = view.buffer();
         buf.text(&buf.start_iter(), &buf.end_iter(), false)
             .to_string()
@@ -914,15 +1009,16 @@ mod tests {
 
     #[gtk::test]
     fn textview_search_highlight_applied() {
-        let (view, count) = render_markdown_to_textview("Hello world", Some("world"));
+        let (widget, count) = render_markdown_to_textview("Hello world", Some("world"));
         assert_eq!(count, 1);
+        let view = as_textview(&widget);
         let buf = view.buffer();
         // "world" starts at char 6 in "Hello world\n"
         let iter = buf.iter_at_offset(6);
         assert!(
             iter.tags()
                 .iter()
-                .any(|t| t.name().as_deref() == Some("search-highlight"))
+                .any(|t: &gtk::TextTag| t.name().as_deref() == Some("search-highlight"))
         );
     }
 
@@ -935,37 +1031,31 @@ mod tests {
     // ── Tables ───────────────────────────────────────────────────────
 
     #[gtk::test]
-    fn textview_table_creates_child_anchor() {
+    fn textview_table_renders_as_separate_widget() {
         let md = "| A | B |\n|---|---|\n| 1 | 2 |";
-        let (view, _) = render_markdown_to_textview(md, None);
-        let anchors = table_anchors(&view);
+        let (widget, _) = render_markdown_to_textview(md, None);
+        let tables = find_table_widgets(&widget);
         assert!(
-            !anchors.is_empty(),
-            "expected table to create at least one child anchor"
+            !tables.is_empty(),
+            "expected table to produce a ScrolledWindow in the output"
         );
     }
 
     #[gtk::test]
-    fn textview_table_anchor_has_attached_widget() {
+    fn textview_table_contains_labels() {
         let md = "| A | B |\n|---|---|\n| 1 | 2 |";
-        let (view, _) = render_markdown_to_textview(md, None);
-        let anchors = table_anchors(&view);
-
+        let (widget, _) = render_markdown_to_textview(md, None);
+        let labels = table_label_texts(&widget);
         assert!(
-            anchors.iter().any(|anchor| !anchor.widgets().is_empty()),
-            "expected at least one table anchor with an attached widget"
+            !labels.is_empty(),
+            "expected table widget to contain labels"
         );
     }
 
     #[gtk::test]
     fn textview_table_search_count_includes_widget_cells() {
         let md = "| Name |\n|------|\n| Rust |";
-        let (view, count) = render_markdown_to_textview(md, Some("Rust"));
-
-        assert!(
-            !table_anchors(&view).is_empty(),
-            "expected table to render via child anchors"
-        );
+        let (_, count) = render_markdown_to_textview(md, Some("Rust"));
         assert_eq!(count, 1, "expected search to include widget cell content");
     }
 
@@ -1006,15 +1096,14 @@ mod tests {
     #[gtk::test]
     fn textview_table_link_visible_inside_widget_cell() {
         let md = "| Name |\n|------|\n| [Rust](https://rust-lang.org) |";
-        let (view, _) = render_markdown_to_textview(md, None);
-        let anchors = table_anchors(&view);
-        let label_texts: Vec<String> = anchors.iter().flat_map(attached_label_text).collect();
+        let (widget, _) = render_markdown_to_textview(md, None);
+        let label_texts = table_label_texts(&widget);
 
         assert!(
             label_texts
                 .iter()
                 .any(|text| text.contains("Rust (https://rust-lang.org)")),
-            "expected link text to be visible inside attached table widget labels, got: {label_texts:?}"
+            "expected link text to be visible inside table widget labels, got: {label_texts:?}"
         );
     }
 
@@ -1023,16 +1112,12 @@ mod tests {
     #[gtk::test]
     fn textview_table_inside_blockquote_widget_has_blockquote_class() {
         let md = "> | A | B |\n> |---|---|\n> | 1 | 2 |";
-        let (view, _) = render_markdown_to_textview(md, None);
-        let anchors = table_anchors(&view);
+        let (widget, _) = render_markdown_to_textview(md, None);
 
         assert!(
-            anchors.iter().any(|anchor| {
-                anchor
-                    .widgets()
-                    .iter()
-                    .any(|widget| widget_tree_has_css_class(widget, "markdown-blockquote"))
-            }),
+            find_table_widgets(&widget)
+                .iter()
+                .any(|w| widget_tree_has_css_class(w, "markdown-blockquote")),
             "expected blockquote table widget tree to include a widget with the blockquote css class"
         );
     }
@@ -1042,9 +1127,8 @@ mod tests {
     #[gtk::test]
     fn textview_table_two_columns_has_correct_labels() {
         let md = "| A | B |\n|---|---|\n| 1 | 2 |";
-        let (view, _) = render_markdown_to_textview(md, None);
-        let anchors = table_anchors(&view);
-        let label_texts: Vec<String> = anchors.iter().flat_map(attached_label_text).collect();
+        let (widget, _) = render_markdown_to_textview(md, None);
+        let label_texts = table_label_texts(&widget);
 
         assert!(
             label_texts.contains(&"A".to_string()),
@@ -1062,23 +1146,12 @@ mod tests {
             label_texts.contains(&"2".to_string()),
             "expected cell '2' in labels, got: {label_texts:?}"
         );
-        // Ensure we have exactly 4 labels (2 headers + 2 cells), not counting separator
         let non_empty: Vec<_> = label_texts.iter().filter(|t| !t.is_empty()).collect();
         assert_eq!(
             non_empty.len(),
             4,
             "expected 4 labels (2 headers + 2 data cells), got: {non_empty:?}"
         );
-    }
-
-    /// Walk a widget tree and collect (column, row) for every gtk::Label
-    /// that is a direct child of a Grid.
-    fn grid_label_positions(anchor: &gtk::TextChildAnchor) -> Vec<(String, i32, i32)> {
-        let mut results = Vec::new();
-        for widget in anchor.widgets() {
-            collect_grid_positions(&widget, &mut results);
-        }
-        results
     }
 
     fn collect_grid_positions(widget: &gtk::Widget, out: &mut Vec<(String, i32, i32)>) {
@@ -1111,10 +1184,11 @@ mod tests {
     #[gtk::test]
     fn textview_table_grid_positions_correct() {
         let md = "| A | B |\n|---|---|\n| 1 | 2 |";
-        let (view, _) = render_markdown_to_textview(md, None);
-        let anchors = table_anchors(&view);
-        assert_eq!(anchors.len(), 1);
-        let positions = grid_label_positions(&anchors[0]);
+        let (widget, _) = render_markdown_to_textview(md, None);
+        let tables = find_table_widgets(&widget);
+        assert_eq!(tables.len(), 1);
+        let mut positions = Vec::new();
+        collect_grid_positions(&tables[0], &mut positions);
         // Should have: A at (0,0), B at (1,0), 1 at (0,2), 2 at (1,2)
         assert!(
             positions.contains(&("A".to_string(), 0, 0)),
