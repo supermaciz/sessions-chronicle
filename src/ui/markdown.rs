@@ -291,261 +291,203 @@ impl MarkdownBufferWriter {
         let parser = Parser::new_ext(content, options);
 
         for event in parser {
-            match event {
-                // -- Inline tag starts --
-                Event::Start(Tag::Emphasis) => self.tag_stack.push("italic"),
-                Event::Start(Tag::Strong) => self.tag_stack.push("bold"),
-                Event::Start(Tag::Strikethrough) => self.tag_stack.push("strikethrough"),
-
-                // -- Inline tag ends --
-                Event::End(TagEnd::Emphasis) => self.pop_tag("italic"),
-                Event::End(TagEnd::Strong) => self.pop_tag("bold"),
-                Event::End(TagEnd::Strikethrough) => self.pop_tag("strikethrough"),
-
-                // -- Links --
-                Event::Start(Tag::Link { dest_url, .. }) => {
-                    self.link_url = Some(dest_url.to_string());
-                }
-                Event::End(TagEnd::Link) => {
-                    if let Some(url) = self.link_url.take() {
-                        let suffix = format!(" ({})", url);
-                        if self.in_table {
-                            self.inline_buf.push_str(&suffix);
-                        } else {
-                            let tags = self.active_tags();
-                            self.insert_with_tags(&suffix, &tags);
-                        }
-                    }
-                }
-
-                // -- Images (rendered as [image: alt_text]) --
-                Event::Start(Tag::Image { .. }) => {
-                    self.in_image = true;
-                    if self.in_table {
-                        self.inline_buf.push_str("[image: ");
-                    } else {
-                        let tags = self.active_tags();
-                        self.insert_with_tags("[image: ", &tags);
-                    }
-                }
-                Event::End(TagEnd::Image) => {
-                    self.in_image = false;
-                    if self.in_table {
-                        self.inline_buf.push(']');
-                    } else {
-                        let tags = self.active_tags();
-                        self.insert_with_tags("]", &tags);
-                    }
-                }
-
-                // -- Paragraphs --
-                Event::Start(Tag::Paragraph) => {
-                    if self.list_stack.is_empty() && !self.in_table {
-                        self.block_separator();
-                    }
-                }
-                Event::End(TagEnd::Paragraph) => {
-                    if self.list_stack.is_empty() && !self.in_table {
-                        self.insert_with_tags("\n", &[]);
-                        self.has_content = true;
-                    }
-                }
-
-                // -- Headings --
-                Event::Start(Tag::Heading { level, .. }) => {
-                    self.block_separator();
-                    let heading_tag = Self::heading_tag_name(level);
-                    self.tag_stack.push(heading_tag);
-                }
-                Event::End(TagEnd::Heading(level)) => {
-                    self.insert_with_tags("\n", &[]);
-                    self.has_content = true;
-                    self.pop_tag(Self::heading_tag_name(level));
-                }
-
-                // -- Code blocks --
-                Event::Start(Tag::CodeBlock(kind)) => {
-                    self.code_buf.clear();
-                    let language = match kind {
-                        CodeBlockKind::Fenced(info) => {
-                            let lang = info.trim().to_string();
-                            if lang.is_empty() { None } else { Some(lang) }
-                        }
-                        CodeBlockKind::Indented => None,
-                    };
-                    self.in_code_block = Some(language);
-                }
-                Event::End(TagEnd::CodeBlock) => {
-                    self.block_separator();
-                    let language = self.in_code_block.take().flatten();
-                    let mut code_tags = vec!["code-block"];
-                    if self.blockquote_depth > 0 {
-                        code_tags.push("blockquote");
-                    }
-                    if let Some(ref lang) = language {
-                        let mut lang_tags = code_tags.clone();
-                        lang_tags.push("code-lang");
-                        self.insert_with_tags(lang, &lang_tags);
-                        self.insert_with_tags("\n", &code_tags);
-                    }
-                    let code = self.code_buf.trim_end_matches('\n').to_string();
-                    self.insert_with_tags(&code, &code_tags);
-                    self.insert_with_tags("\n", &[]);
-                    self.has_content = true;
-                }
-
-                // -- Lists --
-                Event::Start(Tag::List(start)) => {
-                    if self.list_stack.is_empty() {
-                        self.block_separator();
-                    } else {
-                        // Nested list: start on a new line
-                        self.insert_with_tags("\n", &[]);
-                    }
-                    self.list_stack.push((start.is_some(), 0, false));
-                }
-                Event::End(TagEnd::List(_)) => {
-                    self.list_stack.pop();
-                    if self.list_stack.is_empty() {
-                        self.has_content = true;
-                    }
-                }
-                Event::Start(Tag::Item) => {
-                    if let Some(frame) = self.list_stack.last_mut() {
-                        frame.1 += 1;
-                        if frame.2 {
-                            // Already known to be a task list — skip normal marker
-                        } else {
-                            // Defer marker: TaskListMarker may arrive before first text
-                            self.pending_item_marker = true;
-                        }
-                    }
-                }
-                Event::End(TagEnd::Item) => {
-                    self.flush_pending_marker();
-                    self.insert_with_tags("\n", &[]);
-                }
-
-                Event::TaskListMarker(checked) => {
-                    // Cancel the deferred normal marker — this is a task list
-                    self.pending_item_marker = false;
-                    if let Some(frame) = self.list_stack.last_mut() {
-                        frame.2 = true; // mark as task list
-                    }
-                    self.current_task_checked = Some(checked);
-
-                    // Insert styled checkbox symbol
-                    let (symbol, style_tag) = if checked {
-                        ("\u{2611} ", "task-checked")
-                    } else {
-                        ("\u{2610} ", "task-unchecked")
-                    };
-                    let mut tags = self.active_tags();
-                    tags.push("list-item");
-                    tags.push(style_tag);
-                    self.insert_with_tags(symbol, &tags);
-                }
-
-                // -- Tables --
-                Event::Start(Tag::Table(_)) => {
-                    self.block_separator();
-                    self.in_table = true;
-                    self.table_headers.clear();
-                    self.table_rows.clear();
-                }
-                Event::End(TagEnd::Table) => {
-                    self.in_table = false;
-                    self.render_table();
-                    self.has_content = true;
-                }
-                Event::Start(Tag::TableHead) => {
-                    self.in_table_head = true;
-                    self.table_row.clear();
-                }
-                Event::End(TagEnd::TableHead) => {
-                    self.table_headers = std::mem::take(&mut self.table_row);
-                    self.in_table_head = false;
-                }
-                Event::Start(Tag::TableRow) => {
-                    self.table_row.clear();
-                }
-                Event::End(TagEnd::TableRow) => {
-                    if !self.in_table_head {
-                        self.table_rows.push(std::mem::take(&mut self.table_row));
-                    }
-                }
-                Event::Start(Tag::TableCell) => {
-                    self.inline_buf.clear();
-                }
-                Event::End(TagEnd::TableCell) => {
-                    self.table_row.push(std::mem::take(&mut self.inline_buf));
-                }
-
-                // -- Blockquotes --
-                Event::Start(Tag::BlockQuote(_)) => {
-                    self.blockquote_depth += 1;
-                }
-                Event::End(TagEnd::BlockQuote(_)) => {
-                    self.blockquote_depth = self.blockquote_depth.saturating_sub(1);
-                }
-
-                // -- Horizontal rule --
-                Event::Rule => {
-                    self.block_separator();
-                    self.insert_with_tags("────────────────────────", &["horizontal-rule"]);
-                    self.insert_with_tags("\n", &[]);
-                    self.has_content = true;
-                }
-
-                // -- Text content --
-                Event::Text(text) => {
-                    if self.in_code_block.is_some() {
-                        self.code_buf.push_str(&text);
-                    } else if self.in_table {
-                        self.inline_buf.push_str(&text);
-                    } else {
-                        self.emit_text(&text);
-                    }
-                }
-                Event::Code(code) => {
-                    if self.in_table {
-                        self.inline_buf.push_str(&code);
-                    } else {
-                        self.flush_pending_marker();
-                        let mut tags = self.active_tags();
-                        tags.push("code-inline");
-                        if !self.list_stack.is_empty() {
-                            tags.push("list-item");
-                        }
-                        self.insert_with_tags(&code, &tags);
-                    }
-                }
-                Event::SoftBreak | Event::HardBreak => {
-                    if self.in_code_block.is_some() {
-                        self.code_buf.push('\n');
-                    } else if self.in_table {
-                        self.inline_buf.push('\n');
-                    } else {
-                        let tags = self.active_tags();
-                        self.insert_with_tags("\n", &tags);
-                    }
-                }
-                Event::Html(html) | Event::InlineHtml(html) => {
-                    if self.in_code_block.is_some() {
-                        self.code_buf.push_str(&html);
-                    } else if self.in_table {
-                        self.inline_buf.push_str(&html);
-                    } else {
-                        self.emit_text(&html);
-                    }
-                }
-
-                // Intentionally ignored: FootnoteReference, MetadataBlock,
-                // DefinitionList variants — these are either disabled in parser
-                // options or have no meaningful visual representation.
-                _ => {}
-            }
+            self.handle_event(event);
         }
+    }
+
+    fn handle_event(&mut self, event: Event<'_>) {
+        match event {
+            Event::Start(tag) => self.handle_start_tag(tag),
+            Event::End(tag_end) => self.handle_end_tag(tag_end),
+            Event::TaskListMarker(checked) => self.handle_task_list_marker(checked),
+            Event::Rule => {
+                self.block_separator();
+                self.insert_with_tags("────────────────────────", &["horizontal-rule"]);
+                self.insert_with_tags("\n", &[]);
+                self.has_content = true;
+            }
+            Event::Text(text) => self.push_text_content(&text),
+            Event::Code(code) => self.push_inline_code(&code),
+            Event::SoftBreak | Event::HardBreak => self.push_inline_break(),
+            Event::Html(html) | Event::InlineHtml(html) => self.push_text_content(&html),
+
+            // Intentionally ignored: FootnoteReference, MetadataBlock,
+            // DefinitionList variants — these are either disabled in parser
+            // options or have no meaningful visual representation.
+            _ => {}
+        }
+    }
+
+    fn handle_start_tag(&mut self, tag: Tag<'_>) {
+        match tag {
+            Tag::Emphasis => self.tag_stack.push("italic"),
+            Tag::Strong => self.tag_stack.push("bold"),
+            Tag::Strikethrough => self.tag_stack.push("strikethrough"),
+            Tag::Link { dest_url, .. } => {
+                self.link_url = Some(dest_url.to_string());
+            }
+            Tag::Image { .. } => {
+                self.in_image = true;
+                self.write_inline_with_active_tags("[image: ");
+            }
+            Tag::Paragraph => {
+                if self.list_stack.is_empty() && !self.in_table {
+                    self.block_separator();
+                }
+            }
+            Tag::Heading { level, .. } => {
+                self.block_separator();
+                let heading_tag = Self::heading_tag_name(level);
+                self.tag_stack.push(heading_tag);
+            }
+            Tag::CodeBlock(kind) => self.start_code_block(kind),
+            Tag::List(start) => {
+                if self.list_stack.is_empty() {
+                    self.block_separator();
+                } else {
+                    self.insert_with_tags("\n", &[]);
+                }
+                self.list_stack.push((start.is_some(), 0, false));
+            }
+            Tag::Item => {
+                if let Some(frame) = self.list_stack.last_mut() {
+                    frame.1 += 1;
+                    if !frame.2 {
+                        self.pending_item_marker = true;
+                    }
+                }
+            }
+            Tag::Table(_) => {
+                self.block_separator();
+                self.in_table = true;
+                self.table_headers.clear();
+                self.table_rows.clear();
+            }
+            Tag::TableHead => {
+                self.in_table_head = true;
+                self.table_row.clear();
+            }
+            Tag::TableRow => {
+                self.table_row.clear();
+            }
+            Tag::TableCell => {
+                self.inline_buf.clear();
+            }
+            Tag::BlockQuote(_) => {
+                self.blockquote_depth += 1;
+            }
+            _ => {}
+        }
+    }
+
+    fn handle_end_tag(&mut self, tag_end: TagEnd) {
+        match tag_end {
+            TagEnd::Emphasis => self.pop_tag("italic"),
+            TagEnd::Strong => self.pop_tag("bold"),
+            TagEnd::Strikethrough => self.pop_tag("strikethrough"),
+            TagEnd::Link => {
+                if let Some(url) = self.link_url.take() {
+                    let suffix = format!(" ({})", url);
+                    self.write_inline_with_active_tags(&suffix);
+                }
+            }
+            TagEnd::Image => {
+                self.in_image = false;
+                self.write_inline_with_active_tags("]");
+            }
+            TagEnd::Paragraph => {
+                if self.list_stack.is_empty() && !self.in_table {
+                    self.insert_with_tags("\n", &[]);
+                    self.has_content = true;
+                }
+            }
+            TagEnd::Heading(level) => {
+                self.insert_with_tags("\n", &[]);
+                self.has_content = true;
+                self.pop_tag(Self::heading_tag_name(level));
+            }
+            TagEnd::CodeBlock => self.finish_code_block(),
+            TagEnd::List(_) => {
+                self.list_stack.pop();
+                if self.list_stack.is_empty() {
+                    self.has_content = true;
+                }
+            }
+            TagEnd::Item => {
+                self.flush_pending_marker();
+                self.insert_with_tags("\n", &[]);
+            }
+            TagEnd::Table => {
+                self.in_table = false;
+                self.render_table();
+                self.has_content = true;
+            }
+            TagEnd::TableHead => {
+                self.table_headers = std::mem::take(&mut self.table_row);
+                self.in_table_head = false;
+            }
+            TagEnd::TableRow => {
+                if !self.in_table_head {
+                    self.table_rows.push(std::mem::take(&mut self.table_row));
+                }
+            }
+            TagEnd::TableCell => {
+                self.table_row.push(std::mem::take(&mut self.inline_buf));
+            }
+            TagEnd::BlockQuote(_) => {
+                self.blockquote_depth = self.blockquote_depth.saturating_sub(1);
+            }
+            _ => {}
+        }
+    }
+
+    fn start_code_block(&mut self, kind: CodeBlockKind<'_>) {
+        self.code_buf.clear();
+        let language = match kind {
+            CodeBlockKind::Fenced(info) => {
+                let lang = info.trim().to_string();
+                if lang.is_empty() { None } else { Some(lang) }
+            }
+            CodeBlockKind::Indented => None,
+        };
+        self.in_code_block = Some(language);
+    }
+
+    fn finish_code_block(&mut self) {
+        self.block_separator();
+        let language = self.in_code_block.take().flatten();
+        let mut code_tags = vec!["code-block"];
+        if self.blockquote_depth > 0 {
+            code_tags.push("blockquote");
+        }
+        if let Some(ref lang) = language {
+            let mut lang_tags = code_tags.clone();
+            lang_tags.push("code-lang");
+            self.insert_with_tags(lang, &lang_tags);
+            self.insert_with_tags("\n", &code_tags);
+        }
+        let code = self.code_buf.trim_end_matches('\n').to_string();
+        self.insert_with_tags(&code, &code_tags);
+        self.insert_with_tags("\n", &[]);
+        self.has_content = true;
+    }
+
+    fn handle_task_list_marker(&mut self, checked: bool) {
+        self.pending_item_marker = false;
+        if let Some(frame) = self.list_stack.last_mut() {
+            frame.2 = true;
+        }
+        self.current_task_checked = Some(checked);
+
+        let (symbol, style_tag) = if checked {
+            ("\u{2611} ", "task-checked")
+        } else {
+            ("\u{2610} ", "task-unchecked")
+        };
+        let mut tags = self.active_tags();
+        tags.push("list-item");
+        tags.push(style_tag);
+        self.insert_with_tags(symbol, &tags);
     }
 
     /// If a list-item marker was deferred, emit it now.
@@ -574,6 +516,49 @@ impl MarkdownBufferWriter {
             tags.push("list-item");
         }
         self.insert_with_tags(text, &tags);
+    }
+
+    fn write_inline_with_active_tags(&mut self, text: &str) {
+        if self.in_table {
+            self.inline_buf.push_str(text);
+        } else {
+            let tags = self.active_tags();
+            self.insert_with_tags(text, &tags);
+        }
+    }
+
+    fn push_text_content(&mut self, text: &str) {
+        if self.in_code_block.is_some() {
+            self.code_buf.push_str(text);
+        } else if self.in_table {
+            self.inline_buf.push_str(text);
+        } else {
+            self.emit_text(text);
+        }
+    }
+
+    fn push_inline_code(&mut self, code: &str) {
+        if self.in_table {
+            self.inline_buf.push_str(code);
+        } else {
+            self.flush_pending_marker();
+            let mut tags = self.active_tags();
+            tags.push("code-inline");
+            if !self.list_stack.is_empty() {
+                tags.push("list-item");
+            }
+            self.insert_with_tags(code, &tags);
+        }
+    }
+
+    fn push_inline_break(&mut self) {
+        if self.in_code_block.is_some() {
+            self.code_buf.push('\n');
+        } else if self.in_table {
+            self.inline_buf.push('\n');
+        } else {
+            self.write_inline_with_active_tags("\n");
+        }
     }
 
     fn create_table_label(text: &str, query: &str, is_header: bool) -> (gtk::Label, usize) {
@@ -1112,6 +1097,20 @@ mod tests {
                 .iter()
                 .any(|text| text.contains("Rust (https://rust-lang.org)")),
             "expected link text to be visible inside table widget labels, got: {label_texts:?}"
+        );
+    }
+
+    #[gtk::test]
+    fn textview_table_image_visible_inside_widget_cell() {
+        let md = "| Screenshot |\n|------------|\n| ![Session List](docs/screenshots/session_list.png) |";
+        let (widget, _) = render_markdown_to_textview(md, None);
+        let label_texts = table_label_texts(&widget);
+
+        assert!(
+            label_texts
+                .iter()
+                .any(|text| text.contains("[image: Session List]")),
+            "expected image alt text placeholder inside table widget labels, got: {label_texts:?}"
         );
     }
 
