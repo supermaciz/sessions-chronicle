@@ -2,8 +2,6 @@ use pulldown_cmark::{CodeBlockKind, Event, Options, Parser, Tag, TagEnd};
 use relm4::adw;
 use relm4::gtk;
 use relm4::gtk::prelude::*;
-use unicode_width::UnicodeWidthStr;
-
 // Theme-dependent color palette (dark / light variants).
 const DARK_CODE_BG: &str = "#2c2c2c";
 const LIGHT_CODE_BG: &str = "#f4f4f4";
@@ -190,10 +188,17 @@ struct MarkdownBufferWriter<'a> {
     /// Deferred item marker: true when we entered a list item but haven't
     /// yet decided whether it's a regular or task-list item.
     pending_item_marker: bool,
+    /// Search query used for markdown highlight; table widgets will use this
+    /// in a follow-up task.
+    highlight_query: Option<String>,
+    /// Deferred table widgets to attach after TextView creation.
+    pending_table_widgets: Vec<(gtk::TextChildAnchor, gtk::Widget)>,
+    /// Search match count found inside table widgets.
+    table_match_count: usize,
 }
 
 impl<'a> MarkdownBufferWriter<'a> {
-    fn new(buffer: &'a gtk::TextBuffer) -> Self {
+    fn new(buffer: &'a gtk::TextBuffer, highlight_query: Option<&str>) -> Self {
         Self {
             buffer,
             tag_stack: Vec::new(),
@@ -212,6 +217,9 @@ impl<'a> MarkdownBufferWriter<'a> {
             in_image: false,
             has_content: false,
             pending_item_marker: false,
+            highlight_query: highlight_query.map(str::to_owned),
+            pending_table_widgets: Vec::new(),
+            table_match_count: 0,
         }
     }
 
@@ -551,78 +559,76 @@ impl<'a> MarkdownBufferWriter<'a> {
         self.insert_with_tags(text, &tags);
     }
 
-    /// Render collected table data as monospace-aligned text.
+    fn create_table_label(text: &str, query: &str, is_header: bool) -> (gtk::Label, usize) {
+        let (markup, match_count) = crate::ui::highlight::highlight_text(text, query);
+
+        let label = gtk::Label::new(None);
+        label.set_use_markup(true);
+        label.set_markup(&markup);
+        label.set_wrap(true);
+        label.set_wrap_mode(gtk::pango::WrapMode::WordChar);
+        label.set_xalign(0.0);
+        label.set_halign(gtk::Align::Start);
+        label.set_hexpand(true);
+        label.add_css_class("markdown-table-cell");
+        if is_header {
+            label.add_css_class("markdown-table-header");
+        }
+        (label, match_count)
+    }
+
+    /// Defer table rendering by inserting a child anchor and table widget.
     fn render_table(&mut self) {
         if self.table_headers.is_empty() {
             return;
         }
 
-        let num_cols = self.table_headers.len();
+        let mut end_iter = self.buffer.end_iter();
+        let anchor = self.buffer.create_child_anchor(&mut end_iter);
 
-        // Calculate column widths using display width (handles CJK/emoji)
-        let mut col_widths: Vec<usize> = self.table_headers.iter().map(|h| h.width()).collect();
-        for row in &self.table_rows {
-            for (i, cell) in row.iter().enumerate() {
-                if i < num_cols {
-                    col_widths[i] = col_widths[i].max(cell.width());
-                }
+        let grid = gtk::Grid::new();
+        grid.set_hexpand(true);
+        grid.add_css_class("markdown-table");
+        grid.set_row_spacing(4);
+        grid.set_column_spacing(12);
+        let query = self.highlight_query.as_deref().unwrap_or("");
+        let mut table_match_count = 0usize;
+
+        for (col, header) in self.table_headers.iter().enumerate() {
+            let (label, match_count) = Self::create_table_label(header, query, true);
+            table_match_count += match_count;
+            grid.attach(&label, col as i32, 0, 1, 1);
+        }
+
+        let separator = gtk::Separator::new(gtk::Orientation::Horizontal);
+        separator.set_hexpand(true);
+        grid.attach(&separator, 0, 1, self.table_headers.len() as i32, 1);
+
+        for (row_idx, row) in self.table_rows.iter().enumerate() {
+            for (col_idx, cell) in row.iter().enumerate() {
+                let (label, match_count) = Self::create_table_label(cell, query, false);
+                table_match_count += match_count;
+                grid.attach(&label, col_idx as i32, row_idx as i32 + 2, 1, 1);
             }
         }
 
-        // Pad a string to a target display width with trailing spaces.
-        fn pad_to_width(s: &str, target: usize) -> String {
-            let current = s.width();
-            if current >= target {
-                s.to_string()
-            } else {
-                format!("{}{}", s, " ".repeat(target - current))
-            }
+        let table_widget = gtk::ScrolledWindow::builder()
+            .hexpand(true)
+            .propagate_natural_width(true)
+            .hscrollbar_policy(gtk::PolicyType::Automatic)
+            .vscrollbar_policy(gtk::PolicyType::Never)
+            .child(&grid)
+            .build();
+
+        if self.blockquote_depth > 0 {
+            table_widget.add_css_class("markdown-blockquote");
         }
 
-        let in_blockquote = self.blockquote_depth > 0;
+        self.table_match_count += table_match_count;
 
-        // Render header row
-        let header_line: String = self
-            .table_headers
-            .iter()
-            .enumerate()
-            .map(|(i, h)| pad_to_width(h, col_widths[i]))
-            .collect::<Vec<_>>()
-            .join("  ");
-        let mut header_tags: Vec<&str> = vec!["table-header"];
-        if in_blockquote {
-            header_tags.push("blockquote");
-        }
-        self.insert_with_tags(&header_line, &header_tags);
+        self.pending_table_widgets
+            .push((anchor, table_widget.upcast::<gtk::Widget>()));
         self.insert_with_tags("\n", &[]);
-
-        // Render separator
-        let sep_line: String = col_widths
-            .iter()
-            .map(|w| "─".repeat(*w))
-            .collect::<Vec<_>>()
-            .join("  ");
-        let mut text_tags: Vec<&str> = vec!["table-text"];
-        if in_blockquote {
-            text_tags.push("blockquote");
-        }
-        self.insert_with_tags(&sep_line, &text_tags);
-        self.insert_with_tags("\n", &[]);
-
-        // Render data rows
-        for row in &self.table_rows {
-            let row_line: String = row
-                .iter()
-                .enumerate()
-                .map(|(i, cell)| {
-                    let width = col_widths.get(i).copied().unwrap_or(cell.width());
-                    pad_to_width(cell, width)
-                })
-                .collect::<Vec<_>>()
-                .join("  ");
-            self.insert_with_tags(&row_line, &text_tags);
-            self.insert_with_tags("\n", &[]);
-        }
     }
 }
 
@@ -637,11 +643,13 @@ pub fn render_markdown_to_textview(
     let tag_table = create_tag_table();
     let buffer = gtk::TextBuffer::new(Some(&tag_table));
 
-    let mut writer = MarkdownBufferWriter::new(&buffer);
+    let mut writer = MarkdownBufferWriter::new(&buffer, highlight_query);
     writer.process(content);
+    let pending_table_widgets = std::mem::take(&mut writer.pending_table_widgets);
+    let table_match_count = writer.table_match_count;
 
     // Apply search highlighting in a second pass.
-    let match_count = apply_search_highlight(&buffer, highlight_query.unwrap_or(""));
+    let buffer_match_count = apply_search_highlight(&buffer, highlight_query.unwrap_or(""));
 
     let view = gtk::TextView::with_buffer(&buffer);
     view.set_editable(false);
@@ -656,6 +664,10 @@ pub fn render_markdown_to_textview(
     // Make the TextView background transparent so the parent row's
     // background color shows through uniformly in both light and dark mode.
     view.add_css_class("markdown-textview");
+
+    for (anchor, widget) in pending_table_widgets {
+        view.add_child_at_anchor(&widget, &anchor);
+    }
 
     let style_manager = adw::StyleManager::default();
     let buffer_weak = buffer.downgrade();
@@ -672,7 +684,7 @@ pub fn render_markdown_to_textview(
         }
     });
 
-    (view, match_count)
+    (view, buffer_match_count + table_match_count)
 }
 
 /// Find and highlight all case-insensitive matches of `query` in the buffer.
@@ -743,6 +755,63 @@ fn apply_search_highlight(buffer: &gtk::TextBuffer, query: &str) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn table_anchors(view: &gtk::TextView) -> Vec<gtk::TextChildAnchor> {
+        let buffer = view.buffer();
+        let mut iter = buffer.start_iter();
+        let mut anchors = Vec::new();
+
+        loop {
+            if let Some(anchor) = iter.child_anchor() {
+                anchors.push(anchor);
+            }
+            if !iter.forward_char() {
+                break;
+            }
+        }
+
+        anchors
+    }
+
+    fn collect_label_text_from_widget_tree(widget: &gtk::Widget) -> Vec<String> {
+        let mut texts = Vec::new();
+
+        if let Ok(label) = widget.clone().downcast::<gtk::Label>() {
+            texts.push(label.text().to_string());
+        }
+
+        let mut child = widget.first_child();
+        while let Some(child_widget) = child {
+            texts.extend(collect_label_text_from_widget_tree(&child_widget));
+            child = child_widget.next_sibling();
+        }
+
+        texts
+    }
+
+    fn attached_label_text(anchor: &gtk::TextChildAnchor) -> Vec<String> {
+        let mut texts = Vec::new();
+        for widget in anchor.widgets() {
+            texts.extend(collect_label_text_from_widget_tree(&widget));
+        }
+        texts
+    }
+
+    fn widget_tree_has_css_class(widget: &gtk::Widget, class_name: &str) -> bool {
+        if widget.has_css_class(class_name) {
+            return true;
+        }
+
+        let mut child = widget.first_child();
+        while let Some(child_widget) = child {
+            if widget_tree_has_css_class(&child_widget, class_name) {
+                return true;
+            }
+            child = child_widget.next_sibling();
+        }
+
+        false
+    }
 
     fn has_tag_at(content: &str, tag_name: &str, char_offset: i32) -> bool {
         let (view, _) = render_markdown_to_textview(content, None);
@@ -877,14 +946,38 @@ mod tests {
     // ── Tables ───────────────────────────────────────────────────────
 
     #[gtk::test]
-    fn textview_table_rendered_as_text() {
+    fn textview_table_creates_child_anchor() {
         let md = "| A | B |\n|---|---|\n| 1 | 2 |";
-        let text = textview_text(md);
-        assert!(text.contains("A"), "got: {text}");
-        assert!(text.contains("B"), "got: {text}");
-        assert!(text.contains("1"), "got: {text}");
-        assert!(text.contains("2"), "got: {text}");
-        assert!(text.contains('─'), "separator missing, got: {text}");
+        let (view, _) = render_markdown_to_textview(md, None);
+        let anchors = table_anchors(&view);
+        assert!(
+            !anchors.is_empty(),
+            "expected table to create at least one child anchor"
+        );
+    }
+
+    #[gtk::test]
+    fn textview_table_anchor_has_attached_widget() {
+        let md = "| A | B |\n|---|---|\n| 1 | 2 |";
+        let (view, _) = render_markdown_to_textview(md, None);
+        let anchors = table_anchors(&view);
+
+        assert!(
+            anchors.iter().any(|anchor| !anchor.widgets().is_empty()),
+            "expected at least one table anchor with an attached widget"
+        );
+    }
+
+    #[gtk::test]
+    fn textview_table_search_count_includes_widget_cells() {
+        let md = "| Name |\n|------|\n| Rust |";
+        let (view, count) = render_markdown_to_textview(md, Some("Rust"));
+
+        assert!(
+            !table_anchors(&view).is_empty(),
+            "expected table to render via child anchors"
+        );
+        assert_eq!(count, 1, "expected search to include widget cell content");
     }
 
     // ── Horizontal rule ──────────────────────────────────────────────
@@ -922,33 +1015,36 @@ mod tests {
     // ── Link inside table cell ────────────────────────────────────────
 
     #[gtk::test]
-    fn textview_table_link_stays_in_cell() {
+    fn textview_table_link_visible_inside_widget_cell() {
         let md = "| Name |\n|------|\n| [Rust](https://rust-lang.org) |";
-        let text = textview_text(md);
-        // The URL suffix must appear on the same line as the cell content,
-        // not leak outside the table.
+        let (view, _) = render_markdown_to_textview(md, None);
+        let anchors = table_anchors(&view);
+        let label_texts: Vec<String> = anchors.iter().flat_map(attached_label_text).collect();
+
         assert!(
-            text.contains("Rust (https://rust-lang.org)"),
-            "link URL should be inside the cell, got: {text}"
+            label_texts
+                .iter()
+                .any(|text| text.contains("Rust (https://rust-lang.org)")),
+            "expected link text to be visible inside attached table widget labels, got: {label_texts:?}"
         );
     }
 
     // ── Blockquote table styling ──────────────────────────────────────
 
     #[gtk::test]
-    fn textview_table_inside_blockquote_has_blockquote_tag() {
+    fn textview_table_inside_blockquote_widget_has_blockquote_class() {
         let md = "> | A | B |\n> |---|---|\n> | 1 | 2 |";
-        let text = textview_text(md);
-        // Table should render inside the blockquote
-        assert!(text.contains("A"), "got: {text}");
-        // Find the table header and check it carries the blockquote tag
         let (view, _) = render_markdown_to_textview(md, None);
-        let buf = view.buffer();
-        let full = buf.text(&buf.start_iter(), &buf.end_iter(), false);
-        let offset = full.find('A').expect("table header 'A' not found") as i32;
+        let anchors = table_anchors(&view);
+
         assert!(
-            has_tag_at(md, "blockquote", offset),
-            "table header inside blockquote should have blockquote tag"
+            anchors.iter().any(|anchor| {
+                anchor
+                    .widgets()
+                    .iter()
+                    .any(|widget| widget_tree_has_css_class(widget, "markdown-blockquote"))
+            }),
+            "expected blockquote table widget tree to include a widget with the blockquote css class"
         );
     }
 
