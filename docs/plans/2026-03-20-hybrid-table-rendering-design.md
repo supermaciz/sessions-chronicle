@@ -111,11 +111,14 @@ The `ScrolledWindow` is the anchored child attached to the `TextView`.
 The table body uses `gtk::Grid` with:
 
 - `hexpand: true`
-- `column_homogeneous: true`
+- `column_homogeneous: false` (default)
 - CSS class `.markdown-table`
 
-`column_homogeneous: true` is required for equal-width columns. `hexpand` alone is not
-sufficient to guarantee that behavior.
+`column_homogeneous` is left at its default `false` so that columns size according to
+their content. Each cell label sets `hexpand: true`, which distributes extra horizontal
+space among all columns proportionally to their natural width. This gives wider columns
+to content-heavy cells (e.g. descriptions) and narrower columns to short values (e.g.
+status flags), which is the expected behavior for data tables.
 
 ### Cells
 
