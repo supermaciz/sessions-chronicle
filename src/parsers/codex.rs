@@ -21,11 +21,383 @@ pub enum ParseError {
     InvalidSessionMetaJson(String),
 }
 
-/// Intermediate state while correlating begin/end pairs.
-struct PendingCall {
-    tool_name: String,
-    input_json: Option<String>,
-    started_at: Option<i64>,
+/// Mutable parsing state accumulator for Codex sessions.
+struct ParseState {
+    session_id: String,
+    last_updated: DateTime<Utc>,
+    current_turn_model: Option<String>,
+    best_snapshot: Option<(i64, TokenUsage)>,
+    has_user_message: bool,
+
+    // Output collections
+    messages: Vec<Message>,
+    tool_calls: Vec<ToolCall>,
+    transcript_items: Vec<TranscriptItem>,
+
+    // Correlation: call_id -> index in tool_calls
+    call_id_to_tc_idx: HashMap<String, usize>,
+
+    // Counters
+    msg_counter: i64,
+    item_counter: i64,
+}
+
+impl ParseState {
+    fn new(session_id: String, last_updated: DateTime<Utc>) -> Self {
+        Self {
+            session_id,
+            last_updated,
+            current_turn_model: None,
+            best_snapshot: None,
+            has_user_message: false,
+            messages: Vec::new(),
+            tool_calls: Vec::new(),
+            transcript_items: Vec::new(),
+            call_id_to_tc_idx: HashMap::new(),
+            msg_counter: 0,
+            item_counter: 0,
+        }
+    }
+
+    fn update_last_updated(&mut self, ts: DateTime<Utc>) {
+        if ts > self.last_updated {
+            self.last_updated = ts;
+        }
+    }
+
+    fn push_message(
+        &mut self,
+        role: Role,
+        content: String,
+        timestamp: DateTime<Utc>,
+        model: Option<String>,
+    ) {
+        if role == Role::User {
+            self.has_user_message = true;
+        }
+        self.messages.push(Message {
+            session_id: self.session_id.clone(),
+            index: self.msg_counter as usize,
+            role,
+            content,
+            timestamp,
+            model,
+        });
+        self.transcript_items.push(TranscriptItem {
+            session_id: self.session_id.clone(),
+            item_index: self.item_counter,
+            kind: TranscriptItemKind::Message,
+            message_index: Some(self.msg_counter),
+            tool_call_id: None,
+            subagent_id: None,
+        });
+        self.msg_counter += 1;
+        self.item_counter += 1;
+    }
+
+    fn push_tool_call(
+        &mut self,
+        call_id: String,
+        tool_name: String,
+        input_json: Option<String>,
+        started_at: Option<i64>,
+    ) {
+        if self.call_id_to_tc_idx.contains_key(&call_id) {
+            return;
+        }
+        let tc_idx = self.tool_calls.len();
+        self.tool_calls.push(ToolCall {
+            id: call_id.clone(),
+            session_id: self.session_id.clone(),
+            subagent_id: None,
+            tool_name: tool_name.clone(),
+            status: ToolCallStatus::Running,
+            title: Some(tool_name),
+            summary: None,
+            input_json,
+            output_text: None,
+            error_text: None,
+            started_at,
+            ended_at: None,
+            duration_ms: None,
+            parser_call_id: Some(call_id.clone()),
+        });
+        self.call_id_to_tc_idx.insert(call_id.clone(), tc_idx);
+        self.transcript_items.push(TranscriptItem {
+            session_id: self.session_id.clone(),
+            item_index: self.item_counter,
+            kind: TranscriptItemKind::ToolCall,
+            message_index: None,
+            tool_call_id: Some(call_id),
+            subagent_id: None,
+        });
+        self.item_counter += 1;
+    }
+
+    fn complete_tool_call(
+        &mut self,
+        call_id: &str,
+        output_text: Option<String>,
+        error_text: Option<String>,
+        ended_at: Option<i64>,
+        duration_ms: Option<i64>,
+        status: ToolCallStatus,
+    ) {
+        if let Some(&tc_idx) = self.call_id_to_tc_idx.get(call_id)
+            && let Some(tc) = self.tool_calls.get_mut(tc_idx)
+        {
+            tc.output_text = output_text;
+            tc.error_text = error_text;
+            tc.ended_at = ended_at;
+            tc.duration_ms = duration_ms;
+            tc.status = status;
+        }
+    }
+
+    fn handle_turn_context(&mut self, payload: &Value) {
+        self.current_turn_model = normalize_model(payload.get("model"));
+    }
+
+    fn handle_response_item(&mut self, payload: &Value, event_ts: Option<DateTime<Utc>>) {
+        match payload.get("type").and_then(|v| v.as_str()) {
+            Some("function_call") | Some("custom_tool_call") => {
+                let call_id = match payload.get("call_id").and_then(|v| v.as_str()) {
+                    Some(id) if !id.is_empty() => id.to_string(),
+                    _ => {
+                        tracing::warn!("response_item call begin missing call_id, skipping");
+                        return;
+                    }
+                };
+
+                let tool_name = payload
+                    .get("name")
+                    .or_else(|| payload.get("tool_name"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("unknown")
+                    .to_string();
+
+                let input_json = payload
+                    .get("arguments")
+                    .or_else(|| payload.get("input"))
+                    .map(|v| {
+                        v.as_str()
+                            .map(str::to_string)
+                            .unwrap_or_else(|| v.to_string())
+                    });
+
+                self.push_tool_call(
+                    call_id,
+                    tool_name,
+                    input_json,
+                    event_ts.map(|t| t.timestamp()),
+                );
+            }
+            Some("function_call_output") | Some("custom_tool_call_output") => {
+                let call_id = match payload.get("call_id").and_then(|v| v.as_str()) {
+                    Some(id) if !id.is_empty() => id,
+                    _ => {
+                        tracing::warn!("response_item call output missing call_id, skipping");
+                        return;
+                    }
+                };
+
+                let output_text = payload.get("output").and_then(|v| {
+                    if let Some(s) = v.as_str() {
+                        Some(s.to_string())
+                    } else if v.is_null() {
+                        None
+                    } else {
+                        Some(v.to_string())
+                    }
+                });
+                let error_text = payload.get("error").and_then(|v| {
+                    if let Some(s) = v.as_str() {
+                        if s.is_empty() {
+                            None
+                        } else {
+                            Some(s.to_string())
+                        }
+                    } else if v.is_null() {
+                        None
+                    } else {
+                        Some(v.to_string())
+                    }
+                });
+
+                let status_str = payload
+                    .get("status")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_ascii_lowercase());
+                let status = if matches!(status_str.as_deref(), Some("error") | Some("failed")) {
+                    ToolCallStatus::Error
+                } else if matches!(status_str.as_deref(), Some("completed")) {
+                    ToolCallStatus::Completed
+                } else if error_text.is_some() {
+                    ToolCallStatus::Error
+                } else {
+                    ToolCallStatus::Completed
+                };
+
+                self.complete_tool_call(
+                    call_id,
+                    output_text,
+                    error_text,
+                    event_ts.map(|t| t.timestamp()),
+                    payload.get("duration_ms").and_then(|v| v.as_i64()),
+                    status,
+                );
+            }
+            _ => {}
+        }
+    }
+
+    fn handle_event_msg(&mut self, payload: &Value, event_ts: Option<DateTime<Utc>>) {
+        match payload.get("type").and_then(|v| v.as_str()) {
+            Some("turn_context") => {
+                self.handle_turn_context(payload);
+            }
+
+            Some("user_message") => {
+                let content = match payload.get("message").and_then(|v| v.as_str()) {
+                    Some(c) => c.to_string(),
+                    None => return,
+                };
+                self.push_message(Role::User, content, event_ts.unwrap_or_else(Utc::now), None);
+            }
+
+            Some("agent_message") => {
+                let content = match payload.get("message").and_then(|v| v.as_str()) {
+                    Some(c) => c.to_string(),
+                    None => return,
+                };
+                let model = self.current_turn_model.clone();
+                self.push_message(
+                    Role::Assistant,
+                    content,
+                    event_ts.unwrap_or_else(Utc::now),
+                    model,
+                );
+            }
+
+            Some(begin_type)
+                if matches!(begin_type, "mcp_tool_call_begin" | "exec_command_begin") =>
+            {
+                let call_id = match payload.get("call_id").and_then(|v| v.as_str()) {
+                    Some(id) => id.to_string(),
+                    None => {
+                        tracing::warn!("Tool call begin event missing call_id, skipping");
+                        return;
+                    }
+                };
+
+                let tool_name = payload
+                    .get("tool_name")
+                    .or_else(|| payload.get("command"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or(begin_type)
+                    .to_string();
+                let input_json = if begin_type == "exec_command_begin" {
+                    Some(
+                        serde_json::json!({
+                            "command": payload.get("command").and_then(|v| v.as_str()).unwrap_or(""),
+                            "cwd": payload.get("cwd").and_then(|v| v.as_str()),
+                        })
+                        .to_string(),
+                    )
+                } else {
+                    payload.get("input").map(|v| v.to_string())
+                };
+
+                self.push_tool_call(
+                    call_id,
+                    tool_name,
+                    input_json,
+                    event_ts.map(|t| t.timestamp()),
+                );
+            }
+
+            Some("token_count") => {
+                self.record_token_usage(payload);
+            }
+
+            Some("mcp_tool_call_end") | Some("exec_command_end") => {
+                let call_id = match payload.get("call_id").and_then(|v| v.as_str()) {
+                    Some(id) => id,
+                    None => return,
+                };
+                let output = payload
+                    .get("output")
+                    .or_else(|| payload.get("stdout"))
+                    .and_then(|v| v.as_str())
+                    .map(str::to_string);
+                let error = payload
+                    .get("error")
+                    .or_else(|| payload.get("stderr"))
+                    .and_then(|v| v.as_str())
+                    .filter(|s| !s.is_empty())
+                    .map(str::to_string);
+                let exit_code = payload.get("exit_code").and_then(|v| v.as_i64());
+                let status = match exit_code {
+                    Some(0) | None => ToolCallStatus::Completed,
+                    Some(_) => ToolCallStatus::Error,
+                };
+
+                self.complete_tool_call(
+                    call_id,
+                    output,
+                    error,
+                    event_ts.map(|t| t.timestamp()),
+                    payload.get("duration_ms").and_then(|v| v.as_i64()),
+                    status,
+                );
+            }
+
+            _ => {}
+        }
+    }
+
+    fn record_token_usage(&mut self, payload: &Value) {
+        if let Some(info) = payload.get("info")
+            && !info.is_null()
+            && let Some(total_usage) = info.get("total_token_usage")
+        {
+            let input = total_usage
+                .get("input_tokens")
+                .and_then(|v| v.as_i64())
+                .unwrap_or(0);
+            let output = total_usage
+                .get("output_tokens")
+                .and_then(|v| v.as_i64())
+                .unwrap_or(0);
+            let reasoning = total_usage
+                .get("reasoning_output_tokens")
+                .and_then(|v| v.as_i64())
+                .unwrap_or(0);
+            let cached = total_usage
+                .get("cached_input_tokens")
+                .and_then(|v| v.as_i64());
+
+            let global_total = input + output + reasoning;
+            let replace = match &self.best_snapshot {
+                Some((current_best, _)) => global_total > *current_best,
+                None => true,
+            };
+            if replace {
+                // Codex/OpenAI reports cached_input_tokens as the cached subset
+                // of input_tokens, not as an extra bucket to add on top.
+                self.best_snapshot = Some((
+                    global_total,
+                    TokenUsage {
+                        input_tokens: input,
+                        output_tokens: output,
+                        cache_read_tokens: cached,
+                        cache_write_tokens: None,
+                        reasoning_tokens: if reasoning > 0 { Some(reasoning) } else { None },
+                    },
+                ));
+            }
+        }
+    }
 }
 
 pub struct CodexParser;
@@ -85,21 +457,7 @@ impl CodexParser {
             .and_then(|v| v.as_str())
             .map(str::to_string);
 
-        let mut last_updated = start_time;
-        let mut messages: Vec<Message> = Vec::new();
-        let mut tool_calls: Vec<ToolCall> = Vec::new();
-        let mut transcript_items: Vec<TranscriptItem> = Vec::new();
-        let mut has_user_message = false;
-
-        // Maps call_id → PendingCall (for begin/end correlation)
-        let mut pending_calls: HashMap<String, PendingCall> = HashMap::new();
-        // Maps call_id → index in tool_calls (for end event to update)
-        let mut call_id_to_tc_idx: HashMap<String, usize> = HashMap::new();
-
-        let mut msg_counter: i64 = 0;
-        let mut item_counter: i64 = 0;
-        let mut current_turn_model: Option<String> = None;
-        let mut best_snapshot: Option<(i64, TokenUsage)> = None;
+        let mut state = ParseState::new(session_id.clone(), start_time);
 
         for line in lines {
             let line = line.context("Failed to read line")?;
@@ -120,7 +478,7 @@ impl CodexParser {
             let event_ts = event
                 .get("timestamp")
                 .and_then(|v| v.as_str())
-                .and_then(|s| match Self::parse_timestamp(s) {
+                .and_then(|s| match CodexParser::parse_timestamp(s) {
                     Ok(t) => Some(t),
                     Err(err) => {
                         tracing::warn!("Failed to parse event timestamp {}: {}", s, err);
@@ -128,388 +486,36 @@ impl CodexParser {
                     }
                 });
 
-            if let Some(ts) = event_ts
-                && ts > last_updated
-            {
-                last_updated = ts;
+            if let Some(ts) = event_ts {
+                state.update_last_updated(ts);
             }
 
-            if event_type == Some("response_item") {
-                let payload = match event.get("payload") {
-                    Some(p) => p,
-                    None => continue,
-                };
-
-                match payload.get("type").and_then(|v| v.as_str()) {
-                    Some("function_call") | Some("custom_tool_call") => {
-                        let call_id = match payload.get("call_id").and_then(|v| v.as_str()) {
-                            Some(id) if !id.is_empty() => id.to_string(),
-                            _ => {
-                                tracing::warn!(
-                                    "response_item call begin missing call_id, skipping"
-                                );
-                                continue;
-                            }
-                        };
-
-                        if call_id_to_tc_idx.contains_key(&call_id) {
-                            continue;
-                        }
-
-                        let tool_name = payload
-                            .get("name")
-                            .or_else(|| payload.get("tool_name"))
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("unknown")
-                            .to_string();
-
-                        let input_json = payload
-                            .get("arguments")
-                            .or_else(|| payload.get("input"))
-                            .map(|v| {
-                                v.as_str()
-                                    .map(str::to_string)
-                                    .unwrap_or_else(|| v.to_string())
-                            });
-
-                        let tc_idx = tool_calls.len();
-                        tool_calls.push(ToolCall {
-                            id: call_id.clone(),
-                            session_id: session_id.clone(),
-                            subagent_id: None,
-                            tool_name: tool_name.clone(),
-                            status: ToolCallStatus::Running,
-                            title: Some(tool_name),
-                            summary: None,
-                            input_json,
-                            output_text: None,
-                            error_text: None,
-                            started_at: event_ts.map(|t| t.timestamp()),
-                            ended_at: None,
-                            duration_ms: None,
-                            parser_call_id: Some(call_id.clone()),
-                        });
-                        call_id_to_tc_idx.insert(call_id.clone(), tc_idx);
-                        transcript_items.push(TranscriptItem {
-                            session_id: session_id.clone(),
-                            item_index: item_counter,
-                            kind: TranscriptItemKind::ToolCall,
-                            message_index: None,
-                            tool_call_id: Some(call_id.clone()),
-                            subagent_id: None,
-                        });
-                        item_counter += 1;
-
-                        pending_calls.insert(
-                            call_id,
-                            PendingCall {
-                                tool_name: tool_calls[tc_idx].tool_name.clone(),
-                                input_json: tool_calls[tc_idx].input_json.clone(),
-                                started_at: tool_calls[tc_idx].started_at,
-                            },
-                        );
+            match event_type {
+                Some("response_item") => {
+                    if let Some(payload) = event.get("payload") {
+                        state.handle_response_item(payload, event_ts);
                     }
-                    Some("function_call_output") | Some("custom_tool_call_output") => {
-                        let call_id = match payload.get("call_id").and_then(|v| v.as_str()) {
-                            Some(id) if !id.is_empty() => id,
-                            _ => {
-                                tracing::warn!(
-                                    "response_item call output missing call_id, skipping"
-                                );
-                                continue;
-                            }
-                        };
-
-                        if let Some(&tc_idx) = call_id_to_tc_idx.get(call_id)
-                            && let Some(tc) = tool_calls.get_mut(tc_idx)
-                        {
-                            let output_text = payload.get("output").and_then(|v| {
-                                if let Some(s) = v.as_str() {
-                                    Some(s.to_string())
-                                } else if v.is_null() {
-                                    None
-                                } else {
-                                    Some(v.to_string())
-                                }
-                            });
-                            let error_text = payload.get("error").and_then(|v| {
-                                if let Some(s) = v.as_str() {
-                                    if s.is_empty() {
-                                        None
-                                    } else {
-                                        Some(s.to_string())
-                                    }
-                                } else if v.is_null() {
-                                    None
-                                } else {
-                                    Some(v.to_string())
-                                }
-                            });
-
-                            tc.output_text = output_text;
-                            tc.error_text = error_text;
-                            tc.ended_at = event_ts.map(|t| t.timestamp());
-                            tc.duration_ms = payload.get("duration_ms").and_then(|v| v.as_i64());
-                            let status = payload
-                                .get("status")
-                                .and_then(|v| v.as_str())
-                                .map(|s| s.to_ascii_lowercase());
-                            tc.status =
-                                if matches!(status.as_deref(), Some("error") | Some("failed")) {
-                                    ToolCallStatus::Error
-                                } else if matches!(status.as_deref(), Some("completed")) {
-                                    ToolCallStatus::Completed
-                                } else if tc.error_text.is_some() {
-                                    ToolCallStatus::Error
-                                } else {
-                                    ToolCallStatus::Completed
-                                };
-                        }
-                        pending_calls.remove(call_id);
-                    }
-                    _ => {}
                 }
-
-                continue;
-            }
-
-            // Handle top-level turn_context (non-wrapped form)
-            if event_type == Some("turn_context") {
-                current_turn_model =
-                    normalize_model(event.get("payload").and_then(|p| p.get("model")));
-                continue;
-            }
-
-            if event_type != Some("event_msg") {
-                continue;
-            }
-
-            let payload = match event.get("payload") {
-                Some(p) => p,
-                None => continue,
-            };
-
-            let message_type = payload.get("type").and_then(|v| v.as_str());
-
-            match message_type {
                 Some("turn_context") => {
-                    current_turn_model = normalize_model(payload.get("model"));
-                }
-
-                Some("user_message") => {
-                    let content = match payload.get("message").and_then(|v| v.as_str()) {
-                        Some(c) => c.to_string(),
-                        None => continue,
-                    };
-                    has_user_message = true;
-                    messages.push(Message {
-                        session_id: session_id.clone(),
-                        index: msg_counter as usize,
-                        role: Role::User,
-                        content,
-                        timestamp: event_ts.unwrap_or_else(Utc::now),
-                        model: None,
-                    });
-                    transcript_items.push(TranscriptItem {
-                        session_id: session_id.clone(),
-                        item_index: item_counter,
-                        kind: TranscriptItemKind::Message,
-                        message_index: Some(msg_counter),
-                        tool_call_id: None,
-                        subagent_id: None,
-                    });
-                    msg_counter += 1;
-                    item_counter += 1;
-                }
-
-                Some("agent_message") => {
-                    let content = match payload.get("message").and_then(|v| v.as_str()) {
-                        Some(c) => c.to_string(),
-                        None => continue,
-                    };
-                    messages.push(Message {
-                        session_id: session_id.clone(),
-                        index: msg_counter as usize,
-                        role: Role::Assistant,
-                        content,
-                        timestamp: event_ts.unwrap_or_else(Utc::now),
-                        model: current_turn_model.clone(),
-                    });
-                    transcript_items.push(TranscriptItem {
-                        session_id: session_id.clone(),
-                        item_index: item_counter,
-                        kind: TranscriptItemKind::Message,
-                        message_index: Some(msg_counter),
-                        tool_call_id: None,
-                        subagent_id: None,
-                    });
-                    msg_counter += 1;
-                    item_counter += 1;
-                }
-
-                Some(begin_type)
-                    if matches!(begin_type, "mcp_tool_call_begin" | "exec_command_begin") =>
-                {
-                    let call_id = match payload.get("call_id").and_then(|v| v.as_str()) {
-                        Some(id) => id.to_string(),
-                        None => {
-                            tracing::warn!("Tool call begin event missing call_id, skipping");
-                            continue;
-                        }
-                    };
-
-                    if call_id_to_tc_idx.contains_key(&call_id) {
-                        continue;
-                    }
-                    let tool_name = payload
-                        .get("tool_name")
-                        .or_else(|| payload.get("command"))
-                        .and_then(|v| v.as_str())
-                        .unwrap_or(begin_type)
-                        .to_string();
-                    let input_json = if begin_type == "exec_command_begin" {
-                        Some(
-                            serde_json::json!({
-                                "command": payload.get("command").and_then(|v| v.as_str()).unwrap_or(""),
-                                "cwd": payload.get("cwd").and_then(|v| v.as_str()),
-                            })
-                            .to_string(),
-                        )
-                    } else {
-                        payload.get("input").map(|v| v.to_string())
-                    };
-
-                    pending_calls.insert(
-                        call_id.clone(),
-                        PendingCall {
-                            tool_name,
-                            input_json,
-                            started_at: event_ts.map(|t| t.timestamp()),
-                        },
-                    );
-
-                    // Allocate the ToolCall entry now with Pending status;
-                    // the end event will fill in output/duration.
-                    let tc_idx = tool_calls.len();
-                    tool_calls.push(ToolCall {
-                        id: call_id.clone(),
-                        session_id: session_id.clone(),
-                        subagent_id: None,
-                        tool_name: pending_calls[&call_id].tool_name.clone(),
-                        status: ToolCallStatus::Running,
-                        title: Some(pending_calls[&call_id].tool_name.clone()),
-                        summary: None,
-                        input_json: pending_calls[&call_id].input_json.clone(),
-                        output_text: None,
-                        error_text: None,
-                        started_at: pending_calls[&call_id].started_at,
-                        ended_at: None,
-                        duration_ms: None,
-                        parser_call_id: Some(call_id.clone()),
-                    });
-                    call_id_to_tc_idx.insert(call_id.clone(), tc_idx);
-                    transcript_items.push(TranscriptItem {
-                        session_id: session_id.clone(),
-                        item_index: item_counter,
-                        kind: TranscriptItemKind::ToolCall,
-                        message_index: None,
-                        tool_call_id: Some(call_id),
-                        subagent_id: None,
-                    });
-                    item_counter += 1;
-                }
-
-                Some("token_count") => {
-                    if let Some(info) = payload.get("info")
-                        && !info.is_null()
-                        && let Some(total_usage) = info.get("total_token_usage")
-                    {
-                        let input = total_usage
-                            .get("input_tokens")
-                            .and_then(|v| v.as_i64())
-                            .unwrap_or(0);
-                        let output = total_usage
-                            .get("output_tokens")
-                            .and_then(|v| v.as_i64())
-                            .unwrap_or(0);
-                        let reasoning = total_usage
-                            .get("reasoning_output_tokens")
-                            .and_then(|v| v.as_i64())
-                            .unwrap_or(0);
-                        let cached = total_usage
-                            .get("cached_input_tokens")
-                            .and_then(|v| v.as_i64());
-
-                        let global_total = input + output + reasoning;
-                        let replace = match &best_snapshot {
-                            Some((current_best, _)) => global_total > *current_best,
-                            None => true,
-                        };
-                        if replace {
-                            // Codex/OpenAI reports cached_input_tokens as the cached subset
-                            // of input_tokens, not as an extra bucket to add on top.
-                            best_snapshot = Some((
-                                global_total,
-                                TokenUsage {
-                                    input_tokens: input,
-                                    output_tokens: output,
-                                    cache_read_tokens: cached,
-                                    cache_write_tokens: None,
-                                    reasoning_tokens: if reasoning > 0 {
-                                        Some(reasoning)
-                                    } else {
-                                        None
-                                    },
-                                },
-                            ));
-                        }
+                    if let Some(payload) = event.get("payload") {
+                        state.handle_turn_context(payload);
                     }
                 }
-
-                Some("mcp_tool_call_end") | Some("exec_command_end") => {
-                    let call_id = match payload.get("call_id").and_then(|v| v.as_str()) {
-                        Some(id) => id,
-                        None => continue,
-                    };
-                    if let Some(&tc_idx) = call_id_to_tc_idx.get(call_id)
-                        && let Some(tc) = tool_calls.get_mut(tc_idx)
-                    {
-                        let output = payload
-                            .get("output")
-                            .or_else(|| payload.get("stdout"))
-                            .and_then(|v| v.as_str())
-                            .map(str::to_string);
-                        let error = payload
-                            .get("error")
-                            .or_else(|| payload.get("stderr"))
-                            .and_then(|v| v.as_str())
-                            .filter(|s| !s.is_empty())
-                            .map(str::to_string);
-                        let exit_code = payload.get("exit_code").and_then(|v| v.as_i64());
-                        let duration_ms = payload.get("duration_ms").and_then(|v| v.as_i64());
-
-                        tc.output_text = output;
-                        tc.error_text = error;
-                        tc.duration_ms = duration_ms;
-                        tc.ended_at = event_ts.map(|t| t.timestamp());
-                        tc.status = match exit_code {
-                            Some(0) | None => ToolCallStatus::Completed,
-                            Some(_) => ToolCallStatus::Error,
-                        };
+                Some("event_msg") => {
+                    if let Some(payload) = event.get("payload") {
+                        state.handle_event_msg(payload, event_ts);
                     }
-                    pending_calls.remove(call_id);
                 }
-
                 _ => {}
             }
         }
 
-        if !has_user_message {
+        if !state.has_user_message {
             return Err(ParseError::NoUserMessages.into());
         }
 
-        let first_prompt = crate::parsers::extract_first_prompt(&messages);
-        let token_usage = best_snapshot.map(|(_, usage)| usage);
+        let first_prompt = crate::parsers::extract_first_prompt(&state.messages);
+        let token_usage = state.best_snapshot.map(|(_, usage)| usage);
 
         Ok(ParsedSession {
             session: Session {
@@ -518,18 +524,18 @@ impl CodexParser {
                 project_path,
                 project_id: None,
                 start_time,
-                message_count: messages.len(),
+                message_count: state.messages.len(),
                 file_path: file_path.to_str().unwrap_or_default().to_string(),
-                last_updated,
+                last_updated: state.last_updated,
                 first_prompt,
                 parent_session_id: None,
                 is_subagent: false,
                 token_usage: None,
             },
-            messages,
-            tool_calls,
+            messages: state.messages,
+            tool_calls: state.tool_calls,
             subagents: Vec::new(),
-            transcript_items,
+            transcript_items: state.transcript_items,
             token_usage,
         })
     }
