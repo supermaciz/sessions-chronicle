@@ -553,10 +553,20 @@ impl MarkdownBufferWriter {
         }
     }
 
+    /// Minimum width (in characters) a table cell requests — prevents
+    /// columns from collapsing to a single word.
+    const TABLE_CELL_MIN_CHARS: i32 = 12;
+    /// Maximum width (in characters) before a table cell wraps its text.
+    const TABLE_CELL_MAX_CHARS: i32 = 50;
+
     fn create_table_label(text: &str, query: &str, is_header: bool) -> (gtk::Label, usize) {
         let label = gtk::Label::new(None);
         label.set_xalign(0.0);
         label.set_halign(gtk::Align::Start);
+        label.set_width_chars(Self::TABLE_CELL_MIN_CHARS);
+        label.set_max_width_chars(Self::TABLE_CELL_MAX_CHARS);
+        label.set_wrap(true);
+        label.set_wrap_mode(gtk::pango::WrapMode::WordChar);
         label.add_css_class("markdown-table-cell");
         if is_header {
             label.add_css_class("markdown-table-header");
