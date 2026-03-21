@@ -81,6 +81,10 @@
   padding: 4px;
 }
 
+.markdown-table-cell {
+  padding: 4px 8px;
+}
+
 .markdown-table-header {
   font-weight: bold;
 }

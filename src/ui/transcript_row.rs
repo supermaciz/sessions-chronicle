@@ -160,9 +160,9 @@ fn render_content(
     let mut match_count = 0usize;
 
     if role == Role::Assistant {
-        let (textview, count) = markdown::render_markdown_to_textview(content, highlight_query);
+        let (widget, count) = markdown::render_markdown_to_textview(content, highlight_query);
         match_count = count;
-        container.append(&textview);
+        container.append(&widget);
     } else if let Some(query) = highlight_query {
         let (markup, count) = highlight::highlight_text(content, query);
         match_count = count;
