@@ -472,13 +472,27 @@ impl MarkdownBufferWriter {
         }
 
         let code_view = gtk::TextView::with_buffer(&code_buffer);
+        code_view.set_editable(false);
+        code_view.set_cursor_visible(false);
+        code_view.set_monospace(true);
+        code_view.set_wrap_mode(gtk::WrapMode::None);
+        code_view.add_css_class("code-block-content");
+
         let scroller = gtk::ScrolledWindow::new();
+        scroller.set_hexpand(true);
+        scroller.set_hscrollbar_policy(gtk::PolicyType::Automatic);
+        scroller.set_vscrollbar_policy(gtk::PolicyType::Never);
+        scroller.add_css_class("code-block-scroller");
         scroller.set_child(Some(&code_view));
 
         let language = self.in_code_block.take().flatten();
 
         let outer = gtk::Box::new(gtk::Orientation::Vertical, 0);
         outer.add_css_class("code-block-widget");
+
+        if self.blockquote_depth > 0 {
+            outer.add_css_class("markdown-blockquote");
+        }
 
         if let Some(ref lang) = language {
             let lang_label = gtk::Label::new(Some(lang));
@@ -1336,6 +1350,39 @@ mod tests {
                 .any(|t: &gtk::TextTag| t.name().as_deref() == Some("search-highlight")),
             "expected search-highlight tag in code buffer"
         );
+    }
+
+    #[gtk::test]
+    fn code_block_inside_blockquote_widget_has_blockquote_class() {
+        let md = "> ```rust\n> fn main() {}\n> ```";
+        let (widget, _) = render_markdown_to_textview(md, None);
+        let code_blocks = find_widgets_with_css_class(&widget, "code-block-widget");
+        assert!(
+            code_blocks
+                .iter()
+                .any(|w| w.has_css_class("markdown-blockquote")),
+            "expected code block inside blockquote to carry markdown-blockquote class"
+        );
+    }
+
+    #[gtk::test]
+    fn code_block_widget_uses_read_only_textview_and_horizontal_scroller() {
+        let md = "```\nvery long line very long line very long line\n```";
+        let (widget, _) = render_markdown_to_textview(md, None);
+        let scrollers = find_widgets_of_type::<gtk::ScrolledWindow>(&widget);
+        let views = find_widgets_of_type::<gtk::TextView>(&widget);
+
+        let scroller = scrollers
+            .into_iter()
+            .next()
+            .expect("expected code scroller");
+        let view = views.into_iter().next().expect("expected code text view");
+
+        assert_eq!(scroller.hscrollbar_policy(), gtk::PolicyType::Automatic);
+        assert_eq!(scroller.vscrollbar_policy(), gtk::PolicyType::Never);
+        assert!(!view.is_editable());
+        assert!(!view.is_cursor_visible());
+        assert_eq!(view.wrap_mode(), gtk::WrapMode::None);
     }
 
     // ── Theme palette ───────────────────────────────────────────────
