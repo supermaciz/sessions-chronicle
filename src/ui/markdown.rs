@@ -148,10 +148,11 @@ fn create_tag_table() -> gtk::TextTagTable {
     table
 }
 
-/// A rendered segment: either styled text in a buffer or a table widget.
+/// A rendered segment: either styled text in a buffer, a table widget, or a code block widget.
 enum MarkdownSegment {
     Text(gtk::TextBuffer),
     Table(gtk::Widget),
+    CodeBlock(gtk::Widget),
 }
 
 /// Walks pulldown-cmark events and writes formatted text into a `TextBuffer`.
@@ -447,21 +448,34 @@ impl MarkdownBufferWriter {
 
     fn finish_code_block(&mut self) {
         self.block_separator();
-        let language = self.in_code_block.take().flatten();
-        let mut code_tags = vec!["code-block"];
-        if self.blockquote_depth > 0 {
-            code_tags.push("blockquote");
+
+        // Flush current text buffer as a segment (if it has content).
+        if self.buffer.char_count() > 0 {
+            let old_buffer = std::mem::replace(
+                &mut self.buffer,
+                gtk::TextBuffer::new(Some(&self.tag_table)),
+            );
+            self.segments.push(MarkdownSegment::Text(old_buffer));
+            self.has_content = false;
         }
-        if let Some(ref lang) = language {
-            let mut lang_tags = code_tags.clone();
-            lang_tags.push("code-lang");
-            self.insert_with_tags(lang, &lang_tags);
-            self.insert_with_tags("\n", &code_tags);
-        }
+
         let code = self.code_buf.trim_end_matches('\n').to_string();
-        self.insert_with_tags(&code, &code_tags);
-        self.insert_with_tags("\n", &[]);
+        let code_buffer = gtk::TextBuffer::new(Some(&self.tag_table));
+        code_buffer.set_text(&code);
+
+        let code_view = gtk::TextView::with_buffer(&code_buffer);
+        let scroller = gtk::ScrolledWindow::new();
+        scroller.set_child(Some(&code_view));
+
+        let outer = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        outer.add_css_class("code-block-widget");
+        outer.append(&scroller);
+
+        self.segments
+            .push(MarkdownSegment::CodeBlock(outer.upcast::<gtk::Widget>()));
         self.has_content = true;
+        self.code_buf.clear();
+        self.in_code_block = None;
     }
 
     fn handle_task_list_marker(&mut self, checked: bool) {
@@ -710,12 +724,12 @@ pub fn render_markdown_to_textview(
         }
     });
 
-    let has_tables = segments
+    let has_widgets = segments
         .iter()
-        .any(|s| matches!(s, MarkdownSegment::Table(_)));
+        .any(|s| !matches!(s, MarkdownSegment::Text(_)));
 
-    // Fast path: no tables — return a single TextView (common case).
-    if !has_tables {
+    // Fast path: no widget segments — return a single TextView (common case).
+    if !has_widgets {
         let mut match_count = table_match_count;
         // All segments are Text; in practice there's exactly one.
         if let Some(MarkdownSegment::Text(buffer)) = segments.into_iter().next() {
@@ -742,6 +756,9 @@ pub fn render_markdown_to_textview(
                 container.append(&view);
             }
             MarkdownSegment::Table(widget) => {
+                container.append(&widget);
+            }
+            MarkdownSegment::CodeBlock(widget) => {
                 container.append(&widget);
             }
         }
@@ -869,6 +886,20 @@ mod tests {
             .collect()
     }
 
+    /// Collect all widgets that have the given CSS class (recursive).
+    fn find_widgets_with_css_class(widget: &gtk::Widget, class_name: &str) -> Vec<gtk::Widget> {
+        let mut found = Vec::new();
+        if widget.has_css_class(class_name) {
+            found.push(widget.clone());
+        }
+        let mut child = widget.first_child();
+        while let Some(c) = child {
+            found.extend(find_widgets_with_css_class(&c, class_name));
+            child = c.next_sibling();
+        }
+        found
+    }
+
     fn widget_tree_has_css_class(widget: &gtk::Widget, class_name: &str) -> bool {
         if widget.has_css_class(class_name) {
             return true;
@@ -905,20 +936,6 @@ mod tests {
     }
 
     // ── Existing regression tests ────────────────────────────────────
-
-    #[gtk::test]
-    fn code_block_language_line_uses_code_block_tag() {
-        let markdown = "```rust\nfn main() {}\n```";
-        assert!(has_tag_at(markdown, "code-lang", 0));
-        assert!(has_tag_at(markdown, "code-block", 0));
-    }
-
-    #[gtk::test]
-    fn code_block_inside_blockquote_uses_blockquote_tag() {
-        let markdown = "> ```rust\n> fn main() {}\n> ```";
-        assert!(has_tag_at(markdown, "blockquote", 0));
-        assert!(has_tag_at(markdown, "code-block", 0));
-    }
 
     // ── Plain text & paragraphs ──────────────────────────────────────
 
@@ -984,15 +1001,6 @@ mod tests {
         // U+2611 (checked) and U+2610 (unchecked)
         assert!(text.contains('\u{2611}'), "got: {text}");
         assert!(text.contains('\u{2610}'), "got: {text}");
-    }
-
-    // ── Code blocks ──────────────────────────────────────────────────
-
-    #[gtk::test]
-    fn textview_code_block_tagged() {
-        let text = textview_text("```\ncode line\n```");
-        assert!(text.contains("code line"), "got: {text}");
-        assert!(has_tag_at("```\ncode line\n```", "code-block", 0));
     }
 
     // ── Search highlighting ──────────────────────────────────────────
@@ -1229,6 +1237,21 @@ mod tests {
         assert!(text.contains("First item"), "got: {text}");
         assert!(text.contains("Second item"), "got: {text}");
         assert!(text.contains("Third item"), "got: {text}");
+    }
+
+    // ── Code block widget ────────────────────────────────────────────
+
+    #[gtk::test]
+    fn code_block_with_blank_lines_renders_as_widget_segment() {
+        let md = "```rust\nfn one() {}\n\nfn two() {}\n```";
+        let (widget, _) = render_markdown_to_textview(md, None);
+
+        let code_blocks = find_widgets_with_css_class(&widget, "code-block-widget");
+        assert_eq!(
+            code_blocks.len(),
+            1,
+            "expected one code block widget segment"
+        );
     }
 
     // ── Theme palette ───────────────────────────────────────────────
