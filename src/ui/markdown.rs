@@ -437,10 +437,11 @@ impl MarkdownBufferWriter {
     fn start_code_block(&mut self, kind: CodeBlockKind<'_>) {
         self.code_buf.clear();
         let language = match kind {
-            CodeBlockKind::Fenced(info) => {
-                let lang = info.trim().to_string();
-                if lang.is_empty() { None } else { Some(lang) }
-            }
+            CodeBlockKind::Fenced(info) => info
+                .split_whitespace()
+                .next()
+                .map(str::to_string)
+                .filter(|s| !s.is_empty()),
             CodeBlockKind::Indented => None,
         };
         self.in_code_block = Some(language);
@@ -467,15 +468,24 @@ impl MarkdownBufferWriter {
         let scroller = gtk::ScrolledWindow::new();
         scroller.set_child(Some(&code_view));
 
+        let language = self.in_code_block.take().flatten();
+
         let outer = gtk::Box::new(gtk::Orientation::Vertical, 0);
         outer.add_css_class("code-block-widget");
+
+        if let Some(ref lang) = language {
+            let lang_label = gtk::Label::new(Some(lang));
+            lang_label.set_halign(gtk::Align::Start);
+            lang_label.add_css_class("code-block-lang");
+            outer.append(&lang_label);
+        }
+
         outer.append(&scroller);
 
         self.segments
             .push(MarkdownSegment::CodeBlock(outer.upcast::<gtk::Widget>()));
         self.has_content = true;
         self.code_buf.clear();
-        self.in_code_block = None;
     }
 
     fn handle_task_list_marker(&mut self, checked: bool) {
@@ -1240,6 +1250,30 @@ mod tests {
     }
 
     // ── Code block widget ────────────────────────────────────────────
+
+    #[gtk::test]
+    fn code_block_language_label_uses_first_info_token() {
+        let md = "```rust linenos title=demo\nfn main() {}\n```";
+        let (widget, _) = render_markdown_to_textview(md, None);
+
+        let labels = collect_label_text_from_widget_tree(&widget);
+        assert!(
+            labels.iter().any(|t| t == "rust"),
+            "expected language label 'rust'"
+        );
+    }
+
+    #[gtk::test]
+    fn code_block_without_language_has_no_language_label() {
+        let md = "```\nplain text\n```";
+        let (widget, _) = render_markdown_to_textview(md, None);
+
+        let labels = collect_label_text_from_widget_tree(&widget);
+        assert!(
+            !labels.iter().any(|t| t == "plain" || t == "text"),
+            "did not expect a language label"
+        );
+    }
 
     #[gtk::test]
     fn code_block_with_blank_lines_renders_as_widget_segment() {
