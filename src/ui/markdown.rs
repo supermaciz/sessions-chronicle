@@ -4,8 +4,6 @@ use relm4::gtk;
 use relm4::gtk::glib;
 use relm4::gtk::prelude::*;
 // Theme-dependent color palette (dark / light variants).
-const DARK_CODE_BG: &str = "#2c2c2c";
-const LIGHT_CODE_BG: &str = "#f4f4f4";
 const DARK_DIM_FG: &str = "#aaaaaa";
 const LIGHT_DIM_FG: &str = "#666666";
 const DARK_CHECK_FG: &str = "#57e389";
@@ -36,16 +34,9 @@ fn is_dark_mode() -> bool {
 }
 
 fn apply_theme_palette_to_tags(table: &gtk::TextTagTable, dark: bool) {
-    let code_bg = if dark { DARK_CODE_BG } else { LIGHT_CODE_BG };
     let dim_fg = if dark { DARK_DIM_FG } else { LIGHT_DIM_FG };
     let check_fg = if dark { DARK_CHECK_FG } else { LIGHT_CHECK_FG };
 
-    if let Some(tag) = table.lookup("code-block") {
-        tag.set_paragraph_background(Some(code_bg));
-    }
-    if let Some(tag) = table.lookup("code-lang") {
-        tag.set_foreground(Some(dim_fg));
-    }
     if let Some(tag) = table.lookup("blockquote") {
         tag.set_foreground(Some(dim_fg));
     }
@@ -104,18 +95,6 @@ fn create_tag_table() -> gtk::TextTagTable {
     }
 
     // -- Block-level --
-    let code_block = gtk::TextTag::new(Some("code-block"));
-    code_block.set_family(Some("monospace"));
-    code_block.set_pixels_above_lines(0);
-    code_block.set_pixels_below_lines(0);
-    code_block.set_left_margin(12);
-    code_block.set_right_margin(12);
-    table.add(&code_block);
-
-    let code_lang = gtk::TextTag::new(Some("code-lang"));
-    code_lang.set_scale(0.85);
-    table.add(&code_lang);
-
     let blockquote = gtk::TextTag::new(Some("blockquote"));
     blockquote.set_left_margin(16);
     table.add(&blockquote);
@@ -1388,21 +1367,27 @@ mod tests {
     // ── Theme palette ───────────────────────────────────────────────
 
     #[gtk::test]
-    fn theme_palette_update_refreshes_existing_tags() {
+    fn markdown_tag_table_no_longer_defines_code_block_or_code_lang_tags() {
         let table = create_tag_table();
+        assert!(table.lookup("code-block").is_none());
+        assert!(table.lookup("code-lang").is_none());
+    }
 
+    #[gtk::test]
+    fn theme_palette_update_still_updates_remaining_theme_dependent_tags() {
+        let table = create_tag_table();
         apply_theme_palette_to_tags(&table, false);
-        let light_code_bg = table
-            .lookup("code-block")
-            .expect("code-block tag exists")
-            .paragraph_background_rgba();
+        let light = table
+            .lookup("task-unchecked")
+            .expect("task-unchecked tag exists")
+            .foreground_rgba();
 
         apply_theme_palette_to_tags(&table, true);
-        let dark_code_bg = table
-            .lookup("code-block")
-            .expect("code-block tag exists")
-            .paragraph_background_rgba();
+        let dark = table
+            .lookup("task-unchecked")
+            .expect("task-unchecked tag exists")
+            .foreground_rgba();
 
-        assert_ne!(light_code_bg, dark_code_bg);
+        assert_ne!(light, dark);
     }
 }
