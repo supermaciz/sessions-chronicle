@@ -195,6 +195,8 @@ struct MarkdownBufferWriter {
     segments: Vec<MarkdownSegment>,
     /// Search match count found inside table widgets.
     table_match_count: usize,
+    /// Search match count found inside code block buffers.
+    code_block_match_count: usize,
 }
 
 impl MarkdownBufferWriter {
@@ -222,6 +224,7 @@ impl MarkdownBufferWriter {
             highlight_query: highlight_query.map(str::to_owned),
             segments: Vec::new(),
             table_match_count: 0,
+            code_block_match_count: 0,
         }
     }
 
@@ -464,6 +467,10 @@ impl MarkdownBufferWriter {
         let code_buffer = gtk::TextBuffer::new(Some(&self.tag_table));
         code_buffer.set_text(&code);
 
+        if let Some(query) = self.highlight_query.as_deref() {
+            self.code_block_match_count += apply_search_highlight(&code_buffer, query);
+        }
+
         let code_view = gtk::TextView::with_buffer(&code_buffer);
         let scroller = gtk::ScrolledWindow::new();
         scroller.set_child(Some(&code_view));
@@ -669,12 +676,15 @@ impl MarkdownBufferWriter {
             .push(MarkdownSegment::Table(table_widget.upcast::<gtk::Widget>()));
     }
 
-    /// Finalize and return all segments plus table match count.
+    /// Finalize and return all segments plus total widget match count.
     fn finalize(mut self) -> (Vec<MarkdownSegment>, usize) {
         if self.buffer.char_count() > 0 {
             self.segments.push(MarkdownSegment::Text(self.buffer));
         }
-        (self.segments, self.table_match_count)
+        (
+            self.segments,
+            self.table_match_count + self.code_block_match_count,
+        )
     }
 }
 
@@ -871,6 +881,20 @@ mod tests {
         }
 
         texts
+    }
+
+    /// Collect all widgets of a specific type from a widget tree (recursive).
+    fn find_widgets_of_type<T: IsA<gtk::Widget>>(widget: &gtk::Widget) -> Vec<T> {
+        let mut found = Vec::new();
+        if let Ok(typed) = widget.clone().downcast::<T>() {
+            found.push(typed);
+        }
+        let mut child = widget.first_child();
+        while let Some(c) = child {
+            found.extend(find_widgets_of_type::<T>(&c));
+            child = c.next_sibling();
+        }
+        found
     }
 
     /// Collect all table widgets (ScrolledWindows containing Grids) from
@@ -1285,6 +1309,32 @@ mod tests {
             code_blocks.len(),
             1,
             "expected one code block widget segment"
+        );
+    }
+
+    #[gtk::test]
+    fn code_block_search_highlight_contributes_to_total_count() {
+        let md = "```rust\nlet rust = 1;\n// rust\n```";
+        let (_, count) = render_markdown_to_textview(md, Some("rust"));
+        assert_eq!(count, 2, "expected only code text matches to be counted");
+    }
+
+    #[gtk::test]
+    fn code_block_search_highlight_tag_applied_inside_embedded_textview() {
+        let md = "```\nhello world\n```";
+        let (widget, _) = render_markdown_to_textview(md, Some("world"));
+        let code_views = find_widgets_of_type::<gtk::TextView>(&widget);
+        let code_view = code_views
+            .into_iter()
+            .next()
+            .expect("expected code TextView");
+        let buffer = code_view.buffer();
+        let iter = buffer.iter_at_offset(6);
+        assert!(
+            iter.tags()
+                .iter()
+                .any(|t: &gtk::TextTag| t.name().as_deref() == Some("search-highlight")),
+            "expected search-highlight tag in code buffer"
         );
     }
 
