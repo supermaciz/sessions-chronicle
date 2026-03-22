@@ -4,8 +4,6 @@ use relm4::gtk;
 use relm4::gtk::glib;
 use relm4::gtk::prelude::*;
 // Theme-dependent color palette (dark / light variants).
-const DARK_CODE_BG: &str = "#2c2c2c";
-const LIGHT_CODE_BG: &str = "#f4f4f4";
 const DARK_DIM_FG: &str = "#aaaaaa";
 const LIGHT_DIM_FG: &str = "#666666";
 const DARK_CHECK_FG: &str = "#57e389";
@@ -36,16 +34,9 @@ fn is_dark_mode() -> bool {
 }
 
 fn apply_theme_palette_to_tags(table: &gtk::TextTagTable, dark: bool) {
-    let code_bg = if dark { DARK_CODE_BG } else { LIGHT_CODE_BG };
     let dim_fg = if dark { DARK_DIM_FG } else { LIGHT_DIM_FG };
     let check_fg = if dark { DARK_CHECK_FG } else { LIGHT_CHECK_FG };
 
-    if let Some(tag) = table.lookup("code-block") {
-        tag.set_paragraph_background(Some(code_bg));
-    }
-    if let Some(tag) = table.lookup("code-lang") {
-        tag.set_foreground(Some(dim_fg));
-    }
     if let Some(tag) = table.lookup("blockquote") {
         tag.set_foreground(Some(dim_fg));
     }
@@ -104,18 +95,6 @@ fn create_tag_table() -> gtk::TextTagTable {
     }
 
     // -- Block-level --
-    let code_block = gtk::TextTag::new(Some("code-block"));
-    code_block.set_family(Some("monospace"));
-    code_block.set_pixels_above_lines(0);
-    code_block.set_pixels_below_lines(0);
-    code_block.set_left_margin(12);
-    code_block.set_right_margin(12);
-    table.add(&code_block);
-
-    let code_lang = gtk::TextTag::new(Some("code-lang"));
-    code_lang.set_scale(0.85);
-    table.add(&code_lang);
-
     let blockquote = gtk::TextTag::new(Some("blockquote"));
     blockquote.set_left_margin(16);
     table.add(&blockquote);
@@ -148,10 +127,11 @@ fn create_tag_table() -> gtk::TextTagTable {
     table
 }
 
-/// A rendered segment: either styled text in a buffer or a table widget.
+/// A rendered segment: either styled text in a buffer, a table widget, or a code block widget.
 enum MarkdownSegment {
     Text(gtk::TextBuffer),
     Table(gtk::Widget),
+    CodeBlock(gtk::Widget),
 }
 
 /// Walks pulldown-cmark events and writes formatted text into a `TextBuffer`.
@@ -194,6 +174,8 @@ struct MarkdownBufferWriter {
     segments: Vec<MarkdownSegment>,
     /// Search match count found inside table widgets.
     table_match_count: usize,
+    /// Search match count found inside code block buffers.
+    code_block_match_count: usize,
 }
 
 impl MarkdownBufferWriter {
@@ -221,6 +203,7 @@ impl MarkdownBufferWriter {
             highlight_query: highlight_query.map(str::to_owned),
             segments: Vec::new(),
             table_match_count: 0,
+            code_block_match_count: 0,
         }
     }
 
@@ -436,10 +419,11 @@ impl MarkdownBufferWriter {
     fn start_code_block(&mut self, kind: CodeBlockKind<'_>) {
         self.code_buf.clear();
         let language = match kind {
-            CodeBlockKind::Fenced(info) => {
-                let lang = info.trim().to_string();
-                if lang.is_empty() { None } else { Some(lang) }
-            }
+            CodeBlockKind::Fenced(info) => info
+                .split_whitespace()
+                .next()
+                .map(str::to_string)
+                .filter(|s| !s.is_empty()),
             CodeBlockKind::Indented => None,
         };
         self.in_code_block = Some(language);
@@ -447,21 +431,61 @@ impl MarkdownBufferWriter {
 
     fn finish_code_block(&mut self) {
         self.block_separator();
-        let language = self.in_code_block.take().flatten();
-        let mut code_tags = vec!["code-block"];
-        if self.blockquote_depth > 0 {
-            code_tags.push("blockquote");
+
+        // Flush current text buffer as a segment (if it has content).
+        if self.buffer.char_count() > 0 {
+            let old_buffer = std::mem::replace(
+                &mut self.buffer,
+                gtk::TextBuffer::new(Some(&self.tag_table)),
+            );
+            self.segments.push(MarkdownSegment::Text(old_buffer));
+            self.has_content = false;
         }
-        if let Some(ref lang) = language {
-            let mut lang_tags = code_tags.clone();
-            lang_tags.push("code-lang");
-            self.insert_with_tags(lang, &lang_tags);
-            self.insert_with_tags("\n", &code_tags);
-        }
+
         let code = self.code_buf.trim_end_matches('\n').to_string();
-        self.insert_with_tags(&code, &code_tags);
-        self.insert_with_tags("\n", &[]);
+        let code_buffer = gtk::TextBuffer::new(Some(&self.tag_table));
+        code_buffer.set_text(&code);
+
+        if let Some(query) = self.highlight_query.as_deref() {
+            self.code_block_match_count += apply_search_highlight(&code_buffer, query);
+        }
+
+        let code_view = gtk::TextView::with_buffer(&code_buffer);
+        code_view.set_editable(false);
+        code_view.set_cursor_visible(false);
+        code_view.set_monospace(true);
+        code_view.set_wrap_mode(gtk::WrapMode::None);
+        code_view.add_css_class("code-block-content");
+
+        let scroller = gtk::ScrolledWindow::new();
+        scroller.set_hexpand(true);
+        scroller.set_hscrollbar_policy(gtk::PolicyType::Automatic);
+        scroller.set_vscrollbar_policy(gtk::PolicyType::Never);
+        scroller.add_css_class("code-block-scroller");
+        scroller.set_child(Some(&code_view));
+
+        let language = self.in_code_block.take().flatten();
+
+        let outer = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        outer.add_css_class("code-block-widget");
+
+        if self.blockquote_depth > 0 {
+            outer.add_css_class("markdown-blockquote");
+        }
+
+        if let Some(ref lang) = language {
+            let lang_label = gtk::Label::new(Some(lang));
+            lang_label.set_halign(gtk::Align::Start);
+            lang_label.add_css_class("code-block-lang");
+            outer.append(&lang_label);
+        }
+
+        outer.append(&scroller);
+
+        self.segments
+            .push(MarkdownSegment::CodeBlock(outer.upcast::<gtk::Widget>()));
         self.has_content = true;
+        self.code_buf.clear();
     }
 
     fn handle_task_list_marker(&mut self, checked: bool) {
@@ -645,12 +669,15 @@ impl MarkdownBufferWriter {
             .push(MarkdownSegment::Table(table_widget.upcast::<gtk::Widget>()));
     }
 
-    /// Finalize and return all segments plus table match count.
+    /// Finalize and return all segments plus total widget match count.
     fn finalize(mut self) -> (Vec<MarkdownSegment>, usize) {
         if self.buffer.char_count() > 0 {
             self.segments.push(MarkdownSegment::Text(self.buffer));
         }
-        (self.segments, self.table_match_count)
+        (
+            self.segments,
+            self.table_match_count + self.code_block_match_count,
+        )
     }
 }
 
@@ -710,12 +737,12 @@ pub fn render_markdown_to_textview(
         }
     });
 
-    let has_tables = segments
+    let has_widgets = segments
         .iter()
-        .any(|s| matches!(s, MarkdownSegment::Table(_)));
+        .any(|s| !matches!(s, MarkdownSegment::Text(_)));
 
-    // Fast path: no tables — return a single TextView (common case).
-    if !has_tables {
+    // Fast path: no widget segments — return a single TextView (common case).
+    if !has_widgets {
         let mut match_count = table_match_count;
         // All segments are Text; in practice there's exactly one.
         if let Some(MarkdownSegment::Text(buffer)) = segments.into_iter().next() {
@@ -742,6 +769,9 @@ pub fn render_markdown_to_textview(
                 container.append(&view);
             }
             MarkdownSegment::Table(widget) => {
+                container.append(&widget);
+            }
+            MarkdownSegment::CodeBlock(widget) => {
                 container.append(&widget);
             }
         }
@@ -846,6 +876,20 @@ mod tests {
         texts
     }
 
+    /// Collect all widgets of a specific type from a widget tree (recursive).
+    fn find_widgets_of_type<T: IsA<gtk::Widget>>(widget: &gtk::Widget) -> Vec<T> {
+        let mut found = Vec::new();
+        if let Ok(typed) = widget.clone().downcast::<T>() {
+            found.push(typed);
+        }
+        let mut child = widget.first_child();
+        while let Some(c) = child {
+            found.extend(find_widgets_of_type::<T>(&c));
+            child = c.next_sibling();
+        }
+        found
+    }
+
     /// Collect all table widgets (ScrolledWindows containing Grids) from
     /// the rendered output. For the Box-based layout, these are direct
     /// children that are ScrolledWindows.
@@ -867,6 +911,20 @@ mod tests {
             .iter()
             .flat_map(collect_label_text_from_widget_tree)
             .collect()
+    }
+
+    /// Collect all widgets that have the given CSS class (recursive).
+    fn find_widgets_with_css_class(widget: &gtk::Widget, class_name: &str) -> Vec<gtk::Widget> {
+        let mut found = Vec::new();
+        if widget.has_css_class(class_name) {
+            found.push(widget.clone());
+        }
+        let mut child = widget.first_child();
+        while let Some(c) = child {
+            found.extend(find_widgets_with_css_class(&c, class_name));
+            child = c.next_sibling();
+        }
+        found
     }
 
     fn widget_tree_has_css_class(widget: &gtk::Widget, class_name: &str) -> bool {
@@ -905,20 +963,6 @@ mod tests {
     }
 
     // ── Existing regression tests ────────────────────────────────────
-
-    #[gtk::test]
-    fn code_block_language_line_uses_code_block_tag() {
-        let markdown = "```rust\nfn main() {}\n```";
-        assert!(has_tag_at(markdown, "code-lang", 0));
-        assert!(has_tag_at(markdown, "code-block", 0));
-    }
-
-    #[gtk::test]
-    fn code_block_inside_blockquote_uses_blockquote_tag() {
-        let markdown = "> ```rust\n> fn main() {}\n> ```";
-        assert!(has_tag_at(markdown, "blockquote", 0));
-        assert!(has_tag_at(markdown, "code-block", 0));
-    }
 
     // ── Plain text & paragraphs ──────────────────────────────────────
 
@@ -984,15 +1028,6 @@ mod tests {
         // U+2611 (checked) and U+2610 (unchecked)
         assert!(text.contains('\u{2611}'), "got: {text}");
         assert!(text.contains('\u{2610}'), "got: {text}");
-    }
-
-    // ── Code blocks ──────────────────────────────────────────────────
-
-    #[gtk::test]
-    fn textview_code_block_tagged() {
-        let text = textview_text("```\ncode line\n```");
-        assert!(text.contains("code line"), "got: {text}");
-        assert!(has_tag_at("```\ncode line\n```", "code-block", 0));
     }
 
     // ── Search highlighting ──────────────────────────────────────────
@@ -1231,24 +1266,151 @@ mod tests {
         assert!(text.contains("Third item"), "got: {text}");
     }
 
+    // ── Code block widget ────────────────────────────────────────────
+
+    #[gtk::test]
+    fn code_block_language_label_uses_first_info_token() {
+        let md = "```rust linenos title=demo\nfn main() {}\n```";
+        let (widget, _) = render_markdown_to_textview(md, None);
+
+        let labels = collect_label_text_from_widget_tree(&widget);
+        assert!(
+            labels.iter().any(|t| t == "rust"),
+            "expected language label 'rust'"
+        );
+    }
+
+    #[gtk::test]
+    fn code_block_without_language_has_no_language_label() {
+        let md = "```\nplain text\n```";
+        let (widget, _) = render_markdown_to_textview(md, None);
+
+        let labels = collect_label_text_from_widget_tree(&widget);
+        assert!(
+            !labels.iter().any(|t| t == "plain" || t == "text"),
+            "did not expect a language label"
+        );
+    }
+
+    #[gtk::test]
+    fn code_block_with_blank_lines_renders_as_widget_segment() {
+        let md = "```rust\nfn one() {}\n\nfn two() {}\n```";
+        let (widget, _) = render_markdown_to_textview(md, None);
+
+        let code_blocks = find_widgets_with_css_class(&widget, "code-block-widget");
+        assert_eq!(
+            code_blocks.len(),
+            1,
+            "expected one code block widget segment"
+        );
+    }
+
+    #[gtk::test]
+    fn code_block_search_highlight_contributes_to_total_count() {
+        let md = "```rust\nlet rust = 1;\n// rust\n```";
+        let (_, count) = render_markdown_to_textview(md, Some("rust"));
+        assert_eq!(count, 2, "expected only code text matches to be counted");
+    }
+
+    #[gtk::test]
+    fn code_block_search_highlight_tag_applied_inside_embedded_textview() {
+        let md = "```\nhello world\n```";
+        let (widget, _) = render_markdown_to_textview(md, Some("world"));
+        let code_views = find_widgets_of_type::<gtk::TextView>(&widget);
+        let code_view = code_views
+            .into_iter()
+            .next()
+            .expect("expected code TextView");
+        let buffer = code_view.buffer();
+        let iter = buffer.iter_at_offset(6);
+        assert!(
+            iter.tags()
+                .iter()
+                .any(|t: &gtk::TextTag| t.name().as_deref() == Some("search-highlight")),
+            "expected search-highlight tag in code buffer"
+        );
+    }
+
+    #[gtk::test]
+    fn code_block_inside_blockquote_widget_has_blockquote_class() {
+        let md = "> ```rust\n> fn main() {}\n> ```";
+        let (widget, _) = render_markdown_to_textview(md, None);
+        let code_blocks = find_widgets_with_css_class(&widget, "code-block-widget");
+        assert!(
+            code_blocks
+                .iter()
+                .any(|w| w.has_css_class("markdown-blockquote")),
+            "expected code block inside blockquote to carry markdown-blockquote class"
+        );
+    }
+
+    #[gtk::test]
+    fn code_block_widget_uses_read_only_textview_and_horizontal_scroller() {
+        let md = "```\nvery long line very long line very long line\n```";
+        let (widget, _) = render_markdown_to_textview(md, None);
+        let scrollers = find_widgets_of_type::<gtk::ScrolledWindow>(&widget);
+        let views = find_widgets_of_type::<gtk::TextView>(&widget);
+
+        let scroller = scrollers
+            .into_iter()
+            .next()
+            .expect("expected code scroller");
+        let view = views.into_iter().next().expect("expected code text view");
+
+        assert_eq!(scroller.hscrollbar_policy(), gtk::PolicyType::Automatic);
+        assert_eq!(scroller.vscrollbar_policy(), gtk::PolicyType::Never);
+        assert!(!view.is_editable());
+        assert!(!view.is_cursor_visible());
+        assert_eq!(view.wrap_mode(), gtk::WrapMode::None);
+    }
+
+    #[gtk::test]
+    fn code_block_widget_assigns_all_expected_css_classes() {
+        let md = "```rust\nfn main() {}\n```";
+        let (widget, _) = render_markdown_to_textview(md, None);
+
+        assert!(
+            !find_widgets_with_css_class(&widget, "code-block-widget").is_empty(),
+            "expected code-block-widget class"
+        );
+        assert!(
+            !find_widgets_with_css_class(&widget, "code-block-lang").is_empty(),
+            "expected code-block-lang class"
+        );
+        assert!(
+            !find_widgets_with_css_class(&widget, "code-block-scroller").is_empty(),
+            "expected code-block-scroller class"
+        );
+        assert!(
+            !find_widgets_with_css_class(&widget, "code-block-content").is_empty(),
+            "expected code-block-content class"
+        );
+    }
+
     // ── Theme palette ───────────────────────────────────────────────
 
     #[gtk::test]
-    fn theme_palette_update_refreshes_existing_tags() {
+    fn markdown_tag_table_no_longer_defines_code_block_or_code_lang_tags() {
         let table = create_tag_table();
+        assert!(table.lookup("code-block").is_none());
+        assert!(table.lookup("code-lang").is_none());
+    }
 
+    #[gtk::test]
+    fn theme_palette_update_still_updates_remaining_theme_dependent_tags() {
+        let table = create_tag_table();
         apply_theme_palette_to_tags(&table, false);
-        let light_code_bg = table
-            .lookup("code-block")
-            .expect("code-block tag exists")
-            .paragraph_background_rgba();
+        let light = table
+            .lookup("task-unchecked")
+            .expect("task-unchecked tag exists")
+            .foreground_rgba();
 
         apply_theme_palette_to_tags(&table, true);
-        let dark_code_bg = table
-            .lookup("code-block")
-            .expect("code-block tag exists")
-            .paragraph_background_rgba();
+        let dark = table
+            .lookup("task-unchecked")
+            .expect("task-unchecked tag exists")
+            .foreground_rgba();
 
-        assert_ne!(light_code_bg, dark_code_bg);
+        assert_ne!(light, dark);
     }
 }
