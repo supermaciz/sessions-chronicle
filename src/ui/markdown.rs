@@ -1364,6 +1364,29 @@ mod tests {
         assert_eq!(view.wrap_mode(), gtk::WrapMode::None);
     }
 
+    #[gtk::test]
+    fn code_block_widget_assigns_all_expected_css_classes() {
+        let md = "```rust\nfn main() {}\n```";
+        let (widget, _) = render_markdown_to_textview(md, None);
+
+        assert!(
+            !find_widgets_with_css_class(&widget, "code-block-widget").is_empty(),
+            "expected code-block-widget class"
+        );
+        assert!(
+            !find_widgets_with_css_class(&widget, "code-block-lang").is_empty(),
+            "expected code-block-lang class"
+        );
+        assert!(
+            !find_widgets_with_css_class(&widget, "code-block-scroller").is_empty(),
+            "expected code-block-scroller class"
+        );
+        assert!(
+            !find_widgets_with_css_class(&widget, "code-block-content").is_empty(),
+            "expected code-block-content class"
+        );
+    }
+
     // ── Theme palette ───────────────────────────────────────────────
 
     #[gtk::test]

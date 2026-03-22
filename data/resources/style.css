@@ -64,11 +64,28 @@
 }
 
 /* Markdown rendering styles */
-.code-block {
-  font-family: monospace;
+.code-block-widget {
   background-color: alpha(@card_shade_color, 0.15);
   border-radius: 6px;
-  padding: 12px;
+  padding: 8px 12px;
+  margin: 4px 0;
+}
+
+.code-block-lang {
+  font-size: 0.85em;
+  opacity: 0.6;
+  margin-bottom: 4px;
+}
+
+.code-block-scroller,
+.code-block-content,
+.code-block-content text {
+  background-color: transparent;
+  background: transparent;
+}
+
+.code-block-content text {
+  font-family: monospace;
 }
 
 .markdown-blockquote {
