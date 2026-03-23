@@ -277,7 +277,36 @@ These proposals are not mutually exclusive. Some natural combinations:
 
 ## Decision
 
-_To be decided after review._
+**Recommended product direction:** adopt a **hybrid C + B** approach.
+
+- **Phase 1:** ship **Proposal C** first to eliminate silent failures quickly with minimal UI and implementation risk.
+- **Phase 2:** add **Proposal B** as the canonical deep-dive diagnostics surface once the backend result model is validated.
+
+### Rationale
+
+1. **C addresses the core issue immediately.**  
+   Issue #84 is primarily about silent failures and missing visibility. `AdwBanner` + enriched toast + inline source status make indexing problems visible in the main flow, without requiring users to proactively inspect a secondary surface.
+
+2. **C is the right first slice of the shared backend work.**  
+   Both proposals depend on enriching indexing results with per-source status. Proposal C only needs aggregate counts and per-source health, while Proposal B becomes more valuable once individual error messages and richer diagnostics are available. Shipping C first validates the backend shape with lower scope.
+
+3. **B is more useful once C can drive discovery.**  
+   A diagnostics dialog is valuable, but it is fundamentally an inspection surface. Its utility increases significantly when users can reach it from contextual entry points such as a banner or toast "Details" action shown at the moment a problem occurs.
+
+### Product interpretation
+
+- **C = proactive notification and in-context visibility**
+- **B = persistent inspection and troubleshooting**
+
+That makes the recommended sequence:
+
+1. **Implement C first** to remove silent failure and restore trust.
+2. **Implement B next** as the single canonical destination for "Details".
+
+### Explicit non-decision
+
+- Do **not** start with Proposal D or E; both add too much permanent UI weight and depart too far from GNOME HIG for a secondary operational concern.
+- Do **not** treat Proposal A as the target solution; it is acceptable as a low-effort fallback, but too hidden to fully solve the trust problem on its own.
 
 ## References
 
