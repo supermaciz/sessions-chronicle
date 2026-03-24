@@ -1,10 +1,13 @@
 use adw::prelude::*;
 use relm4::{ComponentController, adw};
 
+use std::collections::HashMap;
+
 use crate::indexing_worker::IndexingWorkerInput;
 use crate::models::PerSourceResult;
 use crate::ui::analytics_view::AnalyticsViewMsg;
 use crate::ui::session_list::SessionListMsg;
+use crate::ui::sidebar::SidebarMsg;
 
 use super::super::App;
 use super::super::helpers::{
@@ -60,6 +63,14 @@ impl App {
                 self.banner.set_revealed(false);
             }
         }
+
+        // Push source status to sidebar dots.
+        let source_statuses = per_source
+            .iter()
+            .map(|r| (r.assistant, r.status))
+            .collect::<HashMap<_, _>>();
+        self.sidebar
+            .emit(SidebarMsg::SourceStatusesUpdated(source_statuses));
 
         self.refresh_sidebar_projects();
         self.emit_session_list_filters();
