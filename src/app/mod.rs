@@ -163,6 +163,7 @@ pub(super) enum AppMsg {
     IndexingCompleted {
         indexed: usize,
         skipped: usize,
+        per_source: Vec<crate::models::PerSourceResult>,
     },
     IndexingFailed,
     AnalyticsRefreshRequested,
@@ -491,9 +492,11 @@ impl SimpleComponent for App {
                 dialog_widget.present(Some(&main_application().windows()[0]));
             }
             AppMsg::ReindexRequested => self.handle_reindex_requested(),
-            AppMsg::IndexingCompleted { indexed, skipped } => {
-                self.handle_indexing_completed(indexed, skipped)
-            }
+            AppMsg::IndexingCompleted {
+                indexed,
+                skipped,
+                per_source,
+            } => self.handle_indexing_completed(indexed, skipped, per_source),
             AppMsg::IndexingFailed => self.handle_indexing_failed(),
             AppMsg::AnalyticsRefreshRequested => self.handle_analytics_refresh_requested(),
             AppMsg::AnalyticsLoaded(data) => self.handle_analytics_loaded(data),
@@ -722,6 +725,7 @@ mod tests {
         controller.emit(AppMsg::IndexingCompleted {
             indexed: 0,
             skipped: 0,
+            per_source: vec![],
         });
 
         pump_main_context(|| !spinner.is_visible());

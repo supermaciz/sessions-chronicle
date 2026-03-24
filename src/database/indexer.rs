@@ -5,7 +5,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::UNIX_EPOCH;
 
-use crate::models::indexing_diagnostics::SourceStatus;
+use crate::models::indexing_diagnostics::{IndexingRunResult, PerSourceResult, SourceStatus};
+use crate::models::session::AiAssistant;
 use crate::parsers::ParsedSession;
 use crate::parsers::claude_code::ClaudeCodeParser;
 use crate::parsers::codex::{CodexParser, ParseError as CodexParseError};
@@ -44,6 +45,32 @@ pub(crate) fn derive_source_status(
 
 pub(crate) fn opencode_source_available(storage_root: &Path, db_path: Option<&Path>) -> bool {
     storage_root.exists() || db_path.is_some_and(|path| path.exists())
+}
+
+fn opencode_display_path(storage_root: &Path, db_path: Option<&Path>) -> String {
+    if storage_root.exists() {
+        storage_root.display().to_string()
+    } else if let Some(db) = db_path {
+        db.display().to_string()
+    } else {
+        storage_root.display().to_string()
+    }
+}
+
+fn build_per_source_result(
+    assistant: AiAssistant,
+    display_path: String,
+    source_available: bool,
+    stats: IndexingStats,
+) -> PerSourceResult {
+    PerSourceResult {
+        assistant,
+        display_path,
+        indexed: stats.indexed,
+        skipped: stats.skipped,
+        errors: stats.errors,
+        status: derive_source_status(source_available, stats.indexed, stats.errors),
+    }
 }
 
 fn is_opencode_error(err: &anyhow::Error) -> bool {
@@ -113,6 +140,7 @@ impl SessionIndexer {
 
                 if let Err(e) = self.index_session_file(path, &parser) {
                     tracing::warn!("Failed to index {}: {}", path.display(), e);
+                    stats.errors += 1;
                 } else {
                     stats.indexed += 1;
                 }
@@ -184,6 +212,7 @@ impl SessionIndexer {
                                                 entry.id,
                                                 err
                                             );
+                                            stats.errors += 1;
                                             continue;
                                         }
                                         indexed_ids.insert(entry.id.clone());
@@ -268,6 +297,7 @@ impl SessionIndexer {
                                     }
                                 } else {
                                     tracing::warn!("Failed to index {}: {}", path.display(), err);
+                                    stats.errors += 1;
                                 }
                             }
                         }
@@ -349,6 +379,7 @@ impl SessionIndexer {
                             }
                         } else {
                             tracing::warn!("Failed to index {}: {}", path.display(), err);
+                            stats.errors += 1;
                         }
                     }
                 }
@@ -434,6 +465,7 @@ impl SessionIndexer {
                         }
                     } else {
                         tracing::warn!("Failed to index {}: {}", path.display(), err);
+                        stats.errors += 1;
                     }
                 }
             }
@@ -730,44 +762,118 @@ impl SessionIndexer {
         Ok(())
     }
 
-    pub fn index_all_incremental(&mut self, sources: &SessionSources) -> Result<IndexingStats> {
-        let mut totals = IndexingStats::default();
-
+    pub fn index_all_incremental(&mut self, sources: &SessionSources) -> Result<IndexingRunResult> {
         let claude = self.index_claude_sessions_incremental(&sources.claude_dir)?;
-        totals.indexed += claude.indexed;
-        totals.skipped += claude.skipped;
-
         let opencode = self.index_opencode_sessions_incremental(
             &sources.opencode_storage_root,
             sources.opencode_db_path.as_deref(),
         )?;
-        totals.indexed += opencode.indexed;
-        totals.skipped += opencode.skipped;
-
         let codex = self.index_codex_sessions_incremental(&sources.codex_dir)?;
-        totals.indexed += codex.indexed;
-        totals.skipped += codex.skipped;
-
         let vibe = self.index_vibe_sessions_incremental(&sources.vibe_dir)?;
-        totals.indexed += vibe.indexed;
-        totals.skipped += vibe.skipped;
 
-        Ok(totals)
+        let per_source = vec![
+            build_per_source_result(
+                AiAssistant::ClaudeCode,
+                sources.claude_dir.display().to_string(),
+                sources.claude_dir.exists(),
+                claude,
+            ),
+            build_per_source_result(
+                AiAssistant::OpenCode,
+                opencode_display_path(
+                    &sources.opencode_storage_root,
+                    sources.opencode_db_path.as_deref(),
+                ),
+                opencode_source_available(
+                    &sources.opencode_storage_root,
+                    sources.opencode_db_path.as_deref(),
+                ),
+                opencode,
+            ),
+            build_per_source_result(
+                AiAssistant::Codex,
+                sources.codex_dir.display().to_string(),
+                sources.codex_dir.exists(),
+                codex,
+            ),
+            build_per_source_result(
+                AiAssistant::MistralVibe,
+                sources.vibe_dir.display().to_string(),
+                sources.vibe_dir.exists(),
+                vibe,
+            ),
+        ];
+
+        let totals = per_source
+            .iter()
+            .fold(IndexingStats::default(), |mut acc, r| {
+                acc.indexed += r.indexed;
+                acc.skipped += r.skipped;
+                acc.errors += r.errors;
+                acc
+            });
+
+        Ok(IndexingRunResult { totals, per_source })
     }
 
-    pub fn index_all_full_reindex(&mut self, sources: &SessionSources) -> Result<IndexingStats> {
+    pub fn index_all_full_reindex(
+        &mut self,
+        sources: &SessionSources,
+    ) -> Result<IndexingRunResult> {
         self.clear_all_sessions()?;
 
-        let mut totals = IndexingStats::default();
-        totals.indexed += self.index_claude_sessions(&sources.claude_dir)?;
-        totals.indexed += self.index_opencode_sessions(
+        let claude = self.index_claude_sessions_internal(&sources.claude_dir, false)?;
+        let opencode = self.index_opencode_sessions_internal(
             &sources.opencode_storage_root,
             sources.opencode_db_path.as_deref(),
+            false,
         )?;
-        totals.indexed += self.index_codex_sessions(&sources.codex_dir)?;
-        totals.indexed += self.index_vibe_sessions(&sources.vibe_dir)?;
+        let codex = self.index_codex_sessions_internal(&sources.codex_dir, false)?;
+        let vibe = self.index_vibe_sessions_internal(&sources.vibe_dir, false)?;
 
-        Ok(totals)
+        let per_source = vec![
+            build_per_source_result(
+                AiAssistant::ClaudeCode,
+                sources.claude_dir.display().to_string(),
+                sources.claude_dir.exists(),
+                claude,
+            ),
+            build_per_source_result(
+                AiAssistant::OpenCode,
+                opencode_display_path(
+                    &sources.opencode_storage_root,
+                    sources.opencode_db_path.as_deref(),
+                ),
+                opencode_source_available(
+                    &sources.opencode_storage_root,
+                    sources.opencode_db_path.as_deref(),
+                ),
+                opencode,
+            ),
+            build_per_source_result(
+                AiAssistant::Codex,
+                sources.codex_dir.display().to_string(),
+                sources.codex_dir.exists(),
+                codex,
+            ),
+            build_per_source_result(
+                AiAssistant::MistralVibe,
+                sources.vibe_dir.display().to_string(),
+                sources.vibe_dir.exists(),
+                vibe,
+            ),
+        ];
+
+        let totals = per_source
+            .iter()
+            .fold(IndexingStats::default(), |mut acc, r| {
+                acc.indexed += r.indexed;
+                acc.skipped += r.skipped;
+                acc.errors += r.errors;
+                acc
+            });
+
+        Ok(IndexingRunResult { totals, per_source })
     }
 
     fn remove_session_for_file(&mut self, file_path: &Path) -> Result<()> {
@@ -1586,6 +1692,49 @@ mod tests {
             .query_row("SELECT COUNT(*) FROM messages", [], |row| row.get(0))
             .unwrap();
         assert_eq!(msg_count, 0, "Messages should be empty after clear");
+    }
+
+    #[test]
+    fn indexing_diagnostics_full_reindex_returns_per_source_results() {
+        let temp_db = NamedTempFile::new().unwrap();
+        let mut indexer = SessionIndexer::new(temp_db.path()).unwrap();
+        let sources = SessionSources::resolve(Some(std::path::Path::new("tests/fixtures")));
+
+        let result = indexer.index_all_full_reindex(&sources).unwrap();
+
+        assert_eq!(result.per_source.len(), 4);
+        assert!(result.totals.indexed > 0);
+        assert!(
+            result
+                .per_source
+                .iter()
+                .any(|r| r.assistant == AiAssistant::ClaudeCode)
+        );
+    }
+
+    #[test]
+    fn indexing_diagnostics_malformed_source_records_errors() {
+        let temp = tempfile::tempdir().unwrap();
+        let claude_root = temp.path().join("claude_sessions").join("project-a");
+        std::fs::create_dir_all(&claude_root).unwrap();
+        std::fs::write(claude_root.join("bad.jsonl"), b"not-json\n").unwrap();
+
+        let temp_db = NamedTempFile::new().unwrap();
+        let mut indexer = SessionIndexer::new(temp_db.path()).unwrap();
+        let sources = SessionSources::resolve(Some(temp.path()));
+
+        let result = indexer.index_all_incremental(&sources).unwrap();
+        let claude = result
+            .per_source
+            .iter()
+            .find(|r| r.assistant == AiAssistant::ClaudeCode)
+            .unwrap();
+
+        assert_eq!(claude.errors, 1);
+        assert_eq!(
+            claude.status,
+            crate::models::indexing_diagnostics::SourceStatus::Failed
+        );
     }
 
     #[test]

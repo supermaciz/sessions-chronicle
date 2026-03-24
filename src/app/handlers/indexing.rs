@@ -30,7 +30,12 @@ impl App {
         }
     }
 
-    pub(crate) fn handle_indexing_completed(&mut self, indexed: usize, skipped: usize) {
+    pub(crate) fn handle_indexing_completed(
+        &mut self,
+        indexed: usize,
+        skipped: usize,
+        _per_source: Vec<crate::models::PerSourceResult>,
+    ) {
         tracing::info!(
             "Background indexing complete: indexed={}, skipped={}",
             indexed,

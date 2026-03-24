@@ -50,7 +50,7 @@ fn fixture_index_produces_non_empty_analytics_payload() {
         .expect("Failed to index fixture sessions");
 
     assert!(
-        stats.indexed > 0,
+        stats.totals.indexed > 0,
         "Expected fixtures to index at least one session"
     );
 
@@ -58,7 +58,7 @@ fn fixture_index_produces_non_empty_analytics_payload() {
 
     assert!(analytics.overview.total_sessions > 0);
     assert!(analytics.overview.total_messages > 0);
-    assert!(analytics.overview.total_sessions <= stats.indexed as i64);
+    assert!(analytics.overview.total_sessions <= stats.totals.indexed as i64);
 
     assert!(!analytics.sessions_by_tool.is_empty());
     assert!(!analytics.session_span_buckets.is_empty());

@@ -102,9 +102,15 @@ pub(super) fn init_child_components(
     let indexing_worker = IndexingWorker::builder()
         .detach_worker(db_path.to_path_buf())
         .forward(sender.input_sender(), |output| match output {
-            IndexingWorkerOutput::Completed { indexed, skipped } => {
-                AppMsg::IndexingCompleted { indexed, skipped }
-            }
+            IndexingWorkerOutput::Completed {
+                indexed,
+                skipped,
+                per_source,
+            } => AppMsg::IndexingCompleted {
+                indexed,
+                skipped,
+                per_source,
+            },
             IndexingWorkerOutput::Failed => AppMsg::IndexingFailed,
         });
 
