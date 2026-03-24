@@ -129,6 +129,7 @@ pub(super) struct App {
     pending_reindex_feedback: bool,
     active_workspace: Workspace,
     banner: adw::Banner,
+    banner_has_issues: bool,
 }
 
 #[derive(Debug)]
@@ -403,6 +404,7 @@ impl SimpleComponent for App {
             pending_reindex_feedback: false,
             active_workspace: Workspace::Sessions,
             banner: adw::Banner::new(""),
+            banner_has_issues: false,
         };
 
         // view_output!() must stay in the SimpleComponent impl (Relm4 macro requirement)
@@ -542,6 +544,9 @@ impl App {
         self.tool_inspector_pane.emit(ToolInspectorPaneMsg::Clear);
         transition_to_list(&mut self.pane_mode, &mut self.pane_open);
         self.apply_pane_stack_switch();
+        if self.banner_has_issues {
+            self.banner.set_revealed(true);
+        }
     }
 
     /// Apply the current `pane_mode` to the Stack widget, with verification.

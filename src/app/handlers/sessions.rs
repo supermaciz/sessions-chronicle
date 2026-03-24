@@ -62,6 +62,7 @@ impl App {
         if !self.detail_visible {
             self.nav_view.push(&self.detail_page);
             self.detail_visible = true;
+            self.banner.set_revealed(false);
         }
 
         transition_to_detail(&mut self.pane_mode, &mut self.pane_open);

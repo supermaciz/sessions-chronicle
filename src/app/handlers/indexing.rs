@@ -38,13 +38,13 @@ impl App {
     pub(crate) fn handle_indexing_completed(
         &mut self,
         indexed: usize,
-        _skipped: usize,
+        skipped: usize,
         per_source: Vec<PerSourceResult>,
     ) {
         tracing::info!(
             "Background indexing complete: indexed={}, skipped={}",
             indexed,
-            _skipped
+            skipped
         );
         self.indexing = false;
         self.session_list.emit(SessionListMsg::SetIndexing(false));
@@ -54,9 +54,11 @@ impl App {
         match banner_title(&per_source) {
             Some(title) => {
                 self.banner.set_title(&title);
-                self.banner.set_revealed(true);
+                self.banner_has_issues = true;
+                self.banner.set_revealed(!self.detail_visible);
             }
             None => {
+                self.banner_has_issues = false;
                 self.banner.set_revealed(false);
             }
         }
