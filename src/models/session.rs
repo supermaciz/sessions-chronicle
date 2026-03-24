@@ -25,7 +25,7 @@ pub struct Session {
 }
 
 /// AI coding assistant whose sessions are tracked by this application.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub enum AiAssistant {
     /// Anthropic's Claude Code CLI agent.
     ClaudeCode,

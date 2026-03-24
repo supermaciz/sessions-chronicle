@@ -1,8 +1,11 @@
 use adw::prelude::ActionRowExt;
 use gtk::prelude::*;
 use relm4::{ComponentParts, ComponentSender, RelmWidgetExt, SimpleComponent, adw, gtk};
+use std::collections::HashMap;
 
-use crate::models::{ProjectFilter, ProjectInfo, session::AiAssistant};
+use crate::models::{
+    PerSourceResult, ProjectFilter, ProjectInfo, SourceStatus, session::AiAssistant,
+};
 
 #[derive(Debug)]
 pub struct Sidebar {
@@ -14,12 +17,15 @@ pub struct Sidebar {
     project_row_filters: Vec<ProjectFilter>,
     rebuilding_projects: bool,
     projects_list: Option<gtk::ListBox>,
+    source_statuses: HashMap<AiAssistant, PerSourceResult>,
+    status_dots: HashMap<AiAssistant, gtk::Box>,
 }
 
 #[derive(Debug)]
 pub enum SidebarMsg {
     AiAssistantToggled(AiAssistant, bool),
     ProjectSelected(ProjectFilter),
+    SourceStatusesUpdated(HashMap<AiAssistant, PerSourceResult>),
     ProjectsLoaded {
         projects: Vec<ProjectInfo>,
         all_sessions_count: usize,
@@ -73,35 +79,95 @@ impl SimpleComponent for Sidebar {
                 set_orientation: gtk::Orientation::Vertical,
                 set_spacing: 6,
 
-                gtk::CheckButton {
-                    set_label: Some("Claude Code"),
-                    set_active: true,
-                    connect_toggled[sender] => move |btn| {
-                        sender.input(SidebarMsg::AiAssistantToggled(AiAssistant::ClaudeCode, btn.is_active()));
+                gtk::Box {
+                    set_orientation: gtk::Orientation::Horizontal,
+                    set_spacing: 6,
+
+                    gtk::CheckButton {
+                        set_label: Some("Claude Code"),
+                        set_active: true,
+                        set_hexpand: true,
+                        connect_toggled[sender] => move |btn| {
+                            sender.input(SidebarMsg::AiAssistantToggled(AiAssistant::ClaudeCode, btn.is_active()));
+                        },
+                    },
+
+                    #[name = "claude_status_dot"]
+                    gtk::Box {
+                        set_visible: false,
+                        set_valign: gtk::Align::Center,
+                        set_width_request: 12,
+                        set_height_request: 12,
+                        set_css_classes: &["source-status-dot"],
                     },
                 },
 
-                gtk::CheckButton {
-                    set_label: Some("OpenCode"),
-                    set_active: true,
-                    connect_toggled[sender] => move |btn| {
-                        sender.input(SidebarMsg::AiAssistantToggled(AiAssistant::OpenCode, btn.is_active()));
+                gtk::Box {
+                    set_orientation: gtk::Orientation::Horizontal,
+                    set_spacing: 6,
+
+                    gtk::CheckButton {
+                        set_label: Some("OpenCode"),
+                        set_active: true,
+                        set_hexpand: true,
+                        connect_toggled[sender] => move |btn| {
+                            sender.input(SidebarMsg::AiAssistantToggled(AiAssistant::OpenCode, btn.is_active()));
+                        },
+                    },
+
+                    #[name = "opencode_status_dot"]
+                    gtk::Box {
+                        set_visible: false,
+                        set_valign: gtk::Align::Center,
+                        set_width_request: 12,
+                        set_height_request: 12,
+                        set_css_classes: &["source-status-dot"],
                     },
                 },
 
-                gtk::CheckButton {
-                    set_label: Some("Codex"),
-                    set_active: true,
-                    connect_toggled[sender] => move |btn| {
-                        sender.input(SidebarMsg::AiAssistantToggled(AiAssistant::Codex, btn.is_active()));
+                gtk::Box {
+                    set_orientation: gtk::Orientation::Horizontal,
+                    set_spacing: 6,
+
+                    gtk::CheckButton {
+                        set_label: Some("Codex"),
+                        set_active: true,
+                        set_hexpand: true,
+                        connect_toggled[sender] => move |btn| {
+                            sender.input(SidebarMsg::AiAssistantToggled(AiAssistant::Codex, btn.is_active()));
+                        },
+                    },
+
+                    #[name = "codex_status_dot"]
+                    gtk::Box {
+                        set_visible: false,
+                        set_valign: gtk::Align::Center,
+                        set_width_request: 12,
+                        set_height_request: 12,
+                        set_css_classes: &["source-status-dot"],
                     },
                 },
 
-                gtk::CheckButton {
-                    set_label: Some("Mistral Vibe"),
-                    set_active: true,
-                    connect_toggled[sender] => move |btn| {
-                        sender.input(SidebarMsg::AiAssistantToggled(AiAssistant::MistralVibe, btn.is_active()));
+                gtk::Box {
+                    set_orientation: gtk::Orientation::Horizontal,
+                    set_spacing: 6,
+
+                    gtk::CheckButton {
+                        set_label: Some("Mistral Vibe"),
+                        set_active: true,
+                        set_hexpand: true,
+                        connect_toggled[sender] => move |btn| {
+                            sender.input(SidebarMsg::AiAssistantToggled(AiAssistant::MistralVibe, btn.is_active()));
+                        },
+                    },
+
+                    #[name = "mistral_vibe_status_dot"]
+                    gtk::Box {
+                        set_visible: false,
+                        set_valign: gtk::Align::Center,
+                        set_width_request: 12,
+                        set_height_request: 12,
+                        set_css_classes: &["source-status-dot"],
                     },
                 },
             },
@@ -153,9 +219,20 @@ impl SimpleComponent for Sidebar {
             project_row_filters: Vec::new(),
             rebuilding_projects: false,
             projects_list: None,
+            source_statuses: HashMap::new(),
+            status_dots: HashMap::new(),
         };
         let widgets = view_output!();
         model.projects_list = Some(widgets.projects_list.clone());
+        model.status_dots = HashMap::from([
+            (AiAssistant::ClaudeCode, widgets.claude_status_dot.clone()),
+            (AiAssistant::OpenCode, widgets.opencode_status_dot.clone()),
+            (AiAssistant::Codex, widgets.codex_status_dot.clone()),
+            (
+                AiAssistant::MistralVibe,
+                widgets.mistral_vibe_status_dot.clone(),
+            ),
+        ]);
 
         let _ = sender;
         ComponentParts { model, widgets }
@@ -163,6 +240,12 @@ impl SimpleComponent for Sidebar {
 
     fn update(&mut self, message: Self::Input, sender: ComponentSender<Self>) {
         match message {
+            SidebarMsg::SourceStatusesUpdated(statuses) => {
+                self.source_statuses = statuses;
+                for (assistant, dot) in &self.status_dots {
+                    apply_status_dot(dot, self.source_statuses.get(assistant));
+                }
+            }
             SidebarMsg::AiAssistantToggled(tool, active) => {
                 match tool {
                     AiAssistant::ClaudeCode => self.claude_enabled = active,
@@ -200,6 +283,42 @@ impl SimpleComponent for Sidebar {
             }
         }
     }
+}
+
+fn apply_status_dot(dot: &gtk::Box, result: Option<&PerSourceResult>) {
+    dot.remove_css_class("source-status-ok");
+    dot.remove_css_class("source-status-degraded");
+    dot.remove_css_class("source-status-not-found");
+
+    let Some(r) = result else {
+        dot.set_visible(false);
+        dot.set_tooltip_text(None);
+        return;
+    };
+
+    let (css_class, tooltip) = match r.status {
+        SourceStatus::Indexed => {
+            let n = r.indexed + r.skipped;
+            ("source-status-ok", format!("{n} sessions indexed"))
+        }
+        SourceStatus::Degraded => (
+            "source-status-degraded",
+            format!("Indexed with {} errors", r.errors),
+        ),
+        SourceStatus::Failed => (
+            "source-status-degraded",
+            format!("Indexing failed — {} errors", r.errors),
+        ),
+        SourceStatus::Empty => ("source-status-not-found", "No sessions found".to_string()),
+        SourceStatus::NotFound => (
+            "source-status-not-found",
+            "Source directory not found".to_string(),
+        ),
+    };
+
+    dot.add_css_class(css_class);
+    dot.set_tooltip_text(Some(&tooltip));
+    dot.set_visible(true);
 }
 
 impl Sidebar {
@@ -336,6 +455,7 @@ mod tests {
     use adw::prelude::PreferencesRowExt;
     use relm4::{Component, ComponentController};
     use std::cell::RefCell;
+    use std::collections::HashMap;
     use std::rc::Rc;
     use std::time::Duration;
 
@@ -366,6 +486,100 @@ mod tests {
             child = widget.next_sibling();
         }
         titles
+    }
+
+    #[gtk::test]
+    fn indexing_diagnostics_source_status_dots_start_hidden() {
+        let controller = Sidebar::builder().launch(());
+        let parts = controller.state().get();
+
+        for dot in [
+            &parts.widgets.claude_status_dot,
+            &parts.widgets.opencode_status_dot,
+            &parts.widgets.codex_status_dot,
+            &parts.widgets.mistral_vibe_status_dot,
+        ] {
+            assert!(!dot.is_visible());
+        }
+    }
+
+    #[gtk::test]
+    fn indexing_diagnostics_source_status_updates_apply_css_classes_and_tooltips() {
+        use crate::models::{PerSourceResult, SourceStatus};
+
+        let controller = Sidebar::builder().launch(());
+        controller.emit(SidebarMsg::SourceStatusesUpdated(HashMap::from([
+            (
+                AiAssistant::ClaudeCode,
+                PerSourceResult {
+                    assistant: AiAssistant::ClaudeCode,
+                    display_path: "/tmp/claude".into(),
+                    indexed: 12,
+                    skipped: 3,
+                    errors: 0,
+                    status: SourceStatus::Indexed,
+                },
+            ),
+            (
+                AiAssistant::OpenCode,
+                PerSourceResult {
+                    assistant: AiAssistant::OpenCode,
+                    display_path: "/tmp/opencode".into(),
+                    indexed: 5,
+                    skipped: 0,
+                    errors: 2,
+                    status: SourceStatus::Degraded,
+                },
+            ),
+            (
+                AiAssistant::Codex,
+                PerSourceResult {
+                    assistant: AiAssistant::Codex,
+                    display_path: "/tmp/codex".into(),
+                    indexed: 0,
+                    skipped: 0,
+                    errors: 0,
+                    status: SourceStatus::NotFound,
+                },
+            ),
+        ])));
+
+        pump_main_context(|| {
+            let parts = controller.state().get();
+            parts.widgets.claude_status_dot.is_visible()
+        });
+
+        let parts = controller.state().get();
+        assert!(
+            parts
+                .widgets
+                .claude_status_dot
+                .has_css_class("source-status-ok")
+        );
+        assert_eq!(
+            parts.widgets.claude_status_dot.tooltip_text().as_deref(),
+            Some("15 sessions indexed")
+        );
+        assert!(
+            parts
+                .widgets
+                .opencode_status_dot
+                .has_css_class("source-status-degraded")
+        );
+        assert_eq!(
+            parts.widgets.opencode_status_dot.tooltip_text().as_deref(),
+            Some("Indexed with 2 errors")
+        );
+        assert!(
+            parts
+                .widgets
+                .codex_status_dot
+                .has_css_class("source-status-not-found")
+        );
+        assert_eq!(
+            parts.widgets.codex_status_dot.tooltip_text().as_deref(),
+            Some("Source directory not found")
+        );
     }
 
     #[gtk::test]

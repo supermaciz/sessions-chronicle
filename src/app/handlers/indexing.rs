@@ -1,11 +1,16 @@
 use relm4::{ComponentController, adw};
 
 use crate::indexing_worker::IndexingWorkerInput;
+use crate::models::PerSourceResult;
 use crate::ui::analytics_view::AnalyticsViewMsg;
 use crate::ui::session_list::SessionListMsg;
+use crate::ui::sidebar::SidebarMsg;
 
 use super::super::App;
-use super::super::helpers::{analytics_indexing_completion_outcome, decide_reindex_action};
+use super::super::helpers::{
+    analytics_indexing_completion_outcome, banner_title, completion_toast_title,
+    decide_reindex_action,
+};
 use super::super::types::ReindexAction;
 
 impl App {
@@ -30,7 +35,12 @@ impl App {
         }
     }
 
-    pub(crate) fn handle_indexing_completed(&mut self, indexed: usize, skipped: usize) {
+    pub(crate) fn handle_indexing_completed(
+        &mut self,
+        indexed: usize,
+        skipped: usize,
+        per_source: Vec<PerSourceResult>,
+    ) {
         tracing::info!(
             "Background indexing complete: indexed={}, skipped={}",
             indexed,
@@ -38,6 +48,32 @@ impl App {
         );
         self.indexing = false;
         self.session_list.emit(SessionListMsg::SetIndexing(false));
+
+        // Update banner state from per_source (Degraded/Failed only).
+        let errors: usize = per_source.iter().map(|r| r.errors).sum();
+        match banner_title(&per_source) {
+            Some(title) => {
+                self.banner.set_title(&title);
+                self.banner_has_issues = true;
+                self.banner.set_revealed(!self.detail_visible);
+            }
+            None => {
+                self.banner_has_issues = false;
+                self.banner.set_revealed(false);
+            }
+        }
+
+        // Push source status to sidebar dots.
+        let source_results = per_source
+            .iter()
+            .map(|r| (r.assistant, r.clone()))
+            .collect();
+        self.sidebar
+            .emit(SidebarMsg::SourceStatusesUpdated(source_results));
+
+        self.session_list
+            .emit(SessionListMsg::SetSourceResults(per_source.clone()));
+
         self.refresh_sidebar_projects();
         self.emit_session_list_filters();
 
@@ -51,12 +87,10 @@ impl App {
 
         if self.pending_reindex_feedback {
             self.pending_reindex_feedback = false;
-            self.toast_overlay.add_toast(
-                adw::Toast::builder()
-                    .title(format!("Index rebuilt — {} sessions", indexed))
-                    .timeout(3)
-                    .build(),
-            );
+            let title = completion_toast_title(indexed, errors);
+            let timeout = if errors > 0 { 5 } else { 3 };
+            self.toast_overlay
+                .add_toast(adw::Toast::builder().title(title).timeout(timeout).build());
         }
     }
 

@@ -3,6 +3,7 @@ use std::path::PathBuf;
 use relm4::{ComponentSender, Worker};
 
 use crate::database::SessionIndexer;
+use crate::models::PerSourceResult;
 use crate::session_sources::SessionSources;
 
 pub struct IndexingWorker {
@@ -15,9 +16,13 @@ pub enum IndexingWorkerInput {
     StartFullReindex(SessionSources),
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 pub enum IndexingWorkerOutput {
-    Completed { indexed: usize, skipped: usize },
+    Completed {
+        indexed: usize,
+        skipped: usize,
+        per_source: Vec<PerSourceResult>,
+    },
     Failed,
 }
 
@@ -31,7 +36,7 @@ impl Worker for IndexingWorker {
     }
 
     fn update(&mut self, message: Self::Input, sender: ComponentSender<Self>) {
-        let result = (|| -> anyhow::Result<crate::database::IndexingStats> {
+        let result = (|| -> anyhow::Result<crate::models::IndexingRunResult> {
             let mut indexer = SessionIndexer::new(&self.db_path)?;
             match message {
                 IndexingWorkerInput::StartIncremental(sources) => {
@@ -44,10 +49,11 @@ impl Worker for IndexingWorker {
         })();
 
         match result {
-            Ok(stats) => {
+            Ok(run_result) => {
                 let _ = sender.output(IndexingWorkerOutput::Completed {
-                    indexed: stats.indexed,
-                    skipped: stats.skipped,
+                    indexed: run_result.totals.indexed,
+                    skipped: run_result.totals.skipped,
+                    per_source: run_result.per_source,
                 });
             }
             Err(err) => {
