@@ -1,4 +1,4 @@
-use crate::models::{ProjectFilter, ProjectInfo};
+use crate::models::{PerSourceResult, ProjectFilter, ProjectInfo, SourceStatus};
 use crate::ui::{
     session_detail::SessionDetailMsg, session_list::SessionListMsg,
     tool_inspector_pane::ToolInspectorPaneMsg,
@@ -116,6 +116,27 @@ pub(super) fn analytics_indexing_completion_outcome(
     }
 }
 
+pub(super) fn banner_title(results: &[PerSourceResult]) -> Option<String> {
+    let problematic = results
+        .iter()
+        .filter(|r| matches!(r.status, SourceStatus::Degraded | SourceStatus::Failed))
+        .count();
+
+    match problematic {
+        0 => None,
+        1 => Some("1 session source has indexing issues".to_string()),
+        n => Some(format!("{n} session sources have indexing issues")),
+    }
+}
+
+pub(super) fn completion_toast_title(indexed: usize, errors: usize) -> String {
+    if errors == 0 {
+        format!("Index rebuilt — {indexed} sessions")
+    } else {
+        format!("Indexed {indexed} sessions with {errors} errors")
+    }
+}
+
 pub(super) fn retained_project_filter(
     selected: &ProjectFilter,
     projects: &[ProjectInfo],
@@ -143,7 +164,53 @@ pub(super) fn retained_project_filter(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::models::{ProjectFilter, ProjectInfo};
+    use crate::models::{AiAssistant, PerSourceResult, ProjectFilter, ProjectInfo, SourceStatus};
+
+    fn make_result(assistant: AiAssistant, status: SourceStatus) -> PerSourceResult {
+        PerSourceResult {
+            assistant,
+            display_path: "/tmp/test".into(),
+            indexed: match status {
+                SourceStatus::Indexed | SourceStatus::Degraded => 1,
+                _ => 0,
+            },
+            skipped: 0,
+            errors: match status {
+                SourceStatus::Degraded | SourceStatus::Failed => 1,
+                _ => 0,
+            },
+            status,
+        }
+    }
+
+    #[test]
+    fn indexing_diagnostics_banner_title_reflects_problem_count() {
+        let degraded = make_result(AiAssistant::ClaudeCode, SourceStatus::Degraded);
+
+        assert_eq!(
+            banner_title(std::slice::from_ref(&degraded)).as_deref(),
+            Some("1 session source has indexing issues")
+        );
+        assert_eq!(
+            banner_title(&[degraded.clone(), degraded]).as_deref(),
+            Some("2 session sources have indexing issues")
+        );
+    }
+
+    #[test]
+    fn indexing_diagnostics_banner_ignores_not_found_only_results() {
+        let result = make_result(AiAssistant::Codex, SourceStatus::NotFound);
+        assert_eq!(banner_title(&[result]), None);
+    }
+
+    #[test]
+    fn indexing_diagnostics_partial_toast_mentions_error_count() {
+        assert_eq!(completion_toast_title(12, 0), "Index rebuilt — 12 sessions");
+        assert_eq!(
+            completion_toast_title(12, 3),
+            "Indexed 12 sessions with 3 errors"
+        );
+    }
 
     #[test]
     fn project_sidebar_retained_project_filter_keeps_zero_count_selection() {

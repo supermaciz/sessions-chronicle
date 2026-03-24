@@ -1,11 +1,16 @@
+use adw::prelude::*;
 use relm4::{ComponentController, adw};
 
 use crate::indexing_worker::IndexingWorkerInput;
+use crate::models::PerSourceResult;
 use crate::ui::analytics_view::AnalyticsViewMsg;
 use crate::ui::session_list::SessionListMsg;
 
 use super::super::App;
-use super::super::helpers::{analytics_indexing_completion_outcome, decide_reindex_action};
+use super::super::helpers::{
+    analytics_indexing_completion_outcome, banner_title, completion_toast_title,
+    decide_reindex_action,
+};
 use super::super::types::ReindexAction;
 
 impl App {
@@ -33,16 +38,29 @@ impl App {
     pub(crate) fn handle_indexing_completed(
         &mut self,
         indexed: usize,
-        skipped: usize,
-        _per_source: Vec<crate::models::PerSourceResult>,
+        _skipped: usize,
+        per_source: Vec<PerSourceResult>,
     ) {
         tracing::info!(
             "Background indexing complete: indexed={}, skipped={}",
             indexed,
-            skipped
+            _skipped
         );
         self.indexing = false;
         self.session_list.emit(SessionListMsg::SetIndexing(false));
+
+        // Update banner state from per_source (Degraded/Failed only).
+        let errors: usize = per_source.iter().map(|r| r.errors).sum();
+        match banner_title(&per_source) {
+            Some(title) => {
+                self.banner.set_title(&title);
+                self.banner.set_revealed(true);
+            }
+            None => {
+                self.banner.set_revealed(false);
+            }
+        }
+
         self.refresh_sidebar_projects();
         self.emit_session_list_filters();
 
@@ -56,12 +74,10 @@ impl App {
 
         if self.pending_reindex_feedback {
             self.pending_reindex_feedback = false;
-            self.toast_overlay.add_toast(
-                adw::Toast::builder()
-                    .title(format!("Index rebuilt — {} sessions", indexed))
-                    .timeout(3)
-                    .build(),
-            );
+            let title = completion_toast_title(indexed, errors);
+            let timeout = if errors > 0 { 5 } else { 3 };
+            self.toast_overlay
+                .add_toast(adw::Toast::builder().title(title).timeout(timeout).build());
         }
     }
 

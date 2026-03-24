@@ -286,8 +286,15 @@ pub(super) fn setup_workspace_stack(
                     &model.workspace_stack,
                     Some(&search_bar.clone().upcast::<gtk::Widget>()),
                 );
+
+                // Wrap banner + overlay_split in a dedicated Sessions-page container
+                // so the banner is scoped to the Sessions workspace only.
+                let sessions_page = gtk::Box::new(gtk::Orientation::Vertical, 0);
+                sessions_page.append(&model.banner);
+                sessions_page.append(overlay_split);
+
                 model.workspace_stack.add_titled_with_icon(
-                    overlay_split,
+                    &sessions_page,
                     Some(Workspace::Sessions.stack_name()),
                     "Sessions",
                     Workspace::Sessions.icon_name(),

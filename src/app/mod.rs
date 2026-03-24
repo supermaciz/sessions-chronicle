@@ -128,6 +128,7 @@ pub(super) struct App {
     indexing: bool,
     pending_reindex_feedback: bool,
     active_workspace: Workspace,
+    banner: adw::Banner,
 }
 
 #[derive(Debug)]
@@ -401,6 +402,7 @@ impl SimpleComponent for App {
             indexing: true,
             pending_reindex_feedback: false,
             active_workspace: Workspace::Sessions,
+            banner: adw::Banner::new(""),
         };
 
         // view_output!() must stay in the SimpleComponent impl (Relm4 macro requirement)
