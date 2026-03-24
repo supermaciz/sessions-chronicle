@@ -16,7 +16,7 @@ pub struct Sidebar {
     rebuilding_projects: bool,
     projects_list: Option<gtk::ListBox>,
     source_statuses: HashMap<AiAssistant, SourceStatus>,
-    status_dots: HashMap<AiAssistant, gtk::Image>,
+    status_dots: HashMap<AiAssistant, gtk::Box>,
 }
 
 #[derive(Debug)]
@@ -91,10 +91,12 @@ impl SimpleComponent for Sidebar {
                     },
 
                     #[name = "claude_status_dot"]
-                    gtk::Image {
-                        set_icon_name: Some("emblem-default-symbolic"),
+                    gtk::Box {
                         set_visible: false,
                         set_valign: gtk::Align::Center,
+                        set_width_request: 12,
+                        set_height_request: 12,
+                        set_css_classes: &["source-status-dot"],
                     },
                 },
 
@@ -112,10 +114,12 @@ impl SimpleComponent for Sidebar {
                     },
 
                     #[name = "opencode_status_dot"]
-                    gtk::Image {
-                        set_icon_name: Some("emblem-default-symbolic"),
+                    gtk::Box {
                         set_visible: false,
                         set_valign: gtk::Align::Center,
+                        set_width_request: 12,
+                        set_height_request: 12,
+                        set_css_classes: &["source-status-dot"],
                     },
                 },
 
@@ -133,10 +137,12 @@ impl SimpleComponent for Sidebar {
                     },
 
                     #[name = "codex_status_dot"]
-                    gtk::Image {
-                        set_icon_name: Some("emblem-default-symbolic"),
+                    gtk::Box {
                         set_visible: false,
                         set_valign: gtk::Align::Center,
+                        set_width_request: 12,
+                        set_height_request: 12,
+                        set_css_classes: &["source-status-dot"],
                     },
                 },
 
@@ -154,10 +160,12 @@ impl SimpleComponent for Sidebar {
                     },
 
                     #[name = "mistral_vibe_status_dot"]
-                    gtk::Image {
-                        set_icon_name: Some("emblem-default-symbolic"),
+                    gtk::Box {
                         set_visible: false,
                         set_valign: gtk::Align::Center,
+                        set_width_request: 12,
+                        set_height_request: 12,
+                        set_css_classes: &["source-status-dot"],
                     },
                 },
             },
@@ -275,7 +283,7 @@ impl SimpleComponent for Sidebar {
     }
 }
 
-fn apply_status_dot(dot: &gtk::Image, status: Option<SourceStatus>) {
+fn apply_status_dot(dot: &gtk::Box, status: Option<SourceStatus>) {
     dot.remove_css_class("source-status-ok");
     dot.remove_css_class("source-status-degraded");
     dot.remove_css_class("source-status-not-found");

@@ -357,6 +357,11 @@
 }
 
 /* Source status dots */
-.source-status-ok { color: @success_color; }
-.source-status-degraded { color: @warning_color; }
-.source-status-not-found { color: alpha(@view_fg_color, 0.3); }
+.source-status-dot {
+  border-radius: 50%;
+  min-width: 12px;
+  min-height: 12px;
+}
+.source-status-ok { background-color: @success_color; }
+.source-status-degraded { background-color: @warning_color; }
+.source-status-not-found { background-color: alpha(@view_fg_color, 0.3); }
