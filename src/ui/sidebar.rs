@@ -3,7 +3,9 @@ use gtk::prelude::*;
 use relm4::{ComponentParts, ComponentSender, RelmWidgetExt, SimpleComponent, adw, gtk};
 use std::collections::HashMap;
 
-use crate::models::{ProjectFilter, ProjectInfo, SourceStatus, session::AiAssistant};
+use crate::models::{
+    PerSourceResult, ProjectFilter, ProjectInfo, SourceStatus, session::AiAssistant,
+};
 
 #[derive(Debug)]
 pub struct Sidebar {
@@ -15,7 +17,7 @@ pub struct Sidebar {
     project_row_filters: Vec<ProjectFilter>,
     rebuilding_projects: bool,
     projects_list: Option<gtk::ListBox>,
-    source_statuses: HashMap<AiAssistant, SourceStatus>,
+    source_statuses: HashMap<AiAssistant, PerSourceResult>,
     status_dots: HashMap<AiAssistant, gtk::Box>,
 }
 
@@ -23,7 +25,7 @@ pub struct Sidebar {
 pub enum SidebarMsg {
     AiAssistantToggled(AiAssistant, bool),
     ProjectSelected(ProjectFilter),
-    SourceStatusesUpdated(HashMap<AiAssistant, SourceStatus>),
+    SourceStatusesUpdated(HashMap<AiAssistant, PerSourceResult>),
     ProjectsLoaded {
         projects: Vec<ProjectInfo>,
         all_sessions_count: usize,
@@ -241,7 +243,7 @@ impl SimpleComponent for Sidebar {
             SidebarMsg::SourceStatusesUpdated(statuses) => {
                 self.source_statuses = statuses;
                 for (assistant, dot) in &self.status_dots {
-                    apply_status_dot(dot, self.source_statuses.get(assistant).copied());
+                    apply_status_dot(dot, self.source_statuses.get(assistant));
                 }
             }
             SidebarMsg::AiAssistantToggled(tool, active) => {
@@ -283,26 +285,40 @@ impl SimpleComponent for Sidebar {
     }
 }
 
-fn apply_status_dot(dot: &gtk::Box, status: Option<SourceStatus>) {
+fn apply_status_dot(dot: &gtk::Box, result: Option<&PerSourceResult>) {
     dot.remove_css_class("source-status-ok");
     dot.remove_css_class("source-status-degraded");
     dot.remove_css_class("source-status-not-found");
 
-    match status {
-        Some(SourceStatus::Indexed) => {
-            dot.add_css_class("source-status-ok");
-            dot.set_visible(true);
+    let Some(r) = result else {
+        dot.set_visible(false);
+        dot.set_tooltip_text(None);
+        return;
+    };
+
+    let (css_class, tooltip) = match r.status {
+        SourceStatus::Indexed => {
+            let n = r.indexed + r.skipped;
+            ("source-status-ok", format!("{n} sessions indexed"))
         }
-        Some(SourceStatus::Degraded | SourceStatus::Failed) => {
-            dot.add_css_class("source-status-degraded");
-            dot.set_visible(true);
-        }
-        Some(SourceStatus::NotFound | SourceStatus::Empty) => {
-            dot.add_css_class("source-status-not-found");
-            dot.set_visible(true);
-        }
-        None => dot.set_visible(false),
-    }
+        SourceStatus::Degraded => (
+            "source-status-degraded",
+            format!("Indexed with {} errors", r.errors),
+        ),
+        SourceStatus::Failed => (
+            "source-status-degraded",
+            format!("Indexing failed — {} errors", r.errors),
+        ),
+        SourceStatus::Empty => ("source-status-not-found", "No sessions found".to_string()),
+        SourceStatus::NotFound => (
+            "source-status-not-found",
+            "Source directory not found".to_string(),
+        ),
+    };
+
+    dot.add_css_class(css_class);
+    dot.set_tooltip_text(Some(&tooltip));
+    dot.set_visible(true);
 }
 
 impl Sidebar {
@@ -488,14 +504,44 @@ mod tests {
     }
 
     #[gtk::test]
-    fn indexing_diagnostics_source_status_updates_apply_css_classes() {
-        use crate::models::SourceStatus;
+    fn indexing_diagnostics_source_status_updates_apply_css_classes_and_tooltips() {
+        use crate::models::{PerSourceResult, SourceStatus};
 
         let controller = Sidebar::builder().launch(());
         controller.emit(SidebarMsg::SourceStatusesUpdated(HashMap::from([
-            (AiAssistant::ClaudeCode, SourceStatus::Indexed),
-            (AiAssistant::OpenCode, SourceStatus::Degraded),
-            (AiAssistant::Codex, SourceStatus::NotFound),
+            (
+                AiAssistant::ClaudeCode,
+                PerSourceResult {
+                    assistant: AiAssistant::ClaudeCode,
+                    display_path: "/tmp/claude".into(),
+                    indexed: 12,
+                    skipped: 3,
+                    errors: 0,
+                    status: SourceStatus::Indexed,
+                },
+            ),
+            (
+                AiAssistant::OpenCode,
+                PerSourceResult {
+                    assistant: AiAssistant::OpenCode,
+                    display_path: "/tmp/opencode".into(),
+                    indexed: 5,
+                    skipped: 0,
+                    errors: 2,
+                    status: SourceStatus::Degraded,
+                },
+            ),
+            (
+                AiAssistant::Codex,
+                PerSourceResult {
+                    assistant: AiAssistant::Codex,
+                    display_path: "/tmp/codex".into(),
+                    indexed: 0,
+                    skipped: 0,
+                    errors: 0,
+                    status: SourceStatus::NotFound,
+                },
+            ),
         ])));
 
         pump_main_context(|| {
@@ -510,17 +556,29 @@ mod tests {
                 .claude_status_dot
                 .has_css_class("source-status-ok")
         );
+        assert_eq!(
+            parts.widgets.claude_status_dot.tooltip_text().as_deref(),
+            Some("15 sessions indexed")
+        );
         assert!(
             parts
                 .widgets
                 .opencode_status_dot
                 .has_css_class("source-status-degraded")
         );
+        assert_eq!(
+            parts.widgets.opencode_status_dot.tooltip_text().as_deref(),
+            Some("Indexed with 2 errors")
+        );
         assert!(
             parts
                 .widgets
                 .codex_status_dot
                 .has_css_class("source-status-not-found")
+        );
+        assert_eq!(
+            parts.widgets.codex_status_dot.tooltip_text().as_deref(),
+            Some("Source directory not found")
         );
     }
 

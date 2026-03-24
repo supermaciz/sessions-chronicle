@@ -1,7 +1,5 @@
 use relm4::{ComponentController, adw};
 
-use std::collections::HashMap;
-
 use crate::indexing_worker::IndexingWorkerInput;
 use crate::models::PerSourceResult;
 use crate::ui::analytics_view::AnalyticsViewMsg;
@@ -64,12 +62,12 @@ impl App {
         }
 
         // Push source status to sidebar dots.
-        let source_statuses = per_source
+        let source_results = per_source
             .iter()
-            .map(|r| (r.assistant, r.status))
-            .collect::<HashMap<_, _>>();
+            .map(|r| (r.assistant, r.clone()))
+            .collect();
         self.sidebar
-            .emit(SidebarMsg::SourceStatusesUpdated(source_statuses));
+            .emit(SidebarMsg::SourceStatusesUpdated(source_results));
 
         self.session_list
             .emit(SessionListMsg::SetSourceResults(per_source.clone()));
