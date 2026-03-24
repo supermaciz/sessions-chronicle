@@ -5,6 +5,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::UNIX_EPOCH;
 
+use crate::models::indexing_diagnostics::SourceStatus;
 use crate::parsers::ParsedSession;
 use crate::parsers::claude_code::ClaudeCodeParser;
 use crate::parsers::codex::{CodexParser, ParseError as CodexParseError};
@@ -23,6 +24,26 @@ pub struct SessionIndexer {
 pub struct IndexingStats {
     pub indexed: usize,
     pub skipped: usize,
+    pub errors: usize,
+}
+
+pub(crate) fn derive_source_status(
+    source_available: bool,
+    indexed: usize,
+    errors: usize,
+) -> SourceStatus {
+    match (source_available, indexed, errors) {
+        (false, _, _) => SourceStatus::NotFound,
+        (true, 0, 0) => SourceStatus::Empty,
+        (true, n, 0) if n > 0 => SourceStatus::Indexed,
+        (true, n, e) if n > 0 && e > 0 => SourceStatus::Degraded,
+        (true, 0, e) if e > 0 => SourceStatus::Failed,
+        _ => SourceStatus::Empty,
+    }
+}
+
+pub(crate) fn opencode_source_available(storage_root: &Path, db_path: Option<&Path>) -> bool {
+    storage_root.exists() || db_path.is_some_and(|path| path.exists())
 }
 
 fn is_opencode_error(err: &anyhow::Error) -> bool {
@@ -1565,5 +1586,27 @@ mod tests {
             .query_row("SELECT COUNT(*) FROM messages", [], |row| row.get(0))
             .unwrap();
         assert_eq!(msg_count, 0, "Messages should be empty after clear");
+    }
+
+    #[test]
+    fn indexing_diagnostics_source_status_derives_from_source_availability() {
+        use crate::models::indexing_diagnostics::SourceStatus;
+
+        assert_eq!(derive_source_status(false, 0, 0), SourceStatus::NotFound);
+        assert_eq!(derive_source_status(true, 0, 0), SourceStatus::Empty);
+        assert_eq!(derive_source_status(true, 5, 0), SourceStatus::Indexed);
+        assert_eq!(derive_source_status(true, 5, 2), SourceStatus::Degraded);
+        assert_eq!(derive_source_status(true, 0, 3), SourceStatus::Failed);
+    }
+
+    #[test]
+    fn indexing_diagnostics_opencode_source_available_with_sqlite_only() {
+        let temp = tempfile::tempdir().unwrap();
+        let storage_root = temp.path().join("missing-storage");
+        let sqlite_path = temp.path().join("opencode.db");
+        std::fs::write(&sqlite_path, b"not-a-real-db").unwrap();
+
+        assert!(opencode_source_available(&storage_root, Some(&sqlite_path)));
+        assert!(!opencode_source_available(&storage_root, None));
     }
 }
