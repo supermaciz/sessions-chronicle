@@ -31,9 +31,11 @@ pub struct IndexingStats {
 pub(crate) fn derive_source_status(
     source_available: bool,
     indexed: usize,
+    skipped: usize,
     errors: usize,
 ) -> SourceStatus {
-    match (source_available, indexed, errors) {
+    let processed = indexed + skipped;
+    match (source_available, processed, errors) {
         (false, _, _) => SourceStatus::NotFound,
         (true, 0, 0) => SourceStatus::Empty,
         (true, n, 0) if n > 0 => SourceStatus::Indexed,
@@ -69,7 +71,7 @@ fn build_per_source_result(
         indexed: stats.indexed,
         skipped: stats.skipped,
         errors: stats.errors,
-        status: derive_source_status(source_available, stats.indexed, stats.errors),
+        status: derive_source_status(source_available, stats.indexed, stats.skipped, stats.errors),
     }
 }
 
@@ -1745,11 +1747,16 @@ mod tests {
     fn indexing_diagnostics_source_status_derives_from_source_availability() {
         use crate::models::indexing_diagnostics::SourceStatus;
 
-        assert_eq!(derive_source_status(false, 0, 0), SourceStatus::NotFound);
-        assert_eq!(derive_source_status(true, 0, 0), SourceStatus::Empty);
-        assert_eq!(derive_source_status(true, 5, 0), SourceStatus::Indexed);
-        assert_eq!(derive_source_status(true, 5, 2), SourceStatus::Degraded);
-        assert_eq!(derive_source_status(true, 0, 3), SourceStatus::Failed);
+        // derive_source_status(source_available, indexed, skipped, errors)
+        assert_eq!(derive_source_status(false, 0, 0, 0), SourceStatus::NotFound);
+        assert_eq!(derive_source_status(true, 0, 0, 0), SourceStatus::Empty);
+        assert_eq!(derive_source_status(true, 5, 0, 0), SourceStatus::Indexed);
+        assert_eq!(derive_source_status(true, 5, 0, 2), SourceStatus::Degraded);
+        assert_eq!(derive_source_status(true, 0, 0, 3), SourceStatus::Failed);
+        // Skipped-only run (incremental, nothing new) should report Indexed
+        assert_eq!(derive_source_status(true, 0, 10, 0), SourceStatus::Indexed);
+        // Skipped with some errors should report Degraded
+        assert_eq!(derive_source_status(true, 0, 10, 2), SourceStatus::Degraded);
     }
 
     #[test]
