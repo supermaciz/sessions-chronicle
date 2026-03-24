@@ -110,7 +110,7 @@ fn build_source_results_list(results: &[PerSourceResult]) -> gtk::ListBox {
         };
 
         let subtitle = if result.status == SourceStatus::NotFound {
-            "Source not found".to_string()
+            format!("{} (not found)", result.display_path)
         } else {
             result.display_path.clone()
         };

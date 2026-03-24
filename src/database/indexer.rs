@@ -235,6 +235,7 @@ impl SessionIndexer {
                                                 entry.id,
                                                 err
                                             );
+                                            stats.errors += 1;
                                         }
                                     }
                                 }
