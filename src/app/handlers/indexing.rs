@@ -1,4 +1,3 @@
-use adw::prelude::*;
 use relm4::{ComponentController, adw};
 
 use std::collections::HashMap;
@@ -71,6 +70,9 @@ impl App {
             .collect::<HashMap<_, _>>();
         self.sidebar
             .emit(SidebarMsg::SourceStatusesUpdated(source_statuses));
+
+        self.session_list
+            .emit(SessionListMsg::SetSourceResults(per_source.clone()));
 
         self.refresh_sidebar_projects();
         self.emit_session_list_filters();

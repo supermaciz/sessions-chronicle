@@ -1,10 +1,10 @@
-use gtk::prelude::*;
+use adw::prelude::*;
 use relm4::factory::FactoryVecDeque;
 use relm4::{ComponentParts, ComponentSender, SimpleComponent, adw, gtk};
 use std::path::{Path, PathBuf};
 
 use crate::database::{load_sessions_for_filter, search_sessions_for_filter};
-use crate::models::{AiAssistant, ProjectFilter, Session};
+use crate::models::{AiAssistant, PerSourceResult, ProjectFilter, Session, SourceStatus};
 use crate::ui::session_row::{SessionRow, SessionRowInit, SessionRowOutput};
 
 #[derive(Debug)]
@@ -16,6 +16,8 @@ pub struct SessionList {
     all_tools_selected: bool,
     indexing: bool,
     sessions: FactoryVecDeque<SessionRow>,
+    source_results: Vec<PerSourceResult>,
+    source_results_available: bool,
 }
 
 #[derive(Debug)]
@@ -26,6 +28,7 @@ pub enum SessionListMsg {
     },
     SetSearchQuery(String),
     SetIndexing(bool),
+    SetSourceResults(Vec<PerSourceResult>),
     SessionActivated(i32),
     ResumeRequested(String, AiAssistant),
     /// Ensure a row is selected (defaults to first) and grab keyboard focus.
@@ -42,10 +45,11 @@ pub enum SessionListOutput {
     ResumeRequested(String, AiAssistant),
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct EmptyStateCopy {
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct EmptyStateViewModel {
     title: &'static str,
     description: &'static str,
+    show_source_results: bool,
 }
 
 fn compute_empty_state(
@@ -54,32 +58,73 @@ fn compute_empty_state(
     all_tools_selected: bool,
     indexing: bool,
     project_filter_active: bool,
-) -> EmptyStateCopy {
+    source_results_available: bool,
+) -> EmptyStateViewModel {
     if sessions_empty && indexing {
-        return EmptyStateCopy {
+        return EmptyStateViewModel {
             title: "Indexing sessions...",
             description: "This may take a moment on first launch.",
+            show_source_results: false,
         };
     }
 
     if !search_query.trim().is_empty() {
-        return EmptyStateCopy {
+        return EmptyStateViewModel {
             title: "No sessions match search",
             description: "Try a different query or adjust filters",
+            show_source_results: false,
         };
     }
 
     if all_tools_selected && !project_filter_active {
-        EmptyStateCopy {
+        let description = if source_results_available {
+            "No sessions found in checked session sources"
+        } else {
+            "Your AI coding sessions will appear here"
+        };
+        EmptyStateViewModel {
             title: "No Sessions Yet",
-            description: "Your AI coding sessions will appear here",
+            description,
+            show_source_results: source_results_available,
         }
     } else {
-        EmptyStateCopy {
+        EmptyStateViewModel {
             title: "No sessions match filters",
             description: "Try adjusting the tool filters in the sidebar",
+            show_source_results: false,
         }
     }
+}
+
+fn build_source_results_list(results: &[PerSourceResult]) -> gtk::ListBox {
+    let list = gtk::ListBox::new();
+    list.set_selection_mode(gtk::SelectionMode::None);
+    list.add_css_class("boxed-list");
+
+    for result in results {
+        let title = match result.assistant {
+            AiAssistant::ClaudeCode => "Claude Code",
+            AiAssistant::OpenCode => "OpenCode",
+            AiAssistant::Codex => "Codex",
+            AiAssistant::MistralVibe => "Mistral Vibe",
+        };
+
+        let subtitle = if result.status == SourceStatus::NotFound {
+            "Source not found".to_string()
+        } else {
+            result.display_path.clone()
+        };
+
+        let row = adw::ActionRow::builder()
+            .title(title)
+            .subtitle(&subtitle)
+            .build();
+        row.set_subtitle_selectable(true);
+
+        list.append(&row);
+    }
+
+    list
 }
 
 #[relm4::component(pub)]
@@ -154,6 +199,8 @@ impl SimpleComponent for SessionList {
             all_tools_selected: true,
             indexing: false,
             sessions,
+            source_results: vec![],
+            source_results_available: false,
         };
 
         // Populate initial data
@@ -204,6 +251,10 @@ impl SimpleComponent for SessionList {
             }
             SessionListMsg::SetIndexing(indexing) => {
                 self.indexing = indexing;
+            }
+            SessionListMsg::SetSourceResults(results) => {
+                self.source_results_available = !results.is_empty();
+                self.source_results = results;
             }
             SessionListMsg::SessionActivated(index) => {
                 if let Some(row) = self.sessions.get(index as usize) {
@@ -260,9 +311,16 @@ impl SimpleComponent for SessionList {
                 self.all_tools_selected,
                 self.indexing,
                 self.project_filter != ProjectFilter::AllSessions,
+                self.source_results_available,
             );
             widgets.empty_state.set_title(empty.title);
             widgets.empty_state.set_description(Some(empty.description));
+            if empty.show_source_results {
+                let list = build_source_results_list(&self.source_results);
+                widgets.empty_state.set_child(Some(&list));
+            } else {
+                widgets.empty_state.set_child(gtk::Widget::NONE);
+            }
             widgets
                 .content_stack
                 .set_visible_child(&widgets.empty_state);
@@ -495,7 +553,7 @@ mod tests {
 
     #[test]
     fn empty_state_prefers_indexing_placeholder_when_loading_and_empty() {
-        let state = compute_empty_state(true, "", true, true, false);
+        let state = compute_empty_state(true, "", true, true, false, false);
 
         assert_eq!(state.title, "Indexing sessions...");
         assert_eq!(state.description, "This may take a moment on first launch.");
@@ -503,7 +561,7 @@ mod tests {
 
     #[test]
     fn project_sidebar_empty_state_treats_project_selection_as_active_filter() {
-        let state = compute_empty_state(true, "", true, false, true);
+        let state = compute_empty_state(true, "", true, false, true, false);
 
         assert_eq!(state.title, "No sessions match filters");
         assert_eq!(
@@ -839,6 +897,43 @@ mod tests {
         pump_main_context(|| true);
 
         assert!(list_box.selected_row().is_none());
+    }
+
+    #[test]
+    fn indexing_diagnostics_empty_state_shows_source_results_only_for_global_empty_state() {
+        let state = compute_empty_state(true, "", true, false, false, true);
+        assert!(state.show_source_results);
+    }
+
+    #[test]
+    fn indexing_diagnostics_empty_state_hides_source_results_for_search_results() {
+        let state = compute_empty_state(true, "claude", true, false, false, true);
+        assert!(!state.show_source_results);
+    }
+
+    #[gtk::test]
+    fn indexing_diagnostics_status_page_gets_source_results_child() {
+        use crate::models::{AiAssistant, PerSourceResult, SourceStatus};
+
+        let temp_db = tempfile::NamedTempFile::new().expect("temp db");
+        let controller = SessionList::builder().launch(temp_db.path().to_path_buf());
+
+        controller.emit(SessionListMsg::SetSourceResults(vec![PerSourceResult {
+            assistant: AiAssistant::ClaudeCode,
+            display_path: "/tmp/claude".into(),
+            indexed: 0,
+            skipped: 0,
+            errors: 0,
+            status: SourceStatus::Empty,
+        }]));
+
+        pump_main_context(|| {
+            let parts = controller.state().get();
+            parts.model.source_results_available
+        });
+
+        let parts = controller.state().get();
+        assert!(parts.widgets.empty_state.child().is_some());
     }
 
     #[gtk::test]

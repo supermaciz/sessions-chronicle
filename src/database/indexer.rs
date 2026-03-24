@@ -91,6 +91,7 @@ impl SessionIndexer {
         Ok(Self { db })
     }
 
+    #[allow(dead_code)]
     pub fn index_claude_sessions(&mut self, sessions_dir: &Path) -> Result<usize> {
         Ok(self
             .index_claude_sessions_internal(sessions_dir, false)?
@@ -151,6 +152,7 @@ impl SessionIndexer {
         Ok(stats)
     }
 
+    #[allow(dead_code)]
     pub fn index_opencode_sessions(
         &mut self,
         storage_root: &Path,
@@ -322,6 +324,7 @@ impl SessionIndexer {
         Ok(stats)
     }
 
+    #[allow(dead_code)]
     pub fn index_codex_sessions(&mut self, sessions_dir: &Path) -> Result<usize> {
         Ok(self
             .index_codex_sessions_internal(sessions_dir, false)?
@@ -390,6 +393,7 @@ impl SessionIndexer {
         Ok(stats)
     }
 
+    #[allow(dead_code)]
     pub fn index_vibe_sessions(&mut self, sessions_dir: &Path) -> Result<usize> {
         Ok(self
             .index_vibe_sessions_internal(sessions_dir, false)?
