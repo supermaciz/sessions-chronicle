@@ -9,8 +9,8 @@ use crate::ui::sidebar::SidebarMsg;
 
 use super::super::App;
 use super::super::helpers::{
-    analytics_indexing_completion_outcome, banner_title, completion_toast_title,
-    decide_reindex_action,
+    analytics_indexing_completion_outcome, banner_button_label, banner_title,
+    completion_toast_title, decide_reindex_action,
 };
 use super::super::types::ReindexAction;
 
@@ -69,10 +69,13 @@ impl App {
         match banner_title(&per_source) {
             Some(title) => {
                 self.banner.set_title(&title);
+                self.banner
+                    .set_button_label(banner_button_label(&per_source));
                 self.banner_has_issues = true;
                 self.banner.set_revealed(!self.detail_visible);
             }
             None => {
+                self.banner.set_button_label(None);
                 self.banner_has_issues = false;
                 self.banner.set_revealed(false);
             }
@@ -113,6 +116,13 @@ impl App {
         tracing::error!("Background indexing failed");
         self.indexing = false;
         self.session_list.emit(SessionListMsg::SetIndexing(false));
+
+        if let Some(dialog) = self.indexing_status_dialog.as_ref() {
+            dialog.emit(IndexingStatusMsg::Update {
+                per_source: self.last_per_source.clone(),
+                indexing: false,
+            });
+        }
 
         let title = if self.pending_reindex_feedback {
             self.pending_reindex_feedback = false;

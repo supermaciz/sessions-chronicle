@@ -365,3 +365,26 @@
 .source-status-ok { background-color: @success_color; }
 .source-status-degraded { background-color: @warning_color; }
 .source-status-not-found { background-color: alpha(@view_fg_color, 0.3); }
+
+.source-count-pill {
+  border-radius: 99px;
+  padding: 2px 8px;
+  font-size: 0.85em;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.source-count-pill.source-status-ok {
+  background-color: alpha(@success_color, 0.15);
+  color: @success_color;
+}
+
+.source-count-pill.source-status-degraded {
+  background-color: alpha(@warning_color, 0.15);
+  color: @warning_color;
+}
+
+.source-count-pill.source-status-not-found {
+  background-color: alpha(@view_fg_color, 0.08);
+  color: alpha(@view_fg_color, 0.5);
+}

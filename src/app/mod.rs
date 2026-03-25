@@ -181,6 +181,7 @@ pub(super) enum AppMsg {
 
 relm4::new_action_group!(pub(super) WindowActionGroup, "win");
 relm4::new_stateless_action!(PreferencesAction, WindowActionGroup, "preferences");
+relm4::new_stateless_action!(IndexingStatusAction, WindowActionGroup, "indexing-status");
 relm4::new_stateless_action!(pub(super) ShortcutsAction, WindowActionGroup, "show-help-overlay");
 relm4::new_stateless_action!(AboutAction, WindowActionGroup, "about");
 relm4::new_stateless_action!(QuitAction, WindowActionGroup, "quit");
@@ -198,6 +199,7 @@ impl SimpleComponent for App {
     menu! {
         primary_menu: {
             section! {
+                "_Indexing Status..." => IndexingStatusAction,
                 "_Preferences" => PreferencesAction,
                 "_Keyboard" => ShortcutsAction,
                 "_About Sessions Chronicle" => AboutAction,
@@ -459,6 +461,7 @@ impl SimpleComponent for App {
             &root,
             &widgets.main_window,
             &sender,
+            &model.banner,
             &widgets.search_bar,
             &widgets.search_entry,
             &workspace_stack,

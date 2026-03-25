@@ -129,6 +129,14 @@ pub(super) fn banner_title(results: &[PerSourceResult]) -> Option<String> {
     }
 }
 
+pub(super) fn banner_button_label(results: &[PerSourceResult]) -> Option<&'static str> {
+    if banner_title(results).is_some() {
+        Some("Details")
+    } else {
+        None
+    }
+}
+
 pub(super) fn completion_toast_title(indexed: usize, errors: usize) -> String {
     if errors == 0 {
         format!("Index rebuilt — {indexed} sessions")
@@ -201,6 +209,16 @@ mod tests {
     fn indexing_diagnostics_banner_ignores_not_found_only_results() {
         let result = make_result(AiAssistant::Codex, SourceStatus::NotFound);
         assert_eq!(banner_title(&[result]), None);
+    }
+
+    #[test]
+    fn indexing_status_banner_button_label_matches_issue_presence() {
+        let degraded = make_result(AiAssistant::ClaudeCode, SourceStatus::Degraded);
+        let ok = make_result(AiAssistant::ClaudeCode, SourceStatus::Indexed);
+
+        assert_eq!(banner_button_label(&[degraded]), Some("Details"));
+        assert_eq!(banner_button_label(&[ok]), None);
+        assert_eq!(banner_button_label(&[]), None);
     }
 
     #[test]

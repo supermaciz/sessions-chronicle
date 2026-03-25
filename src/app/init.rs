@@ -29,8 +29,8 @@ use crate::ui::{
 use super::helpers::workspace_allows_search;
 use super::types::Workspace;
 use super::{
-    AboutAction, App, AppMsg, EscapeAction, PreferencesAction, QuitAction, ShortcutsAction,
-    ShowSearchAction, TogglePaneAction, WindowActionGroup,
+    AboutAction, App, AppMsg, EscapeAction, IndexingStatusAction, PreferencesAction, QuitAction,
+    ShortcutsAction, ShowSearchAction, TogglePaneAction, WindowActionGroup,
 };
 
 /// Holds all child controllers and workers created during init.
@@ -383,6 +383,7 @@ pub(super) fn register_actions(
     root: &adw::ApplicationWindow,
     main_window: &adw::ApplicationWindow,
     sender: &ComponentSender<App>,
+    banner: &adw::Banner,
     search_bar: &gtk::SearchBar,
     search_entry: &gtk::SearchEntry,
     workspace_stack: &adw::ViewStack,
@@ -400,6 +401,13 @@ pub(super) fn register_actions(
     let shortcuts_action = {
         RelmAction::<ShortcutsAction>::new_stateless(move |_| {
             ShortcutsDialog::builder().launch(()).detach();
+        })
+    };
+
+    let indexing_status_action = {
+        let sender = sender.clone();
+        RelmAction::<IndexingStatusAction>::new_stateless(move |_| {
+            sender.input(AppMsg::ShowIndexingStatus);
         })
     };
 
@@ -450,16 +458,23 @@ pub(super) fn register_actions(
         })
     };
 
+    let banner_sender = sender.input_sender().clone();
+    banner.connect_button_clicked(move |_| {
+        banner_sender.send(AppMsg::ShowIndexingStatus).ok();
+    });
+
     // Connect actions with hotkeys
     app.set_accelerators_for_action::<QuitAction>(&["<Control>q"]);
     app.set_accelerators_for_action::<TogglePaneAction>(&["F9"]);
     app.set_accelerators_for_action::<ShowSearchAction>(&["<Control>f"]);
     app.set_accelerators_for_action::<ShortcutsAction>(&["<Control>question"]);
+    app.set_accelerators_for_action::<IndexingStatusAction>(&["<Control><Shift>i"]);
     app.set_accelerators_for_action::<PreferencesAction>(&["<Control>comma"]);
     app.set_accelerators_for_action::<EscapeAction>(&["Escape"]);
 
     actions.add_action(preferences_action);
     actions.add_action(shortcuts_action);
+    actions.add_action(indexing_status_action);
     actions.add_action(about_action);
     actions.add_action(show_search_action);
     actions.add_action(toggle_pane_action);
