@@ -5,8 +5,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::UNIX_EPOCH;
 
-use crate::models::indexing_diagnostics::{IndexingRunResult, PerSourceResult, SourceStatus};
-use crate::models::session::AiAssistant;
+use crate::models::{AiAssistant, IndexingError, IndexingRunResult, PerSourceResult, SourceStatus};
 use crate::parsers::ParsedSession;
 use crate::parsers::claude_code::ClaudeCodeParser;
 use crate::parsers::codex::{CodexParser, ParseError as CodexParseError};
@@ -79,6 +78,25 @@ fn build_per_source_result(
     }
 }
 
+const MAX_INDEXING_ERRORS: usize = 50;
+
+fn push_indexing_error(
+    errors_detail: &mut Vec<IndexingError>,
+    assistant: AiAssistant,
+    location: Option<String>,
+    message: impl Into<String>,
+) {
+    if errors_detail.len() >= MAX_INDEXING_ERRORS {
+        return;
+    }
+
+    errors_detail.push(IndexingError {
+        assistant,
+        location,
+        message: message.into(),
+    });
+}
+
 fn is_opencode_error(err: &anyhow::Error) -> bool {
     err.downcast_ref::<OpenCodeParseError>().is_some()
 }
@@ -99,8 +117,9 @@ impl SessionIndexer {
 
     #[allow(dead_code)]
     pub fn index_claude_sessions(&mut self, sessions_dir: &Path) -> Result<usize> {
+        let mut errors_detail = Vec::new();
         Ok(self
-            .index_claude_sessions_internal(sessions_dir, false)?
+            .index_claude_sessions_internal(sessions_dir, false, &mut errors_detail)?
             .indexed)
     }
 
@@ -108,13 +127,15 @@ impl SessionIndexer {
         &mut self,
         sessions_dir: &Path,
     ) -> Result<IndexingStats> {
-        self.index_claude_sessions_internal(sessions_dir, true)
+        let mut errors_detail = Vec::new();
+        self.index_claude_sessions_internal(sessions_dir, true, &mut errors_detail)
     }
 
     fn index_claude_sessions_internal(
         &mut self,
         sessions_dir: &Path,
         incremental: bool,
+        errors_detail: &mut Vec<IndexingError>,
     ) -> Result<IndexingStats> {
         let parser = ClaudeCodeParser;
         let mut stats = IndexingStats::default();
@@ -136,6 +157,12 @@ impl SessionIndexer {
                             path.display(),
                             err
                         );
+                        push_indexing_error(
+                            errors_detail,
+                            AiAssistant::ClaudeCode,
+                            Some(path.display().to_string()),
+                            format!("Failed to prune sidechain session: {err}"),
+                        );
                     }
                     continue;
                 }
@@ -147,6 +174,12 @@ impl SessionIndexer {
 
                 if let Err(e) = self.index_session_file(path, &parser) {
                     tracing::warn!("Failed to index {}: {}", path.display(), e);
+                    push_indexing_error(
+                        errors_detail,
+                        AiAssistant::ClaudeCode,
+                        Some(path.display().to_string()),
+                        format!("Failed to index session: {e}"),
+                    );
                     stats.errors += 1;
                 } else {
                     stats.indexed += 1;
@@ -164,8 +197,9 @@ impl SessionIndexer {
         storage_root: &Path,
         db_path: Option<&Path>,
     ) -> Result<usize> {
+        let mut errors_detail = Vec::new();
         Ok(self
-            .index_opencode_sessions_internal(storage_root, db_path, false)?
+            .index_opencode_sessions_internal(storage_root, db_path, false, &mut errors_detail)?
             .indexed)
     }
 
@@ -174,7 +208,8 @@ impl SessionIndexer {
         storage_root: &Path,
         db_path: Option<&Path>,
     ) -> Result<IndexingStats> {
-        self.index_opencode_sessions_internal(storage_root, db_path, true)
+        let mut errors_detail = Vec::new();
+        self.index_opencode_sessions_internal(storage_root, db_path, true, &mut errors_detail)
     }
 
     fn index_opencode_sessions_internal(
@@ -182,6 +217,7 @@ impl SessionIndexer {
         storage_root: &Path,
         db_path: Option<&Path>,
         incremental: bool,
+        errors_detail: &mut Vec<IndexingError>,
     ) -> Result<IndexingStats> {
         let has_storage_root = storage_root.exists();
         let has_db = db_path.is_some_and(|p| p.exists());
@@ -220,6 +256,15 @@ impl SessionIndexer {
                                                 entry.id,
                                                 err
                                             );
+                                            push_indexing_error(
+                                                errors_detail,
+                                                AiAssistant::OpenCode,
+                                                Some(db_path.display().to_string()),
+                                                format!(
+                                                    "Failed to insert SQLite session {}: {}",
+                                                    entry.id, err
+                                                ),
+                                            );
                                             stats.errors += 1;
                                             continue;
                                         }
@@ -239,6 +284,15 @@ impl SessionIndexer {
                                                 entry.id,
                                                 err
                                             );
+                                            push_indexing_error(
+                                                errors_detail,
+                                                AiAssistant::OpenCode,
+                                                Some(db_path.display().to_string()),
+                                                format!(
+                                                    "Failed to parse SQLite session {}: {}",
+                                                    entry.id, err
+                                                ),
+                                            );
                                             stats.errors += 1;
                                         }
                                     }
@@ -247,6 +301,12 @@ impl SessionIndexer {
                         }
                         Err(err) => {
                             tracing::warn!("Failed to list SQLite sessions: {}", err);
+                            push_indexing_error(
+                                errors_detail,
+                                AiAssistant::OpenCode,
+                                Some(db_path.display().to_string()),
+                                format!("Failed to list SQLite sessions: {err}"),
+                            );
                         }
                     },
                     Err(err) => {
@@ -254,6 +314,12 @@ impl SessionIndexer {
                             "Failed to open OpenCode DB {}: {} - falling back to JSON only",
                             db_path.display(),
                             err
+                        );
+                        push_indexing_error(
+                            errors_detail,
+                            AiAssistant::OpenCode,
+                            Some(db_path.display().to_string()),
+                            format!("Failed to open OpenCode DB: {err}"),
                         );
                     }
                 }
@@ -303,9 +369,21 @@ impl SessionIndexer {
                                             path.display(),
                                             remove_err
                                         );
+                                        push_indexing_error(
+                                            errors_detail,
+                                            AiAssistant::OpenCode,
+                                            Some(path.display().to_string()),
+                                            format!("Failed to prune session: {remove_err}"),
+                                        );
                                     }
                                 } else {
                                     tracing::warn!("Failed to index {}: {}", path.display(), err);
+                                    push_indexing_error(
+                                        errors_detail,
+                                        AiAssistant::OpenCode,
+                                        Some(path.display().to_string()),
+                                        format!("Failed to index session: {err}"),
+                                    );
                                     stats.errors += 1;
                                 }
                             }
@@ -314,6 +392,12 @@ impl SessionIndexer {
                 }
                 Err(err) => {
                     tracing::warn!("Failed to list JSON OpenCode sessions: {}", err);
+                    push_indexing_error(
+                        errors_detail,
+                        AiAssistant::OpenCode,
+                        Some(storage_root.display().to_string()),
+                        format!("Failed to list JSON OpenCode sessions: {err}"),
+                    );
                 }
             }
         }
@@ -333,8 +417,9 @@ impl SessionIndexer {
 
     #[allow(dead_code)]
     pub fn index_codex_sessions(&mut self, sessions_dir: &Path) -> Result<usize> {
+        let mut errors_detail = Vec::new();
         Ok(self
-            .index_codex_sessions_internal(sessions_dir, false)?
+            .index_codex_sessions_internal(sessions_dir, false, &mut errors_detail)?
             .indexed)
     }
 
@@ -342,13 +427,15 @@ impl SessionIndexer {
         &mut self,
         sessions_dir: &Path,
     ) -> Result<IndexingStats> {
-        self.index_codex_sessions_internal(sessions_dir, true)
+        let mut errors_detail = Vec::new();
+        self.index_codex_sessions_internal(sessions_dir, true, &mut errors_detail)
     }
 
     fn index_codex_sessions_internal(
         &mut self,
         sessions_dir: &Path,
         incremental: bool,
+        errors_detail: &mut Vec<IndexingError>,
     ) -> Result<IndexingStats> {
         if !sessions_dir.exists() {
             return Ok(IndexingStats::default());
@@ -380,15 +467,33 @@ impl SessionIndexer {
                     Err(err) => {
                         if is_codex_error(&err) {
                             tracing::warn!("Skipped Codex session {}: {}", path.display(), err);
+                            push_indexing_error(
+                                errors_detail,
+                                AiAssistant::Codex,
+                                Some(path.display().to_string()),
+                                format!("Skipped Codex session: {err}"),
+                            );
                             if let Err(remove_err) = self.remove_session_for_file(path) {
                                 tracing::warn!(
                                     "Failed to prune session {}: {}",
                                     path.display(),
                                     remove_err
                                 );
+                                push_indexing_error(
+                                    errors_detail,
+                                    AiAssistant::Codex,
+                                    Some(path.display().to_string()),
+                                    format!("Failed to prune session: {remove_err}"),
+                                );
                             }
                         } else {
                             tracing::warn!("Failed to index {}: {}", path.display(), err);
+                            push_indexing_error(
+                                errors_detail,
+                                AiAssistant::Codex,
+                                Some(path.display().to_string()),
+                                format!("Failed to index session: {err}"),
+                            );
                             stats.errors += 1;
                         }
                     }
@@ -402,8 +507,9 @@ impl SessionIndexer {
 
     #[allow(dead_code)]
     pub fn index_vibe_sessions(&mut self, sessions_dir: &Path) -> Result<usize> {
+        let mut errors_detail = Vec::new();
         Ok(self
-            .index_vibe_sessions_internal(sessions_dir, false)?
+            .index_vibe_sessions_internal(sessions_dir, false, &mut errors_detail)?
             .indexed)
     }
 
@@ -411,13 +517,15 @@ impl SessionIndexer {
         &mut self,
         sessions_dir: &Path,
     ) -> Result<IndexingStats> {
-        self.index_vibe_sessions_internal(sessions_dir, true)
+        let mut errors_detail = Vec::new();
+        self.index_vibe_sessions_internal(sessions_dir, true, &mut errors_detail)
     }
 
     fn index_vibe_sessions_internal(
         &mut self,
         sessions_dir: &Path,
         incremental: bool,
+        errors_detail: &mut Vec<IndexingError>,
     ) -> Result<IndexingStats> {
         if !sessions_dir.exists() {
             return Ok(IndexingStats::default());
@@ -434,6 +542,12 @@ impl SessionIndexer {
                 Ok(entry) => entry,
                 Err(err) => {
                     tracing::warn!("Failed to read Mistral Vibe session entry: {}", err);
+                    push_indexing_error(
+                        errors_detail,
+                        AiAssistant::MistralVibe,
+                        Some(sessions_dir.display().to_string()),
+                        format!("Failed to read Mistral Vibe session entry: {err}"),
+                    );
                     continue;
                 }
             };
@@ -473,9 +587,21 @@ impl SessionIndexer {
                                 path.display(),
                                 remove_err
                             );
+                            push_indexing_error(
+                                errors_detail,
+                                AiAssistant::MistralVibe,
+                                Some(path.display().to_string()),
+                                format!("Failed to prune session: {remove_err}"),
+                            );
                         }
                     } else {
                         tracing::warn!("Failed to index {}: {}", path.display(), err);
+                        push_indexing_error(
+                            errors_detail,
+                            AiAssistant::MistralVibe,
+                            Some(path.display().to_string()),
+                            format!("Failed to index session: {err}"),
+                        );
                         stats.errors += 1;
                     }
                 }
@@ -774,13 +900,20 @@ impl SessionIndexer {
     }
 
     pub fn index_all_incremental(&mut self, sources: &SessionSources) -> Result<IndexingRunResult> {
-        let claude = self.index_claude_sessions_incremental(&sources.claude_dir)?;
-        let opencode = self.index_opencode_sessions_incremental(
+        let mut errors_detail = Vec::new();
+
+        let claude =
+            self.index_claude_sessions_internal(&sources.claude_dir, true, &mut errors_detail)?;
+        let opencode = self.index_opencode_sessions_internal(
             &sources.opencode_storage_root,
             sources.opencode_db_path.as_deref(),
+            true,
+            &mut errors_detail,
         )?;
-        let codex = self.index_codex_sessions_incremental(&sources.codex_dir)?;
-        let vibe = self.index_vibe_sessions_incremental(&sources.vibe_dir)?;
+        let codex =
+            self.index_codex_sessions_internal(&sources.codex_dir, true, &mut errors_detail)?;
+        let vibe =
+            self.index_vibe_sessions_internal(&sources.vibe_dir, true, &mut errors_detail)?;
 
         let per_source = vec![
             build_per_source_result(
@@ -824,7 +957,11 @@ impl SessionIndexer {
                 acc
             });
 
-        Ok(IndexingRunResult { totals, per_source })
+        Ok(IndexingRunResult {
+            totals,
+            per_source,
+            errors_detail,
+        })
     }
 
     pub fn index_all_full_reindex(
@@ -833,14 +970,20 @@ impl SessionIndexer {
     ) -> Result<IndexingRunResult> {
         self.clear_all_sessions()?;
 
-        let claude = self.index_claude_sessions_internal(&sources.claude_dir, false)?;
+        let mut errors_detail = Vec::new();
+
+        let claude =
+            self.index_claude_sessions_internal(&sources.claude_dir, false, &mut errors_detail)?;
         let opencode = self.index_opencode_sessions_internal(
             &sources.opencode_storage_root,
             sources.opencode_db_path.as_deref(),
             false,
+            &mut errors_detail,
         )?;
-        let codex = self.index_codex_sessions_internal(&sources.codex_dir, false)?;
-        let vibe = self.index_vibe_sessions_internal(&sources.vibe_dir, false)?;
+        let codex =
+            self.index_codex_sessions_internal(&sources.codex_dir, false, &mut errors_detail)?;
+        let vibe =
+            self.index_vibe_sessions_internal(&sources.vibe_dir, false, &mut errors_detail)?;
 
         let per_source = vec![
             build_per_source_result(
@@ -884,7 +1027,11 @@ impl SessionIndexer {
                 acc
             });
 
-        Ok(IndexingRunResult { totals, per_source })
+        Ok(IndexingRunResult {
+            totals,
+            per_source,
+            errors_detail,
+        })
     }
 
     fn remove_session_for_file(&mut self, file_path: &Path) -> Result<()> {
@@ -1746,6 +1893,57 @@ mod tests {
             claude.status,
             crate::models::indexing_diagnostics::SourceStatus::Failed
         );
+    }
+
+    #[test]
+    fn indexing_diagnostics_error_details_are_capped_at_fifty() {
+        let temp = tempfile::tempdir().unwrap();
+        let claude_root = temp.path().join("claude_sessions").join("project-a");
+        std::fs::create_dir_all(&claude_root).unwrap();
+
+        for i in 0..60 {
+            std::fs::write(claude_root.join(format!("bad-{i}.jsonl")), b"not-json\n").unwrap();
+        }
+
+        let temp_db = tempfile::NamedTempFile::new().unwrap();
+        let mut indexer = SessionIndexer::new(temp_db.path()).unwrap();
+        let sources = SessionSources::resolve(Some(temp.path()));
+
+        let result = indexer.index_all_incremental(&sources).unwrap();
+
+        assert_eq!(result.errors_detail.len(), 50);
+        assert!(
+            result
+                .errors_detail
+                .iter()
+                .all(|error| error.assistant == AiAssistant::ClaudeCode)
+        );
+    }
+
+    #[test]
+    fn indexing_diagnostics_collects_source_level_opencode_errors() {
+        let temp = tempfile::tempdir().unwrap();
+        let storage_root = temp.path().join("missing-storage");
+        let sqlite_path = temp.path().join("opencode.db");
+        std::fs::write(&sqlite_path, b"not-a-real-db").unwrap();
+
+        let sources = SessionSources {
+            opencode_storage_root: storage_root.clone(),
+            opencode_db_path: Some(sqlite_path.clone()),
+            ..SessionSources::resolve(Some(temp.path()))
+        };
+
+        let temp_db = tempfile::NamedTempFile::new().unwrap();
+        let mut indexer = SessionIndexer::new(temp_db.path()).unwrap();
+        let result = indexer.index_all_incremental(&sources).unwrap();
+
+        assert!(result.errors_detail.iter().any(|error| {
+            error.assistant == AiAssistant::OpenCode
+                && error
+                    .location
+                    .as_deref()
+                    .is_some_and(|path| path.contains("opencode.db"))
+        }));
     }
 
     #[test]
