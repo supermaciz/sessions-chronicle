@@ -368,8 +368,9 @@
 
 .source-count-pill {
   border-radius: 99px;
-  padding: 2px 8px;
-  font-size: 0.85em;
+  min-height: 0;
+  padding: 0 6px;
+  font-size: 0.8em;
   font-weight: 600;
   font-variant-numeric: tabular-nums;
 }

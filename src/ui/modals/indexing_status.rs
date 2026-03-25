@@ -284,6 +284,8 @@ impl IndexingStatusDialog {
             let pill = gtk::Label::new(Some(&row.badge_text));
             pill.add_css_class("source-count-pill");
             pill.add_css_class(row.badge_css_class);
+            pill.set_valign(gtk::Align::Center);
+            pill.set_height_request(29);
             source_row.add_suffix(&pill);
 
             let source_path_row = adw::ActionRow::builder()
