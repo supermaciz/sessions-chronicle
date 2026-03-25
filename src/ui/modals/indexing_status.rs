@@ -370,6 +370,9 @@ impl IndexingStatusDialog {
                 .build();
             overflow_row.set_sensitive(false);
             overflow_row.add_css_class("dim-label");
+            overflow_row.update_property(&[gtk::accessible::Property::Description(
+                "Additional errors not shown",
+            )]);
 
             widgets.recent_errors_group.add(&overflow_row);
             widgets.recent_error_rows.push(overflow_row);
@@ -448,6 +451,7 @@ fn build_source_rows(results: &[PerSourceResult]) -> Vec<SourceRowState> {
 
 fn build_recent_error_rows(errors: &[IndexingError]) -> ErrorSectionState {
     const MAX_VISIBLE_ROWS: usize = 10;
+    const MAX_MESSAGE_LEN: usize = 200;
 
     let rows = errors
         .iter()
@@ -461,9 +465,15 @@ fn build_recent_error_rows(errors: &[IndexingError]) -> ErrorSectionState {
                 .map(str::to_string)
                 .unwrap_or_else(|| error.assistant.display_name().to_string());
 
+            let message = if error.message.len() > MAX_MESSAGE_LEN {
+                format!("{}...", &error.message[..MAX_MESSAGE_LEN])
+            } else {
+                error.message.clone()
+            };
+
             ErrorRowState {
                 title,
-                subtitle: error.message.clone(),
+                subtitle: message,
             }
         })
         .collect();
@@ -744,6 +754,36 @@ mod tests {
             section.rows[1].title,
             AiAssistant::MistralVibe.display_name()
         );
+    }
+
+    #[test]
+    fn indexing_status_recent_errors_truncates_long_messages() {
+        let long_message = "a".repeat(500);
+        let error = make_error(
+            AiAssistant::ClaudeCode,
+            Some("/tmp/test.jsonl"),
+            &long_message,
+        );
+
+        let section = build_recent_error_rows(&[error]);
+
+        assert_eq!(section.rows[0].subtitle.len(), 203); // 200 chars + "..."
+        assert!(section.rows[0].subtitle.ends_with("..."));
+    }
+
+    #[test]
+    fn indexing_status_recent_errors_preserves_short_messages() {
+        let short_message = "Short error message";
+        let error = make_error(
+            AiAssistant::ClaudeCode,
+            Some("/tmp/test.jsonl"),
+            short_message,
+        );
+
+        let section = build_recent_error_rows(&[error]);
+
+        assert_eq!(section.rows[0].subtitle, short_message);
+        assert!(!section.rows[0].subtitle.contains("..."));
     }
 
     #[gtk::test]
