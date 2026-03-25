@@ -136,8 +136,8 @@ impl SimpleComponent for IndexingStatusDialog {
     ) -> ComponentParts<Self> {
         root.set_title("Indexing Status");
         root.set_content_width(480);
-        root.set_content_height(520);
-        root.set_follows_content_size(true);
+        root.set_content_height(640);
+        root.set_follows_content_size(false);
 
         let toolbar_view = adw::ToolbarView::new();
         let header_bar = adw::HeaderBar::new();
