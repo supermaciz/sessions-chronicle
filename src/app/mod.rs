@@ -120,6 +120,7 @@ pub(super) struct App {
     indexing_worker: WorkerController<IndexingWorker>,
     analytics_worker: WorkerController<AnalyticsWorker>,
     last_per_source: Vec<crate::models::PerSourceResult>,
+    last_errors_detail: Vec<crate::models::IndexingError>,
     indexing_status_dialog: Option<Controller<IndexingStatusDialog>>,
     workspace_stack: adw::ViewStack,
     nav_view: adw::NavigationView,
@@ -172,6 +173,7 @@ pub(super) enum AppMsg {
         indexed: usize,
         skipped: usize,
         per_source: Vec<crate::models::PerSourceResult>,
+        errors_detail: Vec<crate::models::IndexingError>,
     },
     IndexingFailed,
     AnalyticsRefreshRequested,
@@ -400,6 +402,7 @@ impl SimpleComponent for App {
             indexing_worker: components.indexing_worker,
             analytics_worker: components.analytics_worker,
             last_per_source: Vec::new(),
+            last_errors_detail: Vec::new(),
             indexing_status_dialog: None,
             workspace_stack: workspace_stack.clone(),
             nav_view: nav_setup.nav_view.clone(),
@@ -520,6 +523,7 @@ impl SimpleComponent for App {
                 if let Some(dialog) = self.indexing_status_dialog.as_ref() {
                     dialog.emit(IndexingStatusMsg::Update {
                         per_source: self.last_per_source.clone(),
+                        errors_detail: self.last_errors_detail.clone(),
                         indexing: self.indexing,
                     });
 
@@ -533,7 +537,8 @@ impl SimpleComponent for App {
                 indexed,
                 skipped,
                 per_source,
-            } => self.handle_indexing_completed(indexed, skipped, per_source),
+                errors_detail,
+            } => self.handle_indexing_completed(indexed, skipped, per_source, errors_detail),
             AppMsg::IndexingFailed => self.handle_indexing_failed(),
             AppMsg::AnalyticsRefreshRequested => self.handle_analytics_refresh_requested(),
             AppMsg::AnalyticsLoaded(data) => self.handle_analytics_loaded(data),
@@ -766,6 +771,7 @@ mod tests {
             indexed: 0,
             skipped: 0,
             per_source: vec![],
+            errors_detail: vec![],
         });
 
         pump_main_context(|| !spinner.is_visible());
@@ -801,6 +807,45 @@ mod tests {
 
         let parts = controller.state().get();
         assert!(parts.model.indexing_status_dialog.is_some());
+    }
+
+    #[gtk::test]
+    fn indexing_completed_stores_error_details_for_dialog_state() {
+        let schema_available = gio::SettingsSchemaSource::default()
+            .and_then(|source| source.lookup(crate::config::APP_ID, true))
+            .is_some();
+        if !schema_available {
+            return;
+        }
+
+        let controller = App::builder().launch(Some(PathBuf::from("tests/fixtures")));
+        let expected_errors = vec![crate::models::IndexingError {
+            assistant: crate::models::session::AiAssistant::OpenCode,
+            location: Some(
+                "tests/fixtures/opencode/storage/project-a/session-1/messages.jsonl".into(),
+            ),
+            message: "Failed to parse message".into(),
+        }];
+
+        pump_main_context(|| {
+            let parts = controller.state().get();
+            !parts.model.indexing
+        });
+
+        controller.emit(AppMsg::IndexingCompleted {
+            indexed: 1,
+            skipped: 0,
+            per_source: vec![],
+            errors_detail: expected_errors.clone(),
+        });
+
+        pump_main_context(|| {
+            let parts = controller.state().get();
+            parts.model.last_errors_detail == expected_errors
+        });
+
+        let parts = controller.state().get();
+        assert_eq!(parts.model.last_errors_detail, expected_errors);
     }
 
     #[test]

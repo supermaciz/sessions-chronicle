@@ -106,10 +106,12 @@ pub(super) fn init_child_components(
                 indexed,
                 skipped,
                 per_source,
+                errors_detail,
             } => AppMsg::IndexingCompleted {
                 indexed,
                 skipped,
                 per_source,
+                errors_detail,
             },
             IndexingWorkerOutput::Failed => AppMsg::IndexingFailed,
         });

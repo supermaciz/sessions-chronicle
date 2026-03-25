@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use relm4::{ComponentSender, Worker};
 
 use crate::database::SessionIndexer;
-use crate::models::PerSourceResult;
+use crate::models::{IndexingError, PerSourceResult};
 use crate::session_sources::SessionSources;
 
 pub struct IndexingWorker {
@@ -22,6 +22,7 @@ pub enum IndexingWorkerOutput {
         indexed: usize,
         skipped: usize,
         per_source: Vec<PerSourceResult>,
+        errors_detail: Vec<IndexingError>,
     },
     Failed,
 }
@@ -54,6 +55,7 @@ impl Worker for IndexingWorker {
                     indexed: run_result.totals.indexed,
                     skipped: run_result.totals.skipped,
                     per_source: run_result.per_source,
+                    errors_detail: run_result.errors_detail,
                 });
             }
             Err(err) => {

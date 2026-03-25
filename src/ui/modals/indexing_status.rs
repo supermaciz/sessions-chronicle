@@ -1,4 +1,4 @@
-use crate::models::{AiAssistant, PerSourceResult, SourceStatus};
+use crate::models::{AiAssistant, IndexingError, PerSourceResult, SourceStatus};
 use adw::prelude::{
     ActionRowExt, AdwDialogExt, ExpanderRowExt, PreferencesGroupExt, PreferencesRowExt,
 };
@@ -8,6 +8,8 @@ use relm4::{ComponentParts, ComponentSender, SimpleComponent, adw, gtk};
 pub struct IndexingStatusDialog {
     summary_state: SummaryState,
     source_rows: Vec<SourceRowState>,
+    #[allow(dead_code)]
+    errors_detail: Vec<IndexingError>,
     indexing: bool,
 }
 
@@ -15,6 +17,7 @@ pub struct IndexingStatusDialog {
 pub enum IndexingStatusMsg {
     Update {
         per_source: Vec<PerSourceResult>,
+        errors_detail: Vec<IndexingError>,
         indexing: bool,
     },
     ReindexRequested,
@@ -170,6 +173,7 @@ impl SimpleComponent for IndexingStatusDialog {
         let model = Self {
             summary_state: derive_summary_state(&[], false),
             source_rows: Vec::new(),
+            errors_detail: Vec::new(),
             indexing: false,
         };
 
@@ -191,11 +195,13 @@ impl SimpleComponent for IndexingStatusDialog {
         match message {
             IndexingStatusMsg::Update {
                 per_source,
+                errors_detail,
                 indexing,
             } => {
                 self.indexing = indexing;
                 self.summary_state = derive_summary_state(&per_source, indexing);
                 self.source_rows = build_source_rows(&per_source);
+                self.errors_detail = errors_detail;
             }
             IndexingStatusMsg::ReindexRequested => {
                 sender.output(IndexingStatusOutput::Reindex).ok();
@@ -616,6 +622,7 @@ mod tests {
         let controller = IndexingStatusDialog::builder().launch(());
         controller.emit(IndexingStatusMsg::Update {
             per_source: vec![],
+            errors_detail: vec![],
             indexing: true,
         });
 
@@ -641,6 +648,7 @@ mod tests {
                 errors: 0,
                 status: SourceStatus::Empty,
             }],
+            errors_detail: vec![],
             indexing: false,
         });
 

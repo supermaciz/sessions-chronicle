@@ -1,7 +1,7 @@
 use relm4::{ComponentController, adw};
 
 use crate::indexing_worker::IndexingWorkerInput;
-use crate::models::PerSourceResult;
+use crate::models::{IndexingError, PerSourceResult};
 use crate::ui::analytics_view::AnalyticsViewMsg;
 use crate::ui::modals::indexing_status::IndexingStatusMsg;
 use crate::ui::session_list::SessionListMsg;
@@ -33,6 +33,7 @@ impl App {
                 if let Some(dialog) = self.indexing_status_dialog.as_ref() {
                     dialog.emit(IndexingStatusMsg::Update {
                         per_source: self.last_per_source.clone(),
+                        errors_detail: self.last_errors_detail.clone(),
                         indexing: true,
                     });
                 }
@@ -47,6 +48,7 @@ impl App {
         indexed: usize,
         skipped: usize,
         per_source: Vec<PerSourceResult>,
+        errors_detail: Vec<IndexingError>,
     ) {
         tracing::info!(
             "Background indexing complete: indexed={}, skipped={}",
@@ -56,10 +58,12 @@ impl App {
         self.indexing = false;
         self.session_list.emit(SessionListMsg::SetIndexing(false));
         self.last_per_source = per_source.clone();
+        self.last_errors_detail = errors_detail;
 
         if let Some(dialog) = self.indexing_status_dialog.as_ref() {
             dialog.emit(IndexingStatusMsg::Update {
                 per_source: self.last_per_source.clone(),
+                errors_detail: self.last_errors_detail.clone(),
                 indexing: false,
             });
         }
@@ -120,6 +124,7 @@ impl App {
         if let Some(dialog) = self.indexing_status_dialog.as_ref() {
             dialog.emit(IndexingStatusMsg::Update {
                 per_source: self.last_per_source.clone(),
+                errors_detail: self.last_errors_detail.clone(),
                 indexing: false,
             });
         }
