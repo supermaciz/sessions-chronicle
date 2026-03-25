@@ -1,16 +1,54 @@
 # Development Workflow
 
-## Building the Project
+## Building and running the Project
+
+### Via Flatpak
 
 ```bash
 flatpak-builder --user flatpak_app build-aux/io.github.supermaciz.sessionschronicle.Devel.json --force-clean
 ```
 
-## Running the Project
+Run with:
 
 ```bash
 flatpak-builder --run flatpak_app build-aux/io.github.supermaciz.sessionschronicle.Devel.json sessions-chronicle
 ```
+
+Use this path when you want the closest match to the packaged app environment.
+
+### Via Meson (faster inner loop)
+
+```bash
+meson setup builddir -Dprofile=development --prefix="$HOME/.local"
+```
+
+If the build directory already exists and you need to change options, rerun:
+
+```bash
+meson setup builddir --reconfigure -Dprofile=development --prefix="$HOME/.local"
+```
+
+Compile incrementally:
+
+```bash
+meson compile -C builddir
+```
+
+Install the rebuilt binary and desktop resources into `~/.local`:
+
+```bash
+meson install -C builddir
+```
+
+Run the locally installed build:
+
+```bash
+"$HOME/.local/bin/sessions-chronicle"
+```
+
+Meson is the faster day-to-day loop because it reuses the local build tree instead of rebuilding the full Flatpak dependency stack each time. Flatpak remains the right choice when you need to verify packaging behavior or reproduce the release-like runtime.
+
+### Sessions locations
 
 This indexes sessions from all supported AI assistants:
 - Claude Code: `~/.claude/projects/`
@@ -25,6 +63,12 @@ The `--sessions-dir` flag overrides session source paths **for all assistants**.
 ```bash
 # Override with the full fixture root — maps all four assistants
 flatpak-builder --run flatpak_app build-aux/io.github.supermaciz.sessionschronicle.Devel.json sessions-chronicle --sessions-dir tests/fixtures
+```
+
+Meson-installed build equivalent:
+
+```bash
+"$HOME/.local/bin/sessions-chronicle" --sessions-dir tests/fixtures
 ```
 
 This maps to:
@@ -102,6 +146,9 @@ Run the full app with test fixtures using the `--sessions-dir` flag shown above.
 
 - Startup uses background incremental indexing based on file fingerprints.
 - The header spinner indicates indexing is running.
+- Assistant rows in the sidebar gain source-health dots after the first indexing pass.
+- Partial indexing problems reveal a persistent Sessions-only banner; clean runs hide it again.
+- The global empty state shows resolved source paths and assistant health once indexing has completed.
 - Preferences -> Advanced -> Reset session index triggers a full reindex.
 
 ## Adding Test Fixtures
@@ -128,6 +175,13 @@ RUST_LOG=debug flatpak-builder --run flatpak_app build-aux/io.github.supermaciz.
 
 # Filter to specific modules
 RUST_LOG=sessions_chronicle::parsers=trace flatpak-builder --run flatpak_app build-aux/io.github.supermaciz.sessionschronicle.Devel.json sessions-chronicle
+```
+
+Meson-installed build equivalent:
+
+```bash
+RUST_LOG=debug "$HOME/.local/bin/sessions-chronicle"
+RUST_LOG=sessions_chronicle::parsers=trace "$HOME/.local/bin/sessions-chronicle"
 ```
 
 ## Testing
@@ -212,11 +266,14 @@ Two Flatpak manifests exist in `build-aux/`:
 
 ## Summary
 
-- **Build**: `flatpak-builder --user flatpak_app build-aux/io.github.supermaciz.sessionschronicle.Devel.json --force-clean`
-- **Run**: `flatpak-builder --run flatpak_app build-aux/io.github.supermaciz.sessionschronicle.Devel.json sessions-chronicle`
+- **Flatpak build**: `flatpak-builder --user flatpak_app build-aux/io.github.supermaciz.sessionschronicle.Devel.json --force-clean`
+- **Flatpak run**: `flatpak-builder --run flatpak_app build-aux/io.github.supermaciz.sessionschronicle.Devel.json sessions-chronicle`
+- **Meson setup**: `meson setup builddir -Dprofile=development --prefix="$HOME/.local"`
+- **Meson rebuild**: `meson compile -C builddir && meson install -C builddir`
+- **Meson run**: `"$HOME/.local/bin/sessions-chronicle"`
 - **Test Data**: Add `--sessions-dir tests/fixtures` flag
 - **CI parity**: `cargo fmt --all -- --check && cargo clippy --all -- -D warnings && cargo test --all --no-fail-fast`
 
 ---
 
-**Last Updated**: 2026-03-13
+**Last Updated**: 2026-03-25
