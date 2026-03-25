@@ -3,6 +3,7 @@ use relm4::{ComponentController, adw};
 use crate::indexing_worker::IndexingWorkerInput;
 use crate::models::PerSourceResult;
 use crate::ui::analytics_view::AnalyticsViewMsg;
+use crate::ui::modals::indexing_status::IndexingStatusMsg;
 use crate::ui::session_list::SessionListMsg;
 use crate::ui::sidebar::SidebarMsg;
 
@@ -29,6 +30,12 @@ impl App {
                 self.indexing = true;
                 self.pending_reindex_feedback = true;
                 self.session_list.emit(SessionListMsg::SetIndexing(true));
+                if let Some(dialog) = self.indexing_status_dialog.as_ref() {
+                    dialog.emit(IndexingStatusMsg::Update {
+                        per_source: self.last_per_source.clone(),
+                        indexing: true,
+                    });
+                }
                 self.indexing_worker
                     .emit(IndexingWorkerInput::StartFullReindex(self.sources.clone()));
             }
@@ -48,6 +55,14 @@ impl App {
         );
         self.indexing = false;
         self.session_list.emit(SessionListMsg::SetIndexing(false));
+        self.last_per_source = per_source.clone();
+
+        if let Some(dialog) = self.indexing_status_dialog.as_ref() {
+            dialog.emit(IndexingStatusMsg::Update {
+                per_source: self.last_per_source.clone(),
+                indexing: false,
+            });
+        }
 
         // Update banner state from per_source (Degraded/Failed only).
         let errors: usize = per_source.iter().map(|r| r.errors).sum();

@@ -1,5 +1,5 @@
 use relm4::{
-    ComponentController, ComponentParts, ComponentSender, Controller, SimpleComponent,
+    Component, ComponentController, ComponentParts, ComponentSender, Controller, SimpleComponent,
     WorkerController, adw, gtk, main_application,
 };
 
@@ -25,7 +25,10 @@ use crate::database::{
 use crate::indexing_worker::{IndexingWorker, IndexingWorkerInput};
 use crate::models::{ProjectFilter, ProjectInfo, session::AiAssistant};
 use crate::session_sources::{SessionSources, select_db_filename};
-use crate::ui::modals::preferences::PreferencesDialog;
+use crate::ui::modals::{
+    indexing_status::{IndexingStatusDialog, IndexingStatusMsg, IndexingStatusOutput},
+    preferences::PreferencesDialog,
+};
 #[cfg(test)]
 use crate::ui::session_detail::SessionDetailMsg;
 use crate::ui::{
@@ -116,6 +119,8 @@ pub(super) struct App {
     preferences_dialog: Controller<PreferencesDialog>,
     indexing_worker: WorkerController<IndexingWorker>,
     analytics_worker: WorkerController<AnalyticsWorker>,
+    last_per_source: Vec<crate::models::PerSourceResult>,
+    indexing_status_dialog: Option<Controller<IndexingStatusDialog>>,
     workspace_stack: adw::ViewStack,
     nav_view: adw::NavigationView,
     detail_page: adw::NavigationPage,
@@ -161,6 +166,7 @@ pub(super) enum AppMsg {
     /// Esc key: pop inspector drill-down (native) → close pane → navigate back.
     Escape,
     ShowPreferences,
+    ShowIndexingStatus,
     ReindexRequested,
     IndexingCompleted {
         indexed: usize,
@@ -391,6 +397,8 @@ impl SimpleComponent for App {
             preferences_dialog: components.preferences_dialog,
             indexing_worker: components.indexing_worker,
             analytics_worker: components.analytics_worker,
+            last_per_source: Vec::new(),
+            indexing_status_dialog: None,
             workspace_stack: workspace_stack.clone(),
             nav_view: nav_setup.nav_view.clone(),
             detail_page: nav_setup.detail_page.clone(),
@@ -494,6 +502,28 @@ impl SimpleComponent for App {
             AppMsg::ShowPreferences => {
                 let dialog_widget = self.preferences_dialog.widget();
                 dialog_widget.present(Some(&main_application().windows()[0]));
+            }
+            AppMsg::ShowIndexingStatus => {
+                if self.indexing_status_dialog.is_none() {
+                    let dialog = IndexingStatusDialog::builder().launch(()).forward(
+                        sender.input_sender(),
+                        |output| match output {
+                            IndexingStatusOutput::Reindex => AppMsg::ReindexRequested,
+                        },
+                    );
+                    self.indexing_status_dialog = Some(dialog);
+                }
+
+                if let Some(dialog) = self.indexing_status_dialog.as_ref() {
+                    dialog.emit(IndexingStatusMsg::Update {
+                        per_source: self.last_per_source.clone(),
+                        indexing: self.indexing,
+                    });
+
+                    if let Some(window) = main_application().windows().first() {
+                        dialog.widget().present(Some(window));
+                    }
+                }
             }
             AppMsg::ReindexRequested => self.handle_reindex_requested(),
             AppMsg::IndexingCompleted {
@@ -740,6 +770,34 @@ mod tests {
             !spinner.is_visible(),
             "header spinner should hide after indexing completes"
         );
+    }
+
+    #[gtk::test]
+    fn indexing_status_dialog_is_created_lazily() {
+        let schema_available = gio::SettingsSchemaSource::default()
+            .and_then(|source| source.lookup(crate::config::APP_ID, true))
+            .is_some();
+        if !schema_available {
+            return;
+        }
+
+        let controller = App::builder().launch(Some(PathBuf::from("tests/fixtures")));
+
+        {
+            let parts = controller.state().get();
+            assert!(parts.model.last_per_source.is_empty());
+            assert!(parts.model.indexing_status_dialog.is_none());
+        }
+
+        controller.emit(AppMsg::ShowIndexingStatus);
+
+        pump_main_context(|| {
+            let parts = controller.state().get();
+            parts.model.indexing_status_dialog.is_some()
+        });
+
+        let parts = controller.state().get();
+        assert!(parts.model.indexing_status_dialog.is_some());
     }
 
     #[test]
