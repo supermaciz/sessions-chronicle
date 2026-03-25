@@ -449,6 +449,18 @@ fn build_source_rows(results: &[PerSourceResult]) -> Vec<SourceRowState> {
     rows
 }
 
+fn truncate_error_message(message: &str, max_chars: usize) -> String {
+    let truncation_index = message
+        .char_indices()
+        .nth(max_chars)
+        .map(|(index, _)| index);
+
+    match truncation_index {
+        Some(index) => format!("{}...", &message[..index]),
+        None => message.to_string(),
+    }
+}
+
 fn build_recent_error_rows(errors: &[IndexingError]) -> ErrorSectionState {
     const MAX_VISIBLE_ROWS: usize = 10;
     const MAX_MESSAGE_LEN: usize = 200;
@@ -465,11 +477,7 @@ fn build_recent_error_rows(errors: &[IndexingError]) -> ErrorSectionState {
                 .map(str::to_string)
                 .unwrap_or_else(|| error.assistant.display_name().to_string());
 
-            let message = if error.message.len() > MAX_MESSAGE_LEN {
-                format!("{}...", &error.message[..MAX_MESSAGE_LEN])
-            } else {
-                error.message.clone()
-            };
+            let message = truncate_error_message(&error.message, MAX_MESSAGE_LEN);
 
             ErrorRowState {
                 title,
@@ -784,6 +792,21 @@ mod tests {
 
         assert_eq!(section.rows[0].subtitle, short_message);
         assert!(!section.rows[0].subtitle.contains("..."));
+    }
+
+    #[test]
+    fn indexing_status_recent_errors_truncate_utf8_safely() {
+        let long_message = "é".repeat(250);
+        let error = make_error(
+            AiAssistant::ClaudeCode,
+            Some("/tmp/test.jsonl"),
+            &long_message,
+        );
+
+        let section = build_recent_error_rows(&[error]);
+
+        assert_eq!(section.rows[0].subtitle.chars().count(), 203); // 200 chars + "..."
+        assert!(section.rows[0].subtitle.ends_with("..."));
     }
 
     #[gtk::test]
