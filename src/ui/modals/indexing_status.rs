@@ -8,6 +8,7 @@ use relm4::{ComponentParts, ComponentSender, SimpleComponent, adw, gtk};
 pub struct IndexingStatusDialog {
     summary_state: SummaryState,
     source_rows: Vec<SourceRowState>,
+    recent_errors: ErrorSectionState,
     #[allow(dead_code)]
     errors_detail: Vec<IndexingError>,
     indexing: bool,
@@ -33,8 +34,10 @@ pub struct IndexingStatusWidgets {
     pub summary_icon: gtk::Image,
     pub progress_bar: gtk::ProgressBar,
     pub sources_group: adw::PreferencesGroup,
+    pub recent_errors_group: adw::PreferencesGroup,
     pub reindex_button: gtk::Button,
     source_rows: Vec<adw::ExpanderRow>,
+    recent_error_rows: Vec<adw::ActionRow>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -66,6 +69,18 @@ struct SourceRowState {
     indexed: usize,
     skipped: usize,
     errors: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ErrorRowState {
+    title: String,
+    subtitle: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ErrorSectionState {
+    rows: Vec<ErrorRowState>,
+    overflow_label: Option<String>,
 }
 
 impl SourceRowState {
@@ -160,10 +175,14 @@ impl SimpleComponent for IndexingStatusDialog {
         let progress_bar = gtk::ProgressBar::builder().pulse_step(0.2).build();
 
         let sources_group = adw::PreferencesGroup::builder().title("Sources").build();
+        let recent_errors_group = adw::PreferencesGroup::builder()
+            .title("Recent Errors")
+            .build();
 
         content.append(&summary_group);
         content.append(&progress_bar);
         content.append(&sources_group);
+        content.append(&recent_errors_group);
 
         clamp.set_child(Some(&content));
         scrolled.set_child(Some(&clamp));
@@ -173,6 +192,7 @@ impl SimpleComponent for IndexingStatusDialog {
         let model = Self {
             summary_state: derive_summary_state(&[], false),
             source_rows: Vec::new(),
+            recent_errors: build_recent_error_rows(&[]),
             errors_detail: Vec::new(),
             indexing: false,
         };
@@ -182,8 +202,10 @@ impl SimpleComponent for IndexingStatusDialog {
             summary_icon,
             progress_bar,
             sources_group,
+            recent_errors_group,
             reindex_button,
             source_rows: Vec::new(),
+            recent_error_rows: Vec::new(),
         };
 
         model.sync_widgets(&mut widgets);
@@ -201,6 +223,7 @@ impl SimpleComponent for IndexingStatusDialog {
                 self.indexing = indexing;
                 self.summary_state = derive_summary_state(&per_source, indexing);
                 self.source_rows = build_source_rows(&per_source);
+                self.recent_errors = build_recent_error_rows(&errors_detail);
                 self.errors_detail = errors_detail;
             }
             IndexingStatusMsg::ReindexRequested => {
@@ -239,7 +262,11 @@ impl IndexingStatusDialog {
         widgets
             .sources_group
             .set_visible(!self.source_rows.is_empty());
+        widgets
+            .recent_errors_group
+            .set_visible(!self.errors_detail.is_empty());
         self.rebuild_source_rows(widgets);
+        self.rebuild_recent_error_rows(widgets);
     }
 
     fn rebuild_source_rows(&self, widgets: &mut IndexingStatusWidgets) {
@@ -314,6 +341,40 @@ impl IndexingStatusDialog {
         row.add_suffix(&value_label);
         row
     }
+
+    fn rebuild_recent_error_rows(&self, widgets: &mut IndexingStatusWidgets) {
+        for existing_row in widgets.recent_error_rows.drain(..) {
+            widgets.recent_errors_group.remove(&existing_row);
+        }
+
+        for error in &self.recent_errors.rows {
+            let row = adw::ActionRow::builder()
+                .title(&error.title)
+                .subtitle(&error.subtitle)
+                .subtitle_lines(2)
+                .activatable(false)
+                .build();
+            let warning_icon = gtk::Image::from_icon_name("dialog-warning-symbolic");
+            warning_icon.add_css_class("warning");
+            row.add_prefix(&warning_icon);
+            row.update_property(&[gtk::accessible::Property::Description(&error.subtitle)]);
+
+            widgets.recent_errors_group.add(&row);
+            widgets.recent_error_rows.push(row);
+        }
+
+        if let Some(overflow_label) = &self.recent_errors.overflow_label {
+            let overflow_row = adw::ActionRow::builder()
+                .title(overflow_label)
+                .activatable(false)
+                .build();
+            overflow_row.set_sensitive(false);
+            overflow_row.add_css_class("dim-label");
+
+            widgets.recent_errors_group.add(&overflow_row);
+            widgets.recent_error_rows.push(overflow_row);
+        }
+    }
 }
 
 fn derive_summary_state(results: &[PerSourceResult], indexing: bool) -> SummaryState {
@@ -385,6 +446,37 @@ fn build_source_rows(results: &[PerSourceResult]) -> Vec<SourceRowState> {
     rows
 }
 
+fn build_recent_error_rows(errors: &[IndexingError]) -> ErrorSectionState {
+    const MAX_VISIBLE_ROWS: usize = 10;
+
+    let rows = errors
+        .iter()
+        .take(MAX_VISIBLE_ROWS)
+        .map(|error| {
+            let title = error
+                .location
+                .as_deref()
+                .and_then(|location| std::path::Path::new(location).file_name())
+                .and_then(|name| name.to_str())
+                .map(str::to_string)
+                .unwrap_or_else(|| error.assistant.display_name().to_string());
+
+            ErrorRowState {
+                title,
+                subtitle: error.message.clone(),
+            }
+        })
+        .collect();
+
+    let overflow_count = errors.len().saturating_sub(MAX_VISIBLE_ROWS);
+    let overflow_label = (overflow_count > 0).then(|| format!("and {overflow_count} more errors"));
+
+    ErrorSectionState {
+        rows,
+        overflow_label,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -422,6 +514,14 @@ mod tests {
             skipped,
             errors,
             status,
+        }
+    }
+
+    fn make_error(assistant: AiAssistant, location: Option<&str>, message: &str) -> IndexingError {
+        IndexingError {
+            assistant,
+            location: location.map(str::to_string),
+            message: message.to_string(),
         }
     }
 
@@ -608,6 +708,44 @@ mod tests {
         assert!(matches!(rows[1].status, SourceStatus::NotFound));
     }
 
+    #[test]
+    fn indexing_status_recent_errors_limits_visible_rows_and_adds_overflow_label() {
+        let errors: Vec<_> = (0..12)
+            .map(|idx| {
+                make_error(
+                    AiAssistant::ClaudeCode,
+                    Some(&format!("/tmp/claude/error-{idx}.jsonl")),
+                    &format!("error message {idx}"),
+                )
+            })
+            .collect();
+
+        let section = build_recent_error_rows(&errors);
+
+        assert_eq!(section.rows.len(), 10);
+        assert_eq!(section.rows[0].title, "error-0.jsonl");
+        assert_eq!(section.rows[9].title, "error-9.jsonl");
+        assert_eq!(section.overflow_label.as_deref(), Some("and 2 more errors"));
+    }
+
+    #[test]
+    fn indexing_status_recent_errors_uses_basename_or_assistant_name_for_title() {
+        let with_location = make_error(
+            AiAssistant::OpenCode,
+            Some("/tmp/opencode/session-log.jsonl"),
+            "parse error",
+        );
+        let without_location = make_error(AiAssistant::MistralVibe, None, "missing metadata");
+
+        let section = build_recent_error_rows(&[with_location, without_location]);
+
+        assert_eq!(section.rows[0].title, "session-log.jsonl");
+        assert_eq!(
+            section.rows[1].title,
+            AiAssistant::MistralVibe.display_name()
+        );
+    }
+
     #[gtk::test]
     fn indexing_status_dialog_hides_sources_before_first_index() {
         let controller = IndexingStatusDialog::builder().launch(());
@@ -659,5 +797,26 @@ mod tests {
 
         let parts = controller.state().get();
         assert!(parts.model.source_rows[0].expandable);
+    }
+
+    #[gtk::test]
+    fn indexing_status_dialog_hides_recent_errors_group_when_empty() {
+        let controller = IndexingStatusDialog::builder().launch(());
+        let parts = controller.state().get();
+        assert!(!parts.widgets.recent_errors_group.is_visible());
+
+        controller.emit(IndexingStatusMsg::Update {
+            per_source: vec![],
+            errors_detail: vec![],
+            indexing: false,
+        });
+
+        pump_main_context(|| {
+            let parts = controller.state().get();
+            !parts.widgets.recent_errors_group.is_visible()
+        });
+
+        let parts = controller.state().get();
+        assert!(!parts.widgets.recent_errors_group.is_visible());
     }
 }
