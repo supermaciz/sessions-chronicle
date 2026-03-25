@@ -2,7 +2,7 @@
 
 **Issue:** [#93](https://github.com/supermaciz/sessions-chronicle/issues/93)  
 **Date:** 2026-03-24  
-**Type:** Implementation Design  
+**Type:**  Design plan  
 **Status:** Implemented [#95](https://github.com/supermaciz/sessions-chronicle/pull/95)  
 **Exploration:** `docs/plans/2026-03-23-indexing-diagnostics-exploration.md` — Proposal C  
 **Related:** Issue #94 will add the dedicated diagnostics dialog (Proposal B) in a follow-up PR.
