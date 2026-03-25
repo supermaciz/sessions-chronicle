@@ -2,8 +2,7 @@ use crate::models::{AiAssistant, PerSourceResult, SourceStatus};
 use adw::prelude::{
     ActionRowExt, AdwDialogExt, ExpanderRowExt, PreferencesGroupExt, PreferencesRowExt,
 };
-use gtk::prelude::{BoxExt, ButtonExt, DisplayExt, WidgetExt};
-use relm4::gtk::glib;
+use gtk::prelude::{AccessibleExtManual, BoxExt, ButtonExt, DisplayExt, WidgetExt};
 use relm4::{ComponentParts, ComponentSender, SimpleComponent, adw, gtk};
 
 pub struct IndexingStatusDialog {
@@ -55,8 +54,9 @@ impl SummaryState {
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct SourceRowState {
     assistant: AiAssistant,
+    status: SourceStatus,
     display_path: String,
-    subtitle_markup: String,
+    subtitle: String,
     badge_text: String,
     badge_css_class: &'static str,
     expandable: bool,
@@ -67,13 +67,10 @@ struct SourceRowState {
 
 impl SourceRowState {
     fn from_result(result: &PerSourceResult) -> Self {
-        let subtitle_markup = if matches!(result.status, SourceStatus::NotFound) {
+        let subtitle = if matches!(result.status, SourceStatus::NotFound) {
             "Source not found".to_string()
         } else {
-            format!(
-                "<tt>{}</tt>",
-                glib::markup_escape_text(&result.display_path)
-            )
+            result.display_path.clone()
         };
 
         let badge_text = if matches!(result.status, SourceStatus::NotFound) {
@@ -90,8 +87,9 @@ impl SourceRowState {
 
         Self {
             assistant: result.assistant,
+            status: result.status,
             display_path: result.display_path.clone(),
-            subtitle_markup,
+            subtitle,
             badge_text,
             badge_css_class,
             expandable: !matches!(result.status, SourceStatus::NotFound),
@@ -246,7 +244,7 @@ impl IndexingStatusDialog {
         for row in &self.source_rows {
             let source_row = adw::ExpanderRow::builder()
                 .title(row.assistant.display_name())
-                .subtitle(&row.subtitle_markup)
+                .subtitle(&row.subtitle)
                 .build();
             source_row.set_enable_expansion(row.expandable);
 
@@ -257,7 +255,7 @@ impl IndexingStatusDialog {
 
             let source_path_row = adw::ActionRow::builder()
                 .title("Source Path")
-                .subtitle(&row.subtitle_markup)
+                .subtitle(&row.subtitle)
                 .subtitle_lines(1)
                 .activatable(false)
                 .build();
@@ -269,6 +267,7 @@ impl IndexingStatusDialog {
                 .valign(gtk::Align::Center)
                 .css_classes(["flat"])
                 .build();
+            copy_button.update_property(&[gtk::accessible::Property::Label("Copy source path")]);
             copy_button.connect_clicked(move |button| {
                 let clipboard = button.display().clipboard();
                 clipboard.set_text(&display_path);
@@ -368,7 +367,7 @@ fn build_source_rows(results: &[PerSourceResult]) -> Vec<SourceRowState> {
     let mut rows: Vec<_> = results.iter().map(SourceRowState::from_result).collect();
 
     rows.sort_by_key(|row| {
-        let missing_rank = row.badge_text == "N/A";
+        let missing_rank = matches!(row.status, SourceStatus::NotFound);
         let assistant_rank = AiAssistant::ALL
             .iter()
             .position(|assistant| *assistant == row.assistant)
@@ -557,8 +556,50 @@ mod tests {
         ));
 
         assert_eq!(row.badge_text, "N/A");
-        assert_eq!(row.subtitle_markup, "Source not found");
+        assert_eq!(row.subtitle, "Source not found");
         assert_eq!(row.badge_css_class, "source-status-not-found");
+        assert!(matches!(row.status, SourceStatus::NotFound));
+    }
+
+    #[test]
+    fn indexing_status_source_subtitle_uses_plain_text_path() {
+        let row = SourceRowState::from_result(&make_result(
+            AiAssistant::ClaudeCode,
+            SourceStatus::Indexed,
+            2,
+            0,
+            0,
+            "/tmp/claude",
+        ));
+
+        assert_eq!(row.subtitle, "/tmp/claude");
+        assert!(!row.subtitle.contains("<tt>"));
+    }
+
+    #[test]
+    fn indexing_status_sort_order_does_not_depend_on_badge_text() {
+        let rows = build_source_rows(&[
+            make_result(
+                AiAssistant::Codex,
+                SourceStatus::NotFound,
+                0,
+                0,
+                0,
+                "/missing/codex",
+            ),
+            make_result(
+                AiAssistant::ClaudeCode,
+                SourceStatus::Indexed,
+                0,
+                0,
+                0,
+                "/tmp/claude",
+            ),
+        ]);
+
+        assert_eq!(rows[0].assistant, AiAssistant::ClaudeCode);
+        assert_eq!(rows[1].assistant, AiAssistant::Codex);
+        assert!(matches!(rows[1].status, SourceStatus::NotFound));
     }
 
     #[gtk::test]
