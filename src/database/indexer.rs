@@ -123,6 +123,7 @@ impl SessionIndexer {
             .indexed)
     }
 
+    #[allow(dead_code)]
     pub fn index_claude_sessions_incremental(
         &mut self,
         sessions_dir: &Path,
@@ -203,6 +204,7 @@ impl SessionIndexer {
             .indexed)
     }
 
+    #[allow(dead_code)]
     pub fn index_opencode_sessions_incremental(
         &mut self,
         storage_root: &Path,
@@ -307,6 +309,7 @@ impl SessionIndexer {
                                 Some(db_path.display().to_string()),
                                 format!("Failed to list SQLite sessions: {err}"),
                             );
+                            stats.errors += 1;
                         }
                     },
                     Err(err) => {
@@ -321,6 +324,7 @@ impl SessionIndexer {
                             Some(db_path.display().to_string()),
                             format!("Failed to open OpenCode DB: {err}"),
                         );
+                        stats.errors += 1;
                     }
                 }
             }
@@ -398,6 +402,7 @@ impl SessionIndexer {
                         Some(storage_root.display().to_string()),
                         format!("Failed to list JSON OpenCode sessions: {err}"),
                     );
+                    stats.errors += 1;
                 }
             }
         }
@@ -423,6 +428,7 @@ impl SessionIndexer {
             .indexed)
     }
 
+    #[allow(dead_code)]
     pub fn index_codex_sessions_incremental(
         &mut self,
         sessions_dir: &Path,
@@ -513,6 +519,7 @@ impl SessionIndexer {
             .indexed)
     }
 
+    #[allow(dead_code)]
     pub fn index_vibe_sessions_incremental(
         &mut self,
         sessions_dir: &Path,
@@ -1922,6 +1929,8 @@ mod tests {
 
     #[test]
     fn indexing_diagnostics_collects_source_level_opencode_errors() {
+        use crate::models::indexing_diagnostics::SourceStatus;
+
         let temp = tempfile::tempdir().unwrap();
         let storage_root = temp.path().join("missing-storage");
         let sqlite_path = temp.path().join("opencode.db");
@@ -1936,6 +1945,17 @@ mod tests {
         let temp_db = tempfile::NamedTempFile::new().unwrap();
         let mut indexer = SessionIndexer::new(temp_db.path()).unwrap();
         let result = indexer.index_all_incremental(&sources).unwrap();
+
+        let opencode = result
+            .per_source
+            .iter()
+            .find(|source| source.assistant == AiAssistant::OpenCode)
+            .unwrap();
+
+        assert!(opencode.errors > 0);
+        assert!(
+            opencode.status == SourceStatus::Degraded || opencode.status == SourceStatus::Failed
+        );
 
         assert!(result.errors_detail.iter().any(|error| {
             error.assistant == AiAssistant::OpenCode
