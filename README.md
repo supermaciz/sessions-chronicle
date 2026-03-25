@@ -8,7 +8,8 @@
 **Browse, search, and resume your AI assistant sessions**
 
 Sessions Chronicle indexes all your local AI assistant sessions into a searchable database,
-so you can find any conversation, inspect tool calls, and pick up where you left off.
+so you can find any conversation, inspect tool calls, diagnose source indexing issues,
+and pick up where you left off.
 
 
 ## Features
@@ -18,6 +19,7 @@ so you can find any conversation, inspect tool calls, and pick up where you left
 - **Read conversations comfortably** — rich markdown rendering (code blocks, tables, task lists, blockquotes)
 - **Inspect tool calls** — expand inline tool calls and drill down into subagents in the utility pane
 - **Track token usage** — see per-session token breakdowns in the detail view
+- **See indexing health at a glance** — assistant status dots, issue banner, and empty-state source diagnostics
 - **Resume where you left off** — launch sessions directly from the app in your terminal
 - **Navigate with the keyboard** — Up/Down to move selection, Enter to open, Escape closes search or backs out of detail
 - **Supports 4 AI assistants** — Claude Code, OpenCode, Codex, Mistral Vibe

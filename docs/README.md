@@ -153,6 +153,14 @@ Plan file types in `docs/plans/`:
 34. **[plans/2026-03-13-session-title-command-cleanup-design.md](plans/2026-03-13-session-title-command-cleanup-design.md)** ✅
     - Session-title normalization for command-tag-heavy prompts
 
+35. **[plans/2026-03-23-indexing-diagnostics-exploration.md](plans/2026-03-23-indexing-diagnostics-exploration.md)** ✅
+    - UX exploration for source discovery and indexing health diagnostics
+    - Comparison of banner, dialog, dashboard, and log-panel approaches
+
+36. **[plans/2026-03-24-indexing-diagnostics-design.md](plans/2026-03-24-indexing-diagnostics-design.md)** ✅
+    - Implemented indexing diagnostics surface
+    - Assistant status dots, persistent issue banner, and enhanced empty state
+
 ---
 
 ## 🎨 Visual Mockups
@@ -205,7 +213,7 @@ All mockups are SVG files in the `mockups/` subfolder (open in browser or image 
 
 ---
 
-**Last Updated**: 2026-03-13
+**Last Updated**: 2026-03-25
 
-**Current Status**: Analytics workspace is implemented, alongside token usage display and startup incremental indexing improvements.  
-**Next Milestone**: Ongoing UX/documentation polish and follow-up refinements tracked in newer files under `docs/plans/`.
+**Current Status**: Analytics workspace, project filtering, token usage display, incremental indexing, and indexing diagnostics are implemented.  
+**Next Milestone**: Ongoing UX/documentation polish and follow-up refinements tracked in newer files under `docs/plans/`, including deeper indexing diagnostics.

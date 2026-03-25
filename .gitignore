@@ -58,3 +58,4 @@ compile_commands.json
 
 flatpak_app/
 .flatpak-builder/
+builddir/

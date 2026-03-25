@@ -1,7 +1,7 @@
 # Sessions Chronicle - Project Status
 
-Last updated: 2026-03-18
-Branch snapshot: `main` (`v0.3.3` lineage)
+Last updated: 2026-03-25
+Branch snapshot: `main` (`v0.3.4` lineage)
 
 ## Current Product State
 
@@ -15,6 +15,7 @@ Sessions Chronicle is a GNOME desktop app that indexes local AI coding assistant
 - Keyboard navigation and search shortcuts aligned with GNOME patterns
 - Token usage display in session detail (input/output, optional reasoning, optional cache read/write)
 - Incremental indexing with file fingerprints and startup background indexing feedback
+- Indexing diagnostics with assistant health dots, persistent issue banner, and empty-state source visibility
 
 ## Terminology
 
@@ -24,6 +25,7 @@ Sessions Chronicle is a GNOME desktop app that indexes local AI coding assistant
 
 ## Recently Landed Work
 
+- Indexing diagnostics: persistent issue banner, assistant sidebar status dots, and empty-state source results (`PerSourceResult`, `SourceStatus`) (#95)
 - Project detection and indexing: git-root resolution, `projects` table, and `project_id` FK on sessions (schema `user_version = 6`)
 - Project sidebar filtering with cross-filtered session queries; sidebar shows project list alongside AI assistant filters (#81)
 - App init extracted into `src/app/init.rs`; `analytics_worker.rs` and `project_resolver.rs` added as dedicated modules
@@ -124,6 +126,7 @@ cargo test --all --no-fail-fast
 ## Known Gaps / Active Exploration
 
 - Markdown rendering still has practical GTK constraints (for example, link interactivity remains limited)
+- Indexing diagnostics currently stop at assistant-level health; per-source error details and retry actions remain follow-up work
 - Ongoing UX refinements continue under newer plans in `docs/plans/` (for example command-title cleanup and analytics polish)
 
 ## Reference Docs
