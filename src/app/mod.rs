@@ -810,7 +810,7 @@ mod tests {
     }
 
     #[gtk::test]
-    fn indexing_completed_stores_error_details_for_dialog_state() {
+    fn indexing_completed_stores_error_details_for_dialog() {
         let schema_available = gio::SettingsSchemaSource::default()
             .and_then(|source| source.lookup(crate::config::APP_ID, true))
             .is_some();
