@@ -313,7 +313,7 @@ impl IndexingStatusDialog {
             source_row.add_row(&Self::stat_row("Sessions Indexed", row.indexed));
 
             if row.skipped > 0 {
-                source_row.add_row(&Self::stat_row("Skipped", row.skipped));
+                source_row.add_row(&Self::stat_row("Already Indexed", row.skipped));
             }
 
             if row.errors > 0 {
