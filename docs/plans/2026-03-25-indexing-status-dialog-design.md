@@ -35,7 +35,7 @@ This design implements Proposal B from the exploration: a dedicated `AdwDialog` 
 
 ### Header bar
 
-A single "Re-index All" button with `.suggested-action`. During indexing: the button label changes to "Indexing..." and the button is set insensitive. A `GtkSpinner` is placed as the button's `child` alongside the label using `adw::ButtonContent` (icon: spinner, label: "Indexing..."). No custom close button — `AdwDialog` provides one natively.
+A single "Re-index All" button with `.suggested-action`. During indexing: the button label changes to "Indexing..." and the button is set insensitive. The button content is replaced with a small composite child (`gtk::Box` or equivalent) containing a `GtkSpinner` and label, rather than relying on `adw::ButtonContent` for a live spinner. No custom close button — `AdwDialog` provides one natively.
 
 ### Content structure
 
@@ -63,7 +63,14 @@ During indexing, a `GtkProgressBar` in pulse mode is added below the group as a 
 | Indexing in progress | "Indexing in progress..." | `None` | `content-loading-symbolic` |
 | Success | "N sessions indexed" | "Completed successfully" | `emblem-ok-symbolic` |
 | Partial | "N sessions indexed" | "Completed with E errors" | `dialog-warning-symbolic` |
-| No sources | "No sessions found" | "No session sources detected" | `dialog-warning-symbolic` |
+| Empty sources | "No sessions found" | "Session sources detected, but no sessions were found" | `dialog-warning-symbolic` |
+| No detected sources | "No sessions found" | "No session sources detected" | `dialog-warning-symbolic` |
+
+State derivation rules:
+
+- **No detected sources** applies only when every `PerSourceResult` is `NotFound`.
+- **Empty sources** applies when at least one source is available (`Empty`) but no sessions were indexed or skipped.
+- `Empty` and `NotFound` intentionally remain distinct in the UI: both use grey styling, but `Empty` keeps the resolved path visible while `NotFound` uses the fallback text "Source not found".
 
 ---
 
@@ -81,7 +88,7 @@ During indexing, a `GtkProgressBar` in pulse mode is added below the group as a 
   - `Indexed` → green (`source-status-ok`)
   - `Degraded` / `Failed` → orange (`source-status-degraded`)
   - `NotFound` / `Empty` → grey (`source-status-not-found`)
-- **`enable_expansion`:** `false` when `NotFound` (nothing to show)
+- **`enable_expansion`:** `false` when `NotFound`; `true` for `Empty` so the user can still inspect and copy the resolved path
 
 ### Expanded children
 
@@ -101,6 +108,8 @@ When `last_per_source` is empty (dialog opened before first indexing completes),
 ### Ordering
 
 Fixed order matching the sidebar: Claude Code, OpenCode, Codex, Mistral Vibe. Sources with `NotFound` status appear last, grouped at the bottom.
+
+`Empty` sources stay in the normal assistant order. They are available sources with zero sessions, not missing sources.
 
 ### No per-source re-index
 
@@ -164,6 +173,8 @@ last_per_source: Vec<PerSourceResult>,
 
 Updated on every `IndexingCompleted`. Feeds the dialog on open and during live updates.
 
+This state is also the source of truth for distinguishing "not yet indexed" (`last_per_source.is_empty()`) from "indexed and empty" (non-empty vec whose statuses are `Empty`/`NotFound` only).
+
 ### Dialog messages
 
 ```rust
@@ -186,9 +197,9 @@ pub enum IndexingStatusOutput {
 ### Flow
 
 1. **Open:** `AppMsg::ShowIndexingStatus` → create controller if absent → send `IndexingStatusMsg::Update` with `last_per_source` + `self.indexing` → `dialog.present()`
-2. **Indexing starts:** `AppMsg::StartIndexing` → if dialog exists, send `Update { indexing: true, ... }`
+2. **Indexing starts:** app startup or `handle_reindex_requested` sets `self.indexing = true` → if dialog exists, send `Update { indexing: true, ... }`
 3. **Indexing completes:** `handle_indexing_completed` → store `last_per_source` → if dialog exists, send `Update { per_source, indexing: false }`
-4. **Re-index:** dialog emits `IndexingStatusOutput::Reindex` → App receives → triggers `indexing_worker.send(StartFullReindex)`
+4. **Re-index:** dialog emits `IndexingStatusOutput::Reindex` → App receives → triggers `indexing_worker.emit(StartFullReindex)`
 
 ### No persistence
 
@@ -200,16 +211,18 @@ Zero database storage. All data lives in memory, recomputed on each indexing run
 
 ### Backend: new structures
 
-In `src/indexing_worker.rs`:
+In `src/models/indexing_diagnostics.rs`:
 
 ```rust
 #[derive(Debug, Clone)]
 pub struct IndexingError {
-    pub file_path: String,      // basename or relative path
-    pub message: String,        // parse/IO error description
     pub assistant: AiAssistant,
+    pub location: Option<String>, // basename, relative path, or source-level location
+    pub message: String,        // parse/IO error description
 }
 ```
+
+`IndexingError` belongs in `models`, alongside `PerSourceResult`, because it is worker output and app/UI state rather than worker-local implementation detail.
 
 `IndexingWorkerOutput::Completed` gains a field:
 
@@ -221,12 +234,17 @@ errors_detail: Vec<IndexingError>,  // capped at 50 entries
 
 Existing `tracing::warn!` calls in per-session indexing loops (`index_claude_sessions_internal`, etc.) additionally collect errors into a `Vec<IndexingError>`, truncated to 50. This vec propagates via `IndexingWorkerOutput::Completed` up to the App model.
 
+The collection logic should handle both:
+
+- **file/session-scoped errors** (`location: Some("rollout-123.jsonl".into())`)
+- **source-level errors** such as SQLite enumeration/open failures (`location: Some(db_path.display().to_string())` or `None` when no stable location is available)
+
 ### UI: "Recent Errors" section
 
 `AdwPreferencesGroup` with title "Recent Errors". Visible only when `errors_detail` is non-empty.
 
 - Up to 10 `AdwActionRow` entries:
-  - **Title:** file basename (`session_abc123.jsonl`)
+  - **Title:** `location` basename when present (`session_abc123.jsonl`), otherwise assistant display name
   - **Subtitle:** error message, `subtitle_lines: 2`, ellipsized
   - **Prefix:** `dialog-warning-symbolic` with `.warning` color
 - If more than 10 errors: final non-activatable row with title "and N more errors" in dim text
@@ -312,10 +330,11 @@ No custom icons — all symbolic icons are standard GTK: `emblem-ok-symbolic`, `
 
 ### Unit tests
 
-- **Summary state derivation:** pure function returning `(title, subtitle, icon_name)` from `(Vec<PerSourceResult>, bool)`. Test all 5 states from the table in Section 2.
+- **Summary state derivation:** pure function returning `(title, subtitle, icon_name)` from `(Vec<PerSourceResult>, bool)`. Test all 6 states from the table in Section 2.
 - **Banner "Details" label:** verify `banner.button_label()` is `Some("Details")` when issues present, `None` when OK.
 - **Source card ordering:** verify `NotFound` sources sort last.
-- **Pill text:** verify count label displays "N" for Indexed/Degraded/Failed, "N/A" for NotFound/Empty.
+- **Pill text:** verify count label displays "N" for Indexed/Degraded/Failed/Empty, "N/A" for NotFound.
+- **Empty vs NotFound rendering:** verify `Empty` rows remain expandable with visible path, while `NotFound` rows are not expandable and show "Source not found".
 - **Phase 2 — Error cap:** verify `errors_detail` is truncated to 50 entries in the indexer.
 - **Phase 2 — Error row count:** verify dialog shows max 10 rows + "and N more" on overflow.
 
@@ -324,7 +343,8 @@ No custom icons — all symbolic icons are standard GTK: `emblem-ok-symbolic`, `
 | Scenario | Command | Expected |
 |---|---|---|
 | Sources OK | `--sessions-dir tests/fixtures` | All green sources, summary "N sessions indexed", no errors section |
-| No sources | `--sessions-dir /tmp/empty` | Grey sources, summary "No sessions found", expanders non-expandable |
+| Empty sources | `--sessions-dir /tmp/empty` | Grey sources with badge `0`, summary "No sessions found", rows expandable so paths can be inspected |
+| No detected sources | without `--sessions-dir`, on a machine with no supported assistants installed | Grey sources, summary "No sessions found", `NotFound` rows non-expandable |
 | Real data | without `--sessions-dir` | Sources detected per installed assistants |
 | Banner → Details | Trigger indexing error | Banner visible, click "Details" opens dialog |
 | Re-index All | Click button in dialog | Spinner, then live data update |
