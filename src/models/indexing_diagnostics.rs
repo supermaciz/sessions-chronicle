@@ -12,8 +12,6 @@ pub struct IndexingError {
 pub struct IndexingRunResult {
     pub totals: IndexingStats,
     pub per_source: Vec<PerSourceResult>,
-    // TODO(task-6): remove allow once errors detail is shown in UI.
-    #[allow(dead_code)]
     pub errors_detail: Vec<IndexingError>,
 }
 
