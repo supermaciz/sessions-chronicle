@@ -87,7 +87,7 @@ fn push_indexing_error(
     message: impl Into<String>,
 ) {
     if errors_detail.len() >= MAX_INDEXING_ERRORS {
-        return;
+        errors_detail.remove(0);
     }
 
     errors_detail.push(IndexingError {
