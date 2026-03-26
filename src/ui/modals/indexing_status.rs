@@ -15,7 +15,6 @@ pub struct IndexingStatusDialog {
     summary_state: SummaryState,
     source_rows: Vec<SourceRowState>,
     recent_errors: ErrorSectionState,
-    #[allow(dead_code)]
     errors_detail: Vec<IndexingError>,
     indexing: bool,
 }
@@ -505,6 +504,11 @@ fn truncate_error_message(message: &str, max_chars: usize) -> String {
     }
 }
 
+/// Rewrites generic indexing error messages to include the assistant name.
+///
+/// The prefixes matched here (`"Failed to index session:"`, etc.) are coupled
+/// to the messages produced by `push_indexing_error` in `database/indexer.rs`.
+/// If those messages change, update the match arms below.
 fn qualify_error_message(error: &IndexingError) -> String {
     let assistant = error.assistant.display_name();
     let message = error.message.as_str();

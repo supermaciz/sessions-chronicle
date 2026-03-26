@@ -108,7 +108,7 @@ fn is_codex_error(err: &anyhow::Error) -> bool {
 fn is_claude_empty_session_error(err: &anyhow::Error) -> bool {
     matches!(
         err.downcast_ref::<ClaudeCodeParseError>(),
-        Some(ClaudeCodeParseError::NoMessages)
+        Some(ClaudeCodeParseError::NoMessages | ClaudeCodeParseError::NoUserMessages)
     )
 }
 
@@ -128,15 +128,6 @@ impl SessionIndexer {
         Ok(self
             .index_claude_sessions_internal(sessions_dir, false, &mut errors_detail)?
             .indexed)
-    }
-
-    #[allow(dead_code)]
-    pub fn index_claude_sessions_incremental(
-        &mut self,
-        sessions_dir: &Path,
-    ) -> Result<IndexingStats> {
-        let mut errors_detail = VecDeque::new();
-        self.index_claude_sessions_internal(sessions_dir, true, &mut errors_detail)
     }
 
     fn index_claude_sessions_internal(
@@ -233,16 +224,6 @@ impl SessionIndexer {
         Ok(self
             .index_opencode_sessions_internal(storage_root, db_path, false, &mut errors_detail)?
             .indexed)
-    }
-
-    #[allow(dead_code)]
-    pub fn index_opencode_sessions_incremental(
-        &mut self,
-        storage_root: &Path,
-        db_path: Option<&Path>,
-    ) -> Result<IndexingStats> {
-        let mut errors_detail = VecDeque::new();
-        self.index_opencode_sessions_internal(storage_root, db_path, true, &mut errors_detail)
     }
 
     fn index_opencode_sessions_internal(
@@ -459,15 +440,6 @@ impl SessionIndexer {
             .indexed)
     }
 
-    #[allow(dead_code)]
-    pub fn index_codex_sessions_incremental(
-        &mut self,
-        sessions_dir: &Path,
-    ) -> Result<IndexingStats> {
-        let mut errors_detail = VecDeque::new();
-        self.index_codex_sessions_internal(sessions_dir, true, &mut errors_detail)
-    }
-
     fn index_codex_sessions_internal(
         &mut self,
         sessions_dir: &Path,
@@ -542,15 +514,6 @@ impl SessionIndexer {
         Ok(self
             .index_vibe_sessions_internal(sessions_dir, false, &mut errors_detail)?
             .indexed)
-    }
-
-    #[allow(dead_code)]
-    pub fn index_vibe_sessions_incremental(
-        &mut self,
-        sessions_dir: &Path,
-    ) -> Result<IndexingStats> {
-        let mut errors_detail = VecDeque::new();
-        self.index_vibe_sessions_internal(sessions_dir, true, &mut errors_detail)
     }
 
     fn index_vibe_sessions_internal(
@@ -1127,6 +1090,45 @@ impl SessionIndexer {
         tx.execute("DELETE FROM sessions WHERE id = ?1", [session_id])?;
         tx.commit()?;
         Ok(())
+    }
+}
+
+/// Test-only convenience wrappers that discard `errors_detail`.
+/// Production code uses `index_all_incremental` / `index_all_full_reindex`
+/// which propagate errors through `IndexingRunResult`.
+#[cfg(test)]
+impl SessionIndexer {
+    pub fn index_claude_sessions_incremental(
+        &mut self,
+        sessions_dir: &Path,
+    ) -> Result<IndexingStats> {
+        let mut errors_detail = VecDeque::new();
+        self.index_claude_sessions_internal(sessions_dir, true, &mut errors_detail)
+    }
+
+    pub fn index_opencode_sessions_incremental(
+        &mut self,
+        storage_root: &Path,
+        db_path: Option<&Path>,
+    ) -> Result<IndexingStats> {
+        let mut errors_detail = VecDeque::new();
+        self.index_opencode_sessions_internal(storage_root, db_path, true, &mut errors_detail)
+    }
+
+    pub fn index_codex_sessions_incremental(
+        &mut self,
+        sessions_dir: &Path,
+    ) -> Result<IndexingStats> {
+        let mut errors_detail = VecDeque::new();
+        self.index_codex_sessions_internal(sessions_dir, true, &mut errors_detail)
+    }
+
+    pub fn index_vibe_sessions_incremental(
+        &mut self,
+        sessions_dir: &Path,
+    ) -> Result<IndexingStats> {
+        let mut errors_detail = VecDeque::new();
+        self.index_vibe_sessions_internal(sessions_dir, true, &mut errors_detail)
     }
 }
 
