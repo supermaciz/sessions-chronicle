@@ -511,6 +511,7 @@ fn build_recent_error_rows(errors: &[IndexingError]) -> ErrorSectionState {
 
     let rows = errors
         .iter()
+        .rev()
         .take(MAX_VISIBLE_ROWS)
         .map(|error| {
             let title = error
