@@ -148,6 +148,7 @@ Run the full app with test fixtures using the `--sessions-dir` flag shown above.
 - The header spinner indicates indexing is running.
 - Assistant rows in the sidebar gain source-health dots after the first indexing pass.
 - Partial indexing problems reveal a persistent Sessions-only banner; clean runs hide it again.
+- The banner action opens the Indexing Status dialog with per-source details and recent errors.
 - The global empty state shows resolved source paths and assistant health once indexing has completed.
 - Preferences -> Advanced -> Reset session index triggers a full reindex.
 
