@@ -505,6 +505,41 @@ fn truncate_error_message(message: &str, max_chars: usize) -> String {
     }
 }
 
+fn qualify_error_message(error: &IndexingError) -> String {
+    let assistant = error.assistant.display_name();
+    let message = error.message.as_str();
+
+    let rewrite_with_assistant = |prefix: &str, assistant_phrase: &str| {
+        message
+            .strip_prefix(prefix)
+            .map(|suffix| format!("{assistant_phrase}{suffix}"))
+    };
+
+    rewrite_with_assistant(
+        "Failed to index session:",
+        &format!("Failed to index {assistant} session:"),
+    )
+    .or_else(|| {
+        rewrite_with_assistant(
+            "Failed to prune sidechain session:",
+            &format!("Failed to prune {assistant} sidechain session:"),
+        )
+    })
+    .or_else(|| {
+        rewrite_with_assistant(
+            "Failed to prune session:",
+            &format!("Failed to prune {assistant} session:"),
+        )
+    })
+    .unwrap_or_else(|| {
+        if message.contains(assistant) {
+            message.to_string()
+        } else {
+            format!("{assistant}: {message}")
+        }
+    })
+}
+
 fn build_recent_error_rows(errors: &[IndexingError]) -> ErrorSectionState {
     const MAX_VISIBLE_ROWS: usize = 10;
     const MAX_MESSAGE_LEN: usize = 200;
@@ -522,7 +557,7 @@ fn build_recent_error_rows(errors: &[IndexingError]) -> ErrorSectionState {
                 .map(str::to_string)
                 .unwrap_or_else(|| error.assistant.display_name().to_string());
 
-            let message = truncate_error_message(&error.message, MAX_MESSAGE_LEN);
+            let message = truncate_error_message(&qualify_error_message(error), MAX_MESSAGE_LEN);
 
             ErrorRowState {
                 title,
@@ -786,8 +821,8 @@ mod tests {
         let section = build_recent_error_rows(&errors);
 
         assert_eq!(section.rows.len(), 10);
-        assert_eq!(section.rows[0].title, "error-0.jsonl");
-        assert_eq!(section.rows[9].title, "error-9.jsonl");
+        assert_eq!(section.rows[0].title, "error-11.jsonl");
+        assert_eq!(section.rows[9].title, "error-2.jsonl");
         assert_eq!(section.overflow_label.as_deref(), Some("and 2 more errors"));
     }
 
@@ -802,11 +837,11 @@ mod tests {
 
         let section = build_recent_error_rows(&[with_location, without_location]);
 
-        assert_eq!(section.rows[0].title, "session-log.jsonl");
         assert_eq!(
-            section.rows[1].title,
+            section.rows[0].title,
             AiAssistant::MistralVibe.display_name()
         );
+        assert_eq!(section.rows[1].title, "session-log.jsonl");
     }
 
     #[test]
@@ -835,7 +870,7 @@ mod tests {
 
         let section = build_recent_error_rows(&[error]);
 
-        assert_eq!(section.rows[0].subtitle, short_message);
+        assert_eq!(section.rows[0].subtitle, "Claude Code: Short error message");
         assert!(!section.rows[0].subtitle.contains("..."));
     }
 
@@ -852,6 +887,54 @@ mod tests {
 
         assert_eq!(section.rows[0].subtitle.chars().count(), 203); // 200 chars + "..."
         assert!(section.rows[0].subtitle.ends_with("..."));
+    }
+
+    #[test]
+    fn indexing_status_recent_errors_rewrites_generic_session_messages_with_assistant() {
+        let error = make_error(
+            AiAssistant::ClaudeCode,
+            Some("/tmp/test.jsonl"),
+            "Failed to index session: invalid transcript",
+        );
+
+        let section = build_recent_error_rows(&[error]);
+
+        assert_eq!(
+            section.rows[0].subtitle,
+            "Failed to index Claude Code session: invalid transcript"
+        );
+    }
+
+    #[test]
+    fn indexing_status_recent_errors_prefixes_assistant_when_message_is_otherwise_generic() {
+        let error = make_error(
+            AiAssistant::OpenCode,
+            Some("/tmp/opencode.db"),
+            "Failed to parse SQLite session abc123: malformed row",
+        );
+
+        let section = build_recent_error_rows(&[error]);
+
+        assert_eq!(
+            section.rows[0].subtitle,
+            "OpenCode: Failed to parse SQLite session abc123: malformed row"
+        );
+    }
+
+    #[test]
+    fn indexing_status_recent_errors_preserves_messages_that_already_name_the_assistant() {
+        let error = make_error(
+            AiAssistant::MistralVibe,
+            Some("/tmp/vibe"),
+            "Failed to read Mistral Vibe session entry: missing metadata",
+        );
+
+        let section = build_recent_error_rows(&[error]);
+
+        assert_eq!(
+            section.rows[0].subtitle,
+            "Failed to read Mistral Vibe session entry: missing metadata"
+        );
     }
 
     #[gtk::test]
