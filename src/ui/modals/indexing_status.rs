@@ -6,6 +6,11 @@ use gtk::prelude::{AccessibleExtManual, BoxExt, ButtonExt, DisplayExt, WidgetExt
 use relm4::{ComponentParts, ComponentSender, SimpleComponent, adw, gtk};
 use std::time::Duration;
 
+/// Relm4 model for the Indexing Status dialog.
+///
+/// Holds pre-computed view-state structs derived from raw indexing results.
+/// The dialog is created lazily on first `ShowIndexingStatus` and reused
+/// across subsequent opens.
 pub struct IndexingStatusDialog {
     summary_state: SummaryState,
     source_rows: Vec<SourceRowState>,
@@ -17,16 +22,20 @@ pub struct IndexingStatusDialog {
 
 #[derive(Debug, Clone)]
 pub enum IndexingStatusMsg {
+    /// Refresh dialog content with the latest indexing results.
     Update {
         per_source: Vec<PerSourceResult>,
         errors_detail: Vec<IndexingError>,
+        /// Whether an indexing run is currently in progress.
         indexing: bool,
     },
+    /// User clicked the Re-index button.
     ReindexRequested,
 }
 
 #[derive(Debug, Clone)]
 pub enum IndexingStatusOutput {
+    /// Forwarded to [`AppMsg::ReindexRequested`].
     Reindex,
 }
 
@@ -37,11 +46,15 @@ pub struct IndexingStatusWidgets {
     pub sources_group: adw::PreferencesGroup,
     pub recent_errors_group: adw::PreferencesGroup,
     pub reindex_button: gtk::Button,
+    /// Dynamically rebuilt on each update; held here for removal.
     source_rows: Vec<adw::ExpanderRow>,
+    /// Dynamically rebuilt on each update; held here for removal.
     recent_error_rows: Vec<adw::ActionRow>,
+    /// Active glib timer that calls `pulse()` every 250 ms while indexing.
     pulse_source_id: Option<gtk::glib::SourceId>,
 }
 
+/// View-state for the summary row at the top of the dialog.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct SummaryState {
     title: String,
@@ -59,29 +72,44 @@ impl SummaryState {
     }
 }
 
+/// View-state for one AI assistant source card (an `AdwExpanderRow`).
+///
+/// Derived from [`PerSourceResult`] in [`SourceRowState::from_result`].
+/// `NotFound` sources are rendered non-expandable with an "N/A" badge.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct SourceRowState {
     assistant: AiAssistant,
     status: SourceStatus,
     display_path: String,
+    /// Row subtitle: the source path, or "Source not found" for `NotFound`.
     subtitle: String,
+    /// Text shown in the colored pill badge: total session count or "N/A".
     badge_text: String,
+    /// CSS class applied to the pill to give it semantic color.
     badge_css_class: &'static str,
+    /// `false` for `NotFound` sources, which cannot be expanded.
     expandable: bool,
     indexed: usize,
     skipped: usize,
     errors: usize,
 }
 
+/// View-state for a single row in the Recent Errors section.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct ErrorRowState {
+    /// Basename of the offending file, or the assistant name if no path.
     title: String,
+    /// Error message, truncated to 200 characters.
     subtitle: String,
 }
 
+/// View-state for the Recent Errors section.
+///
+/// Shows up to 10 errors; any beyond that are summarised in `overflow_label`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct ErrorSectionState {
     rows: Vec<ErrorRowState>,
+    /// E.g. `"and 5 more errors"`, present only when total errors exceed 10.
     overflow_label: Option<String>,
 }
 
