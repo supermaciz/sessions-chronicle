@@ -4,6 +4,7 @@ use adw::prelude::{
 };
 use gtk::prelude::{AccessibleExtManual, BoxExt, ButtonExt, DisplayExt, WidgetExt};
 use relm4::{ComponentParts, ComponentSender, SimpleComponent, adw, gtk};
+use std::time::Duration;
 
 pub struct IndexingStatusDialog {
     summary_state: SummaryState,
@@ -38,6 +39,7 @@ pub struct IndexingStatusWidgets {
     pub reindex_button: gtk::Button,
     source_rows: Vec<adw::ExpanderRow>,
     recent_error_rows: Vec<adw::ActionRow>,
+    pulse_source_id: Option<gtk::glib::SourceId>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -206,6 +208,7 @@ impl SimpleComponent for IndexingStatusDialog {
             reindex_button,
             source_rows: Vec::new(),
             recent_error_rows: Vec::new(),
+            pulse_source_id: None,
         };
 
         model.sync_widgets(&mut widgets);
@@ -248,8 +251,19 @@ impl IndexingStatusDialog {
             .set_icon_name(Some(self.summary_state.icon_name));
 
         widgets.progress_bar.set_visible(self.indexing);
-        if self.indexing {
-            widgets.progress_bar.pulse();
+        if self.indexing && widgets.pulse_source_id.is_none() {
+            let bar = widgets.progress_bar.clone();
+            bar.pulse();
+            let source_id = gtk::glib::timeout_add_local(Duration::from_millis(250), move || {
+                bar.pulse();
+                gtk::glib::ControlFlow::Continue
+            });
+            widgets.pulse_source_id = Some(source_id);
+        } else if !self.indexing {
+            if let Some(id) = widgets.pulse_source_id.take() {
+                id.remove();
+            }
+            widgets.progress_bar.set_fraction(0.0);
         }
 
         widgets.reindex_button.set_sensitive(!self.indexing);
