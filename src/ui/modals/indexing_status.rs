@@ -472,7 +472,7 @@ fn derive_summary_state(results: &[PerSourceResult], indexing: bool) -> SummaryS
     SummaryState::new(
         &format!("{indexed_total} sessions indexed"),
         Some("Completed successfully"),
-        "emblem-ok-symbolic",
+        "object-select-symbolic",
     )
 }
 
@@ -660,7 +660,7 @@ mod tests {
             SummaryState::new(
                 "12 sessions indexed",
                 Some("Completed successfully"),
-                "emblem-ok-symbolic",
+                "object-select-symbolic",
             )
         );
 
