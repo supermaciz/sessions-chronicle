@@ -10,7 +10,7 @@ pub mod tool_call;
 pub mod transcript_item;
 
 pub use analytics::{AnalyticsData, AnalyticsOverview};
-pub use indexing_diagnostics::{IndexingRunResult, PerSourceResult, SourceStatus};
+pub use indexing_diagnostics::{IndexingError, IndexingRunResult, PerSourceResult, SourceStatus};
 pub use message::{Message, Role};
 pub use message_preview::MessagePreview;
 pub use project_filter::{ProjectFilter, ProjectInfo};

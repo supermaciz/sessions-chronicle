@@ -32,6 +32,10 @@ impl SimpleComponent for ShortcutsDialog {
             "<Control>question",
         ));
         general.add(adw::ShortcutsItem::new(
+            &gettext("Indexing Status"),
+            "<Control><Shift>i",
+        ));
+        general.add(adw::ShortcutsItem::new(
             &gettext("Preferences"),
             "<Control>comma",
         ));

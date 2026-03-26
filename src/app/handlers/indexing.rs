@@ -1,15 +1,16 @@
 use relm4::{ComponentController, adw};
 
 use crate::indexing_worker::IndexingWorkerInput;
-use crate::models::PerSourceResult;
+use crate::models::{IndexingError, PerSourceResult};
 use crate::ui::analytics_view::AnalyticsViewMsg;
+use crate::ui::modals::indexing_status::IndexingStatusMsg;
 use crate::ui::session_list::SessionListMsg;
 use crate::ui::sidebar::SidebarMsg;
 
 use super::super::App;
 use super::super::helpers::{
-    analytics_indexing_completion_outcome, banner_title, completion_toast_title,
-    decide_reindex_action,
+    analytics_indexing_completion_outcome, banner_button_label, banner_title,
+    completion_toast_title, decide_reindex_action,
 };
 use super::super::types::ReindexAction;
 
@@ -29,6 +30,13 @@ impl App {
                 self.indexing = true;
                 self.pending_reindex_feedback = true;
                 self.session_list.emit(SessionListMsg::SetIndexing(true));
+                if let Some(dialog) = self.indexing_status_dialog.as_ref() {
+                    dialog.emit(IndexingStatusMsg::Update {
+                        per_source: self.last_per_source.clone(),
+                        errors_detail: self.last_errors_detail.clone(),
+                        indexing: true,
+                    });
+                }
                 self.indexing_worker
                     .emit(IndexingWorkerInput::StartFullReindex(self.sources.clone()));
             }
@@ -40,6 +48,7 @@ impl App {
         indexed: usize,
         skipped: usize,
         per_source: Vec<PerSourceResult>,
+        errors_detail: Vec<IndexingError>,
     ) {
         tracing::info!(
             "Background indexing complete: indexed={}, skipped={}",
@@ -48,16 +57,29 @@ impl App {
         );
         self.indexing = false;
         self.session_list.emit(SessionListMsg::SetIndexing(false));
+        self.last_per_source = per_source.clone();
+        self.last_errors_detail = errors_detail;
+
+        if let Some(dialog) = self.indexing_status_dialog.as_ref() {
+            dialog.emit(IndexingStatusMsg::Update {
+                per_source: self.last_per_source.clone(),
+                errors_detail: self.last_errors_detail.clone(),
+                indexing: false,
+            });
+        }
 
         // Update banner state from per_source (Degraded/Failed only).
         let errors: usize = per_source.iter().map(|r| r.errors).sum();
         match banner_title(&per_source) {
             Some(title) => {
                 self.banner.set_title(&title);
+                self.banner
+                    .set_button_label(banner_button_label(&per_source));
                 self.banner_has_issues = true;
                 self.banner.set_revealed(!self.detail_visible);
             }
             None => {
+                self.banner.set_button_label(None);
                 self.banner_has_issues = false;
                 self.banner.set_revealed(false);
             }
@@ -98,6 +120,14 @@ impl App {
         tracing::error!("Background indexing failed");
         self.indexing = false;
         self.session_list.emit(SessionListMsg::SetIndexing(false));
+
+        if let Some(dialog) = self.indexing_status_dialog.as_ref() {
+            dialog.emit(IndexingStatusMsg::Update {
+                per_source: self.last_per_source.clone(),
+                errors_detail: self.last_errors_detail.clone(),
+                indexing: false,
+            });
+        }
 
         let title = if self.pending_reindex_feedback {
             self.pending_reindex_feedback = false;
