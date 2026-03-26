@@ -567,7 +567,13 @@ fn build_recent_error_rows(errors: &[IndexingError]) -> ErrorSectionState {
         .collect();
 
     let overflow_count = errors.len().saturating_sub(MAX_VISIBLE_ROWS);
-    let overflow_label = (overflow_count > 0).then(|| format!("and {overflow_count} more errors"));
+    let overflow_label = (overflow_count > 0).then(|| {
+        if overflow_count == 1 {
+            "and 1 more error".to_string()
+        } else {
+            format!("and {overflow_count} more errors")
+        }
+    });
 
     ErrorSectionState {
         rows,

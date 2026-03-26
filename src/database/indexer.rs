@@ -1,6 +1,6 @@
 use anyhow::{Context, Result};
 use rusqlite::Connection;
-use std::collections::HashSet;
+use std::collections::{HashSet, VecDeque};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::UNIX_EPOCH;
@@ -81,16 +81,16 @@ fn build_per_source_result(
 const MAX_INDEXING_ERRORS: usize = 50;
 
 fn push_indexing_error(
-    errors_detail: &mut Vec<IndexingError>,
+    errors_detail: &mut VecDeque<IndexingError>,
     assistant: AiAssistant,
     location: Option<String>,
     message: impl Into<String>,
 ) {
     if errors_detail.len() >= MAX_INDEXING_ERRORS {
-        errors_detail.remove(0);
+        errors_detail.pop_front();
     }
 
-    errors_detail.push(IndexingError {
+    errors_detail.push_back(IndexingError {
         assistant,
         location,
         message: message.into(),
@@ -124,7 +124,7 @@ impl SessionIndexer {
 
     #[allow(dead_code)]
     pub fn index_claude_sessions(&mut self, sessions_dir: &Path) -> Result<usize> {
-        let mut errors_detail = Vec::new();
+        let mut errors_detail = VecDeque::new();
         Ok(self
             .index_claude_sessions_internal(sessions_dir, false, &mut errors_detail)?
             .indexed)
@@ -135,7 +135,7 @@ impl SessionIndexer {
         &mut self,
         sessions_dir: &Path,
     ) -> Result<IndexingStats> {
-        let mut errors_detail = Vec::new();
+        let mut errors_detail = VecDeque::new();
         self.index_claude_sessions_internal(sessions_dir, true, &mut errors_detail)
     }
 
@@ -143,7 +143,7 @@ impl SessionIndexer {
         &mut self,
         sessions_dir: &Path,
         incremental: bool,
-        errors_detail: &mut Vec<IndexingError>,
+        errors_detail: &mut VecDeque<IndexingError>,
     ) -> Result<IndexingStats> {
         let parser = ClaudeCodeParser;
         let mut stats = IndexingStats::default();
@@ -229,7 +229,7 @@ impl SessionIndexer {
         storage_root: &Path,
         db_path: Option<&Path>,
     ) -> Result<usize> {
-        let mut errors_detail = Vec::new();
+        let mut errors_detail = VecDeque::new();
         Ok(self
             .index_opencode_sessions_internal(storage_root, db_path, false, &mut errors_detail)?
             .indexed)
@@ -241,7 +241,7 @@ impl SessionIndexer {
         storage_root: &Path,
         db_path: Option<&Path>,
     ) -> Result<IndexingStats> {
-        let mut errors_detail = Vec::new();
+        let mut errors_detail = VecDeque::new();
         self.index_opencode_sessions_internal(storage_root, db_path, true, &mut errors_detail)
     }
 
@@ -250,7 +250,7 @@ impl SessionIndexer {
         storage_root: &Path,
         db_path: Option<&Path>,
         incremental: bool,
-        errors_detail: &mut Vec<IndexingError>,
+        errors_detail: &mut VecDeque<IndexingError>,
     ) -> Result<IndexingStats> {
         let has_storage_root = storage_root.exists();
         let has_db = db_path.is_some_and(|p| p.exists());
@@ -453,7 +453,7 @@ impl SessionIndexer {
 
     #[allow(dead_code)]
     pub fn index_codex_sessions(&mut self, sessions_dir: &Path) -> Result<usize> {
-        let mut errors_detail = Vec::new();
+        let mut errors_detail = VecDeque::new();
         Ok(self
             .index_codex_sessions_internal(sessions_dir, false, &mut errors_detail)?
             .indexed)
@@ -464,7 +464,7 @@ impl SessionIndexer {
         &mut self,
         sessions_dir: &Path,
     ) -> Result<IndexingStats> {
-        let mut errors_detail = Vec::new();
+        let mut errors_detail = VecDeque::new();
         self.index_codex_sessions_internal(sessions_dir, true, &mut errors_detail)
     }
 
@@ -472,7 +472,7 @@ impl SessionIndexer {
         &mut self,
         sessions_dir: &Path,
         incremental: bool,
-        errors_detail: &mut Vec<IndexingError>,
+        errors_detail: &mut VecDeque<IndexingError>,
     ) -> Result<IndexingStats> {
         if !sessions_dir.exists() {
             return Ok(IndexingStats::default());
@@ -538,7 +538,7 @@ impl SessionIndexer {
 
     #[allow(dead_code)]
     pub fn index_vibe_sessions(&mut self, sessions_dir: &Path) -> Result<usize> {
-        let mut errors_detail = Vec::new();
+        let mut errors_detail = VecDeque::new();
         Ok(self
             .index_vibe_sessions_internal(sessions_dir, false, &mut errors_detail)?
             .indexed)
@@ -549,7 +549,7 @@ impl SessionIndexer {
         &mut self,
         sessions_dir: &Path,
     ) -> Result<IndexingStats> {
-        let mut errors_detail = Vec::new();
+        let mut errors_detail = VecDeque::new();
         self.index_vibe_sessions_internal(sessions_dir, true, &mut errors_detail)
     }
 
@@ -557,7 +557,7 @@ impl SessionIndexer {
         &mut self,
         sessions_dir: &Path,
         incremental: bool,
-        errors_detail: &mut Vec<IndexingError>,
+        errors_detail: &mut VecDeque<IndexingError>,
     ) -> Result<IndexingStats> {
         if !sessions_dir.exists() {
             return Ok(IndexingStats::default());
@@ -932,7 +932,7 @@ impl SessionIndexer {
     }
 
     pub fn index_all_incremental(&mut self, sources: &SessionSources) -> Result<IndexingRunResult> {
-        let mut errors_detail = Vec::new();
+        let mut errors_detail = VecDeque::new();
 
         let claude =
             self.index_claude_sessions_internal(&sources.claude_dir, true, &mut errors_detail)?;
@@ -992,7 +992,7 @@ impl SessionIndexer {
         Ok(IndexingRunResult {
             totals,
             per_source,
-            errors_detail,
+            errors_detail: errors_detail.into(),
         })
     }
 
@@ -1002,7 +1002,7 @@ impl SessionIndexer {
     ) -> Result<IndexingRunResult> {
         self.clear_all_sessions()?;
 
-        let mut errors_detail = Vec::new();
+        let mut errors_detail = VecDeque::new();
 
         let claude =
             self.index_claude_sessions_internal(&sources.claude_dir, false, &mut errors_detail)?;
@@ -1062,7 +1062,7 @@ impl SessionIndexer {
         Ok(IndexingRunResult {
             totals,
             per_source,
-            errors_detail,
+            errors_detail: errors_detail.into(),
         })
     }
 
