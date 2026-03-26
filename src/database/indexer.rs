@@ -7,7 +7,7 @@ use std::time::UNIX_EPOCH;
 
 use crate::models::{AiAssistant, IndexingError, IndexingRunResult, PerSourceResult, SourceStatus};
 use crate::parsers::ParsedSession;
-use crate::parsers::claude_code::ClaudeCodeParser;
+use crate::parsers::claude_code::{ClaudeCodeParser, ParseError as ClaudeCodeParseError};
 use crate::parsers::codex::{CodexParser, ParseError as CodexParseError};
 use crate::parsers::mistral_vibe::{MistralVibeParser, ParseError as MistralVibeParseError};
 use crate::parsers::opencode::{
@@ -105,6 +105,13 @@ fn is_codex_error(err: &anyhow::Error) -> bool {
     err.downcast_ref::<CodexParseError>().is_some()
 }
 
+fn is_claude_empty_session_error(err: &anyhow::Error) -> bool {
+    matches!(
+        err.downcast_ref::<ClaudeCodeParseError>(),
+        Some(ClaudeCodeParseError::NoMessages)
+    )
+}
+
 impl SessionIndexer {
     pub fn new(db_path: &Path) -> Result<Self> {
         let db = crate::database::open_connection(db_path)?;
@@ -173,17 +180,41 @@ impl SessionIndexer {
                     continue;
                 }
 
-                if let Err(e) = self.index_session_file(path, &parser) {
-                    tracing::warn!("Failed to index {}: {}", path.display(), e);
-                    push_indexing_error(
-                        errors_detail,
-                        AiAssistant::ClaudeCode,
-                        Some(path.display().to_string()),
-                        format!("Failed to index session: {e}"),
-                    );
-                    stats.errors += 1;
-                } else {
-                    stats.indexed += 1;
+                match self.index_session_file(path, &parser) {
+                    Ok(()) => {
+                        stats.indexed += 1;
+                    }
+                    Err(err) => {
+                        if is_claude_empty_session_error(&err) {
+                            tracing::debug!(
+                                "Skipped empty Claude Code session {}: {}",
+                                path.display(),
+                                err
+                            );
+                            if let Err(remove_err) = self.remove_session_for_file(path) {
+                                tracing::warn!(
+                                    "Failed to prune session {}: {}",
+                                    path.display(),
+                                    remove_err
+                                );
+                                push_indexing_error(
+                                    errors_detail,
+                                    AiAssistant::ClaudeCode,
+                                    Some(path.display().to_string()),
+                                    format!("Failed to prune session: {remove_err}"),
+                                );
+                            }
+                        } else {
+                            tracing::warn!("Failed to index {}: {}", path.display(), err);
+                            push_indexing_error(
+                                errors_detail,
+                                AiAssistant::ClaudeCode,
+                                Some(path.display().to_string()),
+                                format!("Failed to index session: {err}"),
+                            );
+                            stats.errors += 1;
+                        }
+                    }
                 }
             }
         }
@@ -472,13 +503,7 @@ impl SessionIndexer {
                     }
                     Err(err) => {
                         if is_codex_error(&err) {
-                            tracing::warn!("Skipped Codex session {}: {}", path.display(), err);
-                            push_indexing_error(
-                                errors_detail,
-                                AiAssistant::Codex,
-                                Some(path.display().to_string()),
-                                format!("Skipped Codex session: {err}"),
-                            );
+                            tracing::debug!("Skipped Codex session {}: {}", path.display(), err);
                             if let Err(remove_err) = self.remove_session_for_file(path) {
                                 tracing::warn!(
                                     "Failed to prune session {}: {}",
@@ -1900,6 +1925,39 @@ mod tests {
             claude.status,
             crate::models::indexing_diagnostics::SourceStatus::Failed
         );
+    }
+
+    #[test]
+    fn indexing_diagnostics_empty_claude_session_does_not_record_error() {
+        let temp = tempfile::tempdir().unwrap();
+        let claude_root = temp.path().join("claude_sessions").join("project-a");
+        std::fs::create_dir_all(&claude_root).unwrap();
+        std::fs::write(claude_root.join("empty.jsonl"), b"").unwrap();
+
+        let temp_db = NamedTempFile::new().unwrap();
+        let mut indexer = SessionIndexer::new(temp_db.path()).unwrap();
+        let sources = SessionSources::resolve(Some(temp.path()));
+
+        let result = indexer.index_all_incremental(&sources).unwrap();
+        let claude = result
+            .per_source
+            .iter()
+            .find(|r| r.assistant == AiAssistant::ClaudeCode)
+            .unwrap();
+
+        assert_eq!(claude.indexed, 0);
+        assert_eq!(claude.errors, 0);
+        assert_eq!(result.errors_detail.len(), 0);
+        assert_eq!(
+            claude.status,
+            crate::models::indexing_diagnostics::SourceStatus::Empty
+        );
+
+        let session_count: i64 = indexer
+            .db
+            .query_row("SELECT COUNT(*) FROM sessions", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(session_count, 0);
     }
 
     #[test]

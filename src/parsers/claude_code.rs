@@ -15,6 +15,14 @@ use crate::models::{TranscriptItem, TranscriptItemKind};
 use crate::parsers::ParsedSession;
 use crate::parsers::model::normalize_model;
 
+#[derive(Debug, thiserror::Error)]
+pub enum ParseError {
+    #[error("Session contains no messages")]
+    NoMessages,
+    #[error("Session contains no user messages")]
+    NoUserMessages,
+}
+
 struct UsageEntry {
     input_tokens: i64,
     output_tokens: i64,
@@ -498,7 +506,12 @@ impl ParseState {
 
     /// Finalizes the parsing state into a ParsedSession.
     /// Aggregates token usage, builds Session, computes first_prompt, and validates.
-    fn finish(self, file_path: &Path, file_stem_id: Option<String>) -> Result<ParsedSession> {
+    fn finish(
+        self,
+        file_path: &Path,
+        file_stem_id: Option<String>,
+        had_parse_errors: bool,
+    ) -> Result<ParsedSession> {
         // Aggregate token usage from all deduplicated entries
         let all_entries = self.usage_map.into_values().chain(self.anonymous_usage);
         let mut total_input: i64 = 0;
@@ -534,11 +547,14 @@ impl ParseState {
         };
 
         let Some(start_time) = self.earliest_timestamp else {
-            anyhow::bail!("Session contains no messages");
+            if had_parse_errors {
+                anyhow::bail!("Session contained parse errors and no messages");
+            }
+            return Err(ParseError::NoMessages.into());
         };
 
         if !self.has_user_message {
-            anyhow::bail!("Session contains no user messages");
+            return Err(ParseError::NoUserMessages.into());
         }
 
         let final_session_id = self
@@ -586,6 +602,7 @@ impl ClaudeCodeParser {
             .map(|s| s.to_string());
 
         let mut state = ParseState::new();
+        let mut had_parse_errors = false;
 
         for line in reader.lines() {
             let line = line.context("Failed to read line")?;
@@ -597,6 +614,7 @@ impl ClaudeCodeParser {
                 Ok(v) => v,
                 Err(err) => {
                     tracing::warn!("Failed to parse JSON line: {}", err);
+                    had_parse_errors = true;
                     continue;
                 }
             };
@@ -638,7 +656,7 @@ impl ClaudeCodeParser {
             }
         }
 
-        state.finish(file_path, file_stem_id)
+        state.finish(file_path, file_stem_id, had_parse_errors)
     }
 
     fn parse_timestamp(s: &str) -> Result<DateTime<Utc>> {
@@ -724,7 +742,10 @@ mod tests {
         let result = parser.parse(file.path());
 
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("no user messages"));
+        assert!(matches!(
+            result.unwrap_err().downcast_ref::<ParseError>(),
+            Some(ParseError::NoUserMessages)
+        ));
     }
 
     #[test]
@@ -761,7 +782,26 @@ mod tests {
         let result = parser.parse(file.path());
 
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("no messages"));
+        assert!(matches!(
+            result.unwrap_err().downcast_ref::<ParseError>(),
+            Some(ParseError::NoMessages)
+        ));
+    }
+
+    #[test]
+    fn parse_invalid_json_without_messages_remains_an_error() {
+        let file = create_temp_session(&["not-json"]);
+
+        let parser = ClaudeCodeParser;
+        let result = parser.parse(file.path());
+
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("parse errors and no messages")
+        );
     }
 
     #[test]
