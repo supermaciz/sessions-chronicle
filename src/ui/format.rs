@@ -165,6 +165,75 @@ pub fn token_semantics_help_tooltip() -> &'static str {
      Cache: cache activity; depending on provider, cache tokens may overlap with input tokens"
 }
 
+/// Format a session duration in seconds as a compact human-readable string.
+///
+/// - `< 60s` → `"< 1m"`
+/// - `< 1h`  → `"Nm"`
+/// - `≥ 1h`  → `"Nh Mm"` (minutes omitted when 0)
+pub fn format_session_duration(seconds: i64) -> String {
+    if seconds < 60 {
+        "< 1m".to_string()
+    } else if seconds < 3600 {
+        format!("{}m", seconds / 60)
+    } else {
+        let hours = seconds / 3600;
+        let minutes = (seconds % 3600) / 60;
+        if minutes == 0 {
+            format!("{}h", hours)
+        } else {
+            format!("{}h {}m", hours, minutes)
+        }
+    }
+}
+
+/// Return the dominant activity string using the design precedence:
+/// edits > commands > reads > messages.
+pub fn format_dominant_activity(
+    edit_count: usize,
+    command_count: usize,
+    read_count: usize,
+    message_count: usize,
+) -> String {
+    if edit_count > 0 {
+        pluralize(edit_count, "edit", "edits")
+    } else if command_count > 0 {
+        pluralize(command_count, "command", "commands")
+    } else if read_count > 0 {
+        pluralize(read_count, "read", "reads")
+    } else {
+        pluralize(message_count, "message", "messages")
+    }
+}
+
+fn pluralize(count: usize, singular: &str, plural: &str) -> String {
+    if count == 1 {
+        format!("1 {singular}")
+    } else {
+        format!("{count} {plural}")
+    }
+}
+
+/// Map a stored ending_status to its UI display label.
+/// Returns `None` for `"unknown"` (hidden in the UI).
+pub fn ending_label(status: &str) -> Option<&'static str> {
+    match status {
+        "clean" => Some("completed"),
+        "abrupt" => Some("interrupted"),
+        "error" => Some("failed"),
+        _ => None,
+    }
+}
+
+/// CSS class for a session ending label.
+pub fn ending_css_class(status: &str) -> &'static str {
+    match status {
+        "clean" => "ending-completed",
+        "abrupt" => "ending-interrupted",
+        "error" => "ending-failed",
+        _ => "ending-unknown",
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -331,5 +400,68 @@ mod tests {
         assert!(tooltip.contains("cache"));
         assert!(tooltip.contains("input"));
         assert!(tooltip.contains("overlap"));
+    }
+
+    #[test]
+    fn format_session_duration_under_a_minute() {
+        assert_eq!(format_session_duration(0), "< 1m");
+        assert_eq!(format_session_duration(30), "< 1m");
+        assert_eq!(format_session_duration(59), "< 1m");
+    }
+
+    #[test]
+    fn format_session_duration_minutes() {
+        assert_eq!(format_session_duration(60), "1m");
+        assert_eq!(format_session_duration(90), "1m");
+        assert_eq!(format_session_duration(300), "5m");
+        assert_eq!(format_session_duration(2700), "45m");
+    }
+
+    #[test]
+    fn format_session_duration_hours() {
+        assert_eq!(format_session_duration(3600), "1h");
+        assert_eq!(format_session_duration(5400), "1h 30m");
+        assert_eq!(format_session_duration(7200), "2h");
+    }
+
+    #[test]
+    fn format_dominant_activity_edits_first() {
+        assert_eq!(format_dominant_activity(3, 2, 1, 10), "3 edits");
+        assert_eq!(format_dominant_activity(1, 2, 1, 10), "1 edit");
+    }
+
+    #[test]
+    fn format_dominant_activity_commands_when_no_edits() {
+        assert_eq!(format_dominant_activity(0, 5, 3, 10), "5 commands");
+        assert_eq!(format_dominant_activity(0, 1, 3, 10), "1 command");
+    }
+
+    #[test]
+    fn format_dominant_activity_reads_when_no_edits_or_commands() {
+        assert_eq!(format_dominant_activity(0, 0, 4, 10), "4 reads");
+        assert_eq!(format_dominant_activity(0, 0, 1, 10), "1 read");
+    }
+
+    #[test]
+    fn format_dominant_activity_messages_as_fallback() {
+        assert_eq!(format_dominant_activity(0, 0, 0, 10), "10 messages");
+        assert_eq!(format_dominant_activity(0, 0, 0, 1), "1 message");
+    }
+
+    #[test]
+    fn ending_label_maps_status_to_display_text() {
+        assert_eq!(ending_label("clean"), Some("completed"));
+        assert_eq!(ending_label("abrupt"), Some("interrupted"));
+        assert_eq!(ending_label("error"), Some("failed"));
+        assert_eq!(ending_label("unknown"), None);
+        assert_eq!(ending_label(""), None);
+    }
+
+    #[test]
+    fn ending_css_class_maps_status_to_class() {
+        assert_eq!(ending_css_class("clean"), "ending-completed");
+        assert_eq!(ending_css_class("abrupt"), "ending-interrupted");
+        assert_eq!(ending_css_class("error"), "ending-failed");
+        assert_eq!(ending_css_class("unknown"), "ending-unknown");
     }
 }
