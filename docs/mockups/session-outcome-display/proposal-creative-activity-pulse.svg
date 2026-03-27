@@ -9,7 +9,7 @@
   <rect width="700" height="360" rx="12" fill="#fafafa"/>
 
   <!-- Title -->
-  <text x="24" y="28" font-size="11" font-weight="700" fill="#77767b" letter-spacing="0.5">PROPOSAL D: ACTIVITY PULSE (CREATIVE)</text>
+  <text x="24" y="28" font-size="11" font-weight="700" fill="#77767b" letter-spacing="0.5">PROPOSAL F: ACTIVITY PULSE (CREATIVE)</text>
 
   <!-- === ROW 1: Long productive session, clean end === -->
   <g transform="translate(12, 40)">

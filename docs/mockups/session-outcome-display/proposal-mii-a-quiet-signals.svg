@@ -13,7 +13,7 @@
   <rect width="700" height="260" rx="12" fill="#fafafa"/>
 
   <!-- Title -->
-  <text x="24" y="28" font-size="11" font-weight="700" fill="#77767b" letter-spacing="0.5">PROPOSAL A: QUIET SIGNALS</text>
+  <text x="24" y="28" font-size="11" font-weight="700" fill="#77767b" letter-spacing="0.5">PROPOSAL C: QUIET SIGNALS</text>
 
   <!-- Row 1: Clean end, long session, file edits -->
   <g transform="translate(12, 40)">

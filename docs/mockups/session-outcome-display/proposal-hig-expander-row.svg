@@ -9,7 +9,7 @@
   <rect width="700" height="400" rx="12" fill="#fafafa"/>
 
   <!-- Title -->
-  <text x="24" y="28" font-size="11" font-weight="700" fill="#77767b" letter-spacing="0.5">PROPOSAL C: EXPANDER ROWS (GNOME HIG)</text>
+  <text x="24" y="28" font-size="11" font-weight="700" fill="#77767b" letter-spacing="0.5">PROPOSAL E: EXPANDER ROWS (GNOME HIG)</text>
 
   <!-- === ROW 1: Expanded row — clean completion === -->
   <g transform="translate(12, 40)">
