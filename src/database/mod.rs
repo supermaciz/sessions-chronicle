@@ -206,6 +206,7 @@ fn search_sessions_with_query(
                         s.last_updated, s.first_prompt, s.parent_session_id, s.is_subagent,
                         s.input_tokens, s.output_tokens, s.cache_read_tokens,
                         s.cache_write_tokens, s.reasoning_tokens,
+                        s.edit_count, s.read_count, s.command_count, s.ending_status,
                         bm25(messages) AS rank
                  FROM messages
                  JOIN sessions s ON s.id = messages.session_id
@@ -226,6 +227,7 @@ fn search_sessions_with_query(
                          s.last_updated, s.first_prompt, s.parent_session_id, s.is_subagent,
                          s.input_tokens, s.output_tokens, s.cache_read_tokens,
                          s.cache_write_tokens, s.reasoning_tokens,
+                         s.edit_count, s.read_count, s.command_count, s.ending_status,
                          bm25(messages) AS rank
                   FROM messages
                   JOIN sessions s ON s.id = messages.session_id
@@ -303,7 +305,8 @@ pub fn load_sessions_for_filter(
                 "SELECT id, tool, project_path, project_id, start_time, message_count, file_path,
                         last_updated, first_prompt, parent_session_id, is_subagent,
                         input_tokens, output_tokens, cache_read_tokens,
-                        cache_write_tokens, reasoning_tokens
+                        cache_write_tokens, reasoning_tokens,
+                        edit_count, read_count, command_count, ending_status
                  FROM sessions
                  WHERE is_subagent = 0
                    {}
@@ -320,7 +323,8 @@ pub fn load_sessions_for_filter(
                 "SELECT id, tool, project_path, project_id, start_time, message_count, file_path,
                          last_updated, first_prompt, parent_session_id, is_subagent,
                          input_tokens, output_tokens, cache_read_tokens,
-                         cache_write_tokens, reasoning_tokens
+                         cache_write_tokens, reasoning_tokens,
+                         edit_count, read_count, command_count, ending_status
                   FROM sessions
                   WHERE tool IN ({})
                     AND is_subagent = 0
@@ -534,7 +538,8 @@ pub fn load_session(db_path: &Path, session_id: &str) -> Result<Option<Session>>
         "SELECT id, tool, project_path, project_id, start_time, message_count, file_path,
                 last_updated, first_prompt, parent_session_id, is_subagent,
                 input_tokens, output_tokens, cache_read_tokens,
-                cache_write_tokens, reasoning_tokens
+                cache_write_tokens, reasoning_tokens,
+                edit_count, read_count, command_count, ending_status
          FROM sessions
          WHERE id = ?1",
     )?;
