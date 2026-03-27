@@ -22,6 +22,18 @@ pub struct Session {
     pub is_subagent: bool,
     #[serde(default)]
     pub token_usage: Option<TokenUsage>,
+    #[serde(default)]
+    pub edit_count: usize,
+    #[serde(default)]
+    pub read_count: usize,
+    #[serde(default)]
+    pub command_count: usize,
+    #[serde(default = "default_ending_status")]
+    pub ending_status: String,
+}
+
+fn default_ending_status() -> String {
+    "unknown".to_string()
 }
 
 /// AI coding assistant whose sessions are tracked by this application.

@@ -213,7 +213,20 @@ mod tests {
             parent_session_id: None,
             is_subagent: false,
             token_usage: None,
+            edit_count: 0,
+            read_count: 0,
+            command_count: 0,
+            ending_status: "unknown".to_string(),
         }
+    }
+
+    #[test]
+    fn session_activity_fields_default_to_zero_and_unknown() {
+        let session = build_session(Some("/home/user/project"), Some("Fix bug"), 10);
+        assert_eq!(session.edit_count, 0);
+        assert_eq!(session.read_count, 0);
+        assert_eq!(session.command_count, 0);
+        assert_eq!(session.ending_status, "unknown");
     }
 
     #[test]

@@ -99,6 +99,12 @@ fn session_from_row(row: &Row) -> rusqlite::Result<Session> {
         parent_session_id: row.get("parent_session_id")?,
         is_subagent: is_subagent_int != 0,
         token_usage,
+        edit_count: row.get::<_, i64>("edit_count").unwrap_or(0).max(0) as usize,
+        read_count: row.get::<_, i64>("read_count").unwrap_or(0).max(0) as usize,
+        command_count: row.get::<_, i64>("command_count").unwrap_or(0).max(0) as usize,
+        ending_status: row
+            .get::<_, String>("ending_status")
+            .unwrap_or_else(|_| "unknown".to_string()),
     })
 }
 
