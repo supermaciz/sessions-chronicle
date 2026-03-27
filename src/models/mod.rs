@@ -17,5 +17,5 @@ pub use project_filter::{ProjectFilter, ProjectInfo};
 pub use session::{AiAssistant, Session};
 pub use subagent::Subagent;
 pub use token_usage::TokenUsage;
-pub use tool_call::{ToolCall, ToolCallStatus};
+pub use tool_call::{ToolCall, ToolCallStatus, ToolCategory, classify_tool_name};
 pub use transcript_item::{TranscriptItem, TranscriptItemKind};
