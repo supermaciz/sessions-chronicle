@@ -49,13 +49,18 @@ compile_commands.json
 # Claude local config
 .claude/settings.local.json
 .claude/worktrees/
+
 # boom
-.claude/
+.claude/agents/*
+.claude/skills
 .agents/
 .vibe/
 .opencode/
-
+!.claude/agents/design-ui-designer.md
+!.claude/agents/mii-beta-gtk-designer.md
 
 flatpak_app/
 .flatpak-builder/
 builddir/
+
+
