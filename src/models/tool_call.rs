@@ -76,9 +76,8 @@ pub fn classify_tool_name(name: &str) -> ToolCategory {
         "Bash" | "bash" | "exec_command" => ToolCategory::Command,
 
         // Reads (file/codebase exploration)
-        "Read" | "read" | "Glob" | "Grep" | "grep" | "read_file" | "list_directory" => {
-            ToolCategory::Read
-        }
+        "Read" | "read" | "Glob" | "Grep" | "grep" | "read_file" | "list_directory"
+        | "list_files" => ToolCategory::Read,
 
         // Everything else (Task, Agent, WebSearch, etc.)
         _ => ToolCategory::Other,
