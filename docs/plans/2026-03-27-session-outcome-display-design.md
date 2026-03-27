@@ -55,7 +55,7 @@ existing list, not a redesign.
 
 ```text
 [icon]  Fix the flaky parser test in session_sources   completed  [>]
-        my-project · 45m · 8 files edited · 2d ago
+        my-project · 45m · 8 edits · 2d ago
 ```
 
 - **Prefix:** existing 16px symbolic assistant icon
@@ -98,13 +98,21 @@ substantive work, commands are the next strongest signal, reads indicate
 exploration, and message count remains the fallback when no tool-call activity
 is worth surfacing.
 
+### Activity counts
+
+Each count is a simple operation count, not a distinct-file count. This avoids
+fragile `json_extract` parsing on `input_json` (whose schema varies across
+assistants) and keeps all four categories consistent — commands have no file
+target, so mixing distinct files for edits/reads with operation counts for
+commands would be incoherent.
+
 ### Activity wording
 
 The activity segment uses short, human-readable singular/plural forms:
 
-- `1 file edited` / `N files edited`
-- `1 command run` / `N commands run`
-- `1 file read` / `N files read`
+- `1 edit` / `N edits`
+- `1 command` / `N commands`
+- `1 read` / `N reads`
 - `1 message` / `N messages`
 
 No icons, pills, or multiple categories appear in the row.
