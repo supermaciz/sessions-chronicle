@@ -1,0 +1,125 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="700" height="400" viewBox="0 0 700 400">
+  <defs>
+    <style>
+      text { font-family: Cantarell, system-ui, sans-serif; }
+    </style>
+  </defs>
+
+  <!-- Background -->
+  <rect width="700" height="400" rx="12" fill="#fafafa"/>
+
+  <!-- Title -->
+  <text x="24" y="28" font-size="11" font-weight="700" fill="#77767b" letter-spacing="0.5">PROPOSAL C: EXPANDER ROWS (GNOME HIG)</text>
+
+  <!-- === ROW 1: Expanded row — clean completion === -->
+  <g transform="translate(12, 40)">
+    <!-- Card background (expanded) -->
+    <rect x="0" y="0" width="676" height="130" rx="10" fill="#ffffff" stroke="#e0e0e0" stroke-width="0.5"/>
+
+    <!-- Tool icon (Claude Code) -->
+    <rect x="16" y="18" width="16" height="16" rx="4" fill="#3584e4" opacity="0.8"/>
+    <text x="20" y="29" font-size="7" fill="#ffffff" font-weight="700" text-anchor="middle">C</text>
+
+    <!-- Title -->
+    <text x="44" y="30" font-size="14" font-weight="700" fill="#1e1e1e">Refactor the database module to use connection pooling</text>
+
+    <!-- Subtitle (compact) -->
+    <text x="44" y="48" font-size="11.5" fill="#77767b">sessions-chronicle · 38 messages · 2h ago</text>
+
+    <!-- Expander arrow (rotated = expanded) -->
+    <text x="656" y="34" font-size="12" fill="#77767b" opacity="0.6">▾</text>
+
+    <!-- Divider line -->
+    <line x1="16" y1="60" x2="660" y2="60" stroke="#e0e0e0" stroke-width="0.5"/>
+
+    <!-- Expanded content: outcome details -->
+    <g transform="translate(44, 72)">
+      <!-- Duration -->
+      <text font-size="11" fill="#77767b">
+        <tspan font-weight="600" fill="#1e1e1e">Duration</tspan>
+        <tspan dx="12">42 min</tspan>
+      </text>
+
+      <!-- Activity -->
+      <text y="20" font-size="11" fill="#77767b">
+        <tspan font-weight="600" fill="#1e1e1e">Activity</tspan>
+        <tspan dx="16">8 files edited · 5 commands run · 14 files read</tspan>
+      </text>
+
+      <!-- Ending -->
+      <text y="40" font-size="11" fill="#77767b">
+        <tspan font-weight="600" fill="#1e1e1e">Ending</tspan>
+        <tspan dx="20" fill="#2ec27e">Completed cleanly</tspan>
+      </text>
+
+      <!-- Token usage -->
+      <text y="60" font-size="11" fill="#77767b">
+        <tspan font-weight="600" fill="#1e1e1e">Tokens</tspan>
+        <tspan dx="18">24.3k in · 18.1k out</tspan>
+      </text>
+    </g>
+  </g>
+
+  <!-- === ROW 2: Collapsed row — abrupt ending === -->
+  <g transform="translate(12, 180)">
+    <rect x="0" y="0" width="676" height="56" rx="10" fill="#ffffff" stroke="#e0e0e0" stroke-width="0.5"/>
+
+    <!-- Tool icon (OpenCode) -->
+    <rect x="16" y="20" width="16" height="16" rx="4" fill="#26a269" opacity="0.8"/>
+    <text x="20" y="31" font-size="7" fill="#ffffff" font-weight="700" text-anchor="middle">O</text>
+
+    <!-- Title -->
+    <text x="44" y="24" font-size="14" font-weight="700" fill="#1e1e1e">Why is the auth middleware returning 403 for admin users?</text>
+
+    <!-- Subtitle with ending hint -->
+    <text x="44" y="42" font-size="11.5" fill="#77767b">
+      <tspan>web-backend · 12 messages · 5d ago</tspan>
+      <tspan dx="8" fill="#e5a50a">· interrupted</tspan>
+    </text>
+
+    <!-- Expander arrow (collapsed) -->
+    <text x="656" y="32" font-size="12" fill="#77767b" opacity="0.6">▸</text>
+  </g>
+
+  <!-- === ROW 3: Collapsed row — short session === -->
+  <g transform="translate(12, 244)">
+    <rect x="0" y="0" width="676" height="56" rx="10" fill="#ffffff" stroke="#e0e0e0" stroke-width="0.5"/>
+
+    <!-- Tool icon (Codex) -->
+    <rect x="16" y="20" width="16" height="16" rx="4" fill="#e66100" opacity="0.8"/>
+    <text x="20" y="31" font-size="7" fill="#ffffff" font-weight="700" text-anchor="middle">X</text>
+
+    <!-- Title -->
+    <text x="44" y="24" font-size="14" font-weight="700" fill="#1e1e1e">Add unit tests for the payment processing module</text>
+
+    <!-- Subtitle -->
+    <text x="44" y="42" font-size="11.5" fill="#77767b">billing-service · 4 messages · 2026-03-15</text>
+
+    <!-- Expander arrow (collapsed) -->
+    <text x="656" y="32" font-size="12" fill="#77767b" opacity="0.6">▸</text>
+  </g>
+
+  <!-- === ROW 4: Collapsed — Mistral Vibe session === -->
+  <g transform="translate(12, 308)">
+    <rect x="0" y="0" width="676" height="56" rx="10" fill="#ffffff" stroke="#e0e0e0" stroke-width="0.5"/>
+
+    <!-- Tool icon (Mistral Vibe) -->
+    <rect x="16" y="20" width="16" height="16" rx="4" fill="#9141ac" opacity="0.8"/>
+    <text x="20" y="31" font-size="7" fill="#ffffff" font-weight="700" text-anchor="middle">M</text>
+
+    <!-- Title -->
+    <text x="44" y="24" font-size="14" font-weight="700" fill="#1e1e1e">Set up the new API client for the weather service</text>
+
+    <!-- Subtitle with ending hint -->
+    <text x="44" y="42" font-size="11.5" fill="#77767b">
+      <tspan>weather-app · 22 messages · 3d ago</tspan>
+      <tspan dx="8" fill="#2ec27e">· completed</tspan>
+    </text>
+
+    <!-- Expander arrow (collapsed) -->
+    <text x="656" y="32" font-size="12" fill="#77767b" opacity="0.6">▸</text>
+  </g>
+
+  <!-- Annotation -->
+  <text x="24" y="392" font-size="9.5" fill="#77767b" font-style="italic">Collapsed rows show ending hint in subtitle · Expand any row to reveal full outcome details</text>
+</svg>

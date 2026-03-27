@@ -1,0 +1,107 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="700" height="280" viewBox="0 0 700 280">
+  <defs>
+    <style>
+      text { font-family: Cantarell, system-ui, sans-serif; }
+    </style>
+  </defs>
+
+  <!-- Background -->
+  <rect width="700" height="280" rx="12" fill="#fafafa"/>
+
+  <!-- === ROW 1: Clean completion, productive session === -->
+  <g transform="translate(0, 0)">
+    <rect x="8" y="8" width="684" height="76" rx="8" fill="#ffffff" stroke="#e0e0e0" stroke-width="0.5"/>
+
+    <!-- Tool icon (Claude Code) -->
+    <rect x="24" y="28" width="20" height="20" rx="4" fill="#3584e4" opacity="0.15"/>
+    <text x="34" y="42" text-anchor="middle" font-size="11" fill="#3584e4" font-weight="600">C</text>
+
+    <!-- Title -->
+    <text x="56" y="38" font-size="14" font-weight="500" fill="#1e1e1e">Refactor the database module to use connection pooling</text>
+
+    <!-- Subtitle: project + duration + messages + outcome summary -->
+    <text x="56" y="56" font-size="11.5" fill="#77767b">
+      <tspan>sessions-chronicle</tspan>
+      <tspan dx="4" fill="#b0b0b0">·</tspan>
+      <tspan dx="4">42 min</tspan>
+      <tspan dx="4" fill="#b0b0b0">·</tspan>
+      <tspan dx="4">38 messages</tspan>
+      <tspan dx="4" fill="#b0b0b0">·</tspan>
+      <tspan dx="4" fill="#77767b">8 edits, 5 commands</tspan>
+      <tspan dx="4" fill="#b0b0b0">·</tspan>
+      <tspan dx="4">2h ago</tspan>
+    </text>
+
+    <!-- Suffix: status dot + chevron -->
+    <circle cx="648" cy="44" r="5" fill="#2ec27e"/>
+    <text x="672" y="48" text-anchor="end" font-size="14" fill="#b0b0b0">&#x203A;</text>
+  </g>
+
+  <!-- === ROW 2: Abrupt ending, read-heavy session === -->
+  <g transform="translate(0, 92)">
+    <rect x="8" y="8" width="684" height="76" rx="8" fill="#ffffff" stroke="#e0e0e0" stroke-width="0.5"/>
+
+    <!-- Tool icon (OpenCode) -->
+    <rect x="24" y="28" width="20" height="20" rx="4" fill="#26a269" opacity="0.15"/>
+    <text x="34" y="42" text-anchor="middle" font-size="11" fill="#26a269" font-weight="600">O</text>
+
+    <!-- Title -->
+    <text x="56" y="38" font-size="14" font-weight="500" fill="#1e1e1e">Why is the auth middleware returning 403 for admin users?</text>
+
+    <!-- Subtitle -->
+    <text x="56" y="56" font-size="11.5" fill="#77767b">
+      <tspan>web-backend</tspan>
+      <tspan dx="4" fill="#b0b0b0">·</tspan>
+      <tspan dx="4">7 min</tspan>
+      <tspan dx="4" fill="#b0b0b0">·</tspan>
+      <tspan dx="4">12 messages</tspan>
+      <tspan dx="4" fill="#b0b0b0">·</tspan>
+      <tspan dx="4" fill="#77767b">14 reads</tspan>
+      <tspan dx="4" fill="#b0b0b0">·</tspan>
+      <tspan dx="4">5d ago</tspan>
+    </text>
+
+    <!-- Suffix: amber dot + chevron -->
+    <circle cx="648" cy="44" r="5" fill="#e5a50a"/>
+    <text x="672" y="48" text-anchor="end" font-size="14" fill="#b0b0b0">&#x203A;</text>
+  </g>
+
+  <!-- === ROW 3: Error ending, short session === -->
+  <g transform="translate(0, 184)">
+    <rect x="8" y="8" width="684" height="76" rx="8" fill="#ffffff" stroke="#e0e0e0" stroke-width="0.5"/>
+
+    <!-- Tool icon (Codex) -->
+    <rect x="24" y="28" width="20" height="20" rx="4" fill="#e66100" opacity="0.15"/>
+    <text x="34" y="42" text-anchor="middle" font-size="11" fill="#e66100" font-weight="600">X</text>
+
+    <!-- Title -->
+    <text x="56" y="38" font-size="14" font-weight="500" fill="#1e1e1e">Add unit tests for the payment processing module</text>
+
+    <!-- Subtitle -->
+    <text x="56" y="56" font-size="11.5" fill="#77767b">
+      <tspan>billing-service</tspan>
+      <tspan dx="4" fill="#b0b0b0">·</tspan>
+      <tspan dx="4">2 min</tspan>
+      <tspan dx="4" fill="#b0b0b0">·</tspan>
+      <tspan dx="4">4 messages</tspan>
+      <tspan dx="4" fill="#b0b0b0">·</tspan>
+      <tspan dx="4" fill="#77767b">1 edit</tspan>
+      <tspan dx="4" fill="#b0b0b0">·</tspan>
+      <tspan dx="4">2026-03-15</tspan>
+    </text>
+
+    <!-- Suffix: red dot + chevron -->
+    <circle cx="648" cy="44" r="5" fill="#c01c28"/>
+    <text x="672" y="48" text-anchor="end" font-size="14" fill="#b0b0b0">&#x203A;</text>
+  </g>
+
+  <!-- Legend -->
+  <g transform="translate(440, 268)">
+    <circle cx="0" cy="0" r="4" fill="#2ec27e"/>
+    <text x="10" y="4" font-size="9.5" fill="#77767b">Clean</text>
+    <circle cx="60" cy="0" r="4" fill="#e5a50a"/>
+    <text x="70" y="4" font-size="9.5" fill="#77767b">Abrupt</text>
+    <circle cx="130" cy="0" r="4" fill="#c01c28"/>
+    <text x="140" y="4" font-size="9.5" fill="#77767b">Error</text>
+  </g>
+</svg>

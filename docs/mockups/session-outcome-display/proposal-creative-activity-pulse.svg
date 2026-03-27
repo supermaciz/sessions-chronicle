@@ -1,0 +1,162 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="700" height="360" viewBox="0 0 700 360">
+  <defs>
+    <style>
+      text { font-family: Cantarell, system-ui, sans-serif; }
+    </style>
+  </defs>
+
+  <!-- Background -->
+  <rect width="700" height="360" rx="12" fill="#fafafa"/>
+
+  <!-- Title -->
+  <text x="24" y="28" font-size="11" font-weight="700" fill="#77767b" letter-spacing="0.5">PROPOSAL D: ACTIVITY PULSE (CREATIVE)</text>
+
+  <!-- === ROW 1: Long productive session, clean end === -->
+  <g transform="translate(12, 40)">
+    <rect x="0" y="0" width="676" height="88" rx="10" fill="#ffffff" stroke="#e0e0e0" stroke-width="0.5"/>
+
+    <!-- Tool icon (Claude Code) — larger, with tinted background -->
+    <rect x="12" y="12" width="40" height="40" rx="10" fill="#3584e4" opacity="0.1"/>
+    <rect x="22" y="22" width="20" height="20" rx="4" fill="#3584e4" opacity="0.8"/>
+    <text x="28" y="35" font-size="9" fill="#ffffff" font-weight="700" text-anchor="middle">C</text>
+
+    <!-- Title -->
+    <text x="64" y="28" font-size="14" font-weight="700" fill="#1e1e1e">Refactor the database module to use connection pooling</text>
+
+    <!-- Project + time -->
+    <text x="64" y="44" font-size="11.5" fill="#77767b">sessions-chronicle · 42 min</text>
+    <text x="652" y="28" font-size="11" fill="#77767b" text-anchor="end">2h ago</text>
+
+    <!-- Activity pulse bar (horizontal sparkline) -->
+    <!-- Each segment represents ~5min of session time, colored by activity type -->
+    <!-- Blue = file edits, Teal = commands, Gray = conversation -->
+    <g transform="translate(64, 54)">
+      <!-- Background track -->
+      <rect x="0" y="0" width="580" height="6" rx="3" fill="#e0e0e0" opacity="0.4"/>
+
+      <!-- Activity segments (proportional to session duration) -->
+      <!-- 0-5min: conversation -->
+      <rect x="0" y="0" width="65" height="6" rx="3" fill="#77767b" opacity="0.3"/>
+      <!-- 5-12min: file edits (intense) -->
+      <rect x="65" y="0" width="100" height="6" rx="0" fill="#3584e4" opacity="0.7"/>
+      <!-- 12-18min: commands -->
+      <rect x="165" y="0" width="80" height="6" rx="0" fill="#26a269" opacity="0.6"/>
+      <!-- 18-25min: conversation -->
+      <rect x="245" y="0" width="95" height="6" rx="0" fill="#77767b" opacity="0.3"/>
+      <!-- 25-38min: file edits (intense) -->
+      <rect x="340" y="0" width="180" height="6" rx="0" fill="#3584e4" opacity="0.7"/>
+      <!-- 38-42min: conversation + end -->
+      <rect x="520" y="0" width="60" height="6" rx="0" ry="0" fill="#77767b" opacity="0.3"/>
+
+      <!-- Clean end cap -->
+      <circle cx="580" cy="3" r="5" fill="#2ec27e"/>
+      <rect x="575" y="0" width="5" height="6" fill="#2ec27e"/>
+    </g>
+
+    <!-- Outcome summary -->
+    <text x="64" y="76" font-size="10.5" fill="#77767b">
+      <tspan fill="#3584e4">8 files edited</tspan>
+      <tspan dx="6" fill="#b0b0b0">·</tspan>
+      <tspan dx="6" fill="#26a269">5 commands</tspan>
+      <tspan dx="6" fill="#b0b0b0">·</tspan>
+      <tspan dx="6">14 reads</tspan>
+      <tspan dx="6" fill="#b0b0b0">·</tspan>
+      <tspan dx="6" fill="#2ec27e">completed</tspan>
+    </text>
+
+    <!-- Chevron -->
+    <text x="660" y="52" font-size="14" fill="#77767b" opacity="0.4">›</text>
+  </g>
+
+  <!-- === ROW 2: Short abrupt session === -->
+  <g transform="translate(12, 138)">
+    <rect x="0" y="0" width="676" height="88" rx="10" fill="#ffffff" stroke="#e0e0e0" stroke-width="0.5"/>
+
+    <!-- Tool icon (OpenCode) -->
+    <rect x="12" y="12" width="40" height="40" rx="10" fill="#26a269" opacity="0.1"/>
+    <rect x="22" y="22" width="20" height="20" rx="4" fill="#26a269" opacity="0.8"/>
+    <text x="28" y="35" font-size="9" fill="#ffffff" font-weight="700" text-anchor="middle">O</text>
+
+    <!-- Title -->
+    <text x="64" y="28" font-size="14" font-weight="700" fill="#1e1e1e">Why is the auth middleware returning 403 for admin users?</text>
+
+    <!-- Project + time -->
+    <text x="64" y="44" font-size="11.5" fill="#77767b">web-backend · 7 min</text>
+    <text x="652" y="28" font-size="11" fill="#77767b" text-anchor="end">5d ago</text>
+
+    <!-- Activity pulse bar — short, read-heavy, abrupt end -->
+    <g transform="translate(64, 54)">
+      <rect x="0" y="0" width="580" height="6" rx="3" fill="#e0e0e0" opacity="0.4"/>
+
+      <!-- Only ~1/6 of the bar is filled (7 min is short relative to max) -->
+      <!-- 0-2min: conversation -->
+      <rect x="0" y="0" width="35" height="6" rx="3" fill="#77767b" opacity="0.3"/>
+      <!-- 2-5min: file reads (dim blue) -->
+      <rect x="35" y="0" width="50" height="6" fill="#9141ac" opacity="0.4"/>
+      <!-- 5-7min: commands then abrupt stop -->
+      <rect x="85" y="0" width="30" height="6" fill="#26a269" opacity="0.6"/>
+
+      <!-- Abrupt end cap (amber, jagged edge feel) -->
+      <rect x="112" y="-2" width="3" height="10" rx="1" fill="#e5a50a"/>
+    </g>
+
+    <!-- Outcome summary -->
+    <text x="64" y="76" font-size="10.5" fill="#77767b">
+      <tspan fill="#9141ac">14 files read</tspan>
+      <tspan dx="6" fill="#b0b0b0">·</tspan>
+      <tspan dx="6" fill="#26a269">3 commands</tspan>
+      <tspan dx="6" fill="#b0b0b0">·</tspan>
+      <tspan dx="6" fill="#e5a50a">interrupted</tspan>
+    </text>
+
+    <!-- Chevron -->
+    <text x="660" y="52" font-size="14" fill="#77767b" opacity="0.4">›</text>
+  </g>
+
+  <!-- === ROW 3: Quick question, no tools, indeterminate === -->
+  <g transform="translate(12, 236)">
+    <rect x="0" y="0" width="676" height="88" rx="10" fill="#ffffff" stroke="#e0e0e0" stroke-width="0.5"/>
+
+    <!-- Tool icon (Codex) -->
+    <rect x="12" y="12" width="40" height="40" rx="10" fill="#e66100" opacity="0.1"/>
+    <rect x="22" y="22" width="20" height="20" rx="4" fill="#e66100" opacity="0.8"/>
+    <text x="28" y="35" font-size="9" fill="#ffffff" font-weight="700" text-anchor="middle">X</text>
+
+    <!-- Title -->
+    <text x="64" y="28" font-size="14" font-weight="700" fill="#1e1e1e">Explain the build configuration for the monorepo</text>
+
+    <!-- Project + time -->
+    <text x="64" y="44" font-size="11.5" fill="#77767b">billing-service · 2 min</text>
+    <text x="652" y="28" font-size="11" fill="#77767b" text-anchor="end">1d ago</text>
+
+    <!-- Activity pulse bar — very short, conversation only -->
+    <g transform="translate(64, 54)">
+      <rect x="0" y="0" width="580" height="6" rx="3" fill="#e0e0e0" opacity="0.4"/>
+      <!-- Tiny segment, all conversation -->
+      <rect x="0" y="0" width="22" height="6" rx="3" fill="#77767b" opacity="0.3"/>
+    </g>
+
+    <!-- Outcome summary — minimal -->
+    <text x="64" y="76" font-size="10.5" fill="#77767b">4 messages · conversation only</text>
+
+    <!-- Chevron -->
+    <text x="660" y="52" font-size="14" fill="#77767b" opacity="0.4">›</text>
+  </g>
+
+  <!-- Legend -->
+  <g transform="translate(24, 340)">
+    <rect x="0" y="0" width="10" height="6" rx="2" fill="#3584e4" opacity="0.7"/>
+    <text x="14" y="6" font-size="9" fill="#77767b">file edits</text>
+    <rect x="72" y="0" width="10" height="6" rx="2" fill="#26a269" opacity="0.6"/>
+    <text x="86" y="6" font-size="9" fill="#77767b">commands</text>
+    <rect x="144" y="0" width="10" height="6" rx="2" fill="#9141ac" opacity="0.4"/>
+    <text x="158" y="6" font-size="9" fill="#77767b">reads</text>
+    <rect x="196" y="0" width="10" height="6" rx="2" fill="#77767b" opacity="0.3"/>
+    <text x="210" y="6" font-size="9" fill="#77767b">conversation</text>
+
+    <circle cx="296" cy="3" r="4" fill="#2ec27e"/>
+    <text x="304" y="6" font-size="9" fill="#77767b">completed</text>
+    <rect x="356" y="-1" width="3" height="8" rx="1" fill="#e5a50a"/>
+    <text x="364" y="6" font-size="9" fill="#77767b">interrupted</text>
+  </g>
+</svg>

@@ -1,0 +1,64 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="700" height="260" viewBox="0 0 700 260">
+  <defs>
+    <style>
+      @import url('https://fonts.googleapis.com/css2?family=Cantarell:wght@400;700&amp;display=swap');
+      text { font-family: 'Cantarell', 'Inter', sans-serif; }
+    </style>
+    <clipPath id="card-clip">
+      <rect width="700" height="260" rx="12"/>
+    </clipPath>
+  </defs>
+
+  <!-- Background -->
+  <rect width="700" height="260" rx="12" fill="#fafafa"/>
+
+  <!-- Title -->
+  <text x="24" y="28" font-size="11" font-weight="700" fill="#77767b" letter-spacing="0.5">PROPOSAL A: QUIET SIGNALS</text>
+
+  <!-- Row 1: Clean end, long session, file edits -->
+  <g transform="translate(12, 40)">
+    <rect x="0" y="0" width="676" height="64" rx="10" fill="#ffffff"/>
+    <!-- Tool icon placeholder (Claude Code) -->
+    <rect x="16" y="24" width="16" height="16" rx="4" fill="#3584e4" opacity="0.8"/>
+    <text x="20" y="35" font-size="7" fill="#ffffff" font-weight="700" text-anchor="middle">C</text>
+    <!-- Title -->
+    <text x="44" y="28" font-size="14" font-weight="700" fill="#1e1e1e">Fix the flaky parser test in session_sources</text>
+    <!-- Subtitle -->
+    <text x="44" y="46" font-size="11.5" fill="#77767b">my-project  &#x00B7;  45m  &#x00B7;  8 files edited  &#x00B7;  2d ago</text>
+    <!-- Status dot: green (clean end) -->
+    <circle cx="636" cy="32" r="4" fill="#2ec27e"/>
+    <!-- Chevron -->
+    <text x="656" y="36" font-size="14" fill="#77767b" opacity="0.5">&#x203A;</text>
+  </g>
+
+  <!-- Row 2: Abrupt end, medium session, commands -->
+  <g transform="translate(12, 112)">
+    <rect x="0" y="0" width="676" height="64" rx="10" fill="#ffffff"/>
+    <!-- Tool icon placeholder (OpenCode) -->
+    <rect x="16" y="24" width="16" height="16" rx="4" fill="#26a269" opacity="0.8"/>
+    <text x="20" y="35" font-size="7" fill="#ffffff" font-weight="700" text-anchor="middle">O</text>
+    <!-- Title -->
+    <text x="44" y="28" font-size="14" font-weight="700" fill="#1e1e1e">Investigate failing CI pipeline on staging branch</text>
+    <!-- Subtitle -->
+    <text x="44" y="46" font-size="11.5" fill="#77767b">infra-tools  &#x00B7;  12m  &#x00B7;  3 commands run  &#x00B7;  5h ago</text>
+    <!-- Status dot: amber (abrupt end) -->
+    <circle cx="636" cy="32" r="4" fill="#e5a50a"/>
+    <!-- Chevron -->
+    <text x="656" y="36" font-size="14" fill="#77767b" opacity="0.5">&#x203A;</text>
+  </g>
+
+  <!-- Row 3: Short session, no tool calls, indeterminate -->
+  <g transform="translate(12, 184)">
+    <rect x="0" y="0" width="676" height="64" rx="10" fill="#ffffff"/>
+    <!-- Tool icon placeholder (Codex) -->
+    <rect x="16" y="24" width="16" height="16" rx="4" fill="#e66100" opacity="0.8"/>
+    <text x="20" y="35" font-size="7" fill="#ffffff" font-weight="700" text-anchor="middle">X</text>
+    <!-- Title -->
+    <text x="44" y="28" font-size="14" font-weight="700" fill="#1e1e1e">Read the config file and explain the build structure</text>
+    <!-- Subtitle: fallback to message count (no tool calls) -->
+    <text x="44" y="46" font-size="11.5" fill="#77767b">web-frontend  &#x00B7;  2m  &#x00B7;  4 messages  &#x00B7;  1d ago</text>
+    <!-- No status dot (indeterminate) -->
+    <!-- Chevron -->
+    <text x="656" y="36" font-size="14" fill="#77767b" opacity="0.5">&#x203A;</text>
+  </g>
+</svg>
