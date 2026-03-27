@@ -172,8 +172,9 @@
 }
 
 /* Session ending status label colors */
-.ending-completed {
-  color: @success_color;
+.ending-interrupted,
+.ending-failed {
+  font-size: small;
 }
 
 .ending-interrupted {

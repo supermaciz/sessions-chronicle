@@ -214,10 +214,9 @@ fn pluralize(count: usize, singular: &str, plural: &str) -> String {
 }
 
 /// Map a stored ending_status to its UI display label.
-/// Returns `None` for `"unknown"` (hidden in the UI).
+/// Returns `None` for `"clean"` and `"unknown"` (hidden in the UI).
 pub fn ending_label(status: &str) -> Option<&'static str> {
     match status {
-        "clean" => Some("completed"),
         "abrupt" => Some("interrupted"),
         "error" => Some("failed"),
         _ => None,
@@ -450,7 +449,7 @@ mod tests {
 
     #[test]
     fn ending_label_maps_status_to_display_text() {
-        assert_eq!(ending_label("clean"), Some("completed"));
+        assert_eq!(ending_label("clean"), None);
         assert_eq!(ending_label("abrupt"), Some("interrupted"));
         assert_eq!(ending_label("error"), Some("failed"));
         assert_eq!(ending_label("unknown"), None);
