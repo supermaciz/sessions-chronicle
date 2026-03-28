@@ -223,7 +223,7 @@ impl MistralVibeParser {
                 edit_count: 0,
                 read_count: 0,
                 command_count: 0,
-                ending_status: "unknown".to_string(),
+                ending_status: crate::models::SessionEndingStatus::Unknown,
             },
             messages,
             tool_calls,

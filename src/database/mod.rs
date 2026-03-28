@@ -102,9 +102,10 @@ fn session_from_row(row: &Row) -> rusqlite::Result<Session> {
         edit_count: row.get::<_, i64>("edit_count").unwrap_or(0).max(0) as usize,
         read_count: row.get::<_, i64>("read_count").unwrap_or(0).max(0) as usize,
         command_count: row.get::<_, i64>("command_count").unwrap_or(0).max(0) as usize,
-        ending_status: row
-            .get::<_, String>("ending_status")
-            .unwrap_or_else(|_| "unknown".to_string()),
+        ending_status: crate::models::SessionEndingStatus::from_storage(
+            &row.get::<_, String>("ending_status")
+                .unwrap_or_else(|_| "unknown".to_string()),
+        ),
     })
 }
 

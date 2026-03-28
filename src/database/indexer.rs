@@ -655,7 +655,7 @@ impl SessionIndexer {
                 crate::models::ToolCategory::Other => {}
             }
         }
-        let ending_status = Self::determine_ending_status(&parsed.tool_calls);
+        let ending_status = Self::determine_ending_status(&parsed.tool_calls).to_storage();
 
         tx.execute(
             "INSERT OR REPLACE INTO sessions
@@ -741,21 +741,22 @@ impl SessionIndexer {
     }
 
     /// Derive ending status from the last tool call in the session.
-    ///
-    /// - `"error"`:   last tool call ended with an error
-    /// - `"abrupt"`:  last tool call is still pending or running
-    /// - `"clean"`:   last tool call completed successfully
-    /// - `"unknown"`: no tool calls present
-    fn determine_ending_status(tool_calls: &[crate::models::ToolCall]) -> &'static str {
+    fn determine_ending_status(
+        tool_calls: &[crate::models::ToolCall],
+    ) -> crate::models::SessionEndingStatus {
         match tool_calls.last() {
-            None => "unknown",
+            None => crate::models::SessionEndingStatus::Unknown,
             Some(tc) => match tc.status {
-                crate::models::ToolCallStatus::Error => "error",
+                crate::models::ToolCallStatus::Error => crate::models::SessionEndingStatus::Error,
                 crate::models::ToolCallStatus::Pending | crate::models::ToolCallStatus::Running => {
-                    "abrupt"
+                    crate::models::SessionEndingStatus::Abrupt
                 }
-                crate::models::ToolCallStatus::Completed => "clean",
-                crate::models::ToolCallStatus::Unknown => "unknown",
+                crate::models::ToolCallStatus::Completed => {
+                    crate::models::SessionEndingStatus::Clean
+                }
+                crate::models::ToolCallStatus::Unknown => {
+                    crate::models::SessionEndingStatus::Unknown
+                }
             },
         }
     }
@@ -1268,7 +1269,7 @@ mod tests {
                 edit_count: 0,
                 read_count: 0,
                 command_count: 0,
-                ending_status: "unknown".to_string(),
+                ending_status: crate::models::SessionEndingStatus::Unknown,
             },
             messages: vec![],
             tool_calls: vec![],

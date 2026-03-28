@@ -237,7 +237,7 @@ mod tests {
             edit_count: 0,
             read_count: 0,
             command_count: 0,
-            ending_status: "unknown".to_string(),
+            ending_status: crate::models::SessionEndingStatus::Unknown,
         }
     }
 
@@ -247,7 +247,10 @@ mod tests {
         assert_eq!(session.edit_count, 0);
         assert_eq!(session.read_count, 0);
         assert_eq!(session.command_count, 0);
-        assert_eq!(session.ending_status, "unknown");
+        assert_eq!(
+            session.ending_status,
+            crate::models::SessionEndingStatus::Unknown
+        );
     }
 
     #[test]

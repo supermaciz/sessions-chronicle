@@ -14,7 +14,7 @@ pub use indexing_diagnostics::{IndexingError, IndexingRunResult, PerSourceResult
 pub use message::{Message, Role};
 pub use message_preview::MessagePreview;
 pub use project_filter::{ProjectFilter, ProjectInfo};
-pub use session::{AiAssistant, Session};
+pub use session::{AiAssistant, Session, SessionEndingStatus};
 pub use subagent::Subagent;
 pub use token_usage::TokenUsage;
 pub use tool_call::{ToolCall, ToolCallStatus, ToolCategory, classify_tool_name};

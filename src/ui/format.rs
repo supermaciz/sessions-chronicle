@@ -214,20 +214,20 @@ fn pluralize(count: usize, singular: &str, plural: &str) -> String {
 }
 
 /// Map a stored ending_status to its UI display label.
-/// Returns `None` for `"clean"` and `"unknown"` (hidden in the UI).
-pub fn ending_label(status: &str) -> Option<&'static str> {
+/// Returns `None` for `Clean` and `Unknown` (hidden in the UI).
+pub fn ending_label(status: &crate::models::SessionEndingStatus) -> Option<&'static str> {
     match status {
-        "abrupt" => Some("interrupted"),
-        "error" => Some("failed"),
+        crate::models::SessionEndingStatus::Abrupt => Some("interrupted"),
+        crate::models::SessionEndingStatus::Error => Some("failed"),
         _ => None,
     }
 }
 
 /// CSS class for a session ending label.
-pub fn ending_css_class(status: &str) -> &'static str {
+pub fn ending_css_class(status: &crate::models::SessionEndingStatus) -> &'static str {
     match status {
-        "abrupt" => "ending-interrupted",
-        "error" => "ending-failed",
+        crate::models::SessionEndingStatus::Abrupt => "ending-interrupted",
+        crate::models::SessionEndingStatus::Error => "ending-failed",
         _ => "",
     }
 }
@@ -448,18 +448,41 @@ mod tests {
 
     #[test]
     fn ending_label_maps_status_to_display_text() {
-        assert_eq!(ending_label("clean"), None);
-        assert_eq!(ending_label("abrupt"), Some("interrupted"));
-        assert_eq!(ending_label("error"), Some("failed"));
-        assert_eq!(ending_label("unknown"), None);
-        assert_eq!(ending_label(""), None);
+        assert_eq!(
+            ending_label(&crate::models::SessionEndingStatus::Clean),
+            None
+        );
+        assert_eq!(
+            ending_label(&crate::models::SessionEndingStatus::Abrupt),
+            Some("interrupted")
+        );
+        assert_eq!(
+            ending_label(&crate::models::SessionEndingStatus::Error),
+            Some("failed")
+        );
+        assert_eq!(
+            ending_label(&crate::models::SessionEndingStatus::Unknown),
+            None
+        );
     }
 
     #[test]
     fn ending_css_class_maps_status_to_class() {
-        assert_eq!(ending_css_class("clean"), "");
-        assert_eq!(ending_css_class("abrupt"), "ending-interrupted");
-        assert_eq!(ending_css_class("error"), "ending-failed");
-        assert_eq!(ending_css_class("unknown"), "");
+        assert_eq!(
+            ending_css_class(&crate::models::SessionEndingStatus::Clean),
+            ""
+        );
+        assert_eq!(
+            ending_css_class(&crate::models::SessionEndingStatus::Abrupt),
+            "ending-interrupted"
+        );
+        assert_eq!(
+            ending_css_class(&crate::models::SessionEndingStatus::Error),
+            "ending-failed"
+        );
+        assert_eq!(
+            ending_css_class(&crate::models::SessionEndingStatus::Unknown),
+            ""
+        );
     }
 }
