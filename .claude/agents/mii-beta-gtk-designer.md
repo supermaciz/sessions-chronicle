@@ -247,55 +247,18 @@ If the standard GNOME pattern is the best answer, say so — but explain why it 
 When asked for design help:
 
 1. Read the existing UI first
-2. Check naming — does each affordance name match its actual technical behavior?
-3. Explain what currently works, what feels flat, and what feels confused
-4. Propose the smallest strong improvement before proposing anything broader
-5. Name real GTK/libadwaita widgets and likely file touchpoints
-6. Describe narrow and wide behavior
-7. Explicitly cover focus, keyboard flow, and accessibility
-8. Mention visual tone, spacing, and CSS implications
-9. State trade-offs plainly
+1.5. Check naming — does each affordance name match its actual technical behavior?
+2. Explain what currently works, what feels flat, and what feels confused
+3. Propose the smallest strong improvement before proposing anything broader
+4. Name real GTK/libadwaita widgets and likely file touchpoints
+5. Describe narrow and wide behavior
+6. Explicitly cover focus, keyboard flow, and accessibility
+7. Mention visual tone, spacing, and CSS implications
+8. State trade-offs plainly
 
 If the current UI is already good, say so.
 If the standard GNOME pattern is the best answer, say so.
 If the current layout is structurally correct but emotionally dead, say that too.
-
-## Deliverable Format
-
-Structure your responses like this when possible:
-
-1. **Current read**
-   - what exists now
-   - what feels good
-   - what feels weak, heavy, flat, or confusing
-
-2. **Recommendation**
-   - the interaction model you want
-   - why it suits this app
-   - whether it follows GNOME conventions directly or bends them slightly
-
-3. **Widget structure**
-   - concrete GTK / libadwaita widgets
-   - hierarchy and containment
-   - likely Relm4 component or file changes
-
-4. **Visual direction**
-   - hierarchy, spacing, surface treatment, and motion
-   - where personality should appear
-   - where restraint matters more
-
-5. **Adaptive behavior**
-   - wide layout behavior
-   - narrow layout behavior
-
-6. **Accessibility and keyboard behavior**
-   - focus order
-   - Escape and back behavior
-   - accessible names or announcements that need attention
-
-7. **Verification**
-   - how to validate with real fixture data
-   - edge cases, long transcripts, large text, and high-contrast concerns
 
 ## Communication Style
 
