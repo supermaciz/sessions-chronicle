@@ -643,12 +643,28 @@ impl SessionIndexer {
         let tx = self.db.transaction()?;
         let resolved_project_id = Self::upsert_project_tx(&tx, session.project_path.as_deref())?;
 
+        // Compute activity counts from tool_calls before inserting the session row.
+        let mut edit_count: i64 = 0;
+        let mut read_count: i64 = 0;
+        let mut command_count: i64 = 0;
+        for tc in &parsed.tool_calls {
+            match crate::models::classify_tool_name(&tc.tool_name) {
+                crate::models::ToolCategory::Edit => edit_count += 1,
+                crate::models::ToolCategory::Command => command_count += 1,
+                crate::models::ToolCategory::Read => read_count += 1,
+                crate::models::ToolCategory::Other => {}
+            }
+        }
+        let ending_status = Self::determine_ending_status(&parsed.tool_calls).to_storage();
+
         tx.execute(
             "INSERT OR REPLACE INTO sessions
              (id, tool, project_path, project_id, start_time, message_count, file_path, last_updated,
               first_prompt, parent_session_id, is_subagent,
-              input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, reasoning_tokens)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
+              input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, reasoning_tokens,
+              edit_count, read_count, command_count, ending_status)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16,
+                     ?17, ?18, ?19, ?20)",
             rusqlite::params![
                 &session.id,
                 session.tool.to_storage(),
@@ -672,6 +688,10 @@ impl SessionIndexer {
                     .as_ref()
                     .and_then(|u| u.cache_write_tokens),
                 parsed.token_usage.as_ref().and_then(|u| u.reasoning_tokens),
+                edit_count,
+                read_count,
+                command_count,
+                ending_status,
             ],
         )?;
 
@@ -718,6 +738,27 @@ impl SessionIndexer {
         tx.commit()?;
 
         Ok(())
+    }
+
+    /// Derive ending status from the last tool call in the session.
+    fn determine_ending_status(
+        tool_calls: &[crate::models::ToolCall],
+    ) -> crate::models::SessionEndingStatus {
+        match tool_calls.last() {
+            None => crate::models::SessionEndingStatus::Unknown,
+            Some(tc) => match tc.status {
+                crate::models::ToolCallStatus::Error => crate::models::SessionEndingStatus::Error,
+                crate::models::ToolCallStatus::Pending | crate::models::ToolCallStatus::Running => {
+                    crate::models::SessionEndingStatus::Abrupt
+                }
+                crate::models::ToolCallStatus::Completed => {
+                    crate::models::SessionEndingStatus::Clean
+                }
+                crate::models::ToolCallStatus::Unknown => {
+                    crate::models::SessionEndingStatus::Unknown
+                }
+            },
+        }
     }
 
     fn upsert_project_tx(
@@ -1225,6 +1266,10 @@ mod tests {
                 parent_session_id: None,
                 is_subagent: false,
                 token_usage: None,
+                edit_count: 0,
+                read_count: 0,
+                command_count: 0,
+                ending_status: crate::models::SessionEndingStatus::Unknown,
             },
             messages: vec![],
             tool_calls: vec![],
@@ -2051,5 +2096,131 @@ mod tests {
 
         assert!(opencode_source_available(&storage_root, Some(&sqlite_path)));
         assert!(!opencode_source_available(&storage_root, None));
+    }
+
+    #[test]
+    fn insert_parsed_session_computes_activity_counts_and_ending_status() {
+        use crate::models::{ToolCall, ToolCallStatus};
+
+        let temp_db = NamedTempFile::new().unwrap();
+        let mut indexer = SessionIndexer::new(temp_db.path()).unwrap();
+        let fingerprint = NamedTempFile::new().unwrap();
+
+        let mut parsed = parsed_session("activity-test", Some("/tmp/project"));
+
+        // 3 edits, 2 commands, 1 read — last call is Completed
+        let make_tc = |id: &str, tool_name: &str, status: ToolCallStatus| ToolCall {
+            id: id.to_string(),
+            session_id: "activity-test".to_string(),
+            subagent_id: None,
+            tool_name: tool_name.to_string(),
+            status,
+            title: None,
+            summary: None,
+            input_json: None,
+            output_text: None,
+            error_text: None,
+            started_at: None,
+            ended_at: None,
+            duration_ms: None,
+            parser_call_id: None,
+        };
+
+        parsed.tool_calls = vec![
+            make_tc("tc1", "Edit", ToolCallStatus::Completed),
+            make_tc("tc2", "Write", ToolCallStatus::Completed),
+            make_tc("tc3", "Edit", ToolCallStatus::Completed),
+            make_tc("tc4", "Bash", ToolCallStatus::Completed),
+            make_tc("tc5", "Bash", ToolCallStatus::Completed),
+            make_tc("tc6", "Read", ToolCallStatus::Completed),
+        ];
+
+        indexer
+            .insert_parsed_session_with_fingerprint(&parsed, fingerprint.path(), fingerprint.path())
+            .unwrap();
+
+        let (edit, read, cmd, ending): (i64, i64, i64, String) = indexer
+            .db
+            .query_row(
+                "SELECT edit_count, read_count, command_count, ending_status FROM sessions WHERE id = 'activity-test'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            )
+            .unwrap();
+
+        assert_eq!(edit, 3);
+        assert_eq!(read, 1);
+        assert_eq!(cmd, 2);
+        assert_eq!(ending, "clean");
+    }
+
+    #[test]
+    fn insert_parsed_session_sets_abrupt_when_last_tool_call_is_pending() {
+        use crate::models::{ToolCall, ToolCallStatus};
+
+        let temp_db = NamedTempFile::new().unwrap();
+        let mut indexer = SessionIndexer::new(temp_db.path()).unwrap();
+        let fingerprint = NamedTempFile::new().unwrap();
+
+        let mut parsed = parsed_session("abrupt-test", Some("/tmp/project"));
+        parsed.tool_calls = vec![ToolCall {
+            id: "tc1".to_string(),
+            session_id: "abrupt-test".to_string(),
+            subagent_id: None,
+            tool_name: "Bash".to_string(),
+            status: ToolCallStatus::Pending,
+            title: None,
+            summary: None,
+            input_json: None,
+            output_text: None,
+            error_text: None,
+            started_at: None,
+            ended_at: None,
+            duration_ms: None,
+            parser_call_id: None,
+        }];
+
+        indexer
+            .insert_parsed_session_with_fingerprint(&parsed, fingerprint.path(), fingerprint.path())
+            .unwrap();
+
+        let ending: String = indexer
+            .db
+            .query_row(
+                "SELECT ending_status FROM sessions WHERE id = 'abrupt-test'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+
+        assert_eq!(ending, "abrupt");
+    }
+
+    #[test]
+    fn insert_parsed_session_sets_unknown_when_no_tool_calls() {
+        let temp_db = NamedTempFile::new().unwrap();
+        let mut indexer = SessionIndexer::new(temp_db.path()).unwrap();
+        let fingerprint = NamedTempFile::new().unwrap();
+
+        let parsed = parsed_session("no-tools-test", Some("/tmp/project"));
+        // tool_calls is empty (from parsed_session helper)
+
+        indexer
+            .insert_parsed_session_with_fingerprint(&parsed, fingerprint.path(), fingerprint.path())
+            .unwrap();
+
+        let (edit, read, cmd, ending): (i64, i64, i64, String) = indexer
+            .db
+            .query_row(
+                "SELECT edit_count, read_count, command_count, ending_status FROM sessions WHERE id = 'no-tools-test'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            )
+            .unwrap();
+
+        assert_eq!(edit, 0);
+        assert_eq!(read, 0);
+        assert_eq!(cmd, 0);
+        assert_eq!(ending, "unknown");
     }
 }

@@ -290,12 +290,18 @@ impl ParseState {
                     }
                 };
 
-                let tool_name = payload
-                    .get("tool_name")
-                    .or_else(|| payload.get("command"))
-                    .and_then(|v| v.as_str())
-                    .unwrap_or(begin_type)
-                    .to_string();
+                let tool_name = if begin_type == "exec_command_begin" {
+                    // For exec_command_begin, `payload["command"]` is the shell command
+                    // text, not the tool name. Use the canonical name instead.
+                    "exec_command".to_string()
+                } else {
+                    payload
+                        .get("tool_name")
+                        .or_else(|| payload.get("command"))
+                        .and_then(|v| v.as_str())
+                        .unwrap_or(begin_type)
+                        .to_string()
+                };
                 let input_json = if begin_type == "exec_command_begin" {
                     Some(
                         serde_json::json!({
@@ -531,6 +537,10 @@ impl CodexParser {
                 parent_session_id: None,
                 is_subagent: false,
                 token_usage: None,
+                edit_count: 0,
+                read_count: 0,
+                command_count: 0,
+                ending_status: crate::models::SessionEndingStatus::Unknown,
             },
             messages: state.messages,
             tool_calls: state.tool_calls,

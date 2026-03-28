@@ -171,6 +171,20 @@
   opacity: 0.6;
 }
 
+/* Session ending status label colors */
+.ending-interrupted,
+.ending-failed {
+  font-size: small;
+}
+
+.ending-interrupted {
+  color: @warning_color;
+}
+
+.ending-failed {
+  color: @error_color;
+}
+
 /* Inspector pane code/text block sections */
 .inspector-code-block {
   font-family: monospace;

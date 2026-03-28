@@ -3,6 +3,40 @@ use serde::{Deserialize, Serialize};
 
 use crate::models::token_usage::TokenUsage;
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum SessionEndingStatus {
+    /// No tool calls present or status is truly unknown.
+    #[default]
+    Unknown,
+    /// Last tool call completed successfully.
+    Clean,
+    /// Last tool call is still pending or running.
+    Abrupt,
+    /// Last tool call ended with an error.
+    Error,
+}
+
+impl SessionEndingStatus {
+    pub fn from_storage(value: &str) -> Self {
+        match value {
+            "clean" => SessionEndingStatus::Clean,
+            "abrupt" => SessionEndingStatus::Abrupt,
+            "error" => SessionEndingStatus::Error,
+            _ => SessionEndingStatus::Unknown,
+        }
+    }
+
+    pub fn to_storage(&self) -> &'static str {
+        match self {
+            SessionEndingStatus::Clean => "clean",
+            SessionEndingStatus::Abrupt => "abrupt",
+            SessionEndingStatus::Error => "error",
+            SessionEndingStatus::Unknown => "unknown",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Session {
     pub id: String,
@@ -22,6 +56,14 @@ pub struct Session {
     pub is_subagent: bool,
     #[serde(default)]
     pub token_usage: Option<TokenUsage>,
+    #[serde(default)]
+    pub edit_count: usize,
+    #[serde(default)]
+    pub read_count: usize,
+    #[serde(default)]
+    pub command_count: usize,
+    #[serde(default)]
+    pub ending_status: SessionEndingStatus,
 }
 
 /// AI coding assistant whose sessions are tracked by this application.

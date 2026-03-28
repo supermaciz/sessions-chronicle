@@ -72,6 +72,7 @@ Task-by-task execution plan used to implement a validated design.
 - Stream JSONL data with `BufReader` and line iteration; do not load large session logs fully into memory.
 - Do not hardcode user/system paths; use platform APIs and existing path-resolution helpers.
 - Treat session files as untrusted input: handle malformed entries gracefully and continue indexing where possible.
+- `src/config.rs` is generated from `src/config.rs.in`; edit the `.in` file instead, and `src/config.rs` generally should not be committed unless the task explicitly requires updating the checked-in generated file.
 
 ## Testing Guidelines
 - Use fixtures from `tests/fixtures/` for repeatable manual runs; prefer `--sessions-dir tests/fixtures` for end-to-end checks.

@@ -54,6 +54,17 @@ impl FactoryComponent for SessionRow {
                     set_pixel_size: 16,
                 },
 
+                // Ending status icon — hidden for clean/unknown endings
+                add_suffix = &gtk::Image::from_icon_name(
+                    crate::ui::format::ending_icon_name(&self.session.ending_status).unwrap_or("")
+                ) {
+                    set_visible: crate::ui::format::ending_icon_name(&self.session.ending_status).is_some(),
+                    add_css_class: crate::ui::format::ending_css_class(&self.session.ending_status),
+                    set_valign: gtk::Align::Center,
+                    set_pixel_size: 16,
+                    set_tooltip_text: crate::ui::format::ending_tooltip(&self.session.ending_status),
+                },
+
                 add_suffix = &gtk::Image::from_icon_name("go-next-symbolic") {
                     add_css_class: "dim-label",
                 },
@@ -162,11 +173,23 @@ impl SessionRow {
                 .unwrap_or_else(|| session.file_path.clone())
         };
 
-        let relative_time = Self::format_relative_time(session.last_updated);
-        let raw = format!(
-            "{} · {} messages · {}",
-            location, session.message_count, relative_time
+        let duration_secs = session
+            .last_updated
+            .signed_duration_since(session.start_time)
+            .num_seconds()
+            .max(0);
+        let duration = crate::ui::format::format_session_duration(duration_secs);
+
+        let activity = crate::ui::format::format_dominant_activity(
+            session.edit_count,
+            session.command_count,
+            session.read_count,
+            session.message_count,
         );
+
+        let relative_time = Self::format_relative_time(session.last_updated);
+        let raw =
+            format!("{location} \u{00b7} {duration} \u{00b7} {activity} \u{00b7} {relative_time}");
 
         // Escape for Pango markup (ActionRow subtitle also uses markup).
         glib::markup_escape_text(&raw).to_string()
@@ -213,7 +236,23 @@ mod tests {
             parent_session_id: None,
             is_subagent: false,
             token_usage: None,
+            edit_count: 0,
+            read_count: 0,
+            command_count: 0,
+            ending_status: crate::models::SessionEndingStatus::Unknown,
         }
+    }
+
+    #[test]
+    fn session_activity_fields_default_to_zero_and_unknown() {
+        let session = build_session(Some("/home/user/project"), Some("Fix bug"), 10);
+        assert_eq!(session.edit_count, 0);
+        assert_eq!(session.read_count, 0);
+        assert_eq!(session.command_count, 0);
+        assert_eq!(
+            session.ending_status,
+            crate::models::SessionEndingStatus::Unknown
+        );
     }
 
     #[test]
@@ -246,20 +285,49 @@ mod tests {
     fn session_subtitle_shows_full_path_when_no_prompt() {
         let session = build_session(Some("/home/user/work/my-project"), None, 5);
 
-        assert_eq!(
-            SessionRow::session_subtitle(&session),
-            "/home/user/work/my-project · 7 messages · 5m ago"
-        );
+        let subtitle = SessionRow::session_subtitle(&session);
+        assert!(subtitle.starts_with("/home/user/work/my-project"));
+        assert!(subtitle.contains("5m ago"));
     }
 
     #[test]
     fn session_subtitle_shows_project_name_when_prompt_present() {
         let session = build_session(Some("/home/user/work/my-project"), Some("Fix the build"), 5);
 
-        assert_eq!(
-            SessionRow::session_subtitle(&session),
-            "my-project · 7 messages · 5m ago"
-        );
+        let subtitle = SessionRow::session_subtitle(&session);
+        assert!(subtitle.starts_with("my-project"));
+        assert!(subtitle.contains("5m ago"));
+    }
+
+    #[test]
+    fn session_subtitle_shows_duration_and_dominant_activity() {
+        let mut session = build_session(Some("/home/user/work/my-project"), Some("Fix bug"), 5);
+        session.edit_count = 8;
+        session.command_count = 3;
+        session.read_count = 12;
+
+        let subtitle = SessionRow::session_subtitle(&session);
+        assert!(subtitle.contains("my-project"));
+        assert!(subtitle.contains("8 edits"));
+        assert!(subtitle.contains("5m ago"));
+    }
+
+    #[test]
+    fn session_subtitle_uses_command_when_no_edits() {
+        let mut session = build_session(Some("/home/user/work/my-project"), Some("Run tests"), 5);
+        session.command_count = 3;
+
+        let subtitle = SessionRow::session_subtitle(&session);
+        assert!(subtitle.contains("3 commands"));
+    }
+
+    #[test]
+    fn session_subtitle_falls_back_to_messages() {
+        let session = build_session(Some("/home/user/work/my-project"), Some("Chat"), 5);
+        // All counts are 0, message_count is 7 (from build_session)
+
+        let subtitle = SessionRow::session_subtitle(&session);
+        assert!(subtitle.contains("7 messages"));
     }
 
     #[test]

@@ -1,6 +1,14 @@
 use anyhow::Result;
 use rusqlite::Connection;
 
+fn column_exists(conn: &Connection, table_name: &str, column_name: &str) -> Result<bool> {
+    Ok(conn.query_row(
+        "SELECT COUNT(*) FROM pragma_table_info(?1) WHERE name = ?2",
+        [table_name, column_name],
+        |row| row.get::<_, i64>(0),
+    )? > 0)
+}
+
 /// Initialize (or migrate) the database to the current schema version.
 ///
 /// Versioning uses `PRAGMA user_version`:
@@ -15,6 +23,8 @@ use rusqlite::Connection;
 ///       (strip_command_tags in normalize_prompt)
 ///   6 – add projects table + sessions.project_id and clear file_fingerprints
 ///       to backfill canonical project IDs during re-index
+///   7 – sessions gains activity counts (edit_count, read_count, command_count)
+///       and ending_status; clear file_fingerprints to backfill during re-index
 pub fn initialize_database(conn: &Connection) -> Result<()> {
     let version: i64 = conn.query_row("PRAGMA user_version", [], |row| row.get(0))?;
 
@@ -36,6 +46,9 @@ pub fn initialize_database(conn: &Connection) -> Result<()> {
     if version < 6 {
         apply_v6_migration(conn)?;
     }
+    if version < 7 {
+        apply_v7_migration(conn)?;
+    }
 
     Ok(())
 }
@@ -45,8 +58,8 @@ pub fn initialize_database(conn: &Connection) -> Result<()> {
 /// Handles two cases:
 /// - Fresh database (no `sessions` table yet): creates all tables outright.
 /// - Pre-v1 database (existing `sessions` table missing the two new columns):
-///   uses ALTER TABLE to add them; ignores "duplicate column" errors so the
-///   function is safe to call even if a partial migration was interrupted.
+///   uses ALTER TABLE to add only missing columns, so the function is safe to
+///   call even if a partial migration was interrupted.
 fn apply_v1_migration(conn: &Connection) -> Result<()> {
     let sessions_exists: bool = conn
         .query_row(
@@ -58,13 +71,18 @@ fn apply_v1_migration(conn: &Connection) -> Result<()> {
         > 0;
 
     if sessions_exists {
-        // Pre-v1 DB: add new columns to the existing sessions table.
-        // "duplicate column name" is silently ignored so the migration is idempotent.
-        let _ = conn.execute("ALTER TABLE sessions ADD COLUMN parent_session_id TEXT", []);
-        let _ = conn.execute(
-            "ALTER TABLE sessions ADD COLUMN is_subagent INTEGER NOT NULL DEFAULT 0",
-            [],
-        );
+        // Pre-v1 DB: add only the missing columns to the existing sessions table.
+        for (column_name, column_def) in &[
+            ("parent_session_id", "TEXT"),
+            ("is_subagent", "INTEGER NOT NULL DEFAULT 0"),
+        ] {
+            if !column_exists(conn, "sessions", column_name)? {
+                conn.execute(
+                    &format!("ALTER TABLE sessions ADD COLUMN {column_name} {column_def}"),
+                    [],
+                )?;
+            }
+        }
     } else {
         // Fresh DB: create the sessions table with the full v1 schema.
         conn.execute(
@@ -214,22 +232,21 @@ fn apply_v2_migration(conn: &Connection) -> Result<()> {
 
 /// Migrate from v2 to v3: add token usage columns to the sessions table.
 ///
-/// Uses individual ALTER TABLE statements; "duplicate column name" errors are
-/// ignored so the migration is idempotent (safe after partial runs).
-/// Any other error is propagated immediately.
+/// Uses individual ALTER TABLE statements for columns that are not already
+/// present, so the migration stays idempotent after partial runs.
 fn apply_v3_migration(conn: &Connection) -> Result<()> {
-    let columns = [
-        "ALTER TABLE sessions ADD COLUMN input_tokens INTEGER",
-        "ALTER TABLE sessions ADD COLUMN output_tokens INTEGER",
-        "ALTER TABLE sessions ADD COLUMN cache_read_tokens INTEGER",
-        "ALTER TABLE sessions ADD COLUMN cache_write_tokens INTEGER",
-        "ALTER TABLE sessions ADD COLUMN reasoning_tokens INTEGER",
-    ];
-    for sql in columns {
-        match conn.execute(sql, []) {
-            Ok(_) => {}
-            Err(e) if e.to_string().contains("duplicate column name") => {}
-            Err(e) => return Err(e.into()),
+    for (column_name, column_def) in &[
+        ("input_tokens", "INTEGER"),
+        ("output_tokens", "INTEGER"),
+        ("cache_read_tokens", "INTEGER"),
+        ("cache_write_tokens", "INTEGER"),
+        ("reasoning_tokens", "INTEGER"),
+    ] {
+        if !column_exists(conn, "sessions", column_name)? {
+            conn.execute(
+                &format!("ALTER TABLE sessions ADD COLUMN {column_name} {column_def}"),
+                [],
+            )?;
         }
     }
     conn.execute_batch("PRAGMA user_version = 3")?;
@@ -283,13 +300,11 @@ fn apply_v6_migration(conn: &Connection) -> Result<()> {
         [],
     )?;
 
-    match conn.execute(
-        "ALTER TABLE sessions ADD COLUMN project_id INTEGER REFERENCES projects(id)",
-        [],
-    ) {
-        Ok(_) => {}
-        Err(err) if err.to_string().contains("duplicate column name") => {}
-        Err(err) => return Err(err.into()),
+    if !column_exists(conn, "sessions", "project_id")? {
+        conn.execute(
+            "ALTER TABLE sessions ADD COLUMN project_id INTEGER REFERENCES projects(id)",
+            [],
+        )?;
     }
 
     conn.execute(
@@ -302,19 +317,44 @@ fn apply_v6_migration(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
+/// Migrate from v6 to v7.
+///
+/// Adds denormalized activity counts and ending status to sessions.
+/// Clears `file_fingerprints` to force re-index so existing sessions are
+/// backfilled with activity data.
+fn apply_v7_migration(conn: &Connection) -> Result<()> {
+    for (col_name, col_def) in &[
+        ("edit_count", "INTEGER DEFAULT 0"),
+        ("read_count", "INTEGER DEFAULT 0"),
+        ("command_count", "INTEGER DEFAULT 0"),
+        ("ending_status", "TEXT DEFAULT 'unknown'"),
+    ] {
+        if !column_exists(conn, "sessions", col_name)? {
+            conn.execute(
+                &format!("ALTER TABLE sessions ADD COLUMN {col_name} {col_def}"),
+                [],
+            )?;
+        }
+    }
+
+    conn.execute("DELETE FROM file_fingerprints", [])?;
+    conn.execute_batch("PRAGMA user_version = 7")?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use rusqlite::Connection;
 
     #[test]
-    fn fresh_db_initializes_to_v6() {
+    fn fresh_db_initializes_to_v7() {
         let conn = Connection::open_in_memory().unwrap();
         initialize_database(&conn).unwrap();
         let version: i64 = conn
             .query_row("PRAGMA user_version", [], |r| r.get(0))
             .unwrap();
-        assert_eq!(version, 6);
+        assert_eq!(version, 7);
 
         let table_exists: i64 = conn
             .query_row(
@@ -406,7 +446,7 @@ mod tests {
         let version: i64 = conn
             .query_row("PRAGMA user_version", [], |r| r.get(0))
             .unwrap();
-        assert_eq!(version, 6);
+        assert_eq!(version, 7);
 
         // Old messages are gone (by design — will be re-indexed)
         let count: i64 = conn
@@ -465,7 +505,7 @@ mod tests {
         let version: i64 = conn
             .query_row("PRAGMA user_version", [], |r| r.get(0))
             .unwrap();
-        assert_eq!(version, 6);
+        assert_eq!(version, 7);
 
         conn.execute(
             "UPDATE sessions SET input_tokens = 1000, output_tokens = 500 WHERE id = 's1'",
@@ -491,7 +531,7 @@ mod tests {
         let version: i64 = conn
             .query_row("PRAGMA user_version", [], |r| r.get(0))
             .unwrap();
-        assert_eq!(version, 6);
+        assert_eq!(version, 7);
     }
 
     #[test]
@@ -527,7 +567,7 @@ mod tests {
         let version: i64 = conn
             .query_row("PRAGMA user_version", [], |r| r.get(0))
             .unwrap();
-        assert_eq!(version, 6);
+        assert_eq!(version, 7);
 
         let table_exists: i64 = conn
             .query_row(
@@ -561,7 +601,7 @@ mod tests {
         let version: i64 = conn
             .query_row("PRAGMA user_version", [], |r| r.get(0))
             .unwrap();
-        assert_eq!(version, 6);
+        assert_eq!(version, 7);
         let count: i64 = conn
             .query_row("SELECT count(*) FROM file_fingerprints", [], |r| r.get(0))
             .unwrap();
@@ -675,7 +715,7 @@ mod tests {
         let version: i64 = conn
             .query_row("PRAGMA user_version", [], |r| r.get(0))
             .unwrap();
-        assert_eq!(version, 6);
+        assert_eq!(version, 7);
 
         let projects_exists: i64 = conn
             .query_row(
@@ -709,13 +749,13 @@ mod tests {
             .unwrap();
         assert_eq!(fingerprint_count, 0);
 
-        // Re-running initialize_database should keep schema stable at v6.
+        // Re-running initialize_database should keep schema stable at v7.
         initialize_database(&conn).unwrap();
 
         let version_after_second_run: i64 = conn
             .query_row("PRAGMA user_version", [], |r| r.get(0))
             .unwrap();
-        assert_eq!(version_after_second_run, 6);
+        assert_eq!(version_after_second_run, 7);
 
         let projects_exists_after_second_run: i64 = conn
             .query_row(
@@ -760,5 +800,32 @@ mod tests {
             )
             .unwrap();
         assert!(model.is_none());
+    }
+
+    #[test]
+    fn v7_migration_adds_activity_and_ending_columns() {
+        let conn = Connection::open_in_memory().unwrap();
+        initialize_database(&conn).unwrap();
+
+        conn.execute(
+            "INSERT INTO sessions (id, tool, start_time, message_count, file_path, last_updated,
+             is_subagent, edit_count, read_count, command_count, ending_status)
+             VALUES ('test', 'claude_code', 0, 0, '/tmp/f', 0, 0, 5, 3, 2, 'clean')",
+            [],
+        )
+        .unwrap();
+
+        let (edit, read, cmd, ending): (i64, i64, i64, String) = conn
+            .query_row(
+                "SELECT edit_count, read_count, command_count, ending_status FROM sessions WHERE id = 'test'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            )
+            .unwrap();
+
+        assert_eq!(edit, 5);
+        assert_eq!(read, 3);
+        assert_eq!(cmd, 2);
+        assert_eq!(ending, "clean");
     }
 }

@@ -341,6 +341,10 @@ impl OpenCodeParser {
             parent_session_id,
             is_subagent,
             token_usage: None,
+            edit_count: 0,
+            read_count: 0,
+            command_count: 0,
+            ending_status: crate::models::SessionEndingStatus::Unknown,
         };
 
         Ok(ParsedSession {

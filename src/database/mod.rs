@@ -99,6 +99,13 @@ fn session_from_row(row: &Row) -> rusqlite::Result<Session> {
         parent_session_id: row.get("parent_session_id")?,
         is_subagent: is_subagent_int != 0,
         token_usage,
+        edit_count: row.get::<_, i64>("edit_count").unwrap_or(0).max(0) as usize,
+        read_count: row.get::<_, i64>("read_count").unwrap_or(0).max(0) as usize,
+        command_count: row.get::<_, i64>("command_count").unwrap_or(0).max(0) as usize,
+        ending_status: crate::models::SessionEndingStatus::from_storage(
+            &row.get::<_, String>("ending_status")
+                .unwrap_or_else(|_| "unknown".to_string()),
+        ),
     })
 }
 
@@ -200,6 +207,7 @@ fn search_sessions_with_query(
                         s.last_updated, s.first_prompt, s.parent_session_id, s.is_subagent,
                         s.input_tokens, s.output_tokens, s.cache_read_tokens,
                         s.cache_write_tokens, s.reasoning_tokens,
+                        s.edit_count, s.read_count, s.command_count, s.ending_status,
                         bm25(messages) AS rank
                  FROM messages
                  JOIN sessions s ON s.id = messages.session_id
@@ -220,6 +228,7 @@ fn search_sessions_with_query(
                          s.last_updated, s.first_prompt, s.parent_session_id, s.is_subagent,
                          s.input_tokens, s.output_tokens, s.cache_read_tokens,
                          s.cache_write_tokens, s.reasoning_tokens,
+                         s.edit_count, s.read_count, s.command_count, s.ending_status,
                          bm25(messages) AS rank
                   FROM messages
                   JOIN sessions s ON s.id = messages.session_id
@@ -297,7 +306,8 @@ pub fn load_sessions_for_filter(
                 "SELECT id, tool, project_path, project_id, start_time, message_count, file_path,
                         last_updated, first_prompt, parent_session_id, is_subagent,
                         input_tokens, output_tokens, cache_read_tokens,
-                        cache_write_tokens, reasoning_tokens
+                        cache_write_tokens, reasoning_tokens,
+                        edit_count, read_count, command_count, ending_status
                  FROM sessions
                  WHERE is_subagent = 0
                    {}
@@ -314,7 +324,8 @@ pub fn load_sessions_for_filter(
                 "SELECT id, tool, project_path, project_id, start_time, message_count, file_path,
                          last_updated, first_prompt, parent_session_id, is_subagent,
                          input_tokens, output_tokens, cache_read_tokens,
-                         cache_write_tokens, reasoning_tokens
+                         cache_write_tokens, reasoning_tokens,
+                         edit_count, read_count, command_count, ending_status
                   FROM sessions
                   WHERE tool IN ({})
                     AND is_subagent = 0
@@ -528,7 +539,8 @@ pub fn load_session(db_path: &Path, session_id: &str) -> Result<Option<Session>>
         "SELECT id, tool, project_path, project_id, start_time, message_count, file_path,
                 last_updated, first_prompt, parent_session_id, is_subagent,
                 input_tokens, output_tokens, cache_read_tokens,
-                cache_write_tokens, reasoning_tokens
+                cache_write_tokens, reasoning_tokens,
+                edit_count, read_count, command_count, ending_status
          FROM sessions
          WHERE id = ?1",
     )?;

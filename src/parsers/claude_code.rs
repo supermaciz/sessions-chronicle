@@ -578,6 +578,10 @@ impl ParseState {
             parent_session_id: None,
             is_subagent: false,
             token_usage: None,
+            edit_count: 0,
+            read_count: 0,
+            command_count: 0,
+            ending_status: crate::models::SessionEndingStatus::Unknown,
         };
 
         Ok(ParsedSession {

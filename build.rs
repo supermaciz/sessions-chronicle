@@ -4,6 +4,6 @@ fn main() {
         Some("io.github.supermaciz.sessionschronicle"),
         None::<&str>,
         None::<&str>,
-        ["graph"],
+        ["graph", "prohibited-regular", "error-circle-regular"],
     );
 }
