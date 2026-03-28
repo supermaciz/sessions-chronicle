@@ -1,0 +1,255 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="720" height="1280" viewBox="0 0 720 1280">
+  <defs>
+    <style>
+      text { font-family: Cantarell, system-ui, sans-serif; }
+      .mono { font-family: "Source Code Pro", monospace; }
+    </style>
+    <clipPath id="round12">
+      <rect width="688" height="600" rx="12" ry="12"/>
+    </clipPath>
+  </defs>
+
+  <!-- Window background -->
+  <rect width="720" height="1280" fill="#1e1e1e" rx="12"/>
+
+  <!-- Header bar -->
+  <rect x="0" y="0" width="720" height="47" fill="#2d2d2d" rx="12" ry="12"/>
+  <rect x="0" y="24" width="720" height="23" fill="#2d2d2d"/>
+  <!-- Back button -->
+  <text x="20" y="30" fill="#b0b0b0" font-size="13" font-weight="600">&lt; Sessions</text>
+  <!-- Title -->
+  <text x="360" y="30" fill="#ffffff" font-size="14" font-weight="600" text-anchor="middle">Session Detail</text>
+  <!-- Resume button -->
+  <rect x="614" y="10" width="90" height="28" rx="6" fill="#3584e4" opacity="0.9"/>
+  <text x="659" y="29" fill="#ffffff" font-size="12" font-weight="600" text-anchor="middle">Resume</text>
+
+  <!-- Scrollable content area starts -->
+  <!-- === SESSION IDENTITY HEADER === -->
+  <!-- No card wrapper, flush content, not a card -->
+  <g transform="translate(16, 63)">
+    <!-- Project name - big, bold, the anchor -->
+    <text x="0" y="24" fill="#ffffff" font-size="22" font-weight="700">sessions-chronicle</text>
+
+    <!-- Path - dim, selectable feel -->
+    <text x="0" y="46" fill="#888888" font-size="12" class="mono">/home/mcizo/Projets/sessions-chronicle</text>
+
+    <!-- Inline metadata chips row -->
+    <g transform="translate(0, 62)">
+      <!-- AI assistant chip -->
+      <rect x="0" y="0" width="106" height="26" rx="13" fill="#3584e4" opacity="0.15"/>
+      <circle cx="16" cy="13" r="6" fill="#3584e4"/>
+      <text x="28" y="17" fill="#8ab4f8" font-size="12" font-weight="500">Claude Code</text>
+
+      <!-- Duration chip -->
+      <rect x="114" y="0" width="76" height="26" rx="13" fill="#444444"/>
+      <text x="127" y="17" fill="#cccccc" font-size="12">47 min</text>
+
+      <!-- Message count chip -->
+      <rect x="198" y="0" width="64" height="26" rx="13" fill="#444444"/>
+      <text x="211" y="17" fill="#cccccc" font-size="12">38 msgs</text>
+
+      <!-- Ending status chip - Clean -->
+      <rect x="270" y="0" width="62" height="26" rx="13" fill="#26a269" opacity="0.15"/>
+      <text x="283" y="17" fill="#57d68d" font-size="12" font-weight="500">Clean</text>
+    </g>
+  </g>
+
+  <!-- Thin separator -->
+  <rect x="16" y="148" width="688" height="1" fill="#3d3d3d"/>
+
+  <!-- === FIRST PROMPT === -->
+  <g transform="translate(16, 160)">
+    <text x="0" y="14" fill="#888888" font-size="11" font-weight="700" letter-spacing="0.5">FIRST PROMPT</text>
+    <text x="0" y="36" fill="#dddddd" font-size="14" font-weight="400">Add a structured summary section at the top of session detail view, built from</text>
+    <text x="0" y="54" fill="#dddddd" font-size="14" font-weight="400">existing indexed data. No LLM, entirely deterministic.</text>
+  </g>
+
+  <!-- Thin separator -->
+  <rect x="16" y="228" width="688" height="1" fill="#3d3d3d"/>
+
+  <!-- === ACTIVITY BREAKDOWN (AdwPreferencesGroup style) === -->
+  <g transform="translate(16, 242)">
+    <text x="0" y="14" fill="#888888" font-size="11" font-weight="700" letter-spacing="0.5">ACTIVITY</text>
+
+    <!-- Activity bar - stacked horizontal bar showing proportion -->
+    <g transform="translate(0, 26)">
+      <!-- Total bar background -->
+      <rect x="0" y="0" width="688" height="8" rx="4" fill="#3d3d3d"/>
+      <!-- Edits segment (orange) - 12 out of 47 total -->
+      <rect x="0" y="0" width="176" height="8" rx="4" fill="#e66100"/>
+      <!-- Commands segment (blue) -->
+      <rect x="176" y="0" width="220" height="8" fill="#3584e4"/>
+      <!-- Reads segment (green) -->
+      <rect x="396" y="0" width="180" height="8" fill="#26a269"/>
+      <!-- Other segment (gray) -->
+      <rect x="576" y="0" width="112" height="8" rx="0" fill="#888888"/>
+      <!-- Round right end -->
+      <rect x="672" y="0" width="16" height="8" rx="4" fill="#888888"/>
+    </g>
+
+    <!-- Legend row -->
+    <g transform="translate(0, 48)">
+      <!-- Edits -->
+      <circle cx="6" cy="6" r="5" fill="#e66100"/>
+      <text x="16" y="10" fill="#cccccc" font-size="12">12 edits</text>
+
+      <!-- Commands -->
+      <circle cx="96" cy="6" r="5" fill="#3584e4"/>
+      <text x="106" y="10" fill="#cccccc" font-size="12">18 commands</text>
+
+      <!-- Reads -->
+      <circle cx="210" cy="6" r="5" fill="#26a269"/>
+      <text x="220" y="10" fill="#cccccc" font-size="12">14 reads</text>
+
+      <!-- Other -->
+      <circle cx="304" cy="6" r="5" fill="#888888"/>
+      <text x="314" y="10" fill="#cccccc" font-size="12">3 other</text>
+    </g>
+  </g>
+
+  <!-- Thin separator -->
+  <rect x="16" y="312" width="688" height="1" fill="#3d3d3d"/>
+
+  <!-- === TOKEN USAGE === -->
+  <g transform="translate(16, 326)">
+    <text x="0" y="14" fill="#888888" font-size="11" font-weight="700" letter-spacing="0.5">TOKENS</text>
+
+    <!-- Two-column layout for tokens -->
+    <g transform="translate(0, 28)">
+      <!-- Input -->
+      <text x="0" y="14" fill="#aaaaaa" font-size="12">Input</text>
+      <text x="0" y="34" fill="#ffffff" font-size="18" font-weight="700" class="mono">124,832</text>
+
+      <!-- Output -->
+      <text x="172" y="14" fill="#aaaaaa" font-size="12">Output</text>
+      <text x="172" y="34" fill="#ffffff" font-size="18" font-weight="700" class="mono">18,456</text>
+
+      <!-- Cache read -->
+      <text x="344" y="14" fill="#aaaaaa" font-size="12">Cache read</text>
+      <text x="344" y="34" fill="#ffffff" font-size="18" font-weight="700" class="mono">89,120</text>
+
+      <!-- Reasoning -->
+      <text x="516" y="14" fill="#aaaaaa" font-size="12">Reasoning</text>
+      <text x="516" y="34" fill="#ffffff" font-size="18" font-weight="700" class="mono">3,200</text>
+    </g>
+  </g>
+
+  <!-- Thin separator -->
+  <rect x="16" y="404" width="688" height="1" fill="#3d3d3d"/>
+
+  <!-- === KEY TOOL CALLS (top errors/notable) === -->
+  <g transform="translate(16, 418)">
+    <text x="0" y="14" fill="#888888" font-size="11" font-weight="700" letter-spacing="0.5">NOTABLE TOOL CALLS</text>
+
+    <!-- Error tool call row -->
+    <g transform="translate(0, 28)">
+      <rect x="0" y="0" width="688" height="40" rx="8" fill="#e01b24" opacity="0.08"/>
+      <rect x="0" y="0" width="3" height="40" rx="1.5" fill="#e01b24"/>
+      <text x="14" y="16" fill="#e01b24" font-size="11" font-weight="600">ERROR</text>
+      <text x="14" y="32" fill="#dddddd" font-size="13" class="mono">Bash</text>
+      <text x="70" y="32" fill="#888888" font-size="12">cargo clippy -- exited with code 1</text>
+      <text x="650" y="25" fill="#666666" font-size="11" text-anchor="end">2.4s</text>
+    </g>
+
+    <!-- Long-running tool call row -->
+    <g transform="translate(0, 76)">
+      <rect x="0" y="0" width="688" height="40" rx="8" fill="#3d3d3d" opacity="0.4"/>
+      <rect x="0" y="0" width="3" height="40" rx="1.5" fill="#e66100"/>
+      <text x="14" y="16" fill="#e66100" font-size="11" font-weight="600">SLOW</text>
+      <text x="14" y="32" fill="#dddddd" font-size="13" class="mono">Bash</text>
+      <text x="70" y="32" fill="#888888" font-size="12">flatpak-builder --user flatpak_app ...</text>
+      <text x="650" y="25" fill="#666666" font-size="11" text-anchor="end">38.1s</text>
+    </g>
+
+    <!-- Subagent row -->
+    <g transform="translate(0, 124)">
+      <rect x="0" y="0" width="688" height="40" rx="8" fill="#3d3d3d" opacity="0.4"/>
+      <rect x="0" y="0" width="3" height="40" rx="1.5" fill="#9141ac"/>
+      <text x="14" y="16" fill="#9141ac" font-size="11" font-weight="600">SUBAGENT</text>
+      <text x="14" y="32" fill="#dddddd" font-size="13">Review code changes for style.css</text>
+      <text x="650" y="25" fill="#666666" font-size="11" text-anchor="end">12.0s</text>
+    </g>
+  </g>
+
+  <!-- Thin separator -->
+  <rect x="16" y="592" width="688" height="1" fill="#3d3d3d"/>
+
+  <!-- === STOPPING POINT === -->
+  <g transform="translate(16, 606)">
+    <text x="0" y="14" fill="#888888" font-size="11" font-weight="700" letter-spacing="0.5">STOPPING POINT</text>
+    <g transform="translate(0, 26)">
+      <rect x="0" y="0" width="688" height="44" rx="8" fill="#26a269" opacity="0.08"/>
+      <rect x="0" y="0" width="3" height="44" rx="1.5" fill="#26a269"/>
+      <text x="14" y="18" fill="#57d68d" font-size="12" font-weight="600">Last assistant message</text>
+      <text x="14" y="36" fill="#aaaaaa" font-size="12">I have updated the SVG mockup and written the complete proposal. The changes are ready for review.</text>
+    </g>
+  </g>
+
+  <!-- Heavier separator before transcript -->
+  <rect x="0" y="690" width="720" height="2" fill="#3d3d3d"/>
+
+  <!-- === TRANSCRIPT HEADER === -->
+  <g transform="translate(16, 706)">
+    <text x="0" y="16" fill="#888888" font-size="11" font-weight="700" letter-spacing="0.5">TRANSCRIPT</text>
+    <text x="688" y="16" fill="#666666" font-size="11" text-anchor="end">38 items</text>
+  </g>
+
+  <!-- Transcript row 1 - user message -->
+  <g transform="translate(16, 732)">
+    <rect x="0" y="0" width="688" height="72" rx="8" fill="rgba(255,255,255,0.03)"/>
+    <rect x="0" y="0" width="3" height="72" rx="1.5" fill="#3584e4"/>
+    <text x="14" y="18" fill="#3584e4" font-size="12" font-weight="600">User</text>
+    <text x="660" y="18" fill="#555555" font-size="11" text-anchor="end">14:32</text>
+    <text x="14" y="40" fill="#cccccc" font-size="13">Add a structured summary section at the top of session detail view,</text>
+    <text x="14" y="58" fill="#cccccc" font-size="13">built from existing indexed data. No LLM, entirely deterministic.</text>
+  </g>
+
+  <!-- Transcript row 2 - assistant message -->
+  <g transform="translate(16, 812)">
+    <rect x="0" y="0" width="688" height="56" rx="8" fill="rgba(255,255,255,0.03)"/>
+    <rect x="0" y="0" width="3" height="56" rx="1.5" fill="#26a269"/>
+    <text x="14" y="18" fill="#26a269" font-size="12" font-weight="600">Assistant</text>
+    <text x="660" y="18" fill="#555555" font-size="11" text-anchor="end">14:32</text>
+    <text x="14" y="40" fill="#cccccc" font-size="13">I will read the current implementation first to understand the existing</text>
+  </g>
+
+  <!-- Transcript row 3 - tool call -->
+  <g transform="translate(16, 876)">
+    <rect x="0" y="0" width="688" height="36" rx="6" fill="rgba(255,255,255,0.02)"/>
+    <rect x="0" y="0" width="2" height="36" rx="1" fill="#e66100"/>
+    <text x="14" y="14" fill="#e66100" font-size="11" font-weight="600">Read</text>
+    <text x="56" y="14" fill="#888888" font-size="12">src/ui/session_detail.rs</text>
+    <text x="14" y="30" fill="#57d68d" font-size="11">completed</text>
+    <text x="660" y="22" fill="#555555" font-size="11" text-anchor="end">0.1s</text>
+  </g>
+
+  <!-- Transcript row 4 - tool call -->
+  <g transform="translate(16, 920)">
+    <rect x="0" y="0" width="688" height="36" rx="6" fill="rgba(255,255,255,0.02)"/>
+    <rect x="0" y="0" width="2" height="36" rx="1" fill="#e66100"/>
+    <text x="14" y="14" fill="#e66100" font-size="11" font-weight="600">Read</text>
+    <text x="56" y="14" fill="#888888" font-size="12">data/resources/style.css</text>
+    <text x="14" y="30" fill="#57d68d" font-size="11">completed</text>
+    <text x="660" y="22" fill="#555555" font-size="11" text-anchor="end">0.1s</text>
+  </g>
+
+  <!-- More items indicator -->
+  <g transform="translate(16, 968)">
+    <text x="344" y="14" fill="#666666" font-size="12" text-anchor="middle">... 34 more items</text>
+  </g>
+
+  <!-- Load more button -->
+  <g transform="translate(260, 996)">
+    <rect x="0" y="0" width="200" height="36" rx="8" fill="#3d3d3d"/>
+    <text x="100" y="23" fill="#cccccc" font-size="13" font-weight="500" text-anchor="middle">Load more</text>
+  </g>
+
+  <!-- Session ID footer -->
+  <g transform="translate(16, 1052)">
+    <text x="0" y="14" fill="#555555" font-size="11" class="mono">Session 01jghk4m9n...</text>
+  </g>
+
+  <!-- Annotation labels (design notes on the side) -->
+  <!-- These are faint callout labels to explain the structure -->
+
+</svg>

@@ -1,0 +1,251 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 1200" style="font-family: Cantarell, system-ui, sans-serif;">
+  <defs>
+    <clipPath id="window-clip">
+      <rect width="800" height="1200" rx="12"/>
+    </clipPath>
+  </defs>
+
+  <!-- Window background (dark theme) -->
+  <rect width="800" height="1200" fill="#1e1e1e" rx="12"/>
+
+  <!-- ================================================================ -->
+  <!-- HEADER BAR                                                       -->
+  <!-- ================================================================ -->
+  <rect width="800" height="46" fill="#2d2d2d" rx="12" clip-path="url(#window-clip)"/>
+  <rect y="12" width="800" height="34" fill="#2d2d2d"/>
+
+  <!-- Back arrow -->
+  <text x="16" y="30" font-size="16" fill="#78aeed">&#x2190;</text>
+
+  <!-- Title in header -->
+  <text x="44" y="30" font-size="13.5" font-weight="600" fill="#eeeeee">sessions-chronicle</text>
+
+  <!-- Resume button -->
+  <rect x="580" y="10" width="120" height="26" fill="#3584e4" rx="6"/>
+  <text x="601" y="28" font-size="11.5" font-weight="500" fill="#ffffff">Resume Session</text>
+
+  <!-- Menu button -->
+  <circle cx="730" cy="23" r="14" fill="#3a3a3a"/>
+  <text x="726" y="28" font-size="14" fill="#cccccc">&#x22ee;</text>
+
+  <!-- Search button -->
+  <circle cx="764" cy="23" r="14" fill="#3a3a3a"/>
+  <text x="758" y="28" font-size="13" fill="#cccccc">&#x1F50D;</text>
+
+  <!-- ================================================================ -->
+  <!-- SCROLLABLE CONTENT AREA                                          -->
+  <!-- ================================================================ -->
+
+  <!-- Scroll indicator track -->
+  <rect x="790" y="56" width="4" height="1140" fill="#2a2a2a" rx="2"/>
+  <rect x="790" y="56" width="4" height="180" fill="#555555" rx="2"/>
+
+  <!-- ================================================================ -->
+  <!-- METADATA CARD (existing, enhanced)                               -->
+  <!-- ================================================================ -->
+  <rect x="16" y="58" width="764" height="156" fill="#2d2d2d" rx="12"/>
+
+  <!-- Project name -->
+  <text x="32" y="84" font-size="16" font-weight="700" fill="#eeeeee">sessions-chronicle</text>
+
+  <!-- Project path -->
+  <text x="32" y="102" font-size="11.5" fill="#888888">~/Projets/sessions-chronicle</text>
+
+  <!-- Separator -->
+  <line x1="32" y1="114" x2="764" y2="114" stroke="#3a3a3a" stroke-width="1"/>
+
+  <!-- AI assistant icon + name | message count | time -->
+  <rect x="32" y="122" width="14" height="14" fill="#3584e4" rx="3"/>
+  <text x="52" y="134" font-size="12" fill="#999999">Claude Code</text>
+
+  <text x="158" y="134" font-size="12" fill="#999999">47 messages</text>
+
+  <text x="278" y="134" font-size="12" fill="#999999">Started 3h ago  &#x00b7;  Updated 1h ago</text>
+
+  <!-- Token usage row -->
+  <text x="32" y="154" font-size="11.5" fill="#777777">Tokens:</text>
+  <text x="82" y="154" font-size="11.5" fill="#999999">84 230 input &#x00b7; 12 456 output &#x00b7; 3 200 reasoning</text>
+
+  <!-- Cache row -->
+  <text x="32" y="170" font-size="11.5" fill="#777777">Cache:</text>
+  <text x="76" y="170" font-size="11.5" fill="#999999">71 400 read &#x00b7; 8 120 write</text>
+
+  <!-- Session ID row -->
+  <text x="32" y="200" font-size="11" fill="#777777">Session ID:</text>
+  <text x="108" y="200" font-size="11" font-family="monospace" fill="#aaaaaa">01J8K2M5-a7b3c9d2</text>
+
+  <!-- ================================================================ -->
+  <!-- SESSION SUMMARY SECTION                                          -->
+  <!-- ================================================================ -->
+
+  <!-- Section heading: "Summary" -->
+  <text x="20" y="240" font-size="11" font-weight="700" letter-spacing="0.5" fill="#888888" text-transform="uppercase">SUMMARY</text>
+
+  <!-- ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ -->
+  <!-- Row group 1: Duration and Outcome                                -->
+  <!-- ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ -->
+  <rect x="16" y="252" width="764" height="78" fill="#2d2d2d" rx="12"/>
+
+  <!-- Duration row (AdwActionRow style) -->
+  <text x="32" y="278" font-size="13" fill="#eeeeee">Duration</text>
+  <text x="32" y="293" font-size="11" fill="#888888">Wall time from first to last message</text>
+  <text x="700" y="286" font-size="13" fill="#cccccc" text-anchor="end">2h 14m</text>
+
+  <!-- Separator -->
+  <line x1="32" y1="302" x2="764" y2="302" stroke="#3a3a3a" stroke-width="0.5"/>
+
+  <!-- Outcome row -->
+  <text x="32" y="322" font-size="13" fill="#eeeeee">Outcome</text>
+  <!-- Status chip: Clean -->
+  <rect x="700" y="310" width="56" height="20" fill="rgba(38,162,105,0.15)" rx="10"/>
+  <text x="728" y="324" font-size="11" fill="#26a269" text-anchor="middle">Clean</text>
+
+  <!-- ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ -->
+  <!-- Row group 2: Activity Breakdown                                  -->
+  <!-- ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ -->
+  <text x="20" y="360" font-size="11" font-weight="700" letter-spacing="0.5" fill="#888888">ACTIVITY</text>
+
+  <rect x="16" y="372" width="764" height="136" fill="#2d2d2d" rx="12"/>
+
+  <!-- Edit row -->
+  <rect x="32" y="384" width="16" height="16" fill="transparent" rx="2"/>
+  <text x="32" y="397" font-size="14" fill="#e66100">&#x270E;</text>
+  <text x="56" y="397" font-size="13" fill="#eeeeee">Edits</text>
+  <text x="740" y="397" font-size="13" fill="#cccccc" text-anchor="end">12</text>
+
+  <!-- Separator -->
+  <line x1="56" y1="408" x2="764" y2="408" stroke="#3a3a3a" stroke-width="0.5"/>
+
+  <!-- Command row -->
+  <text x="32" y="430" font-size="14" fill="#9141ac">&#x25B6;</text>
+  <text x="56" y="430" font-size="13" fill="#eeeeee">Commands</text>
+  <text x="740" y="430" font-size="13" fill="#cccccc" text-anchor="end">8</text>
+
+  <!-- Separator -->
+  <line x1="56" y1="440" x2="764" y2="440" stroke="#3a3a3a" stroke-width="0.5"/>
+
+  <!-- Read row -->
+  <text x="32" y="462" font-size="14" fill="#1c71d8">&#x1F4C4;</text>
+  <text x="56" y="462" font-size="13" fill="#eeeeee">Reads</text>
+  <text x="740" y="462" font-size="13" fill="#cccccc" text-anchor="end">23</text>
+
+  <!-- Separator -->
+  <line x1="56" y1="473" x2="764" y2="473" stroke="#3a3a3a" stroke-width="0.5"/>
+
+  <!-- Subagent row (conditional) -->
+  <text x="32" y="496" font-size="14" fill="#c061cb">&#x2699;</text>
+  <text x="56" y="496" font-size="13" fill="#eeeeee">Subagents</text>
+  <text x="740" y="496" font-size="13" fill="#cccccc" text-anchor="end">2</text>
+
+
+  <!-- ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ -->
+  <!-- Row group 3: First Prompt                                        -->
+  <!-- ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ -->
+  <text x="20" y="536" font-size="11" font-weight="700" letter-spacing="0.5" fill="#888888">FIRST PROMPT</text>
+
+  <rect x="16" y="548" width="764" height="56" fill="#2d2d2d" rx="12"/>
+
+  <text x="32" y="570" font-size="12.5" fill="#dddddd">Implement the session summary view at the top of session detail.</text>
+  <text x="32" y="588" font-size="12.5" fill="#dddddd">Show duration, activity counts, token usage, and outcome status.</text>
+
+  <!-- ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ -->
+  <!-- Row group 4: Errors (conditional - shown when errors exist)      -->
+  <!-- ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ -->
+  <text x="20" y="632" font-size="11" font-weight="700" letter-spacing="0.5" fill="#e01b24">ERRORS</text>
+
+  <rect x="16" y="644" width="764" height="68" fill="#2d2d2d" rx="12"/>
+
+  <!-- Error row 1 -->
+  <text x="32" y="668" font-size="12" fill="#e01b24">&#x26A0;</text>
+  <text x="52" y="668" font-size="12.5" fill="#eeeeee">Bash</text>
+  <text x="120" y="668" font-size="11.5" fill="#999999">&#x2014; Command exited with non-zero status</text>
+
+  <!-- Separator -->
+  <line x1="52" y1="679" x2="764" y2="679" stroke="#3a3a3a" stroke-width="0.5"/>
+
+  <!-- Error row 2 -->
+  <text x="32" y="700" font-size="12" fill="#e01b24">&#x26A0;</text>
+  <text x="52" y="700" font-size="12.5" fill="#eeeeee">Edit</text>
+  <text x="120" y="700" font-size="11.5" fill="#999999">&#x2014; old_string not found in file</text>
+
+  <!-- ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ -->
+  <!-- TRANSCRIPT HEADER                                                -->
+  <!-- ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ -->
+  <text x="20" y="746" font-size="11" font-weight="700" letter-spacing="0.5" fill="#888888">TRANSCRIPT</text>
+
+  <!-- ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ -->
+  <!-- Transcript message 1: User                                       -->
+  <!-- ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ -->
+  <rect x="16" y="758" width="764" height="72" fill="rgba(45,45,45,0.5)" rx="8"/>
+  <rect x="16" y="758" width="3" height="72" fill="#3584e4" rx="1.5"/>
+
+  <text x="32" y="778" font-size="11" font-weight="600" fill="#3584e4">USER</text>
+  <text x="720" y="778" font-size="10" fill="#777777" text-anchor="end">14:30:22</text>
+  <text x="32" y="798" font-size="12.5" fill="#dddddd">Implement the session summary view at the top of session detail.</text>
+  <text x="32" y="816" font-size="12.5" fill="#dddddd">Show duration, activity counts, token usage, and outcome status.</text>
+
+  <!-- ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ -->
+  <!-- Transcript message 2: Assistant                                  -->
+  <!-- ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ -->
+  <rect x="16" y="840" width="764" height="88" fill="rgba(45,45,45,0.5)" rx="8"/>
+  <rect x="16" y="840" width="3" height="88" fill="#26a269" rx="1.5"/>
+
+  <text x="32" y="860" font-size="11" font-weight="600" fill="#26a269">ASSISTANT</text>
+  <text x="720" y="860" font-size="10" fill="#777777" text-anchor="end">14:30:45</text>
+  <text x="32" y="880" font-size="12.5" fill="#dddddd">I'll implement the session summary view. Let me start by reading</text>
+  <text x="32" y="898" font-size="12.5" fill="#dddddd">the current session_detail.rs to understand the existing layout</text>
+  <text x="32" y="916" font-size="12.5" fill="#dddddd">and component structure...</text>
+
+  <!-- ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ -->
+  <!-- Transcript: Tool call row (inline chip)                          -->
+  <!-- ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ -->
+  <rect x="16" y="938" width="764" height="32" fill="rgba(45,45,45,0.4)" rx="6"/>
+  <rect x="16" y="938" width="2" height="32" fill="#e66100" rx="1"/>
+
+  <text x="32" y="958" font-size="11" font-weight="600" fill="#e66100">Read</text>
+  <text x="72" y="958" font-size="11" fill="#999999">src/ui/session_detail.rs</text>
+  <rect x="700" y="946" width="46" height="18" fill="transparent" rx="3"/>
+  <text x="714" y="959" font-size="10" fill="#26a269">done</text>
+  <text x="740" y="959" font-size="10" fill="#777777">1.2s</text>
+
+  <!-- ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ -->
+  <!-- Transcript: Another tool call                                    -->
+  <!-- ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ -->
+  <rect x="16" y="978" width="764" height="32" fill="rgba(45,45,45,0.4)" rx="6"/>
+  <rect x="16" y="978" width="2" height="32" fill="#e66100" rx="1"/>
+
+  <text x="32" y="998" font-size="11" font-weight="600" fill="#e66100">Edit</text>
+  <text x="72" y="998" font-size="11" fill="#999999">src/ui/session_detail.rs</text>
+  <rect x="700" y="986" width="46" height="18" fill="transparent" rx="3"/>
+  <text x="714" y="999" font-size="10" fill="#26a269">done</text>
+  <text x="740" y="999" font-size="10" fill="#777777">0.8s</text>
+
+  <!-- ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ -->
+  <!-- Transcript message 3: Assistant                                  -->
+  <!-- ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ -->
+  <rect x="16" y="1018" width="764" height="72" fill="rgba(45,45,45,0.5)" rx="8"/>
+  <rect x="16" y="1018" width="3" height="72" fill="#26a269" rx="1.5"/>
+
+  <text x="32" y="1038" font-size="11" font-weight="600" fill="#26a269">ASSISTANT</text>
+  <text x="720" y="1038" font-size="10" fill="#777777" text-anchor="end">14:32:10</text>
+  <text x="32" y="1058" font-size="12.5" fill="#dddddd">I've added the summary section. The implementation uses</text>
+  <text x="32" y="1076" font-size="12.5" fill="#dddddd">AdwPreferencesGroup with AdwActionRow widgets for each...</text>
+
+  <!-- Load more button -->
+  <rect x="320" y="1108" width="160" height="32" fill="#3a3a3a" rx="8"/>
+  <text x="368" y="1129" font-size="12" fill="#cccccc">Load more</text>
+
+  <!-- ================================================================ -->
+  <!-- ANNOTATION LABELS                                                -->
+  <!-- ================================================================ -->
+  <!-- Annotation: Enhanced metadata card -->
+  <line x1="784" y1="100" x2="796" y2="100" stroke="#e66100" stroke-width="1" stroke-dasharray="3,2"/>
+
+  <!-- Annotation: Summary section -->
+  <rect x="4" y="232" width="2" height="490" fill="#3584e4" rx="1" opacity="0.4"/>
+
+  <!-- Label: "NEW" badge next to Summary heading -->
+  <rect x="80" y="228" width="32" height="16" fill="rgba(53,132,228,0.2)" rx="4"/>
+  <text x="88" y="240" font-size="9" font-weight="700" fill="#3584e4">NEW</text>
+
+</svg>

@@ -1,0 +1,322 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="780" height="920" viewBox="0 0 780 920">
+  <defs>
+    <linearGradient id="pulse-bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#1e1e2e"/>
+      <stop offset="100%" stop-color="#181825"/>
+    </linearGradient>
+    <linearGradient id="activity-grad" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#3584e4" stop-opacity="0.0"/>
+      <stop offset="8%" stop-color="#3584e4" stop-opacity="0.6"/>
+      <stop offset="15%" stop-color="#26a269" stop-opacity="0.8"/>
+      <stop offset="25%" stop-color="#e66100" stop-opacity="0.9"/>
+      <stop offset="35%" stop-color="#26a269" stop-opacity="0.5"/>
+      <stop offset="45%" stop-color="#e66100" stop-opacity="0.7"/>
+      <stop offset="55%" stop-color="#3584e4" stop-opacity="0.4"/>
+      <stop offset="65%" stop-color="#e66100" stop-opacity="0.8"/>
+      <stop offset="78%" stop-color="#26a269" stop-opacity="0.6"/>
+      <stop offset="88%" stop-color="#e66100" stop-opacity="0.3"/>
+      <stop offset="95%" stop-color="#e01b24" stop-opacity="0.9"/>
+      <stop offset="100%" stop-color="#e01b24" stop-opacity="0.0"/>
+    </linearGradient>
+    <linearGradient id="edit-bar" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#e66100"/>
+      <stop offset="100%" stop-color="#e66100" stop-opacity="0.3"/>
+    </linearGradient>
+    <linearGradient id="read-bar" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#3584e4"/>
+      <stop offset="100%" stop-color="#3584e4" stop-opacity="0.3"/>
+    </linearGradient>
+    <linearGradient id="cmd-bar" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#26a269"/>
+      <stop offset="100%" stop-color="#26a269" stop-opacity="0.3"/>
+    </linearGradient>
+    <filter id="glow">
+      <feGaussianBlur stdDeviation="3" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+    <clipPath id="activity-clip">
+      <rect x="32" y="0" width="716" height="64" rx="6"/>
+    </clipPath>
+  </defs>
+
+  <!-- Background -->
+  <rect width="780" height="920" fill="url(#pulse-bg)" rx="12"/>
+
+  <!-- Header bar simulation -->
+  <rect width="780" height="46" fill="#11111b" rx="12"/>
+  <rect y="34" width="780" height="12" fill="#11111b"/>
+  <circle cx="24" cy="23" r="5" fill="#45475a"/>
+  <text x="54" y="28" font-family="Cantarell, system-ui, sans-serif" font-size="14" font-weight="700" fill="#cdd6f4">sessions-chronicle</text>
+  <text x="690" y="28" font-family="Cantarell, system-ui, sans-serif" font-size="12" fill="#6c7086">search</text>
+  <rect x="670" y="14" width="90" height="24" rx="6" fill="none" stroke="#45475a" stroke-width="1"/>
+
+  <!-- === SESSION PULSE: The summary IS the session === -->
+
+  <!-- Project identity stripe — replaces the card header -->
+  <rect x="16" y="62" width="748" height="56" rx="10" fill="#1e1e2e" stroke="#313244" stroke-width="1"/>
+
+  <!-- AI assistant icon placeholder -->
+  <circle cx="48" cy="90" r="14" fill="#3584e4" opacity="0.2"/>
+  <text x="44" y="95" font-family="Cantarell, system-ui, sans-serif" font-size="14" fill="#3584e4">C</text>
+
+  <!-- Project name large -->
+  <text x="74" y="84" font-family="Cantarell, system-ui, sans-serif" font-size="17" font-weight="700" fill="#cdd6f4">sessions-chronicle</text>
+
+  <!-- First prompt preview — the ACTUAL identity of this session -->
+  <text x="74" y="104" font-family="Cantarell, system-ui, sans-serif" font-size="12" fill="#a6adc8" opacity="0.85">"Design the session summary view for issue #91 with three proposals..."</text>
+
+  <!-- Ending status indicator — right-aligned, semantic color -->
+  <rect x="636" y="74" width="116" height="28" rx="14" fill="#e01b24" opacity="0.15"/>
+  <circle cx="654" cy="88" r="4" fill="#e01b24" filter="url(#glow)"/>
+  <text x="664" y="93" font-family="Cantarell, system-ui, sans-serif" font-size="11" font-weight="600" fill="#e01b24">Error exit</text>
+
+
+  <!-- === ACTIVITY PULSE — the heartbeat visualization === -->
+  <!-- This is the core radical idea: a horizontal activity strip showing
+       the rhythm of the session as colored segments. Each segment represents
+       a chunk of transcript time, colored by dominant activity type. -->
+
+  <g transform="translate(16, 132)">
+    <!-- Section label -->
+    <text x="0" y="0" font-family="Cantarell, system-ui, sans-serif" font-size="10" font-weight="600" fill="#6c7086" text-transform="uppercase" letter-spacing="0.08em">ACTIVITY PULSE</text>
+
+    <!-- Time axis -->
+    <text x="16" y="20" font-family="Cantarell, system-ui, sans-serif" font-size="9" fill="#585b70">14:02</text>
+    <text x="190" y="20" font-family="Cantarell, system-ui, sans-serif" font-size="9" fill="#585b70">14:15</text>
+    <text x="370" y="20" font-family="Cantarell, system-ui, sans-serif" font-size="9" fill="#585b70">14:28</text>
+    <text x="540" y="20" font-family="Cantarell, system-ui, sans-serif" font-size="9" fill="#585b70">14:41</text>
+    <text x="700" y="20" font-family="Cantarell, system-ui, sans-serif" font-size="9" fill="#585b70">14:52</text>
+
+    <!-- Activity strip background -->
+    <rect x="16" y="26" width="716" height="48" rx="6" fill="#181825" stroke="#313244" stroke-width="0.5"/>
+
+    <!-- Activity segments — each represents ~2min chunk colored by dominant action -->
+    <!-- Phase 1: Reading/exploration (blue) -->
+    <rect x="16" y="26" width="45" height="48" rx="0" fill="#3584e4" opacity="0.12"/>
+    <rect x="16" y="56" width="45" height="18" rx="0" fill="#3584e4" opacity="0.35"/>
+
+    <rect x="61" y="26" width="40" height="48" fill="#3584e4" opacity="0.2"/>
+    <rect x="61" y="46" width="40" height="28" fill="#3584e4" opacity="0.4"/>
+
+    <rect x="101" y="26" width="35" height="48" fill="#3584e4" opacity="0.15"/>
+    <rect x="101" y="36" width="35" height="38" fill="#26a269" opacity="0.3"/>
+
+    <!-- Phase 2: Editing burst (orange) -->
+    <rect x="136" y="26" width="50" height="48" fill="#e66100" opacity="0.15"/>
+    <rect x="136" y="30" width="50" height="44" fill="#e66100" opacity="0.45"/>
+
+    <rect x="186" y="26" width="45" height="48" fill="#e66100" opacity="0.3"/>
+    <rect x="186" y="26" width="45" height="40" fill="#e66100" opacity="0.55"/>
+
+    <rect x="231" y="26" width="40" height="48" fill="#26a269" opacity="0.2"/>
+    <rect x="231" y="36" width="40" height="38" fill="#26a269" opacity="0.4"/>
+
+    <!-- Phase 3: Mixed commands + reads -->
+    <rect x="271" y="26" width="55" height="48" fill="#26a269" opacity="0.15"/>
+    <rect x="271" y="40" width="55" height="34" fill="#26a269" opacity="0.5"/>
+
+    <rect x="326" y="26" width="45" height="48" fill="#3584e4" opacity="0.1"/>
+    <rect x="326" y="50" width="45" height="24" fill="#3584e4" opacity="0.3"/>
+
+    <!-- Phase 4: Heavy edit burst -->
+    <rect x="371" y="26" width="65" height="48" fill="#e66100" opacity="0.2"/>
+    <rect x="371" y="26" width="65" height="48" fill="#e66100" opacity="0.5"/>
+
+    <rect x="436" y="26" width="50" height="48" fill="#e66100" opacity="0.15"/>
+    <rect x="436" y="32" width="50" height="42" fill="#e66100" opacity="0.4"/>
+
+    <!-- Phase 5: Commands and testing -->
+    <rect x="486" y="26" width="55" height="48" fill="#26a269" opacity="0.2"/>
+    <rect x="486" y="30" width="55" height="44" fill="#26a269" opacity="0.45"/>
+
+    <rect x="541" y="26" width="50" height="48" fill="#26a269" opacity="0.15"/>
+    <rect x="541" y="38" width="50" height="36" fill="#26a269" opacity="0.35"/>
+
+    <!-- Phase 6: Read again -->
+    <rect x="591" y="26" width="40" height="48" fill="#3584e4" opacity="0.12"/>
+    <rect x="591" y="46" width="40" height="28" fill="#3584e4" opacity="0.3"/>
+
+    <!-- Phase 7: Final commands — error zone -->
+    <rect x="631" y="26" width="55" height="48" fill="#26a269" opacity="0.15"/>
+    <rect x="631" y="36" width="55" height="38" fill="#26a269" opacity="0.35"/>
+
+    <rect x="686" y="26" width="46" height="48" fill="#e01b24" opacity="0.15"/>
+    <rect x="686" y="26" width="46" height="48" rx="0" fill="#e01b24" opacity="0.35"/>
+    <!-- Error marker -->
+    <line x1="730" y1="26" x2="730" y2="74" stroke="#e01b24" stroke-width="2" opacity="0.8"/>
+    <circle cx="730" cy="50" r="4" fill="#e01b24" filter="url(#glow)"/>
+
+    <!-- "You are here" cursor — clickable to jump to that transcript position -->
+    <line x1="730" y1="22" x2="730" y2="78" stroke="#f38ba8" stroke-width="1" stroke-dasharray="2,2" opacity="0.6"/>
+    <text x="700" y="88" font-family="Cantarell, system-ui, sans-serif" font-size="9" fill="#f38ba8" opacity="0.7">error here</text>
+
+    <!-- Legend -->
+    <rect x="16" y="84" width="8" height="8" rx="2" fill="#3584e4" opacity="0.6"/>
+    <text x="28" y="92" font-family="Cantarell, system-ui, sans-serif" font-size="9" fill="#6c7086">Read</text>
+    <rect x="60" y="84" width="8" height="8" rx="2" fill="#e66100" opacity="0.6"/>
+    <text x="72" y="92" font-family="Cantarell, system-ui, sans-serif" font-size="9" fill="#6c7086">Edit</text>
+    <rect x="100" y="84" width="8" height="8" rx="2" fill="#26a269" opacity="0.6"/>
+    <text x="112" y="92" font-family="Cantarell, system-ui, sans-serif" font-size="9" fill="#6c7086">Command</text>
+    <rect x="172" y="84" width="8" height="8" rx="2" fill="#e01b24" opacity="0.6"/>
+    <text x="184" y="92" font-family="Cantarell, system-ui, sans-serif" font-size="9" fill="#6c7086">Error</text>
+
+    <!-- Duration and message count inline with legend -->
+    <text x="540" y="92" font-family="Cantarell, system-ui, sans-serif" font-size="10" fill="#a6adc8">50 min</text>
+    <text x="586" y="92" font-family="Cantarell, system-ui, sans-serif" font-size="10" fill="#585b70">|</text>
+    <text x="596" y="92" font-family="Cantarell, system-ui, sans-serif" font-size="10" fill="#a6adc8">87 messages</text>
+    <text x="680" y="92" font-family="Cantarell, system-ui, sans-serif" font-size="10" fill="#585b70">|</text>
+    <text x="690" y="92" font-family="Cantarell, system-ui, sans-serif" font-size="10" fill="#a6adc8">Claude Code</text>
+  </g>
+
+
+  <!-- === FACETS: Three inline stat clusters, not separate cards === -->
+  <g transform="translate(16, 244)">
+    <rect x="0" y="0" width="748" height="88" rx="10" fill="#1e1e2e" stroke="#313244" stroke-width="0.5"/>
+
+    <!-- Facet 1: Activity breakdown -->
+    <g transform="translate(24, 16)">
+      <text x="0" y="0" font-family="Cantarell, system-ui, sans-serif" font-size="10" font-weight="600" fill="#6c7086" letter-spacing="0.06em">ACTIONS</text>
+
+      <!-- Stacked horizontal bar -->
+      <rect x="0" y="12" width="200" height="14" rx="4" fill="#181825"/>
+      <!-- Edit proportion -->
+      <rect x="0" y="12" width="82" height="14" rx="4" fill="#e66100" opacity="0.6"/>
+      <!-- Read proportion -->
+      <rect x="82" y="12" width="56" height="14" fill="#3584e4" opacity="0.5"/>
+      <!-- Command proportion -->
+      <rect x="138" y="12" width="62" height="14" rx="0" fill="#26a269" opacity="0.5"/>
+      <!-- Round right edge -->
+      <rect x="190" y="12" width="10" height="14" rx="4" fill="#26a269" opacity="0.5"/>
+      <rect x="190" y="12" width="5" height="14" fill="#26a269" opacity="0.5"/>
+
+      <text x="0" y="42" font-family="Cantarell, system-ui, sans-serif" font-size="20" font-weight="700" fill="#e66100">14</text>
+      <text x="28" y="42" font-family="Cantarell, system-ui, sans-serif" font-size="11" fill="#6c7086">edits</text>
+
+      <text x="68" y="42" font-family="Cantarell, system-ui, sans-serif" font-size="20" font-weight="700" fill="#3584e4">9</text>
+      <text x="82" y="42" font-family="Cantarell, system-ui, sans-serif" font-size="11" fill="#6c7086">reads</text>
+
+      <text x="122" y="42" font-family="Cantarell, system-ui, sans-serif" font-size="20" font-weight="700" fill="#26a269">11</text>
+      <text x="142" y="42" font-family="Cantarell, system-ui, sans-serif" font-size="11" fill="#6c7086">cmds</text>
+
+      <!-- Vertical separator -->
+      <line x1="210" y1="-4" x2="210" y2="56" stroke="#313244" stroke-width="1"/>
+    </g>
+
+    <!-- Facet 2: Token usage -->
+    <g transform="translate(260, 16)">
+      <text x="0" y="0" font-family="Cantarell, system-ui, sans-serif" font-size="10" font-weight="600" fill="#6c7086" letter-spacing="0.06em">TOKENS</text>
+
+      <!-- Input/output ratio bar -->
+      <rect x="0" y="12" width="200" height="14" rx="4" fill="#181825"/>
+      <rect x="0" y="12" width="140" height="14" rx="4" fill="#b4befe" opacity="0.4"/>
+      <rect x="140" y="12" width="60" height="14" rx="0" fill="#f9e2af" opacity="0.4"/>
+      <rect x="190" y="12" width="10" height="14" rx="4" fill="#f9e2af" opacity="0.4"/>
+      <rect x="190" y="12" width="5" height="14" fill="#f9e2af" opacity="0.4"/>
+
+      <text x="0" y="42" font-family="Cantarell, system-ui, sans-serif" font-size="20" font-weight="700" fill="#b4befe">142k</text>
+      <text x="52" y="42" font-family="Cantarell, system-ui, sans-serif" font-size="11" fill="#6c7086">in</text>
+
+      <text x="72" y="42" font-family="Cantarell, system-ui, sans-serif" font-size="20" font-weight="700" fill="#f9e2af">38k</text>
+      <text x="108" y="42" font-family="Cantarell, system-ui, sans-serif" font-size="11" fill="#6c7086">out</text>
+
+      <text x="142" y="42" font-family="Cantarell, system-ui, sans-serif" font-size="13" fill="#585b70">~$0.42</text>
+
+      <line x1="210" y1="-4" x2="210" y2="56" stroke="#313244" stroke-width="1"/>
+    </g>
+
+    <!-- Facet 3: Errors and ending -->
+    <g transform="translate(496, 16)">
+      <text x="0" y="0" font-family="Cantarell, system-ui, sans-serif" font-size="10" font-weight="600" fill="#6c7086" letter-spacing="0.06em">STOPPING POINT</text>
+
+      <text x="0" y="26" font-family="Cantarell, system-ui, sans-serif" font-size="13" font-weight="600" fill="#e01b24">Bash failed (exit 1)</text>
+      <text x="0" y="44" font-family="Cantarell, system-ui, sans-serif" font-size="11" fill="#a6adc8" opacity="0.7">cargo clippy -- -D warnings</text>
+
+      <!-- Jump-to link -->
+      <rect x="0" y="50" width="108" height="22" rx="6" fill="#e01b24" opacity="0.1"/>
+      <text x="10" y="65" font-family="Cantarell, system-ui, sans-serif" font-size="10" font-weight="600" fill="#e01b24" opacity="0.8">Jump to error</text>
+      <text x="90" y="65" font-family="Cantarell, system-ui, sans-serif" font-size="10" fill="#e01b24" opacity="0.5">-></text>
+    </g>
+  </g>
+
+
+  <!-- === SUBAGENT STRIP (if any) === -->
+  <g transform="translate(16, 348)">
+    <text x="0" y="0" font-family="Cantarell, system-ui, sans-serif" font-size="10" font-weight="600" fill="#6c7086" letter-spacing="0.06em">SUBAGENTS (2)</text>
+
+    <!-- Subagent chip 1 -->
+    <rect x="0" y="10" width="358" height="36" rx="8" fill="#9141ac" opacity="0.08" stroke="#9141ac" stroke-width="0.5" stroke-opacity="0.3"/>
+    <circle cx="18" cy="28" r="6" fill="#9141ac" opacity="0.4"/>
+    <text x="30" y="32" font-family="Cantarell, system-ui, sans-serif" font-size="11" font-weight="600" fill="#cba6f7">"Run clippy and fix all warnings"</text>
+    <text x="280" y="32" font-family="Cantarell, system-ui, sans-serif" font-size="10" fill="#585b70">12 tool calls</text>
+
+    <!-- Subagent chip 2 -->
+    <rect x="370" y="10" width="378" height="36" rx="8" fill="#9141ac" opacity="0.08" stroke="#9141ac" stroke-width="0.5" stroke-opacity="0.3"/>
+    <circle cx="388" cy="28" r="6" fill="#9141ac" opacity="0.4"/>
+    <text x="400" y="32" font-family="Cantarell, system-ui, sans-serif" font-size="11" font-weight="600" fill="#cba6f7">"Write integration tests for parser"</text>
+    <text x="652" y="32" font-family="Cantarell, system-ui, sans-serif" font-size="10" fill="#585b70">8 tool calls</text>
+  </g>
+
+
+  <!-- === THIN SEPARATOR before transcript === -->
+  <line x1="32" y1="404" x2="748" y2="404" stroke="#313244" stroke-width="0.5" opacity="0.5"/>
+
+
+  <!-- === TRANSCRIPT begins immediately — no gap, no second card === -->
+  <g transform="translate(16, 416)">
+    <!-- First user message -->
+    <rect x="0" y="0" width="748" height="72" rx="8" fill="#1e1e2e" opacity="0.5"/>
+    <rect x="0" y="0" width="3" height="72" rx="1.5" fill="#3584e4"/>
+    <text x="16" y="16" font-family="Cantarell, system-ui, sans-serif" font-size="10" font-weight="600" fill="#3584e4">USER</text>
+    <text x="60" y="16" font-family="Cantarell, system-ui, sans-serif" font-size="9" fill="#585b70">14:02</text>
+    <text x="16" y="36" font-family="Cantarell, system-ui, sans-serif" font-size="13" fill="#cdd6f4">Design the session summary view for issue #91. Create three proposals:</text>
+    <text x="16" y="54" font-family="Cantarell, system-ui, sans-serif" font-size="13" fill="#cdd6f4">one conservative HIG-aligned, one balanced, one creative/divergent...</text>
+
+    <!-- Assistant response -->
+    <rect x="0" y="84" width="748" height="56" rx="8" fill="#1e1e2e" opacity="0.5"/>
+    <rect x="0" y="84" width="3" height="56" rx="1.5" fill="#26a269"/>
+    <text x="16" y="100" font-family="Cantarell, system-ui, sans-serif" font-size="10" font-weight="600" fill="#26a269">ASSISTANT</text>
+    <text x="80" y="100" font-family="Cantarell, system-ui, sans-serif" font-size="9" fill="#585b70">14:02</text>
+    <text x="120" y="100" font-family="Cantarell, system-ui, sans-serif" font-size="9" fill="#585b70">claude-sonnet-4-20250514</text>
+    <text x="16" y="120" font-family="Cantarell, system-ui, sans-serif" font-size="13" fill="#a6adc8">I'll start by reading the current implementation to understand the...</text>
+
+    <!-- Tool call row -->
+    <rect x="0" y="152" width="748" height="36" rx="6" fill="#1e1e2e" opacity="0.3"/>
+    <rect x="0" y="152" width="2" height="36" rx="1" fill="#e66100"/>
+    <text x="16" y="174" font-family="Cantarell, system-ui, sans-serif" font-size="11" font-weight="600" fill="#e66100">Read</text>
+    <text x="52" y="174" font-family="Cantarell, system-ui, sans-serif" font-size="11" fill="#a6adc8" opacity="0.7">src/ui/session_detail.rs</text>
+    <rect x="690" y="160" width="48" height="20" rx="4" fill="#26a269" opacity="0.12"/>
+    <text x="698" y="174" font-family="Cantarell, system-ui, sans-serif" font-size="10" fill="#26a269">120ms</text>
+
+    <!-- Another tool call -->
+    <rect x="0" y="196" width="748" height="36" rx="6" fill="#1e1e2e" opacity="0.3"/>
+    <rect x="0" y="196" width="2" height="36" rx="1" fill="#e66100"/>
+    <text x="16" y="218" font-family="Cantarell, system-ui, sans-serif" font-size="11" font-weight="600" fill="#e66100">Read</text>
+    <text x="52" y="218" font-family="Cantarell, system-ui, sans-serif" font-size="11" fill="#a6adc8" opacity="0.7">data/resources/style.css</text>
+    <rect x="690" y="204" width="48" height="20" rx="4" fill="#26a269" opacity="0.12"/>
+    <text x="698" y="218" font-family="Cantarell, system-ui, sans-serif" font-size="10" fill="#26a269">85ms</text>
+
+    <!-- Fade-to-more indicator -->
+    <rect x="0" y="244" width="748" height="40" rx="0" fill="url(#pulse-bg)" opacity="0.8"/>
+    <text x="334" y="272" font-family="Cantarell, system-ui, sans-serif" font-size="11" fill="#6c7086" text-anchor="middle">83 more items below</text>
+    <text x="334" y="288" font-family="Cantarell, system-ui, sans-serif" font-size="10" fill="#585b70" text-anchor="middle">scroll to continue</text>
+  </g>
+
+
+  <!-- === Annotation: Design rationale callouts === -->
+  <g transform="translate(16, 730)">
+    <line x1="0" y1="0" x2="748" y2="0" stroke="#45475a" stroke-width="0.5" stroke-dasharray="4,4"/>
+    <text x="0" y="24" font-family="Cantarell, system-ui, sans-serif" font-size="11" font-weight="700" fill="#f5c2e7">DESIGN NOTES</text>
+
+    <text x="0" y="48" font-family="Cantarell, system-ui, sans-serif" font-size="10" fill="#a6adc8">1. The activity pulse strip is clickable — tap a segment to jump to that transcript region.</text>
+    <text x="0" y="64" font-family="Cantarell, system-ui, sans-serif" font-size="10" fill="#a6adc8">2. No "summary card" — the pulse + facets + first prompt ARE the summary. One surface, not two.</text>
+    <text x="0" y="80" font-family="Cantarell, system-ui, sans-serif" font-size="10" fill="#a6adc8">3. The ending status is a semantic signal, not decoration: red glow = error, amber = abrupt, green = clean.</text>
+    <text x="0" y="96" font-family="Cantarell, system-ui, sans-serif" font-size="10" fill="#a6adc8">4. Subagent chips are inline, not in a separate card or expanding section. Click to inspect.</text>
+    <text x="0" y="112" font-family="Cantarell, system-ui, sans-serif" font-size="10" fill="#a6adc8">5. Token cost estimate uses known per-model pricing. Hover for breakdown tooltip.</text>
+    <text x="0" y="128" font-family="Cantarell, system-ui, sans-serif" font-size="10" fill="#a6adc8">6. "Jump to error" scrolls directly to the failing tool call in transcript.</text>
+    <text x="0" y="144" font-family="Cantarell, system-ui, sans-serif" font-size="10" fill="#a6adc8">7. At narrow widths, facets stack vertically; pulse strip remains full-width and touch-scrollable.</text>
+    <text x="0" y="160" font-family="Cantarell, system-ui, sans-serif" font-size="10" fill="#a6adc8">8. The pulse strip is a GtkDrawingArea, not a widget tree. Minimal overhead per session.</text>
+  </g>
+</svg>
