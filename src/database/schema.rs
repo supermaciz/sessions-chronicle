@@ -313,16 +313,22 @@ fn apply_v6_migration(conn: &Connection) -> Result<()> {
 /// Clears `file_fingerprints` to force re-index so existing sessions are
 /// backfilled with activity data.
 fn apply_v7_migration(conn: &Connection) -> Result<()> {
-    for col in &[
-        "edit_count INTEGER DEFAULT 0",
-        "read_count INTEGER DEFAULT 0",
-        "command_count INTEGER DEFAULT 0",
-        "ending_status TEXT DEFAULT 'unknown'",
+    for (col_name, col_def) in &[
+        ("edit_count", "INTEGER DEFAULT 0"),
+        ("read_count", "INTEGER DEFAULT 0"),
+        ("command_count", "INTEGER DEFAULT 0"),
+        ("ending_status", "TEXT DEFAULT 'unknown'"),
     ] {
-        match conn.execute(&format!("ALTER TABLE sessions ADD COLUMN {col}"), []) {
-            Ok(_) => {}
-            Err(err) if err.to_string().contains("duplicate column name") => {}
-            Err(err) => return Err(err.into()),
+        let exists: bool = conn.query_row(
+            "SELECT COUNT(*) FROM pragma_table_info('sessions') WHERE name = ?1",
+            [col_name],
+            |row| row.get::<_, i64>(0),
+        )? > 0;
+        if !exists {
+            conn.execute(
+                &format!("ALTER TABLE sessions ADD COLUMN {col_name} {col_def}"),
+                [],
+            )?;
         }
     }
 
