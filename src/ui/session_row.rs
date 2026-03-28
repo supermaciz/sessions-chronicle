@@ -54,13 +54,15 @@ impl FactoryComponent for SessionRow {
                     set_pixel_size: 16,
                 },
 
-                // Ending status label — hidden for "unknown"
-                add_suffix = &gtk::Label::new(
-                    crate::ui::format::ending_label(&self.session.ending_status)
+                // Ending status icon — hidden for clean/unknown endings
+                add_suffix = &gtk::Image::from_icon_name(
+                    crate::ui::format::ending_icon_name(&self.session.ending_status).unwrap_or("")
                 ) {
-                    set_visible: crate::ui::format::ending_label(&self.session.ending_status).is_some(),
+                    set_visible: crate::ui::format::ending_icon_name(&self.session.ending_status).is_some(),
                     add_css_class: crate::ui::format::ending_css_class(&self.session.ending_status),
                     set_valign: gtk::Align::Center,
+                    set_pixel_size: 16,
+                    set_tooltip_text: crate::ui::format::ending_tooltip(&self.session.ending_status),
                 },
 
                 add_suffix = &gtk::Image::from_icon_name("go-next-symbolic") {

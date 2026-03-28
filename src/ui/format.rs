@@ -1,3 +1,4 @@
+use crate::icon_names;
 use crate::models::TokenUsage;
 use crate::models::ToolCallStatus;
 
@@ -213,12 +214,22 @@ fn pluralize(count: usize, singular: &str, plural: &str) -> String {
     }
 }
 
-/// Map a stored ending_status to its UI display label.
-/// Returns `None` for `Clean` and `Unknown` (hidden in the UI).
-pub fn ending_label(status: &crate::models::SessionEndingStatus) -> Option<&'static str> {
+/// Icon name for a session ending badge.
+pub fn ending_icon_name(status: &crate::models::SessionEndingStatus) -> Option<&'static str> {
     match status {
-        crate::models::SessionEndingStatus::Abrupt => Some("interrupted"),
-        crate::models::SessionEndingStatus::Error => Some("failed"),
+        crate::models::SessionEndingStatus::Abrupt => Some(icon_names::PROHIBITED_REGULAR),
+        crate::models::SessionEndingStatus::Error => Some(icon_names::ERROR_CIRCLE_REGULAR),
+        _ => None,
+    }
+}
+
+/// Tooltip text for a session ending badge.
+pub fn ending_tooltip(status: &crate::models::SessionEndingStatus) -> Option<&'static str> {
+    match status {
+        crate::models::SessionEndingStatus::Abrupt => {
+            Some("Session ended unexpectedly before completion")
+        }
+        crate::models::SessionEndingStatus::Error => Some("Session ended because of an error"),
         _ => None,
     }
 }
@@ -447,26 +458,6 @@ mod tests {
     }
 
     #[test]
-    fn ending_label_maps_status_to_display_text() {
-        assert_eq!(
-            ending_label(&crate::models::SessionEndingStatus::Clean),
-            None
-        );
-        assert_eq!(
-            ending_label(&crate::models::SessionEndingStatus::Abrupt),
-            Some("interrupted")
-        );
-        assert_eq!(
-            ending_label(&crate::models::SessionEndingStatus::Error),
-            Some("failed")
-        );
-        assert_eq!(
-            ending_label(&crate::models::SessionEndingStatus::Unknown),
-            None
-        );
-    }
-
-    #[test]
     fn ending_css_class_maps_status_to_class() {
         assert_eq!(
             ending_css_class(&crate::models::SessionEndingStatus::Clean),
@@ -483,6 +474,46 @@ mod tests {
         assert_eq!(
             ending_css_class(&crate::models::SessionEndingStatus::Unknown),
             ""
+        );
+    }
+
+    #[test]
+    fn ending_icon_name_maps_status_to_icon() {
+        assert_eq!(
+            ending_icon_name(&crate::models::SessionEndingStatus::Clean),
+            None
+        );
+        assert_eq!(
+            ending_icon_name(&crate::models::SessionEndingStatus::Abrupt),
+            Some(icon_names::PROHIBITED_REGULAR)
+        );
+        assert_eq!(
+            ending_icon_name(&crate::models::SessionEndingStatus::Error),
+            Some(icon_names::ERROR_CIRCLE_REGULAR)
+        );
+        assert_eq!(
+            ending_icon_name(&crate::models::SessionEndingStatus::Unknown),
+            None
+        );
+    }
+
+    #[test]
+    fn ending_tooltip_maps_status_to_clear_description() {
+        assert_eq!(
+            ending_tooltip(&crate::models::SessionEndingStatus::Clean),
+            None
+        );
+        assert_eq!(
+            ending_tooltip(&crate::models::SessionEndingStatus::Abrupt),
+            Some("Session ended unexpectedly before completion")
+        );
+        assert_eq!(
+            ending_tooltip(&crate::models::SessionEndingStatus::Error),
+            Some("Session ended because of an error")
+        );
+        assert_eq!(
+            ending_tooltip(&crate::models::SessionEndingStatus::Unknown),
+            None
         );
     }
 }
