@@ -226,10 +226,9 @@ pub fn ending_label(status: &str) -> Option<&'static str> {
 /// CSS class for a session ending label.
 pub fn ending_css_class(status: &str) -> &'static str {
     match status {
-        "clean" => "ending-completed",
         "abrupt" => "ending-interrupted",
         "error" => "ending-failed",
-        _ => "ending-unknown",
+        _ => "",
     }
 }
 
@@ -458,9 +457,9 @@ mod tests {
 
     #[test]
     fn ending_css_class_maps_status_to_class() {
-        assert_eq!(ending_css_class("clean"), "ending-completed");
+        assert_eq!(ending_css_class("clean"), "");
         assert_eq!(ending_css_class("abrupt"), "ending-interrupted");
         assert_eq!(ending_css_class("error"), "ending-failed");
-        assert_eq!(ending_css_class("unknown"), "ending-unknown");
+        assert_eq!(ending_css_class("unknown"), "");
     }
 }
