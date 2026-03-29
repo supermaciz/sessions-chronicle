@@ -189,12 +189,10 @@ impl SessionRow {
             };
 
         let relative_time = Self::format_relative_time(session.last_updated);
-        
+
         // Only include activity if it's not empty
         let raw = if activity.is_empty() {
-            format!(
-                "{location} \u{00b7} {message_count} \u{00b7} {relative_time}"
-            )
+            format!("{location} \u{00b7} {message_count} \u{00b7} {relative_time}")
         } else {
             format!(
                 "{location} \u{00b7} {message_count} \u{00b7} {activity} \u{00b7} {relative_time}"
@@ -338,10 +336,7 @@ mod tests {
         // All counts are 0, message_count is 7 (from build_session)
 
         let subtitle = SessionRow::session_subtitle(&session);
-        assert_eq!(
-            subtitle,
-            "my-project \u{00b7} 7 messages \u{00b7} 5m ago"
-        );
+        assert_eq!(subtitle, "my-project \u{00b7} 7 messages \u{00b7} 5m ago");
     }
 
     #[test]
