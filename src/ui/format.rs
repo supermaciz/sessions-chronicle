@@ -166,31 +166,26 @@ pub fn token_semantics_help_tooltip() -> &'static str {
      Cache: cache activity; depending on provider, cache tokens may overlap with input tokens"
 }
 
-/// Return the dominant activity string using the design precedence:
-/// edits > commands > reads > messages.
+/// Return the dominant tool-call activity using the design precedence:
+/// edits > commands > reads. Returns `None` when no tool calls exist.
 pub fn format_dominant_activity(
     edit_count: usize,
     command_count: usize,
     read_count: usize,
-    message_count: usize,
-) -> String {
+) -> Option<String> {
     if edit_count > 0 {
-        format_count(edit_count, "edit", "edits")
+        Some(format_count(edit_count, "edit", "edits"))
     } else if command_count > 0 {
-        format_count(command_count, "command", "commands")
+        Some(format_count(command_count, "command", "commands"))
     } else if read_count > 0 {
-        format_count(read_count, "read", "reads")
+        Some(format_count(read_count, "read", "reads"))
     } else {
-        format_count(message_count, "message", "messages")
+        None
     }
 }
 
 /// Format a count with explicit singular and plural words.
 pub fn format_count(count: usize, singular: &str, plural: &str) -> String {
-    pluralize(count, singular, plural)
-}
-
-fn pluralize(count: usize, singular: &str, plural: &str) -> String {
     if count == 1 {
         format!("1 {singular}")
     } else {
@@ -404,26 +399,25 @@ mod tests {
 
     #[test]
     fn format_dominant_activity_edits_first() {
-        assert_eq!(format_dominant_activity(3, 2, 1, 10), "3 edits");
-        assert_eq!(format_dominant_activity(1, 2, 1, 10), "1 edit");
+        assert_eq!(format_dominant_activity(3, 2, 1), Some("3 edits".into()));
+        assert_eq!(format_dominant_activity(1, 2, 1), Some("1 edit".into()));
     }
 
     #[test]
     fn format_dominant_activity_commands_when_no_edits() {
-        assert_eq!(format_dominant_activity(0, 5, 3, 10), "5 commands");
-        assert_eq!(format_dominant_activity(0, 1, 3, 10), "1 command");
+        assert_eq!(format_dominant_activity(0, 5, 3), Some("5 commands".into()));
+        assert_eq!(format_dominant_activity(0, 1, 3), Some("1 command".into()));
     }
 
     #[test]
     fn format_dominant_activity_reads_when_no_edits_or_commands() {
-        assert_eq!(format_dominant_activity(0, 0, 4, 10), "4 reads");
-        assert_eq!(format_dominant_activity(0, 0, 1, 10), "1 read");
+        assert_eq!(format_dominant_activity(0, 0, 4), Some("4 reads".into()));
+        assert_eq!(format_dominant_activity(0, 0, 1), Some("1 read".into()));
     }
 
     #[test]
-    fn format_dominant_activity_messages_as_fallback() {
-        assert_eq!(format_dominant_activity(0, 0, 0, 10), "10 messages");
-        assert_eq!(format_dominant_activity(0, 0, 0, 1), "1 message");
+    fn format_dominant_activity_none_when_no_tool_calls() {
+        assert_eq!(format_dominant_activity(0, 0, 0), None);
     }
 
     #[test]

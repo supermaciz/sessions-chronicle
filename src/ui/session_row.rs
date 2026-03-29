@@ -176,27 +176,20 @@ impl SessionRow {
         let message_count =
             crate::ui::format::format_count(session.message_count, "message", "messages");
 
-        let activity =
-            if session.edit_count == 0 && session.command_count == 0 && session.read_count == 0 {
-                String::new()
-            } else {
-                crate::ui::format::format_dominant_activity(
-                    session.edit_count,
-                    session.command_count,
-                    session.read_count,
-                    session.message_count,
-                )
-            };
+        let activity = crate::ui::format::format_dominant_activity(
+            session.edit_count,
+            session.command_count,
+            session.read_count,
+        );
 
         let relative_time = Self::format_relative_time(session.last_updated);
 
-        // Only include activity if it's not empty
-        let raw = if activity.is_empty() {
-            format!("{location} \u{00b7} {message_count} \u{00b7} {relative_time}")
-        } else {
+        let raw = if let Some(activity) = activity {
             format!(
                 "{location} \u{00b7} {message_count} \u{00b7} {activity} \u{00b7} {relative_time}"
             )
+        } else {
+            format!("{location} \u{00b7} {message_count} \u{00b7} {relative_time}")
         };
 
         // Escape for Pango markup (ActionRow subtitle also uses markup).
