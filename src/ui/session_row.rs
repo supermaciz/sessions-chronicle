@@ -178,7 +178,7 @@ impl SessionRow {
 
         let activity =
             if session.edit_count == 0 && session.command_count == 0 && session.read_count == 0 {
-                "no tool calls".to_string()
+                String::new()
             } else {
                 crate::ui::format::format_dominant_activity(
                     session.edit_count,
@@ -189,9 +189,17 @@ impl SessionRow {
             };
 
         let relative_time = Self::format_relative_time(session.last_updated);
-        let raw = format!(
-            "{location} \u{00b7} {message_count} \u{00b7} {activity} \u{00b7} {relative_time}"
-        );
+        
+        // Only include activity if it's not empty
+        let raw = if activity.is_empty() {
+            format!(
+                "{location} \u{00b7} {message_count} \u{00b7} {relative_time}"
+            )
+        } else {
+            format!(
+                "{location} \u{00b7} {message_count} \u{00b7} {activity} \u{00b7} {relative_time}"
+            )
+        };
 
         // Escape for Pango markup (ActionRow subtitle also uses markup).
         glib::markup_escape_text(&raw).to_string()
@@ -325,14 +333,14 @@ mod tests {
     }
 
     #[test]
-    fn session_subtitle_shows_no_tool_calls_when_activity_is_missing() {
+    fn session_subtitle_hides_activity_when_no_tool_calls() {
         let session = build_session(Some("/home/user/work/my-project"), Some("Chat"), 5);
         // All counts are 0, message_count is 7 (from build_session)
 
         let subtitle = SessionRow::session_subtitle(&session);
         assert_eq!(
             subtitle,
-            "my-project \u{00b7} 7 messages \u{00b7} no tool calls \u{00b7} 5m ago"
+            "my-project \u{00b7} 7 messages \u{00b7} 5m ago"
         );
     }
 
