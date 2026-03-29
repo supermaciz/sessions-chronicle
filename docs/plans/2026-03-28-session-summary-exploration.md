@@ -427,22 +427,162 @@ Three inline stat clusters in a single row, separated by vertical dividers:
 
 ---
 
+## Proposal D: Session Landmarks
+
+**Author**: Codex agent
+**Philosophy**: Creative and original — summarize the session as a handful of deterministic moments worth revisiting
+
+### The Core Idea
+
+Proposal C visualizes the whole session as a continuous pulse.
+This proposal takes the opposite creative route: **compress the session into 3 to 5 landmarks**.
+
+Instead of asking the user to interpret a full activity strip or scan multiple property groups,
+the UI answers a simpler question:
+
+**Where should I look first in this session?**
+
+The summary becomes a deterministic "trail" of moments:
+
+- why it started
+- where activity peaked
+- what changed the direction
+- how it ended
+
+### Mockup
+
+![Proposal D — Session Landmarks](../mockups/issue-91-session-summary/proposal-d-codex-landmarks.svg)
+
+### Approach
+
+Insert a **Landmarks** section between the identity area and the transcript.
+This section contains a vertical sequence of milestone rows derived from existing indexed data.
+
+Each landmark is:
+
+- deterministic
+- clickable
+- anchored to a real transcript position
+- intentionally sparse
+
+This is closer to a table of contents than to a metrics dashboard.
+
+### Landmark Extraction Heuristics
+
+Choose up to five items, in chronological order:
+
+1. **Start Intent** — first prompt
+2. **Peak Activity** — time bucket with the highest tool-call count
+3. **Biggest Change** — first heavy edit cluster or tool call affecting the most files
+4. **Failure / Recovery Moment** — first error, retry cluster, or longest slow call
+5. **Final State** — last assistant message preview + ending status
+
+If some categories do not exist, skip them rather than filling with low-value placeholders.
+
+### Layout
+
+Top-to-bottom:
+
+1. **Compact identity header** — project, AI assistant, duration, outcome
+2. **Landmarks rail** — vertical line with 3-5 milestone cards
+3. **Compact metrics footer** — edits / reads / commands / tokens as a single dense row
+4. **Transcript**
+
+Each milestone card contains:
+
+- icon
+- title
+- one-line subtitle
+- time offset or transcript position
+- `Jump` action
+
+### Example Landmarks
+
+| Landmark | Deterministic subtitle example |
+|----------|-------------------------------|
+| Start Intent | first prompt preview |
+| Peak Activity | "12 tool calls in 4 minutes" |
+| Biggest Change | "Edited 6 files" |
+| Failure Moment | "`cargo clippy` failed" |
+| Final State | "Ended abruptly after assistant reply" |
+
+### Visual Treatment
+
+- Thin vertical rail, subdued by default
+- Milestone nodes use semantic symbolic icons
+- Current/last milestone may receive slight emphasis
+- No full card surfaces; small outlined or boxed rows attached to the rail
+
+The style should feel more like a navigation aid than an analytics dashboard.
+
+### Widget Approach
+
+1. `gtk::Box` (vertical) for the rail container
+2. Repeated milestone rows as small custom composites
+3. CSS-drawn rail via background/border, or a narrow dedicated child widget
+4. Standard buttons/rows for jump actions
+
+No custom charting is required; the originality comes from the information model, not
+from heavy graphics code.
+
+### Adaptive Behavior
+
+- **Wide**: rail sits in the main flow with comfortable spacing
+- **Medium**: milestone cards tighten vertically; subtitles ellipsize
+- **Narrow**: the rail remains vertical; cards become simpler one-line rows with chevrons
+
+Unlike Proposal C, the core pattern survives narrow layouts without losing meaning.
+
+### Accessibility
+
+- Milestones are discrete rows with clear labels and actions
+- Chronological order matches focus order
+- Accessible description can summarize the trail in one sentence
+- No color-only encoding; icons and text carry meaning
+
+### Trade-offs
+
+| Pros | Cons |
+|------|------|
+| Directly answers "where should I look first?" | Requires new heuristic extraction logic for landmarks |
+| Strong narrative value without using LLM text | Omits some global metrics unless user scans footer row |
+| Clickable milestones create fast transcript re-entry | Landmark quality varies for quiet or very uniform sessions |
+| More original than property rows, but lighter than custom visualization | Some milestone titles need careful wording to stay neutral |
+| Works well on narrow screens | Needs extra query work to identify buckets/clusters |
+
+### Risk Assessment
+
+- **Low-activity sessions**: show only Start Intent + Final State + compact metrics
+- **No timestamps on some items**: fall back to transcript position labels
+- **Ambiguous "biggest change"**: prefer file-count-based heuristics when available, else skip
+- **Overfitting wording**: keep labels factual and template-based
+
+### Implementation Complexity: **Medium**
+
+**Files to touch**:
+- `src/ui/session_detail.rs` — add landmarks section and jump handlers
+- New: `src/ui/session_landmarks.rs` or local milestone row helper
+- `src/database/` — add queries for peak bucket, longest tool call, first error, file-touch stats
+- `data/resources/style.css` — rail and milestone styling
+
+---
+
 ## Comparison Matrix
 
-| Criterion | A: Grouped Property Rows | B: Unified Header | C: Session Pulse |
-|-----------|--------------------------|-------------------|-----------------|
-| **Designer** | UI Designer | Mii Beta (HIG) | Mii Beta (Creative) |
-| **HIG conformance** | Full | High (flush layout) | Moderate (custom viz) |
-| **Surface count** | +1 (summary groups) | 0 (replaces card) | 0 (replaces card) |
-| **Information density** | Low-medium | High | Very high |
-| **Visual richness** | Minimal | Medium | High |
-| **First prompt visible?** | Yes (conditional group) | Yes (dedicated section) | Yes (identity stripe) |
-| **Activity visualization** | Count labels only | Proportional bar | Temporal pulse strip |
-| **Error surfacing** | Dedicated error group | Notable tool calls section | Stopping point facet |
-| **Navigation from summary** | None | None | Click pulse → transcript |
-| **Custom drawing needed** | No | Minimal (bar) | Yes (pulse strip) |
-| **Implementation effort** | Small-Medium | Medium | Medium-High |
-| **Risk** | Low | Low-Medium | Medium |
+| Criterion | A: Grouped Property Rows | B: Unified Header | C: Session Pulse | D: Session Landmarks |
+|-----------|--------------------------|-------------------|-----------------|----------------------|
+| **Designer** | UI Designer | Mii Beta (HIG) | Mii Beta (Creative) | Codex |
+| **HIG conformance** | Full | High (flush layout) | Moderate (custom viz) | Medium-High |
+| **Surface count** | +1 (summary groups) | 0 (replaces card) | 0 (replaces card) | 0 to +1 depending on header treatment |
+| **Information density** | Low-medium | High | Very high | Medium |
+| **Visual richness** | Minimal | Medium | High | Medium |
+| **First prompt visible?** | Yes (conditional group) | Yes (dedicated section) | Yes (identity stripe) | Yes (start landmark) |
+| **Activity visualization** | Count labels only | Proportional bar | Temporal pulse strip | Landmark-based milestones |
+| **Error surfacing** | Dedicated error group | Notable tool calls section | Stopping point facet | Failure / recovery landmark |
+| **Navigation from summary** | None | None | Click pulse → transcript | Jump per landmark |
+| **Custom drawing needed** | No | Minimal (bar) | Yes (pulse strip) | No |
+| **Implementation effort** | Small-Medium | Medium | Medium-High | Medium |
+| **Risk** | Low | Low-Medium | Medium | Medium |
 
 ---
 
@@ -455,3 +595,6 @@ Three inline stat clusters in a single row, separated by vertical dividers:
 - [Issue #91 — Deterministic structured session summary](https://github.com/supermaciz/sessions-chronicle/issues/91)
 - `docs/PRODUCT_ASSESSMENT_2026-03-21.md` — recommendation 2 and Direction 1
 - Related: #55, #36, #70, #74, #79, #80, #81
+- [GNOME HIG — Boxed Lists](https://developer.gnome.org/hig/patterns/containers/boxed-lists.html)
+- [GNOME HIG — Scaling & Adaptiveness](https://developer.gnome.org/hig/guidelines/adaptive.html)
+- [GNOME HIG — Typography](https://developer.gnome.org/hig/guidelines/typography.html)
