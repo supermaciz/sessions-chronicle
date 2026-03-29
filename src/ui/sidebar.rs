@@ -1,4 +1,4 @@
-use adw::prelude::{ActionRowExt, PreferencesGroupExt};
+use adw::prelude::ActionRowExt;
 use gtk::prelude::*;
 use relm4::{ComponentParts, ComponentSender, RelmWidgetExt, SimpleComponent, adw, gtk};
 use std::collections::HashMap;
@@ -68,9 +68,17 @@ impl SimpleComponent for Sidebar {
                 set_margin_bottom: 12,
             },
 
-            #[name = "assistants_group"]
-            adw::PreferencesGroup {
-                set_title: "AI Assistants",
+            gtk::Label {
+                set_label: "AI Assistants",
+                set_halign: gtk::Align::Start,
+                add_css_class: "heading",
+                set_margin_bottom: 6,
+            },
+
+            #[name = "assistants_list"]
+            gtk::ListBox {
+                add_css_class: "assistant-sidebar-list",
+                set_selection_mode: gtk::SelectionMode::None,
             },
 
             gtk::Separator {
@@ -133,7 +141,7 @@ impl SimpleComponent for Sidebar {
             (AiAssistant::MistralVibe, "Mistral Vibe"),
         ] {
             let (row, dot) = Self::build_assistant_row(assistant, title, sender.clone());
-            widgets.assistants_group.add(&row);
+            widgets.assistants_list.append(&row);
             model.status_dots.insert(assistant, dot);
         }
 
@@ -589,8 +597,11 @@ mod tests {
 
         let parts = controller.state().get();
         let projects_list = &parts.widgets.projects_list;
+        let assistants_list = &parts.widgets.assistants_list;
 
         assert!(projects_list.has_css_class("project-sidebar-list"));
         assert!(!projects_list.has_css_class("boxed-list"));
+        assert!(assistants_list.has_css_class("assistant-sidebar-list"));
+        assert!(!assistants_list.has_css_class("boxed-list"));
     }
 }
