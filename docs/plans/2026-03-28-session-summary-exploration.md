@@ -1,8 +1,8 @@
 # Session Summary View — Design Exploration
 
-**Issue**: [#91 — Deterministic structured session summary](https://github.com/supermaciz/sessions-chronicle/issues/91)
-**Date**: 2026-03-28
-**Status**: Exploration — decision pending
+**Issue**: [#91 — Deterministic structured session summary](https://github.com/supermaciz/sessions-chronicle/issues/91)  
+**Date**: 2026-03-28  
+**Status**: Exploration — decision pending  
 
 ---
 
@@ -45,7 +45,7 @@ and a true human-comprehension tool.
 
 ## Proposal A: Grouped Property Rows
 
-**Author**: UI Designer agent
+**Author**: UI Designer agent  
 **Philosophy**: HIG-conformant, conservative, minimal change
 
 ### Approach
@@ -160,7 +160,7 @@ scroll_child (gtk::Box, vertical, spacing=12, margin=12)
 
 ## Proposal B: Unified Session Header
 
-**Author**: Mii Beta GTK Designer agent
+**Author**: Mii Beta GTK Designer agent  
 **Philosophy**: GNOME HIG-leaning with critical eye on naming and surface count
 
 ### Naming Critique
@@ -295,7 +295,7 @@ No layout mode switch needed. Single column that breathes at every width.
 
 ## Proposal C: Session Pulse
 
-**Author**: Mii Beta GTK Designer agent
+**Author**: Mii Beta GTK Designer agent  
 **Philosophy**: Creative, divergent — challenge the assumption that a summary is a list of metadata fields
 
 ### The Radical Idea
@@ -429,7 +429,7 @@ Three inline stat clusters in a single row, separated by vertical dividers:
 
 ## Proposal D: Session Landmarks
 
-**Author**: Codex agent
+**Author**: Codex agent  
 **Philosophy**: Creative and original — summarize the session as a handful of deterministic moments worth revisiting
 
 ### The Core Idea
@@ -588,7 +588,27 @@ Unlike Proposal C, the core pattern survives narrow layouts without losing meani
 
 ## Decision
 
-*Pending — to be decided after review of this exploration.*
+**Proposal B (Unified Session Header)** with three navigation anchors borrowed from Proposal D's interaction model.
+
+### Base: Proposal B
+
+Remove the existing metadata card. Replace it with a flush header — one scroll surface, sections separated by `GtkSeparator` with dim uppercase headings.
+
+### Addition: Jump buttons on three concrete anchors
+
+| Anchor | Condition | Action |
+|--------|-----------|--------|
+| First prompt | Always shown | Jump to the first transcript row |
+| First error | Only if an error exists | Jump to the failing tool call |
+| Final message + status | Always shown | Jump to the last assistant message |
+
+These three anchors are **facts**, not heuristics. No clustering algorithm or time-bucketing required.
+
+### What is ruled out
+
+- **Proposal A**: adds a second surface on top of an already poorly structured layout
+- **Proposal C**: custom `GtkDrawingArea` too costly for v1; revisit if usage data justifies it
+- **Proposal D**: heuristics (Peak Activity, Biggest Change) are fragile without an LLM; the jump interaction is extracted and grafted onto B
 
 ## References
 
