@@ -3,7 +3,7 @@ mod helpers;
 use helpers::TempDatabase;
 use sessions_chronicle::database::{
     count_all_sessions, count_unassigned_sessions, has_unassigned_sessions, load_projects,
-    load_sessions, load_sessions_for_filter, search_sessions, search_sessions_for_filter,
+    load_sessions_for_filter, search_sessions_for_filter,
 };
 use sessions_chronicle::models::{AiAssistant, ProjectFilter};
 
@@ -235,50 +235,4 @@ fn search_sessions_for_filter_returns_only_unassigned_matches() {
     assert_eq!(sessions.len(), 1);
     assert_eq!(sessions[0].id, "unassigned-claude");
     assert_eq!(sessions[0].project_id, None);
-}
-
-#[test]
-fn load_sessions_wrapper_matches_all_sessions_filter() {
-    let db = TempDatabase::new("project-sidebar");
-    db.seed_project_sidebar_fixture();
-
-    let tools = &[AiAssistant::ClaudeCode];
-    let from_wrapper = load_sessions(&db.path, tools).expect("load sessions wrapper");
-    let from_filter = load_sessions_for_filter(&db.path, tools, &ProjectFilter::AllSessions)
-        .expect("load sessions for all filter");
-
-    let wrapper_ids: Vec<&str> = from_wrapper
-        .iter()
-        .map(|session| session.id.as_str())
-        .collect();
-    let filter_ids: Vec<&str> = from_filter
-        .iter()
-        .map(|session| session.id.as_str())
-        .collect();
-
-    assert_eq!(wrapper_ids, filter_ids);
-}
-
-#[test]
-fn search_sessions_wrapper_matches_all_sessions_filter() {
-    let db = TempDatabase::new("project-sidebar");
-    db.seed_project_sidebar_fixture();
-
-    let tools = &[AiAssistant::ClaudeCode];
-    let query = "alpha";
-    let from_wrapper = search_sessions(&db.path, tools, query).expect("search sessions wrapper");
-    let from_filter =
-        search_sessions_for_filter(&db.path, tools, &ProjectFilter::AllSessions, query)
-            .expect("search sessions for all filter");
-
-    let wrapper_ids: Vec<&str> = from_wrapper
-        .iter()
-        .map(|session| session.id.as_str())
-        .collect();
-    let filter_ids: Vec<&str> = from_filter
-        .iter()
-        .map(|session| session.id.as_str())
-        .collect();
-
-    assert_eq!(wrapper_ids, filter_ids);
 }

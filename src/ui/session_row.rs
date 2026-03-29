@@ -173,23 +173,24 @@ impl SessionRow {
                 .unwrap_or_else(|| session.file_path.clone())
         };
 
-        let duration_secs = session
-            .last_updated
-            .signed_duration_since(session.start_time)
-            .num_seconds()
-            .max(0);
-        let duration = crate::ui::format::format_session_duration(duration_secs);
+        let message_count =
+            crate::ui::format::format_count(session.message_count, "message", "messages");
 
         let activity = crate::ui::format::format_dominant_activity(
             session.edit_count,
             session.command_count,
             session.read_count,
-            session.message_count,
         );
 
         let relative_time = Self::format_relative_time(session.last_updated);
-        let raw =
-            format!("{location} \u{00b7} {duration} \u{00b7} {activity} \u{00b7} {relative_time}");
+
+        let raw = if let Some(activity) = activity {
+            format!(
+                "{location} \u{00b7} {message_count} \u{00b7} {activity} \u{00b7} {relative_time}"
+            )
+        } else {
+            format!("{location} \u{00b7} {message_count} \u{00b7} {relative_time}")
+        };
 
         // Escape for Pango markup (ActionRow subtitle also uses markup).
         glib::markup_escape_text(&raw).to_string()
@@ -300,16 +301,17 @@ mod tests {
     }
 
     #[test]
-    fn session_subtitle_shows_duration_and_dominant_activity() {
+    fn session_subtitle_shows_message_count_and_dominant_activity() {
         let mut session = build_session(Some("/home/user/work/my-project"), Some("Fix bug"), 5);
         session.edit_count = 8;
         session.command_count = 3;
         session.read_count = 12;
 
         let subtitle = SessionRow::session_subtitle(&session);
-        assert!(subtitle.contains("my-project"));
-        assert!(subtitle.contains("8 edits"));
-        assert!(subtitle.contains("5m ago"));
+        assert_eq!(
+            subtitle,
+            "my-project \u{00b7} 7 messages \u{00b7} 8 edits \u{00b7} 5m ago"
+        );
     }
 
     #[test]
@@ -322,12 +324,30 @@ mod tests {
     }
 
     #[test]
-    fn session_subtitle_falls_back_to_messages() {
+    fn session_subtitle_hides_activity_when_no_tool_calls() {
         let session = build_session(Some("/home/user/work/my-project"), Some("Chat"), 5);
         // All counts are 0, message_count is 7 (from build_session)
 
         let subtitle = SessionRow::session_subtitle(&session);
-        assert!(subtitle.contains("7 messages"));
+        assert_eq!(subtitle, "my-project \u{00b7} 7 messages \u{00b7} 5m ago");
+    }
+
+    #[test]
+    fn session_subtitle_shows_singular_message_count() {
+        let mut session = build_session(Some("/home/user/work/my-project"), Some("Chat"), 5);
+        session.message_count = 1;
+
+        let subtitle = SessionRow::session_subtitle(&session);
+        assert!(subtitle.contains("1 message"));
+    }
+
+    #[test]
+    fn session_subtitle_shows_zero_message_count() {
+        let mut session = build_session(Some("/home/user/work/my-project"), Some("Chat"), 5);
+        session.message_count = 0;
+
+        let subtitle = SessionRow::session_subtitle(&session);
+        assert!(subtitle.contains("0 messages"));
     }
 
     #[test]

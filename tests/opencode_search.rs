@@ -3,8 +3,8 @@ use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use sessions_chronicle::database::SessionIndexer;
-use sessions_chronicle::database::search_sessions;
-use sessions_chronicle::models::AiAssistant;
+use sessions_chronicle::database::search_sessions_for_filter;
+use sessions_chronicle::models::{AiAssistant, ProjectFilter};
 
 struct TempDatabase {
     path: PathBuf,
@@ -52,9 +52,10 @@ fn opencode_search_finds_text_part_content() {
         "Should index 4 sessions (3 visible + 1 subagent)"
     );
 
-    let sessions = search_sessions(
+    let sessions = search_sessions_for_filter(
         &db.path,
         &[AiAssistant::OpenCode],
+        &ProjectFilter::AllSessions,
         "I can help you with that task",
     )
     .expect("Search failed");
@@ -91,8 +92,13 @@ fn opencode_search_excludes_tool_output() {
     );
 
     // Search for content that exists only in tool output (now excluded)
-    let sessions =
-        search_sessions(&db.path, &[AiAssistant::OpenCode], "total").expect("Search failed");
+    let sessions = search_sessions_for_filter(
+        &db.path,
+        &[AiAssistant::OpenCode],
+        &ProjectFilter::AllSessions,
+        "total",
+    )
+    .expect("Search failed");
 
     assert_eq!(
         sessions.len(),
@@ -111,8 +117,13 @@ fn opencode_search_respects_tool_filter() {
         .index_opencode_sessions(&storage_root, None)
         .expect("Failed to index OpenCode sessions");
 
-    let sessions = search_sessions(&db.path, &[AiAssistant::ClaudeCode], "Hello OpenCode")
-        .expect("Search failed");
+    let sessions = search_sessions_for_filter(
+        &db.path,
+        &[AiAssistant::ClaudeCode],
+        &ProjectFilter::AllSessions,
+        "Hello OpenCode",
+    )
+    .expect("Search failed");
 
     assert_eq!(
         sessions.len(),
@@ -132,9 +143,10 @@ fn opencode_dual_read_sqlite_only_session_is_searchable() {
         .index_opencode_sessions(&storage_root, Some(&opencode_db))
         .expect("Failed to index");
 
-    let sessions = search_sessions(
+    let sessions = search_sessions_for_filter(
         &db.path,
         &[AiAssistant::OpenCode],
+        &ProjectFilter::AllSessions,
         "This session only exists in SQLite",
     )
     .expect("Search failed");

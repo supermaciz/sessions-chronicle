@@ -166,47 +166,26 @@ pub fn token_semantics_help_tooltip() -> &'static str {
      Cache: cache activity; depending on provider, cache tokens may overlap with input tokens"
 }
 
-/// Format a session duration in seconds as a compact human-readable string.
-///
-/// - `< 60s` → `"< 1m"`
-/// - `< 1h`  → `"Nm"`
-/// - `≥ 1h`  → `"Nh Mm"` (minutes omitted when 0)
-pub fn format_session_duration(seconds: i64) -> String {
-    if seconds < 60 {
-        "< 1m".to_string()
-    } else if seconds < 3600 {
-        format!("{}m", seconds / 60)
-    } else {
-        let hours = seconds / 3600;
-        let minutes = (seconds % 3600) / 60;
-        if minutes == 0 {
-            format!("{}h", hours)
-        } else {
-            format!("{}h {}m", hours, minutes)
-        }
-    }
-}
-
-/// Return the dominant activity string using the design precedence:
-/// edits > commands > reads > messages.
+/// Return the dominant tool-call activity using the design precedence:
+/// edits > commands > reads. Returns `None` when no tool calls exist.
 pub fn format_dominant_activity(
     edit_count: usize,
     command_count: usize,
     read_count: usize,
-    message_count: usize,
-) -> String {
+) -> Option<String> {
     if edit_count > 0 {
-        pluralize(edit_count, "edit", "edits")
+        Some(format_count(edit_count, "edit", "edits"))
     } else if command_count > 0 {
-        pluralize(command_count, "command", "commands")
+        Some(format_count(command_count, "command", "commands"))
     } else if read_count > 0 {
-        pluralize(read_count, "read", "reads")
+        Some(format_count(read_count, "read", "reads"))
     } else {
-        pluralize(message_count, "message", "messages")
+        None
     }
 }
 
-fn pluralize(count: usize, singular: &str, plural: &str) -> String {
+/// Format a count with explicit singular and plural words.
+pub fn format_count(count: usize, singular: &str, plural: &str) -> String {
     if count == 1 {
         format!("1 {singular}")
     } else {
@@ -412,49 +391,33 @@ mod tests {
     }
 
     #[test]
-    fn format_session_duration_under_a_minute() {
-        assert_eq!(format_session_duration(0), "< 1m");
-        assert_eq!(format_session_duration(30), "< 1m");
-        assert_eq!(format_session_duration(59), "< 1m");
-    }
-
-    #[test]
-    fn format_session_duration_minutes() {
-        assert_eq!(format_session_duration(60), "1m");
-        assert_eq!(format_session_duration(90), "1m");
-        assert_eq!(format_session_duration(300), "5m");
-        assert_eq!(format_session_duration(2700), "45m");
-    }
-
-    #[test]
-    fn format_session_duration_hours() {
-        assert_eq!(format_session_duration(3600), "1h");
-        assert_eq!(format_session_duration(5400), "1h 30m");
-        assert_eq!(format_session_duration(7200), "2h");
+    fn format_count_uses_singular_and_plural_forms() {
+        assert_eq!(format_count(0, "message", "messages"), "0 messages");
+        assert_eq!(format_count(1, "message", "messages"), "1 message");
+        assert_eq!(format_count(2, "message", "messages"), "2 messages");
     }
 
     #[test]
     fn format_dominant_activity_edits_first() {
-        assert_eq!(format_dominant_activity(3, 2, 1, 10), "3 edits");
-        assert_eq!(format_dominant_activity(1, 2, 1, 10), "1 edit");
+        assert_eq!(format_dominant_activity(3, 2, 1), Some("3 edits".into()));
+        assert_eq!(format_dominant_activity(1, 2, 1), Some("1 edit".into()));
     }
 
     #[test]
     fn format_dominant_activity_commands_when_no_edits() {
-        assert_eq!(format_dominant_activity(0, 5, 3, 10), "5 commands");
-        assert_eq!(format_dominant_activity(0, 1, 3, 10), "1 command");
+        assert_eq!(format_dominant_activity(0, 5, 3), Some("5 commands".into()));
+        assert_eq!(format_dominant_activity(0, 1, 3), Some("1 command".into()));
     }
 
     #[test]
     fn format_dominant_activity_reads_when_no_edits_or_commands() {
-        assert_eq!(format_dominant_activity(0, 0, 4, 10), "4 reads");
-        assert_eq!(format_dominant_activity(0, 0, 1, 10), "1 read");
+        assert_eq!(format_dominant_activity(0, 0, 4), Some("4 reads".into()));
+        assert_eq!(format_dominant_activity(0, 0, 1), Some("1 read".into()));
     }
 
     #[test]
-    fn format_dominant_activity_messages_as_fallback() {
-        assert_eq!(format_dominant_activity(0, 0, 0, 10), "10 messages");
-        assert_eq!(format_dominant_activity(0, 0, 0, 1), "1 message");
+    fn format_dominant_activity_none_when_no_tool_calls() {
+        assert_eq!(format_dominant_activity(0, 0, 0), None);
     }
 
     #[test]
