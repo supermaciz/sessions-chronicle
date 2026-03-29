@@ -237,8 +237,14 @@ impl Sidebar {
         assistant: AiAssistant,
         title: &'static str,
         sender: ComponentSender<Self>,
-    ) -> (adw::SwitchRow, gtk::Box) {
-        let row = adw::SwitchRow::builder().title(title).active(true).build();
+    ) -> (adw::ActionRow, gtk::Box) {
+        let check = gtk::CheckButton::builder().active(true).build();
+
+        let row = adw::ActionRow::builder()
+            .title(title)
+            .activatable_widget(&check)
+            .build();
+        row.add_prefix(&check);
 
         let dot = gtk::Box::new(gtk::Orientation::Horizontal, 0);
         dot.set_visible(false);
@@ -248,11 +254,8 @@ impl Sidebar {
         dot.add_css_class("source-status-dot");
         row.add_suffix(&dot);
 
-        row.connect_active_notify(move |switch_row| {
-            sender.input(SidebarMsg::AiAssistantToggled(
-                assistant,
-                switch_row.is_active(),
-            ));
+        check.connect_toggled(move |check| {
+            sender.input(SidebarMsg::AiAssistantToggled(assistant, check.is_active()));
         });
 
         (row, dot)
