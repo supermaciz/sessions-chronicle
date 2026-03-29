@@ -380,6 +380,16 @@
   box-shadow: none;
 }
 
+.assistant-sidebar-list row {
+  min-height: 28px;
+}
+
+.assistant-sidebar-list row .header {
+  min-height: 30px;
+  padding-top: 1px;
+  padding-bottom: 1px;
+}
+
 .unassigned-label {
   font-style: italic;
   opacity: 0.85;
