@@ -166,27 +166,6 @@ pub fn token_semantics_help_tooltip() -> &'static str {
      Cache: cache activity; depending on provider, cache tokens may overlap with input tokens"
 }
 
-/// Format a session duration in seconds as a compact human-readable string.
-///
-/// - `< 60s` → `"< 1m"`
-/// - `< 1h`  → `"Nm"`
-/// - `≥ 1h`  → `"Nh Mm"` (minutes omitted when 0)
-pub fn format_session_duration(seconds: i64) -> String {
-    if seconds < 60 {
-        "< 1m".to_string()
-    } else if seconds < 3600 {
-        format!("{}m", seconds / 60)
-    } else {
-        let hours = seconds / 3600;
-        let minutes = (seconds % 3600) / 60;
-        if minutes == 0 {
-            format!("{}h", hours)
-        } else {
-            format!("{}h {}m", hours, minutes)
-        }
-    }
-}
-
 /// Return the dominant activity string using the design precedence:
 /// edits > commands > reads > messages.
 pub fn format_dominant_activity(
@@ -414,28 +393,6 @@ mod tests {
         assert!(tooltip.contains("cache"));
         assert!(tooltip.contains("input"));
         assert!(tooltip.contains("overlap"));
-    }
-
-    #[test]
-    fn format_session_duration_under_a_minute() {
-        assert_eq!(format_session_duration(0), "< 1m");
-        assert_eq!(format_session_duration(30), "< 1m");
-        assert_eq!(format_session_duration(59), "< 1m");
-    }
-
-    #[test]
-    fn format_session_duration_minutes() {
-        assert_eq!(format_session_duration(60), "1m");
-        assert_eq!(format_session_duration(90), "1m");
-        assert_eq!(format_session_duration(300), "5m");
-        assert_eq!(format_session_duration(2700), "45m");
-    }
-
-    #[test]
-    fn format_session_duration_hours() {
-        assert_eq!(format_session_duration(3600), "1h");
-        assert_eq!(format_session_duration(5400), "1h 30m");
-        assert_eq!(format_session_duration(7200), "2h");
     }
 
     #[test]

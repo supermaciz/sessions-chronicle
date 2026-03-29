@@ -3,8 +3,8 @@ use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use sessions_chronicle::database::schema::initialize_database;
-use sessions_chronicle::database::search_sessions;
-use sessions_chronicle::models::AiAssistant;
+use sessions_chronicle::database::search_sessions_for_filter;
+use sessions_chronicle::models::{AiAssistant, ProjectFilter};
 
 struct TempDatabase {
     path: PathBuf,
@@ -160,9 +160,10 @@ fn search_sessions_orders_by_relevance() {
     let db = TempDatabase::new();
     db.seed();
 
-    let sessions = search_sessions(
+    let sessions = search_sessions_for_filter(
         &db.path,
         &[AiAssistant::ClaudeCode, AiAssistant::OpenCode],
+        &ProjectFilter::AllSessions,
         "alpha",
     )
     .expect("Search failed");
@@ -177,8 +178,13 @@ fn search_sessions_respects_tool_filter() {
     let db = TempDatabase::new();
     db.seed();
 
-    let sessions =
-        search_sessions(&db.path, &[AiAssistant::OpenCode], "alpha").expect("Search failed");
+    let sessions = search_sessions_for_filter(
+        &db.path,
+        &[AiAssistant::OpenCode],
+        &ProjectFilter::AllSessions,
+        "alpha",
+    )
+    .expect("Search failed");
 
     assert_eq!(sessions.len(), 1);
     assert_eq!(sessions[0].id, "session-b");
@@ -190,8 +196,13 @@ fn search_sessions_sanitizes_invalid_query() {
     let db = TempDatabase::new();
     db.seed();
 
-    let sessions =
-        search_sessions(&db.path, &[AiAssistant::ClaudeCode], "\"alpha").expect("Search failed");
+    let sessions = search_sessions_for_filter(
+        &db.path,
+        &[AiAssistant::ClaudeCode],
+        &ProjectFilter::AllSessions,
+        "\"alpha",
+    )
+    .expect("Search failed");
 
     assert_eq!(sessions.len(), 1);
     assert_eq!(sessions[0].id, "session-a");

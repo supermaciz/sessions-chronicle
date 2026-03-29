@@ -132,11 +132,6 @@ fn sanitize_search_query(raw: &str) -> Option<String> {
     }
 }
 
-#[cfg_attr(not(test), allow(dead_code))]
-pub fn search_sessions(db_path: &Path, tools: &[AiAssistant], query: &str) -> Result<Vec<Session>> {
-    search_sessions_for_filter(db_path, tools, &ProjectFilter::AllSessions, query)
-}
-
 pub fn search_sessions_for_filter(
     db_path: &Path,
     tools: &[AiAssistant],
@@ -272,11 +267,6 @@ fn search_sessions_with_query(
     }
 
     Ok(sessions)
-}
-
-#[cfg_attr(not(test), allow(dead_code))]
-pub fn load_sessions(db_path: &Path, tools: &[AiAssistant]) -> Result<Vec<Session>> {
-    load_sessions_for_filter(db_path, tools, &ProjectFilter::AllSessions)
 }
 
 pub fn load_sessions_for_filter(
