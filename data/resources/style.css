@@ -365,6 +365,31 @@
   box-shadow: none;
 }
 
+/* Keep AI assistant filter rows unboxed inside sidebar. */
+.assistant-sidebar-list {
+  background-color: transparent;
+}
+
+.assistant-sidebar-list > row:not(:hover):not(:focus-within) {
+  background-color: transparent;
+}
+
+.assistant-sidebar-list > row:not(:hover):not(:focus-within) > .activatable {
+  background-color: transparent;
+  border-radius: 0;
+  box-shadow: none;
+}
+
+.assistant-sidebar-list row {
+  min-height: 28px;
+}
+
+.assistant-sidebar-list row .header {
+  min-height: 30px;
+  padding-top: 1px;
+  padding-bottom: 1px;
+}
+
 .unassigned-label {
   font-style: italic;
   opacity: 0.85;

@@ -75,101 +75,10 @@ impl SimpleComponent for Sidebar {
                 set_margin_bottom: 6,
             },
 
-            gtk::Box {
-                set_orientation: gtk::Orientation::Vertical,
-                set_spacing: 6,
-
-                gtk::Box {
-                    set_orientation: gtk::Orientation::Horizontal,
-                    set_spacing: 6,
-
-                    gtk::CheckButton {
-                        set_label: Some("Claude Code"),
-                        set_active: true,
-                        set_hexpand: true,
-                        connect_toggled[sender] => move |btn| {
-                            sender.input(SidebarMsg::AiAssistantToggled(AiAssistant::ClaudeCode, btn.is_active()));
-                        },
-                    },
-
-                    #[name = "claude_status_dot"]
-                    gtk::Box {
-                        set_visible: false,
-                        set_valign: gtk::Align::Center,
-                        set_width_request: 12,
-                        set_height_request: 12,
-                        set_css_classes: &["source-status-dot"],
-                    },
-                },
-
-                gtk::Box {
-                    set_orientation: gtk::Orientation::Horizontal,
-                    set_spacing: 6,
-
-                    gtk::CheckButton {
-                        set_label: Some("OpenCode"),
-                        set_active: true,
-                        set_hexpand: true,
-                        connect_toggled[sender] => move |btn| {
-                            sender.input(SidebarMsg::AiAssistantToggled(AiAssistant::OpenCode, btn.is_active()));
-                        },
-                    },
-
-                    #[name = "opencode_status_dot"]
-                    gtk::Box {
-                        set_visible: false,
-                        set_valign: gtk::Align::Center,
-                        set_width_request: 12,
-                        set_height_request: 12,
-                        set_css_classes: &["source-status-dot"],
-                    },
-                },
-
-                gtk::Box {
-                    set_orientation: gtk::Orientation::Horizontal,
-                    set_spacing: 6,
-
-                    gtk::CheckButton {
-                        set_label: Some("Codex"),
-                        set_active: true,
-                        set_hexpand: true,
-                        connect_toggled[sender] => move |btn| {
-                            sender.input(SidebarMsg::AiAssistantToggled(AiAssistant::Codex, btn.is_active()));
-                        },
-                    },
-
-                    #[name = "codex_status_dot"]
-                    gtk::Box {
-                        set_visible: false,
-                        set_valign: gtk::Align::Center,
-                        set_width_request: 12,
-                        set_height_request: 12,
-                        set_css_classes: &["source-status-dot"],
-                    },
-                },
-
-                gtk::Box {
-                    set_orientation: gtk::Orientation::Horizontal,
-                    set_spacing: 6,
-
-                    gtk::CheckButton {
-                        set_label: Some("Mistral Vibe"),
-                        set_active: true,
-                        set_hexpand: true,
-                        connect_toggled[sender] => move |btn| {
-                            sender.input(SidebarMsg::AiAssistantToggled(AiAssistant::MistralVibe, btn.is_active()));
-                        },
-                    },
-
-                    #[name = "mistral_vibe_status_dot"]
-                    gtk::Box {
-                        set_visible: false,
-                        set_valign: gtk::Align::Center,
-                        set_width_request: 12,
-                        set_height_request: 12,
-                        set_css_classes: &["source-status-dot"],
-                    },
-                },
+            #[name = "assistants_list"]
+            gtk::ListBox {
+                add_css_class: "assistant-sidebar-list",
+                set_selection_mode: gtk::SelectionMode::None,
             },
 
             gtk::Separator {
@@ -224,15 +133,17 @@ impl SimpleComponent for Sidebar {
         };
         let widgets = view_output!();
         model.projects_list = Some(widgets.projects_list.clone());
-        model.status_dots = HashMap::from([
-            (AiAssistant::ClaudeCode, widgets.claude_status_dot.clone()),
-            (AiAssistant::OpenCode, widgets.opencode_status_dot.clone()),
-            (AiAssistant::Codex, widgets.codex_status_dot.clone()),
-            (
-                AiAssistant::MistralVibe,
-                widgets.mistral_vibe_status_dot.clone(),
-            ),
-        ]);
+
+        for (assistant, title) in [
+            (AiAssistant::ClaudeCode, "Claude Code"),
+            (AiAssistant::OpenCode, "OpenCode"),
+            (AiAssistant::Codex, "Codex"),
+            (AiAssistant::MistralVibe, "Mistral Vibe"),
+        ] {
+            let (row, dot) = Self::build_assistant_row(assistant, title, sender.clone());
+            widgets.assistants_list.append(&row);
+            model.status_dots.insert(assistant, dot);
+        }
 
         let _ = sender;
         ComponentParts { model, widgets }
@@ -322,6 +233,34 @@ fn apply_status_dot(dot: &gtk::Box, result: Option<&PerSourceResult>) {
 }
 
 impl Sidebar {
+    fn build_assistant_row(
+        assistant: AiAssistant,
+        title: &'static str,
+        sender: ComponentSender<Self>,
+    ) -> (adw::ActionRow, gtk::Box) {
+        let check = gtk::CheckButton::builder().active(true).build();
+
+        let row = adw::ActionRow::builder()
+            .title(title)
+            .activatable_widget(&check)
+            .build();
+        row.add_prefix(&check);
+
+        let dot = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+        dot.set_visible(false);
+        dot.set_valign(gtk::Align::Center);
+        dot.set_width_request(12);
+        dot.set_height_request(12);
+        dot.add_css_class("source-status-dot");
+        row.add_suffix(&dot);
+
+        check.connect_toggled(move |check| {
+            sender.input(SidebarMsg::AiAssistantToggled(assistant, check.is_active()));
+        });
+
+        (row, dot)
+    }
+
     fn active_tools(&self) -> Vec<AiAssistant> {
         let mut tools = Vec::new();
         if self.claude_enabled {
@@ -493,12 +432,17 @@ mod tests {
         let controller = Sidebar::builder().launch(());
         let parts = controller.state().get();
 
-        for dot in [
-            &parts.widgets.claude_status_dot,
-            &parts.widgets.opencode_status_dot,
-            &parts.widgets.codex_status_dot,
-            &parts.widgets.mistral_vibe_status_dot,
+        for assistant in [
+            AiAssistant::ClaudeCode,
+            AiAssistant::OpenCode,
+            AiAssistant::Codex,
+            AiAssistant::MistralVibe,
         ] {
+            let dot = parts
+                .model
+                .status_dots
+                .get(&assistant)
+                .expect("status dot should exist for assistant");
             assert!(!dot.is_visible());
         }
     }
@@ -546,38 +490,43 @@ mod tests {
 
         pump_main_context(|| {
             let parts = controller.state().get();
-            parts.widgets.claude_status_dot.is_visible()
+            parts
+                .model
+                .status_dots
+                .get(&AiAssistant::ClaudeCode)
+                .is_some_and(|dot| dot.is_visible())
         });
 
         let parts = controller.state().get();
-        assert!(
-            parts
-                .widgets
-                .claude_status_dot
-                .has_css_class("source-status-ok")
-        );
+        let claude_dot = parts
+            .model
+            .status_dots
+            .get(&AiAssistant::ClaudeCode)
+            .expect("Claude Code status dot should exist");
+        let opencode_dot = parts
+            .model
+            .status_dots
+            .get(&AiAssistant::OpenCode)
+            .expect("OpenCode status dot should exist");
+        let codex_dot = parts
+            .model
+            .status_dots
+            .get(&AiAssistant::Codex)
+            .expect("Codex status dot should exist");
+
+        assert!(claude_dot.has_css_class("source-status-ok"));
         assert_eq!(
-            parts.widgets.claude_status_dot.tooltip_text().as_deref(),
+            claude_dot.tooltip_text().as_deref(),
             Some("15 sessions indexed")
         );
-        assert!(
-            parts
-                .widgets
-                .opencode_status_dot
-                .has_css_class("source-status-degraded")
-        );
+        assert!(opencode_dot.has_css_class("source-status-degraded"));
         assert_eq!(
-            parts.widgets.opencode_status_dot.tooltip_text().as_deref(),
+            opencode_dot.tooltip_text().as_deref(),
             Some("Indexed with 2 errors")
         );
-        assert!(
-            parts
-                .widgets
-                .codex_status_dot
-                .has_css_class("source-status-not-found")
-        );
+        assert!(codex_dot.has_css_class("source-status-not-found"));
         assert_eq!(
-            parts.widgets.codex_status_dot.tooltip_text().as_deref(),
+            codex_dot.tooltip_text().as_deref(),
             Some("Source directory not found")
         );
     }
@@ -651,8 +600,11 @@ mod tests {
 
         let parts = controller.state().get();
         let projects_list = &parts.widgets.projects_list;
+        let assistants_list = &parts.widgets.assistants_list;
 
         assert!(projects_list.has_css_class("project-sidebar-list"));
         assert!(!projects_list.has_css_class("boxed-list"));
+        assert!(assistants_list.has_css_class("assistant-sidebar-list"));
+        assert!(!assistants_list.has_css_class("boxed-list"));
     }
 }
