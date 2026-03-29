@@ -196,14 +196,19 @@ pub fn format_dominant_activity(
     message_count: usize,
 ) -> String {
     if edit_count > 0 {
-        pluralize(edit_count, "edit", "edits")
+        format_count(edit_count, "edit", "edits")
     } else if command_count > 0 {
-        pluralize(command_count, "command", "commands")
+        format_count(command_count, "command", "commands")
     } else if read_count > 0 {
-        pluralize(read_count, "read", "reads")
+        format_count(read_count, "read", "reads")
     } else {
-        pluralize(message_count, "message", "messages")
+        format_count(message_count, "message", "messages")
     }
+}
+
+/// Format a count with explicit singular and plural words.
+pub fn format_count(count: usize, singular: &str, plural: &str) -> String {
+    pluralize(count, singular, plural)
 }
 
 fn pluralize(count: usize, singular: &str, plural: &str) -> String {
@@ -431,6 +436,13 @@ mod tests {
         assert_eq!(format_session_duration(3600), "1h");
         assert_eq!(format_session_duration(5400), "1h 30m");
         assert_eq!(format_session_duration(7200), "2h");
+    }
+
+    #[test]
+    fn format_count_uses_singular_and_plural_forms() {
+        assert_eq!(format_count(0, "message", "messages"), "0 messages");
+        assert_eq!(format_count(1, "message", "messages"), "1 message");
+        assert_eq!(format_count(2, "message", "messages"), "2 messages");
     }
 
     #[test]
