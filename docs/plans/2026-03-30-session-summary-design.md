@@ -20,6 +20,10 @@ Replace the existing `.card` metadata box with a flush unified session header. A
 compact navigation anchor row that links to key transcript positions. No LLM-generated
 text — everything deterministic from indexed data.
 
+The navigation anchors target the mixed transcript stream (`messages`, `tool calls`,
+`subagents`) as stored in `transcript_items`. They do not attempt to target only
+message rows.
+
 ---
 
 ## Section 1: Session Identity
@@ -122,16 +126,16 @@ pill-styled buttons.
 
 | Button | Condition | Target |
 |--------|-----------|--------|
-| "First prompt" | Always shown | Transcript row index 0 |
-| "First error: `{tool_name}`" | Only if an error tool call exists | Transcript row at the error's `item_index` |
-| "Final message" | Always shown | Last transcript row |
+| "Start of session" | Always shown | Transcript item index 0 |
+| "First error: `{tool_name}`" | Only if an error tool call exists | Transcript item at the error's `item_index` |
+| "End of session" | Always shown | Last transcript item |
 
 **Scroll behavior:**
 
-- **First prompt**: target is index 0, always loaded. Use existing `scroll_to_item` mechanism.
+- **Start of session**: target is index 0, always loaded. Use existing `scroll_to_item` mechanism.
 - **First error**: target is `first_error.item_index`. If within `loaded_count`, scroll directly.
   Otherwise, set `loading_anchor_target` and trigger `LoadMore` in a loop until target is loaded.
-- **Final message**: target is `total_transcript_count - 1`. Same load-until-ready pattern as
+- **End of session**: target is `total_transcript_count - 1`. Same load-until-ready pattern as
   first error.
 
 While loading toward an anchor target, the button shows a `gtk::Spinner` replacing its label.
@@ -139,8 +143,8 @@ While loading toward an anchor target, the button shows a `gtk::Spinner` replaci
 **Edge cases:**
 
 - Session with 0 transcript items: hide all anchors
-- Session with <200 items: "Final message" already loaded, no extra loading needed
-- Very long session (>1000 items): bulk loading triggered by "Final message"
+- Session with <200 items: "End of session" already loaded, no extra loading needed
+- Very long session (>1000 items): bulk loading triggered by "End of session"
 
 ---
 
@@ -191,9 +195,9 @@ scroll_child (gtk::Box, vertical, spacing=0, margin=16)
 
   // Section 5: Navigation Anchors
   anchor_row (gtk::Box, horizontal, spacing=8)
-    first_prompt_btn (gtk::Button.pill "First prompt")
+    start_of_session_btn (gtk::Button.pill "Start of session")
     first_error_btn (gtk::Button.pill "First error: {name}", conditional)
-    final_message_btn (gtk::Button.pill "Final message")
+    end_of_session_btn (gtk::Button.pill "End of session")
 
   gtk::Separator  // heavier, marks transcript start
 
@@ -213,7 +217,7 @@ SELECT tc.id, tc.tool_name, ti.item_index
 FROM tool_calls tc
 JOIN transcript_items ti
   ON ti.session_id = tc.session_id AND ti.tool_call_id = tc.id
-WHERE tc.session_id = ?1 AND tc.status = 'Error'
+WHERE tc.session_id = ?1 AND tc.status = 'error'
 ORDER BY ti.item_index ASC
 LIMIT 1
 ```
@@ -226,7 +230,7 @@ Returns `Option<(String, String, usize)>` — `(tool_call_id, tool_name, item_in
 SELECT COUNT(*) FROM transcript_items WHERE session_id = ?1
 ```
 
-Returns `usize`. Needed for "Final message" anchor target.
+Returns `usize`. Needed for the "End of session" anchor target.
 
 ### No schema migration
 
@@ -259,9 +263,9 @@ pub struct FirstErrorInfo {
 ```rust
 enum SessionDetailMsg {
     // existing messages unchanged...
-    JumpToFirstPrompt,
+    JumpToStartOfSession,
     JumpToFirstError,
-    JumpToFinalMessage,
+    JumpToEndOfSession,
 }
 ```
 
@@ -269,10 +273,10 @@ enum SessionDetailMsg {
 
 All three handlers use the existing `scroll_to_item` mechanism:
 
-1. **JumpToFirstPrompt** — set `scroll_to_item = Some(0)`, always loaded
+1. **JumpToStartOfSession** — set `scroll_to_item = Some(0)`, always loaded
 2. **JumpToFirstError** — if `item_index < loaded_count`, scroll directly;
    otherwise set `loading_anchor_target` and trigger `LoadMore` loop
-3. **JumpToFinalMessage** — target is `total_transcript_count - 1`, same
+3. **JumpToEndOfSession** — target is `total_transcript_count - 1`, same
    load-until-ready pattern
 
 The `LoadMore` handler checks `loading_anchor_target` after each page load.
@@ -399,8 +403,10 @@ The `LoadMore` loop must:
 4. If not, trigger another `LoadMore`
 5. Once loaded, scroll and clear
 
-This must not freeze the UI. Each `LoadMore` is already async-friendly since it posts
-a message. The loop is message-driven, not blocking.
+This must not freeze the UI. In the current implementation, `LoadMore` reads from SQLite
+inside the component update path, so repeated auto-loading can still stall the UI on very
+large sessions. The loop is message-driven, but the implementation should avoid assuming
+that it is non-blocking.
 
 ## Verification Plan
 
@@ -414,7 +420,7 @@ a message. The loop is message-driven, not blocking.
 - No first prompt: section hides, separator hides
 - Narrow width: chips wrap, tokens go 2x2, anchors stack
 - High contrast theme: semantic colors remain legible
-- Paginated jump: "Final message" on a 500+ item session loads all pages then scrolls
+- Paginated jump: "End of session" on a 500+ item session loads all pages then scrolls
 
 ---
 
