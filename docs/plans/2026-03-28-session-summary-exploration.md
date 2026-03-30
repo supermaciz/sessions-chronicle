@@ -2,7 +2,7 @@
 
 **Issue**: [#91 — Deterministic structured session summary](https://github.com/supermaciz/sessions-chronicle/issues/91)  
 **Date**: 2026-03-28  
-**Status**: Exploration — decision pending  
+**Status**: Implemented [PR 105](https://github.com/supermaciz/sessions-chronicle/pull/105)  
 
 ---
 
