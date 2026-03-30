@@ -99,134 +99,135 @@ impl SimpleComponent for SessionDetail {
                         gtk::Box {
                             set_orientation: gtk::Orientation::Vertical,
                             set_spacing: 12,
-                            set_margin_all: 12,
+                            set_margin_all: 16,
 
-                            // Metadata header
-                            gtk::Box {
-                                add_css_class: "card",
-                                set_orientation: gtk::Orientation::Vertical,
-                                set_spacing: 8,
-                                set_margin_bottom: 12,
-
-                                #[name = "project_label"]
-                                gtk::Label {
-                                    add_css_class: "title-2",
-                                    set_halign: gtk::Align::Start,
-                                    set_wrap: true,
-                                    set_wrap_mode: gtk::pango::WrapMode::WordChar,
-                                },
-
-                                #[name = "path_label"]
-                                gtk::Label {
-                                    add_css_class: "dim-label",
-                                    set_halign: gtk::Align::Start,
-                                    set_wrap: true,
-                                    set_wrap_mode: gtk::pango::WrapMode::WordChar,
-                                    set_selectable: true,
-                                },
-
-                                gtk::Separator {},
-
-                                gtk::Box {
-                                    set_orientation: gtk::Orientation::Horizontal,
-                                    set_spacing: 24,
-                                    set_halign: gtk::Align::Start,
-
-                                    gtk::Box {
-                                        set_orientation: gtk::Orientation::Horizontal,
-                                        set_spacing: 6,
-
-                                        #[name = "tool_icon"]
-                                        gtk::Image {
-                                            set_pixel_size: 16,
-                                        },
-
-                                        #[name = "tool_label"]
-                                        gtk::Label {
-                                            add_css_class: "dim-label",
-                                        },
-                                    },
-
-                                    #[name = "message_count_label"]
-                                    gtk::Label {
-                                        add_css_class: "dim-label",
-                                    },
-
-                                    #[name = "time_label"]
-                                    gtk::Label {
-                                        add_css_class: "dim-label",
-                                    },
-                                },
-
-                                // Token usage rows
-                                #[name = "token_row"]
-                                gtk::Box {
-                                    set_orientation: gtk::Orientation::Vertical,
-                                    set_spacing: 2,
-                                    set_halign: gtk::Align::Start,
-                                    #[watch]
-                                    set_visible: model.session.as_ref()
-                                        .and_then(|s| s.token_usage.as_ref())
-                                        .is_some(),
-
-                                    gtk::Box {
-                                        set_orientation: gtk::Orientation::Horizontal,
-                                        set_spacing: 6,
-
-                                        gtk::Label {
-                                            set_label: "Tokens:",
-                                            add_css_class: "dim-label",
-                                        },
-
-                                        #[name = "token_details_label"]
-                                        gtk::Label {
-                                            add_css_class: "dim-label",
-                                            set_has_tooltip: true,
-                                        },
-                                    },
-
-                                    gtk::Box {
-                                        set_orientation: gtk::Orientation::Horizontal,
-                                        set_spacing: 6,
-                                        #[watch]
-                                        set_visible: model.session.as_ref()
-                                            .and_then(|s| s.token_usage.as_ref())
-                                            .and_then(crate::ui::format::format_token_cache)
-                                            .is_some(),
-
-                                        gtk::Label {
-                                            set_label: "Cache:",
-                                            add_css_class: "dim-label",
-                                        },
-
-                                        #[name = "token_cache_label"]
-                                        gtk::Label {
-                                            add_css_class: "dim-label",
-                                            set_has_tooltip: true,
-                                        },
-                                    },
-                                },
-
-                                gtk::Box {
-                                    set_orientation: gtk::Orientation::Horizontal,
-                                    set_spacing: 6,
-                                    set_halign: gtk::Align::Start,
-
-                                    gtk::Label {
-                                        set_label: "Session ID:",
-                                        add_css_class: "dim-label",
-                                    },
-
-                                    #[name = "session_id_label"]
-                                    gtk::Label {
-                                        add_css_class: "monospace",
-                                        set_selectable: true,
-                                    },
-                                },
-
+                            #[name = "project_label"]
+                            gtk::Label {
+                                add_css_class: "title-2",
+                                set_halign: gtk::Align::Start,
+                                set_wrap: true,
+                                set_wrap_mode: gtk::pango::WrapMode::WordChar,
                             },
 
-                            // Transcript rows — managed by factory
+                            #[name = "path_label"]
+                            gtk::Label {
+                                add_css_class: "dim-label",
+                                set_halign: gtk::Align::Start,
+                                set_wrap: true,
+                                set_wrap_mode: gtk::pango::WrapMode::WordChar,
+                                set_selectable: true,
+                            },
+
+                            #[name = "session_id_row"]
+                            gtk::Box {
+                                set_orientation: gtk::Orientation::Horizontal,
+                                set_spacing: 6,
+
+                                gtk::Label {
+                                    set_label: "Session ID:",
+                                    add_css_class: "dim-label",
+                                },
+
+                                #[name = "session_id_label"]
+                                gtk::Label {
+                                    add_css_class: "monospace",
+                                    set_selectable: true,
+                                    set_wrap: true,
+                                    set_wrap_mode: gtk::pango::WrapMode::WordChar,
+                                },
+                            },
+
+                            #[name = "chip_row"]
+                            gtk::FlowBox {
+                                set_selection_mode: gtk::SelectionMode::None,
+                                set_row_spacing: 8,
+                                set_column_spacing: 8,
+                                set_max_children_per_line: 4,
+                                set_min_children_per_line: 1,
+
+                                append = &gtk::Box {
+                                    set_orientation: gtk::Orientation::Horizontal,
+                                    set_spacing: 6,
+                                    add_css_class: "pill",
+
+                                    #[name = "tool_icon"]
+                                    gtk::Image {
+                                        set_pixel_size: 16,
+                                    },
+
+                                    #[name = "tool_label"]
+                                    gtk::Label {},
+                                },
+
+                                append = &gtk::Box {
+                                    add_css_class: "pill",
+
+                                    #[name = "duration_chip"]
+                                    gtk::Label {},
+                                },
+
+                                append = &gtk::Box {
+                                    add_css_class: "pill",
+
+                                    #[name = "message_count_chip"]
+                                    gtk::Label {},
+                                },
+
+                                append = &gtk::Box {
+                                    add_css_class: "pill",
+
+                                    #[name = "ending_status_chip"]
+                                    gtk::Label {},
+                                },
+                            },
+
+                            #[name = "first_prompt_separator"]
+                            gtk::Separator {},
+
+                            #[name = "first_prompt_section"]
+                            gtk::Box {
+                                set_orientation: gtk::Orientation::Vertical,
+                                set_spacing: 4,
+
+                                gtk::Label {
+                                    set_label: "FIRST PROMPT",
+                                    add_css_class: "section-heading",
+                                    set_halign: gtk::Align::Start,
+                                },
+
+                                #[name = "first_prompt_label"]
+                                gtk::Label {
+                                    set_halign: gtk::Align::Start,
+                                    set_xalign: 0.0,
+                                    set_wrap: true,
+                                    set_wrap_mode: gtk::pango::WrapMode::WordChar,
+                                    set_lines: 3,
+                                    set_ellipsize: gtk::pango::EllipsizeMode::End,
+                                    set_max_width_chars: 80,
+                                },
+                            },
+
+                            #[name = "activity_separator"]
+                            gtk::Separator {},
+
+                            #[name = "activity_section"]
+                            gtk::Box {
+                                set_orientation: gtk::Orientation::Vertical,
+                                set_spacing: 8,
+                            },
+
+                            #[name = "tokens_separator"]
+                            gtk::Separator {},
+
+                            #[name = "tokens_section"]
+                            gtk::Box {
+                                set_orientation: gtk::Orientation::Vertical,
+                                set_spacing: 8,
+                            },
+
+                            #[name = "transcript_separator"]
+                            gtk::Separator {},
+
                             #[local_ref]
                             messages_box -> gtk::Box {
                                 set_orientation: gtk::Orientation::Vertical,
@@ -504,38 +505,7 @@ impl SimpleComponent for SessionDetail {
                 .set_icon_name(Some(session.tool.icon_name()));
             widgets.tool_label.set_label(session.tool.display_name());
 
-            widgets
-                .message_count_label
-                .set_label(&format!("{} messages", session.message_count));
-
-            let time_str = format!(
-                "Started {} • Updated {}",
-                Self::format_relative_time(session.start_time),
-                Self::format_relative_time(session.last_updated)
-            );
-            widgets.time_label.set_label(&time_str);
-
             widgets.session_id_label.set_label(&session.id);
-
-            if let Some(usage) = &session.token_usage {
-                widgets
-                    .token_details_label
-                    .set_label(&crate::ui::format::format_token_details(usage));
-                widgets
-                    .token_details_label
-                    .set_tooltip_text(Some(&crate::ui::format::token_details_tooltip(usage)));
-                if let Some(cache_text) = crate::ui::format::format_token_cache(usage) {
-                    widgets.token_cache_label.set_label(&cache_text);
-                    widgets
-                        .token_cache_label
-                        .set_tooltip_text(Some(crate::ui::format::token_cache_tooltip()));
-                }
-            } else {
-                widgets.token_details_label.set_label("");
-                widgets.token_details_label.set_tooltip_text(None);
-                widgets.token_cache_label.set_label("");
-                widgets.token_cache_label.set_tooltip_text(None);
-            }
 
             widgets
                 .content_stack
@@ -722,6 +692,7 @@ fn activity_segment_widths(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use relm4::{Component, ComponentController};
 
     #[test]
     fn activity_segment_widths_fill_the_available_width() {
@@ -736,5 +707,52 @@ mod tests {
     #[test]
     fn activity_segment_widths_assign_remainder_to_the_last_visible_segment() {
         assert_eq!(activity_segment_widths(1, 1, 1, 10), [3, 3, 4]);
+    }
+
+    fn build_test_session(
+        first_prompt: Option<&str>,
+        token_usage: Option<crate::models::TokenUsage>,
+        edit_count: usize,
+        command_count: usize,
+        read_count: usize,
+    ) -> Session {
+        use chrono::{TimeZone, Utc};
+
+        Session {
+            id: "test-session-123".to_string(),
+            tool: crate::models::AiAssistant::ClaudeCode,
+            project_path: Some("/tmp/project".to_string()),
+            project_id: None,
+            start_time: Utc.with_ymd_and_hms(2026, 3, 30, 10, 0, 0).unwrap(),
+            message_count: 42,
+            file_path: "/tmp/test.json".to_string(),
+            last_updated: Utc.with_ymd_and_hms(2026, 3, 30, 12, 14, 0).unwrap(),
+            first_prompt: first_prompt.map(|s| s.to_string()),
+            parent_session_id: None,
+            is_subagent: false,
+            token_usage,
+            edit_count,
+            read_count,
+            command_count,
+            ending_status: crate::models::SessionEndingStatus::Clean,
+        }
+    }
+
+    #[gtk::test]
+    fn session_detail_header_hides_optional_sections_when_data_is_missing() {
+        let temp_db = tempfile::NamedTempFile::new().expect("temp db");
+        let controller = SessionDetail::builder().launch(temp_db.path().to_path_buf());
+
+        controller.emit(SessionDetailMsg::SetSession {
+            session: Box::new(build_test_session(None, None, 0, 0, 0)),
+            search_query: None,
+        });
+
+        while gtk::glib::MainContext::default().iteration(false) {}
+
+        let parts = controller.state().get();
+        assert!(!parts.widgets.first_prompt_section.is_visible());
+        assert!(!parts.widgets.tokens_section.is_visible());
+        assert!(parts.widgets.activity_section.is_visible());
     }
 }
