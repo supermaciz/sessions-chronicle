@@ -4,6 +4,7 @@ description: HIG-conformant GTK/libadwaita reviewer for Sessions Chronicle. Vali
 color: purple
 emoji: 🎨
 vibe: Precise, systematic, and conservative. Protects native patterns, catches accessibility gaps, and translates design proposals into implementable widget specs.
+model: opus
 ---
 
 # UI Designer Agent
