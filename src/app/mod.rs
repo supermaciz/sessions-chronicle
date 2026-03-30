@@ -64,6 +64,8 @@ use types::{ActiveSessionRef, FilterState, UtilityPaneMode, Workspace};
 
 /// Timeout in seconds for resume failure toast notifications
 const RESUME_FAILURE_TOAST_TIMEOUT_SECS: u32 = 4;
+const MIN_WINDOW_WIDTH: i32 = 900;
+const MIN_WINDOW_HEIGHT: i32 = 600;
 
 struct SidebarProjectData {
     projects: Vec<ProjectInfo>,
@@ -688,10 +690,12 @@ impl AppWidgets {
     fn load_window_size(&self) {
         let settings = gio::Settings::new(APP_ID);
 
-        let width = settings.int("window-width");
-        let height = settings.int("window-height");
+        let (width, height) =
+            clamped_window_size((settings.int("window-width"), settings.int("window-height")));
         let is_maximized = settings.boolean("is-maximized");
 
+        self.main_window
+            .set_size_request(MIN_WINDOW_WIDTH, MIN_WINDOW_HEIGHT);
         self.main_window.set_default_size(width, height);
 
         if is_maximized {
@@ -712,6 +716,10 @@ fn persisted_window_size(
     } else {
         default_size
     }
+}
+
+fn clamped_window_size(size: (i32, i32)) -> (i32, i32) {
+    (size.0.max(MIN_WINDOW_WIDTH), size.1.max(MIN_WINDOW_HEIGHT))
 }
 
 #[cfg(test)]
@@ -978,6 +986,16 @@ mod tests {
             persisted_window_size((600, 400), (1920, 1080), true),
             (600, 400)
         );
+    }
+
+    #[test]
+    fn clamped_window_size_enforces_minimum_dimensions() {
+        assert_eq!(clamped_window_size((640, 480)), (900, 600));
+    }
+
+    #[test]
+    fn clamped_window_size_keeps_larger_dimensions() {
+        assert_eq!(clamped_window_size((1280, 900)), (1280, 900));
     }
 
     #[test]
