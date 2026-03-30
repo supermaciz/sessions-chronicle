@@ -1,6 +1,7 @@
 use std::cell::Cell;
 use std::collections::BTreeMap;
 use std::path::PathBuf;
+use std::rc::Rc;
 use std::sync::Arc;
 
 use chrono::{DateTime, Duration as ChronoDuration, Utc};
@@ -31,6 +32,7 @@ pub struct SessionDetail {
     total_matches: usize,
     scroll_to_item: Cell<Option<usize>>,
     pending_toast: Cell<bool>,
+    activity_bar_width: i32,
 }
 
 #[derive(Debug)]
@@ -52,6 +54,7 @@ pub enum SessionDetailMsg {
     ClearSearch,
     MatchCount(usize, usize),
     ShowExpandLoadFailure,
+    ActivityBarWidthChanged(i32),
     Clear,
     InspectToolCall(String),
     InspectSubagent(String),
@@ -520,10 +523,22 @@ impl SimpleComponent for SessionDetail {
             total_matches: 0,
             scroll_to_item: Cell::new(None),
             pending_toast: Cell::new(false),
+            activity_bar_width: 0,
         };
 
         let messages_box = model.messages.widget();
         let widgets = view_output!();
+        let last_activity_bar_width = Rc::new(Cell::new(0));
+        let width_sender = sender.input_sender().clone();
+        let last_activity_bar_width_ref = last_activity_bar_width.clone();
+        widgets.activity_bar.add_tick_callback(move |bar, _| {
+            let width = bar.width();
+            if width > 0 && width != last_activity_bar_width_ref.get() {
+                last_activity_bar_width_ref.set(width);
+                let _ = width_sender.send(SessionDetailMsg::ActivityBarWidthChanged(width));
+            }
+            glib::ControlFlow::Continue
+        });
 
         widgets
             .content_stack
@@ -633,6 +648,9 @@ impl SimpleComponent for SessionDetail {
                 tracing::warn!("Could not load full message content");
                 self.pending_toast.set(true);
             }
+            SessionDetailMsg::ActivityBarWidthChanged(width) => {
+                self.activity_bar_width = width;
+            }
             SessionDetailMsg::ClearSearch => {
                 self.search_query = None;
                 self.match_counts.clear();
@@ -738,11 +756,12 @@ impl SimpleComponent for SessionDetail {
             widgets.conversation_only_label.set_visible(!has_activity);
 
             if has_activity {
+                let activity_bar_width = self.activity_bar_width.max(widgets.activity_bar.width());
                 let widths = activity_segment_widths(
                     session.edit_count,
                     session.command_count,
                     session.read_count,
-                    widgets.activity_bar.width(),
+                    activity_bar_width,
                 );
                 widgets.edit_segment.set_size_request(widths[0], 8);
                 widgets.command_segment.set_size_request(widths[1], 8);
@@ -788,6 +807,10 @@ impl SimpleComponent for SessionDetail {
                     .command_legend
                     .set_visible(session.command_count > 0);
                 widgets.read_legend.set_visible(session.read_count > 0);
+            } else {
+                widgets.edit_segment.set_size_request(0, 8);
+                widgets.command_segment.set_size_request(0, 8);
+                widgets.read_segment.set_size_request(0, 8);
             }
 
             // Tokens section
@@ -1135,6 +1158,25 @@ mod tests {
         let parts = controller.state().get();
         assert!(parts.widgets.conversation_only_label.is_visible());
         assert!(!parts.widgets.activity_bar.is_visible());
+    }
+
+    #[gtk::test]
+    fn session_detail_activity_segments_recompute_when_width_arrives_later() {
+        let temp_db = tempfile::NamedTempFile::new().expect("temp db");
+        let controller = SessionDetail::builder().launch(temp_db.path().to_path_buf());
+
+        controller.emit(SessionDetailMsg::SetSession {
+            session: Box::new(build_test_session(Some("Ship it"), None, 4, 2, 1)),
+            search_query: None,
+        });
+        controller.emit(SessionDetailMsg::ActivityBarWidthChanged(70));
+
+        while gtk::glib::MainContext::default().iteration(false) {}
+
+        let parts = controller.state().get();
+        assert_eq!(parts.widgets.edit_segment.width_request(), 40);
+        assert_eq!(parts.widgets.command_segment.width_request(), 20);
+        assert_eq!(parts.widgets.read_segment.width_request(), 10);
     }
 
     fn build_error_session_for_css_test() -> Session {

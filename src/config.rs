@@ -8,4 +8,4 @@ pub const RESOURCES_FILE: &str = concat!(
     "/home/mcizo/.local/share/sessions-chronicle",
     "/resources.gresource"
 );
-pub const VERSION: &str = "0.4.0-7a4a775";
+pub const VERSION: &str = "0.4.0-ba6b727";
