@@ -12,12 +12,14 @@
 
 When a user opens a session, the app drops them into the full transcript with only a
 minimal metadata card above it. The most common review questions remain unanswered at
-a glance: what happened, how much activity, how it ended, and where to look first.
+a glance: what happened, how much activity, and how it ended.
 
 ## Scope
 
-Replace the existing `.card` metadata box with a flush unified session header. No
-LLM-generated text — everything deterministic from indexed data.
+Replace the existing `.card` metadata box with a flush unified session header. This
+iteration improves immediate comprehension of the session but does not add transcript
+navigation; navigation anchors are deferred to a future issue. No LLM-generated text —
+everything deterministic from indexed data.
 
 ---
 
@@ -289,12 +291,15 @@ Activity bar always full-width (proportional, compresses well).
 
 The hardest part is the **activity bar proportional sizing**. Using `set_size_request`
 after measuring parent allocation is fragile during GTK4 resize cycles. Validate during
-prototyping; `hexpand` with proportional weights may be more robust.
+prototyping and be ready to switch to a more explicit proportional layout strategy if the
+box-based approach proves unstable.
 
 ## Verification Plan
 
 - `--sessions-dir tests/fixtures` covers multiple AI assistants
 - Sessions with zero tool calls: activity shows "Conversation only"
+- Ending status pill renders correct label, color, and accessible text for `clean`,
+  `abrupt`, `error`, and `unknown`
 - Short sessions: header height stays under ~300px
 - Long first prompt: 3-line ellipsis works
 - No token data: tokens section hides cleanly
