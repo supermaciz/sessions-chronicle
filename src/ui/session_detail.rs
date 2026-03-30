@@ -3,7 +3,6 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use chrono::{DateTime, Duration as ChronoDuration, Utc};
 use gtk::glib;
 use gtk::prelude::*;
 use relm4::factory::FactoryVecDeque;
@@ -931,24 +930,6 @@ impl SessionDetail {
             remaining -= count;
         }
         counts.keys().last().copied().unwrap_or(0)
-    }
-
-    #[allow(dead_code)]
-    fn format_relative_time(instant: DateTime<Utc>) -> String {
-        let now = Utc::now();
-        let duration = now.signed_duration_since(instant);
-
-        if duration < ChronoDuration::minutes(1) {
-            "just now".to_string()
-        } else if duration < ChronoDuration::hours(1) {
-            format!("{}m ago", duration.num_minutes())
-        } else if duration < ChronoDuration::days(1) {
-            format!("{}h ago", duration.num_hours())
-        } else if duration < ChronoDuration::days(7) {
-            format!("{}d ago", duration.num_days())
-        } else {
-            instant.format("%Y-%m-%d").to_string()
-        }
     }
 }
 
