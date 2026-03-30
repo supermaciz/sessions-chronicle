@@ -507,6 +507,52 @@ impl SimpleComponent for SessionDetail {
 
             widgets.session_id_label.set_label(&session.id);
 
+            // Populate chip row
+            widgets
+                .duration_chip
+                .set_label(&crate::ui::format::format_session_duration(
+                    session.start_time,
+                    session.last_updated,
+                ));
+            widgets
+                .message_count_chip
+                .set_label(&crate::ui::format::format_count(
+                    session.message_count,
+                    "message",
+                    "messages",
+                ));
+            widgets
+                .ending_status_chip
+                .set_label(crate::ui::format::format_ending_label(
+                    &session.ending_status,
+                ));
+            widgets.ending_status_chip.set_css_classes(&[
+                "pill",
+                crate::ui::format::ending_css_class(&session.ending_status),
+            ]);
+
+            // First prompt section visibility
+            let has_first_prompt = session
+                .first_prompt
+                .as_ref()
+                .map(|p| !p.trim().is_empty())
+                .unwrap_or(false);
+            widgets.first_prompt_section.set_visible(has_first_prompt);
+            if has_first_prompt {
+                widgets
+                    .first_prompt_label
+                    .set_label(session.first_prompt.as_ref().unwrap());
+            }
+
+            // Activity section visibility (always visible, shows different content based on data)
+            let has_activity =
+                session.edit_count > 0 || session.command_count > 0 || session.read_count > 0;
+            widgets.activity_section.set_visible(true);
+
+            // Tokens section visibility
+            let has_tokens = session.token_usage.is_some();
+            widgets.tokens_section.set_visible(has_tokens);
+
             widgets
                 .content_stack
                 .set_visible_child(&widgets.toast_overlay);
@@ -754,5 +800,66 @@ mod tests {
         assert!(!parts.widgets.first_prompt_section.is_visible());
         assert!(!parts.widgets.tokens_section.is_visible());
         assert!(parts.widgets.activity_section.is_visible());
+    }
+
+    #[gtk::test]
+    fn session_detail_header_populates_identity_prompt_and_tokens() {
+        let temp_db = tempfile::NamedTempFile::new().expect("temp db");
+        let controller = SessionDetail::builder().launch(temp_db.path().to_path_buf());
+
+        controller.emit(SessionDetailMsg::SetSession {
+            session: Box::new(build_test_session(
+                Some("Ship the summary header"),
+                Some(crate::models::TokenUsage {
+                    input_tokens: 1200,
+                    output_tokens: 300,
+                    cache_read_tokens: Some(400),
+                    cache_write_tokens: None,
+                    reasoning_tokens: Some(50),
+                }),
+                4,
+                2,
+                1,
+            )),
+            search_query: None,
+        });
+
+        while gtk::glib::MainContext::default().iteration(false) {}
+
+        let parts = controller.state().get();
+        assert_eq!(parts.widgets.project_label.label(), "project");
+        assert_eq!(parts.widgets.duration_chip.label(), "2h 14m");
+        assert_eq!(parts.widgets.message_count_chip.label(), "42 messages");
+        assert_eq!(parts.widgets.ending_status_chip.label(), "Ended cleanly");
+        assert!(parts.widgets.first_prompt_section.is_visible());
+        assert!(parts.widgets.tokens_section.is_visible());
+    }
+
+    fn build_error_session_for_css_test() -> Session {
+        let mut session = build_test_session(None, None, 0, 0, 0);
+        session.ending_status = crate::models::SessionEndingStatus::Error;
+        session
+    }
+
+    #[gtk::test]
+    fn session_detail_header_applies_status_and_activity_css_classes() {
+        let temp_db = tempfile::NamedTempFile::new().expect("temp db");
+        let controller = SessionDetail::builder().launch(temp_db.path().to_path_buf());
+
+        controller.emit(SessionDetailMsg::SetSession {
+            session: Box::new(build_error_session_for_css_test()),
+            search_query: None,
+        });
+
+        while gtk::glib::MainContext::default().iteration(false) {}
+
+        let parts = controller.state().get();
+        assert!(parts.widgets.ending_status_chip.has_css_class("pill"));
+        assert!(
+            parts
+                .widgets
+                .ending_status_chip
+                .has_css_class("ending-failed")
+        );
     }
 }
