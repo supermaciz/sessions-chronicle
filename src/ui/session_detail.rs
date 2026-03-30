@@ -680,3 +680,61 @@ impl SessionDetail {
         }
     }
 }
+
+fn activity_segment_widths(
+    edit_count: usize,
+    command_count: usize,
+    read_count: usize,
+    total_width: i32,
+) -> [i32; 3] {
+    if total_width <= 0 {
+        return [0, 0, 0];
+    }
+
+    let counts = [edit_count as i32, command_count as i32, read_count as i32];
+    let total = counts.iter().sum::<i32>();
+    if total == 0 {
+        return [0, 0, 0];
+    }
+
+    let mut widths = [0, 0, 0];
+    let mut used = 0;
+    let last_visible = counts.iter().rposition(|count| *count > 0).unwrap();
+
+    for (index, count) in counts.iter().enumerate() {
+        if *count == 0 {
+            continue;
+        }
+
+        let width = if index == last_visible {
+            total_width - used
+        } else {
+            (total_width * *count) / total
+        };
+
+        widths[index] = width;
+        used += width;
+    }
+
+    widths
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn activity_segment_widths_fill_the_available_width() {
+        assert_eq!(activity_segment_widths(14, 9, 3, 260), [140, 90, 30]);
+    }
+
+    #[test]
+    fn activity_segment_widths_return_zeroes_when_no_activity_exists() {
+        assert_eq!(activity_segment_widths(0, 0, 0, 260), [0, 0, 0]);
+    }
+
+    #[test]
+    fn activity_segment_widths_assign_remainder_to_the_last_visible_segment() {
+        assert_eq!(activity_segment_widths(1, 1, 1, 10), [3, 3, 4]);
+    }
+}
