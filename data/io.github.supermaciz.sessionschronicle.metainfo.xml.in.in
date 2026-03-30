@@ -49,6 +49,16 @@
   </categories>
   <content_rating type="oars-1.1" />
   <releases>
+    <release version="0.4.1" date="2026-03-31">
+      <description>
+        <p>Improves session list readability and detail headers.</p>
+        <ul>
+          <li>Add structured summary header to session detail view</li>
+          <li>Show message count, activity count, and ending status in session rows</li>
+          <li>Streamline AI assistant filter rows in the sidebar</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.4.0" date="2026-03-26">
       <description>
         <p>Adds detailed indexing status diagnostics and project-aware session organization.</p>

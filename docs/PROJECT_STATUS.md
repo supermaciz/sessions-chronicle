@@ -1,7 +1,7 @@
 # Sessions Chronicle - Project Status
 
-Last updated: 2026-03-26
-Branch snapshot: `main` (`v0.3.5` lineage)
+Last updated: 2026-03-31
+Branch snapshot: `main` (`v0.4.1`)
 
 ## Current Product State
 
@@ -16,6 +16,8 @@ Sessions Chronicle is a GNOME desktop app that indexes local AI coding assistant
 - Token usage display in session detail (input/output, optional reasoning, optional cache read/write)
 - Incremental indexing with file fingerprints and startup background indexing feedback
 - Indexing diagnostics with assistant health dots, persistent issue banner, and empty-state source visibility
+- Session rows show message count, activity count, and ending status for at-a-glance context
+- Structured summary header in session detail view (model, timestamps, token totals, project)
 
 ## Terminology
 
@@ -25,6 +27,9 @@ Sessions Chronicle is a GNOME desktop app that indexes local AI coding assistant
 
 ## Recently Landed Work
 
+- Structured session summary header in session detail view: model slug, start/end timestamps, token totals, and project path (#105)
+- Session rows show message count, activity count, and ending status; duration replaced by message count (#98, #104)
+- AI assistant filter rows in sidebar streamlined for a cleaner layout (#103)
 - Indexing status dialog: detailed per-source diagnostics with source summaries, recent errors, and direct re-index action (#96)
 - Indexing diagnostics: persistent issue banner, assistant sidebar status dots, and empty-state source results (`PerSourceResult`, `SourceStatus`) (#95)
 - Project detection and indexing: git-root resolution, `projects` table, and `project_id` FK on sessions (schema `user_version = 6`)
@@ -128,7 +133,7 @@ cargo test --all --no-fail-fast
 
 - Markdown rendering still has practical GTK constraints (for example, link interactivity remains limited)
 - Indexing diagnostics now include per-source details and recent errors via the Indexing Status dialog; richer remediation actions remain follow-up work
-- Ongoing UX refinements continue under newer plans in `docs/plans/` (for example command-title cleanup, indexing diagnostics follow-ups, and analytics polish)
+- Ongoing UX refinements continue under newer plans in `docs/plans/`
 
 ## Reference Docs
 
