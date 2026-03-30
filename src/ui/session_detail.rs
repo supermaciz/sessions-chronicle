@@ -1,7 +1,6 @@
 use std::cell::Cell;
 use std::collections::BTreeMap;
 use std::path::PathBuf;
-use std::rc::Rc;
 use std::sync::Arc;
 
 use chrono::{DateTime, Duration as ChronoDuration, Utc};
@@ -12,6 +11,7 @@ use relm4::{ComponentParts, ComponentSender, RelmWidgetExt, SimpleComponent, adw
 
 use crate::database::load_transcript_items;
 use crate::models::Session;
+use crate::ui::activity_bar::SessionActivityBar;
 use crate::ui::transcript_row::{
     TranscriptRow, TranscriptRowOutput, transcript_item_init_from_row,
 };
@@ -32,7 +32,6 @@ pub struct SessionDetail {
     total_matches: usize,
     scroll_to_item: Cell<Option<usize>>,
     pending_toast: Cell<bool>,
-    activity_bar_width: i32,
 }
 
 #[derive(Debug)]
@@ -54,7 +53,6 @@ pub enum SessionDetailMsg {
     ClearSearch,
     MatchCount(usize, usize),
     ShowExpandLoadFailure,
-    ActivityBarWidthChanged(i32),
     Clear,
     InspectToolCall(String),
     InspectSubagent(String),
@@ -225,24 +223,8 @@ impl SimpleComponent for SessionDetail {
                                 },
 
                                 #[name = "activity_bar"]
-                                gtk::Box {
-                                    set_orientation: gtk::Orientation::Horizontal,
+                                SessionActivityBar {
                                     add_css_class: "activity-bar",
-
-                                    #[name = "edit_segment"]
-                                    gtk::Box {
-                                        add_css_class: "activity-edits",
-                                    },
-
-                                    #[name = "command_segment"]
-                                    gtk::Box {
-                                        add_css_class: "activity-commands",
-                                    },
-
-                                    #[name = "read_segment"]
-                                    gtk::Box {
-                                        add_css_class: "activity-reads",
-                                    },
                                 },
 
                                 #[name = "legend_row"]
@@ -523,22 +505,10 @@ impl SimpleComponent for SessionDetail {
             total_matches: 0,
             scroll_to_item: Cell::new(None),
             pending_toast: Cell::new(false),
-            activity_bar_width: 0,
         };
 
         let messages_box = model.messages.widget();
         let widgets = view_output!();
-        let last_activity_bar_width = Rc::new(Cell::new(0));
-        let width_sender = sender.input_sender().clone();
-        let last_activity_bar_width_ref = last_activity_bar_width.clone();
-        widgets.activity_bar.add_tick_callback(move |bar, _| {
-            let width = bar.width();
-            if width > 0 && width != last_activity_bar_width_ref.get() {
-                last_activity_bar_width_ref.set(width);
-                let _ = width_sender.send(SessionDetailMsg::ActivityBarWidthChanged(width));
-            }
-            glib::ControlFlow::Continue
-        });
 
         widgets
             .content_stack
@@ -648,9 +618,6 @@ impl SimpleComponent for SessionDetail {
                 tracing::warn!("Could not load full message content");
                 self.pending_toast.set(true);
             }
-            SessionDetailMsg::ActivityBarWidthChanged(width) => {
-                self.activity_bar_width = width;
-            }
             SessionDetailMsg::ClearSearch => {
                 self.search_query = None;
                 self.match_counts.clear();
@@ -756,29 +723,11 @@ impl SimpleComponent for SessionDetail {
             widgets.conversation_only_label.set_visible(!has_activity);
 
             if has_activity {
-                let activity_bar_width = self.activity_bar_width.max(widgets.activity_bar.width());
-                let widths = activity_segment_widths(
+                widgets.activity_bar.set_counts(
                     session.edit_count,
                     session.command_count,
                     session.read_count,
-                    activity_bar_width,
                 );
-                widgets.edit_segment.set_size_request(widths[0], 8);
-                widgets.command_segment.set_size_request(widths[1], 8);
-                widgets.read_segment.set_size_request(widths[2], 8);
-
-                widgets
-                    .activity_bar
-                    .update_property(&[gtk::accessible::Property::Label(&format!(
-                        "Activity: {}, {}, {}",
-                        crate::ui::format::format_count(session.edit_count, "edit", "edits"),
-                        crate::ui::format::format_count(
-                            session.command_count,
-                            "command",
-                            "commands"
-                        ),
-                        crate::ui::format::format_count(session.read_count, "read", "reads"),
-                    ))]);
 
                 widgets
                     .edit_count_label
@@ -808,9 +757,7 @@ impl SimpleComponent for SessionDetail {
                     .set_visible(session.command_count > 0);
                 widgets.read_legend.set_visible(session.read_count > 0);
             } else {
-                widgets.edit_segment.set_size_request(0, 8);
-                widgets.command_segment.set_size_request(0, 8);
-                widgets.read_segment.set_size_request(0, 8);
+                widgets.activity_bar.set_counts(0, 0, 0);
             }
 
             // Tokens section
@@ -1005,63 +952,10 @@ impl SessionDetail {
     }
 }
 
-fn activity_segment_widths(
-    edit_count: usize,
-    command_count: usize,
-    read_count: usize,
-    total_width: i32,
-) -> [i32; 3] {
-    if total_width <= 0 {
-        return [0, 0, 0];
-    }
-
-    let counts = [edit_count as i32, command_count as i32, read_count as i32];
-    let total = counts.iter().sum::<i32>();
-    if total == 0 {
-        return [0, 0, 0];
-    }
-
-    let mut widths = [0, 0, 0];
-    let mut used = 0;
-    let last_visible = counts.iter().rposition(|count| *count > 0).unwrap();
-
-    for (index, count) in counts.iter().enumerate() {
-        if *count == 0 {
-            continue;
-        }
-
-        let width = if index == last_visible {
-            total_width - used
-        } else {
-            (total_width * *count) / total
-        };
-
-        widths[index] = width;
-        used += width;
-    }
-
-    widths
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use relm4::{Component, ComponentController};
-
-    #[test]
-    fn activity_segment_widths_fill_the_available_width() {
-        assert_eq!(activity_segment_widths(14, 9, 3, 260), [140, 90, 30]);
-    }
-
-    #[test]
-    fn activity_segment_widths_return_zeroes_when_no_activity_exists() {
-        assert_eq!(activity_segment_widths(0, 0, 0, 260), [0, 0, 0]);
-    }
-
-    #[test]
-    fn activity_segment_widths_assign_remainder_to_the_last_visible_segment() {
-        assert_eq!(activity_segment_widths(1, 1, 1, 10), [3, 3, 4]);
-    }
 
     fn build_test_session(
         first_prompt: Option<&str>,
@@ -1161,7 +1055,7 @@ mod tests {
     }
 
     #[gtk::test]
-    fn session_detail_activity_segments_recompute_when_width_arrives_later() {
+    fn session_detail_activity_bar_does_not_lock_a_minimum_width_request() {
         let temp_db = tempfile::NamedTempFile::new().expect("temp db");
         let controller = SessionDetail::builder().launch(temp_db.path().to_path_buf());
 
@@ -1169,14 +1063,11 @@ mod tests {
             session: Box::new(build_test_session(Some("Ship it"), None, 4, 2, 1)),
             search_query: None,
         });
-        controller.emit(SessionDetailMsg::ActivityBarWidthChanged(70));
 
         while gtk::glib::MainContext::default().iteration(false) {}
 
         let parts = controller.state().get();
-        assert_eq!(parts.widgets.edit_segment.width_request(), 40);
-        assert_eq!(parts.widgets.command_segment.width_request(), 20);
-        assert_eq!(parts.widgets.read_segment.width_request(), 10);
+        assert_eq!(parts.widgets.activity_bar.width_request(), -1);
     }
 
     fn build_error_session_for_css_test() -> Session {

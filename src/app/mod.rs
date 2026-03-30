@@ -670,12 +670,17 @@ impl App {
 impl AppWidgets {
     fn save_window_size(&self) -> Result<(), glib::BoolError> {
         let settings = gio::Settings::new(APP_ID);
-        let (width, height) = self.main_window.default_size();
+        let is_maximized = self.main_window.is_maximized();
+        let (width, height) = persisted_window_size(
+            self.main_window.default_size(),
+            (self.main_window.width(), self.main_window.height()),
+            is_maximized,
+        );
 
         settings.set_int("window-width", width)?;
         settings.set_int("window-height", height)?;
 
-        settings.set_boolean("is-maximized", self.main_window.is_maximized())?;
+        settings.set_boolean("is-maximized", is_maximized)?;
 
         Ok(())
     }
@@ -692,6 +697,20 @@ impl AppWidgets {
         if is_maximized {
             self.main_window.maximize();
         }
+    }
+}
+
+fn persisted_window_size(
+    default_size: (i32, i32),
+    current_size: (i32, i32),
+    is_maximized: bool,
+) -> (i32, i32) {
+    if is_maximized {
+        default_size
+    } else if current_size.0 > 0 && current_size.1 > 0 {
+        current_size
+    } else {
+        default_size
     }
 }
 
@@ -942,6 +961,22 @@ mod tests {
         assert_eq!(
             UtilityPaneMode::ToolInspector.stack_child_name(),
             "tool-inspector"
+        );
+    }
+
+    #[test]
+    fn persisted_window_size_uses_current_size_after_manual_resize() {
+        assert_eq!(
+            persisted_window_size((600, 400), (920, 710), false),
+            (920, 710)
+        );
+    }
+
+    #[test]
+    fn persisted_window_size_preserves_default_size_when_maximized() {
+        assert_eq!(
+            persisted_window_size((600, 400), (1920, 1080), true),
+            (600, 400)
         );
     }
 
