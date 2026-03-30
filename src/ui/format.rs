@@ -193,6 +193,39 @@ pub fn format_count(count: usize, singular: &str, plural: &str) -> String {
     }
 }
 
+pub fn format_session_duration(
+    start: chrono::DateTime<chrono::Utc>,
+    end: chrono::DateTime<chrono::Utc>,
+) -> String {
+    let total_minutes = end.signed_duration_since(start).num_minutes().max(0);
+    let hours = total_minutes / 60;
+    let minutes = total_minutes % 60;
+
+    if hours > 0 {
+        format!("{hours}h {minutes}m")
+    } else {
+        format!("{total_minutes}m")
+    }
+}
+
+pub fn format_ending_label(status: &crate::models::SessionEndingStatus) -> &'static str {
+    match status {
+        crate::models::SessionEndingStatus::Clean => "Ended cleanly",
+        crate::models::SessionEndingStatus::Abrupt => "Ended unexpectedly",
+        crate::models::SessionEndingStatus::Error => "Ended with error",
+        crate::models::SessionEndingStatus::Unknown => "Ending unknown",
+    }
+}
+
+pub fn format_ending_accessible_label(status: &crate::models::SessionEndingStatus) -> &'static str {
+    match status {
+        crate::models::SessionEndingStatus::Clean => "Session ended cleanly",
+        crate::models::SessionEndingStatus::Abrupt => "Session ended unexpectedly",
+        crate::models::SessionEndingStatus::Error => "Session ended with error",
+        crate::models::SessionEndingStatus::Unknown => "Session ending status unknown",
+    }
+}
+
 /// Icon name for a session ending badge.
 pub fn ending_icon_name(status: &crate::models::SessionEndingStatus) -> Option<&'static str> {
     match status {
@@ -477,6 +510,70 @@ mod tests {
         assert_eq!(
             ending_tooltip(&crate::models::SessionEndingStatus::Unknown),
             None
+        );
+    }
+
+    #[test]
+    fn format_session_duration_shows_hours_and_minutes() {
+        use chrono::{TimeZone, Utc};
+
+        let start = Utc.with_ymd_and_hms(2026, 3, 30, 10, 0, 0).unwrap();
+        let end = Utc.with_ymd_and_hms(2026, 3, 30, 12, 14, 0).unwrap();
+
+        assert_eq!(format_session_duration(start, end), "2h 14m");
+    }
+
+    #[test]
+    fn format_session_duration_clamps_negative_ranges_to_zero_minutes() {
+        use chrono::{TimeZone, Utc};
+
+        let start = Utc.with_ymd_and_hms(2026, 3, 30, 10, 0, 0).unwrap();
+        let end = Utc.with_ymd_and_hms(2026, 3, 30, 9, 59, 0).unwrap();
+
+        assert_eq!(format_session_duration(start, end), "0m");
+    }
+
+    #[test]
+    fn format_ending_label_covers_all_statuses() {
+        use crate::models::SessionEndingStatus;
+
+        assert_eq!(
+            format_ending_label(&SessionEndingStatus::Clean),
+            "Ended cleanly"
+        );
+        assert_eq!(
+            format_ending_label(&SessionEndingStatus::Abrupt),
+            "Ended unexpectedly"
+        );
+        assert_eq!(
+            format_ending_label(&SessionEndingStatus::Error),
+            "Ended with error"
+        );
+        assert_eq!(
+            format_ending_label(&SessionEndingStatus::Unknown),
+            "Ending unknown"
+        );
+    }
+
+    #[test]
+    fn format_ending_accessible_label_covers_all_statuses() {
+        use crate::models::SessionEndingStatus;
+
+        assert_eq!(
+            format_ending_accessible_label(&SessionEndingStatus::Clean),
+            "Session ended cleanly"
+        );
+        assert_eq!(
+            format_ending_accessible_label(&SessionEndingStatus::Abrupt),
+            "Session ended unexpectedly"
+        );
+        assert_eq!(
+            format_ending_accessible_label(&SessionEndingStatus::Error),
+            "Session ended with error"
+        );
+        assert_eq!(
+            format_ending_accessible_label(&SessionEndingStatus::Unknown),
+            "Session ending status unknown"
         );
     }
 }
