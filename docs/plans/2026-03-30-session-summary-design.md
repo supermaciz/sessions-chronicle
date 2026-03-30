@@ -4,7 +4,7 @@
 **Date**: 2026-03-30
 **Status**: Validated
 **Exploration**: [2026-03-28-session-summary-exploration.md](2026-03-28-session-summary-exploration.md)
-**Decision**: Proposal B (Unified Session Header) + 3 navigation anchors from Proposal D
+**Decision**: Proposal B (Unified Session Header). Navigation anchors (Proposal D) deferred to a future issue.
 
 ---
 
@@ -16,13 +16,8 @@ a glance: what happened, how much activity, how it ended, and where to look firs
 
 ## Scope
 
-Replace the existing `.card` metadata box with a flush unified session header. Add a
-compact navigation anchor row that links to key transcript positions. No LLM-generated
-text — everything deterministic from indexed data.
-
-The navigation anchors target the mixed transcript stream (`messages`, `tool calls`,
-`subagents`) as stored in `transcript_items`. They do not attempt to target only
-message rows.
+Replace the existing `.card` metadata box with a flush unified session header. No
+LLM-generated text — everything deterministic from indexed data.
 
 ---
 
@@ -117,37 +112,6 @@ Separated by `GtkSeparator`. Conditional — hidden entirely when `token_usage` 
 
 ---
 
-## Section 5: Navigation Anchors
-
-No section heading. A compact horizontal `gtk::Box` with `spacing: 8` containing 1-3
-pill-styled buttons.
-
-**Buttons:**
-
-| Button | Condition | Target |
-|--------|-----------|--------|
-| "Start of session" | Always shown | Transcript item index 0 |
-| "First error: `{tool_name}`" | Only if an error tool call exists | Transcript item at the error's `item_index` |
-| "End of session" | Always shown | Last transcript item |
-
-**Scroll behavior:**
-
-- **Start of session**: target is index 0, always loaded. Use existing `scroll_to_item` mechanism.
-- **First error**: target is `first_error.item_index`. If within `loaded_count`, scroll directly.
-  Otherwise, set `loading_anchor_target` and trigger `LoadMore` in a loop until target is loaded.
-- **End of session**: target is `total_transcript_count - 1`. Same load-until-ready pattern as
-  first error.
-
-While loading toward an anchor target, the button shows a `gtk::Spinner` replacing its label.
-
-**Edge cases:**
-
-- Session with 0 transcript items: hide all anchors
-- Session with <200 items: "End of session" already loaded, no extra loading needed
-- Very long session (>1000 items): bulk loading triggered by "End of session"
-
----
-
 ## Widget Tree
 
 ```
@@ -191,17 +155,9 @@ scroll_child (gtk::Box, vertical, spacing=0, margin=16)
     cache_pair (gtk::Box, vertical, conditional)
     reasoning_pair (gtk::Box, vertical, conditional)
 
-  gtk::Separator  // hidden when tokens not available
+  gtk::Separator  // hidden when tokens not available; marks transcript start
 
-  // Section 5: Navigation Anchors
-  anchor_row (gtk::Box, horizontal, spacing=8)
-    start_of_session_btn (gtk::Button.pill "Start of session")
-    first_error_btn (gtk::Button.pill "First error: {name}", conditional)
-    end_of_session_btn (gtk::Button.pill "End of session")
-
-  gtk::Separator  // heavier, marks transcript start
-
-  // Section 6: Transcript (unchanged)
+  // Transcript (unchanged)
   messages_box (FactoryVecDeque<TranscriptRow>)
   load_more_button
 ```
@@ -209,28 +165,6 @@ scroll_child (gtk::Box, vertical, spacing=0, margin=16)
 ---
 
 ## Database Queries
-
-### New: `load_first_error_tool_call`
-
-```sql
-SELECT tc.id, tc.tool_name, ti.item_index
-FROM tool_calls tc
-JOIN transcript_items ti
-  ON ti.session_id = tc.session_id AND ti.tool_call_id = tc.id
-WHERE tc.session_id = ?1 AND tc.status = 'error'
-ORDER BY ti.item_index ASC
-LIMIT 1
-```
-
-Returns `Option<(String, String, usize)>` — `(tool_call_id, tool_name, item_index)`.
-
-### New: `count_transcript_items`
-
-```sql
-SELECT COUNT(*) FROM transcript_items WHERE session_id = ?1
-```
-
-Returns `usize`. Needed for the "End of session" anchor target.
 
 ### No schema migration
 
@@ -240,47 +174,7 @@ All data comes from existing tables and columns.
 
 ## Model Changes
 
-### `SessionDetail` struct additions
-
-```rust
-first_error: Option<FirstErrorInfo>,
-total_transcript_count: usize,
-loading_anchor_target: Option<usize>,  // item_index being scrolled to
-```
-
-### New struct
-
-```rust
-pub struct FirstErrorInfo {
-    pub tool_call_id: String,
-    pub tool_name: String,
-    pub item_index: usize,
-}
-```
-
-### New messages
-
-```rust
-enum SessionDetailMsg {
-    // existing messages unchanged...
-    JumpToStartOfSession,
-    JumpToFirstError,
-    JumpToEndOfSession,
-}
-```
-
-### Jump-to logic
-
-All three handlers use the existing `scroll_to_item` mechanism:
-
-1. **JumpToStartOfSession** — set `scroll_to_item = Some(0)`, always loaded
-2. **JumpToFirstError** — if `item_index < loaded_count`, scroll directly;
-   otherwise set `loading_anchor_target` and trigger `LoadMore` loop
-3. **JumpToEndOfSession** — target is `total_transcript_count - 1`, same
-   load-until-ready pattern
-
-The `LoadMore` handler checks `loading_anchor_target` after each page load.
-If target is now within `loaded_count`, scroll and clear. If not, trigger another `LoadMore`.
+No model or message changes needed. All data comes from existing `Session` fields.
 
 ---
 
@@ -345,9 +239,8 @@ If target is now within `loaded_count`, scroll and clear. If not, trigger anothe
 | Section headings | `accessible-role: heading` |
 | Activity bar | `accessible-label` on container: "Activity: 14 edits, 9 commands, 3 reads" |
 | Token values | `accessible-label` on each pair: "Input tokens: 124,832" |
-| Anchor buttons | Standard `GtkButton`, keyboard focusable, Enter/Space activatable |
 
-**Focus order:** path -> session ID -> anchor buttons -> transcript rows -> load more button
+**Focus order:** path -> session ID -> transcript rows -> load more button
 
 No color-only encoding. Icons, text, and labels carry meaning alongside color.
 
@@ -356,7 +249,7 @@ No color-only encoding. Icons, text, and labels carry meaning alongside color.
 | Breakpoint | Behavior |
 |------------|----------|
 | Wide (>600px) | Chip row horizontal. Token pairs in one row. Legend in one row. |
-| Narrow (<600px) | Chip row wraps. Token pairs 2x2. Legend wraps. Anchor buttons stack. |
+| Narrow (<600px) | Chip row wraps. Token pairs 2x2. Legend wraps. |
 
 Activity bar always full-width (proportional, compresses well).
 
@@ -388,39 +281,26 @@ Activity bar always full-width (proportional, compresses well).
 
 | File | Change |
 |------|--------|
-| `src/ui/session_detail.rs` | Restructure view macro, replace card with flush sections, add anchor buttons + jump handlers, add `FirstErrorInfo` and new model fields |
+| `src/ui/session_detail.rs` | Restructure view macro, replace card with flush sections |
 | `src/ui/format.rs` | Add `format_duration()` for session duration chip, `format_ending_label()` for status pill text |
-| `src/database/mod.rs` | Add `load_first_error_tool_call()` and `count_transcript_items()` queries |
 | `data/resources/style.css` | Add `.section-heading`, `.pill`, `.ending-clean`, `.activity-bar`, `.activity-*`, `.token-value`. Remove `.card` usage from detail view. |
 
 ## Implementation Risk
 
-The hardest part is the **jump-to-anchor scroll logic** for targets beyond the loaded page.
-The `LoadMore` loop must:
-1. Set `loading_anchor_target`
-2. Trigger `LoadMore`
-3. On completion, check if target is loaded
-4. If not, trigger another `LoadMore`
-5. Once loaded, scroll and clear
-
-This must not freeze the UI. In the current implementation, `LoadMore` reads from SQLite
-inside the component update path, so repeated auto-loading can still stall the UI on very
-large sessions. The loop is message-driven, but the implementation should avoid assuming
-that it is non-blocking.
+The hardest part is the **activity bar proportional sizing**. Using `set_size_request`
+after measuring parent allocation is fragile during GTK4 resize cycles. Validate during
+prototyping; `hexpand` with proportional weights may be more robust.
 
 ## Verification Plan
 
 - `--sessions-dir tests/fixtures` covers multiple AI assistants
-- Sessions with zero errors: "First error" anchor must be absent
-- Sessions with errors: anchor appears with tool call name
 - Sessions with zero tool calls: activity shows "Conversation only"
 - Short sessions: header height stays under ~300px
 - Long first prompt: 3-line ellipsis works
 - No token data: tokens section hides cleanly
 - No first prompt: section hides, separator hides
-- Narrow width: chips wrap, tokens go 2x2, anchors stack
+- Narrow width: chips wrap, tokens go 2x2
 - High contrast theme: semantic colors remain legible
-- Paginated jump: "End of session" on a 500+ item session loads all pages then scrolls
 
 ---
 
