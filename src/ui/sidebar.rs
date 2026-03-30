@@ -210,24 +210,29 @@ fn apply_status_dot(dot: &gtk::Box, result: Option<&PerSourceResult>) {
     let (css_class, tooltip) = match r.status {
         SourceStatus::Indexed => {
             let n = r.indexed + r.skipped;
-            ("source-status-ok", format!("{n} sessions indexed"))
+            (Some("source-status-ok"), format!("{n} sessions indexed"))
         }
         SourceStatus::Degraded => (
-            "source-status-degraded",
+            Some("source-status-degraded"),
             format!("Indexed with {} errors", r.errors),
         ),
         SourceStatus::Failed => (
-            "source-status-degraded",
+            Some("source-status-degraded"),
             format!("Indexing failed — {} errors", r.errors),
         ),
-        SourceStatus::Empty => ("source-status-not-found", "No sessions found".to_string()),
+        SourceStatus::Empty => (
+            Some("source-status-not-found"),
+            "No sessions found".to_string(),
+        ),
         SourceStatus::NotFound => (
-            "source-status-not-found",
+            Some("source-status-not-found"),
             "Source directory not found".to_string(),
         ),
     };
 
-    dot.add_css_class(css_class);
+    if let Some(css_class) = css_class {
+        dot.add_css_class(css_class);
+    }
     dot.set_tooltip_text(Some(&tooltip));
     dot.set_visible(true);
 }

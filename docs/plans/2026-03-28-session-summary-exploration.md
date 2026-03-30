@@ -2,7 +2,7 @@
 
 **Issue**: [#91 — Deterministic structured session summary](https://github.com/supermaciz/sessions-chronicle/issues/91)  
 **Date**: 2026-03-28  
-**Status**: Exploration — decision pending  
+**Status**: Implemented [PR 105](https://github.com/supermaciz/sessions-chronicle/pull/105)  
 
 ---
 
@@ -588,27 +588,49 @@ Unlike Proposal C, the core pattern survives narrow layouts without losing meani
 
 ## Decision
 
-**Proposal B (Unified Session Header)** with three navigation anchors borrowed from Proposal D's interaction model.
+**Proposal B (Unified Session Header)**, simplified, with three navigation anchors borrowed
+from Proposal D's interaction model.
 
-### Base: Proposal B
+### Base: Proposal B (simplified)
 
-Remove the existing metadata card. Replace it with a flush header — one scroll surface, sections separated by `GtkSeparator` with dim uppercase headings.
+Remove the existing metadata card. Replace it with a flush header — one scroll surface,
+sections separated by `GtkSeparator` with dim uppercase headings.
 
-### Addition: Jump buttons on three concrete anchors
+**Kept from Proposal B:** Session identity (flush, no card), First prompt, Activity breakdown,
+Tokens.
+
+**Dropped from Proposal B:** "Notable Tool Calls" and "Stopping Point" as full sections.
+These are conditional notifications masquerading as permanent header fixtures — Notable Tool
+Calls is empty for the majority of sessions, and Stopping Point duplicates information
+already visible at the end of the transcript and in the ending status chip. Their useful
+information is captured by the navigation anchors and the ending status pill instead.
+
+### Addition: Navigation anchor row
+
+A compact horizontal row of 1-3 pill buttons replacing the dropped sections:
 
 | Anchor | Condition | Action |
 |--------|-----------|--------|
 | First prompt | Always shown | Jump to the first transcript row |
-| First error | Only if an error exists | Jump to the failing tool call |
-| Final message + status | Always shown | Jump to the last assistant message |
+| First error: `{tool_name}` | Only if an error exists | Jump to the failing tool call |
+| Final message | Always shown | Jump to the last transcript row |
 
-These three anchors are **facts**, not heuristics. No clustering algorithm or time-bucketing required.
+These three anchors are **facts**, not heuristics. No clustering algorithm or time-bucketing
+required. The conditional "First error" anchor does the work of the entire Notable Tool Calls
+section — its presence tells you errors exist, its label tells you what failed, and clicking
+it takes you there.
 
 ### What is ruled out
 
 - **Proposal A**: adds a second surface on top of an already poorly structured layout
 - **Proposal C**: custom `GtkDrawingArea` too costly for v1; revisit if usage data justifies it
 - **Proposal D**: heuristics (Peak Activity, Biggest Change) are fragile without an LLM; the jump interaction is extracted and grafted onto B
+- **Proposal B's Notable Tool Calls section**: empty too often, conditional section heading with nothing under it
+- **Proposal B's Stopping Point section**: duplicates ending status chip + transcript ending
+
+### Design document
+
+Full design: [2026-03-30-session-summary-design.md](2026-03-30-session-summary-design.md)
 
 ## References
 
