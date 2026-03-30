@@ -255,7 +255,7 @@ pub fn ending_css_class(status: &crate::models::SessionEndingStatus) -> &'static
         crate::models::SessionEndingStatus::Clean => "ending-clean",
         crate::models::SessionEndingStatus::Abrupt => "ending-interrupted",
         crate::models::SessionEndingStatus::Error => "ending-failed",
-        crate::models::SessionEndingStatus::Unknown => "",
+        crate::models::SessionEndingStatus::Unknown => "ending-unknown",
     }
 }
 
