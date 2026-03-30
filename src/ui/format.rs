@@ -473,7 +473,7 @@ mod tests {
         );
         assert_eq!(
             ending_css_class(&crate::models::SessionEndingStatus::Unknown),
-            ""
+            "ending-unknown"
         );
     }
 

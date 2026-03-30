@@ -173,7 +173,8 @@
 
 /* Session ending status label colors */
 .ending-interrupted,
-.ending-failed {
+.ending-failed,
+.ending-unknown {
   font-size: small;
 }
 
@@ -183,6 +184,10 @@
 
 .ending-failed {
   color: @error_color;
+}
+
+.ending-unknown {
+  opacity: 0.6;
 }
 
 /* Session summary header styles */
