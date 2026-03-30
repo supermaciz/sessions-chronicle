@@ -84,7 +84,6 @@ pub fn format_token_details(usage: &TokenUsage) -> String {
 }
 
 /// Build the cache line: "9 012 read [· 234 write]", or None if no cache data.
-#[allow(dead_code)]
 pub fn format_token_cache(usage: &TokenUsage) -> Option<String> {
     let mut parts = Vec::new();
     if let Some(read) = usage.cache_read_tokens {
@@ -253,9 +252,10 @@ pub fn ending_tooltip(status: &crate::models::SessionEndingStatus) -> Option<&'s
 /// CSS class for a session ending label.
 pub fn ending_css_class(status: &crate::models::SessionEndingStatus) -> &'static str {
     match status {
+        crate::models::SessionEndingStatus::Clean => "ending-clean",
         crate::models::SessionEndingStatus::Abrupt => "ending-interrupted",
         crate::models::SessionEndingStatus::Error => "ending-failed",
-        _ => "",
+        crate::models::SessionEndingStatus::Unknown => "",
     }
 }
 
@@ -461,7 +461,7 @@ mod tests {
     fn ending_css_class_maps_status_to_class() {
         assert_eq!(
             ending_css_class(&crate::models::SessionEndingStatus::Clean),
-            ""
+            "ending-clean"
         );
         assert_eq!(
             ending_css_class(&crate::models::SessionEndingStatus::Abrupt),
