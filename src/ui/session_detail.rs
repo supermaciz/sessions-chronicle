@@ -530,6 +530,11 @@ impl SimpleComponent for SessionDetail {
                 "pill",
                 crate::ui::format::ending_css_class(&session.ending_status),
             ]);
+            widgets
+                .ending_status_chip
+                .update_property(&[gtk::accessible::Property::Label(
+                    crate::ui::format::format_ending_accessible_label(&session.ending_status),
+                )]);
 
             // First prompt section visibility
             let has_first_prompt = session
@@ -545,7 +550,7 @@ impl SimpleComponent for SessionDetail {
             }
 
             // Activity section visibility (always visible, shows different content based on data)
-            let has_activity =
+            let _has_activity =
                 session.edit_count > 0 || session.command_count > 0 || session.read_count > 0;
             widgets.activity_section.set_visible(true);
 
@@ -679,6 +684,7 @@ impl SessionDetail {
         counts.keys().last().copied().unwrap_or(0)
     }
 
+    #[allow(dead_code)]
     fn format_relative_time(instant: DateTime<Utc>) -> String {
         let now = Utc::now();
         let duration = now.signed_duration_since(instant);
@@ -697,6 +703,7 @@ impl SessionDetail {
     }
 }
 
+#[allow(dead_code)]
 fn activity_segment_widths(
     edit_count: usize,
     command_count: usize,

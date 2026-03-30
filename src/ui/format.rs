@@ -71,6 +71,7 @@ pub fn format_token_count(n: i64) -> String {
 }
 
 /// Build the token details line: "12 345 input · 678 output [· 456 reasoning]"
+#[allow(dead_code)]
 pub fn format_token_details(usage: &TokenUsage) -> String {
     let mut parts = vec![
         format!("{} input", format_token_count(usage.input_tokens)),
@@ -83,6 +84,7 @@ pub fn format_token_details(usage: &TokenUsage) -> String {
 }
 
 /// Build the cache line: "9 012 read [· 234 write]", or None if no cache data.
+#[allow(dead_code)]
 pub fn format_token_cache(usage: &TokenUsage) -> Option<String> {
     let mut parts = Vec::new();
     if let Some(read) = usage.cache_read_tokens {
@@ -140,6 +142,7 @@ pub fn format_analytics_token_secondary(
 }
 
 /// Explanatory tooltip for the token details line.
+#[allow(dead_code)]
 pub fn token_details_tooltip(usage: &TokenUsage) -> String {
     let mut lines = vec![
         "Input: tokens sent to the model (prompt + context)".to_string(),
@@ -152,6 +155,7 @@ pub fn token_details_tooltip(usage: &TokenUsage) -> String {
 }
 
 /// Explanatory tooltip for the cache line.
+#[allow(dead_code)]
 pub fn token_cache_tooltip() -> &'static str {
     "Read: tokens served from prompt cache\n\
      Write: tokens stored in prompt cache for future requests\n\

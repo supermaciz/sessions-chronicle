@@ -1,11 +1,11 @@
-pub const APP_ID: &str = "io.github.supermaciz.sessionschronicle";
+pub const APP_ID: &str = "io.github.supermaciz.sessionschronicle.Devel";
 pub const GETTEXT_PACKAGE: &str = "sessions-chronicle";
-pub const LOCALEDIR: &str = "/usr/local/share/locale";
+pub const LOCALEDIR: &str = "/home/mcizo/.local/share/locale";
 #[allow(unused)]
-pub const PKGDATADIR: &str = "/usr/local/share/sessions-chronicle";
-pub const PROFILE: &str = "";
+pub const PKGDATADIR: &str = "/home/mcizo/.local/share/sessions-chronicle";
+pub const PROFILE: &str = "Devel";
 pub const RESOURCES_FILE: &str = concat!(
-    "/usr/local/share/sessions-chronicle",
+    "/home/mcizo/.local/share/sessions-chronicle",
     "/resources.gresource"
 );
-pub const VERSION: &str = "0.4.0";
+pub const VERSION: &str = "0.4.0-7a4a775";
