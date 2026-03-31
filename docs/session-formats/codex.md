@@ -11,15 +11,15 @@ See [SESSION_FORMAT_ANALYSIS.md](../SESSION_FORMAT_ANALYSIS.md) for cross-assist
 |---------|-------|
 | **Path** | `~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl` |
 | **Pattern** | `rollout-*.jsonl` |
-| **Example** | `rollout-20250912-164103.jsonl` |
+| **Example** | `rollout-2026-01-18T02-01-28-019bce9f-0a40-79e2-8351-8818e8487fb6.jsonl` |
 | **Format** | JSONL (one JSON object per line, UTF-8, append-only) |
 
 **Date sharding:**
 
 ```
-~/.codex/sessions/2025/09/12/rollout-20250912-164103.jsonl
-                  └─────────┘          └──────────┘
-                  Date sharding        Timestamp in filename
+~/.codex/sessions/2026/01/18/rollout-2026-01-18T02-01-28-019bce9f-0a40-79e2-8351-8818e8487fb6.jsonl
+                  └─────────┘          └─────────────────────────────────────────────────────────┘
+                  Date sharding        Timestamp + thread id in filename
 ```
 
 ---
@@ -46,13 +46,41 @@ Codex rollout logs are envelope-based JSONL entries (`RolloutLine`).
     "id": "019bce9f-0a40-79e2-8351-8818e8487fb6",
     "timestamp": "2026-01-18T01:01:28.000Z",
     "cwd": "/home/user/project",
-    "source": "cli"
+    "originator": "codex_cli_rs",
+    "cli_version": "0.117.0",
+    "source": "cli",
+    "model_provider": "openai"
   }
 }
 ```
 
-`source` supports subagent variants: `cli`, `vscode`, `subagent_review`, `subagent_compact`,
-thread-spawn variants, etc.
+`source` is now a structured `SessionSource` in upstream types. It can still be a
+simple source like `cli`, `vscode`, `exec`, or `unknown`, but it can also be a
+structured subagent/custom value.
+
+Representative shapes:
+
+```json
+"source": "cli"
+```
+
+```json
+"source": {
+  "sub_agent": {
+    "thread_spawn": {
+      "parent_thread_id": "thr_parent",
+      "depth": 1,
+      "agent_path": "/root/agent_a",
+      "agent_nickname": "agent_a",
+      "agent_role": "reviewer"
+    }
+  }
+}
+```
+
+Additional `session_meta` fields now present in upstream types include
+`forked_from_id`, `agent_nickname`, `agent_role`, `agent_path`,
+`base_instructions`, `dynamic_tools`, and `memory_mode`.
 
 ### User / Assistant Events (`event_msg`)
 
@@ -243,8 +271,10 @@ Two patterns:
 |-------|-------------|
 | `session_meta.payload.id` | Session/thread identifier |
 | `session_meta.payload.cwd` | Working directory |
-| `session_meta.payload.source` | Source provenance (`cli`, `vscode`, `subagent_*`, ...) |
+| `session_meta.payload.source` | Source provenance (`cli`, `vscode`, `exec`, structured subagent/custom variants, ...) |
 | `session_meta.payload.model_provider` | Optional session-level provider id |
+| `session_meta.payload.originator` | Recorder/runtime identifier |
+| `session_meta.payload.cli_version` | CLI version that created the rollout |
 | `turn_context.payload.model` | Active model slug for that turn |
 | `event_msg` `session_configured` | Can provide `model` + `model_provider_id` |
 | Skill invocation | Explicit `$skill-name` `user_message` plus injected `<skill>` payload |
@@ -351,6 +381,6 @@ fn extract_content_codex_event_msg(event: &Value) -> Option<(Role, String)> {
 
 - [Codex protocol `RolloutItem`, `SessionMeta`, `EventMsg`](https://github.com/openai/codex/blob/main/codex-rs/protocol/src/protocol.rs)
 - [Codex turn-context persistence](https://github.com/openai/codex/blob/main/codex-rs/core/src/codex.rs)
-- [Codex rollout recorder](https://github.com/openai/codex/blob/main/codex-rs/core/src/rollout/recorder.rs)
+- [Codex rollout recorder](https://github.com/openai/codex/blob/main/codex-rs/rollout/src/recorder.rs)
 - [Codex app-server thread/item event model](https://github.com/openai/codex/blob/main/codex-rs/app-server/README.md)
 - [OpenAI Prompt Caching guide (`cached_tokens` is part of prompt/input usage)](https://developers.openai.com/api/docs/guides/prompt-caching)

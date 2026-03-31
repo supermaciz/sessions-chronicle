@@ -62,7 +62,7 @@ Cross-tool comparison of Claude Code, Codex, OpenCode, and Mistral Vibe session 
 | Tool | Pattern | Example |
 |------|---------|---------|
 | **Claude Code** | `UUID.jsonl` (main), `agent-*.jsonl` (subagent), `tool-results/*` (materialized tool output) | `a1b2c3d4-e5f6-7890-abcd-ef1234567890.jsonl`<br>`2a19bf71-3687-49ed-8ae9-8bd15e1522f6/subagents/agent-a60d695.jsonl`<br>`82b2d04e-d30e-4370-8e41-f53890baeda1/tool-results/bdw7vxszs.txt` |
-| **Codex** | `rollout-*.jsonl` | `rollout-20250912-164103.jsonl` |
+| **Codex** | `rollout-*.jsonl` | `rollout-2026-01-18T02-01-28-019bce9f-0a40-79e2-8351-8818e8487fb6.jsonl` |
 | **OpenCode** | **New (>= 2026-02-14):** `opencode.db`, `opencode-<channel>.db`<br>**Legacy:** `ses_*.json` | `opencode.db` (default channel)<br>`opencode-dev.db` (non-default channel)<br>`ses_66a71b6f4ffeq796jvvOpJQ04m.json` (legacy) |
 | **Mistral Vibe** | `session_YYYYMMDD_HHMMSS_<shortid>/` | `session_20260123_174305_64883c86/` |
 
@@ -84,13 +84,13 @@ Cross-tool comparison of Claude Code, Codex, OpenCode, and Mistral Vibe session 
 
 **Threading Model:**
 - **Claude Code**: Tree structure via `uuid`/`parentUuid` + `isSidechain` flag; some newer compaction events also include `logicalParentUuid`
-- **Codex**: Thread-based rollouts (`session_meta.payload.id` thread id); optional subagent provenance via `session_meta.payload.source == "subagent_*"` and collab events (`collab_agent_spawn_*`, `collab_resume_*`, ...)
+- **Codex**: Thread-based rollouts (`session_meta.payload.id` thread id); source provenance now comes from structured `session_meta.payload.source` (`cli`, `vscode`, `exec`, custom, or structured `subAgent` variants), with additional child-thread linkage visible in collab events (`collab_agent_spawn_*`, `collab_resume_*`, ...)
 - **OpenCode**: Parent-child sessions via `parentID` (subagent sessions)
 - **Mistral Vibe**: Linear message list in `messages.jsonl`; tool calls are embedded in assistant messages and resolved by subsequent `tool` role messages
 
 **Metadata Storage:**
 - **Claude Code**: Rich per-event metadata (`cwd`, `gitBranch`, `version`, `sessionId`, `entrypoint`, `slug`) plus assistant-level model slug at `message.model`; user turns can also include `promptId`, and subagent transcripts include `agentId`
-- **Codex**: Session metadata (`session_meta`) can include provider (`model_provider`), and turn-level metadata (`turn_context`) includes active model slug (`model`)
+- **Codex**: Session metadata (`session_meta`) can include provider (`model_provider`), origin/runtime (`originator`), CLI version (`cli_version`), and structured source/subagent provenance; turn-level metadata (`turn_context`) includes active model slug (`model`)
 - **Codex skills**: Explicit invocation appears as `$skill-name` in
   `event_msg.payload.message`; loaded skill content is injected as a separate
   `response_item` user message wrapped in `<skill>...</skill>`
@@ -265,7 +265,7 @@ Each tool can persist token usage metrics, but **the granularity and presence ar
 ### Codex (Primary Sources)
 - [Codex protocol `RolloutItem`, `SessionMeta`, `EventMsg`](https://github.com/openai/codex/blob/main/codex-rs/protocol/src/protocol.rs)
 - [Codex turn-context persistence (`RolloutItem::TurnContext` before sampling)](https://github.com/openai/codex/blob/main/codex-rs/core/src/codex.rs)
-- [Codex rollout recorder writes `session_meta.model_provider`](https://github.com/openai/codex/blob/main/codex-rs/core/src/rollout/recorder.rs)
+- [Codex rollout recorder writes `session_meta.model_provider`](https://github.com/openai/codex/blob/main/codex-rs/rollout/src/recorder.rs)
 - [Codex app-server thread/item event model](https://github.com/openai/codex/blob/main/codex-rs/app-server/README.md)
 - [Codex TypeScript SDK note on session persistence](https://github.com/openai/codex/blob/main/sdk/typescript/README.md)
 - [OpenAI Prompt Caching guide (`cached_tokens` within prompt/input usage)](https://developers.openai.com/api/docs/guides/prompt-caching)
