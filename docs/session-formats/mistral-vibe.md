@@ -50,10 +50,14 @@ Session-level metadata:
 | `environment.working_directory` | Working directory |
 | `git_commit` | Optional git commit hash |
 | `git_branch` | Optional git branch name |
+| `username` | Username of the session owner |
+| `title` | First ~50 chars of the first user message |
+| `total_messages` | Count of all non-system messages |
 | `stats` | Token usage, tool call counters, other session metrics |
 | `tools_available` | Set of tools available to the agent for the session |
 | `config` | Optional config snapshot: `active_model`, `providers`, `models` arrays |
 | `agent_profile` | Optional selected profile/override metadata |
+| `system_prompt` | System message object (`{"role": "system", "content": "..."}`) — moved here from `messages.jsonl` |
 
 **Model metadata** is session-level via `meta.json.config` snapshot when present
 (`config.active_model`, plus `config.providers`/`config.models`).
@@ -87,7 +91,8 @@ Example (abridged):
 Current observed limitation:
 
 - No separate cache-token counters were observed in `meta.json.stats`.
-- No separate reasoning-token counter was observed either; current logs expose aggregate prompt/completion totals.
+- No separate reasoning-token counter was observed in `meta.json.stats`; current logs expose aggregate prompt/completion totals only.
+- Reasoning content itself is available per-message via `reasoning_content` on assistant messages (see above), but is not reflected as a separate token counter in `stats`.
 
 ---
 
@@ -104,11 +109,15 @@ Messages do not include a normalized model identifier field.
 { "role": "assistant", "content": "Sure, here's how we can refactor it..." }
 ```
 
-### System Message
+**System messages are not written to `messages.jsonl`.** They are filtered out by the session logger and stored in `meta.json` under the `system_prompt` key.
 
-```json
-{ "role": "system", "content": "You are a helpful assistant..." }
-```
+**Optional message fields** (nullable, excluded from serialization when absent):
+
+| Field | Present on | Notes |
+|-------|-----------|-------|
+| `message_id` | `user`, `assistant` | Auto-generated UUID per message; absent on `tool` role |
+| `reasoning_content` | `assistant` | Thinking/reasoning block content (reasoning-capable models) |
+| `reasoning_signature` | `assistant` | Signature for reasoning blocks |
 
 ### Assistant Message with Tool Calls
 
