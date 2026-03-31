@@ -33,7 +33,6 @@ pub(crate) struct MessageMetadata {
     pub role: Option<Role>,
     pub time_created: DateTime<Utc>,
     pub model: Option<String>,
-    pub tokens: Option<MessageTokens>,
 }
 
 pub(crate) struct MessageTokens {
@@ -167,23 +166,6 @@ impl OpenCodeParser {
         let mut transcript_items: Vec<TranscriptItem> = Vec::new();
         let mut has_user_message = false;
         let mut step_finish_tokens: Vec<MessageTokens> = Vec::new();
-        let mut has_message_level_tokens = false;
-        let mut msg_level_input: i64 = 0;
-        let mut msg_level_output: i64 = 0;
-        let mut msg_level_reasoning: i64 = 0;
-        let mut msg_level_cache_read: i64 = 0;
-        let mut msg_level_cache_write: i64 = 0;
-
-        for message in &messages {
-            if let Some(ref tok) = message.tokens {
-                has_message_level_tokens = true;
-                msg_level_input += tok.input;
-                msg_level_output += tok.output;
-                msg_level_reasoning += tok.reasoning.unwrap_or(0);
-                msg_level_cache_read += tok.cache_read.unwrap_or(0);
-                msg_level_cache_write += tok.cache_write.unwrap_or(0);
-            }
-        }
 
         for message in &messages {
             let mut parts = backend.load_parts(&message.id)?;
@@ -264,28 +246,8 @@ impl OpenCodeParser {
             _ => crate::parsers::extract_first_prompt(&flattened),
         };
 
-        // Aggregate token usage: prefer message-level tokens, fall back to step-finish
-        let token_usage = if has_message_level_tokens {
-            Some(TokenUsage {
-                input_tokens: msg_level_input,
-                output_tokens: msg_level_output,
-                reasoning_tokens: if msg_level_reasoning > 0 {
-                    Some(msg_level_reasoning)
-                } else {
-                    None
-                },
-                cache_read_tokens: if msg_level_cache_read > 0 {
-                    Some(msg_level_cache_read)
-                } else {
-                    None
-                },
-                cache_write_tokens: if msg_level_cache_write > 0 {
-                    Some(msg_level_cache_write)
-                } else {
-                    None
-                },
-            })
-        } else if !step_finish_tokens.is_empty() {
+        // Aggregate token usage from step-finish parts only.
+        let token_usage = if !step_finish_tokens.is_empty() {
             let mut sf_input: i64 = 0;
             let mut sf_output: i64 = 0;
             let mut sf_reasoning: i64 = 0;
@@ -1316,7 +1278,7 @@ mod tests {
     }
 
     #[test]
-    fn parse_extracts_token_usage_from_message_tokens() {
+    fn parse_message_tokens_without_step_finish_yields_none() {
         let temp_dir = TempDir::new().unwrap();
         let root = temp_dir.path();
 
@@ -1370,12 +1332,81 @@ mod tests {
 
         let parser = OpenCodeParser::new(root);
         let parsed = parser.parse(&session_path).unwrap();
-        let usage = parsed.token_usage.expect("should have token_usage");
-        assert_eq!(usage.input_tokens, 1000);
-        assert_eq!(usage.output_tokens, 500);
-        assert_eq!(usage.reasoning_tokens, Some(200));
-        assert_eq!(usage.cache_read_tokens, Some(300));
-        assert_eq!(usage.cache_write_tokens, Some(50));
+        assert!(parsed.token_usage.is_none());
+    }
+
+    #[test]
+    fn parse_prefers_step_finish_tokens_over_message_tokens() {
+        let temp_dir = TempDir::new().unwrap();
+        let root = temp_dir.path();
+
+        let session_path = write_session_file(
+            root,
+            "project-a",
+            "session-tok-both.json",
+            json!({
+                "id": "session-tok-both",
+                "directory": "/projects/alpha",
+                "time": { "created": 1_704_067_200_000i64, "updated": 1_704_067_260_000i64 }
+            }),
+        );
+
+        write_message_file(
+            root,
+            "session-tok-both",
+            "msg-user.json",
+            json!({
+                "id": "msg-user", "sessionID": "session-tok-both", "role": "user",
+                "time": { "created": 1_704_067_200_000i64 }
+            }),
+        );
+        write_message_file(
+            root,
+            "session-tok-both",
+            "msg-asst.json",
+            json!({
+                "id": "msg-asst", "sessionID": "session-tok-both", "role": "assistant",
+                "time": { "created": 1_704_067_260_000i64 },
+                "data": { "tokens": { "input": 1000, "output": 500, "reasoning": 200, "cache": { "read": 300, "write": 50 } } }
+            }),
+        );
+
+        write_part_file(
+            root,
+            "msg-user",
+            "part-user.json",
+            json!({
+                "id": "part-user", "order": 1, "type": "text", "text": "Hello"
+            }),
+        );
+        write_part_file(
+            root,
+            "msg-asst",
+            "part-sf.json",
+            json!({
+                "id": "part-sf", "order": 1, "type": "step-finish",
+                "tokens": { "input": 800, "output": 400, "reasoning": 100, "cache": { "read": 55, "write": 25 } }
+            }),
+        );
+        write_part_file(
+            root,
+            "msg-asst",
+            "part-text.json",
+            json!({
+                "id": "part-text", "order": 2, "type": "text", "text": "Hi!"
+            }),
+        );
+
+        let parser = OpenCodeParser::new(root);
+        let parsed = parser.parse(&session_path).unwrap();
+        let usage = parsed
+            .token_usage
+            .expect("should have token_usage from step-finish");
+        assert_eq!(usage.input_tokens, 800);
+        assert_eq!(usage.output_tokens, 400);
+        assert_eq!(usage.reasoning_tokens, Some(100));
+        assert_eq!(usage.cache_read_tokens, Some(55));
+        assert_eq!(usage.cache_write_tokens, Some(25));
     }
 
     #[test]

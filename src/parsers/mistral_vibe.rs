@@ -406,6 +406,85 @@ mod tests {
     }
 
     #[test]
+    fn parse_v27_session_does_not_depend_on_system_message_position() {
+        let parser = MistralVibeParser;
+
+        let with_system = TempDir::new().unwrap();
+        let with_system_root = with_system.path();
+        fs::write(
+            with_system_root.join("meta.json"),
+            serde_json::to_vec(&json!({
+                "session_id": "v27-with-system",
+                "start_time": "2026-02-03T19:14:51Z",
+                "end_time": "2026-02-03T19:16:05Z",
+                "system_prompt": "You are Mistral Vibe system prompt",
+                "environment": { "working_directory": "/tmp/project" }
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        write_messages(
+            &with_system_root.join("messages.jsonl"),
+            &[
+                r#"{"role":"user","content":"Hi"}"#,
+                r#"{"role":"system","content":"Injected system row"}"#,
+                r#"{"role":"assistant","content":"Hello"}"#,
+            ],
+        );
+
+        let without_system = TempDir::new().unwrap();
+        let without_system_root = without_system.path();
+        fs::write(
+            without_system_root.join("meta.json"),
+            serde_json::to_vec(&json!({
+                "session_id": "v27-without-system",
+                "start_time": "2026-02-03T19:14:51Z",
+                "end_time": "2026-02-03T19:16:05Z",
+                "system_prompt": "You are Mistral Vibe system prompt",
+                "environment": { "working_directory": "/tmp/project" }
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        write_messages(
+            &without_system_root.join("messages.jsonl"),
+            &[
+                r#"{"role":"user","content":"Hi"}"#,
+                r#"{"role":"assistant","content":"Hello"}"#,
+            ],
+        );
+
+        let with_system_parsed = parser.parse(with_system_root).unwrap();
+        let without_system_parsed = parser.parse(without_system_root).unwrap();
+
+        assert_eq!(with_system_parsed.messages.len(), 2);
+        assert_eq!(with_system_parsed.messages[0].role, Role::User);
+        assert_eq!(with_system_parsed.messages[0].content, "Hi");
+        assert_eq!(with_system_parsed.messages[1].role, Role::Assistant);
+        assert_eq!(with_system_parsed.messages[1].content, "Hello");
+        assert_eq!(
+            with_system_parsed.session.first_prompt.as_deref(),
+            Some("Hi")
+        );
+
+        assert_eq!(without_system_parsed.messages.len(), 2);
+        assert_eq!(without_system_parsed.messages[0].content, "Hi");
+        assert_eq!(without_system_parsed.messages[1].content, "Hello");
+
+        let with_contents: Vec<String> = with_system_parsed
+            .messages
+            .iter()
+            .map(|m| m.content.clone())
+            .collect();
+        let without_contents: Vec<String> = without_system_parsed
+            .messages
+            .iter()
+            .map(|m| m.content.clone())
+            .collect();
+        assert_eq!(with_contents, without_contents);
+    }
+
+    #[test]
     fn parse_extracts_tool_calls_from_assistant_messages() {
         let temp_dir = create_temp_session_dir(&[
             r#"{"role":"user","content":"Run bash"}"#,

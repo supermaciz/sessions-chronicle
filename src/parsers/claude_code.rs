@@ -316,7 +316,7 @@ impl ParseState {
             &extract_content,
         );
 
-        // Extract and record tool_use blocks (both regular tools and Task subagents)
+        // Extract and record tool_use blocks (regular tools and Task/Agent subagents)
         if let Some(arr) = content_val.as_array() {
             for block in arr {
                 self.record_tool_use(block, &session_id, timestamp, &parse_timestamp);
@@ -448,7 +448,7 @@ impl ParseState {
             .to_string();
         let input_json = block.get("input").map(|v| v.to_string());
 
-        if tool_name == "Task" {
+        if matches!(tool_name.as_str(), "Task" | "Agent") {
             // Treat as subagent
             let description = block
                 .get("input")
@@ -942,6 +942,34 @@ mod tests {
         assert_eq!(parsed.tool_calls.len(), 0);
 
         // Transcript: user, assistant text, subagent item, assistant
+        assert_eq!(parsed.transcript_items.len(), 4);
+        assert_eq!(
+            parsed.transcript_items[2].kind,
+            TranscriptItemKind::Subagent
+        );
+    }
+
+    #[test]
+    fn parse_extracts_agent_tool_as_subagent() {
+        let file = create_temp_session(&[
+            r#"{"type":"user","timestamp":"2024-01-01T00:00:00Z","sessionId":"s3","message":{"content":"Analyze this"}}"#,
+            r#"{"type":"assistant","timestamp":"2024-01-01T00:00:01Z","sessionId":"s3","message":{"content":[{"type":"text","text":"Running task"},{"type":"tool_use","id":"toolu_agent_001","name":"Agent","input":{"description":"Analyze project","prompt":"List all files"}}]}}"#,
+            r#"{"type":"user","timestamp":"2024-01-01T00:00:10Z","sessionId":"s3","message":{"content":[{"type":"tool_result","tool_use_id":"toolu_agent_001","content":"Found 5 files"}]}}"#,
+            r#"{"type":"assistant","timestamp":"2024-01-01T00:00:11Z","sessionId":"s3","message":{"content":"Done"}}"#,
+        ]);
+
+        let parser = ClaudeCodeParser;
+        let parsed = parser.parse(file.path()).unwrap();
+
+        assert_eq!(parsed.subagents.len(), 1);
+        assert_eq!(parsed.subagents[0].id, "toolu_agent_001");
+        assert_eq!(parsed.subagents[0].title, "Analyze project");
+        assert_eq!(
+            parsed.subagents[0].result_summary.as_deref(),
+            Some("Found 5 files")
+        );
+        assert_eq!(parsed.tool_calls.len(), 0);
+
         assert_eq!(parsed.transcript_items.len(), 4);
         assert_eq!(
             parsed.transcript_items[2].kind,

@@ -44,7 +44,7 @@ fn opencode_search_finds_text_part_content() {
 
     let mut indexer = SessionIndexer::new(&db.path).expect("Failed to create indexer");
     let indexed_count = indexer
-        .index_opencode_sessions(&storage_root, None)
+        .index_opencode_sessions(&storage_root, &[])
         .expect("Failed to index OpenCode sessions");
 
     assert_eq!(
@@ -83,7 +83,7 @@ fn opencode_search_excludes_tool_output() {
 
     let mut indexer = SessionIndexer::new(&db.path).expect("Failed to create indexer");
     let indexed_count = indexer
-        .index_opencode_sessions(&storage_root, None)
+        .index_opencode_sessions(&storage_root, &[])
         .expect("Failed to index OpenCode sessions");
 
     assert_eq!(
@@ -114,7 +114,7 @@ fn opencode_search_respects_tool_filter() {
 
     let mut indexer = SessionIndexer::new(&db.path).expect("Failed to create indexer");
     indexer
-        .index_opencode_sessions(&storage_root, None)
+        .index_opencode_sessions(&storage_root, &[])
         .expect("Failed to index OpenCode sessions");
 
     let sessions = search_sessions_for_filter(
@@ -140,7 +140,7 @@ fn opencode_dual_read_sqlite_only_session_is_searchable() {
 
     let mut indexer = SessionIndexer::new(&db.path).expect("Failed to create indexer");
     indexer
-        .index_opencode_sessions(&storage_root, Some(&opencode_db))
+        .index_opencode_sessions(&storage_root, &[opencode_db.clone()])
         .expect("Failed to index");
 
     let sessions = search_sessions_for_filter(
@@ -163,7 +163,7 @@ fn opencode_dual_read_total_session_count() {
 
     let mut indexer = SessionIndexer::new(&db.path).expect("Failed to create indexer");
     let count = indexer
-        .index_opencode_sessions(&storage_root, Some(&opencode_db))
+        .index_opencode_sessions(&storage_root, &[opencode_db.clone()])
         .expect("Failed to index");
 
     assert_eq!(count, 6);

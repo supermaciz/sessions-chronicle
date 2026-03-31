@@ -781,7 +781,7 @@ mod tests {
                 "app should start in indexing mode for background incremental scan"
             );
             assert!(
-                parts.model.sources.opencode_db_path.is_some(),
+                !parts.model.sources.opencode_db_paths.is_empty(),
                 "fixtures should resolve an OpenCode SQLite source"
             );
         }

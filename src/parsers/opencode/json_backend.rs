@@ -7,7 +7,7 @@ use crate::parsers::model::normalize_model;
 
 use super::{
     MessageMetadata, OpenCodeBackend, PartData, SessionEntry, SessionMetadata, SessionSource,
-    extract_tokens, read_json, timestamp_from_millis,
+    read_json, timestamp_from_millis,
 };
 
 pub struct JsonBackend {
@@ -193,17 +193,11 @@ impl OpenCodeBackend for JsonBackend {
             let model = normalize_model(value.get("modelID"))
                 .or_else(|| normalize_model(value.get("model").and_then(|m| m.get("modelID"))));
 
-            let tokens = value
-                .get("data")
-                .and_then(|d| d.get("tokens"))
-                .and_then(extract_tokens);
-
             messages.push(MessageMetadata {
                 id,
                 role,
                 time_created,
                 model,
-                tokens,
             });
         }
 

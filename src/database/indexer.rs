@@ -48,14 +48,14 @@ pub(crate) fn derive_source_status(
     }
 }
 
-pub(crate) fn opencode_source_available(storage_root: &Path, db_path: Option<&Path>) -> bool {
-    storage_root.exists() || db_path.is_some_and(|path| path.exists())
+pub(crate) fn opencode_source_available(storage_root: &Path, db_paths: &[PathBuf]) -> bool {
+    storage_root.exists() || db_paths.iter().any(|path| path.exists())
 }
 
-fn opencode_display_path(storage_root: &Path, db_path: Option<&Path>) -> String {
+fn opencode_display_path(storage_root: &Path, db_paths: &[PathBuf]) -> String {
     if storage_root.exists() {
         storage_root.display().to_string()
-    } else if let Some(db) = db_path {
+    } else if let Some(db) = db_paths.first() {
         db.display().to_string()
     } else {
         storage_root.display().to_string()
@@ -218,23 +218,23 @@ impl SessionIndexer {
     pub fn index_opencode_sessions(
         &mut self,
         storage_root: &Path,
-        db_path: Option<&Path>,
+        db_paths: &[PathBuf],
     ) -> Result<usize> {
         let mut errors_detail = VecDeque::new();
         Ok(self
-            .index_opencode_sessions_internal(storage_root, db_path, false, &mut errors_detail)?
+            .index_opencode_sessions_internal(storage_root, db_paths, false, &mut errors_detail)?
             .indexed)
     }
 
     fn index_opencode_sessions_internal(
         &mut self,
         storage_root: &Path,
-        db_path: Option<&Path>,
+        db_paths: &[PathBuf],
         incremental: bool,
         errors_detail: &mut VecDeque<IndexingError>,
     ) -> Result<IndexingStats> {
         let has_storage_root = storage_root.exists();
-        let has_db = db_path.is_some_and(|p| p.exists());
+        let has_db = db_paths.iter().any(|path| path.exists());
 
         if !has_storage_root && !has_db {
             return Ok(IndexingStats::default());
@@ -246,7 +246,7 @@ impl SessionIndexer {
         let mut enumeration_succeeded = false;
         let mut sqlite_enumerated = false;
 
-        if let Some(db_path) = db_path {
+        for db_path in db_paths {
             if incremental && !self.should_reindex_opencode_sqlite(db_path)? {
                 stats.skipped += 1;
             } else {
@@ -942,7 +942,7 @@ impl SessionIndexer {
             self.index_claude_sessions_internal(&sources.claude_dir, true, &mut errors_detail)?;
         let opencode = self.index_opencode_sessions_internal(
             &sources.opencode_storage_root,
-            sources.opencode_db_path.as_deref(),
+            &sources.opencode_db_paths,
             true,
             &mut errors_detail,
         )?;
@@ -960,13 +960,10 @@ impl SessionIndexer {
             ),
             build_per_source_result(
                 AiAssistant::OpenCode,
-                opencode_display_path(
-                    &sources.opencode_storage_root,
-                    sources.opencode_db_path.as_deref(),
-                ),
+                opencode_display_path(&sources.opencode_storage_root, &sources.opencode_db_paths),
                 opencode_source_available(
                     &sources.opencode_storage_root,
-                    sources.opencode_db_path.as_deref(),
+                    &sources.opencode_db_paths,
                 ),
                 opencode,
             ),
@@ -1012,7 +1009,7 @@ impl SessionIndexer {
             self.index_claude_sessions_internal(&sources.claude_dir, false, &mut errors_detail)?;
         let opencode = self.index_opencode_sessions_internal(
             &sources.opencode_storage_root,
-            sources.opencode_db_path.as_deref(),
+            &sources.opencode_db_paths,
             false,
             &mut errors_detail,
         )?;
@@ -1030,13 +1027,10 @@ impl SessionIndexer {
             ),
             build_per_source_result(
                 AiAssistant::OpenCode,
-                opencode_display_path(
-                    &sources.opencode_storage_root,
-                    sources.opencode_db_path.as_deref(),
-                ),
+                opencode_display_path(&sources.opencode_storage_root, &sources.opencode_db_paths),
                 opencode_source_available(
                     &sources.opencode_storage_root,
-                    sources.opencode_db_path.as_deref(),
+                    &sources.opencode_db_paths,
                 ),
                 opencode,
             ),
@@ -1150,10 +1144,10 @@ impl SessionIndexer {
     pub fn index_opencode_sessions_incremental(
         &mut self,
         storage_root: &Path,
-        db_path: Option<&Path>,
+        db_paths: &[PathBuf],
     ) -> Result<IndexingStats> {
         let mut errors_detail = VecDeque::new();
-        self.index_opencode_sessions_internal(storage_root, db_path, true, &mut errors_detail)
+        self.index_opencode_sessions_internal(storage_root, db_paths, true, &mut errors_detail)
     }
 
     pub fn index_codex_sessions_incremental(
@@ -1478,12 +1472,12 @@ mod tests {
         let db_path = storage_root.join("opencode.db");
 
         let first = indexer
-            .index_opencode_sessions_incremental(&storage_root, Some(&db_path))
+            .index_opencode_sessions_incremental(&storage_root, &[db_path.clone()])
             .unwrap();
         assert!(first.indexed > 0);
 
         let second = indexer
-            .index_opencode_sessions_incremental(&storage_root, Some(&db_path))
+            .index_opencode_sessions_incremental(&storage_root, &[db_path.clone()])
             .unwrap();
         assert!(second.skipped > 0);
 
@@ -1513,7 +1507,7 @@ mod tests {
 
         let missing_storage_root = source_root.path().join("missing-storage");
         let first = indexer
-            .index_opencode_sessions_incremental(&missing_storage_root, Some(&source_db))
+            .index_opencode_sessions_incremental(&missing_storage_root, &[source_db.clone()])
             .unwrap();
         assert_eq!(first.indexed, 1);
 
@@ -1528,7 +1522,7 @@ mod tests {
         );
 
         let second = indexer
-            .index_opencode_sessions_incremental(&missing_storage_root, Some(&source_db))
+            .index_opencode_sessions_incremental(&missing_storage_root, &[source_db.clone()])
             .unwrap();
 
         assert!(
@@ -1590,9 +1584,7 @@ mod tests {
         let mut indexer = SessionIndexer::new(temp_db.path()).unwrap();
         let storage_root = PathBuf::from("tests/fixtures/opencode_storage");
 
-        let count = indexer
-            .index_opencode_sessions(&storage_root, None)
-            .unwrap();
+        let count = indexer.index_opencode_sessions(&storage_root, &[]).unwrap();
         // session-002 has parentID but no messages → NoUserMessages → pruned
         // session-tools-child has parentID and messages → indexed as is_subagent=1
         assert_eq!(count, 4);
@@ -1645,7 +1637,7 @@ mod tests {
         let nonexistent_root = PathBuf::from("tests/fixtures/nonexistent_opencode_storage");
 
         let count = indexer
-            .index_opencode_sessions(&nonexistent_root, None)
+            .index_opencode_sessions(&nonexistent_root, &[])
             .unwrap();
         assert_eq!(count, 0);
     }
@@ -1658,10 +1650,44 @@ mod tests {
         let db_path = storage_root.join("opencode.db");
 
         let count = indexer
-            .index_opencode_sessions(&storage_root, Some(&db_path))
+            .index_opencode_sessions(&storage_root, &[db_path.clone()])
             .unwrap();
 
         assert_eq!(count, 6);
+    }
+
+    #[test]
+    fn index_opencode_sessions_reads_all_discovered_sqlite_dbs() {
+        let temp_db = NamedTempFile::new().unwrap();
+        let mut indexer = SessionIndexer::new(temp_db.path()).unwrap();
+
+        let source_root = tempfile::tempdir().unwrap();
+        let storage_root = source_root.path().join("opencode_storage");
+        std::fs::create_dir_all(&storage_root).unwrap();
+        let default_db = source_root.path().join("opencode.db");
+        let dev_db = source_root.path().join("opencode-dev.db");
+
+        let default_conn = create_opencode_sqlite_db(&default_db);
+        insert_opencode_session(&default_conn, "session-default", 1_700_001_000_000);
+        let dev_conn = create_opencode_sqlite_db(&dev_db);
+        insert_opencode_session(&dev_conn, "session-dev", 1_700_002_000_000);
+
+        let count = indexer
+            .index_opencode_sessions(&storage_root, &[default_db.clone(), dev_db.clone()])
+            .unwrap();
+
+        assert_eq!(count, 2);
+
+        let indexed_ids: Vec<String> = indexer
+            .db
+            .prepare("SELECT id FROM sessions WHERE tool = 'opencode' ORDER BY id")
+            .unwrap()
+            .query_map([], |row| row.get(0))
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+
+        assert_eq!(indexed_ids, vec!["session-default", "session-dev"]);
     }
 
     #[test]
@@ -1672,7 +1698,7 @@ mod tests {
         let db_path = storage_root.join("opencode.db");
 
         indexer
-            .index_opencode_sessions(&storage_root, Some(&db_path))
+            .index_opencode_sessions(&storage_root, &[db_path.clone()])
             .unwrap();
 
         let session: (String, Option<String>) = indexer
@@ -1700,7 +1726,7 @@ mod tests {
         let db_path = storage_root.join("opencode.db");
 
         indexer
-            .index_opencode_sessions(&storage_root, Some(&db_path))
+            .index_opencode_sessions(&storage_root, &[db_path.clone()])
             .unwrap();
 
         let exists: bool = indexer
@@ -1723,7 +1749,7 @@ mod tests {
         let db_path = PathBuf::from("tests/fixtures/opencode_storage/opencode.db");
 
         let count = indexer
-            .index_opencode_sessions(&nonexistent_root, Some(&db_path))
+            .index_opencode_sessions(&nonexistent_root, &[db_path.clone()])
             .unwrap();
 
         assert_eq!(
@@ -1749,9 +1775,7 @@ mod tests {
         let storage_root = PathBuf::from("tests/fixtures/opencode_storage");
 
         // First: index JSON sessions to populate the app DB
-        indexer
-            .index_opencode_sessions(&storage_root, None)
-            .unwrap();
+        indexer.index_opencode_sessions(&storage_root, &[]).unwrap();
         let initial_count: i64 = indexer
             .db
             .query_row(
@@ -1767,7 +1791,7 @@ mod tests {
         let bad_root = PathBuf::from("tests/fixtures/nonexistent_opencode_storage");
         let bad_db = PathBuf::from("tests/fixtures/nonexistent.db");
         indexer
-            .index_opencode_sessions(&bad_root, Some(&bad_db))
+            .index_opencode_sessions(&bad_root, &[bad_db.clone()])
             .unwrap();
 
         let after_count: i64 = indexer
@@ -1790,9 +1814,7 @@ mod tests {
         let mut indexer = SessionIndexer::new(temp_db.path()).unwrap();
         let storage_root = PathBuf::from("tests/fixtures/opencode_storage");
 
-        let count = indexer
-            .index_opencode_sessions(&storage_root, None)
-            .unwrap();
+        let count = indexer.index_opencode_sessions(&storage_root, &[]).unwrap();
 
         assert_eq!(
             count, 4,
@@ -2043,7 +2065,7 @@ mod tests {
 
         let sources = SessionSources {
             opencode_storage_root: storage_root.clone(),
-            opencode_db_path: Some(sqlite_path.clone()),
+            opencode_db_paths: vec![sqlite_path.clone()],
             ..SessionSources::resolve(Some(temp.path()))
         };
 
@@ -2094,8 +2116,11 @@ mod tests {
         let sqlite_path = temp.path().join("opencode.db");
         std::fs::write(&sqlite_path, b"not-a-real-db").unwrap();
 
-        assert!(opencode_source_available(&storage_root, Some(&sqlite_path)));
-        assert!(!opencode_source_available(&storage_root, None));
+        assert!(opencode_source_available(
+            &storage_root,
+            &[sqlite_path.clone()]
+        ));
+        assert!(!opencode_source_available(&storage_root, &[]));
     }
 
     #[test]
