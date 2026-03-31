@@ -32,7 +32,7 @@ Cross-tool comparison of Claude Code, Codex, OpenCode, and Mistral Vibe session 
 
 | Tool | Path | Organization |
 |------|------|--------------|
-| **Claude Code** | `~/.claude/` | Project-specific directories<br>Main session: `~/.claude/projects/-Users-alexm-Repository-<project>/UUID.jsonl`<br>Subagent transcripts also appear as `agent-*.jsonl` (commonly under `<session-id>/subagents/`) |
+| **Claude Code** | `~/.claude/` | Project-specific directories<br>Main session: `~/.claude/projects/-Users-alexm-Repository-<project>/UUID.jsonl`<br>Subagent transcripts appear under `<session-id>/subagents/agent-*.jsonl`<br>Large materialized tool outputs can also appear under `<session-id>/tool-results/` |
 | **Codex** | `~/.codex/sessions/` | Date-sharded directories<br>`YYYY/MM/DD/rollout-*.jsonl` |
 | **OpenCode** | `~/.local/share/opencode/` | **New (≥ 2026-02-14)**: Single SQLite DB at `opencode.db`; tables: `session`, `message`, `part`, `project`, `todo`, `permission`, `session_share`.<br>**Legacy (pre-migration)**: Multi-directory JSON under `storage/`: `session/<project>/ses_xxx.json`, `message/ses_xxx/`, `part/msg_xxx/`, `session_diff/ses_xxx.json`. Files are retained post-migration (no auto-cleanup). |
 | **Mistral Vibe** | `~/.vibe/logs/session/` | One directory per session:<br>`session_YYYYMMDD_HHMMSS_<shortid>/`<br>Contains `meta.json` + `messages.jsonl`.<br>Default can be overridden via `VIBE_HOME` or `session_logging.save_dir` in `config.toml`. |
@@ -61,7 +61,7 @@ Cross-tool comparison of Claude Code, Codex, OpenCode, and Mistral Vibe session 
 
 | Tool | Pattern | Example |
 |------|---------|---------|
-| **Claude Code** | `UUID.jsonl` (main), `agent-*.jsonl` (subagent) | `a1b2c3d4-e5f6-7890-abcd-ef1234567890.jsonl`<br>`2a19bf71-3687-49ed-8ae9-8bd15e1522f6/subagents/agent-a60d695.jsonl` |
+| **Claude Code** | `UUID.jsonl` (main), `agent-*.jsonl` (subagent), `tool-results/*` (materialized tool output) | `a1b2c3d4-e5f6-7890-abcd-ef1234567890.jsonl`<br>`2a19bf71-3687-49ed-8ae9-8bd15e1522f6/subagents/agent-a60d695.jsonl`<br>`82b2d04e-d30e-4370-8e41-f53890baeda1/tool-results/bdw7vxszs.txt` |
 | **Codex** | `rollout-*.jsonl` | `rollout-20250912-164103.jsonl` |
 | **OpenCode** | **New (>= 2026-02-14):** `opencode.db`<br>**Legacy:** `ses_*.json` | `opencode.db` (new)<br>`ses_66a71b6f4ffeq796jvvOpJQ04m.json` (legacy) |
 | **Mistral Vibe** | `session_YYYYMMDD_HHMMSS_<shortid>/` | `session_20260123_174305_64883c86/` |
@@ -74,22 +74,22 @@ Cross-tool comparison of Claude Code, Codex, OpenCode, and Mistral Vibe session 
 
 | Field Category | Claude Code | Codex | OpenCode | Mistral Vibe |
 |----------------|-------------|-------|----------|-------------|
-| **Event Type** | `type` (`user`, `assistant`, `system`, `summary`, `progress`, `queue-operation`, `saved_hook_context`, `pr-link`, ...) | Rollout envelope `type` (`session_meta`, `event_msg`, `response_item`, `turn_context`, ...); nested `event_msg.payload.type` (`user_message`, `agent_message`, `exec_command_*`, `mcp_tool_call_*`, `collab_*`, ...) | Session metadata only (messages in separate files) | `role` (`system`, `user`, `assistant`, `tool`) in `messages.jsonl`; tool calls on assistant messages via `tool_calls` |
-| **Identity** | `uuid`, `parentUuid` (tree structure) | Session id at `session_meta.payload.id`; event-specific IDs like `call_id`, `sender_thread_id`, `receiver_thread_id` | `id`, `parentID` (hierarchical sessions) | No message IDs; tool calls have an `id` and tool responses reference it via `tool_call_id` |
+| **Event Type** | `type` (`user`, `assistant`, `system`, `summary`, `progress`, `queue-operation`, `saved_hook_context`, `pr-link`, `file-history-snapshot`, ...); current `system` subtypes observed locally include `local_command`, `turn_duration`, and `compact_boundary` | Rollout envelope `type` (`session_meta`, `event_msg`, `response_item`, `turn_context`, ...); nested `event_msg.payload.type` (`user_message`, `agent_message`, `exec_command_*`, `mcp_tool_call_*`, `collab_*`, ...) | Session metadata only (messages in separate files) | `role` (`system`, `user`, `assistant`, `tool`) in `messages.jsonl`; tool calls on assistant messages via `tool_calls` |
+| **Identity** | `uuid`, `parentUuid` (tree structure), plus `promptId` on user turns, `agentId` in subagent logs, and `logicalParentUuid` on some compaction events | Session id at `session_meta.payload.id`; event-specific IDs like `call_id`, `sender_thread_id`, `receiver_thread_id` | `id`, `parentID` (hierarchical sessions) | No message IDs; tool calls have an `id` and tool responses reference it via `tool_call_id` |
 | **Timestamp** | `timestamp` (ISO-8601) | Top-level rollout-line `timestamp` (ISO-8601 string) | `time.created`, `time.updated` (session level) | Session-level only in `meta.json`: `start_time`, `end_time` (ISO-8601). No per-message timestamps |
-| **Content** | Nested: `message.content` | Usually in `event_msg.payload` (for example `message`, command output deltas, MCP results), plus optional `response_item.payload.content[]` blocks; skills can also be injected as `response_item` user messages wrapped in `<skill>...</skill>` | Stored in `message/ses_xxx/` directory + `part/msg_xxx/` | `messages.jsonl` lines with `content`; tool output stored as `role: "tool"` messages |
-| **Model Metadata** | Assistant-level `message.model` (slug). In sampled recent logs: present on `assistant`, absent on `user`; `<synthetic>` appears for local synthetic/error assistant messages | `session_meta.payload.model_provider` (optional provider, session-level) + `turn_context.payload.model` (model slug, per turn); `event_msg.payload.type == "session_configured"` can also carry `model` + `model_provider_id` | Per-message model fields: `user.model.{providerID,modelID}` and assistant `providerID` + `modelID`; `subtask` parts can optionally include delegated model | No model field in `messages.jsonl` records; session-level `meta.json` can include a full `config` snapshot (`active_model`, `providers`, `models`) when logging is enabled |
+| **Content** | Nested: `message.content`; tool results also appear inline as `tool_result` blocks, can be duplicated in top-level `toolUseResult`, and large outputs may be materialized under `tool-results/` | Usually in `event_msg.payload` (for example `message`, command output deltas, MCP results), plus optional `response_item.payload.content[]` blocks; skills can also be injected as `response_item` user messages wrapped in `<skill>...</skill>` | Stored in `message/ses_xxx/` directory + `part/msg_xxx/` | `messages.jsonl` lines with `content`; tool output stored as `role: "tool"` messages |
+| **Model Metadata** | Assistant-level `message.model` (slug). In sampled recent logs: present on `assistant`, absent on `user`; `<synthetic>` appears for local synthetic/error assistant messages. Current local v2.1.87 samples still match this. | `session_meta.payload.model_provider` (optional provider, session-level) + `turn_context.payload.model` (model slug, per turn); `event_msg.payload.type == "session_configured"` can also carry `model` + `model_provider_id` | Per-message model fields: `user.model.{providerID,modelID}` and assistant `providerID` + `modelID`; `subtask` parts can optionally include delegated model | No model field in `messages.jsonl` records; session-level `meta.json` can include a full `config` snapshot (`active_model`, `providers`, `models`) when logging is enabled |
 
 ### Key Architectural Differences
 
 **Threading Model:**
-- **Claude Code**: Tree structure via `uuid`/`parentUuid` + `isSidechain` flag
+- **Claude Code**: Tree structure via `uuid`/`parentUuid` + `isSidechain` flag; some newer compaction events also include `logicalParentUuid`
 - **Codex**: Thread-based rollouts (`session_meta.payload.id` thread id); optional subagent provenance via `session_meta.payload.source == "subagent_*"` and collab events (`collab_agent_spawn_*`, `collab_resume_*`, ...)
 - **OpenCode**: Parent-child sessions via `parentID` (subagent sessions)
 - **Mistral Vibe**: Linear message list in `messages.jsonl`; tool calls are embedded in assistant messages and resolved by subsequent `tool` role messages
 
 **Metadata Storage:**
-- **Claude Code**: Rich per-event metadata (`cwd`, `gitBranch`, `version`, `sessionId`) plus assistant-level model slug at `message.model`
+- **Claude Code**: Rich per-event metadata (`cwd`, `gitBranch`, `version`, `sessionId`, `entrypoint`, `slug`) plus assistant-level model slug at `message.model`; user turns can also include `promptId`, and subagent transcripts include `agentId`
 - **Codex**: Session metadata (`session_meta`) can include provider (`model_provider`), and turn-level metadata (`turn_context`) includes active model slug (`model`)
 - **Codex skills**: Explicit invocation appears as `$skill-name` in
   `event_msg.payload.message`; loaded skill content is injected as a separate
@@ -98,7 +98,7 @@ Cross-tool comparison of Claude Code, Codex, OpenCode, and Mistral Vibe session 
 - **Mistral Vibe**: Session-level `meta.json` includes environment, optional git info, token/tool usage stats, tools snapshot, and configuration snapshot data
 
 **Content Access:**
-- **Claude Code**: `event.message.content` (nested in JSONL events)
+- **Claude Code**: `event.message.content` (nested in JSONL events); some current tool-result user events also include top-level `toolUseResult`
 - **Codex**: `event_msg.payload.message` for user/assistant text; tool/collab
   info in event-specific payload fields; loaded skills can appear as injected
   `response_item` user messages wrapped in `<skill>...</skill>`
@@ -110,7 +110,7 @@ Cross-tool comparison of Claude Code, Codex, OpenCode, and Mistral Vibe session 
   `read_file` tool calls to `skills/<name>/SKILL.md`
 
 **File Organization:**
-- **Claude Code**: Main `UUID.jsonl` session file plus additional `agent-*.jsonl` subagent transcripts (often nested under `<session-id>/subagents/`)
+- **Claude Code**: Main `UUID.jsonl` session file plus additional `agent-*.jsonl` subagent transcripts under `<session-id>/subagents/`; large materialized tool outputs can also appear under `<session-id>/tool-results/`
 - **Codex**: Single JSONL file per session
 - **OpenCode**: Multi-file structure (metadata + message directories + parts + diffs) or single SQLite DB
 - **Mistral Vibe**: Directory-based session (`meta.json` + `messages.jsonl`)
@@ -123,7 +123,7 @@ Goal: determine whether model information is available per message, per turn, an
 
 | Tool | Per Message | Per Turn | Per Session | Notes |
 |------|-------------|----------|-------------|-------|
-| **Claude Code** | ✅ On assistant events as `message.model` (slug). Not present on sampled `user` events. | ❌ No explicit turn-context object in the known JSONL schema | ⚠️ Partial: session/events include `version`; model is currently event/message-level, not a dedicated session object | Observed slugs include `claude-opus-4-6`, `claude-sonnet-4-6`, `claude-opus-4-5-20251101`, `claude-sonnet-4-5-20250929`, `claude-haiku-4-5-20251001`; `<synthetic>` appears on generated fallback/error messages. |
+| **Claude Code** | ✅ On assistant events as `message.model` (slug). Not present on sampled `user` events. | ❌ No explicit turn-context object in the known JSONL schema | ⚠️ Partial: session/events include `version`; model is currently event/message-level, not a dedicated session object | Observed slugs include `claude-opus-4-6`, `claude-sonnet-4-6`, `claude-opus-4-5-20251101`, `claude-sonnet-4-5-20250929`, `claude-haiku-4-5-20251001`; `<synthetic>` appears on generated fallback/error messages. Current local v2.1.87 sampling still matches this pattern. |
 | **Codex** | ⚠️ Not on `user_message` / `agent_message` payloads | ✅ `turn_context.payload.model` (`TurnContextItem.model`) | ✅/⚠️ `session_meta.payload.model_provider` is optional and provider-only (no guaranteed model slug) | `event_msg.payload.type == "session_configured"` can provide `model` + `model_provider_id`; reroutes can be observed via `model_reroute` events. |
 | **OpenCode** | ✅ User message has `model.{providerID,modelID}` and assistant message has `providerID` + `modelID` | N/A (message-centric schema) | ❌ Session metadata has no model field | `subtask` parts can optionally pin delegated model (`model.providerID`, `model.modelID`). |
 | **Mistral Vibe** | ❌ `messages.jsonl` (`LLMMessage`) has no model key | ❌ No separate turn-context model object in logs | ✅ `meta.json` metadata dump can contain `config` snapshot with `active_model`, plus `providers`/`models` arrays | Requires session logging metadata output; minimal/older logs may omit full config snapshot. |
@@ -132,13 +132,14 @@ Goal: determine whether model information is available per message, per turn, an
 - Codex: `codex-rs/protocol/src/protocol.rs` (`SessionMeta`, `TurnContextItem`, `SessionConfiguredEvent`) and `codex-rs/core/src/codex.rs`.
 - OpenCode: `packages/opencode/src/session/message-v2.ts` and `packages/sdk/js/src/v2/gen/types.gen.ts`.
 - Mistral Vibe: `vibe/core/session/session_logger.py` and `vibe/core/types.py`.
-- Claude Code: direct `~/.claude/projects/**/*.jsonl` sampling (2026-02-24), fixture comparison, and Anthropic model documentation.
+- Claude Code: direct `~/.claude/projects/**/*.jsonl` sampling (2026-02-24 and 2026-03-31), fixture comparison, and Anthropic model documentation.
 
 ---
 
 ## Key Findings Summary
 
-- **Claude Code**: JSONL format, tree-structured events, project-based organization; model slug is available on assistant events (`message.model`) in recent logs; **token usage is commonly available per assistant message** (`message.usage`, optional and version-dependent), with cache fields reported separately from uncached input
+- **Claude Code**: JSONL format, tree-structured events, project-based organization; current local logs add `turn_duration` and `compact_boundary` system events, confirm subagent transcripts under `<session-id>/subagents/agent-*.jsonl`, and show large materialized tool output under `<session-id>/tool-results/`; model slug is available on assistant events (`message.model`) in recent logs; **token usage is commonly available per assistant message** (`message.usage`, optional and version-dependent), with cache fields reported separately from uncached input
+- **Claude Code subagent/tool naming**: Current local v2.1.87 sessions show subagent launches as `tool_use` with `name == "Agent"` and `input.subagent_type`; older local fixtures and parser assumptions still reference `Task`
 - **Codex**: JSONL rollout envelope (`session_meta`/`event_msg`/`turn_context`/...); model provider can exist at session level, and model slug is captured at turn level (`turn_context.model`); **token usage is emitted as `event_msg` `token_count` events** (running totals + last-call deltas), where cached input is a subset of `input_tokens`
 - **Codex skills**: Sampled local rollouts show explicit `$skill-name`
   `user_message` events followed by injected `<skill>` payloads in
@@ -279,6 +280,8 @@ Each tool can persist token usage metrics, but **the granularity and presence ar
 
 ### Claude References
 - [Claude API tool-use block structure](https://platform.claude.com/docs/en/api/typescript/messages/create)
+- [Claude Code subagents docs](https://docs.anthropic.com/en/docs/claude-code/sub-agents)
+- [Claude Code changelog](https://docs.anthropic.com/en/docs/claude-code/changelog)
 - [Anthropic prompt caching docs (`cache_read_input_tokens`, `cache_creation_input_tokens`, `input_tokens`)](https://docs.anthropic.com/en/docs/build-with-claude/prompt-caching)
 - [Claude Code model configuration (supported slugs)](https://support.claude.com/en/articles/11940350-claude-code-model-configuration)
 - [Claude Sonnet 4.6 model page](https://www.anthropic.com/claude/sonnet)
@@ -294,5 +297,5 @@ Each tool can persist token usage metrics, but **the granularity and presence ar
 
 ---
 
-**Last Updated**: 2026-03-05
-**Status**: OpenCode SQLite migration documented and indexed (SQLite-first + JSON fallback); Claude model-metadata availability refreshed from real-session sampling; tool call wire format analysis added as companion doc; remaining scope gaps documented
+**Last Updated**: 2026-03-31
+**Status**: Claude Code docs refreshed from recent real-session sampling (v2.1.87-era logs), including current subagent naming (`Agent`), `turn_duration`/`compact_boundary` system events, and `tool-results/` side files; remaining parser/fixture drift is documented
