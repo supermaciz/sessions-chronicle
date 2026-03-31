@@ -4,7 +4,9 @@ Format reference for OpenCode session files.
 See [SESSION_FORMAT_ANALYSIS.md](../SESSION_FORMAT_ANALYSIS.md) for cross-assistant comparison tables.
 
 > **⚠️ Breaking change (≥ 2026-02-14):** OpenCode migrated to SQLite.
-> New sessions are written to `opencode.db` — the legacy JSON file tree is retained but no longer the write path.
+> New sessions are written to SQLite databases in `~/.local/share/opencode/`.
+> The default filename is `opencode.db`; non-default channels use `opencode-<channel>.db`.
+> The legacy JSON file tree is retained but no longer the write path.
 
 ---
 
@@ -12,14 +14,14 @@ See [SESSION_FORMAT_ANALYSIS.md](../SESSION_FORMAT_ANALYSIS.md) for cross-assist
 
 | Format | Path |
 |--------|------|
-| **New (≥ 2026-02-14)** | `~/.local/share/opencode/opencode.db` (SQLite WAL mode) |
+| **New (≥ 2026-02-14)** | `~/.local/share/opencode/opencode.db` (default/latest/beta channels, SQLite WAL mode); `~/.local/share/opencode/opencode-<channel>.db` for other channels |
 | **Legacy (pre-migration)** | `~/.local/share/opencode/storage/` (JSON files, retained post-migration) |
 
 **Legacy file naming:** `ses_*.json` — e.g. `ses_66a71b6f4ffeq796jvvOpJQ04m.json`
 
 ---
 
-## New Format — SQLite (`opencode.db`)
+## New Format — SQLite (`opencode.db` / `opencode-<channel>.db`)
 
 ### Schema
 
@@ -28,6 +30,7 @@ See [SESSION_FORMAT_ANALYSIS.md](../SESSION_FORMAT_ANALYSIS.md) for cross-assist
 CREATE TABLE session (
   id TEXT PRIMARY KEY,              -- "ses_" prefix
   project_id TEXT NOT NULL REFERENCES project(id) ON DELETE CASCADE,
+  workspace_id TEXT,
   parent_id TEXT,                   -- set for child/subagent sessions
   slug TEXT NOT NULL,
   directory TEXT NOT NULL,
@@ -89,6 +92,7 @@ CREATE TABLE project (
   id: string           // "ses_" prefix
   slug: string
   projectID: string    // git first-commit hash, or "global"
+  workspaceID?: string
   directory: string
   parentID?: string    // child/subagent sessions
   title: string
@@ -101,8 +105,8 @@ CREATE TABLE project (
 }
 ```
 
-New fields vs previous docs: `slug`, `share`, `permission`, `revert`, `time.compacting`,
-`time.archived`, `summary.diffs`.
+Newer fields vs previous docs: `slug`, `share`, `permission`, `revert`, `workspaceID`,
+`time.compacting`, `time.archived`, `summary.diffs`.
 
 ### Message `data` Blob — User
 
@@ -165,7 +169,7 @@ New fields vs previous docs: `slug`, `share`, `permission`, `revert`, `time.comp
 | `patch` | `hash`, `files: string[]` |
 | `agent` | `name`, `source?` |
 | `retry` | `attempt`, `error`, `time.created` |
-| `compaction` | `auto: boolean` |
+| `compaction` | `auto: boolean`, `overflow?` |
 | `subtask` | `prompt`, `description`, `agent`, `model?`, `command?` |
 
 New part types vs previous docs: `file`, `agent`, `retry`, `patch` (added).
@@ -235,6 +239,8 @@ Open the database read-only:
 ```bash
 sqlite3 'file:~/.local/share/opencode/opencode.db?mode=ro&immutable=1'
 ```
+
+For non-default channels, replace `opencode.db` with `opencode-<channel>.db`.
 
 Find sessions containing at least one tool part with `state.status == "error"`:
 
@@ -424,7 +430,8 @@ Model metadata is message-scoped (not session-scoped), unchanged between SQLite 
 
 ## Storage Migration (≥ 2026-02-14)
 
-- New primary storage is `opencode.db` (SQLite WAL mode)
+- New primary storage is a SQLite WAL-mode database in `~/.local/share/opencode/`
+- Default/latest/beta channels use `opencode.db`; other channels use `opencode-<channel>.db`
 - On first run after upgrade, OpenCode runs a one-time `JsonMigration` that reads all JSON files
   from `storage/` and imports them into SQLite
 - The `storage/` directory is **not deleted** after migration; legacy files remain on disk
@@ -444,7 +451,7 @@ Current implementation:
 
 Current indexing strategy is **SQLite-first dual-read with JSON fallback**:
 
-1. If `opencode.db` is available, list/parse sessions from SQLite first
+1. If an OpenCode SQLite database is available, list/parse sessions from SQLite first
 2. Also enumerate legacy JSON storage when present
 3. Deduplicate by session `id` (SQLite wins on overlap)
 4. Support JSON-only and SQLite-only installs
@@ -453,6 +460,7 @@ Current indexing strategy is **SQLite-first dual-read with JSON fallback**:
 - Converts `part.type == text` into transcript messages
 - Extracts `part.type == tool` into indexed tool-call records and `part.type == subtask` into subagent records
 - Non-message parts like `reasoning`, `step-start`, `step-finish`, `snapshot`, `compaction`, `file`, `agent`, `retry`, and `patch` are currently not rendered as transcript messages
+- Current official schema also includes optional `workspaceID` on sessions and optional `overflow` on `compaction` parts
 
 **Title extraction:** Prefer session metadata `title` (SQLite `session.title`) when present;
 fallback to first flattened `text` part attached to a `user` message.

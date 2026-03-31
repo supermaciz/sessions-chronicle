@@ -34,7 +34,7 @@ Cross-tool comparison of Claude Code, Codex, OpenCode, and Mistral Vibe session 
 |------|------|--------------|
 | **Claude Code** | `~/.claude/` | Project-specific directories<br>Main session: `~/.claude/projects/-Users-alexm-Repository-<project>/UUID.jsonl`<br>Subagent transcripts appear under `<session-id>/subagents/agent-*.jsonl`<br>Large materialized tool outputs can also appear under `<session-id>/tool-results/` |
 | **Codex** | `~/.codex/sessions/` | Date-sharded directories<br>`YYYY/MM/DD/rollout-*.jsonl` |
-| **OpenCode** | `~/.local/share/opencode/` | **New (≥ 2026-02-14)**: Single SQLite DB at `opencode.db`; tables: `session`, `message`, `part`, `project`, `todo`, `permission`, `session_share`.<br>**Legacy (pre-migration)**: Multi-directory JSON under `storage/`: `session/<project>/ses_xxx.json`, `message/ses_xxx/`, `part/msg_xxx/`, `session_diff/ses_xxx.json`. Files are retained post-migration (no auto-cleanup). |
+| **OpenCode** | `~/.local/share/opencode/` | **New (≥ 2026-02-14)**: SQLite WAL-mode DB, usually `opencode.db` and channel-specific `opencode-<channel>.db` for non-default channels; tables: `session`, `message`, `part`, `project`, `todo`, `permission`, `session_share`.<br>**Legacy (pre-migration)**: Multi-directory JSON under `storage/`: `session/<project>/ses_xxx.json`, `message/ses_xxx/`, `part/msg_xxx/`, `session_diff/ses_xxx.json`. Files are retained post-migration (no auto-cleanup). |
 | **Mistral Vibe** | `~/.vibe/logs/session/` | One directory per session:<br>`session_YYYYMMDD_HHMMSS_<shortid>/`<br>Contains `meta.json` + `messages.jsonl`.<br>Default can be overridden via `VIBE_HOME` or `session_logging.save_dir` in `config.toml`. |
 
 ---
@@ -47,7 +47,7 @@ Cross-tool comparison of Claude Code, Codex, OpenCode, and Mistral Vibe session 
 - Append-only chronological events
 
 **OpenCode** uses **SQLite (new)** or **separate JSON files (legacy)**:
-- **New (≥ 2026-02-14)**: Single SQLite WAL-mode database (`opencode.db`). Message and part content stored as JSON blobs in the `data` column.
+- **New (≥ 2026-02-14)**: SQLite WAL-mode database, usually `opencode.db` and `opencode-<channel>.db` for non-default channels. Message and part content are stored as JSON blobs in the `data` column.
 - **Legacy**: One JSON file per session (metadata), separate directories for messages and parts, standard JSON format (not line-delimited). Still present on disk after migration for users who have updated.
 
 **Mistral Vibe** uses a **directory-based format**:
@@ -63,7 +63,7 @@ Cross-tool comparison of Claude Code, Codex, OpenCode, and Mistral Vibe session 
 |------|---------|---------|
 | **Claude Code** | `UUID.jsonl` (main), `agent-*.jsonl` (subagent), `tool-results/*` (materialized tool output) | `a1b2c3d4-e5f6-7890-abcd-ef1234567890.jsonl`<br>`2a19bf71-3687-49ed-8ae9-8bd15e1522f6/subagents/agent-a60d695.jsonl`<br>`82b2d04e-d30e-4370-8e41-f53890baeda1/tool-results/bdw7vxszs.txt` |
 | **Codex** | `rollout-*.jsonl` | `rollout-20250912-164103.jsonl` |
-| **OpenCode** | **New (>= 2026-02-14):** `opencode.db`<br>**Legacy:** `ses_*.json` | `opencode.db` (new)<br>`ses_66a71b6f4ffeq796jvvOpJQ04m.json` (legacy) |
+| **OpenCode** | **New (>= 2026-02-14):** `opencode.db`, `opencode-<channel>.db`<br>**Legacy:** `ses_*.json` | `opencode.db` (default channel)<br>`opencode-dev.db` (non-default channel)<br>`ses_66a71b6f4ffeq796jvvOpJQ04m.json` (legacy) |
 | **Mistral Vibe** | `session_YYYYMMDD_HHMMSS_<shortid>/` | `session_20260123_174305_64883c86/` |
 
 ---
@@ -94,7 +94,7 @@ Cross-tool comparison of Claude Code, Codex, OpenCode, and Mistral Vibe session 
 - **Codex skills**: Explicit invocation appears as `$skill-name` in
   `event_msg.payload.message`; loaded skill content is injected as a separate
   `response_item` user message wrapped in `<skill>...</skill>`
-- **OpenCode**: Session-level metadata (`projectID`, `directory`, `version`, `title`)
+- **OpenCode**: Session-level metadata (`projectID`, `workspaceID?`, `directory`, `version`, `title`)
 - **Mistral Vibe**: Session-level `meta.json` includes environment, optional git info, token/tool usage stats, tools snapshot, and configuration snapshot data
 
 **Content Access:**
@@ -125,7 +125,7 @@ Goal: determine whether model information is available per message, per turn, an
 |------|-------------|----------|-------------|-------|
 | **Claude Code** | ✅ On assistant events as `message.model` (slug). Not present on sampled `user` events. | ❌ No explicit turn-context object in the known JSONL schema | ⚠️ Partial: session/events include `version`; model is currently event/message-level, not a dedicated session object | Observed slugs include `claude-opus-4-6`, `claude-sonnet-4-6`, `claude-opus-4-5-20251101`, `claude-sonnet-4-5-20250929`, `claude-haiku-4-5-20251001`; `<synthetic>` appears on generated fallback/error messages. Current local v2.1.87 sampling still matches this pattern. |
 | **Codex** | ⚠️ Not on `user_message` / `agent_message` payloads | ✅ `turn_context.payload.model` (`TurnContextItem.model`) | ✅/⚠️ `session_meta.payload.model_provider` is optional and provider-only (no guaranteed model slug) | `event_msg.payload.type == "session_configured"` can provide `model` + `model_provider_id`; reroutes can be observed via `model_reroute` events. |
-| **OpenCode** | ✅ User message has `model.{providerID,modelID}` and assistant message has `providerID` + `modelID` | N/A (message-centric schema) | ❌ Session metadata has no model field | `subtask` parts can optionally pin delegated model (`model.providerID`, `model.modelID`). |
+| **OpenCode** | ✅ User message has `model.{providerID,modelID}` and assistant message has `providerID` + `modelID` | N/A (message-centric schema) | ❌ Session metadata has no model field | `subtask` parts can optionally pin delegated model (`model.providerID`, `model.modelID`). Session metadata now also has optional `workspaceID`, but still no session-level model field. |
 | **Mistral Vibe** | ❌ `messages.jsonl` (`LLMMessage`) has no model key | ❌ No separate turn-context model object in logs | ✅ `meta.json` metadata dump can contain `config` snapshot with `active_model`, plus `providers`/`models` arrays | Requires session logging metadata output; minimal/older logs may omit full config snapshot. |
 
 **Primary evidence:**
@@ -146,7 +146,7 @@ Goal: determine whether model information is available per message, per turn, an
   `response_item` user messages. The injected payload includes `<name>` and
   `<path>` headers plus the skill body; unavailable skills can appear as a
   `$skill-name` invocation without a following `<skill>` payload.
-- **OpenCode**: **Breaking change ≥ 2026-02-14** — migrated to SQLite (`opencode.db`). Sessions Chronicle now indexes SQLite sessions first and falls back to legacy JSON storage, deduplicating by session `id` when both sources contain the same session. Legacy JSON file tree remains relevant for pre-migration/compatibility reads. Data schema (session/message/part fields) is largely unchanged; newer part types include `file`, `agent`, `retry`, `patch`; part ID prefix in SQLite era is `prt_`. Model metadata remains message-level; **token usage is commonly available per assistant message** (`message.data.tokens`, optional and provider-dependent) and can also appear on step boundaries (`part.type == "step-finish"` includes `tokens`).
+- **OpenCode**: **Breaking change ≥ 2026-02-14** — migrated to SQLite (`opencode.db` by default, `opencode-<channel>.db` on non-default channels). Sessions Chronicle now indexes SQLite sessions first and falls back to legacy JSON storage, deduplicating by session `id` when both sources contain the same session. Legacy JSON file tree remains relevant for pre-migration/compatibility reads. Data schema has continued to evolve: session rows now include optional `workspace_id` / `workspaceID`; newer part types include `file`, `agent`, `retry`, `patch`; `compaction` parts can include optional `overflow`; part ID prefix in SQLite era is `prt_`. Model metadata remains message-level; **token usage is commonly available per assistant message** (`message.tokens`, optional and provider-dependent) and can also appear on step boundaries (`part.type == "step-finish"` includes `tokens`).
 - **OpenCode skills**: Skill invocations have a reliable structural marker in
   `part.type == "tool"` with `part.tool == "skill"`. Skill identity is
   available in `state.metadata.name` and `state.input.name`; the injected
@@ -211,7 +211,7 @@ Each tool can persist token usage metrics, but **the granularity and presence ar
 |------|---------------------|------------|-------|
 | **Claude Code** | `assistant` events: `message.usage` | Per assistant message / request | Often includes `input_tokens`, `output_tokens`, plus `cache_read_input_tokens` / `cache_creation_input_tokens`. Anthropic reports cache separately, so `input_tokens` is the uncached portion only. Not present on all historical logs/fixtures. |
 | **Codex** | `event_msg` events: `payload.type == "token_count"` | Running session totals + per-call deltas | `info.total_token_usage` is a running total; `info.last_token_usage` is the last model call. `cached_input_tokens` is the cached subset of `input_tokens`, while `reasoning_output_tokens` is exposed as a separate field in the payload. Some events may have `info: null`. |
-| **OpenCode** | Assistant message metadata (`message.data.tokens`) and/or `part.type == "step-finish"` | Per assistant message and/or per step | Presence depends on provider/backends and OpenCode version; avoid double-counting if both are present. `tokens.cache.read` / `tokens.cache.write` are separate fields, but whether `tokens.input` already includes cache is provider-dependent. |
+| **OpenCode** | Assistant message metadata (`message.tokens`) and/or `part.type == "step-finish"` | Per assistant message and/or per step | Presence depends on provider/backends and OpenCode version; avoid double-counting if both are present. `tokens.cache.read` / `tokens.cache.write` are separate fields, but whether `tokens.input` already includes cache is provider-dependent. |
 | **Mistral Vibe** | `meta.json.stats` | Session totals + last turn | `stats` may be `null` in minimal/older logs or when logging is configured without stats. `messages.jsonl` does not include per-message tokens, and no separate cache/reasoning counters were observed. |
 
 ### Cross-provider token semantics
