@@ -280,9 +280,12 @@ mapping strategy.
 
 When search navigation auto-expands a burst via `set_expanded(true)`, the child
 widgets may not be allocated in the same frame. GTK 4 layouts are asynchronous.
-The scroll-to-child must be deferred using `glib::idle_add_local_once` or
-`gtk::Widget::connect_size_allocate` to wait for the expanded content to be laid
-out before scrolling to the target child widget.
+The scroll-to-child must be deferred until after the next layout pass. Follow
+the existing `glib::idle_add_local_once` pattern already used in the session
+detail view. If one idle is not sufficient in practice, use a one-shot
+`add_tick_callback` on the expanded container and perform the scroll once the
+target child is present and has a computed position. Do not plan around
+`connect_size_allocate`; that hook is not available in this GTK 4 stack.
 
 ---
 
@@ -343,22 +346,25 @@ Styling rules:
 - Add a new container style such as `.tool-call-group`.
 - Preserve the orange left border to maintain continuity with current tool call
   rows.
-- Make the expander header compact by targeting the internal `GtkExpander` CSS
-  nodes. The key selectors are:
+- Make the expander header compact by styling the widgets we own inside
+  `GtkExpander::set_label_widget`, not undocumented internal `GtkExpander` CSS
+  nodes. Add explicit classes to the header container and its subparts so the
+  implementation can style them directly, and set header box spacing in code.
+  For example:
 
   ```css
-  .tool-call-group expander-widget > box > title {
-    min-height: 0;
+  .tool-call-group-header {
     padding: 4px 8px;
+    min-height: 0;
   }
 
-  .tool-call-group expander-widget > box {
-    /* Remove default spacing between title and child if needed */
+  .tool-call-group-pill {
+    margin: 0;
   }
   ```
 
-  Without these, the internal `title` node retains its default padding and the
-  header will not feel compact even if `.tool-call-group` is styled.
+  This keeps the compact layout under app control and avoids depending on
+  fragile or incorrect internal node names such as `expander-widget`.
 - Render category pills using `@accent_color` for all categories. The text
   label on each pill (e.g. "3 Read", "1 Edit") is the primary differentiator,
   not color. This avoids misusing `@warning_color` and `@success_color` as
