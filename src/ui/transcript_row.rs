@@ -39,15 +39,38 @@ pub struct MessageItemInit {
 }
 
 #[derive(Debug, Clone)]
+/// UI-facing data needed to render a single tool call transcript row.
+///
+/// `preview` is the preferred secondary line because it is derived from the
+/// tool-specific input/output payload when possible. `summary` is a normalized
+/// fallback string carried through the database layer; current parsers do not
+/// populate it, but the row still supports it for future parser coverage and
+/// historical data compatibility.
 pub struct ToolCallItemInit {
+    /// Stable transcript item position used for match/selection bookkeeping.
     pub item_index: usize,
+    /// Session-scoped tool call identifier used by the inspector action.
     pub tool_call_id: String,
+    /// Normalized tool call name shown in the primary monospace label.
     pub tool_name: String,
+    /// Normalized execution status rendered as a badge.
     pub status: ToolCallStatus,
+    /// Preferred short preview extracted from tool input/output content.
     pub preview: Option<String>,
+    /// Optional one-line summary string used as a fallback preview/search text.
     pub summary: Option<String>,
+    /// Optional execution duration displayed in the row suffix.
     pub duration_ms: Option<i64>,
+    /// Active transcript search query used to compute per-row match counts.
     pub highlight_query: Option<String>,
+}
+
+impl ToolCallItemInit {
+    /// Returns the text actually shown as the secondary preview line:
+    /// `preview` if present, otherwise `summary` as fallback.
+    pub fn displayed_preview(&self) -> Option<&str> {
+        self.preview.as_deref().or(self.summary.as_deref())
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -214,11 +237,8 @@ fn count_tool_call_matches(init: &ToolCallItemInit) -> usize {
     };
 
     let mut count = highlight::find_case_insensitive_matches_in_text(&init.tool_name, query).len();
-    if let Some(preview) = init.preview.as_deref() {
-        count += highlight::find_case_insensitive_matches_in_text(preview, query).len();
-    }
-    if let Some(summary) = init.summary.as_deref() {
-        count += highlight::find_case_insensitive_matches_in_text(summary, query).len();
+    if let Some(text) = init.displayed_preview() {
+        count += highlight::find_case_insensitive_matches_in_text(text, query).len();
     }
     count
 }
@@ -351,7 +371,7 @@ fn build_tool_call_widget(
     row.append(&inspect_btn);
     root.append(&row);
 
-    if let Some(preview) = init.preview.as_deref().or(init.summary.as_deref()) {
+    if let Some(preview) = init.displayed_preview() {
         let preview_label = gtk::Label::new(None);
         preview_label.add_css_class("caption");
         preview_label.add_css_class("dim-label");
@@ -1147,8 +1167,9 @@ mod tests {
     }
 
     #[test]
-    fn tool_call_match_count_includes_name_preview_and_summary() {
-        let init = ToolCallItemInit {
+    fn tool_call_match_count_uses_only_displayed_preview() {
+        // When preview is present, summary is not rendered and must not be counted.
+        let with_preview = ToolCallItemInit {
             item_index: 7,
             tool_call_id: "call-7".to_string(),
             tool_name: "Read".to_string(),
@@ -1158,8 +1179,22 @@ mod tests {
             duration_ms: Some(12),
             highlight_query: Some("read".to_string()),
         };
+        // Only "Read" in tool_name matches; preview has no "read", summary is hidden.
+        assert_eq!(count_tool_call_matches(&with_preview), 1);
 
-        assert_eq!(count_tool_call_matches(&init), 2);
+        // When preview is absent, summary acts as fallback and is counted.
+        let with_summary_fallback = ToolCallItemInit {
+            item_index: 8,
+            tool_call_id: "call-8".to_string(),
+            tool_name: "Read".to_string(),
+            status: ToolCallStatus::Completed,
+            preview: None,
+            summary: Some("read the transcript loader".to_string()),
+            duration_ms: Some(12),
+            highlight_query: Some("read".to_string()),
+        };
+        // "Read" in tool_name + "read" in summary fallback = 2.
+        assert_eq!(count_tool_call_matches(&with_summary_fallback), 2);
     }
 
     #[test]
