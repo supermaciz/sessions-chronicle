@@ -30,12 +30,18 @@ pub struct SessionDetail {
     pending_boundary_tool_rows: Vec<crate::database::TranscriptItemRow>,
     pending_boundary_display_count: usize,
     search_query: Option<String>,
-    /// Keyed by transcript item_index (== factory position). Only message rows contribute.
-    match_counts: BTreeMap<usize, usize>,
+    /// Keyed by transcript item_index (== factory position).
+    match_segments: BTreeMap<usize, Vec<usize>>,
     current_match: usize,
     total_matches: usize,
-    scroll_to_item: Cell<Option<usize>>,
+    scroll_to_item: Cell<Option<ScrollTarget>>,
     pending_toast: Cell<bool>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct ScrollTarget {
+    display_index: usize,
+    child_index: Option<usize>,
 }
 
 #[derive(Debug)]
@@ -55,7 +61,7 @@ pub enum SessionDetailMsg {
     PrevMatch,
     NextMatch,
     ClearSearch,
-    MatchCount(usize, usize),
+    MatchSegments(usize, Vec<usize>),
     ShowExpandLoadFailure,
     Clear,
     InspectToolCall(String),
@@ -484,9 +490,10 @@ impl SimpleComponent for SessionDetail {
         let messages: FactoryVecDeque<TranscriptRow> = FactoryVecDeque::builder()
             .launch_default()
             .forward(sender.input_sender(), |output| match output {
-                TranscriptRowOutput::MatchCountChanged { item_index, count } => {
-                    SessionDetailMsg::MatchCount(item_index, count)
-                }
+                TranscriptRowOutput::MatchSegmentsChanged {
+                    item_index,
+                    segments,
+                } => SessionDetailMsg::MatchSegments(item_index, segments),
                 TranscriptRowOutput::ExpandLoadFailed { .. } => {
                     SessionDetailMsg::ShowExpandLoadFailure
                 }
@@ -506,7 +513,7 @@ impl SimpleComponent for SessionDetail {
             pending_boundary_tool_rows: Vec::new(),
             pending_boundary_display_count: 0,
             search_query: None,
-            match_counts: BTreeMap::new(),
+            match_segments: BTreeMap::new(),
             current_match: 0,
             total_matches: 0,
             scroll_to_item: Cell::new(None),
@@ -530,7 +537,7 @@ impl SimpleComponent for SessionDetail {
                 search_query,
             } => {
                 self.search_query = search_query;
-                self.match_counts.clear();
+                self.match_segments.clear();
                 self.current_match = 0;
                 self.total_matches = 0;
 
@@ -541,7 +548,7 @@ impl SimpleComponent for SessionDetail {
             }
             SessionDetailMsg::UpdateSearchQuery(query) => {
                 self.search_query = query;
-                self.match_counts.clear();
+                self.match_segments.clear();
                 self.current_match = 0;
                 self.total_matches = 0;
 
@@ -648,27 +655,29 @@ impl SimpleComponent for SessionDetail {
                     } else {
                         self.current_match -= 1;
                     }
-                    let item_idx =
-                        Self::find_item_for_match(&self.match_counts, self.current_match);
-                    self.scroll_to_item.set(Some(item_idx));
+                    let target = Self::find_match_target(&self.match_segments, self.current_match);
+                    self.scroll_to_item.set(Some(target));
                 }
             }
             SessionDetailMsg::NextMatch => {
                 if self.total_matches > 0 {
                     self.current_match = (self.current_match + 1) % self.total_matches;
-                    let item_idx =
-                        Self::find_item_for_match(&self.match_counts, self.current_match);
-                    self.scroll_to_item.set(Some(item_idx));
+                    let target = Self::find_match_target(&self.match_segments, self.current_match);
+                    self.scroll_to_item.set(Some(target));
                 }
             }
-            SessionDetailMsg::MatchCount(item_index, count) => {
+            SessionDetailMsg::MatchSegments(item_index, segments) => {
                 let was_empty = self.total_matches == 0;
-                self.match_counts.insert(item_index, count);
-                self.total_matches = self.match_counts.values().sum();
+                self.match_segments.insert(item_index, segments);
+                self.total_matches = self
+                    .match_segments
+                    .values()
+                    .map(|parts| parts.iter().sum::<usize>())
+                    .sum();
                 if was_empty && self.total_matches > 0 && self.search_query.is_some() {
                     self.current_match = 0;
-                    let item_idx = Self::find_item_for_match(&self.match_counts, 0);
-                    self.scroll_to_item.set(Some(item_idx));
+                    let target = Self::find_match_target(&self.match_segments, 0);
+                    self.scroll_to_item.set(Some(target));
                 }
                 if self.total_matches > 0 {
                     if self.current_match >= self.total_matches {
@@ -684,7 +693,7 @@ impl SimpleComponent for SessionDetail {
             }
             SessionDetailMsg::ClearSearch => {
                 self.search_query = None;
-                self.match_counts.clear();
+                self.match_segments.clear();
                 self.current_match = 0;
                 self.total_matches = 0;
 
@@ -699,7 +708,7 @@ impl SimpleComponent for SessionDetail {
                 self.loaded_count = 0;
                 self.has_more_messages = false;
                 self.search_query = None;
-                self.match_counts.clear();
+                self.match_segments.clear();
                 self.current_match = 0;
                 self.total_matches = 0;
                 self.pending_boundary_tool_rows.clear();
@@ -888,34 +897,49 @@ impl SimpleComponent for SessionDetail {
                 .add_toast(adw::Toast::new("Could not load full message."));
         }
 
-        if let Some(item_index) = self.scroll_to_item.take() {
+        if let Some(target) = self.scroll_to_item.take() {
             let messages_widget = self.messages.widget().clone();
             let scroll_child = widgets.scroll_child.clone();
             glib::idle_add_local_once(move || {
-                let Some(target) = messages_widget
+                let Some(row_widget) = messages_widget
                     .observe_children()
-                    .item(item_index as u32)
+                    .item(target.display_index as u32)
                     .and_then(|obj| obj.downcast::<gtk::Widget>().ok())
                 else {
                     return;
                 };
 
-                let Some(point) =
-                    target.compute_point(&scroll_child, &gtk::graphene::Point::zero())
-                else {
-                    return;
-                };
+                if let Some(child_index) = target.child_index
+                    && let Some(expander) = row_widget
+                        .first_child()
+                        .and_then(|w| w.downcast::<gtk::Expander>().ok())
+                {
+                    expander.set_expanded(true);
+                    let scroll_child_for_tick = scroll_child.clone();
+                    let expander_for_tick = expander.clone();
+                    expander.add_tick_callback(move |_, _| {
+                        let Some(child_box) = expander_for_tick
+                            .child()
+                            .and_then(|w| w.downcast::<gtk::Box>().ok())
+                        else {
+                            return glib::ControlFlow::Break;
+                        };
 
-                let Some(scrolled_window) = scroll_child
-                    .ancestor(gtk::ScrolledWindow::static_type())
-                    .and_then(|w| w.downcast::<gtk::ScrolledWindow>().ok())
-                else {
-                    return;
-                };
+                        let Some(child_widget) = child_box
+                            .observe_children()
+                            .item(child_index as u32)
+                            .and_then(|obj| obj.downcast::<gtk::Widget>().ok())
+                        else {
+                            return glib::ControlFlow::Continue;
+                        };
 
-                let vadj = scrolled_window.vadjustment();
-                let target_y = (point.y() as f64) - (vadj.page_size() / 3.0);
-                vadj.set_value(target_y.max(0.0));
+                        Self::scroll_widget_into_view(&child_widget, &scroll_child_for_tick);
+                        glib::ControlFlow::Break
+                    });
+                    return;
+                }
+
+                Self::scroll_widget_into_view(&row_widget, &scroll_child);
             });
         }
     }
@@ -1011,18 +1035,49 @@ impl SessionDetail {
         }
     }
 
-    /// Resolve a global match index to the transcript item_index of the matching row.
-    /// Since item_index == factory position (items pushed in transcript order),
-    /// this can be used directly as the scroll target.
-    fn find_item_for_match(counts: &BTreeMap<usize, usize>, global_index: usize) -> usize {
+    fn scroll_widget_into_view(widget: &gtk::Widget, scroll_child: &gtk::Box) {
+        let Some(point) = widget.compute_point(scroll_child, &gtk::graphene::Point::zero()) else {
+            return;
+        };
+
+        let Some(scrolled_window) = scroll_child
+            .ancestor(gtk::ScrolledWindow::static_type())
+            .and_then(|w| w.downcast::<gtk::ScrolledWindow>().ok())
+        else {
+            return;
+        };
+
+        let vadj = scrolled_window.vadjustment();
+        let target_y = (point.y() as f64) - (vadj.page_size() / 3.0);
+        vadj.set_value(target_y.max(0.0));
+    }
+
+    fn find_match_target(
+        segments_by_display_index: &BTreeMap<usize, Vec<usize>>,
+        global_index: usize,
+    ) -> ScrollTarget {
         let mut remaining = global_index;
-        for (&item_index, &count) in counts.iter() {
-            if remaining < count {
-                return item_index;
+
+        for (&display_index, segments) in segments_by_display_index {
+            for (child_index, count) in segments.iter().copied().enumerate() {
+                if remaining < count {
+                    return ScrollTarget {
+                        display_index,
+                        child_index: (segments.len() > 1).then_some(child_index),
+                    };
+                }
+                remaining = remaining.saturating_sub(count);
             }
-            remaining -= count;
         }
-        counts.keys().last().copied().unwrap_or(0)
+
+        ScrollTarget {
+            display_index: segments_by_display_index
+                .keys()
+                .last()
+                .copied()
+                .unwrap_or(0),
+            child_index: None,
+        }
     }
 }
 
@@ -1135,6 +1190,28 @@ mod tests {
 
         assert_eq!(items.len(), 2);
         assert!(matches!(items[1], TranscriptItemInit::ToolBurst(_)));
+    }
+
+    #[test]
+    fn find_match_target_returns_child_index_for_burst_matches() {
+        let mut segments = BTreeMap::new();
+        segments.insert(0, vec![2]);
+        segments.insert(1, vec![0, 3, 1]);
+
+        assert_eq!(
+            SessionDetail::find_match_target(&segments, 3),
+            ScrollTarget {
+                display_index: 1,
+                child_index: Some(1),
+            }
+        );
+        assert_eq!(
+            SessionDetail::find_match_target(&segments, 5),
+            ScrollTarget {
+                display_index: 1,
+                child_index: Some(2),
+            }
+        );
     }
 
     #[gtk::test]

@@ -92,9 +92,9 @@ pub enum TranscriptRowCmd {
 
 #[derive(Debug)]
 pub enum TranscriptRowOutput {
-    MatchCountChanged {
+    MatchSegmentsChanged {
         item_index: usize,
-        count: usize,
+        segments: Vec<usize>,
     },
     ExpandLoadFailed {
         #[allow(dead_code)]
@@ -521,9 +521,9 @@ impl FactoryComponent for TranscriptRow {
                     if count != self.rendered_match_count {
                         self.rendered_match_count = count;
                         sender
-                            .output(TranscriptRowOutput::MatchCountChanged {
+                            .output(TranscriptRowOutput::MatchSegmentsChanged {
                                 item_index: self.item_index,
-                                count,
+                                segments: vec![count],
                             })
                             .ok();
                     }
@@ -540,9 +540,9 @@ impl FactoryComponent for TranscriptRow {
                     if count != self.rendered_match_count {
                         self.rendered_match_count = count;
                         sender
-                            .output(TranscriptRowOutput::MatchCountChanged {
+                            .output(TranscriptRowOutput::MatchSegmentsChanged {
                                 item_index: self.item_index,
-                                count,
+                                segments: vec![count],
                             })
                             .ok();
                     }
@@ -607,9 +607,9 @@ impl FactoryComponent for TranscriptRow {
                 if count != self.rendered_match_count {
                     self.rendered_match_count = count;
                     sender
-                        .output(TranscriptRowOutput::MatchCountChanged {
+                        .output(TranscriptRowOutput::MatchSegmentsChanged {
                             item_index: self.item_index,
-                            count,
+                            segments: vec![count],
                         })
                         .ok();
                 }
@@ -715,9 +715,9 @@ impl TranscriptRow {
         );
         self.rendered_match_count = match_count;
         sender
-            .output(TranscriptRowOutput::MatchCountChanged {
+            .output(TranscriptRowOutput::MatchSegmentsChanged {
                 item_index: self.item_index,
-                count: match_count,
+                segments: vec![match_count],
             })
             .ok();
 
@@ -756,9 +756,9 @@ impl TranscriptRow {
         root.append(&refs.root);
         self.rendered_match_count = refs.match_count;
         sender
-            .output(TranscriptRowOutput::MatchCountChanged {
+            .output(TranscriptRowOutput::MatchSegmentsChanged {
                 item_index: self.item_index,
-                count: refs.match_count,
+                segments: vec![refs.match_count],
             })
             .ok();
 
@@ -857,9 +857,9 @@ impl TranscriptRow {
 
         self.rendered_match_count = burst_match_count;
         sender
-            .output(TranscriptRowOutput::MatchCountChanged {
+            .output(TranscriptRowOutput::MatchSegmentsChanged {
                 item_index: self.item_index,
-                count: burst_match_count,
+                segments: burst.child_match_counts.clone(),
             })
             .ok();
 
