@@ -538,10 +538,7 @@ impl SimpleComponent for SessionDetail {
                 search_query,
             } => {
                 self.search_query = search_query;
-                self.match_segments.clear();
-                self.current_match = 0;
-                self.total_matches = 0;
-
+                self.reset_search_matches();
                 let session = *session;
                 let session_id = session.id.clone();
                 self.session = Some(session);
@@ -549,144 +546,29 @@ impl SimpleComponent for SessionDetail {
             }
             SessionDetailMsg::UpdateSearchQuery(query) => {
                 self.search_query = query;
-                self.match_segments.clear();
-                self.current_match = 0;
-                self.total_matches = 0;
-
-                if let Some(session) = &self.session {
-                    let session_id = session.id.clone();
-                    self.load_first_page(&session_id);
-                }
+                self.reset_search_matches();
+                self.reload_current_session();
             }
             SessionDetailMsg::LoadMore => {
-                if let Some(session) = &self.session {
-                    let session_id = session.id.clone();
-                    let offset = self.loaded_count;
-                    match load_transcript_items(
-                        &self.db_path,
-                        &session_id,
-                        self.page_size as i64,
-                        offset as i64,
-                        self.preview_len as i64,
-                    ) {
-                        Ok(rows) => {
-                            let source_len = rows.len();
-                            self.has_more_messages = source_len == self.page_size;
-                            self.loaded_count += source_len;
-
-                            let mut rows = rows;
-                            let highlight = self.search_query.clone();
-                            let db_path = self.db_path.clone();
-                            let mut guard = self.messages.guard();
-
-                            if !self.pending_boundary_tool_rows.is_empty() {
-                                let regrouped =
-                                    regroup_boundary(self.pending_boundary_tool_rows.clone(), rows);
-
-                                let trailing_from_merge =
-                                    trailing_tool_rows_from_display(&regrouped.replacement_items);
-
-                                if !regrouped.replacement_items.is_empty() {
-                                    for _ in 0..usize::from(self.has_pending_boundary_burst) {
-                                        let _ = guard.pop_back();
-                                    }
-
-                                    let start_index = guard.len();
-                                    for item in
-                                        regrouped.replacement_items.into_iter().enumerate().map(
-                                            |(offset, item)| {
-                                                transcript_item_init_from_display_item(
-                                                    start_index + offset,
-                                                    &item,
-                                                    &session_id,
-                                                    highlight.clone(),
-                                                    db_path.clone(),
-                                                )
-                                            },
-                                        )
-                                    {
-                                        guard.push_back(item);
-                                    }
-                                }
-
-                                rows = regrouped.remaining_rows;
-                                self.pending_boundary_tool_rows = if rows.is_empty() {
-                                    trailing_from_merge
-                                } else {
-                                    trailing_tool_call_rows(&rows)
-                                };
-                                self.has_pending_boundary_burst =
-                                    !self.pending_boundary_tool_rows.is_empty();
-                            }
-
-                            if self.pending_boundary_tool_rows.is_empty() && self.has_more_messages
-                            {
-                                self.pending_boundary_tool_rows = trailing_tool_call_rows(&rows);
-                                self.has_pending_boundary_burst =
-                                    !self.pending_boundary_tool_rows.is_empty();
-                            }
-
-                            let start_index = guard.len();
-                            for item in Self::build_display_items(
-                                rows,
-                                &session_id,
-                                highlight,
-                                db_path,
-                                start_index,
-                            ) {
-                                guard.push_back(item);
-                            }
-
-                            if !self.has_more_messages {
-                                self.pending_boundary_tool_rows.clear();
-                                self.has_pending_boundary_burst = false;
-                            }
-                        }
-                        Err(err) => {
-                            tracing::error!("Failed to load more transcript items: {}", err);
-                            self.has_more_messages = false;
-                        }
-                    }
-                }
+                self.load_next_page();
             }
             SessionDetailMsg::PrevMatch => {
                 if self.total_matches > 0 {
-                    if self.current_match == 0 {
-                        self.current_match = self.total_matches - 1;
-                    } else {
-                        self.current_match -= 1;
-                    }
-                    let target = Self::find_match_target(&self.match_segments, self.current_match);
-                    self.scroll_to_item.set(Some(target));
+                    self.current_match = match self.current_match {
+                        0 => self.total_matches - 1,
+                        n => n - 1,
+                    };
+                    self.scroll_to_current_match();
                 }
             }
             SessionDetailMsg::NextMatch => {
                 if self.total_matches > 0 {
                     self.current_match = (self.current_match + 1) % self.total_matches;
-                    let target = Self::find_match_target(&self.match_segments, self.current_match);
-                    self.scroll_to_item.set(Some(target));
+                    self.scroll_to_current_match();
                 }
             }
             SessionDetailMsg::MatchSegments(item_index, segments) => {
-                let was_empty = self.total_matches == 0;
-                self.match_segments.insert(item_index, segments);
-                self.total_matches = self
-                    .match_segments
-                    .values()
-                    .map(|parts| parts.iter().sum::<usize>())
-                    .sum();
-                if was_empty && self.total_matches > 0 && self.search_query.is_some() {
-                    self.current_match = 0;
-                    let target = Self::find_match_target(&self.match_segments, 0);
-                    self.scroll_to_item.set(Some(target));
-                }
-                if self.total_matches > 0 {
-                    if self.current_match >= self.total_matches {
-                        self.current_match = self.total_matches - 1;
-                    }
-                } else {
-                    self.current_match = 0;
-                }
+                self.update_match_segments(item_index, segments);
             }
             SessionDetailMsg::ShowExpandLoadFailure => {
                 tracing::warn!("Could not load full message content");
@@ -694,14 +576,8 @@ impl SimpleComponent for SessionDetail {
             }
             SessionDetailMsg::ClearSearch => {
                 self.search_query = None;
-                self.match_segments.clear();
-                self.current_match = 0;
-                self.total_matches = 0;
-
-                if let Some(session) = &self.session {
-                    let session_id = session.id.clone();
-                    self.load_first_page(&session_id);
-                }
+                self.reset_search_matches();
+                self.reload_current_session();
             }
             SessionDetailMsg::Clear => {
                 self.session = None;
@@ -709,9 +585,7 @@ impl SimpleComponent for SessionDetail {
                 self.loaded_count = 0;
                 self.has_more_messages = false;
                 self.search_query = None;
-                self.match_segments.clear();
-                self.current_match = 0;
-                self.total_matches = 0;
+                self.reset_search_matches();
                 self.pending_boundary_tool_rows.clear();
                 self.has_pending_boundary_burst = false;
             }
@@ -1014,6 +888,135 @@ impl SessionDetail {
                 self.has_pending_boundary_burst = false;
             }
         }
+    }
+
+    fn reset_search_matches(&mut self) {
+        self.match_segments.clear();
+        self.current_match = 0;
+        self.total_matches = 0;
+    }
+
+    fn reload_current_session(&mut self) {
+        if let Some(session) = &self.session {
+            let session_id = session.id.clone();
+            self.load_first_page(&session_id);
+        }
+    }
+
+    fn scroll_to_current_match(&self) {
+        let target = Self::find_match_target(&self.match_segments, self.current_match);
+        self.scroll_to_item.set(Some(target));
+    }
+
+    fn load_next_page(&mut self) {
+        let Some(session) = &self.session else {
+            return;
+        };
+        let session_id = session.id.clone();
+        let offset = self.loaded_count;
+        let rows = match load_transcript_items(
+            &self.db_path,
+            &session_id,
+            self.page_size as i64,
+            offset as i64,
+            self.preview_len as i64,
+        ) {
+            Ok(rows) => rows,
+            Err(err) => {
+                tracing::error!("Failed to load more transcript items: {}", err);
+                self.has_more_messages = false;
+                return;
+            }
+        };
+
+        let source_len = rows.len();
+        self.has_more_messages = source_len == self.page_size;
+        self.loaded_count += source_len;
+
+        let mut rows = rows;
+        let highlight = self.search_query.clone();
+        let db_path = self.db_path.clone();
+
+        // Boundary regrouping must run before borrowing `self.messages` since it
+        // mutates `self.pending_boundary_tool_rows`.
+        let boundary_replacements = if !self.pending_boundary_tool_rows.is_empty() {
+            let regrouped = regroup_boundary(self.pending_boundary_tool_rows.clone(), rows);
+            let trailing_from_merge = trailing_tool_rows_from_display(&regrouped.replacement_items);
+            let pop_count = usize::from(self.has_pending_boundary_burst);
+
+            rows = regrouped.remaining_rows;
+            self.pending_boundary_tool_rows = if rows.is_empty() {
+                trailing_from_merge
+            } else {
+                trailing_tool_call_rows(&rows)
+            };
+            self.has_pending_boundary_burst = !self.pending_boundary_tool_rows.is_empty();
+
+            Some((regrouped.replacement_items, pop_count))
+        } else {
+            None
+        };
+
+        if self.pending_boundary_tool_rows.is_empty() && self.has_more_messages {
+            self.pending_boundary_tool_rows = trailing_tool_call_rows(&rows);
+            self.has_pending_boundary_burst = !self.pending_boundary_tool_rows.is_empty();
+        }
+
+        let mut guard = self.messages.guard();
+
+        if let Some((replacement_items, pop_count)) = boundary_replacements
+            && !replacement_items.is_empty()
+        {
+            for _ in 0..pop_count {
+                let _ = guard.pop_back();
+            }
+            let start_index = guard.len();
+            for item in replacement_items
+                .into_iter()
+                .enumerate()
+                .map(|(offset, item)| {
+                    transcript_item_init_from_display_item(
+                        start_index + offset,
+                        &item,
+                        &session_id,
+                        highlight.clone(),
+                        db_path.clone(),
+                    )
+                })
+            {
+                guard.push_back(item);
+            }
+        }
+
+        let start_index = guard.len();
+        for item in Self::build_display_items(rows, &session_id, highlight, db_path, start_index) {
+            guard.push_back(item);
+        }
+
+        if !self.has_more_messages {
+            self.pending_boundary_tool_rows.clear();
+            self.has_pending_boundary_burst = false;
+        }
+    }
+
+    fn update_match_segments(&mut self, item_index: usize, segments: Vec<usize>) {
+        let was_empty = self.total_matches == 0;
+        self.match_segments.insert(item_index, segments);
+        self.total_matches = self
+            .match_segments
+            .values()
+            .map(|parts| parts.iter().sum::<usize>())
+            .sum();
+        if was_empty && self.total_matches > 0 && self.search_query.is_some() {
+            self.current_match = 0;
+            let target = Self::find_match_target(&self.match_segments, 0);
+            self.scroll_to_item.set(Some(target));
+        }
+        self.current_match = match self.total_matches {
+            0 => 0,
+            n if self.current_match >= n => n - 1,
+            _ => self.current_match,
+        };
     }
 
     /// Clear transcript rows after releasing focus from any currently-focused row widget.
