@@ -145,6 +145,27 @@
   margin-bottom: 2px;
 }
 
+.tool-call-group {
+  padding: 2px 8px;
+  border-radius: 6px;
+  background-color: alpha(@card_bg_color, 0.4);
+  border-left: 2px solid #e66100;
+  margin-bottom: 2px;
+}
+
+.tool-call-group-header {
+  padding: 4px 8px;
+  min-height: 0;
+}
+
+.tool-call-group-pill {
+  margin: 0;
+}
+
+.tool-call-group .dim-label {
+  font-variant-numeric: tabular-nums;
+}
+
 .subagent-row {
   padding: 2px 8px;
   border-radius: 6px;

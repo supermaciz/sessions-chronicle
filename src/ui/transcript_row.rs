@@ -1159,7 +1159,7 @@ mod tests {
             highlight_query: Some("read".to_string()),
         };
 
-        assert_eq!(count_tool_call_matches(&init), 3);
+        assert_eq!(count_tool_call_matches(&init), 2);
     }
 
     #[test]
@@ -1207,6 +1207,14 @@ mod tests {
         );
 
         assert_eq!(label, "3 tool calls: 1 Bash, 2 Read, 1 error");
+    }
+
+    #[test]
+    fn tool_burst_match_badge_accessible_label_is_descriptive() {
+        assert_eq!(
+            format_tool_burst_match_badge_accessible_label(2),
+            "2 search matches inside this group"
+        );
     }
 
     #[test]

@@ -3,7 +3,7 @@ use crate::models::TranscriptItemKind;
 
 #[derive(Debug, Clone)]
 pub enum DisplayTranscriptItem {
-    Single(TranscriptItemRow),
+    Single(Box<TranscriptItemRow>),
     ToolBurst(DisplayToolBurst),
 }
 
@@ -23,7 +23,7 @@ pub fn group_transcript_rows(rows: Vec<TranscriptItemRow>) -> Vec<DisplayTranscr
         }
 
         flush_pending_tool_rows(&mut grouped, &mut pending_tool_rows);
-        grouped.push(DisplayTranscriptItem::Single(row));
+        grouped.push(DisplayTranscriptItem::Single(Box::new(row)));
     }
 
     flush_pending_tool_rows(&mut grouped, &mut pending_tool_rows);
@@ -82,7 +82,9 @@ fn flush_pending_tool_rows(
 ) {
     match pending_tool_rows.len() {
         0 => {}
-        1 => grouped.push(DisplayTranscriptItem::Single(pending_tool_rows.remove(0))),
+        1 => grouped.push(DisplayTranscriptItem::Single(Box::new(
+            pending_tool_rows.remove(0),
+        ))),
         _ => grouped.push(DisplayTranscriptItem::ToolBurst(DisplayToolBurst {
             rows: std::mem::take(pending_tool_rows),
         })),
