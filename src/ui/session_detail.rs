@@ -11,8 +11,9 @@ use relm4::{ComponentParts, ComponentSender, RelmWidgetExt, SimpleComponent, adw
 use crate::database::load_transcript_items;
 use crate::models::Session;
 use crate::ui::activity_bar::SessionActivityBar;
+use crate::ui::transcript_display::group_transcript_rows;
 use crate::ui::transcript_row::{
-    TranscriptRow, TranscriptRowOutput, transcript_item_init_from_row,
+    TranscriptItemInit, TranscriptRow, TranscriptRowOutput, transcript_item_init_from_display_item,
 };
 
 #[derive(Debug)]
@@ -560,13 +561,15 @@ impl SimpleComponent for SessionDetail {
                             let highlight = self.search_query.clone();
                             let db_path = self.db_path.clone();
                             let mut guard = self.messages.guard();
-                            for row in rows {
-                                guard.push_back(transcript_item_init_from_row(
-                                    &row,
-                                    &session_id,
-                                    highlight.clone(),
-                                    db_path.clone(),
-                                ));
+                            let start_index = guard.len();
+                            for item in Self::build_display_items(
+                                rows,
+                                &session_id,
+                                highlight,
+                                db_path,
+                                start_index,
+                            ) {
+                                guard.push_back(item);
                             }
                         }
                         Err(err) => {
@@ -855,6 +858,28 @@ impl SimpleComponent for SessionDetail {
 }
 
 impl SessionDetail {
+    fn build_display_items(
+        rows: Vec<crate::database::TranscriptItemRow>,
+        session_id: &str,
+        highlight_query: Option<String>,
+        db_path: Arc<PathBuf>,
+        base_display_index: usize,
+    ) -> Vec<TranscriptItemInit> {
+        group_transcript_rows(rows)
+            .into_iter()
+            .enumerate()
+            .map(|(offset, item)| {
+                transcript_item_init_from_display_item(
+                    base_display_index + offset,
+                    &item,
+                    session_id,
+                    highlight_query.clone(),
+                    db_path.clone(),
+                )
+            })
+            .collect()
+    }
+
     fn load_first_page(&mut self, session_id: &str) {
         match load_transcript_items(
             &self.db_path,
@@ -870,13 +895,8 @@ impl SessionDetail {
                 let db_path = self.db_path.clone();
                 self.clear_messages_safely();
                 let mut guard = self.messages.guard();
-                for row in rows {
-                    guard.push_back(transcript_item_init_from_row(
-                        &row,
-                        session_id,
-                        highlight.clone(),
-                        db_path.clone(),
-                    ));
+                for item in Self::build_display_items(rows, session_id, highlight, db_path, 0) {
+                    guard.push_back(item);
                 }
             }
             Err(err) => {
@@ -965,6 +985,83 @@ mod tests {
             command_count,
             ending_status: crate::models::SessionEndingStatus::Clean,
         }
+    }
+
+    #[test]
+    fn build_display_items_groups_two_tool_calls_into_one_tool_burst() {
+        let rows = vec![
+            crate::database::TranscriptItemRow {
+                item_index: 0,
+                kind: crate::models::TranscriptItemKind::Message,
+                message_index: Some(0),
+                role: Some(crate::models::Role::Assistant),
+                content_preview: Some("hello".to_string()),
+                content_len: Some(5),
+                timestamp: Some(0),
+                model: None,
+                tool_call_id: None,
+                tool_name: None,
+                tool_status: None,
+                tool_summary: None,
+                tool_input_json: None,
+                tool_output_text: None,
+                duration_ms: None,
+                subagent_id: None,
+                subagent_title: None,
+                subagent_prompt: None,
+            },
+            crate::database::TranscriptItemRow {
+                item_index: 1,
+                kind: crate::models::TranscriptItemKind::ToolCall,
+                message_index: None,
+                role: None,
+                content_preview: None,
+                content_len: None,
+                timestamp: None,
+                model: None,
+                tool_call_id: Some("call-1".to_string()),
+                tool_name: Some("Read".to_string()),
+                tool_status: Some(crate::models::ToolCallStatus::Completed),
+                tool_summary: Some("read a file".to_string()),
+                tool_input_json: Some("{}".to_string()),
+                tool_output_text: None,
+                duration_ms: Some(5),
+                subagent_id: None,
+                subagent_title: None,
+                subagent_prompt: None,
+            },
+            crate::database::TranscriptItemRow {
+                item_index: 2,
+                kind: crate::models::TranscriptItemKind::ToolCall,
+                message_index: None,
+                role: None,
+                content_preview: None,
+                content_len: None,
+                timestamp: None,
+                model: None,
+                tool_call_id: Some("call-2".to_string()),
+                tool_name: Some("Edit".to_string()),
+                tool_status: Some(crate::models::ToolCallStatus::Completed),
+                tool_summary: Some("edit a file".to_string()),
+                tool_input_json: Some("{}".to_string()),
+                tool_output_text: None,
+                duration_ms: Some(7),
+                subagent_id: None,
+                subagent_title: None,
+                subagent_prompt: None,
+            },
+        ];
+
+        let items = SessionDetail::build_display_items(
+            rows,
+            "session-1",
+            None,
+            Arc::new(PathBuf::from("/tmp/test.db")),
+            0,
+        );
+
+        assert_eq!(items.len(), 2);
+        assert!(matches!(items[1], TranscriptItemInit::ToolBurst(_)));
     }
 
     #[gtk::test]

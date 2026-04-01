@@ -822,12 +822,13 @@ impl TranscriptRow {
             header.append(&error_label);
         }
 
-        if burst.match_count > 0 {
-            let badge = gtk::Label::new(Some(&format!("{} matches", burst.match_count)));
+        let burst_match_count: usize = burst.child_match_counts.iter().sum();
+        if burst_match_count > 0 {
+            let badge = gtk::Label::new(Some(&format!("{} matches", burst_match_count)));
             badge.add_css_class("pill");
             badge.add_css_class("accent");
             badge.add_css_class("tool-call-group-pill");
-            let badge_a11y = format_tool_burst_match_badge_accessible_label(burst.match_count);
+            let badge_a11y = format_tool_burst_match_badge_accessible_label(burst_match_count);
             badge.update_property(&[gtk::accessible::Property::Label(&badge_a11y)]);
             header.append(&badge);
         }
@@ -854,11 +855,11 @@ impl TranscriptRow {
         expander.set_child(Some(&children));
         root.append(&expander);
 
-        self.rendered_match_count = burst.match_count;
+        self.rendered_match_count = burst_match_count;
         sender
             .output(TranscriptRowOutput::MatchCountChanged {
                 item_index: self.item_index,
-                count: burst.match_count,
+                count: burst_match_count,
             })
             .ok();
 
@@ -939,8 +940,25 @@ impl TranscriptRow {
 }
 
 /// Build a `TranscriptItemInit` from a `TranscriptItemRow` returned by the DB query.
-pub fn transcript_item_init_from_row(
+#[cfg(test)]
+fn transcript_item_init_from_row(
     row: &crate::database::TranscriptItemRow,
+    session_id: &str,
+    highlight_query: Option<String>,
+    db_path: Arc<PathBuf>,
+) -> TranscriptItemInit {
+    transcript_item_init_from_row_with_index(
+        row,
+        row.item_index as usize,
+        session_id,
+        highlight_query,
+        db_path,
+    )
+}
+
+fn transcript_item_init_from_row_with_index(
+    row: &crate::database::TranscriptItemRow,
+    item_index: usize,
     session_id: &str,
     highlight_query: Option<String>,
     db_path: Arc<PathBuf>,
@@ -958,7 +976,7 @@ pub fn transcript_item_init_from_row(
             let message_index = row.message_index.unwrap_or(0) as usize;
 
             TranscriptItemInit::Message(MessageItemInit {
-                item_index: row.item_index as usize,
+                item_index,
                 preview: MessagePreview {
                     session_id: session_id.to_string(),
                     message_index,
@@ -973,7 +991,7 @@ pub fn transcript_item_init_from_row(
             })
         }
         TranscriptItemKind::ToolCall => TranscriptItemInit::ToolCall(ToolCallItemInit {
-            item_index: row.item_index as usize,
+            item_index,
             tool_call_id: row.tool_call_id.clone().unwrap_or_default(),
             tool_name: row
                 .tool_name
@@ -991,7 +1009,7 @@ pub fn transcript_item_init_from_row(
             highlight_query,
         }),
         TranscriptItemKind::Subagent => TranscriptItemInit::Subagent(SubagentItemInit {
-            item_index: row.item_index as usize,
+            item_index,
             subagent_id: row.subagent_id.clone().unwrap_or_default(),
             title: row
                 .subagent_title
@@ -1004,7 +1022,7 @@ pub fn transcript_item_init_from_row(
                 "transcript item with unknown kind; rendering as empty message"
             );
             TranscriptItemInit::Message(MessageItemInit {
-                item_index: row.item_index as usize,
+                item_index,
                 preview: MessagePreview {
                     session_id: session_id.to_string(),
                     message_index: 0,
@@ -1017,6 +1035,45 @@ pub fn transcript_item_init_from_row(
                 highlight_query,
                 db_path,
             })
+        }
+    }
+}
+
+pub fn transcript_item_init_from_display_item(
+    display_index: usize,
+    item: &crate::ui::transcript_display::DisplayTranscriptItem,
+    session_id: &str,
+    highlight_query: Option<String>,
+    db_path: Arc<PathBuf>,
+) -> TranscriptItemInit {
+    match item {
+        crate::ui::transcript_display::DisplayTranscriptItem::Single(row) => {
+            transcript_item_init_from_row_with_index(
+                row,
+                display_index,
+                session_id,
+                highlight_query,
+                db_path,
+            )
+        }
+        crate::ui::transcript_display::DisplayTranscriptItem::ToolBurst(burst) => {
+            let tool_calls = burst
+                .rows
+                .iter()
+                .map(|row| {
+                    match transcript_item_init_from_row_with_index(
+                        row,
+                        display_index,
+                        session_id,
+                        highlight_query.clone(),
+                        db_path.clone(),
+                    ) {
+                        TranscriptItemInit::ToolCall(tool_call) => tool_call,
+                        _ => panic!("tool burst child must be a tool call"),
+                    }
+                })
+                .collect();
+            TranscriptItemInit::ToolBurst(build_tool_burst_init(display_index, tool_calls, false))
         }
     }
 }
