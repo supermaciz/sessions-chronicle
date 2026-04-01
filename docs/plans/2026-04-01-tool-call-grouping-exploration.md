@@ -2,7 +2,7 @@
 
 **Issue:** [#89](https://github.com/supermaciz/sessions-chronicle/issues/89) — Group consecutive tool calls in session detail view  
 **Date:** 2026-04-01  
-**Status:** Open for decision  
+**Status:** Decided — Proposal A  
 **Milestone:** First release
 
 ## Problem
@@ -294,3 +294,53 @@ segments. "Expand rows" fallback provides full text access.
 
 4. **Summary generation (Proposal C):** Is generating narrative text worth the
    complexity? Or are pills/counts sufficient?
+
+---
+
+## Decision
+
+**Chosen: Proposal A — HIG Burst Expander**, with adjustments from Proposal D.
+
+### Rationale
+
+`GtkExpander` is the canonical GNOME disclosure widget and gives keyboard
+navigation and screen reader state announcements for free. Every alternative
+requires manual accessibility work for a result that is identical or inferior.
+
+Proposals B and E (segmented duration bars) degrade silently when per-tool
+duration data is absent, which is common. A visualization that sometimes shows
+time proportions and sometimes shows equal-width boxes is unreliable.
+
+Proposal C (narrative summary) introduces a text generation problem: the summary
+can be inaccurate when tool call previews are sparse. Category pills ("3 Read,
+1 Edit") are unambiguous and require no generation logic.
+
+Proposal D is Proposal A without the free accessibility — strictly worse.
+
+### Adjustments from Proposal D
+
+- **Compact header (~42px):** tune CSS padding rather than switching widget.
+- **Trailing label** `"N tool calls · Xs"` as dim text instead of a separate
+  count pill. Lighter visual weight.
+
+### Implementation notes
+
+- Grouping threshold: ≥ 2 consecutive tool calls; single isolated calls render
+  as-is.
+- Default state: collapsed.
+- Pill colors map to libadwaita semantic variables:
+  - Read / Grep / Glob → `@accent_color`
+  - Edit / Write → `@warning_color`
+  - Bash → `@success_color`
+  - Subagent → `@define-color subagent_color #9141ac` (no libadwaita semantic)
+- Search: auto-expand burst when a match falls inside; show match count badge on
+  the header while collapsed.
+- Errors: red dot + "N error(s)" text in the expander label — color and text,
+  not color alone.
+- Duration absent: omit the duration label; pills still render correctly.
+
+### Files affected
+
+- `src/ui/transcript_row.rs` — new `ToolBurst` variant, expander widget tree
+- `src/ui/session_detail.rs` — burst detection in the transcript loading loop
+- `data/resources/style.css` — `.tool-call-group`, pill colors, expander padding
