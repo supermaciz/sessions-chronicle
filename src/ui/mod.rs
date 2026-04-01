@@ -12,4 +12,5 @@ pub mod sidebar;
 pub mod tool_inspector_pane;
 pub mod tool_preview;
 pub mod tool_renderers;
+pub mod transcript_display;
 pub mod transcript_row;

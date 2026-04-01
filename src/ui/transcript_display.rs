@@ -1,0 +1,169 @@
+use crate::database::TranscriptItemRow;
+use crate::models::TranscriptItemKind;
+
+#[derive(Debug, Clone)]
+pub enum DisplayTranscriptItem {
+    Single(TranscriptItemRow),
+    ToolBurst(DisplayToolBurst),
+}
+
+#[derive(Debug, Clone)]
+pub struct DisplayToolBurst {
+    pub rows: Vec<TranscriptItemRow>,
+}
+
+pub fn group_transcript_rows(rows: Vec<TranscriptItemRow>) -> Vec<DisplayTranscriptItem> {
+    let mut grouped = Vec::new();
+    let mut pending_tool_rows = Vec::new();
+
+    for row in rows {
+        if row.kind == TranscriptItemKind::ToolCall {
+            pending_tool_rows.push(row);
+            continue;
+        }
+
+        flush_pending_tool_rows(&mut grouped, &mut pending_tool_rows);
+        grouped.push(DisplayTranscriptItem::Single(row));
+    }
+
+    flush_pending_tool_rows(&mut grouped, &mut pending_tool_rows);
+    grouped
+}
+
+fn flush_pending_tool_rows(
+    grouped: &mut Vec<DisplayTranscriptItem>,
+    pending_tool_rows: &mut Vec<TranscriptItemRow>,
+) {
+    match pending_tool_rows.len() {
+        0 => {}
+        1 => grouped.push(DisplayTranscriptItem::Single(pending_tool_rows.remove(0))),
+        _ => grouped.push(DisplayTranscriptItem::ToolBurst(DisplayToolBurst {
+            rows: std::mem::take(pending_tool_rows),
+        })),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::models::{Role, ToolCallStatus};
+
+    fn message_row(item_index: i64) -> TranscriptItemRow {
+        TranscriptItemRow {
+            item_index,
+            kind: TranscriptItemKind::Message,
+            message_index: Some(item_index),
+            role: Some(Role::Assistant),
+            content_preview: Some(format!("message-{item_index}")),
+            content_len: Some(10),
+            timestamp: Some(0),
+            model: None,
+            tool_call_id: None,
+            tool_name: None,
+            tool_status: None,
+            tool_summary: None,
+            tool_input_json: None,
+            tool_output_text: None,
+            duration_ms: None,
+            subagent_id: None,
+            subagent_title: None,
+            subagent_prompt: None,
+        }
+    }
+
+    fn tool_row(item_index: i64, tool_name: &str) -> TranscriptItemRow {
+        TranscriptItemRow {
+            item_index,
+            kind: TranscriptItemKind::ToolCall,
+            message_index: None,
+            role: None,
+            content_preview: None,
+            content_len: None,
+            timestamp: None,
+            model: None,
+            tool_call_id: Some(format!("call-{item_index}")),
+            tool_name: Some(tool_name.to_string()),
+            tool_status: Some(ToolCallStatus::Completed),
+            tool_summary: Some(format!("summary-{item_index}")),
+            tool_input_json: Some("{}".to_string()),
+            tool_output_text: None,
+            duration_ms: Some(25),
+            subagent_id: None,
+            subagent_title: None,
+            subagent_prompt: None,
+        }
+    }
+
+    fn subagent_row(item_index: i64) -> TranscriptItemRow {
+        TranscriptItemRow {
+            item_index,
+            kind: TranscriptItemKind::Subagent,
+            message_index: None,
+            role: None,
+            content_preview: None,
+            content_len: None,
+            timestamp: None,
+            model: None,
+            tool_call_id: None,
+            tool_name: None,
+            tool_status: None,
+            tool_summary: None,
+            tool_input_json: None,
+            tool_output_text: None,
+            duration_ms: None,
+            subagent_id: Some(format!("sub-{item_index}")),
+            subagent_title: Some("Subagent".to_string()),
+            subagent_prompt: None,
+        }
+    }
+
+    #[test]
+    fn isolated_tool_call_stays_single() {
+        let rows = vec![message_row(0), tool_row(1, "Read"), message_row(2)];
+        let grouped = group_transcript_rows(rows);
+        assert_eq!(grouped.len(), 3);
+        assert!(matches!(grouped[1], DisplayTranscriptItem::Single(_)));
+    }
+
+    #[test]
+    fn two_consecutive_tool_calls_become_burst() {
+        let rows = vec![message_row(0), tool_row(1, "Read"), tool_row(2, "Edit")];
+        let grouped = group_transcript_rows(rows);
+        assert_eq!(grouped.len(), 2);
+        assert!(matches!(grouped[1], DisplayTranscriptItem::ToolBurst(_)));
+    }
+
+    #[test]
+    fn subagent_breaks_tool_burst() {
+        let rows = vec![tool_row(0, "Read"), subagent_row(1), tool_row(2, "Edit")];
+        let grouped = group_transcript_rows(rows);
+        assert_eq!(grouped.len(), 3);
+        assert!(matches!(grouped[0], DisplayTranscriptItem::Single(_)));
+        assert!(matches!(grouped[1], DisplayTranscriptItem::Single(_)));
+        assert!(matches!(grouped[2], DisplayTranscriptItem::Single(_)));
+    }
+
+    #[test]
+    fn mixed_tool_run_preserves_order_inside_burst() {
+        let rows = vec![
+            tool_row(0, "Read"),
+            tool_row(1, "Read"),
+            tool_row(2, "Grep"),
+            tool_row(3, "Edit"),
+            tool_row(4, "Bash"),
+        ];
+        let grouped = group_transcript_rows(rows);
+        assert_eq!(grouped.len(), 1);
+
+        let DisplayTranscriptItem::ToolBurst(burst) = &grouped[0] else {
+            panic!("expected tool burst");
+        };
+
+        let names: Vec<&str> = burst
+            .rows
+            .iter()
+            .map(|row| row.tool_name.as_deref().unwrap_or(""))
+            .collect();
+        assert_eq!(names, vec!["Read", "Read", "Grep", "Edit", "Bash"]);
+    }
+}
