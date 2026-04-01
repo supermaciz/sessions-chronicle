@@ -1080,7 +1080,7 @@ pub fn transcript_item_init_from_display_item(
             let tool_calls = burst
                 .rows
                 .iter()
-                .map(|row| {
+                .filter_map(|row| {
                     match transcript_item_init_from_row_with_index(
                         row,
                         display_index,
@@ -1088,8 +1088,15 @@ pub fn transcript_item_init_from_display_item(
                         highlight_query.clone(),
                         db_path.clone(),
                     ) {
-                        TranscriptItemInit::ToolCall(tool_call) => tool_call,
-                        _ => panic!("tool burst child must be a tool call"),
+                        TranscriptItemInit::ToolCall(tool_call) => Some(tool_call),
+                        other => {
+                            debug_assert!(
+                                false,
+                                "tool burst child must be a tool call, got {:?}",
+                                std::mem::discriminant(&other)
+                            );
+                            None
+                        }
                     }
                 })
                 .collect();

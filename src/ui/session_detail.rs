@@ -13,6 +13,7 @@ use crate::models::Session;
 use crate::ui::activity_bar::SessionActivityBar;
 use crate::ui::transcript_display::{
     group_transcript_rows, regroup_boundary, trailing_tool_call_rows,
+    trailing_tool_rows_from_display,
 };
 use crate::ui::transcript_row::{
     TranscriptItemInit, TranscriptRow, TranscriptRowOutput, transcript_item_init_from_display_item,
@@ -28,7 +29,7 @@ pub struct SessionDetail {
     loaded_count: usize,
     has_more_messages: bool,
     pending_boundary_tool_rows: Vec<crate::database::TranscriptItemRow>,
-    pending_boundary_display_count: usize,
+    has_pending_boundary_burst: bool,
     search_query: Option<String>,
     /// Keyed by transcript item_index (== factory position).
     match_segments: BTreeMap<usize, Vec<usize>>,
@@ -511,7 +512,7 @@ impl SimpleComponent for SessionDetail {
             loaded_count: 0,
             has_more_messages: false,
             pending_boundary_tool_rows: Vec::new(),
-            pending_boundary_display_count: 0,
+            has_pending_boundary_burst: false,
             search_query: None,
             match_segments: BTreeMap::new(),
             current_match: 0,
@@ -582,8 +583,11 @@ impl SimpleComponent for SessionDetail {
                                 let regrouped =
                                     regroup_boundary(self.pending_boundary_tool_rows.clone(), rows);
 
+                                let trailing_from_merge =
+                                    trailing_tool_rows_from_display(&regrouped.replacement_items);
+
                                 if !regrouped.replacement_items.is_empty() {
-                                    for _ in 0..self.pending_boundary_display_count {
+                                    for _ in 0..usize::from(self.has_pending_boundary_burst) {
                                         let _ = guard.pop_back();
                                     }
 
@@ -607,17 +611,24 @@ impl SimpleComponent for SessionDetail {
 
                                 rows = regrouped.remaining_rows;
                                 self.pending_boundary_tool_rows = if rows.is_empty() {
-                                    trailing_tool_call_rows(&regrouped.merged_rows)
+                                    trailing_from_merge
                                 } else {
                                     trailing_tool_call_rows(&rows)
                                 };
-                                self.pending_boundary_display_count =
-                                    usize::from(!self.pending_boundary_tool_rows.is_empty());
+                                self.has_pending_boundary_burst =
+                                    !self.pending_boundary_tool_rows.is_empty();
+                            }
+
+                            if self.pending_boundary_tool_rows.is_empty() && self.has_more_messages
+                            {
+                                self.pending_boundary_tool_rows = trailing_tool_call_rows(&rows);
+                                self.has_pending_boundary_burst =
+                                    !self.pending_boundary_tool_rows.is_empty();
                             }
 
                             let start_index = guard.len();
                             for item in Self::build_display_items(
-                                rows.clone(),
+                                rows,
                                 &session_id,
                                 highlight,
                                 db_path,
@@ -626,19 +637,9 @@ impl SimpleComponent for SessionDetail {
                                 guard.push_back(item);
                             }
 
-                            if self.pending_boundary_tool_rows.is_empty() {
-                                self.pending_boundary_tool_rows = if self.has_more_messages {
-                                    trailing_tool_call_rows(&rows)
-                                } else {
-                                    Vec::new()
-                                };
-                                self.pending_boundary_display_count =
-                                    usize::from(!self.pending_boundary_tool_rows.is_empty());
-                            }
-
                             if !self.has_more_messages {
                                 self.pending_boundary_tool_rows.clear();
-                                self.pending_boundary_display_count = 0;
+                                self.has_pending_boundary_burst = false;
                             }
                         }
                         Err(err) => {
@@ -712,7 +713,7 @@ impl SimpleComponent for SessionDetail {
                 self.current_match = 0;
                 self.total_matches = 0;
                 self.pending_boundary_tool_rows.clear();
-                self.pending_boundary_display_count = 0;
+                self.has_pending_boundary_burst = false;
             }
             SessionDetailMsg::InspectToolCall(id) => {
                 sender.output(SessionDetailOutput::InspectToolCall(id)).ok();
@@ -917,7 +918,14 @@ impl SimpleComponent for SessionDetail {
                     expander.set_expanded(true);
                     let scroll_child_for_tick = scroll_child.clone();
                     let expander_for_tick = expander.clone();
+                    let tick_count = std::cell::Cell::new(0u32);
                     expander.add_tick_callback(move |_, _| {
+                        let ticks = tick_count.get() + 1;
+                        tick_count.set(ticks);
+                        if ticks > 60 {
+                            return glib::ControlFlow::Break;
+                        }
+
                         let Some(child_box) = expander_for_tick
                             .child()
                             .and_then(|w| w.downcast::<gtk::Box>().ok())
@@ -986,8 +994,7 @@ impl SessionDetail {
                 } else {
                     Vec::new()
                 };
-                self.pending_boundary_display_count =
-                    usize::from(!self.pending_boundary_tool_rows.is_empty());
+                self.has_pending_boundary_burst = !self.pending_boundary_tool_rows.is_empty();
                 self.clear_messages_safely();
                 let mut guard = self.messages.guard();
                 for item in Self::build_display_items(rows, session_id, highlight, db_path, 0) {
@@ -1004,7 +1011,7 @@ impl SessionDetail {
                 self.loaded_count = 0;
                 self.has_more_messages = false;
                 self.pending_boundary_tool_rows.clear();
-                self.pending_boundary_display_count = 0;
+                self.has_pending_boundary_burst = false;
             }
         }
     }

@@ -43,7 +43,6 @@ pub fn trailing_tool_call_rows(rows: &[TranscriptItemRow]) -> Vec<TranscriptItem
 }
 
 pub struct BoundaryRegroupResult {
-    pub merged_rows: Vec<TranscriptItemRow>,
     pub replacement_items: Vec<DisplayTranscriptItem>,
     pub remaining_rows: Vec<TranscriptItemRow>,
 }
@@ -59,7 +58,6 @@ pub fn regroup_boundary(
 
     if leading_tool_count == 0 {
         return BoundaryRegroupResult {
-            merged_rows: Vec::new(),
             replacement_items: Vec::new(),
             remaining_rows: next_page_rows,
         };
@@ -69,10 +67,22 @@ pub fn regroup_boundary(
     let leading_rows: Vec<_> = next_page_rows.drain(..leading_tool_count).collect();
     merged_rows.extend(leading_rows);
 
+    let replacement_items = group_transcript_rows(merged_rows);
     BoundaryRegroupResult {
-        merged_rows: merged_rows.clone(),
-        replacement_items: group_transcript_rows(merged_rows),
+        replacement_items,
         remaining_rows: next_page_rows,
+    }
+}
+
+/// Extract the raw tool call rows from the tail of a display item list.
+/// Used to determine boundary candidates when `merged_rows` is no longer available.
+pub fn trailing_tool_rows_from_display(items: &[DisplayTranscriptItem]) -> Vec<TranscriptItemRow> {
+    match items.last() {
+        Some(DisplayTranscriptItem::ToolBurst(burst)) => burst.rows.clone(),
+        Some(DisplayTranscriptItem::Single(row)) if row.kind == TranscriptItemKind::ToolCall => {
+            vec![row.as_ref().clone()]
+        }
+        _ => Vec::new(),
     }
 }
 
