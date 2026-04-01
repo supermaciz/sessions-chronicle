@@ -11,7 +11,9 @@ use relm4::{ComponentParts, ComponentSender, RelmWidgetExt, SimpleComponent, adw
 use crate::database::load_transcript_items;
 use crate::models::Session;
 use crate::ui::activity_bar::SessionActivityBar;
-use crate::ui::transcript_display::group_transcript_rows;
+use crate::ui::transcript_display::{
+    group_transcript_rows, regroup_boundary, trailing_tool_call_rows,
+};
 use crate::ui::transcript_row::{
     TranscriptItemInit, TranscriptRow, TranscriptRowOutput, transcript_item_init_from_display_item,
 };
@@ -25,6 +27,8 @@ pub struct SessionDetail {
     preview_len: usize,
     loaded_count: usize,
     has_more_messages: bool,
+    pending_boundary_tool_rows: Vec<crate::database::TranscriptItemRow>,
+    pending_boundary_display_count: usize,
     search_query: Option<String>,
     /// Keyed by transcript item_index (== factory position). Only message rows contribute.
     match_counts: BTreeMap<usize, usize>,
@@ -499,6 +503,8 @@ impl SimpleComponent for SessionDetail {
             preview_len: 2000,
             loaded_count: 0,
             has_more_messages: false,
+            pending_boundary_tool_rows: Vec::new(),
+            pending_boundary_display_count: 0,
             search_query: None,
             match_counts: BTreeMap::new(),
             current_match: 0,
@@ -556,20 +562,76 @@ impl SimpleComponent for SessionDetail {
                         self.preview_len as i64,
                     ) {
                         Ok(rows) => {
-                            self.has_more_messages = rows.len() == self.page_size;
-                            self.loaded_count += rows.len();
+                            let source_len = rows.len();
+                            self.has_more_messages = source_len == self.page_size;
+                            self.loaded_count += source_len;
+
+                            let mut rows = rows;
                             let highlight = self.search_query.clone();
                             let db_path = self.db_path.clone();
                             let mut guard = self.messages.guard();
+
+                            if !self.pending_boundary_tool_rows.is_empty() {
+                                let regrouped =
+                                    regroup_boundary(self.pending_boundary_tool_rows.clone(), rows);
+
+                                if !regrouped.replacement_items.is_empty() {
+                                    for _ in 0..self.pending_boundary_display_count {
+                                        let _ = guard.pop_back();
+                                    }
+
+                                    let start_index = guard.len();
+                                    for item in
+                                        regrouped.replacement_items.into_iter().enumerate().map(
+                                            |(offset, item)| {
+                                                transcript_item_init_from_display_item(
+                                                    start_index + offset,
+                                                    &item,
+                                                    &session_id,
+                                                    highlight.clone(),
+                                                    db_path.clone(),
+                                                )
+                                            },
+                                        )
+                                    {
+                                        guard.push_back(item);
+                                    }
+                                }
+
+                                rows = regrouped.remaining_rows;
+                                self.pending_boundary_tool_rows = if rows.is_empty() {
+                                    trailing_tool_call_rows(&regrouped.merged_rows)
+                                } else {
+                                    trailing_tool_call_rows(&rows)
+                                };
+                                self.pending_boundary_display_count =
+                                    usize::from(!self.pending_boundary_tool_rows.is_empty());
+                            }
+
                             let start_index = guard.len();
                             for item in Self::build_display_items(
-                                rows,
+                                rows.clone(),
                                 &session_id,
                                 highlight,
                                 db_path,
                                 start_index,
                             ) {
                                 guard.push_back(item);
+                            }
+
+                            if self.pending_boundary_tool_rows.is_empty() {
+                                self.pending_boundary_tool_rows = if self.has_more_messages {
+                                    trailing_tool_call_rows(&rows)
+                                } else {
+                                    Vec::new()
+                                };
+                                self.pending_boundary_display_count =
+                                    usize::from(!self.pending_boundary_tool_rows.is_empty());
+                            }
+
+                            if !self.has_more_messages {
+                                self.pending_boundary_tool_rows.clear();
+                                self.pending_boundary_display_count = 0;
                             }
                         }
                         Err(err) => {
@@ -640,6 +702,8 @@ impl SimpleComponent for SessionDetail {
                 self.match_counts.clear();
                 self.current_match = 0;
                 self.total_matches = 0;
+                self.pending_boundary_tool_rows.clear();
+                self.pending_boundary_display_count = 0;
             }
             SessionDetailMsg::InspectToolCall(id) => {
                 sender.output(SessionDetailOutput::InspectToolCall(id)).ok();
@@ -893,6 +957,13 @@ impl SessionDetail {
                 self.loaded_count = rows.len();
                 let highlight = self.search_query.clone();
                 let db_path = self.db_path.clone();
+                self.pending_boundary_tool_rows = if self.has_more_messages {
+                    trailing_tool_call_rows(&rows)
+                } else {
+                    Vec::new()
+                };
+                self.pending_boundary_display_count =
+                    usize::from(!self.pending_boundary_tool_rows.is_empty());
                 self.clear_messages_safely();
                 let mut guard = self.messages.guard();
                 for item in Self::build_display_items(rows, session_id, highlight, db_path, 0) {
@@ -908,6 +979,8 @@ impl SessionDetail {
                 self.clear_messages_safely();
                 self.loaded_count = 0;
                 self.has_more_messages = false;
+                self.pending_boundary_tool_rows.clear();
+                self.pending_boundary_display_count = 0;
             }
         }
     }
