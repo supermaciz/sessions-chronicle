@@ -1,0 +1,297 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="900" height="1280" font-family="Cantarell, sans-serif">
+  <defs>
+    <filter id="shadow">
+      <feDropShadow dx="0" dy="1" stdDeviation="2" flood-opacity="0.08"/>
+    </filter>
+    <filter id="shadow-sm">
+      <feDropShadow dx="0" dy="0.5" stdDeviation="1" flood-opacity="0.06"/>
+    </filter>
+  </defs>
+
+  <!-- Background -->
+  <rect width="900" height="1280" fill="#fafafa"/>
+
+  <!-- Header bar -->
+  <rect width="900" height="47" fill="#ebebeb"/>
+  <text x="450" y="30" text-anchor="middle" font-size="14" font-weight="600" fill="#333">Session Detail</text>
+  <line x1="0" y1="47" x2="900" y2="47" stroke="#d0d0d0" stroke-width="1"/>
+
+  <!-- Title -->
+  <text x="32" y="82" font-size="12" fill="#888" font-weight="600" letter-spacing="0.5">PROPOSAL 2: ACTIVITY STRIP</text>
+  <text x="32" y="106" font-size="11" fill="#999">Replace tool call rows with a colored timeline strip -- each segment is one tool call, width = duration</text>
+
+  <!-- ===== COLLAPSED VIEW (primary) ===== -->
+  <text x="32" y="140" font-size="11" fill="#666" font-weight="600" letter-spacing="0.5">DEFAULT VIEW -- STRIPS INLINE WITH CONVERSATION</text>
+
+  <!-- User message -->
+  <g filter="url(#shadow)">
+    <rect x="32" y="156" width="836" height="72" rx="8" fill="rgba(255,255,255,0.85)"/>
+    <rect x="32" y="156" width="3" height="72" rx="1.5" fill="#3584e4"/>
+  </g>
+  <text x="48" y="176" font-size="11" font-weight="600" fill="#3584e4">User</text>
+  <text x="82" y="176" font-size="11" fill="#999">· 10:14:32</text>
+  <text x="48" y="198" font-size="13" fill="#333">Fix the parser regression in the OpenCode JSONL handler. The timestamp</text>
+  <text x="48" y="214" font-size="13" fill="#333">field is sometimes missing and we crash instead of skipping the entry.</text>
+
+  <!-- Assistant message -->
+  <g filter="url(#shadow)">
+    <rect x="32" y="240" width="836" height="52" rx="8" fill="rgba(255,255,255,0.85)"/>
+    <rect x="32" y="240" width="3" height="52" rx="1.5" fill="#26a269"/>
+  </g>
+  <text x="48" y="260" font-size="11" font-weight="600" fill="#26a269">Assistant</text>
+  <text x="102" y="260" font-size="11" fill="#999">· claude-sonnet-4-5-20250514 · 10:14:33</text>
+  <text x="48" y="282" font-size="13" fill="#333">I'll investigate the parser and fix the crash. Let me read the relevant files.</text>
+
+  <!-- ★ ACTIVITY STRIP -->
+  <g filter="url(#shadow-sm)">
+    <rect x="32" y="304" width="836" height="56" rx="8" fill="rgba(255,255,255,0.7)"/>
+  </g>
+
+  <!-- Summary line -->
+  <text x="48" y="322" font-size="11" fill="#777">8 tool calls</text>
+  <text x="120" y="322" font-size="11" fill="#aaa">·</text>
+  <text x="130" y="322" font-size="11" fill="#3584e4">4 Read</text>
+  <text x="178" y="322" font-size="11" fill="#3584e4">1 Grep</text>
+  <text x="222" y="322" font-size="11" fill="#e66100">2 Edit</text>
+  <text x="268" y="322" font-size="11" fill="#26a269">1 Bash</text>
+  <text x="830" y="322" font-size="11" fill="#999" text-anchor="end">4.7s</text>
+
+  <!-- The strip itself - segments proportional to duration -->
+  <!-- Total: 4.7s. Read1=0.2s(4%), Read2=0.1s(2%), Read3=0.3s(6%), Read4=0.1s(2%), Grep=0.4s(9%), Edit1=0.8s(17%), Edit2=0.5s(11%), Bash=2.3s(49%) -->
+  <!-- Strip area: x=48 to x=852, total width=804px -->
+
+  <!-- Read 1: 0.2s -> ~34px -->
+  <rect x="48" y="332" width="34" height="20" rx="3" fill="rgba(53,132,228,0.7)"/>
+
+  <!-- Read 2: 0.1s -> ~17px -->
+  <rect x="84" y="332" width="17" height="20" rx="3" fill="rgba(53,132,228,0.6)"/>
+
+  <!-- Read 3: 0.3s -> ~51px -->
+  <rect x="103" y="332" width="51" height="20" rx="3" fill="rgba(53,132,228,0.7)"/>
+
+  <!-- Read 4: 0.1s -> ~17px -->
+  <rect x="156" y="332" width="17" height="20" rx="3" fill="rgba(53,132,228,0.6)"/>
+
+  <!-- Grep: 0.4s -> ~68px -->
+  <rect x="175" y="332" width="68" height="20" rx="3" fill="rgba(53,132,228,0.5)"/>
+  <!-- Grep has a slightly different shade to distinguish from Read -->
+
+  <!-- Edit 1: 0.8s -> ~137px -->
+  <rect x="245" y="332" width="137" height="20" rx="3" fill="rgba(230,97,0,0.6)"/>
+
+  <!-- Edit 2: 0.5s -> ~85px -->
+  <rect x="384" y="332" width="85" height="20" rx="3" fill="rgba(230,97,0,0.5)"/>
+
+  <!-- Bash: 2.3s -> ~393px -->
+  <rect x="471" y="332" width="381" height="20" rx="3" fill="rgba(38,162,105,0.6)"/>
+
+  <!-- Expand affordance (small text link) -->
+  <text x="830" y="352" font-size="10" fill="#888" text-anchor="end" font-style="italic">expand rows</text>
+
+  <!-- Next assistant message -->
+  <g filter="url(#shadow)">
+    <rect x="32" y="372" width="836" height="68" rx="8" fill="rgba(255,255,255,0.85)"/>
+    <rect x="32" y="372" width="3" height="68" rx="1.5" fill="#26a269"/>
+  </g>
+  <text x="48" y="392" font-size="11" font-weight="600" fill="#26a269">Assistant</text>
+  <text x="102" y="392" font-size="11" fill="#999">· claude-sonnet-4-5-20250514 · 10:14:41</text>
+  <text x="48" y="414" font-size="13" fill="#333">I've fixed the parser regression. The issue was a missing .unwrap_or_default() on the</text>
+  <text x="48" y="430" font-size="13" fill="#333">timestamp field. I also added a test to prevent future regressions.</text>
+
+  <!-- Second strip with error -->
+  <g filter="url(#shadow-sm)">
+    <rect x="32" y="452" width="836" height="56" rx="8" fill="rgba(255,255,255,0.7)"/>
+  </g>
+
+  <text x="48" y="470" font-size="11" fill="#777">2 tool calls</text>
+  <text x="120" y="470" font-size="11" fill="#aaa">·</text>
+  <text x="130" y="470" font-size="11" fill="#26a269">2 Bash</text>
+  <text x="180" y="470" font-size="11" fill="#aaa">·</text>
+  <circle cx="194" cy="467" r="4" fill="#e01b24"/>
+  <text x="204" y="470" font-size="11" fill="#e01b24">1 error</text>
+  <text x="830" y="470" font-size="11" fill="#999" text-anchor="end">12.3s</text>
+
+  <!-- Bash 1 (errored): 8s -> ~524px -->
+  <rect x="48" y="480" width="524" height="20" rx="3" fill="rgba(224,27,36,0.4)"/>
+  <!-- Red tint for errored call -->
+
+  <!-- Bash 2 (ok): 4.3s -> ~280px -->
+  <rect x="574" y="480" width="278" height="20" rx="3" fill="rgba(38,162,105,0.6)"/>
+
+  <text x="830" y="500" font-size="10" fill="#888" text-anchor="end" font-style="italic">expand rows</text>
+
+  <!-- Another assistant message -->
+  <g filter="url(#shadow)">
+    <rect x="32" y="520" width="836" height="52" rx="8" fill="rgba(255,255,255,0.85)"/>
+    <rect x="32" y="520" width="3" height="52" rx="1.5" fill="#26a269"/>
+  </g>
+  <text x="48" y="540" font-size="11" font-weight="600" fill="#26a269">Assistant</text>
+  <text x="102" y="540" font-size="11" fill="#999">· claude-sonnet-4-5-20250514 · 10:14:55</text>
+  <text x="48" y="562" font-size="13" fill="#333">The first test run failed but the retry passed. All tests green now.</text>
+
+  <!-- Divider -->
+  <line x1="32" y1="600" x2="868" y2="600" stroke="#e0e0e0" stroke-width="1"/>
+
+  <!-- ===== HOVER STATE ===== -->
+  <text x="32" y="630" font-size="11" fill="#666" font-weight="600" letter-spacing="0.5">HOVER STATE -- TOOLTIP ON SEGMENT</text>
+
+  <!-- Repeat the first strip -->
+  <g filter="url(#shadow-sm)">
+    <rect x="32" y="646" width="836" height="56" rx="8" fill="rgba(255,255,255,0.7)"/>
+  </g>
+  <text x="48" y="664" font-size="11" fill="#777">8 tool calls</text>
+  <text x="120" y="664" font-size="11" fill="#aaa">·</text>
+  <text x="130" y="664" font-size="11" fill="#3584e4">4 Read</text>
+  <text x="178" y="664" font-size="11" fill="#3584e4">1 Grep</text>
+  <text x="222" y="664" font-size="11" fill="#e66100">2 Edit</text>
+  <text x="268" y="664" font-size="11" fill="#26a269">1 Bash</text>
+  <text x="830" y="664" font-size="11" fill="#999" text-anchor="end">4.7s</text>
+
+  <rect x="48" y="674" width="34" height="20" rx="3" fill="rgba(53,132,228,0.7)"/>
+  <rect x="84" y="674" width="17" height="20" rx="3" fill="rgba(53,132,228,0.6)"/>
+  <rect x="103" y="674" width="51" height="20" rx="3" fill="rgba(53,132,228,0.7)"/>
+  <rect x="156" y="674" width="17" height="20" rx="3" fill="rgba(53,132,228,0.6)"/>
+  <rect x="175" y="674" width="68" height="20" rx="3" fill="rgba(53,132,228,0.5)"/>
+
+  <!-- Hovered segment (Edit 1) - highlight -->
+  <rect x="245" y="674" width="137" height="20" rx="3" fill="rgba(230,97,0,0.85)" stroke="#e66100" stroke-width="1.5"/>
+
+  <rect x="384" y="674" width="85" height="20" rx="3" fill="rgba(230,97,0,0.5)"/>
+  <rect x="471" y="674" width="381" height="20" rx="3" fill="rgba(38,162,105,0.6)"/>
+
+  <!-- Tooltip -->
+  <g filter="url(#shadow)">
+    <rect x="230" y="698" width="220" height="52" rx="6" fill="#333"/>
+  </g>
+  <text x="244" y="716" font-size="12" font-weight="600" fill="#fff">Edit</text>
+  <text x="270" y="716" font-size="11" fill="rgba(255,255,255,0.7)">completed · 0.8s</text>
+  <text x="244" y="736" font-size="11" font-family="monospace" fill="rgba(255,255,255,0.85)">parsers/opencode.rs +3 -1</text>
+  <!-- Tooltip arrow -->
+  <polygon points="310,698 320,688 330,698" fill="#333"/>
+
+  <!-- Divider -->
+  <line x1="32" y1="775" x2="868" y2="775" stroke="#e0e0e0" stroke-width="1"/>
+
+  <!-- ===== EXPANDED STATE ===== -->
+  <text x="32" y="805" font-size="11" fill="#666" font-weight="600" letter-spacing="0.5">EXPANDED STATE -- FULL ROWS (CLICK "EXPAND ROWS")</text>
+
+  <!-- Strip header stays visible -->
+  <g filter="url(#shadow-sm)">
+    <rect x="32" y="821" width="836" height="56" rx="8" ry="8" fill="rgba(255,255,255,0.85)"/>
+  </g>
+  <text x="48" y="839" font-size="11" fill="#777">8 tool calls</text>
+  <text x="120" y="839" font-size="11" fill="#aaa">·</text>
+  <text x="130" y="839" font-size="11" fill="#3584e4">4 Read</text>
+  <text x="178" y="839" font-size="11" fill="#3584e4">1 Grep</text>
+  <text x="222" y="839" font-size="11" fill="#e66100">2 Edit</text>
+  <text x="268" y="839" font-size="11" fill="#26a269">1 Bash</text>
+  <text x="830" y="839" font-size="11" fill="#666" text-anchor="end" font-style="italic">collapse</text>
+
+  <!-- Strip -->
+  <rect x="48" y="849" width="34" height="20" rx="3" fill="rgba(53,132,228,0.7)"/>
+  <rect x="84" y="849" width="17" height="20" rx="3" fill="rgba(53,132,228,0.6)"/>
+  <rect x="103" y="849" width="51" height="20" rx="3" fill="rgba(53,132,228,0.7)"/>
+  <rect x="156" y="849" width="17" height="20" rx="3" fill="rgba(53,132,228,0.6)"/>
+  <rect x="175" y="849" width="68" height="20" rx="3" fill="rgba(53,132,228,0.5)"/>
+  <rect x="245" y="849" width="137" height="20" rx="3" fill="rgba(230,97,0,0.6)"/>
+  <rect x="384" y="849" width="85" height="20" rx="3" fill="rgba(230,97,0,0.5)"/>
+  <rect x="471" y="849" width="381" height="20" rx="3" fill="rgba(38,162,105,0.6)"/>
+
+  <!-- Expanded rows -->
+  <rect x="40" y="877" width="820" height="390" rx="6" fill="rgba(230,97,0,0.02)"/>
+
+  <!-- Just showing first 4 and last to save space -->
+  <g filter="url(#shadow-sm)">
+    <rect x="52" y="885" width="796" height="36" rx="6" fill="rgba(255,255,255,0.7)"/>
+    <rect x="52" y="885" width="2" height="36" rx="1" fill="#3584e4"/>
+  </g>
+  <text x="68" y="908" font-size="12" font-family="monospace" fill="#444">Read</text>
+  <text x="118" y="908" font-size="11" fill="#26a269">completed</text>
+  <text x="180" y="908" font-size="11" fill="#999">0.2s</text>
+  <text x="240" y="908" font-size="11" fill="#888" font-family="monospace">parsers/opencode.rs:142-180</text>
+  <text x="780" y="908" font-size="11" fill="#3584e4" text-anchor="end">inspect</text>
+
+  <g filter="url(#shadow-sm)">
+    <rect x="52" y="925" width="796" height="36" rx="6" fill="rgba(255,255,255,0.7)"/>
+    <rect x="52" y="925" width="2" height="36" rx="1" fill="#3584e4"/>
+  </g>
+  <text x="68" y="948" font-size="12" font-family="monospace" fill="#444">Read</text>
+  <text x="118" y="948" font-size="11" fill="#26a269">completed</text>
+  <text x="180" y="948" font-size="11" fill="#999">0.1s</text>
+  <text x="240" y="948" font-size="11" fill="#888" font-family="monospace">parsers/opencode.rs:1-40</text>
+  <text x="780" y="948" font-size="11" fill="#3584e4" text-anchor="end">inspect</text>
+
+  <g filter="url(#shadow-sm)">
+    <rect x="52" y="965" width="796" height="36" rx="6" fill="rgba(255,255,255,0.7)"/>
+    <rect x="52" y="965" width="2" height="36" rx="1" fill="#3584e4"/>
+  </g>
+  <text x="68" y="988" font-size="12" font-family="monospace" fill="#444">Read</text>
+  <text x="118" y="988" font-size="11" fill="#26a269">completed</text>
+  <text x="180" y="988" font-size="11" fill="#999">0.3s</text>
+  <text x="240" y="988" font-size="11" fill="#888" font-family="monospace">models/session.rs:55-90</text>
+  <text x="780" y="988" font-size="11" fill="#3584e4" text-anchor="end">inspect</text>
+
+  <g filter="url(#shadow-sm)">
+    <rect x="52" y="1005" width="796" height="36" rx="6" fill="rgba(255,255,255,0.7)"/>
+    <rect x="52" y="1005" width="2" height="36" rx="1" fill="#3584e4"/>
+  </g>
+  <text x="68" y="1028" font-size="12" font-family="monospace" fill="#444">Read</text>
+  <text x="118" y="1028" font-size="11" fill="#26a269">completed</text>
+  <text x="180" y="1028" font-size="11" fill="#999">0.1s</text>
+  <text x="240" y="1028" font-size="11" fill="#888" font-family="monospace">tests/fixtures/opencode_storage/sample.jsonl</text>
+  <text x="780" y="1028" font-size="11" fill="#3584e4" text-anchor="end">inspect</text>
+
+  <g filter="url(#shadow-sm)">
+    <rect x="52" y="1045" width="796" height="36" rx="6" fill="rgba(255,255,255,0.7)"/>
+    <rect x="52" y="1045" width="2" height="36" rx="1" fill="#3584e4"/>
+  </g>
+  <text x="68" y="1068" font-size="12" font-family="monospace" fill="#444">Grep</text>
+  <text x="118" y="1068" font-size="11" fill="#26a269">completed</text>
+  <text x="180" y="1068" font-size="11" fill="#999">0.4s</text>
+  <text x="240" y="1068" font-size="11" fill="#888" font-family="monospace">pattern="timestamp" -> 12 matches</text>
+  <text x="780" y="1068" font-size="11" fill="#3584e4" text-anchor="end">inspect</text>
+
+  <g filter="url(#shadow-sm)">
+    <rect x="52" y="1085" width="796" height="36" rx="6" fill="rgba(255,255,255,0.7)"/>
+    <rect x="52" y="1085" width="2" height="36" rx="1" fill="#e66100"/>
+  </g>
+  <text x="68" y="1108" font-size="12" font-family="monospace" fill="#444">Edit</text>
+  <text x="118" y="1108" font-size="11" fill="#26a269">completed</text>
+  <text x="180" y="1108" font-size="11" fill="#999">0.8s</text>
+  <text x="240" y="1108" font-size="11" fill="#888" font-family="monospace">parsers/opencode.rs +3 -1</text>
+  <text x="780" y="1108" font-size="11" fill="#3584e4" text-anchor="end">inspect</text>
+
+  <g filter="url(#shadow-sm)">
+    <rect x="52" y="1125" width="796" height="36" rx="6" fill="rgba(255,255,255,0.7)"/>
+    <rect x="52" y="1125" width="2" height="36" rx="1" fill="#e66100"/>
+  </g>
+  <text x="68" y="1148" font-size="12" font-family="monospace" fill="#444">Edit</text>
+  <text x="118" y="1148" font-size="11" fill="#26a269">completed</text>
+  <text x="180" y="1148" font-size="11" fill="#999">0.5s</text>
+  <text x="240" y="1148" font-size="11" fill="#888" font-family="monospace">tests/test_opencode_parser.rs +12 -0</text>
+  <text x="780" y="1148" font-size="11" fill="#3584e4" text-anchor="end">inspect</text>
+
+  <g filter="url(#shadow-sm)">
+    <rect x="52" y="1165" width="796" height="36" rx="6" fill="rgba(255,255,255,0.7)"/>
+    <rect x="52" y="1165" width="2" height="36" rx="1" fill="#26a269"/>
+  </g>
+  <text x="68" y="1188" font-size="12" font-family="monospace" fill="#444">Bash</text>
+  <text x="118" y="1188" font-size="11" fill="#26a269">completed</text>
+  <text x="180" y="1188" font-size="11" fill="#999">2.3s</text>
+  <text x="240" y="1188" font-size="11" fill="#888" font-family="monospace">$ cargo test --all --no-fail-fast</text>
+  <text x="780" y="1188" font-size="11" fill="#3584e4" text-anchor="end">inspect</text>
+
+  <!-- Legend -->
+  <rect x="32" y="1220" width="836" height="50" rx="8" fill="rgba(0,0,0,0.03)"/>
+  <text x="48" y="1240" font-size="11" font-weight="600" fill="#555">SEGMENT COLORS</text>
+  <rect x="48" y="1248" width="12" height="12" rx="2" fill="rgba(53,132,228,0.7)"/>
+  <text x="66" y="1259" font-size="11" fill="#666">Read / Grep / Glob</text>
+  <rect x="200" y="1248" width="12" height="12" rx="2" fill="rgba(230,97,0,0.6)"/>
+  <text x="218" y="1259" font-size="11" fill="#666">Edit / Write / Patch</text>
+  <rect x="370" y="1248" width="12" height="12" rx="2" fill="rgba(38,162,105,0.6)"/>
+  <text x="388" y="1259" font-size="11" fill="#666">Bash / Shell</text>
+  <rect x="490" y="1248" width="12" height="12" rx="2" fill="rgba(145,65,172,0.6)"/>
+  <text x="508" y="1259" font-size="11" fill="#666">Subagent</text>
+  <rect x="590" y="1248" width="12" height="12" rx="2" fill="rgba(224,27,36,0.4)"/>
+  <text x="608" y="1259" font-size="11" fill="#666">Error (any type)</text>
+</svg>

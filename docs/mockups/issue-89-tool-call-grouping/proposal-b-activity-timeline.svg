@@ -1,0 +1,188 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="900" height="1050" viewBox="0 0 900 1050">
+  <defs>
+    <filter id="cardShadow" x="-2%" y="-2%" width="104%" height="108%">
+      <feDropShadow dx="0" dy="1" stdDeviation="2" flood-color="#000000" flood-opacity="0.08"/>
+    </filter>
+    <filter id="headerShadow" x="0" y="0" width="100%" height="150%">
+      <feDropShadow dx="0" dy="1" stdDeviation="1" flood-color="#000000" flood-opacity="0.12"/>
+    </filter>
+  </defs>
+
+  <!-- Background -->
+  <rect width="900" height="1050" fill="#fafafa"/>
+
+  <!-- Header bar -->
+  <rect width="900" height="47" fill="#ebebeb" filter="url(#headerShadow)"/>
+  <line x1="0" y1="47" x2="900" y2="47" stroke="#d5d5d5" stroke-width="1"/>
+  <text x="20" y="30" font-family="Cantarell, sans-serif" font-size="16" fill="#2e3436">&#x2190;</text>
+  <text x="450" y="30" font-family="Cantarell, sans-serif" font-size="14" font-weight="bold" fill="#2e3436" text-anchor="middle">Session Detail</text>
+
+  <!-- Title -->
+  <text x="450" y="78" font-family="Cantarell, sans-serif" font-size="12" font-weight="bold" fill="#929595" text-anchor="middle" letter-spacing="1">PROPOSAL B — ACTIVITY TIMELINE BAR (COLLAPSED)</text>
+
+  <g transform="translate(32, 94)">
+
+    <!-- === User message === -->
+    <g transform="translate(0, 0)">
+      <rect x="0" y="0" width="836" height="56" rx="8" ry="8" fill="#ffffff" filter="url(#cardShadow)"/>
+      <rect x="0" y="8" width="3" height="40" rx="1.5" fill="#3584e4"/>
+      <text x="16" y="22" font-family="Cantarell, sans-serif" font-size="11" font-weight="bold" fill="#3584e4">You</text>
+      <text x="16" y="40" font-family="Cantarell, sans-serif" font-size="13" fill="#2e3436">Read the config and fix the parsing bug in session_sources.rs</text>
+    </g>
+
+    <!-- === Assistant message === -->
+    <g transform="translate(0, 68)">
+      <rect x="0" y="0" width="836" height="56" rx="8" ry="8" fill="#ffffff" filter="url(#cardShadow)"/>
+      <rect x="0" y="8" width="3" height="40" rx="1.5" fill="#26a269"/>
+      <text x="16" y="22" font-family="Cantarell, sans-serif" font-size="11" font-weight="bold" fill="#26a269">Assistant</text>
+      <text x="16" y="40" font-family="Cantarell, sans-serif" font-size="13" fill="#2e3436">I'll examine the configuration and source files first.</text>
+    </g>
+
+    <!-- === COLLAPSED GROUP — Activity Timeline Bar === -->
+    <g transform="translate(0, 140)">
+      <rect x="0" y="0" width="836" height="64" rx="8" ry="8" fill="#ffffff" filter="url(#cardShadow)"/>
+      <rect x="0" y="8" width="3" height="48" rx="1.5" fill="#e66100"/>
+
+      <!-- Top line: summary text + total duration -->
+      <text x="16" y="22" font-family="Cantarell, sans-serif" font-size="11" fill="#929595">5 tool calls · 2.4s</text>
+
+      <!-- Segmented activity bar (proportional by duration) -->
+      <!-- Read calls: 1.2s = 50% of 2.4s -> ~380px of 800px -->
+      <!-- Edit: 0.2s = 8% -> ~66px -->
+      <!-- Bash: 1.0s = 42% -> ~334px -->
+      <g transform="translate(16, 32)">
+        <!-- Read segment 1 (0.3s) -->
+        <rect x="0" y="0" width="95" height="8" rx="4" fill="#3584e4"/>
+        <!-- Read segment 2 (0.4s) -->
+        <rect x="99" y="0" width="128" height="8" rx="4" fill="#3584e4"/>
+        <!-- Read segment 3 (0.5s) -->
+        <rect x="231" y="0" width="160" height="8" rx="4" fill="#3584e4"/>
+        <!-- Edit segment (0.2s) -->
+        <rect x="395" y="0" width="66" height="8" rx="4" fill="#e66100"/>
+        <!-- Bash segment (1.0s) -->
+        <rect x="465" y="0" width="339" height="8" rx="4" fill="#26a269"/>
+      </g>
+
+      <!-- Legend pills below bar -->
+      <g transform="translate(16, 48)">
+        <circle cx="4" cy="7" r="4" fill="#3584e4"/>
+        <text x="14" y="11" font-family="Cantarell, sans-serif" font-size="10" fill="#929595">3 Read</text>
+        <circle cx="76" cy="7" r="4" fill="#e66100"/>
+        <text x="86" y="11" font-family="Cantarell, sans-serif" font-size="10" fill="#929595">1 Edit</text>
+        <circle cx="140" cy="7" r="4" fill="#26a269"/>
+        <text x="150" y="11" font-family="Cantarell, sans-serif" font-size="10" fill="#929595">1 Bash</text>
+      </g>
+
+      <!-- Expand chevron -->
+      <text x="812" y="36" font-family="Cantarell, sans-serif" font-size="18" fill="#c0c0c0" text-anchor="end">&#x203A;</text>
+    </g>
+
+    <!-- === Assistant message after group === -->
+    <g transform="translate(0, 220)">
+      <rect x="0" y="0" width="836" height="72" rx="8" ry="8" fill="#ffffff" filter="url(#cardShadow)"/>
+      <rect x="0" y="8" width="3" height="56" rx="1.5" fill="#26a269"/>
+      <text x="16" y="22" font-family="Cantarell, sans-serif" font-size="11" font-weight="bold" fill="#26a269">Assistant</text>
+      <text x="16" y="40" font-family="Cantarell, sans-serif" font-size="13" fill="#2e3436">Found the issue. The parser was ignoring the `started_at` field when it's null.</text>
+      <text x="16" y="58" font-family="Cantarell, sans-serif" font-size="13" fill="#2e3436">Let me fix it now.</text>
+    </g>
+  </g>
+
+  <!-- ===== EXPANDED STATE ===== -->
+  <text x="450" y="430" font-family="Cantarell, sans-serif" font-size="12" font-weight="bold" fill="#929595" text-anchor="middle" letter-spacing="1">SAME GROUP — EXPANDED (WITH TIMELINE)</text>
+
+  <g transform="translate(32, 450)">
+
+    <g transform="translate(0, 0)">
+      <rect x="0" y="0" width="836" height="380" rx="8" ry="8" fill="#ffffff" filter="url(#cardShadow)"/>
+      <rect x="0" y="8" width="3" height="364" rx="1.5" fill="#e66100"/>
+
+      <!-- Header with segmented bar -->
+      <text x="16" y="22" font-family="Cantarell, sans-serif" font-size="11" fill="#929595">5 tool calls · 2.4s</text>
+
+      <!-- Segmented bar (same as collapsed) -->
+      <g transform="translate(16, 32)">
+        <rect x="0" y="0" width="95" height="8" rx="4" fill="#3584e4"/>
+        <rect x="99" y="0" width="128" height="8" rx="4" fill="#3584e4"/>
+        <rect x="231" y="0" width="160" height="8" rx="4" fill="#3584e4"/>
+        <rect x="395" y="0" width="66" height="8" rx="4" fill="#e66100"/>
+        <rect x="465" y="0" width="339" height="8" rx="4" fill="#26a269"/>
+      </g>
+
+      <!-- Separator -->
+      <line x1="16" y1="52" x2="820" y2="52" stroke="#e8e8e8" stroke-width="1"/>
+
+      <!-- Timeline with vertical connector line -->
+      <!-- Vertical line -->
+      <line x1="30" y1="68" x2="30" y2="332" stroke="#e0e0e0" stroke-width="2" stroke-dasharray="4,4"/>
+
+      <!-- Tool 1: Read -->
+      <g transform="translate(0, 62)">
+        <circle cx="30" cy="14" r="6" fill="#3584e4" stroke="#ffffff" stroke-width="2"/>
+        <text x="48" y="12" font-family="monospace" font-size="12" font-weight="600" fill="#3584e4">Read</text>
+        <text x="106" y="12" font-family="Cantarell, sans-serif" font-size="12" fill="#2e3436">src/config.rs:1-50</text>
+        <text x="700" y="12" font-family="Cantarell, sans-serif" font-size="11" fill="#26a269">completed</text>
+        <text x="770" y="12" font-family="Cantarell, sans-serif" font-size="11" fill="#929595">0.3s</text>
+        <text x="808" y="14" font-family="Cantarell, sans-serif" font-size="14" fill="#c0c0c0">⎘</text>
+      </g>
+
+      <!-- Tool 2: Read -->
+      <g transform="translate(0, 118)">
+        <circle cx="30" cy="14" r="6" fill="#3584e4" stroke="#ffffff" stroke-width="2"/>
+        <text x="48" y="12" font-family="monospace" font-size="12" font-weight="600" fill="#3584e4">Read</text>
+        <text x="106" y="12" font-family="Cantarell, sans-serif" font-size="12" fill="#2e3436">src/session_sources.rs:120-180</text>
+        <text x="700" y="12" font-family="Cantarell, sans-serif" font-size="11" fill="#26a269">completed</text>
+        <text x="770" y="12" font-family="Cantarell, sans-serif" font-size="11" fill="#929595">0.4s</text>
+        <text x="808" y="14" font-family="Cantarell, sans-serif" font-size="14" fill="#c0c0c0">⎘</text>
+      </g>
+
+      <!-- Tool 3: Read -->
+      <g transform="translate(0, 174)">
+        <circle cx="30" cy="14" r="6" fill="#3584e4" stroke="#ffffff" stroke-width="2"/>
+        <text x="48" y="12" font-family="monospace" font-size="12" font-weight="600" fill="#3584e4">Read</text>
+        <text x="106" y="12" font-family="Cantarell, sans-serif" font-size="12" fill="#2e3436">src/parsers/claude.rs:45-90</text>
+        <text x="700" y="12" font-family="Cantarell, sans-serif" font-size="11" fill="#26a269">completed</text>
+        <text x="770" y="12" font-family="Cantarell, sans-serif" font-size="11" fill="#929595">0.5s</text>
+        <text x="808" y="14" font-family="Cantarell, sans-serif" font-size="14" fill="#c0c0c0">⎘</text>
+      </g>
+
+      <!-- Tool 4: Edit -->
+      <g transform="translate(0, 230)">
+        <circle cx="30" cy="14" r="6" fill="#e66100" stroke="#ffffff" stroke-width="2"/>
+        <text x="48" y="12" font-family="monospace" font-size="12" font-weight="600" fill="#e66100">Edit</text>
+        <text x="106" y="12" font-family="Cantarell, sans-serif" font-size="12" fill="#2e3436">src/session_sources.rs +3 −1</text>
+        <text x="700" y="12" font-family="Cantarell, sans-serif" font-size="11" fill="#26a269">completed</text>
+        <text x="770" y="12" font-family="Cantarell, sans-serif" font-size="11" fill="#929595">0.2s</text>
+        <text x="808" y="14" font-family="Cantarell, sans-serif" font-size="14" fill="#c0c0c0">⎘</text>
+      </g>
+
+      <!-- Tool 5: Bash -->
+      <g transform="translate(0, 286)">
+        <circle cx="30" cy="14" r="6" fill="#26a269" stroke="#ffffff" stroke-width="2"/>
+        <text x="48" y="12" font-family="monospace" font-size="12" font-weight="600" fill="#26a269">Bash</text>
+        <text x="106" y="12" font-family="monospace" font-size="12" fill="#2e3436">$ cargo test --all</text>
+        <text x="700" y="12" font-family="Cantarell, sans-serif" font-size="11" fill="#26a269">completed</text>
+        <text x="770" y="12" font-family="Cantarell, sans-serif" font-size="11" fill="#929595">1.0s</text>
+        <text x="808" y="14" font-family="Cantarell, sans-serif" font-size="14" fill="#c0c0c0">⎘</text>
+      </g>
+
+      <!-- Collapse chevron -->
+      <text x="812" y="22" font-family="Cantarell, sans-serif" font-size="18" fill="#e66100" text-anchor="end">&#x2304;</text>
+    </g>
+  </g>
+
+  <!-- Legend -->
+  <g transform="translate(32, 900)">
+    <text x="0" y="16" font-family="Cantarell, sans-serif" font-size="11" fill="#929595" font-weight="600">Color coding by tool category:</text>
+    <g transform="translate(0, 28)">
+      <circle cx="6" cy="7" r="5" fill="#3584e4"/>
+      <text x="18" y="11" font-family="Cantarell, sans-serif" font-size="11" fill="#929595">Read / Glob / Grep (exploration)</text>
+      <circle cx="260" cy="7" r="5" fill="#e66100"/>
+      <text x="272" y="11" font-family="Cantarell, sans-serif" font-size="11" fill="#929595">Edit / Write (mutation)</text>
+      <circle cx="440" cy="7" r="5" fill="#26a269"/>
+      <text x="452" y="11" font-family="Cantarell, sans-serif" font-size="11" fill="#929595">Bash / Agent (execution)</text>
+    </g>
+    <text x="0" y="58" font-family="Cantarell, sans-serif" font-size="11" fill="#929595">
+      Segmented bar shows proportional time per tool  |  Timeline dots connect the sequence  |  Click bar or chevron to expand
+    </text>
+  </g>
+</svg>
