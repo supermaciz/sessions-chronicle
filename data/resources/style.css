@@ -162,6 +162,10 @@
   margin: 0;
 }
 
+.tool-call-group .tool-call-row {
+  border-left: none;
+}
+
 .tool-call-group .dim-label {
   font-variant-numeric: tabular-nums;
 }
