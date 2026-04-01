@@ -78,6 +78,15 @@ References used while validating this design:
 This keeps the grouping concern in the presentation layer, where it belongs,
 and avoids leaking a UI abstraction into the database or parser layers.
 
+### Pagination boundary handling
+
+The current transcript loads pages of 200 items. A page boundary may split a
+burst mid-run. The transformation step must buffer any pending burst at the end
+of a page and flush it only when the next page load confirms no more consecutive
+tool calls follow, or when the user has not requested the next page yet. In the
+latter case, the partial burst renders normally and is re-grouped when the next
+page arrives.
+
 ---
 
 ## 1. Transcript Transformation Layer
@@ -101,6 +110,19 @@ tool call bursts.
 
 This design preserves source ordering while allowing the display layer to reduce
 vertical noise.
+
+### Index mapping
+
+The current codebase assumes `item_index == factory position` for match
+navigation and scrolling. Grouping breaks this invariant because multiple source
+rows collapse into one display item.
+
+The transformation step produces a `Vec<DisplayItem>` where each element carries
+its own `display_index` (sequential position in the factory). The transformation
+also builds a mapping from `display_index` to the source `item_index` range it
+covers. `match_counts` in `SessionDetail` must be keyed by `display_index`, not
+by the DB `item_index`. `find_item_for_match()` uses `display_index` for scroll
+targeting.
 
 ---
 
@@ -147,7 +169,6 @@ The new `ToolBurst` row renders as:
 gtk::Box.tool-call-group
   GtkExpander
     [label_widget] gtk::Box(H)
-      disclosure arrow
       category pills
       total duration (optional)
       dim text: "N tool calls"
@@ -155,6 +176,10 @@ gtk::Box.tool-call-group
     [child] gtk::Box(V)
       tool-call-row x N
 ```
+
+Note: the disclosure arrow is provided natively by `GtkExpander` (the `expander`
+CSS node under `title`). It is not created by the application and should not
+appear in the label_widget children.
 
 Important rendering rules:
 
@@ -168,6 +193,32 @@ Important rendering rules:
 
 This gives the transcript a higher-level activity summary without hiding the
 underlying tool calls from inspection.
+
+### Child widget construction
+
+Burst child tool call widgets are **manually constructed**, not
+factory-managed. A `ToolBurst` is a single `FactoryComponent` item whose
+`init_widgets` builds N inner tool call widgets programmatically.
+
+To keep rendering consistent between standalone tool calls and burst children,
+the tool call widget building logic should be extracted from
+`build_tool_call_widgets` into a standalone helper function with a signature
+like:
+
+```rust
+fn build_tool_call_widget(
+    init: &ToolCallItemInit,
+    on_inspect: impl Fn(String) + 'static,
+) -> gtk::Box
+```
+
+This helper is called by the factory path for standalone `ToolCall` rows and by
+the burst builder for inner children. The `on_inspect` callback wires the
+inspect button signal back to the parent factory item's sender.
+
+Because these children lack `FactoryComponent` lifecycle methods, any dynamic
+updates (such as search highlighting within an expanded burst) must be handled
+through explicit widget references stored alongside the burst state.
 
 ---
 
@@ -190,7 +241,7 @@ detail view itself.
 ### Match counting
 
 - A `ToolBurst` reports one aggregate `match_count` for the entire burst.
-- A collapsed burst header may display a match badge when `match_count > 0`.
+- A collapsed burst header displays a match badge when `match_count > 0`.
 - `Message` rows continue reporting message-local match counts as they do today.
 
 ### Active match behavior
@@ -202,6 +253,12 @@ detail view itself.
 
 This avoids opening every burst for broad queries while still making search
 navigation useful.
+
+### Match badge accessibility
+
+The match badge on collapsed bursts must carry an accessible label, for example
+`"3 search matches inside this group"`, so that screen reader users can discover
+matches without expanding.
 
 ### Indexing and scrolling
 
@@ -215,8 +272,17 @@ This design therefore distinguishes:
 - display order: factory item order after grouping
 
 Search navigation targets the display order. The scroll target for a match is
-the `item_index` of the display item, not the original DB row index inside the
-burst.
+the `display_index` of the display item, not the original DB row index inside
+the burst. See the index mapping section under the Approach for the concrete
+mapping strategy.
+
+### Scroll-after-expand timing
+
+When search navigation auto-expands a burst via `set_expanded(true)`, the child
+widgets may not be allocated in the same frame. GTK 4 layouts are asynchronous.
+The scroll-to-child must be deferred using `glib::idle_add_local_once` or
+`gtk::Widget::connect_size_allocate` to wait for the expanded content to be laid
+out before scrolling to the target child widget.
 
 ---
 
@@ -228,7 +294,19 @@ of a custom button-plus-revealer pattern.
 Required accessibility behavior:
 
 1. Each burst header exposes a descriptive accessible name, for example:
-   `6 tool calls: 3 Read, 1 Edit, 1 Bash, 1 Grep, 1 error`.
+   `6 tool calls: 3 Read, 1 Edit, 1 Bash, 1 Grep, 1 error`. This must be set
+   explicitly via `update_property` with `gtk::accessible::Property::Label` on
+   the `GtkExpander`, not derived implicitly from the composite `label_widget`
+   child text (which produces awkward concatenation for screen readers):
+
+   ```rust
+   expander.update_property(&[
+       gtk::accessible::Property::Label(
+           "6 tool calls: 3 Read, 1 Edit, 1 Bash, 1 Grep, 1 error"
+       ),
+   ]);
+   ```
+
 2. Error state is never color-only; it always includes visible text such as
    `1 error` or `2 errors`.
 3. Category pills are visual affordances, but the same information exists in the
@@ -236,9 +314,19 @@ Required accessibility behavior:
 4. Expansion state remains exposed through `GtkExpander`'s built-in accessible
    semantics.
 
-Verification expectations:
+### Keyboard navigation
 
-- full keyboard navigation
+- Tab reaches the `GtkExpander` as a single tab stop.
+- Space or Enter toggles expansion.
+- When expanded, Tab navigates into child tool call rows and their inspect
+  buttons.
+- Shift+Tab returns focus to the expander header.
+- Escape does not collapse the expander (this is not standard `GtkExpander`
+  behavior).
+
+### Verification expectations
+
+- full keyboard navigation per the flow above
 - screen reader announcement of the burst header and expansion state
 - high-contrast rendering
 - large text rendering
@@ -255,12 +343,26 @@ Styling rules:
 - Add a new container style such as `.tool-call-group`.
 - Preserve the orange left border to maintain continuity with current tool call
   rows.
-- Make the expander header compact through CSS tuning rather than replacing the
-  widget.
-- Render category pills using semantic colors already present in the app:
-  - Read / Grep / Glob -> accent
-  - Edit / Write -> warning
-  - Bash -> success
+- Make the expander header compact by targeting the internal `GtkExpander` CSS
+  nodes. The key selectors are:
+
+  ```css
+  .tool-call-group expander-widget > box > title {
+    min-height: 0;
+    padding: 4px 8px;
+  }
+
+  .tool-call-group expander-widget > box {
+    /* Remove default spacing between title and child if needed */
+  }
+  ```
+
+  Without these, the internal `title` node retains its default padding and the
+  header will not feel compact even if `.tool-call-group` is styled.
+- Render category pills using `@accent_color` for all categories. The text
+  label on each pill (e.g. "3 Read", "1 Edit") is the primary differentiator,
+  not color. This avoids misusing `@warning_color` and `@success_color` as
+  category identifiers when they carry status semantics in libadwaita.
 - Render total tool call count as dim text instead of a dedicated count pill.
 - Omit the duration label entirely when no total duration is available.
 
@@ -298,12 +400,18 @@ Cover the transformation layer independently of GTK widgets:
 7. burst with partial or absent duration data
 8. subagent row interrupting a run of tool calls
 
+### Grouping edge case tests
+
+1. page boundary splits a burst mid-run (partial burst at end of page)
+2. burst re-grouped correctly when next page arrives
+
 ### Search behavior tests
 
 1. burst match count aggregates tool child matches
 2. passive matches do not auto-expand the burst
 3. active-match navigation expands only the targeted burst
-4. scroll targeting uses display item indices after grouping
+4. scroll targeting uses display indices, not DB item indices, after grouping
+5. collapsed burst match badge carries accessible label
 
 ### Manual verification
 
