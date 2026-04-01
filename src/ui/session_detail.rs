@@ -19,6 +19,11 @@ use crate::ui::transcript_row::{
     TranscriptItemInit, TranscriptRow, TranscriptRowOutput, transcript_item_init_from_display_item,
 };
 
+/// Detail view for a single indexed session.
+///
+/// This component owns the session summary header, paginated transcript
+/// rendering, transcript search navigation, and forwarding of inspection
+/// actions back to the parent app.
 #[derive(Debug)]
 pub struct SessionDetail {
     db_path: Arc<PathBuf>,
@@ -39,30 +44,49 @@ pub struct SessionDetail {
     pending_toast: Cell<bool>,
 }
 
+/// Resolved scroll destination for global search navigation.
+///
+/// `display_index` addresses a top-level transcript row in the factory. When
+/// `child_index` is present, the target is a child entry inside an expanded
+/// burst row rather than the row container itself.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct ScrollTarget {
     display_index: usize,
     child_index: Option<usize>,
 }
 
+/// Parent-facing actions emitted by [`SessionDetail`].
 #[derive(Debug)]
 pub enum SessionDetailOutput {
     InspectToolCall(String),
     InspectSubagent(String),
 }
 
+/// Input messages accepted by [`SessionDetail`].
+///
+/// This enum mixes app-level commands sent by parent components with
+/// child-row events and internal UI messages that are funneled back into the
+/// detail view's `update` loop.
 #[derive(Debug)]
 pub enum SessionDetailMsg {
+    /// Replaces the active session and reloads transcript content, optionally
+    /// applying an active transcript search query.
     SetSession {
         session: Box<Session>,
         search_query: Option<String>,
     },
+    /// Updates the active transcript search query and reloads the current
+    /// session so match highlighting stays in sync with displayed rows.
     UpdateSearchQuery(Option<String>),
     LoadMore,
     PrevMatch,
     NextMatch,
     ClearSearch,
+    /// Receives per-row match counts from [`TranscriptRow`] children; one count
+    /// per segment (burst child or single row).
     MatchSegments(usize, Vec<usize>),
+    /// Indicates that a transcript row failed to expand to its full content and
+    /// should trigger the shared toast notification path.
     ShowExpandLoadFailure,
     Clear,
     InspectToolCall(String),
@@ -828,6 +852,9 @@ impl SimpleComponent for SessionDetail {
 }
 
 impl SessionDetail {
+    /// Converts database transcript rows into display items, assigning
+    /// factory display indexes (starting from `base_display_index`) for
+    /// search-match bookkeeping.
     fn build_display_items(
         rows: Vec<crate::database::TranscriptItemRow>,
         session_id: &str,
@@ -908,6 +935,13 @@ impl SessionDetail {
         self.scroll_to_item.set(Some(target));
     }
 
+    /// Loads the next transcript page and repairs any tool-burst grouping that
+    /// straddles the previous page boundary.
+    ///
+    /// The last rows of a loaded page may be trailing tool calls that cannot be
+    /// grouped correctly until the next page is available. When that happens,
+    /// the component replaces the affected tail items before appending the new
+    /// page so display rows and their search indexes stay stable.
     fn load_next_page(&mut self) {
         let Some(session) = &self.session else {
             return;
@@ -999,6 +1033,8 @@ impl SessionDetail {
         }
     }
 
+    /// Merges per-row match counts reported by child rows into global search
+    /// navigation state.
     fn update_match_segments(&mut self, item_index: usize, segments: Vec<usize>) {
         let was_empty = self.total_matches == 0;
         self.match_segments.insert(item_index, segments);
@@ -1062,6 +1098,8 @@ impl SessionDetail {
         vadj.set_value(target_y.max(0.0));
     }
 
+    /// Maps a global match ordinal to the row, and optional burst child,
+    /// containing that match.
     fn find_match_target(
         segments_by_display_index: &BTreeMap<usize, Vec<usize>>,
         global_index: usize,
