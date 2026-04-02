@@ -1,0 +1,336 @@
+# Exploration: Favorite Sessions (Issue #109)
+
+**Date:** 2026-04-02  
+**Issue:** [#109 — feat: favorite sessions for quick revisit](https://github.com/supermaciz/sessions-chronicle/issues/109)  
+**Type:** Design exploration — comparing 5 proposals from 4 perspectives  
+**Status:** Open for decision
+
+## Problem
+
+Some sessions are worth revisiting soon, and the user already knows which ones.  
+Today, the only way to get back to them is to search or navigate again, adding  
+small but repeated friction. This is a **quick-access problem**, not a discovery  
+problem.
+
+## Shared Technical Baseline
+
+All proposals share these implementation facts:
+
+- **Schema:** new column on `sessions` table (schema migration v8). Either  
+  `is_favorite INTEGER NOT NULL DEFAULT 0` or `pinned_at TIMESTAMP NULL`.  
+  No re-index needed — the column has a default and is user-set.
+- **Keyboard shortcut:** `Ctrl+D` to toggle the mark on the selected row.
+- **Context menu:** the existing right-click `PopoverMenu` on session rows gains  
+  a toggle action ("Add to favorites" / "Remove from favorites", or equivalent).
+- **Composition:** the mark composes with existing assistant, project, and search filters.
+- **Scope:** v1 has no ordering, no folders/tags, no smart suggestions, no sync.
+
+## A Note on Naming
+
+The Mii Beta reviewer makes a fair point: "favorite" implies affective preference,  
+while the actual behavior is "keep this reachable." Alternative names considered:
+
+| Name | Connotation | Precedent |
+|---|---|---|
+| **Favorite** | "I like this" | GNOME Web bookmarks, Android |
+| **Star** | "Mark for attention" | Gmail, GitHub |
+| **Pin** | "Keep at hand" | GNOME Files sidebar, Slack, Discord |
+| **Flag** | "Needs follow-up" | Mail.app, Outlook |
+| **Bookmark** | "Save for later" | Firefox, GNOME Web |
+
+The naming decision is orthogonal to the interaction design and can be settled  
+independently during the design phase. Proposals below use their authors'  
+preferred terminology.
+
+---
+
+## Proposal A — Sidebar Filter + Inline Stars *(GNOME HIG)*
+
+**Source:** Main author  
+**Summary:** A visible star icon on every session row for direct toggling, with a  
+sidebar filter row (between AI Assistants and Projects) to show only favorites.
+
+![Sidebar filter with inline stars](../mockups/favorites/01-gnome-hig-sidebar-filter.svg)
+
+### Interaction Model
+
+- Each `AdwActionRow` gains a clickable **star prefix** (after the assistant icon).  
+  Filled star = favorited, outline star = not.  
+  Click the star or press `Ctrl+D` to toggle.
+- A new **sidebar filter row** appears between AI Assistants and Projects, styled  
+  like project rows, with `starred-symbolic` icon and a count badge.
+- Clicking the sidebar row filters the session list to favorites only.  
+  The filter composes with project/assistant/search.
+
+### Widgets
+
+| Widget | Role |
+|---|---|
+| `gtk::Button` with `starred-symbolic` / `non-starred-symbolic` | Star toggle per row (prefix) |
+| `AdwActionRow` in sidebar `ListBox` | Favorites filter row |
+| `gtk::Label` styled as `.project-badge` | Count badge on sidebar row |
+| Context menu entry | Toggle via right-click |
+
+### Trade-offs
+
+| + | - |
+|---|---|
+| Direct manipulation — star always visible | Adds visual density to **every** row |
+| Universal affordance (everyone knows stars) | Star is small (16px) — tight touch target |
+| Sidebar filter reuses existing filter patterns | Sidebar gains one more concept |
+| Composable with all existing filters | Visual noise for users who never use favorites |
+
+---
+
+## Proposal B — Ephemeral Quick-Access Shelf *(Creative)*
+
+**Source:** Main author  
+**Summary:** A horizontal card shelf pinned above the session list, with  
+drag-to-pin and automatic 7-day expiry. Designed for sessions that are  
+"hot right now" rather than permanently bookmarked.
+
+![Ephemeral quick-access shelf](../mockups/favorites/02-creative-ephemeral-shelf.svg)
+
+### Interaction Model
+
+- A collapsible **shelf** (`gtk::Revealer` + `gtk::FlowBox`) sits between the  
+  search bar and the session list.
+- Sessions are **dragged** from the list onto the shelf, or added via context  
+  menu / `Ctrl+D`.
+- Each shelf card shows: assistant icon, title, date, message count, and a  
+  **countdown badge** ("6d left"). A close button (✕) unpins immediately.
+- After **7 days** the pin auto-expires and the session drops off the shelf.  
+  The shelf collapses when empty.
+- A drag handle (⠿) appears on each list row to signal DnD affordance.
+
+### Widgets
+
+| Widget | Role |
+|---|---|
+| `gtk::Revealer` | Collapsible shelf container |
+| `gtk::FlowBox` | Horizontal card layout inside shelf |
+| Custom card widget | Session summary + expiry badge + close button |
+| `gtk::DragSource` / `gtk::DropTarget` | DnD between list and shelf |
+| Context menu entry | Alternative to drag |
+
+### Schema Note
+
+Requires `pinned_at TIMESTAMP NULL` instead of a boolean, to compute the  
+7-day expiry countdown.
+
+### Trade-offs
+
+| + | - |
+|---|---|
+| Visually distinct — favorites are physically separated | High implementation cost (DnD, custom cards, timers) |
+| Auto-expiry prevents stale bookmarks | Unfamiliar pattern — no GNOME precedent |
+| Horizontal cards use space efficiently | Shelf takes vertical space even with few pins |
+| Drag-to-pin is satisfying and direct | DnD is hard to discover without onboarding |
+| No modifications to existing session rows | Auto-expiry may surprise users who expect permanence |
+
+---
+
+## Proposal C — Star Toggle + Sidebar Filter *(UI Designer)*
+
+**Source:** UI Designer agent  
+**Summary:** Similar to Proposal A but with more detailed HIG analysis.  
+Star icon as prefix on every row, sidebar filter row, full accessibility  
+story.
+
+![Star toggle with sidebar filter](../mockups/favorites/03-hig-star-toggle.svg)
+
+### Interaction Model
+
+- Star icon as **prefix** on `AdwActionRow` (after assistant icon).  
+  Click or `Ctrl+D` to toggle.
+- Sidebar gains a **Favorites filter row** with count badge,  
+  placed between AI Assistants and Projects.
+- Context menu gains "Toggle Favorite" / "Remove from Favorites".
+
+### Accessibility
+
+- Star button is focusable within the row. `Ctrl+D` works from row focus.
+- `accessible-label`: "Add to favorites" / "Remove from favorites".
+- `starred-symbolic` adapts to high-contrast themes.  
+  Filled star uses `@warning_color` (yellow) with adequate contrast.
+- Button area is at least 24×24px effective size (16px icon + padding).
+
+### Trade-offs
+
+| + | - |
+|---|---|
+| Direct manipulation — immediate visual feedback | Adds visual noise to every row |
+| Composes with project + assistant + search filters | Star is a tight target for mouse |
+| Low learning curve | Sidebar complexity increases |
+| Full accessibility: keyboard, screen reader, high contrast | — |
+
+### Differences From Proposal A
+
+Essentially the same design with more detailed accessibility analysis  
+and explicit widget sizing. The UI Designer recommends **Proposal D** over  
+this one.
+
+---
+
+## Proposal D — Context Menu + Header-Bar Section Toggle *(UI Designer)*
+
+**Source:** UI Designer agent  
+**Summary:** No inline star. Favorites managed exclusively through  
+context menu. A header-bar toggle button splits the session list into  
+"Favorites" and "Recent" sections.
+
+![Header-bar section toggle](../mockups/favorites/04-hig-section-toggle.svg)
+
+### Interaction Model
+
+- **No star icon** on session rows. Rows stay visually clean.
+- Mark via **right-click menu** or `Ctrl+D` only.
+- A `gtk::ToggleButton` with `starred-symbolic` in the **header bar**  
+  (right of search entry). When ON, the list visually splits:
+  - **"FAVORITES"** section at the top
+  - **"RECENT"** section below
+- When OFF (default), the list is flat — identical to today.
+- Toggle state persisted in **GSettings** across launches.
+
+### Widgets
+
+| Widget | Role |
+|---|---|
+| `gtk::ToggleButton` with `starred-symbolic` | Header-bar view mode toggle |
+| `gtk::Label` with `.section-heading` CSS | Section headers in list |
+| Context menu entry | Only mouse-driven way to toggle favorite |
+
+### Trade-offs
+
+| + | - |
+|---|---|
+| Session rows stay clean — zero visual change | No single-click toggle — friction for bulk starring |
+| Header-bar toggle is discoverable but unobtrusive | Favorites invisible when toggle is OFF |
+| Default experience unchanged | Section headers in ListBox slightly complex to implement |
+| Sidebar complexity unchanged | Users may forget they are in filtered state |
+
+### UI Designer Recommendation
+
+The UI Designer agent recommends this proposal over C, arguing that  
+GNOME apps generally avoid persistent interactive controls on list rows  
+when secondary actions (context menu, shortcut) suffice.
+
+---
+
+## Proposal E — Pinned Partition *(Mii Beta)*
+
+**Source:** Mii Beta GTK Designer agent  
+**Summary:** Pinned sessions are physically separated at the top of the  
+session list. The list becomes two zones: pinned (stable, user-curated)  
+and recent (chronological, system-driven). One surface, zero new views.
+
+![Pinned partition](../mockups/favorites/05-mii-pinned-partition.svg)
+
+### Naming
+
+Rejects "favorite" in favor of **"pin"** — expressing intent ("keep this  
+reachable") rather than affection ("I like this").
+
+### Interaction Model
+
+- Toggle via **right-click context menu** ("Pin" / "Unpin") or `Ctrl+D`.
+- **No star icon** on rows. Pinned rows show a `pin-symbolic` icon as  
+  prefix instead of the assistant icon.
+- The `ListBox` is partitioned with section headers:  
+  **"PINNED"** at top, **"RECENT"** below.
+- Pinned section is **always visible** when pins exist — no toggle needed.
+
+### Widgets
+
+| Widget | Role |
+|---|---|
+| `gtk::Label` with `.heading` CSS | Section headers ("PINNED", "RECENT") |
+| `gtk::Image` with `pin-symbolic` | Prefix on pinned rows (replaces assistant icon) |
+| Context menu entry | Toggle via right-click |
+
+### Trade-offs
+
+| + | - |
+|---|---|
+| Spatial anchor — pinned = "up there" | Section headers add visual weight |
+| Always visible — no mode toggle needed | Sessions jump position when pinned (disorienting) |
+| Zero new views or surfaces | Partition is disproportionate for 1 pinned session |
+| Matches GNOME Files sidebar pattern | Pin icon replaces assistant icon — loss of identity |
+| Lowest widget count | Keyboard nav gap at section boundary |
+
+### Schema Note
+
+The Mii Beta reviewer recommends `pinned_at TIMESTAMP` from day one  
+instead of a boolean, even though v1 doesn't need ordering.  
+"Schema migrations are cheap; fixing data you didn't collect is not."
+
+---
+
+## Proposal F — Flag Filter *(Mii Beta)*
+
+**Source:** Mii Beta GTK Designer agent  
+**Summary:** A flag is metadata on a row, not a spatial partition.  
+Flagged sessions stay in chronological order. A toggle button next to  
+the search bar filters to flagged-only. Zero new sections, zero list  
+rearrangement.
+
+![Flag filter](../mockups/favorites/06-mii-flag-filter.svg)
+
+### Naming
+
+Uses **"flag"** — expressing "needs follow-up" intent.
+
+### Interaction Model
+
+- Toggle via **right-click context menu** ("Flag" / "Unflag") or `Ctrl+D`.
+- Flagged rows gain a `flag-symbolic` **suffix icon** (alongside  
+  ending-status icon). Unflagged rows are unchanged.
+- A `gtk::ToggleButton` with `flag-symbolic` sits **next to the search bar**.  
+  When active, the list shows only flagged sessions.
+- Composes with all existing filters.
+
+### Widgets
+
+| Widget | Role |
+|---|---|
+| `gtk::Image` with `flag-symbolic` | Suffix on flagged rows only |
+| `gtk::ToggleButton` with `flag-symbolic` | Filter toggle next to search bar |
+| Context menu entry | Toggle via right-click |
+
+### Trade-offs
+
+| + | - |
+|---|---|
+| Zero new visual structures | Flag suffix is subtle — easy to miss |
+| Composes with existing filter model naturally | Toggle button is easy to overlook |
+| Sessions don't move when flagged | "Flag" may be confused with "report/problem" |
+| Only flagged rows gain visual change | Suffix area gets crowded (flag + status + chevron) |
+| Lowest implementation cost | No persistent indicator of "you have N flags" |
+
+### Mii Beta Recommendation
+
+The Mii Beta agent recommends this proposal over E, arguing that it  
+adds zero new visual structures and composes honestly with the existing  
+filter model.
+
+---
+
+## Comparison Matrix
+
+| Aspect | A: Sidebar Stars | B: Shelf | C: Star Toggle | D: Section Toggle | E: Pinned | F: Flag Filter |
+|---|---|---|---|---|---|---|
+| **Source** | Main (HIG) | Main (Creative) | UI Designer | UI Designer | Mii Beta | Mii Beta |
+| **Mark action** | Click star | Drag / menu | Click star | Menu only | Menu only | Menu only |
+| **Surface favorites** | Sidebar filter | Horizontal shelf | Sidebar filter | Header toggle + sections | Always-on partition | Search-bar toggle |
+| **Row visual change** | Star on all rows | Drag handle on all rows | Star on all rows | None | Pin icon on pinned rows | Flag icon on flagged rows |
+| **New surfaces** | 0 | 1 (shelf) | 0 | 0 | 0 | 0 |
+| **Discoverability** | High | Medium | High | Medium | High (always visible) | Low |
+| **Visual density** | Higher | Higher | Higher | Unchanged | Medium | Minimal |
+| **Implementation cost** | Medium | High | Medium | Medium | Low-Medium | Low |
+| **GNOME HIG fit** | Good | Poor | Good | Very Good | Good | Good |
+| **Schema** | Boolean | Timestamp | Boolean | Boolean | Boolean or Timestamp | Boolean |
+
+## Decision
+
+**Pending.** This document compares approaches. The next step is to  
+choose one (or combine elements) and produce a design document.

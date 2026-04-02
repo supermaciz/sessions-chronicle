@@ -1,0 +1,145 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="800" height="520" viewBox="0 0 800 520">
+  <defs>
+    <style>
+      text { font-family: Cantarell, Inter, system-ui, sans-serif; fill: #ffffff; }
+      .dim { fill: #999999; }
+      .accent { fill: #3584e4; }
+      .heading { font-size: 11px; font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase; fill: #888888; }
+      .title { font-size: 13px; font-weight: 500; }
+      .subtitle { font-size: 11px; fill: #999999; }
+      .small { font-size: 10px; }
+      .separator { stroke: #3a3a3a; stroke-width: 1; }
+      .flag-active { fill: #e5a50a; }
+      .flag-dim { fill: #555555; }
+    </style>
+  </defs>
+
+  <!-- Window chrome -->
+  <rect width="800" height="520" rx="12" fill="#242424"/>
+  <!-- Headerbar -->
+  <rect width="800" height="46" rx="12" fill="#303030"/>
+  <rect y="34" width="800" height="12" fill="#303030"/>
+  <text x="400" y="29" text-anchor="middle" font-size="14" font-weight="600">Sessions Chronicle</text>
+
+  <!-- Sidebar -->
+  <rect x="0" y="46" width="200" height="474" fill="#1e1e1e"/>
+  <line x1="200" y1="46" x2="200" y2="520" class="separator"/>
+
+  <text x="16" y="74" class="heading">AI ASSISTANTS</text>
+  <rect x="14" y="82" width="14" height="14" rx="3" fill="none" stroke="#3584e4" stroke-width="1.5"/>
+  <polyline points="17,89 20,93 26,85" fill="none" stroke="#3584e4" stroke-width="1.5"/>
+  <text x="34" y="94" font-size="12">Claude Code</text>
+  <rect x="14" y="102" width="14" height="14" rx="3" fill="none" stroke="#3584e4" stroke-width="1.5"/>
+  <polyline points="17,109 20,113 26,105" fill="none" stroke="#3584e4" stroke-width="1.5"/>
+  <text x="34" y="114" font-size="12">OpenCode</text>
+
+  <line x1="12" y1="130" x2="188" y2="130" class="separator"/>
+
+  <text x="16" y="150" class="heading">PROJECTS</text>
+  <rect x="8" y="156" width="184" height="32" rx="6" fill="#3584e4" fill-opacity="0.15"/>
+  <text x="16" y="176" font-size="12" class="accent">All Sessions</text>
+  <text x="172" y="176" font-size="11" text-anchor="end" class="dim">47</text>
+
+  <text x="16" y="204" font-size="12">sessions-chronicle</text>
+  <text x="172" y="204" font-size="11" text-anchor="end" class="dim">12</text>
+
+  <text x="16" y="228" font-size="12">my-webapp</text>
+  <text x="172" y="228" font-size="11" text-anchor="end" class="dim">8</text>
+
+  <!-- Session list panel -->
+  <rect x="200" y="46" width="340" height="474" fill="#2a2a2a"/>
+  <line x1="540" y1="46" x2="540" y2="520" class="separator"/>
+
+  <!-- Search bar with toggle button -->
+  <rect x="212" y="56" width="276" height="32" rx="8" fill="#1e1e1e"/>
+  <text x="228" y="76" font-size="12" class="dim">Search sessions...</text>
+  <circle cx="472" cy="72" r="6" fill="none" stroke="#666" stroke-width="1.5"/>
+  <line x1="476" y1="76" x2="480" y2="80" stroke="#666" stroke-width="1.5"/>
+
+  <!-- Flagged-only toggle button -->
+  <rect x="496" y="56" width="32" height="32" rx="8" fill="#e5a50a" fill-opacity="0.15"/>
+  <!-- Flag icon in toggle -->
+  <g transform="translate(504, 62)">
+    <path d="M2,0 L14,0 L12,5 L14,10 L2,10 Z" fill="#e5a50a" transform="scale(0.85)"/>
+    <line x1="2" y1="0" x2="2" y2="18" stroke="#e5a50a" stroke-width="1.5" transform="scale(0.85)"/>
+  </g>
+
+  <!-- Flat session list - no sections, flags inline -->
+
+  <!-- Row 1: FLAGGED -->
+  <rect x="210" y="100" width="322" height="52" rx="6" fill="transparent"/>
+  <!-- Assistant icon -->
+  <circle cx="226" cy="126" r="8" fill="#3584e4" fill-opacity="0.3"/>
+  <text x="240" y="122" class="title">Fix the flaky CI test for parser</text>
+  <text x="240" y="138" class="subtitle">sessions-chronicle  --  12 messages  --  2h ago</text>
+  <!-- Flag suffix (active = gold) -->
+  <g transform="translate(498, 114)">
+    <path d="M2,0 L12,0 L10,4.5 L12,9 L2,9 Z" class="flag-active"/>
+    <line x1="2" y1="0" x2="2" y2="14" stroke="#e5a50a" stroke-width="1.2"/>
+  </g>
+  <!-- Ending status icon placeholder -->
+  <!-- Chevron -->
+  <text x="522" y="130" font-size="14" class="dim">&#8250;</text>
+
+  <!-- Row 2: not flagged -->
+  <rect x="210" y="156" width="322" height="52" rx="6" fill="transparent"/>
+  <circle cx="226" cy="182" r="8" fill="#26a269" fill-opacity="0.3"/>
+  <text x="240" y="178" class="title">Add analytics heatmap component</text>
+  <text x="240" y="194" class="subtitle">my-webapp  --  8 messages  --  15m ago</text>
+  <text x="522" y="186" font-size="14" class="dim">&#8250;</text>
+
+  <!-- Row 3: FLAGGED -->
+  <rect x="210" y="212" width="322" height="52" rx="6" fill="transparent"/>
+  <circle cx="226" cy="238" r="8" fill="#3584e4" fill-opacity="0.3"/>
+  <text x="240" y="234" class="title">Refactor database migrations</text>
+  <text x="240" y="250" class="subtitle">sessions-chronicle  --  34 messages  --  1d ago</text>
+  <g transform="translate(498, 226)">
+    <path d="M2,0 L12,0 L10,4.5 L12,9 L2,9 Z" class="flag-active"/>
+    <line x1="2" y1="0" x2="2" y2="14" stroke="#e5a50a" stroke-width="1.2"/>
+  </g>
+  <text x="522" y="242" font-size="14" class="dim">&#8250;</text>
+
+  <!-- Row 4: not flagged -->
+  <rect x="210" y="268" width="322" height="52" rx="6" fill="transparent"/>
+  <circle cx="226" cy="294" r="8" fill="#3584e4" fill-opacity="0.3"/>
+  <text x="240" y="290" class="title">Debug WebSocket reconnection</text>
+  <text x="240" y="306" class="subtitle">my-webapp  --  22 messages  --  3h ago</text>
+  <text x="522" y="298" font-size="14" class="dim">&#8250;</text>
+
+  <!-- Row 5: not flagged -->
+  <rect x="210" y="324" width="322" height="52" rx="6" fill="transparent"/>
+  <circle cx="226" cy="350" r="8" fill="#e66100" fill-opacity="0.3"/>
+  <text x="240" y="346" class="title">Write unit tests for token counter</text>
+  <text x="240" y="362" class="subtitle">sessions-chronicle  --  5 messages  --  5h ago</text>
+  <text x="522" y="354" font-size="14" class="dim">&#8250;</text>
+
+  <!-- Row 6: not flagged -->
+  <rect x="210" y="380" width="322" height="52" rx="6" fill="transparent"/>
+  <circle cx="226" cy="406" r="8" fill="#3584e4" fill-opacity="0.3"/>
+  <text x="240" y="402" class="title">Setup Flatpak CI pipeline</text>
+  <text x="240" y="418" class="subtitle">sessions-chronicle  --  18 messages  --  2d ago</text>
+  <text x="522" y="410" font-size="14" class="dim">&#8250;</text>
+
+  <!-- Detail pane -->
+  <rect x="540" y="46" width="260" height="474" fill="#242424"/>
+  <text x="670" y="260" text-anchor="middle" font-size="13" class="dim">Select a session</text>
+  <text x="670" y="278" text-anchor="middle" font-size="11" class="dim">to view details</text>
+
+  <!-- Annotation: toggle button -->
+  <rect x="560" y="56" width="210" height="72" rx="8" fill="#1a1a1a" stroke="#e5a50a" stroke-width="1" stroke-dasharray="3,3"/>
+  <text x="570" y="74" font-size="10" fill="#e5a50a">Toggle button filters to flagged-only.</text>
+  <text x="570" y="88" font-size="10" fill="#ccc">No new view, no new surface.</text>
+  <text x="570" y="102" font-size="10" fill="#ccc">Just a WHERE clause: is_flagged=1</text>
+  <text x="570" y="116" font-size="10" fill="#ccc">Composes with search + project.</text>
+
+  <!-- Annotation: flag suffix -->
+  <rect x="560" y="144" width="210" height="56" rx="8" fill="#1a1a1a" stroke="#e5a50a" stroke-width="1" stroke-dasharray="3,3"/>
+  <text x="570" y="162" font-size="10" fill="#e5a50a">Flag icon as suffix on ActionRow.</text>
+  <text x="570" y="176" font-size="10" fill="#ccc">Same slot as ending-status icon.</text>
+  <text x="570" y="190" font-size="10" fill="#ccc">Click-through: right-click to toggle.</text>
+
+  <!-- Annotation: no sections -->
+  <rect x="560" y="216" width="210" height="44" rx="8" fill="#1a1a1a" stroke="#e5a50a" stroke-width="1" stroke-dasharray="3,3"/>
+  <text x="570" y="234" font-size="10" fill="#e5a50a">No pinned/recent sections.</text>
+  <text x="570" y="248" font-size="10" fill="#ccc">One flat list. Sorted by recency.</text>
+</svg>

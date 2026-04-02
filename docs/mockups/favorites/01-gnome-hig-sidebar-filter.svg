@@ -1,0 +1,155 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="860" height="520" font-family="Cantarell, sans-serif">
+  <defs>
+    <style>
+      .bg { fill: #242424; }
+      .sidebar-bg { fill: #1e1e1e; }
+      .list-bg { fill: #2a2a2a; }
+      .card { fill: #303030; rx: 8; }
+      .text { fill: #ffffff; font-size: 13px; }
+      .text-dim { fill: #999999; font-size: 11px; }
+      .text-heading { fill: #999999; font-size: 11px; font-weight: 600; letter-spacing: 0.5px; text-transform: uppercase; }
+      .accent { fill: #3584e4; }
+      .accent-text { fill: #3584e4; font-size: 13px; font-weight: 600; }
+      .star { fill: #f5c211; }
+      .star-empty { fill: none; stroke: #666666; stroke-width: 1.5; }
+      .separator { stroke: #444444; stroke-width: 1; }
+      .selected-row { fill: #3584e4; rx: 8; opacity: 0.25; }
+      .chevron { fill: #666666; font-size: 14px; }
+      .icon-assistant { fill: #3584e4; }
+      .widget-label { fill: #ff7800; font-size: 9px; font-style: italic; opacity: 0.7; }
+    </style>
+  </defs>
+
+  <!-- Background -->
+  <rect width="860" height="520" class="bg"/>
+
+  <!-- Header bar -->
+  <rect width="860" height="46" fill="#1a1a1a"/>
+  <text x="430" y="28" class="text" text-anchor="middle" font-weight="600">Sessions Chronicle</text>
+
+  <!-- Sidebar -->
+  <rect x="0" y="46" width="210" height="474" class="sidebar-bg"/>
+  <line x1="210" y1="46" x2="210" y2="520" class="separator"/>
+
+  <!-- Sidebar: Filters heading -->
+  <text x="16" y="76" class="text" font-weight="700" font-size="15">Filters</text>
+  <line x1="16" y1="86" x2="194" y2="86" class="separator"/>
+
+  <!-- Sidebar: AI Assistants -->
+  <text x="16" y="108" class="text-heading">AI ASSISTANTS</text>
+  <rect x="16" y="116" width="14" height="14" rx="3" fill="none" stroke="#3584e4" stroke-width="1.5"/>
+  <text x="16" y="127" fill="#3584e4" font-size="10" text-anchor="middle" dx="7" dy="-2">✓</text>
+  <text x="38" y="128" class="text" font-size="12">Claude Code</text>
+  <rect x="16" y="138" width="14" height="14" rx="3" fill="none" stroke="#26a269" stroke-width="1.5"/>
+  <text x="16" y="149" fill="#26a269" font-size="10" text-anchor="middle" dx="7" dy="-2">✓</text>
+  <text x="38" y="150" class="text" font-size="12">OpenCode</text>
+
+  <!-- Sidebar: Separator before Favorites -->
+  <line x1="16" y1="170" x2="194" y2="170" class="separator"/>
+
+  <!-- NEW: Favorites filter toggle -->
+  <rect x="12" y="180" width="186" height="36" rx="8" fill="#3584e4" opacity="0.15"/>
+  <text x="16" y="203" class="star" font-size="16">★</text>
+  <text x="38" y="203" class="accent-text">Favorites</text>
+  <rect x="160" y="190" width="30" height="18" rx="9" fill="#3584e4"/>
+  <circle cx="180" cy="199" r="7" fill="#ffffff"/>
+  <text x="105" y="225" class="widget-label">gtk::Switch + sidebar filter</text>
+
+  <!-- Sidebar: Separator -->
+  <line x1="16" y1="236" x2="194" y2="236" class="separator"/>
+
+  <!-- Sidebar: Projects -->
+  <text x="16" y="258" class="text-heading">PROJECTS</text>
+  <text x="16" y="280" class="text" font-size="12">All sessions</text>
+  <text x="170" y="280" class="text-dim" font-size="11" text-anchor="end">42</text>
+  <text x="16" y="302" class="text" font-size="12">sessions-chronicle</text>
+  <text x="170" y="302" class="text-dim" font-size="11" text-anchor="end">12</text>
+
+  <!-- Session List -->
+  <rect x="210" y="46" width="310" height="474" class="list-bg"/>
+  <line x1="520" y1="46" x2="520" y2="520" class="separator"/>
+
+  <!-- Search bar -->
+  <rect x="222" y="56" width="286" height="32" rx="6" fill="#383838"/>
+  <text x="240" y="77" class="text-dim">Search sessions...</text>
+
+  <!-- Session row 1: Favorited -->
+  <rect x="218" y="98" width="294" height="56" class="selected-row"/>
+  <rect x="218" y="98" width="294" height="56" rx="8" fill="transparent"/>
+  <!-- Star icon (favorited) -->
+  <text x="228" y="132" class="star" font-size="15">★</text>
+  <!-- Assistant icon -->
+  <circle cx="252" cy="126" r="8" class="icon-assistant"/>
+  <text x="252" y="130" fill="#fff" font-size="8" text-anchor="middle">C</text>
+  <!-- Row content -->
+  <text x="268" y="122" class="text" font-size="12" font-weight="500">Add favorites feature to app</text>
+  <text x="268" y="140" class="text-dim">Today · 24 messages</text>
+  <text x="498" y="130" class="chevron">›</text>
+
+  <!-- Session row 2: Favorited -->
+  <rect x="218" y="160" width="294" height="56" rx="8" fill="#2d2d2d"/>
+  <text x="228" y="194" class="star" font-size="15">★</text>
+  <circle cx="252" cy="188" r="8" fill="#26a269"/>
+  <text x="252" y="192" fill="#fff" font-size="8" text-anchor="middle">O</text>
+  <text x="268" y="184" class="text" font-size="12" font-weight="500">Debug parser regression</text>
+  <text x="268" y="202" class="text-dim">Yesterday · 8 messages</text>
+  <text x="498" y="192" class="chevron">›</text>
+
+  <!-- Session row 3: Not favorited -->
+  <rect x="218" y="222" width="294" height="56" rx="8" fill="#2d2d2d"/>
+  <text x="228" y="256" class="star-empty" font-size="15">☆</text>
+  <circle cx="252" cy="250" r="8" class="icon-assistant"/>
+  <text x="252" y="254" fill="#fff" font-size="8" text-anchor="middle">C</text>
+  <text x="268" y="246" class="text" font-size="12" font-weight="500">Refactor database module</text>
+  <text x="268" y="264" class="text-dim">Mar 30 · 15 messages</text>
+  <text x="498" y="254" class="chevron">›</text>
+
+  <!-- Session row 4 -->
+  <rect x="218" y="284" width="294" height="56" rx="8" fill="#2d2d2d"/>
+  <text x="228" y="318" class="star-empty" font-size="15">☆</text>
+  <circle cx="252" cy="312" r="8" fill="#e66100"/>
+  <text x="252" y="316" fill="#fff" font-size="8" text-anchor="middle">X</text>
+  <text x="268" y="308" class="text" font-size="12" font-weight="500">Setup CI pipeline</text>
+  <text x="268" y="326" class="text-dim">Mar 29 · 5 messages</text>
+  <text x="498" y="316" class="chevron">›</text>
+
+  <!-- Widget labels -->
+  <text x="228" y="360" class="widget-label">★ inline in ActionRow prefix</text>
+  <text x="228" y="375" class="widget-label">Click star or Ctrl+D to toggle</text>
+
+  <!-- Detail pane (simplified) -->
+  <rect x="520" y="46" width="340" height="474" fill="#262626"/>
+  <text x="540" y="80" class="text" font-weight="700" font-size="16">Add favorites feature to app</text>
+  <text x="540" y="100" class="text-dim">Claude Code · Today at 14:32</text>
+
+  <!-- Favorite button in detail header -->
+  <rect x="540" y="114" width="110" height="28" rx="14" fill="#3584e4" opacity="0.2"/>
+  <text x="556" y="133" class="star" font-size="13">★</text>
+  <text x="574" y="133" class="accent-text" font-size="12">Favorited</text>
+  <text x="540" y="158" class="widget-label">gtk::ToggleButton pill in detail header</text>
+
+  <!-- Metadata cards -->
+  <rect x="540" y="170" width="300" height="50" rx="8" fill="#303030"/>
+  <text x="556" y="192" class="text-dim" font-size="10">MESSAGES</text>
+  <text x="556" y="210" class="text" font-weight="600">24</text>
+  <text x="640" y="192" class="text-dim" font-size="10">DURATION</text>
+  <text x="640" y="210" class="text" font-weight="600">45 min</text>
+  <text x="740" y="192" class="text-dim" font-size="10">STATUS</text>
+  <text x="740" y="210" fill="#26a269" font-weight="600" font-size="13">Clean</text>
+
+  <!-- Transcript preview -->
+  <rect x="540" y="232" width="300" height="40" rx="6" fill="#303030"/>
+  <rect x="540" y="232" width="3" height="40" fill="#3584e4"/>
+  <text x="554" y="248" fill="#3584e4" font-size="10" font-weight="600">USER</text>
+  <text x="554" y="264" class="text" font-size="11">Add a favorites system to...</text>
+
+  <rect x="540" y="280" width="300" height="40" rx="6" fill="#303030"/>
+  <rect x="540" y="280" width="3" height="40" fill="#26a269"/>
+  <text x="554" y="296" fill="#26a269" font-size="10" font-weight="600">ASSISTANT</text>
+  <text x="554" y="312" class="text" font-size="11">I'll implement the favorites...</text>
+
+  <!-- Legend -->
+  <rect x="530" y="460" width="320" height="50" rx="8" fill="#1e1e1e" opacity="0.6"/>
+  <text x="545" y="480" class="text" font-size="11" font-weight="600">Proposal A: Sidebar Filter + Inline Stars</text>
+  <text x="545" y="498" class="text-dim" font-size="10">GNOME HIG · Switch filter in sidebar, star prefix in rows</text>
+</svg>

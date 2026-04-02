@@ -1,0 +1,135 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="860" height="520" font-family="Cantarell, sans-serif">
+  <defs>
+    <style>
+      .bg { fill: #242424; }
+      .sidebar-bg { fill: #1e1e1e; }
+      .list-bg { fill: #2a2a2a; }
+      .text { fill: #ffffff; font-size: 13px; }
+      .text-dim { fill: #999999; font-size: 11px; }
+      .text-heading { fill: #999999; font-size: 11px; font-weight: 600; letter-spacing: 0.5px; }
+      .accent { fill: #3584e4; }
+      .accent-text { fill: #3584e4; font-size: 13px; font-weight: 600; }
+      .shelf-bg { fill: #1a2a3a; }
+      .shelf-border { stroke: #3584e4; stroke-width: 1; fill: none; stroke-dasharray: 4,3; }
+      .pin { fill: #f5c211; }
+      .separator { stroke: #444444; stroke-width: 1; }
+      .chevron { fill: #666666; font-size: 14px; }
+      .icon-assistant { fill: #3584e4; }
+      .drag-handle { fill: #555555; }
+      .widget-label { fill: #ff7800; font-size: 9px; font-style: italic; opacity: 0.7; }
+      .shelf-card { fill: #2d3a4a; rx: 10; }
+      .close-btn { fill: #999999; font-size: 12px; }
+      .drop-zone { fill: #3584e4; opacity: 0.08; rx: 10; }
+      .time-badge { fill: #e66100; font-size: 9px; font-weight: 600; }
+    </style>
+  </defs>
+
+  <!-- Background -->
+  <rect width="860" height="520" class="bg"/>
+
+  <!-- Header bar -->
+  <rect width="860" height="46" fill="#1a1a1a"/>
+  <text x="430" y="28" class="text" text-anchor="middle" font-weight="600">Sessions Chronicle</text>
+
+  <!-- Sidebar (simplified) -->
+  <rect x="0" y="46" width="210" height="474" class="sidebar-bg"/>
+  <line x1="210" y1="46" x2="210" y2="520" class="separator"/>
+  <text x="16" y="76" class="text" font-weight="700" font-size="15">Filters</text>
+  <line x1="16" y1="86" x2="194" y2="86" class="separator"/>
+  <text x="16" y="108" class="text-heading">AI ASSISTANTS</text>
+  <text x="16" y="130" class="text" font-size="12">Claude Code</text>
+  <text x="16" y="152" class="text" font-size="12">OpenCode</text>
+  <line x1="16" y1="170" x2="194" y2="170" class="separator"/>
+  <text x="16" y="192" class="text-heading">PROJECTS</text>
+  <text x="16" y="214" class="text" font-size="12">All sessions</text>
+  <text x="16" y="236" class="text" font-size="12">sessions-chronicle</text>
+
+  <!-- Session List with Shelf at top -->
+  <rect x="210" y="46" width="650" height="474" class="list-bg"/>
+
+  <!-- Search bar -->
+  <rect x="222" y="56" width="626" height="32" rx="6" fill="#383838"/>
+  <text x="240" y="77" class="text-dim">Search sessions...</text>
+
+  <!-- SHELF: Pinned favorites area at top of list -->
+  <rect x="218" y="98" width="634" height="130" rx="10" fill="#1a2a3a" opacity="0.5"/>
+  <rect x="218" y="98" width="634" height="130" class="shelf-border"/>
+
+  <!-- Shelf header -->
+  <text x="234" y="118" class="pin" font-size="13">📌</text>
+  <text x="254" y="118" class="text" font-size="12" font-weight="600">Quick Access Shelf</text>
+  <text x="254" y="132" class="text-dim" font-size="10">Drag sessions here · Pins auto-expire after 7 days</text>
+  <text x="600" y="118" class="widget-label">Collapsible gtk::Revealer</text>
+
+  <!-- Shelf cards (horizontal layout) -->
+  <!-- Card 1 -->
+  <rect x="230" y="142" width="190" height="72" class="shelf-card"/>
+  <circle cx="248" cy="162" r="8" class="icon-assistant"/>
+  <text x="248" y="166" fill="#fff" font-size="8" text-anchor="middle">C</text>
+  <text x="264" y="166" class="text" font-size="11" font-weight="500">Add favorites feature</text>
+  <text x="264" y="182" class="text-dim" font-size="10">Today · 24 msgs</text>
+  <!-- Time badge -->
+  <rect x="234" y="196" width="48" height="14" rx="7" fill="#e66100" opacity="0.2"/>
+  <text x="258" y="207" class="time-badge" text-anchor="middle" opacity="0.9">6d left</text>
+  <!-- Close button -->
+  <text x="406" y="158" class="close-btn">✕</text>
+
+  <!-- Card 2 -->
+  <rect x="430" y="142" width="190" height="72" class="shelf-card"/>
+  <circle cx="448" cy="162" r="8" fill="#26a269"/>
+  <text x="448" y="166" fill="#fff" font-size="8" text-anchor="middle">O</text>
+  <text x="464" y="166" class="text" font-size="11" font-weight="500">Debug parser regression</text>
+  <text x="464" y="182" class="text-dim" font-size="10">Yesterday · 8 msgs</text>
+  <rect x="434" y="196" width="48" height="14" rx="7" fill="#e66100" opacity="0.2"/>
+  <text x="458" y="207" class="time-badge" text-anchor="middle" opacity="0.9">3d left</text>
+  <text x="606" y="158" class="close-btn">✕</text>
+
+  <!-- Drop zone hint -->
+  <rect x="630" y="142" width="72" height="72" class="drop-zone"/>
+  <text x="666" y="182" fill="#3584e4" font-size="22" text-anchor="middle" opacity="0.3">+</text>
+  <text x="666" y="197" fill="#3584e4" font-size="8" text-anchor="middle" opacity="0.3">Drop</text>
+
+  <!-- Widget label for shelf cards -->
+  <text x="234" y="238" class="widget-label">gtk::FlowBox with DnD + auto-expiry countdown</text>
+
+  <!-- Separator between shelf and list -->
+  <line x1="222" y1="244" x2="848" y2="244" class="separator"/>
+
+  <!-- Regular session list below shelf -->
+  <text x="228" y="264" class="text-heading">ALL SESSIONS</text>
+
+  <!-- Session row 1 -->
+  <rect x="218" y="274" width="634" height="48" rx="8" fill="#2d2d2d"/>
+  <text x="234" y="300" class="drag-handle">⠿</text>
+  <circle cx="260" cy="298" r="8" class="icon-assistant"/>
+  <text x="260" y="302" fill="#fff" font-size="8" text-anchor="middle">C</text>
+  <text x="278" y="296" class="text" font-size="12">Refactor database module</text>
+  <text x="278" y="312" class="text-dim">Mar 30 · 15 messages</text>
+  <text x="836" y="302" class="chevron">›</text>
+
+  <!-- Session row 2 -->
+  <rect x="218" y="328" width="634" height="48" rx="8" fill="#2d2d2d"/>
+  <text x="234" y="354" class="drag-handle">⠿</text>
+  <circle cx="260" cy="352" r="8" fill="#e66100"/>
+  <text x="260" y="356" fill="#fff" font-size="8" text-anchor="middle">X</text>
+  <text x="278" y="350" class="text" font-size="12">Setup CI pipeline</text>
+  <text x="278" y="366" class="text-dim">Mar 29 · 5 messages</text>
+  <text x="836" y="356" class="chevron">›</text>
+
+  <!-- Session row 3 -->
+  <rect x="218" y="382" width="634" height="48" rx="8" fill="#2d2d2d"/>
+  <text x="234" y="408" class="drag-handle">⠿</text>
+  <circle cx="260" cy="406" r="8" fill="#26a269"/>
+  <text x="260" y="410" fill="#fff" font-size="8" text-anchor="middle">O</text>
+  <text x="278" y="404" class="text" font-size="12">Implement search feature</text>
+  <text x="278" y="420" class="text-dim">Mar 28 · 31 messages</text>
+  <text x="836" y="410" class="chevron">›</text>
+
+  <!-- Widget label for drag handles -->
+  <text x="228" y="450" class="widget-label">⠿ drag handles for DnD to shelf</text>
+
+  <!-- Legend -->
+  <rect x="218" y="460" width="634" height="50" rx="8" fill="#1e1e1e" opacity="0.6"/>
+  <text x="234" y="480" class="text" font-size="11" font-weight="600">Proposal B: Ephemeral Quick-Access Shelf</text>
+  <text x="234" y="498" class="text-dim" font-size="10">Creative · Horizontal card shelf with drag-to-pin and 7-day auto-expiry</text>
+</svg>

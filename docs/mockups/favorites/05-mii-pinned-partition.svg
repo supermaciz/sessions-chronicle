@@ -1,0 +1,136 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="800" height="520" viewBox="0 0 800 520">
+  <defs>
+    <style>
+      text { font-family: Cantarell, Inter, system-ui, sans-serif; fill: #ffffff; }
+      .dim { fill: #999999; }
+      .accent { fill: #3584e4; }
+      .heading { font-size: 11px; font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase; fill: #888888; }
+      .title { font-size: 13px; font-weight: 500; }
+      .subtitle { font-size: 11px; fill: #999999; }
+      .small { font-size: 10px; }
+      .separator { stroke: #3a3a3a; stroke-width: 1; }
+    </style>
+  </defs>
+
+  <!-- Window chrome -->
+  <rect width="800" height="520" rx="12" fill="#242424"/>
+  <!-- Headerbar -->
+  <rect width="800" height="46" rx="12" fill="#303030"/>
+  <rect y="34" width="800" height="12" fill="#303030"/>
+  <text x="400" y="29" text-anchor="middle" font-size="14" font-weight="600">Sessions Chronicle</text>
+
+  <!-- Sidebar -->
+  <rect x="0" y="46" width="200" height="474" fill="#1e1e1e"/>
+  <line x1="200" y1="46" x2="200" y2="520" class="separator"/>
+
+  <text x="16" y="74" class="heading">AI ASSISTANTS</text>
+  <!-- Assistant checkboxes (compact) -->
+  <rect x="14" y="82" width="14" height="14" rx="3" fill="none" stroke="#3584e4" stroke-width="1.5"/>
+  <polyline points="17,89 20,93 26,85" fill="none" stroke="#3584e4" stroke-width="1.5"/>
+  <text x="34" y="94" font-size="12">Claude Code</text>
+  <rect x="14" y="102" width="14" height="14" rx="3" fill="none" stroke="#3584e4" stroke-width="1.5"/>
+  <polyline points="17,109 20,113 26,105" fill="none" stroke="#3584e4" stroke-width="1.5"/>
+  <text x="34" y="114" font-size="12">OpenCode</text>
+
+  <line x1="12" y1="130" x2="188" y2="130" class="separator"/>
+
+  <text x="16" y="150" class="heading">PROJECTS</text>
+  <!-- Project list -->
+  <rect x="8" y="156" width="184" height="32" rx="6" fill="#3584e4" fill-opacity="0.15"/>
+  <text x="16" y="176" font-size="12" class="accent">All Sessions</text>
+  <text x="172" y="176" font-size="11" text-anchor="end" class="dim">47</text>
+
+  <text x="16" y="204" font-size="12">sessions-chronicle</text>
+  <text x="172" y="204" font-size="11" text-anchor="end" class="dim">12</text>
+
+  <text x="16" y="228" font-size="12">my-webapp</text>
+  <text x="172" y="228" font-size="11" text-anchor="end" class="dim">8</text>
+
+  <!-- Session list panel -->
+  <rect x="200" y="46" width="340" height="474" fill="#2a2a2a"/>
+  <line x1="540" y1="46" x2="540" y2="520" class="separator"/>
+
+  <!-- Search bar -->
+  <rect x="212" y="56" width="316" height="32" rx="8" fill="#1e1e1e"/>
+  <text x="228" y="76" font-size="12" class="dim">Search sessions...</text>
+  <!-- Search icon -->
+  <circle cx="510" cy="72" r="6" fill="none" stroke="#666" stroke-width="1.5"/>
+  <line x1="514" y1="76" x2="518" y2="80" stroke="#666" stroke-width="1.5"/>
+
+  <!-- PINNED SECTION -->
+  <text x="218" y="112" class="heading">PINNED</text>
+
+  <!-- Pinned row 1 -->
+  <rect x="210" y="118" width="322" height="52" rx="6" fill="#333333"/>
+  <!-- Pin icon (filled, accent) -->
+  <g transform="translate(220, 132)">
+    <path d="M4,0 L8,0 L10,6 L8,8 L6,8 L6,14 L4,14 L4,8 L2,8 L0,6 Z" fill="#3584e4" transform="scale(1.1)"/>
+  </g>
+  <text x="240" y="138" class="title">Fix the flaky CI test for parser</text>
+  <text x="240" y="154" class="subtitle">sessions-chronicle  --  12 messages  --  2h ago</text>
+  <!-- Chevron -->
+  <text x="518" y="148" font-size="14" class="dim">&#8250;</text>
+
+  <!-- Pinned row 2 -->
+  <rect x="210" y="174" width="322" height="52" rx="6" fill="#333333"/>
+  <g transform="translate(220, 188)">
+    <path d="M4,0 L8,0 L10,6 L8,8 L6,8 L6,14 L4,14 L4,8 L2,8 L0,6 Z" fill="#3584e4" transform="scale(1.1)"/>
+  </g>
+  <text x="240" y="194" class="title">Refactor database migrations</text>
+  <text x="240" y="210" class="subtitle">sessions-chronicle  --  34 messages  --  1d ago</text>
+  <text x="518" y="204" font-size="14" class="dim">&#8250;</text>
+
+  <!-- Thin separator between pinned and recent -->
+  <line x1="218" y1="238" x2="524" y2="238" stroke="#3a3a3a" stroke-width="0.5"/>
+
+  <!-- RECENT SECTION -->
+  <text x="218" y="258" class="heading">RECENT</text>
+
+  <!-- Recent row 1 -->
+  <rect x="210" y="264" width="322" height="52" rx="6" fill="transparent"/>
+  <!-- Claude icon placeholder -->
+  <circle cx="226" cy="290" r="8" fill="#3584e4" fill-opacity="0.3"/>
+  <text x="240" y="286" class="title">Add analytics heatmap component</text>
+  <text x="240" y="302" class="subtitle">my-webapp  --  8 messages  --  15m ago</text>
+  <text x="518" y="292" font-size="14" class="dim">&#8250;</text>
+
+  <!-- Recent row 2 -->
+  <rect x="210" y="320" width="322" height="52" rx="6" fill="transparent"/>
+  <circle cx="226" cy="346" r="8" fill="#26a269" fill-opacity="0.3"/>
+  <text x="240" y="342" class="title">Debug WebSocket reconnection</text>
+  <text x="240" y="358" class="subtitle">my-webapp  --  22 messages  --  3h ago</text>
+  <text x="518" y="348" font-size="14" class="dim">&#8250;</text>
+
+  <!-- Recent row 3 -->
+  <rect x="210" y="376" width="322" height="52" rx="6" fill="transparent"/>
+  <circle cx="226" cy="402" r="8" fill="#3584e4" fill-opacity="0.3"/>
+  <text x="240" y="398" class="title">Write unit tests for token counter</text>
+  <text x="240" y="414" class="subtitle">sessions-chronicle  --  5 messages  --  5h ago</text>
+  <text x="518" y="404" font-size="14" class="dim">&#8250;</text>
+
+  <!-- Detail pane (muted, shows context) -->
+  <rect x="540" y="46" width="260" height="474" fill="#242424"/>
+  <text x="670" y="260" text-anchor="middle" font-size="13" class="dim">Select a session</text>
+  <text x="670" y="278" text-anchor="middle" font-size="11" class="dim">to view details</text>
+
+  <!-- Context menu overlay (floating near a row) -->
+  <rect x="350" y="140" width="180" height="72" rx="10" fill="#383838" stroke="#4a4a4a" stroke-width="1"/>
+  <!-- Shadow hint -->
+  <rect x="352" y="142" width="176" height="68" rx="9" fill="none" stroke="rgba(0,0,0,0.3)" stroke-width="2"/>
+  <rect x="350" y="140" width="180" height="72" rx="10" fill="#383838"/>
+  <!-- Menu items -->
+  <rect x="356" y="146" width="168" height="28" rx="6" fill="#3584e4" fill-opacity="0.15"/>
+  <text x="370" y="164" font-size="12" class="accent">Unpin</text>
+  <text x="370" y="192" font-size="12">Resume in Terminal</text>
+
+  <!-- Annotation labels -->
+  <rect x="580" y="96" width="190" height="56" rx="8" fill="#1a1a1a" stroke="#3584e4" stroke-width="1" stroke-dasharray="3,3"/>
+  <text x="590" y="114" font-size="10" class="accent">Right-click context menu:</text>
+  <text x="590" y="128" font-size="10" fill="#ccc">"Pin" / "Unpin" action added</text>
+  <text x="590" y="142" font-size="10" fill="#ccc">to existing popover</text>
+
+  <rect x="580" y="372" width="190" height="56" rx="8" fill="#1a1a1a" stroke="#3584e4" stroke-width="1" stroke-dasharray="3,3"/>
+  <text x="590" y="390" font-size="10" class="accent">Pinned section:</text>
+  <text x="590" y="404" font-size="10" fill="#ccc">Sticky group at top of list.</text>
+  <text x="590" y="418" font-size="10" fill="#ccc">Same rows, just partitioned.</text>
+</svg>

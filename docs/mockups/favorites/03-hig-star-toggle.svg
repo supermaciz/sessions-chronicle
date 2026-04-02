@@ -1,0 +1,139 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="800" height="520" viewBox="0 0 800 520">
+  <defs>
+    <style>
+      text { font-family: Cantarell, sans-serif; fill: #ffffff; }
+      .label { font-size: 11px; fill: #999999; font-style: italic; }
+      .heading { font-size: 14px; font-weight: bold; }
+      .subtext { font-size: 11px; fill: #aaaaaa; }
+      .dim { fill: #888888; }
+      .accent { fill: #3584e4; }
+      .star-active { fill: #f6d32d; stroke: #f6d32d; stroke-width: 1; }
+      .star-inactive { fill: none; stroke: #666666; stroke-width: 1.2; }
+      .widget-label { font-size: 9px; fill: #78aeed; font-family: monospace; }
+    </style>
+  </defs>
+
+  <!-- Background -->
+  <rect width="800" height="520" fill="#1e1e1e" rx="12"/>
+
+  <!-- Title bar -->
+  <rect x="0" y="0" width="800" height="46" fill="#303030" rx="12"/>
+  <rect x="0" y="24" width="800" height="22" fill="#303030"/>
+  <text x="400" y="28" text-anchor="middle" font-size="13" font-weight="bold" fill="#ffffff">Sessions Chronicle</text>
+  <circle cx="24" cy="23" r="6" fill="#555555"/>
+  <circle cx="44" cy="23" r="6" fill="#555555"/>
+  <circle cx="64" cy="23" r="6" fill="#555555"/>
+
+  <!-- View switcher tabs -->
+  <rect x="310" y="6" width="80" height="28" rx="6" fill="#3584e4" opacity="0.3"/>
+  <text x="350" y="24" text-anchor="middle" font-size="11" fill="#ffffff">Sessions</text>
+  <text x="450" y="24" text-anchor="middle" font-size="11" fill="#888888">Analytics</text>
+
+  <!-- Sidebar -->
+  <rect x="0" y="46" width="200" height="474" fill="#242424"/>
+  <text x="16" y="74" class="heading" font-size="13">Filters</text>
+  <rect x="12" y="82" width="176" height="1" fill="#444444"/>
+
+  <text x="16" y="106" font-size="12" fill="#cccccc">AI Assistants</text>
+  <!-- Assistant checkboxes -->
+  <rect x="20" y="114" width="12" height="12" rx="2" fill="#3584e4"/>
+  <text x="40" y="125" font-size="11" fill="#cccccc">Claude Code</text>
+  <rect x="20" y="134" width="12" height="12" rx="2" fill="#3584e4"/>
+  <text x="40" y="145" font-size="11" fill="#cccccc">OpenCode</text>
+  <rect x="20" y="154" width="12" height="12" rx="2" fill="#3584e4"/>
+  <text x="40" y="165" font-size="11" fill="#cccccc">Codex</text>
+  <rect x="20" y="174" width="12" height="12" rx="2" fill="#3584e4"/>
+  <text x="40" y="185" font-size="11" fill="#cccccc">Mistral Vibe</text>
+
+  <rect x="12" y="198" width="176" height="1" fill="#444444"/>
+  <text x="16" y="220" font-size="12" fill="#cccccc">Projects</text>
+
+  <!-- Favorites filter row in sidebar -->
+  <rect x="8" y="230" width="184" height="32" rx="6" fill="#3584e4" opacity="0.15"/>
+  <!-- Star icon -->
+  <polygon points="24,240 26.5,247 34,247 28,251.5 30,259 24,255 18,259 20,251.5 14,247 21.5,247" class="star-active" transform="scale(0.7) translate(10,105)"/>
+  <text x="40" y="251" font-size="12" fill="#ffffff" font-weight="bold">Favorites</text>
+  <rect x="152" y="241" width="28" height="16" rx="8" fill="#3584e4" opacity="0.3"/>
+  <text x="166" y="253" text-anchor="middle" font-size="9" fill="#78aeed">3</text>
+  <text x="16" y="280" class="widget-label">AdwActionRow in sidebar</text>
+  <text x="16" y="292" class="widget-label">(acts as filter toggle)</text>
+
+  <!-- Separator -->
+  <rect x="12" y="300" width="176" height="1" fill="#444444"/>
+  <text x="16" y="320" font-size="11" fill="#888888">All Sessions</text>
+  <text x="16" y="340" font-size="11" fill="#888888">sessions-chronicle</text>
+  <text x="16" y="360" font-size="11" fill="#888888">my-rust-project</text>
+
+  <!-- Vertical divider -->
+  <rect x="200" y="46" width="1" height="474" fill="#333333"/>
+
+  <!-- Search bar area -->
+  <rect x="201" y="46" width="599" height="40" fill="#2a2a2a"/>
+  <rect x="216" y="54" width="280" height="26" rx="6" fill="#383838"/>
+  <text x="232" y="72" font-size="11" fill="#666666">Search sessions...</text>
+
+  <!-- Session list area -->
+  <rect x="201" y="86" width="380" height="434" fill="#1e1e1e"/>
+
+  <!-- SESSION ROW 1: Favorited -->
+  <rect x="212" y="96" width="358" height="64" rx="8" fill="#2c2c2c"/>
+  <!-- Star toggle (filled = favorited) -->
+  <polygon points="230,118 233,126 241,126 235,131 237,139 230,135 224,139 226,131 220,126 227,126" class="star-active" transform="scale(0.75) translate(72,-2)"/>
+  <!-- Assistant icon placeholder -->
+  <circle cx="248" cy="128" r="8" fill="#3584e4" opacity="0.4"/>
+  <!-- Row content -->
+  <text x="264" y="120" font-size="12" fill="#ffffff">Fix the parser edge case</text>
+  <text x="264" y="136" font-size="10" fill="#888888">sessions-chronicle . 12 messages . 3 edits . 2h ago</text>
+  <!-- go-next chevron -->
+  <text x="550" y="130" font-size="14" fill="#555555">&gt;</text>
+  <!-- Widget labels -->
+  <text x="214" y="170" class="widget-label">star-toggle-symbolic suffix on AdwActionRow</text>
+
+  <!-- SESSION ROW 2: Favorited -->
+  <rect x="212" y="172" width="358" height="64" rx="8" fill="#2c2c2c"/>
+  <polygon points="230,194 233,202 241,202 235,207 237,215 230,211 224,215 226,207 220,202 227,202" class="star-active" transform="scale(0.75) translate(72,74)"/>
+  <circle cx="248" cy="204" r="8" fill="#26a269" opacity="0.4"/>
+  <text x="264" y="196" font-size="12" fill="#ffffff">Add retry logic to HTTP client</text>
+  <text x="264" y="212" font-size="10" fill="#888888">my-rust-project . 8 messages . 5 edits . 1d ago</text>
+  <text x="550" y="206" font-size="14" fill="#555555">&gt;</text>
+
+  <!-- SESSION ROW 3: NOT favorited -->
+  <rect x="212" y="248" width="358" height="64" rx="8" fill="#2c2c2c"/>
+  <!-- Star toggle (outline = not favorited) -->
+  <polygon points="230,270 233,278 241,278 235,283 237,291 230,287 224,291 226,283 220,278 227,278" class="star-inactive" transform="scale(0.75) translate(72,150)"/>
+  <circle cx="248" cy="280" r="8" fill="#3584e4" opacity="0.4"/>
+  <text x="264" y="272" font-size="12" fill="#ffffff">Debug failing CI pipeline</text>
+  <text x="264" y="288" font-size="10" fill="#888888">sessions-chronicle . 5 messages . 30m ago</text>
+  <text x="550" y="282" font-size="14" fill="#555555">&gt;</text>
+
+  <!-- SESSION ROW 4: NOT favorited -->
+  <rect x="212" y="324" width="358" height="64" rx="8" fill="#2c2c2c"/>
+  <polygon points="230,346 233,354 241,354 235,359 237,367 230,363 224,367 226,359 220,354 227,354" class="star-inactive" transform="scale(0.75) translate(72,226)"/>
+  <circle cx="248" cy="356" r="8" fill="#e66100" opacity="0.4"/>
+  <text x="264" y="348" font-size="12" fill="#ffffff">Refactor database module</text>
+  <text x="264" y="364" font-size="10" fill="#888888">my-rust-project . 22 messages . 11 edits . 3d ago</text>
+  <text x="550" y="358" font-size="14" fill="#555555">&gt;</text>
+
+  <!-- Annotation: context menu -->
+  <rect x="350" y="395" width="180" height="68" rx="6" fill="#383838" stroke="#555555" stroke-width="1"/>
+  <text x="366" y="415" font-size="11" fill="#ffffff">Toggle Favorite</text>
+  <rect x="356" y="422" width="166" height="1" fill="#444444"/>
+  <text x="366" y="440" font-size="11" fill="#ffffff">Resume in Terminal</text>
+  <text x="366" y="460" class="widget-label">gtk::PopoverMenu (right-click)</text>
+
+  <!-- Annotation arrow from context menu to row 3 -->
+  <line x1="390" y1="395" x2="370" y2="315" stroke="#78aeed" stroke-width="1" stroke-dasharray="4,3"/>
+
+  <!-- Legend / annotations -->
+  <rect x="600" y="96" width="190" height="180" rx="8" fill="#2a2a2a" stroke="#444444" stroke-width="1"/>
+  <text x="612" y="116" font-size="11" font-weight="bold" fill="#cccccc">Proposal A: Star Toggle</text>
+  <rect x="608" y="122" width="174" height="1" fill="#444444"/>
+  <text x="612" y="140" font-size="10" fill="#aaaaaa">Mark: click star prefix or</text>
+  <text x="612" y="154" font-size="10" fill="#aaaaaa">right-click context menu</text>
+  <text x="612" y="174" font-size="10" fill="#aaaaaa">Surface: sidebar filter row</text>
+  <text x="612" y="188" font-size="10" fill="#aaaaaa">(like project filter)</text>
+  <text x="612" y="208" font-size="10" fill="#aaaaaa">Keyboard: Ctrl+D to toggle</text>
+  <text x="612" y="228" font-size="10" fill="#aaaaaa">DB: sessions.is_favorite</text>
+  <text x="612" y="242" font-size="10" fill="#aaaaaa">(INTEGER DEFAULT 0)</text>
+  <text x="612" y="262" font-size="10" fill="#aaaaaa">Sort: favorites first in list</text>
+</svg>
