@@ -11,10 +11,19 @@ use relm4::{ComponentParts, ComponentSender, RelmWidgetExt, SimpleComponent, adw
 use crate::database::load_transcript_items;
 use crate::models::Session;
 use crate::ui::activity_bar::SessionActivityBar;
+use crate::ui::transcript_display::{
+    DisplayTranscriptItem, group_transcript_rows, regroup_boundary, trailing_tool_call_rows,
+    trailing_tool_rows_from_display,
+};
 use crate::ui::transcript_row::{
-    TranscriptRow, TranscriptRowOutput, transcript_item_init_from_row,
+    TranscriptItemInit, TranscriptRow, TranscriptRowOutput, transcript_item_init_from_display_item,
 };
 
+/// Detail view for a single indexed session.
+///
+/// This component owns the session summary header, paginated transcript
+/// rendering, transcript search navigation, and forwarding of inspection
+/// actions back to the parent app.
 #[derive(Debug)]
 pub struct SessionDetail {
     db_path: Arc<PathBuf>,
@@ -24,33 +33,68 @@ pub struct SessionDetail {
     preview_len: usize,
     loaded_count: usize,
     has_more_messages: bool,
+    pending_boundary_tool_rows: Vec<crate::database::TranscriptItemRow>,
     search_query: Option<String>,
-    /// Keyed by transcript item_index (== factory position). Only message rows contribute.
-    match_counts: BTreeMap<usize, usize>,
+    /// Keyed by top-level display index in the transcript factory.
+    ///
+    /// This is intentionally a UI index, not the original database
+    /// `transcript_items.item_index`, because grouped tool bursts collapse
+    /// multiple source rows into one displayed row.
+    match_segments: BTreeMap<usize, Vec<usize>>,
     current_match: usize,
     total_matches: usize,
-    scroll_to_item: Cell<Option<usize>>,
+    scroll_to_item: Cell<Option<ScrollTarget>>,
     pending_toast: Cell<bool>,
 }
 
+/// Resolved scroll destination for global search navigation.
+///
+/// `display_index` addresses a top-level transcript row in the factory. When
+/// `child_index` is present, the target is a child entry inside an expanded
+/// burst row rather than the row container itself.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct ScrollTarget {
+    display_index: usize,
+    child_index: Option<usize>,
+}
+
+struct BoundaryAppendPlan {
+    replacement_items: Vec<DisplayTranscriptItem>,
+    rows: Vec<crate::database::TranscriptItemRow>,
+}
+
+/// Parent-facing actions emitted by [`SessionDetail`].
 #[derive(Debug)]
 pub enum SessionDetailOutput {
     InspectToolCall(String),
     InspectSubagent(String),
 }
 
+/// Input messages accepted by [`SessionDetail`].
+///
+/// This enum mixes app-level commands sent by parent components with
+/// child-row events and internal UI messages that are funneled back into the
+/// detail view's `update` loop.
 #[derive(Debug)]
 pub enum SessionDetailMsg {
+    /// Replaces the active session and reloads transcript content, optionally
+    /// applying an active transcript search query.
     SetSession {
         session: Box<Session>,
         search_query: Option<String>,
     },
+    /// Updates the active transcript search query and reloads the current
+    /// session so match highlighting stays in sync with displayed rows.
     UpdateSearchQuery(Option<String>),
     LoadMore,
     PrevMatch,
     NextMatch,
     ClearSearch,
-    MatchCount(usize, usize),
+    /// Receives per-row match counts from [`TranscriptRow`] children; one count
+    /// per segment (burst child or single row).
+    MatchSegments(usize, Vec<usize>),
+    /// Indicates that a transcript row failed to expand to its full content and
+    /// should trigger the shared toast notification path.
     ShowExpandLoadFailure,
     Clear,
     InspectToolCall(String),
@@ -479,9 +523,10 @@ impl SimpleComponent for SessionDetail {
         let messages: FactoryVecDeque<TranscriptRow> = FactoryVecDeque::builder()
             .launch_default()
             .forward(sender.input_sender(), |output| match output {
-                TranscriptRowOutput::MatchCountChanged { item_index, count } => {
-                    SessionDetailMsg::MatchCount(item_index, count)
-                }
+                TranscriptRowOutput::MatchSegmentsChanged {
+                    display_index,
+                    segments,
+                } => SessionDetailMsg::MatchSegments(display_index, segments),
                 TranscriptRowOutput::ExpandLoadFailed { .. } => {
                     SessionDetailMsg::ShowExpandLoadFailure
                 }
@@ -498,8 +543,9 @@ impl SimpleComponent for SessionDetail {
             preview_len: 2000,
             loaded_count: 0,
             has_more_messages: false,
+            pending_boundary_tool_rows: Vec::new(),
             search_query: None,
-            match_counts: BTreeMap::new(),
+            match_segments: BTreeMap::new(),
             current_match: 0,
             total_matches: 0,
             scroll_to_item: Cell::new(None),
@@ -523,10 +569,7 @@ impl SimpleComponent for SessionDetail {
                 search_query,
             } => {
                 self.search_query = search_query;
-                self.match_counts.clear();
-                self.current_match = 0;
-                self.total_matches = 0;
-
+                self.reset_search_matches();
                 let session = *session;
                 let session_id = session.id.clone();
                 self.session = Some(session);
@@ -534,84 +577,29 @@ impl SimpleComponent for SessionDetail {
             }
             SessionDetailMsg::UpdateSearchQuery(query) => {
                 self.search_query = query;
-                self.match_counts.clear();
-                self.current_match = 0;
-                self.total_matches = 0;
-
-                if let Some(session) = &self.session {
-                    let session_id = session.id.clone();
-                    self.load_first_page(&session_id);
-                }
+                self.reset_search_matches();
+                self.reload_current_session();
             }
             SessionDetailMsg::LoadMore => {
-                if let Some(session) = &self.session {
-                    let session_id = session.id.clone();
-                    let offset = self.loaded_count;
-                    match load_transcript_items(
-                        &self.db_path,
-                        &session_id,
-                        self.page_size as i64,
-                        offset as i64,
-                        self.preview_len as i64,
-                    ) {
-                        Ok(rows) => {
-                            self.has_more_messages = rows.len() == self.page_size;
-                            self.loaded_count += rows.len();
-                            let highlight = self.search_query.clone();
-                            let db_path = self.db_path.clone();
-                            let mut guard = self.messages.guard();
-                            for row in rows {
-                                guard.push_back(transcript_item_init_from_row(
-                                    &row,
-                                    &session_id,
-                                    highlight.clone(),
-                                    db_path.clone(),
-                                ));
-                            }
-                        }
-                        Err(err) => {
-                            tracing::error!("Failed to load more transcript items: {}", err);
-                            self.has_more_messages = false;
-                        }
-                    }
-                }
+                self.load_next_page();
             }
             SessionDetailMsg::PrevMatch => {
                 if self.total_matches > 0 {
-                    if self.current_match == 0 {
-                        self.current_match = self.total_matches - 1;
-                    } else {
-                        self.current_match -= 1;
-                    }
-                    let item_idx =
-                        Self::find_item_for_match(&self.match_counts, self.current_match);
-                    self.scroll_to_item.set(Some(item_idx));
+                    self.current_match = match self.current_match {
+                        0 => self.total_matches - 1,
+                        n => n - 1,
+                    };
+                    self.scroll_to_current_match();
                 }
             }
             SessionDetailMsg::NextMatch => {
                 if self.total_matches > 0 {
                     self.current_match = (self.current_match + 1) % self.total_matches;
-                    let item_idx =
-                        Self::find_item_for_match(&self.match_counts, self.current_match);
-                    self.scroll_to_item.set(Some(item_idx));
+                    self.scroll_to_current_match();
                 }
             }
-            SessionDetailMsg::MatchCount(item_index, count) => {
-                let was_empty = self.total_matches == 0;
-                self.match_counts.insert(item_index, count);
-                self.total_matches = self.match_counts.values().sum();
-                if was_empty && self.total_matches > 0 && self.search_query.is_some() {
-                    self.current_match = 0;
-                    let item_idx = Self::find_item_for_match(&self.match_counts, 0);
-                    self.scroll_to_item.set(Some(item_idx));
-                }
-                if self.total_matches > 0 {
-                    if self.current_match >= self.total_matches {
-                        self.current_match = self.total_matches - 1;
-                    }
-                } else {
-                    self.current_match = 0;
-                }
+            SessionDetailMsg::MatchSegments(display_index, segments) => {
+                self.update_match_segments(display_index, segments);
             }
             SessionDetailMsg::ShowExpandLoadFailure => {
                 tracing::warn!("Could not load full message content");
@@ -619,14 +607,8 @@ impl SimpleComponent for SessionDetail {
             }
             SessionDetailMsg::ClearSearch => {
                 self.search_query = None;
-                self.match_counts.clear();
-                self.current_match = 0;
-                self.total_matches = 0;
-
-                if let Some(session) = &self.session {
-                    let session_id = session.id.clone();
-                    self.load_first_page(&session_id);
-                }
+                self.reset_search_matches();
+                self.reload_current_session();
             }
             SessionDetailMsg::Clear => {
                 self.session = None;
@@ -634,9 +616,8 @@ impl SimpleComponent for SessionDetail {
                 self.loaded_count = 0;
                 self.has_more_messages = false;
                 self.search_query = None;
-                self.match_counts.clear();
-                self.current_match = 0;
-                self.total_matches = 0;
+                self.reset_search_matches();
+                self.clear_pending_boundary_tool_rows();
             }
             SessionDetailMsg::InspectToolCall(id) => {
                 sender.output(SessionDetailOutput::InspectToolCall(id)).ok();
@@ -821,40 +802,87 @@ impl SimpleComponent for SessionDetail {
                 .add_toast(adw::Toast::new("Could not load full message."));
         }
 
-        if let Some(item_index) = self.scroll_to_item.take() {
+        if let Some(target) = self.scroll_to_item.take() {
             let messages_widget = self.messages.widget().clone();
             let scroll_child = widgets.scroll_child.clone();
             glib::idle_add_local_once(move || {
-                let Some(target) = messages_widget
+                let Some(row_widget) = messages_widget
                     .observe_children()
-                    .item(item_index as u32)
+                    .item(target.display_index as u32)
                     .and_then(|obj| obj.downcast::<gtk::Widget>().ok())
                 else {
                     return;
                 };
 
-                let Some(point) =
-                    target.compute_point(&scroll_child, &gtk::graphene::Point::zero())
-                else {
-                    return;
-                };
+                if let Some(child_index) = target.child_index
+                    && let Some(expander) = row_widget
+                        .first_child()
+                        .and_then(|w| w.downcast::<gtk::Expander>().ok())
+                {
+                    expander.set_expanded(true);
+                    let scroll_child_for_tick = scroll_child.clone();
+                    let expander_for_tick = expander.clone();
+                    let tick_count = std::cell::Cell::new(0u32);
+                    expander.add_tick_callback(move |_, _| {
+                        let ticks = tick_count.get() + 1;
+                        tick_count.set(ticks);
+                        if ticks > 60 {
+                            return glib::ControlFlow::Break;
+                        }
 
-                let Some(scrolled_window) = scroll_child
-                    .ancestor(gtk::ScrolledWindow::static_type())
-                    .and_then(|w| w.downcast::<gtk::ScrolledWindow>().ok())
-                else {
-                    return;
-                };
+                        let Some(child_box) = expander_for_tick
+                            .child()
+                            .and_then(|w| w.downcast::<gtk::Box>().ok())
+                        else {
+                            return glib::ControlFlow::Break;
+                        };
 
-                let vadj = scrolled_window.vadjustment();
-                let target_y = (point.y() as f64) - (vadj.page_size() / 3.0);
-                vadj.set_value(target_y.max(0.0));
+                        let Some(child_widget) = child_box
+                            .observe_children()
+                            .item(child_index as u32)
+                            .and_then(|obj| obj.downcast::<gtk::Widget>().ok())
+                        else {
+                            return glib::ControlFlow::Continue;
+                        };
+
+                        Self::scroll_widget_into_view(&child_widget, &scroll_child_for_tick);
+                        glib::ControlFlow::Break
+                    });
+                    return;
+                }
+
+                Self::scroll_widget_into_view(&row_widget, &scroll_child);
             });
         }
     }
 }
 
 impl SessionDetail {
+    /// Converts database transcript rows into display items, assigning
+    /// factory display indexes (starting from `base_display_index`) for
+    /// search-match bookkeeping.
+    fn build_display_items(
+        rows: Vec<crate::database::TranscriptItemRow>,
+        session_id: &str,
+        highlight_query: Option<String>,
+        db_path: Arc<PathBuf>,
+        base_display_index: usize,
+    ) -> Vec<TranscriptItemInit> {
+        group_transcript_rows(rows)
+            .into_iter()
+            .enumerate()
+            .map(|(offset, item)| {
+                transcript_item_init_from_display_item(
+                    base_display_index + offset,
+                    &item,
+                    session_id,
+                    highlight_query.clone(),
+                    db_path.clone(),
+                )
+            })
+            .collect()
+    }
+
     fn load_first_page(&mut self, session_id: &str) {
         match load_transcript_items(
             &self.db_path,
@@ -868,15 +896,11 @@ impl SessionDetail {
                 self.loaded_count = rows.len();
                 let highlight = self.search_query.clone();
                 let db_path = self.db_path.clone();
+                self.track_pending_boundary_tool_rows(&rows);
                 self.clear_messages_safely();
                 let mut guard = self.messages.guard();
-                for row in rows {
-                    guard.push_back(transcript_item_init_from_row(
-                        &row,
-                        session_id,
-                        highlight.clone(),
-                        db_path.clone(),
-                    ));
+                for item in Self::build_display_items(rows, session_id, highlight, db_path, 0) {
+                    guard.push_back(item);
                 }
             }
             Err(err) => {
@@ -888,8 +912,172 @@ impl SessionDetail {
                 self.clear_messages_safely();
                 self.loaded_count = 0;
                 self.has_more_messages = false;
+                self.clear_pending_boundary_tool_rows();
             }
         }
+    }
+
+    fn reset_search_matches(&mut self) {
+        self.match_segments.clear();
+        self.current_match = 0;
+        self.total_matches = 0;
+    }
+
+    fn reload_current_session(&mut self) {
+        if let Some(session) = &self.session {
+            let session_id = session.id.clone();
+            self.load_first_page(&session_id);
+        }
+    }
+
+    fn scroll_to_current_match(&self) {
+        let target = Self::find_match_target(&self.match_segments, self.current_match);
+        self.scroll_to_item.set(Some(target));
+    }
+
+    fn clear_pending_boundary_tool_rows(&mut self) {
+        self.pending_boundary_tool_rows.clear();
+    }
+
+    fn track_pending_boundary_tool_rows(&mut self, rows: &[crate::database::TranscriptItemRow]) {
+        self.pending_boundary_tool_rows = if self.has_more_messages {
+            trailing_tool_call_rows(rows)
+        } else {
+            Vec::new()
+        };
+    }
+
+    fn regroup_next_page_boundary(
+        &mut self,
+        rows: Vec<crate::database::TranscriptItemRow>,
+    ) -> BoundaryAppendPlan {
+        if self.pending_boundary_tool_rows.is_empty() {
+            self.track_pending_boundary_tool_rows(&rows);
+            return BoundaryAppendPlan {
+                replacement_items: Vec::new(),
+                rows,
+            };
+        }
+
+        let regrouped =
+            regroup_boundary(std::mem::take(&mut self.pending_boundary_tool_rows), rows);
+        let replacement_items = regrouped.replacement_items;
+        let rows = regrouped.remaining_rows;
+
+        self.pending_boundary_tool_rows = if !self.has_more_messages {
+            Vec::new()
+        } else if rows.is_empty() {
+            trailing_tool_rows_from_display(&replacement_items)
+        } else {
+            trailing_tool_call_rows(&rows)
+        };
+
+        BoundaryAppendPlan {
+            replacement_items,
+            rows,
+        }
+    }
+
+    /// Loads the next transcript page and repairs any tool-burst grouping that
+    /// straddles the previous page boundary.
+    ///
+    /// The last rows of a loaded page may be trailing tool calls that cannot be
+    /// grouped correctly until the next page is available. When that happens,
+    /// the component replaces the affected tail items before appending the new
+    /// page so display rows and their search indexes stay stable.
+    fn load_next_page(&mut self) {
+        let Some(session) = &self.session else {
+            return;
+        };
+        let session_id = session.id.clone();
+        let offset = self.loaded_count;
+        let rows = match load_transcript_items(
+            &self.db_path,
+            &session_id,
+            self.page_size as i64,
+            offset as i64,
+            self.preview_len as i64,
+        ) {
+            Ok(rows) => rows,
+            Err(err) => {
+                tracing::error!("Failed to load more transcript items: {}", err);
+                self.has_more_messages = false;
+                return;
+            }
+        };
+
+        let source_len = rows.len();
+        self.has_more_messages = source_len == self.page_size;
+        self.loaded_count += source_len;
+
+        let highlight = self.search_query.clone();
+        let db_path = self.db_path.clone();
+        // Boundary regrouping must run before borrowing `self.messages` since it
+        // mutates `self.pending_boundary_tool_rows`.
+        let BoundaryAppendPlan {
+            replacement_items,
+            rows,
+        } = self.regroup_next_page_boundary(rows);
+
+        {
+            let mut guard = self.messages.guard();
+
+            if !replacement_items.is_empty() {
+                let _ = guard.pop_back();
+                let start_index = guard.len();
+                for item in replacement_items
+                    .into_iter()
+                    .enumerate()
+                    .map(|(offset, item)| {
+                        transcript_item_init_from_display_item(
+                            start_index + offset,
+                            &item,
+                            &session_id,
+                            highlight.clone(),
+                            db_path.clone(),
+                        )
+                    })
+                {
+                    guard.push_back(item);
+                }
+            }
+
+            let start_index = guard.len();
+            for item in
+                Self::build_display_items(rows, &session_id, highlight, db_path, start_index)
+            {
+                guard.push_back(item);
+            }
+        }
+
+        if !self.has_more_messages {
+            self.clear_pending_boundary_tool_rows();
+        }
+    }
+
+    /// Merges per-row match counts reported by child rows into global search
+    /// navigation state.
+    ///
+    /// `display_index` is the current top-level factory position for the row,
+    /// not the original database `item_index`.
+    fn update_match_segments(&mut self, display_index: usize, segments: Vec<usize>) {
+        let was_empty = self.total_matches == 0;
+        self.match_segments.insert(display_index, segments);
+        self.total_matches = self
+            .match_segments
+            .values()
+            .map(|parts| parts.iter().sum::<usize>())
+            .sum();
+        if was_empty && self.total_matches > 0 && self.search_query.is_some() {
+            self.current_match = 0;
+            let target = Self::find_match_target(&self.match_segments, 0);
+            self.scroll_to_item.set(Some(target));
+        }
+        self.current_match = match self.total_matches {
+            0 => 0,
+            n if self.current_match >= n => n - 1,
+            _ => self.current_match,
+        };
     }
 
     /// Clear transcript rows after releasing focus from any currently-focused row widget.
@@ -918,18 +1106,51 @@ impl SessionDetail {
         }
     }
 
-    /// Resolve a global match index to the transcript item_index of the matching row.
-    /// Since item_index == factory position (items pushed in transcript order),
-    /// this can be used directly as the scroll target.
-    fn find_item_for_match(counts: &BTreeMap<usize, usize>, global_index: usize) -> usize {
+    fn scroll_widget_into_view(widget: &gtk::Widget, scroll_child: &gtk::Box) {
+        let Some(point) = widget.compute_point(scroll_child, &gtk::graphene::Point::zero()) else {
+            return;
+        };
+
+        let Some(scrolled_window) = scroll_child
+            .ancestor(gtk::ScrolledWindow::static_type())
+            .and_then(|w| w.downcast::<gtk::ScrolledWindow>().ok())
+        else {
+            return;
+        };
+
+        let vadj = scrolled_window.vadjustment();
+        let target_y = (point.y() as f64) - (vadj.page_size() / 3.0);
+        vadj.set_value(target_y.max(0.0));
+    }
+
+    /// Maps a global match ordinal to the row, and optional burst child,
+    /// containing that match.
+    fn find_match_target(
+        segments_by_display_index: &BTreeMap<usize, Vec<usize>>,
+        global_index: usize,
+    ) -> ScrollTarget {
         let mut remaining = global_index;
-        for (&item_index, &count) in counts.iter() {
-            if remaining < count {
-                return item_index;
+
+        for (&display_index, segments) in segments_by_display_index {
+            for (child_index, count) in segments.iter().copied().enumerate() {
+                if remaining < count {
+                    return ScrollTarget {
+                        display_index,
+                        child_index: (segments.len() > 1).then_some(child_index),
+                    };
+                }
+                remaining = remaining.saturating_sub(count);
             }
-            remaining -= count;
         }
-        counts.keys().last().copied().unwrap_or(0)
+
+        ScrollTarget {
+            display_index: segments_by_display_index
+                .keys()
+                .last()
+                .copied()
+                .unwrap_or(0),
+            child_index: None,
+        }
     }
 }
 
@@ -965,6 +1186,120 @@ mod tests {
             command_count,
             ending_status: crate::models::SessionEndingStatus::Clean,
         }
+    }
+
+    #[test]
+    fn build_display_items_groups_two_tool_calls_into_one_tool_burst() {
+        let rows = vec![
+            crate::database::TranscriptItemRow {
+                item_index: 0,
+                kind: crate::models::TranscriptItemKind::Message,
+                message_index: Some(0),
+                role: Some(crate::models::Role::Assistant),
+                content_preview: Some("hello".to_string()),
+                content_len: Some(5),
+                timestamp: Some(0),
+                model: None,
+                tool_call_id: None,
+                tool_name: None,
+                tool_status: None,
+                tool_summary: None,
+                tool_input_json: None,
+                tool_output_text: None,
+                duration_ms: None,
+                subagent_id: None,
+                subagent_title: None,
+                subagent_prompt: None,
+            },
+            crate::database::TranscriptItemRow {
+                item_index: 1,
+                kind: crate::models::TranscriptItemKind::ToolCall,
+                message_index: None,
+                role: None,
+                content_preview: None,
+                content_len: None,
+                timestamp: None,
+                model: None,
+                tool_call_id: Some("call-1".to_string()),
+                tool_name: Some("Read".to_string()),
+                tool_status: Some(crate::models::ToolCallStatus::Completed),
+                tool_summary: Some("read a file".to_string()),
+                tool_input_json: Some("{}".to_string()),
+                tool_output_text: None,
+                duration_ms: Some(5),
+                subagent_id: None,
+                subagent_title: None,
+                subagent_prompt: None,
+            },
+            crate::database::TranscriptItemRow {
+                item_index: 2,
+                kind: crate::models::TranscriptItemKind::ToolCall,
+                message_index: None,
+                role: None,
+                content_preview: None,
+                content_len: None,
+                timestamp: None,
+                model: None,
+                tool_call_id: Some("call-2".to_string()),
+                tool_name: Some("Edit".to_string()),
+                tool_status: Some(crate::models::ToolCallStatus::Completed),
+                tool_summary: Some("edit a file".to_string()),
+                tool_input_json: Some("{}".to_string()),
+                tool_output_text: None,
+                duration_ms: Some(7),
+                subagent_id: None,
+                subagent_title: None,
+                subagent_prompt: None,
+            },
+        ];
+
+        let items = SessionDetail::build_display_items(
+            rows,
+            "session-1",
+            None,
+            Arc::new(PathBuf::from("/tmp/test.db")),
+            0,
+        );
+
+        assert_eq!(items.len(), 2);
+        assert!(matches!(items[1], TranscriptItemInit::ToolBurst(_)));
+    }
+
+    #[test]
+    fn find_match_target_returns_child_index_for_burst_matches() {
+        let mut segments = BTreeMap::new();
+        segments.insert(0, vec![2]);
+        segments.insert(1, vec![0, 3, 1]);
+
+        assert_eq!(
+            SessionDetail::find_match_target(&segments, 3),
+            ScrollTarget {
+                display_index: 1,
+                child_index: Some(1),
+            }
+        );
+        assert_eq!(
+            SessionDetail::find_match_target(&segments, 5),
+            ScrollTarget {
+                display_index: 1,
+                child_index: Some(2),
+            }
+        );
+    }
+
+    #[test]
+    fn next_match_after_top_level_row_targets_burst_child() {
+        let mut segments = BTreeMap::new();
+        segments.insert(0, vec![1]);
+        segments.insert(1, vec![0, 2]);
+
+        assert_eq!(
+            SessionDetail::find_match_target(&segments, 1),
+            ScrollTarget {
+                display_index: 1,
+                child_index: Some(1),
+            }
+        );
     }
 
     #[gtk::test]

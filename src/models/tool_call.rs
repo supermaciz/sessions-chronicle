@@ -58,7 +58,28 @@ pub enum ToolCategory {
     Edit,
     Command,
     Read,
+    Search,
+    Agent,
+    Web,
     Other,
+}
+
+impl ToolCategory {
+    /// Returns the symbolic icon name for this category.
+    ///
+    /// Callers must pass the appropriate `icon_names` constants from the
+    /// binary crate.  Use [`tool_category_icon`] for the convenience wrapper.
+    pub fn icon_name(self, icons: &ToolCategoryIcons) -> &'static str {
+        match self {
+            Self::Read => icons.read,
+            Self::Edit => icons.edit,
+            Self::Command => icons.command,
+            Self::Search => icons.search,
+            Self::Agent => icons.agent,
+            Self::Web => icons.web,
+            Self::Other => icons.other,
+        }
+    }
 }
 
 /// Classify a tool name into a broad activity category.
@@ -75,13 +96,38 @@ pub fn classify_tool_name(name: &str) -> ToolCategory {
         // Commands (shell execution)
         "Bash" | "bash" | "exec_command" => ToolCategory::Command,
 
-        // Reads (file/codebase exploration)
-        "Read" | "read" | "Glob" | "Grep" | "grep" | "read_file" | "list_directory"
-        | "list_files" => ToolCategory::Read,
+        // Reads (file content)
+        "Read" | "read" | "read_file" | "list_directory" | "list_files" => ToolCategory::Read,
 
-        // Everything else (Task, Agent, WebSearch, etc.)
+        // Search (codebase exploration)
+        "Glob" | "Grep" | "grep" => ToolCategory::Search,
+
+        // Agent (subagent spawning)
+        "Agent" | "Task" | "TaskCreate" | "TaskUpdate" => ToolCategory::Agent,
+
+        // Web (network operations)
+        "WebSearch" | "WebFetch" => ToolCategory::Web,
+
+        // Everything else
         _ => ToolCategory::Other,
     }
+}
+
+/// Icon name constants for each tool category, bridging the binary
+/// crate's generated `icon_names` module to the library crate.
+pub struct ToolCategoryIcons {
+    pub read: &'static str,
+    pub edit: &'static str,
+    pub command: &'static str,
+    pub search: &'static str,
+    pub agent: &'static str,
+    pub web: &'static str,
+    pub other: &'static str,
+}
+
+/// Returns the icon name for a specific tool call name.
+pub fn tool_name_icon(name: &str, icons: &ToolCategoryIcons) -> &'static str {
+    classify_tool_name(name).icon_name(icons)
 }
 
 #[cfg(test)]
@@ -106,20 +152,35 @@ mod tests {
     #[test]
     fn classify_read_tools() {
         assert_eq!(classify_tool_name("Read"), ToolCategory::Read);
-        assert_eq!(classify_tool_name("Glob"), ToolCategory::Read);
-        assert_eq!(classify_tool_name("Grep"), ToolCategory::Read);
         assert_eq!(classify_tool_name("read"), ToolCategory::Read);
-        assert_eq!(classify_tool_name("grep"), ToolCategory::Read);
         assert_eq!(classify_tool_name("read_file"), ToolCategory::Read);
         assert_eq!(classify_tool_name("list_directory"), ToolCategory::Read);
     }
 
     #[test]
+    fn classify_search_tools() {
+        assert_eq!(classify_tool_name("Glob"), ToolCategory::Search);
+        assert_eq!(classify_tool_name("Grep"), ToolCategory::Search);
+        assert_eq!(classify_tool_name("grep"), ToolCategory::Search);
+    }
+
+    #[test]
+    fn classify_agent_tools() {
+        assert_eq!(classify_tool_name("Agent"), ToolCategory::Agent);
+        assert_eq!(classify_tool_name("Task"), ToolCategory::Agent);
+        assert_eq!(classify_tool_name("TaskCreate"), ToolCategory::Agent);
+        assert_eq!(classify_tool_name("TaskUpdate"), ToolCategory::Agent);
+    }
+
+    #[test]
+    fn classify_web_tools() {
+        assert_eq!(classify_tool_name("WebSearch"), ToolCategory::Web);
+        assert_eq!(classify_tool_name("WebFetch"), ToolCategory::Web);
+    }
+
+    #[test]
     fn classify_unknown_tools_as_other() {
-        assert_eq!(classify_tool_name("Task"), ToolCategory::Other);
-        assert_eq!(classify_tool_name("Agent"), ToolCategory::Other);
         assert_eq!(classify_tool_name("my_tool"), ToolCategory::Other);
-        assert_eq!(classify_tool_name("WebSearch"), ToolCategory::Other);
         assert_eq!(classify_tool_name(""), ToolCategory::Other);
     }
 }

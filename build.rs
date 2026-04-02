@@ -4,6 +4,17 @@ fn main() {
         Some("io.github.supermaciz.sessionschronicle"),
         None::<&str>,
         None::<&str>,
-        ["graph", "prohibited-regular", "error-circle-regular"],
+        [
+            "graph",
+            "prohibited-regular",
+            "error-circle-regular",
+            "text-snippet",
+            "edit-document",
+            "terminal",
+            "search",
+            "smart-toy",
+            "earth",
+            "build",
+        ],
     );
 }

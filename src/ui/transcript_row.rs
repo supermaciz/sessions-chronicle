@@ -1,5 +1,6 @@
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::{collections::BTreeMap, rc::Rc};
 
 use anyhow::Result;
 use chrono::{TimeZone, Utc};
@@ -8,10 +9,21 @@ use relm4::factory::{DynamicIndex, FactoryComponent, FactorySender};
 use relm4::gtk;
 
 use crate::database::load_message_full_content;
-use crate::models::{MessagePreview, Role, ToolCallStatus};
+use crate::icon_names;
+use crate::models::{MessagePreview, Role, ToolCallStatus, ToolCategoryIcons, tool_name_icon};
 use crate::ui::format::{format_duration_ms, tool_status_css_class, tool_status_label};
 use crate::ui::highlight;
 use crate::ui::markdown;
+
+const TOOL_ICONS: ToolCategoryIcons = ToolCategoryIcons {
+    read: icon_names::TEXT_SNIPPET,
+    edit: icon_names::EDIT_DOCUMENT,
+    command: icon_names::TERMINAL,
+    search: icon_names::SEARCH,
+    agent: icon_names::SMART_TOY,
+    web: icon_names::EARTH,
+    other: icon_names::BUILD,
+};
 
 /// Return the model display text for a transcript header.
 /// Only assistant messages with a non-empty model value produce output.
@@ -37,14 +49,51 @@ pub struct MessageItemInit {
     pub db_path: Arc<PathBuf>,
 }
 
+#[derive(Debug, Clone)]
+/// UI-facing data needed to render a single tool call transcript row.
+///
+/// `preview` is the preferred secondary line because it is derived from the
+/// tool-specific input/output payload when possible. `summary` is a normalized
+/// fallback string carried through the database layer; current parsers do not
+/// populate it, but the row still supports it for future parser coverage and
+/// historical data compatibility.
 pub struct ToolCallItemInit {
+    /// Stable transcript item position used for match/selection bookkeeping.
     pub item_index: usize,
+    /// Session-scoped tool call identifier used by the inspector action.
     pub tool_call_id: String,
+    /// Normalized tool call name shown in the primary monospace label.
     pub tool_name: String,
+    /// Normalized execution status rendered as a badge.
     pub status: ToolCallStatus,
+    /// Preferred short preview extracted from tool input/output content.
     pub preview: Option<String>,
+    /// Optional one-line summary string used as a fallback preview/search text.
     pub summary: Option<String>,
+    /// Optional execution duration displayed in the row suffix.
     pub duration_ms: Option<i64>,
+    /// Active transcript search query used to compute per-row match counts.
+    pub highlight_query: Option<String>,
+}
+
+impl ToolCallItemInit {
+    /// Returns the text actually shown as the secondary preview line:
+    /// `preview` if present, otherwise `summary` as fallback.
+    pub fn displayed_preview(&self) -> Option<&str> {
+        self.preview.as_deref().or(self.summary.as_deref())
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct ToolBurstItemInit {
+    pub item_index: usize,
+    pub tool_calls: Vec<ToolCallItemInit>,
+    pub category_counts: Vec<(String, usize)>,
+    pub error_count: usize,
+    pub total_duration_ms: Option<i64>,
+    pub match_count: usize,
+    pub child_match_counts: Vec<usize>,
+    pub default_expanded: bool,
 }
 
 pub struct SubagentItemInit {
@@ -56,6 +105,7 @@ pub struct SubagentItemInit {
 pub enum TranscriptItemInit {
     Message(MessageItemInit),
     ToolCall(ToolCallItemInit),
+    ToolBurst(ToolBurstItemInit),
     Subagent(SubagentItemInit),
 }
 
@@ -76,9 +126,13 @@ pub enum TranscriptRowCmd {
 
 #[derive(Debug)]
 pub enum TranscriptRowOutput {
-    MatchCountChanged {
-        item_index: usize,
-        count: usize,
+    MatchSegmentsChanged {
+        /// Top-level display index in the transcript factory.
+        ///
+        /// This differs from the source database `item_index` whenever the UI
+        /// groups consecutive tool calls into a single burst row.
+        display_index: usize,
+        segments: Vec<usize>,
     },
     ExpandLoadFailed {
         #[allow(dead_code)]
@@ -96,6 +150,7 @@ pub enum TranscriptRowOutput {
 enum TranscriptRowKind {
     Message,
     ToolCall,
+    ToolBurst,
     Subagent,
 }
 
@@ -124,6 +179,10 @@ pub struct TranscriptRow {
     tool_preview: Option<String>,
     tool_summary: Option<String>,
     tool_duration_ms: Option<i64>,
+    tool_highlight_query: Option<String>,
+
+    // --- ToolBurst state ---
+    tool_burst: Option<ToolBurstItemInit>,
 
     // --- Subagent state ---
     subagent_id: Option<String>,
@@ -187,6 +246,170 @@ fn render_content(
     match_count
 }
 
+fn count_tool_call_matches(init: &ToolCallItemInit) -> usize {
+    let Some(query) = init.highlight_query.as_deref() else {
+        return 0;
+    };
+
+    let mut count = highlight::find_case_insensitive_matches_in_text(&init.tool_name, query).len();
+    if let Some(text) = init.displayed_preview() {
+        count += highlight::find_case_insensitive_matches_in_text(text, query).len();
+    }
+    count
+}
+
+pub fn build_tool_burst_init(
+    item_index: usize,
+    tool_calls: Vec<ToolCallItemInit>,
+    default_expanded: bool,
+) -> ToolBurstItemInit {
+    let mut category_counts = BTreeMap::new();
+    let mut error_count = 0usize;
+    let mut total_duration_ms = 0i64;
+    let mut saw_duration = false;
+    let mut child_match_counts = Vec::new();
+
+    for tool_call in &tool_calls {
+        *category_counts
+            .entry(tool_call.tool_name.clone())
+            .or_insert(0usize) += 1;
+        if matches!(tool_call.status, ToolCallStatus::Error) {
+            error_count += 1;
+        }
+        if let Some(ms) = tool_call.duration_ms {
+            total_duration_ms += ms;
+            saw_duration = true;
+        }
+        child_match_counts.push(count_tool_call_matches(tool_call));
+    }
+
+    ToolBurstItemInit {
+        item_index,
+        tool_calls,
+        category_counts: category_counts.into_iter().collect(),
+        error_count,
+        total_duration_ms: saw_duration.then_some(total_duration_ms),
+        match_count: child_match_counts.iter().sum(),
+        child_match_counts,
+        default_expanded,
+    }
+}
+
+fn format_tool_burst_accessible_label(
+    category_counts: &[(String, usize)],
+    total_tool_calls: usize,
+    error_count: usize,
+) -> String {
+    let mut details: Vec<String> = category_counts
+        .iter()
+        .map(|(name, count)| format!("{count} {name}"))
+        .collect();
+    if error_count > 0 {
+        details.push(format!(
+            "{error_count} {}",
+            if error_count == 1 { "error" } else { "errors" }
+        ));
+    }
+
+    let mut label = format!("{total_tool_calls} tool calls");
+    if !details.is_empty() {
+        label.push_str(": ");
+        label.push_str(&details.join(", "));
+    }
+    label
+}
+
+pub fn format_tool_burst_match_badge_accessible_label(match_count: usize) -> String {
+    format!("{match_count} search matches inside this group")
+}
+
+struct ToolCallWidgetRefs {
+    root: gtk::Box,
+    match_count: usize,
+}
+
+fn build_tool_call_widget(
+    init: &ToolCallItemInit,
+    on_inspect: impl Fn(String) + 'static,
+) -> ToolCallWidgetRefs {
+    let on_inspect = Rc::new(on_inspect);
+    let root = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    root.add_css_class("tool-call-row");
+    root.set_margin_top(2);
+    root.set_margin_bottom(2);
+
+    let row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    row.set_margin_start(8);
+    row.set_margin_end(4);
+    row.set_margin_top(4);
+    row.set_margin_bottom(4);
+
+    let icon = gtk::Image::new();
+    icon.set_icon_name(Some(tool_name_icon(&init.tool_name, &TOOL_ICONS)));
+    icon.set_pixel_size(16);
+    row.append(&icon);
+
+    let name_label = gtk::Label::new(None);
+    name_label.add_css_class("monospace");
+    name_label.set_halign(gtk::Align::Start);
+    name_label.set_hexpand(true);
+    name_label.set_ellipsize(gtk::pango::EllipsizeMode::End);
+    if let Some(query) = init.highlight_query.as_deref() {
+        let (markup, _) = highlight::highlight_text(&init.tool_name, query);
+        name_label.set_markup(&markup);
+    } else {
+        name_label.set_label(&init.tool_name);
+    }
+    row.append(&name_label);
+
+    let status_label = gtk::Label::new(Some(tool_status_label(init.status)));
+    status_label.add_css_class("caption");
+    status_label.add_css_class(tool_status_css_class(init.status));
+    row.append(&status_label);
+
+    if let Some(ms) = init.duration_ms {
+        let dur_label = gtk::Label::new(Some(&format_duration_ms(ms)));
+        dur_label.add_css_class("caption");
+        dur_label.add_css_class("dim-label");
+        row.append(&dur_label);
+    }
+
+    let inspect_btn = gtk::Button::new();
+    inspect_btn.set_icon_name("view-reveal-symbolic");
+    inspect_btn.set_tooltip_text(Some("Inspect tool call"));
+    inspect_btn.add_css_class("flat");
+    {
+        let id = init.tool_call_id.clone();
+        let on_inspect = on_inspect.clone();
+        inspect_btn.connect_clicked(move |_| on_inspect(id.clone()));
+    }
+    row.append(&inspect_btn);
+    root.append(&row);
+
+    if let Some(preview) = init.displayed_preview() {
+        let preview_label = gtk::Label::new(None);
+        preview_label.add_css_class("caption");
+        preview_label.add_css_class("dim-label");
+        preview_label.add_css_class("preview-label");
+        preview_label.set_halign(gtk::Align::Start);
+        preview_label.set_margin_start(32);
+        preview_label.set_margin_bottom(4);
+        preview_label.set_ellipsize(gtk::pango::EllipsizeMode::End);
+        if let Some(query) = init.highlight_query.as_deref() {
+            let (markup, _) = highlight::highlight_text(preview, query);
+            preview_label.set_markup(&markup);
+        } else {
+            preview_label.set_label(preview);
+        }
+        root.append(&preview_label);
+    }
+
+    ToolCallWidgetRefs {
+        root,
+        match_count: count_tool_call_matches(init),
+    }
+}
+
 impl FactoryComponent for TranscriptRow {
     type Init = TranscriptItemInit;
     type Input = TranscriptRowMsg;
@@ -219,6 +442,8 @@ impl FactoryComponent for TranscriptRow {
                 tool_preview: None,
                 tool_summary: None,
                 tool_duration_ms: None,
+                tool_highlight_query: None,
+                tool_burst: None,
                 subagent_id: None,
                 subagent_title: None,
             },
@@ -238,6 +463,29 @@ impl FactoryComponent for TranscriptRow {
                 tool_preview: tc.preview,
                 tool_summary: tc.summary,
                 tool_duration_ms: tc.duration_ms,
+                tool_highlight_query: tc.highlight_query,
+                tool_burst: None,
+                subagent_id: None,
+                subagent_title: None,
+            },
+            TranscriptItemInit::ToolBurst(tb) => Self {
+                item_index: tb.item_index,
+                kind: TranscriptRowKind::ToolBurst,
+                preview: None,
+                highlight_query: None,
+                db_path: None,
+                expanded: false,
+                full_content: None,
+                loading_full_content: false,
+                rendered_match_count: tb.match_count,
+                tool_call_id: None,
+                tool_name: None,
+                tool_status: None,
+                tool_preview: None,
+                tool_summary: None,
+                tool_duration_ms: None,
+                tool_highlight_query: None,
+                tool_burst: Some(tb),
                 subagent_id: None,
                 subagent_title: None,
             },
@@ -257,6 +505,8 @@ impl FactoryComponent for TranscriptRow {
                 tool_preview: None,
                 tool_summary: None,
                 tool_duration_ms: None,
+                tool_highlight_query: None,
+                tool_burst: None,
                 subagent_id: Some(sa.subagent_id),
                 subagent_title: Some(sa.title),
             },
@@ -273,6 +523,7 @@ impl FactoryComponent for TranscriptRow {
         match self.kind {
             TranscriptRowKind::Message => self.build_message_widgets(&root, sender),
             TranscriptRowKind::ToolCall => self.build_tool_call_widgets(&root, sender),
+            TranscriptRowKind::ToolBurst => self.build_tool_burst_widgets(&root, sender),
             TranscriptRowKind::Subagent => self.build_subagent_widgets(&root, sender),
         }
     }
@@ -305,9 +556,9 @@ impl FactoryComponent for TranscriptRow {
                     if count != self.rendered_match_count {
                         self.rendered_match_count = count;
                         sender
-                            .output(TranscriptRowOutput::MatchCountChanged {
-                                item_index: self.item_index,
-                                count,
+                            .output(TranscriptRowOutput::MatchSegmentsChanged {
+                                display_index: self.item_index,
+                                segments: vec![count],
                             })
                             .ok();
                     }
@@ -324,9 +575,9 @@ impl FactoryComponent for TranscriptRow {
                     if count != self.rendered_match_count {
                         self.rendered_match_count = count;
                         sender
-                            .output(TranscriptRowOutput::MatchCountChanged {
-                                item_index: self.item_index,
-                                count,
+                            .output(TranscriptRowOutput::MatchSegmentsChanged {
+                                display_index: self.item_index,
+                                segments: vec![count],
                             })
                             .ok();
                     }
@@ -354,6 +605,7 @@ impl FactoryComponent for TranscriptRow {
                             .ok();
                     }
                 }
+                TranscriptRowKind::ToolBurst => {}
                 TranscriptRowKind::Subagent => {
                     if let Some(ref id) = self.subagent_id {
                         sender
@@ -390,9 +642,9 @@ impl FactoryComponent for TranscriptRow {
                 if count != self.rendered_match_count {
                     self.rendered_match_count = count;
                     sender
-                        .output(TranscriptRowOutput::MatchCountChanged {
-                            item_index: self.item_index,
-                            count,
+                        .output(TranscriptRowOutput::MatchSegmentsChanged {
+                            display_index: self.item_index,
+                            segments: vec![count],
                         })
                         .ok();
                 }
@@ -498,9 +750,9 @@ impl TranscriptRow {
         );
         self.rendered_match_count = match_count;
         sender
-            .output(TranscriptRowOutput::MatchCountChanged {
-                item_index: self.item_index,
-                count: match_count,
+            .output(TranscriptRowOutput::MatchSegmentsChanged {
+                display_index: self.item_index,
+                segments: vec![match_count],
             })
             .ok();
 
@@ -516,79 +768,145 @@ impl TranscriptRow {
         root: &gtk::Box,
         sender: FactorySender<Self>,
     ) -> TranscriptRowWidgets {
-        root.add_css_class("tool-call-row");
-        root.set_margin_top(2);
-        root.set_margin_bottom(2);
+        let init = ToolCallItemInit {
+            item_index: self.item_index,
+            tool_call_id: self.tool_call_id.clone().unwrap_or_default(),
+            tool_name: self
+                .tool_name
+                .clone()
+                .unwrap_or_else(|| "unknown".to_string()),
+            status: self.tool_status.unwrap_or(ToolCallStatus::Unknown),
+            preview: self.tool_preview.clone(),
+            summary: self.tool_summary.clone(),
+            duration_ms: self.tool_duration_ms,
+            highlight_query: self.tool_highlight_query.clone(),
+        };
 
-        let row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-        row.set_margin_start(8);
-        row.set_margin_end(4);
-        row.set_margin_top(4);
-        row.set_margin_bottom(4);
+        let refs = build_tool_call_widget(&init, {
+            let sender = sender.clone();
+            move |id| {
+                sender.output(TranscriptRowOutput::InspectToolCall(id)).ok();
+            }
+        });
+        root.append(&refs.root);
+        self.rendered_match_count = refs.match_count;
+        sender
+            .output(TranscriptRowOutput::MatchSegmentsChanged {
+                display_index: self.item_index,
+                segments: vec![refs.match_count],
+            })
+            .ok();
 
-        // Tool icon
-        let icon = gtk::Image::new();
-        icon.set_icon_name(Some("utilities-terminal-symbolic"));
-        icon.set_pixel_size(16);
-        row.append(&icon);
+        TranscriptRowWidgets {
+            content_container: gtk::Box::new(gtk::Orientation::Vertical, 0),
+            expand_button: gtk::Button::new(),
+        }
+    }
 
-        // Tool name
-        let name_label = gtk::Label::new(self.tool_name.as_deref());
-        name_label.add_css_class("monospace");
-        name_label.set_halign(gtk::Align::Start);
-        name_label.set_hexpand(true);
-        name_label.set_ellipsize(gtk::pango::EllipsizeMode::End);
-        row.append(&name_label);
+    fn build_tool_burst_widgets(
+        &mut self,
+        root: &gtk::Box,
+        sender: FactorySender<Self>,
+    ) -> TranscriptRowWidgets {
+        let Some(burst) = self.tool_burst.as_ref() else {
+            return TranscriptRowWidgets {
+                content_container: gtk::Box::new(gtk::Orientation::Vertical, 0),
+                expand_button: gtk::Button::new(),
+            };
+        };
 
-        // Status badge
-        if let Some(status) = self.tool_status {
-            let status_label = gtk::Label::new(Some(tool_status_label(status)));
-            status_label.add_css_class("caption");
-            status_label.add_css_class(tool_status_css_class(status));
-            row.append(&status_label);
+        root.add_css_class("tool-call-group");
+
+        let expander = gtk::Expander::new(None);
+        expander.set_expanded(burst.default_expanded);
+
+        let header = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+        header.add_css_class("tool-call-group-header");
+
+        for (name, count) in &burst.category_counts {
+            let pill_box = gtk::Box::new(gtk::Orientation::Horizontal, 4);
+            pill_box.add_css_class("pill");
+            pill_box.add_css_class("tool-call-group-pill");
+
+            let pill_icon = gtk::Image::new();
+            pill_icon.set_icon_name(Some(tool_name_icon(name, &TOOL_ICONS)));
+            pill_icon.set_pixel_size(12);
+            pill_box.append(&pill_icon);
+
+            let pill_label = gtk::Label::new(Some(&format!("{count} {name}")));
+            pill_box.append(&pill_label);
+
+            header.append(&pill_box);
         }
 
-        // Duration
-        if let Some(ms) = self.tool_duration_ms {
-            let dur_label = gtk::Label::new(Some(&format_duration_ms(ms)));
-            dur_label.add_css_class("caption");
-            dur_label.add_css_class("dim-label");
-            row.append(&dur_label);
+        if let Some(total_ms) = burst.total_duration_ms {
+            let duration = gtk::Label::new(Some(&format_duration_ms(total_ms)));
+            duration.add_css_class("caption");
+            duration.add_css_class("dim-label");
+            header.append(&duration);
         }
 
-        // Inspect button
-        let inspect_btn = gtk::Button::new();
-        inspect_btn.set_icon_name("view-reveal-symbolic");
-        inspect_btn.set_tooltip_text(Some("Inspect tool call"));
-        inspect_btn.add_css_class("flat");
-        {
-            let s = sender.clone();
-            inspect_btn.connect_clicked(move |_| {
-                s.input(TranscriptRowMsg::InspectClicked);
+        let total = gtk::Label::new(Some(&format!("{} tool calls", burst.tool_calls.len())));
+        total.add_css_class("caption");
+        total.add_css_class("dim-label");
+        header.append(&total);
+
+        if burst.error_count > 0 {
+            let error_label = gtk::Label::new(Some(&format!(
+                "{} {}",
+                burst.error_count,
+                if burst.error_count == 1 {
+                    "error"
+                } else {
+                    "errors"
+                }
+            )));
+            error_label.add_css_class("caption");
+            error_label.add_css_class("status-error");
+            header.append(&error_label);
+        }
+
+        let burst_match_count: usize = burst.child_match_counts.iter().sum();
+        if burst_match_count > 0 {
+            let badge = gtk::Label::new(Some(&format!("{} matches", burst_match_count)));
+            badge.add_css_class("pill");
+            badge.add_css_class("accent");
+            badge.add_css_class("tool-call-group-pill");
+            let badge_a11y = format_tool_burst_match_badge_accessible_label(burst_match_count);
+            badge.update_property(&[gtk::accessible::Property::Label(&badge_a11y)]);
+            header.append(&badge);
+        }
+
+        expander.set_label_widget(Some(&header));
+        let expander_a11y = format_tool_burst_accessible_label(
+            &burst.category_counts,
+            burst.tool_calls.len(),
+            burst.error_count,
+        );
+        expander.update_property(&[gtk::accessible::Property::Label(&expander_a11y)]);
+
+        let children = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        for tool_call in &burst.tool_calls {
+            let child = build_tool_call_widget(tool_call, {
+                let sender = sender.clone();
+                move |id| {
+                    sender.output(TranscriptRowOutput::InspectToolCall(id)).ok();
+                }
             });
-        }
-        row.append(&inspect_btn);
-
-        root.append(&row);
-
-        // Preview line (optional)
-        if let Some(preview) = self
-            .tool_preview
-            .as_deref()
-            .or(self.tool_summary.as_deref())
-        {
-            let preview_label = gtk::Label::new(Some(preview));
-            preview_label.add_css_class("caption");
-            preview_label.add_css_class("dim-label");
-            preview_label.add_css_class("preview-label");
-            preview_label.set_halign(gtk::Align::Start);
-            preview_label.set_margin_start(32);
-            preview_label.set_margin_bottom(4);
-            preview_label.set_ellipsize(gtk::pango::EllipsizeMode::End);
-            root.append(&preview_label);
+            children.append(&child.root);
         }
 
-        // Return dummy widgets struct (nothing dynamic for tool calls in Phase 3)
+        expander.set_child(Some(&children));
+        root.append(&expander);
+
+        self.rendered_match_count = burst_match_count;
+        sender
+            .output(TranscriptRowOutput::MatchSegmentsChanged {
+                display_index: self.item_index,
+                segments: burst.child_match_counts.clone(),
+            })
+            .ok();
+
         TranscriptRowWidgets {
             content_container: gtk::Box::new(gtk::Orientation::Vertical, 0),
             expand_button: gtk::Button::new(),
@@ -666,8 +984,25 @@ impl TranscriptRow {
 }
 
 /// Build a `TranscriptItemInit` from a `TranscriptItemRow` returned by the DB query.
-pub fn transcript_item_init_from_row(
+#[cfg(test)]
+fn transcript_item_init_from_row(
     row: &crate::database::TranscriptItemRow,
+    session_id: &str,
+    highlight_query: Option<String>,
+    db_path: Arc<PathBuf>,
+) -> TranscriptItemInit {
+    transcript_item_init_from_row_with_index(
+        row,
+        row.item_index as usize,
+        session_id,
+        highlight_query,
+        db_path,
+    )
+}
+
+fn transcript_item_init_from_row_with_index(
+    row: &crate::database::TranscriptItemRow,
+    item_index: usize,
     session_id: &str,
     highlight_query: Option<String>,
     db_path: Arc<PathBuf>,
@@ -685,7 +1020,7 @@ pub fn transcript_item_init_from_row(
             let message_index = row.message_index.unwrap_or(0) as usize;
 
             TranscriptItemInit::Message(MessageItemInit {
-                item_index: row.item_index as usize,
+                item_index,
                 preview: MessagePreview {
                     session_id: session_id.to_string(),
                     message_index,
@@ -700,7 +1035,7 @@ pub fn transcript_item_init_from_row(
             })
         }
         TranscriptItemKind::ToolCall => TranscriptItemInit::ToolCall(ToolCallItemInit {
-            item_index: row.item_index as usize,
+            item_index,
             tool_call_id: row.tool_call_id.clone().unwrap_or_default(),
             tool_name: row
                 .tool_name
@@ -715,9 +1050,10 @@ pub fn transcript_item_init_from_row(
             .or_else(|| row.tool_summary.clone()),
             summary: row.tool_summary.clone(),
             duration_ms: row.duration_ms,
+            highlight_query,
         }),
         TranscriptItemKind::Subagent => TranscriptItemInit::Subagent(SubagentItemInit {
-            item_index: row.item_index as usize,
+            item_index,
             subagent_id: row.subagent_id.clone().unwrap_or_default(),
             title: row
                 .subagent_title
@@ -730,7 +1066,7 @@ pub fn transcript_item_init_from_row(
                 "transcript item with unknown kind; rendering as empty message"
             );
             TranscriptItemInit::Message(MessageItemInit {
-                item_index: row.item_index as usize,
+                item_index,
                 preview: MessagePreview {
                     session_id: session_id.to_string(),
                     message_index: 0,
@@ -743,6 +1079,52 @@ pub fn transcript_item_init_from_row(
                 highlight_query,
                 db_path,
             })
+        }
+    }
+}
+
+pub fn transcript_item_init_from_display_item(
+    display_index: usize,
+    item: &crate::ui::transcript_display::DisplayTranscriptItem,
+    session_id: &str,
+    highlight_query: Option<String>,
+    db_path: Arc<PathBuf>,
+) -> TranscriptItemInit {
+    match item {
+        crate::ui::transcript_display::DisplayTranscriptItem::Single(row) => {
+            transcript_item_init_from_row_with_index(
+                row,
+                display_index,
+                session_id,
+                highlight_query,
+                db_path,
+            )
+        }
+        crate::ui::transcript_display::DisplayTranscriptItem::ToolBurst(burst) => {
+            let tool_calls = burst
+                .rows
+                .iter()
+                .filter_map(|row| {
+                    match transcript_item_init_from_row_with_index(
+                        row,
+                        display_index,
+                        session_id,
+                        highlight_query.clone(),
+                        db_path.clone(),
+                    ) {
+                        TranscriptItemInit::ToolCall(tool_call) => Some(tool_call),
+                        other => {
+                            debug_assert!(
+                                false,
+                                "tool burst child must be a tool call, got {:?}",
+                                std::mem::discriminant(&other)
+                            );
+                            None
+                        }
+                    }
+                })
+                .collect();
+            TranscriptItemInit::ToolBurst(build_tool_burst_init(display_index, tool_calls, false))
         }
     }
 }
@@ -813,6 +1195,92 @@ mod tests {
         assert_eq!(model_label_text(Role::User, Some("o3-mini")), None);
         assert_eq!(model_label_text(Role::ToolResult, Some("o3-mini")), None);
         assert_eq!(model_label_text(Role::ToolCall, Some("o3-mini")), None);
+    }
+
+    #[test]
+    fn tool_call_match_count_uses_only_displayed_preview() {
+        // When preview is present, summary is not rendered and must not be counted.
+        let with_preview = ToolCallItemInit {
+            item_index: 7,
+            tool_call_id: "call-7".to_string(),
+            tool_name: "Read".to_string(),
+            status: ToolCallStatus::Completed,
+            preview: Some("src/ui/session_detail.rs:1-20".to_string()),
+            summary: Some("read the transcript loader".to_string()),
+            duration_ms: Some(12),
+            highlight_query: Some("read".to_string()),
+        };
+        // Only "Read" in tool_name matches; preview has no "read", summary is hidden.
+        assert_eq!(count_tool_call_matches(&with_preview), 1);
+
+        // When preview is absent, summary acts as fallback and is counted.
+        let with_summary_fallback = ToolCallItemInit {
+            item_index: 8,
+            tool_call_id: "call-8".to_string(),
+            tool_name: "Read".to_string(),
+            status: ToolCallStatus::Completed,
+            preview: None,
+            summary: Some("read the transcript loader".to_string()),
+            duration_ms: Some(12),
+            highlight_query: Some("read".to_string()),
+        };
+        // "Read" in tool_name + "read" in summary fallback = 2.
+        assert_eq!(count_tool_call_matches(&with_summary_fallback), 2);
+    }
+
+    #[test]
+    fn tool_burst_item_init_aggregates_categories_duration_errors_and_matches() {
+        let tool_calls = vec![
+            ToolCallItemInit {
+                item_index: 1,
+                tool_call_id: "call-1".to_string(),
+                tool_name: "Read".to_string(),
+                status: ToolCallStatus::Completed,
+                preview: Some("read src/ui/transcript_row.rs".to_string()),
+                summary: None,
+                duration_ms: Some(5),
+                highlight_query: Some("read".to_string()),
+            },
+            ToolCallItemInit {
+                item_index: 2,
+                tool_call_id: "call-2".to_string(),
+                tool_name: "Edit".to_string(),
+                status: ToolCallStatus::Error,
+                preview: Some("edit src/ui/session_detail.rs".to_string()),
+                summary: None,
+                duration_ms: Some(8),
+                highlight_query: Some("edit".to_string()),
+            },
+        ];
+
+        let burst = build_tool_burst_init(10, tool_calls, false);
+        assert_eq!(burst.error_count, 1);
+        assert_eq!(burst.total_duration_ms, Some(13));
+        assert_eq!(burst.match_count, 4);
+        assert_eq!(burst.child_match_counts, vec![2, 2]);
+        assert_eq!(
+            burst.category_counts,
+            vec![("Edit".to_string(), 1), ("Read".to_string(), 1)]
+        );
+    }
+
+    #[test]
+    fn tool_burst_accessible_label_summarizes_tools_and_errors() {
+        let label = format_tool_burst_accessible_label(
+            &[("Bash".to_string(), 1), ("Read".to_string(), 2)],
+            3,
+            1,
+        );
+
+        assert_eq!(label, "3 tool calls: 1 Bash, 2 Read, 1 error");
+    }
+
+    #[test]
+    fn tool_burst_match_badge_accessible_label_is_descriptive() {
+        assert_eq!(
+            format_tool_burst_match_badge_accessible_label(2),
+            "2 search matches inside this group"
+        );
     }
 
     #[test]
