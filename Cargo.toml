@@ -27,7 +27,7 @@ clap = { version = "4.5", features = ["derive"] }
 which = "8.0.0"
 pulldown-cmark = { version = "0.13", default-features = false, features = ["simd"] }
 regex = "1"
-similar = "2.7.0"
+similar = "3.0.0"
 
 [build-dependencies]
 relm4-icons-build = "0.10.1"
