@@ -3,7 +3,7 @@
 **Date:** 2026-04-02  
 **Issue:** [#109 — feat: favorite sessions for quick revisit](https://github.com/supermaciz/sessions-chronicle/issues/109)  
 **Type:** Design exploration — comparing 5 proposals from 4 perspectives  
-**Status:** Open for decision
+**Status:** Decided — Proposal F (Pin Filter)
 
 ## Problem
 
@@ -362,5 +362,36 @@ has composable checkboxes (AI Assistants) and exclusive selection
 
 ## Decision
 
-**Pending.** This document compares approaches. The next step is to  
-choose one (or combine elements) and produce a design document.
+**Proposal F — Pin Filter**, with refinements from the UI Designer review.
+
+### Chosen Design
+
+- **Naming:** "Pin" (`pin-symbolic`), not "favorite" or "flag".
+- **Mark action:** Right-click context menu ("Pin" / "Unpin") or `Ctrl+D`.
+- **Row visual:** `pin-symbolic` suffix icon on pinned rows only.  
+  Use `@accent_color` (not `@warning_color`) — pin is not a warning state.
+- **Filter surface:** `gtk::CheckButton` inside `adw::ActionRow` in the  
+  **sidebar**, between AI Assistants and Projects. Label: "Pinned Only".  
+  Default: OFF. Composable AND filter with assistants, project, and search.
+- **Sidebar row visibility:** Always visible (not hidden via Revealer),  
+  matching AI Assistant checkbox behavior. Greyed out with count "0"  
+  when no pins exist — consistent and discoverable.
+- **Schema:** `pinned_at TIMESTAMP NULL` (migration v8). Forward-looking:  
+  enables future ordering without a second migration.
+- **Filter composition:** `SidebarOutput::FiltersChanged` gains  
+  `pinned_only: bool`. Query: `AND (NOT :pinned_only OR pinned_at IS NOT NULL)`.
+
+### Rationale
+
+- Both the Mii Beta and UI Designer agents independently converged on F.
+- The sidebar is already the filter surface — adding a composable  
+  checkbox reuses an established pattern with zero learning cost.
+- Lowest implementation cost (~30 lines in sidebar) and minimal  
+  visual disruption (only pinned rows change).
+- The search bar is hidden by default (`Ctrl+F`), ruling out the  
+  original "toggle next to search" placement.
+
+### Next Step
+
+Produce a design document (`2026-04-02-favorite-sessions-design.md`)  
+and then an implementation plan.
