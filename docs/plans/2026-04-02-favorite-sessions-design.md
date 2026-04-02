@@ -281,12 +281,15 @@ stale detail session while the user is looking at another workspace.
 ### Detail behavior under `Pinned Only`
 
 If `pinned_only = true` and the user unpins the **currently open detail
-session**, the app immediately navigates back to the session list after the
-toggle succeeds.
+session**, the detail view **stays open**. The session row is removed from the
+filtered list in the background, but the user keeps reading the detail until
+they navigate back. On return, the unpinned session is simply absent from the
+list.
 
-- Rationale: once unpinned, the session no longer matches the active filter,
-  so keeping the detail page open would show an item that is absent from the
-  filtered list.
+- Rationale: forcing an immediate navigation back feels abrupt, especially
+  when the user is triaging pins one by one. Staying on the detail mirrors
+  email-client behavior (archiving a message doesn't close it — it disappears
+  from the inbox on return).
 - Toggling from the list already behaves naturally: the row disappears after
   reload and selection falls back to the next available row (or empty state).
 
@@ -303,7 +306,7 @@ User action (context menu / Ctrl+D)
   → Database: UPDATE sessions SET pinned_at = ...
   → App refreshes session list + sidebar pin count
   → If detail session was unpinned while pinned_only = true:
-     navigate back to list
+     remove row from filtered list; detail view stays open
 ```
 
 ### Additional types touched
@@ -344,9 +347,9 @@ filter input.
    → count 1.
 7. **Pin filter composes with tool filter**: Sessions from 2 assistants,
    pin one of each. `pinned_only: true` + single tool → 1 result.
-8. **Detail session removed by filter**: With `pinned_only: true`, open a
-   pinned session in detail, unpin it, and verify the app returns to the
-   session list.
+8. **Detail stays open after unpin**: With `pinned_only: true`, open a
+   pinned session in detail, unpin it → detail view remains open. Navigate
+   back → session is absent from the filtered list.
 9. **Empty state copy for pinned filter**: `pinned_only: true` with zero
    matches shows a filter-specific empty state rather than the generic first-run
    "No Sessions Yet" state.
@@ -362,7 +365,7 @@ filter input.
 6. `Ctrl+D` on selected row toggles pin state in the Sessions workspace.
 7. Switch to Analytics, press `Ctrl+D` → no session is toggled.
 8. With `Pinned Only` enabled, open a pinned session in detail and unpin it
-   → app returns to the list.
+   → detail stays open. Navigate back → session absent from list.
 9. With `Pinned Only` enabled and no pinned sessions, verify a filter-specific
    empty state is shown.
 10. Pin session, quit, relaunch → pin persists.
