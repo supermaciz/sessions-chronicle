@@ -36,7 +36,11 @@ pub struct SessionDetail {
     pending_boundary_tool_rows: Vec<crate::database::TranscriptItemRow>,
     has_pending_boundary_burst: bool,
     search_query: Option<String>,
-    /// Keyed by transcript item_index (== factory position).
+    /// Keyed by top-level display index in the transcript factory.
+    ///
+    /// This is intentionally a UI index, not the original database
+    /// `transcript_items.item_index`, because grouped tool bursts collapse
+    /// multiple source rows into one displayed row.
     match_segments: BTreeMap<usize, Vec<usize>>,
     current_match: usize,
     total_matches: usize,
@@ -516,9 +520,9 @@ impl SimpleComponent for SessionDetail {
             .launch_default()
             .forward(sender.input_sender(), |output| match output {
                 TranscriptRowOutput::MatchSegmentsChanged {
-                    item_index,
+                    display_index,
                     segments,
-                } => SessionDetailMsg::MatchSegments(item_index, segments),
+                } => SessionDetailMsg::MatchSegments(display_index, segments),
                 TranscriptRowOutput::ExpandLoadFailed { .. } => {
                     SessionDetailMsg::ShowExpandLoadFailure
                 }
@@ -591,8 +595,8 @@ impl SimpleComponent for SessionDetail {
                     self.scroll_to_current_match();
                 }
             }
-            SessionDetailMsg::MatchSegments(item_index, segments) => {
-                self.update_match_segments(item_index, segments);
+            SessionDetailMsg::MatchSegments(display_index, segments) => {
+                self.update_match_segments(display_index, segments);
             }
             SessionDetailMsg::ShowExpandLoadFailure => {
                 tracing::warn!("Could not load full message content");
@@ -1035,9 +1039,12 @@ impl SessionDetail {
 
     /// Merges per-row match counts reported by child rows into global search
     /// navigation state.
-    fn update_match_segments(&mut self, item_index: usize, segments: Vec<usize>) {
+    ///
+    /// `display_index` is the current top-level factory position for the row,
+    /// not the original database `item_index`.
+    fn update_match_segments(&mut self, display_index: usize, segments: Vec<usize>) {
         let was_empty = self.total_matches == 0;
-        self.match_segments.insert(item_index, segments);
+        self.match_segments.insert(display_index, segments);
         self.total_matches = self
             .match_segments
             .values()
@@ -1258,6 +1265,21 @@ mod tests {
             ScrollTarget {
                 display_index: 1,
                 child_index: Some(2),
+            }
+        );
+    }
+
+    #[test]
+    fn next_match_after_top_level_row_targets_burst_child() {
+        let mut segments = BTreeMap::new();
+        segments.insert(0, vec![1]);
+        segments.insert(1, vec![0, 2]);
+
+        assert_eq!(
+            SessionDetail::find_match_target(&segments, 1),
+            ScrollTarget {
+                display_index: 1,
+                child_index: Some(1),
             }
         );
     }

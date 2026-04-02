@@ -127,7 +127,11 @@ pub enum TranscriptRowCmd {
 #[derive(Debug)]
 pub enum TranscriptRowOutput {
     MatchSegmentsChanged {
-        item_index: usize,
+        /// Top-level display index in the transcript factory.
+        ///
+        /// This differs from the source database `item_index` whenever the UI
+        /// groups consecutive tool calls into a single burst row.
+        display_index: usize,
         segments: Vec<usize>,
     },
     ExpandLoadFailed {
@@ -553,7 +557,7 @@ impl FactoryComponent for TranscriptRow {
                         self.rendered_match_count = count;
                         sender
                             .output(TranscriptRowOutput::MatchSegmentsChanged {
-                                item_index: self.item_index,
+                                display_index: self.item_index,
                                 segments: vec![count],
                             })
                             .ok();
@@ -572,7 +576,7 @@ impl FactoryComponent for TranscriptRow {
                         self.rendered_match_count = count;
                         sender
                             .output(TranscriptRowOutput::MatchSegmentsChanged {
-                                item_index: self.item_index,
+                                display_index: self.item_index,
                                 segments: vec![count],
                             })
                             .ok();
@@ -639,7 +643,7 @@ impl FactoryComponent for TranscriptRow {
                     self.rendered_match_count = count;
                     sender
                         .output(TranscriptRowOutput::MatchSegmentsChanged {
-                            item_index: self.item_index,
+                            display_index: self.item_index,
                             segments: vec![count],
                         })
                         .ok();
@@ -747,7 +751,7 @@ impl TranscriptRow {
         self.rendered_match_count = match_count;
         sender
             .output(TranscriptRowOutput::MatchSegmentsChanged {
-                item_index: self.item_index,
+                display_index: self.item_index,
                 segments: vec![match_count],
             })
             .ok();
@@ -788,7 +792,7 @@ impl TranscriptRow {
         self.rendered_match_count = refs.match_count;
         sender
             .output(TranscriptRowOutput::MatchSegmentsChanged {
-                item_index: self.item_index,
+                display_index: self.item_index,
                 segments: vec![refs.match_count],
             })
             .ok();
@@ -898,7 +902,7 @@ impl TranscriptRow {
         self.rendered_match_count = burst_match_count;
         sender
             .output(TranscriptRowOutput::MatchSegmentsChanged {
-                item_index: self.item_index,
+                display_index: self.item_index,
                 segments: burst.child_match_counts.clone(),
             })
             .ok();
