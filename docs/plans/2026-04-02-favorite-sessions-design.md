@@ -17,6 +17,8 @@ is a **quick-access problem**, not a discovery problem.
 - Pin/unpin sessions via context menu or `Ctrl+D`.
 - Pinned rows gain a suffix icon and subtle CSS styling.
 - Sidebar gains a composable "Pinned Only" checkbox filter.
+- `Ctrl+D` only acts in the Sessions workspace, with an explicit target
+  resolution rule.
 - No ordering, folders/tags, smart suggestions, or sync.
 
 ---
@@ -262,19 +264,67 @@ The existing `gio::Menu` gains a second action, placed **before**
 ### Keyboard shortcut — `Ctrl+D`
 
 Wired as an app-level keyboard shortcut (not per-row), since the row
-factory doesn't own keyboard focus. The app resolves the active/selected
-session and dispatches the toggle.
+factory doesn't own keyboard focus. Because app accelerators are global, the
+handler must explicitly scope the action and resolve the target session:
+
+- **Sessions workspace only**. If the active workspace is Analytics, `Ctrl+D`
+  is a no-op.
+- **Detail view wins**. If a session detail page is open, toggle that
+  `active_session`.
+- **Otherwise use list selection**. If the user is on the session list, ask
+  `SessionList` for the currently selected row's session ID and toggle that.
+- **No selection**: no-op.
+
+This avoids ambiguous "active vs selected" behavior and prevents toggling a
+stale detail session while the user is looking at another workspace.
+
+### Detail behavior under `Pinned Only`
+
+If `pinned_only = true` and the user unpins the **currently open detail
+session**, the app immediately navigates back to the session list after the
+toggle succeeds.
+
+- Rationale: once unpinned, the session no longer matches the active filter,
+  so keeping the detail page open would show an item that is absent from the
+  filtered list.
+- Toggling from the list already behaves naturally: the row disappears after
+  reload and selection falls back to the next available row (or empty state).
 
 ### Pin toggle data flow
 
 ```
 User action (context menu / Ctrl+D)
   → SessionRowOutput::TogglePinRequested(session_id)
-     (or AppMsg::TogglePinActiveSession for Ctrl+D)
+     (or AppMsg::TogglePinShortcutRequested for Ctrl+D)
+  → App resolves target:
+     detail open → active_session.id
+     otherwise → SessionListOutput::SelectedSessionForPin(session_id)
   → App calls toggle_pin(db_path, session_id)
   → Database: UPDATE sessions SET pinned_at = ...
   → App refreshes session list + sidebar pin count
+  → If detail session was unpinned while pinned_only = true:
+     navigate back to list
 ```
+
+### Additional types touched
+
+| Type | Change |
+|---|---|
+| `AppMsg` | + `TogglePinShortcutRequested`, pin-toggle completion handling |
+| `SessionListMsg` / `SessionListOutput` | + request/response pair for selected session ID |
+
+### Empty state behavior
+
+`SessionList` empty-state logic must treat `pinned_only` as a first-class
+filter input.
+
+- If `pinned_only = true` and the filtered result set is empty, show a
+  filter-specific empty state such as:
+  - **Title**: "No pinned sessions"
+  - **Description**: "Pin sessions from the list to keep them easy to revisit"
+- Do **not** reuse the generic first-run state ("No Sessions Yet"), because
+  the absence of results is caused by an active filter, not by missing source
+  data.
 
 ## 8. Test & Verification Plan
 
@@ -294,6 +344,12 @@ User action (context menu / Ctrl+D)
    → count 1.
 7. **Pin filter composes with tool filter**: Sessions from 2 assistants,
    pin one of each. `pinned_only: true` + single tool → 1 result.
+8. **Detail session removed by filter**: With `pinned_only: true`, open a
+   pinned session in detail, unpin it, and verify the app returns to the
+   session list.
+9. **Empty state copy for pinned filter**: `pinned_only: true` with zero
+   matches shows a filter-specific empty state rather than the generic first-run
+   "No Sessions Yet" state.
 
 ### Manual verification (`--sessions-dir tests/fixtures`)
 
@@ -303,8 +359,13 @@ User action (context menu / Ctrl+D)
 3. Sidebar "Pinned Only" count badge increments.
 4. Check "Pinned Only" → list filters to pinned sessions only.
 5. Uncheck → all sessions visible again.
-6. `Ctrl+D` on selected row toggles pin state.
-7. Pin session, quit, relaunch → pin persists.
-8. Pin session, trigger re-index → pin persists.
-9. Verify light and dark theme: left border + pin icon use
+6. `Ctrl+D` on selected row toggles pin state in the Sessions workspace.
+7. Switch to Analytics, press `Ctrl+D` → no session is toggled.
+8. With `Pinned Only` enabled, open a pinned session in detail and unpin it
+   → app returns to the list.
+9. With `Pinned Only` enabled and no pinned sessions, verify a filter-specific
+   empty state is shown.
+10. Pin session, quit, relaunch → pin persists.
+11. Pin session, trigger re-index → pin persists.
+12. Verify light and dark theme: left border + pin icon use
    `@accent_color` correctly.
