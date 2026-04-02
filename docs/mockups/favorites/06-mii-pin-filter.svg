@@ -1,0 +1,145 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="800" height="520" viewBox="0 0 800 520">
+  <defs>
+    <style>
+      text { font-family: Cantarell, Inter, system-ui, sans-serif; fill: #ffffff; }
+      .dim { fill: #999999; }
+      .accent { fill: #3584e4; }
+      .heading { font-size: 11px; font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase; fill: #888888; }
+      .title { font-size: 13px; font-weight: 500; }
+      .subtitle { font-size: 11px; fill: #999999; }
+      .small { font-size: 10px; }
+      .separator { stroke: #3a3a3a; stroke-width: 1; }
+      .pin-active { fill: #e5a50a; }
+      .pin-dim { fill: #555555; }
+    </style>
+  </defs>
+
+  <!-- Window chrome -->
+  <rect width="800" height="520" rx="12" fill="#242424"/>
+  <!-- Headerbar -->
+  <rect width="800" height="46" rx="12" fill="#303030"/>
+  <rect y="34" width="800" height="12" fill="#303030"/>
+  <text x="400" y="29" text-anchor="middle" font-size="14" font-weight="600">Sessions Chronicle</text>
+
+  <!-- Sidebar -->
+  <rect x="0" y="46" width="200" height="474" fill="#1e1e1e"/>
+  <line x1="200" y1="46" x2="200" y2="520" class="separator"/>
+
+  <text x="16" y="74" class="heading">AI ASSISTANTS</text>
+  <rect x="14" y="82" width="14" height="14" rx="3" fill="none" stroke="#3584e4" stroke-width="1.5"/>
+  <polyline points="17,89 20,93 26,85" fill="none" stroke="#3584e4" stroke-width="1.5"/>
+  <text x="34" y="94" font-size="12">Claude Code</text>
+  <rect x="14" y="102" width="14" height="14" rx="3" fill="none" stroke="#3584e4" stroke-width="1.5"/>
+  <polyline points="17,109 20,113 26,105" fill="none" stroke="#3584e4" stroke-width="1.5"/>
+  <text x="34" y="114" font-size="12">OpenCode</text>
+
+  <line x1="12" y1="130" x2="188" y2="130" class="separator"/>
+
+  <!-- Pinned Only checkbox row in sidebar -->
+  <rect x="8" y="136" width="184" height="32" rx="6" fill="#2a2a2a"/>
+  <rect x="14" y="144" width="14" height="14" rx="3" fill="none" stroke="#e5a50a" stroke-width="1.5"/>
+  <text x="34" y="156" font-size="12">Pinned Only</text>
+  <!-- Pin icon suffix -->
+  <g transform="translate(168, 143)">
+    <line x1="5" y1="0" x2="5" y2="10" stroke="#e5a50a" stroke-width="1.5"/>
+    <circle cx="5" cy="3" r="3" fill="none" stroke="#e5a50a" stroke-width="1.2"/>
+    <line x1="5" y1="10" x2="5" y2="15" stroke="#e5a50a" stroke-width="1"/>
+  </g>
+
+  <line x1="12" y1="176" x2="188" y2="176" class="separator"/>
+
+  <text x="16" y="196" class="heading">PROJECTS</text>
+  <rect x="8" y="202" width="184" height="32" rx="6" fill="#3584e4" fill-opacity="0.15"/>
+  <text x="16" y="222" font-size="12" class="accent">All Sessions</text>
+  <text x="172" y="222" font-size="11" text-anchor="end" class="dim">47</text>
+
+  <text x="16" y="250" font-size="12">sessions-chronicle</text>
+  <text x="172" y="250" font-size="11" text-anchor="end" class="dim">12</text>
+
+  <text x="16" y="274" font-size="12">my-webapp</text>
+  <text x="172" y="274" font-size="11" text-anchor="end" class="dim">8</text>
+
+  <!-- Session list panel -->
+  <rect x="200" y="46" width="340" height="474" fill="#2a2a2a"/>
+  <line x1="540" y1="46" x2="540" y2="520" class="separator"/>
+
+  <!-- Flat session list — no sections, pins inline as suffix -->
+
+  <!-- Row 1: PINNED -->
+  <rect x="210" y="64" width="322" height="52" rx="6" fill="transparent"/>
+  <!-- Assistant icon -->
+  <circle cx="226" cy="90" r="8" fill="#3584e4" fill-opacity="0.3"/>
+  <text x="240" y="86" class="title">Fix the flaky CI test for parser</text>
+  <text x="240" y="102" class="subtitle">sessions-chronicle  --  12 messages  --  2h ago</text>
+  <!-- Pin suffix (active = gold) -->
+  <g transform="translate(502, 80)">
+    <line x1="5" y1="0" x2="5" y2="10" stroke="#e5a50a" stroke-width="1.5"/>
+    <circle cx="5" cy="3" r="3" fill="none" stroke="#e5a50a" stroke-width="1.2"/>
+    <line x1="5" y1="10" x2="5" y2="15" stroke="#e5a50a" stroke-width="1"/>
+  </g>
+  <!-- Chevron -->
+  <text x="522" y="94" font-size="14" class="dim">&#8250;</text>
+
+  <!-- Row 2: not pinned -->
+  <rect x="210" y="120" width="322" height="52" rx="6" fill="transparent"/>
+  <circle cx="226" cy="146" r="8" fill="#26a269" fill-opacity="0.3"/>
+  <text x="240" y="142" class="title">Add analytics heatmap component</text>
+  <text x="240" y="158" class="subtitle">my-webapp  --  8 messages  --  15m ago</text>
+  <text x="522" y="150" font-size="14" class="dim">&#8250;</text>
+
+  <!-- Row 3: PINNED -->
+  <rect x="210" y="176" width="322" height="52" rx="6" fill="transparent"/>
+  <circle cx="226" cy="202" r="8" fill="#3584e4" fill-opacity="0.3"/>
+  <text x="240" y="198" class="title">Refactor database migrations</text>
+  <text x="240" y="214" class="subtitle">sessions-chronicle  --  34 messages  --  1d ago</text>
+  <g transform="translate(502, 192)">
+    <line x1="5" y1="0" x2="5" y2="10" stroke="#e5a50a" stroke-width="1.5"/>
+    <circle cx="5" cy="3" r="3" fill="none" stroke="#e5a50a" stroke-width="1.2"/>
+    <line x1="5" y1="10" x2="5" y2="15" stroke="#e5a50a" stroke-width="1"/>
+  </g>
+  <text x="522" y="206" font-size="14" class="dim">&#8250;</text>
+
+  <!-- Row 4: not pinned -->
+  <rect x="210" y="232" width="322" height="52" rx="6" fill="transparent"/>
+  <circle cx="226" cy="258" r="8" fill="#3584e4" fill-opacity="0.3"/>
+  <text x="240" y="254" class="title">Debug WebSocket reconnection</text>
+  <text x="240" y="270" class="subtitle">my-webapp  --  22 messages  --  3h ago</text>
+  <text x="522" y="262" font-size="14" class="dim">&#8250;</text>
+
+  <!-- Row 5: not pinned -->
+  <rect x="210" y="288" width="322" height="52" rx="6" fill="transparent"/>
+  <circle cx="226" cy="314" r="8" fill="#e66100" fill-opacity="0.3"/>
+  <text x="240" y="310" class="title">Write unit tests for token counter</text>
+  <text x="240" y="326" class="subtitle">sessions-chronicle  --  5 messages  --  5h ago</text>
+  <text x="522" y="318" font-size="14" class="dim">&#8250;</text>
+
+  <!-- Row 6: not pinned -->
+  <rect x="210" y="344" width="322" height="52" rx="6" fill="transparent"/>
+  <circle cx="226" cy="370" r="8" fill="#3584e4" fill-opacity="0.3"/>
+  <text x="240" y="366" class="title">Setup Flatpak CI pipeline</text>
+  <text x="240" y="382" class="subtitle">sessions-chronicle  --  18 messages  --  2d ago</text>
+  <text x="522" y="374" font-size="14" class="dim">&#8250;</text>
+
+  <!-- Detail pane -->
+  <rect x="540" y="46" width="260" height="474" fill="#242424"/>
+  <text x="670" y="260" text-anchor="middle" font-size="13" class="dim">Select a session</text>
+  <text x="670" y="278" text-anchor="middle" font-size="11" class="dim">to view details</text>
+
+  <!-- Annotation: sidebar checkbox -->
+  <rect x="560" y="56" width="210" height="72" rx="8" fill="#1a1a1a" stroke="#e5a50a" stroke-width="1" stroke-dasharray="3,3"/>
+  <text x="570" y="74" font-size="10" fill="#e5a50a">Sidebar CheckButton row: "Pinned Only"</text>
+  <text x="570" y="88" font-size="10" fill="#ccc">Same pattern as AI Assistant checkboxes.</text>
+  <text x="570" y="102" font-size="10" fill="#ccc">Composable: AND with assistant + project.</text>
+  <text x="570" y="116" font-size="10" fill="#ccc">Hidden via Revealer when no pins exist.</text>
+
+  <!-- Annotation: pin suffix -->
+  <rect x="560" y="144" width="210" height="56" rx="8" fill="#1a1a1a" stroke="#e5a50a" stroke-width="1" stroke-dasharray="3,3"/>
+  <text x="570" y="162" font-size="10" fill="#e5a50a">Pin icon as suffix on ActionRow.</text>
+  <text x="570" y="176" font-size="10" fill="#ccc">Same slot as ending-status icon.</text>
+  <text x="570" y="190" font-size="10" fill="#ccc">Toggle: right-click menu or Ctrl+D.</text>
+
+  <!-- Annotation: no sections -->
+  <rect x="560" y="216" width="210" height="44" rx="8" fill="#1a1a1a" stroke="#e5a50a" stroke-width="1" stroke-dasharray="3,3"/>
+  <text x="570" y="234" font-size="10" fill="#e5a50a">No pinned/recent sections.</text>
+  <text x="570" y="248" font-size="10" fill="#ccc">One flat list. Sorted by recency.</text>
+</svg>

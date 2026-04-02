@@ -266,69 +266,99 @@ instead of a boolean, even though v1 doesn't need ordering.
 
 ---
 
-## Proposal F — Flag Filter *(Mii Beta)*
+## Proposal F — Pin Filter *(Mii Beta)*
 
 **Source:** Mii Beta GTK Designer agent  
-**Summary:** A flag is metadata on a row, not a spatial partition.  
-Flagged sessions stay in chronological order. A toggle button next to  
-the search bar filters to flagged-only. Zero new sections, zero list  
-rearrangement.
+**Summary:** A pin is metadata on a row, not a spatial partition.  
+Pinned sessions stay in chronological order. A sidebar checkbox row  
+filters to pinned-only. Zero new sections, zero list rearrangement.
 
-![Flag filter](../mockups/favorites/06-mii-flag-filter.svg)
+![Pin filter](../mockups/favorites/06-mii-pin-filter.svg)
 
 ### Naming
 
-Uses **"flag"** — expressing "needs follow-up" intent.
+Uses **"pin"** — expressing "keep this reachable" intent rather than  
+affection ("favorite") or problem reporting ("flag").
 
 ### Interaction Model
 
-- Toggle via **right-click context menu** ("Flag" / "Unflag") or `Ctrl+D`.
-- Flagged rows gain a `flag-symbolic` **suffix icon** (alongside  
-  ending-status icon). Unflagged rows are unchanged.
-- A `gtk::ToggleButton` with `flag-symbolic` sits **next to the search bar**.  
-  When active, the list shows only flagged sessions.
-- Composes with all existing filters.
+- Toggle via **right-click context menu** ("Pin" / "Unpin") or `Ctrl+D`.
+- Pinned rows gain a `pin-symbolic` **suffix icon** (alongside  
+  ending-status icon). Unpinned rows are unchanged.
+- A `gtk::CheckButton` inside an `adw::ActionRow` sits in the **sidebar**,  
+  between the AI Assistants and Projects sections. Label: "Pinned Only",  
+  with a `pin-symbolic` suffix. Default: **OFF** (show all sessions).  
+  When checked, the list shows only pinned sessions.
+- The sidebar row is hidden via `gtk::Revealer` when no sessions are  
+  pinned. First pin triggers a toast: "Session pinned — find it in  
+  the sidebar."
+- Composes with all existing filters (assistants, project, search)  
+  via AND composition.
 
 ### Widgets
 
 | Widget | Role |
 |---|---|
-| `gtk::Image` with `flag-symbolic` | Suffix on flagged rows only |
-| `gtk::ToggleButton` with `flag-symbolic` | Filter toggle next to search bar |
+| `gtk::Image` with `pin-symbolic` | Suffix on pinned rows only |
+| `adw::ActionRow` with `gtk::CheckButton` prefix | Sidebar filter toggle (composable, like AI Assistant rows) |
+| `gtk::Revealer` | Hides sidebar row when no pins exist |
 | Context menu entry | Toggle via right-click |
+
+### Schema
+
+`pinned_at TIMESTAMP NULL` from day one — even though v1 doesn't need  
+ordering. Schema migrations are cheap; fixing data you didn't collect  
+is not.
+
+### Filter Composition
+
+The `SidebarOutput::FiltersChanged` message gains one field:
+
+```rust
+FiltersChanged {
+    tools: Vec<AiAssistant>,
+    project_filter: ProjectFilter,
+    pinned_only: bool,  // new
+}
+```
+
+Query: `WHERE ... AND (NOT :pinned_only OR pinned_at IS NOT NULL)`.
 
 ### Trade-offs
 
 | + | - |
 |---|---|
-| Zero new visual structures | Flag suffix is subtle — easy to miss |
-| Composes with existing filter model naturally | Toggle button is easy to overlook |
-| Sessions don't move when flagged | "Flag" may be confused with "report/problem" |
-| Only flagged rows gain visual change | Suffix area gets crowded (flag + status + chevron) |
-| Lowest implementation cost | No persistent indicator of "you have N flags" |
+| Zero new visual structures — uses existing sidebar pattern | Pin suffix is subtle — easy to miss |
+| Composes with existing filter model naturally (AND) | Sidebar row hidden when no pins = delayed discoverability |
+| Sessions don't move when pinned | Suffix area gets crowded (pin + status + chevron) |
+| Only pinned rows gain visual change | — |
+| Always-visible filter (sidebar never hides) | — |
+| Low implementation cost (~30 lines in sidebar) | — |
+| CheckButton matches AI Assistant row pattern | — |
 
 ### Mii Beta Recommendation
 
 The Mii Beta agent recommends this proposal over E, arguing that it  
-adds zero new visual structures and composes honestly with the existing  
-filter model.
+uses the existing sidebar filter surface honestly — the sidebar already  
+has composable checkboxes (AI Assistants) and exclusive selection  
+(Projects), and a pin filter is the same kind of thing as the former.
 
 ---
 
 ## Comparison Matrix
 
-| Aspect | A: Sidebar Stars | B: Shelf | C: Star Toggle | D: Section Toggle | E: Pinned | F: Flag Filter |
+| Aspect | A: Sidebar Stars | B: Shelf | C: Star Toggle | D: Section Toggle | E: Pinned | F: Pin Filter |
 |---|---|---|---|---|---|---|
 | **Source** | Main (HIG) | Main (Creative) | UI Designer | UI Designer | Mii Beta | Mii Beta |
 | **Mark action** | Click star | Drag / menu | Click star | Menu only | Menu only | Menu only |
-| **Surface favorites** | Sidebar filter | Horizontal shelf | Sidebar filter | Header toggle + sections | Always-on partition | Search-bar toggle |
-| **Row visual change** | Star on all rows | Drag handle on all rows | Star on all rows | None | Pin icon on pinned rows | Flag icon on flagged rows |
+| **Surface favorites** | Sidebar filter | Horizontal shelf | Sidebar filter | Header toggle + sections | Always-on partition | Sidebar checkbox (composable) |
+| **Row visual change** | Star on all rows | Drag handle on all rows | Star on all rows | None | Pin icon on pinned rows | Pin icon on pinned rows |
 | **New surfaces** | 0 | 1 (shelf) | 0 | 0 | 0 | 0 |
-| **Discoverability** | High | Medium | High | Medium | High (always visible) | Low |
+| **Discoverability** | High | Medium | High | Medium | High (always visible) | High (sidebar always visible) |
 | **Visual density** | Higher | Higher | Higher | Unchanged | Medium | Minimal |
 | **Implementation cost** | Medium | High | Medium | Medium | Low-Medium | Low |
-| **GNOME HIG fit** | Good | Poor | Good | Very Good | Good | Good |
-| **Schema** | Boolean | Timestamp | Boolean | Boolean | Boolean or Timestamp | Boolean |
+| **GNOME HIG fit** | Good | Poor | Good | Very Good | Good | Very Good |
+| **Schema** | Boolean | Timestamp | Boolean | Boolean | Boolean or Timestamp | Timestamp |
 
 ## Decision
 
