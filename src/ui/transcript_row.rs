@@ -9,10 +9,21 @@ use relm4::factory::{DynamicIndex, FactoryComponent, FactorySender};
 use relm4::gtk;
 
 use crate::database::load_message_full_content;
-use crate::models::{MessagePreview, Role, ToolCallStatus};
+use crate::icon_names;
+use crate::models::{MessagePreview, Role, ToolCallStatus, ToolCategoryIcons, tool_name_icon};
 use crate::ui::format::{format_duration_ms, tool_status_css_class, tool_status_label};
 use crate::ui::highlight;
 use crate::ui::markdown;
+
+const TOOL_ICONS: ToolCategoryIcons = ToolCategoryIcons {
+    read: icon_names::TEXT_SNIPPET,
+    edit: icon_names::EDIT_DOCUMENT,
+    command: icon_names::TERMINAL,
+    search: icon_names::SEARCH,
+    agent: icon_names::SMART_TOY,
+    web: icon_names::EARTH,
+    other: icon_names::BUILD,
+};
 
 /// Return the model display text for a transcript header.
 /// Only assistant messages with a non-empty model value produce output.
@@ -330,7 +341,7 @@ fn build_tool_call_widget(
     row.set_margin_bottom(4);
 
     let icon = gtk::Image::new();
-    icon.set_icon_name(Some("utilities-terminal-symbolic"));
+    icon.set_icon_name(Some(tool_name_icon(&init.tool_name, &TOOL_ICONS)));
     icon.set_pixel_size(16);
     row.append(&icon);
 
@@ -809,10 +820,19 @@ impl TranscriptRow {
         header.add_css_class("tool-call-group-header");
 
         for (name, count) in &burst.category_counts {
-            let pill = gtk::Label::new(Some(&format!("{count} {name}")));
-            pill.add_css_class("pill");
-            pill.add_css_class("tool-call-group-pill");
-            header.append(&pill);
+            let pill_box = gtk::Box::new(gtk::Orientation::Horizontal, 4);
+            pill_box.add_css_class("pill");
+            pill_box.add_css_class("tool-call-group-pill");
+
+            let pill_icon = gtk::Image::new();
+            pill_icon.set_icon_name(Some(tool_name_icon(name, &TOOL_ICONS)));
+            pill_icon.set_pixel_size(12);
+            pill_box.append(&pill_icon);
+
+            let pill_label = gtk::Label::new(Some(&format!("{count} {name}")));
+            pill_box.append(&pill_label);
+
+            header.append(&pill_box);
         }
 
         if let Some(total_ms) = burst.total_duration_ms {

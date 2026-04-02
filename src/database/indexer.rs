@@ -651,8 +651,12 @@ impl SessionIndexer {
             match crate::models::classify_tool_name(&tc.tool_name) {
                 crate::models::ToolCategory::Edit => edit_count += 1,
                 crate::models::ToolCategory::Command => command_count += 1,
-                crate::models::ToolCategory::Read => read_count += 1,
-                crate::models::ToolCategory::Other => {}
+                crate::models::ToolCategory::Read | crate::models::ToolCategory::Search => {
+                    read_count += 1
+                }
+                crate::models::ToolCategory::Agent
+                | crate::models::ToolCategory::Web
+                | crate::models::ToolCategory::Other => {}
             }
         }
         let ending_status = Self::determine_ending_status(&parsed.tool_calls).to_storage();
