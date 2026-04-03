@@ -56,6 +56,7 @@ fn opencode_search_finds_text_part_content() {
         &db.path,
         &[AiAssistant::OpenCode],
         &ProjectFilter::AllSessions,
+        false,
         "I can help you with that task",
     )
     .expect("Search failed");
@@ -96,6 +97,7 @@ fn opencode_search_excludes_tool_output() {
         &db.path,
         &[AiAssistant::OpenCode],
         &ProjectFilter::AllSessions,
+        false,
         "total",
     )
     .expect("Search failed");
@@ -121,6 +123,7 @@ fn opencode_search_respects_tool_filter() {
         &db.path,
         &[AiAssistant::ClaudeCode],
         &ProjectFilter::AllSessions,
+        false,
         "Hello OpenCode",
     )
     .expect("Search failed");
@@ -147,6 +150,7 @@ fn opencode_dual_read_sqlite_only_session_is_searchable() {
         &db.path,
         &[AiAssistant::OpenCode],
         &ProjectFilter::AllSessions,
+        false,
         "This session only exists in SQLite",
     )
     .expect("Search failed");

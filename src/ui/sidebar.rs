@@ -14,6 +14,7 @@ pub struct Sidebar {
     codex_enabled: bool,
     mistral_vibe_enabled: bool,
     selected_project_filter: ProjectFilter,
+    pinned_only: bool,
     project_row_filters: Vec<ProjectFilter>,
     rebuilding_projects: bool,
     projects_list: Option<gtk::ListBox>,
@@ -40,6 +41,7 @@ pub enum SidebarOutput {
     FiltersChanged {
         tools: Vec<AiAssistant>,
         project_filter: ProjectFilter,
+        pinned_only: bool,
     },
 }
 
@@ -125,6 +127,7 @@ impl SimpleComponent for Sidebar {
             codex_enabled: true,
             mistral_vibe_enabled: true,
             selected_project_filter: ProjectFilter::AllSessions,
+            pinned_only: false,
             project_row_filters: Vec::new(),
             rebuilding_projects: false,
             projects_list: None,
@@ -287,6 +290,7 @@ impl Sidebar {
         let _ = sender.output(SidebarOutput::FiltersChanged {
             tools: self.active_tools(),
             project_filter: self.selected_project_filter.clone(),
+            pinned_only: self.pinned_only,
         });
     }
 

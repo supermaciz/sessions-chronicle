@@ -151,6 +151,7 @@ pub(super) enum AppMsg {
     FiltersChanged {
         tools: Vec<AiAssistant>,
         project_filter: ProjectFilter,
+        pinned_only: bool,
     },
     SessionSelected(String),
     /// User-requested navigation back from detail to list.
@@ -498,9 +499,11 @@ impl SimpleComponent for App {
             AppMsg::FiltersChanged {
                 tools,
                 project_filter,
+                pinned_only,
             } => {
                 self.filter_state.tools = tools;
                 self.filter_state.project_filter = project_filter;
+                self.filter_state.pinned_only = pinned_only;
                 self.refresh_sidebar_projects();
                 self.emit_session_list_filters();
             }
@@ -634,6 +637,7 @@ impl App {
         self.session_list.emit(SessionListMsg::SetFilters {
             tools: self.filter_state.tools.clone(),
             project_filter: self.filter_state.project_filter.clone(),
+            pinned_only: self.filter_state.pinned_only,
         });
     }
 

@@ -12,6 +12,7 @@ pub struct SessionList {
     db_path: PathBuf,
     active_tools: Vec<AiAssistant>,
     project_filter: ProjectFilter,
+    pinned_only: bool,
     search_query: String,
     all_tools_selected: bool,
     indexing: bool,
@@ -25,6 +26,7 @@ pub enum SessionListMsg {
     SetFilters {
         tools: Vec<AiAssistant>,
         project_filter: ProjectFilter,
+        pinned_only: bool,
     },
     SetSearchQuery(String),
     SetIndexing(bool),
@@ -59,6 +61,7 @@ fn compute_empty_state(
     indexing: bool,
     project_filter_active: bool,
     source_results_available: bool,
+    pinned_only: bool,
 ) -> EmptyStateViewModel {
     if sessions_empty && indexing {
         return EmptyStateViewModel {
@@ -72,6 +75,14 @@ fn compute_empty_state(
         return EmptyStateViewModel {
             title: "No sessions match search",
             description: "Try a different query or adjust filters",
+            show_source_results: false,
+        };
+    }
+
+    if pinned_only {
+        return EmptyStateViewModel {
+            title: "No pinned sessions",
+            description: "Pin sessions from the list to keep them easy to revisit",
             show_source_results: false,
         };
     }
@@ -181,7 +192,14 @@ impl SimpleComponent for SessionList {
         ];
         let search_query = String::new();
         let project_filter = ProjectFilter::AllSessions;
-        let fetched = Self::fetch_sessions(&db_path, &active_tools, &project_filter, &search_query);
+        let pinned_only = false;
+        let fetched = Self::fetch_sessions(
+            &db_path,
+            &active_tools,
+            &project_filter,
+            pinned_only,
+            &search_query,
+        );
 
         let sessions: FactoryVecDeque<SessionRow> = FactoryVecDeque::builder()
             .launch_default()
@@ -195,6 +213,7 @@ impl SimpleComponent for SessionList {
             db_path,
             active_tools,
             project_filter,
+            pinned_only,
             search_query,
             all_tools_selected: true,
             indexing: false,
@@ -239,9 +258,11 @@ impl SimpleComponent for SessionList {
             SessionListMsg::SetFilters {
                 tools,
                 project_filter,
+                pinned_only,
             } => {
                 self.active_tools = tools.clone();
                 self.project_filter = project_filter;
+                self.pinned_only = pinned_only;
                 self.all_tools_selected = tools.len() == AiAssistant::ALL.len();
                 self.reload_sessions();
             }
@@ -312,6 +333,7 @@ impl SimpleComponent for SessionList {
                 self.indexing,
                 self.project_filter != ProjectFilter::AllSessions,
                 self.source_results_available,
+                self.pinned_only,
             );
             widgets.empty_state.set_title(empty.title);
             widgets.empty_state.set_description(Some(empty.description));
@@ -361,13 +383,14 @@ impl SessionList {
         db_path: &Path,
         tools: &[AiAssistant],
         project_filter: &ProjectFilter,
+        pinned_only: bool,
         query: &str,
     ) -> Vec<Session> {
         let query = query.trim();
         let sessions = if query.is_empty() {
-            load_sessions_for_filter(db_path, tools, project_filter)
+            load_sessions_for_filter(db_path, tools, project_filter, pinned_only)
         } else {
-            search_sessions_for_filter(db_path, tools, project_filter, query)
+            search_sessions_for_filter(db_path, tools, project_filter, pinned_only, query)
         };
 
         match sessions {
@@ -391,6 +414,7 @@ impl SessionList {
             &self.db_path,
             &self.active_tools,
             &self.project_filter,
+            self.pinned_only,
             &self.search_query,
         );
         let mut guard = self.sessions.guard();
@@ -553,7 +577,7 @@ mod tests {
 
     #[test]
     fn empty_state_prefers_indexing_placeholder_when_loading_and_empty() {
-        let state = compute_empty_state(true, "", true, true, false, false);
+        let state = compute_empty_state(true, "", true, true, false, false, false);
 
         assert_eq!(state.title, "Indexing sessions...");
         assert_eq!(state.description, "This may take a moment on first launch.");
@@ -561,7 +585,7 @@ mod tests {
 
     #[test]
     fn project_sidebar_empty_state_treats_project_selection_as_active_filter() {
-        let state = compute_empty_state(true, "", true, false, true, false);
+        let state = compute_empty_state(true, "", true, false, true, false, false);
 
         assert_eq!(state.title, "No sessions match filters");
         assert_eq!(
@@ -746,6 +770,7 @@ mod tests {
         controller.emit(SessionListMsg::SetFilters {
             tools: vec![AiAssistant::ClaudeCode],
             project_filter: ProjectFilter::Project(1),
+            pinned_only: false,
         });
 
         pump_main_context(|| {
@@ -921,13 +946,26 @@ mod tests {
 
     #[test]
     fn indexing_diagnostics_empty_state_shows_source_results_only_for_global_empty_state() {
-        let state = compute_empty_state(true, "", true, false, false, true);
+        let state = compute_empty_state(true, "", true, false, false, true, false);
         assert!(state.show_source_results);
     }
 
     #[test]
     fn indexing_diagnostics_empty_state_hides_source_results_for_search_results() {
-        let state = compute_empty_state(true, "claude", true, false, false, true);
+        let state = compute_empty_state(true, "claude", true, false, false, true, false);
+
+        assert!(!state.show_source_results);
+    }
+
+    #[test]
+    fn pinned_only_empty_state_has_specific_copy() {
+        let state = compute_empty_state(true, "", true, false, false, false, true);
+
+        assert_eq!(state.title, "No pinned sessions");
+        assert_eq!(
+            state.description,
+            "Pin sessions from the list to keep them easy to revisit"
+        );
         assert!(!state.show_source_results);
     }
 

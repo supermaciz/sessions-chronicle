@@ -58,11 +58,13 @@ fn load_sessions_for_filter_respects_pinned_only() {
     insert_session(&db, "b", "claude_code", None);
     insert_session(&db, "c", "opencode", None);
 
-    let pinned = load_sessions_for_filter(&db.path, AiAssistant::ALL, &ProjectFilter::AllSessions)
-        .unwrap()
-        .into_iter()
-        .filter(|session| session.pinned_at.is_some())
-        .collect::<Vec<_>>();
+    let pinned = load_sessions_for_filter(
+        &db.path,
+        AiAssistant::ALL,
+        &ProjectFilter::AllSessions,
+        true,
+    )
+    .unwrap();
 
     assert_eq!(
         pinned
@@ -98,14 +100,11 @@ fn search_sessions_for_filter_respects_pinned_only() {
         &db.path,
         AiAssistant::ALL,
         &ProjectFilter::AllSessions,
+        true,
         "needle",
     )
     .unwrap();
 
-    let pinned_ids: Vec<String> = sessions
-        .into_iter()
-        .filter(|session| session.pinned_at.is_some())
-        .map(|session| session.id)
-        .collect();
+    let pinned_ids: Vec<String> = sessions.into_iter().map(|session| session.id).collect();
     assert_eq!(pinned_ids, vec!["a"]);
 }

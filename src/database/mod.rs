@@ -138,6 +138,7 @@ pub fn search_sessions_for_filter(
     db_path: &Path,
     tools: &[AiAssistant],
     project_filter: &ProjectFilter,
+    pinned_only: bool,
     query: &str,
 ) -> Result<Vec<Session>> {
     if !db_path.exists() {
@@ -150,12 +151,12 @@ pub fn search_sessions_for_filter(
 
     let query = query.trim();
     if query.is_empty() {
-        return load_sessions_for_filter(db_path, tools, project_filter);
+        return load_sessions_for_filter(db_path, tools, project_filter, pinned_only);
     }
 
     let db = open_connection(db_path)?;
 
-    match search_sessions_with_query(&db, tools, project_filter, query) {
+    match search_sessions_with_query(&db, tools, project_filter, pinned_only, query) {
         Ok(sessions) => Ok(sessions),
         Err(err) => {
             let sanitized = sanitize_search_query(query);
@@ -165,7 +166,13 @@ pub fn search_sessions_for_filter(
                     sanitized,
                     err
                 );
-                match search_sessions_with_query(&db, tools, project_filter, &sanitized) {
+                match search_sessions_with_query(
+                    &db,
+                    tools,
+                    project_filter,
+                    pinned_only,
+                    &sanitized,
+                ) {
                     Ok(sessions) => Ok(sessions),
                     Err(retry_err) => {
                         tracing::warn!(
@@ -188,12 +195,18 @@ fn search_sessions_with_query(
     db: &Connection,
     tools: &[AiAssistant],
     project_filter: &ProjectFilter,
+    pinned_only: bool,
     query: &str,
 ) -> Result<Vec<Session>> {
     let project_clause = match project_filter {
         ProjectFilter::AllSessions => String::new(),
         ProjectFilter::Project(_) => " AND s.project_id = ?".to_string(),
         ProjectFilter::Unassigned => " AND s.project_id IS NULL".to_string(),
+    };
+    let pinned_clause = if pinned_only {
+        " AND s.pinned_at IS NOT NULL"
+    } else {
+        ""
     };
 
     let (query_sql, tool_strings): (String, Vec<String>) = if tools.len() == AiAssistant::ALL.len()
@@ -210,9 +223,9 @@ fn search_sessions_with_query(
                  JOIN sessions s ON s.id = messages.session_id
                  WHERE messages MATCH ?
                    AND s.is_subagent = 0
-                   {}
+                   {}{}
                  ORDER BY rank ASC, s.last_updated DESC",
-                project_clause
+                project_clause, pinned_clause
             ),
             vec![],
         )
@@ -222,20 +235,21 @@ fn search_sessions_with_query(
         (
             format!(
                 "SELECT s.id, s.tool, s.project_path, s.project_id, s.start_time, s.message_count, s.file_path,
-                         s.last_updated, s.pinned_at, s.first_prompt, s.parent_session_id, s.is_subagent,
-                         s.input_tokens, s.output_tokens, s.cache_read_tokens,
-                         s.cache_write_tokens, s.reasoning_tokens,
-                         s.edit_count, s.read_count, s.command_count, s.ending_status,
-                         bm25(messages) AS rank
-                  FROM messages
-                  JOIN sessions s ON s.id = messages.session_id
-                  WHERE messages MATCH ?
-                    AND s.tool IN ({})
-                    AND s.is_subagent = 0
-                    {}
-                  ORDER BY rank ASC, s.last_updated DESC",
+                          s.last_updated, s.pinned_at, s.first_prompt, s.parent_session_id, s.is_subagent,
+                          s.input_tokens, s.output_tokens, s.cache_read_tokens,
+                          s.cache_write_tokens, s.reasoning_tokens,
+                          s.edit_count, s.read_count, s.command_count, s.ending_status,
+                          bm25(messages) AS rank
+                   FROM messages
+                   JOIN sessions s ON s.id = messages.session_id
+                   WHERE messages MATCH ?
+                     AND s.tool IN ({})
+                     AND s.is_subagent = 0
+                     {}{}
+                   ORDER BY rank ASC, s.last_updated DESC",
                 placeholders.join(","),
-                project_clause
+                project_clause,
+                pinned_clause
             ),
             tool_strings,
         )
@@ -275,6 +289,7 @@ pub fn load_sessions_for_filter(
     db_path: &Path,
     tools: &[AiAssistant],
     project_filter: &ProjectFilter,
+    pinned_only: bool,
 ) -> Result<Vec<Session>> {
     if !db_path.exists() {
         return Ok(Vec::new());
@@ -291,6 +306,11 @@ pub fn load_sessions_for_filter(
         ProjectFilter::Project(_) => " AND project_id = ?".to_string(),
         ProjectFilter::Unassigned => " AND project_id IS NULL".to_string(),
     };
+    let pinned_clause = if pinned_only {
+        " AND pinned_at IS NOT NULL"
+    } else {
+        ""
+    };
 
     let (query, tool_strings): (String, Vec<String>) = if tools.len() == AiAssistant::ALL.len() {
         (
@@ -302,9 +322,9 @@ pub fn load_sessions_for_filter(
                         edit_count, read_count, command_count, ending_status
                  FROM sessions
                  WHERE is_subagent = 0
-                   {}
+                   {}{}
                  ORDER BY last_updated DESC",
-                project_clause
+                project_clause, pinned_clause
             ),
             vec![],
         )
@@ -315,16 +335,17 @@ pub fn load_sessions_for_filter(
             format!(
                 "SELECT id, tool, project_path, project_id, start_time, message_count, file_path,
                          last_updated, pinned_at, first_prompt, parent_session_id, is_subagent,
-                         input_tokens, output_tokens, cache_read_tokens,
-                         cache_write_tokens, reasoning_tokens,
-                         edit_count, read_count, command_count, ending_status
-                  FROM sessions
-                  WHERE tool IN ({})
-                    AND is_subagent = 0
-                    {}
-                  ORDER BY last_updated DESC",
+                          input_tokens, output_tokens, cache_read_tokens,
+                          cache_write_tokens, reasoning_tokens,
+                          edit_count, read_count, command_count, ending_status
+                   FROM sessions
+                   WHERE tool IN ({})
+                     AND is_subagent = 0
+                     {}{}
+                   ORDER BY last_updated DESC",
                 placeholders.join(","),
-                project_clause
+                project_clause,
+                pinned_clause
             ),
             tool_strings,
         )
