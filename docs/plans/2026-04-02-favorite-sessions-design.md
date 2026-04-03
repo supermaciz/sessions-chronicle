@@ -280,7 +280,9 @@ to avoid adding density to the already busy right side:
 - Tooltip: "Pin session (Ctrl+D)" when unpinned, "Unpin session (Ctrl+D)"
   when pinned.
 - Signal: `connect_clicked => AppMsg::TogglePinShortcutRequested` (same
-  code path as `Ctrl+D`).
+  code path as `Ctrl+D`). Use `connect_clicked`, not `connect_toggled` —
+  `toggled` also fires on programmatic `active` changes from `#[watch]`,
+  which would create an infinite toggle loop.
 
 **Why `pack_start`:** Back and Pin only appear in detail mode — they
 appear and disappear together, so grouping them on the left is natural.
@@ -297,8 +299,8 @@ The right side (menu, pane, resume, parent) stays untouched.
 
 **Toast feedback:** After each successful toggle, a 2-second `adw::Toast`
 confirms the action: "Session pinned" / "Session unpinned". If the database
-write fails, `active_session_pinned` stays unchanged and an error toast is
-shown instead. The button is model-driven, so any transient GTK toggle state
+write fails, `active_session_pinned` stays unchanged and an error toast
+"Could not update pin state." is shown instead. The button is model-driven, so any transient GTK toggle state
 is corrected on the next render.
 
 ### Keyboard shortcut — `Ctrl+D`
@@ -399,7 +401,8 @@ filter input.
    → count 1.
 7. **Pin filter composes with tool filter**: Sessions from 2 assistants,
    pin one of each. `pinned_only: true` + single tool → 1 result.
-8. **Detail stays open after unpin**: With `pinned_only: true`, open a
+8. **Detail stays open after unpin** *(manual verification only — requires
+   UI integration; see checklist item 8)*: With `pinned_only: true`, open a
    pinned session in detail, unpin it → detail view remains open. Navigate
    back → session is absent from the filtered list.
 9. **Empty state copy for pinned filter**: `pinned_only: true` with zero
@@ -435,8 +438,9 @@ filter input.
 12. Pin toggle button is hidden on the session list view and in Analytics.
 13. Navigate from a pinned detail session to an unpinned child session and back
     → header toggle state follows the active session each time.
-14. Force a pin-toggle failure → pin state remains unchanged and an error toast
-    appears.
+14. Force a pin-toggle failure (e.g., make the database file read-only with
+    `chmod 444` before toggling) → pin state remains unchanged and an error
+    toast appears.
 15. Pin session, quit, relaunch → pin persists.
 16. Pin session, trigger re-index → pin persists.
 17. Verify light and dark theme: left border + pin icon use
