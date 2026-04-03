@@ -258,7 +258,7 @@ impl SimpleComponent for App {
 
                         #[name = "pin_button"]
                         pack_start = &gtk::ToggleButton {
-                            set_icon_name: "pin-symbolic",
+                            set_icon_name: "view-pin-symbolic",
                             add_css_class: "flat",
                             #[watch]
                             set_active: model.active_session_pinned,

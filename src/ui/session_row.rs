@@ -9,6 +9,8 @@ use adw::prelude::ActionRowExt;
 use crate::models::{AiAssistant, Session};
 use gtk::glib;
 
+const PIN_ICON_NAME: &str = "view-pin-symbolic";
+
 /// Data passed to initialize each factory row.
 pub struct SessionRowInit {
     pub session: Session,
@@ -64,7 +66,7 @@ impl FactoryComponent for SessionRow {
                     set_pixel_size: 16,
                 },
 
-                add_suffix = &gtk::Image::from_icon_name("pin-symbolic") {
+                add_suffix = &gtk::Image::from_icon_name(PIN_ICON_NAME) {
                     set_visible: self.session.pinned_at.is_some(),
                     set_pixel_size: 16,
                     set_valign: gtk::Align::Center,
@@ -418,5 +420,12 @@ mod tests {
 
         session.pinned_at = Some(Utc::now());
         assert_eq!(SessionRow::pin_menu_label(&session), "Unpin");
+    }
+
+    #[gtk::test]
+    fn pin_icon_name_exists_in_icon_theme() {
+        let display = gtk::gdk::Display::default().expect("display");
+        let theme = gtk::IconTheme::for_display(&display);
+        assert!(theme.has_icon(PIN_ICON_NAME));
     }
 }
