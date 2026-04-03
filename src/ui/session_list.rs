@@ -75,7 +75,17 @@ fn compute_empty_state(
         };
     }
 
-    if !search_query.trim().is_empty() {
+    let has_search = !search_query.trim().is_empty();
+
+    if has_search && pinned_only {
+        return EmptyStateViewModel {
+            title: "No pinned sessions match search",
+            description: "Try a different query or clear the pinned filter",
+            show_source_results: false,
+        };
+    }
+
+    if has_search {
         return EmptyStateViewModel {
             title: "No sessions match search",
             description: "Try a different query or adjust filters",
@@ -983,6 +993,18 @@ mod tests {
         assert_eq!(
             state.description,
             "Pin sessions from the list to keep them easy to revisit"
+        );
+        assert!(!state.show_source_results);
+    }
+
+    #[test]
+    fn pinned_only_with_search_empty_state_mentions_both() {
+        let state = compute_empty_state(true, "query", true, false, false, false, true);
+
+        assert_eq!(state.title, "No pinned sessions match search");
+        assert_eq!(
+            state.description,
+            "Try a different query or clear the pinned filter"
         );
         assert!(!state.show_source_results);
     }

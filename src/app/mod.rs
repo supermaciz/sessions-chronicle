@@ -111,7 +111,6 @@ pub(super) struct App {
     pane_open: bool,
     pane_mode: UtilityPaneMode,
     active_session: Option<ActiveSessionRef>,
-    active_session_pinned: bool,
     /// When the user opens a child session from the inspector, this holds the
     /// originating parent session so a one-hop return is possible.
     parent_session: Option<ActiveSessionRef>,
@@ -257,15 +256,13 @@ impl SimpleComponent for App {
                         },
 
                         #[name = "pin_button"]
-                        pack_start = &gtk::ToggleButton {
+                        pack_start = &gtk::Button {
                             set_icon_name: "view-pin-symbolic",
                             add_css_class: "flat",
                             #[watch]
-                            set_active: model.active_session_pinned,
-                            #[watch]
                             set_visible: model.detail_visible && model.are_detail_actions_visible(),
                             #[watch]
-                            set_tooltip_text: Some(pin_button_tooltip(model.active_session_pinned)),
+                            set_tooltip_text: Some(pin_button_tooltip(model.active_session_pinned())),
                             connect_clicked => AppMsg::TogglePinShortcutRequested,
                         },
 
@@ -415,7 +412,6 @@ impl SimpleComponent for App {
             pane_open: true,
             pane_mode: UtilityPaneMode::Filters,
             active_session: None,
-            active_session_pinned: false,
             parent_session: None,
             search_query: String::new(),
             session_list: components.session_list,
@@ -595,6 +591,12 @@ impl SimpleComponent for App {
         {
             widgets.search_bar.set_search_mode(self.search_visible);
         }
+
+        if self.active_session_pinned() {
+            widgets.pin_button.add_css_class("suggested-action");
+        } else {
+            widgets.pin_button.remove_css_class("suggested-action");
+        }
     }
 
     fn shutdown(&mut self, widgets: &mut Self::Widgets, _output: relm4::Sender<Self::Output>) {
@@ -603,11 +605,14 @@ impl SimpleComponent for App {
 }
 
 impl App {
+    fn active_session_pinned(&self) -> bool {
+        self.active_session.as_ref().is_some_and(|s| s.pinned)
+    }
+
     /// Reset app state after leaving detail view.
     fn transition_to_session_list_mode(&mut self) {
         self.detail_visible = false;
         self.active_session = None;
-        self.active_session_pinned = false;
         self.parent_session = None;
         self.tool_inspector_pane.emit(ToolInspectorPaneMsg::Clear);
         transition_to_list(&mut self.pane_mode, &mut self.pane_open);

@@ -58,7 +58,7 @@ fn session_from_row(row: &Row) -> rusqlite::Result<Session> {
     let tool = AiAssistant::from_storage(&tool_value).unwrap_or(AiAssistant::ClaudeCode);
     let start_time: i64 = row.get("start_time")?;
     let last_updated: i64 = row.get("last_updated")?;
-    let pinned_at: Option<i64> = row.get("pinned_at").unwrap_or(None);
+    let pinned_at: Option<i64> = row.get("pinned_at")?;
     let message_count: i64 = row.get("message_count")?;
     let is_subagent_int: i64 = row.get("is_subagent").unwrap_or(0);
 
@@ -235,18 +235,18 @@ fn search_sessions_with_query(
         (
             format!(
                 "SELECT s.id, s.tool, s.project_path, s.project_id, s.start_time, s.message_count, s.file_path,
-                          s.last_updated, s.pinned_at, s.first_prompt, s.parent_session_id, s.is_subagent,
-                          s.input_tokens, s.output_tokens, s.cache_read_tokens,
-                          s.cache_write_tokens, s.reasoning_tokens,
-                          s.edit_count, s.read_count, s.command_count, s.ending_status,
-                          bm25(messages) AS rank
-                   FROM messages
-                   JOIN sessions s ON s.id = messages.session_id
-                   WHERE messages MATCH ?
-                     AND s.tool IN ({})
-                     AND s.is_subagent = 0
-                     {}{}
-                   ORDER BY rank ASC, s.last_updated DESC",
+                        s.last_updated, s.pinned_at, s.first_prompt, s.parent_session_id, s.is_subagent,
+                        s.input_tokens, s.output_tokens, s.cache_read_tokens,
+                        s.cache_write_tokens, s.reasoning_tokens,
+                        s.edit_count, s.read_count, s.command_count, s.ending_status,
+                        bm25(messages) AS rank
+                 FROM messages
+                 JOIN sessions s ON s.id = messages.session_id
+                 WHERE messages MATCH ?
+                   AND s.tool IN ({})
+                   AND s.is_subagent = 0
+                   {}{}
+                 ORDER BY rank ASC, s.last_updated DESC",
                 placeholders.join(","),
                 project_clause,
                 pinned_clause
@@ -334,15 +334,15 @@ pub fn load_sessions_for_filter(
         (
             format!(
                 "SELECT id, tool, project_path, project_id, start_time, message_count, file_path,
-                         last_updated, pinned_at, first_prompt, parent_session_id, is_subagent,
-                          input_tokens, output_tokens, cache_read_tokens,
-                          cache_write_tokens, reasoning_tokens,
-                          edit_count, read_count, command_count, ending_status
-                   FROM sessions
-                   WHERE tool IN ({})
-                     AND is_subagent = 0
-                     {}{}
-                   ORDER BY last_updated DESC",
+                        last_updated, pinned_at, first_prompt, parent_session_id, is_subagent,
+                        input_tokens, output_tokens, cache_read_tokens,
+                        cache_write_tokens, reasoning_tokens,
+                        edit_count, read_count, command_count, ending_status
+                 FROM sessions
+                 WHERE tool IN ({})
+                   AND is_subagent = 0
+                   {}{}
+                 ORDER BY last_updated DESC",
                 placeholders.join(","),
                 project_clause,
                 pinned_clause

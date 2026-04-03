@@ -10,9 +10,10 @@ impl App {
     pub(crate) fn handle_toggle_pin_requested(&mut self, session_id: String) {
         match toggle_pin(&self.db_path, &session_id) {
             Ok(is_pinned) => {
-                if self.active_session.as_ref().map(|s| s.id.as_str()) == Some(session_id.as_str())
+                if let Some(ref mut s) = self.active_session
+                    && s.id == session_id
                 {
-                    self.active_session_pinned = is_pinned;
+                    s.pinned = is_pinned;
                 }
 
                 let title = if is_pinned {

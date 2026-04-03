@@ -47,6 +47,7 @@ pub(super) struct ActiveSessionRef {
     pub(super) tool: AiAssistant,
     #[allow(dead_code)]
     pub(super) project_name: String,
+    pub(super) pinned: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
