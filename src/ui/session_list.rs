@@ -32,7 +32,9 @@ pub enum SessionListMsg {
     SetIndexing(bool),
     SetSourceResults(Vec<PerSourceResult>),
     SessionActivated(i32),
+    TogglePinRequested(String),
     ResumeRequested(String, AiAssistant),
+    RequestSelectedSessionForPin,
     /// Ensure a row is selected (defaults to first) and grab keyboard focus.
     RestoreFocus,
     /// Move selection by delta rows (−1 = up, +1 = down) without changing focus.
@@ -44,6 +46,8 @@ pub enum SessionListMsg {
 #[derive(Debug)]
 pub enum SessionListOutput {
     SessionSelected(String),
+    TogglePinRequested(String),
+    SelectedSessionForPin(String),
     ResumeRequested(String, AiAssistant),
 }
 
@@ -204,6 +208,7 @@ impl SimpleComponent for SessionList {
         let sessions: FactoryVecDeque<SessionRow> = FactoryVecDeque::builder()
             .launch_default()
             .forward(sender.input_sender(), |msg| match msg {
+                SessionRowOutput::TogglePinRequested(id) => SessionListMsg::TogglePinRequested(id),
                 SessionRowOutput::ResumeRequested(id, tool) => {
                     SessionListMsg::ResumeRequested(id, tool)
                 }
@@ -284,8 +289,21 @@ impl SimpleComponent for SessionList {
                     ));
                 }
             }
+            SessionListMsg::TogglePinRequested(id) => {
+                let _ = sender.output(SessionListOutput::TogglePinRequested(id));
+            }
             SessionListMsg::ResumeRequested(id, tool) => {
                 let _ = sender.output(SessionListOutput::ResumeRequested(id, tool));
+            }
+            SessionListMsg::RequestSelectedSessionForPin => {
+                let list_box = self.sessions.widget();
+                if let Some(row) = list_box.selected_row()
+                    && let Some(session_row) = self.sessions.get(row.index() as usize)
+                {
+                    let _ = sender.output(SessionListOutput::SelectedSessionForPin(
+                        session_row.session_id().to_owned(),
+                    ));
+                }
             }
             SessionListMsg::RestoreFocus => {
                 self.ensure_selection();
@@ -992,6 +1010,42 @@ mod tests {
 
         let parts = controller.state().get();
         assert!(parts.widgets.empty_state.child().is_some());
+    }
+
+    #[gtk::test]
+    fn request_selected_session_for_pin_emits_selected_id() {
+        let temp_db = tempfile::NamedTempFile::new().expect("temp db");
+        let outputs: Rc<RefCell<Vec<SessionListOutput>>> = Rc::new(RefCell::new(Vec::new()));
+        let outputs_ref = outputs.clone();
+
+        let controller = SessionList::builder()
+            .launch(temp_db.path().to_path_buf())
+            .connect_receiver(move |_, output| {
+                outputs_ref.borrow_mut().push(output);
+            });
+
+        {
+            let mut parts = controller.state().get_mut();
+            let mut guard = parts.model.sessions.guard();
+            guard.push_back(SessionRowInit {
+                session: make_test_session("pin-target"),
+            });
+        }
+
+        let root = controller.widget().clone().upcast::<gtk::Widget>();
+        let list_box = find_list_box(&root).expect("list box");
+
+        list_box.select_row(list_box.row_at_index(0).as_ref());
+        pump_main_context(|| list_box.selected_row().is_some());
+
+        controller.emit(SessionListMsg::RequestSelectedSessionForPin);
+        pump_main_context(|| !outputs.borrow().is_empty());
+
+        let outputs = outputs.borrow();
+        assert!(matches!(
+            outputs.as_slice(),
+            [SessionListOutput::SelectedSessionForPin(id)] if id == "pin-target"
+        ));
     }
 
     #[gtk::test]

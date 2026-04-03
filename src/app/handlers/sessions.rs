@@ -25,6 +25,7 @@ impl App {
 
     fn set_active_session_and_detail(&mut self, session: Session, search_query: Option<String>) {
         let project_name = Self::project_name_from_session(&session);
+        self.active_session_pinned = session.pinned_at.is_some();
 
         self.active_session = Some(ActiveSessionRef {
             id: session.id.clone(),
@@ -50,11 +51,13 @@ impl App {
             Ok(None) => {
                 tracing::warn!("Session not found: {}", id);
                 self.active_session = None;
+                self.active_session_pinned = false;
                 self.session_detail.emit(SessionDetailMsg::Clear);
             }
             Err(err) => {
                 tracing::error!("Failed to load session: {}", err);
                 self.active_session = None;
+                self.active_session_pinned = false;
                 self.session_detail.emit(SessionDetailMsg::Clear);
             }
         }
@@ -130,6 +133,7 @@ impl App {
             match load_session(&self.db_path, &parent.id) {
                 Ok(Some(session)) => {
                     self.active_session = Some(parent);
+                    self.active_session_pinned = session.pinned_at.is_some();
                     self.session_detail.emit(SessionDetailMsg::SetSession {
                         session: Box::new(session),
                         search_query,
@@ -139,6 +143,7 @@ impl App {
                 Ok(None) => {
                     tracing::warn!("Parent session no longer found; resetting");
                     self.active_session = None;
+                    self.active_session_pinned = false;
                     let (detail_msg, inspector_msg) = parent_session_load_failure_messages();
                     self.session_detail.emit(detail_msg);
                     self.tool_inspector_pane.emit(inspector_msg);
@@ -146,6 +151,7 @@ impl App {
                 Err(err) => {
                     tracing::error!("Failed to load parent session: {}", err);
                     self.active_session = None;
+                    self.active_session_pinned = false;
                     let (detail_msg, inspector_msg) = parent_session_load_failure_messages();
                     self.session_detail.emit(detail_msg);
                     self.tool_inspector_pane.emit(inspector_msg);

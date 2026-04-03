@@ -111,6 +111,7 @@ pub(super) struct App {
     pane_open: bool,
     pane_mode: UtilityPaneMode,
     active_session: Option<ActiveSessionRef>,
+    active_session_pinned: bool,
     /// When the user opens a child session from the inspector, this holds the
     /// originating parent session so a one-hop return is possible.
     parent_session: Option<ActiveSessionRef>,
@@ -167,6 +168,8 @@ pub(super) enum AppMsg {
     ResumeActiveSession,
     InspectToolCall(String),
     InspectSubagent(String),
+    TogglePinRequested(String),
+    TogglePinShortcutRequested,
     /// Inspector pane requested opening a child session.
     OpenChildSession(String),
     /// Header-bar button: return to the one-hop parent session.
@@ -195,6 +198,7 @@ relm4::new_stateless_action!(pub(super) ShortcutsAction, WindowActionGroup, "sho
 relm4::new_stateless_action!(AboutAction, WindowActionGroup, "about");
 relm4::new_stateless_action!(QuitAction, WindowActionGroup, "quit");
 relm4::new_stateless_action!(TogglePaneAction, WindowActionGroup, "toggle-pane");
+relm4::new_stateless_action!(TogglePinAction, WindowActionGroup, "toggle-pin");
 relm4::new_stateless_action!(ShowSearchAction, WindowActionGroup, "show-search");
 relm4::new_stateless_action!(EscapeAction, WindowActionGroup, "escape");
 
@@ -250,6 +254,19 @@ impl SimpleComponent for App {
                             #[watch]
                             set_visible: model.detail_visible && model.are_detail_actions_visible(),
                             connect_clicked => AppMsg::RequestNavigateBack,
+                        },
+
+                        #[name = "pin_button"]
+                        pack_start = &gtk::ToggleButton {
+                            set_icon_name: "pin-symbolic",
+                            add_css_class: "flat",
+                            #[watch]
+                            set_active: model.active_session_pinned,
+                            #[watch]
+                            set_visible: model.detail_visible && model.are_detail_actions_visible(),
+                            #[watch]
+                            set_tooltip_text: Some(pin_button_tooltip(model.active_session_pinned)),
+                            connect_clicked => AppMsg::TogglePinShortcutRequested,
                         },
 
                         #[name = "search_toggle"]
@@ -398,6 +415,7 @@ impl SimpleComponent for App {
             pane_open: true,
             pane_mode: UtilityPaneMode::Filters,
             active_session: None,
+            active_session_pinned: false,
             parent_session: None,
             search_query: String::new(),
             session_list: components.session_list,
@@ -556,6 +574,8 @@ impl SimpleComponent for App {
             AppMsg::ResumeActiveSession => self.handle_resume_active_session(&sender),
             AppMsg::InspectToolCall(tool_call_id) => self.handle_inspect_tool_call(tool_call_id),
             AppMsg::InspectSubagent(subagent_id) => self.handle_inspect_subagent(subagent_id),
+            AppMsg::TogglePinRequested(session_id) => self.handle_toggle_pin_requested(session_id),
+            AppMsg::TogglePinShortcutRequested => self.handle_toggle_pin_shortcut_requested(),
             AppMsg::OpenChildSession(child_session_id) => {
                 self.handle_open_child_session(child_session_id)
             }
@@ -587,6 +607,7 @@ impl App {
     fn transition_to_session_list_mode(&mut self) {
         self.detail_visible = false;
         self.active_session = None;
+        self.active_session_pinned = false;
         self.parent_session = None;
         self.tool_inspector_pane.emit(ToolInspectorPaneMsg::Clear);
         transition_to_list(&mut self.pane_mode, &mut self.pane_open);
@@ -729,6 +750,14 @@ fn persisted_window_size(
 
 fn clamped_window_size(size: (i32, i32)) -> (i32, i32) {
     (size.0.max(MIN_WINDOW_WIDTH), size.1.max(MIN_WINDOW_HEIGHT))
+}
+
+fn pin_button_tooltip(pinned: bool) -> &'static str {
+    if pinned {
+        "Unpin session (Ctrl+D)"
+    } else {
+        "Pin session (Ctrl+D)"
+    }
 }
 
 #[cfg(test)]
@@ -979,6 +1008,12 @@ mod tests {
             UtilityPaneMode::ToolInspector.stack_child_name(),
             "tool-inspector"
         );
+    }
+
+    #[test]
+    fn pin_button_tooltip_matches_state() {
+        assert_eq!(pin_button_tooltip(false), "Pin session (Ctrl+D)");
+        assert_eq!(pin_button_tooltip(true), "Unpin session (Ctrl+D)");
     }
 
     #[test]

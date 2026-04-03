@@ -23,7 +23,12 @@ pub struct SessionRow {
 
 #[derive(Debug)]
 pub enum SessionRowOutput {
+    TogglePinRequested(String),
     ResumeRequested(String, AiAssistant),
+}
+
+fn emit_toggle_pin(sender: &relm4::Sender<SessionRowOutput>, id: &str) {
+    let _ = sender.send(SessionRowOutput::TogglePinRequested(id.to_string()));
 }
 
 fn emit_resume(sender: &relm4::Sender<SessionRowOutput>, id: &str, tool: AiAssistant) {
@@ -41,6 +46,11 @@ impl FactoryComponent for SessionRow {
     view! {
         root = gtk::Box {
             set_orientation: gtk::Orientation::Horizontal,
+            add_css_class?: if self.session.pinned_at.is_some() {
+                Some("pinned-row")
+            } else {
+                None
+            },
 
             append = &adw::ActionRow::builder()
                 .title(Self::session_title(&self.session))
@@ -52,6 +62,12 @@ impl FactoryComponent for SessionRow {
 
                 add_prefix = &gtk::Image::from_icon_name(self.session.tool.icon_name()) {
                     set_pixel_size: 16,
+                },
+
+                add_suffix = &gtk::Image::from_icon_name("pin-symbolic") {
+                    set_visible: self.session.pinned_at.is_some(),
+                    set_pixel_size: 16,
+                    set_valign: gtk::Align::Center,
                 },
 
                 // Ending status icon — hidden for clean/unknown endings
@@ -90,10 +106,21 @@ impl FactoryComponent for SessionRow {
         let widgets = view_output!();
 
         let menu = gio::Menu::new();
+        menu.append(
+            Some(Self::pin_menu_label(&self.session)),
+            Some("row.toggle-pin"),
+        );
         menu.append(Some("Resume in Terminal"), Some("row.resume"));
 
         let action_group = gio::SimpleActionGroup::new();
+        let toggle_pin_action = gio::SimpleAction::new("toggle-pin", None);
         let resume_action = gio::SimpleAction::new("resume", None);
+
+        let output_sender = sender.output_sender().clone();
+        let session_id = self.session.id.clone();
+        toggle_pin_action.connect_activate(move |_, _| {
+            emit_toggle_pin(&output_sender, &session_id);
+        });
 
         let output_sender = sender.output_sender().clone();
         let session_id = self.session.id.clone();
@@ -102,6 +129,7 @@ impl FactoryComponent for SessionRow {
             emit_resume(&output_sender, &session_id, tool);
         });
 
+        action_group.add_action(&toggle_pin_action);
         action_group.add_action(&resume_action);
         root_for_actions.insert_action_group("row", Some(&action_group));
 
@@ -147,6 +175,14 @@ impl SessionRow {
         // ActionRow interprets title as Pango markup by default.
         // Escape special chars (<, >, &) to prevent parse failures.
         glib::markup_escape_text(&raw).to_string()
+    }
+
+    fn pin_menu_label(session: &Session) -> &'static str {
+        if session.pinned_at.is_some() {
+            "Unpin"
+        } else {
+            "Pin"
+        }
     }
 
     fn project_name(session: &Session) -> Option<String> {
@@ -372,5 +408,15 @@ mod tests {
             receiver.recv_sync(),
             Some(SessionRowOutput::ResumeRequested(id, tool)) if id == "session-123" && tool == AiAssistant::OpenCode
         ));
+    }
+
+    #[test]
+    fn pin_menu_label_matches_session_state() {
+        let mut session = build_session(Some("/home/user/work/my-project"), Some("Pin me"), 5);
+        session.pinned_at = None;
+        assert_eq!(SessionRow::pin_menu_label(&session), "Pin");
+
+        session.pinned_at = Some(Utc::now());
+        assert_eq!(SessionRow::pin_menu_label(&session), "Unpin");
     }
 }
