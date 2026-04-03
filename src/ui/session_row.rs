@@ -233,6 +233,7 @@ mod tests {
             message_count: 7,
             file_path: "/tmp/session.jsonl".to_string(),
             last_updated: now - ChronoDuration::minutes(minutes_ago),
+            pinned_at: None,
             first_prompt: first_prompt.map(str::to_string),
             parent_session_id: None,
             is_subagent: false,

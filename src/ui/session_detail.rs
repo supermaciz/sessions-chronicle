@@ -1177,6 +1177,7 @@ mod tests {
             message_count: 42,
             file_path: "/tmp/test.json".to_string(),
             last_updated: Utc.with_ymd_and_hms(2026, 3, 30, 12, 14, 0).unwrap(),
+            pinned_at: None,
             first_prompt: first_prompt.map(|s| s.to_string()),
             parent_session_id: None,
             is_subagent: false,

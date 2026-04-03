@@ -216,6 +216,7 @@ impl MistralVibeParser {
                 message_count: messages.len(),
                 file_path: session_dir.to_str().unwrap_or_default().to_string(),
                 last_updated: end_time,
+                pinned_at: None,
                 first_prompt,
                 parent_session_id: None,
                 is_subagent: false,

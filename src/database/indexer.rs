@@ -1260,6 +1260,7 @@ mod tests {
                 message_count: 1,
                 file_path: format!("/tmp/{}.jsonl", session_id),
                 last_updated: now,
+                pinned_at: None,
                 first_prompt: Some("hello".to_string()),
                 parent_session_id: None,
                 is_subagent: false,
