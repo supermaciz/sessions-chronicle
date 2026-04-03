@@ -18,6 +18,7 @@ pub struct Sidebar {
     project_row_filters: Vec<ProjectFilter>,
     rebuilding_projects: bool,
     projects_list: Option<gtk::ListBox>,
+    pinned_count_label: Option<gtk::Label>,
     source_statuses: HashMap<AiAssistant, PerSourceResult>,
     status_dots: HashMap<AiAssistant, gtk::Box>,
 }
@@ -25,12 +26,14 @@ pub struct Sidebar {
 #[derive(Debug)]
 pub enum SidebarMsg {
     AiAssistantToggled(AiAssistant, bool),
+    PinnedOnlyToggled(bool),
     ProjectSelected(ProjectFilter),
     SourceStatusesUpdated(HashMap<AiAssistant, PerSourceResult>),
     ProjectsLoaded {
         projects: Vec<ProjectInfo>,
         all_sessions_count: usize,
         unassigned_count: usize,
+        pinned_count: usize,
         show_unassigned: bool,
         selected_filter: ProjectFilter,
     },
@@ -89,6 +92,24 @@ impl SimpleComponent for Sidebar {
             },
 
             gtk::Label {
+                set_label: "Pinned",
+                set_halign: gtk::Align::Start,
+                add_css_class: "heading",
+                set_margin_bottom: 6,
+            },
+
+            #[name = "pinned_list"]
+            gtk::ListBox {
+                add_css_class: "pinned-sidebar-list",
+                set_selection_mode: gtk::SelectionMode::None,
+            },
+
+            gtk::Separator {
+                set_margin_top: 6,
+                set_margin_bottom: 6,
+            },
+
+            gtk::Label {
                 set_label: "Projects",
                 set_halign: gtk::Align::Start,
                 add_css_class: "heading",
@@ -131,6 +152,7 @@ impl SimpleComponent for Sidebar {
             project_row_filters: Vec::new(),
             rebuilding_projects: false,
             projects_list: None,
+            pinned_count_label: None,
             source_statuses: HashMap::new(),
             status_dots: HashMap::new(),
         };
@@ -147,6 +169,26 @@ impl SimpleComponent for Sidebar {
             widgets.assistants_list.append(&row);
             model.status_dots.insert(assistant, dot);
         }
+
+        let pinned_check = gtk::CheckButton::builder().active(false).build();
+        let pinned_row = adw::ActionRow::builder()
+            .title("Pinned Only")
+            .activatable_widget(&pinned_check)
+            .build();
+        pinned_row.add_prefix(&pinned_check);
+
+        let pinned_count_label = gtk::Label::new(Some("0"));
+        pinned_count_label.add_css_class("project-badge");
+        pinned_count_label.set_valign(gtk::Align::Center);
+        pinned_count_label.set_height_request(29);
+        pinned_row.add_suffix(&pinned_count_label);
+        model.pinned_count_label = Some(pinned_count_label);
+
+        pinned_check.connect_toggled(move |check| {
+            sender.input(SidebarMsg::PinnedOnlyToggled(check.is_active()));
+        });
+
+        widgets.pinned_list.append(&pinned_row);
 
         let _ = sender;
         ComponentParts { model, widgets }
@@ -170,6 +212,12 @@ impl SimpleComponent for Sidebar {
 
                 self.emit_filters_changed(&sender);
             }
+            SidebarMsg::PinnedOnlyToggled(active) => {
+                if self.pinned_only != active {
+                    self.pinned_only = active;
+                    self.emit_filters_changed(&sender);
+                }
+            }
             SidebarMsg::ProjectSelected(project_filter) => {
                 if self.selected_project_filter != project_filter {
                     self.selected_project_filter = project_filter;
@@ -182,10 +230,14 @@ impl SimpleComponent for Sidebar {
                 projects,
                 all_sessions_count,
                 unassigned_count,
+                pinned_count,
                 show_unassigned,
                 selected_filter,
             } => {
                 self.selected_project_filter = selected_filter;
+                if let Some(label) = self.pinned_count_label.as_ref() {
+                    label.set_label(&pinned_count.to_string());
+                }
                 self.rebuilding_projects = true;
                 self.rebuild_project_rows(
                     projects,
@@ -570,6 +622,7 @@ mod tests {
             ],
             all_sessions_count: 3,
             unassigned_count: 1,
+            pinned_count: 0,
             show_unassigned: true,
             selected_filter: ProjectFilter::Project(2),
         });
@@ -615,5 +668,49 @@ mod tests {
         assert!(!projects_list.has_css_class("boxed-list"));
         assert!(assistants_list.has_css_class("assistant-sidebar-list"));
         assert!(!assistants_list.has_css_class("boxed-list"));
+    }
+
+    #[gtk::test]
+    fn pinned_sidebar_toggle_emits_filters_changed_with_pinned_only() {
+        let outputs: Rc<RefCell<Vec<SidebarOutput>>> = Rc::new(RefCell::new(Vec::new()));
+        let outputs_ref = outputs.clone();
+
+        let controller = Sidebar::builder()
+            .launch(())
+            .connect_receiver(move |_, output| outputs_ref.borrow_mut().push(output));
+
+        controller.emit(SidebarMsg::PinnedOnlyToggled(true));
+        pump_main_context(|| !outputs.borrow().is_empty());
+
+        assert!(matches!(
+            outputs.borrow().as_slice(),
+            [SidebarOutput::FiltersChanged {
+                pinned_only: true,
+                ..
+            }]
+        ));
+    }
+
+    #[gtk::test]
+    fn projects_loaded_updates_pinned_count_badge() {
+        let controller = Sidebar::builder().launch(());
+
+        controller.emit(SidebarMsg::ProjectsLoaded {
+            projects: vec![],
+            all_sessions_count: 0,
+            unassigned_count: 0,
+            pinned_count: 3,
+            show_unassigned: false,
+            selected_filter: ProjectFilter::AllSessions,
+        });
+
+        pump_main_context(|| {
+            let parts = controller.state().get();
+            parts
+                .model
+                .pinned_count_label
+                .as_ref()
+                .is_some_and(|label| label.label() == "3")
+        });
     }
 }

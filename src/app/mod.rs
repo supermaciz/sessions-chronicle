@@ -19,8 +19,8 @@ use std::{
 use crate::analytics_worker::AnalyticsWorker;
 use crate::config::{APP_ID, PROFILE};
 use crate::database::{
-    SessionIndexer, count_all_sessions, count_unassigned_sessions, has_unassigned_sessions,
-    load_projects,
+    SessionIndexer, count_all_sessions, count_pinned_sessions, count_unassigned_sessions,
+    has_unassigned_sessions, load_projects,
 };
 use crate::indexing_worker::{IndexingWorker, IndexingWorkerInput};
 use crate::models::{ProjectFilter, ProjectInfo, session::AiAssistant};
@@ -71,6 +71,7 @@ struct SidebarProjectData {
     projects: Vec<ProjectInfo>,
     all_sessions_count: usize,
     unassigned_count: usize,
+    pinned_count: usize,
     show_unassigned: bool,
 }
 
@@ -83,6 +84,8 @@ fn load_sidebar_project_data(
         count_all_sessions(db_path, tools).context("count all sessions for sidebar")?;
     let unassigned_count = count_unassigned_sessions(db_path, tools)
         .context("count unassigned sessions for sidebar")?;
+    let pinned_count =
+        count_pinned_sessions(db_path, tools).context("count pinned sessions for sidebar")?;
     let show_unassigned =
         has_unassigned_sessions(db_path).context("determine unassigned sidebar visibility")?;
 
@@ -90,6 +93,7 @@ fn load_sidebar_project_data(
         projects,
         all_sessions_count,
         unassigned_count,
+        pinned_count,
         show_unassigned,
     })
 }
@@ -665,6 +669,7 @@ impl App {
             projects: sidebar_data.projects,
             all_sessions_count: sidebar_data.all_sessions_count,
             unassigned_count: sidebar_data.unassigned_count,
+            pinned_count: sidebar_data.pinned_count,
             show_unassigned: sidebar_data.show_unassigned,
             selected_filter,
         });
