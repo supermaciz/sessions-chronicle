@@ -287,12 +287,19 @@ appear and disappear together, so grouping them on the left is natural.
 The right side (menu, pane, resume, parent) stays untouched.
 
 **Model change:** `App` gains `active_session_pinned: bool` (default
-`false`), initialized from `session.pinned_at.is_some()` when the detail
-opens. Updated reactively after each toggle.
+`false`), derived from the currently active detail session.
 
-**Toast feedback:** After each toggle, a 2-second `adw::Toast` confirms
-the action: "Session pinned" / "Session unpinned". This covers the case
-where the user's eyes are on the transcript, not the header bar.
+- Set from `session.pinned_at.is_some()` whenever `active_session` changes:
+  initial detail open, opening a child session, returning to parent, and
+  clearing detail state on navigate-back.
+- Updated after each successful pin toggle so the header button remains a
+  model-driven view, not a second source of truth.
+
+**Toast feedback:** After each successful toggle, a 2-second `adw::Toast`
+confirms the action: "Session pinned" / "Session unpinned". If the database
+write fails, `active_session_pinned` stays unchanged and an error toast is
+shown instead. The button is model-driven, so any transient GTK toggle state
+is corrected on the next render.
 
 ### Keyboard shortcut — `Ctrl+D`
 
@@ -329,17 +336,26 @@ list.
 ### Pin toggle data flow
 
 ```
-User action (context menu / Ctrl+D / detail pin toggle)
+Context menu on row
   → SessionRowOutput::TogglePinRequested(session_id)
-     (or AppMsg::TogglePinShortcutRequested for Ctrl+D and detail toggle)
+  → App toggles that explicit session_id directly
+
+Keyboard shortcut / detail pin toggle
+  → AppMsg::TogglePinShortcutRequested
   → App resolves target:
      detail open → active_session.id
      otherwise → SessionListOutput::SelectedSessionForPin(session_id)
-  → App calls toggle_pin(db_path, session_id)
+  → App toggles the resolved session_id
+
+Shared completion path
   → Database: UPDATE sessions SET pinned_at = ...
-  → App updates active_session_pinned (detail toggle follows via #[watch])
-  → App shows toast: "Session pinned" / "Session unpinned"
-  → App refreshes session list + sidebar pin count
+  → success:
+     update active_session_pinned when the affected session is the active detail
+     show toast: "Session pinned" / "Session unpinned"
+     refresh session list + sidebar pin count
+  → failure:
+     leave active_session_pinned unchanged
+     show error toast
   → If detail session was unpinned while pinned_only = true:
      remove row from filtered list; detail view stays open
 ```
@@ -389,6 +405,13 @@ filter input.
 9. **Empty state copy for pinned filter**: `pinned_only: true` with zero
    matches shows a filter-specific empty state rather than the generic first-run
    "No Sessions Yet" state.
+10. **Header pin state resyncs across session changes**: Open pinned session A,
+    then navigate to unpinned child session B and back to parent A →
+    `active_session_pinned` and header toggle follow the currently active session
+    each time.
+11. **Pin-toggle failure preserves model state**: Simulate `toggle_pin()`
+    failure while detail is open → header toggle re-renders to the prior state
+    and an error toast is shown.
 
 ### Manual verification (`--sessions-dir tests/fixtures`)
 
@@ -410,7 +433,11 @@ filter input.
 11. Open an unpinned session detail → pin toggle shows inactive. Click it
     → button flips to active, toast "Session pinned" appears.
 12. Pin toggle button is hidden on the session list view and in Analytics.
-13. Pin session, quit, relaunch → pin persists.
-14. Pin session, trigger re-index → pin persists.
-15. Verify light and dark theme: left border + pin icon use
+13. Navigate from a pinned detail session to an unpinned child session and back
+    → header toggle state follows the active session each time.
+14. Force a pin-toggle failure → pin state remains unchanged and an error toast
+    appears.
+15. Pin session, quit, relaunch → pin persists.
+16. Pin session, trigger re-index → pin persists.
+17. Verify light and dark theme: left border + pin icon use
     `@accent_color` correctly.
