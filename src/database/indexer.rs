@@ -662,13 +662,33 @@ impl SessionIndexer {
         let ending_status = Self::determine_ending_status(&parsed.tool_calls).to_storage();
 
         tx.execute(
-            "INSERT OR REPLACE INTO sessions
+            "INSERT INTO sessions
              (id, tool, project_path, project_id, start_time, message_count, file_path, last_updated,
               first_prompt, parent_session_id, is_subagent,
               input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, reasoning_tokens,
               edit_count, read_count, command_count, ending_status)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16,
-                     ?17, ?18, ?19, ?20)",
+                     ?17, ?18, ?19, ?20)
+             ON CONFLICT(id) DO UPDATE SET
+                 tool = excluded.tool,
+                 project_path = excluded.project_path,
+                 project_id = excluded.project_id,
+                 start_time = excluded.start_time,
+                 message_count = excluded.message_count,
+                 file_path = excluded.file_path,
+                 last_updated = excluded.last_updated,
+                 first_prompt = excluded.first_prompt,
+                 parent_session_id = excluded.parent_session_id,
+                 is_subagent = excluded.is_subagent,
+                 input_tokens = excluded.input_tokens,
+                 output_tokens = excluded.output_tokens,
+                 cache_read_tokens = excluded.cache_read_tokens,
+                 cache_write_tokens = excluded.cache_write_tokens,
+                 reasoning_tokens = excluded.reasoning_tokens,
+                 edit_count = excluded.edit_count,
+                 read_count = excluded.read_count,
+                 command_count = excluded.command_count,
+                 ending_status = excluded.ending_status",
             rusqlite::params![
                 &session.id,
                 session.tool.to_storage(),
@@ -2252,5 +2272,48 @@ mod tests {
         assert_eq!(read, 0);
         assert_eq!(cmd, 0);
         assert_eq!(ending, "unknown");
+    }
+
+    #[test]
+    fn reindex_upsert_preserves_existing_pinned_at() {
+        let temp_db = NamedTempFile::new().unwrap();
+        let mut indexer = SessionIndexer::new(temp_db.path()).unwrap();
+        let fingerprint = NamedTempFile::new().unwrap();
+
+        let parsed = parsed_session("pin-preserve", Some("/tmp/project"));
+        indexer
+            .insert_parsed_session_with_fingerprint(&parsed, fingerprint.path(), fingerprint.path())
+            .unwrap();
+
+        indexer
+            .db
+            .execute(
+                "UPDATE sessions SET pinned_at = 1234 WHERE id = 'pin-preserve'",
+                [],
+            )
+            .unwrap();
+
+        let mut reparsed = parsed_session("pin-preserve", Some("/tmp/project"));
+        reparsed.session.first_prompt = Some("updated prompt".to_string());
+
+        indexer
+            .insert_parsed_session_with_fingerprint(
+                &reparsed,
+                fingerprint.path(),
+                fingerprint.path(),
+            )
+            .unwrap();
+
+        let (pinned_at, first_prompt): (Option<i64>, Option<String>) = indexer
+            .db
+            .query_row(
+                "SELECT pinned_at, first_prompt FROM sessions WHERE id = 'pin-preserve'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+
+        assert_eq!(pinned_at, Some(1234));
+        assert_eq!(first_prompt.as_deref(), Some("updated prompt"));
     }
 }
