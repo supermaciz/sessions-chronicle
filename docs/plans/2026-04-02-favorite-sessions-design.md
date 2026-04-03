@@ -30,17 +30,22 @@ is a **quick-access problem**, not a discovery problem.
 Add one column to `sessions`:
 
 ```sql
-ALTER TABLE sessions ADD COLUMN pinned_at TEXT DEFAULT NULL;
+ALTER TABLE sessions ADD COLUMN pinned_at INTEGER DEFAULT NULL;
 PRAGMA user_version = 8;
 ```
 
-- **Type**: `TEXT` storing ISO 8601 timestamps (e.g., `2026-04-03T14:30:00Z`),
-  or `NULL` for unpinned. A timestamp (rather than boolean) enables future
-  pin-order sorting without a second migration.
+- **Type**: `INTEGER` storing Unix timestamps in seconds (same convention as
+  `start_time` / `last_updated`), or `NULL` for unpinned. A timestamp (rather
+  than boolean) enables future pin-order sorting without a second migration.
 - **Index**: None in v1. The filter `pinned_at IS NOT NULL` is efficient on a
   small result set. An index can be added later if needed.
 - **No fingerprint clear**: `pinned_at` is user-set metadata, not derived from
   parsing. This is the first migration that does not clear `file_fingerprints`.
+- **Migration shape**: Implement `apply_v8_migration()` using the same
+  defensive pattern as v6/v7: check `column_exists(conn, "sessions",
+  "pinned_at")` before `ALTER TABLE`, then set `PRAGMA user_version = 8`.
+  This keeps the migration safe if startup is interrupted after the column is
+  added but before the version stamp is written.
 
 ## 2. Indexer Safety — Preserving `pinned_at` Across Re-index
 
@@ -88,7 +93,8 @@ ON CONFLICT(id) DO UPDATE SET
 
 ### `toggle_pin(db_path, session_id) -> Result<bool>`
 
-Atomically flips the pin state. Returns `true` if now pinned.
+Atomically flips the pin state and returns `true` if the session is pinned
+after the update.
 
 ```sql
 UPDATE sessions
@@ -97,7 +103,14 @@ SET pinned_at = CASE
     ELSE NULL
 END
 WHERE id = ?2
+RETURNING pinned_at IS NOT NULL
 ```
+
+- Pass the current Unix timestamp as `?1`.
+- Use SQLite `RETURNING` so the function does not need a second read to learn
+  the post-toggle state.
+- If no row matches `id = ?2`, return an error instead of silently reporting
+  `false`.
 
 ### `count_pinned_sessions(db_path, tools) -> Result<usize>`
 
@@ -140,6 +153,10 @@ pub pinned_at: Option<DateTime<Utc>>,
 All session-reading queries include `pinned_at` in their `SELECT` list.
 The `SessionRow` reads `pinned_at` to decide icon visibility, CSS class,
 and context menu label.
+
+- Storage remains `INTEGER`; `session_from_row()` converts it to
+  `Option<DateTime<Utc>>` the same way it already converts `start_time` and
+  `last_updated`.
 
 ## 5. Sidebar — Pin Filter Row
 
@@ -225,6 +242,7 @@ SessionList
 | `FilterState` | + `pinned_only: bool` (default `false`) |
 | `SessionListMsg::SetFilters` | + `pinned_only: bool` |
 | `SessionList` struct | + `pinned_only: bool` |
+| `SidebarProjectData` | + `pinned_count: usize` |
 
 ## 7. Session Row — Pin Visual & Context Menu
 
@@ -391,6 +409,9 @@ filter input.
    → verify `PRAGMA user_version = 8` and `pinned_at` column exists with
    `NULL` default.
 2. **Migration v8 is idempotent**: Run twice — no error.
+   Also cover the partial-migration case: `pinned_at` column exists while
+   `PRAGMA user_version = 7`, then `initialize_database()` upgrades cleanly
+   to v8.
 3. **toggle_pin flips state**: Insert session, toggle → non-NULL. Toggle
    again → NULL.
 4. **Re-index preserves pinned_at**: Insert session, set `pinned_at`,
