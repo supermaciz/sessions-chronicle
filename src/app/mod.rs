@@ -256,9 +256,11 @@ impl SimpleComponent for App {
                         },
 
                         #[name = "pin_button"]
-                        pack_start = &gtk::Button {
+                        pack_start = &gtk::ToggleButton {
                             set_icon_name: "view-pin-symbolic",
                             add_css_class: "flat",
+                            #[watch]
+                            set_active: model.active_session_pinned(),
                             #[watch]
                             set_visible: model.detail_visible && model.are_detail_actions_visible(),
                             #[watch]
@@ -590,12 +592,6 @@ impl SimpleComponent for App {
             && widgets.search_bar.is_search_mode() != self.search_visible
         {
             widgets.search_bar.set_search_mode(self.search_visible);
-        }
-
-        if self.active_session_pinned() {
-            widgets.pin_button.add_css_class("suggested-action");
-        } else {
-            widgets.pin_button.remove_css_class("suggested-action");
         }
     }
 
