@@ -19,6 +19,8 @@ is a **quick-access problem**, not a discovery problem.
 - Sidebar gains a composable "Pinned Only" checkbox filter.
 - `Ctrl+D` only acts in the Sessions workspace, with an explicit target
   resolution rule.
+- Detail header bar shows a pin toggle button (`pack_start`, after back)
+  with toast feedback.
 - No ordering, folders/tags, smart suggestions, or sync.
 
 ---
@@ -261,6 +263,37 @@ The existing `gio::Menu` gains a second action, placed **before**
 - **Output**: `SessionRowOutput::TogglePinRequested(String)` carrying
   the session ID.
 
+### Detail view — Pin toggle button
+
+The shared `adw::HeaderBar` gains a `gtk::ToggleButton` for pin state,
+visible only in detail mode. Placed at `pack_start` after the back button
+to avoid adding density to the already busy right side:
+
+```
+[← Back] [Pin]  [Search]  |  Sessions / Analytics  |  [Spinner] [Menu] [Pane] [Resume] [Parent]
+```
+
+**Widget:**
+- `gtk::ToggleButton` with `set_icon_name("pin-symbolic")`, CSS class `.flat`.
+- `#[watch] set_active: model.active_session_pinned`.
+- `#[watch] set_visible: model.detail_visible && model.are_detail_actions_visible()`.
+- Tooltip: "Pin session (Ctrl+D)" when unpinned, "Unpin session (Ctrl+D)"
+  when pinned.
+- Signal: `connect_clicked => AppMsg::TogglePinShortcutRequested` (same
+  code path as `Ctrl+D`).
+
+**Why `pack_start`:** Back and Pin only appear in detail mode — they
+appear and disappear together, so grouping them on the left is natural.
+The right side (menu, pane, resume, parent) stays untouched.
+
+**Model change:** `App` gains `active_session_pinned: bool` (default
+`false`), initialized from `session.pinned_at.is_some()` when the detail
+opens. Updated reactively after each toggle.
+
+**Toast feedback:** After each toggle, a 2-second `adw::Toast` confirms
+the action: "Session pinned" / "Session unpinned". This covers the case
+where the user's eyes are on the transcript, not the header bar.
+
 ### Keyboard shortcut — `Ctrl+D`
 
 Wired as an app-level keyboard shortcut (not per-row), since the row
@@ -296,14 +329,16 @@ list.
 ### Pin toggle data flow
 
 ```
-User action (context menu / Ctrl+D)
+User action (context menu / Ctrl+D / detail pin toggle)
   → SessionRowOutput::TogglePinRequested(session_id)
-     (or AppMsg::TogglePinShortcutRequested for Ctrl+D)
+     (or AppMsg::TogglePinShortcutRequested for Ctrl+D and detail toggle)
   → App resolves target:
      detail open → active_session.id
      otherwise → SessionListOutput::SelectedSessionForPin(session_id)
   → App calls toggle_pin(db_path, session_id)
   → Database: UPDATE sessions SET pinned_at = ...
+  → App updates active_session_pinned (detail toggle follows via #[watch])
+  → App shows toast: "Session pinned" / "Session unpinned"
   → App refreshes session list + sidebar pin count
   → If detail session was unpinned while pinned_only = true:
      remove row from filtered list; detail view stays open
@@ -314,6 +349,7 @@ User action (context menu / Ctrl+D)
 | Type | Change |
 |---|---|
 | `AppMsg` | + `TogglePinShortcutRequested`, pin-toggle completion handling |
+| `App` struct | + `active_session_pinned: bool` |
 | `SessionListMsg` / `SessionListOutput` | + request/response pair for selected session ID |
 
 ### Empty state behavior
@@ -368,7 +404,13 @@ filter input.
    → detail stays open. Navigate back → session absent from list.
 9. With `Pinned Only` enabled and no pinned sessions, verify a filter-specific
    empty state is shown.
-10. Pin session, quit, relaunch → pin persists.
-11. Pin session, trigger re-index → pin persists.
-12. Verify light and dark theme: left border + pin icon use
-   `@accent_color` correctly.
+10. Open a pinned session detail → pin toggle button (left of header bar)
+    shows pressed/active state. Click it → button flips to inactive, toast
+    "Session unpinned" appears.
+11. Open an unpinned session detail → pin toggle shows inactive. Click it
+    → button flips to active, toast "Session pinned" appears.
+12. Pin toggle button is hidden on the session list view and in Analytics.
+13. Pin session, quit, relaunch → pin persists.
+14. Pin session, trigger re-index → pin persists.
+15. Verify light and dark theme: left border + pin icon use
+    `@accent_color` correctly.
