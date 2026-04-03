@@ -395,3 +395,93 @@ has composable checkboxes (AI Assistants) and exclusive selection
 
 Produce a design document (`2026-04-02-favorite-sessions-design.md`)  
 and then an implementation plan.
+
+---
+
+## Post-Implementation Review: Pinned as Navigation Target
+
+**Date:** 2026-04-03  
+**Source:** Mii Beta GTK Designer review of the implemented Proposal F  
+**Context:** After implementing Pin Filter (Proposal F), a follow-up design  
+(`2026-04-03-pinned-sidebar-navigation-design.md`) proposed promoting Pinned  
+from a composable filter to a dedicated sidebar section. The Mii Beta Designer  
+reviewed that proposal and identified a simpler path.
+
+### Problem With Current Implementation
+
+The `pinned_only: bool` filter composes with project selection via AND.  
+This creates confusing empty states: the sidebar can point to a project  
+with zero pinned sessions while pinned sessions exist in other projects.  
+The user sees an empty list despite having pins.
+
+Pinned is functionally a **navigation destination** ("show me my bookmarks"),  
+not a **filter facet** ("narrow this view"). The current implementation  
+treats it as the latter.
+
+### Rejected Approach: Separate Pinned Section
+
+The initial proposal (`2026-04-03-pinned-sidebar-navigation-design.md`)  
+added a dedicated `Pinned` section above AI Assistants with its own  
+header and `ListBox`. The Mii Beta review rejected this for three reasons:
+
+1. **Wrong ordering.** Placing Pinned above AI Assistants breaks the  
+   visual grammar — AI assistant filters are global scope that affect  
+   everything below, including the Pinned badge count. Global context  
+   should come first.
+2. **Unnecessary surface.** Pinned is a navigation target in the same  
+   selection group as All Sessions and projects. It does not need its  
+   own section, header, or `ListBox`.
+3. **Extra state reconciliation.** A separate section requires manual  
+   mutual exclusivity logic. A row in the same `ListBox` gets it free  
+   from GTK's `SelectionMode::Single`.
+
+### Recommended Approach: Pinned as First Row in Projects
+
+Pinned becomes the first row in the existing projects `ListBox`,  
+participating in the same single-selection model:
+
+```
+AI Assistants
+  [x] Claude Code
+  [x] OpenCode
+  [x] Codex
+  [x] Mistral Vibe
+
+Projects
+  * Pinned           (3)
+    All Sessions    (42)
+    my-project      (12)
+    other-project    (8)
+    Unassigned       (2)
+```
+
+### Data Model Change
+
+`pinned_only: bool` is removed from `SidebarOutput::FiltersChanged`  
+and `FilterState`. Pinned becomes a variant of `ProjectFilter`:
+
+```rust
+pub enum ProjectFilter {
+    AllSessions,
+    Pinned,          // new
+    Project(i64),
+    Unassigned,
+}
+```
+
+The database switches on `ProjectFilter::Pinned` to add  
+`WHERE pinned_at IS NOT NULL`, ignoring project_id.
+
+### Net Impact
+
+- Removes one boolean from 5+ files
+- Removes one `ListBox` and one section header from the sidebar
+- Consolidates a two-axis filter (project + pinned) into a single-axis  
+  navigation enum
+- GTK enforces mutual exclusivity — no manual state reconciliation
+- Pinned row always visible (even with count 0) for consistent discoverability
+- Badge count updates via the existing `rebuild_project_rows` path
+
+### Status
+
+Pending — requires a design document to specify the full implementation.
