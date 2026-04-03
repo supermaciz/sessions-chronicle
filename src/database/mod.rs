@@ -4,7 +4,7 @@ pub mod schema;
 
 use anyhow::{Context, Result};
 use chrono::{TimeZone, Utc};
-use rusqlite::{Connection, Row, ToSql};
+use rusqlite::{Connection, OptionalExtension, Row, ToSql};
 use std::collections::HashSet;
 use std::path::Path;
 use std::time::Duration;
@@ -454,6 +454,53 @@ pub fn count_all_sessions(db_path: &Path, tools: &[AiAssistant]) -> Result<usize
     Ok(count.max(0) as usize)
 }
 
+pub fn count_pinned_sessions(db_path: &Path, tools: &[AiAssistant]) -> Result<usize> {
+    if !db_path.exists() {
+        return Ok(0);
+    }
+
+    if tools.is_empty() {
+        return Ok(0);
+    }
+
+    let db = open_connection(db_path)?;
+
+    let (query, tool_strings): (String, Vec<String>) = if tools.len() == AiAssistant::ALL.len() {
+        (
+            "SELECT COUNT(*) FROM sessions
+             WHERE pinned_at IS NOT NULL
+               AND is_subagent = 0"
+                .to_string(),
+            vec![],
+        )
+    } else {
+        let placeholders: Vec<String> = tools.iter().map(|_| "?".to_string()).collect();
+        let tool_strings = tools
+            .iter()
+            .map(|tool| tool.to_storage())
+            .collect::<Vec<_>>();
+        (
+            format!(
+                "SELECT COUNT(*) FROM sessions
+                 WHERE pinned_at IS NOT NULL
+                   AND is_subagent = 0
+                   AND tool IN ({})",
+                placeholders.join(",")
+            ),
+            tool_strings,
+        )
+    };
+
+    let mut stmt = db.prepare(&query)?;
+    let tool_refs: Vec<&dyn ToSql> = tool_strings
+        .iter()
+        .map(|value| value as &dyn ToSql)
+        .collect();
+    let count: i64 = stmt.query_row(tool_refs.as_slice(), |row| row.get(0))?;
+
+    Ok(count.max(0) as usize)
+}
+
 pub fn count_unassigned_sessions(db_path: &Path, tools: &[AiAssistant]) -> Result<usize> {
     if !db_path.exists() {
         return Ok(0);
@@ -493,6 +540,31 @@ pub fn count_unassigned_sessions(db_path: &Path, tools: &[AiAssistant]) -> Resul
     let count: i64 = stmt.query_row(tool_refs.as_slice(), |row| row.get(0))?;
 
     Ok(count.max(0) as usize)
+}
+
+pub fn toggle_pin(db_path: &Path, session_id: &str) -> Result<bool> {
+    if !db_path.exists() {
+        anyhow::bail!("Database does not exist: {}", db_path.display());
+    }
+
+    let db = open_connection(db_path)?;
+    let now = Utc::now().timestamp();
+
+    let pinned: Option<bool> = db
+        .query_row(
+            "UPDATE sessions
+             SET pinned_at = CASE WHEN pinned_at IS NULL THEN ?1 ELSE NULL END
+             WHERE id = ?2
+             RETURNING pinned_at IS NOT NULL",
+            rusqlite::params![now, session_id],
+            |row| row.get(0),
+        )
+        .optional()?;
+
+    match pinned {
+        Some(is_pinned) => Ok(is_pinned),
+        None => anyhow::bail!("Session not found: {}", session_id),
+    }
 }
 
 /// Check whether any unassigned (no project) non-subagent session exists in the database.
