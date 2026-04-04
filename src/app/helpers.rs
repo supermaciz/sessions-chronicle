@@ -166,6 +166,7 @@ pub(super) fn retained_project_filter(
 ) -> ProjectFilter {
     match selected {
         ProjectFilter::AllSessions => ProjectFilter::AllSessions,
+        ProjectFilter::Pinned => ProjectFilter::Pinned,
         ProjectFilter::Unassigned => {
             if show_unassigned {
                 ProjectFilter::Unassigned
@@ -264,6 +265,21 @@ mod tests {
         assert_eq!(
             retained_project_filter(&ProjectFilter::Project(2), &projects, false),
             ProjectFilter::Project(2)
+        );
+    }
+
+    #[test]
+    fn retained_project_filter_preserves_pinned_selection() {
+        let projects = vec![ProjectInfo {
+            id: 1,
+            name: "alpha".to_string(),
+            path: "/tmp/alpha".to_string(),
+            session_count: 2,
+        }];
+
+        assert_eq!(
+            retained_project_filter(&ProjectFilter::Pinned, &projects, false),
+            ProjectFilter::Pinned
         );
     }
 

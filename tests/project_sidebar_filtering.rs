@@ -212,7 +212,6 @@ fn load_sessions_for_filter_returns_project_and_tool_intersection() {
         &db.path,
         &[AiAssistant::ClaudeCode],
         &ProjectFilter::Project(1),
-        false,
     )
     .expect("load sessions");
 
@@ -229,7 +228,6 @@ fn search_sessions_for_filter_returns_only_unassigned_matches() {
         &db.path,
         &[AiAssistant::ClaudeCode],
         &ProjectFilter::Unassigned,
-        false,
         "lonely",
     )
     .expect("search sessions");

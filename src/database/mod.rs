@@ -138,7 +138,6 @@ pub fn search_sessions_for_filter(
     db_path: &Path,
     tools: &[AiAssistant],
     project_filter: &ProjectFilter,
-    pinned_only: bool,
     query: &str,
 ) -> Result<Vec<Session>> {
     if !db_path.exists() {
@@ -151,12 +150,12 @@ pub fn search_sessions_for_filter(
 
     let query = query.trim();
     if query.is_empty() {
-        return load_sessions_for_filter(db_path, tools, project_filter, pinned_only);
+        return load_sessions_for_filter(db_path, tools, project_filter);
     }
 
     let db = open_connection(db_path)?;
 
-    match search_sessions_with_query(&db, tools, project_filter, pinned_only, query) {
+    match search_sessions_with_query(&db, tools, project_filter, query) {
         Ok(sessions) => Ok(sessions),
         Err(err) => {
             let sanitized = sanitize_search_query(query);
@@ -166,13 +165,7 @@ pub fn search_sessions_for_filter(
                     sanitized,
                     err
                 );
-                match search_sessions_with_query(
-                    &db,
-                    tools,
-                    project_filter,
-                    pinned_only,
-                    &sanitized,
-                ) {
+                match search_sessions_with_query(&db, tools, project_filter, &sanitized) {
                     Ok(sessions) => Ok(sessions),
                     Err(retry_err) => {
                         tracing::warn!(
@@ -195,18 +188,13 @@ fn search_sessions_with_query(
     db: &Connection,
     tools: &[AiAssistant],
     project_filter: &ProjectFilter,
-    pinned_only: bool,
     query: &str,
 ) -> Result<Vec<Session>> {
     let project_clause = match project_filter {
         ProjectFilter::AllSessions => String::new(),
+        ProjectFilter::Pinned => " AND s.pinned_at IS NOT NULL".to_string(),
         ProjectFilter::Project(_) => " AND s.project_id = ?".to_string(),
         ProjectFilter::Unassigned => " AND s.project_id IS NULL".to_string(),
-    };
-    let pinned_clause = if pinned_only {
-        " AND s.pinned_at IS NOT NULL"
-    } else {
-        ""
     };
 
     let (query_sql, tool_strings): (String, Vec<String>) = if tools.len() == AiAssistant::ALL.len()
@@ -223,9 +211,9 @@ fn search_sessions_with_query(
                  JOIN sessions s ON s.id = messages.session_id
                  WHERE messages MATCH ?
                    AND s.is_subagent = 0
-                   {}{}
+                    {}
                  ORDER BY rank ASC, s.last_updated DESC",
-                project_clause, pinned_clause
+                project_clause
             ),
             vec![],
         )
@@ -245,11 +233,10 @@ fn search_sessions_with_query(
                  WHERE messages MATCH ?
                    AND s.tool IN ({})
                    AND s.is_subagent = 0
-                   {}{}
+                    {}
                  ORDER BY rank ASC, s.last_updated DESC",
                 placeholders.join(","),
-                project_clause,
-                pinned_clause
+                project_clause
             ),
             tool_strings,
         )
@@ -289,7 +276,6 @@ pub fn load_sessions_for_filter(
     db_path: &Path,
     tools: &[AiAssistant],
     project_filter: &ProjectFilter,
-    pinned_only: bool,
 ) -> Result<Vec<Session>> {
     if !db_path.exists() {
         return Ok(Vec::new());
@@ -303,13 +289,9 @@ pub fn load_sessions_for_filter(
 
     let project_clause = match project_filter {
         ProjectFilter::AllSessions => String::new(),
+        ProjectFilter::Pinned => " AND pinned_at IS NOT NULL".to_string(),
         ProjectFilter::Project(_) => " AND project_id = ?".to_string(),
         ProjectFilter::Unassigned => " AND project_id IS NULL".to_string(),
-    };
-    let pinned_clause = if pinned_only {
-        " AND pinned_at IS NOT NULL"
-    } else {
-        ""
     };
 
     let (query, tool_strings): (String, Vec<String>) = if tools.len() == AiAssistant::ALL.len() {
@@ -322,9 +304,9 @@ pub fn load_sessions_for_filter(
                         edit_count, read_count, command_count, ending_status
                  FROM sessions
                  WHERE is_subagent = 0
-                   {}{}
+                    {}
                  ORDER BY last_updated DESC",
-                project_clause, pinned_clause
+                project_clause
             ),
             vec![],
         )
@@ -341,11 +323,10 @@ pub fn load_sessions_for_filter(
                  FROM sessions
                  WHERE tool IN ({})
                    AND is_subagent = 0
-                   {}{}
+                    {}
                  ORDER BY last_updated DESC",
                 placeholders.join(","),
-                project_clause,
-                pinned_clause
+                project_clause
             ),
             tool_strings,
         )

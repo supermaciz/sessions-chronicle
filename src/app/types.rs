@@ -136,7 +136,6 @@ pub(super) struct AnalyticsIndexingOutcome {
 pub(super) struct FilterState {
     pub(super) tools: Vec<AiAssistant>,
     pub(super) project_filter: ProjectFilter,
-    pub(super) pinned_only: bool,
 }
 
 impl Default for FilterState {
@@ -144,7 +143,6 @@ impl Default for FilterState {
         Self {
             tools: AiAssistant::ALL.to_vec(),
             project_filter: ProjectFilter::AllSessions,
-            pinned_only: false,
         }
     }
 }

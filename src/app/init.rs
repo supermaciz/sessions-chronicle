@@ -83,11 +83,9 @@ pub(super) fn init_child_components(
                 SidebarOutput::FiltersChanged {
                     tools,
                     project_filter,
-                    pinned_only,
                 } => AppMsg::FiltersChanged {
                     tools,
                     project_filter,
-                    pinned_only,
                 },
             });
     let tool_inspector_pane = ToolInspectorPane::builder()

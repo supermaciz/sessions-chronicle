@@ -458,20 +458,6 @@
   padding-bottom: 1px;
 }
 
-.pinned-sidebar-list {
-  background-color: transparent;
-}
-
-.pinned-sidebar-list > row:not(:hover):not(:focus-within) {
-  background-color: transparent;
-}
-
-.pinned-sidebar-list > row:not(:hover):not(:focus-within) > .activatable {
-  background-color: transparent;
-  border-radius: 0;
-  box-shadow: none;
-}
-
 .unassigned-label {
   font-style: italic;
   opacity: 0.85;

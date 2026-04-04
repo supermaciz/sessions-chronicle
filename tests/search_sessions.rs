@@ -164,7 +164,6 @@ fn search_sessions_orders_by_relevance() {
         &db.path,
         &[AiAssistant::ClaudeCode, AiAssistant::OpenCode],
         &ProjectFilter::AllSessions,
-        false,
         "alpha",
     )
     .expect("Search failed");
@@ -183,7 +182,6 @@ fn search_sessions_respects_tool_filter() {
         &db.path,
         &[AiAssistant::OpenCode],
         &ProjectFilter::AllSessions,
-        false,
         "alpha",
     )
     .expect("Search failed");
@@ -202,7 +200,6 @@ fn search_sessions_sanitizes_invalid_query() {
         &db.path,
         &[AiAssistant::ClaudeCode],
         &ProjectFilter::AllSessions,
-        false,
         "\"alpha",
     )
     .expect("Search failed");
