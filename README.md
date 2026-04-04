@@ -17,7 +17,8 @@ and pick up where you left off.
 - **Find any session instantly** — full-text search across all conversations (SQLite FTS5)
 - **Browse & filter** — sidebar filters by project and assistant, keyword search with highlighted matches
 - **Read conversations comfortably** — rich markdown rendering (code blocks, tables, task lists, blockquotes)
-- **Inspect tool calls** — expand inline tool calls and drill down into subagents in the utility pane
+- **Inspect tool calls** — expand inline tool calls and drill down into subagents in the utility pane; consecutive tool calls are grouped into collapsible bursts to reduce visual noise
+- **Pin favourite sessions** — star any session to pin it; a sidebar filter shows only pinned sessions with a live badge count
 - **Track token usage** — see per-session token breakdowns in the detail view
 - **See indexing health at a glance** — assistant status dots, issue banner, empty-state source diagnostics, and a detailed indexing status dialog
 - **Resume where you left off** — launch sessions directly from the app in your terminal

@@ -1,6 +1,6 @@
 # Sessions Chronicle - Project Status
 
-Last updated: 2026-03-31
+Last updated: 2026-04-05
 Branch snapshot: `main` (`v0.4.1`)
 
 ## Current Product State
@@ -18,6 +18,9 @@ Sessions Chronicle is a GNOME desktop app that indexes local AI coding assistant
 - Indexing diagnostics with assistant health dots, persistent issue banner, and empty-state source visibility
 - Session rows show message count, activity count, and ending status for at-a-glance context
 - Structured summary header in session detail view (model, timestamps, token totals, project)
+- Favorite sessions pinning: toggle pin from list or detail header bar; `pinned_at` stored in `sessions` table (schema `user_version = 8`)
+- Pin Filter in sidebar: dedicated "Pinned" entry with live badge count; filters session list to pinned-only; compatible with AI assistant toggles and search
+- Consecutive tool calls in session detail grouped into collapsible bursts (`DisplayToolBurst`), reducing visual clutter and preserving page-boundary correctness
 
 ## Terminology
 
@@ -27,6 +30,9 @@ Sessions Chronicle is a GNOME desktop app that indexes local AI coding assistant
 
 ## Recently Landed Work
 
+- Favorite sessions pinning and Pin Filter: pin toggle in session list and detail header bar; "Pinned" sidebar filter with live count; `sessions.pinned_at` column (schema v8) (#115)
+- Tool call grouping in session detail: consecutive tool calls collapsed into expandable bursts; page-boundary regrouping handles splits across pagination (#110)
+- Parser correctness fixes: closed drift regressions across Claude Code, OpenCode, Codex, and Mistral Vibe parsers (8f4d0c9)
 - Structured session summary header in session detail view: model slug, start/end timestamps, token totals, and project path (#105)
 - Session rows show message count, activity count, and ending status; duration replaced by message count (#98, #104)
 - AI assistant filter rows in sidebar streamlined for a cleaner layout (#103)
@@ -83,7 +89,7 @@ sessions-chronicle/
 
 ## Database Snapshot
 
-Current migration level is `PRAGMA user_version = 6`.
+Current migration level is `PRAGMA user_version = 8`.
 
 ### Core Tables
 
@@ -92,6 +98,8 @@ Current migration level is `PRAGMA user_version = 6`.
   - hierarchy fields (`parent_session_id`, `is_subagent`)
   - token usage aggregates (`input_tokens`, `output_tokens`, `cache_read_tokens`, `cache_write_tokens`, `reasoning_tokens`)
   - `project_id` FK → `projects(id)` (added in v6)
+  - activity counts (`edit_count`, `read_count`, `command_count`) and `ending_status` (added in v7)
+  - `pinned_at` nullable timestamp for favorite pinning (added in v8)
 - `projects`
   - canonical project records (`id`, `path`, `name`); path is the git root, name is the directory basename
 - `messages` (FTS5 virtual table)

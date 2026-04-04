@@ -49,6 +49,16 @@
   </categories>
   <content_rating type="oars-1.1" />
   <releases>
+    <release version="0.4.2" date="2026-04-05">
+      <description>
+        <p>Adds session pinning and improves transcript readability.</p>
+        <ul>
+          <li>Pin favorite sessions and filter to pinned-only in the sidebar</li>
+          <li>Group consecutive tool calls in the session detail view</li>
+          <li>Fix parser correctness drift regressions</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.4.1" date="2026-03-31">
       <description>
         <p>Improves session list readability and detail headers.</p>
