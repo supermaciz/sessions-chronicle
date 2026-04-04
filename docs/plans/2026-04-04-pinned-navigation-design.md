@@ -21,8 +21,9 @@ treats it as the latter.
 
 ## Scope
 
-This design modifies only the **sidebar navigation model and filtering
-pipeline**. Everything else from the Proposal F implementation is stable:
+This design modifies the **sidebar navigation model, filtering pipeline,
+and pinned-specific empty-state semantics**. Everything else from the
+Proposal F implementation is stable:
 
 **Unchanged (already on `feat/favorite-sessions`):**
 
@@ -61,13 +62,15 @@ the sidebar visual order.
 
 ### Removals
 
-The `pinned_only: bool` field is removed from three locations:
+The `pinned_only: bool` field is removed from the current filter plumbing:
 
 | Location | Field removed |
 |---|---|
 | `FilterState` (`src/app/types.rs`) | `pinned_only: bool` |
 | `SidebarOutput::FiltersChanged` (`src/ui/sidebar.rs`) | `pinned_only: bool` |
 | `SidebarMsg::PinnedOnlyToggled` (`src/ui/sidebar.rs`) | entire variant |
+| `SessionList` state / `SessionListMsg::SetFilters` (`src/ui/session_list.rs`) | `pinned_only: bool` |
+| DB query helpers (`src/database/mod.rs`) | `pinned_only` params on filter-loading/search functions |
 
 ### FilterState (after)
 
@@ -123,6 +126,23 @@ let project_clause = match project_filter {
 | `search_sessions_for_filter()` | Remove `pinned_only` param (no longer forwarded) |
 | `count_pinned_sessions()` | Unchanged — used for badge count independently |
 
+### App/session-list plumbing
+
+`SessionListMsg::SetFilters` now carries only:
+
+```rust
+SetFilters {
+    tools: Vec<AiAssistant>,
+    project_filter: ProjectFilter,
+}
+```
+
+`SessionList` no longer stores `pinned_only: bool`. Empty-state copy that was
+previously keyed on `pinned_only` now keys on
+`project_filter == ProjectFilter::Pinned`.
+
+This keeps pinned semantics in one place: the navigation target itself.
+
 ### Composition with AI Assistants
 
 `ProjectFilter::Pinned` composes with the `tools: &[AiAssistant]` filter
@@ -176,12 +196,18 @@ the `ProjectFilter`. Add one arm:
 GTK enforces mutual exclusivity — selecting Pinned deselects any project
 row, and vice versa. No manual state reconciliation needed.
 
+`project_filter_key()` / `project_filter_from_key()` must also gain the
+`Pinned` mapping so row rebuilds and row-selected events stay symmetric.
+
 ### Badge count
 
-`count_pinned_sessions()` is called during `rebuild_project_rows` (or
-equivalent) to update the `pinned_count_label`. The label reference moves
-from the deleted `pinned_list` section to the `projects_list` row, but
-the update logic is the same.
+`count_pinned_sessions()` remains owned by the app-level sidebar data load
+path (`load_sidebar_project_data()` / `SidebarProjectData`). The sidebar
+continues to receive `pinned_count` via `SidebarMsg::ProjectsLoaded` and
+updates only the label widget.
+
+`rebuild_project_rows()` should not query the database directly. The sidebar
+stays a pure view over already-computed counts.
 
 ### Behavior at count 0
 
@@ -193,6 +219,18 @@ list, consistent with how empty projects and "Unassigned" at 0 behave.
 
 "All Sessions" (position 0) remains the default selection at launch.
 No GSettings change. Filter state persistence is out of scope.
+
+### Filter retention after sidebar refresh
+
+`retained_project_filter()` must preserve `ProjectFilter::Pinned` unchanged:
+
+```rust
+ProjectFilter::Pinned => ProjectFilter::Pinned,
+```
+
+Unlike project IDs or `Unassigned`, the Pinned destination does not depend on
+project list membership or unassigned visibility, so it should never collapse
+back to `AllSessions` during `ProjectsLoaded`.
 
 ---
 
@@ -229,6 +267,7 @@ between Pinned and project rows.
 | `search_sessions_for_filter_respects_pinned_only()` | Same |
 | `pinned_sidebar_toggle_emits_filters_changed_with_pinned_only()` | Remove — replaced by row selection test |
 | `projects_loaded_updates_pinned_count_badge()` | Adapt — verify badge on `projects_list` row |
+| Session-list pinned empty-state tests | Adapt to `ProjectFilter::Pinned` instead of a bool flag |
 
 ### Unchanged tests
 
@@ -250,6 +289,13 @@ fn pinned_filter_returns_sessions_across_all_projects() {
 
 This test validates the core reason for the redesign — Pinned is a
 cross-project navigation target, not a per-project facet.
+
+Additional UI/plumbing tests to add:
+
+- `retained_project_filter_preserves_pinned_selection()`
+- sidebar row-selection test for `"pinned" -> ProjectFilter::Pinned`
+- `project_filter_key_round_trips_pinned()`
+- pinned empty-state copy test keyed on `ProjectFilter::Pinned`
 
 ---
 
