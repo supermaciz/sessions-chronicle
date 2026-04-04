@@ -437,11 +437,10 @@ impl SessionList {
         for index in 0..self.sessions.len() {
             if let Some(session_row) = self.sessions.get(index)
                 && session_row.session_id() == session_id
+                && let Some(row) = list_box.row_at_index(index as i32)
             {
-                if let Some(row) = list_box.row_at_index(index as i32) {
-                    list_box.select_row(Some(&row));
-                    return true;
-                }
+                list_box.select_row(Some(&row));
+                return true;
             }
         }
 
