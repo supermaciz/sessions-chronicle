@@ -299,6 +299,7 @@ impl OpenCodeParser {
             message_count: flattened.len(),
             file_path,
             last_updated: metadata.time_updated,
+            pinned_at: None,
             first_prompt,
             parent_session_id,
             is_subagent,

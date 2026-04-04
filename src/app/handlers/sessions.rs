@@ -30,6 +30,7 @@ impl App {
             id: session.id.clone(),
             tool: session.tool,
             project_name,
+            pinned: session.pinned_at.is_some(),
         });
 
         self.session_detail.emit(SessionDetailMsg::SetSession {
@@ -129,6 +130,8 @@ impl App {
             let search_query = active_search_query(&self.search_query);
             match load_session(&self.db_path, &parent.id) {
                 Ok(Some(session)) => {
+                    let mut parent = parent;
+                    parent.pinned = session.pinned_at.is_some();
                     self.active_session = Some(parent);
                     self.session_detail.emit(SessionDetailMsg::SetSession {
                         session: Box::new(session),

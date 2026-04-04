@@ -473,6 +473,10 @@
 .source-status-degraded { background-color: @warning_color; }
 .source-status-not-found { background-color: alpha(@view_fg_color, 0.3); }
 
+.pinned-row {
+  border-left: 2px solid @accent_color;
+}
+
 .source-count-pill {
   border-radius: 99px;
   min-height: 0;

@@ -145,6 +145,38 @@ fn load_session_returns_existing_session() {
 }
 
 #[test]
+fn load_session_maps_pinned_at_to_utc_datetime() {
+    let db = TempDatabase::new();
+
+    db.connection
+        .execute(
+            "INSERT INTO sessions (
+                id, tool, project_path, project_id, start_time, message_count,
+                file_path, last_updated, first_prompt, pinned_at
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+            rusqlite::params![
+                "pinned-session",
+                "claude_code",
+                Some("/projects/test"),
+                Option::<i64>::None,
+                1000_i64,
+                4_i64,
+                "/tmp/test-session.jsonl",
+                2000_i64,
+                Some("Help me refactor this code"),
+                1_717_171_717_i64,
+            ],
+        )
+        .expect("Failed to insert pinned session");
+
+    let session = load_session(&db.path, "pinned-session")
+        .expect("Failed to load session")
+        .expect("Session should exist");
+
+    assert_eq!(session.pinned_at.unwrap().timestamp(), 1_717_171_717);
+}
+
+#[test]
 fn load_session_returns_none_for_nonexistent() {
     let db = TempDatabase::new();
     db.seed_with_messages();

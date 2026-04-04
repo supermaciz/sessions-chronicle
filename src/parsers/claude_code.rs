@@ -574,6 +574,7 @@ impl ParseState {
             message_count: self.messages.len(),
             file_path: file_path.to_str().unwrap().to_string(),
             last_updated,
+            pinned_at: None,
             first_prompt,
             parent_session_id: None,
             is_subagent: false,

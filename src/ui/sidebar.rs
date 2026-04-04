@@ -17,6 +17,7 @@ pub struct Sidebar {
     project_row_filters: Vec<ProjectFilter>,
     rebuilding_projects: bool,
     projects_list: Option<gtk::ListBox>,
+    pinned_count_label: Option<gtk::Label>,
     source_statuses: HashMap<AiAssistant, PerSourceResult>,
     status_dots: HashMap<AiAssistant, gtk::Box>,
 }
@@ -30,6 +31,7 @@ pub enum SidebarMsg {
         projects: Vec<ProjectInfo>,
         all_sessions_count: usize,
         unassigned_count: usize,
+        pinned_count: usize,
         show_unassigned: bool,
         selected_filter: ProjectFilter,
     },
@@ -128,6 +130,7 @@ impl SimpleComponent for Sidebar {
             project_row_filters: Vec::new(),
             rebuilding_projects: false,
             projects_list: None,
+            pinned_count_label: None,
             source_statuses: HashMap::new(),
             status_dots: HashMap::new(),
         };
@@ -179,6 +182,7 @@ impl SimpleComponent for Sidebar {
                 projects,
                 all_sessions_count,
                 unassigned_count,
+                pinned_count,
                 show_unassigned,
                 selected_filter,
             } => {
@@ -188,6 +192,7 @@ impl SimpleComponent for Sidebar {
                     projects,
                     all_sessions_count,
                     unassigned_count,
+                    pinned_count,
                     show_unassigned,
                 );
                 self.rebuilding_projects = false;
@@ -293,6 +298,7 @@ impl Sidebar {
     fn project_filter_key(project_filter: &ProjectFilter) -> String {
         match project_filter {
             ProjectFilter::AllSessions => "all".to_string(),
+            ProjectFilter::Pinned => "pinned".to_string(),
             ProjectFilter::Unassigned => "unassigned".to_string(),
             ProjectFilter::Project(project_id) => format!("project:{}", project_id),
         }
@@ -307,6 +313,10 @@ impl Sidebar {
             return Some(ProjectFilter::Unassigned);
         }
 
+        if key == "pinned" {
+            return Some(ProjectFilter::Pinned);
+        }
+
         key.strip_prefix("project:")
             .and_then(|id| id.parse::<i64>().ok())
             .map(ProjectFilter::Project)
@@ -317,10 +327,16 @@ impl Sidebar {
         subtitle: Option<&str>,
         badge_count: usize,
         italic: bool,
-    ) -> gtk::ListBoxRow {
+        prefix_icon: Option<&str>,
+    ) -> (gtk::ListBoxRow, gtk::Label) {
         let action_row = adw::ActionRow::builder().title(title).build();
         if let Some(subtitle) = subtitle {
             action_row.set_subtitle(subtitle);
+        }
+
+        if let Some(icon_name) = prefix_icon {
+            let icon = gtk::Image::from_icon_name(icon_name);
+            action_row.add_prefix(&icon);
         }
 
         if italic {
@@ -335,7 +351,7 @@ impl Sidebar {
 
         let row = gtk::ListBoxRow::new();
         row.set_child(Some(&action_row));
-        row
+        (row, badge)
     }
 
     fn rebuild_project_rows(
@@ -343,6 +359,7 @@ impl Sidebar {
         projects: Vec<ProjectInfo>,
         all_sessions_count: usize,
         unassigned_count: usize,
+        pinned_count: usize,
         show_unassigned: bool,
     ) {
         let Some(list_box) = self.projects_list.as_ref() else {
@@ -354,20 +371,35 @@ impl Sidebar {
         }
 
         self.project_row_filters.clear();
+        self.pinned_count_label = None;
 
         let all_filter = ProjectFilter::AllSessions;
-        let all_row = Self::make_row("All Sessions", None, all_sessions_count, false);
+        let (all_row, _) = Self::make_row("All Sessions", None, all_sessions_count, false, None);
         all_row.set_widget_name(&Self::project_filter_key(&all_filter));
         list_box.append(&all_row);
         self.project_row_filters.push(all_filter);
 
+        let pinned_filter = ProjectFilter::Pinned;
+        let (pinned_row, pinned_badge) = Self::make_row(
+            "Pinned",
+            None,
+            pinned_count,
+            false,
+            Some("view-pin-symbolic"),
+        );
+        pinned_row.set_widget_name(&Self::project_filter_key(&pinned_filter));
+        list_box.append(&pinned_row);
+        self.project_row_filters.push(pinned_filter);
+        self.pinned_count_label = Some(pinned_badge);
+
         for project in projects {
             let filter = ProjectFilter::Project(project.id);
-            let row = Self::make_row(
+            let (row, _) = Self::make_row(
                 &project.name,
                 Some(&project.path),
                 project.session_count,
                 false,
+                None,
             );
             row.set_widget_name(&Self::project_filter_key(&filter));
             list_box.append(&row);
@@ -376,7 +408,8 @@ impl Sidebar {
 
         if show_unassigned {
             let unassigned_filter = ProjectFilter::Unassigned;
-            let unassigned_row = Self::make_row("Unassigned", None, unassigned_count, true);
+            let (unassigned_row, _) =
+                Self::make_row("Unassigned", None, unassigned_count, true, None);
             unassigned_row.set_widget_name(&Self::project_filter_key(&unassigned_filter));
             list_box.append(&unassigned_row);
             self.project_row_filters.push(unassigned_filter);
@@ -566,6 +599,7 @@ mod tests {
             ],
             all_sessions_count: 3,
             unassigned_count: 1,
+            pinned_count: 0,
             show_unassigned: true,
             selected_filter: ProjectFilter::Project(2),
         });
@@ -590,7 +624,7 @@ mod tests {
 
         assert_eq!(
             row_titles,
-            vec!["All Sessions", "alpha", "beta", "Unassigned"]
+            vec!["All Sessions", "Pinned", "alpha", "beta", "Unassigned"]
         );
 
         assert!(
@@ -611,5 +645,99 @@ mod tests {
         assert!(!projects_list.has_css_class("boxed-list"));
         assert!(assistants_list.has_css_class("assistant-sidebar-list"));
         assert!(!assistants_list.has_css_class("boxed-list"));
+    }
+
+    #[test]
+    fn project_filter_key_round_trips_pinned() {
+        let key = Sidebar::project_filter_key(&ProjectFilter::Pinned);
+        assert_eq!(key, "pinned");
+        assert_eq!(
+            Sidebar::project_filter_from_key(&key),
+            Some(ProjectFilter::Pinned)
+        );
+    }
+
+    #[gtk::test]
+    fn project_sidebar_selecting_pinned_row_emits_filters_changed() {
+        let outputs: Rc<RefCell<Vec<SidebarOutput>>> = Rc::new(RefCell::new(Vec::new()));
+        let outputs_ref = outputs.clone();
+
+        let controller = Sidebar::builder()
+            .launch(())
+            .connect_receiver(move |_, output| outputs_ref.borrow_mut().push(output));
+
+        controller.emit(SidebarMsg::ProjectsLoaded {
+            projects: vec![ProjectInfo {
+                id: 1,
+                name: "alpha".to_string(),
+                path: "/tmp/alpha".to_string(),
+                session_count: 2,
+            }],
+            all_sessions_count: 3,
+            unassigned_count: 0,
+            pinned_count: 2,
+            show_unassigned: false,
+            selected_filter: ProjectFilter::AllSessions,
+        });
+
+        pump_main_context(|| {
+            let parts = controller.state().get();
+            visible_project_row_titles(&parts.widgets.projects_list)
+                == vec!["All Sessions", "Pinned", "alpha"]
+        });
+
+        {
+            let parts = controller.state().get();
+            let pinned_row = parts
+                .widgets
+                .projects_list
+                .row_at_index(1)
+                .expect("pinned row");
+            parts.widgets.projects_list.select_row(Some(&pinned_row));
+        }
+
+        pump_main_context(|| !outputs.borrow().is_empty());
+
+        assert!(matches!(
+            outputs.borrow().as_slice(),
+            [SidebarOutput::FiltersChanged {
+                project_filter: ProjectFilter::Pinned,
+                ..
+            }]
+        ));
+    }
+
+    #[gtk::test]
+    fn projects_loaded_places_pinned_row_before_projects_and_updates_badge() {
+        let controller = Sidebar::builder().launch(());
+
+        controller.emit(SidebarMsg::ProjectsLoaded {
+            projects: vec![ProjectInfo {
+                id: 1,
+                name: "alpha".to_string(),
+                path: "/tmp/alpha".to_string(),
+                session_count: 2,
+            }],
+            all_sessions_count: 3,
+            unassigned_count: 1,
+            pinned_count: 4,
+            show_unassigned: true,
+            selected_filter: ProjectFilter::Pinned,
+        });
+
+        pump_main_context(|| {
+            let parts = controller.state().get();
+            parts
+                .model
+                .pinned_count_label
+                .as_ref()
+                .is_some_and(|label| label.label() == "4")
+        });
+
+        let parts = controller.state().get();
+        assert_eq!(
+            visible_project_row_titles(&parts.widgets.projects_list),
+            vec!["All Sessions", "Pinned", "alpha", "Unassigned"]
+        );
     }
 }

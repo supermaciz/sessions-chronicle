@@ -4,7 +4,7 @@ pub mod schema;
 
 use anyhow::{Context, Result};
 use chrono::{TimeZone, Utc};
-use rusqlite::{Connection, Row, ToSql};
+use rusqlite::{Connection, OptionalExtension, Row, ToSql};
 use std::collections::HashSet;
 use std::path::Path;
 use std::time::Duration;
@@ -58,6 +58,7 @@ fn session_from_row(row: &Row) -> rusqlite::Result<Session> {
     let tool = AiAssistant::from_storage(&tool_value).unwrap_or(AiAssistant::ClaudeCode);
     let start_time: i64 = row.get("start_time")?;
     let last_updated: i64 = row.get("last_updated")?;
+    let pinned_at: Option<i64> = row.get("pinned_at")?;
     let message_count: i64 = row.get("message_count")?;
     let is_subagent_int: i64 = row.get("is_subagent").unwrap_or(0);
 
@@ -95,6 +96,7 @@ fn session_from_row(row: &Row) -> rusqlite::Result<Session> {
             .timestamp_opt(last_updated, 0)
             .single()
             .unwrap_or_else(Utc::now),
+        pinned_at: pinned_at.and_then(|ts| Utc.timestamp_opt(ts, 0).single()),
         first_prompt: row.get("first_prompt")?,
         parent_session_id: row.get("parent_session_id")?,
         is_subagent: is_subagent_int != 0,
@@ -190,6 +192,7 @@ fn search_sessions_with_query(
 ) -> Result<Vec<Session>> {
     let project_clause = match project_filter {
         ProjectFilter::AllSessions => String::new(),
+        ProjectFilter::Pinned => " AND s.pinned_at IS NOT NULL".to_string(),
         ProjectFilter::Project(_) => " AND s.project_id = ?".to_string(),
         ProjectFilter::Unassigned => " AND s.project_id IS NULL".to_string(),
     };
@@ -199,7 +202,7 @@ fn search_sessions_with_query(
         (
             format!(
                 "SELECT s.id, s.tool, s.project_path, s.project_id, s.start_time, s.message_count, s.file_path,
-                        s.last_updated, s.first_prompt, s.parent_session_id, s.is_subagent,
+                        s.last_updated, s.pinned_at, s.first_prompt, s.parent_session_id, s.is_subagent,
                         s.input_tokens, s.output_tokens, s.cache_read_tokens,
                         s.cache_write_tokens, s.reasoning_tokens,
                         s.edit_count, s.read_count, s.command_count, s.ending_status,
@@ -208,7 +211,7 @@ fn search_sessions_with_query(
                  JOIN sessions s ON s.id = messages.session_id
                  WHERE messages MATCH ?
                    AND s.is_subagent = 0
-                   {}
+                    {}
                  ORDER BY rank ASC, s.last_updated DESC",
                 project_clause
             ),
@@ -220,18 +223,18 @@ fn search_sessions_with_query(
         (
             format!(
                 "SELECT s.id, s.tool, s.project_path, s.project_id, s.start_time, s.message_count, s.file_path,
-                         s.last_updated, s.first_prompt, s.parent_session_id, s.is_subagent,
-                         s.input_tokens, s.output_tokens, s.cache_read_tokens,
-                         s.cache_write_tokens, s.reasoning_tokens,
-                         s.edit_count, s.read_count, s.command_count, s.ending_status,
-                         bm25(messages) AS rank
-                  FROM messages
-                  JOIN sessions s ON s.id = messages.session_id
-                  WHERE messages MATCH ?
-                    AND s.tool IN ({})
-                    AND s.is_subagent = 0
+                        s.last_updated, s.pinned_at, s.first_prompt, s.parent_session_id, s.is_subagent,
+                        s.input_tokens, s.output_tokens, s.cache_read_tokens,
+                        s.cache_write_tokens, s.reasoning_tokens,
+                        s.edit_count, s.read_count, s.command_count, s.ending_status,
+                        bm25(messages) AS rank
+                 FROM messages
+                 JOIN sessions s ON s.id = messages.session_id
+                 WHERE messages MATCH ?
+                   AND s.tool IN ({})
+                   AND s.is_subagent = 0
                     {}
-                  ORDER BY rank ASC, s.last_updated DESC",
+                 ORDER BY rank ASC, s.last_updated DESC",
                 placeholders.join(","),
                 project_clause
             ),
@@ -286,6 +289,7 @@ pub fn load_sessions_for_filter(
 
     let project_clause = match project_filter {
         ProjectFilter::AllSessions => String::new(),
+        ProjectFilter::Pinned => " AND pinned_at IS NOT NULL".to_string(),
         ProjectFilter::Project(_) => " AND project_id = ?".to_string(),
         ProjectFilter::Unassigned => " AND project_id IS NULL".to_string(),
     };
@@ -294,13 +298,13 @@ pub fn load_sessions_for_filter(
         (
             format!(
                 "SELECT id, tool, project_path, project_id, start_time, message_count, file_path,
-                        last_updated, first_prompt, parent_session_id, is_subagent,
+                        last_updated, pinned_at, first_prompt, parent_session_id, is_subagent,
                         input_tokens, output_tokens, cache_read_tokens,
                         cache_write_tokens, reasoning_tokens,
                         edit_count, read_count, command_count, ending_status
                  FROM sessions
                  WHERE is_subagent = 0
-                   {}
+                    {}
                  ORDER BY last_updated DESC",
                 project_clause
             ),
@@ -312,15 +316,15 @@ pub fn load_sessions_for_filter(
         (
             format!(
                 "SELECT id, tool, project_path, project_id, start_time, message_count, file_path,
-                         last_updated, first_prompt, parent_session_id, is_subagent,
-                         input_tokens, output_tokens, cache_read_tokens,
-                         cache_write_tokens, reasoning_tokens,
-                         edit_count, read_count, command_count, ending_status
-                  FROM sessions
-                  WHERE tool IN ({})
-                    AND is_subagent = 0
+                        last_updated, pinned_at, first_prompt, parent_session_id, is_subagent,
+                        input_tokens, output_tokens, cache_read_tokens,
+                        cache_write_tokens, reasoning_tokens,
+                        edit_count, read_count, command_count, ending_status
+                 FROM sessions
+                 WHERE tool IN ({})
+                   AND is_subagent = 0
                     {}
-                  ORDER BY last_updated DESC",
+                 ORDER BY last_updated DESC",
                 placeholders.join(","),
                 project_clause
             ),
@@ -452,6 +456,53 @@ pub fn count_all_sessions(db_path: &Path, tools: &[AiAssistant]) -> Result<usize
     Ok(count.max(0) as usize)
 }
 
+pub fn count_pinned_sessions(db_path: &Path, tools: &[AiAssistant]) -> Result<usize> {
+    if !db_path.exists() {
+        return Ok(0);
+    }
+
+    if tools.is_empty() {
+        return Ok(0);
+    }
+
+    let db = open_connection(db_path)?;
+
+    let (query, tool_strings): (String, Vec<String>) = if tools.len() == AiAssistant::ALL.len() {
+        (
+            "SELECT COUNT(*) FROM sessions
+             WHERE pinned_at IS NOT NULL
+               AND is_subagent = 0"
+                .to_string(),
+            vec![],
+        )
+    } else {
+        let placeholders: Vec<String> = tools.iter().map(|_| "?".to_string()).collect();
+        let tool_strings = tools
+            .iter()
+            .map(|tool| tool.to_storage())
+            .collect::<Vec<_>>();
+        (
+            format!(
+                "SELECT COUNT(*) FROM sessions
+                 WHERE pinned_at IS NOT NULL
+                   AND is_subagent = 0
+                   AND tool IN ({})",
+                placeholders.join(",")
+            ),
+            tool_strings,
+        )
+    };
+
+    let mut stmt = db.prepare(&query)?;
+    let tool_refs: Vec<&dyn ToSql> = tool_strings
+        .iter()
+        .map(|value| value as &dyn ToSql)
+        .collect();
+    let count: i64 = stmt.query_row(tool_refs.as_slice(), |row| row.get(0))?;
+
+    Ok(count.max(0) as usize)
+}
+
 pub fn count_unassigned_sessions(db_path: &Path, tools: &[AiAssistant]) -> Result<usize> {
     if !db_path.exists() {
         return Ok(0);
@@ -493,6 +544,31 @@ pub fn count_unassigned_sessions(db_path: &Path, tools: &[AiAssistant]) -> Resul
     Ok(count.max(0) as usize)
 }
 
+pub fn toggle_pin(db_path: &Path, session_id: &str) -> Result<bool> {
+    if !db_path.exists() {
+        anyhow::bail!("Database does not exist: {}", db_path.display());
+    }
+
+    let db = open_connection(db_path)?;
+    let now = Utc::now().timestamp();
+
+    let pinned: Option<bool> = db
+        .query_row(
+            "UPDATE sessions
+             SET pinned_at = CASE WHEN pinned_at IS NULL THEN ?1 ELSE NULL END
+             WHERE id = ?2
+             RETURNING pinned_at IS NOT NULL",
+            rusqlite::params![now, session_id],
+            |row| row.get(0),
+        )
+        .optional()?;
+
+    match pinned {
+        Some(is_pinned) => Ok(is_pinned),
+        None => anyhow::bail!("Session not found: {}", session_id),
+    }
+}
+
 /// Check whether any unassigned (no project) non-subagent session exists in the database.
 /// This is intentionally tool-agnostic: the "Unassigned" sidebar row stays visible even
 /// when a tool filter makes its visible count zero, so users always know unassigned
@@ -527,7 +603,7 @@ pub fn load_session(db_path: &Path, session_id: &str) -> Result<Option<Session>>
 
     let mut stmt = db.prepare(
         "SELECT id, tool, project_path, project_id, start_time, message_count, file_path,
-                last_updated, first_prompt, parent_session_id, is_subagent,
+                last_updated, pinned_at, first_prompt, parent_session_id, is_subagent,
                 input_tokens, output_tokens, cache_read_tokens,
                 cache_write_tokens, reasoning_tokens,
                 edit_count, read_count, command_count, ending_status

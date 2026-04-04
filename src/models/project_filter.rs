@@ -2,6 +2,7 @@
 pub enum ProjectFilter {
     #[default]
     AllSessions,
+    Pinned,
     Project(i64),
     Unassigned,
 }

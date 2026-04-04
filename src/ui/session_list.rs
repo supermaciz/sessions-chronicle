@@ -30,7 +30,9 @@ pub enum SessionListMsg {
     SetIndexing(bool),
     SetSourceResults(Vec<PerSourceResult>),
     SessionActivated(i32),
+    TogglePinRequested(String),
     ResumeRequested(String, AiAssistant),
+    RequestSelectedSessionForPin,
     /// Ensure a row is selected (defaults to first) and grab keyboard focus.
     RestoreFocus,
     /// Move selection by delta rows (−1 = up, +1 = down) without changing focus.
@@ -42,6 +44,8 @@ pub enum SessionListMsg {
 #[derive(Debug)]
 pub enum SessionListOutput {
     SessionSelected(String),
+    TogglePinRequested(String),
+    SelectedSessionForPin(String),
     ResumeRequested(String, AiAssistant),
 }
 
@@ -59,6 +63,7 @@ fn compute_empty_state(
     indexing: bool,
     project_filter_active: bool,
     source_results_available: bool,
+    project_filter: &ProjectFilter,
 ) -> EmptyStateViewModel {
     if sessions_empty && indexing {
         return EmptyStateViewModel {
@@ -68,10 +73,29 @@ fn compute_empty_state(
         };
     }
 
-    if !search_query.trim().is_empty() {
+    let has_search = !search_query.trim().is_empty();
+    let pinned_selected = *project_filter == ProjectFilter::Pinned;
+
+    if has_search && pinned_selected {
+        return EmptyStateViewModel {
+            title: "No pinned sessions match search",
+            description: "Try a different query or clear the pinned filter",
+            show_source_results: false,
+        };
+    }
+
+    if has_search {
         return EmptyStateViewModel {
             title: "No sessions match search",
             description: "Try a different query or adjust filters",
+            show_source_results: false,
+        };
+    }
+
+    if pinned_selected {
+        return EmptyStateViewModel {
+            title: "No pinned sessions",
+            description: "Pin sessions from the list to keep them easy to revisit",
             show_source_results: false,
         };
     }
@@ -186,6 +210,7 @@ impl SimpleComponent for SessionList {
         let sessions: FactoryVecDeque<SessionRow> = FactoryVecDeque::builder()
             .launch_default()
             .forward(sender.input_sender(), |msg| match msg {
+                SessionRowOutput::TogglePinRequested(id) => SessionListMsg::TogglePinRequested(id),
                 SessionRowOutput::ResumeRequested(id, tool) => {
                     SessionListMsg::ResumeRequested(id, tool)
                 }
@@ -263,8 +288,21 @@ impl SimpleComponent for SessionList {
                     ));
                 }
             }
+            SessionListMsg::TogglePinRequested(id) => {
+                let _ = sender.output(SessionListOutput::TogglePinRequested(id));
+            }
             SessionListMsg::ResumeRequested(id, tool) => {
                 let _ = sender.output(SessionListOutput::ResumeRequested(id, tool));
+            }
+            SessionListMsg::RequestSelectedSessionForPin => {
+                let list_box = self.sessions.widget();
+                if let Some(row) = list_box.selected_row()
+                    && let Some(session_row) = self.sessions.get(row.index() as usize)
+                {
+                    let _ = sender.output(SessionListOutput::SelectedSessionForPin(
+                        session_row.session_id().to_owned(),
+                    ));
+                }
             }
             SessionListMsg::RestoreFocus => {
                 self.ensure_selection();
@@ -312,6 +350,7 @@ impl SimpleComponent for SessionList {
                 self.indexing,
                 self.project_filter != ProjectFilter::AllSessions,
                 self.source_results_available,
+                &self.project_filter,
             );
             widgets.empty_state.set_title(empty.title);
             widgets.empty_state.set_description(Some(empty.description));
@@ -386,7 +425,30 @@ impl SessionList {
         }
     }
 
+    fn selected_session_id(&self) -> Option<String> {
+        let list_box = self.sessions.widget();
+        let row = list_box.selected_row()?;
+        let session_row = self.sessions.get(row.index() as usize)?;
+        Some(session_row.session_id().to_string())
+    }
+
+    fn select_session_by_id(&self, session_id: &str) -> bool {
+        let list_box = self.sessions.widget();
+        for index in 0..self.sessions.len() {
+            if let Some(session_row) = self.sessions.get(index)
+                && session_row.session_id() == session_id
+                && let Some(row) = list_box.row_at_index(index as i32)
+            {
+                list_box.select_row(Some(&row));
+                return true;
+            }
+        }
+
+        false
+    }
+
     fn reload_sessions(&mut self) {
+        let previously_selected_id = self.selected_session_id();
         let fetched = Self::fetch_sessions(
             &self.db_path,
             &self.active_tools,
@@ -399,7 +461,14 @@ impl SessionList {
             guard.push_back(SessionRowInit { session });
         }
         drop(guard);
-        self.ensure_selection();
+
+        if let Some(session_id) = previously_selected_id {
+            if !self.select_session_by_id(&session_id) {
+                self.ensure_selection();
+            }
+        } else {
+            self.ensure_selection();
+        }
     }
 }
 
@@ -553,7 +622,15 @@ mod tests {
 
     #[test]
     fn empty_state_prefers_indexing_placeholder_when_loading_and_empty() {
-        let state = compute_empty_state(true, "", true, true, false, false);
+        let state = compute_empty_state(
+            true,
+            "",
+            true,
+            true,
+            false,
+            false,
+            &ProjectFilter::AllSessions,
+        );
 
         assert_eq!(state.title, "Indexing sessions...");
         assert_eq!(state.description, "This may take a moment on first launch.");
@@ -561,7 +638,15 @@ mod tests {
 
     #[test]
     fn project_sidebar_empty_state_treats_project_selection_as_active_filter() {
-        let state = compute_empty_state(true, "", true, false, true, false);
+        let state = compute_empty_state(
+            true,
+            "",
+            true,
+            false,
+            true,
+            false,
+            &ProjectFilter::Project(1),
+        );
 
         assert_eq!(state.title, "No sessions match filters");
         assert_eq!(
@@ -647,6 +732,7 @@ mod tests {
             message_count: 1,
             file_path: "/tmp/session.jsonl".to_string(),
             last_updated: chrono::Utc::now(),
+            pinned_at: None,
             first_prompt: None,
             parent_session_id: None,
             is_subagent: false,
@@ -709,6 +795,7 @@ mod tests {
                     message_count: 1,
                     file_path: "/tmp/s.jsonl".to_string(),
                     last_updated: chrono::Utc::now(),
+                    pinned_at: None,
                     first_prompt: None,
                     parent_session_id: None,
                     is_subagent: false,
@@ -763,6 +850,92 @@ mod tests {
     }
 
     #[gtk::test]
+    fn project_sidebar_session_list_set_filters_supports_pinned_destination() {
+        let temp_db = TempDatabase::new();
+        temp_db.seed_project_sidebar_fixture();
+        temp_db
+            .connection
+            .execute(
+                "UPDATE sessions SET pinned_at = ?1 WHERE id IN (?2, ?3)",
+                rusqlite::params![999_i64, "alpha-claude-new", "beta-claude"],
+            )
+            .expect("Failed to pin fixture sessions");
+
+        let controller = SessionList::builder().launch(temp_db.path.clone());
+
+        controller.emit(SessionListMsg::SetFilters {
+            tools: vec![AiAssistant::ClaudeCode],
+            project_filter: ProjectFilter::Pinned,
+        });
+
+        pump_main_context(|| {
+            let parts = controller.state().get();
+            parts.model.sessions.len() == 2
+        });
+
+        let ids: Vec<String> = {
+            let parts = controller.state().get();
+            (0..parts.model.sessions.len())
+                .filter_map(|index| parts.model.sessions.get(index))
+                .map(|row| row.session_id().to_string())
+                .collect()
+        };
+
+        assert_eq!(ids, vec!["beta-claude", "alpha-claude-new"]);
+    }
+
+    #[gtk::test]
+    fn session_list_reload_preserves_selected_session_when_order_changes() {
+        let temp_db = TempDatabase::new();
+        temp_db.seed_project_sidebar_fixture();
+
+        let controller = SessionList::builder().launch(temp_db.path.clone());
+
+        controller.emit(SessionListMsg::SetFilters {
+            tools: vec![AiAssistant::ClaudeCode],
+            project_filter: ProjectFilter::Project(1),
+        });
+
+        pump_main_context(|| {
+            let parts = controller.state().get();
+            parts.model.sessions.len() == 2
+        });
+
+        let root = controller.widget().clone().upcast::<gtk::Widget>();
+        let list_box = find_list_box(&root).expect("list box");
+        let second_row = list_box.row_at_index(1).expect("second row");
+        list_box.select_row(Some(&second_row));
+        pump_main_context(|| list_box.selected_row().map(|r| r.index()) == Some(1));
+
+        temp_db
+            .connection
+            .execute(
+                "UPDATE sessions SET last_updated = ?1 WHERE id = ?2",
+                rusqlite::params![999_i64, "alpha-claude-old"],
+            )
+            .expect("Failed to reorder selected session");
+
+        controller.emit(SessionListMsg::SetSearchQuery("".to_string()));
+        pump_main_context(|| list_box.selected_row().is_some());
+
+        let selected_session_id = {
+            let parts = controller.state().get();
+            let selected_index = list_box
+                .selected_row()
+                .map(|row| row.index() as usize)
+                .expect("selected row");
+            parts
+                .model
+                .sessions
+                .get(selected_index)
+                .map(|row| row.session_id().to_string())
+                .expect("selected session")
+        };
+
+        assert_eq!(selected_session_id, "alpha-claude-old");
+    }
+
+    #[gtk::test]
     fn session_list_forwards_row_resume_action_without_selection() {
         let temp_db = tempfile::NamedTempFile::new().expect("temp db");
         let outputs: Rc<RefCell<Vec<SessionListOutput>>> = Rc::new(RefCell::new(Vec::new()));
@@ -783,6 +956,7 @@ mod tests {
             message_count: 1,
             file_path: "/tmp/session.jsonl".to_string(),
             last_updated: chrono::Utc::now(),
+            pinned_at: None,
             first_prompt: None,
             parent_session_id: None,
             is_subagent: false,
@@ -835,6 +1009,7 @@ mod tests {
             message_count: 1,
             file_path: "/tmp/session.jsonl".to_string(),
             last_updated: chrono::Utc::now(),
+            pinned_at: None,
             first_prompt: None,
             parent_session_id: None,
             is_subagent: false,
@@ -917,13 +1092,63 @@ mod tests {
 
     #[test]
     fn indexing_diagnostics_empty_state_shows_source_results_only_for_global_empty_state() {
-        let state = compute_empty_state(true, "", true, false, false, true);
+        let state = compute_empty_state(
+            true,
+            "",
+            true,
+            false,
+            false,
+            true,
+            &ProjectFilter::AllSessions,
+        );
         assert!(state.show_source_results);
     }
 
     #[test]
     fn indexing_diagnostics_empty_state_hides_source_results_for_search_results() {
-        let state = compute_empty_state(true, "claude", true, false, false, true);
+        let state = compute_empty_state(
+            true,
+            "claude",
+            true,
+            false,
+            false,
+            true,
+            &ProjectFilter::AllSessions,
+        );
+
+        assert!(!state.show_source_results);
+    }
+
+    #[test]
+    fn pinned_filter_empty_state_has_specific_copy() {
+        let state =
+            compute_empty_state(true, "", true, false, false, false, &ProjectFilter::Pinned);
+
+        assert_eq!(state.title, "No pinned sessions");
+        assert_eq!(
+            state.description,
+            "Pin sessions from the list to keep them easy to revisit"
+        );
+        assert!(!state.show_source_results);
+    }
+
+    #[test]
+    fn pinned_filter_with_search_empty_state_mentions_both() {
+        let state = compute_empty_state(
+            true,
+            "query",
+            true,
+            false,
+            false,
+            false,
+            &ProjectFilter::Pinned,
+        );
+
+        assert_eq!(state.title, "No pinned sessions match search");
+        assert_eq!(
+            state.description,
+            "Try a different query or clear the pinned filter"
+        );
         assert!(!state.show_source_results);
     }
 
@@ -950,6 +1175,42 @@ mod tests {
 
         let parts = controller.state().get();
         assert!(parts.widgets.empty_state.child().is_some());
+    }
+
+    #[gtk::test]
+    fn request_selected_session_for_pin_emits_selected_id() {
+        let temp_db = tempfile::NamedTempFile::new().expect("temp db");
+        let outputs: Rc<RefCell<Vec<SessionListOutput>>> = Rc::new(RefCell::new(Vec::new()));
+        let outputs_ref = outputs.clone();
+
+        let controller = SessionList::builder()
+            .launch(temp_db.path().to_path_buf())
+            .connect_receiver(move |_, output| {
+                outputs_ref.borrow_mut().push(output);
+            });
+
+        {
+            let mut parts = controller.state().get_mut();
+            let mut guard = parts.model.sessions.guard();
+            guard.push_back(SessionRowInit {
+                session: make_test_session("pin-target"),
+            });
+        }
+
+        let root = controller.widget().clone().upcast::<gtk::Widget>();
+        let list_box = find_list_box(&root).expect("list box");
+
+        list_box.select_row(list_box.row_at_index(0).as_ref());
+        pump_main_context(|| list_box.selected_row().is_some());
+
+        controller.emit(SessionListMsg::RequestSelectedSessionForPin);
+        pump_main_context(|| !outputs.borrow().is_empty());
+
+        let outputs = outputs.borrow();
+        assert!(matches!(
+            outputs.as_slice(),
+            [SessionListOutput::SelectedSessionForPin(id)] if id == "pin-target"
+        ));
     }
 
     #[gtk::test]

@@ -30,7 +30,7 @@ use super::helpers::workspace_allows_search;
 use super::types::Workspace;
 use super::{
     AboutAction, App, AppMsg, EscapeAction, IndexingStatusAction, PreferencesAction, QuitAction,
-    ShortcutsAction, ShowSearchAction, TogglePaneAction, WindowActionGroup,
+    ShortcutsAction, ShowSearchAction, TogglePaneAction, TogglePinAction, WindowActionGroup,
 };
 
 /// Holds all child controllers and workers created during init.
@@ -60,6 +60,8 @@ pub(super) fn init_child_components(
         .launch(db_path.to_path_buf())
         .forward(sender.input_sender(), |msg| match msg {
             SessionListOutput::SessionSelected(id) => AppMsg::SessionSelected(id),
+            SessionListOutput::TogglePinRequested(id) => AppMsg::TogglePinRequested(id),
+            SessionListOutput::SelectedSessionForPin(id) => AppMsg::TogglePinRequested(id),
             SessionListOutput::ResumeRequested(id, tool) => AppMsg::ResumeSession(id, tool),
         });
     let analytics_view = AnalyticsView::builder().launch(None).forward(
@@ -446,6 +448,13 @@ pub(super) fn register_actions(
         })
     };
 
+    let toggle_pin_action = {
+        let sender = sender.clone();
+        RelmAction::<TogglePinAction>::new_stateless(move |_| {
+            sender.input(AppMsg::TogglePinShortcutRequested);
+        })
+    };
+
     let quit_action = {
         let sender = sender.clone();
         RelmAction::<QuitAction>::new_stateless(move |_| {
@@ -468,6 +477,7 @@ pub(super) fn register_actions(
     // Connect actions with hotkeys
     app.set_accelerators_for_action::<QuitAction>(&["<Control>q"]);
     app.set_accelerators_for_action::<TogglePaneAction>(&["F9"]);
+    app.set_accelerators_for_action::<TogglePinAction>(&["<Control>d"]);
     app.set_accelerators_for_action::<ShowSearchAction>(&["<Control>f"]);
     app.set_accelerators_for_action::<ShortcutsAction>(&["<Control>question"]);
     app.set_accelerators_for_action::<IndexingStatusAction>(&["<Control><Shift>i"]);
@@ -480,6 +490,7 @@ pub(super) fn register_actions(
     actions.add_action(about_action);
     actions.add_action(show_search_action);
     actions.add_action(toggle_pane_action);
+    actions.add_action(toggle_pin_action);
     actions.add_action(quit_action);
     actions.add_action(escape_action);
     actions.register_for_widget(main_window);

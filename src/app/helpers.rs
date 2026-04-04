@@ -145,6 +145,20 @@ pub(super) fn completion_toast_title(indexed: usize, errors: usize) -> String {
     }
 }
 
+pub(super) fn resolve_pin_shortcut_target(
+    workspace: Workspace,
+    active_session_id: Option<&str>,
+    selected_session_id: Option<&str>,
+) -> Option<String> {
+    if workspace.is_analytics() {
+        return None;
+    }
+
+    active_session_id
+        .or(selected_session_id)
+        .map(str::to_string)
+}
+
 pub(super) fn retained_project_filter(
     selected: &ProjectFilter,
     projects: &[ProjectInfo],
@@ -152,6 +166,7 @@ pub(super) fn retained_project_filter(
 ) -> ProjectFilter {
     match selected {
         ProjectFilter::AllSessions => ProjectFilter::AllSessions,
+        ProjectFilter::Pinned => ProjectFilter::Pinned,
         ProjectFilter::Unassigned => {
             if show_unassigned {
                 ProjectFilter::Unassigned
@@ -251,5 +266,42 @@ mod tests {
             retained_project_filter(&ProjectFilter::Project(2), &projects, false),
             ProjectFilter::Project(2)
         );
+    }
+
+    #[test]
+    fn retained_project_filter_preserves_pinned_selection() {
+        let projects = vec![ProjectInfo {
+            id: 1,
+            name: "alpha".to_string(),
+            path: "/tmp/alpha".to_string(),
+            session_count: 2,
+        }];
+
+        assert_eq!(
+            retained_project_filter(&ProjectFilter::Pinned, &projects, false),
+            ProjectFilter::Pinned
+        );
+    }
+
+    #[test]
+    fn resolve_pin_shortcut_target_prefers_active_detail_session() {
+        let target = resolve_pin_shortcut_target(
+            Workspace::Sessions,
+            Some("detail-session"),
+            Some("list-session"),
+        );
+
+        assert_eq!(target.as_deref(), Some("detail-session"));
+    }
+
+    #[test]
+    fn resolve_pin_shortcut_target_is_disabled_in_analytics() {
+        let target = resolve_pin_shortcut_target(
+            Workspace::Analytics,
+            Some("detail-session"),
+            Some("list-session"),
+        );
+
+        assert!(target.is_none());
     }
 }

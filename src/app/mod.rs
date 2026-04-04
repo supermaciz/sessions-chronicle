@@ -19,8 +19,8 @@ use std::{
 use crate::analytics_worker::AnalyticsWorker;
 use crate::config::{APP_ID, PROFILE};
 use crate::database::{
-    SessionIndexer, count_all_sessions, count_unassigned_sessions, has_unassigned_sessions,
-    load_projects,
+    SessionIndexer, count_all_sessions, count_pinned_sessions, count_unassigned_sessions,
+    has_unassigned_sessions, load_projects,
 };
 use crate::indexing_worker::{IndexingWorker, IndexingWorkerInput};
 use crate::models::{ProjectFilter, ProjectInfo, session::AiAssistant};
@@ -71,6 +71,7 @@ struct SidebarProjectData {
     projects: Vec<ProjectInfo>,
     all_sessions_count: usize,
     unassigned_count: usize,
+    pinned_count: usize,
     show_unassigned: bool,
 }
 
@@ -83,6 +84,8 @@ fn load_sidebar_project_data(
         count_all_sessions(db_path, tools).context("count all sessions for sidebar")?;
     let unassigned_count = count_unassigned_sessions(db_path, tools)
         .context("count unassigned sessions for sidebar")?;
+    let pinned_count =
+        count_pinned_sessions(db_path, tools).context("count pinned sessions for sidebar")?;
     let show_unassigned =
         has_unassigned_sessions(db_path).context("determine unassigned sidebar visibility")?;
 
@@ -90,6 +93,7 @@ fn load_sidebar_project_data(
         projects,
         all_sessions_count,
         unassigned_count,
+        pinned_count,
         show_unassigned,
     })
 }
@@ -162,6 +166,8 @@ pub(super) enum AppMsg {
     ResumeActiveSession,
     InspectToolCall(String),
     InspectSubagent(String),
+    TogglePinRequested(String),
+    TogglePinShortcutRequested,
     /// Inspector pane requested opening a child session.
     OpenChildSession(String),
     /// Header-bar button: return to the one-hop parent session.
@@ -190,6 +196,7 @@ relm4::new_stateless_action!(pub(super) ShortcutsAction, WindowActionGroup, "sho
 relm4::new_stateless_action!(AboutAction, WindowActionGroup, "about");
 relm4::new_stateless_action!(QuitAction, WindowActionGroup, "quit");
 relm4::new_stateless_action!(TogglePaneAction, WindowActionGroup, "toggle-pane");
+relm4::new_stateless_action!(TogglePinAction, WindowActionGroup, "toggle-pin");
 relm4::new_stateless_action!(ShowSearchAction, WindowActionGroup, "show-search");
 relm4::new_stateless_action!(EscapeAction, WindowActionGroup, "escape");
 
@@ -245,6 +252,19 @@ impl SimpleComponent for App {
                             #[watch]
                             set_visible: model.detail_visible && model.are_detail_actions_visible(),
                             connect_clicked => AppMsg::RequestNavigateBack,
+                        },
+
+                        #[name = "pin_button"]
+                        pack_start = &gtk::ToggleButton {
+                            set_icon_name: "view-pin-symbolic",
+                            add_css_class: "flat",
+                            #[watch]
+                            set_active: model.active_session_pinned(),
+                            #[watch]
+                            set_visible: model.detail_visible && model.are_detail_actions_visible(),
+                            #[watch]
+                            set_tooltip_text: Some(pin_button_tooltip(model.active_session_pinned())),
+                            connect_clicked => AppMsg::TogglePinShortcutRequested,
                         },
 
                         #[name = "search_toggle"]
@@ -549,6 +569,8 @@ impl SimpleComponent for App {
             AppMsg::ResumeActiveSession => self.handle_resume_active_session(&sender),
             AppMsg::InspectToolCall(tool_call_id) => self.handle_inspect_tool_call(tool_call_id),
             AppMsg::InspectSubagent(subagent_id) => self.handle_inspect_subagent(subagent_id),
+            AppMsg::TogglePinRequested(session_id) => self.handle_toggle_pin_requested(session_id),
+            AppMsg::TogglePinShortcutRequested => self.handle_toggle_pin_shortcut_requested(),
             AppMsg::OpenChildSession(child_session_id) => {
                 self.handle_open_child_session(child_session_id)
             }
@@ -576,6 +598,10 @@ impl SimpleComponent for App {
 }
 
 impl App {
+    fn active_session_pinned(&self) -> bool {
+        self.active_session.as_ref().is_some_and(|s| s.pinned)
+    }
+
     /// Reset app state after leaving detail view.
     fn transition_to_session_list_mode(&mut self) {
         self.detail_visible = false;
@@ -661,6 +687,7 @@ impl App {
             projects: sidebar_data.projects,
             all_sessions_count: sidebar_data.all_sessions_count,
             unassigned_count: sidebar_data.unassigned_count,
+            pinned_count: sidebar_data.pinned_count,
             show_unassigned: sidebar_data.show_unassigned,
             selected_filter,
         });
@@ -720,6 +747,14 @@ fn persisted_window_size(
 
 fn clamped_window_size(size: (i32, i32)) -> (i32, i32) {
     (size.0.max(MIN_WINDOW_WIDTH), size.1.max(MIN_WINDOW_HEIGHT))
+}
+
+fn pin_button_tooltip(pinned: bool) -> &'static str {
+    if pinned {
+        "Unpin session (Ctrl+D)"
+    } else {
+        "Pin session (Ctrl+D)"
+    }
 }
 
 #[cfg(test)]
@@ -970,6 +1005,12 @@ mod tests {
             UtilityPaneMode::ToolInspector.stack_child_name(),
             "tool-inspector"
         );
+    }
+
+    #[test]
+    fn pin_button_tooltip_matches_state() {
+        assert_eq!(pin_button_tooltip(false), "Pin session (Ctrl+D)");
+        assert_eq!(pin_button_tooltip(true), "Unpin session (Ctrl+D)");
     }
 
     #[test]

@@ -25,6 +25,7 @@ fn column_exists(conn: &Connection, table_name: &str, column_name: &str) -> Resu
 ///       to backfill canonical project IDs during re-index
 ///   7 – sessions gains activity counts (edit_count, read_count, command_count)
 ///       and ending_status; clear file_fingerprints to backfill during re-index
+///   8 – sessions gains nullable pinned_at metadata (no fingerprint clear)
 pub fn initialize_database(conn: &Connection) -> Result<()> {
     let version: i64 = conn.query_row("PRAGMA user_version", [], |row| row.get(0))?;
 
@@ -48,6 +49,9 @@ pub fn initialize_database(conn: &Connection) -> Result<()> {
     }
     if version < 7 {
         apply_v7_migration(conn)?;
+    }
+    if version < 8 {
+        apply_v8_migration(conn)?;
     }
 
     Ok(())
@@ -342,19 +346,44 @@ fn apply_v7_migration(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
+/// Migrate from v7 to v8.
+///
+/// Adds nullable `pinned_at` session metadata used for user-controlled pinning.
+/// Does not clear fingerprints because this column is user state, not parser-derived.
+fn apply_v8_migration(conn: &Connection) -> Result<()> {
+    if !column_exists(conn, "sessions", "pinned_at")? {
+        conn.execute(
+            "ALTER TABLE sessions ADD COLUMN pinned_at INTEGER DEFAULT NULL",
+            [],
+        )?;
+    }
+
+    conn.execute_batch("PRAGMA user_version = 8")?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use rusqlite::Connection;
 
     #[test]
-    fn fresh_db_initializes_to_v7() {
+    fn fresh_db_initializes_to_v8() {
         let conn = Connection::open_in_memory().unwrap();
         initialize_database(&conn).unwrap();
         let version: i64 = conn
             .query_row("PRAGMA user_version", [], |r| r.get(0))
             .unwrap();
-        assert_eq!(version, 7);
+        assert_eq!(version, 8);
+
+        let pinned_column_exists: i64 = conn
+            .query_row(
+                "SELECT count(*) FROM pragma_table_info('sessions') WHERE name='pinned_at'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(pinned_column_exists, 1);
 
         let table_exists: i64 = conn
             .query_row(
@@ -446,7 +475,7 @@ mod tests {
         let version: i64 = conn
             .query_row("PRAGMA user_version", [], |r| r.get(0))
             .unwrap();
-        assert_eq!(version, 7);
+        assert_eq!(version, 8);
 
         // Old messages are gone (by design — will be re-indexed)
         let count: i64 = conn
@@ -505,7 +534,7 @@ mod tests {
         let version: i64 = conn
             .query_row("PRAGMA user_version", [], |r| r.get(0))
             .unwrap();
-        assert_eq!(version, 7);
+        assert_eq!(version, 8);
 
         conn.execute(
             "UPDATE sessions SET input_tokens = 1000, output_tokens = 500 WHERE id = 's1'",
@@ -531,7 +560,7 @@ mod tests {
         let version: i64 = conn
             .query_row("PRAGMA user_version", [], |r| r.get(0))
             .unwrap();
-        assert_eq!(version, 7);
+        assert_eq!(version, 8);
     }
 
     #[test]
@@ -567,7 +596,7 @@ mod tests {
         let version: i64 = conn
             .query_row("PRAGMA user_version", [], |r| r.get(0))
             .unwrap();
-        assert_eq!(version, 7);
+        assert_eq!(version, 8);
 
         let table_exists: i64 = conn
             .query_row(
@@ -601,7 +630,7 @@ mod tests {
         let version: i64 = conn
             .query_row("PRAGMA user_version", [], |r| r.get(0))
             .unwrap();
-        assert_eq!(version, 7);
+        assert_eq!(version, 8);
         let count: i64 = conn
             .query_row("SELECT count(*) FROM file_fingerprints", [], |r| r.get(0))
             .unwrap();
@@ -715,7 +744,7 @@ mod tests {
         let version: i64 = conn
             .query_row("PRAGMA user_version", [], |r| r.get(0))
             .unwrap();
-        assert_eq!(version, 7);
+        assert_eq!(version, 8);
 
         let projects_exists: i64 = conn
             .query_row(
@@ -749,13 +778,22 @@ mod tests {
             .unwrap();
         assert_eq!(fingerprint_count, 0);
 
-        // Re-running initialize_database should keep schema stable at v7.
+        // Re-running initialize_database should keep schema stable at v8.
         initialize_database(&conn).unwrap();
 
         let version_after_second_run: i64 = conn
             .query_row("PRAGMA user_version", [], |r| r.get(0))
             .unwrap();
-        assert_eq!(version_after_second_run, 7);
+        assert_eq!(version_after_second_run, 8);
+
+        let pinned_column_count: i64 = conn
+            .query_row(
+                "SELECT count(*) FROM pragma_table_info('sessions') WHERE name='pinned_at'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(pinned_column_count, 1);
 
         let projects_exists_after_second_run: i64 = conn
             .query_row(
@@ -827,5 +865,42 @@ mod tests {
         assert_eq!(read, 3);
         assert_eq!(cmd, 2);
         assert_eq!(ending, "clean");
+    }
+
+    #[test]
+    fn v8_migration_is_idempotent_and_preserves_file_fingerprints() {
+        let conn = Connection::open_in_memory().unwrap();
+        initialize_database(&conn).unwrap();
+
+        conn.execute_batch("PRAGMA user_version = 7").unwrap();
+        conn.execute(
+            "INSERT INTO file_fingerprints (file_path, mtime_ns, size) VALUES ('fixture.jsonl', 1, 1)",
+            [],
+        )
+        .unwrap();
+
+        initialize_database(&conn).unwrap();
+        initialize_database(&conn).unwrap();
+
+        let version: i64 = conn
+            .query_row("PRAGMA user_version", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(version, 8);
+
+        let pinned_column_count: i64 = conn
+            .query_row(
+                "SELECT count(*) FROM pragma_table_info('sessions') WHERE name = 'pinned_at'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(pinned_column_count, 1);
+
+        let fingerprint_count: i64 = conn
+            .query_row("SELECT count(*) FROM file_fingerprints", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(fingerprint_count, 1);
     }
 }
