@@ -425,7 +425,31 @@ impl SessionList {
         }
     }
 
+    fn selected_session_id(&self) -> Option<String> {
+        let list_box = self.sessions.widget();
+        let row = list_box.selected_row()?;
+        let session_row = self.sessions.get(row.index() as usize)?;
+        Some(session_row.session_id().to_string())
+    }
+
+    fn select_session_by_id(&self, session_id: &str) -> bool {
+        let list_box = self.sessions.widget();
+        for index in 0..self.sessions.len() {
+            if let Some(session_row) = self.sessions.get(index)
+                && session_row.session_id() == session_id
+            {
+                if let Some(row) = list_box.row_at_index(index as i32) {
+                    list_box.select_row(Some(&row));
+                    return true;
+                }
+            }
+        }
+
+        false
+    }
+
     fn reload_sessions(&mut self) {
+        let previously_selected_id = self.selected_session_id();
         let fetched = Self::fetch_sessions(
             &self.db_path,
             &self.active_tools,
@@ -438,7 +462,14 @@ impl SessionList {
             guard.push_back(SessionRowInit { session });
         }
         drop(guard);
-        self.ensure_selection();
+
+        if let Some(session_id) = previously_selected_id {
+            if !self.select_session_by_id(&session_id) {
+                self.ensure_selection();
+            }
+        } else {
+            self.ensure_selection();
+        }
     }
 }
 
@@ -852,6 +883,57 @@ mod tests {
         };
 
         assert_eq!(ids, vec!["beta-claude", "alpha-claude-new"]);
+    }
+
+    #[gtk::test]
+    fn session_list_reload_preserves_selected_session_when_order_changes() {
+        let temp_db = TempDatabase::new();
+        temp_db.seed_project_sidebar_fixture();
+
+        let controller = SessionList::builder().launch(temp_db.path.clone());
+
+        controller.emit(SessionListMsg::SetFilters {
+            tools: vec![AiAssistant::ClaudeCode],
+            project_filter: ProjectFilter::Project(1),
+        });
+
+        pump_main_context(|| {
+            let parts = controller.state().get();
+            parts.model.sessions.len() == 2
+        });
+
+        let root = controller.widget().clone().upcast::<gtk::Widget>();
+        let list_box = find_list_box(&root).expect("list box");
+        let second_row = list_box.row_at_index(1).expect("second row");
+        list_box.select_row(Some(&second_row));
+        pump_main_context(|| list_box.selected_row().map(|r| r.index()) == Some(1));
+
+        temp_db
+            .connection
+            .execute(
+                "UPDATE sessions SET last_updated = ?1 WHERE id = ?2",
+                rusqlite::params![999_i64, "alpha-claude-old"],
+            )
+            .expect("Failed to reorder selected session");
+
+        controller.emit(SessionListMsg::SetSearchQuery("".to_string()));
+        pump_main_context(|| list_box.selected_row().is_some());
+
+        let selected_session_id = {
+            let parts = controller.state().get();
+            let selected_index = list_box
+                .selected_row()
+                .map(|row| row.index() as usize)
+                .expect("selected row");
+            parts
+                .model
+                .sessions
+                .get(selected_index)
+                .map(|row| row.session_id().to_string())
+                .expect("selected session")
+        };
+
+        assert_eq!(selected_session_id, "alpha-claude-old");
     }
 
     #[gtk::test]
