@@ -75,6 +75,9 @@ pub(super) fn init_child_components(
         .forward(sender.input_sender(), |msg| match msg {
             SessionDetailOutput::InspectToolCall(id) => AppMsg::InspectToolCall(id),
             SessionDetailOutput::InspectSubagent(id) => AppMsg::InspectSubagent(id),
+            SessionDetailOutput::InspectReasoning {
+                transcript_item_index,
+            } => AppMsg::InspectReasoning(transcript_item_index),
         });
     let sidebar =
         Sidebar::builder()

@@ -12,16 +12,19 @@ pub struct ReasoningAttachment {
 }
 
 impl ReasoningAttachment {
+    #[allow(dead_code)]
     pub fn has_reasoning(&self) -> bool {
         self.visible_text.is_some()
             || self.summary_text.is_some()
             || self.encrypted_content.is_some()
     }
 
+    #[allow(dead_code)]
     pub fn has_visible_reasoning(&self) -> bool {
         self.visible_text.is_some() || self.summary_text.is_some()
     }
 
+    #[allow(dead_code)]
     pub fn encrypted_only(&self) -> bool {
         self.encrypted_content.is_some()
             && self.visible_text.is_none()
@@ -37,6 +40,7 @@ pub struct ReasoningPreview {
 }
 
 impl ReasoningPreview {
+    #[allow(dead_code)]
     pub fn from_attachment(attachment: &ReasoningAttachment) -> Self {
         Self {
             has_reasoning: attachment.has_reasoning(),

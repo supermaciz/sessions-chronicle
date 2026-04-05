@@ -179,6 +179,71 @@ mod tests {
     }
 
     #[test]
+    fn tool_burst_preserves_child_reasoning_flags() {
+        let rows = vec![
+            TranscriptItemRow {
+                item_index: 0,
+                kind: TranscriptItemKind::ToolCall,
+                reasoning_preview: crate::models::ReasoningPreview {
+                    has_reasoning: true,
+                    has_visible_reasoning: true,
+                    encrypted_only: false,
+                },
+                message_index: None,
+                role: None,
+                content_preview: None,
+                content_len: None,
+                timestamp: None,
+                model: None,
+                tool_call_id: Some("call-0".to_string()),
+                tool_name: Some("Read".to_string()),
+                tool_status: Some(ToolCallStatus::Completed),
+                tool_summary: None,
+                tool_input_json: Some("{}".to_string()),
+                tool_output_text: None,
+                duration_ms: Some(10),
+                subagent_id: None,
+                subagent_title: None,
+                subagent_prompt: None,
+            },
+            TranscriptItemRow {
+                item_index: 1,
+                kind: TranscriptItemKind::ToolCall,
+                reasoning_preview: crate::models::ReasoningPreview {
+                    has_reasoning: true,
+                    has_visible_reasoning: false,
+                    encrypted_only: true,
+                },
+                message_index: None,
+                role: None,
+                content_preview: None,
+                content_len: None,
+                timestamp: None,
+                model: None,
+                tool_call_id: Some("call-1".to_string()),
+                tool_name: Some("Edit".to_string()),
+                tool_status: Some(ToolCallStatus::Completed),
+                tool_summary: None,
+                tool_input_json: Some("{}".to_string()),
+                tool_output_text: None,
+                duration_ms: Some(20),
+                subagent_id: None,
+                subagent_title: None,
+                subagent_prompt: None,
+            },
+        ];
+
+        let grouped = group_transcript_rows(rows);
+        let DisplayTranscriptItem::ToolBurst(burst) = &grouped[0] else {
+            panic!("expected tool burst");
+        };
+
+        assert_eq!(burst.rows.len(), 2);
+        assert!(burst.rows[0].reasoning_preview.has_visible_reasoning);
+        assert!(burst.rows[1].reasoning_preview.encrypted_only);
+    }
+
+    #[test]
     fn isolated_tool_call_stays_single() {
         let rows = vec![message_row(0), tool_row(1, "Read"), message_row(2)];
         let grouped = group_transcript_rows(rows);

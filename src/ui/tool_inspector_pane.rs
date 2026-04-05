@@ -6,8 +6,10 @@ use adw::prelude::*;
 use chrono::TimeZone;
 use relm4::{Component, ComponentParts, ComponentSender, RelmWidgetExt, adw, gtk};
 
-use crate::database::{load_subagent, load_tool_call, load_tool_calls_for_subagent};
-use crate::models::{Subagent, ToolCall, ToolCallStatus};
+use crate::database::{
+    load_reasoning_attachment, load_subagent, load_tool_call, load_tool_calls_for_subagent,
+};
+use crate::models::{ReasoningAttachment, Subagent, ToolCall, ToolCallStatus};
 use crate::ui::format::{format_duration_ms, status_icon_name};
 use crate::ui::markdown;
 use crate::ui::tool_renderers::diff::DiffRenderer;
@@ -35,6 +37,12 @@ enum InspectorSelection {
         session_id: String,
         #[allow(dead_code)]
         subagent_id: String,
+    },
+    Reasoning {
+        #[allow(dead_code)]
+        session_id: String,
+        #[allow(dead_code)]
+        transcript_item_index: i64,
     },
 }
 
@@ -79,6 +87,7 @@ pub struct ToolInspectorPane {
     active_request_id: u64,
     tool_call: Option<ToolCall>,
     subagent: Option<Subagent>,
+    reasoning: Option<ReasoningAttachment>,
     subagent_tools: Vec<ToolCall>,
     drilled_tool: Option<ToolCall>,
     pending_drill_tool_id: Option<String>,
@@ -107,6 +116,13 @@ pub struct ToolInspectorPane {
     subagent_tools_list: gtk::ListBox,
     open_session_button: gtk::Button,
 
+    // Reasoning detail widgets (inside "reasoning" stack page)
+    reasoning_title_label: gtk::Label,
+    reasoning_metadata_label: gtk::Label,
+    reasoning_visible_views: MarkdownSectionViews,
+    reasoning_summary_views: MarkdownSectionViews,
+    reasoning_encrypted_views: TextSectionViews,
+
     // Drill-down NavigationPage and its content widgets.
     // The page is pushed/popped based on drilled_tool state.
     drill_page: adw::NavigationPage,
@@ -129,6 +145,10 @@ pub enum ToolInspectorPaneMsg {
     SelectSubagent {
         session_id: String,
         subagent_id: String,
+    },
+    SelectReasoning {
+        session_id: String,
+        transcript_item_index: i64,
     },
     Clear,
     /// Drill into an inner tool call from the subagent overview.
@@ -158,6 +178,10 @@ pub enum ToolInspectorPaneCmd {
         subagent_id: String,
         subagent_result: Result<Option<Subagent>, String>,
         tools_result: Result<Vec<ToolCall>, String>,
+    },
+    Reasoning {
+        request_id: u64,
+        result: Result<Option<ReasoningAttachment>, String>,
     },
     DrillTool {
         session_id: String,
@@ -333,6 +357,27 @@ impl Component for ToolInspectorPane {
         subagent_scroll.set_child(Some(&subagent_outer));
         content_stack.add_named(&subagent_scroll, Some("subagent"));
 
+        // — Reasoning detail ———————————————————————————————————————————————
+        let reasoning_title_label = make_title_label();
+        let reasoning_metadata_label = make_metadata_label();
+        let reasoning_visible_views = make_markdown_section("Thinking");
+        let reasoning_summary_views = make_markdown_section("Summary");
+        let reasoning_encrypted_views = make_text_section("Encrypted");
+
+        let reasoning_outer = gtk::Box::new(gtk::Orientation::Vertical, 12);
+        reasoning_outer.set_margin_all(16);
+        reasoning_outer.append(&reasoning_title_label);
+        reasoning_outer.append(&reasoning_metadata_label);
+        reasoning_outer.append(&reasoning_visible_views.section);
+        reasoning_outer.append(&reasoning_summary_views.section);
+        reasoning_outer.append(&reasoning_encrypted_views.section);
+
+        let reasoning_scroll = gtk::ScrolledWindow::new();
+        reasoning_scroll.set_vexpand(true);
+        reasoning_scroll.set_hscrollbar_policy(gtk::PolicyType::Never);
+        reasoning_scroll.set_child(Some(&reasoning_outer));
+        content_stack.add_named(&reasoning_scroll, Some("reasoning"));
+
         // ── Overview NavigationPage ───────────────────────────────────────────
         let overview_page = adw::NavigationPage::builder()
             .title("Inspector")
@@ -397,6 +442,7 @@ impl Component for ToolInspectorPane {
             active_request_id: 0,
             tool_call: None,
             subagent: None,
+            reasoning: None,
             subagent_tools: Vec::new(),
             drilled_tool: None,
             pending_drill_tool_id: None,
@@ -414,6 +460,11 @@ impl Component for ToolInspectorPane {
             subagent_result_views,
             subagent_tools_list,
             open_session_button,
+            reasoning_title_label,
+            reasoning_metadata_label,
+            reasoning_visible_views,
+            reasoning_summary_views,
+            reasoning_encrypted_views,
             drill_page,
             drill_name_label,
             drill_status_label,
@@ -443,6 +494,7 @@ impl Component for ToolInspectorPane {
                 self.pending_drill_tool_id = None;
                 self.tool_call = None;
                 self.subagent = None;
+                self.reasoning = None;
                 self.subagent_tools.clear();
 
                 let db_path = self.db_path.clone();
@@ -469,6 +521,7 @@ impl Component for ToolInspectorPane {
                 self.pending_drill_tool_id = None;
                 self.tool_call = None;
                 self.subagent = None;
+                self.reasoning = None;
                 self.subagent_tools.clear();
 
                 let db_path = self.db_path.clone();
@@ -487,11 +540,41 @@ impl Component for ToolInspectorPane {
                 });
             }
 
+            ToolInspectorPaneMsg::SelectReasoning {
+                session_id,
+                transcript_item_index,
+            } => {
+                self.selection = InspectorSelection::Reasoning {
+                    session_id: session_id.clone(),
+                    transcript_item_index,
+                };
+                let request_id =
+                    begin_loading_request(&mut self.active_request_id, &mut self.load_state);
+                self.drilled_tool = None;
+                self.pending_drill_tool_id = None;
+                self.tool_call = None;
+                self.subagent = None;
+                self.reasoning = None;
+                self.subagent_tools.clear();
+
+                let db_path = self.db_path.clone();
+                sender.spawn_oneshot_command(move || ToolInspectorPaneCmd::Reasoning {
+                    request_id,
+                    result: load_reasoning_attachment(
+                        db_path.as_path(),
+                        &session_id,
+                        transcript_item_index,
+                    )
+                    .map_err(|err| err.to_string()),
+                });
+            }
+
             ToolInspectorPaneMsg::Clear => {
                 self.selection = InspectorSelection::None;
                 clear_active_request(&mut self.active_request_id, &mut self.load_state);
                 self.tool_call = None;
                 self.subagent = None;
+                self.reasoning = None;
                 self.subagent_tools.clear();
                 self.drilled_tool = None;
                 self.pending_drill_tool_id = None;
@@ -634,6 +717,29 @@ impl Component for ToolInspectorPane {
                     }
                 }
             }
+            ToolInspectorPaneCmd::Reasoning { request_id, result } => {
+                let request_result = result.as_ref().map(|_| ()).map_err(Clone::clone);
+                if apply_load_result(
+                    self.active_request_id,
+                    &mut self.load_state,
+                    request_id,
+                    request_result,
+                )
+                .is_none()
+                {
+                    return;
+                }
+
+                match result {
+                    Ok(attachment) => {
+                        self.reasoning = attachment;
+                    }
+                    Err(err) => {
+                        tracing::error!("Failed to load reasoning attachment: {}", err);
+                        self.reasoning = None;
+                    }
+                }
+            }
             ToolInspectorPaneCmd::DrillTool {
                 session_id,
                 tool_call_id,
@@ -684,6 +790,13 @@ impl Component for ToolInspectorPane {
                 InspectorSelection::Subagent { .. } => {
                     if self.subagent.is_some() {
                         "subagent"
+                    } else {
+                        "empty"
+                    }
+                }
+                InspectorSelection::Reasoning { .. } => {
+                    if self.reasoning.is_some() {
+                        "reasoning"
                     } else {
                         "empty"
                     }
@@ -751,7 +864,31 @@ impl Component for ToolInspectorPane {
                 .set_visible(sa.child_session_id.is_some());
         }
 
-        // 4. Manage drill-down page push/pop.
+        // 4. Update reasoning content widgets.
+        if let Some(ref reasoning) = self.reasoning {
+            self.reasoning_title_label.set_label(&format!(
+                "Transcript item {}",
+                reasoning.transcript_item_index
+            ));
+
+            let metadata_line = format_reasoning_metadata_line(reasoning);
+            apply_optional_line(&self.reasoning_metadata_label, metadata_line.as_deref());
+
+            apply_optional_markdown_section(
+                &self.reasoning_visible_views,
+                reasoning.visible_text.as_deref(),
+            );
+            apply_optional_markdown_section(
+                &self.reasoning_summary_views,
+                reasoning.summary_text.as_deref(),
+            );
+            apply_optional_text_section(
+                &self.reasoning_encrypted_views,
+                reasoning.encrypted_content.as_deref(),
+            );
+        }
+
+        // 5. Manage drill-down page push/pop.
         if let Some(ref tc) = self.drilled_tool {
             // Update drill-down content before (re-)showing the page.
             self.drill_page.set_title(&tc.tool_name);
@@ -1418,6 +1555,32 @@ fn format_tool_metadata_line(tool_call: &ToolCall) -> Option<String> {
 
     if let Some(ended) = tool_call.ended_at.and_then(format_unix_timestamp) {
         parts.push(format!("End: {ended}"));
+    }
+
+    if parts.is_empty() {
+        None
+    } else {
+        Some(parts.join("  |  "))
+    }
+}
+
+fn format_reasoning_metadata_line(reasoning: &ReasoningAttachment) -> Option<String> {
+    let mut parts = Vec::new();
+
+    if let Some(model) = reasoning
+        .source_model
+        .as_deref()
+        .map(str::trim)
+        .filter(|text| !text.is_empty())
+    {
+        parts.push(format!("Model: {model}"));
+    }
+
+    if let Some(ts) = reasoning
+        .source_timestamp
+        .map(|dt| dt.format("%Y-%m-%d %H:%M:%S UTC").to_string())
+    {
+        parts.push(format!("Time: {ts}"));
     }
 
     if parts.is_empty() {
