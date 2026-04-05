@@ -10,8 +10,8 @@ use std::path::Path;
 use std::time::Duration;
 
 use crate::models::{
-    AiAssistant, MessagePreview, ProjectFilter, ProjectInfo, Role, Session, Subagent, ToolCall,
-    ToolCallStatus, TranscriptItem, TranscriptItemKind,
+    AiAssistant, MessagePreview, ProjectFilter, ProjectInfo, ReasoningAttachment, ReasoningPreview,
+    Role, Session, Subagent, ToolCall, ToolCallStatus, TranscriptItem, TranscriptItemKind,
 };
 
 pub use indexer::{IndexingStats, SessionIndexer};
@@ -31,6 +31,7 @@ pub(crate) fn open_connection(db_path: &Path) -> Result<Connection> {
 pub struct TranscriptItemRow {
     pub item_index: i64,
     pub kind: TranscriptItemKind,
+    pub reasoning_preview: ReasoningPreview,
     // Message fields
     pub message_index: Option<i64>,
     pub role: Option<Role>,
@@ -709,6 +710,7 @@ pub fn load_message_previews_for_session(
                 .single()
                 .unwrap_or_else(Utc::now),
             model: row.get(6)?,
+            reasoning_preview: ReasoningPreview::default(),
         });
     }
 
@@ -738,6 +740,9 @@ pub fn load_transcript_items(
 
     let mut stmt = db.prepare(
         "SELECT ti.item_index, ti.kind, ti.message_index, ti.tool_call_id, ti.subagent_id,
+                (ra.visible_text IS NOT NULL OR ra.summary_text IS NOT NULL OR ra.encrypted_content IS NOT NULL) AS has_reasoning,
+                (ra.visible_text IS NOT NULL OR ra.summary_text IS NOT NULL) AS has_visible_reasoning,
+                (ra.encrypted_content IS NOT NULL AND ra.visible_text IS NULL AND ra.summary_text IS NULL) AS encrypted_only,
                 m.role, substr(m.content, 1, ?2) AS content_preview,
                 length(m.content) AS content_len, m.timestamp, m.model,
                 tc.tool_name, tc.status, tc.summary,
@@ -746,6 +751,8 @@ pub fn load_transcript_items(
                 tc.duration_ms,
                 sa.title AS subagent_title, sa.prompt AS subagent_prompt
          FROM transcript_items ti
+         LEFT JOIN reasoning_attachments ra ON ti.session_id = ra.session_id
+                                        AND ti.item_index = ra.transcript_item_index
          LEFT JOIN messages m ON ti.session_id = m.session_id
                              AND ti.message_index = CAST(m.message_index AS INTEGER)
          LEFT JOIN tool_calls tc ON ti.session_id = tc.session_id
@@ -767,19 +774,22 @@ pub fn load_transcript_items(
     const COL_MSG_INDEX: usize = 2;
     const COL_TOOL_CALL_ID: usize = 3;
     const COL_SUBAGENT_ID: usize = 4;
-    const COL_ROLE: usize = 5;
-    const COL_CONTENT_PREVIEW: usize = 6;
-    const COL_CONTENT_LEN: usize = 7;
-    const COL_TIMESTAMP: usize = 8;
-    const COL_MODEL: usize = 9;
-    const COL_TOOL_NAME: usize = 10;
-    const COL_TOOL_STATUS: usize = 11;
-    const COL_TOOL_SUMMARY: usize = 12;
-    const COL_TOOL_INPUT_JSON: usize = 13;
-    const COL_TOOL_OUTPUT_TEXT: usize = 14;
-    const COL_DURATION_MS: usize = 15;
-    const COL_SUBAGENT_TITLE: usize = 16;
-    const COL_SUBAGENT_PROMPT: usize = 17;
+    const COL_HAS_REASONING: usize = 5;
+    const COL_HAS_VISIBLE_REASONING: usize = 6;
+    const COL_ENCRYPTED_ONLY: usize = 7;
+    const COL_ROLE: usize = 8;
+    const COL_CONTENT_PREVIEW: usize = 9;
+    const COL_CONTENT_LEN: usize = 10;
+    const COL_TIMESTAMP: usize = 11;
+    const COL_MODEL: usize = 12;
+    const COL_TOOL_NAME: usize = 13;
+    const COL_TOOL_STATUS: usize = 14;
+    const COL_TOOL_SUMMARY: usize = 15;
+    const COL_TOOL_INPUT_JSON: usize = 16;
+    const COL_TOOL_OUTPUT_TEXT: usize = 17;
+    const COL_DURATION_MS: usize = 18;
+    const COL_SUBAGENT_TITLE: usize = 19;
+    const COL_SUBAGENT_PROMPT: usize = 20;
 
     let mut items = Vec::new();
     while let Some(row) = rows.next()? {
@@ -792,6 +802,11 @@ pub fn load_transcript_items(
         items.push(TranscriptItemRow {
             item_index: row.get(COL_ITEM_INDEX)?,
             kind,
+            reasoning_preview: ReasoningPreview {
+                has_reasoning: row.get(COL_HAS_REASONING)?,
+                has_visible_reasoning: row.get(COL_HAS_VISIBLE_REASONING)?,
+                encrypted_only: row.get(COL_ENCRYPTED_ONLY)?,
+            },
             message_index: row.get(COL_MSG_INDEX)?,
             tool_call_id: row.get(COL_TOOL_CALL_ID)?,
             subagent_id: row.get(COL_SUBAGENT_ID)?,
@@ -885,6 +900,28 @@ pub fn insert_transcript_item(
     Ok(())
 }
 
+pub fn insert_reasoning_attachment(
+    conn: &Connection,
+    attachment: &ReasoningAttachment,
+) -> Result<()> {
+    conn.execute(
+        "INSERT OR REPLACE INTO reasoning_attachments
+         (session_id, transcript_item_index, visible_text, summary_text, encrypted_content, source_model, source_timestamp)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+        rusqlite::params![
+            &attachment.session_id,
+            attachment.transcript_item_index,
+            attachment.visible_text.as_deref(),
+            attachment.summary_text.as_deref(),
+            attachment.encrypted_content.as_deref(),
+            attachment.source_model.as_deref(),
+            attachment.source_timestamp.map(|ts| ts.timestamp()),
+        ],
+    )
+    .context("Failed to insert reasoning attachment")?;
+    Ok(())
+}
+
 /// Load a single tool call by session_id and id.
 pub fn load_tool_call(
     db_path: &Path,
@@ -959,6 +996,40 @@ pub fn load_subagent(
     } else {
         Ok(None)
     }
+}
+
+pub fn load_reasoning_attachment(
+    db_path: &Path,
+    session_id: &str,
+    transcript_item_index: i64,
+) -> Result<Option<ReasoningAttachment>> {
+    if !db_path.exists() {
+        return Ok(None);
+    }
+
+    let db = open_connection(db_path)?;
+    db.query_row(
+        "SELECT session_id, transcript_item_index, visible_text, summary_text,
+                encrypted_content, source_model, source_timestamp
+         FROM reasoning_attachments
+         WHERE session_id = ?1 AND transcript_item_index = ?2",
+        rusqlite::params![session_id, transcript_item_index],
+        |row| {
+            Ok(ReasoningAttachment {
+                session_id: row.get(0)?,
+                transcript_item_index: row.get(1)?,
+                visible_text: row.get(2)?,
+                summary_text: row.get(3)?,
+                encrypted_content: row.get(4)?,
+                source_model: row.get(5)?,
+                source_timestamp: row
+                    .get::<_, Option<i64>>(6)?
+                    .and_then(|ts| Utc.timestamp_opt(ts, 0).single()),
+            })
+        },
+    )
+    .optional()
+    .context("Failed to query reasoning attachment")
 }
 
 /// Load all tool calls owned by a subagent, ordered by rowid (insertion order).

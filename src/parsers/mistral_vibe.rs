@@ -230,6 +230,7 @@ impl MistralVibeParser {
             tool_calls,
             subagents: Vec::new(),
             transcript_items,
+            reasoning_attachments: Vec::new(),
             token_usage,
         })
     }

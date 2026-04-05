@@ -725,6 +725,10 @@ impl SessionIndexer {
             [&session.id],
         )?;
         tx.execute(
+            "DELETE FROM reasoning_attachments WHERE session_id = ?1",
+            [&session.id],
+        )?;
+        tx.execute(
             "DELETE FROM tool_calls WHERE session_id = ?1",
             [&session.id],
         )?;
@@ -755,6 +759,10 @@ impl SessionIndexer {
 
         for item in &parsed.transcript_items {
             crate::database::insert_transcript_item(&tx, item, &session.id)?;
+        }
+
+        for attachment in &parsed.reasoning_attachments {
+            crate::database::insert_reasoning_attachment(&tx, attachment)?;
         }
 
         Self::upsert_fingerprint_tx(&tx, fingerprint_path)?;
@@ -949,6 +957,7 @@ impl SessionIndexer {
     /// correctly on FTS5 tables and participates in transactions normally.
     pub fn clear_all_sessions(&mut self) -> Result<()> {
         let tx = self.db.transaction()?;
+        tx.execute("DELETE FROM reasoning_attachments", [])?;
         tx.execute("DELETE FROM transcript_items", [])?;
         tx.execute("DELETE FROM tool_calls", [])?;
         tx.execute("DELETE FROM subagents", [])?;
@@ -1101,6 +1110,10 @@ impl SessionIndexer {
             [file_path_str],
         )?;
         tx.execute(
+            "DELETE FROM reasoning_attachments WHERE session_id IN (SELECT id FROM sessions WHERE file_path = ?1)",
+            [file_path_str],
+        )?;
+        tx.execute(
             "DELETE FROM tool_calls WHERE session_id IN (SELECT id FROM sessions WHERE file_path = ?1)",
             [file_path_str],
         )?;
@@ -1141,6 +1154,10 @@ impl SessionIndexer {
         let tx = self.db.transaction()?;
         tx.execute(
             "DELETE FROM transcript_items WHERE session_id = ?1",
+            [session_id],
+        )?;
+        tx.execute(
+            "DELETE FROM reasoning_attachments WHERE session_id = ?1",
             [session_id],
         )?;
         tx.execute("DELETE FROM tool_calls WHERE session_id = ?1", [session_id])?;
@@ -1294,6 +1311,7 @@ mod tests {
             tool_calls: vec![],
             subagents: vec![],
             transcript_items: vec![],
+            reasoning_attachments: vec![],
             token_usage: None,
         }
     }
@@ -1487,6 +1505,39 @@ mod tests {
             })
             .unwrap();
         assert_eq!(fingerprint_count, 0);
+    }
+
+    #[test]
+    fn clear_all_sessions_removes_reasoning_attachments() {
+        let temp_db = NamedTempFile::new().unwrap();
+        let mut indexer = SessionIndexer::new(temp_db.path()).unwrap();
+
+        indexer
+            .db
+            .execute(
+                "INSERT INTO sessions (id, tool, start_time, message_count, file_path, last_updated)
+                 VALUES ('s1', 'claude_code', 0, 1, '/tmp/session.jsonl', 0)",
+                [],
+            )
+            .unwrap();
+        indexer
+            .db
+            .execute(
+                "INSERT INTO reasoning_attachments (session_id, transcript_item_index, visible_text)
+                 VALUES ('s1', 0, 'reasoning')",
+                [],
+            )
+            .unwrap();
+
+        indexer.clear_all_sessions().unwrap();
+
+        let count: i64 = indexer
+            .db
+            .query_row("SELECT COUNT(*) FROM reasoning_attachments", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(count, 0);
     }
 
     #[test]

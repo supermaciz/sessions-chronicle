@@ -186,3 +186,27 @@ fn load_transcript_items_includes_tool_input_and_output() {
     assert_eq!(items[0].tool_input_json.as_deref(), Some(input_json));
     assert_eq!(items[0].tool_output_text.as_deref(), Some(output_text));
 }
+
+#[test]
+fn load_transcript_items_includes_reasoning_flags() {
+    let db = TempDatabase::new();
+    let sid = "test-reasoning-preview-session";
+    db.insert_session(sid);
+    db.insert_message(sid, 0, "assistant", "Visible answer", Some("o3-mini"));
+    db.insert_transcript_item(sid, 0, "message", Some(0));
+
+    db.connection
+        .execute(
+            "INSERT INTO reasoning_attachments
+             (session_id, transcript_item_index, visible_text, encrypted_content)
+             VALUES (?1, ?2, ?3, ?4)",
+            rusqlite::params![sid, 0_i64, Some("chain of thought"), Some("cipher")],
+        )
+        .unwrap();
+
+    let items = load_transcript_items(&db.path, sid, 100, 0, 2000).unwrap();
+    assert_eq!(items.len(), 1);
+    assert!(items[0].reasoning_preview.has_reasoning);
+    assert!(items[0].reasoning_preview.has_visible_reasoning);
+    assert!(!items[0].reasoning_preview.encrypted_only);
+}

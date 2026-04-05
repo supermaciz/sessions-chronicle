@@ -547,6 +547,7 @@ impl CodexParser {
             tool_calls: state.tool_calls,
             subagents: Vec::new(),
             transcript_items: state.transcript_items,
+            reasoning_attachments: Vec::new(),
             token_usage,
         })
     }

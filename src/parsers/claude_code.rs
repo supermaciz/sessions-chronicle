@@ -591,6 +591,7 @@ impl ParseState {
             tool_calls: self.tool_calls,
             subagents: self.subagents,
             transcript_items: self.transcript_items,
+            reasoning_attachments: Vec::new(),
             token_usage,
         })
     }

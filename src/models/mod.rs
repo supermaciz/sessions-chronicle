@@ -3,6 +3,7 @@ pub mod indexing_diagnostics;
 pub mod message;
 pub mod message_preview;
 pub mod project_filter;
+pub mod reasoning;
 pub mod session;
 pub mod subagent;
 pub mod token_usage;
@@ -14,6 +15,7 @@ pub use indexing_diagnostics::{IndexingError, IndexingRunResult, PerSourceResult
 pub use message::{Message, Role};
 pub use message_preview::MessagePreview;
 pub use project_filter::{ProjectFilter, ProjectInfo};
+pub use reasoning::{ReasoningAttachment, ReasoningPreview};
 pub use session::{AiAssistant, Session, SessionEndingStatus};
 pub use subagent::Subagent;
 pub use token_usage::TokenUsage;

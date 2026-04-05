@@ -4,7 +4,9 @@ pub mod mistral_vibe;
 pub mod model;
 pub mod opencode;
 
-use crate::models::{Message, Role, Subagent, TokenUsage, ToolCall, TranscriptItem};
+use crate::models::{
+    Message, ReasoningAttachment, Role, Subagent, TokenUsage, ToolCall, TranscriptItem,
+};
 
 const FIRST_PROMPT_MAX_CHARS: usize = 200;
 
@@ -16,6 +18,7 @@ pub struct ParsedSession {
     pub tool_calls: Vec<ToolCall>,
     pub subagents: Vec<Subagent>,
     pub transcript_items: Vec<TranscriptItem>,
+    pub reasoning_attachments: Vec<ReasoningAttachment>,
     pub token_usage: Option<TokenUsage>,
 }
 

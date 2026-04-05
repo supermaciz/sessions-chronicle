@@ -1195,6 +1195,7 @@ mod tests {
             crate::database::TranscriptItemRow {
                 item_index: 0,
                 kind: crate::models::TranscriptItemKind::Message,
+                reasoning_preview: crate::models::ReasoningPreview::default(),
                 message_index: Some(0),
                 role: Some(crate::models::Role::Assistant),
                 content_preview: Some("hello".to_string()),
@@ -1215,6 +1216,7 @@ mod tests {
             crate::database::TranscriptItemRow {
                 item_index: 1,
                 kind: crate::models::TranscriptItemKind::ToolCall,
+                reasoning_preview: crate::models::ReasoningPreview::default(),
                 message_index: None,
                 role: None,
                 content_preview: None,
@@ -1235,6 +1237,7 @@ mod tests {
             crate::database::TranscriptItemRow {
                 item_index: 2,
                 kind: crate::models::TranscriptItemKind::ToolCall,
+                reasoning_preview: crate::models::ReasoningPreview::default(),
                 message_index: None,
                 role: None,
                 content_preview: None,

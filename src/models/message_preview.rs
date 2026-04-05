@@ -1,6 +1,6 @@
 use chrono::{DateTime, Utc};
 
-use crate::models::Role;
+use crate::models::{ReasoningPreview, Role};
 
 #[derive(Debug, Clone)]
 pub struct MessagePreview {
@@ -11,6 +11,7 @@ pub struct MessagePreview {
     pub content_len: usize,
     pub timestamp: DateTime<Utc>,
     pub model: Option<String>,
+    pub reasoning_preview: ReasoningPreview,
 }
 
 impl MessagePreview {

@@ -316,6 +316,7 @@ impl OpenCodeParser {
             tool_calls,
             subagents,
             transcript_items,
+            reasoning_attachments: Vec::new(),
             token_usage,
         })
     }

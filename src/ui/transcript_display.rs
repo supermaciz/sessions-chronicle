@@ -110,6 +110,7 @@ mod tests {
         TranscriptItemRow {
             item_index,
             kind: TranscriptItemKind::Message,
+            reasoning_preview: crate::models::ReasoningPreview::default(),
             message_index: Some(item_index),
             role: Some(Role::Assistant),
             content_preview: Some(format!("message-{item_index}")),
@@ -133,6 +134,7 @@ mod tests {
         TranscriptItemRow {
             item_index,
             kind: TranscriptItemKind::ToolCall,
+            reasoning_preview: crate::models::ReasoningPreview::default(),
             message_index: None,
             role: None,
             content_preview: None,
@@ -156,6 +158,7 @@ mod tests {
         TranscriptItemRow {
             item_index,
             kind: TranscriptItemKind::Subagent,
+            reasoning_preview: crate::models::ReasoningPreview::default(),
             message_index: None,
             role: None,
             content_preview: None,

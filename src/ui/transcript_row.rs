@@ -1029,6 +1029,7 @@ fn transcript_item_init_from_row_with_index(
                     content_len: row.content_len.unwrap_or(0) as usize,
                     timestamp,
                     model: row.model.clone(),
+                    reasoning_preview: crate::models::ReasoningPreview::default(),
                 },
                 highlight_query,
                 db_path,
@@ -1075,6 +1076,7 @@ fn transcript_item_init_from_row_with_index(
                     content_len: 0,
                     timestamp: Utc::now(),
                     model: None,
+                    reasoning_preview: crate::models::ReasoningPreview::default(),
                 },
                 highlight_query,
                 db_path,
@@ -1143,6 +1145,7 @@ mod tests {
         crate::database::TranscriptItemRow {
             item_index,
             kind: crate::models::TranscriptItemKind::ToolCall,
+            reasoning_preview: crate::models::ReasoningPreview::default(),
             message_index: None,
             role: None,
             content_preview: None,
@@ -1288,6 +1291,7 @@ mod tests {
         let row = crate::database::TranscriptItemRow {
             item_index: 1,
             kind: crate::models::TranscriptItemKind::ToolCall,
+            reasoning_preview: crate::models::ReasoningPreview::default(),
             message_index: None,
             role: None,
             content_preview: None,
