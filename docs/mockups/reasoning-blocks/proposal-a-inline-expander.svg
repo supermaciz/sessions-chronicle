@@ -1,0 +1,91 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="680" height="520" viewBox="0 0 680 520">
+  <defs>
+    <style>
+      text { font-family: Cantarell, sans-serif; }
+      .title { font-size: 11px; font-weight: 600; fill: #77767b; text-transform: uppercase; letter-spacing: 0.5px; }
+      .heading { font-size: 12px; font-weight: 600; }
+      .body { font-size: 13px; fill: #3d3846; }
+      .dim { font-size: 11px; fill: #9a9996; }
+      .caption { font-size: 11px; fill: #77767b; }
+      .pill-text { font-size: 10px; font-weight: 600; }
+    </style>
+  </defs>
+
+  <!-- Background -->
+  <rect width="680" height="520" rx="12" fill="#fafafa"/>
+
+  <!-- Title -->
+  <text x="24" y="28" class="title">Proposal A — Inline Collapsible Expander (HIG)</text>
+
+  <!-- ===== Row 1: User message ===== -->
+  <rect x="16" y="42" width="648" height="52" rx="8" fill="#f6f5f4"/>
+  <rect x="16" y="42" width="3" height="52" rx="1.5" fill="#3584e4"/>
+  <text x="32" y="60" class="heading" fill="#3584e4">USER</text>
+  <text x="68" y="60" class="dim">· 14:32:01</text>
+  <text x="32" y="80" class="body">Can you refactor the database layer to use connection pooling?</text>
+
+  <!-- ===== Row 2: Assistant with COLLAPSED reasoning ===== -->
+  <rect x="16" y="102" width="648" height="120" rx="8" fill="#f6f5f4"/>
+  <rect x="16" y="102" width="3" height="120" rx="1.5" fill="#26a269"/>
+  <text x="32" y="120" class="heading" fill="#26a269">ASSISTANT</text>
+  <text x="104" y="120" class="dim">· claude-sonnet-4-6 · 14:32:15</text>
+
+  <!-- Collapsed reasoning section -->
+  <rect x="28" y="130" width="624" height="30" rx="6" fill="rgba(0,0,0,0.04)"/>
+  <rect x="28" y="130" width="3" height="30" rx="1.5" fill="rgba(53,132,228,0.5)"/>
+  <!-- Disclosure triangle (right = collapsed) -->
+  <polygon points="40,140 40,152 48,146" fill="#77767b"/>
+  <!-- Brain icon placeholder -->
+  <circle cx="58" cy="145" r="6" fill="none" stroke="#77767b" stroke-width="1.2"/>
+  <path d="M55,145 Q58,139 61,145" fill="none" stroke="#77767b" stroke-width="1"/>
+  <text x="70" y="149" class="caption">Reasoning</text>
+
+  <!-- Response text -->
+  <text x="32" y="178" class="body">I'll refactor the database layer to use connection pooling. Here's the</text>
+  <text x="32" y="195" class="body">approach I recommend using r2d2 with diesel...</text>
+
+  <!-- Label: "collapsed" -->
+  <text x="560" y="149" class="dim" font-style="italic">▸ collapsed</text>
+
+  <!-- ===== Row 3: Assistant with EXPANDED reasoning ===== -->
+  <rect x="16" y="234" width="648" height="230" rx="8" fill="#f6f5f4"/>
+  <rect x="16" y="234" width="3" height="230" rx="1.5" fill="#26a269"/>
+  <text x="32" y="252" class="heading" fill="#26a269">ASSISTANT</text>
+  <text x="104" y="252" class="dim">· claude-opus-4-6 · 14:35:42</text>
+
+  <!-- Expanded reasoning section -->
+  <rect x="28" y="262" width="624" height="120" rx="6" fill="rgba(0,0,0,0.04)"/>
+  <rect x="28" y="262" width="3" height="120" rx="1.5" fill="rgba(53,132,228,0.5)"/>
+  <!-- Disclosure triangle (down = expanded) -->
+  <polygon points="36,272 48,272 42,280" fill="#77767b"/>
+  <circle cx="58" cy="275" r="6" fill="none" stroke="#77767b" stroke-width="1.2"/>
+  <path d="M55,275 Q58,269 61,275" fill="none" stroke="#77767b" stroke-width="1"/>
+  <text x="70" y="279" class="caption">Reasoning</text>
+
+  <!-- Expanded reasoning content -->
+  <text x="40" y="300" class="body" opacity="0.85" font-size="12px">The user wants to add connection pooling. I should consider the</text>
+  <text x="40" y="316" class="body" opacity="0.85" font-size="12px">existing diesel setup in src/database/mod.rs. The current approach</text>
+  <text x="40" y="332" class="body" opacity="0.85" font-size="12px">opens a new connection per query which is inefficient. r2d2 is the</text>
+  <text x="40" y="348" class="body" opacity="0.85" font-size="12px">standard connection pool for diesel. I need to check if they're using</text>
+  <text x="40" y="364" class="body" opacity="0.85" font-size="12px">SQLite or PostgreSQL since the pool config differs...</text>
+
+  <!-- Label: "expanded" -->
+  <text x="560" y="279" class="dim" font-style="italic">▾ expanded</text>
+
+  <!-- Response text after expanded reasoning -->
+  <text x="32" y="402" class="body">Looking at your codebase, I see you're using SQLite with diesel. Here's</text>
+  <text x="32" y="419" class="body">my recommended approach for adding r2d2 connection pooling...</text>
+  <text x="32" y="436" class="body" fill="#9a9996">[markdown content continues...]</text>
+
+  <!-- ===== Row 4: Codex encrypted indicator ===== -->
+  <rect x="16" y="476" width="648" height="36" rx="8" fill="#f6f5f4"/>
+  <rect x="16" y="476" width="3" height="36" rx="1.5" fill="#26a269"/>
+  <text x="32" y="494" class="heading" fill="#26a269">ASSISTANT</text>
+  <text x="104" y="494" class="dim">· gpt-5.1-codex · 15:01:00</text>
+  <!-- Encrypted indicator (no expander) -->
+  <rect x="300" y="481" width="200" height="22" rx="11" fill="rgba(0,0,0,0.04)"/>
+  <!-- Lock icon -->
+  <rect x="312" y="488" width="8" height="6" rx="1" fill="none" stroke="#9a9996" stroke-width="1.2"/>
+  <path d="M314,488 L314,485 A2,2 0 0 1 318,485 L318,488" fill="none" stroke="#9a9996" stroke-width="1.2"/>
+  <text x="326" y="496" class="dim" font-size="10px">Encrypted reasoning (not viewable)</text>
+</svg>

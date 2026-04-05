@@ -1,0 +1,97 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="920" height="440" viewBox="0 0 920 440">
+  <defs>
+    <style>
+      text { font-family: Cantarell, sans-serif; }
+      .title { font-size: 11px; font-weight: 600; fill: #77767b; text-transform: uppercase; letter-spacing: 0.5px; }
+      .heading { font-size: 12px; font-weight: 600; }
+      .body { font-size: 13px; fill: #3d3846; }
+      .dim { font-size: 11px; fill: #9a9996; }
+      .caption { font-size: 11px; fill: #77767b; }
+      .section-heading { font-size: 10px; font-weight: 700; fill: #77767b; text-transform: uppercase; letter-spacing: 0.8px; }
+    </style>
+  </defs>
+
+  <!-- Background -->
+  <rect width="920" height="440" rx="12" fill="#fafafa"/>
+
+  <!-- Title -->
+  <text x="24" y="28" class="title">Proposal C — Dual-Column Reasoning Pane (toggle mode)</text>
+
+  <!-- ===== Toggle bar at top ===== -->
+  <rect x="16" y="40" width="888" height="32" rx="8" fill="#e8e8e6"/>
+  <!-- Toggle buttons -->
+  <rect x="20" y="44" width="100" height="24" rx="6" fill="#fafafa"/>
+  <text x="42" y="60" font-size="11px" font-weight="600" fill="#3d3846">Transcript</text>
+  <rect x="124" y="44" width="140" height="24" rx="6" fill="transparent"/>
+  <text x="137" y="60" font-size="11px" fill="#9a9996">Transcript + Reasoning</text>
+
+  <!-- ===== State 1: Normal transcript (top half) ===== -->
+  <text x="24" y="92" class="dim" font-style="italic">Mode: Transcript only (default)</text>
+
+  <rect x="16" y="100" width="888" height="130" rx="8" fill="transparent"/>
+
+  <!-- Row 1: User -->
+  <rect x="16" y="100" width="888" height="48" rx="8" fill="#f6f5f4"/>
+  <rect x="16" y="100" width="3" height="48" rx="1.5" fill="#3584e4"/>
+  <text x="32" y="118" class="heading" fill="#3584e4">USER</text>
+  <text x="68" y="118" class="dim">· 14:32:01</text>
+  <text x="32" y="138" class="body">Refactor the database layer to use connection pooling</text>
+
+  <!-- Row 2: Assistant (reasoning indicator as subtle icon) -->
+  <rect x="16" y="156" width="888" height="70" rx="8" fill="#f6f5f4"/>
+  <rect x="16" y="156" width="3" height="70" rx="1.5" fill="#26a269"/>
+  <text x="32" y="174" class="heading" fill="#26a269">ASSISTANT</text>
+  <text x="104" y="174" class="dim">· claude-opus-4-6 · 14:32:20</text>
+  <!-- Small brain dot indicator -->
+  <circle cx="870" cy="170" r="4" fill="rgba(53,132,228,0.4)"/>
+  <text x="32" y="196" class="body">I'll add r2d2 connection pooling to the diesel backend. The key changes</text>
+  <text x="32" y="213" class="body">are in src/database/mod.rs where we currently open per-query connections.</text>
+
+  <!-- ===== State 2: Dual column mode (bottom half) ===== -->
+  <text x="24" y="252" class="dim" font-style="italic">Mode: Transcript + Reasoning (toggled on)</text>
+
+  <!-- LEFT: Transcript column -->
+  <rect x="16" y="260" width="444" height="168" rx="8" fill="transparent"/>
+
+  <!-- User row -->
+  <rect x="16" y="260" width="444" height="44" rx="8" fill="#f6f5f4"/>
+  <rect x="16" y="260" width="3" height="44" rx="1.5" fill="#3584e4"/>
+  <text x="32" y="278" class="heading" fill="#3584e4">USER</text>
+  <text x="68" y="278" class="dim">· 14:32:01</text>
+  <text x="32" y="296" class="body">Refactor the database layer</text>
+
+  <!-- Assistant row (aligned with reasoning) -->
+  <rect x="16" y="312" width="444" height="110" rx="8" fill="#f6f5f4"/>
+  <rect x="16" y="312" width="3" height="110" rx="1.5" fill="#26a269"/>
+  <text x="32" y="330" class="heading" fill="#26a269">ASSISTANT</text>
+  <text x="104" y="330" class="dim">· claude-opus-4-6</text>
+  <text x="32" y="354" class="body">I'll add r2d2 connection pooling</text>
+  <text x="32" y="371" class="body">to the diesel backend. The key</text>
+  <text x="32" y="388" class="body">changes are in</text>
+  <text x="32" y="405" class="body">src/database/mod.rs...</text>
+
+  <!-- Divider -->
+  <line x1="468" y1="264" x2="468" y2="428" stroke="#deddda" stroke-width="1" stroke-dasharray="4,3"/>
+
+  <!-- RIGHT: Reasoning column -->
+  <rect x="476" y="260" width="428" height="168" rx="8" fill="transparent"/>
+
+  <!-- Header -->
+  <text x="488" y="278" class="section-heading">REASONING</text>
+
+  <!-- Empty space aligned with user row -->
+  <rect x="476" y="260" width="428" height="44" rx="8" fill="transparent"/>
+
+  <!-- Reasoning content aligned with assistant row -->
+  <rect x="476" y="312" width="428" height="110" rx="8" fill="rgba(0,0,0,0.03)"/>
+  <rect x="476" y="312" width="3" height="110" rx="1.5" fill="rgba(53,132,228,0.35)"/>
+  <text x="492" y="332" class="body" opacity="0.85" font-size="12px">The user wants to add connection pooling.</text>
+  <text x="492" y="350" class="body" opacity="0.85" font-size="12px">I should check src/database/mod.rs for the</text>
+  <text x="492" y="368" class="body" opacity="0.85" font-size="12px">current connection pattern. They're using</text>
+  <text x="492" y="386" class="body" opacity="0.85" font-size="12px">SQLite+diesel. r2d2 is the standard pool.</text>
+  <text x="492" y="404" class="body" opacity="0.85" font-size="12px">Need to verify async compat...</text>
+
+  <!-- Alignment guides -->
+  <line x1="460" y1="312" x2="476" y2="312" stroke="#3584e4" stroke-width="0.5" opacity="0.3"/>
+  <line x1="460" y1="422" x2="476" y2="422" stroke="#3584e4" stroke-width="0.5" opacity="0.3"/>
+</svg>

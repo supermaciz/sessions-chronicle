@@ -1,0 +1,110 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="920" height="420" viewBox="0 0 920 420">
+  <defs>
+    <style>
+      text { font-family: Cantarell, sans-serif; }
+      .title { font-size: 11px; font-weight: 600; fill: #77767b; text-transform: uppercase; letter-spacing: 0.5px; }
+      .heading { font-size: 12px; font-weight: 600; }
+      .body { font-size: 13px; fill: #3d3846; }
+      .dim { font-size: 11px; fill: #9a9996; }
+      .caption { font-size: 11px; fill: #77767b; }
+      .inspector-heading { font-size: 10px; font-weight: 700; fill: #77767b; text-transform: uppercase; letter-spacing: 0.8px; }
+    </style>
+  </defs>
+
+  <!-- Background -->
+  <rect width="920" height="420" rx="12" fill="#fafafa"/>
+
+  <!-- Title -->
+  <text x="24" y="28" class="title">Proposal B — Inspector Pill (Mii Beta)</text>
+
+  <!-- ===== LEFT: Transcript column ===== -->
+  <rect x="12" y="40" width="560" height="370" rx="8" fill="transparent"/>
+
+  <!-- Row 1: User message -->
+  <rect x="16" y="44" width="552" height="52" rx="8" fill="#f6f5f4"/>
+  <rect x="16" y="44" width="3" height="52" rx="1.5" fill="#3584e4"/>
+  <text x="32" y="62" class="heading" fill="#3584e4">USER</text>
+  <text x="68" y="62" class="dim">· 14:32:01</text>
+  <text x="32" y="82" class="body">Can you refactor the auth module?</text>
+
+  <!-- Row 2: Assistant with reasoning PILL (selected state) -->
+  <rect x="16" y="104" width="552" height="88" rx="8" fill="#f6f5f4"/>
+  <rect x="16" y="104" width="3" height="88" rx="1.5" fill="#26a269"/>
+  <text x="32" y="122" class="heading" fill="#26a269">ASSISTANT</text>
+  <text x="104" y="122" class="dim">· claude-sonnet-4-6 · 14:32:15</text>
+
+  <!-- Reasoning pill (selected/active state) -->
+  <rect x="312" y="110" width="72" height="20" rx="10" fill="rgba(53,132,228,0.25)"/>
+  <circle cx="324" cy="120" r="5" fill="none" stroke="#3584e4" stroke-width="1.2"/>
+  <path d="M322,120 Q324,116 326,120" fill="none" stroke="#3584e4" stroke-width="0.8"/>
+  <text x="334" y="124" font-size="10px" font-weight="600" fill="#3584e4">Thinking</text>
+
+  <text x="32" y="148" class="body">I'll restructure the auth module to separate concerns. The current</text>
+  <text x="32" y="165" class="body">monolithic middleware should be split into authentication and</text>
+  <text x="32" y="182" class="body">authorization layers...</text>
+
+  <!-- Row 3: Tool call -->
+  <rect x="16" y="200" width="552" height="34" rx="6" fill="rgba(0,0,0,0.03)"/>
+  <rect x="16" y="200" width="2" height="34" rx="1" fill="#e66100"/>
+  <text x="32" y="221" class="caption" font-family="monospace" fill="#e66100">Read</text>
+  <text x="68" y="221" class="dim">src/auth/middleware.rs</text>
+  <rect x="490" y="208" width="66" height="18" rx="9" fill="rgba(38,162,105,0.12)"/>
+  <text x="500" y="221" font-size="10px" fill="#26a269">completed</text>
+
+  <!-- Row 4: Another assistant WITHOUT reasoning -->
+  <rect x="16" y="242" width="552" height="68" rx="8" fill="#f6f5f4"/>
+  <rect x="16" y="242" width="3" height="68" rx="1.5" fill="#26a269"/>
+  <text x="32" y="260" class="heading" fill="#26a269">ASSISTANT</text>
+  <text x="104" y="260" class="dim">· claude-sonnet-4-6 · 14:32:28</text>
+  <!-- No pill — this message has no reasoning -->
+  <text x="32" y="284" class="body">I see the current auth middleware handles both JWT validation and</text>
+  <text x="32" y="301" class="body">role checking in a single function...</text>
+
+  <!-- Row 5: Assistant with encrypted reasoning (Codex) -->
+  <rect x="16" y="318" width="552" height="68" rx="8" fill="#f6f5f4"/>
+  <rect x="16" y="318" width="3" height="68" rx="1.5" fill="#26a269"/>
+  <text x="32" y="336" class="heading" fill="#26a269">ASSISTANT</text>
+  <text x="104" y="336" class="dim">· gpt-5.1-codex · 15:01:00</text>
+
+  <!-- Encrypted pill (dimmed, non-clickable) -->
+  <rect x="262" y="324" width="148" height="20" rx="10" fill="rgba(0,0,0,0.04)"/>
+  <rect x="274" y="331" width="6" height="5" rx="1" fill="none" stroke="#9a9996" stroke-width="1"/>
+  <path d="M275,331 L275,329 A2,2 0 0 1 279,329 L279,331" fill="none" stroke="#9a9996" stroke-width="1"/>
+  <text x="286" y="338" font-size="10px" fill="#9a9996">Thinking (encrypted)</text>
+
+  <text x="32" y="362" class="body">Here's the refactored auth module with separate middleware...</text>
+  <text x="32" y="379" class="body" fill="#9a9996">[continues...]</text>
+
+  <!-- ===== RIGHT: Inspector pane ===== -->
+  <rect x="580" y="40" width="328" height="370" rx="8" fill="#f0f0f0" stroke="#deddda" stroke-width="1"/>
+
+  <!-- Inspector header -->
+  <rect x="580" y="40" width="328" height="40" rx="8" fill="#e8e8e6"/>
+  <rect x="580" y="72" width="328" height="8" fill="#e8e8e6"/>
+  <text x="596" y="65" class="inspector-heading">REASONING</text>
+  <text x="672" y="65" class="dim">· claude-sonnet-4-6</text>
+
+  <!-- Close button -->
+  <rect x="876" y="48" width="24" height="24" rx="12" fill="rgba(0,0,0,0.06)"/>
+  <line x1="884" y1="56" x2="894" y2="66" stroke="#77767b" stroke-width="1.5" stroke-linecap="round"/>
+  <line x1="894" y1="56" x2="884" y2="66" stroke="#77767b" stroke-width="1.5" stroke-linecap="round"/>
+
+  <!-- Inspector content -->
+  <text x="596" y="100" class="body" opacity="0.9" font-size="12px">The user wants to refactor the auth module.</text>
+  <text x="596" y="118" class="body" opacity="0.9" font-size="12px">The current middleware in src/auth/middleware.rs</text>
+  <text x="596" y="136" class="body" opacity="0.9" font-size="12px">handles both JWT validation and role-based</text>
+  <text x="596" y="154" class="body" opacity="0.9" font-size="12px">access control in a single function. This is a</text>
+  <text x="596" y="172" class="body" opacity="0.9" font-size="12px">separation of concerns issue.</text>
+  <text x="596" y="198" class="body" opacity="0.9" font-size="12px">I should split this into two middleware layers:</text>
+  <text x="596" y="224" class="body" opacity="0.9" font-size="12px">1. AuthenticationMiddleware — verifies JWT</text>
+  <text x="608" y="242" class="body" opacity="0.9" font-size="12px">  tokens and extracts user identity</text>
+  <text x="596" y="268" class="body" opacity="0.9" font-size="12px">2. AuthorizationMiddleware — checks role</text>
+  <text x="608" y="286" class="body" opacity="0.9" font-size="12px">  permissions against route requirements</text>
+  <text x="596" y="312" class="body" opacity="0.9" font-size="12px">This aligns with the OWASP recommendation</text>
+  <text x="596" y="330" class="body" opacity="0.9" font-size="12px">for defense-in-depth. The existing session</text>
+  <text x="596" y="348" class="body" opacity="0.9" font-size="12px">token storage in config.rs also needs to be</text>
+  <text x="596" y="366" class="body" opacity="0.9" font-size="12px">reviewed as part of this refactor...</text>
+
+  <!-- Connecting line from pill to inspector -->
+  <line x1="384" y1="120" x2="580" y2="60" stroke="#3584e4" stroke-width="1" stroke-dasharray="4,3" opacity="0.3"/>
+</svg>
