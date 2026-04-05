@@ -2,7 +2,7 @@
 
 **Issue:** [#45](https://github.com/supermaciz/sessions-chronicle/issues/45)  
 **Date:** 2026-04-05  
-**Status:** Exploration — no decision taken yet
+**Status:** Decision made — Proposal B selected for v1
 
 ---
 
@@ -261,6 +261,41 @@ For Codex encrypted reasoning, the reasoning column cell shows a dimmed lock ico
 5. **Reasoning in session-level summary?**  
    The session summary header already shows `reasoning_tokens` in the token breakdown. Should
    it also show a "contains reasoning" indicator?
+
+---
+
+## Decision
+
+**Selected for v1:** Proposal B — Inspector Pill
+
+### Why this option
+
+Reasoning content is primarily a **forensic aid**, not primary conversation flow. In real usage,
+the main need is to notice that reasoning exists on a message and inspect it selectively when a
+response looks suspicious or needs explanation. Proposal B matches that workflow best:
+
+- it keeps the transcript stable and compact during normal reading
+- it adds a lightweight signal directly on reasoning-bearing assistant messages
+- it reuses the existing inspector mental model instead of introducing a new major surface
+- it keeps implementation cost low while still preserving access to full reasoning text
+
+### Why not Proposal A
+
+Inline expanders keep reasoning close to the response, but they add persistent visual weight to
+every affected message and make long transcripts harder to scan. That is a poor default for
+content users inspect only occasionally.
+
+### Why not Proposal C
+
+The dual-column view is attractive for deep comparative analysis, but it is too expensive and too
+broad for the current problem. It introduces synchronized layout complexity, narrow-window issues,
+and a whole new mode before validating that frequent side-by-side reasoning review is a common need.
+
+### Decision summary
+
+Build Proposal B first. Validate whether users actually inspect reasoning often enough to justify
+a richer dedicated surface later. If repeated side-by-side reasoning review becomes common, Proposal
+C can be reconsidered as a future evolution.
 
 ---
 
