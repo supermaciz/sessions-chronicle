@@ -26,12 +26,13 @@ tool calls. The data model therefore attaches reasoning to the **next rendered t
 
 ## 1. Reasoning Data Model
 
-Each extracted reasoning payload is stored explicitly, without sentinels:
+Each extracted reasoning payload is stored explicitly, without sentinel text values in the
+payload fields:
 
 ```rust
 pub struct ReasoningAttachment {
     pub session_id: String,
-    pub transcript_item_index: i64,  // -1 for orphan attachments
+    pub transcript_item_index: i64,  // < 0 reserved for orphan attachments
     pub visible_text: Option<String>,
     pub summary_text: Option<String>,
     pub encrypted_content: Option<String>,
@@ -107,11 +108,18 @@ When the parser emits the next visible `TranscriptItem`, it:
 - Reasoning is never carried across a user turn
 - Reasoning is never attached to a previous transcript item
 - If an assistant turn ends with reasoning but produces no visible transcript item, the
-  reasoning is stored as an **orphan attachment** with `transcript_item_index = -1` for
-  that session. This preserves the data for diagnostics and future use, and a `warn!` log
-  is emitted noting the orphaned reasoning. Orphan attachments are excluded from transcript
-  row joins (the query already filters on `ti.item_index = ra.transcript_item_index`) so
-  they are invisible in the UI but queryable for debugging.
+  reasoning is stored as an **orphan attachment** with a unique negative
+  `transcript_item_index` for that session, allocated from a reserved orphan range such as
+  `-1`, `-2`, `-3`, in encounter order. Allocation is deterministic: each parser/indexing
+  pass starts an orphan counter at `-1` and decrements it for every orphan attachment
+  encountered in that session. This preserves the data for diagnostics and future use
+  without primary-key collisions, and a `warn!` log is emitted noting the orphaned
+  reasoning. Orphan attachments are excluded from transcript row joins (the query already
+  filters on `ti.item_index = ra.transcript_item_index`) so they are invisible in the UI
+  but queryable for debugging.
+
+Normal transcript items always use non-negative `item_index` values. Negative
+`transcript_item_index` values are reserved for orphan reasoning only.
 
 This keeps attachment deterministic and avoids ambiguous cross-turn pairing while
 preventing silent data loss.
@@ -208,12 +216,16 @@ stale reasoning attachments from pointing to the wrong transcript item:
 - **Re-index always co-deletes**: every code path that deletes `transcript_items` for a session
   must also delete the corresponding `reasoning_attachments` rows. The indexer already follows
   this pattern for `tool_calls`, `subagents`, and `messages` — `reasoning_attachments` is added
-  to the same delete cascade.
+  to the same delete cascade. Because orphan attachments use a session-global negative index
+  range, any file-level reindex that touches a session must delete and rebuild that session's
+  orphan reasoning rows before reinserting them; per-file orphan cleanup is not sufficient.
 - **Full re-index on migration**: the v9 migration clears `file_fingerprints`, which forces a
   complete re-parse and re-insert of both tables from scratch.
 
 This means reasoning attachments are never orphaned by a parser evolution, because both tables
-are rebuilt together.
+are rebuilt together. The same rule applies to orphan attachments: their reserved negative
+indices are regenerated from scratch during the same parse, using deterministic encounter
+order within the session.
 
 ```sql
 CREATE TABLE IF NOT EXISTS reasoning_attachments (
@@ -271,6 +283,15 @@ This preview is carried on transcript-row init data for:
 - tool call rows
 - subagent rows
 
+Grouped tool-burst rows do not own a separate reasoning record. Their header state is derived
+from the already-loaded child tool-call rows being grouped:
+
+- `visible_reasoning_child_count`: number of grouped children where `has_visible_reasoning == true`
+- `encrypted_only_child_count`: number of grouped children where `encrypted_only == true`
+- each grouped child keeps its own raw database `transcript_item_index`
+
+No extra DB query is required to build burst-header reasoning indicators.
+
 ### Transcript query join
 
 ```sql
@@ -296,11 +317,13 @@ LEFT JOIN reasoning_attachments ra
 pub fn load_reasoning_attachment(
     db_path: &Path,
     session_id: &str,
-    transcript_item_index: usize,
+    transcript_item_index: i64,
 ) -> Result<Option<ReasoningAttachment>>
 ```
 
 Returns `None` when no reasoning is attached to that transcript item.
+UI callers only pass non-negative transcript-item indices. Negative indices are
+diagnostic-only orphan attachments and are never routed through the inspector.
 
 ---
 
@@ -344,10 +367,25 @@ Dimmed appearance.
 - **Tool call rows**: near the existing inspect action
 - **Subagent rows**: near the existing inspect action
 - **Tool burst rows**:
-  - aggregate child reasoning count in the burst header when any grouped child has reasoning
-  - retain per-child pills when the group is expanded
+  - when one or more grouped child tool calls have visible reasoning, show a non-interactive
+    burst-header pill labelled with a count of affected children, for example `1 thinking`
+    or `2 thinking`
+  - if no grouped child has visible reasoning but one or more children are encrypted-only,
+    show a dimmed non-interactive burst-header pill labelled `1 encrypted` or
+    `2 encrypted`
+  - if a mixed burst contains both visible-reasoning children and encrypted-only children,
+    the collapsed header shows only the visible `N thinking` count in v1; encrypted-only
+    children remain discoverable after expansion via their own dimmed child pills
+  - the burst-header pill is informational only and never opens the inspector
+  - reasoning inspection happens only on the expanded child tool-call rows
+  - each expanded child that has reasoning keeps its own pill and routes to
+    `InspectReasoning { session_id, transcript_item_index }`
+  - the visible-thinking count reflects the number of child tool-call rows with visible
+    reasoning, not the number of reasoning blocks
 
-This ensures grouped tool-call UI does not hide the presence of reasoning entirely.
+A tool burst never owns reasoning itself. It only aggregates the presence of reasoning
+attached to its child transcript items. This ensures grouped tool-call UI does not hide the
+presence of reasoning entirely while keeping inspection bound to a real child transcript row.
 
 ### CSS
 
@@ -374,7 +412,7 @@ enum InspectorSelection {
 ```rust
 ToolInspectorPaneMsg::SelectReasoning {
     session_id: String,
-    transcript_item_index: usize,
+    transcript_item_index: i64,
 }
 
 ToolInspectorPaneCmd::Reasoning {
@@ -411,7 +449,8 @@ Escape closes the inspector pane using existing behavior.
 
 ## 8. Message Routing
 
-Routing mirrors the existing inspect flow, but targets `transcript_item_index`:
+Routing mirrors the existing inspect flow, but targets the raw database
+`transcript_item_index`:
 
 ```text
 TranscriptRow
@@ -422,6 +461,10 @@ TranscriptRow
 ```
 
 No standalone reasoning row component is introduced.
+
+Grouped tool-burst UI must preserve each child row's original database
+`transcript_item_index` separately from any top-level `display_index`, so expanding a burst
+and clicking a child pill always loads the correct reasoning attachment.
 
 ---
 
@@ -438,12 +481,23 @@ No standalone reasoning row component is introduced.
   - transcript preview query derives reasoning flags correctly
   - lazy-load returns the full attachment payload
   - per-session, per-file, and clear-all cleanup paths co-delete `reasoning_attachments` rows
+  - multiple orphan attachments in one session receive distinct negative indices and do not
+    collide on the primary key
+  - orphan negative-index allocation is deterministic for a fixed session input and parser
+    version
+  - file-level reindex for a session clears and rebuilds that session's orphan reasoning rows
+    so the reserved negative index range remains collision-free
 - **UI tests / manual verification**
   - message row with visible reasoning pill
   - tool call row with visible reasoning pill
-  - grouped tool burst shows aggregate reasoning indicator
+  - grouped tool burst header shows a non-interactive count pill when one or more children
+    have reasoning
+  - grouped tool burst header uses `N thinking` for visible child reasoning and a dimmed
+    `N encrypted` pill when only encrypted-only children are present
+  - expanding a grouped tool burst keeps clickable child pills on only the affected tool calls
   - encrypted-only pill is dimmed and non-clickable
   - inspector renders summary-only and full-text cases correctly
+  - clicking a child pill inside a grouped tool burst opens the matching reasoning attachment
   - no pill appears for empty dropped reasoning
 - **Fixtures**
   - Claude Code fixture with thinking-only event before tool call
@@ -466,9 +520,9 @@ No standalone reasoning row component is introduced.
 | `src/database/indexer.rs` | Persist reasoning attachments during re-index; add `DELETE FROM reasoning_attachments` to all session-cleanup paths (per-session, per-file, and clear-all) |
 | `src/database/mod.rs` | Join reasoning preview flags into transcript queries; add `load_reasoning_attachment` |
 | `src/models/` | Add explicit reasoning attachment/preview types |
-| `src/ui/transcript_row.rs` | Add pills on message/tool/subagent rows and aggregate handling for grouped tool rows |
+| `src/ui/transcript_row.rs` | Add pills on message/tool/subagent rows, a non-interactive count pill for tool-burst headers, and preserve raw child transcript indices for grouped tool rows |
 | `src/ui/transcript_display.rs` | Relay `InspectReasoning` and aggregate grouped reasoning counts |
-| `src/ui/session_detail.rs` | Route `InspectReasoning` to the inspector pane |
+| `src/ui/session_detail.rs` | Route `InspectReasoning` to the inspector pane while keeping database transcript indices distinct from display indices |
 | `src/ui/tool_inspector_pane.rs` | Add reasoning selection, loading, and rendering |
 | `data/resources/style.css` | Add reasoning pill styles |
 | `tests/fixtures/` | Add reasoning-bearing fixtures across supported parsers |
