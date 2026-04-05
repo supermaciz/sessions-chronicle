@@ -31,7 +31,7 @@ Each extracted reasoning payload is stored explicitly, without sentinels:
 ```rust
 pub struct ReasoningAttachment {
     pub session_id: String,
-    pub transcript_item_index: usize,
+    pub transcript_item_index: i64,  // -1 for orphan attachments
     pub visible_text: Option<String>,
     pub summary_text: Option<String>,
     pub encrypted_content: Option<String>,
@@ -107,9 +107,14 @@ When the parser emits the next visible `TranscriptItem`, it:
 - Reasoning is never carried across a user turn
 - Reasoning is never attached to a previous transcript item
 - If an assistant turn ends with reasoning but produces no visible transcript item, the
-  reasoning is dropped and recorded in diagnostics/logging
+  reasoning is stored as an **orphan attachment** with `transcript_item_index = -1` for
+  that session. This preserves the data for diagnostics and future use, and a `warn!` log
+  is emitted noting the orphaned reasoning. Orphan attachments are excluded from transcript
+  row joins (the query already filters on `ti.item_index = ra.transcript_item_index`) so
+  they are invisible in the UI but queryable for debugging.
 
-This keeps attachment deterministic and avoids ambiguous cross-turn pairing.
+This keeps attachment deterministic and avoids ambiguous cross-turn pairing while
+preventing silent data loss.
 
 ---
 
@@ -157,6 +162,11 @@ Important status note:
 - implementation should support it when present
 - current Vibe-shaped sessions must remain a graceful no-op when it is absent
 
+Testing strategy: since no real session with `reasoning_content` has been observed, the parser
+unit test constructs a minimal JSON payload inline with the field present, without requiring a
+dedicated fixture file. This keeps the test self-contained and avoids maintaining a synthetic
+fixture that could drift from the real format.
+
 ### OpenCode
 
 OpenCode is processed part-by-part, so reasoning extraction is not just a `Nothing -> Message`
@@ -187,6 +197,23 @@ Important details:
 ## 4. Schema Migration (v9)
 
 Store reasoning outside the FTS5 `messages` table.
+
+### Index stability
+
+`transcript_item_index` is a positional key assigned by the parser during indexing. It is
+deterministic for a given parser version and session file: the same input always produces the
+same sequence of `item_index` values. However, a parser change could renumber items. To prevent
+stale reasoning attachments from pointing to the wrong transcript item:
+
+- **Re-index always co-deletes**: every code path that deletes `transcript_items` for a session
+  must also delete the corresponding `reasoning_attachments` rows. The indexer already follows
+  this pattern for `tool_calls`, `subagents`, and `messages` — `reasoning_attachments` is added
+  to the same delete cascade.
+- **Full re-index on migration**: the v9 migration clears `file_fingerprints`, which forces a
+  complete re-parse and re-insert of both tables from scratch.
+
+This means reasoning attachments are never orphaned by a parser evolution, because both tables
+are rebuilt together.
 
 ```sql
 CREATE TABLE IF NOT EXISTS reasoning_attachments (
@@ -404,12 +431,13 @@ No standalone reasoning row component is introduced.
   - Claude Code: thinking/text split, empty thinking filtered, reasoning-only event attaches to first tool call
   - Codex: summary extraction, encrypted payload extraction, reasoning item attaches to next visible transcript item
   - OpenCode: part-level accumulation, empty reasoning ignored unless encrypted metadata exists
-  - Mistral Vibe: conditional extraction when `reasoning_content` is present; graceful no-op on current Vibe-shaped sessions
+  - Mistral Vibe: conditional extraction when `reasoning_content` is present (tested via synthetic fixture); graceful no-op verified on current real Vibe-shaped sessions
 - **DB tests**
   - v9 creates `reasoning_attachments`
   - v9 clears `file_fingerprints`
   - transcript preview query derives reasoning flags correctly
   - lazy-load returns the full attachment payload
+  - per-session, per-file, and clear-all cleanup paths co-delete `reasoning_attachments` rows
 - **UI tests / manual verification**
   - message row with visible reasoning pill
   - tool call row with visible reasoning pill
@@ -422,7 +450,7 @@ No standalone reasoning row component is introduced.
   - Codex fixture with summary + encrypted reasoning
   - OpenCode fixture with visible reasoning text
   - OpenCode fixture with encrypted-only reasoning part
-  - Mistral Vibe fixture with `reasoning_content` if available; otherwise current no-reasoning fixture remains valid
+  - Mistral Vibe: no dedicated fixture; parser test uses inline JSON payload with `reasoning_content`
 
 ---
 
@@ -435,7 +463,7 @@ No standalone reasoning row component is introduced.
 | `src/parsers/opencode/mod.rs` | Accumulate `reasoning` parts and attach to next visible part-derived transcript item |
 | `src/parsers/codex.rs` | Extract reasoning summaries and encrypted payload; attach to next transcript item |
 | `src/database/schema.rs` | Add `reasoning_attachments` table and v9 migration |
-| `src/database/indexer.rs` | Persist reasoning attachments during re-index |
+| `src/database/indexer.rs` | Persist reasoning attachments during re-index; add `DELETE FROM reasoning_attachments` to all session-cleanup paths (per-session, per-file, and clear-all) |
 | `src/database/mod.rs` | Join reasoning preview flags into transcript queries; add `load_reasoning_attachment` |
 | `src/models/` | Add explicit reasoning attachment/preview types |
 | `src/ui/transcript_row.rs` | Add pills on message/tool/subagent rows and aggregate handling for grouped tool rows |
