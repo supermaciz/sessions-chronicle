@@ -13,8 +13,8 @@ use crate::models::{
     ToolCallStatus,
 };
 use crate::models::{TranscriptItem, TranscriptItemKind};
-use crate::parsers::ParsedSession;
 use crate::parsers::model::normalize_model;
+use crate::parsers::{ParsedSession, PendingReasoning};
 
 #[derive(Debug, thiserror::Error)]
 pub enum ParseError {
@@ -60,10 +60,7 @@ struct ParseState {
 
     // Pending reasoning attached to the next transcript item.
     pending_reasoning_session_id: Option<String>,
-    pending_reasoning_visible_parts: Vec<String>,
-    pending_reasoning_has_encrypted_content: bool,
-    pending_reasoning_source_model: Option<String>,
-    pending_reasoning_source_timestamp: Option<DateTime<Utc>>,
+    pending_reasoning: PendingReasoning,
 
     // Token usage dedupe state
     usage_map: HashMap<(String, String), UsageEntry>,
@@ -88,10 +85,7 @@ impl ParseState {
             msg_counter: 0,
             item_counter: 0,
             pending_reasoning_session_id: None,
-            pending_reasoning_visible_parts: Vec::new(),
-            pending_reasoning_has_encrypted_content: false,
-            pending_reasoning_source_model: None,
-            pending_reasoning_source_timestamp: None,
+            pending_reasoning: PendingReasoning::default(),
             usage_map: HashMap::new(),
             anonymous_usage: Vec::new(),
         }
@@ -197,70 +191,45 @@ impl ParseState {
         source_model: Option<String>,
         source_timestamp: DateTime<Utc>,
     ) {
-        if visible_text.is_none() && !has_encrypted_content {
+        let visible_text = visible_text
+            .map(|t| t.trim().to_string())
+            .filter(|t| !t.is_empty());
+        let next = PendingReasoning {
+            visible_text,
+            summary_text: None,
+            has_encrypted_content,
+            source_model,
+            source_timestamp: Some(source_timestamp),
+        };
+        if next.is_empty() {
             return;
         }
-
         if self.pending_reasoning_session_id.is_none() {
             self.pending_reasoning_session_id = Some(session_id.to_string());
-            self.pending_reasoning_source_model = source_model;
-            self.pending_reasoning_source_timestamp = Some(source_timestamp);
         }
-
-        if let Some(visible_text) = visible_text
-            && !visible_text.trim().is_empty()
-        {
-            self.pending_reasoning_visible_parts.push(visible_text);
-        }
-
-        if has_encrypted_content {
-            self.pending_reasoning_has_encrypted_content = true;
-        }
+        self.pending_reasoning.merge(next);
     }
 
     fn flush_pending_reasoning_to_item(&mut self, transcript_item_index: i64) {
-        if self.pending_reasoning_visible_parts.is_empty()
-            && !self.pending_reasoning_has_encrypted_content
-        {
+        if self.pending_reasoning.is_empty() {
             return;
         }
-
-        self.reasoning_attachments.push(ReasoningAttachment {
-            session_id: self
-                .pending_reasoning_session_id
-                .clone()
-                .unwrap_or_else(|| "unknown".to_string()),
-            transcript_item_index,
-            visible_text: if self.pending_reasoning_visible_parts.is_empty() {
-                None
-            } else {
-                Some(self.pending_reasoning_visible_parts.join("\n"))
-            },
-            summary_text: None,
-            has_encrypted_content: self.pending_reasoning_has_encrypted_content,
-            source_model: self.pending_reasoning_source_model.clone(),
-            source_timestamp: self.pending_reasoning_source_timestamp,
-        });
-        self.clear_pending_reasoning();
+        let session_id = self
+            .pending_reasoning_session_id
+            .take()
+            .unwrap_or_else(|| "unknown".to_string());
+        let pending = std::mem::take(&mut self.pending_reasoning);
+        self.reasoning_attachments
+            .push(pending.into_attachment(&session_id, transcript_item_index));
     }
 
     fn drop_pending_reasoning_if_orphan(&mut self) {
-        if self.pending_reasoning_visible_parts.is_empty()
-            && !self.pending_reasoning_has_encrypted_content
-        {
+        if self.pending_reasoning.is_empty() {
             return;
         }
-
         tracing::debug!("dropping orphan reasoning with no visible transcript item");
-        self.clear_pending_reasoning();
-    }
-
-    fn clear_pending_reasoning(&mut self) {
         self.pending_reasoning_session_id = None;
-        self.pending_reasoning_visible_parts.clear();
-        self.pending_reasoning_has_encrypted_content = false;
-        self.pending_reasoning_source_model = None;
-        self.pending_reasoning_source_timestamp = None;
+        self.pending_reasoning = PendingReasoning::default();
     }
 
     /// Handles a user event: extracts content, processes tool results, and emits messages.

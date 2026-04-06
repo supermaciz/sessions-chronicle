@@ -10,8 +10,8 @@ use crate::models::{
     AiAssistant, Message, ReasoningAttachment, Role, Session, TokenUsage, ToolCall, ToolCallStatus,
 };
 use crate::models::{TranscriptItem, TranscriptItemKind};
-use crate::parsers::ParsedSession;
 use crate::parsers::model::normalize_model;
+use crate::parsers::{ParsedSession, PendingReasoning};
 
 #[derive(Debug, thiserror::Error)]
 pub enum ParseError {
@@ -44,67 +44,6 @@ struct ParseState {
     msg_counter: i64,
     item_counter: i64,
     pending_reasoning: PendingReasoning,
-}
-
-#[derive(Debug, Clone, Default)]
-struct PendingReasoning {
-    visible_text: Option<String>,
-    summary_text: Option<String>,
-    has_encrypted_content: bool,
-    source_model: Option<String>,
-    source_timestamp: Option<DateTime<Utc>>,
-}
-
-impl PendingReasoning {
-    fn is_empty(&self) -> bool {
-        self.visible_text.is_none() && self.summary_text.is_none() && !self.has_encrypted_content
-    }
-
-    fn merge(&mut self, next: PendingReasoning) {
-        if let Some(visible) = next.visible_text {
-            match &mut self.visible_text {
-                Some(current) => {
-                    if !current.is_empty() {
-                        current.push('\n');
-                    }
-                    current.push_str(&visible);
-                }
-                None => self.visible_text = Some(visible),
-            }
-        }
-
-        if let Some(summary) = next.summary_text {
-            match &mut self.summary_text {
-                Some(current) => {
-                    if !current.is_empty() {
-                        current.push('\n');
-                    }
-                    current.push_str(&summary);
-                }
-                None => self.summary_text = Some(summary),
-            }
-        }
-
-        self.has_encrypted_content |= next.has_encrypted_content;
-        if self.source_model.is_none() {
-            self.source_model = next.source_model;
-        }
-        if self.source_timestamp.is_none() {
-            self.source_timestamp = next.source_timestamp;
-        }
-    }
-
-    fn into_attachment(self, session_id: &str, transcript_item_index: i64) -> ReasoningAttachment {
-        ReasoningAttachment {
-            session_id: session_id.to_string(),
-            transcript_item_index,
-            visible_text: self.visible_text,
-            summary_text: self.summary_text,
-            has_encrypted_content: self.has_encrypted_content,
-            source_model: self.source_model,
-            source_timestamp: self.source_timestamp,
-        }
-    }
 }
 
 impl ParseState {

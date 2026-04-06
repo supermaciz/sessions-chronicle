@@ -4,11 +4,81 @@ pub mod mistral_vibe;
 pub mod model;
 pub mod opencode;
 
+use chrono::{DateTime, Utc};
+
 use crate::models::{
     Message, ReasoningAttachment, Role, Subagent, TokenUsage, ToolCall, TranscriptItem,
 };
 
 const FIRST_PROMPT_MAX_CHARS: usize = 200;
+
+/// Accumulates reasoning parts (visible text, summary, encrypted flag) across
+/// multiple content blocks until the next transcript item flushes them into a
+/// single [`ReasoningAttachment`].  Shared by all four parsers.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct PendingReasoning {
+    pub visible_text: Option<String>,
+    pub summary_text: Option<String>,
+    pub has_encrypted_content: bool,
+    pub source_model: Option<String>,
+    pub source_timestamp: Option<DateTime<Utc>>,
+}
+
+impl PendingReasoning {
+    pub fn is_empty(&self) -> bool {
+        self.visible_text.is_none() && self.summary_text.is_none() && !self.has_encrypted_content
+    }
+
+    pub fn merge(&mut self, next: PendingReasoning) {
+        if let Some(text) = next.visible_text {
+            match &mut self.visible_text {
+                Some(current) => {
+                    if !current.is_empty() {
+                        current.push('\n');
+                    }
+                    current.push_str(&text);
+                }
+                None => self.visible_text = Some(text),
+            }
+        }
+
+        if let Some(summary) = next.summary_text {
+            match &mut self.summary_text {
+                Some(current) => {
+                    if !current.is_empty() {
+                        current.push('\n');
+                    }
+                    current.push_str(&summary);
+                }
+                None => self.summary_text = Some(summary),
+            }
+        }
+
+        self.has_encrypted_content |= next.has_encrypted_content;
+        if self.source_model.is_none() {
+            self.source_model = next.source_model;
+        }
+        if self.source_timestamp.is_none() {
+            self.source_timestamp = next.source_timestamp;
+        }
+    }
+
+    pub fn into_attachment(
+        self,
+        session_id: &str,
+        transcript_item_index: i64,
+    ) -> ReasoningAttachment {
+        ReasoningAttachment {
+            session_id: session_id.to_string(),
+            transcript_item_index,
+            visible_text: self.visible_text,
+            summary_text: self.summary_text,
+            has_encrypted_content: self.has_encrypted_content,
+            source_model: self.source_model,
+            source_timestamp: self.source_timestamp,
+        }
+    }
+}
 
 /// All data produced by parsing a single session file.
 #[derive(Debug)]
