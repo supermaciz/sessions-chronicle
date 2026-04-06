@@ -230,7 +230,6 @@ impl OpenCodeParser {
         let mut has_user_message = false;
         let mut step_finish_tokens: Vec<MessageTokens> = Vec::new();
         let mut pending_reasoning = PendingReasoning::default();
-        let orphan_reasoning_index = -1_i64;
 
         for message in &messages {
             let mut parts = backend.load_parts(&message.id)?;
@@ -317,8 +316,7 @@ impl OpenCodeParser {
         }
 
         if !pending_reasoning.is_empty() {
-            reasoning_attachments
-                .push(pending_reasoning.into_attachment(&metadata.id, orphan_reasoning_index));
+            tracing::debug!("dropping orphan reasoning with no visible transcript item");
         }
 
         if !has_user_message {

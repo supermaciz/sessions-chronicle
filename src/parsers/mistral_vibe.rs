@@ -74,7 +74,6 @@ impl MistralVibeParser {
         let mut transcript_items: Vec<TranscriptItem> = Vec::new();
         let mut reasoning_attachments: Vec<ReasoningAttachment> = Vec::new();
         let mut pending_reasoning: Option<ReasoningAttachment> = None;
-        let orphan_reasoning_index = -1_i64;
         let mut has_user_message = false;
         // Maps the raw tool_call id from the JSON → index in tool_calls vec for result correlation
         let mut pending_calls: HashMap<String, usize> = HashMap::new();
@@ -243,9 +242,8 @@ impl MistralVibeParser {
             return Err(ParseError::NoUserMessages.into());
         }
 
-        if let Some(mut attachment) = pending_reasoning.take() {
-            attachment.transcript_item_index = orphan_reasoning_index;
-            reasoning_attachments.push(attachment);
+        if pending_reasoning.is_some() {
+            tracing::debug!("dropping orphan reasoning with no visible transcript item");
         }
 
         let first_prompt = crate::parsers::extract_first_prompt(&messages);

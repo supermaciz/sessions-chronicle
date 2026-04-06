@@ -43,7 +43,6 @@ struct ParseState {
     // Counters
     msg_counter: i64,
     item_counter: i64,
-    orphan_reasoning_index: i64,
     pending_reasoning: PendingReasoning,
 }
 
@@ -123,7 +122,6 @@ impl ParseState {
             call_id_to_tc_idx: HashMap::new(),
             msg_counter: 0,
             item_counter: 0,
-            orphan_reasoning_index: -1,
             pending_reasoning: PendingReasoning::default(),
         }
     }
@@ -218,15 +216,12 @@ impl ParseState {
             .push(pending.into_attachment(&self.session_id, transcript_item_index));
     }
 
-    fn flush_pending_reasoning_as_orphan(&mut self) {
+    fn drop_pending_reasoning_if_orphan(&mut self) {
         if self.pending_reasoning.is_empty() {
             return;
         }
-        let orphan_index = self.orphan_reasoning_index;
-        self.orphan_reasoning_index -= 1;
-        let pending = std::mem::take(&mut self.pending_reasoning);
-        self.reasoning_attachments
-            .push(pending.into_attachment(&self.session_id, orphan_index));
+        tracing::debug!("dropping orphan reasoning with no visible transcript item");
+        self.pending_reasoning = PendingReasoning::default();
     }
 
     fn complete_tool_call(
@@ -666,7 +661,7 @@ impl CodexParser {
             return Err(ParseError::NoUserMessages.into());
         }
 
-        state.flush_pending_reasoning_as_orphan();
+        state.drop_pending_reasoning_if_orphan();
 
         let first_prompt = crate::parsers::extract_first_prompt(&state.messages);
         let token_usage = state.best_snapshot.map(|(_, usage)| usage);

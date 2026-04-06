@@ -57,7 +57,6 @@ struct ParseState {
     // Counters
     msg_counter: i64,
     item_counter: i64,
-    orphan_reasoning_index: i64,
 
     // Pending reasoning attached to the next transcript item.
     pending_reasoning_session_id: Option<String>,
@@ -88,7 +87,6 @@ impl ParseState {
             pending_subagents: HashMap::new(),
             msg_counter: 0,
             item_counter: 0,
-            orphan_reasoning_index: -1,
             pending_reasoning_session_id: None,
             pending_reasoning_visible_parts: Vec::new(),
             pending_reasoning_has_encrypted_content: false,
@@ -246,32 +244,14 @@ impl ParseState {
         self.clear_pending_reasoning();
     }
 
-    fn flush_pending_reasoning_as_orphan(&mut self, fallback_session_id: &str) {
+    fn drop_pending_reasoning_if_orphan(&mut self) {
         if self.pending_reasoning_visible_parts.is_empty()
             && !self.pending_reasoning_has_encrypted_content
         {
             return;
         }
 
-        let orphan_index = self.orphan_reasoning_index;
-        self.orphan_reasoning_index -= 1;
-
-        self.reasoning_attachments.push(ReasoningAttachment {
-            session_id: self
-                .pending_reasoning_session_id
-                .clone()
-                .unwrap_or_else(|| fallback_session_id.to_string()),
-            transcript_item_index: orphan_index,
-            visible_text: if self.pending_reasoning_visible_parts.is_empty() {
-                None
-            } else {
-                Some(self.pending_reasoning_visible_parts.join("\n"))
-            },
-            summary_text: None,
-            has_encrypted_content: self.pending_reasoning_has_encrypted_content,
-            source_model: self.pending_reasoning_source_model.clone(),
-            source_timestamp: self.pending_reasoning_source_timestamp,
-        });
+        tracing::debug!("dropping orphan reasoning with no visible transcript item");
         self.clear_pending_reasoning();
     }
 
@@ -634,7 +614,7 @@ impl ParseState {
             .clone()
             .or(file_stem_id)
             .unwrap_or_else(|| "unknown".to_string());
-        self.flush_pending_reasoning_as_orphan(&final_session_id);
+        self.drop_pending_reasoning_if_orphan();
 
         // Aggregate token usage from all deduplicated entries
         let all_entries = self.usage_map.into_values().chain(self.anonymous_usage);
