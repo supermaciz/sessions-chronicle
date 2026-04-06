@@ -63,16 +63,14 @@ pub(crate) enum PartOutcome {
 pub(crate) struct PendingReasoning {
     visible_text: Option<String>,
     summary_text: Option<String>,
-    encrypted_content: Option<String>,
+    has_encrypted_content: bool,
     source_model: Option<String>,
     source_timestamp: Option<DateTime<Utc>>,
 }
 
 impl PendingReasoning {
     fn is_empty(&self) -> bool {
-        self.visible_text.is_none()
-            && self.summary_text.is_none()
-            && self.encrypted_content.is_none()
+        self.visible_text.is_none() && self.summary_text.is_none() && !self.has_encrypted_content
     }
 
     fn merge(&mut self, next: PendingReasoning) {
@@ -100,9 +98,7 @@ impl PendingReasoning {
             }
         }
 
-        if self.encrypted_content.is_none() {
-            self.encrypted_content = next.encrypted_content;
-        }
+        self.has_encrypted_content |= next.has_encrypted_content;
         if self.source_model.is_none() {
             self.source_model = next.source_model;
         }
@@ -117,7 +113,7 @@ impl PendingReasoning {
             transcript_item_index,
             visible_text: self.visible_text,
             summary_text: self.summary_text,
-            encrypted_content: self.encrypted_content,
+            has_encrypted_content: self.has_encrypted_content,
             source_model: self.source_model,
             source_timestamp: self.source_timestamp,
         }
@@ -563,21 +559,22 @@ impl OpenCodeParser {
                     .filter(|value| !value.is_empty())
                     .map(str::to_string);
 
-                let encrypted_content = part
+                let has_encrypted_content = part
                     .raw
                     .get("metadata")
                     .and_then(|value| value.get("openai"))
                     .and_then(|value| value.get("reasoningEncryptedContent"))
                     .and_then(|value| value.as_str())
-                    .map(str::to_string);
+                    .map(str::trim)
+                    .is_some_and(|value| !value.is_empty());
 
-                if visible_text.is_none() && encrypted_content.is_none() {
+                if visible_text.is_none() && !has_encrypted_content {
                     PartOutcome::Nothing
                 } else {
                     PartOutcome::Reasoning(PendingReasoning {
                         visible_text,
                         summary_text: None,
-                        encrypted_content,
+                        has_encrypted_content,
                         source_model: message_model.map(str::to_string),
                         source_timestamp: Some(timestamp),
                     })
@@ -1235,7 +1232,13 @@ mod tests {
             &mut has_user_message,
         );
 
-        assert!(matches!(outcome, PartOutcome::Reasoning(_)));
+        match outcome {
+            PartOutcome::Reasoning(reasoning) => {
+                assert_eq!(reasoning.visible_text, None);
+                assert!(reasoning.has_encrypted_content);
+            }
+            _ => panic!("expected reasoning outcome"),
+        }
     }
 
     #[test]

@@ -62,6 +62,7 @@ struct ParseState {
     // Pending reasoning attached to the next transcript item.
     pending_reasoning_session_id: Option<String>,
     pending_reasoning_visible_parts: Vec<String>,
+    pending_reasoning_has_encrypted_content: bool,
     pending_reasoning_source_model: Option<String>,
     pending_reasoning_source_timestamp: Option<DateTime<Utc>>,
 
@@ -90,6 +91,7 @@ impl ParseState {
             orphan_reasoning_index: -1,
             pending_reasoning_session_id: None,
             pending_reasoning_visible_parts: Vec::new(),
+            pending_reasoning_has_encrypted_content: false,
             pending_reasoning_source_model: None,
             pending_reasoning_source_timestamp: None,
             usage_map: HashMap::new(),
@@ -189,27 +191,39 @@ impl ParseState {
         self.flush_pending_reasoning_to_item(item_index);
     }
 
-    fn queue_visible_reasoning(
+    fn queue_reasoning(
         &mut self,
         session_id: &str,
-        visible_text: String,
+        visible_text: Option<String>,
+        has_encrypted_content: bool,
         source_model: Option<String>,
         source_timestamp: DateTime<Utc>,
     ) {
-        if visible_text.trim().is_empty() {
+        if visible_text.is_none() && !has_encrypted_content {
             return;
         }
 
-        if self.pending_reasoning_visible_parts.is_empty() {
+        if self.pending_reasoning_session_id.is_none() {
             self.pending_reasoning_session_id = Some(session_id.to_string());
             self.pending_reasoning_source_model = source_model;
             self.pending_reasoning_source_timestamp = Some(source_timestamp);
         }
-        self.pending_reasoning_visible_parts.push(visible_text);
+
+        if let Some(visible_text) = visible_text
+            && !visible_text.trim().is_empty()
+        {
+            self.pending_reasoning_visible_parts.push(visible_text);
+        }
+
+        if has_encrypted_content {
+            self.pending_reasoning_has_encrypted_content = true;
+        }
     }
 
     fn flush_pending_reasoning_to_item(&mut self, transcript_item_index: i64) {
-        if self.pending_reasoning_visible_parts.is_empty() {
+        if self.pending_reasoning_visible_parts.is_empty()
+            && !self.pending_reasoning_has_encrypted_content
+        {
             return;
         }
 
@@ -219,9 +233,13 @@ impl ParseState {
                 .clone()
                 .unwrap_or_else(|| "unknown".to_string()),
             transcript_item_index,
-            visible_text: Some(self.pending_reasoning_visible_parts.join("\n")),
+            visible_text: if self.pending_reasoning_visible_parts.is_empty() {
+                None
+            } else {
+                Some(self.pending_reasoning_visible_parts.join("\n"))
+            },
             summary_text: None,
-            encrypted_content: None,
+            has_encrypted_content: self.pending_reasoning_has_encrypted_content,
             source_model: self.pending_reasoning_source_model.clone(),
             source_timestamp: self.pending_reasoning_source_timestamp,
         });
@@ -229,7 +247,9 @@ impl ParseState {
     }
 
     fn flush_pending_reasoning_as_orphan(&mut self, fallback_session_id: &str) {
-        if self.pending_reasoning_visible_parts.is_empty() {
+        if self.pending_reasoning_visible_parts.is_empty()
+            && !self.pending_reasoning_has_encrypted_content
+        {
             return;
         }
 
@@ -242,9 +262,13 @@ impl ParseState {
                 .clone()
                 .unwrap_or_else(|| fallback_session_id.to_string()),
             transcript_item_index: orphan_index,
-            visible_text: Some(self.pending_reasoning_visible_parts.join("\n")),
+            visible_text: if self.pending_reasoning_visible_parts.is_empty() {
+                None
+            } else {
+                Some(self.pending_reasoning_visible_parts.join("\n"))
+            },
             summary_text: None,
-            encrypted_content: None,
+            has_encrypted_content: self.pending_reasoning_has_encrypted_content,
             source_model: self.pending_reasoning_source_model.clone(),
             source_timestamp: self.pending_reasoning_source_timestamp,
         });
@@ -254,6 +278,7 @@ impl ParseState {
     fn clear_pending_reasoning(&mut self) {
         self.pending_reasoning_session_id = None;
         self.pending_reasoning_visible_parts.clear();
+        self.pending_reasoning_has_encrypted_content = false;
         self.pending_reasoning_source_model = None;
         self.pending_reasoning_source_timestamp = None;
     }
@@ -397,9 +422,15 @@ impl ParseState {
         self.record_usage(event);
 
         if let Some(arr) = content_val.as_array() {
-            if let Some(reasoning_text) = ClaudeCodeParser::extract_reasoning_from_array(arr) {
-                self.queue_visible_reasoning(&session_id, reasoning_text, model.clone(), timestamp);
-            }
+            let (reasoning_text, has_encrypted_signature) =
+                ClaudeCodeParser::extract_reasoning_from_array(arr);
+            self.queue_reasoning(
+                &session_id,
+                reasoning_text,
+                has_encrypted_signature,
+                model.clone(),
+                timestamp,
+            );
 
             if let Some(text) = ClaudeCodeParser::extract_assistant_text_from_array(arr)
                 && !text.trim().is_empty()
@@ -814,23 +845,37 @@ impl ClaudeCodeParser {
         }
     }
 
-    fn extract_reasoning_from_array(arr: &[Value]) -> Option<String> {
+    fn extract_reasoning_from_array(arr: &[Value]) -> (Option<String>, bool) {
         let parts: Vec<String> = arr
             .iter()
             .filter_map(|block| {
                 let block_type = block.get("type")?.as_str()?;
                 if block_type == "thinking" {
-                    block.get("thinking")?.as_str().map(str::to_string)
+                    block
+                        .get("thinking")
+                        .and_then(|v| v.as_str())
+                        .map(str::trim)
+                        .filter(|text| !text.is_empty())
+                        .map(str::to_string)
                 } else {
                     None
                 }
             })
             .collect();
 
+        let has_encrypted_signature = arr.iter().any(|block| {
+            block.get("type").and_then(|v| v.as_str()) == Some("thinking")
+                && block
+                    .get("signature")
+                    .and_then(|v| v.as_str())
+                    .map(str::trim)
+                    .is_some_and(|value| !value.is_empty())
+        });
+
         if parts.is_empty() {
-            None
+            (None, has_encrypted_signature)
         } else {
-            Some(parts.join("\n"))
+            (Some(parts.join("\n")), has_encrypted_signature)
         }
     }
 
@@ -1062,6 +1107,21 @@ mod tests {
             parsed.reasoning_attachments[0].visible_text.as_deref(),
             Some("need to inspect repo")
         );
+        assert_eq!(parsed.reasoning_attachments[0].transcript_item_index, 1);
+    }
+
+    #[test]
+    fn encrypted_signature_attaches_as_encrypted_only_reasoning() {
+        let file = create_temp_session(&[
+            r#"{"type":"user","timestamp":"2024-01-01T00:00:00Z","message":{"content":"Run command"}}"#,
+            r#"{"type":"assistant","timestamp":"2024-01-01T00:00:01Z","message":{"content":[{"type":"thinking","thinking":"","signature":"sig"},{"type":"tool_use","id":"toolu_1","name":"Bash","input":{"command":"pwd"}}]}}"#,
+        ]);
+
+        let parsed = ClaudeCodeParser.parse(file.path()).unwrap();
+
+        assert_eq!(parsed.reasoning_attachments.len(), 1);
+        assert_eq!(parsed.reasoning_attachments[0].visible_text, None);
+        assert!(parsed.reasoning_attachments[0].has_encrypted_content);
         assert_eq!(parsed.reasoning_attachments[0].transcript_item_index, 1);
     }
 

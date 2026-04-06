@@ -38,14 +38,14 @@ fn load_reasoning_attachment_returns_full_payload() {
     db.connection
         .execute(
             "INSERT INTO reasoning_attachments
-             (session_id, transcript_item_index, visible_text, summary_text, encrypted_content, source_model, source_timestamp)
+             (session_id, transcript_item_index, visible_text, summary_text, has_encrypted_content, source_model, source_timestamp)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
             rusqlite::params![
                 "s1",
                 4_i64,
                 Some("full reasoning"),
                 Some("summary"),
-                Some("ciphertext"),
+                true,
                 Some("o3-mini"),
                 Some(1_700_000_000_i64),
             ],
@@ -58,7 +58,7 @@ fn load_reasoning_attachment_returns_full_payload() {
 
     assert_eq!(attachment.visible_text.as_deref(), Some("full reasoning"));
     assert_eq!(attachment.summary_text.as_deref(), Some("summary"));
-    assert_eq!(attachment.encrypted_content.as_deref(), Some("ciphertext"));
+    assert!(attachment.has_encrypted_content);
     assert_eq!(attachment.source_model.as_deref(), Some("o3-mini"));
     assert_eq!(
         attachment.source_timestamp.unwrap().timestamp(),

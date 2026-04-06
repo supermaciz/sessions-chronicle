@@ -147,7 +147,7 @@ impl MistralVibeParser {
                                     transcript_item_index: 0,
                                     visible_text: Some(reasoning_text),
                                     summary_text: None,
-                                    encrypted_content: None,
+                                    has_encrypted_content: false,
                                     source_model: session_model.clone(),
                                     source_timestamp,
                                 });

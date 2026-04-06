@@ -377,7 +377,7 @@ fn apply_v9_migration(conn: &Connection) -> Result<()> {
             transcript_item_index INTEGER NOT NULL,
             visible_text TEXT,
             summary_text TEXT,
-            encrypted_content TEXT,
+            has_encrypted_content INTEGER NOT NULL DEFAULT 0,
             source_model TEXT,
             source_timestamp INTEGER,
             PRIMARY KEY (session_id, transcript_item_index)
@@ -436,6 +436,24 @@ mod tests {
             )
             .unwrap();
         assert_eq!(reasoning_table_exists, 1);
+
+        let has_encrypted_content_column: i64 = conn
+            .query_row(
+                "SELECT count(*) FROM pragma_table_info('reasoning_attachments') WHERE name='has_encrypted_content'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(has_encrypted_content_column, 1);
+
+        let encrypted_content_column: i64 = conn
+            .query_row(
+                "SELECT count(*) FROM pragma_table_info('reasoning_attachments') WHERE name='encrypted_content'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(encrypted_content_column, 0);
     }
 
     #[test]

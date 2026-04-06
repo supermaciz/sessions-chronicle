@@ -6,7 +6,7 @@ pub struct ReasoningAttachment {
     pub transcript_item_index: i64,
     pub visible_text: Option<String>,
     pub summary_text: Option<String>,
-    pub encrypted_content: Option<String>,
+    pub has_encrypted_content: bool,
     pub source_model: Option<String>,
     pub source_timestamp: Option<DateTime<Utc>>,
 }
@@ -14,9 +14,7 @@ pub struct ReasoningAttachment {
 impl ReasoningAttachment {
     #[allow(dead_code)]
     pub fn has_reasoning(&self) -> bool {
-        self.visible_text.is_some()
-            || self.summary_text.is_some()
-            || self.encrypted_content.is_some()
+        self.visible_text.is_some() || self.summary_text.is_some() || self.has_encrypted_content
     }
 
     #[allow(dead_code)]
@@ -26,9 +24,7 @@ impl ReasoningAttachment {
 
     #[allow(dead_code)]
     pub fn encrypted_only(&self) -> bool {
-        self.encrypted_content.is_some()
-            && self.visible_text.is_none()
-            && self.summary_text.is_none()
+        self.has_encrypted_content && self.visible_text.is_none() && self.summary_text.is_none()
     }
 }
 
@@ -55,13 +51,13 @@ mod tests {
     use super::*;
 
     #[test]
-    fn encrypted_only_requires_no_visible_or_summary_text() {
+    fn encrypted_only_requires_flag_and_no_visible_or_summary_text() {
         let attachment = ReasoningAttachment {
             session_id: "s1".to_string(),
             transcript_item_index: 4,
             visible_text: None,
             summary_text: None,
-            encrypted_content: Some("ciphertext".to_string()),
+            has_encrypted_content: true,
             source_model: None,
             source_timestamp: None,
         };

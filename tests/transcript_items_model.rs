@@ -198,9 +198,9 @@ fn load_transcript_items_includes_reasoning_flags() {
     db.connection
         .execute(
             "INSERT INTO reasoning_attachments
-             (session_id, transcript_item_index, visible_text, encrypted_content)
+             (session_id, transcript_item_index, visible_text, has_encrypted_content)
              VALUES (?1, ?2, ?3, ?4)",
-            rusqlite::params![sid, 0_i64, Some("chain of thought"), Some("cipher")],
+            rusqlite::params![sid, 0_i64, Some("chain of thought"), true],
         )
         .unwrap();
 

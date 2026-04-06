@@ -121,7 +121,6 @@ pub struct ToolInspectorPane {
     reasoning_metadata_label: gtk::Label,
     reasoning_visible_views: MarkdownSectionViews,
     reasoning_summary_views: MarkdownSectionViews,
-    reasoning_encrypted_views: TextSectionViews,
 
     // Drill-down NavigationPage and its content widgets.
     // The page is pushed/popped based on drilled_tool state.
@@ -362,7 +361,6 @@ impl Component for ToolInspectorPane {
         let reasoning_metadata_label = make_metadata_label();
         let reasoning_visible_views = make_markdown_section("Thinking");
         let reasoning_summary_views = make_markdown_section("Summary");
-        let reasoning_encrypted_views = make_text_section("Encrypted");
 
         let reasoning_outer = gtk::Box::new(gtk::Orientation::Vertical, 12);
         reasoning_outer.set_margin_all(16);
@@ -370,7 +368,6 @@ impl Component for ToolInspectorPane {
         reasoning_outer.append(&reasoning_metadata_label);
         reasoning_outer.append(&reasoning_visible_views.section);
         reasoning_outer.append(&reasoning_summary_views.section);
-        reasoning_outer.append(&reasoning_encrypted_views.section);
 
         let reasoning_scroll = gtk::ScrolledWindow::new();
         reasoning_scroll.set_vexpand(true);
@@ -464,7 +461,6 @@ impl Component for ToolInspectorPane {
             reasoning_metadata_label,
             reasoning_visible_views,
             reasoning_summary_views,
-            reasoning_encrypted_views,
             drill_page,
             drill_name_label,
             drill_status_label,
@@ -881,10 +877,6 @@ impl Component for ToolInspectorPane {
             apply_optional_markdown_section(
                 &self.reasoning_summary_views,
                 reasoning.summary_text.as_deref(),
-            );
-            apply_optional_text_section(
-                &self.reasoning_encrypted_views,
-                reasoning.encrypted_content.as_deref(),
             );
         }
 

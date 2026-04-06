@@ -740,9 +740,9 @@ pub fn load_transcript_items(
 
     let mut stmt = db.prepare(
         "SELECT ti.item_index, ti.kind, ti.message_index, ti.tool_call_id, ti.subagent_id,
-                (ra.visible_text IS NOT NULL OR ra.summary_text IS NOT NULL OR ra.encrypted_content IS NOT NULL) AS has_reasoning,
+                COALESCE((ra.visible_text IS NOT NULL OR ra.summary_text IS NOT NULL OR ra.has_encrypted_content = 1), 0) AS has_reasoning,
                 (ra.visible_text IS NOT NULL OR ra.summary_text IS NOT NULL) AS has_visible_reasoning,
-                (ra.encrypted_content IS NOT NULL AND ra.visible_text IS NULL AND ra.summary_text IS NULL) AS encrypted_only,
+                COALESCE((ra.has_encrypted_content = 1 AND ra.visible_text IS NULL AND ra.summary_text IS NULL), 0) AS encrypted_only,
                 m.role, substr(m.content, 1, ?2) AS content_preview,
                 length(m.content) AS content_len, m.timestamp, m.model,
                 tc.tool_name, tc.status, tc.summary,
@@ -906,14 +906,14 @@ pub fn insert_reasoning_attachment(
 ) -> Result<()> {
     conn.execute(
         "INSERT OR REPLACE INTO reasoning_attachments
-         (session_id, transcript_item_index, visible_text, summary_text, encrypted_content, source_model, source_timestamp)
+         (session_id, transcript_item_index, visible_text, summary_text, has_encrypted_content, source_model, source_timestamp)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
         rusqlite::params![
             &attachment.session_id,
             attachment.transcript_item_index,
             attachment.visible_text.as_deref(),
             attachment.summary_text.as_deref(),
-            attachment.encrypted_content.as_deref(),
+            if attachment.has_encrypted_content { 1_i64 } else { 0_i64 },
             attachment.source_model.as_deref(),
             attachment.source_timestamp.map(|ts| ts.timestamp()),
         ],
@@ -1010,7 +1010,7 @@ pub fn load_reasoning_attachment(
     let db = open_connection(db_path)?;
     db.query_row(
         "SELECT session_id, transcript_item_index, visible_text, summary_text,
-                encrypted_content, source_model, source_timestamp
+                has_encrypted_content, source_model, source_timestamp
          FROM reasoning_attachments
          WHERE session_id = ?1 AND transcript_item_index = ?2",
         rusqlite::params![session_id, transcript_item_index],
@@ -1020,7 +1020,7 @@ pub fn load_reasoning_attachment(
                 transcript_item_index: row.get(1)?,
                 visible_text: row.get(2)?,
                 summary_text: row.get(3)?,
-                encrypted_content: row.get(4)?,
+                has_encrypted_content: row.get::<_, i64>(4)? != 0,
                 source_model: row.get(5)?,
                 source_timestamp: row
                     .get::<_, Option<i64>>(6)?

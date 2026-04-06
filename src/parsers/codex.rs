@@ -51,16 +51,14 @@ struct ParseState {
 struct PendingReasoning {
     visible_text: Option<String>,
     summary_text: Option<String>,
-    encrypted_content: Option<String>,
+    has_encrypted_content: bool,
     source_model: Option<String>,
     source_timestamp: Option<DateTime<Utc>>,
 }
 
 impl PendingReasoning {
     fn is_empty(&self) -> bool {
-        self.visible_text.is_none()
-            && self.summary_text.is_none()
-            && self.encrypted_content.is_none()
+        self.visible_text.is_none() && self.summary_text.is_none() && !self.has_encrypted_content
     }
 
     fn merge(&mut self, next: PendingReasoning) {
@@ -88,9 +86,7 @@ impl PendingReasoning {
             }
         }
 
-        if self.encrypted_content.is_none() {
-            self.encrypted_content = next.encrypted_content;
-        }
+        self.has_encrypted_content |= next.has_encrypted_content;
         if self.source_model.is_none() {
             self.source_model = next.source_model;
         }
@@ -105,7 +101,7 @@ impl PendingReasoning {
             transcript_item_index,
             visible_text: self.visible_text,
             summary_text: self.summary_text,
-            encrypted_content: self.encrypted_content,
+            has_encrypted_content: self.has_encrypted_content,
             source_model: self.source_model,
             source_timestamp: self.source_timestamp,
         }
@@ -378,16 +374,17 @@ impl ParseState {
                         }
                     });
 
-                let encrypted_content = response_item
+                let has_encrypted_content = response_item
                     .get("encrypted_content")
                     .or_else(|| response_item.get("encryptedContent"))
                     .and_then(|v| v.as_str())
-                    .map(str::to_string);
+                    .map(str::trim)
+                    .is_some_and(|value| !value.is_empty());
 
                 let reasoning = PendingReasoning {
                     visible_text,
                     summary_text,
-                    encrypted_content,
+                    has_encrypted_content,
                     source_model: self.current_turn_model.clone(),
                     source_timestamp: event_ts,
                 };
@@ -876,10 +873,7 @@ mod tests {
             parsed.reasoning_attachments[0].summary_text.as_deref(),
             Some("Need project structure first")
         );
-        assert_eq!(
-            parsed.reasoning_attachments[0].encrypted_content.as_deref(),
-            Some("cipher")
-        );
+        assert!(parsed.reasoning_attachments[0].has_encrypted_content);
         assert_eq!(parsed.reasoning_attachments[0].transcript_item_index, 1);
     }
 
