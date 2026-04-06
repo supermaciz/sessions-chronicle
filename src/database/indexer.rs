@@ -762,7 +762,7 @@ impl SessionIndexer {
         }
 
         for attachment in &parsed.reasoning_attachments {
-            crate::database::insert_reasoning_attachment(&tx, attachment)?;
+            crate::database::insert_reasoning_attachment(&tx, attachment, &session.id)?;
         }
 
         Self::upsert_fingerprint_tx(&tx, fingerprint_path)?;

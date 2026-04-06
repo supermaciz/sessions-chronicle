@@ -903,13 +903,14 @@ pub fn insert_transcript_item(
 pub fn insert_reasoning_attachment(
     conn: &Connection,
     attachment: &ReasoningAttachment,
+    session_id: &str,
 ) -> Result<()> {
     conn.execute(
         "INSERT OR REPLACE INTO reasoning_attachments
          (session_id, transcript_item_index, visible_text, summary_text, has_encrypted_content, source_model, source_timestamp)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
         rusqlite::params![
-            &attachment.session_id,
+            session_id,
             attachment.transcript_item_index,
             attachment.visible_text.as_deref(),
             attachment.summary_text.as_deref(),
