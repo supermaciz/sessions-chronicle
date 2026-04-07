@@ -49,6 +49,15 @@
   </categories>
   <content_rating type="oars-1.1" />
   <releases>
+    <release version="0.4.3" date="2026-04-06">
+      <description>
+        <p>Adds transcript reasoning pills and encrypted presence support.</p>
+        <ul>
+          <li>Add reasoning pills to transcript rows for quick navigation to reasoning blocks</li>
+          <li>Support encrypted presence detection</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.4.2" date="2026-04-05">
       <description>
         <p>Adds session pinning and improves transcript readability.</p>
