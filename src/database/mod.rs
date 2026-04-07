@@ -764,65 +764,65 @@ pub fn load_transcript_items(
          LIMIT ?3 OFFSET ?4",
     )?;
 
+    // Resolve column names to indices once before iterating rows.
+    let col_item_index = stmt.column_index("item_index")?;
+    let col_kind = stmt.column_index("kind")?;
+    let col_msg_index = stmt.column_index("message_index")?;
+    let col_tool_call_id = stmt.column_index("tool_call_id")?;
+    let col_subagent_id = stmt.column_index("subagent_id")?;
+    let col_has_reasoning = stmt.column_index("has_reasoning")?;
+    let col_has_visible_reasoning = stmt.column_index("has_visible_reasoning")?;
+    let col_encrypted_only = stmt.column_index("encrypted_only")?;
+    let col_role = stmt.column_index("role")?;
+    let col_content_preview = stmt.column_index("content_preview")?;
+    let col_content_len = stmt.column_index("content_len")?;
+    let col_timestamp = stmt.column_index("timestamp")?;
+    let col_model = stmt.column_index("model")?;
+    let col_tool_name = stmt.column_index("tool_name")?;
+    let col_tool_status = stmt.column_index("status")?;
+    let col_tool_summary = stmt.column_index("summary")?;
+    let col_tool_input_json = stmt.column_index("input_json")?;
+    let col_tool_output_text = stmt.column_index("output_text")?;
+    let col_duration_ms = stmt.column_index("duration_ms")?;
+    let col_subagent_title = stmt.column_index("subagent_title")?;
+    let col_subagent_prompt = stmt.column_index("subagent_prompt")?;
+
     let mut rows = stmt
         .query([&session_id as &dyn ToSql, &preview_len, &limit, &offset])
         .context("Failed to query transcript items")?;
 
-    // Column indices matching the SELECT order above.
-    const COL_ITEM_INDEX: usize = 0;
-    const COL_KIND: usize = 1;
-    const COL_MSG_INDEX: usize = 2;
-    const COL_TOOL_CALL_ID: usize = 3;
-    const COL_SUBAGENT_ID: usize = 4;
-    const COL_HAS_REASONING: usize = 5;
-    const COL_HAS_VISIBLE_REASONING: usize = 6;
-    const COL_ENCRYPTED_ONLY: usize = 7;
-    const COL_ROLE: usize = 8;
-    const COL_CONTENT_PREVIEW: usize = 9;
-    const COL_CONTENT_LEN: usize = 10;
-    const COL_TIMESTAMP: usize = 11;
-    const COL_MODEL: usize = 12;
-    const COL_TOOL_NAME: usize = 13;
-    const COL_TOOL_STATUS: usize = 14;
-    const COL_TOOL_SUMMARY: usize = 15;
-    const COL_TOOL_INPUT_JSON: usize = 16;
-    const COL_TOOL_OUTPUT_TEXT: usize = 17;
-    const COL_DURATION_MS: usize = 18;
-    const COL_SUBAGENT_TITLE: usize = 19;
-    const COL_SUBAGENT_PROMPT: usize = 20;
-
     let mut items = Vec::new();
     while let Some(row) = rows.next()? {
-        let kind_str: String = row.get(COL_KIND)?;
+        let kind_str: String = row.get(col_kind)?;
         let kind = TranscriptItemKind::from_storage(&kind_str);
 
-        let role: Option<String> = row.get(COL_ROLE)?;
-        let tool_status: Option<String> = row.get(COL_TOOL_STATUS)?;
+        let role: Option<String> = row.get(col_role)?;
+        let tool_status: Option<String> = row.get(col_tool_status)?;
 
         items.push(TranscriptItemRow {
-            item_index: row.get(COL_ITEM_INDEX)?,
+            item_index: row.get(col_item_index)?,
             kind,
             reasoning_preview: ReasoningPreview {
-                has_reasoning: row.get(COL_HAS_REASONING)?,
-                has_visible_reasoning: row.get(COL_HAS_VISIBLE_REASONING)?,
-                encrypted_only: row.get(COL_ENCRYPTED_ONLY)?,
+                has_reasoning: row.get(col_has_reasoning)?,
+                has_visible_reasoning: row.get(col_has_visible_reasoning)?,
+                encrypted_only: row.get(col_encrypted_only)?,
             },
-            message_index: row.get(COL_MSG_INDEX)?,
-            tool_call_id: row.get(COL_TOOL_CALL_ID)?,
-            subagent_id: row.get(COL_SUBAGENT_ID)?,
+            message_index: row.get(col_msg_index)?,
+            tool_call_id: row.get(col_tool_call_id)?,
+            subagent_id: row.get(col_subagent_id)?,
             role: role.as_deref().and_then(Role::from_storage),
-            content_preview: row.get(COL_CONTENT_PREVIEW)?,
-            content_len: row.get(COL_CONTENT_LEN)?,
-            timestamp: row.get(COL_TIMESTAMP)?,
-            model: row.get(COL_MODEL)?,
-            tool_name: row.get(COL_TOOL_NAME)?,
+            content_preview: row.get(col_content_preview)?,
+            content_len: row.get(col_content_len)?,
+            timestamp: row.get(col_timestamp)?,
+            model: row.get(col_model)?,
+            tool_name: row.get(col_tool_name)?,
             tool_status: tool_status.as_deref().map(ToolCallStatus::from_storage),
-            tool_summary: row.get(COL_TOOL_SUMMARY)?,
-            tool_input_json: row.get(COL_TOOL_INPUT_JSON)?,
-            tool_output_text: row.get(COL_TOOL_OUTPUT_TEXT)?,
-            duration_ms: row.get(COL_DURATION_MS)?,
-            subagent_title: row.get(COL_SUBAGENT_TITLE)?,
-            subagent_prompt: row.get(COL_SUBAGENT_PROMPT)?,
+            tool_summary: row.get(col_tool_summary)?,
+            tool_input_json: row.get(col_tool_input_json)?,
+            tool_output_text: row.get(col_tool_output_text)?,
+            duration_ms: row.get(col_duration_ms)?,
+            subagent_title: row.get(col_subagent_title)?,
+            subagent_prompt: row.get(col_subagent_prompt)?,
         });
     }
 
