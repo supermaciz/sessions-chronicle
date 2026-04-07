@@ -10,7 +10,9 @@ use relm4::gtk;
 
 use crate::database::load_message_full_content;
 use crate::icon_names;
-use crate::models::{MessagePreview, Role, ToolCallStatus, ToolCategoryIcons, tool_name_icon};
+use crate::models::{
+    MessagePreview, ReasoningPreview, Role, ToolCallStatus, ToolCategoryIcons, tool_name_icon,
+};
 use crate::ui::format::{format_duration_ms, tool_status_css_class, tool_status_label};
 use crate::ui::highlight;
 use crate::ui::markdown;
@@ -44,6 +46,7 @@ fn model_label_text(role: Role, model: Option<&str>) -> Option<String> {
 
 pub struct MessageItemInit {
     pub item_index: usize,
+    pub transcript_item_index: i64,
     pub preview: MessagePreview,
     pub highlight_query: Option<String>,
     pub db_path: Arc<PathBuf>,
@@ -60,6 +63,10 @@ pub struct MessageItemInit {
 pub struct ToolCallItemInit {
     /// Stable transcript item position used for match/selection bookkeeping.
     pub item_index: usize,
+    /// Stable transcript row index from database `transcript_items.item_index`.
+    pub transcript_item_index: i64,
+    /// Owning session id used for reasoning inspection routing.
+    pub session_id: String,
     /// Session-scoped tool call identifier used by the inspector action.
     pub tool_call_id: String,
     /// Normalized tool call name shown in the primary monospace label.
@@ -74,6 +81,8 @@ pub struct ToolCallItemInit {
     pub duration_ms: Option<i64>,
     /// Active transcript search query used to compute per-row match counts.
     pub highlight_query: Option<String>,
+    /// Presence flags for associated reasoning attachment.
+    pub reasoning_preview: ReasoningPreview,
 }
 
 impl ToolCallItemInit {
@@ -93,13 +102,18 @@ pub struct ToolBurstItemInit {
     pub total_duration_ms: Option<i64>,
     pub match_count: usize,
     pub child_match_counts: Vec<usize>,
+    pub visible_reasoning_child_count: usize,
+    pub encrypted_only_child_count: usize,
     pub default_expanded: bool,
 }
 
 pub struct SubagentItemInit {
     pub item_index: usize,
+    pub transcript_item_index: i64,
+    pub session_id: String,
     pub subagent_id: String,
     pub title: String,
+    pub reasoning_preview: ReasoningPreview,
 }
 
 pub enum TranscriptItemInit {
@@ -140,6 +154,11 @@ pub enum TranscriptRowOutput {
     },
     InspectToolCall(String),
     InspectSubagent(String),
+    InspectReasoning {
+        #[allow(dead_code)]
+        session_id: String,
+        transcript_item_index: i64,
+    },
 }
 
 // ---------------------------------------------------------------------------
@@ -161,6 +180,9 @@ enum TranscriptRowKind {
 #[derive(Debug)]
 pub struct TranscriptRow {
     item_index: usize,
+    transcript_item_index: Option<i64>,
+    session_id: Option<String>,
+    reasoning_preview: Option<ReasoningPreview>,
     kind: TranscriptRowKind,
 
     // --- Message state ---
@@ -268,6 +290,8 @@ pub fn build_tool_burst_init(
     let mut total_duration_ms = 0i64;
     let mut saw_duration = false;
     let mut child_match_counts = Vec::new();
+    let mut visible_reasoning_child_count = 0usize;
+    let mut encrypted_only_child_count = 0usize;
 
     for tool_call in &tool_calls {
         *category_counts
@@ -280,6 +304,11 @@ pub fn build_tool_burst_init(
             total_duration_ms += ms;
             saw_duration = true;
         }
+        if tool_call.reasoning_preview.has_visible_reasoning {
+            visible_reasoning_child_count += 1;
+        } else if tool_call.reasoning_preview.encrypted_only {
+            encrypted_only_child_count += 1;
+        }
         child_match_counts.push(count_tool_call_matches(tool_call));
     }
 
@@ -291,7 +320,22 @@ pub fn build_tool_burst_init(
         total_duration_ms: saw_duration.then_some(total_duration_ms),
         match_count: child_match_counts.iter().sum(),
         child_match_counts,
+        visible_reasoning_child_count,
+        encrypted_only_child_count,
         default_expanded,
+    }
+}
+
+fn format_reasoning_burst_label(
+    visible_reasoning_child_count: usize,
+    encrypted_only_child_count: usize,
+) -> Option<String> {
+    if visible_reasoning_child_count > 0 {
+        Some(format!("{} thinking", visible_reasoning_child_count))
+    } else if encrypted_only_child_count > 0 {
+        Some(format!("{} encrypted", encrypted_only_child_count))
+    } else {
+        None
     }
 }
 
@@ -331,8 +375,10 @@ struct ToolCallWidgetRefs {
 fn build_tool_call_widget(
     init: &ToolCallItemInit,
     on_inspect: impl Fn(String) + 'static,
+    on_inspect_reasoning: impl Fn(String, i64) + 'static,
 ) -> ToolCallWidgetRefs {
     let on_inspect = Rc::new(on_inspect);
+    let on_inspect_reasoning = Rc::new(on_inspect_reasoning);
     let root = gtk::Box::new(gtk::Orientation::Vertical, 0);
     root.add_css_class("tool-call-row");
     root.set_margin_top(2);
@@ -372,6 +418,27 @@ fn build_tool_call_widget(
         dur_label.add_css_class("caption");
         dur_label.add_css_class("dim-label");
         row.append(&dur_label);
+    }
+
+    if init.reasoning_preview.has_visible_reasoning {
+        let reasoning_btn = gtk::Button::with_label("Thinking");
+        reasoning_btn.add_css_class("flat");
+        reasoning_btn.add_css_class("pill");
+        reasoning_btn.add_css_class("reasoning-pill");
+        {
+            let session_id = init.session_id.clone();
+            let transcript_item_index = init.transcript_item_index;
+            let on_inspect_reasoning = on_inspect_reasoning.clone();
+            reasoning_btn.connect_clicked(move |_| {
+                on_inspect_reasoning(session_id.clone(), transcript_item_index);
+            });
+        }
+        row.append(&reasoning_btn);
+    } else if init.reasoning_preview.encrypted_only {
+        let encrypted_label = gtk::Label::new(Some("Thinking (encrypted)"));
+        encrypted_label.add_css_class("pill");
+        encrypted_label.add_css_class("reasoning-pill-encrypted");
+        row.append(&encrypted_label);
     }
 
     let inspect_btn = gtk::Button::new();
@@ -428,6 +495,9 @@ impl FactoryComponent for TranscriptRow {
         match init {
             TranscriptItemInit::Message(m) => Self {
                 item_index: m.item_index,
+                transcript_item_index: Some(m.transcript_item_index),
+                session_id: Some(m.preview.session_id.clone()),
+                reasoning_preview: Some(m.preview.reasoning_preview),
                 kind: TranscriptRowKind::Message,
                 preview: Some(m.preview),
                 highlight_query: m.highlight_query,
@@ -449,6 +519,9 @@ impl FactoryComponent for TranscriptRow {
             },
             TranscriptItemInit::ToolCall(tc) => Self {
                 item_index: tc.item_index,
+                transcript_item_index: Some(tc.transcript_item_index),
+                session_id: Some(tc.session_id.clone()),
+                reasoning_preview: Some(tc.reasoning_preview),
                 kind: TranscriptRowKind::ToolCall,
                 preview: None,
                 highlight_query: None,
@@ -470,6 +543,9 @@ impl FactoryComponent for TranscriptRow {
             },
             TranscriptItemInit::ToolBurst(tb) => Self {
                 item_index: tb.item_index,
+                transcript_item_index: None,
+                session_id: None,
+                reasoning_preview: None,
                 kind: TranscriptRowKind::ToolBurst,
                 preview: None,
                 highlight_query: None,
@@ -491,6 +567,9 @@ impl FactoryComponent for TranscriptRow {
             },
             TranscriptItemInit::Subagent(sa) => Self {
                 item_index: sa.item_index,
+                transcript_item_index: Some(sa.transcript_item_index),
+                session_id: Some(sa.session_id),
+                reasoning_preview: Some(sa.reasoning_preview),
                 kind: TranscriptRowKind::Subagent,
                 preview: None,
                 highlight_query: None,
@@ -718,6 +797,36 @@ impl TranscriptRow {
         ts_label.set_halign(gtk::Align::Start);
         header.append(&ts_label);
 
+        if preview.reasoning_preview.has_visible_reasoning {
+            let reasoning_btn = gtk::Button::with_label("Thinking");
+            reasoning_btn.add_css_class("flat");
+            reasoning_btn.add_css_class("pill");
+            reasoning_btn.add_css_class("reasoning-pill");
+            {
+                let sender = sender.clone();
+                let session_id = self.session_id.clone();
+                let transcript_item_index = self.transcript_item_index;
+                reasoning_btn.connect_clicked(move |_| {
+                    if let (Some(session_id), Some(transcript_item_index)) =
+                        (session_id.clone(), transcript_item_index)
+                    {
+                        sender
+                            .output(TranscriptRowOutput::InspectReasoning {
+                                session_id,
+                                transcript_item_index,
+                            })
+                            .ok();
+                    }
+                });
+            }
+            header.append(&reasoning_btn);
+        } else if preview.reasoning_preview.encrypted_only {
+            let reasoning_label = gtk::Label::new(Some("Thinking (encrypted)"));
+            reasoning_label.add_css_class("pill");
+            reasoning_label.add_css_class("reasoning-pill-encrypted");
+            header.append(&reasoning_label);
+        }
+
         root.append(&header);
 
         // Content container
@@ -770,6 +879,8 @@ impl TranscriptRow {
     ) -> TranscriptRowWidgets {
         let init = ToolCallItemInit {
             item_index: self.item_index,
+            transcript_item_index: self.transcript_item_index.unwrap_or_default(),
+            session_id: self.session_id.clone().unwrap_or_default(),
             tool_call_id: self.tool_call_id.clone().unwrap_or_default(),
             tool_name: self
                 .tool_name
@@ -780,14 +891,29 @@ impl TranscriptRow {
             summary: self.tool_summary.clone(),
             duration_ms: self.tool_duration_ms,
             highlight_query: self.tool_highlight_query.clone(),
+            reasoning_preview: self.reasoning_preview.unwrap_or_default(),
         };
 
-        let refs = build_tool_call_widget(&init, {
-            let sender = sender.clone();
-            move |id| {
-                sender.output(TranscriptRowOutput::InspectToolCall(id)).ok();
-            }
-        });
+        let refs = build_tool_call_widget(
+            &init,
+            {
+                let sender = sender.clone();
+                move |id| {
+                    sender.output(TranscriptRowOutput::InspectToolCall(id)).ok();
+                }
+            },
+            {
+                let sender = sender.clone();
+                move |session_id, transcript_item_index| {
+                    sender
+                        .output(TranscriptRowOutput::InspectReasoning {
+                            session_id,
+                            transcript_item_index,
+                        })
+                        .ok();
+                }
+            },
+        );
         root.append(&refs.root);
         self.rendered_match_count = refs.match_count;
         sender
@@ -846,6 +972,21 @@ impl TranscriptRow {
             header.append(&duration);
         }
 
+        if let Some(reasoning_label) = format_reasoning_burst_label(
+            burst.visible_reasoning_child_count,
+            burst.encrypted_only_child_count,
+        ) {
+            let badge = gtk::Label::new(Some(&reasoning_label));
+            badge.add_css_class("pill");
+            badge.add_css_class("tool-call-group-pill");
+            if burst.visible_reasoning_child_count > 0 {
+                badge.add_css_class("reasoning-pill");
+            } else {
+                badge.add_css_class("reasoning-pill-encrypted");
+            }
+            header.append(&badge);
+        }
+
         let total = gtk::Label::new(Some(&format!("{} tool calls", burst.tool_calls.len())));
         total.add_css_class("caption");
         total.add_css_class("dim-label");
@@ -887,12 +1028,26 @@ impl TranscriptRow {
 
         let children = gtk::Box::new(gtk::Orientation::Vertical, 0);
         for tool_call in &burst.tool_calls {
-            let child = build_tool_call_widget(tool_call, {
-                let sender = sender.clone();
-                move |id| {
-                    sender.output(TranscriptRowOutput::InspectToolCall(id)).ok();
-                }
-            });
+            let child = build_tool_call_widget(
+                tool_call,
+                {
+                    let sender = sender.clone();
+                    move |id| {
+                        sender.output(TranscriptRowOutput::InspectToolCall(id)).ok();
+                    }
+                },
+                {
+                    let sender = sender.clone();
+                    move |session_id, transcript_item_index| {
+                        sender
+                            .output(TranscriptRowOutput::InspectReasoning {
+                                session_id,
+                                transcript_item_index,
+                            })
+                            .ok();
+                    }
+                },
+            );
             children.append(&child.root);
         }
 
@@ -954,6 +1109,38 @@ impl TranscriptRow {
             });
         }
         row.append(&inspect_btn);
+
+        if let Some(reasoning_preview) = self.reasoning_preview {
+            if reasoning_preview.has_visible_reasoning {
+                let reasoning_btn = gtk::Button::with_label("Thinking");
+                reasoning_btn.add_css_class("flat");
+                reasoning_btn.add_css_class("pill");
+                reasoning_btn.add_css_class("reasoning-pill");
+                {
+                    let sender = sender.clone();
+                    let session_id = self.session_id.clone();
+                    let transcript_item_index = self.transcript_item_index;
+                    reasoning_btn.connect_clicked(move |_| {
+                        if let (Some(session_id), Some(transcript_item_index)) =
+                            (session_id.clone(), transcript_item_index)
+                        {
+                            sender
+                                .output(TranscriptRowOutput::InspectReasoning {
+                                    session_id,
+                                    transcript_item_index,
+                                })
+                                .ok();
+                        }
+                    });
+                }
+                row.append(&reasoning_btn);
+            } else if reasoning_preview.encrypted_only {
+                let encrypted_label = gtk::Label::new(Some("Thinking (encrypted)"));
+                encrypted_label.add_css_class("pill");
+                encrypted_label.add_css_class("reasoning-pill-encrypted");
+                row.append(&encrypted_label);
+            }
+        }
 
         root.append(&row);
 
@@ -1021,6 +1208,7 @@ fn transcript_item_init_from_row_with_index(
 
             TranscriptItemInit::Message(MessageItemInit {
                 item_index,
+                transcript_item_index: row.item_index,
                 preview: MessagePreview {
                     session_id: session_id.to_string(),
                     message_index,
@@ -1029,6 +1217,7 @@ fn transcript_item_init_from_row_with_index(
                     content_len: row.content_len.unwrap_or(0) as usize,
                     timestamp,
                     model: row.model.clone(),
+                    reasoning_preview: row.reasoning_preview,
                 },
                 highlight_query,
                 db_path,
@@ -1036,6 +1225,8 @@ fn transcript_item_init_from_row_with_index(
         }
         TranscriptItemKind::ToolCall => TranscriptItemInit::ToolCall(ToolCallItemInit {
             item_index,
+            transcript_item_index: row.item_index,
+            session_id: session_id.to_string(),
             tool_call_id: row.tool_call_id.clone().unwrap_or_default(),
             tool_name: row
                 .tool_name
@@ -1051,14 +1242,18 @@ fn transcript_item_init_from_row_with_index(
             summary: row.tool_summary.clone(),
             duration_ms: row.duration_ms,
             highlight_query,
+            reasoning_preview: row.reasoning_preview,
         }),
         TranscriptItemKind::Subagent => TranscriptItemInit::Subagent(SubagentItemInit {
             item_index,
+            transcript_item_index: row.item_index,
+            session_id: session_id.to_string(),
             subagent_id: row.subagent_id.clone().unwrap_or_default(),
             title: row
                 .subagent_title
                 .clone()
                 .unwrap_or_else(|| "Subagent".to_string()),
+            reasoning_preview: row.reasoning_preview,
         }),
         TranscriptItemKind::Unknown => {
             tracing::warn!(
@@ -1067,6 +1262,7 @@ fn transcript_item_init_from_row_with_index(
             );
             TranscriptItemInit::Message(MessageItemInit {
                 item_index,
+                transcript_item_index: row.item_index,
                 preview: MessagePreview {
                     session_id: session_id.to_string(),
                     message_index: 0,
@@ -1075,6 +1271,7 @@ fn transcript_item_init_from_row_with_index(
                     content_len: 0,
                     timestamp: Utc::now(),
                     model: None,
+                    reasoning_preview: row.reasoning_preview,
                 },
                 highlight_query,
                 db_path,
@@ -1107,7 +1304,7 @@ pub fn transcript_item_init_from_display_item(
                 .filter_map(|row| {
                     match transcript_item_init_from_row_with_index(
                         row,
-                        display_index,
+                        row.item_index as usize,
                         session_id,
                         highlight_query.clone(),
                         db_path.clone(),
@@ -1143,6 +1340,7 @@ mod tests {
         crate::database::TranscriptItemRow {
             item_index,
             kind: crate::models::TranscriptItemKind::ToolCall,
+            reasoning_preview: crate::models::ReasoningPreview::default(),
             message_index: None,
             role: None,
             content_preview: None,
@@ -1202,6 +1400,8 @@ mod tests {
         // When preview is present, summary is not rendered and must not be counted.
         let with_preview = ToolCallItemInit {
             item_index: 7,
+            transcript_item_index: 7,
+            session_id: "session-1".to_string(),
             tool_call_id: "call-7".to_string(),
             tool_name: "Read".to_string(),
             status: ToolCallStatus::Completed,
@@ -1209,6 +1409,7 @@ mod tests {
             summary: Some("read the transcript loader".to_string()),
             duration_ms: Some(12),
             highlight_query: Some("read".to_string()),
+            reasoning_preview: ReasoningPreview::default(),
         };
         // Only "Read" in tool_name matches; preview has no "read", summary is hidden.
         assert_eq!(count_tool_call_matches(&with_preview), 1);
@@ -1216,6 +1417,8 @@ mod tests {
         // When preview is absent, summary acts as fallback and is counted.
         let with_summary_fallback = ToolCallItemInit {
             item_index: 8,
+            transcript_item_index: 8,
+            session_id: "session-1".to_string(),
             tool_call_id: "call-8".to_string(),
             tool_name: "Read".to_string(),
             status: ToolCallStatus::Completed,
@@ -1223,6 +1426,7 @@ mod tests {
             summary: Some("read the transcript loader".to_string()),
             duration_ms: Some(12),
             highlight_query: Some("read".to_string()),
+            reasoning_preview: ReasoningPreview::default(),
         };
         // "Read" in tool_name + "read" in summary fallback = 2.
         assert_eq!(count_tool_call_matches(&with_summary_fallback), 2);
@@ -1233,6 +1437,8 @@ mod tests {
         let tool_calls = vec![
             ToolCallItemInit {
                 item_index: 1,
+                transcript_item_index: 1,
+                session_id: "session-1".to_string(),
                 tool_call_id: "call-1".to_string(),
                 tool_name: "Read".to_string(),
                 status: ToolCallStatus::Completed,
@@ -1240,9 +1446,12 @@ mod tests {
                 summary: None,
                 duration_ms: Some(5),
                 highlight_query: Some("read".to_string()),
+                reasoning_preview: ReasoningPreview::default(),
             },
             ToolCallItemInit {
                 item_index: 2,
+                transcript_item_index: 2,
+                session_id: "session-1".to_string(),
                 tool_call_id: "call-2".to_string(),
                 tool_name: "Edit".to_string(),
                 status: ToolCallStatus::Error,
@@ -1250,6 +1459,7 @@ mod tests {
                 summary: None,
                 duration_ms: Some(8),
                 highlight_query: Some("edit".to_string()),
+                reasoning_preview: ReasoningPreview::default(),
             },
         ];
 
@@ -1284,10 +1494,54 @@ mod tests {
     }
 
     #[test]
+    fn transcript_item_init_from_display_item_keeps_raw_child_transcript_indices() {
+        let burst = crate::ui::transcript_display::DisplayTranscriptItem::ToolBurst(
+            crate::ui::transcript_display::DisplayToolBurst {
+                rows: vec![
+                    tool_row(11, "Read", "{}", None, None),
+                    tool_row(12, "Edit", "{}", None, None),
+                ],
+            },
+        );
+
+        let init = transcript_item_init_from_display_item(
+            5,
+            &burst,
+            "session-1",
+            None,
+            Arc::new(PathBuf::from("/tmp/test.db")),
+        );
+
+        let TranscriptItemInit::ToolBurst(burst_init) = init else {
+            panic!("expected tool burst init");
+        };
+
+        assert_eq!(burst_init.tool_calls[0].transcript_item_index, 11);
+        assert_eq!(burst_init.tool_calls[1].transcript_item_index, 12);
+    }
+
+    #[test]
+    fn tool_burst_reasoning_header_prefers_visible_count() {
+        assert_eq!(
+            format_reasoning_burst_label(2, 1),
+            Some("2 thinking".to_string())
+        );
+    }
+
+    #[test]
+    fn tool_burst_reasoning_header_falls_back_to_encrypted_count() {
+        assert_eq!(
+            format_reasoning_burst_label(0, 3),
+            Some("3 encrypted".to_string())
+        );
+    }
+
+    #[test]
     fn transcript_item_init_prefers_extracted_preview_over_summary() {
         let row = crate::database::TranscriptItemRow {
             item_index: 1,
             kind: crate::models::TranscriptItemKind::ToolCall,
+            reasoning_preview: crate::models::ReasoningPreview::default(),
             message_index: None,
             role: None,
             content_preview: None,

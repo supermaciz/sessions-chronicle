@@ -166,6 +166,7 @@ pub(super) enum AppMsg {
     ResumeActiveSession,
     InspectToolCall(String),
     InspectSubagent(String),
+    InspectReasoning(i64),
     TogglePinRequested(String),
     TogglePinShortcutRequested,
     /// Inspector pane requested opening a child session.
@@ -569,6 +570,9 @@ impl SimpleComponent for App {
             AppMsg::ResumeActiveSession => self.handle_resume_active_session(&sender),
             AppMsg::InspectToolCall(tool_call_id) => self.handle_inspect_tool_call(tool_call_id),
             AppMsg::InspectSubagent(subagent_id) => self.handle_inspect_subagent(subagent_id),
+            AppMsg::InspectReasoning(transcript_item_index) => {
+                self.handle_inspect_reasoning(transcript_item_index)
+            }
             AppMsg::TogglePinRequested(session_id) => self.handle_toggle_pin_requested(session_id),
             AppMsg::TogglePinShortcutRequested => self.handle_toggle_pin_shortcut_requested(),
             AppMsg::OpenChildSession(child_session_id) => {

@@ -1,0 +1,5 @@
+{"type":"session_meta","timestamp":"2026-04-05T12:00:00Z","payload":{"id":"codex-reasoning-fixture","timestamp":"2026-04-05T12:00:00Z","cwd":"/tmp/reasoning-demo"}}
+{"type":"event_msg","timestamp":"2026-04-05T12:00:01Z","payload":{"type":"user_message","message":"Inspect the repo"}}
+{"type":"response_item","timestamp":"2026-04-05T12:00:02Z","payload":{"type":"reasoning","summary":[{"type":"summary_text","text":"Need project structure first"}],"encrypted_content":"fixture-cipher"}}
+{"type":"event_msg","timestamp":"2026-04-05T12:00:03Z","payload":{"type":"response_item","response_item":{"type":"function_call","call_id":"call-1","name":"shell","arguments":"{\"command\":\"pwd\"}"}}}
+{"type":"event_msg","timestamp":"2026-04-05T12:00:04Z","payload":{"type":"response_item","response_item":{"type":"function_call_output","call_id":"call-1","output":"/tmp/reasoning-demo","status":"completed"}}}

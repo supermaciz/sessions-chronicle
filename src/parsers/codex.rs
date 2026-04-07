@@ -6,10 +6,12 @@ use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::path::Path;
 
-use crate::models::{AiAssistant, Message, Role, Session, TokenUsage, ToolCall, ToolCallStatus};
+use crate::models::{
+    AiAssistant, Message, ReasoningAttachment, Role, Session, TokenUsage, ToolCall, ToolCallStatus,
+};
 use crate::models::{TranscriptItem, TranscriptItemKind};
-use crate::parsers::ParsedSession;
 use crate::parsers::model::normalize_model;
+use crate::parsers::{ParsedSession, PendingReasoning};
 
 #[derive(Debug, thiserror::Error)]
 pub enum ParseError {
@@ -33,6 +35,7 @@ struct ParseState {
     messages: Vec<Message>,
     tool_calls: Vec<ToolCall>,
     transcript_items: Vec<TranscriptItem>,
+    reasoning_attachments: Vec<ReasoningAttachment>,
 
     // Correlation: call_id -> index in tool_calls
     call_id_to_tc_idx: HashMap<String, usize>,
@@ -40,6 +43,7 @@ struct ParseState {
     // Counters
     msg_counter: i64,
     item_counter: i64,
+    pending_reasoning: PendingReasoning,
 }
 
 impl ParseState {
@@ -53,9 +57,11 @@ impl ParseState {
             messages: Vec::new(),
             tool_calls: Vec::new(),
             transcript_items: Vec::new(),
+            reasoning_attachments: Vec::new(),
             call_id_to_tc_idx: HashMap::new(),
             msg_counter: 0,
             item_counter: 0,
+            pending_reasoning: PendingReasoning::default(),
         }
     }
 
@@ -91,6 +97,7 @@ impl ParseState {
             tool_call_id: None,
             subagent_id: None,
         });
+        self.flush_pending_reasoning_to_item(self.item_counter);
         self.msg_counter += 1;
         self.item_counter += 1;
     }
@@ -131,7 +138,29 @@ impl ParseState {
             tool_call_id: Some(call_id),
             subagent_id: None,
         });
+        self.flush_pending_reasoning_to_item(self.item_counter);
         self.item_counter += 1;
+    }
+
+    fn queue_reasoning(&mut self, reasoning: PendingReasoning) {
+        self.pending_reasoning.merge(reasoning);
+    }
+
+    fn flush_pending_reasoning_to_item(&mut self, transcript_item_index: i64) {
+        if self.pending_reasoning.is_empty() {
+            return;
+        }
+        let pending = std::mem::take(&mut self.pending_reasoning);
+        self.reasoning_attachments
+            .push(pending.into_attachment(&self.session_id, transcript_item_index));
+    }
+
+    fn drop_pending_reasoning_if_orphan(&mut self) {
+        if self.pending_reasoning.is_empty() {
+            return;
+        }
+        tracing::debug!("dropping orphan reasoning with no visible transcript item");
+        self.pending_reasoning = PendingReasoning::default();
     }
 
     fn complete_tool_call(
@@ -159,9 +188,10 @@ impl ParseState {
     }
 
     fn handle_response_item(&mut self, payload: &Value, event_ts: Option<DateTime<Utc>>) {
-        match payload.get("type").and_then(|v| v.as_str()) {
+        let response_item = payload.get("response_item").unwrap_or(payload);
+        match response_item.get("type").and_then(|v| v.as_str()) {
             Some("function_call") | Some("custom_tool_call") => {
-                let call_id = match payload.get("call_id").and_then(|v| v.as_str()) {
+                let call_id = match response_item.get("call_id").and_then(|v| v.as_str()) {
                     Some(id) if !id.is_empty() => id.to_string(),
                     _ => {
                         tracing::warn!("response_item call begin missing call_id, skipping");
@@ -169,16 +199,16 @@ impl ParseState {
                     }
                 };
 
-                let tool_name = payload
+                let tool_name = response_item
                     .get("name")
-                    .or_else(|| payload.get("tool_name"))
+                    .or_else(|| response_item.get("tool_name"))
                     .and_then(|v| v.as_str())
                     .unwrap_or("unknown")
                     .to_string();
 
-                let input_json = payload
+                let input_json = response_item
                     .get("arguments")
-                    .or_else(|| payload.get("input"))
+                    .or_else(|| response_item.get("input"))
                     .map(|v| {
                         v.as_str()
                             .map(str::to_string)
@@ -193,7 +223,7 @@ impl ParseState {
                 );
             }
             Some("function_call_output") | Some("custom_tool_call_output") => {
-                let call_id = match payload.get("call_id").and_then(|v| v.as_str()) {
+                let call_id = match response_item.get("call_id").and_then(|v| v.as_str()) {
                     Some(id) if !id.is_empty() => id,
                     _ => {
                         tracing::warn!("response_item call output missing call_id, skipping");
@@ -201,7 +231,7 @@ impl ParseState {
                     }
                 };
 
-                let output_text = payload.get("output").and_then(|v| {
+                let output_text = response_item.get("output").and_then(|v| {
                     if let Some(s) = v.as_str() {
                         Some(s.to_string())
                     } else if v.is_null() {
@@ -210,7 +240,7 @@ impl ParseState {
                         Some(v.to_string())
                     }
                 });
-                let error_text = payload.get("error").and_then(|v| {
+                let error_text = response_item.get("error").and_then(|v| {
                     if let Some(s) = v.as_str() {
                         if s.is_empty() {
                             None
@@ -224,7 +254,7 @@ impl ParseState {
                     }
                 });
 
-                let status_str = payload
+                let status_str = response_item
                     .get("status")
                     .and_then(|v| v.as_str())
                     .map(|s| s.to_ascii_lowercase());
@@ -243,9 +273,59 @@ impl ParseState {
                     output_text,
                     error_text,
                     event_ts.map(|t| t.timestamp()),
-                    payload.get("duration_ms").and_then(|v| v.as_i64()),
+                    response_item.get("duration_ms").and_then(|v| v.as_i64()),
                     status,
                 );
+            }
+            Some("reasoning") => {
+                let visible_text = response_item
+                    .get("text")
+                    .and_then(|v| v.as_str())
+                    .map(str::trim)
+                    .filter(|v| !v.is_empty())
+                    .map(str::to_string);
+
+                let summary_text = response_item
+                    .get("summary")
+                    .and_then(|v| v.as_array())
+                    .map(|arr| {
+                        arr.iter()
+                            .filter_map(|entry| {
+                                entry
+                                    .get("text")
+                                    .and_then(|v| v.as_str())
+                                    .map(str::trim)
+                                    .filter(|text| !text.is_empty())
+                                    .map(str::to_string)
+                            })
+                            .collect::<Vec<_>>()
+                    })
+                    .and_then(|parts| {
+                        if parts.is_empty() {
+                            None
+                        } else {
+                            Some(parts.join("\n"))
+                        }
+                    });
+
+                let has_encrypted_content = response_item
+                    .get("encrypted_content")
+                    .or_else(|| response_item.get("encryptedContent"))
+                    .and_then(|v| v.as_str())
+                    .map(str::trim)
+                    .is_some_and(|value| !value.is_empty());
+
+                let reasoning = PendingReasoning {
+                    visible_text,
+                    summary_text,
+                    has_encrypted_content,
+                    source_model: self.current_turn_model.clone(),
+                    source_timestamp: event_ts,
+                };
+
+                if !reasoning.is_empty() {
+                    self.queue_reasoning(reasoning);
+                }
             }
             _ => {}
         }
@@ -520,6 +600,8 @@ impl CodexParser {
             return Err(ParseError::NoUserMessages.into());
         }
 
+        state.drop_pending_reasoning_if_orphan();
+
         let first_prompt = crate::parsers::extract_first_prompt(&state.messages);
         let token_usage = state.best_snapshot.map(|(_, usage)| usage);
 
@@ -547,6 +629,7 @@ impl CodexParser {
             tool_calls: state.tool_calls,
             subagents: Vec::new(),
             transcript_items: state.transcript_items,
+            reasoning_attachments: state.reasoning_attachments,
             token_usage,
         })
     }
@@ -691,6 +774,41 @@ mod tests {
             Some("Process exited with code 0")
         );
         assert_eq!(parsed.tool_calls[0].error_text, None);
+    }
+
+    #[test]
+    fn codex_reasoning_summary_attaches_to_following_tool_call() {
+        let mut file = tempfile::NamedTempFile::new().unwrap();
+        writeln!(
+            file,
+            r#"{{"type":"session_meta","payload":{{"id":"codex-r1","timestamp":"2026-04-05T10:00:00Z","cwd":"/tmp"}}}}"#
+        )
+        .unwrap();
+        writeln!(
+            file,
+            r#"{{"type":"event_msg","timestamp":"2026-04-05T10:00:01Z","payload":{{"type":"user_message","message":"Inspect the repo"}}}}"#
+        )
+        .unwrap();
+        writeln!(
+            file,
+            r#"{{"type":"response_item","timestamp":"2026-04-05T10:00:02Z","payload":{{"type":"reasoning","summary":[{{"type":"summary_text","text":"Need project structure first"}}],"encrypted_content":"cipher"}}}}"#
+        )
+        .unwrap();
+        writeln!(
+            file,
+            r#"{{"type":"response_item","timestamp":"2026-04-05T10:00:03Z","payload":{{"type":"function_call","call_id":"call-1","name":"shell","arguments":"{{\"command\":\"pwd\"}}"}}}}"#
+        )
+        .unwrap();
+
+        let parser = CodexParser;
+        let parsed = parser.parse(file.path()).unwrap();
+        assert_eq!(parsed.reasoning_attachments.len(), 1);
+        assert_eq!(
+            parsed.reasoning_attachments[0].summary_text.as_deref(),
+            Some("Need project structure first")
+        );
+        assert!(parsed.reasoning_attachments[0].has_encrypted_content);
+        assert_eq!(parsed.reasoning_attachments[0].transcript_item_index, 1);
     }
 
     #[test]

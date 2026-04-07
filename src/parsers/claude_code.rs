@@ -9,11 +9,12 @@ use std::path::Path;
 mod first_prompt;
 
 use crate::models::{
-    AiAssistant, Message, Role, Session, Subagent, TokenUsage, ToolCall, ToolCallStatus,
+    AiAssistant, Message, ReasoningAttachment, Role, Session, Subagent, TokenUsage, ToolCall,
+    ToolCallStatus,
 };
 use crate::models::{TranscriptItem, TranscriptItemKind};
-use crate::parsers::ParsedSession;
 use crate::parsers::model::normalize_model;
+use crate::parsers::{ParsedSession, PendingReasoning};
 
 #[derive(Debug, thiserror::Error)]
 pub enum ParseError {
@@ -47,6 +48,7 @@ struct ParseState {
     tool_calls: Vec<ToolCall>,
     subagents: Vec<Subagent>,
     transcript_items: Vec<TranscriptItem>,
+    reasoning_attachments: Vec<ReasoningAttachment>,
 
     // Pending correlation maps
     pending_calls: HashMap<String, usize>,
@@ -55,6 +57,10 @@ struct ParseState {
     // Counters
     msg_counter: i64,
     item_counter: i64,
+
+    // Pending reasoning attached to the next transcript item.
+    pending_reasoning_session_id: Option<String>,
+    pending_reasoning: PendingReasoning,
 
     // Token usage dedupe state
     usage_map: HashMap<(String, String), UsageEntry>,
@@ -73,10 +79,13 @@ impl ParseState {
             tool_calls: Vec::new(),
             subagents: Vec::new(),
             transcript_items: Vec::new(),
+            reasoning_attachments: Vec::new(),
             pending_calls: HashMap::new(),
             pending_subagents: HashMap::new(),
             msg_counter: 0,
             item_counter: 0,
+            pending_reasoning_session_id: None,
+            pending_reasoning: PendingReasoning::default(),
             usage_map: HashMap::new(),
             anonymous_usage: Vec::new(),
         }
@@ -133,39 +142,94 @@ impl ParseState {
     }
 
     fn push_message_transcript_item(&mut self) {
+        let item_index = self.item_counter;
         self.transcript_items.push(TranscriptItem {
             session_id: String::new(),
-            item_index: self.item_counter,
+            item_index,
             kind: TranscriptItemKind::Message,
             message_index: Some(self.msg_counter - 1),
             tool_call_id: None,
             subagent_id: None,
         });
         self.item_counter += 1;
+        self.flush_pending_reasoning_to_item(item_index);
     }
 
     fn push_tool_call_transcript_item(&mut self, tool_call_id: String) {
+        let item_index = self.item_counter;
         self.transcript_items.push(TranscriptItem {
             session_id: String::new(),
-            item_index: self.item_counter,
+            item_index,
             kind: TranscriptItemKind::ToolCall,
             message_index: None,
             tool_call_id: Some(tool_call_id),
             subagent_id: None,
         });
         self.item_counter += 1;
+        self.flush_pending_reasoning_to_item(item_index);
     }
 
     fn push_subagent_transcript_item(&mut self, subagent_id: String) {
+        let item_index = self.item_counter;
         self.transcript_items.push(TranscriptItem {
             session_id: String::new(),
-            item_index: self.item_counter,
+            item_index,
             kind: TranscriptItemKind::Subagent,
             message_index: None,
             tool_call_id: None,
             subagent_id: Some(subagent_id),
         });
         self.item_counter += 1;
+        self.flush_pending_reasoning_to_item(item_index);
+    }
+
+    fn queue_reasoning(
+        &mut self,
+        session_id: &str,
+        visible_text: Option<String>,
+        has_encrypted_content: bool,
+        source_model: Option<String>,
+        source_timestamp: DateTime<Utc>,
+    ) {
+        let visible_text = visible_text
+            .map(|t| t.trim().to_string())
+            .filter(|t| !t.is_empty());
+        let next = PendingReasoning {
+            visible_text,
+            summary_text: None,
+            has_encrypted_content,
+            source_model,
+            source_timestamp: Some(source_timestamp),
+        };
+        if next.is_empty() {
+            return;
+        }
+        if self.pending_reasoning_session_id.is_none() {
+            self.pending_reasoning_session_id = Some(session_id.to_string());
+        }
+        self.pending_reasoning.merge(next);
+    }
+
+    fn flush_pending_reasoning_to_item(&mut self, transcript_item_index: i64) {
+        if self.pending_reasoning.is_empty() {
+            return;
+        }
+        let session_id = self
+            .pending_reasoning_session_id
+            .take()
+            .unwrap_or_else(|| "unknown".to_string());
+        let pending = std::mem::take(&mut self.pending_reasoning);
+        self.reasoning_attachments
+            .push(pending.into_attachment(&session_id, transcript_item_index));
+    }
+
+    fn drop_pending_reasoning_if_orphan(&mut self) {
+        if self.pending_reasoning.is_empty() {
+            return;
+        }
+        tracing::debug!("dropping orphan reasoning with no visible transcript item");
+        self.pending_reasoning_session_id = None;
+        self.pending_reasoning = PendingReasoning::default();
     }
 
     /// Handles a user event: extracts content, processes tool results, and emits messages.
@@ -292,7 +356,6 @@ impl ParseState {
     fn handle_assistant_event(
         &mut self,
         event: &Value,
-        extract_content: impl Fn(&Value) -> Option<String>,
         parse_timestamp: impl Fn(&str) -> Result<DateTime<Utc>>,
     ) {
         let content_val = event.get("message").and_then(|m| m.get("content"));
@@ -307,20 +370,45 @@ impl ParseState {
         // Record token usage from this event
         self.record_usage(event);
 
-        // Extract and emit assistant visible text
-        self.emit_assistant_text(
-            content_val,
-            &session_id,
-            timestamp,
-            model.clone(),
-            &extract_content,
-        );
-
-        // Extract and record tool_use blocks (regular tools and Task/Agent subagents)
         if let Some(arr) = content_val.as_array() {
+            let (reasoning_text, has_encrypted_signature) =
+                ClaudeCodeParser::extract_reasoning_from_array(arr);
+            self.queue_reasoning(
+                &session_id,
+                reasoning_text,
+                has_encrypted_signature,
+                model.clone(),
+                timestamp,
+            );
+
+            if let Some(text) = ClaudeCodeParser::extract_assistant_text_from_array(arr)
+                && !text.trim().is_empty()
+            {
+                self.push_message(
+                    session_id.clone(),
+                    Role::Assistant,
+                    text,
+                    timestamp,
+                    model.clone(),
+                );
+                self.push_message_transcript_item();
+            }
+
+            // Extract and record tool_use blocks (regular tools and Task/Agent subagents)
             for block in arr {
                 self.record_tool_use(block, &session_id, timestamp, &parse_timestamp);
             }
+            return;
+        }
+
+        // Non-array assistant content (legacy string payloads).
+        if let Some(text) = content_val
+            .as_str()
+            .map(str::to_string)
+            .filter(|t| !t.trim().is_empty())
+        {
+            self.push_message(session_id, Role::Assistant, text, timestamp, model);
+            self.push_message_transcript_item();
         }
     }
 
@@ -397,28 +485,6 @@ impl ParseState {
             }
         } else {
             self.anonymous_usage.push(entry);
-        }
-    }
-
-    /// Emits an assistant message from the text portion of content, if any.
-    fn emit_assistant_text(
-        &mut self,
-        content_val: &Value,
-        session_id: &str,
-        timestamp: DateTime<Utc>,
-        model: Option<String>,
-        extract_content: impl Fn(&Value) -> Option<String>,
-    ) {
-        let text = extract_content(content_val).filter(|t| !t.trim().is_empty());
-        if let Some(text) = text {
-            self.push_message(
-                session_id.to_string(),
-                Role::Assistant,
-                text,
-                timestamp,
-                model,
-            );
-            self.push_message_transcript_item();
         }
     }
 
@@ -507,11 +573,18 @@ impl ParseState {
     /// Finalizes the parsing state into a ParsedSession.
     /// Aggregates token usage, builds Session, computes first_prompt, and validates.
     fn finish(
-        self,
+        mut self,
         file_path: &Path,
         file_stem_id: Option<String>,
         had_parse_errors: bool,
     ) -> Result<ParsedSession> {
+        let final_session_id = self
+            .session_id_from_event
+            .clone()
+            .or(file_stem_id)
+            .unwrap_or_else(|| "unknown".to_string());
+        self.drop_pending_reasoning_if_orphan();
+
         // Aggregate token usage from all deduplicated entries
         let all_entries = self.usage_map.into_values().chain(self.anonymous_usage);
         let mut total_input: i64 = 0;
@@ -557,11 +630,6 @@ impl ParseState {
             return Err(ParseError::NoUserMessages.into());
         }
 
-        let final_session_id = self
-            .session_id_from_event
-            .or(file_stem_id)
-            .unwrap_or_else(|| "unknown".to_string());
-
         let last_updated = self.latest_timestamp.unwrap_or(start_time);
         let first_prompt = first_prompt::extract_first_prompt(&self.messages);
 
@@ -591,6 +659,7 @@ impl ParseState {
             tool_calls: self.tool_calls,
             subagents: self.subagents,
             transcript_items: self.transcript_items,
+            reasoning_attachments: self.reasoning_attachments,
             token_usage,
         })
     }
@@ -650,11 +719,7 @@ impl ClaudeCodeParser {
                 }
 
                 Some("assistant") => {
-                    state.handle_assistant_event(
-                        &event,
-                        Self::extract_content,
-                        Self::parse_timestamp,
-                    );
+                    state.handle_assistant_event(&event, Self::parse_timestamp);
                 }
 
                 _ => {}
@@ -706,6 +771,60 @@ impl ClaudeCodeParser {
             None
         } else {
             Some(parts.join("\n"))
+        }
+    }
+
+    fn extract_assistant_text_from_array(arr: &[Value]) -> Option<String> {
+        let parts: Vec<String> = arr
+            .iter()
+            .filter_map(|block| {
+                let block_type = block.get("type")?.as_str()?;
+                if block_type == "text" {
+                    block.get("text")?.as_str().map(str::to_string)
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        if parts.is_empty() {
+            None
+        } else {
+            Some(parts.join("\n"))
+        }
+    }
+
+    fn extract_reasoning_from_array(arr: &[Value]) -> (Option<String>, bool) {
+        let parts: Vec<String> = arr
+            .iter()
+            .filter_map(|block| {
+                let block_type = block.get("type")?.as_str()?;
+                if block_type == "thinking" {
+                    block
+                        .get("thinking")
+                        .and_then(|v| v.as_str())
+                        .map(str::trim)
+                        .filter(|text| !text.is_empty())
+                        .map(str::to_string)
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        let has_encrypted_signature = arr.iter().any(|block| {
+            block.get("type").and_then(|v| v.as_str()) == Some("thinking")
+                && block
+                    .get("signature")
+                    .and_then(|v| v.as_str())
+                    .map(str::trim)
+                    .is_some_and(|value| !value.is_empty())
+        });
+
+        if parts.is_empty() {
+            (None, has_encrypted_signature)
+        } else {
+            (Some(parts.join("\n")), has_encrypted_signature)
         }
     }
 
@@ -900,6 +1019,59 @@ mod tests {
             parsed.transcript_items[2].kind,
             TranscriptItemKind::ToolCall
         );
+    }
+
+    #[test]
+    fn assistant_thinking_stays_out_of_visible_message_content() {
+        let file = create_temp_session(&[
+            r#"{"type":"user","timestamp":"2024-01-01T00:00:00Z","message":{"content":"Help"}}"#,
+            r#"{"type":"assistant","timestamp":"2024-01-01T00:00:01Z","message":{"model":"claude-sonnet-4-5","content":[{"type":"thinking","thinking":"private chain"},{"type":"text","text":"public answer"}]}}"#,
+        ]);
+
+        let parser = ClaudeCodeParser;
+        let parsed = parser.parse(file.path()).unwrap();
+
+        assert_eq!(parsed.messages.len(), 2);
+        assert_eq!(parsed.messages[1].content, "public answer");
+        assert_eq!(parsed.reasoning_attachments.len(), 1);
+        assert_eq!(
+            parsed.reasoning_attachments[0].visible_text.as_deref(),
+            Some("private chain")
+        );
+        assert_eq!(parsed.reasoning_attachments[0].transcript_item_index, 1);
+    }
+
+    #[test]
+    fn thinking_only_assistant_event_attaches_to_first_tool_call() {
+        let file = create_temp_session(&[
+            r#"{"type":"user","timestamp":"2024-01-01T00:00:00Z","message":{"content":"Run command"}}"#,
+            r#"{"type":"assistant","timestamp":"2024-01-01T00:00:01Z","message":{"model":"claude-sonnet-4-5","content":[{"type":"thinking","thinking":"need to inspect repo"},{"type":"tool_use","id":"toolu_1","name":"Bash","input":{"command":"pwd"}}]}}"#,
+        ]);
+
+        let parser = ClaudeCodeParser;
+        let parsed = parser.parse(file.path()).unwrap();
+
+        assert_eq!(parsed.reasoning_attachments.len(), 1);
+        assert_eq!(
+            parsed.reasoning_attachments[0].visible_text.as_deref(),
+            Some("need to inspect repo")
+        );
+        assert_eq!(parsed.reasoning_attachments[0].transcript_item_index, 1);
+    }
+
+    #[test]
+    fn encrypted_signature_attaches_as_encrypted_only_reasoning() {
+        let file = create_temp_session(&[
+            r#"{"type":"user","timestamp":"2024-01-01T00:00:00Z","message":{"content":"Run command"}}"#,
+            r#"{"type":"assistant","timestamp":"2024-01-01T00:00:01Z","message":{"content":[{"type":"thinking","thinking":"","signature":"sig"},{"type":"tool_use","id":"toolu_1","name":"Bash","input":{"command":"pwd"}}]}}"#,
+        ]);
+
+        let parsed = ClaudeCodeParser.parse(file.path()).unwrap();
+
+        assert_eq!(parsed.reasoning_attachments.len(), 1);
+        assert_eq!(parsed.reasoning_attachments[0].visible_text, None);
+        assert!(parsed.reasoning_attachments[0].has_encrypted_content);
+        assert_eq!(parsed.reasoning_attachments[0].transcript_item_index, 1);
     }
 
     #[test]

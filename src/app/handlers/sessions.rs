@@ -103,6 +103,20 @@ impl App {
         }
     }
 
+    pub(crate) fn handle_inspect_reasoning(&mut self, transcript_item_index: i64) {
+        tracing::debug!(
+            "Inspect reasoning for transcript item {}",
+            transcript_item_index
+        );
+        if let Some(session_id) = self.open_inspector_for_active_session() {
+            self.tool_inspector_pane
+                .emit(ToolInspectorPaneMsg::SelectReasoning {
+                    session_id,
+                    transcript_item_index,
+                });
+        }
+    }
+
     pub(crate) fn handle_open_child_session(&mut self, child_session_id: String) {
         tracing::debug!("Open child session: {}", child_session_id);
         self.parent_session = self.active_session.clone();

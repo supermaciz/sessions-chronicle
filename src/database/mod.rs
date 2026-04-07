@@ -10,8 +10,8 @@ use std::path::Path;
 use std::time::Duration;
 
 use crate::models::{
-    AiAssistant, MessagePreview, ProjectFilter, ProjectInfo, Role, Session, Subagent, ToolCall,
-    ToolCallStatus, TranscriptItem, TranscriptItemKind,
+    AiAssistant, MessagePreview, ProjectFilter, ProjectInfo, ReasoningAttachment, ReasoningPreview,
+    Role, Session, Subagent, ToolCall, ToolCallStatus, TranscriptItem, TranscriptItemKind,
 };
 
 pub use indexer::{IndexingStats, SessionIndexer};
@@ -31,6 +31,7 @@ pub(crate) fn open_connection(db_path: &Path) -> Result<Connection> {
 pub struct TranscriptItemRow {
     pub item_index: i64,
     pub kind: TranscriptItemKind,
+    pub reasoning_preview: ReasoningPreview,
     // Message fields
     pub message_index: Option<i64>,
     pub role: Option<Role>,
@@ -709,6 +710,7 @@ pub fn load_message_previews_for_session(
                 .single()
                 .unwrap_or_else(Utc::now),
             model: row.get(6)?,
+            reasoning_preview: ReasoningPreview::default(),
         });
     }
 
@@ -738,6 +740,9 @@ pub fn load_transcript_items(
 
     let mut stmt = db.prepare(
         "SELECT ti.item_index, ti.kind, ti.message_index, ti.tool_call_id, ti.subagent_id,
+                COALESCE((ra.visible_text IS NOT NULL OR ra.summary_text IS NOT NULL OR ra.has_encrypted_content = 1), 0) AS has_reasoning,
+                (ra.visible_text IS NOT NULL OR ra.summary_text IS NOT NULL) AS has_visible_reasoning,
+                COALESCE((ra.has_encrypted_content = 1 AND ra.visible_text IS NULL AND ra.summary_text IS NULL), 0) AS encrypted_only,
                 m.role, substr(m.content, 1, ?2) AS content_preview,
                 length(m.content) AS content_len, m.timestamp, m.model,
                 tc.tool_name, tc.status, tc.summary,
@@ -746,6 +751,8 @@ pub fn load_transcript_items(
                 tc.duration_ms,
                 sa.title AS subagent_title, sa.prompt AS subagent_prompt
          FROM transcript_items ti
+         LEFT JOIN reasoning_attachments ra ON ti.session_id = ra.session_id
+                                        AND ti.item_index = ra.transcript_item_index
          LEFT JOIN messages m ON ti.session_id = m.session_id
                              AND ti.message_index = CAST(m.message_index AS INTEGER)
          LEFT JOIN tool_calls tc ON ti.session_id = tc.session_id
@@ -757,57 +764,65 @@ pub fn load_transcript_items(
          LIMIT ?3 OFFSET ?4",
     )?;
 
+    // Resolve column names to indices once before iterating rows.
+    let col_item_index = stmt.column_index("item_index")?;
+    let col_kind = stmt.column_index("kind")?;
+    let col_msg_index = stmt.column_index("message_index")?;
+    let col_tool_call_id = stmt.column_index("tool_call_id")?;
+    let col_subagent_id = stmt.column_index("subagent_id")?;
+    let col_has_reasoning = stmt.column_index("has_reasoning")?;
+    let col_has_visible_reasoning = stmt.column_index("has_visible_reasoning")?;
+    let col_encrypted_only = stmt.column_index("encrypted_only")?;
+    let col_role = stmt.column_index("role")?;
+    let col_content_preview = stmt.column_index("content_preview")?;
+    let col_content_len = stmt.column_index("content_len")?;
+    let col_timestamp = stmt.column_index("timestamp")?;
+    let col_model = stmt.column_index("model")?;
+    let col_tool_name = stmt.column_index("tool_name")?;
+    let col_tool_status = stmt.column_index("status")?;
+    let col_tool_summary = stmt.column_index("summary")?;
+    let col_tool_input_json = stmt.column_index("input_json")?;
+    let col_tool_output_text = stmt.column_index("output_text")?;
+    let col_duration_ms = stmt.column_index("duration_ms")?;
+    let col_subagent_title = stmt.column_index("subagent_title")?;
+    let col_subagent_prompt = stmt.column_index("subagent_prompt")?;
+
     let mut rows = stmt
         .query([&session_id as &dyn ToSql, &preview_len, &limit, &offset])
         .context("Failed to query transcript items")?;
 
-    // Column indices matching the SELECT order above.
-    const COL_ITEM_INDEX: usize = 0;
-    const COL_KIND: usize = 1;
-    const COL_MSG_INDEX: usize = 2;
-    const COL_TOOL_CALL_ID: usize = 3;
-    const COL_SUBAGENT_ID: usize = 4;
-    const COL_ROLE: usize = 5;
-    const COL_CONTENT_PREVIEW: usize = 6;
-    const COL_CONTENT_LEN: usize = 7;
-    const COL_TIMESTAMP: usize = 8;
-    const COL_MODEL: usize = 9;
-    const COL_TOOL_NAME: usize = 10;
-    const COL_TOOL_STATUS: usize = 11;
-    const COL_TOOL_SUMMARY: usize = 12;
-    const COL_TOOL_INPUT_JSON: usize = 13;
-    const COL_TOOL_OUTPUT_TEXT: usize = 14;
-    const COL_DURATION_MS: usize = 15;
-    const COL_SUBAGENT_TITLE: usize = 16;
-    const COL_SUBAGENT_PROMPT: usize = 17;
-
     let mut items = Vec::new();
     while let Some(row) = rows.next()? {
-        let kind_str: String = row.get(COL_KIND)?;
+        let kind_str: String = row.get(col_kind)?;
         let kind = TranscriptItemKind::from_storage(&kind_str);
 
-        let role: Option<String> = row.get(COL_ROLE)?;
-        let tool_status: Option<String> = row.get(COL_TOOL_STATUS)?;
+        let role: Option<String> = row.get(col_role)?;
+        let tool_status: Option<String> = row.get(col_tool_status)?;
 
         items.push(TranscriptItemRow {
-            item_index: row.get(COL_ITEM_INDEX)?,
+            item_index: row.get(col_item_index)?,
             kind,
-            message_index: row.get(COL_MSG_INDEX)?,
-            tool_call_id: row.get(COL_TOOL_CALL_ID)?,
-            subagent_id: row.get(COL_SUBAGENT_ID)?,
+            reasoning_preview: ReasoningPreview {
+                has_reasoning: row.get(col_has_reasoning)?,
+                has_visible_reasoning: row.get(col_has_visible_reasoning)?,
+                encrypted_only: row.get(col_encrypted_only)?,
+            },
+            message_index: row.get(col_msg_index)?,
+            tool_call_id: row.get(col_tool_call_id)?,
+            subagent_id: row.get(col_subagent_id)?,
             role: role.as_deref().and_then(Role::from_storage),
-            content_preview: row.get(COL_CONTENT_PREVIEW)?,
-            content_len: row.get(COL_CONTENT_LEN)?,
-            timestamp: row.get(COL_TIMESTAMP)?,
-            model: row.get(COL_MODEL)?,
-            tool_name: row.get(COL_TOOL_NAME)?,
+            content_preview: row.get(col_content_preview)?,
+            content_len: row.get(col_content_len)?,
+            timestamp: row.get(col_timestamp)?,
+            model: row.get(col_model)?,
+            tool_name: row.get(col_tool_name)?,
             tool_status: tool_status.as_deref().map(ToolCallStatus::from_storage),
-            tool_summary: row.get(COL_TOOL_SUMMARY)?,
-            tool_input_json: row.get(COL_TOOL_INPUT_JSON)?,
-            tool_output_text: row.get(COL_TOOL_OUTPUT_TEXT)?,
-            duration_ms: row.get(COL_DURATION_MS)?,
-            subagent_title: row.get(COL_SUBAGENT_TITLE)?,
-            subagent_prompt: row.get(COL_SUBAGENT_PROMPT)?,
+            tool_summary: row.get(col_tool_summary)?,
+            tool_input_json: row.get(col_tool_input_json)?,
+            tool_output_text: row.get(col_tool_output_text)?,
+            duration_ms: row.get(col_duration_ms)?,
+            subagent_title: row.get(col_subagent_title)?,
+            subagent_prompt: row.get(col_subagent_prompt)?,
         });
     }
 
@@ -885,6 +900,29 @@ pub fn insert_transcript_item(
     Ok(())
 }
 
+pub fn insert_reasoning_attachment(
+    conn: &Connection,
+    attachment: &ReasoningAttachment,
+    session_id: &str,
+) -> Result<()> {
+    conn.execute(
+        "INSERT OR REPLACE INTO reasoning_attachments
+         (session_id, transcript_item_index, visible_text, summary_text, has_encrypted_content, source_model, source_timestamp)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+        rusqlite::params![
+            session_id,
+            attachment.transcript_item_index,
+            attachment.visible_text.as_deref(),
+            attachment.summary_text.as_deref(),
+            if attachment.has_encrypted_content { 1_i64 } else { 0_i64 },
+            attachment.source_model.as_deref(),
+            attachment.source_timestamp.map(|ts| ts.timestamp()),
+        ],
+    )
+    .context("Failed to insert reasoning attachment")?;
+    Ok(())
+}
+
 /// Load a single tool call by session_id and id.
 pub fn load_tool_call(
     db_path: &Path,
@@ -959,6 +997,40 @@ pub fn load_subagent(
     } else {
         Ok(None)
     }
+}
+
+pub fn load_reasoning_attachment(
+    db_path: &Path,
+    session_id: &str,
+    transcript_item_index: i64,
+) -> Result<Option<ReasoningAttachment>> {
+    if !db_path.exists() {
+        return Ok(None);
+    }
+
+    let db = open_connection(db_path)?;
+    db.query_row(
+        "SELECT session_id, transcript_item_index, visible_text, summary_text,
+                has_encrypted_content, source_model, source_timestamp
+         FROM reasoning_attachments
+         WHERE session_id = ?1 AND transcript_item_index = ?2",
+        rusqlite::params![session_id, transcript_item_index],
+        |row| {
+            Ok(ReasoningAttachment {
+                session_id: row.get(0)?,
+                transcript_item_index: row.get(1)?,
+                visible_text: row.get(2)?,
+                summary_text: row.get(3)?,
+                has_encrypted_content: row.get::<_, i64>(4)? != 0,
+                source_model: row.get(5)?,
+                source_timestamp: row
+                    .get::<_, Option<i64>>(6)?
+                    .and_then(|ts| Utc.timestamp_opt(ts, 0).single()),
+            })
+        },
+    )
+    .optional()
+    .context("Failed to query reasoning attachment")
 }
 
 /// Load all tool calls owned by a subagent, ordered by rowid (insertion order).

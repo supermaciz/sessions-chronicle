@@ -64,10 +64,12 @@ struct BoundaryAppendPlan {
 }
 
 /// Parent-facing actions emitted by [`SessionDetail`].
+#[allow(clippy::enum_variant_names)]
 #[derive(Debug)]
 pub enum SessionDetailOutput {
     InspectToolCall(String),
     InspectSubagent(String),
+    InspectReasoning { transcript_item_index: i64 },
 }
 
 /// Input messages accepted by [`SessionDetail`].
@@ -99,6 +101,7 @@ pub enum SessionDetailMsg {
     Clear,
     InspectToolCall(String),
     InspectSubagent(String),
+    InspectReasoning(i64),
 }
 
 #[relm4::component(pub)]
@@ -532,6 +535,10 @@ impl SimpleComponent for SessionDetail {
                 }
                 TranscriptRowOutput::InspectToolCall(id) => SessionDetailMsg::InspectToolCall(id),
                 TranscriptRowOutput::InspectSubagent(id) => SessionDetailMsg::InspectSubagent(id),
+                TranscriptRowOutput::InspectReasoning {
+                    transcript_item_index,
+                    ..
+                } => SessionDetailMsg::InspectReasoning(transcript_item_index),
             });
 
         let db_path = Arc::new(db_path);
@@ -624,6 +631,13 @@ impl SimpleComponent for SessionDetail {
             }
             SessionDetailMsg::InspectSubagent(id) => {
                 sender.output(SessionDetailOutput::InspectSubagent(id)).ok();
+            }
+            SessionDetailMsg::InspectReasoning(transcript_item_index) => {
+                sender
+                    .output(SessionDetailOutput::InspectReasoning {
+                        transcript_item_index,
+                    })
+                    .ok();
             }
         }
     }
@@ -1195,6 +1209,7 @@ mod tests {
             crate::database::TranscriptItemRow {
                 item_index: 0,
                 kind: crate::models::TranscriptItemKind::Message,
+                reasoning_preview: crate::models::ReasoningPreview::default(),
                 message_index: Some(0),
                 role: Some(crate::models::Role::Assistant),
                 content_preview: Some("hello".to_string()),
@@ -1215,6 +1230,7 @@ mod tests {
             crate::database::TranscriptItemRow {
                 item_index: 1,
                 kind: crate::models::TranscriptItemKind::ToolCall,
+                reasoning_preview: crate::models::ReasoningPreview::default(),
                 message_index: None,
                 role: None,
                 content_preview: None,
@@ -1235,6 +1251,7 @@ mod tests {
             crate::database::TranscriptItemRow {
                 item_index: 2,
                 kind: crate::models::TranscriptItemKind::ToolCall,
+                reasoning_preview: crate::models::ReasoningPreview::default(),
                 message_index: None,
                 role: None,
                 content_preview: None,
@@ -1286,6 +1303,20 @@ mod tests {
                 child_index: Some(2),
             }
         );
+    }
+
+    #[test]
+    fn inspect_reasoning_output_is_forwarded_to_parent() {
+        let output = SessionDetailOutput::InspectReasoning {
+            transcript_item_index: 42,
+        };
+
+        assert!(matches!(
+            output,
+            SessionDetailOutput::InspectReasoning {
+                transcript_item_index: 42
+            }
+        ));
     }
 
     #[test]

@@ -8,10 +8,10 @@ use std::cmp::Ordering;
 use std::path::{Path, PathBuf};
 
 use crate::models::{
-    AiAssistant, Message, Role, Session, Subagent, TokenUsage, ToolCall, ToolCallStatus,
-    TranscriptItem, TranscriptItemKind,
+    AiAssistant, Message, ReasoningAttachment, Role, Session, Subagent, TokenUsage, ToolCall,
+    ToolCallStatus, TranscriptItem, TranscriptItemKind,
 };
-use crate::parsers::ParsedSession;
+use crate::parsers::{ParsedSession, PendingReasoning};
 
 #[derive(Debug, thiserror::Error)]
 pub enum ParseError {
@@ -55,6 +55,7 @@ pub(crate) enum PartOutcome {
     ToolCall(ToolCall),
     Subagent(Subagent),
     StepFinishTokens(MessageTokens),
+    Reasoning(PendingReasoning),
     Nothing,
 }
 
@@ -164,8 +165,10 @@ impl OpenCodeParser {
         let mut tool_calls: Vec<ToolCall> = Vec::new();
         let mut subagents: Vec<Subagent> = Vec::new();
         let mut transcript_items: Vec<TranscriptItem> = Vec::new();
+        let mut reasoning_attachments: Vec<ReasoningAttachment> = Vec::new();
         let mut has_user_message = false;
         let mut step_finish_tokens: Vec<MessageTokens> = Vec::new();
+        let mut pending_reasoning = PendingReasoning::default();
 
         for message in &messages {
             let mut parts = backend.load_parts(&message.id)?;
@@ -199,6 +202,11 @@ impl OpenCodeParser {
                             tool_call_id: None,
                             subagent_id: None,
                         });
+                        if !pending_reasoning.is_empty() {
+                            reasoning_attachments
+                                .push(pending_reasoning.into_attachment(&metadata.id, item_idx));
+                            pending_reasoning = PendingReasoning::default();
+                        }
                         flattened.push(msg);
                     }
                     PartOutcome::ToolCall(tc) => {
@@ -211,6 +219,11 @@ impl OpenCodeParser {
                             tool_call_id: Some(tc_id),
                             subagent_id: None,
                         });
+                        if !pending_reasoning.is_empty() {
+                            reasoning_attachments
+                                .push(pending_reasoning.into_attachment(&metadata.id, item_idx));
+                            pending_reasoning = PendingReasoning::default();
+                        }
                         tool_calls.push(tc);
                     }
                     PartOutcome::Subagent(sa) => {
@@ -223,14 +236,26 @@ impl OpenCodeParser {
                             tool_call_id: None,
                             subagent_id: Some(sa_id),
                         });
+                        if !pending_reasoning.is_empty() {
+                            reasoning_attachments
+                                .push(pending_reasoning.into_attachment(&metadata.id, item_idx));
+                            pending_reasoning = PendingReasoning::default();
+                        }
                         subagents.push(sa);
                     }
                     PartOutcome::StepFinishTokens(tok) => {
                         step_finish_tokens.push(tok);
                     }
+                    PartOutcome::Reasoning(reasoning) => {
+                        pending_reasoning.merge(reasoning);
+                    }
                     PartOutcome::Nothing => {}
                 }
             }
+        }
+
+        if !pending_reasoning.is_empty() {
+            tracing::debug!("dropping orphan reasoning with no visible transcript item");
         }
 
         if !has_user_message {
@@ -316,6 +341,7 @@ impl OpenCodeParser {
             tool_calls,
             subagents,
             transcript_items,
+            reasoning_attachments,
             token_usage,
         })
     }
@@ -461,7 +487,37 @@ impl OpenCodeParser {
                     PartOutcome::Nothing
                 }
             }
-            "reasoning" | "step-start" | "snapshot" | "compaction" => PartOutcome::Nothing,
+            "reasoning" => {
+                let visible_text = part
+                    .raw
+                    .get("text")
+                    .and_then(|value| value.as_str())
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .map(str::to_string);
+
+                let has_encrypted_content = part
+                    .raw
+                    .get("metadata")
+                    .and_then(|value| value.get("openai"))
+                    .and_then(|value| value.get("reasoningEncryptedContent"))
+                    .and_then(|value| value.as_str())
+                    .map(str::trim)
+                    .is_some_and(|value| !value.is_empty());
+
+                if visible_text.is_none() && !has_encrypted_content {
+                    PartOutcome::Nothing
+                } else {
+                    PartOutcome::Reasoning(PendingReasoning {
+                        visible_text,
+                        summary_text: None,
+                        has_encrypted_content,
+                        source_model: message_model.map(str::to_string),
+                        source_timestamp: Some(timestamp),
+                    })
+                }
+            }
+            "step-start" | "snapshot" | "compaction" => PartOutcome::Nothing,
             other => {
                 tracing::debug!("Unhandled part type: {}", other);
                 PartOutcome::Nothing
@@ -990,6 +1046,136 @@ mod tests {
         assert_eq!(parsed.tool_calls.len(), 1);
         assert_eq!(parsed.tool_calls[0].tool_name, "read");
         assert_eq!(parsed.tool_calls[0].status, ToolCallStatus::Completed);
+    }
+
+    #[test]
+    fn reasoning_part_attaches_to_following_tool_call() {
+        let temp_dir = TempDir::new().unwrap();
+        let root = temp_dir.path();
+
+        let session_path = write_session_file(
+            root,
+            "project-reasoning",
+            "session-reasoning.json",
+            json!({
+                "id": "session-reasoning",
+                "directory": "/tmp/project-reasoning",
+                "title": "Reasoning test",
+                "time": { "created": 1_712_320_000_000i64, "updated": 1_712_320_010_000i64 }
+            }),
+        );
+
+        write_message_file(
+            root,
+            "session-reasoning",
+            "msg-user.json",
+            json!({
+                "id": "msg-user",
+                "sessionID": "session-reasoning",
+                "role": "user",
+                "time": { "created": 1_712_320_000_000i64 }
+            }),
+        );
+
+        write_message_file(
+            root,
+            "session-reasoning",
+            "msg-assistant.json",
+            json!({
+                "id": "msg-assistant",
+                "sessionID": "session-reasoning",
+                "role": "assistant",
+                "modelID": "gpt-5",
+                "time": { "created": 1_712_320_001_000i64 }
+            }),
+        );
+
+        write_part_file(
+            root,
+            "msg-user",
+            "part-u1.json",
+            json!({
+                "id": "part-u1",
+                "order": 1,
+                "type": "text",
+                "text": "Run a command"
+            }),
+        );
+
+        write_part_file(
+            root,
+            "msg-assistant",
+            "part-r1.json",
+            json!({
+                "id": "part-r1",
+                "order": 1,
+                "type": "reasoning",
+                "text": "Need to inspect the project"
+            }),
+        );
+
+        write_part_file(
+            root,
+            "msg-assistant",
+            "part-t1.json",
+            json!({
+                "id": "part-t1",
+                "order": 2,
+                "type": "tool",
+                "tool": "Bash",
+                "state": {
+                    "status": "completed",
+                    "input": { "command": "pwd" },
+                    "output": "/tmp/project-reasoning"
+                }
+            }),
+        );
+
+        let parser = OpenCodeParser::new(root);
+        let parsed = parser.parse(&session_path).unwrap();
+
+        assert_eq!(parsed.tool_calls.len(), 1);
+        assert_eq!(parsed.reasoning_attachments.len(), 1);
+        assert_eq!(
+            parsed.reasoning_attachments[0].visible_text.as_deref(),
+            Some("Need to inspect the project")
+        );
+        assert_eq!(parsed.reasoning_attachments[0].transcript_item_index, 1);
+    }
+
+    #[test]
+    fn encrypted_only_reasoning_part_is_kept() {
+        let part = PartData {
+            id: "part-r2".to_string(),
+            kind: "reasoning".to_string(),
+            order: None,
+            raw: json!({
+                "type": "reasoning",
+                "text": "",
+                "metadata": {"openai": {"reasoningEncryptedContent": "ciphertext"}}
+            }),
+        };
+
+        let mut has_user_message = true;
+        let outcome = OpenCodeParser::process_part(
+            "session-1",
+            "msg-1",
+            Some(Role::Assistant),
+            Some("gpt-5"),
+            DateTime::parse_from_rfc3339("2026-04-05T12:00:00Z")
+                .unwrap()
+                .with_timezone(&Utc),
+            &part,
+            &mut has_user_message,
+        );
+
+        match outcome {
+            PartOutcome::Reasoning(reasoning) => {
+                assert_eq!(reasoning.visible_text, None);
+                assert!(reasoning.has_encrypted_content);
+            }
+            _ => panic!("expected reasoning outcome"),
+        }
     }
 
     #[test]
