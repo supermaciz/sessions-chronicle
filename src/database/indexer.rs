@@ -11,7 +11,7 @@ use crate::parsers::claude_code::{ClaudeCodeParser, ParseError as ClaudeCodePars
 use crate::parsers::codex::{CodexParser, ParseError as CodexParseError};
 use crate::parsers::mistral_vibe::{MistralVibeParser, ParseError as MistralVibeParseError};
 use crate::parsers::opencode::{
-    OpenCodeBackend, OpenCodeParser, ParseError as OpenCodeParseError, SessionSource,
+    OpenCodeBackend, OpenCodeParser, ParseError as OpenCodeParseError, SessionEntry, SessionSource,
     json_backend::JsonBackend, sqlite_backend::SqliteBackend,
 };
 use crate::session_sources::SessionSources;
@@ -79,6 +79,48 @@ fn build_per_source_result(
 }
 
 const MAX_INDEXING_ERRORS: usize = 50;
+const SESSION_UPSERT_SQL: &str = "INSERT INTO sessions
+             (id, tool, project_path, project_id, start_time, message_count, file_path, last_updated,
+              first_prompt, parent_session_id, is_subagent,
+              input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, reasoning_tokens,
+              edit_count, read_count, command_count, ending_status)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16,
+                     ?17, ?18, ?19, ?20)
+             ON CONFLICT(id) DO UPDATE SET
+                 tool = excluded.tool,
+                 project_path = excluded.project_path,
+                 project_id = excluded.project_id,
+                 start_time = excluded.start_time,
+                 message_count = excluded.message_count,
+                 file_path = excluded.file_path,
+                 last_updated = excluded.last_updated,
+                 first_prompt = excluded.first_prompt,
+                 parent_session_id = excluded.parent_session_id,
+                 is_subagent = excluded.is_subagent,
+                 input_tokens = excluded.input_tokens,
+                 output_tokens = excluded.output_tokens,
+                 cache_read_tokens = excluded.cache_read_tokens,
+                 cache_write_tokens = excluded.cache_write_tokens,
+                 reasoning_tokens = excluded.reasoning_tokens,
+                 edit_count = excluded.edit_count,
+                 read_count = excluded.read_count,
+                 command_count = excluded.command_count,
+                 ending_status = excluded.ending_status";
+
+#[derive(Debug, Default, Clone, Copy)]
+struct OpencodeEnumerationFlags {
+    enumeration_succeeded: bool,
+    sqlite_enumerated: bool,
+}
+
+struct OpencodeIndexContext<'a> {
+    parser: &'a OpenCodeParser,
+    incremental: bool,
+    indexed_ids: &'a mut HashSet<String>,
+    flags: &'a mut OpencodeEnumerationFlags,
+    stats: &'a mut IndexingStats,
+    errors_detail: &'a mut VecDeque<IndexingError>,
+}
 
 fn push_indexing_error(
     errors_detail: &mut VecDeque<IndexingError>,
@@ -145,69 +187,21 @@ impl SessionIndexer {
             .filter_map(|e| e.ok())
         {
             let path = entry.path();
-            if entry.file_type().is_file()
-                && let Some(ext) = path.extension()
-                && ext == "jsonl"
-            {
-                if Self::is_sidechain_file(path, sessions_dir) {
-                    if let Err(err) = self.remove_session_for_file(path) {
-                        tracing::warn!(
-                            "Failed to prune sidechain session {}: {}",
-                            path.display(),
-                            err
-                        );
-                        push_indexing_error(
-                            errors_detail,
-                            AiAssistant::ClaudeCode,
-                            Some(path.display().to_string()),
-                            format!("Failed to prune sidechain session: {err}"),
-                        );
-                    }
-                    continue;
-                }
-
-                if incremental && !self.should_reindex(path)? {
-                    stats.skipped += 1;
-                    continue;
-                }
-
-                match self.index_session_file(path, &parser) {
-                    Ok(()) => {
-                        stats.indexed += 1;
-                    }
-                    Err(err) => {
-                        if is_claude_empty_session_error(&err) {
-                            tracing::debug!(
-                                "Skipped empty Claude Code session {}: {}",
-                                path.display(),
-                                err
-                            );
-                            if let Err(remove_err) = self.remove_session_for_file(path) {
-                                tracing::warn!(
-                                    "Failed to prune session {}: {}",
-                                    path.display(),
-                                    remove_err
-                                );
-                                push_indexing_error(
-                                    errors_detail,
-                                    AiAssistant::ClaudeCode,
-                                    Some(path.display().to_string()),
-                                    format!("Failed to prune session: {remove_err}"),
-                                );
-                            }
-                        } else {
-                            tracing::warn!("Failed to index {}: {}", path.display(), err);
-                            push_indexing_error(
-                                errors_detail,
-                                AiAssistant::ClaudeCode,
-                                Some(path.display().to_string()),
-                                format!("Failed to index session: {err}"),
-                            );
-                            stats.errors += 1;
-                        }
-                    }
-                }
+            if !Self::is_claude_session_file(path) {
+                continue;
             }
+
+            if Self::is_sidechain_file(path, sessions_dir) {
+                self.prune_sidechain_session(AiAssistant::ClaudeCode, path, errors_detail);
+                continue;
+            }
+
+            if incremental && !self.should_reindex(path)? {
+                stats.skipped += 1;
+                continue;
+            }
+
+            self.process_claude_session_file(path, &parser, &mut stats, errors_detail);
         }
 
         self.prune_orphan_fingerprints()?;
@@ -243,189 +237,23 @@ impl SessionIndexer {
         let parser = OpenCodeParser::new(storage_root);
         let mut indexed_ids: HashSet<String> = HashSet::new();
         let mut stats = IndexingStats::default();
-        let mut enumeration_succeeded = false;
-        let mut sqlite_enumerated = false;
+        let mut flags = OpencodeEnumerationFlags::default();
+        let mut context = OpencodeIndexContext {
+            parser: &parser,
+            incremental,
+            indexed_ids: &mut indexed_ids,
+            flags: &mut flags,
+            stats: &mut stats,
+            errors_detail,
+        };
 
-        for db_path in db_paths {
-            if incremental && !self.should_reindex_opencode_sqlite(db_path)? {
-                stats.skipped += 1;
-            } else {
-                match SqliteBackend::open(db_path) {
-                    Ok(sqlite_backend) => match sqlite_backend.list_sessions() {
-                        Ok(entries) => {
-                            enumeration_succeeded = true;
-                            sqlite_enumerated = true;
-                            for entry in &entries {
-                                match parser.parse_entry(entry, &sqlite_backend) {
-                                    Ok(parsed) => {
-                                        if let Err(err) = self
-                                            .insert_parsed_session_with_fingerprint(
-                                                &parsed,
-                                                db_path,
-                                                &Self::opencode_sqlite_fingerprint_target(db_path),
-                                            )
-                                        {
-                                            tracing::warn!(
-                                                "Failed to insert SQLite session {}: {}",
-                                                entry.id,
-                                                err
-                                            );
-                                            push_indexing_error(
-                                                errors_detail,
-                                                AiAssistant::OpenCode,
-                                                Some(db_path.display().to_string()),
-                                                format!(
-                                                    "Failed to insert SQLite session {}: {}",
-                                                    entry.id, err
-                                                ),
-                                            );
-                                            stats.errors += 1;
-                                            continue;
-                                        }
-                                        indexed_ids.insert(entry.id.clone());
-                                        stats.indexed += 1;
-                                    }
-                                    Err(err) => {
-                                        if is_opencode_error(&err) {
-                                            tracing::debug!(
-                                                "Skipped SQLite session {}: {}",
-                                                entry.id,
-                                                err
-                                            );
-                                        } else {
-                                            tracing::warn!(
-                                                "Failed to parse SQLite session {}: {}",
-                                                entry.id,
-                                                err
-                                            );
-                                            push_indexing_error(
-                                                errors_detail,
-                                                AiAssistant::OpenCode,
-                                                Some(db_path.display().to_string()),
-                                                format!(
-                                                    "Failed to parse SQLite session {}: {}",
-                                                    entry.id, err
-                                                ),
-                                            );
-                                            stats.errors += 1;
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                        Err(err) => {
-                            tracing::warn!("Failed to list SQLite sessions: {}", err);
-                            push_indexing_error(
-                                errors_detail,
-                                AiAssistant::OpenCode,
-                                Some(db_path.display().to_string()),
-                                format!("Failed to list SQLite sessions: {err}"),
-                            );
-                            stats.errors += 1;
-                        }
-                    },
-                    Err(err) => {
-                        tracing::warn!(
-                            "Failed to open OpenCode DB {}: {} - falling back to JSON only",
-                            db_path.display(),
-                            err
-                        );
-                        push_indexing_error(
-                            errors_detail,
-                            AiAssistant::OpenCode,
-                            Some(db_path.display().to_string()),
-                            format!("Failed to open OpenCode DB: {err}"),
-                        );
-                        stats.errors += 1;
-                    }
-                }
-            }
-        }
+        self.index_opencode_sqlite_sources(db_paths, &mut context)?;
 
         if has_storage_root {
-            let json_backend = JsonBackend::new(storage_root);
-            match json_backend.list_sessions() {
-                Ok(entries) => {
-                    enumeration_succeeded = true;
-                    for entry in entries {
-                        if indexed_ids.contains(&entry.id) {
-                            tracing::debug!(
-                                "Skipping JSON session {} (already indexed from SQLite)",
-                                entry.id
-                            );
-                            continue;
-                        }
-
-                        let path = match &entry.source {
-                            SessionSource::JsonFile(path) => path,
-                            SessionSource::SqliteRow { .. } => continue,
-                        };
-
-                        if incremental && !self.should_reindex(path)? {
-                            indexed_ids.insert(entry.id.clone());
-                            stats.skipped += 1;
-                            continue;
-                        }
-
-                        match self.index_opencode_session_file(path, &parser) {
-                            Ok(()) => {
-                                indexed_ids.insert(entry.id);
-                                stats.indexed += 1;
-                            }
-                            Err(err) => {
-                                if is_opencode_error(&err) {
-                                    tracing::debug!(
-                                        "Skipped OpenCode session {}: {}",
-                                        path.display(),
-                                        err
-                                    );
-                                    if let Err(remove_err) = self.remove_session_for_file(path) {
-                                        tracing::warn!(
-                                            "Failed to prune session {}: {}",
-                                            path.display(),
-                                            remove_err
-                                        );
-                                        push_indexing_error(
-                                            errors_detail,
-                                            AiAssistant::OpenCode,
-                                            Some(path.display().to_string()),
-                                            format!("Failed to prune session: {remove_err}"),
-                                        );
-                                    }
-                                } else {
-                                    tracing::warn!("Failed to index {}: {}", path.display(), err);
-                                    push_indexing_error(
-                                        errors_detail,
-                                        AiAssistant::OpenCode,
-                                        Some(path.display().to_string()),
-                                        format!("Failed to index session: {err}"),
-                                    );
-                                    stats.errors += 1;
-                                }
-                            }
-                        }
-                    }
-                }
-                Err(err) => {
-                    tracing::warn!("Failed to list JSON OpenCode sessions: {}", err);
-                    push_indexing_error(
-                        errors_detail,
-                        AiAssistant::OpenCode,
-                        Some(storage_root.display().to_string()),
-                        format!("Failed to list JSON OpenCode sessions: {err}"),
-                    );
-                    stats.errors += 1;
-                }
-            }
+            self.index_opencode_json_sessions(storage_root, &mut context)?;
         }
 
-        if incremental {
-            if sqlite_enumerated {
-                self.prune_stale_opencode_sessions(&indexed_ids)?;
-            }
-        } else if enumeration_succeeded {
-            self.prune_stale_opencode_sessions(&indexed_ids)?;
-        }
+        self.prune_stale_opencode_sessions_if_needed(incremental, flags, &indexed_ids)?;
 
         self.prune_orphan_fingerprints()?;
 
@@ -459,49 +287,16 @@ impl SessionIndexer {
             .filter_map(|e| e.ok())
         {
             let path = entry.path();
-            if entry.file_type().is_file()
-                && let Some(file_name) = path.file_name().and_then(|name| name.to_str())
-                && file_name.starts_with("rollout-")
-                && file_name.ends_with(".jsonl")
-            {
-                if incremental && !self.should_reindex(path)? {
-                    stats.skipped += 1;
-                    continue;
-                }
-
-                match self.index_codex_session_file(path, &parser) {
-                    Ok(()) => {
-                        stats.indexed += 1;
-                    }
-                    Err(err) => {
-                        if is_codex_error(&err) {
-                            tracing::debug!("Skipped Codex session {}: {}", path.display(), err);
-                            if let Err(remove_err) = self.remove_session_for_file(path) {
-                                tracing::warn!(
-                                    "Failed to prune session {}: {}",
-                                    path.display(),
-                                    remove_err
-                                );
-                                push_indexing_error(
-                                    errors_detail,
-                                    AiAssistant::Codex,
-                                    Some(path.display().to_string()),
-                                    format!("Failed to prune session: {remove_err}"),
-                                );
-                            }
-                        } else {
-                            tracing::warn!("Failed to index {}: {}", path.display(), err);
-                            push_indexing_error(
-                                errors_detail,
-                                AiAssistant::Codex,
-                                Some(path.display().to_string()),
-                                format!("Failed to index session: {err}"),
-                            );
-                            stats.errors += 1;
-                        }
-                    }
-                }
+            if !Self::is_codex_session_file(path) {
+                continue;
             }
+
+            if incremental && !self.should_reindex(path)? {
+                stats.skipped += 1;
+                continue;
+            }
+
+            self.process_codex_session_file(path, &parser, &mut stats, errors_detail);
         }
 
         self.prune_orphan_fingerprints()?;
@@ -533,78 +328,200 @@ impl SessionIndexer {
             .with_context(|| format!("Failed to read {}", sessions_dir.display()))?;
 
         for entry in entries {
-            let entry = match entry {
-                Ok(entry) => entry,
-                Err(err) => {
-                    tracing::warn!("Failed to read Mistral Vibe session entry: {}", err);
-                    push_indexing_error(
-                        errors_detail,
-                        AiAssistant::MistralVibe,
-                        Some(sessions_dir.display().to_string()),
-                        format!("Failed to read Mistral Vibe session entry: {err}"),
-                    );
-                    continue;
-                }
+            let Some(path) = self.next_vibe_session_path(entry, sessions_dir, errors_detail)?
+            else {
+                continue;
             };
 
-            let path = entry.path();
-            if !path.is_dir() {
-                continue;
-            }
-
             let fingerprint_target = path.join("messages.jsonl");
-            if !path.join("meta.json").exists() || !fingerprint_target.exists() {
-                continue;
-            }
-
             if incremental && !self.should_reindex(&fingerprint_target)? {
                 stats.skipped += 1;
                 continue;
             }
 
-            match parser.parse(&path) {
-                Ok(parsed) => {
-                    self.insert_parsed_session_with_fingerprint(
-                        &parsed,
-                        &path,
-                        &fingerprint_target,
-                    )?;
-                    stats.indexed += 1;
-                }
-                Err(err) => {
-                    if matches!(
-                        err.downcast_ref::<MistralVibeParseError>(),
-                        Some(MistralVibeParseError::NoUserMessages)
-                    ) {
-                        if let Err(remove_err) = self.remove_session_for_file(&path) {
-                            tracing::warn!(
-                                "Failed to prune session {}: {}",
-                                path.display(),
-                                remove_err
-                            );
-                            push_indexing_error(
-                                errors_detail,
-                                AiAssistant::MistralVibe,
-                                Some(path.display().to_string()),
-                                format!("Failed to prune session: {remove_err}"),
-                            );
-                        }
-                    } else {
-                        tracing::warn!("Failed to index {}: {}", path.display(), err);
-                        push_indexing_error(
-                            errors_detail,
-                            AiAssistant::MistralVibe,
-                            Some(path.display().to_string()),
-                            format!("Failed to index session: {err}"),
-                        );
-                        stats.errors += 1;
-                    }
-                }
-            }
+            self.process_vibe_session_dir(
+                &path,
+                &fingerprint_target,
+                &parser,
+                &mut stats,
+                errors_detail,
+            )?;
         }
 
         self.prune_orphan_fingerprints()?;
         Ok(stats)
+    }
+
+    fn process_vibe_session_dir(
+        &mut self,
+        path: &Path,
+        fingerprint_target: &Path,
+        parser: &MistralVibeParser,
+        stats: &mut IndexingStats,
+        errors_detail: &mut VecDeque<IndexingError>,
+    ) -> Result<()> {
+        match parser.parse(path) {
+            Ok(parsed) => {
+                self.insert_parsed_session_with_fingerprint(&parsed, path, fingerprint_target)?;
+                stats.indexed += 1;
+            }
+            Err(err) => {
+                if matches!(
+                    err.downcast_ref::<MistralVibeParseError>(),
+                    Some(MistralVibeParseError::NoUserMessages)
+                ) {
+                    self.prune_session_after_parse_skip(
+                        AiAssistant::MistralVibe,
+                        path,
+                        errors_detail,
+                    );
+                } else {
+                    self.record_index_failure(
+                        AiAssistant::MistralVibe,
+                        path,
+                        &err,
+                        stats,
+                        errors_detail,
+                    );
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    fn process_claude_session_file(
+        &mut self,
+        path: &Path,
+        parser: &ClaudeCodeParser,
+        stats: &mut IndexingStats,
+        errors_detail: &mut VecDeque<IndexingError>,
+    ) {
+        match self.index_session_file(path, parser) {
+            Ok(()) => stats.indexed += 1,
+            Err(err) => {
+                if is_claude_empty_session_error(&err) {
+                    tracing::debug!(
+                        "Skipped empty Claude Code session {}: {}",
+                        path.display(),
+                        err
+                    );
+                    self.prune_session_after_parse_skip(
+                        AiAssistant::ClaudeCode,
+                        path,
+                        errors_detail,
+                    );
+                } else {
+                    self.record_index_failure(
+                        AiAssistant::ClaudeCode,
+                        path,
+                        &err,
+                        stats,
+                        errors_detail,
+                    );
+                }
+            }
+        }
+    }
+
+    fn process_codex_session_file(
+        &mut self,
+        path: &Path,
+        parser: &CodexParser,
+        stats: &mut IndexingStats,
+        errors_detail: &mut VecDeque<IndexingError>,
+    ) {
+        match self.index_codex_session_file(path, parser) {
+            Ok(()) => stats.indexed += 1,
+            Err(err) => {
+                if is_codex_error(&err) {
+                    tracing::debug!("Skipped Codex session {}: {}", path.display(), err);
+                    self.prune_session_after_parse_skip(AiAssistant::Codex, path, errors_detail);
+                } else {
+                    self.record_index_failure(AiAssistant::Codex, path, &err, stats, errors_detail);
+                }
+            }
+        }
+    }
+
+    fn next_vibe_session_path(
+        &self,
+        entry: std::io::Result<std::fs::DirEntry>,
+        sessions_dir: &Path,
+        errors_detail: &mut VecDeque<IndexingError>,
+    ) -> Result<Option<PathBuf>> {
+        let entry = match entry {
+            Ok(entry) => entry,
+            Err(err) => {
+                tracing::warn!("Failed to read Mistral Vibe session entry: {}", err);
+                push_indexing_error(
+                    errors_detail,
+                    AiAssistant::MistralVibe,
+                    Some(sessions_dir.display().to_string()),
+                    format!("Failed to read Mistral Vibe session entry: {err}"),
+                );
+                return Ok(None);
+            }
+        };
+
+        let path = entry.path();
+        let fingerprint_target = path.join("messages.jsonl");
+        if !path.is_dir() || !path.join("meta.json").exists() || !fingerprint_target.exists() {
+            return Ok(None);
+        }
+
+        Ok(Some(path))
+    }
+
+    fn is_claude_session_file(path: &Path) -> bool {
+        path.is_file() && path.extension().is_some_and(|ext| ext == "jsonl")
+    }
+
+    fn is_codex_session_file(path: &Path) -> bool {
+        path.is_file()
+            && path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.starts_with("rollout-") && name.ends_with(".jsonl"))
+    }
+
+    fn prune_sidechain_session(
+        &mut self,
+        assistant: AiAssistant,
+        path: &Path,
+        errors_detail: &mut VecDeque<IndexingError>,
+    ) {
+        if let Err(err) = self.remove_session_for_file(path) {
+            tracing::warn!(
+                "Failed to prune sidechain session {}: {}",
+                path.display(),
+                err
+            );
+            push_indexing_error(
+                errors_detail,
+                assistant,
+                Some(path.display().to_string()),
+                format!("Failed to prune sidechain session: {err}"),
+            );
+        }
+    }
+
+    fn record_index_failure(
+        &self,
+        assistant: AiAssistant,
+        path: &Path,
+        err: &anyhow::Error,
+        stats: &mut IndexingStats,
+        errors_detail: &mut VecDeque<IndexingError>,
+    ) {
+        tracing::warn!("Failed to index {}: {}", path.display(), err);
+        push_indexing_error(
+            errors_detail,
+            assistant,
+            Some(path.display().to_string()),
+            format!("Failed to index session: {err}"),
+        );
+        stats.errors += 1;
     }
 
     fn index_session_file(&mut self, file_path: &Path, parser: &ClaudeCodeParser) -> Result<()> {
@@ -629,6 +546,207 @@ impl SessionIndexer {
         Ok(())
     }
 
+    fn index_opencode_sqlite_sources(
+        &mut self,
+        db_paths: &[PathBuf],
+        context: &mut OpencodeIndexContext<'_>,
+    ) -> Result<()> {
+        for db_path in db_paths {
+            self.index_opencode_sqlite_source(db_path, context)?;
+        }
+
+        Ok(())
+    }
+
+    fn index_opencode_sqlite_source(
+        &mut self,
+        db_path: &Path,
+        context: &mut OpencodeIndexContext<'_>,
+    ) -> Result<()> {
+        if context.incremental && !self.should_reindex_opencode_sqlite(db_path)? {
+            context.stats.skipped += 1;
+            return Ok(());
+        }
+
+        match SqliteBackend::open(db_path) {
+            Ok(sqlite_backend) => {
+                self.index_opencode_sqlite_backend(db_path, &sqlite_backend, context)
+            }
+            Err(err) => {
+                tracing::warn!(
+                    "Failed to open OpenCode DB {}: {} - falling back to JSON only",
+                    db_path.display(),
+                    err
+                );
+                push_indexing_error(
+                    context.errors_detail,
+                    AiAssistant::OpenCode,
+                    Some(db_path.display().to_string()),
+                    format!("Failed to open OpenCode DB: {err}"),
+                );
+                context.stats.errors += 1;
+                Ok(())
+            }
+        }
+    }
+
+    fn index_opencode_sqlite_backend(
+        &mut self,
+        db_path: &Path,
+        sqlite_backend: &SqliteBackend,
+        context: &mut OpencodeIndexContext<'_>,
+    ) -> Result<()> {
+        match sqlite_backend.list_sessions() {
+            Ok(entries) => {
+                context.flags.enumeration_succeeded = true;
+                context.flags.sqlite_enumerated = true;
+                for entry in &entries {
+                    self.index_opencode_sqlite_entry(db_path, entry, sqlite_backend, context);
+                }
+            }
+            Err(err) => {
+                tracing::warn!("Failed to list SQLite sessions: {}", err);
+                push_indexing_error(
+                    context.errors_detail,
+                    AiAssistant::OpenCode,
+                    Some(db_path.display().to_string()),
+                    format!("Failed to list SQLite sessions: {err}"),
+                );
+                context.stats.errors += 1;
+            }
+        }
+
+        Ok(())
+    }
+
+    fn index_opencode_sqlite_entry(
+        &mut self,
+        db_path: &Path,
+        entry: &SessionEntry,
+        sqlite_backend: &SqliteBackend,
+        context: &mut OpencodeIndexContext<'_>,
+    ) {
+        match context.parser.parse_entry(entry, sqlite_backend) {
+            Ok(parsed) => {
+                if let Err(err) = self.insert_parsed_session_with_fingerprint(
+                    &parsed,
+                    db_path,
+                    &Self::opencode_sqlite_fingerprint_target(db_path),
+                ) {
+                    tracing::warn!("Failed to insert SQLite session {}: {}", entry.id, err);
+                    push_indexing_error(
+                        context.errors_detail,
+                        AiAssistant::OpenCode,
+                        Some(db_path.display().to_string()),
+                        format!("Failed to insert SQLite session {}: {}", entry.id, err),
+                    );
+                    context.stats.errors += 1;
+                    return;
+                }
+
+                context.indexed_ids.insert(entry.id.clone());
+                context.stats.indexed += 1;
+            }
+            Err(err) => {
+                if is_opencode_error(&err) {
+                    tracing::debug!("Skipped SQLite session {}: {}", entry.id, err);
+                } else {
+                    tracing::warn!("Failed to parse SQLite session {}: {}", entry.id, err);
+                    push_indexing_error(
+                        context.errors_detail,
+                        AiAssistant::OpenCode,
+                        Some(db_path.display().to_string()),
+                        format!("Failed to parse SQLite session {}: {}", entry.id, err),
+                    );
+                    context.stats.errors += 1;
+                }
+            }
+        }
+    }
+
+    fn index_opencode_json_sessions(
+        &mut self,
+        storage_root: &Path,
+        context: &mut OpencodeIndexContext<'_>,
+    ) -> Result<()> {
+        let json_backend = JsonBackend::new(storage_root);
+        match json_backend.list_sessions() {
+            Ok(entries) => {
+                context.flags.enumeration_succeeded = true;
+                for entry in entries {
+                    self.index_opencode_json_entry(entry, context)?;
+                }
+            }
+            Err(err) => {
+                tracing::warn!("Failed to list JSON OpenCode sessions: {}", err);
+                push_indexing_error(
+                    context.errors_detail,
+                    AiAssistant::OpenCode,
+                    Some(storage_root.display().to_string()),
+                    format!("Failed to list JSON OpenCode sessions: {err}"),
+                );
+                context.stats.errors += 1;
+            }
+        }
+
+        Ok(())
+    }
+
+    fn index_opencode_json_entry(
+        &mut self,
+        entry: SessionEntry,
+        context: &mut OpencodeIndexContext<'_>,
+    ) -> Result<()> {
+        let session_id = entry.id.clone();
+
+        if context.indexed_ids.contains(&session_id) {
+            tracing::debug!(
+                "Skipping JSON session {} (already indexed from SQLite)",
+                session_id
+            );
+            return Ok(());
+        }
+
+        let path = match &entry.source {
+            SessionSource::JsonFile(path) => path,
+            SessionSource::SqliteRow { .. } => return Ok(()),
+        };
+
+        if context.incremental && !self.should_reindex(path)? {
+            context.indexed_ids.insert(session_id);
+            context.stats.skipped += 1;
+            return Ok(());
+        }
+
+        match self.index_opencode_session_file(path, context.parser) {
+            Ok(()) => {
+                context.indexed_ids.insert(session_id);
+                context.stats.indexed += 1;
+            }
+            Err(err) => {
+                if is_opencode_error(&err) {
+                    tracing::debug!("Skipped OpenCode session {}: {}", path.display(), err);
+                    self.prune_session_after_parse_skip(
+                        AiAssistant::OpenCode,
+                        path,
+                        context.errors_detail,
+                    );
+                } else {
+                    tracing::warn!("Failed to index {}: {}", path.display(), err);
+                    push_indexing_error(
+                        context.errors_detail,
+                        AiAssistant::OpenCode,
+                        Some(path.display().to_string()),
+                        format!("Failed to index session: {err}"),
+                    );
+                    context.stats.errors += 1;
+                }
+            }
+        }
+
+        Ok(())
+    }
+
     fn insert_parsed_session(&mut self, parsed: &ParsedSession, file_path: &Path) -> Result<()> {
         self.insert_parsed_session_with_fingerprint(parsed, file_path, file_path)
     }
@@ -642,13 +760,41 @@ impl SessionIndexer {
         let session = &parsed.session;
         let tx = self.db.transaction()?;
         let resolved_project_id = Self::upsert_project_tx(&tx, session.project_path.as_deref())?;
+        Self::upsert_session_row_tx(&tx, parsed, file_path, resolved_project_id)?;
+        Self::replace_session_contents_tx(&tx, parsed)?;
+        Self::upsert_fingerprint_tx(&tx, fingerprint_path)?;
+        tx.commit()?;
+        Ok(())
+    }
 
-        // Compute activity counts from tool_calls before inserting the session row.
+    /// Derive ending status from the last tool call in the session.
+    fn determine_ending_status(
+        tool_calls: &[crate::models::ToolCall],
+    ) -> crate::models::SessionEndingStatus {
+        match tool_calls.last() {
+            None => crate::models::SessionEndingStatus::Unknown,
+            Some(tc) => match tc.status {
+                crate::models::ToolCallStatus::Error => crate::models::SessionEndingStatus::Error,
+                crate::models::ToolCallStatus::Pending | crate::models::ToolCallStatus::Running => {
+                    crate::models::SessionEndingStatus::Abrupt
+                }
+                crate::models::ToolCallStatus::Completed => {
+                    crate::models::SessionEndingStatus::Clean
+                }
+                crate::models::ToolCallStatus::Unknown => {
+                    crate::models::SessionEndingStatus::Unknown
+                }
+            },
+        }
+    }
+
+    fn compute_activity_counts(tool_calls: &[crate::models::ToolCall]) -> (i64, i64, i64) {
         let mut edit_count: i64 = 0;
         let mut read_count: i64 = 0;
         let mut command_count: i64 = 0;
-        for tc in &parsed.tool_calls {
-            match crate::models::classify_tool_name(&tc.tool_name) {
+
+        for tool_call in tool_calls {
+            match crate::models::classify_tool_name(&tool_call.tool_name) {
                 crate::models::ToolCategory::Edit => edit_count += 1,
                 crate::models::ToolCategory::Command => command_count += 1,
                 crate::models::ToolCategory::Read | crate::models::ToolCategory::Search => {
@@ -659,36 +805,23 @@ impl SessionIndexer {
                 | crate::models::ToolCategory::Other => {}
             }
         }
+
+        (edit_count, read_count, command_count)
+    }
+
+    fn upsert_session_row_tx(
+        tx: &rusqlite::Transaction<'_>,
+        parsed: &ParsedSession,
+        file_path: &Path,
+        resolved_project_id: Option<i64>,
+    ) -> Result<()> {
+        let session = &parsed.session;
+        let (edit_count, read_count, command_count) =
+            Self::compute_activity_counts(&parsed.tool_calls);
         let ending_status = Self::determine_ending_status(&parsed.tool_calls).to_storage();
 
         tx.execute(
-            "INSERT INTO sessions
-             (id, tool, project_path, project_id, start_time, message_count, file_path, last_updated,
-              first_prompt, parent_session_id, is_subagent,
-              input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, reasoning_tokens,
-              edit_count, read_count, command_count, ending_status)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16,
-                     ?17, ?18, ?19, ?20)
-             ON CONFLICT(id) DO UPDATE SET
-                 tool = excluded.tool,
-                 project_path = excluded.project_path,
-                 project_id = excluded.project_id,
-                 start_time = excluded.start_time,
-                 message_count = excluded.message_count,
-                 file_path = excluded.file_path,
-                 last_updated = excluded.last_updated,
-                 first_prompt = excluded.first_prompt,
-                 parent_session_id = excluded.parent_session_id,
-                 is_subagent = excluded.is_subagent,
-                 input_tokens = excluded.input_tokens,
-                 output_tokens = excluded.output_tokens,
-                 cache_read_tokens = excluded.cache_read_tokens,
-                 cache_write_tokens = excluded.cache_write_tokens,
-                 reasoning_tokens = excluded.reasoning_tokens,
-                 edit_count = excluded.edit_count,
-                 read_count = excluded.read_count,
-                 command_count = excluded.command_count,
-                 ending_status = excluded.ending_status",
+            SESSION_UPSERT_SQL,
             rusqlite::params![
                 &session.id,
                 session.tool.to_storage(),
@@ -719,27 +852,22 @@ impl SessionIndexer {
             ],
         )?;
 
-        tx.execute("DELETE FROM messages WHERE session_id = ?1", [&session.id])?;
-        tx.execute(
-            "DELETE FROM transcript_items WHERE session_id = ?1",
-            [&session.id],
-        )?;
-        tx.execute(
-            "DELETE FROM reasoning_attachments WHERE session_id = ?1",
-            [&session.id],
-        )?;
-        tx.execute(
-            "DELETE FROM tool_calls WHERE session_id = ?1",
-            [&session.id],
-        )?;
-        tx.execute("DELETE FROM subagents WHERE session_id = ?1", [&session.id])?;
+        Ok(())
+    }
+
+    fn replace_session_contents_tx(
+        tx: &rusqlite::Transaction<'_>,
+        parsed: &ParsedSession,
+    ) -> Result<()> {
+        let session_id = &parsed.session.id;
+        Self::delete_session_contents_tx(tx, session_id)?;
 
         for msg in &parsed.messages {
             tx.execute(
                 "INSERT INTO messages (session_id, message_index, role, content, timestamp, model)
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
                 rusqlite::params![
-                    &session.id,
+                    session_id,
                     msg.index as i64,
                     format!("{:?}", msg.role).to_lowercase(),
                     &msg.content,
@@ -749,48 +877,38 @@ impl SessionIndexer {
             )?;
         }
 
-        for tc in &parsed.tool_calls {
-            crate::database::insert_tool_call(&tx, tc, &session.id)?;
+        for tool_call in &parsed.tool_calls {
+            crate::database::insert_tool_call(tx, tool_call, session_id)?;
         }
 
-        for sa in &parsed.subagents {
-            crate::database::insert_subagent(&tx, sa, &session.id)?;
+        for subagent in &parsed.subagents {
+            crate::database::insert_subagent(tx, subagent, session_id)?;
         }
 
         for item in &parsed.transcript_items {
-            crate::database::insert_transcript_item(&tx, item, &session.id)?;
+            crate::database::insert_transcript_item(tx, item, session_id)?;
         }
 
         for attachment in &parsed.reasoning_attachments {
-            crate::database::insert_reasoning_attachment(&tx, attachment, &session.id)?;
+            crate::database::insert_reasoning_attachment(tx, attachment, session_id)?;
         }
-
-        Self::upsert_fingerprint_tx(&tx, fingerprint_path)?;
-
-        tx.commit()?;
 
         Ok(())
     }
 
-    /// Derive ending status from the last tool call in the session.
-    fn determine_ending_status(
-        tool_calls: &[crate::models::ToolCall],
-    ) -> crate::models::SessionEndingStatus {
-        match tool_calls.last() {
-            None => crate::models::SessionEndingStatus::Unknown,
-            Some(tc) => match tc.status {
-                crate::models::ToolCallStatus::Error => crate::models::SessionEndingStatus::Error,
-                crate::models::ToolCallStatus::Pending | crate::models::ToolCallStatus::Running => {
-                    crate::models::SessionEndingStatus::Abrupt
-                }
-                crate::models::ToolCallStatus::Completed => {
-                    crate::models::SessionEndingStatus::Clean
-                }
-                crate::models::ToolCallStatus::Unknown => {
-                    crate::models::SessionEndingStatus::Unknown
-                }
-            },
-        }
+    fn delete_session_contents_tx(tx: &rusqlite::Transaction<'_>, session_id: &str) -> Result<()> {
+        tx.execute("DELETE FROM messages WHERE session_id = ?1", [session_id])?;
+        tx.execute(
+            "DELETE FROM transcript_items WHERE session_id = ?1",
+            [session_id],
+        )?;
+        tx.execute(
+            "DELETE FROM reasoning_attachments WHERE session_id = ?1",
+            [session_id],
+        )?;
+        tx.execute("DELETE FROM tool_calls WHERE session_id = ?1", [session_id])?;
+        tx.execute("DELETE FROM subagents WHERE session_id = ?1", [session_id])?;
+        Ok(())
     }
 
     fn upsert_project_tx(
@@ -935,6 +1053,40 @@ impl SessionIndexer {
         Ok(removed)
     }
 
+    fn prune_stale_opencode_sessions_if_needed(
+        &mut self,
+        incremental: bool,
+        flags: OpencodeEnumerationFlags,
+        indexed_ids: &HashSet<String>,
+    ) -> Result<()> {
+        if incremental {
+            if flags.sqlite_enumerated {
+                self.prune_stale_opencode_sessions(indexed_ids)?;
+            }
+        } else if flags.enumeration_succeeded {
+            self.prune_stale_opencode_sessions(indexed_ids)?;
+        }
+
+        Ok(())
+    }
+
+    fn prune_session_after_parse_skip(
+        &mut self,
+        assistant: AiAssistant,
+        path: &Path,
+        errors_detail: &mut VecDeque<IndexingError>,
+    ) {
+        if let Err(remove_err) = self.remove_session_for_file(path) {
+            tracing::warn!("Failed to prune session {}: {}", path.display(), remove_err);
+            push_indexing_error(
+                errors_detail,
+                assistant,
+                Some(path.display().to_string()),
+                format!("Failed to prune session: {remove_err}"),
+            );
+        }
+    }
+
     fn is_sidechain_file(file_path: &Path, sessions_dir: &Path) -> bool {
         let is_agent_file = file_path
             .file_stem()
@@ -984,50 +1136,14 @@ impl SessionIndexer {
         let vibe =
             self.index_vibe_sessions_internal(&sources.vibe_dir, true, &mut errors_detail)?;
 
-        let per_source = vec![
-            build_per_source_result(
-                AiAssistant::ClaudeCode,
-                sources.claude_dir.display().to_string(),
-                sources.claude_dir.exists(),
-                claude,
-            ),
-            build_per_source_result(
-                AiAssistant::OpenCode,
-                opencode_display_path(&sources.opencode_storage_root, &sources.opencode_db_paths),
-                opencode_source_available(
-                    &sources.opencode_storage_root,
-                    &sources.opencode_db_paths,
-                ),
-                opencode,
-            ),
-            build_per_source_result(
-                AiAssistant::Codex,
-                sources.codex_dir.display().to_string(),
-                sources.codex_dir.exists(),
-                codex,
-            ),
-            build_per_source_result(
-                AiAssistant::MistralVibe,
-                sources.vibe_dir.display().to_string(),
-                sources.vibe_dir.exists(),
-                vibe,
-            ),
-        ];
-
-        let totals = per_source
-            .iter()
-            .fold(IndexingStats::default(), |mut acc, r| {
-                acc.indexed += r.indexed;
-                acc.skipped += r.skipped;
-                acc.errors += r.errors;
-                acc
-            });
-
-        Ok(IndexingRunResult {
-            totals,
-            per_source,
-            errors_detail: errors_detail.into(),
-        })
+        Ok(Self::build_indexing_run_result(
+            sources,
+            claude,
+            opencode,
+            codex,
+            vibe,
+            errors_detail,
+        ))
     }
 
     pub fn index_all_full_reindex(
@@ -1051,6 +1167,24 @@ impl SessionIndexer {
         let vibe =
             self.index_vibe_sessions_internal(&sources.vibe_dir, false, &mut errors_detail)?;
 
+        Ok(Self::build_indexing_run_result(
+            sources,
+            claude,
+            opencode,
+            codex,
+            vibe,
+            errors_detail,
+        ))
+    }
+
+    fn build_indexing_run_result(
+        sources: &SessionSources,
+        claude: IndexingStats,
+        opencode: IndexingStats,
+        codex: IndexingStats,
+        vibe: IndexingStats,
+        errors_detail: VecDeque<IndexingError>,
+    ) -> IndexingRunResult {
         let per_source = vec![
             build_per_source_result(
                 AiAssistant::ClaudeCode,
@@ -1083,18 +1217,18 @@ impl SessionIndexer {
 
         let totals = per_source
             .iter()
-            .fold(IndexingStats::default(), |mut acc, r| {
-                acc.indexed += r.indexed;
-                acc.skipped += r.skipped;
-                acc.errors += r.errors;
+            .fold(IndexingStats::default(), |mut acc, result| {
+                acc.indexed += result.indexed;
+                acc.skipped += result.skipped;
+                acc.errors += result.errors;
                 acc
             });
 
-        Ok(IndexingRunResult {
+        IndexingRunResult {
             totals,
             per_source,
             errors_detail: errors_detail.into(),
-        })
+        }
     }
 
     fn remove_session_for_file(&mut self, file_path: &Path) -> Result<()> {
