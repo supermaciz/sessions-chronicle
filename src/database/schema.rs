@@ -1,6 +1,7 @@
 use anyhow::Result;
 use rusqlite::Connection;
 
+#[cfg(test)]
 const CURRENT_DB_VERSION: i64 = 10;
 
 fn column_exists(conn: &Connection, table_name: &str, column_name: &str) -> Result<bool> {

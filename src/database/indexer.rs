@@ -328,12 +328,11 @@ impl SessionIndexer {
             .with_context(|| format!("Failed to read {}", sessions_dir.display()))?;
 
         for entry in entries {
-            let Some(path) = self.next_vibe_session_path(entry, sessions_dir, errors_detail)?
+            let Some((path, fingerprint_target)) =
+                self.next_vibe_session_path(entry, sessions_dir, errors_detail)?
             else {
                 continue;
             };
-
-            let fingerprint_target = path.join("messages.jsonl");
             if incremental && !self.should_reindex(&fingerprint_target)? {
                 stats.skipped += 1;
                 continue;
@@ -449,7 +448,7 @@ impl SessionIndexer {
         entry: std::io::Result<std::fs::DirEntry>,
         sessions_dir: &Path,
         errors_detail: &mut VecDeque<IndexingError>,
-    ) -> Result<Option<PathBuf>> {
+    ) -> Result<Option<(PathBuf, PathBuf)>> {
         let entry = match entry {
             Ok(entry) => entry,
             Err(err) => {
@@ -470,7 +469,7 @@ impl SessionIndexer {
             return Ok(None);
         }
 
-        Ok(Some(path))
+        Ok(Some((path, fingerprint_target)))
     }
 
     fn is_claude_session_file(path: &Path) -> bool {
