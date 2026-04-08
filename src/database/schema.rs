@@ -1,6 +1,8 @@
 use anyhow::Result;
 use rusqlite::Connection;
 
+const CURRENT_DB_VERSION: i64 = 10;
+
 fn column_exists(conn: &Connection, table_name: &str, column_name: &str) -> Result<bool> {
     Ok(conn.query_row(
         "SELECT COUNT(*) FROM pragma_table_info(?1) WHERE name = ?2",
@@ -27,6 +29,7 @@ fn column_exists(conn: &Connection, table_name: &str, column_name: &str) -> Resu
 ///       and ending_status; clear file_fingerprints to backfill during re-index
 ///   8 – sessions gains nullable pinned_at metadata (no fingerprint clear)
 ///   9 – reasoning_attachments side table and clear file_fingerprints
+///   10 – clear file_fingerprints to rebuild transcripts after parser changes
 pub fn initialize_database(conn: &Connection) -> Result<()> {
     let version: i64 = conn.query_row("PRAGMA user_version", [], |row| row.get(0))?;
 
@@ -56,6 +59,9 @@ pub fn initialize_database(conn: &Connection) -> Result<()> {
     }
     if version < 9 {
         apply_v9_migration(conn)?;
+    }
+    if version < 10 {
+        apply_v10_migration(conn)?;
     }
 
     Ok(())
@@ -396,19 +402,29 @@ fn apply_v9_migration(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
+/// Migrate from v9 to v10.
+///
+/// Clears `file_fingerprints` so the next incremental index rebuilds session
+/// transcript rows and counts after parser/output-shape changes.
+fn apply_v10_migration(conn: &Connection) -> Result<()> {
+    conn.execute("DELETE FROM file_fingerprints", [])?;
+    conn.execute_batch("PRAGMA user_version = 10")?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use rusqlite::Connection;
 
     #[test]
-    fn fresh_db_initializes_to_v9() {
+    fn fresh_db_initializes_to_latest() {
         let conn = Connection::open_in_memory().unwrap();
         initialize_database(&conn).unwrap();
         let version: i64 = conn
             .query_row("PRAGMA user_version", [], |r| r.get(0))
             .unwrap();
-        assert_eq!(version, 9);
+        assert_eq!(version, CURRENT_DB_VERSION);
 
         let pinned_column_exists: i64 = conn
             .query_row(
@@ -473,7 +489,7 @@ mod tests {
         let version: i64 = conn
             .query_row("PRAGMA user_version", [], |r| r.get(0))
             .unwrap();
-        assert_eq!(version, 9);
+        assert_eq!(version, CURRENT_DB_VERSION);
 
         let reasoning_table_exists: i64 = conn
             .query_row(
@@ -570,7 +586,7 @@ mod tests {
         let version: i64 = conn
             .query_row("PRAGMA user_version", [], |r| r.get(0))
             .unwrap();
-        assert_eq!(version, 9);
+        assert_eq!(version, CURRENT_DB_VERSION);
 
         // Old messages are gone (by design — will be re-indexed)
         let count: i64 = conn
@@ -629,7 +645,7 @@ mod tests {
         let version: i64 = conn
             .query_row("PRAGMA user_version", [], |r| r.get(0))
             .unwrap();
-        assert_eq!(version, 9);
+        assert_eq!(version, CURRENT_DB_VERSION);
 
         conn.execute(
             "UPDATE sessions SET input_tokens = 1000, output_tokens = 500 WHERE id = 's1'",
@@ -655,7 +671,7 @@ mod tests {
         let version: i64 = conn
             .query_row("PRAGMA user_version", [], |r| r.get(0))
             .unwrap();
-        assert_eq!(version, 9);
+        assert_eq!(version, CURRENT_DB_VERSION);
     }
 
     #[test]
@@ -691,7 +707,7 @@ mod tests {
         let version: i64 = conn
             .query_row("PRAGMA user_version", [], |r| r.get(0))
             .unwrap();
-        assert_eq!(version, 9);
+        assert_eq!(version, CURRENT_DB_VERSION);
 
         let table_exists: i64 = conn
             .query_row(
@@ -725,7 +741,7 @@ mod tests {
         let version: i64 = conn
             .query_row("PRAGMA user_version", [], |r| r.get(0))
             .unwrap();
-        assert_eq!(version, 9);
+        assert_eq!(version, CURRENT_DB_VERSION);
         let count: i64 = conn
             .query_row("SELECT count(*) FROM file_fingerprints", [], |r| r.get(0))
             .unwrap();
@@ -839,7 +855,7 @@ mod tests {
         let version: i64 = conn
             .query_row("PRAGMA user_version", [], |r| r.get(0))
             .unwrap();
-        assert_eq!(version, 9);
+        assert_eq!(version, CURRENT_DB_VERSION);
 
         let projects_exists: i64 = conn
             .query_row(
@@ -873,13 +889,13 @@ mod tests {
             .unwrap();
         assert_eq!(fingerprint_count, 0);
 
-        // Re-running initialize_database should keep schema stable at v9.
+        // Re-running initialize_database should keep schema stable at the latest version.
         initialize_database(&conn).unwrap();
 
         let version_after_second_run: i64 = conn
             .query_row("PRAGMA user_version", [], |r| r.get(0))
             .unwrap();
-        assert_eq!(version_after_second_run, 9);
+        assert_eq!(version_after_second_run, CURRENT_DB_VERSION);
 
         let pinned_column_count: i64 = conn
             .query_row(
@@ -980,25 +996,34 @@ mod tests {
         let version: i64 = conn
             .query_row("PRAGMA user_version", [], |row| row.get(0))
             .unwrap();
-        assert_eq!(version, 9);
+        assert_eq!(version, CURRENT_DB_VERSION);
 
-        let pinned_column_count: i64 = conn
-            .query_row(
-                "SELECT count(*) FROM pragma_table_info('sessions') WHERE name = 'pinned_at'",
-                [],
-                |row| row.get(0),
-            )
+        let fingerprint_count: i64 = conn
+            .query_row("SELECT count(*) FROM file_fingerprints", [], |row| {
+                row.get(0)
+            })
             .unwrap();
-        assert_eq!(pinned_column_count, 1);
+        assert_eq!(fingerprint_count, 0);
+    }
 
-        let reasoning_table_count: i64 = conn
-            .query_row(
-                "SELECT count(*) FROM sqlite_master WHERE type='table' AND name='reasoning_attachments'",
-                [],
-                |row| row.get(0),
-            )
+    #[test]
+    fn v9_to_v10_migration_clears_file_fingerprints() {
+        let conn = Connection::open_in_memory().unwrap();
+        initialize_database(&conn).unwrap();
+
+        conn.execute_batch("PRAGMA user_version = 9").unwrap();
+        conn.execute(
+            "INSERT INTO file_fingerprints (file_path, mtime_ns, size) VALUES ('fixture.jsonl', 1, 1)",
+            [],
+        )
+        .unwrap();
+
+        initialize_database(&conn).unwrap();
+
+        let version: i64 = conn
+            .query_row("PRAGMA user_version", [], |row| row.get(0))
             .unwrap();
-        assert_eq!(reasoning_table_count, 1);
+        assert_eq!(version, CURRENT_DB_VERSION);
 
         let fingerprint_count: i64 = conn
             .query_row("SELECT count(*) FROM file_fingerprints", [], |row| {

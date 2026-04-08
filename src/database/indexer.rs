@@ -2367,4 +2367,67 @@ mod tests {
         assert_eq!(pinned_at, Some(1234));
         assert_eq!(first_prompt.as_deref(), Some("updated prompt"));
     }
+
+    #[test]
+    fn v10_migration_forces_incremental_reindex_of_stale_fixture_override_db() {
+        let temp_db = NamedTempFile::new().unwrap();
+        let sources = SessionSources::resolve(Some(std::path::Path::new("tests/fixtures")));
+
+        {
+            let mut indexer = SessionIndexer::new(temp_db.path()).unwrap();
+            let result = indexer.index_all_incremental(&sources).unwrap();
+            assert!(
+                result.totals.indexed > 0,
+                "fixture index should populate the DB"
+            );
+        }
+
+        let conn = crate::database::open_connection(temp_db.path()).unwrap();
+        conn.execute_batch("PRAGMA user_version = 9").unwrap();
+        conn.execute(
+            "UPDATE sessions SET message_count = 0 WHERE id = 'claude-tools-session'",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "DELETE FROM transcript_items WHERE session_id = 'claude-tools-session'",
+            [],
+        )
+        .unwrap();
+        drop(conn);
+
+        let stale_count: i64 = crate::database::open_connection(temp_db.path())
+            .unwrap()
+            .query_row(
+                "SELECT message_count FROM sessions WHERE id = 'claude-tools-session'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            stale_count, 0,
+            "fixture session should be stale before reopening"
+        );
+
+        let mut indexer = SessionIndexer::new(temp_db.path()).unwrap();
+        let result = indexer.index_all_incremental(&sources).unwrap();
+        assert!(
+            result.totals.indexed > 0,
+            "migration should clear fingerprints so incremental indexing repairs stale rows"
+        );
+
+        let (message_count, transcript_count): (i64, i64) = indexer
+            .db
+            .query_row(
+                "SELECT s.message_count,
+                        (SELECT COUNT(*) FROM transcript_items ti WHERE ti.session_id = s.id)
+                 FROM sessions s
+                 WHERE s.id = 'claude-tools-session'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(message_count, 4);
+        assert!(transcript_count > 0);
+    }
 }
