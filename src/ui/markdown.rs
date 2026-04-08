@@ -333,7 +333,8 @@ impl MarkdownBufferWriter {
                 }
             }
             Tag::Table(_) => {
-                self.block_separator();
+                // No block_separator(): the table is a separate widget
+                // segment; a trailing '\n' would create blank space above it.
                 self.in_table = true;
                 self.table_headers.clear();
                 self.table_rows.clear();
@@ -395,7 +396,8 @@ impl MarkdownBufferWriter {
             TagEnd::Table => {
                 self.in_table = false;
                 self.render_table();
-                self.has_content = true;
+                // Buffer was flushed inside render_table(); keep has_content
+                // false so the next block won't get a leading '\n'.
             }
             TagEnd::TableHead => {
                 self.table_headers = std::mem::take(&mut self.table_row);
@@ -429,18 +431,37 @@ impl MarkdownBufferWriter {
         self.in_code_block = Some(language);
     }
 
-    fn finish_code_block(&mut self) {
-        self.block_separator();
-
-        // Flush current text buffer as a segment (if it has content).
+    /// Flush the current text buffer as a segment before a widget segment
+    /// (table or code block).  Trailing newlines are stripped so they don't
+    /// appear as blank space above the widget.
+    fn flush_buffer_before_widget(&mut self) {
         if self.buffer.char_count() > 0 {
-            let old_buffer = std::mem::replace(
-                &mut self.buffer,
-                gtk::TextBuffer::new(Some(&self.tag_table)),
-            );
-            self.segments.push(MarkdownSegment::Text(old_buffer));
+            // Strip trailing newlines from the buffer.
+            let mut end = self.buffer.end_iter();
+            let mut start = end;
+            while start.backward_char() {
+                if start.char() != '\n' {
+                    start.forward_char();
+                    break;
+                }
+            }
+            if start.offset() < end.offset() {
+                self.buffer.delete(&mut start, &mut end);
+            }
+            // Only push if content remains after stripping.
+            if self.buffer.char_count() > 0 {
+                let old_buffer = std::mem::replace(
+                    &mut self.buffer,
+                    gtk::TextBuffer::new(Some(&self.tag_table)),
+                );
+                self.segments.push(MarkdownSegment::Text(old_buffer));
+            }
             self.has_content = false;
         }
+    }
+
+    fn finish_code_block(&mut self) {
+        self.flush_buffer_before_widget();
 
         let code = self.code_buf.trim_end_matches('\n').to_string();
         let code_buffer = gtk::TextBuffer::new(Some(&self.tag_table));
@@ -484,7 +505,7 @@ impl MarkdownBufferWriter {
 
         self.segments
             .push(MarkdownSegment::CodeBlock(outer.upcast::<gtk::Widget>()));
-        self.has_content = true;
+        // Buffer was flushed; keep has_content false.
         self.code_buf.clear();
     }
 
@@ -615,15 +636,7 @@ impl MarkdownBufferWriter {
             return;
         }
 
-        // Flush current text buffer into a segment (if it has content).
-        if self.buffer.char_count() > 0 {
-            let old_buffer = std::mem::replace(
-                &mut self.buffer,
-                gtk::TextBuffer::new(Some(&self.tag_table)),
-            );
-            self.segments.push(MarkdownSegment::Text(old_buffer));
-            self.has_content = false;
-        }
+        self.flush_buffer_before_widget();
 
         // Build the table grid.
         let grid = gtk::Grid::new();
@@ -657,6 +670,7 @@ impl MarkdownBufferWriter {
             .hexpand(true)
             .hscrollbar_policy(gtk::PolicyType::Automatic)
             .vscrollbar_policy(gtk::PolicyType::Never)
+            .propagate_natural_height(true)
             .child(&grid)
             .build();
 
@@ -669,11 +683,43 @@ impl MarkdownBufferWriter {
             .push(MarkdownSegment::Table(table_widget.upcast::<gtk::Widget>()));
     }
 
+    /// Strip leading newlines from a text buffer.
+    fn strip_leading_newlines(buffer: &gtk::TextBuffer) {
+        let mut start = buffer.start_iter();
+        let mut end = start;
+        while end.char() == '\n' {
+            if !end.forward_char() {
+                break;
+            }
+        }
+        if start.offset() < end.offset() {
+            buffer.delete(&mut start, &mut end);
+        }
+    }
+
     /// Finalize and return all segments plus total widget match count.
     fn finalize(mut self) -> (Vec<MarkdownSegment>, usize) {
         if self.buffer.char_count() > 0 {
             self.segments.push(MarkdownSegment::Text(self.buffer));
         }
+
+        // Strip leading newlines from any text buffer that follows a widget
+        // segment, so there is no blank space below tables / code blocks.
+        let mut after_widget = false;
+        for segment in &self.segments {
+            match segment {
+                MarkdownSegment::Text(buffer) => {
+                    if after_widget {
+                        Self::strip_leading_newlines(buffer);
+                    }
+                    after_widget = false;
+                }
+                _ => {
+                    after_widget = true;
+                }
+            }
+        }
+
         (
             self.segments,
             self.table_match_count + self.code_block_match_count,
