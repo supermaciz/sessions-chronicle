@@ -21,7 +21,7 @@ highlighting with automatic dark/light theme support.
 - Syntax highlighting in the tool inspector pane (deferred).
 - Syntax-aware diff rendering (deferred).
 - Line numbers in transcript code blocks.
-- Custom language alias mapping (e.g. `ts` -> `typescript`).
+- Large or user-configurable language alias mapping tables.
 - `guess_language()` fallback for blocks without a language tag.
 
 ## Scope
@@ -29,8 +29,13 @@ highlighting with automatic dark/light theme support.
 ### Modified
 
 - `src/ui/markdown.rs` -- `finish_code_block()` uses `sourceview5::Buffer` /
-  `sourceview5::View`; theme handler extended.
-- `Cargo.toml` -- add `sourceview5` dependency.
+  `sourceview5::View`; theme handler extended; fenced-language normalization
+  added for common markdown info strings; search highlight priority made explicit.
+- `src/main.rs` -- initialize GtkSourceView once during app startup.
+- `Cargo.toml` -- add a `sourceview5` dependency version compatible with the
+  existing `relm4 0.10` / `gtk4 0.10` stack.
+- `Cargo.lock` -- lock the resolved `sourceview5` and transitive dependency
+  versions.
 - `build-aux/io.github.supermaciz.sessionschronicle.Devel.json` -- add
   `gtksourceview-5` Flatpak module.
 - `build-aux/io.github.supermaciz.sessionschronicle.json` -- same.
@@ -69,9 +74,14 @@ pulldown-cmark CodeBlock events -> accumulate in code_buf
 
 - `finish_code_block()` creates a `sourceview5::Buffer` instead of `gtk::TextBuffer`
   and a `sourceview5::View` instead of `gtk::TextView`.
+- `main()` initializes GtkSourceView once immediately after `gtk::init()`.
+- A small normalization layer maps common fenced-code aliases to GtkSourceView
+  language IDs before lookup.
 - Each `sourceview5::Buffer` is stored as a weak reference for theme tracking.
 - The existing `connect_dark_notify` handler is extended to update style schemes
   on all live `SourceBuffer` instances.
+- Search highlighting keeps using `TextTag`s, but the `search-highlight` tag
+  priority is explicitly raised instead of relying on default tag ordering.
 
 ### What stays the same
 
@@ -99,15 +109,27 @@ Box (vertical, .code-block-widget)
 
 ## Language Detection
 
-Lookup via `sourceview5::LanguageManager::default().language(info_string)`:
+Use the first fenced info token that `markdown.rs` already extracts today, then:
 
-- If the info string matches a known language ID -> set language on buffer,
-  enable syntax highlighting.
-- If no match or no info string -> disable syntax highlighting. The block
-  renders as plain monospace text (current behavior).
+1. Normalize common markdown aliases to GtkSourceView IDs.
+2. Lookup via `sourceview5::LanguageManager::default().language(normalized_id)`.
+3. If lookup succeeds, set the buffer language and enable syntax highlighting.
+4. If lookup fails or no info string is present, leave the block as plain
+   monospace text with syntax highlighting disabled.
 
-No custom alias table. Common aliases (`js`, `py`, `sh`, `c`, `cpp`, `ts`) are
-natively handled by GtkSourceView language definitions.
+The alias table stays intentionally small and only covers high-frequency
+markdown fence names that are unlikely to match GtkSourceView language IDs
+directly. Initial mappings:
+
+- `js` -> `javascript`
+- `ts` -> `typescript`
+- `py` -> `python`
+- `sh`, `shell`, `bash`, `zsh` -> `sh`
+- `rs` -> `rust`
+- `yml` -> `yaml`
+- `c++` -> `cpp`
+
+No fallback to `guess_language()` for untagged blocks.
 
 ## Theme Integration
 
@@ -125,11 +147,11 @@ The existing `connect_dark_notify` handler (line 780 of `markdown.rs`) updates
 `TextTag` colors when the theme changes. Extend it to also update `SourceBuffer`
 style schemes:
 
-- During `finish_code_block()`, push a `glib::WeakRef<sourceview5::Buffer>` into
-  a shared `Vec`.
+- `MarkdownBufferWriter` keeps a `Vec<glib::WeakRef<sourceview5::Buffer>>`.
+- During `finish_code_block()`, push the newly created buffer into that `Vec`.
+- `finalize()` returns those weak refs alongside segments and match counts.
 - In the `connect_dark_notify` closure, iterate over weak refs, upgrade each one,
-  and apply the appropriate style scheme.
-- Dead weak refs (destroyed buffers) are silently skipped.
+  apply the appropriate style scheme, and prune dead refs opportunistically.
 
 This follows the existing pattern: one handler, no widget tree traversal.
 
@@ -149,11 +171,12 @@ preserved.
 `sourceview5::Buffer` inherits from `gtk::TextBuffer`. The existing
 `apply_search_highlight()` function works without modification on a `SourceBuffer`.
 
-Search highlight `TextTag` priority is higher than syntax coloring tags, so the
-yellow highlight background remains visible on top of syntax colors.
+Do not rely on default tag ordering. The implementation must explicitly raise the
+shared `search-highlight` `TextTag` priority high enough that its background
+remains visible on top of syntax-coloring tags in code blocks.
 
 No changes to:
-- `apply_search_highlight()` in `src/ui/highlight.rs`
+- Match-finding logic in `src/ui/highlight.rs`
 - `code_block_match_count` accumulator
 - The returned match count from `render_markdown_to_textview()`
 
@@ -161,9 +184,26 @@ No changes to:
 
 ### Cargo.toml
 
-```toml
-sourceview5 = "0.11.0"
-```
+Add `sourceview5`, but do **not** hardcode `0.11.0` unless the rest of the GTK
+stack is upgraded to match it.
+
+Constraint:
+
+- The selected `sourceview5` crate version must be compatible with the existing
+  `relm4 0.10` / `gtk4 0.10.x` / `glib 0.21.x` dependency set already used by the
+  application.
+
+Implementation note:
+
+- After selecting the compatible crate version, commit the resulting
+  `Cargo.lock` update.
+
+### App startup
+
+GtkSourceView requires explicit library initialization. Call the Rust binding's
+`sourceview5::init()` function (or the binding equivalent if the exact API name
+differs for the selected crate version) once in `src/main.rs`, immediately after
+`gtk::init()`.
 
 ### Flatpak manifests
 
@@ -202,14 +242,20 @@ Add `gtksourceview-5` to the `dependency()` declarations in `meson.build`.
 
 - Test that `finish_code_block()` with a known language (e.g. `rust`) produces a
   `SourceBuffer` with `highlight_syntax() == true` and a language set.
+- Test that a common alias (e.g. fenced `ts`) resolves to the expected
+  GtkSourceView language ID.
 - Test that an unknown or absent language produces a `SourceBuffer` with
   `highlight_syntax() == false`.
 - Test that search highlighting on a `SourceBuffer` returns the correct match count.
+- Test that a code-block search match still carries the `search-highlight` tag
+  after syntax highlighting is enabled.
 
 ### Manual verification
 
+- App startup still succeeds with GtkSourceView initialized.
 - Run with `--sessions-dir tests/fixtures` and verify coloring on Rust, Python, JSON
   code blocks.
+- Verify common alias fences such as `ts` and `py` color correctly.
 - Toggle dark/light theme -- coloring follows the switch.
 - Code block without language -- monospace, no coloring (no regression).
 - Search in a code block -- highlights visible on top of syntax colors.
@@ -219,7 +265,9 @@ Add `gtksourceview-5` to the `dependency()` declarations in `meson.build`.
 ### Modified
 
 - `src/ui/markdown.rs`
+- `src/main.rs`
 - `Cargo.toml`
+- `Cargo.lock`
 - `build-aux/io.github.supermaciz.sessionschronicle.Devel.json`
 - `build-aux/io.github.supermaciz.sessionschronicle.json`
 - `meson.build`
