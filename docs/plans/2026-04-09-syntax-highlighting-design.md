@@ -162,7 +162,7 @@ No changes to:
 ### Cargo.toml
 
 ```toml
-sourceview5 = "0.10.0"
+sourceview5 = "0.11.0"
 ```
 
 ### Flatpak manifests
