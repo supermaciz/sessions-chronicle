@@ -34,6 +34,15 @@ fn is_dark_mode() -> bool {
     adw::StyleManager::default().is_dark()
 }
 
+fn source_style_scheme_id(dark: bool) -> &'static str {
+    if dark { "Adwaita-dark" } else { "Adwaita" }
+}
+
+fn apply_source_style_scheme(buffer: &sourceview5::Buffer, dark: bool) {
+    let scheme = sourceview5::StyleSchemeManager::default().scheme(source_style_scheme_id(dark));
+    buffer.set_style_scheme(scheme.as_ref());
+}
+
 fn apply_theme_palette_to_tags(table: &gtk::TextTagTable, dark: bool) {
     let dim_fg = if dark { DARK_DIM_FG } else { LIGHT_DIM_FG };
     let check_fg = if dark { DARK_CHECK_FG } else { LIGHT_CHECK_FG };
@@ -125,16 +134,17 @@ fn create_tag_table() -> gtk::TextTagTable {
     let task_unchecked = gtk::TextTag::new(Some("task-unchecked"));
     table.add(&task_unchecked);
 
+    // -- Horizontal rule --
+    let hr = gtk::TextTag::new(Some("horizontal-rule"));
+    hr.set_justification(gtk::Justification::Center);
+    table.add(&hr);
+
     // -- Search highlight --
     let highlight = gtk::TextTag::new(Some("search-highlight"));
     highlight.set_background(Some("#fce94f"));
     highlight.set_foreground(Some("#1e1e1e"));
     table.add(&highlight);
-
-    // -- Horizontal rule --
-    let hr = gtk::TextTag::new(Some("horizontal-rule"));
-    hr.set_justification(gtk::Justification::Center);
-    table.add(&hr);
+    highlight.set_priority(table.size() - 1);
 
     apply_theme_palette_to_tags(&table, is_dark_mode());
 
@@ -190,6 +200,8 @@ struct MarkdownBufferWriter {
     table_match_count: usize,
     /// Search match count found inside code block buffers.
     code_block_match_count: usize,
+    /// Source buffers used by code block widgets, tracked for theme updates.
+    source_buffers: Vec<glib::WeakRef<sourceview5::Buffer>>,
 }
 
 impl MarkdownBufferWriter {
@@ -218,6 +230,7 @@ impl MarkdownBufferWriter {
             segments: Vec::new(),
             table_match_count: 0,
             code_block_match_count: 0,
+            source_buffers: Vec::new(),
         }
     }
 
@@ -509,6 +522,9 @@ impl MarkdownBufferWriter {
             self.code_block_match_count += apply_search_highlight(&code_buffer, query);
         }
 
+        apply_source_style_scheme(&code_buffer, is_dark_mode());
+        self.source_buffers.push(code_buffer.downgrade());
+
         let code_view = sourceview5::View::with_buffer(&code_buffer);
         code_view.set_editable(false);
         code_view.set_cursor_visible(false);
@@ -733,8 +749,14 @@ impl MarkdownBufferWriter {
         }
     }
 
-    /// Finalize and return all segments plus total widget match count.
-    fn finalize(mut self) -> (Vec<MarkdownSegment>, usize) {
+    /// Finalize and return segments, widget match count, and source buffers.
+    fn finalize(
+        mut self,
+    ) -> (
+        Vec<MarkdownSegment>,
+        usize,
+        Vec<glib::WeakRef<sourceview5::Buffer>>,
+    ) {
         if self.buffer.char_count() > 0 {
             self.segments.push(MarkdownSegment::Text(self.buffer));
         }
@@ -759,6 +781,7 @@ impl MarkdownBufferWriter {
         (
             self.segments,
             self.table_match_count + self.code_block_match_count,
+            self.source_buffers,
         )
     }
 }
@@ -807,16 +830,26 @@ pub fn render_markdown_to_textview(
 
     let mut writer = MarkdownBufferWriter::new(tag_table.clone(), highlight_query);
     writer.process(content);
-    let (segments, table_match_count) = writer.finalize();
+    let (segments, table_match_count, source_buffers) = writer.finalize();
 
     // Wire up theme-change listener that updates tag colours. Since all
     // buffers share the same tag_table, one handler covers everything.
     let style_manager = adw::StyleManager::default();
     let tt_weak = tag_table.downgrade();
+    let source_buffers = std::cell::RefCell::new(source_buffers);
     let theme_handler = style_manager.connect_dark_notify(move |manager| {
         if let Some(tt) = tt_weak.upgrade() {
             apply_theme_palette_to_tags(&tt, manager.is_dark());
         }
+
+        source_buffers.borrow_mut().retain(|weak_buffer| {
+            if let Some(buffer) = weak_buffer.upgrade() {
+                apply_source_style_scheme(&buffer, manager.is_dark());
+                true
+            } else {
+                false
+            }
+        });
     });
 
     let has_widgets = segments
@@ -934,6 +967,22 @@ fn apply_search_highlight(buffer: &impl IsA<gtk::TextBuffer>, query: &str) -> us
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn source_style_scheme_id_matches_adwaita_theme_names() {
+        assert_eq!(source_style_scheme_id(false), "Adwaita");
+        assert_eq!(source_style_scheme_id(true), "Adwaita-dark");
+    }
+
+    #[gtk::test]
+    fn search_highlight_tag_has_highest_priority() {
+        let table = create_tag_table();
+        let highlight = table
+            .lookup("search-highlight")
+            .expect("search-highlight tag exists");
+
+        assert_eq!(highlight.priority(), table.size() - 1);
+    }
 
     /// Downcast the rendered widget to a single TextView (for non-table content).
     fn as_textview(widget: &gtk::Widget) -> gtk::TextView {
