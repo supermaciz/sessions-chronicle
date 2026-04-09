@@ -29,11 +29,18 @@ impl TempDatabase {
         Self { path, connection }
     }
 
-    /// Seed the two-project fixture used by project sidebar filtering tests.
+    /// Seed a deterministic two-project dataset for sidebar filtering tests.
     ///
-    /// Projects: alpha (id=1), beta (id=2)
-    /// Sessions: alpha-claude-old, alpha-claude-new, alpha-opencode, unassigned-claude, beta-claude
-    /// Messages: "this session is lonely" on unassigned-claude; "alpha topic" on alpha-claude-new
+    /// Inserts:
+    /// - Projects: alpha (id=1), beta (id=2)
+    /// - Sessions: 3 in alpha, 1 in beta, and 1 unassigned session
+    /// - Messages:
+    ///   - "this session is lonely" on unassigned-claude
+    ///   - "alpha topic" on alpha-claude-new
+    ///
+    /// This fixture is used to validate project-scoped filtering,
+    /// unassigned-session behavior, and search behavior across projects.
+    #[allow(dead_code)]
     pub fn seed_project_sidebar_fixture(&self) {
         self.connection
             .execute(
