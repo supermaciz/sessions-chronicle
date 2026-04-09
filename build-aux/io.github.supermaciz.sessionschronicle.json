@@ -35,6 +35,22 @@
     },
     "modules": [
         {
+            "name": "gtksourceview-5",
+            "buildsystem": "meson",
+            "config-opts": [
+                "-Ddocumentation=false",
+                "-Dintrospection=disabled",
+                "-Dvapi=false"
+            ],
+            "sources": [
+                {
+                    "type": "git",
+                    "url": "https://gitlab.gnome.org/GNOME/gtksourceview.git",
+                    "tag": "5.14.2"
+                }
+            ]
+        },
+        {
             "name": "sessions-chronicle",
             "buildsystem": "meson",
             "run-tests": true,

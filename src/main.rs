@@ -58,6 +58,7 @@ fn main() {
     }
 
     gtk::init().unwrap();
+    sourceview5::init();
     relm4_icons::initialize_icons(icon_names::GRESOURCE_BYTES, icon_names::RESOURCE_PREFIX);
 
     // Enable logging
