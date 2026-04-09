@@ -3,6 +3,7 @@ use relm4::adw;
 use relm4::gtk;
 use relm4::gtk::glib;
 use relm4::gtk::prelude::*;
+use sourceview5::prelude::*;
 // Theme-dependent color palette (dark / light variants).
 const DARK_DIM_FG: &str = "#aaaaaa";
 const LIGHT_DIM_FG: &str = "#666666";
@@ -48,6 +49,19 @@ fn apply_theme_palette_to_tags(table: &gtk::TextTagTable, dark: bool) {
     }
     if let Some(tag) = table.lookup("horizontal-rule") {
         tag.set_foreground(Some(dim_fg));
+    }
+}
+
+fn normalize_language_alias(language: &str) -> String {
+    match language.to_ascii_lowercase().as_str() {
+        "js" => "javascript".to_string(),
+        "ts" => "typescript".to_string(),
+        "py" => "python".to_string(),
+        "sh" | "shell" | "bash" | "zsh" => "sh".to_string(),
+        "rs" => "rust".to_string(),
+        "yml" => "yaml".to_string(),
+        "c++" => "cpp".to_string(),
+        other => other.to_string(),
     }
 }
 
@@ -464,14 +478,38 @@ impl MarkdownBufferWriter {
         self.flush_buffer_before_widget();
 
         let code = self.code_buf.trim_end_matches('\n').to_string();
-        let code_buffer = gtk::TextBuffer::new(Some(&self.tag_table));
+        let code_buffer = sourceview5::Buffer::new(Some(&self.tag_table));
         code_buffer.set_text(&code);
+
+        let language = self.in_code_block.take().flatten();
+        let normalized_language = language.as_deref().map(normalize_language_alias);
+
+        if let Some(language_id) = normalized_language.as_deref() {
+            let language_manager = sourceview5::LanguageManager::default();
+            let fallback_language = language.as_deref().map(str::to_ascii_lowercase);
+            let resolved_language = language_manager.language(language_id).or_else(|| {
+                fallback_language
+                    .as_deref()
+                    .and_then(|id| language_manager.language(id))
+            });
+
+            if let Some(source_language) = resolved_language {
+                code_buffer.set_language(Some(&source_language));
+                code_buffer.set_highlight_syntax(true);
+            } else {
+                code_buffer.set_language(None);
+                code_buffer.set_highlight_syntax(false);
+            }
+        } else {
+            code_buffer.set_language(None);
+            code_buffer.set_highlight_syntax(false);
+        }
 
         if let Some(query) = self.highlight_query.as_deref() {
             self.code_block_match_count += apply_search_highlight(&code_buffer, query);
         }
 
-        let code_view = gtk::TextView::with_buffer(&code_buffer);
+        let code_view = sourceview5::View::with_buffer(&code_buffer);
         code_view.set_editable(false);
         code_view.set_cursor_visible(false);
         code_view.set_monospace(true);
@@ -484,8 +522,6 @@ impl MarkdownBufferWriter {
         scroller.set_vscrollbar_policy(gtk::PolicyType::Never);
         scroller.add_css_class("code-block-scroller");
         scroller.set_child(Some(&code_view));
-
-        let language = self.in_code_block.take().flatten();
 
         let outer = gtk::Box::new(gtk::Orientation::Vertical, 0);
         outer.add_css_class("code-block-widget");
@@ -832,7 +868,9 @@ pub fn render_markdown_to_textview(
 ///
 /// Uses the `search-highlight` tag from the buffer's tag table.
 /// Returns the number of matches found.
-fn apply_search_highlight(buffer: &gtk::TextBuffer, query: &str) -> usize {
+fn apply_search_highlight(buffer: &impl IsA<gtk::TextBuffer>, query: &str) -> usize {
+    let buffer: &gtk::TextBuffer = buffer.as_ref();
+
     if query.is_empty() {
         return 0;
     }
@@ -934,6 +972,18 @@ mod tests {
             child = c.next_sibling();
         }
         found
+    }
+
+    fn first_source_buffer(widget: &gtk::Widget) -> sourceview5::Buffer {
+        let source_views = find_widgets_of_type::<sourceview5::View>(widget);
+        let source_view = source_views
+            .into_iter()
+            .next()
+            .expect("expected code SourceView");
+        source_view
+            .buffer()
+            .downcast::<sourceview5::Buffer>()
+            .expect("expected GtkSourceBuffer")
     }
 
     /// Collect all table widgets (ScrolledWindows containing Grids) from
@@ -1359,15 +1409,10 @@ mod tests {
     }
 
     #[gtk::test]
-    fn code_block_search_highlight_tag_applied_inside_embedded_textview() {
+    fn code_block_search_highlight_tag_applied_inside_source_buffer() {
         let md = "```\nhello world\n```";
         let (widget, _) = render_markdown_to_textview(md, Some("world"));
-        let code_views = find_widgets_of_type::<gtk::TextView>(&widget);
-        let code_view = code_views
-            .into_iter()
-            .next()
-            .expect("expected code TextView");
-        let buffer = code_view.buffer();
+        let buffer = first_source_buffer(&widget);
         let iter = buffer.iter_at_offset(6);
         assert!(
             iter.tags()
@@ -1375,6 +1420,51 @@ mod tests {
                 .any(|t: &gtk::TextTag| t.name().as_deref() == Some("search-highlight")),
             "expected search-highlight tag in code buffer"
         );
+    }
+
+    #[gtk::test]
+    fn code_block_known_language_uses_source_buffer_with_syntax_highlighting() {
+        let md = "```rust\nfn main() {}\n```";
+        let (widget, _) = render_markdown_to_textview(md, None);
+
+        let buffer = first_source_buffer(&widget);
+        assert!(buffer.is_highlight_syntax());
+
+        let language = buffer.language().expect("expected resolved language");
+        assert_eq!(language.id(), "rust");
+    }
+
+    #[gtk::test]
+    fn code_block_alias_language_resolves_before_lookup() {
+        let md = "```js\nconsole.log('ok');\n```";
+        let (widget, _) = render_markdown_to_textview(md, None);
+
+        assert_eq!(normalize_language_alias("js"), "javascript");
+
+        let buffer = first_source_buffer(&widget);
+        let language = buffer.language().expect("expected resolved language");
+        assert!(language.id() == "javascript" || language.id() == "js");
+        assert!(buffer.is_highlight_syntax());
+    }
+
+    #[gtk::test]
+    fn code_block_unknown_language_disables_syntax_highlighting() {
+        let md = "```totally-unknown\nvalue\n```";
+        let (widget, _) = render_markdown_to_textview(md, None);
+
+        let buffer = first_source_buffer(&widget);
+        assert!(buffer.language().is_none());
+        assert!(!buffer.is_highlight_syntax());
+    }
+
+    #[gtk::test]
+    fn code_block_without_language_disables_syntax_highlighting() {
+        let md = "```\nvalue\n```";
+        let (widget, _) = render_markdown_to_textview(md, None);
+
+        let buffer = first_source_buffer(&widget);
+        assert!(buffer.language().is_none());
+        assert!(!buffer.is_highlight_syntax());
     }
 
     #[gtk::test]
