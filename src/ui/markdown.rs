@@ -3,11 +3,26 @@ use relm4::adw;
 use relm4::gtk;
 use relm4::gtk::glib;
 use relm4::gtk::prelude::*;
+use sourceview5::prelude::*;
 // Theme-dependent color palette (dark / light variants).
 const DARK_DIM_FG: &str = "#aaaaaa";
 const LIGHT_DIM_FG: &str = "#666666";
 const DARK_CHECK_FG: &str = "#57e389";
 const LIGHT_CHECK_FG: &str = "#2ec27e";
+const LANGUAGE_ALIASES: &[(&str, &str)] = &[
+    // GtkSourceView 5 exposes JavaScript as `js`, not `javascript`.
+    ("js", "js"),
+    ("javascript", "js"),
+    ("ts", "typescript"),
+    ("py", "python"),
+    ("sh", "sh"),
+    ("shell", "sh"),
+    ("bash", "sh"),
+    ("zsh", "sh"),
+    ("rs", "rust"),
+    ("yml", "yaml"),
+    ("c++", "cpp"),
+];
 
 /// Escape characters that are special in Pango markup.
 ///
@@ -33,6 +48,15 @@ fn is_dark_mode() -> bool {
     adw::StyleManager::default().is_dark()
 }
 
+fn source_style_scheme_id(dark: bool) -> &'static str {
+    if dark { "Adwaita-dark" } else { "Adwaita" }
+}
+
+fn apply_source_style_scheme(buffer: &sourceview5::Buffer, dark: bool) {
+    let scheme = sourceview5::StyleSchemeManager::default().scheme(source_style_scheme_id(dark));
+    buffer.set_style_scheme(scheme.as_ref());
+}
+
 fn apply_theme_palette_to_tags(table: &gtk::TextTagTable, dark: bool) {
     let dim_fg = if dark { DARK_DIM_FG } else { LIGHT_DIM_FG };
     let check_fg = if dark { DARK_CHECK_FG } else { LIGHT_CHECK_FG };
@@ -49,6 +73,15 @@ fn apply_theme_palette_to_tags(table: &gtk::TextTagTable, dark: bool) {
     if let Some(tag) = table.lookup("horizontal-rule") {
         tag.set_foreground(Some(dim_fg));
     }
+}
+
+fn normalize_language_alias(language: &str) -> String {
+    let lowercase = language.to_ascii_lowercase();
+    LANGUAGE_ALIASES
+        .iter()
+        .find_map(|(alias, canonical)| (*alias == lowercase).then_some(*canonical))
+        .unwrap_or(lowercase.as_str())
+        .to_string()
 }
 
 /// Create a `TextTagTable` with all markdown formatting tags.
@@ -111,16 +144,31 @@ fn create_tag_table() -> gtk::TextTagTable {
     let task_unchecked = gtk::TextTag::new(Some("task-unchecked"));
     table.add(&task_unchecked);
 
+    // -- Horizontal rule --
+    let hr = gtk::TextTag::new(Some("horizontal-rule"));
+    hr.set_justification(gtk::Justification::Center);
+    table.add(&hr);
+
     // -- Search highlight --
     let highlight = gtk::TextTag::new(Some("search-highlight"));
     highlight.set_background(Some("#fce94f"));
     highlight.set_foreground(Some("#1e1e1e"));
     table.add(&highlight);
+    highlight.set_priority(table.size() - 1);
 
-    // -- Horizontal rule --
-    let hr = gtk::TextTag::new(Some("horizontal-rule"));
-    hr.set_justification(gtk::Justification::Center);
-    table.add(&hr);
+    // `GtkSourceBuffer` shares this tag table with plain markdown buffers and
+    // adds its own syntax tags lazily when a language is attached. Newly added
+    // tags get the highest priority by default, which would otherwise relegate
+    // `search-highlight` below syntax tags and let code-block syntax colours
+    // override search matches. Re-promote `search-highlight` on every insert.
+    table.connect_tag_added(|table, added| {
+        if added.name().as_deref() == Some("search-highlight") {
+            return;
+        }
+        if let Some(highlight) = table.lookup("search-highlight") {
+            highlight.set_priority(table.size() - 1);
+        }
+    });
 
     apply_theme_palette_to_tags(&table, is_dark_mode());
 
@@ -176,6 +224,8 @@ struct MarkdownBufferWriter {
     table_match_count: usize,
     /// Search match count found inside code block buffers.
     code_block_match_count: usize,
+    /// Source buffers used by code block widgets, tracked for theme updates.
+    source_buffers: Vec<glib::WeakRef<sourceview5::Buffer>>,
 }
 
 impl MarkdownBufferWriter {
@@ -204,6 +254,7 @@ impl MarkdownBufferWriter {
             segments: Vec::new(),
             table_match_count: 0,
             code_block_match_count: 0,
+            source_buffers: Vec::new(),
         }
     }
 
@@ -464,14 +515,41 @@ impl MarkdownBufferWriter {
         self.flush_buffer_before_widget();
 
         let code = self.code_buf.trim_end_matches('\n').to_string();
-        let code_buffer = gtk::TextBuffer::new(Some(&self.tag_table));
+        let code_buffer = sourceview5::Buffer::new(Some(&self.tag_table));
         code_buffer.set_text(&code);
+
+        let language = self.in_code_block.take().flatten();
+        let normalized_language = language.as_deref().map(normalize_language_alias);
+
+        if let Some(language_id) = normalized_language.as_deref() {
+            let language_manager = sourceview5::LanguageManager::default();
+            let fallback_language = language.as_deref().map(str::to_ascii_lowercase);
+            let resolved_language = language_manager.language(language_id).or_else(|| {
+                fallback_language
+                    .as_deref()
+                    .and_then(|id| language_manager.language(id))
+            });
+
+            if let Some(source_language) = resolved_language {
+                code_buffer.set_language(Some(&source_language));
+                code_buffer.set_highlight_syntax(true);
+            } else {
+                code_buffer.set_language(None);
+                code_buffer.set_highlight_syntax(false);
+            }
+        } else {
+            code_buffer.set_language(None);
+            code_buffer.set_highlight_syntax(false);
+        }
 
         if let Some(query) = self.highlight_query.as_deref() {
             self.code_block_match_count += apply_search_highlight(&code_buffer, query);
         }
 
-        let code_view = gtk::TextView::with_buffer(&code_buffer);
+        apply_source_style_scheme(&code_buffer, is_dark_mode());
+        self.source_buffers.push(code_buffer.downgrade());
+
+        let code_view = sourceview5::View::with_buffer(&code_buffer);
         code_view.set_editable(false);
         code_view.set_cursor_visible(false);
         code_view.set_monospace(true);
@@ -484,8 +562,6 @@ impl MarkdownBufferWriter {
         scroller.set_vscrollbar_policy(gtk::PolicyType::Never);
         scroller.add_css_class("code-block-scroller");
         scroller.set_child(Some(&code_view));
-
-        let language = self.in_code_block.take().flatten();
 
         let outer = gtk::Box::new(gtk::Orientation::Vertical, 0);
         outer.add_css_class("code-block-widget");
@@ -697,8 +773,14 @@ impl MarkdownBufferWriter {
         }
     }
 
-    /// Finalize and return all segments plus total widget match count.
-    fn finalize(mut self) -> (Vec<MarkdownSegment>, usize) {
+    /// Finalize and return segments, widget match count, and source buffers.
+    fn finalize(
+        mut self,
+    ) -> (
+        Vec<MarkdownSegment>,
+        usize,
+        Vec<glib::WeakRef<sourceview5::Buffer>>,
+    ) {
         if self.buffer.char_count() > 0 {
             self.segments.push(MarkdownSegment::Text(self.buffer));
         }
@@ -723,6 +805,7 @@ impl MarkdownBufferWriter {
         (
             self.segments,
             self.table_match_count + self.code_block_match_count,
+            self.source_buffers,
         )
     }
 }
@@ -771,16 +854,26 @@ pub fn render_markdown_to_textview(
 
     let mut writer = MarkdownBufferWriter::new(tag_table.clone(), highlight_query);
     writer.process(content);
-    let (segments, table_match_count) = writer.finalize();
+    let (segments, table_match_count, source_buffers) = writer.finalize();
 
     // Wire up theme-change listener that updates tag colours. Since all
     // buffers share the same tag_table, one handler covers everything.
     let style_manager = adw::StyleManager::default();
     let tt_weak = tag_table.downgrade();
+    let source_buffers = std::cell::RefCell::new(source_buffers);
     let theme_handler = style_manager.connect_dark_notify(move |manager| {
         if let Some(tt) = tt_weak.upgrade() {
             apply_theme_palette_to_tags(&tt, manager.is_dark());
         }
+
+        source_buffers.borrow_mut().retain(|weak_buffer| {
+            if let Some(buffer) = weak_buffer.upgrade() {
+                apply_source_style_scheme(&buffer, manager.is_dark());
+                true
+            } else {
+                false
+            }
+        });
     });
 
     let has_widgets = segments
@@ -832,7 +925,9 @@ pub fn render_markdown_to_textview(
 ///
 /// Uses the `search-highlight` tag from the buffer's tag table.
 /// Returns the number of matches found.
-fn apply_search_highlight(buffer: &gtk::TextBuffer, query: &str) -> usize {
+fn apply_search_highlight(buffer: &impl IsA<gtk::TextBuffer>, query: &str) -> usize {
+    let buffer: &gtk::TextBuffer = buffer.as_ref();
+
     if query.is_empty() {
         return 0;
     }
@@ -897,6 +992,22 @@ fn apply_search_highlight(buffer: &gtk::TextBuffer, query: &str) -> usize {
 mod tests {
     use super::*;
 
+    #[test]
+    fn source_style_scheme_id_matches_adwaita_theme_names() {
+        assert_eq!(source_style_scheme_id(false), "Adwaita");
+        assert_eq!(source_style_scheme_id(true), "Adwaita-dark");
+    }
+
+    #[gtk::test]
+    fn search_highlight_tag_has_highest_priority() {
+        let table = create_tag_table();
+        let highlight = table
+            .lookup("search-highlight")
+            .expect("search-highlight tag exists");
+
+        assert_eq!(highlight.priority(), table.size() - 1);
+    }
+
     /// Downcast the rendered widget to a single TextView (for non-table content).
     fn as_textview(widget: &gtk::Widget) -> gtk::TextView {
         widget
@@ -934,6 +1045,18 @@ mod tests {
             child = c.next_sibling();
         }
         found
+    }
+
+    fn first_source_buffer(widget: &gtk::Widget) -> sourceview5::Buffer {
+        let source_views = find_widgets_of_type::<sourceview5::View>(widget);
+        let source_view = source_views
+            .into_iter()
+            .next()
+            .expect("expected code SourceView");
+        source_view
+            .buffer()
+            .downcast::<sourceview5::Buffer>()
+            .expect("expected GtkSourceBuffer")
     }
 
     /// Collect all table widgets (ScrolledWindows containing Grids) from
@@ -1359,15 +1482,10 @@ mod tests {
     }
 
     #[gtk::test]
-    fn code_block_search_highlight_tag_applied_inside_embedded_textview() {
+    fn code_block_search_highlight_tag_applied_inside_source_buffer() {
         let md = "```\nhello world\n```";
         let (widget, _) = render_markdown_to_textview(md, Some("world"));
-        let code_views = find_widgets_of_type::<gtk::TextView>(&widget);
-        let code_view = code_views
-            .into_iter()
-            .next()
-            .expect("expected code TextView");
-        let buffer = code_view.buffer();
+        let buffer = first_source_buffer(&widget);
         let iter = buffer.iter_at_offset(6);
         assert!(
             iter.tags()
@@ -1375,6 +1493,115 @@ mod tests {
                 .any(|t: &gtk::TextTag| t.name().as_deref() == Some("search-highlight")),
             "expected search-highlight tag in code buffer"
         );
+    }
+
+    /// Regression guard for PR #118 review comment (r3060859924):
+    /// `GtkSourceBuffer` shares the markdown `TextTagTable`, and any tag it
+    /// adds when a language is attached gets the highest priority by default,
+    /// potentially relegating `search-highlight` below syntax tags.
+    #[gtk::test]
+    fn search_highlight_keeps_highest_priority_after_code_block_syntax_tags() {
+        let md = "```rust\nfn main() { let value = 1; }\n```";
+        let (widget, _) = render_markdown_to_textview(md, Some("main"));
+
+        let buffer = first_source_buffer(&widget);
+        assert!(buffer.is_highlight_syntax());
+        assert!(buffer.language().is_some(), "rust language should resolve");
+
+        // Force GtkSourceView to materialise its syntax tags on the shared
+        // tag table for the entire buffer range.
+        let start = buffer.start_iter();
+        let end = buffer.end_iter();
+        buffer.ensure_highlight(&start, &end);
+
+        // Drain any pending idle work the highlighter may have queued.
+        let context = glib::MainContext::default();
+        while context.iteration(false) {}
+
+        let table = buffer.tag_table();
+        let highlight = table
+            .lookup("search-highlight")
+            .expect("search-highlight tag exists");
+
+        assert_eq!(
+            highlight.priority(),
+            table.size() - 1,
+            "search-highlight must remain the highest-priority tag even after \
+             GtkSourceView adds its syntax tags to the shared tag table"
+        );
+    }
+
+    #[gtk::test]
+    fn code_block_known_language_uses_source_buffer_with_syntax_highlighting() {
+        let md = "```rust\nfn main() {}\n```";
+        let (widget, _) = render_markdown_to_textview(md, None);
+
+        let buffer = first_source_buffer(&widget);
+        assert!(buffer.is_highlight_syntax());
+
+        let language = buffer.language().expect("expected resolved language");
+        assert_eq!(language.id(), "rust");
+    }
+
+    #[gtk::test]
+    fn code_block_alias_language_resolves_before_lookup() {
+        let md = "```js\nconsole.log('ok');\n```";
+        let (widget, _) = render_markdown_to_textview(md, None);
+
+        assert_eq!(normalize_language_alias("js"), "js");
+
+        let buffer = first_source_buffer(&widget);
+        let language = buffer.language().expect("expected resolved language");
+        assert_eq!(language.id(), "js");
+        assert!(buffer.is_highlight_syntax());
+    }
+
+    #[gtk::test]
+    fn code_block_full_javascript_fence_resolves_to_js_language() {
+        let md = "```javascript\nconsole.log('ok');\n```";
+        let (widget, _) = render_markdown_to_textview(md, None);
+
+        let buffer = first_source_buffer(&widget);
+        let language = buffer.language().expect("expected resolved language");
+        assert_eq!(language.id(), "js");
+        assert!(buffer.is_highlight_syntax());
+    }
+
+    #[gtk::test]
+    fn language_aliases_resolve_to_known_source_view_languages() {
+        let manager = sourceview5::LanguageManager::default();
+        for (alias, canonical) in LANGUAGE_ALIASES {
+            assert_eq!(
+                normalize_language_alias(alias),
+                *canonical,
+                "alias `{alias}` should normalise to `{canonical}`"
+            );
+            assert!(
+                manager.language(canonical).is_some(),
+                "GtkSourceView no longer recognises language id `{canonical}` \
+                 (from alias `{alias}`)"
+            );
+        }
+    }
+
+    #[gtk::test]
+    fn code_block_unknown_language_disables_syntax_highlighting() {
+        let md = "```totally-unknown\nvalue\n```";
+        let (widget, _) = render_markdown_to_textview(md, None);
+
+        let buffer = first_source_buffer(&widget);
+        assert!(buffer.language().is_none());
+        assert!(!buffer.is_highlight_syntax());
+    }
+
+    #[gtk::test]
+    fn code_block_without_language_disables_syntax_highlighting() {
+        let md = "```\nvalue\n```";
+        let (widget, _) = render_markdown_to_textview(md, None);
+
+        let buffer = first_source_buffer(&widget);
+        assert!(buffer.language().is_none());
+        assert!(!buffer.is_highlight_syntax());
     }
 
     #[gtk::test]

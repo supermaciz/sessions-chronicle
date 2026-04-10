@@ -14,7 +14,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - name: Install dependencies
-        run: dnf install -y gcc pkg-config gtk4-devel libadwaita-devel glib2-devel rust cargo git xorg-x11-server-Xvfb
+        run: dnf install -y gcc pkg-config gtk4-devel libadwaita-devel glib2-devel gtksourceview5-devel rust cargo git xorg-x11-server-Xvfb
       - name: Run cargo test
         run: xvfb-run cargo test --all --no-fail-fast
 
@@ -26,7 +26,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - name: Install dependencies
-        run: dnf install -y gcc pkg-config gtk4-devel libadwaita-devel glib2-devel rust cargo clippy
+        run: dnf install -y gcc pkg-config gtk4-devel libadwaita-devel glib2-devel gtksourceview5-devel rust cargo clippy
       - name: Run cargo clippy
         run: cargo clippy --all -- -D warnings
 
@@ -50,7 +50,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - name: Install system dependencies
-        run: dnf install -y gcc pkg-config gtk4-devel libadwaita-devel glib2-devel curl git gnupg2 xorg-x11-server-Xvfb
+        run: dnf install -y gcc pkg-config gtk4-devel libadwaita-devel glib2-devel gtksourceview5-devel curl git gnupg2 xorg-x11-server-Xvfb
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
         with:

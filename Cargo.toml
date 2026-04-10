@@ -28,6 +28,7 @@ which = "8.0.2"
 pulldown-cmark = { version = "0.13", default-features = false, features = ["simd"] }
 regex = "1"
 similar = "3.0.0"
+sourceview5 = "0.10"
 
 [build-dependencies]
 relm4-icons-build = { git = "https://github.com/Relm4/icons", rev = "647a5fadad8eb5b5e66ecef329770ab4597c5e4d" }
