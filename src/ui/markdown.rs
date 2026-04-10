@@ -146,6 +146,20 @@ fn create_tag_table() -> gtk::TextTagTable {
     table.add(&highlight);
     highlight.set_priority(table.size() - 1);
 
+    // `GtkSourceBuffer` shares this tag table with plain markdown buffers and
+    // adds its own syntax tags lazily when a language is attached. Newly added
+    // tags get the highest priority by default, which would otherwise relegate
+    // `search-highlight` below syntax tags and let code-block syntax colours
+    // override search matches. Re-promote `search-highlight` on every insert.
+    table.connect_tag_added(|table, added| {
+        if added.name().as_deref() == Some("search-highlight") {
+            return;
+        }
+        if let Some(highlight) = table.lookup("search-highlight") {
+            highlight.set_priority(table.size() - 1);
+        }
+    });
+
     apply_theme_palette_to_tags(&table, is_dark_mode());
 
     table
@@ -1468,6 +1482,42 @@ mod tests {
                 .iter()
                 .any(|t: &gtk::TextTag| t.name().as_deref() == Some("search-highlight")),
             "expected search-highlight tag in code buffer"
+        );
+    }
+
+    /// Regression guard for PR #118 review comment (r3060859924):
+    /// `GtkSourceBuffer` shares the markdown `TextTagTable`, and any tag it
+    /// adds when a language is attached gets the highest priority by default,
+    /// potentially relegating `search-highlight` below syntax tags.
+    #[gtk::test]
+    fn search_highlight_keeps_highest_priority_after_code_block_syntax_tags() {
+        let md = "```rust\nfn main() { let value = 1; }\n```";
+        let (widget, _) = render_markdown_to_textview(md, Some("main"));
+
+        let buffer = first_source_buffer(&widget);
+        assert!(buffer.is_highlight_syntax());
+        assert!(buffer.language().is_some(), "rust language should resolve");
+
+        // Force GtkSourceView to materialise its syntax tags on the shared
+        // tag table for the entire buffer range.
+        let start = buffer.start_iter();
+        let end = buffer.end_iter();
+        buffer.ensure_highlight(&start, &end);
+
+        // Drain any pending idle work the highlighter may have queued.
+        let context = glib::MainContext::default();
+        while context.iteration(false) {}
+
+        let table = buffer.tag_table();
+        let highlight = table
+            .lookup("search-highlight")
+            .expect("search-highlight tag exists");
+
+        assert_eq!(
+            highlight.priority(),
+            table.size() - 1,
+            "search-highlight must remain the highest-priority tag even after \
+             GtkSourceView adds its syntax tags to the shared tag table"
         );
     }
 
