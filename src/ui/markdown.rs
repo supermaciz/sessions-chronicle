@@ -63,7 +63,10 @@ fn apply_theme_palette_to_tags(table: &gtk::TextTagTable, dark: bool) {
 
 fn normalize_language_alias(language: &str) -> String {
     match language.to_ascii_lowercase().as_str() {
-        "js" => "javascript".to_string(),
+        // GtkSourceView 5 exposes the JavaScript language as `js`, not
+        // `javascript`. Map both the common fence tag and the long form to
+        // the canonical id so ```javascript highlights identically to ```js.
+        "js" | "javascript" => "js".to_string(),
         "ts" => "typescript".to_string(),
         "py" => "python".to_string(),
         "sh" | "shell" | "bash" | "zsh" => "sh".to_string(),
@@ -1538,12 +1541,58 @@ mod tests {
         let md = "```js\nconsole.log('ok');\n```";
         let (widget, _) = render_markdown_to_textview(md, None);
 
-        assert_eq!(normalize_language_alias("js"), "javascript");
+        assert_eq!(normalize_language_alias("js"), "js");
 
         let buffer = first_source_buffer(&widget);
         let language = buffer.language().expect("expected resolved language");
-        assert!(language.id() == "javascript" || language.id() == "js");
+        assert_eq!(language.id(), "js");
         assert!(buffer.is_highlight_syntax());
+    }
+
+    #[gtk::test]
+    fn code_block_full_javascript_fence_resolves_to_js_language() {
+        let md = "```javascript\nconsole.log('ok');\n```";
+        let (widget, _) = render_markdown_to_textview(md, None);
+
+        let buffer = first_source_buffer(&widget);
+        let language = buffer.language().expect("expected resolved language");
+        assert_eq!(language.id(), "js");
+        assert!(buffer.is_highlight_syntax());
+    }
+
+    #[gtk::test]
+    fn language_aliases_resolve_to_known_source_view_languages() {
+        // Every alias handled by `normalize_language_alias` must map to a
+        // canonical id that `LanguageManager::default()` still recognises.
+        // Catches upstream GtkSourceView id renames before users lose code
+        // block syntax highlighting.
+        let cases: &[(&str, &str)] = &[
+            ("js", "js"),
+            ("javascript", "js"),
+            ("ts", "typescript"),
+            ("py", "python"),
+            ("sh", "sh"),
+            ("shell", "sh"),
+            ("bash", "sh"),
+            ("zsh", "sh"),
+            ("rs", "rust"),
+            ("yml", "yaml"),
+            ("c++", "cpp"),
+        ];
+
+        let manager = sourceview5::LanguageManager::default();
+        for (alias, canonical) in cases {
+            assert_eq!(
+                normalize_language_alias(alias),
+                *canonical,
+                "alias `{alias}` should normalise to `{canonical}`"
+            );
+            assert!(
+                manager.language(canonical).is_some(),
+                "GtkSourceView no longer recognises language id `{canonical}` \
+                 (from alias `{alias}`)"
+            );
+        }
     }
 
     #[gtk::test]
