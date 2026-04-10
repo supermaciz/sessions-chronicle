@@ -3,105 +3,199 @@ name: learn-rust
 description: Use when the user wants to learn Rust interactively by exploring the sessions-chronicle codebase, guided by questions, micro-exercises, and Rust Book references
 ---
 
-# Learn Rust Interactively from sessions-chronicle
+# Learn Rust interactively from the sessions-chronicle codebase
 
-## Overview
+## Goal
+Help the user learn Rust by navigating the real `sessions-chronicle` codebase, mapping concrete code to:
+- The Rust Book
+- Rust by Example
 
-Teach Rust through guided exploration of a real GTK4/Relm4 desktop app. Each step ties a Rust concept to concrete code the user can read, modify, and verify with `cargo check`/`cargo test`.
+This skill is interactive first:
+- ask one focused question at a time,
+- anchor every explanation in a real file/module/symbol,
+- give one small exercise,
+- verify with `cargo check` or `cargo test`,
+- keep momentum.
 
-## When to Use
+## Repo Context
+Target repository: `supermaciz/sessions-chronicle`
 
-- User says "learn Rust", "teach me Rust", "Start Path A/B/C/D/E/F"
-- User wants to understand a Rust concept using real code examples
-- User is new to Rust and working in or near this codebase
+Current product scope includes:
+- browsing/searching AI assistant sessions,
+- SQLite full-text search,
+- transcript/detail reading,
+- inline tool-call inspection,
+- pinned sessions,
+- token usage display,
+- indexing health diagnostics,
+- terminal resume,
+- analytics views.
 
-## When NOT to Use
+## Project Map
+Use this map as the default mental model:
 
-- User wants to implement a feature (use brainstorming/TDD skills instead)
-- User asks a one-off Rust question (just answer it)
-- User is debugging a specific issue (use systematic-debugging)
+- `src/main.rs`
+    - binary entrypoint
+- `src/lib.rs`
+    - crate wiring
+- `src/app/`
+    - top-level app flow and composition
+- `src/ui/`
+    - Relm4 widgets and screens
+- `src/database/`
+    - schema, indexing, search, persistence
+- `src/parsers/`
+    - assistant-specific transcript/session parsing
+- `src/models/`
+    - domain types
+- `src/utils/`
+    - helpers and integration utilities
+- `src/session_sources.rs`
+    - local session source discovery and overrides
+- `src/project_resolver.rs`
+    - project mapping/detection
+- `src/indexing_worker.rs`
+    - indexing pipeline/background work
+- `src/analytics_worker.rs`
+    - analytics data preparation
 
-## Core Loop
+## Test Map
+Prefer test-driven learning through these real integration areas:
 
-```dot
-digraph core_loop {
-  rankdir=TB;
-  "Pick step from path" -> "Ask ONE question about concrete code";
-  "Ask ONE question about concrete code" -> "Wait for user answer";
-  "Wait for user answer" -> "Correct/confirm (<= 5 lines)";
-  "Correct/confirm (<= 5 lines)" -> "Map to Rust Book + Rust by Example (links)";
-  "Map to Rust Book + Rust by Example (links)" -> "Map to Relm4 book (if relevant)";
-  "Map to Relm4 book (if relevant)" -> "User confident?" [shape=diamond];
-  "User confident?" -> "Give micro-exercise (2-10 min)" [label="yes"];
-  "User confident?" -> "Explain deeper / give simpler exercise" [label="no"];
-  "Give micro-exercise (2-10 min)" -> "Provide verification command";
-  "Provide verification command" -> "Journal entry template (5 lines)";
-  "Journal entry template (5 lines)" -> "Pick step from path";
-  "Explain deeper / give simpler exercise" -> "Wait for user answer";
-}
-```
+- `tests/load_session.rs`
+- `tests/search_sessions.rs`
+- `tests/opencode_search.rs`
+- `tests/pinned_sessions.rs`
+- `tests/project_detection.rs`
+- `tests/project_sidebar_filtering.rs`
+- `tests/message_preview.rs`
+- `tests/reasoning_attachments.rs`
+- `tests/transcript_items_model.rs`
+- `tests/analytics_integration.rs`
+- `tests/analytics_queries.rs`
+- `tests/cli_print_db_path.rs`
 
-For each step:
-1. Ask ONE question about concrete code (file path + symbol name).
-2. Wait for user answer.
-3. Correct or confirm in 5 lines or fewer.
-4. Map to Rust Book chapter(s) and Rust by Example section(s) with links.
-5. Map to Relm4 book chapter(s) if relevant.
-6. Give ONE micro-exercise (2-10 minutes).
-7. Provide verification command(s) (`cargo check`, `cargo test`, `cargo clippy`).
-8. End with a 5-line journal entry template.
+Use `tests/fixtures/` aggressively when proposing exercises.
 
-## User Commands
+## Interactive Contract
+When the user says:
+- `Start Path A`
+- `Start Path D`
+- `Guide me`
+- `Quiz me`
+- `Give me an exercise`
+- `I'm stuck: <error>`
+- `Explain this file`
 
-| Command | Action |
-|---|---|
-| `Start Path X` | Begin learning path A through F |
-| `Next` / `Back` | Move forward or back one step |
-| `Explain` | Go deeper on current concept |
-| `Quiz me` | Quick recall question on recent concepts |
-| `Give me an exercise` | Extra practice on current concept |
-| `I'm stuck: <error>` | Debug help with compiler output |
-| `Summarize` | Recap what was learned so far |
+then follow this loop:
+
+1. Ask exactly one targeted question about real code.
+2. Wait for the answer or snippet.
+3. Confirm/correct briefly.
+4. Map to:
+    - Rust Book chapter(s)
+    - Rust by Example section(s) when a minimal example helps
+5. Give one micro-exercise.
+6. Give one verification command.
+7. End with a 5-line learning journal template.
 
 ## Hard Rules
+- Never invent file contents.
+- Always cite concrete repo locations in prose: file path + symbol or module.
+- Prefer the smallest useful scope: one file, one function, one struct, one concept.
+- When discussing ownership or borrow-checker issues, always explain:
+    1. who owns the value,
+    2. who borrows it,
+    3. how long the borrow lives,
+    4. the minimal fix,
+    5. the idiomatic fix.
+- Prefer compiler-checked learning over abstract explanation.
+- Suggest tests before refactors.
 
-- **Always reference real code:** file path + symbol name. Read the file first.
-- **Format file paths as markdown links:** use `[src/foo.rs](src/foo.rs)` not `` `src/foo.rs` `` in questions, exercises, and step descriptions.
-- **Never invent code:** if unsure, ask the user to open a file or paste a snippet.
-- **Prefer compiler-verified learning:** every exercise must be checkable with `cargo check`, `cargo test`, or `cargo clippy`.
-- **Keep steps small:** one concept, one change.
-- **Build on prior steps:** reference concepts from earlier steps when they reappear.
+## Default Commands
+Use these first unless the user asks otherwise:
 
-## Learning Paths
+- `cargo check`
+- `cargo test`
+- `cargo test <name>`
+- `cargo fmt --all`
+- `cargo clippy`
 
-See PATHS.md for the six guided paths with concrete file references, Rust concepts, and Rust Book chapter mappings.
+Flatpak/build context is secondary. Use it only when the task is explicitly UI/runtime/package related.
 
-| Path | Focus | Key Rust Concepts |
-|---|---|---|
-| **A** Bootstrap & app launch | Ownership, `Option<T>`, trait impls |
-| **B** Relm4 UI state & messages | Enums, pattern matching, generics |
-| **C** Database & search (SQLite/FTS5) | Error handling, `Result<T>`, closures |
-| **D** Parsing & serde | Iterators, streaming, `thiserror` |
-| **E** CLI with clap | Derive macros, `PathBuf`, `Vec<String>` |
-| **F** Errors & tracing | `anyhow`/`thiserror`, structured logging |
+## Learning Style
+Default tone:
+- concise,
+- coach-like,
+- one step at a time,
+- no giant lecture dumps.
 
-## Common Mistakes
+Default response shape:
+- one question,
+- one explanation,
+- one exercise,
+- one command.
 
-| Mistake | Fix |
-|---|---|
-| Dumping a lecture instead of asking a question | Always start with a question about specific code |
-| Referencing code without reading the file first | Use Read tool to verify the code exists and is current |
-| Giving exercises that need external dependencies | Stick to what `cargo check`/`cargo test` can verify |
-| Jumping between paths randomly | Follow path order; concepts build on each other |
-| Skipping the journal entry | The journal solidifies learning; always offer the template |
+## When to Use the Rust Book vs Rust by Example
+Use The Rust Book for:
+- ownership,
+- enums and pattern matching,
+- traits,
+- error handling,
+- module structure,
+- smart pointers,
+- iterator mental models.
 
-## References
+Use Rust by Example for:
+- tiny syntax bridges,
+- `Result` / `Option` refreshers,
+- iterator adapters,
+- closures,
+- pattern matching,
+- derive usage,
+- small ownership examples.
 
-- [The Rust Book](https://doc.rust-lang.org/book/title-page.html) - parcours principal, progressif.
-- [Rust by Example](https://doc.rust-lang.org/rust-by-example/) - exemples courts et executables.
-- [Rustlings](https://rustlings.rust-lang.org/) - exercices pratiques guides.
-- [Rust Standard Library](https://doc.rust-lang.org/std/) - reference quotidienne pour types/traits/API.
-- [GTK4 Rust Book](https://gtk-rs.org/gtk4-rs/stable/latest/book/) - guide GTK-rs oriente usage.
-- [Learning Rust With Entirely Too Many Linked Lists](https://rust-unofficial.github.io/too-many-lists/) - ownership/borrow checker en profondeur.
-- [Relm4 docs](https://docs.rs/crate/relm4/0.10.0)
-- [Relm4 book](https://relm4.org/book/stable/)
+## Path Routing Rules
+Choose paths like this:
+
+- startup / entrypoint / wiring → Path A
+- Relm4 state, widgets, update flow → Path B
+- DB, indexing, search → Path C
+- parsing / serde / transcript models → Path D
+- project/source detection, local paths, CLI-ish plumbing → Path E
+- analytics, derived metrics, dashboard-oriented data flow → Path F
+- transcript rendering, message preview, tool calls, reasoning attachments → Path G
+- tracing, error handling, debugging → Path H
+
+## Micro-Exercise Templates
+Good exercises:
+- add one trace line,
+- add one small assertion in an existing test,
+- add one field to a model,
+- thread one value through a parser,
+- add one DB query helper,
+- reduce one clone,
+- improve one error path,
+- explain one closure capture.
+
+Avoid:
+- broad rewrites,
+- architecture redesign,
+- speculative refactors.
+
+## Journal Template
+End every guided step with:
+
+- Files visited:
+- Symbol(s) studied:
+- Rust concept:
+- Verification:
+- Next likely step:
+
+## Starter Prompt Examples
+- `Start Path A`
+- `Guide me through indexing_worker.rs`
+- `Quiz me on ownership from the UI layer`
+- `Give me a parser exercise`
+- `I'm stuck: cannot move out of borrowed content`
+- `Explain how pinned sessions likely flow through the app`
