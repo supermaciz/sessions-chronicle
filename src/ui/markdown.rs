@@ -9,6 +9,20 @@ const DARK_DIM_FG: &str = "#aaaaaa";
 const LIGHT_DIM_FG: &str = "#666666";
 const DARK_CHECK_FG: &str = "#57e389";
 const LIGHT_CHECK_FG: &str = "#2ec27e";
+const LANGUAGE_ALIASES: &[(&str, &str)] = &[
+    // GtkSourceView 5 exposes JavaScript as `js`, not `javascript`.
+    ("js", "js"),
+    ("javascript", "js"),
+    ("ts", "typescript"),
+    ("py", "python"),
+    ("sh", "sh"),
+    ("shell", "sh"),
+    ("bash", "sh"),
+    ("zsh", "sh"),
+    ("rs", "rust"),
+    ("yml", "yaml"),
+    ("c++", "cpp"),
+];
 
 /// Escape characters that are special in Pango markup.
 ///
@@ -62,19 +76,12 @@ fn apply_theme_palette_to_tags(table: &gtk::TextTagTable, dark: bool) {
 }
 
 fn normalize_language_alias(language: &str) -> String {
-    match language.to_ascii_lowercase().as_str() {
-        // GtkSourceView 5 exposes the JavaScript language as `js`, not
-        // `javascript`. Map both the common fence tag and the long form to
-        // the canonical id so ```javascript highlights identically to ```js.
-        "js" | "javascript" => "js".to_string(),
-        "ts" => "typescript".to_string(),
-        "py" => "python".to_string(),
-        "sh" | "shell" | "bash" | "zsh" => "sh".to_string(),
-        "rs" => "rust".to_string(),
-        "yml" => "yaml".to_string(),
-        "c++" => "cpp".to_string(),
-        other => other.to_string(),
-    }
+    let lowercase = language.to_ascii_lowercase();
+    LANGUAGE_ALIASES
+        .iter()
+        .find_map(|(alias, canonical)| (*alias == lowercase).then_some(*canonical))
+        .unwrap_or(lowercase.as_str())
+        .to_string()
 }
 
 /// Create a `TextTagTable` with all markdown formatting tags.
@@ -1562,26 +1569,8 @@ mod tests {
 
     #[gtk::test]
     fn language_aliases_resolve_to_known_source_view_languages() {
-        // Every alias handled by `normalize_language_alias` must map to a
-        // canonical id that `LanguageManager::default()` still recognises.
-        // Catches upstream GtkSourceView id renames before users lose code
-        // block syntax highlighting.
-        let cases: &[(&str, &str)] = &[
-            ("js", "js"),
-            ("javascript", "js"),
-            ("ts", "typescript"),
-            ("py", "python"),
-            ("sh", "sh"),
-            ("shell", "sh"),
-            ("bash", "sh"),
-            ("zsh", "sh"),
-            ("rs", "rust"),
-            ("yml", "yaml"),
-            ("c++", "cpp"),
-        ];
-
         let manager = sourceview5::LanguageManager::default();
-        for (alias, canonical) in cases {
+        for (alias, canonical) in LANGUAGE_ALIASES {
             assert_eq!(
                 normalize_language_alias(alias),
                 *canonical,
