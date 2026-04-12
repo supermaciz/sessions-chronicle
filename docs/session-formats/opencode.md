@@ -198,6 +198,62 @@ State fields:
 | `completed` | `input`, `output`, `title`, `metadata`, `time.start/end`, optional `attachments` |
 | `error` | `input`, `error`, optional `metadata`, `time.start/end` |
 
+### Task Tool — Subagent Delegation
+
+OpenCode `task` is a concrete tool name inside a `tool` part, not a generic
+todo/task-list marker. The official task tool creates or resumes a child
+session and stores the child session ID in tool state metadata.
+
+**Primary marker:**
+
+```json
+{
+  "type": "tool",
+  "tool": "task",
+  "callID": "call_xxx",
+  "state": {
+    "status": "completed",
+    "input": {
+      "description": "Explore parser layout",
+      "prompt": "Find all parser files",
+      "subagent_type": "explore",
+      "task_id": "ses_existing_child"
+    },
+    "title": "Explore parser layout",
+    "metadata": {
+      "sessionId": "ses_child123",
+      "model": {
+        "providerID": "anthropic",
+        "modelID": "claude-sonnet-4-5"
+      },
+      "truncated": false
+    },
+    "output": "task_id: ses_child123 (for resuming to continue this task if needed)\n\n<task_result>\n...\n</task_result>",
+    "time": { "start": 1776000000000, "end": 1776000010000 }
+  }
+}
+```
+
+**Observed semantics:**
+
+- Detect delegated subagent work with `json_extract(part.data, '$.type') = 'tool'`
+  and `json_extract(part.data, '$.tool') = 'task'`
+- `$.state.input.description` is the short task title
+- `$.state.input.prompt` is the task prompt sent to the subagent
+- `$.state.input.subagent_type` identifies the requested OpenCode agent type
+- `$.state.input.task_id` is optional and requests resuming an existing child session
+- `$.state.metadata.sessionId` is the child session ID produced or resumed by the task tool
+- The child session is also present in the `session` table with `parent_id`
+  pointing to the parent session
+- Local SQLite scan refreshed 2026-04-13: `tool == "task"` appeared 628 times;
+  616 completed, 10 errored, 2 running; every child session in that DB was
+  referenced by at least one task tool via `state.metadata.sessionId`
+
+Do not collapse this with `part.type == "subtask"`. `subtask` is a distinct
+part schema with `prompt`, `description`, `agent`, optional `model`, and optional
+`command`, while `tool == "task"` is a tool lifecycle record with `state`,
+`callID`, and child-session metadata.
+
 ### Skill Invocation Marker
 
 OpenCode skill loading is not just implied by Markdown headings in user text.
@@ -279,6 +335,23 @@ SELECT
 FROM part p
 WHERE json_extract(p.data, '$.type') = 'tool'
   AND lower(json_extract(p.data, '$.tool')) = 'skill'
+ORDER BY p.time_created DESC
+LIMIT 50;
+```
+
+Find recent task-tool subagent invocations:
+
+```sql
+SELECT
+  p.session_id AS parent_session_id,
+  json_extract(p.data, '$.state.metadata.sessionId') AS child_session_id,
+  json_extract(p.data, '$.state.status') AS status,
+  json_extract(p.data, '$.state.input.subagent_type') AS subagent_type,
+  json_extract(p.data, '$.state.title') AS title,
+  datetime(p.time_created / 1000, 'unixepoch') AS created_utc
+FROM part p
+WHERE json_extract(p.data, '$.type') = 'tool'
+  AND json_extract(p.data, '$.tool') = 'task'
 ORDER BY p.time_created DESC
 LIMIT 50;
 ```
@@ -388,6 +461,9 @@ Key fields:
 
 ### Subtask Part (records delegated work in parent session)
 
+This is a distinct part type from `tool == "task"`. Use the task tool marker
+when you need the child session link (`state.metadata.sessionId`).
+
 ```json
 {
   "id": "part_subtask",
@@ -420,6 +496,8 @@ Model metadata is message-scoped (not session-scoped), unchanged between SQLite 
 
 - Child sessions spawned through task tools or agent mentions
 - Identified by presence of `parentID` field (both formats)
+- In SQLite task-tool records, `part.data.state.metadata.sessionId` points to
+  the child session created or resumed by `tool == "task"`
 - Form hierarchical parent-child relationships
 - Can accumulate without cleanup (known limitation)
 
@@ -466,6 +544,9 @@ Current indexing strategy is **SQLite-first dual-read with JSON fallback**:
 - Indexes sessions with `parentID` as subagent sessions (`is_subagent = 1`)
 - Converts `part.type == text` into transcript messages
 - Extracts `part.type == tool` into indexed tool-call records and `part.type == subtask` into subagent records
+- Current parser does not yet special-case `part.type == tool && tool == "task"`,
+  so task-tool subagent launches are currently indexed as generic tool calls
+  instead of subagent rows linked to `state.metadata.sessionId`
 - Non-message parts like `reasoning`, `step-start`, `step-finish`, `snapshot`, `compaction`, `file`, `agent`, `retry`, and `patch` are currently not rendered as transcript messages
 - Current official schema also includes optional `workspaceID` on sessions and optional `overflow` on `compaction` parts
 

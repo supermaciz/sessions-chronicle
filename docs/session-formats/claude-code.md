@@ -90,6 +90,11 @@ See [SESSION_FORMAT_ANALYSIS.md](../SESSION_FORMAT_ANALYSIS.md) for cross-assist
 
 ### Assistant Subagent Launch Block (observed in current local sessions)
 
+Claude Code subagent launches are currently emitted as `tool_use` blocks with
+`name == "Agent"`. `Task` was the older tool name and remains an alias in some
+settings/agent definitions, but recent local JSONL logs use `Agent` for
+subagent launches.
+
 ```json
 {
   "type": "assistant",
@@ -104,6 +109,8 @@ See [SESSION_FORMAT_ANALYSIS.md](../SESSION_FORMAT_ANALYSIS.md) for cross-assist
         "input": {
           "description": "Explore project docs and current state",
           "subagent_type": "Explore",
+          "name": "Explore",
+          "run_in_background": false,
           "prompt": "..."
         },
         "caller": {
@@ -289,12 +296,16 @@ Notes:
 Current implementation: `src/parsers/claude_code.rs`
 
 - Indexes `type == user|assistant` text content
-- Extracts `tool_use` blocks as tool calls (current implementation maps `Task` tool uses to subagent records)
+- Extracts `tool_use` blocks as tool calls; current implementation maps both
+  `Agent` and legacy `Task` tool uses to subagent records
 - Correlates `tool_result` blocks by `tool_use_id`
 - Does not currently normalize `system/local_command` events into tool calls
 - Does not currently persist/index `message.model` in Sessions Chronicle database schema
-- Recent real Claude Code sessions (v2.1.87) show subagent launches as `name == "Agent"`
-  with `input.subagent_type`, so the local parser assumption is now stale relative to current logs.
+- Recent real Claude Code sessions (local scan refreshed 2026-04-13, versions
+  observed through v2.1.100) show subagent launches as `name == "Agent"` with
+  `input.description`, `input.subagent_type`, and `input.prompt`; optional
+  fields include `input.name`, `input.run_in_background`, `input.team_name`,
+  and `input.mode`.
 
 **Title extraction:** First parsed `user` message content (assistant/system/summary are ignored).
 
@@ -315,6 +326,9 @@ fn extract_content_claude(event: &Value) -> Option<String> {
 
 - Tool invocations appear in assistant `message.content[]` as `{type: "tool_use", id, name, input}`.
 - Current local samples use PascalCase tool names such as `Read`, `Edit`, `Bash`, and `Agent`.
+- `Agent` is the current Claude Code subagent launch tool name. Treat exact
+  `Task` as a legacy subagent launch alias, not as equivalent to task-list tools
+  such as `TaskCreate`, `TaskUpdate`, or `TaskList`.
 - Tool execution output is commonly observable in `system` events (`subtype: "local_command"`)
   with `command`, `stdout`, `stderr` fields.
 - Tool result payloads may also be duplicated in a top-level `toolUseResult` object on the user event.
