@@ -82,7 +82,10 @@ CREATE TABLE project (
   commands TEXT                     -- JSON: {start?: string}
 );
 
--- Todos, permissions, session shares also stored in the same DB
+-- Companion tables in the same DB: todo, permission, session_share,
+--   workspace, project, event, event_sequence, account, account_state,
+--   control_account
+-- (__drizzle_migrations tracks applied schema migrations)
 ```
 
 ### Session Object Fields
@@ -99,6 +102,9 @@ CREATE TABLE project (
   version: string
   share?: { url: string }
   summary?: { additions, deletions, files, diffs?: FileDiff[] }
+  // ⚠️ v1.4.0 SDK break: FileDiff no longer carries `to`/`from` full-file
+  // contents; only `patch` (unified diff). Applies to session `summary.diffs`,
+  // user-message `summary.diffs`, and edit/patch tool metadata.
   revert?: { messageID, partID?, snapshot?, diff? }
   permission?: PermissionRuleset
   time: { created, updated, compacting?, archived? }  // Unix ms
@@ -114,13 +120,14 @@ Newer fields vs previous docs: `slug`, `share`, `permission`, `revert`, `workspa
 {
   role: "user"
   agent: string
-  model: { providerID: string; modelID: string }
+  model: { providerID: string; modelID: string; variant?: string }
   format?: { type: "text" } | { type: "json_schema", schema, retryCount? }
   summary?: { title?, body?, diffs: FileDiff[] }
   system?: string
   tools?: Record<string, boolean>
-  variant?: string
 }
+// ⚠️ v1.4.0 SDK break: `variant` moved from top-level into `model.variant`.
+// Sessions written by OpenCode ≥ 1.4.0 use the nested shape.
 ```
 
 ### Message `data` Blob — Assistant
