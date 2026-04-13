@@ -20,7 +20,7 @@ Sources used:
 - Verifying upstream schemas:
   - Claude Code: [Anthropic API tool use docs](https://docs.anthropic.com/en/docs/build-with-claude/tool-use/overview)
   - Codex protocol/models: `openai/codex` (`codex-rs/protocol/src/protocol.rs`, `codex-rs/protocol/src/models.rs`)
-  - OpenCode MessageV2: `sst/opencode` (`packages/opencode/src/session/message-v2.ts`)
+  - OpenCode MessageV2: `anomalyco/opencode` (`packages/opencode/src/session/message-v2.ts`)
   - Mistral Vibe logger/types: `mistralai/mistral-vibe` (`vibe/core/session/session_logger.py`, `vibe/core/types.py`)
 
 Local sample size (home directory):
@@ -87,9 +87,10 @@ Two error signals exist in Claude `tool_result`:
 
 ### Subagent detection
 
-Tool calls with `name == "Task"` are treated as subagent invocations,
-not regular tool calls. The parser extracts `input.description` as title and `input.prompt`
-as the subagent prompt. The tool result becomes `result_summary` on the `Subagent` record.
+Tool calls with `name == "Agent"` are the current Claude Code subagent marker;
+legacy `name == "Task"` remains relevant for older sessions. The parser extracts
+`input.description` as title and `input.prompt` as the subagent prompt. The tool result
+becomes `result_summary` on the `Subagent` record.
 
 ### Side note
 
@@ -143,21 +144,32 @@ pending  →  running  →  completed
 
 ### Subagent detection
 
-`part.type == "subtask"` is the subagent family:
+Current OpenCode delegated subagent work is best detected from the task tool record,
+not just from `part.type == "subtask"`:
 
 ```json
 {
-  "type": "subtask",
-  "prompt": "Find all parser files",
-  "description": "Explore parser layout",
-  "agent": "explore",
-  "model": { "providerID": "anthropic", "modelID": "claude-sonnet" },
-  "command": "@explore find parser files",
-  "childSessionID": "ses_child123"
+  "type": "tool",
+  "tool": "task",
+  "state": {
+    "status": "completed",
+    "input": {
+      "description": "Explore parser layout",
+      "prompt": "Find all parser files",
+      "subagent_type": "explore",
+      "task_id": "ses_existing_child"
+    },
+    "title": "Explore parser layout",
+    "metadata": {
+      "sessionId": "ses_child123"
+    }
+  }
 }
 ```
 
-The `childSessionID` field (when present) links to a full child session in the same storage.
+The child session link lives in `state.metadata.sessionId`. `part.type == "subtask"` is a
+distinct related part shape with fields such as `description`, `prompt`, `agent`, optional
+`model`, and optional `command`; it is not the same record type as `tool == "task"`.
 
 ---
 
@@ -323,8 +335,8 @@ populated by every parser:
 
 | Agent | Subagent trigger | Subagent data fields | Child session link |
 |-------|-----------------|---------------------|-------------------|
-| Claude Code | `tool_use.name == "Task"` | `input.description` (title), `input.prompt` | None (inline in parent JSONL) |
-| OpenCode | `part.type == "subtask"` | `description`, `prompt`, `agent`, `model`, `command` | `childSessionID` → child `ses_*` |
+| Claude Code | `tool_use.name == "Agent"` (legacy `Task` alias) | `input.description` (title), `input.prompt`, `input.subagent_type` | None (inline in parent JSONL) |
+| OpenCode | `part.type == "tool" && tool == "task"` | `state.input.description`, `state.input.prompt`, `state.input.subagent_type` | `state.metadata.sessionId` → child `ses_*` |
 | Codex CLI | `collab_agent_spawn_begin/end` | `prompt`, `sender_thread_id`, `new_thread_id` | Thread-based (not yet parsed) |
 | Mistral Vibe | — | — | — |
 
@@ -411,6 +423,6 @@ For a polished UI, the key is a normalization layer that:
 - [Anthropic API — Tool Use](https://docs.anthropic.com/en/docs/build-with-claude/tool-use/overview)
 - [Codex protocol definitions (`protocol.rs`)](https://github.com/openai/codex/blob/main/codex-rs/protocol/src/protocol.rs)
 - [Codex rollout recorder](https://github.com/openai/codex/blob/main/codex-rs/core/src/rollout/recorder.rs)
-- [OpenCode `MessageV2` part schemas](https://github.com/sst/opencode/blob/dev/packages/opencode/src/session/message-v2.ts)
+- [OpenCode `MessageV2` part schemas](https://github.com/anomalyco/opencode/blob/dev/packages/opencode/src/session/message-v2.ts)
 - [Mistral Vibe session logger](https://github.com/mistralai/mistral-vibe/blob/main/vibe/core/session/session_logger.py)
 - [Mistral Vibe types](https://github.com/mistralai/mistral-vibe/blob/main/vibe/core/types.py)

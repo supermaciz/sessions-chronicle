@@ -272,13 +272,13 @@ Each tool can persist token usage metrics, but **the granularity and presence ar
 
 ### OpenCode
 - [Agent Sessions GitHub Repository](https://github.com/jazzyalex/agent-sessions)
-- [OpenCode GitHub Repository](https://github.com/sst/opencode)
-- [OpenCode Sessions Issue #3026](https://github.com/sst/opencode/issues/3026)
-- [OpenCode Sessions Issue #5734](https://github.com/sst/opencode/issues/5734)
-- [OpenCode `MessageV2` part schemas](https://github.com/sst/opencode/blob/dev/packages/opencode/src/session/message-v2.ts)
-- [OpenCode task tool](https://github.com/sst/opencode/blob/dev/packages/opencode/src/tool/task.ts)
-- [OpenCode generated v2 SDK types](https://github.com/sst/opencode/blob/dev/packages/sdk/js/src/v2/gen/types.gen.ts)
-- [OpenCode session schema](https://github.com/sst/opencode/blob/dev/packages/opencode/src/session/index.ts)
+- [OpenCode GitHub Repository](https://github.com/anomalyco/opencode)
+- [OpenCode Sessions Issue #3026](https://github.com/anomalyco/opencode/issues/3026)
+- [OpenCode Sessions Issue #5734](https://github.com/anomalyco/opencode/issues/5734)
+- [OpenCode `MessageV2` part schemas](https://github.com/anomalyco/opencode/blob/dev/packages/opencode/src/session/message-v2.ts)
+- [OpenCode task tool](https://github.com/anomalyco/opencode/blob/dev/packages/opencode/src/tool/task.ts)
+- [OpenCode generated v2 SDK types](https://github.com/anomalyco/opencode/blob/dev/packages/sdk/js/src/v2/gen/types.gen.ts)
+- [OpenCode session schema](https://github.com/anomalyco/opencode/blob/dev/packages/opencode/src/session/index.ts)
 
 ### Claude References
 - [Claude API tool-use block structure](https://platform.claude.com/docs/en/api/typescript/messages/create)

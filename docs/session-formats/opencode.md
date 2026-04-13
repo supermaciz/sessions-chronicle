@@ -575,10 +575,10 @@ used by the JSON backend.
 
 ## Primary Sources
 
-- [OpenCode GitHub Repository](https://github.com/sst/opencode)
-- [OpenCode `MessageV2` part schemas](https://github.com/sst/opencode/blob/dev/packages/opencode/src/session/message-v2.ts)
-- [OpenCode task tool (creates child sessions with `parentID`)](https://github.com/sst/opencode/blob/dev/packages/opencode/src/tool/task.ts)
-- [OpenCode generated v2 SDK types](https://github.com/sst/opencode/blob/dev/packages/sdk/js/src/v2/gen/types.gen.ts)
-- [OpenCode session schema](https://github.com/sst/opencode/blob/dev/packages/opencode/src/session/index.ts)
-- [OpenCode Sessions Issue #3026](https://github.com/sst/opencode/issues/3026)
-- [OpenCode Sessions Issue #5734](https://github.com/sst/opencode/issues/5734)
+- [OpenCode GitHub Repository](https://github.com/anomalyco/opencode)
+- [OpenCode `MessageV2` part schemas](https://github.com/anomalyco/opencode/blob/dev/packages/opencode/src/session/message-v2.ts)
+- [OpenCode task tool (creates child sessions with `parentID`)](https://github.com/anomalyco/opencode/blob/dev/packages/opencode/src/tool/task.ts)
+- [OpenCode generated v2 SDK types](https://github.com/anomalyco/opencode/blob/dev/packages/sdk/js/src/v2/gen/types.gen.ts)
+- [OpenCode session schema](https://github.com/anomalyco/opencode/blob/dev/packages/opencode/src/session/index.ts)
+- [OpenCode Sessions Issue #3026](https://github.com/anomalyco/opencode/issues/3026)
+- [OpenCode Sessions Issue #5734](https://github.com/anomalyco/opencode/issues/5734)

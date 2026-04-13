@@ -177,9 +177,11 @@ This is critical for sessions with thousands of messages.
 
 - Tool calls are explicit `part.type == "tool"` records with lifecycle state
   (`pending`/`running`/`completed`/`error`)
-- Delegation markers are explicit `part.type == "subtask"` records
+- Delegated subagent work is currently visible in two distinct shapes: `part.type == "tool"`
+  with `tool == "task"`, and separate `part.type == "subtask"` records
 - Current parser behavior: indexes `tool` parts as tool calls, indexes `subtask` parts as
-  subagent records, and keeps `parentID` sessions as `is_subagent`
+  subagent records, and keeps `parentID` sessions as `is_subagent`; it does not yet
+  special-case `tool == "task"` into subagent rows linked by `state.metadata.sessionId`
 
 **Mistral Vibe:**
 
