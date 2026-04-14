@@ -141,6 +141,23 @@ impl OpenCodeBackend for SqliteBackend {
         Ok(messages)
     }
 
+    fn session_has_task_tool(
+        &self,
+        session_id: &str,
+        _messages: &[MessageMetadata],
+    ) -> Result<bool> {
+        let mut stmt = self.conn.prepare(
+            "SELECT EXISTS(\
+                 SELECT 1 FROM part \
+                 WHERE session_id = ?1 \
+                 AND json_extract(data, '$.type') = 'tool' \
+                 AND json_extract(data, '$.tool') = 'task'\
+             )",
+        )?;
+        let exists: i64 = stmt.query_row([session_id], |row| row.get(0))?;
+        Ok(exists != 0)
+    }
+
     fn load_parts(&self, message_id: &str) -> Result<Vec<PartData>> {
         let mut stmt = self
             .conn

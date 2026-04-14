@@ -106,6 +106,28 @@ pub(crate) trait OpenCodeBackend {
     fn load_session_metadata(&self, entry: &SessionEntry) -> Result<SessionMetadata>;
     fn load_messages(&self, session_id: &str) -> Result<Vec<MessageMetadata>>;
     fn load_parts(&self, message_id: &str) -> Result<Vec<PartData>>;
+
+    /// Returns true if the session has any `part.type == "tool"` part with
+    /// `tool == "task"`. Used by the parser to dedup legacy `subtask` parts.
+    ///
+    /// Default impl streams one message at a time so memory stays O(message),
+    /// matching the parser's streaming constraint. Backends that can answer
+    /// this with a single query should override.
+    fn session_has_task_tool(
+        &self,
+        _session_id: &str,
+        messages: &[MessageMetadata],
+    ) -> Result<bool> {
+        for message in messages {
+            let parts = self.load_parts(&message.id)?;
+            if parts.iter().any(|p| {
+                p.kind == "tool" && p.raw.get("tool").and_then(|v| v.as_str()) == Some("task")
+            }) {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
 }
 
 pub(crate) fn read_json(path: &Path) -> Result<Value> {
@@ -170,7 +192,8 @@ impl OpenCodeParser {
         let mut step_finish_tokens: Vec<MessageTokens> = Vec::new();
         let mut pending_reasoning = PendingReasoning::default();
 
-        let mut loaded: Vec<(&MessageMetadata, Vec<PartData>)> = Vec::with_capacity(messages.len());
+        let has_task_tool_in_session = backend.session_has_task_tool(&metadata.id, &messages)?;
+
         for message in &messages {
             let mut parts = backend.load_parts(&message.id)?;
             parts.sort_by(|a, b| match (a.order, b.order) {
@@ -179,16 +202,7 @@ impl OpenCodeParser {
                 (None, Some(_)) => Ordering::Greater,
                 (None, None) => a.id.cmp(&b.id),
             });
-            loaded.push((message, parts));
-        }
 
-        let has_task_tool_in_session = loaded.iter().any(|(_, parts)| {
-            parts.iter().any(|p| {
-                p.kind == "tool" && p.raw.get("tool").and_then(|v| v.as_str()) == Some("task")
-            })
-        });
-
-        for (message, parts) in &loaded {
             for part in parts {
                 let outcome = Self::process_part(
                     &metadata.id,
@@ -196,7 +210,7 @@ impl OpenCodeParser {
                     message.role,
                     message.model.as_deref(),
                     message.time_created,
-                    part,
+                    &part,
                     &mut has_user_message,
                     has_task_tool_in_session,
                 );
