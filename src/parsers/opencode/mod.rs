@@ -1492,6 +1492,12 @@ mod tests {
             parsed.transcript_items[1].kind,
             TranscriptItemKind::Subagent
         );
+        // Dedup guard: subtask-only session must still produce the legacy subagent
+        assert_eq!(
+            parsed.subagents.len(),
+            1,
+            "subtask-only session must still produce the legacy subagent"
+        );
     }
 
     #[test]
