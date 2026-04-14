@@ -1442,6 +1442,114 @@ mod tests {
     }
 
     #[test]
+    fn task_tool_produces_subagent_entry() {
+        let temp_dir = TempDir::new().unwrap();
+        let root = temp_dir.path();
+
+        let session_path = write_session_file(
+            root,
+            "project-a",
+            "session-task.json",
+            json!({
+                "id": "session-task",
+                "directory": "/projects/alpha",
+                "time": { "created": 1_704_067_200_000i64, "updated": 1_704_067_260_000i64 }
+            }),
+        );
+
+        write_message_file(
+            root,
+            "session-task",
+            "msg-user.json",
+            json!({
+                "id": "msg-user",
+                "sessionID": "session-task",
+                "role": "user",
+                "time": { "created": 1_704_067_200_000i64 }
+            }),
+        );
+
+        write_message_file(
+            root,
+            "session-task",
+            "msg-asst.json",
+            json!({
+                "id": "msg-asst",
+                "sessionID": "session-task",
+                "role": "assistant",
+                "time": { "created": 1_704_067_260_000i64 }
+            }),
+        );
+
+        write_part_file(
+            root,
+            "msg-user",
+            "part-user.json",
+            json!({
+                "id": "part-user",
+                "order": 1,
+                "type": "text",
+                "text": "Please delegate"
+            }),
+        );
+
+        write_part_file(
+            root,
+            "msg-asst",
+            "part-task.json",
+            json!({
+                "id": "part-task",
+                "order": 1,
+                "type": "tool",
+                "tool": "task",
+                "callID": "call_abc",
+                "state": {
+                    "status": "completed",
+                    "input": {
+                        "description": "Explore parser layout",
+                        "prompt": "Find all parser files",
+                        "subagent_type": "explore"
+                    },
+                    "metadata": {
+                        "sessionId": "ses_child123"
+                    },
+                    "output": "task_id: ses_child123\n\n<task_result>done</task_result>"
+                }
+            }),
+        );
+
+        let parser = OpenCodeParser::new(root);
+        let parsed = parser.parse(&session_path).unwrap();
+
+        assert_eq!(
+            parsed.subagents.len(),
+            1,
+            "expected one subagent from tool==task"
+        );
+        assert_eq!(parsed.subagents[0].title, "Explore parser layout");
+        assert_eq!(
+            parsed.subagents[0].prompt.as_deref(),
+            Some("Find all parser files")
+        );
+        assert_eq!(
+            parsed.subagents[0].child_session_id.as_deref(),
+            Some("ses_child123")
+        );
+        assert!(
+            parsed.subagents[0]
+                .result_summary
+                .as_deref()
+                .unwrap_or_default()
+                .contains("task_result"),
+            "result_summary should carry state.output"
+        );
+        assert!(
+            parsed.tool_calls.iter().all(|tc| tc.tool_name != "task"),
+            "tool==task should not also appear as a generic tool call"
+        );
+    }
+
+    #[test]
     fn opencode_assistant_message_gets_model() {
         use crate::parsers::opencode::json_backend::JsonBackend;
 
