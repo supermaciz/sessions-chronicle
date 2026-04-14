@@ -1,6 +1,6 @@
 # Similar Projects
 
-Last reviewed: 2026-03-21
+Last reviewed: 2026-04-14
 
 A shortlist of projects in the same product space as Sessions Chronicle:
 tools that index, browse, search, or analyze local AI assistant sessions.
@@ -103,6 +103,22 @@ running many simultaneous Claude sessions.
 - **How it differs from Sessions Chronicle:** Claude Code-only; emphasis is on
   live monitoring of active sessions rather than browsing past history.
 - **Maintenance signal:** GitHub repo shows pushes on 2026-03-20.
+
+### [Claudoscope](https://github.com/cordwainersmith/Claudoscope)
+
+Native macOS menu bar app in Swift (121 stars) exclusively for Claude Code
+(`~/.claude/projects/`). Combines a compact menu bar popover with a full
+dashboard covering session browsing, analytics, cost estimation, plan and
+timeline views, hooks, skills, MCPs, memory, and a secret-scanning feature that
+alerts on leaked credentials in session history. Installable via Homebrew cask.
+
+- **Why it's adjacent:** Rich native-desktop session browsing and analytics
+  with a local-first, privacy-first approach closely mirrors Sessions
+  Chronicle's core purpose.
+- **Why it is not a direct match:** Claude Code-only, macOS-exclusive (Apple
+  Silicon, 14+), and menu-bar-first rather than a standalone multi-assistant
+  session browser.
+- **Maintenance signal:** GitHub repo shows pushes on 2026-04-13 (v0.6.0).
 
 ### [CodMate](https://github.com/loocor/codmate)
 
