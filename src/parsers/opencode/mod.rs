@@ -410,6 +410,43 @@ impl OpenCodeParser {
 
                 let state = part.raw.get("state");
 
+                if tool_name == "task" {
+                    let input = state.and_then(|s| s.get("input"));
+                    let title = input
+                        .and_then(|i| i.get("description"))
+                        .and_then(|v| v.as_str())
+                        .unwrap_or_default()
+                        .to_string();
+                    let prompt = input
+                        .and_then(|i| i.get("prompt"))
+                        .and_then(|v| v.as_str())
+                        .map(str::to_string);
+                    let child_session_id = state
+                        .and_then(|s| s.get("metadata"))
+                        .and_then(|m| m.get("sessionId"))
+                        .and_then(|v| v.as_str())
+                        .map(str::to_string);
+                    let output_text = state
+                        .and_then(|s| s.get("output"))
+                        .and_then(|v| v.as_str())
+                        .map(str::to_string);
+                    let error_text = state
+                        .and_then(|s| s.get("error"))
+                        .and_then(|v| v.as_str())
+                        .map(str::to_string);
+                    let result_summary = output_text.or(error_text);
+
+                    return PartOutcome::Subagent(Subagent {
+                        id: format!("{}-{}-{}", session_id, message_id, part.id),
+                        session_id: session_id.to_string(),
+                        title,
+                        prompt,
+                        result_summary,
+                        child_session_id,
+                        parser_ref: None,
+                    });
+                }
+
                 let status = match state.and_then(|s| s.get("status")).and_then(|v| v.as_str()) {
                     Some("completed") => ToolCallStatus::Completed,
                     Some("failed") | Some("error") => ToolCallStatus::Error,
