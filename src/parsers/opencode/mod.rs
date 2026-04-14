@@ -170,6 +170,7 @@ impl OpenCodeParser {
         let mut step_finish_tokens: Vec<MessageTokens> = Vec::new();
         let mut pending_reasoning = PendingReasoning::default();
 
+        let mut loaded: Vec<(&MessageMetadata, Vec<PartData>)> = Vec::with_capacity(messages.len());
         for message in &messages {
             let mut parts = backend.load_parts(&message.id)?;
             parts.sort_by(|a, b| match (a.order, b.order) {
@@ -178,7 +179,16 @@ impl OpenCodeParser {
                 (None, Some(_)) => Ordering::Greater,
                 (None, None) => a.id.cmp(&b.id),
             });
+            loaded.push((message, parts));
+        }
 
+        let has_task_tool_in_session = loaded.iter().any(|(_, parts)| {
+            parts.iter().any(|p| {
+                p.kind == "tool" && p.raw.get("tool").and_then(|v| v.as_str()) == Some("task")
+            })
+        });
+
+        for (message, parts) in &loaded {
             for part in parts {
                 let outcome = Self::process_part(
                     &metadata.id,
@@ -186,8 +196,9 @@ impl OpenCodeParser {
                     message.role,
                     message.model.as_deref(),
                     message.time_created,
-                    &part,
+                    part,
                     &mut has_user_message,
+                    has_task_tool_in_session,
                 );
 
                 let item_idx = transcript_items.len() as i64;
@@ -354,6 +365,7 @@ impl OpenCodeParser {
         timestamp: DateTime<Utc>,
         part: &PartData,
         has_user_message: &mut bool,
+        has_task_tool_in_session: bool,
     ) -> PartOutcome {
         match part.kind.as_str() {
             "text" => {
@@ -482,6 +494,9 @@ impl OpenCodeParser {
                 })
             }
             "subtask" => {
+                if has_task_tool_in_session {
+                    return PartOutcome::Nothing;
+                }
                 let title = part
                     .raw
                     .get("description")
@@ -1204,6 +1219,7 @@ mod tests {
                 .with_timezone(&Utc),
             &part,
             &mut has_user_message,
+            false,
         );
 
         match outcome {
