@@ -1587,6 +1587,114 @@ mod tests {
     }
 
     #[test]
+    fn task_and_subtask_coexist_dedup() {
+        let temp_dir = TempDir::new().unwrap();
+        let root = temp_dir.path();
+
+        let session_path = write_session_file(
+            root,
+            "project-a",
+            "session-dedup.json",
+            json!({
+                "id": "session-dedup",
+                "directory": "/projects/alpha",
+                "time": { "created": 1_704_067_200_000i64, "updated": 1_704_067_260_000i64 }
+            }),
+        );
+
+        write_message_file(
+            root,
+            "session-dedup",
+            "msg-user.json",
+            json!({
+                "id": "msg-user",
+                "sessionID": "session-dedup",
+                "role": "user",
+                "time": { "created": 1_704_067_200_000i64 }
+            }),
+        );
+
+        write_message_file(
+            root,
+            "session-dedup",
+            "msg-asst.json",
+            json!({
+                "id": "msg-asst",
+                "sessionID": "session-dedup",
+                "role": "assistant",
+                "time": { "created": 1_704_067_260_000i64 }
+            }),
+        );
+
+        write_part_file(
+            root,
+            "msg-user",
+            "part-user.json",
+            json!({
+                "id": "part-user",
+                "order": 1,
+                "type": "text",
+                "text": "Please delegate"
+            }),
+        );
+
+        // Legacy subtask announcement
+        write_part_file(
+            root,
+            "msg-asst",
+            "part-subtask.json",
+            json!({
+                "id": "part-subtask",
+                "order": 1,
+                "type": "subtask",
+                "description": "Same title",
+                "prompt": "legacy announcement",
+                "agent": "explore",
+                "childSessionID": "ses_child_legacy"
+            }),
+        );
+
+        // Full task-tool record
+        write_part_file(
+            root,
+            "msg-asst",
+            "part-task.json",
+            json!({
+                "id": "part-task",
+                "order": 2,
+                "type": "tool",
+                "tool": "task",
+                "callID": "call_abc",
+                "state": {
+                    "status": "completed",
+                    "input": {
+                        "description": "Same title",
+                        "prompt": "real prompt",
+                        "subagent_type": "explore"
+                    },
+                    "metadata": { "sessionId": "ses_child_real" },
+                    "output": "done"
+                }
+            }),
+        );
+
+        let parser = OpenCodeParser::new(root);
+        let parsed = parser.parse(&session_path).unwrap();
+
+        assert_eq!(
+            parsed.subagents.len(),
+            1,
+            "subtask should be deduped when tool==task is present"
+        );
+        assert_eq!(
+            parsed.subagents[0].child_session_id.as_deref(),
+            Some("ses_child_real"),
+            "surviving subagent must come from tool==task"
+        );
+        assert_eq!(parsed.subagents[0].prompt.as_deref(), Some("real prompt"));
+    }
+
+    #[test]
     fn opencode_assistant_message_gets_model() {
         use crate::parsers::opencode::json_backend::JsonBackend;
 
