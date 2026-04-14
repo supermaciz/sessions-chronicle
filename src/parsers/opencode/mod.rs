@@ -357,6 +357,7 @@ impl OpenCodeParser {
         })
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn process_part(
         session_id: &str,
         message_id: &str,
