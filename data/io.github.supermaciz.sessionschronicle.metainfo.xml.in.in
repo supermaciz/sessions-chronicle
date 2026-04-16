@@ -49,6 +49,17 @@
   </categories>
   <content_rating type="oars-1.1" />
   <releases>
+    <release version="0.4.4" date="2026-04-16">
+      <description>
+        <p>Improves transcript rendering, OpenCode parsing, and indexing reliability.</p>
+        <ul>
+          <li>Add syntax highlighting for markdown code blocks in transcripts</li>
+          <li>Parse OpenCode task tool calls as subagent activity and deduplicate subtask entries</li>
+          <li>Fix spacing around markdown tables and code blocks</li>
+          <li>Rebuild stale override fixture transcripts when indexed session data changes</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.4.3" date="2026-04-06">
       <description>
         <p>Adds transcript reasoning pills and encrypted presence support.</p>
