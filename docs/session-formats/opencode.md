@@ -543,10 +543,13 @@ Current indexing strategy is **SQLite-first dual-read with JSON fallback**:
 
 - Indexes sessions with `parentID` as subagent sessions (`is_subagent = 1`)
 - Converts `part.type == text` into transcript messages
-- Extracts `part.type == tool` into indexed tool-call records and `part.type == subtask` into subagent records
-- Current parser does not yet special-case `part.type == tool && tool == "task"`,
-  so task-tool subagent launches are currently indexed as generic tool calls
-  instead of subagent rows linked to `state.metadata.sessionId`
+- Extracts `part.type == tool` into indexed tool-call records, with the exception
+  that `tool == "task"` is mapped to subagent records (title from
+  `state.input.description`, prompt from `state.input.prompt`, `child_session_id`
+  from `state.metadata.sessionId`, result from `state.output`)
+- Extracts `part.type == subtask` into subagent records; when a session also
+  contains any `tool == "task"` part, `subtask` records are skipped to avoid
+  duplication (legacy sessions without `tool == "task"` continue to use `subtask`)
 - Non-message parts like `reasoning`, `step-start`, `step-finish`, `snapshot`, `compaction`, `file`, `agent`, `retry`, and `patch` are currently not rendered as transcript messages
 - Current official schema also includes optional `workspaceID` on sessions and optional `overflow` on `compaction` parts
 

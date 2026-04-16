@@ -28,6 +28,16 @@ impl SqliteBackend {
             db_path: db_path.to_path_buf(),
         })
     }
+
+    fn part_table_has_session_id(&self) -> Result<bool> {
+        let mut stmt = self.conn.prepare("PRAGMA table_info(part)")?;
+        let columns = stmt
+            .query_map([], |row| row.get::<_, String>(1))?
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .context("Failed to inspect OpenCode part table")?;
+
+        Ok(columns.iter().any(|column| column == "session_id"))
+    }
 }
 
 impl OpenCodeBackend for SqliteBackend {
@@ -141,6 +151,39 @@ impl OpenCodeBackend for SqliteBackend {
         Ok(messages)
     }
 
+    fn session_has_task_tool(
+        &self,
+        session_id: &str,
+        _messages: &[MessageMetadata],
+    ) -> Result<bool> {
+        let query = if self.part_table_has_session_id()? {
+            r#"
+            SELECT EXISTS(
+                SELECT 1
+                FROM part p
+                WHERE p.session_id = ?1
+                  AND CASE WHEN json_valid(p.data) THEN json_extract(p.data, '$.type') END = 'tool'
+                  AND CASE WHEN json_valid(p.data) THEN json_extract(p.data, '$.tool') END = 'task'
+            )
+            "#
+        } else {
+            r#"
+            SELECT EXISTS(
+                SELECT 1
+                FROM part p
+                INNER JOIN message m ON m.id = p.message_id
+                WHERE m.session_id = ?1
+                  AND CASE WHEN json_valid(p.data) THEN json_extract(p.data, '$.type') END = 'tool'
+                  AND CASE WHEN json_valid(p.data) THEN json_extract(p.data, '$.tool') END = 'task'
+            )
+            "#
+        };
+
+        let mut stmt = self.conn.prepare(query)?;
+        let exists: i64 = stmt.query_row([session_id], |row| row.get(0))?;
+        Ok(exists != 0)
+    }
+
     fn load_parts(&self, message_id: &str) -> Result<Vec<PartData>> {
         let mut stmt = self
             .conn
@@ -193,10 +236,81 @@ impl OpenCodeBackend for SqliteBackend {
 mod tests {
     use super::*;
     use crate::parsers::opencode::OpenCodeBackend;
+    use rusqlite::Connection;
     use std::path::{Path, PathBuf};
+    use tempfile::NamedTempFile;
 
     fn fixture_db() -> PathBuf {
         PathBuf::from("tests/fixtures/opencode_storage/opencode.db")
+    }
+
+    fn create_task_tool_backend(
+        part_has_session_id: bool,
+        part_rows: &[(&str, &str, &str, Option<&str>)],
+    ) -> (NamedTempFile, SqliteBackend) {
+        let db_file = NamedTempFile::new().unwrap();
+        {
+            let conn = Connection::open(db_file.path()).unwrap();
+            conn.execute_batch(
+                "
+                CREATE TABLE message (
+                    id TEXT PRIMARY KEY,
+                    session_id TEXT NOT NULL
+                );
+                ",
+            )
+            .unwrap();
+
+            if part_has_session_id {
+                conn.execute_batch(
+                    "
+                    CREATE TABLE part (
+                        id TEXT PRIMARY KEY,
+                        message_id TEXT NOT NULL,
+                        session_id TEXT NOT NULL,
+                        data TEXT NOT NULL
+                    );
+                    ",
+                )
+                .unwrap();
+            } else {
+                conn.execute_batch(
+                    "
+                    CREATE TABLE part (
+                        id TEXT PRIMARY KEY,
+                        message_id TEXT NOT NULL,
+                        data TEXT NOT NULL
+                    );
+                    ",
+                )
+                .unwrap();
+            }
+
+            for (part_id, message_id, session_id, data) in part_rows {
+                conn.execute(
+                    "INSERT OR IGNORE INTO message (id, session_id) VALUES (?1, ?2)",
+                    (*message_id, *session_id),
+                )
+                .unwrap();
+
+                if part_has_session_id {
+                    conn.execute(
+                        "INSERT INTO part (id, message_id, session_id, data) VALUES (?1, ?2, ?3, ?4)",
+                        (*part_id, *message_id, *session_id, data.unwrap_or("not-json")),
+                    )
+                    .unwrap();
+                } else {
+                    conn.execute(
+                        "INSERT INTO part (id, message_id, data) VALUES (?1, ?2, ?3)",
+                        (*part_id, *message_id, data.unwrap_or("not-json")),
+                    )
+                    .unwrap();
+                }
+            }
+        }
+
+        let backend = SqliteBackend::open(db_file.path()).unwrap();
+        (db_file, backend)
     }
 
     #[test]
@@ -266,6 +380,45 @@ mod tests {
             parts[0].raw.get("text").and_then(|v| v.as_str()),
             Some("This session only exists in SQLite")
         );
+    }
+
+    #[test]
+    fn session_has_task_tool_supports_part_tables_without_session_id() {
+        let (_db_file, backend) = create_task_tool_backend(
+            false,
+            &[(
+                "part-task",
+                "msg-task",
+                "session-task",
+                Some(r#"{"type":"tool","tool":"task"}"#),
+            )],
+        );
+
+        assert!(backend.session_has_task_tool("session-task", &[]).unwrap());
+        assert!(!backend.session_has_task_tool("other-session", &[]).unwrap());
+    }
+
+    #[test]
+    fn session_has_task_tool_supports_part_session_id_schema() {
+        let (_db_file, backend) = create_task_tool_backend(
+            true,
+            &[(
+                "part-task",
+                "msg-task",
+                "session-task",
+                Some(r#"{"type":"tool","tool":"task"}"#),
+            )],
+        );
+
+        assert!(backend.session_has_task_tool("session-task", &[]).unwrap());
+    }
+
+    #[test]
+    fn session_has_task_tool_ignores_malformed_part_json() {
+        let (_db_file, backend) =
+            create_task_tool_backend(true, &[("bad-part", "msg-task", "session-task", None)]);
+
+        assert!(!backend.session_has_task_tool("session-task", &[]).unwrap());
     }
 
     #[test]

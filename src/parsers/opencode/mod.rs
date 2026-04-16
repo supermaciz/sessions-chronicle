@@ -106,6 +106,28 @@ pub(crate) trait OpenCodeBackend {
     fn load_session_metadata(&self, entry: &SessionEntry) -> Result<SessionMetadata>;
     fn load_messages(&self, session_id: &str) -> Result<Vec<MessageMetadata>>;
     fn load_parts(&self, message_id: &str) -> Result<Vec<PartData>>;
+
+    /// Returns true if the session has any `part.type == "tool"` part with
+    /// `tool == "task"`. Used by the parser to dedup legacy `subtask` parts.
+    ///
+    /// Default impl streams one message at a time so memory stays O(message),
+    /// matching the parser's streaming constraint. Backends that can answer
+    /// this with a single query should override.
+    fn session_has_task_tool(
+        &self,
+        _session_id: &str,
+        messages: &[MessageMetadata],
+    ) -> Result<bool> {
+        for message in messages {
+            let parts = self.load_parts(&message.id)?;
+            if parts.iter().any(|p| {
+                p.kind == "tool" && p.raw.get("tool").and_then(|v| v.as_str()) == Some("task")
+            }) {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
 }
 
 pub(crate) fn read_json(path: &Path) -> Result<Value> {
@@ -170,6 +192,8 @@ impl OpenCodeParser {
         let mut step_finish_tokens: Vec<MessageTokens> = Vec::new();
         let mut pending_reasoning = PendingReasoning::default();
 
+        let has_task_tool_in_session = backend.session_has_task_tool(&metadata.id, &messages)?;
+
         for message in &messages {
             let mut parts = backend.load_parts(&message.id)?;
             parts.sort_by(|a, b| match (a.order, b.order) {
@@ -188,6 +212,7 @@ impl OpenCodeParser {
                     message.time_created,
                     &part,
                     &mut has_user_message,
+                    has_task_tool_in_session,
                 );
 
                 let item_idx = transcript_items.len() as i64;
@@ -346,6 +371,7 @@ impl OpenCodeParser {
         })
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn process_part(
         session_id: &str,
         message_id: &str,
@@ -354,6 +380,7 @@ impl OpenCodeParser {
         timestamp: DateTime<Utc>,
         part: &PartData,
         has_user_message: &mut bool,
+        has_task_tool_in_session: bool,
     ) -> PartOutcome {
         match part.kind.as_str() {
             "text" => {
@@ -410,6 +437,43 @@ impl OpenCodeParser {
 
                 let state = part.raw.get("state");
 
+                if tool_name == "task" {
+                    let input = state.and_then(|s| s.get("input"));
+                    let title = input
+                        .and_then(|i| i.get("description"))
+                        .and_then(|v| v.as_str())
+                        .unwrap_or_default()
+                        .to_string();
+                    let prompt = input
+                        .and_then(|i| i.get("prompt"))
+                        .and_then(|v| v.as_str())
+                        .map(str::to_string);
+                    let child_session_id = state
+                        .and_then(|s| s.get("metadata"))
+                        .and_then(|m| m.get("sessionId"))
+                        .and_then(|v| v.as_str())
+                        .map(str::to_string);
+                    let output_text = state
+                        .and_then(|s| s.get("output"))
+                        .and_then(|v| v.as_str())
+                        .map(str::to_string);
+                    let error_text = state
+                        .and_then(|s| s.get("error"))
+                        .and_then(|v| v.as_str())
+                        .map(str::to_string);
+                    let result_summary = output_text.or(error_text);
+
+                    return PartOutcome::Subagent(Subagent {
+                        id: format!("{}-{}-{}", session_id, message_id, part.id),
+                        session_id: session_id.to_string(),
+                        title,
+                        prompt,
+                        result_summary,
+                        child_session_id,
+                        parser_ref: None,
+                    });
+                }
+
                 let status = match state.and_then(|s| s.get("status")).and_then(|v| v.as_str()) {
                     Some("completed") => ToolCallStatus::Completed,
                     Some("failed") | Some("error") => ToolCallStatus::Error,
@@ -445,6 +509,9 @@ impl OpenCodeParser {
                 })
             }
             "subtask" => {
+                if has_task_tool_in_session {
+                    return PartOutcome::Nothing;
+                }
                 let title = part
                     .raw
                     .get("description")
@@ -1167,6 +1234,7 @@ mod tests {
                 .with_timezone(&Utc),
             &part,
             &mut has_user_message,
+            false,
         );
 
         match outcome {
@@ -1439,6 +1507,228 @@ mod tests {
             parsed.transcript_items[1].kind,
             TranscriptItemKind::Subagent
         );
+        // Dedup guard: subtask-only session must still produce the legacy subagent
+        assert_eq!(
+            parsed.subagents.len(),
+            1,
+            "subtask-only session must still produce the legacy subagent"
+        );
+    }
+
+    #[test]
+    fn task_tool_produces_subagent_entry() {
+        let temp_dir = TempDir::new().unwrap();
+        let root = temp_dir.path();
+
+        let session_path = write_session_file(
+            root,
+            "project-a",
+            "session-task.json",
+            json!({
+                "id": "session-task",
+                "directory": "/projects/alpha",
+                "time": { "created": 1_704_067_200_000i64, "updated": 1_704_067_260_000i64 }
+            }),
+        );
+
+        write_message_file(
+            root,
+            "session-task",
+            "msg-user.json",
+            json!({
+                "id": "msg-user",
+                "sessionID": "session-task",
+                "role": "user",
+                "time": { "created": 1_704_067_200_000i64 }
+            }),
+        );
+
+        write_message_file(
+            root,
+            "session-task",
+            "msg-asst.json",
+            json!({
+                "id": "msg-asst",
+                "sessionID": "session-task",
+                "role": "assistant",
+                "time": { "created": 1_704_067_260_000i64 }
+            }),
+        );
+
+        write_part_file(
+            root,
+            "msg-user",
+            "part-user.json",
+            json!({
+                "id": "part-user",
+                "order": 1,
+                "type": "text",
+                "text": "Please delegate"
+            }),
+        );
+
+        write_part_file(
+            root,
+            "msg-asst",
+            "part-task.json",
+            json!({
+                "id": "part-task",
+                "order": 1,
+                "type": "tool",
+                "tool": "task",
+                "callID": "call_abc",
+                "state": {
+                    "status": "completed",
+                    "input": {
+                        "description": "Explore parser layout",
+                        "prompt": "Find all parser files",
+                        "subagent_type": "explore"
+                    },
+                    "metadata": {
+                        "sessionId": "ses_child123"
+                    },
+                    "output": "task_id: ses_child123\n\n<task_result>done</task_result>"
+                }
+            }),
+        );
+
+        let parser = OpenCodeParser::new(root);
+        let parsed = parser.parse(&session_path).unwrap();
+
+        assert_eq!(
+            parsed.subagents.len(),
+            1,
+            "expected one subagent from tool==task"
+        );
+        assert_eq!(parsed.subagents[0].title, "Explore parser layout");
+        assert_eq!(
+            parsed.subagents[0].prompt.as_deref(),
+            Some("Find all parser files")
+        );
+        assert_eq!(
+            parsed.subagents[0].child_session_id.as_deref(),
+            Some("ses_child123")
+        );
+        assert!(
+            parsed.subagents[0]
+                .result_summary
+                .as_deref()
+                .unwrap_or_default()
+                .contains("task_result"),
+            "result_summary should carry state.output"
+        );
+        assert!(
+            parsed.tool_calls.iter().all(|tc| tc.tool_name != "task"),
+            "tool==task should not also appear as a generic tool call"
+        );
+    }
+
+    #[test]
+    fn task_and_subtask_coexist_dedup() {
+        let temp_dir = TempDir::new().unwrap();
+        let root = temp_dir.path();
+
+        let session_path = write_session_file(
+            root,
+            "project-a",
+            "session-dedup.json",
+            json!({
+                "id": "session-dedup",
+                "directory": "/projects/alpha",
+                "time": { "created": 1_704_067_200_000i64, "updated": 1_704_067_260_000i64 }
+            }),
+        );
+
+        write_message_file(
+            root,
+            "session-dedup",
+            "msg-user.json",
+            json!({
+                "id": "msg-user",
+                "sessionID": "session-dedup",
+                "role": "user",
+                "time": { "created": 1_704_067_200_000i64 }
+            }),
+        );
+
+        write_message_file(
+            root,
+            "session-dedup",
+            "msg-asst.json",
+            json!({
+                "id": "msg-asst",
+                "sessionID": "session-dedup",
+                "role": "assistant",
+                "time": { "created": 1_704_067_260_000i64 }
+            }),
+        );
+
+        write_part_file(
+            root,
+            "msg-user",
+            "part-user.json",
+            json!({
+                "id": "part-user",
+                "order": 1,
+                "type": "text",
+                "text": "Please delegate"
+            }),
+        );
+
+        // Legacy subtask announcement
+        write_part_file(
+            root,
+            "msg-asst",
+            "part-subtask.json",
+            json!({
+                "id": "part-subtask",
+                "order": 1,
+                "type": "subtask",
+                "description": "Same title",
+                "prompt": "legacy announcement",
+                "agent": "explore",
+                "childSessionID": "ses_child_legacy"
+            }),
+        );
+
+        // Full task-tool record
+        write_part_file(
+            root,
+            "msg-asst",
+            "part-task.json",
+            json!({
+                "id": "part-task",
+                "order": 2,
+                "type": "tool",
+                "tool": "task",
+                "callID": "call_abc",
+                "state": {
+                    "status": "completed",
+                    "input": {
+                        "description": "Same title",
+                        "prompt": "real prompt",
+                        "subagent_type": "explore"
+                    },
+                    "metadata": { "sessionId": "ses_child_real" },
+                    "output": "done"
+                }
+            }),
+        );
+
+        let parser = OpenCodeParser::new(root);
+        let parsed = parser.parse(&session_path).unwrap();
+
+        assert_eq!(
+            parsed.subagents.len(),
+            1,
+            "subtask should be deduped when tool==task is present"
+        );
+        assert_eq!(
+            parsed.subagents[0].child_session_id.as_deref(),
+            Some("ses_child_real"),
+            "surviving subagent must come from tool==task"
+        );
+        assert_eq!(parsed.subagents[0].prompt.as_deref(), Some("real prompt"));
     }
 
     #[test]
