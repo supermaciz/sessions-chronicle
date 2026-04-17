@@ -1151,21 +1151,26 @@ impl SessionIndexer {
         };
 
         let components: Vec<_> = relative.components().collect();
-        let nested_subagent = components.len() >= 3
-            && components[1].as_os_str() == "subagents"
-            && file_path
-                .file_stem()
-                .and_then(|stem| stem.to_str())
-                .is_some_and(|stem| stem.starts_with("agent-"));
+        let has_agent_prefix = relative
+            .file_stem()
+            .and_then(|stem| stem.to_str())
+            .is_some_and(|stem| stem.starts_with("agent-"));
+
+        let nested_subagent =
+            components.len() == 3 && components[1].as_os_str() == "subagents" && has_agent_prefix;
 
         if nested_subagent {
             return false;
         }
 
-        file_path
-            .file_stem()
-            .and_then(|stem| stem.to_str())
-            .is_some_and(|stem| stem.starts_with("agent-"))
+        if components
+            .first()
+            .is_some_and(|component| component.as_os_str() == "subagents")
+        {
+            return true;
+        }
+
+        has_agent_prefix
     }
 
     /// Clear all indexed sessions and messages.
@@ -1842,6 +1847,16 @@ mod tests {
     fn is_prunable_claude_sidechain_file_detects_legacy_subagents_root_file() {
         let sessions_dir = PathBuf::from("/home/user/.claude/sessions");
         let path = PathBuf::from("/home/user/.claude/sessions/subagents/agent-abc123.jsonl");
+        assert!(SessionIndexer::is_prunable_claude_sidechain_file(
+            &path,
+            &sessions_dir
+        ));
+    }
+
+    #[test]
+    fn is_prunable_claude_sidechain_file_detects_subagents_root_file_without_agent_prefix() {
+        let sessions_dir = PathBuf::from("/home/user/.claude/sessions");
+        let path = PathBuf::from("/home/user/.claude/sessions/subagents/some-session.jsonl");
         assert!(SessionIndexer::is_prunable_claude_sidechain_file(
             &path,
             &sessions_dir
