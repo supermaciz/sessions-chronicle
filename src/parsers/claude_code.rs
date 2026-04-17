@@ -78,6 +78,12 @@ fn extract_agent_id_from_result_text(result_text: &str) -> Option<String> {
         if is_valid {
             return Some(token.to_string());
         }
+
+        tracing::warn!(
+            "Ignoring Claude agentId token {:?} that failed validation; \
+             upstream format may have drifted.",
+            token
+        );
     }
 
     None
