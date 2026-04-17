@@ -1,0 +1,2 @@
+{"parentUuid":null,"isSidechain":true,"agentId":"a41c0fb07beb52ed6","type":"user","message":{"role":"user","content":"List all files"},"timestamp":"2026-04-11T20:05:03.000Z","cwd":"/home/user/project","sessionId":"65ce34ec-2589-4f2a-aad3-f536cf8b2906"}
+{"parentUuid":"msg-1","isSidechain":true,"agentId":"a41c0fb07beb52ed6","type":"assistant","message":{"role":"assistant","content":"Found 5 files"},"timestamp":"2026-04-11T20:05:04.000Z","cwd":"/home/user/project","sessionId":"65ce34ec-2589-4f2a-aad3-f536cf8b2906"}

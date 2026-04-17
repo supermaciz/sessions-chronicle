@@ -191,7 +191,7 @@ impl SessionIndexer {
                 continue;
             }
 
-            if Self::is_sidechain_file(path, sessions_dir) {
+            if Self::is_prunable_claude_sidechain_file(path, sessions_dir) {
                 self.prune_sidechain_session(AiAssistant::ClaudeCode, path, errors_detail);
                 continue;
             }
@@ -761,8 +761,66 @@ impl SessionIndexer {
         let resolved_project_id = Self::upsert_project_tx(&tx, session.project_path.as_deref())?;
         Self::upsert_session_row_tx(&tx, parsed, file_path, resolved_project_id)?;
         Self::replace_session_contents_tx(&tx, parsed)?;
+        Self::link_claude_subagents_tx(&tx, parsed)?;
         Self::upsert_fingerprint_tx(&tx, fingerprint_path)?;
         tx.commit()?;
+        Ok(())
+    }
+
+    fn link_claude_subagents_tx(
+        tx: &rusqlite::Transaction<'_>,
+        parsed: &ParsedSession,
+    ) -> Result<()> {
+        if parsed.session.tool != AiAssistant::ClaudeCode {
+            return Ok(());
+        }
+
+        if parsed.session.is_subagent {
+            let Some(parent_session_id) = parsed.session.parent_session_id.as_deref() else {
+                return Ok(());
+            };
+
+            let agent_id = parsed
+                .session
+                .id
+                .rsplit("::")
+                .next()
+                .filter(|value| !value.is_empty())
+                .context("Claude child session id missing agent suffix")?;
+
+            tx.execute(
+                "UPDATE subagents
+                 SET child_session_id = ?1
+                 WHERE session_id = ?2 AND agent_id = ?3",
+                rusqlite::params![&parsed.session.id, parent_session_id, agent_id],
+            )?;
+
+            return Ok(());
+        }
+
+        for subagent in &parsed.subagents {
+            let Some(agent_id) = subagent.agent_id.as_deref() else {
+                continue;
+            };
+
+            let child_session_id = format!("claude-subagent::{}::{}", parsed.session.id, agent_id);
+
+            let child_exists: bool = tx.query_row(
+                "SELECT EXISTS(SELECT 1 FROM sessions WHERE id = ?1)",
+                [&child_session_id],
+                |row| row.get(0),
+            )?;
+
+            if child_exists {
+                tx.execute(
+                    "UPDATE subagents
+                     SET child_session_id = ?1
+                     WHERE session_id = ?2 AND id = ?3",
+                    rusqlite::params![child_session_id, &parsed.session.id, &subagent.id],
+                )?;
+            }
+        }
+
         Ok(())
     }
 
@@ -1086,20 +1144,28 @@ impl SessionIndexer {
         }
     }
 
-    fn is_sidechain_file(file_path: &Path, sessions_dir: &Path) -> bool {
-        let is_agent_file = file_path
+    fn is_prunable_claude_sidechain_file(file_path: &Path, sessions_dir: &Path) -> bool {
+        let relative = match file_path.strip_prefix(sessions_dir) {
+            Ok(relative) => relative,
+            Err(_) => return false,
+        };
+
+        let components: Vec<_> = relative.components().collect();
+        let nested_subagent = components.len() >= 3
+            && components[1].as_os_str() == "subagents"
+            && file_path
+                .file_stem()
+                .and_then(|stem| stem.to_str())
+                .is_some_and(|stem| stem.starts_with("agent-"));
+
+        if nested_subagent {
+            return false;
+        }
+
+        file_path
             .file_stem()
             .and_then(|stem| stem.to_str())
-            .is_some_and(|stem| stem.starts_with("agent-"));
-
-        // Check if path is under sessions_dir/subagents/
-        let is_subagent = file_path
-            .strip_prefix(sessions_dir)
-            .ok()
-            .and_then(|rel| rel.components().next())
-            .is_some_and(|first| first.as_os_str() == "subagents");
-
-        is_agent_file || is_subagent
+            .is_some_and(|stem| stem.starts_with("agent-"))
     }
 
     /// Clear all indexed sessions and messages.
@@ -1751,40 +1817,67 @@ mod tests {
     }
 
     #[test]
-    fn is_sidechain_file_detects_agent_prefix() {
+    fn is_prunable_claude_sidechain_file_detects_agent_prefix() {
         let sessions_dir = PathBuf::from("/home/user/.claude/sessions");
         let path = PathBuf::from("/home/user/.claude/sessions/agent-abc123.jsonl");
-        assert!(SessionIndexer::is_sidechain_file(&path, &sessions_dir));
+        assert!(SessionIndexer::is_prunable_claude_sidechain_file(
+            &path,
+            &sessions_dir
+        ));
     }
 
     #[test]
-    fn is_sidechain_file_detects_subagents_directory() {
+    fn is_prunable_claude_sidechain_file_allows_nested_subagent_transcripts() {
         let sessions_dir = PathBuf::from("/home/user/.claude/sessions");
-        let path = PathBuf::from("/home/user/.claude/sessions/subagents/some-session.jsonl");
-        assert!(SessionIndexer::is_sidechain_file(&path, &sessions_dir));
+        let path = PathBuf::from(
+            "/home/user/.claude/sessions/65ce34ec-2589-4f2a-aad3-f536cf8b2906/subagents/agent-a41c0fb07beb52ed6.jsonl",
+        );
+        assert!(!SessionIndexer::is_prunable_claude_sidechain_file(
+            &path,
+            &sessions_dir
+        ));
     }
 
     #[test]
-    fn is_sidechain_file_allows_regular_sessions() {
+    fn is_prunable_claude_sidechain_file_detects_legacy_subagents_root_file() {
+        let sessions_dir = PathBuf::from("/home/user/.claude/sessions");
+        let path = PathBuf::from("/home/user/.claude/sessions/subagents/agent-abc123.jsonl");
+        assert!(SessionIndexer::is_prunable_claude_sidechain_file(
+            &path,
+            &sessions_dir
+        ));
+    }
+
+    #[test]
+    fn is_prunable_claude_sidechain_file_allows_regular_sessions() {
         let sessions_dir = PathBuf::from("/home/user/.claude/sessions");
         let path = PathBuf::from("/home/user/.claude/sessions/abc123.jsonl");
-        assert!(!SessionIndexer::is_sidechain_file(&path, &sessions_dir));
+        assert!(!SessionIndexer::is_prunable_claude_sidechain_file(
+            &path,
+            &sessions_dir
+        ));
     }
 
     #[test]
-    fn is_sidechain_file_allows_agent_in_middle_of_name() {
+    fn is_prunable_claude_sidechain_file_allows_agent_in_middle_of_name() {
         // "agent-" prefix is required, not just containing "agent"
         let sessions_dir = PathBuf::from("/home/user/.claude/sessions");
         let path = PathBuf::from("/home/user/.claude/sessions/my-agent-session.jsonl");
-        assert!(!SessionIndexer::is_sidechain_file(&path, &sessions_dir));
+        assert!(!SessionIndexer::is_prunable_claude_sidechain_file(
+            &path,
+            &sessions_dir
+        ));
     }
 
     #[test]
-    fn is_sidechain_file_allows_subagents_in_project_name() {
+    fn is_prunable_claude_sidechain_file_allows_subagents_in_project_name() {
         // "subagents" in an encoded project path should not trigger filtering
         let sessions_dir = PathBuf::from("/home/user/.claude/projects");
         let path = PathBuf::from("/home/user/.claude/projects/-home-user-subagents/session.jsonl");
-        assert!(!SessionIndexer::is_sidechain_file(&path, &sessions_dir));
+        assert!(!SessionIndexer::is_prunable_claude_sidechain_file(
+            &path,
+            &sessions_dir
+        ));
     }
 
     #[test]
