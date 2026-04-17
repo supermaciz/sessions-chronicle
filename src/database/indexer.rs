@@ -1145,32 +1145,29 @@ impl SessionIndexer {
     }
 
     fn is_prunable_claude_sidechain_file(file_path: &Path, sessions_dir: &Path) -> bool {
-        let relative = match file_path.strip_prefix(sessions_dir) {
-            Ok(relative) => relative,
-            Err(_) => return false,
+        let Ok(relative) = file_path.strip_prefix(sessions_dir) else {
+            return false;
         };
 
-        let components: Vec<_> = relative.components().collect();
         let has_agent_prefix = relative
             .file_stem()
             .and_then(|stem| stem.to_str())
             .is_some_and(|stem| stem.starts_with("agent-"));
 
-        let nested_subagent = components.len() >= 3
-            && components[components.len() - 2].as_os_str() == "subagents"
-            && components
-                .first()
-                .is_none_or(|component| component.as_os_str() != "subagents")
-            && has_agent_prefix;
+        let mut rev = relative.components().rev();
+        rev.next(); // skip filename
+        let parent = rev.next();
+        let grandparent = rev.next();
 
-        if nested_subagent {
+        let parent_is_subagents = parent.is_some_and(|c| c.as_os_str() == "subagents");
+
+        // Nested subagent transcript (<parent-uuid>/subagents/agent-*.jsonl): index it.
+        if parent_is_subagents && grandparent.is_some() && has_agent_prefix {
             return false;
         }
 
-        if components
-            .first()
-            .is_some_and(|component| component.as_os_str() == "subagents")
-        {
+        // Legacy root-level sidechain (sessions_dir/subagents/...): prune.
+        if parent_is_subagents && grandparent.is_none() {
             return true;
         }
 
