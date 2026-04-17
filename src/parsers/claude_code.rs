@@ -22,6 +22,8 @@ pub enum ParseError {
     NoMessages,
     #[error("Session contains no user messages")]
     NoUserMessages,
+    #[error("Nested subagent file has malformed agent id")]
+    MalformedNestedSubagentFile,
 }
 
 struct UsageEntry {
@@ -632,6 +634,15 @@ impl ParseState {
     ) -> Result<ParsedSession> {
         let parent_session_id = claude_subagent_parent_session_id_from_path(file_path);
         let nested_agent_id = claude_subagent_agent_id_from_path(file_path);
+
+        // A file under `<parent>/subagents/` whose name does not yield a valid
+        // agent id would otherwise fall back to the sessionId embedded in its
+        // events — which nested subagent transcripts copy from the parent.
+        // Indexing it would overwrite the parent's transcript. Reject instead.
+        if parent_session_id.is_some() && nested_agent_id.is_none() {
+            return Err(ParseError::MalformedNestedSubagentFile.into());
+        }
+
         let is_subagent = parent_session_id.is_some() && nested_agent_id.is_some();
         let parent_session_id = if is_subagent { parent_session_id } else { None };
 
@@ -1336,7 +1347,7 @@ mod tests {
     }
 
     #[test]
-    fn parse_malformed_child_filename_does_not_mark_session_as_subagent() {
+    fn parse_malformed_child_filename_rejects_file_instead_of_colliding_with_parent() {
         let temp = tempfile::tempdir().unwrap();
         let parent_dir = temp.path().join("65ce34ec-2589-4f2a-aad3-f536cf8b2906");
         let subagents_dir = parent_dir.join("subagents");
@@ -1354,11 +1365,12 @@ mod tests {
         )
         .unwrap();
 
-        let parsed = ClaudeCodeParser.parse(&malformed_child_path).unwrap();
+        let result = ClaudeCodeParser.parse(&malformed_child_path);
 
-        assert_eq!(parsed.session.id, "65ce34ec-2589-4f2a-aad3-f536cf8b2906");
-        assert_eq!(parsed.session.parent_session_id, None);
-        assert!(!parsed.session.is_subagent);
+        assert!(matches!(
+            result.unwrap_err().downcast_ref::<ParseError>(),
+            Some(ParseError::MalformedNestedSubagentFile)
+        ));
     }
 
     #[test]

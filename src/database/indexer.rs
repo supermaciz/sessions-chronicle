@@ -147,10 +147,14 @@ fn is_codex_error(err: &anyhow::Error) -> bool {
     err.downcast_ref::<CodexParseError>().is_some()
 }
 
-fn is_claude_empty_session_error(err: &anyhow::Error) -> bool {
+fn is_claude_skippable_error(err: &anyhow::Error) -> bool {
     matches!(
         err.downcast_ref::<ClaudeCodeParseError>(),
-        Some(ClaudeCodeParseError::NoMessages | ClaudeCodeParseError::NoUserMessages)
+        Some(
+            ClaudeCodeParseError::NoMessages
+                | ClaudeCodeParseError::NoUserMessages
+                | ClaudeCodeParseError::MalformedNestedSubagentFile
+        )
     )
 }
 
@@ -399,12 +403,8 @@ impl SessionIndexer {
         match self.index_session_file(path, parser) {
             Ok(()) => stats.indexed += 1,
             Err(err) => {
-                if is_claude_empty_session_error(&err) {
-                    tracing::debug!(
-                        "Skipped empty Claude Code session {}: {}",
-                        path.display(),
-                        err
-                    );
+                if is_claude_skippable_error(&err) {
+                    tracing::debug!("Skipped Claude Code session {}: {}", path.display(), err);
                     self.prune_session_after_parse_skip(
                         AiAssistant::ClaudeCode,
                         path,
