@@ -4,6 +4,8 @@ use serde::{Deserialize, Serialize};
 pub struct Subagent {
     /// Session-scoped identifier
     pub id: String,
+    /// Durable Claude agent identifier (for Task/Agent tool calls)
+    pub agent_id: Option<String>,
     pub session_id: String,
     pub title: String,
     pub prompt: Option<String>,

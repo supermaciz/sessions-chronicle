@@ -22,6 +22,8 @@ pub enum ParseError {
     NoMessages,
     #[error("Session contains no user messages")]
     NoUserMessages,
+    #[error("Nested subagent file has malformed agent id")]
+    MalformedNestedSubagentFile,
 }
 
 struct UsageEntry {
@@ -32,6 +34,60 @@ struct UsageEntry {
 }
 
 pub struct ClaudeCodeParser;
+
+fn claude_subagent_agent_id_from_path(file_path: &Path) -> Option<String> {
+    file_path
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .and_then(|stem| stem.strip_prefix("agent-"))
+        .filter(|suffix| !suffix.is_empty())
+        .map(str::to_string)
+}
+
+fn claude_subagent_parent_session_id_from_path(file_path: &Path) -> Option<String> {
+    let subagents_dir = file_path.parent()?;
+    if subagents_dir.file_name()?.to_str()? != "subagents" {
+        return None;
+    }
+
+    subagents_dir
+        .parent()?
+        .file_name()
+        .and_then(|name| name.to_str())
+        .map(str::to_string)
+}
+
+fn claude_subagent_child_session_id(parent_session_id: &str, agent_id: &str) -> String {
+    format!("claude-subagent::{parent_session_id}::{agent_id}")
+}
+
+fn extract_agent_id_from_result_text(result_text: &str) -> Option<String> {
+    for line in result_text.lines().map(str::trim) {
+        let Some(value) = line.strip_prefix("agentId:") else {
+            continue;
+        };
+        let Some(token) = value.split_whitespace().next() else {
+            continue;
+        };
+
+        let is_valid = token.len() >= 6
+            && token.starts_with('a')
+            && token
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-');
+        if is_valid {
+            return Some(token.to_string());
+        }
+
+        tracing::warn!(
+            "Ignoring Claude agentId token {:?} that failed validation; \
+             upstream format may have drifted.",
+            token
+        );
+    }
+
+    None
+}
 
 /// Private parsing state accumulator for Claude Code sessions.
 /// Holds all mutable fields that were previously declared inside `parse()`.
@@ -326,7 +382,10 @@ impl ParseState {
         } else if let Some(&sa_idx) = self.pending_subagents.get(tool_use_id)
             && let Some(sa) = self.subagents.get_mut(sa_idx)
         {
-            sa.result_summary = Some(result_text);
+            sa.result_summary = Some(result_text.clone());
+            if sa.agent_id.is_none() {
+                sa.agent_id = extract_agent_id_from_result_text(&result_text);
+            }
         }
     }
 
@@ -536,6 +595,7 @@ impl ParseState {
             });
             self.subagents.push(Subagent {
                 id: tool_use_id.clone(),
+                agent_id: None,
                 session_id: String::new(),
                 title,
                 prompt,
@@ -578,11 +638,30 @@ impl ParseState {
         file_stem_id: Option<String>,
         had_parse_errors: bool,
     ) -> Result<ParsedSession> {
-        let final_session_id = self
-            .session_id_from_event
-            .clone()
-            .or(file_stem_id)
-            .unwrap_or_else(|| "unknown".to_string());
+        let parent_session_id = claude_subagent_parent_session_id_from_path(file_path);
+        let nested_agent_id = claude_subagent_agent_id_from_path(file_path);
+
+        // A file under `<parent>/subagents/` whose name does not yield a valid
+        // agent id would otherwise fall back to the sessionId embedded in its
+        // events — which nested subagent transcripts copy from the parent.
+        // Indexing it would overwrite the parent's transcript. Reject instead.
+        if parent_session_id.is_some() && nested_agent_id.is_none() {
+            return Err(ParseError::MalformedNestedSubagentFile.into());
+        }
+
+        let is_subagent = parent_session_id.is_some() && nested_agent_id.is_some();
+        let parent_session_id = if is_subagent { parent_session_id } else { None };
+
+        let final_session_id = match (&parent_session_id, &nested_agent_id) {
+            (Some(parent_session_id), Some(agent_id)) => {
+                claude_subagent_child_session_id(parent_session_id, agent_id)
+            }
+            _ => self
+                .session_id_from_event
+                .clone()
+                .or(file_stem_id)
+                .unwrap_or_else(|| "unknown".to_string()),
+        };
         self.drop_pending_reasoning_if_orphan();
 
         // Aggregate token usage from all deduplicated entries
@@ -644,8 +723,8 @@ impl ParseState {
             last_updated,
             pinned_at: None,
             first_prompt,
-            parent_session_id: None,
-            is_subagent: false,
+            parent_session_id,
+            is_subagent,
             token_usage: None,
             edit_count: 0,
             read_count: 0,
@@ -1148,6 +1227,188 @@ mod tests {
             parsed.transcript_items[2].kind,
             TranscriptItemKind::Subagent
         );
+    }
+
+    #[test]
+    fn parse_extracts_agent_id_from_async_subagent_result() {
+        let file = create_temp_session(&[
+            r#"{"type":"user","timestamp":"2024-01-01T00:00:00Z","sessionId":"parent-1","message":{"content":"Analyze this"}}"#,
+            r#"{"type":"assistant","timestamp":"2024-01-01T00:00:01Z","sessionId":"parent-1","message":{"content":[{"type":"tool_use","id":"toolu_agent_001","name":"Agent","input":{"description":"Analyze project","prompt":"List all files"}}]}}"#,
+            r#"{"type":"user","timestamp":"2024-01-01T00:00:02Z","sessionId":"parent-1","message":{"content":[{"type":"tool_result","tool_use_id":"toolu_agent_001","content":[{"type":"text","text":"Async agent launched successfully.\nagentId: a41c0fb07beb52ed6"}]}]}}"#,
+        ]);
+
+        let parsed = ClaudeCodeParser.parse(file.path()).unwrap();
+
+        assert_eq!(parsed.subagents.len(), 1);
+        assert_eq!(
+            parsed.subagents[0].agent_id.as_deref(),
+            Some("a41c0fb07beb52ed6")
+        );
+    }
+
+    #[test]
+    fn parse_nested_subagent_file_marks_session_as_subagent() {
+        let temp = tempfile::tempdir().unwrap();
+        let parent_dir = temp.path().join("65ce34ec-2589-4f2a-aad3-f536cf8b2906");
+        let subagents_dir = parent_dir.join("subagents");
+        std::fs::create_dir_all(&subagents_dir).unwrap();
+
+        let child_path = subagents_dir.join("agent-a41c0fb07beb52ed6.jsonl");
+        std::fs::write(
+            &child_path,
+            concat!(
+                r#"{"parentUuid":null,"isSidechain":true,"agentId":"a41c0fb07beb52ed6","type":"user","message":{"role":"user","content":"Analyze repo"},"timestamp":"2024-01-01T00:00:00Z","cwd":"/tmp/project","sessionId":"65ce34ec-2589-4f2a-aad3-f536cf8b2906"}"#,
+                "\n",
+                r#"{"parentUuid":"msg-1","isSidechain":true,"agentId":"a41c0fb07beb52ed6","type":"assistant","message":{"role":"assistant","content":"Done"},"timestamp":"2024-01-01T00:00:01Z","cwd":"/tmp/project","sessionId":"65ce34ec-2589-4f2a-aad3-f536cf8b2906"}"#,
+                "\n",
+            ),
+        )
+        .unwrap();
+
+        let parsed = ClaudeCodeParser.parse(&child_path).unwrap();
+
+        assert_eq!(
+            parsed.session.id,
+            "claude-subagent::65ce34ec-2589-4f2a-aad3-f536cf8b2906::a41c0fb07beb52ed6"
+        );
+        assert_eq!(
+            parsed.session.parent_session_id.as_deref(),
+            Some("65ce34ec-2589-4f2a-aad3-f536cf8b2906")
+        );
+        assert!(parsed.session.is_subagent);
+    }
+
+    #[test]
+    fn parse_parent_transcript_is_not_marked_as_subagent() {
+        let file = create_temp_session(&[
+            r#"{"type":"user","timestamp":"2024-01-01T00:00:00Z","sessionId":"parent-plain-1","message":{"content":"Analyze repo"}}"#,
+            r#"{"type":"assistant","timestamp":"2024-01-01T00:00:01Z","sessionId":"parent-plain-1","message":{"content":"Done"}}"#,
+        ]);
+
+        let parsed = ClaudeCodeParser.parse(file.path()).unwrap();
+
+        assert_eq!(parsed.session.id, "parent-plain-1");
+        assert_eq!(parsed.session.parent_session_id, None);
+        assert!(!parsed.session.is_subagent);
+    }
+
+    #[test]
+    fn parse_extracts_agent_id_for_supported_spacing_variants() {
+        for result_text in [
+            "Async agent launched successfully.\nagentId:a41c0fb07beb52ed6",
+            "Async agent launched successfully.\nagentId: a41c0fb07beb52ed6",
+            "Async agent launched successfully.\nagentId:\ta41c0fb07beb52ed6",
+        ] {
+            assert_eq!(
+                extract_agent_id_from_result_text(result_text).as_deref(),
+                Some("a41c0fb07beb52ed6")
+            );
+        }
+    }
+
+    #[test]
+    fn parse_extracts_only_first_agent_id_token() {
+        assert_eq!(
+            extract_agent_id_from_result_text(
+                "Async agent launched successfully.\nagentId: a41c0f extra"
+            )
+            .as_deref(),
+            Some("a41c0f")
+        );
+    }
+
+    #[test]
+    fn parse_skips_malformed_agent_id_line_and_reads_next_valid_line() {
+        assert_eq!(
+            extract_agent_id_from_result_text(
+                "Async agent launched successfully.\nagentId: abc$123\nagentId: a41c0fb07beb52ed6"
+            )
+            .as_deref(),
+            Some("a41c0fb07beb52ed6")
+        );
+    }
+
+    #[test]
+    fn parse_rejects_agent_id_with_invalid_characters() {
+        assert_eq!(
+            extract_agent_id_from_result_text(
+                "Async agent launched successfully.\nagentId: abc$123"
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn parse_rejects_empty_agent_id_in_async_subagent_result() {
+        let file = create_temp_session(&[
+            r#"{"type":"user","timestamp":"2024-01-01T00:00:00Z","sessionId":"parent-1","message":{"content":"Analyze this"}}"#,
+            r#"{"type":"assistant","timestamp":"2024-01-01T00:00:01Z","sessionId":"parent-1","message":{"content":[{"type":"tool_use","id":"toolu_agent_001","name":"Agent","input":{"description":"Analyze project","prompt":"List all files"}}]}}"#,
+            r#"{"type":"user","timestamp":"2024-01-01T00:00:02Z","sessionId":"parent-1","message":{"content":[{"type":"tool_result","tool_use_id":"toolu_agent_001","content":[{"type":"text","text":"Async agent launched successfully.\nagentId:   "}]}]}}"#,
+        ]);
+
+        let parsed = ClaudeCodeParser.parse(file.path()).unwrap();
+
+        assert_eq!(parsed.subagents.len(), 1);
+        assert_eq!(parsed.subagents[0].agent_id, None);
+    }
+
+    #[test]
+    fn parse_malformed_child_filename_rejects_file_instead_of_colliding_with_parent() {
+        let temp = tempfile::tempdir().unwrap();
+        let parent_dir = temp.path().join("65ce34ec-2589-4f2a-aad3-f536cf8b2906");
+        let subagents_dir = parent_dir.join("subagents");
+        std::fs::create_dir_all(&subagents_dir).unwrap();
+
+        let malformed_child_path = subagents_dir.join("agent-.jsonl");
+        std::fs::write(
+            &malformed_child_path,
+            concat!(
+                r#"{"parentUuid":null,"isSidechain":true,"type":"user","message":{"role":"user","content":"Analyze repo"},"timestamp":"2024-01-01T00:00:00Z","cwd":"/tmp/project","sessionId":"65ce34ec-2589-4f2a-aad3-f536cf8b2906"}"#,
+                "\n",
+                r#"{"parentUuid":"msg-1","isSidechain":true,"type":"assistant","message":{"role":"assistant","content":"Done"},"timestamp":"2024-01-01T00:00:01Z","cwd":"/tmp/project","sessionId":"65ce34ec-2589-4f2a-aad3-f536cf8b2906"}"#,
+                "\n",
+            ),
+        )
+        .unwrap();
+
+        let result = ClaudeCodeParser.parse(&malformed_child_path);
+
+        assert!(matches!(
+            result.unwrap_err().downcast_ref::<ParseError>(),
+            Some(ParseError::MalformedNestedSubagentFile)
+        ));
+    }
+
+    #[test]
+    fn parse_nested_subagent_file_without_sidechain_evidence_is_still_subagent() {
+        let temp = tempfile::tempdir().unwrap();
+        let parent_dir = temp.path().join("65ce34ec-2589-4f2a-aad3-f536cf8b2906");
+        let subagents_dir = parent_dir.join("subagents");
+        std::fs::create_dir_all(&subagents_dir).unwrap();
+
+        let child_path = subagents_dir.join("agent-a41c0fb07beb52ed6.jsonl");
+        std::fs::write(
+            &child_path,
+            concat!(
+                r#"{"parentUuid":null,"isSidechain":false,"agentId":"a41c0fb07beb52ed6","type":"user","message":{"role":"user","content":"Analyze repo"},"timestamp":"2024-01-01T00:00:00Z","cwd":"/tmp/project","sessionId":"65ce34ec-2589-4f2a-aad3-f536cf8b2906"}"#,
+                "\n",
+                r#"{"parentUuid":"msg-1","isSidechain":false,"agentId":"a41c0fb07beb52ed6","type":"assistant","message":{"role":"assistant","content":"Done"},"timestamp":"2024-01-01T00:00:01Z","cwd":"/tmp/project","sessionId":"65ce34ec-2589-4f2a-aad3-f536cf8b2906"}"#,
+                "\n",
+            ),
+        )
+        .unwrap();
+
+        let parsed = ClaudeCodeParser.parse(&child_path).unwrap();
+
+        assert_eq!(
+            parsed.session.id,
+            "claude-subagent::65ce34ec-2589-4f2a-aad3-f536cf8b2906::a41c0fb07beb52ed6"
+        );
+        assert_eq!(
+            parsed.session.parent_session_id.as_deref(),
+            Some("65ce34ec-2589-4f2a-aad3-f536cf8b2906")
+        );
+        assert!(parsed.session.is_subagent);
     }
 
     #[test]
