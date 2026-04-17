@@ -1156,8 +1156,12 @@ impl SessionIndexer {
             .and_then(|stem| stem.to_str())
             .is_some_and(|stem| stem.starts_with("agent-"));
 
-        let nested_subagent =
-            components.len() == 3 && components[1].as_os_str() == "subagents" && has_agent_prefix;
+        let nested_subagent = components.len() >= 3
+            && components[components.len() - 2].as_os_str() == "subagents"
+            && !components
+                .first()
+                .is_some_and(|component| component.as_os_str() == "subagents")
+            && has_agent_prefix;
 
         if nested_subagent {
             return false;
@@ -1836,6 +1840,18 @@ mod tests {
         let sessions_dir = PathBuf::from("/home/user/.claude/sessions");
         let path = PathBuf::from(
             "/home/user/.claude/sessions/65ce34ec-2589-4f2a-aad3-f536cf8b2906/subagents/agent-a41c0fb07beb52ed6.jsonl",
+        );
+        assert!(!SessionIndexer::is_prunable_claude_sidechain_file(
+            &path,
+            &sessions_dir
+        ));
+    }
+
+    #[test]
+    fn is_prunable_claude_sidechain_file_allows_nested_subagent_transcripts_in_project_tree() {
+        let sessions_dir = PathBuf::from("/home/user/.claude/projects");
+        let path = PathBuf::from(
+            "/home/user/.claude/projects/-home-user-repo/65ce34ec-2589-4f2a-aad3-f536cf8b2906/subagents/agent-a41c0fb07beb52ed6.jsonl",
         );
         assert!(!SessionIndexer::is_prunable_claude_sidechain_file(
             &path,
