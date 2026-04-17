@@ -60,21 +60,25 @@ fn claude_subagent_child_session_id(parent_session_id: &str, agent_id: &str) -> 
 }
 
 fn extract_agent_id_from_result_text(result_text: &str) -> Option<String> {
-    result_text
-        .lines()
-        .map(str::trim)
-        .find_map(|line| line.strip_prefix("agentId:"))
-        .and_then(|value| {
-            let token = value.trim().split_whitespace().next()?;
-            if token
+    for line in result_text.lines().map(str::trim) {
+        let Some(value) = line.strip_prefix("agentId:") else {
+            continue;
+        };
+        let Some(token) = value.trim().split_whitespace().next() else {
+            continue;
+        };
+
+        let is_valid = token.len() >= 6
+            && token.starts_with('a')
+            && token
                 .chars()
-                .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
-            {
-                Some(token.to_string())
-            } else {
-                None
-            }
-        })
+                .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-');
+        if is_valid {
+            return Some(token.to_string());
+        }
+    }
+
+    None
 }
 
 /// Private parsing state accumulator for Claude Code sessions.
@@ -85,7 +89,6 @@ struct ParseState {
     latest_timestamp: Option<DateTime<Utc>>,
     project_path: Option<String>,
     session_id_from_event: Option<String>,
-    has_sidechain_evidence: bool,
     has_user_message: bool,
 
     // Output collections
@@ -119,7 +122,6 @@ impl ParseState {
             latest_timestamp: None,
             project_path: None,
             session_id_from_event: None,
-            has_sidechain_evidence: false,
             has_user_message: false,
             messages: Vec::new(),
             tool_calls: Vec::new(),
@@ -630,8 +632,7 @@ impl ParseState {
     ) -> Result<ParsedSession> {
         let parent_session_id = claude_subagent_parent_session_id_from_path(file_path);
         let nested_agent_id = claude_subagent_agent_id_from_path(file_path);
-        let is_subagent =
-            parent_session_id.is_some() && nested_agent_id.is_some() && self.has_sidechain_evidence;
+        let is_subagent = parent_session_id.is_some() && nested_agent_id.is_some();
         let parent_session_id = if is_subagent { parent_session_id } else { None };
 
         let final_session_id = match (&parent_session_id, &nested_agent_id) {
@@ -758,9 +759,6 @@ impl ClaudeCodeParser {
             state.maybe_capture_cwd(&event);
 
             let event_type = event.get("type").and_then(|v| v.as_str());
-            if event.get("isSidechain").and_then(|v| v.as_bool()) == Some(true) {
-                state.has_sidechain_evidence = true;
-            }
             let is_message_like = matches!(event_type, Some("user") | Some("assistant"));
 
             if is_message_like {
@@ -1295,10 +1293,21 @@ mod tests {
     fn parse_extracts_only_first_agent_id_token() {
         assert_eq!(
             extract_agent_id_from_result_text(
-                "Async agent launched successfully.\nagentId: abc123 extra"
+                "Async agent launched successfully.\nagentId: a41c0f extra"
             )
             .as_deref(),
-            Some("abc123")
+            Some("a41c0f")
+        );
+    }
+
+    #[test]
+    fn parse_skips_malformed_agent_id_line_and_reads_next_valid_line() {
+        assert_eq!(
+            extract_agent_id_from_result_text(
+                "Async agent launched successfully.\nagentId: abc$123\nagentId: a41c0fb07beb52ed6"
+            )
+            .as_deref(),
+            Some("a41c0fb07beb52ed6")
         );
     }
 
@@ -1353,7 +1362,7 @@ mod tests {
     }
 
     #[test]
-    fn parse_nested_subagent_file_without_sidechain_evidence_is_not_subagent() {
+    fn parse_nested_subagent_file_without_sidechain_evidence_is_still_subagent() {
         let temp = tempfile::tempdir().unwrap();
         let parent_dir = temp.path().join("65ce34ec-2589-4f2a-aad3-f536cf8b2906");
         let subagents_dir = parent_dir.join("subagents");
@@ -1373,9 +1382,15 @@ mod tests {
 
         let parsed = ClaudeCodeParser.parse(&child_path).unwrap();
 
-        assert_eq!(parsed.session.id, "65ce34ec-2589-4f2a-aad3-f536cf8b2906");
-        assert_eq!(parsed.session.parent_session_id, None);
-        assert!(!parsed.session.is_subagent);
+        assert_eq!(
+            parsed.session.id,
+            "claude-subagent::65ce34ec-2589-4f2a-aad3-f536cf8b2906::a41c0fb07beb52ed6"
+        );
+        assert_eq!(
+            parsed.session.parent_session_id.as_deref(),
+            Some("65ce34ec-2589-4f2a-aad3-f536cf8b2906")
+        );
+        assert!(parsed.session.is_subagent);
     }
 
     #[test]
