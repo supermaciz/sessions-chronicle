@@ -1166,8 +1166,12 @@ impl SessionIndexer {
             return false;
         }
 
-        // Legacy root-level sidechain (sessions_dir/subagents/...): prune.
-        if parent_is_subagents && grandparent.is_none() {
+        // Legacy sidechain tree (anything under sessions_dir/subagents/): prune.
+        if relative
+            .components()
+            .next()
+            .is_some_and(|c| c.as_os_str() == "subagents")
+        {
             return true;
         }
 
@@ -1870,6 +1874,16 @@ mod tests {
     fn is_prunable_claude_sidechain_file_detects_subagents_root_file_without_agent_prefix() {
         let sessions_dir = PathBuf::from("/home/user/.claude/sessions");
         let path = PathBuf::from("/home/user/.claude/sessions/subagents/some-session.jsonl");
+        assert!(SessionIndexer::is_prunable_claude_sidechain_file(
+            &path,
+            &sessions_dir
+        ));
+    }
+
+    #[test]
+    fn is_prunable_claude_sidechain_file_detects_nested_file_under_legacy_subagents_root() {
+        let sessions_dir = PathBuf::from("/home/user/.claude/sessions");
+        let path = PathBuf::from("/home/user/.claude/sessions/subagents/foo/some-session.jsonl");
         assert!(SessionIndexer::is_prunable_claude_sidechain_file(
             &path,
             &sessions_dir
