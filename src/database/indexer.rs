@@ -1158,9 +1158,9 @@ impl SessionIndexer {
 
         let nested_subagent = components.len() >= 3
             && components[components.len() - 2].as_os_str() == "subagents"
-            && !components
+            && components
                 .first()
-                .is_some_and(|component| component.as_os_str() == "subagents")
+                .is_none_or(|component| component.as_os_str() != "subagents")
             && has_agent_prefix;
 
         if nested_subagent {

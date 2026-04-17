@@ -64,7 +64,7 @@ fn extract_agent_id_from_result_text(result_text: &str) -> Option<String> {
         let Some(value) = line.strip_prefix("agentId:") else {
             continue;
         };
-        let Some(token) = value.trim().split_whitespace().next() else {
+        let Some(token) = value.split_whitespace().next() else {
             continue;
         };
 

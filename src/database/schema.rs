@@ -423,16 +423,33 @@ fn apply_v10_migration(conn: &Connection) -> Result<()> {
 /// `(session_id, agent_id)` for fast lookups. Clears `file_fingerprints` to
 /// force re-index so agent IDs are backfilled into persisted subagent rows.
 fn apply_v11_migration(conn: &Connection) -> Result<()> {
-    if !column_exists(conn, "subagents", "agent_id")? {
-        conn.execute("ALTER TABLE subagents ADD COLUMN agent_id TEXT", [])?;
+    let subagents_exists: bool = conn.query_row(
+        "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='subagents'",
+        [],
+        |row| row.get::<_, i64>(0),
+    )? > 0;
+
+    if subagents_exists {
+        if !column_exists(conn, "subagents", "agent_id")? {
+            conn.execute("ALTER TABLE subagents ADD COLUMN agent_id TEXT", [])?;
+        }
+
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_subagents_agent ON subagents(session_id, agent_id)",
+            [],
+        )?;
     }
 
-    conn.execute(
-        "CREATE INDEX IF NOT EXISTS idx_subagents_agent ON subagents(session_id, agent_id)",
+    let file_fingerprints_exists: bool = conn.query_row(
+        "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='file_fingerprints'",
         [],
-    )?;
+        |row| row.get::<_, i64>(0),
+    )? > 0;
 
-    conn.execute("DELETE FROM file_fingerprints", [])?;
+    if file_fingerprints_exists {
+        conn.execute("DELETE FROM file_fingerprints", [])?;
+    }
+
     conn.execute_batch("PRAGMA user_version = 11")?;
     Ok(())
 }
