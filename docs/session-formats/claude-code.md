@@ -206,6 +206,17 @@ Tree structure via `uuid`/`parentUuid` + `isSidechain` flag.
 Sidechain/subagent context appears through `isSidechain` and parent links (`parentUuid`).
 Some recent `system/compact_boundary` events also include `logicalParentUuid`.
 
+### Nested Subagent Transcript Linkage
+
+Claude Code stores subagent transcripts as nested files under:
+
+`<session-id>/subagents/agent-<agentId>.jsonl`
+
+The nested transcript reuses the parent `sessionId`. Sessions Chronicle therefore
+derives a local child session ID from the parent session ID plus `agentId`, then
+stores that derived ID in `Subagent.child_session_id` so the existing inspector
+navigation can open the indexed child transcript.
+
 ---
 
 ## Metadata Available in Events
