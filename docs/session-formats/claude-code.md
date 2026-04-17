@@ -217,6 +217,18 @@ derives a local child session ID from the parent session ID plus `agentId`, then
 stores that derived ID in `Subagent.child_session_id` so the existing inspector
 navigation can open the indexed child transcript.
 
+The bridge from the parent transcript to the nested file is the `agentId` token
+emitted inside the `Agent`/`Task` `tool_result` text, e.g.:
+
+```
+Async agent launched successfully.
+agentId: a41c0fb07beb52ed6
+```
+
+The parser captures that value onto the parent `Subagent.agent_id`, and the
+indexer matches it against nested `agent-<agentId>.jsonl` files to populate
+`child_session_id`.
+
 ---
 
 ## Metadata Available in Events
