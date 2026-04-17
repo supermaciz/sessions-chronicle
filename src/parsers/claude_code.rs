@@ -536,6 +536,7 @@ impl ParseState {
             });
             self.subagents.push(Subagent {
                 id: tool_use_id.clone(),
+                agent_id: Some(tool_use_id.clone()),
                 session_id: String::new(),
                 title,
                 prompt,

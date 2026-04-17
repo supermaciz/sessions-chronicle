@@ -2,7 +2,7 @@ use anyhow::Result;
 use rusqlite::Connection;
 
 #[cfg(test)]
-const CURRENT_DB_VERSION: i64 = 10;
+const CURRENT_DB_VERSION: i64 = 11;
 
 fn column_exists(conn: &Connection, table_name: &str, column_name: &str) -> Result<bool> {
     Ok(conn.query_row(
@@ -31,6 +31,7 @@ fn column_exists(conn: &Connection, table_name: &str, column_name: &str) -> Resu
 ///   8 – sessions gains nullable pinned_at metadata (no fingerprint clear)
 ///   9 – reasoning_attachments side table and clear file_fingerprints
 ///   10 – clear file_fingerprints to rebuild transcripts after parser changes
+///   11 – subagents gains nullable agent_id and clear file_fingerprints
 pub fn initialize_database(conn: &Connection) -> Result<()> {
     let version: i64 = conn.query_row("PRAGMA user_version", [], |row| row.get(0))?;
 
@@ -63,6 +64,9 @@ pub fn initialize_database(conn: &Connection) -> Result<()> {
     }
     if version < 10 {
         apply_v10_migration(conn)?;
+    }
+    if version < 11 {
+        apply_v11_migration(conn)?;
     }
 
     Ok(())
@@ -410,6 +414,26 @@ fn apply_v9_migration(conn: &Connection) -> Result<()> {
 fn apply_v10_migration(conn: &Connection) -> Result<()> {
     conn.execute("DELETE FROM file_fingerprints", [])?;
     conn.execute_batch("PRAGMA user_version = 10")?;
+    Ok(())
+}
+
+/// Migrate from v10 to v11.
+///
+/// Adds nullable durable `agent_id` to subagents and an index on
+/// `(session_id, agent_id)` for fast lookups. Clears `file_fingerprints` to
+/// force re-index so agent IDs are backfilled into persisted subagent rows.
+fn apply_v11_migration(conn: &Connection) -> Result<()> {
+    if !column_exists(conn, "subagents", "agent_id")? {
+        conn.execute("ALTER TABLE subagents ADD COLUMN agent_id TEXT", [])?;
+    }
+
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_subagents_agent ON subagents(session_id, agent_id)",
+        [],
+    )?;
+
+    conn.execute("DELETE FROM file_fingerprints", [])?;
+    conn.execute_batch("PRAGMA user_version = 11")?;
     Ok(())
 }
 
@@ -1025,6 +1049,51 @@ mod tests {
             .query_row("PRAGMA user_version", [], |row| row.get(0))
             .unwrap();
         assert_eq!(version, CURRENT_DB_VERSION);
+
+        let fingerprint_count: i64 = conn
+            .query_row("SELECT count(*) FROM file_fingerprints", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(fingerprint_count, 0);
+    }
+
+    #[test]
+    fn v10_to_v11_migration_adds_subagent_agent_id_column() {
+        let conn = Connection::open_in_memory().unwrap();
+        initialize_database(&conn).unwrap();
+
+        conn.execute_batch("PRAGMA user_version = 10").unwrap();
+        conn.execute(
+            "INSERT INTO file_fingerprints (file_path, mtime_ns, size) VALUES ('fixture.jsonl', 1, 1)",
+            [],
+        )
+        .unwrap();
+
+        initialize_database(&conn).unwrap();
+
+        let version: i64 = conn
+            .query_row("PRAGMA user_version", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(version, CURRENT_DB_VERSION);
+
+        let agent_id_column_count: i64 = conn
+            .query_row(
+                "SELECT count(*) FROM pragma_table_info('subagents') WHERE name='agent_id'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(agent_id_column_count, 1);
+
+        let agent_index_count: i64 = conn
+            .query_row(
+                "SELECT count(*) FROM sqlite_master WHERE type='index' AND name='idx_subagents_agent'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(agent_index_count, 1);
 
         let fingerprint_count: i64 = conn
             .query_row("SELECT count(*) FROM file_fingerprints", [], |row| {
