@@ -38,6 +38,7 @@ fn claude_subagent_agent_id_from_path(file_path: &Path) -> Option<String> {
         .file_stem()
         .and_then(|stem| stem.to_str())
         .and_then(|stem| stem.strip_prefix("agent-"))
+        .filter(|suffix| !suffix.is_empty())
         .map(str::to_string)
 }
 
@@ -62,7 +63,7 @@ fn extract_agent_id_from_result_text(result_text: &str) -> Option<String> {
     result_text
         .lines()
         .map(str::trim)
-        .find_map(|line| line.strip_prefix("agentId: "))
+        .find_map(|line| line.strip_prefix("agentId:"))
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(str::to_string)
@@ -620,6 +621,7 @@ impl ParseState {
         let parent_session_id = claude_subagent_parent_session_id_from_path(file_path);
         let nested_agent_id = claude_subagent_agent_id_from_path(file_path);
         let is_subagent = parent_session_id.is_some() && nested_agent_id.is_some();
+        let parent_session_id = if is_subagent { parent_session_id } else { None };
 
         let final_session_id = match (&parent_session_id, &nested_agent_id) {
             (Some(parent_session_id), Some(agent_id)) => {
@@ -1245,6 +1247,74 @@ mod tests {
             Some("65ce34ec-2589-4f2a-aad3-f536cf8b2906")
         );
         assert!(parsed.session.is_subagent);
+    }
+
+    #[test]
+    fn parse_parent_transcript_is_not_marked_as_subagent() {
+        let file = create_temp_session(&[
+            r#"{"type":"user","timestamp":"2024-01-01T00:00:00Z","sessionId":"parent-plain-1","message":{"content":"Analyze repo"}}"#,
+            r#"{"type":"assistant","timestamp":"2024-01-01T00:00:01Z","sessionId":"parent-plain-1","message":{"content":"Done"}}"#,
+        ]);
+
+        let parsed = ClaudeCodeParser.parse(file.path()).unwrap();
+
+        assert_eq!(parsed.session.id, "parent-plain-1");
+        assert_eq!(parsed.session.parent_session_id, None);
+        assert!(!parsed.session.is_subagent);
+    }
+
+    #[test]
+    fn parse_extracts_agent_id_for_supported_spacing_variants() {
+        for result_text in [
+            "Async agent launched successfully.\nagentId:a41c0fb07beb52ed6",
+            "Async agent launched successfully.\nagentId: a41c0fb07beb52ed6",
+            "Async agent launched successfully.\nagentId:\ta41c0fb07beb52ed6",
+        ] {
+            assert_eq!(
+                extract_agent_id_from_result_text(result_text).as_deref(),
+                Some("a41c0fb07beb52ed6")
+            );
+        }
+    }
+
+    #[test]
+    fn parse_rejects_empty_agent_id_in_async_subagent_result() {
+        let file = create_temp_session(&[
+            r#"{"type":"user","timestamp":"2024-01-01T00:00:00Z","sessionId":"parent-1","message":{"content":"Analyze this"}}"#,
+            r#"{"type":"assistant","timestamp":"2024-01-01T00:00:01Z","sessionId":"parent-1","message":{"content":[{"type":"tool_use","id":"toolu_agent_001","name":"Agent","input":{"description":"Analyze project","prompt":"List all files"}}]}}"#,
+            r#"{"type":"user","timestamp":"2024-01-01T00:00:02Z","sessionId":"parent-1","message":{"content":[{"type":"tool_result","tool_use_id":"toolu_agent_001","content":[{"type":"text","text":"Async agent launched successfully.\nagentId:   "}]}]}}"#,
+        ]);
+
+        let parsed = ClaudeCodeParser.parse(file.path()).unwrap();
+
+        assert_eq!(parsed.subagents.len(), 1);
+        assert_eq!(parsed.subagents[0].agent_id, None);
+    }
+
+    #[test]
+    fn parse_malformed_child_filename_does_not_mark_session_as_subagent() {
+        let temp = tempfile::tempdir().unwrap();
+        let parent_dir = temp.path().join("65ce34ec-2589-4f2a-aad3-f536cf8b2906");
+        let subagents_dir = parent_dir.join("subagents");
+        std::fs::create_dir_all(&subagents_dir).unwrap();
+
+        let malformed_child_path = subagents_dir.join("agent-.jsonl");
+        std::fs::write(
+            &malformed_child_path,
+            concat!(
+                r#"{"parentUuid":null,"isSidechain":true,"type":"user","message":{"role":"user","content":"Analyze repo"},"timestamp":"2024-01-01T00:00:00Z","cwd":"/tmp/project","sessionId":"65ce34ec-2589-4f2a-aad3-f536cf8b2906"}"#,
+                "\n",
+                r#"{"parentUuid":"msg-1","isSidechain":true,"type":"assistant","message":{"role":"assistant","content":"Done"},"timestamp":"2024-01-01T00:00:01Z","cwd":"/tmp/project","sessionId":"65ce34ec-2589-4f2a-aad3-f536cf8b2906"}"#,
+                "\n",
+            ),
+        )
+        .unwrap();
+
+        let parsed = ClaudeCodeParser.parse(&malformed_child_path).unwrap();
+
+        assert_eq!(parsed.session.id, "65ce34ec-2589-4f2a-aad3-f536cf8b2906");
+        assert_eq!(parsed.session.parent_session_id, None);
+        assert!(!parsed.session.is_subagent);
     }
 
     #[test]
