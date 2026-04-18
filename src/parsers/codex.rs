@@ -488,6 +488,25 @@ impl ParseState {
 
 pub struct CodexParser;
 
+fn extract_parent_thread_id(source: Option<&Value>) -> Option<String> {
+    let source = source?;
+
+    source
+        .get("subagent")
+        .and_then(|subagent| subagent.get("thread_spawn"))
+        .and_then(|spawn| spawn.get("parent_thread_id"))
+        .and_then(|value| value.as_str())
+        .map(str::to_string)
+        .or_else(|| {
+            source
+                .get("sub_agent")
+                .and_then(|subagent| subagent.get("thread_spawn"))
+                .and_then(|spawn| spawn.get("parent_thread_id"))
+                .and_then(|value| value.as_str())
+                .map(str::to_string)
+        })
+}
+
 impl CodexParser {
     pub fn parse(&self, file_path: &Path) -> Result<ParsedSession> {
         let file = File::open(file_path).context("Failed to open session file")?;
@@ -542,6 +561,8 @@ impl CodexParser {
             .get("cwd")
             .and_then(|v| v.as_str())
             .map(str::to_string);
+        let parent_session_id = extract_parent_thread_id(payload.get("source"));
+        let is_subagent = parent_session_id.is_some();
 
         let mut state = ParseState::new(session_id.clone(), start_time);
 
@@ -617,8 +638,8 @@ impl CodexParser {
                 last_updated: state.last_updated,
                 pinned_at: None,
                 first_prompt,
-                parent_session_id: None,
-                is_subagent: false,
+                parent_session_id,
+                is_subagent,
                 token_usage: None,
                 edit_count: 0,
                 read_count: 0,
@@ -919,6 +940,38 @@ mod tests {
         writeln!(file, r#"{{"type":"event_msg","timestamp":"2026-01-01T00:00:03Z","payload":{{"type":"agent_message","message":"Done"}}}}"#).unwrap();
         let parsed = CodexParser.parse(file.path()).unwrap();
         assert!(parsed.token_usage.is_none());
+    }
+
+    #[test]
+    fn parse_child_session_marks_session_as_subagent_for_sub_agent_source() {
+        let mut file = tempfile::NamedTempFile::new().unwrap();
+        writeln!(file, r#"{{"type":"session_meta","payload":{{"id":"child-sub-agent","timestamp":"2026-01-01T00:00:00Z","cwd":"/tmp","source":{{"sub_agent":{{"thread_spawn":{{"parent_thread_id":"019da0bb-541a-74e2-ae0a-6693c5e4fe04"}}}}}}}}}}"#).unwrap();
+        writeln!(file, r#"{{"type":"event_msg","timestamp":"2026-01-01T00:00:01Z","payload":{{"type":"user_message","message":"Hi"}}}}"#).unwrap();
+        writeln!(file, r#"{{"type":"event_msg","timestamp":"2026-01-01T00:00:02Z","payload":{{"type":"agent_message","message":"Done"}}}}"#).unwrap();
+
+        let parsed = CodexParser.parse(file.path()).unwrap();
+
+        assert!(parsed.session.is_subagent);
+        assert_eq!(
+            parsed.session.parent_session_id.as_deref(),
+            Some("019da0bb-541a-74e2-ae0a-6693c5e4fe04")
+        );
+    }
+
+    #[test]
+    fn parse_child_session_marks_session_as_subagent_for_subagent_source() {
+        let mut file = tempfile::NamedTempFile::new().unwrap();
+        writeln!(file, r#"{{"type":"session_meta","payload":{{"id":"child-subagent","timestamp":"2026-01-01T00:00:00Z","cwd":"/tmp","source":{{"subagent":{{"thread_spawn":{{"parent_thread_id":"019da0bb-541a-74e2-ae0a-6693c5e4fe04"}}}}}}}}}}"#).unwrap();
+        writeln!(file, r#"{{"type":"event_msg","timestamp":"2026-01-01T00:00:01Z","payload":{{"type":"user_message","message":"Hi"}}}}"#).unwrap();
+        writeln!(file, r#"{{"type":"event_msg","timestamp":"2026-01-01T00:00:02Z","payload":{{"type":"agent_message","message":"Done"}}}}"#).unwrap();
+
+        let parsed = CodexParser.parse(file.path()).unwrap();
+
+        assert!(parsed.session.is_subagent);
+        assert_eq!(
+            parsed.session.parent_session_id.as_deref(),
+            Some("019da0bb-541a-74e2-ae0a-6693c5e4fe04")
+        );
     }
 
     #[derive(Clone, Default)]
