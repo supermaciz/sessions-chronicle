@@ -24,6 +24,61 @@ pub enum ParseError {
     InvalidSessionMetaJson(String),
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum SubagentEventPriority {
+    Interaction = 1,
+    Waiting = 2,
+    Close = 3,
+}
+
+#[derive(Debug, Clone)]
+struct StatusUpdate {
+    summary: Option<String>,
+    terminal: bool,
+}
+
+fn parse_status_update(status: &Value) -> StatusUpdate {
+    if let Some(unit) = status.as_str() {
+        return match unit {
+            "pending_init" | "running" | "interrupted" => StatusUpdate {
+                summary: None,
+                terminal: false,
+            },
+            "shutdown" => StatusUpdate {
+                summary: Some("Shutdown".to_string()),
+                terminal: true,
+            },
+            "not_found" => StatusUpdate {
+                summary: Some("Not found".to_string()),
+                terminal: true,
+            },
+            _ => StatusUpdate {
+                summary: None,
+                terminal: false,
+            },
+        };
+    }
+
+    if let Some(completed) = status.get("completed") {
+        return StatusUpdate {
+            summary: completed.as_str().map(str::to_string),
+            terminal: true,
+        };
+    }
+
+    if let Some(errored) = status.get("errored").and_then(|v| v.as_str()) {
+        return StatusUpdate {
+            summary: Some(format!("Error: {errored}")),
+            terminal: true,
+        };
+    }
+
+    StatusUpdate {
+        summary: None,
+        terminal: false,
+    }
+}
+
 /// Mutable parsing state accumulator for Codex sessions.
 struct ParseState {
     session_id: String,
@@ -43,6 +98,7 @@ struct ParseState {
     call_id_to_tc_idx: HashMap<String, usize>,
     subagent_idx_by_call_id: HashMap<String, usize>,
     subagent_indexes_by_agent_id: HashMap<String, Vec<usize>>,
+    subagent_priority_by_id: HashMap<String, SubagentEventPriority>,
 
     // Counters
     msg_counter: i64,
@@ -66,6 +122,7 @@ impl ParseState {
             call_id_to_tc_idx: HashMap::new(),
             subagent_idx_by_call_id: HashMap::new(),
             subagent_indexes_by_agent_id: HashMap::new(),
+            subagent_priority_by_id: HashMap::new(),
             msg_counter: 0,
             item_counter: 0,
             pending_reasoning: PendingReasoning::default(),
@@ -196,6 +253,8 @@ impl ParseState {
         });
         self.subagent_idx_by_call_id
             .insert(call_id.to_string(), subagent_idx);
+        self.subagent_priority_by_id
+            .insert(call_id.to_string(), SubagentEventPriority::Interaction);
         if let Some(agent_id) = agent_id {
             self.subagent_indexes_by_agent_id
                 .entry(agent_id)
@@ -213,6 +272,62 @@ impl ParseState {
         });
         self.flush_pending_reasoning_to_item(self.item_counter);
         self.item_counter += 1;
+    }
+
+    fn update_subagent_from_status(
+        &mut self,
+        call_id: Option<&str>,
+        receiver_thread_id: Option<&str>,
+        title: Option<&str>,
+        prompt: Option<&str>,
+        status: &Value,
+        priority: SubagentEventPriority,
+    ) {
+        let subagent_index = call_id
+            .and_then(|id| self.subagent_idx_by_call_id.get(id).copied())
+            .or_else(|| {
+                receiver_thread_id
+                    .and_then(|thread_id| self.subagent_indexes_by_agent_id.get(thread_id))
+                    .and_then(|indexes| indexes.last().copied())
+            });
+
+        let Some(index) = subagent_index else {
+            tracing::debug!("dropping orphan collab enrichment event with no matching spawn");
+            return;
+        };
+
+        let update = parse_status_update(status);
+        let subagent_id = self.subagents[index].id.clone();
+        let current_priority = self
+            .subagent_priority_by_id
+            .get(&subagent_id)
+            .copied()
+            .unwrap_or(SubagentEventPriority::Interaction);
+
+        {
+            let subagent = &mut self.subagents[index];
+            if let Some(title) = title.filter(|value| !value.is_empty()) {
+                subagent.title = title.to_string();
+            }
+            if subagent.prompt.is_none() {
+                subagent.prompt = prompt.map(str::to_string);
+            }
+        }
+
+        if !update.terminal || priority < current_priority {
+            return;
+        }
+
+        if let Some(summary) = update.summary.filter(|value| !value.is_empty()) {
+            self.subagents[index].result_summary = Some(summary);
+            self.subagent_priority_by_id.insert(subagent_id, priority);
+            return;
+        }
+
+        if self.subagents[index].result_summary.is_none() {
+            self.subagents[index].result_summary = Some(String::new());
+        }
+        self.subagent_priority_by_id.insert(subagent_id, priority);
     }
 
     fn flush_pending_reasoning_to_item(&mut self, transcript_item_index: i64) {
@@ -511,6 +626,62 @@ impl ParseState {
 
             Some("collab_agent_spawn_end") => {
                 self.record_subagent_spawn(payload);
+            }
+
+            Some("collab_waiting_end") => {
+                let call_id = payload.get("call_id").and_then(|v| v.as_str());
+
+                if let Some(agent_statuses) =
+                    payload.get("agent_statuses").and_then(|v| v.as_array())
+                {
+                    for agent_status in agent_statuses {
+                        self.update_subagent_from_status(
+                            call_id,
+                            agent_status.get("thread_id").and_then(|v| v.as_str()),
+                            agent_status.get("agent_nickname").and_then(|v| v.as_str()),
+                            None,
+                            agent_status.get("status").unwrap_or(&Value::Null),
+                            SubagentEventPriority::Waiting,
+                        );
+                    }
+                } else if let Some(statuses) = payload.get("statuses").and_then(|v| v.as_object()) {
+                    for (thread_id, status) in statuses {
+                        self.update_subagent_from_status(
+                            call_id,
+                            Some(thread_id.as_str()),
+                            None,
+                            None,
+                            status,
+                            SubagentEventPriority::Waiting,
+                        );
+                    }
+                }
+            }
+
+            Some("collab_close_end") => {
+                self.update_subagent_from_status(
+                    payload.get("call_id").and_then(|v| v.as_str()),
+                    payload.get("receiver_thread_id").and_then(|v| v.as_str()),
+                    payload
+                        .get("receiver_agent_nickname")
+                        .and_then(|v| v.as_str()),
+                    None,
+                    payload.get("status").unwrap_or(&Value::Null),
+                    SubagentEventPriority::Close,
+                );
+            }
+
+            Some("collab_agent_interaction_end") => {
+                self.update_subagent_from_status(
+                    payload.get("call_id").and_then(|v| v.as_str()),
+                    payload.get("receiver_thread_id").and_then(|v| v.as_str()),
+                    payload
+                        .get("receiver_agent_nickname")
+                        .and_then(|v| v.as_str()),
+                    payload.get("prompt").and_then(|v| v.as_str()),
+                    payload.get("status").unwrap_or(&Value::Null),
+                    SubagentEventPriority::Interaction,
+                );
             }
 
             _ => {}
@@ -1116,6 +1287,199 @@ mod tests {
 
         assert!(parsed.subagents.is_empty());
         assert_eq!(parsed.transcript_items.len(), 1);
+    }
+
+    #[test]
+    fn parse_close_end_overrides_waiting_end_summary_for_same_subagent() {
+        let mut file = tempfile::NamedTempFile::new().unwrap();
+        writeln!(
+            file,
+            "{}",
+            r#"{"type":"session_meta","payload":{"id":"019da0bb-541a-74e2-ae0a-6693c5e4fe04","timestamp":"2026-04-18T13:17:40Z","cwd":"/tmp/project"}}"#
+        )
+        .unwrap();
+        writeln!(
+            file,
+            "{}",
+            r#"{"type":"event_msg","timestamp":"2026-04-18T13:17:41Z","payload":{"type":"user_message","message":"Delegate this"}}"#
+        )
+        .unwrap();
+        writeln!(
+            file,
+            "{}",
+            r#"{"type":"event_msg","timestamp":"2026-04-18T13:17:42Z","payload":{"type":"collab_agent_spawn_end","call_id":"call_spawn_1","sender_thread_id":"019da0bb-541a-74e2-ae0a-6693c5e4fe04","new_thread_id":"019da0bd-3df2-7191-a1a8-e326b55fe052","new_agent_nickname":"Kierkegaard","new_agent_role":"default","prompt":"Inspect the failing parser tests","status":"running"}}"#
+        )
+        .unwrap();
+        writeln!(
+            file,
+            "{}",
+            r#"{"type":"event_msg","timestamp":"2026-04-18T13:17:43Z","payload":{"type":"collab_waiting_end","call_id":"call_spawn_1","sender_thread_id":"019da0bb-541a-74e2-ae0a-6693c5e4fe04","agent_statuses":[{"thread_id":"019da0bd-3df2-7191-a1a8-e326b55fe052","agent_nickname":"Kierkegaard","agent_role":"default","status":{"completed":"intermediate summary"}}],"statuses":{"019da0bd-3df2-7191-a1a8-e326b55fe052":{"completed":"intermediate summary"}}}}"#
+        )
+        .unwrap();
+        writeln!(
+            file,
+            "{}",
+            r#"{"type":"event_msg","timestamp":"2026-04-18T13:17:44Z","payload":{"type":"collab_close_end","call_id":"call_close_1","sender_thread_id":"019da0bb-541a-74e2-ae0a-6693c5e4fe04","receiver_thread_id":"019da0bd-3df2-7191-a1a8-e326b55fe052","receiver_agent_nickname":"Kierkegaard","receiver_agent_role":"default","status":{"completed":"final delegated answer"}}}"#
+        )
+        .unwrap();
+
+        let parsed = CodexParser.parse(file.path()).unwrap();
+        assert_eq!(parsed.subagents.len(), 1);
+        assert_eq!(
+            parsed.subagents[0].result_summary.as_deref(),
+            Some("final delegated answer")
+        );
+    }
+
+    #[test]
+    fn parse_running_status_does_not_overwrite_completed_summary() {
+        let mut file = tempfile::NamedTempFile::new().unwrap();
+        writeln!(
+            file,
+            "{}",
+            r#"{"type":"session_meta","payload":{"id":"codex-non-terminal","timestamp":"2026-04-18T13:17:40Z","cwd":"/tmp/project"}}"#
+        )
+        .unwrap();
+        writeln!(
+            file,
+            "{}",
+            r#"{"type":"event_msg","timestamp":"2026-04-18T13:17:41Z","payload":{"type":"user_message","message":"Delegate this"}}"#
+        )
+        .unwrap();
+        writeln!(
+            file,
+            "{}",
+            r#"{"type":"event_msg","timestamp":"2026-04-18T13:17:42Z","payload":{"type":"collab_agent_spawn_end","call_id":"call_spawn_1","sender_thread_id":"codex-non-terminal","new_thread_id":"child-1","new_agent_nickname":"Kierkegaard","new_agent_role":"default","prompt":"Inspect the failing parser tests","status":"running"}}"#
+        )
+        .unwrap();
+        writeln!(
+            file,
+            "{}",
+            r#"{"type":"event_msg","timestamp":"2026-04-18T13:17:43Z","payload":{"type":"collab_waiting_end","call_id":"call_spawn_1","sender_thread_id":"codex-non-terminal","agent_statuses":[{"thread_id":"child-1","agent_nickname":"Kierkegaard","agent_role":"default","status":{"completed":"done already"}}],"statuses":{"child-1":{"completed":"done already"}}}}"#
+        )
+        .unwrap();
+        writeln!(
+            file,
+            "{}",
+            r#"{"type":"event_msg","timestamp":"2026-04-18T13:17:44Z","payload":{"type":"collab_waiting_end","call_id":"call_spawn_1","sender_thread_id":"codex-non-terminal","agent_statuses":[{"thread_id":"child-1","agent_nickname":"Kierkegaard","agent_role":"default","status":"running"}],"statuses":{"child-1":"running"}}}"#
+        )
+        .unwrap();
+
+        let parsed = CodexParser.parse(file.path()).unwrap();
+        assert_eq!(
+            parsed.subagents[0].result_summary.as_deref(),
+            Some("done already")
+        );
+    }
+
+    #[test]
+    fn parse_unknown_agent_status_does_not_fail_session_parse() {
+        let mut file = tempfile::NamedTempFile::new().unwrap();
+        writeln!(
+            file,
+            "{}",
+            r#"{"type":"session_meta","payload":{"id":"codex-unknown-status","timestamp":"2026-04-18T13:17:40Z","cwd":"/tmp/project"}}"#
+        )
+        .unwrap();
+        writeln!(
+            file,
+            "{}",
+            r#"{"type":"event_msg","timestamp":"2026-04-18T13:17:41Z","payload":{"type":"user_message","message":"Delegate this"}}"#
+        )
+        .unwrap();
+        writeln!(
+            file,
+            "{}",
+            r#"{"type":"event_msg","timestamp":"2026-04-18T13:17:42Z","payload":{"type":"collab_agent_spawn_end","call_id":"call_spawn_1","sender_thread_id":"codex-unknown-status","new_thread_id":"child-1","new_agent_nickname":"Kierkegaard","new_agent_role":"default","prompt":"Inspect the failing parser tests","status":"running"}}"#
+        )
+        .unwrap();
+        writeln!(
+            file,
+            "{}",
+            r#"{"type":"event_msg","timestamp":"2026-04-18T13:17:43Z","payload":{"type":"collab_close_end","call_id":"call_close_1","sender_thread_id":"codex-unknown-status","receiver_thread_id":"child-1","receiver_agent_nickname":"Kierkegaard","receiver_agent_role":"default","status":{"paused_for_human":"needs approval"}}}"#
+        )
+        .unwrap();
+
+        let parsed = CodexParser.parse(file.path()).unwrap();
+        assert_eq!(parsed.subagents.len(), 1);
+    }
+
+    #[test]
+    fn parse_waiting_end_falls_back_to_statuses_map_when_agent_statuses_is_missing() {
+        let mut file = tempfile::NamedTempFile::new().unwrap();
+        writeln!(
+            file,
+            "{}",
+            r#"{"type":"session_meta","payload":{"id":"codex-status-map","timestamp":"2026-04-18T13:17:40Z","cwd":"/tmp/project"}}"#
+        )
+        .unwrap();
+        writeln!(
+            file,
+            "{}",
+            r#"{"type":"event_msg","timestamp":"2026-04-18T13:17:41Z","payload":{"type":"user_message","message":"Delegate this"}}"#
+        )
+        .unwrap();
+        writeln!(
+            file,
+            "{}",
+            r#"{"type":"event_msg","timestamp":"2026-04-18T13:17:42Z","payload":{"type":"collab_agent_spawn_end","call_id":"call_spawn_1","sender_thread_id":"codex-status-map","new_thread_id":"child-1","new_agent_nickname":"Kierkegaard","new_agent_role":"default","prompt":"Inspect the failing parser tests","status":"running"}}"#
+        )
+        .unwrap();
+        writeln!(
+            file,
+            "{}",
+            r#"{"type":"event_msg","timestamp":"2026-04-18T13:17:43Z","payload":{"type":"collab_waiting_end","call_id":"call_spawn_1","sender_thread_id":"codex-status-map","statuses":{"child-1":{"errored":"permission denied"}}}}"#
+        )
+        .unwrap();
+
+        let parsed = CodexParser.parse(file.path()).unwrap();
+        assert_eq!(
+            parsed.subagents[0].result_summary.as_deref(),
+            Some("Error: permission denied")
+        );
+    }
+
+    #[test]
+    fn parse_enrichment_without_call_id_updates_latest_matching_thread_row() {
+        let mut file = tempfile::NamedTempFile::new().unwrap();
+        writeln!(
+            file,
+            "{}",
+            r#"{"type":"session_meta","payload":{"id":"codex-retry","timestamp":"2026-04-18T13:17:40Z","cwd":"/tmp/project"}}"#
+        )
+        .unwrap();
+        writeln!(
+            file,
+            "{}",
+            r#"{"type":"event_msg","timestamp":"2026-04-18T13:17:41Z","payload":{"type":"user_message","message":"Delegate twice"}}"#
+        )
+        .unwrap();
+        writeln!(
+            file,
+            "{}",
+            r#"{"type":"event_msg","timestamp":"2026-04-18T13:17:42Z","payload":{"type":"collab_agent_spawn_end","call_id":"call_spawn_1","sender_thread_id":"codex-retry","new_thread_id":"child-1","new_agent_nickname":"Kierkegaard","new_agent_role":"default","prompt":"first attempt","status":"running"}}"#
+        )
+        .unwrap();
+        writeln!(
+            file,
+            "{}",
+            r#"{"type":"event_msg","timestamp":"2026-04-18T13:17:43Z","payload":{"type":"collab_agent_spawn_end","call_id":"call_spawn_2","sender_thread_id":"codex-retry","new_thread_id":"child-1","new_agent_nickname":"Kierkegaard","new_agent_role":"default","prompt":"second attempt","status":"running"}}"#
+        )
+        .unwrap();
+        writeln!(
+            file,
+            "{}",
+            r#"{"type":"event_msg","timestamp":"2026-04-18T13:17:44Z","payload":{"type":"collab_close_end","sender_thread_id":"codex-retry","receiver_thread_id":"child-1","receiver_agent_nickname":"Kierkegaard","receiver_agent_role":"default","status":{"completed":"second attempt finished"}}}"#
+        )
+        .unwrap();
+
+        let parsed = CodexParser.parse(file.path()).unwrap();
+        assert_eq!(parsed.subagents.len(), 2);
+        assert_eq!(parsed.subagents[0].result_summary, None);
+        assert_eq!(
+            parsed.subagents[1].result_summary.as_deref(),
+            Some("second attempt finished")
+        );
     }
 
     #[derive(Clone, Default)]
