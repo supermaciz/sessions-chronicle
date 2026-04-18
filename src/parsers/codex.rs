@@ -172,7 +172,7 @@ impl ParseState {
             .filter(|value| !value.is_empty())
             .map(str::to_string);
         let title = payload
-            .get("nickname")
+            .get("new_agent_nickname")
             .and_then(|v| v.as_str())
             .filter(|value| !value.is_empty())
             .unwrap_or("Codex subagent")
@@ -1064,7 +1064,7 @@ mod tests {
         .unwrap();
         writeln!(
             file,
-            r#"{{"type":"event_msg","timestamp":"2026-01-01T00:00:02Z","payload":{{"type":"collab_agent_spawn_end","call_id":"call_spawn_1","new_thread_id":"019da0bd-3df2-7191-a1a8-e326b55fe052","nickname":"Kierkegaard","prompt":"Inspect the failing parser tests"}}}}"#
+            r#"{{"type":"event_msg","timestamp":"2026-01-01T00:00:02Z","payload":{{"type":"collab_agent_spawn_end","call_id":"call_spawn_1","new_thread_id":"019da0bd-3df2-7191-a1a8-e326b55fe052","new_agent_nickname":"Kierkegaard","prompt":"Inspect the failing parser tests"}}}}"#
         )
         .unwrap();
 
@@ -1108,7 +1108,7 @@ mod tests {
         .unwrap();
         writeln!(
             file,
-            r#"{{"type":"event_msg","timestamp":"2026-01-01T00:00:02Z","payload":{{"type":"collab_agent_spawn_begin","call_id":"call_spawn_1","new_thread_id":"019da0bd-3df2-7191-a1a8-e326b55fe052","nickname":"Kierkegaard","prompt":"Inspect the failing parser tests"}}}}"#
+            r#"{{"type":"event_msg","timestamp":"2026-01-01T00:00:02Z","payload":{{"type":"collab_agent_spawn_begin","call_id":"call_spawn_1","new_thread_id":"019da0bd-3df2-7191-a1a8-e326b55fe052","new_agent_nickname":"Kierkegaard","prompt":"Inspect the failing parser tests"}}}}"#
         )
         .unwrap();
 
