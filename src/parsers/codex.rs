@@ -790,6 +790,10 @@ impl ParseState {
 
 pub struct CodexParser;
 
+// Codex rollouts use two different keys for the subagent source variant:
+// upstream `SessionSource` serializes as `sub_agent` (snake_case), but older
+// rollouts emit `subagent` (no underscore). Both shapes appear in the wild,
+// so accept either.
 fn extract_parent_thread_id(source: Option<&Value>) -> Option<String> {
     let source = source?;
 
