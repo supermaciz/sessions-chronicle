@@ -7,7 +7,8 @@ use std::io::{BufRead, BufReader};
 use std::path::Path;
 
 use crate::models::{
-    AiAssistant, Message, ReasoningAttachment, Role, Session, TokenUsage, ToolCall, ToolCallStatus,
+    AiAssistant, Message, ReasoningAttachment, Role, Session, Subagent, TokenUsage, ToolCall,
+    ToolCallStatus,
 };
 use crate::models::{TranscriptItem, TranscriptItemKind};
 use crate::parsers::model::normalize_model;
@@ -34,11 +35,14 @@ struct ParseState {
     // Output collections
     messages: Vec<Message>,
     tool_calls: Vec<ToolCall>,
+    subagents: Vec<Subagent>,
     transcript_items: Vec<TranscriptItem>,
     reasoning_attachments: Vec<ReasoningAttachment>,
 
     // Correlation: call_id -> index in tool_calls
     call_id_to_tc_idx: HashMap<String, usize>,
+    subagent_idx_by_call_id: HashMap<String, usize>,
+    subagent_indexes_by_agent_id: HashMap<String, Vec<usize>>,
 
     // Counters
     msg_counter: i64,
@@ -56,9 +60,12 @@ impl ParseState {
             has_user_message: false,
             messages: Vec::new(),
             tool_calls: Vec::new(),
+            subagents: Vec::new(),
             transcript_items: Vec::new(),
             reasoning_attachments: Vec::new(),
             call_id_to_tc_idx: HashMap::new(),
+            subagent_idx_by_call_id: HashMap::new(),
+            subagent_indexes_by_agent_id: HashMap::new(),
             msg_counter: 0,
             item_counter: 0,
             pending_reasoning: PendingReasoning::default(),
@@ -144,6 +151,68 @@ impl ParseState {
 
     fn queue_reasoning(&mut self, reasoning: PendingReasoning) {
         self.pending_reasoning.merge(reasoning);
+    }
+
+    fn record_subagent_spawn(&mut self, payload: &Value) {
+        let call_id = match payload.get("call_id").and_then(|v| v.as_str()) {
+            Some(call_id) if !call_id.is_empty() => call_id,
+            _ => {
+                tracing::warn!("collab_agent_spawn_end missing call_id, skipping");
+                return;
+            }
+        };
+
+        if self.subagent_idx_by_call_id.contains_key(call_id) {
+            return;
+        }
+
+        let agent_id = payload
+            .get("new_thread_id")
+            .and_then(|v| v.as_str())
+            .filter(|value| !value.is_empty())
+            .map(str::to_string);
+        let title = payload
+            .get("nickname")
+            .and_then(|v| v.as_str())
+            .filter(|value| !value.is_empty())
+            .unwrap_or("Codex subagent")
+            .to_string();
+        let prompt = payload
+            .get("prompt")
+            .and_then(|v| v.as_str())
+            .filter(|value| !value.is_empty())
+            .map(str::to_string);
+
+        let subagent_idx = self.subagents.len();
+        self.subagents.push(Subagent {
+            id: call_id.to_string(),
+            agent_id: agent_id.clone(),
+            session_id: self.session_id.clone(),
+            title,
+            prompt,
+            result_summary: None,
+            child_session_id: None,
+            parser_ref: Some(call_id.to_string()),
+        });
+        self.subagent_idx_by_call_id
+            .insert(call_id.to_string(), subagent_idx);
+        if let Some(agent_id) = agent_id {
+            self.subagent_indexes_by_agent_id
+                .entry(agent_id)
+                .or_default()
+                .push(subagent_idx);
+        }
+
+        self.transcript_items.push(TranscriptItem {
+            session_id: self.session_id.clone(),
+            item_index: self.item_counter,
+            kind: TranscriptItemKind::Subagent,
+            message_index: None,
+            tool_call_id: None,
+            subagent_id: Some(call_id.to_string()),
+        });
+        self.flush_pending_reasoning_to_item(self.item_counter);
+        self.item_counter += 1;
     }
 
     fn flush_pending_reasoning_to_item(&mut self, transcript_item_index: i64) {
@@ -438,6 +507,12 @@ impl ParseState {
                 );
             }
 
+            Some("collab_agent_spawn_begin") => {}
+
+            Some("collab_agent_spawn_end") => {
+                self.record_subagent_spawn(payload);
+            }
+
             _ => {}
         }
     }
@@ -648,7 +723,7 @@ impl CodexParser {
             },
             messages: state.messages,
             tool_calls: state.tool_calls,
-            subagents: Vec::new(),
+            subagents: state.subagents,
             transcript_items: state.transcript_items,
             reasoning_attachments: state.reasoning_attachments,
             token_usage,
@@ -972,6 +1047,75 @@ mod tests {
             parsed.session.parent_session_id.as_deref(),
             Some("019da0bb-541a-74e2-ae0a-6693c5e4fe04")
         );
+    }
+
+    #[test]
+    fn parse_collab_agent_spawn_end_creates_subagent_and_transcript_item() {
+        let mut file = tempfile::NamedTempFile::new().unwrap();
+        writeln!(
+            file,
+            r#"{{"type":"session_meta","payload":{{"id":"codex-subagent","timestamp":"2026-01-01T00:00:00Z","cwd":"/tmp"}}}}"#
+        )
+        .unwrap();
+        writeln!(
+            file,
+            r#"{{"type":"event_msg","timestamp":"2026-01-01T00:00:01Z","payload":{{"type":"user_message","message":"Inspect parser behavior"}}}}"#
+        )
+        .unwrap();
+        writeln!(
+            file,
+            r#"{{"type":"event_msg","timestamp":"2026-01-01T00:00:02Z","payload":{{"type":"collab_agent_spawn_end","call_id":"call_spawn_1","new_thread_id":"019da0bd-3df2-7191-a1a8-e326b55fe052","nickname":"Kierkegaard","prompt":"Inspect the failing parser tests"}}}}"#
+        )
+        .unwrap();
+
+        let parsed = CodexParser.parse(file.path()).unwrap();
+
+        assert_eq!(parsed.subagents.len(), 1);
+        assert_eq!(parsed.subagents[0].id, "call_spawn_1");
+        assert_eq!(
+            parsed.subagents[0].agent_id.as_deref(),
+            Some("019da0bd-3df2-7191-a1a8-e326b55fe052")
+        );
+        assert_eq!(parsed.subagents[0].title, "Kierkegaard");
+        assert_eq!(
+            parsed.subagents[0].prompt.as_deref(),
+            Some("Inspect the failing parser tests")
+        );
+
+        assert_eq!(parsed.transcript_items.len(), 2);
+        assert!(matches!(
+            parsed.transcript_items[1].kind,
+            TranscriptItemKind::Subagent
+        ));
+        assert_eq!(
+            parsed.transcript_items[1].subagent_id.as_deref(),
+            Some("call_spawn_1")
+        );
+    }
+
+    #[test]
+    fn parse_collab_agent_spawn_begin_without_end_does_not_create_subagent() {
+        let mut file = tempfile::NamedTempFile::new().unwrap();
+        writeln!(
+            file,
+            r#"{{"type":"session_meta","payload":{{"id":"codex-subagent-begin-only","timestamp":"2026-01-01T00:00:00Z","cwd":"/tmp"}}}}"#
+        )
+        .unwrap();
+        writeln!(
+            file,
+            r#"{{"type":"event_msg","timestamp":"2026-01-01T00:00:01Z","payload":{{"type":"user_message","message":"Inspect parser behavior"}}}}"#
+        )
+        .unwrap();
+        writeln!(
+            file,
+            r#"{{"type":"event_msg","timestamp":"2026-01-01T00:00:02Z","payload":{{"type":"collab_agent_spawn_begin","call_id":"call_spawn_1","new_thread_id":"019da0bd-3df2-7191-a1a8-e326b55fe052","nickname":"Kierkegaard","prompt":"Inspect the failing parser tests"}}}}"#
+        )
+        .unwrap();
+
+        let parsed = CodexParser.parse(file.path()).unwrap();
+
+        assert!(parsed.subagents.is_empty());
+        assert_eq!(parsed.transcript_items.len(), 1);
     }
 
     #[derive(Clone, Default)]
