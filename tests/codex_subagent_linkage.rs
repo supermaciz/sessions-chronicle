@@ -1,6 +1,10 @@
 use rusqlite::Connection;
 use sessions_chronicle::database::{SessionIndexer, load_session, load_subagent};
+use sessions_chronicle::models::AiAssistant;
+use sessions_chronicle::session_sources::SessionSources;
 use std::fs;
+use std::fs::OpenOptions;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use tempfile::{NamedTempFile, TempDir, tempdir};
 
@@ -28,6 +32,30 @@ fn fixture_dir(include_parent: bool, include_child: bool) -> TempDir {
     }
 
     dir
+}
+
+fn fixture_override_root() -> TempDir {
+    let root = tempdir().unwrap();
+    let target_dir = root.path().join("codex_sessions/2026/04/18");
+    fs::create_dir_all(&target_dir).unwrap();
+
+    fs::copy(fixture_file_path(PARENT_FILE), target_dir.join(PARENT_FILE)).unwrap();
+    fs::copy(fixture_file_path(CHILD_FILE), target_dir.join(CHILD_FILE)).unwrap();
+
+    root
+}
+
+fn append_harmless_parent_event(root: &TempDir) {
+    let parent_path = root
+        .path()
+        .join("codex_sessions/2026/04/18")
+        .join(PARENT_FILE);
+    let mut file = OpenOptions::new().append(true).open(parent_path).unwrap();
+    writeln!(
+        file,
+        "{{\"type\":\"event_msg\",\"timestamp\":\"2026-04-18T13:17:05Z\",\"payload\":{{\"type\":\"agent_message\",\"message\":\"No-op incremental marker\"}}}}"
+    )
+    .unwrap();
 }
 
 #[test]
@@ -151,4 +179,45 @@ fn indexing_codex_duplicate_thread_rows_share_the_same_child_session_id() {
         )
         .unwrap();
     assert_eq!(distinct_child_ids, 1);
+}
+
+#[test]
+fn codex_incremental_reindex_keeps_existing_child_link_when_child_file_is_skipped() {
+    let temp_db = NamedTempFile::new().unwrap();
+    let mut indexer = SessionIndexer::new(temp_db.path()).unwrap();
+    let root = fixture_override_root();
+    let sources = SessionSources::resolve(Some(root.path()));
+
+    let first_run = indexer.index_all_incremental(&sources).unwrap();
+    let first_codex = first_run
+        .per_source
+        .iter()
+        .find(|result| result.assistant == AiAssistant::Codex)
+        .expect("Codex source result should exist");
+    assert_eq!(first_codex.indexed, 2);
+
+    let initial_subagent = load_subagent(temp_db.path(), PARENT_SESSION_ID, "call_spawn_1")
+        .unwrap()
+        .expect("parent subagent should exist after initial index");
+    assert_eq!(
+        initial_subagent.child_session_id.as_deref(),
+        Some(CHILD_SESSION_ID)
+    );
+
+    append_harmless_parent_event(&root);
+
+    let second_run = indexer.index_all_incremental(&sources).unwrap();
+    let second_codex = second_run
+        .per_source
+        .iter()
+        .find(|result| result.assistant == AiAssistant::Codex)
+        .expect("Codex source result should exist");
+    assert_eq!(second_codex.indexed, 1);
+    assert_eq!(second_codex.skipped, 1);
+
+    let subagent = load_subagent(temp_db.path(), PARENT_SESSION_ID, "call_spawn_1")
+        .unwrap()
+        .expect("parent subagent should exist after incremental reindex");
+    assert_eq!(subagent.agent_id.as_deref(), Some(CHILD_SESSION_ID));
+    assert_eq!(subagent.child_session_id.as_deref(), Some(CHILD_SESSION_ID));
 }

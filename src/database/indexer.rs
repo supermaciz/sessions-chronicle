@@ -829,7 +829,32 @@ impl SessionIndexer {
         tx: &rusqlite::Transaction<'_>,
         parsed: &ParsedSession,
     ) -> Result<()> {
-        if parsed.session.tool != AiAssistant::Codex || !parsed.session.is_subagent {
+        if parsed.session.tool != AiAssistant::Codex {
+            return Ok(());
+        }
+
+        if !parsed.session.is_subagent {
+            for subagent in &parsed.subagents {
+                let Some(agent_id) = subagent.agent_id.as_deref() else {
+                    continue;
+                };
+
+                let child_exists: bool = tx.query_row(
+                    "SELECT EXISTS(SELECT 1 FROM sessions WHERE id = ?1)",
+                    [agent_id],
+                    |row| row.get(0),
+                )?;
+
+                if child_exists {
+                    tx.execute(
+                        "UPDATE subagents
+                         SET child_session_id = ?1
+                         WHERE session_id = ?2 AND id = ?3",
+                        rusqlite::params![agent_id, &parsed.session.id, &subagent.id],
+                    )?;
+                }
+            }
+
             return Ok(());
         }
 
