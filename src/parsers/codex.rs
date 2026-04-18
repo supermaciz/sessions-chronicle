@@ -1,7 +1,7 @@
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
 use serde_json::Value;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::path::Path;
@@ -630,11 +630,18 @@ impl ParseState {
 
             Some("collab_waiting_end") => {
                 let call_id = payload.get("call_id").and_then(|v| v.as_str());
+                let mut thread_ids_with_agent_status = HashSet::new();
 
                 if let Some(agent_statuses) =
                     payload.get("agent_statuses").and_then(|v| v.as_array())
                 {
                     for agent_status in agent_statuses {
+                        if let Some(thread_id) =
+                            agent_status.get("thread_id").and_then(|v| v.as_str())
+                        {
+                            thread_ids_with_agent_status.insert(thread_id.to_string());
+                        }
+
                         self.update_subagent_from_status(
                             call_id,
                             agent_status.get("thread_id").and_then(|v| v.as_str()),
@@ -644,8 +651,14 @@ impl ParseState {
                             SubagentEventPriority::Waiting,
                         );
                     }
-                } else if let Some(statuses) = payload.get("statuses").and_then(|v| v.as_object()) {
+                }
+
+                if let Some(statuses) = payload.get("statuses").and_then(|v| v.as_object()) {
                     for (thread_id, status) in statuses {
+                        if thread_ids_with_agent_status.contains(thread_id) {
+                            continue;
+                        }
+
                         self.update_subagent_from_status(
                             call_id,
                             Some(thread_id.as_str()),
@@ -1436,6 +1449,52 @@ mod tests {
         assert_eq!(
             parsed.subagents[0].result_summary.as_deref(),
             Some("Error: permission denied")
+        );
+    }
+
+    #[test]
+    fn parse_waiting_end_falls_back_to_statuses_map_when_agent_statuses_is_partial() {
+        let mut file = tempfile::NamedTempFile::new().unwrap();
+        writeln!(
+            file,
+            "{}",
+            r#"{"type":"session_meta","payload":{"id":"codex-status-map-partial","timestamp":"2026-04-18T13:17:40Z","cwd":"/tmp/project"}}"#
+        )
+        .unwrap();
+        writeln!(
+            file,
+            "{}",
+            r#"{"type":"event_msg","timestamp":"2026-04-18T13:17:41Z","payload":{"type":"user_message","message":"Delegate this"}}"#
+        )
+        .unwrap();
+        writeln!(
+            file,
+            "{}",
+            r#"{"type":"event_msg","timestamp":"2026-04-18T13:17:42Z","payload":{"type":"collab_agent_spawn_end","call_id":"call_spawn_1","sender_thread_id":"codex-status-map-partial","new_thread_id":"child-1","new_agent_nickname":"Kierkegaard","new_agent_role":"default","prompt":"Inspect parser behavior","status":"running"}}"#
+        )
+        .unwrap();
+        writeln!(
+            file,
+            "{}",
+            r#"{"type":"event_msg","timestamp":"2026-04-18T13:17:43Z","payload":{"type":"collab_agent_spawn_end","call_id":"call_spawn_2","sender_thread_id":"codex-status-map-partial","new_thread_id":"child-2","new_agent_nickname":"Camus","new_agent_role":"default","prompt":"Inspect parser behavior","status":"running"}}"#
+        )
+        .unwrap();
+        writeln!(
+            file,
+            "{}",
+            r#"{"type":"event_msg","timestamp":"2026-04-18T13:17:44Z","payload":{"type":"collab_waiting_end","call_id":"call_wait_1","sender_thread_id":"codex-status-map-partial","agent_statuses":[{"thread_id":"child-1","agent_nickname":"Kierkegaard","agent_role":"default","status":{"completed":"first done"}}],"statuses":{"child-1":{"completed":"first done"},"child-2":{"errored":"second failed"}}}}"#
+        )
+        .unwrap();
+
+        let parsed = CodexParser.parse(file.path()).unwrap();
+        assert_eq!(parsed.subagents.len(), 2);
+        assert_eq!(
+            parsed.subagents[0].result_summary.as_deref(),
+            Some("first done")
+        );
+        assert_eq!(
+            parsed.subagents[1].result_summary.as_deref(),
+            Some("Error: second failed")
         );
     }
 
