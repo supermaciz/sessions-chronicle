@@ -35,6 +35,9 @@ enum SubagentEventPriority {
 struct StatusUpdate {
     summary: Option<String>,
     terminal: bool,
+    // true for generic unit labels like "Shutdown"/"Not found" that should
+    // never overwrite a detailed summary from `completed`/`errored`.
+    coarse: bool,
 }
 
 fn parse_status_update(status: &Value) -> StatusUpdate {
@@ -43,18 +46,22 @@ fn parse_status_update(status: &Value) -> StatusUpdate {
             "pending_init" | "running" | "interrupted" => StatusUpdate {
                 summary: None,
                 terminal: false,
+                coarse: false,
             },
             "shutdown" => StatusUpdate {
                 summary: Some("Shutdown".to_string()),
                 terminal: true,
+                coarse: true,
             },
             "not_found" => StatusUpdate {
                 summary: Some("Not found".to_string()),
                 terminal: true,
+                coarse: true,
             },
             _ => StatusUpdate {
                 summary: None,
                 terminal: false,
+                coarse: false,
             },
         };
     }
@@ -63,6 +70,7 @@ fn parse_status_update(status: &Value) -> StatusUpdate {
         return StatusUpdate {
             summary: completed.as_str().map(str::to_string),
             terminal: true,
+            coarse: false,
         };
     }
 
@@ -70,12 +78,14 @@ fn parse_status_update(status: &Value) -> StatusUpdate {
         return StatusUpdate {
             summary: Some(format!("Error: {errored}")),
             terminal: true,
+            coarse: false,
         };
     }
 
     StatusUpdate {
         summary: None,
         terminal: false,
+        coarse: false,
     }
 }
 
@@ -99,6 +109,10 @@ struct ParseState {
     subagent_idx_by_call_id: HashMap<String, usize>,
     subagent_indexes_by_agent_id: HashMap<String, Vec<usize>>,
     subagent_priority_by_id: HashMap<String, SubagentEventPriority>,
+    // Tracks whether the current `result_summary` came from a coarse unit
+    // status label, so a later coarse terminal event cannot downgrade a
+    // detailed `completed`/`errored` summary.
+    subagent_summary_is_coarse: HashMap<String, bool>,
 
     // Counters
     msg_counter: i64,
@@ -123,6 +137,7 @@ impl ParseState {
             subagent_idx_by_call_id: HashMap::new(),
             subagent_indexes_by_agent_id: HashMap::new(),
             subagent_priority_by_id: HashMap::new(),
+            subagent_summary_is_coarse: HashMap::new(),
             msg_counter: 0,
             item_counter: 0,
             pending_reasoning: PendingReasoning::default(),
@@ -283,12 +298,18 @@ impl ParseState {
         status: &Value,
         priority: SubagentEventPriority,
     ) {
-        let subagent_index = call_id
-            .and_then(|id| self.subagent_idx_by_call_id.get(id).copied())
+        // Prefer per-thread resolution when the event carries an explicit
+        // thread_id: waiting_end fan-out shares a single call_id across
+        // multiple agent_statuses, so resolving by call_id first would
+        // funnel every status update onto the same subagent row.
+        let subagent_index = receiver_thread_id
+            .filter(|id| !id.is_empty())
+            .and_then(|thread_id| self.subagent_indexes_by_agent_id.get(thread_id))
+            .and_then(|indexes| indexes.last().copied())
             .or_else(|| {
-                receiver_thread_id
-                    .and_then(|thread_id| self.subagent_indexes_by_agent_id.get(thread_id))
-                    .and_then(|indexes| indexes.last().copied())
+                call_id
+                    .filter(|id| !id.is_empty())
+                    .and_then(|id| self.subagent_idx_by_call_id.get(id).copied())
             });
 
         let Some(index) = subagent_index else {
@@ -319,13 +340,35 @@ impl ParseState {
         }
 
         if let Some(summary) = update.summary.filter(|value| !value.is_empty()) {
+            let current_is_coarse = self
+                .subagent_summary_is_coarse
+                .get(&subagent_id)
+                .copied()
+                .unwrap_or(true);
+            let has_existing_summary = self.subagents[index]
+                .result_summary
+                .as_deref()
+                .is_some_and(|s| !s.is_empty());
+
+            // Never let a coarse unit label overwrite a detailed summary
+            // from `completed`/`errored`, even if the new event has higher
+            // priority (e.g. close_end:"shutdown" after waiting_end:completed).
+            if update.coarse && has_existing_summary && !current_is_coarse {
+                self.subagent_priority_by_id.insert(subagent_id, priority);
+                return;
+            }
+
             self.subagents[index].result_summary = Some(summary);
+            self.subagent_summary_is_coarse
+                .insert(subagent_id.clone(), update.coarse);
             self.subagent_priority_by_id.insert(subagent_id, priority);
             return;
         }
 
         if self.subagents[index].result_summary.is_none() {
             self.subagents[index].result_summary = Some(String::new());
+            self.subagent_summary_is_coarse
+                .insert(subagent_id.clone(), true);
         }
         self.subagent_priority_by_id.insert(subagent_id, priority);
     }
@@ -1538,6 +1581,133 @@ mod tests {
         assert_eq!(
             parsed.subagents[1].result_summary.as_deref(),
             Some("second attempt finished")
+        );
+    }
+
+    #[test]
+    fn parse_waiting_end_fans_out_per_thread_when_call_id_matches_a_spawn() {
+        let mut file = tempfile::NamedTempFile::new().unwrap();
+        writeln!(
+            file,
+            "{}",
+            r#"{"type":"session_meta","payload":{"id":"codex-fanout","timestamp":"2026-04-18T13:17:40Z","cwd":"/tmp/project"}}"#
+        )
+        .unwrap();
+        writeln!(
+            file,
+            "{}",
+            r#"{"type":"event_msg","timestamp":"2026-04-18T13:17:41Z","payload":{"type":"user_message","message":"Delegate to two"}}"#
+        )
+        .unwrap();
+        writeln!(
+            file,
+            "{}",
+            r#"{"type":"event_msg","timestamp":"2026-04-18T13:17:42Z","payload":{"type":"collab_agent_spawn_end","call_id":"call_spawn_1","sender_thread_id":"codex-fanout","new_thread_id":"child-1","new_agent_nickname":"Kierkegaard","new_agent_role":"default","prompt":"Inspect A","status":"running"}}"#
+        )
+        .unwrap();
+        writeln!(
+            file,
+            "{}",
+            r#"{"type":"event_msg","timestamp":"2026-04-18T13:17:43Z","payload":{"type":"collab_agent_spawn_end","call_id":"call_spawn_2","sender_thread_id":"codex-fanout","new_thread_id":"child-2","new_agent_nickname":"Camus","new_agent_role":"default","prompt":"Inspect B","status":"running"}}"#
+        )
+        .unwrap();
+        // waiting_end reuses call_spawn_1 as its call_id, yet carries agent_statuses
+        // for BOTH threads. Resolver must fan out per thread, not funnel both
+        // updates onto call_spawn_1's row.
+        writeln!(
+            file,
+            "{}",
+            r#"{"type":"event_msg","timestamp":"2026-04-18T13:17:44Z","payload":{"type":"collab_waiting_end","call_id":"call_spawn_1","sender_thread_id":"codex-fanout","agent_statuses":[{"thread_id":"child-1","agent_nickname":"Kierkegaard","agent_role":"default","status":{"completed":"first done"}},{"thread_id":"child-2","agent_nickname":"Camus","agent_role":"default","status":{"completed":"second done"}}]}}"#
+        )
+        .unwrap();
+
+        let parsed = CodexParser.parse(file.path()).unwrap();
+        assert_eq!(parsed.subagents.len(), 2);
+        assert_eq!(
+            parsed.subagents[0].result_summary.as_deref(),
+            Some("first done")
+        );
+        assert_eq!(
+            parsed.subagents[1].result_summary.as_deref(),
+            Some("second done")
+        );
+    }
+
+    #[test]
+    fn parse_close_end_shutdown_does_not_overwrite_detailed_completed_summary() {
+        let mut file = tempfile::NamedTempFile::new().unwrap();
+        writeln!(
+            file,
+            "{}",
+            r#"{"type":"session_meta","payload":{"id":"codex-no-downgrade","timestamp":"2026-04-18T13:17:40Z","cwd":"/tmp/project"}}"#
+        )
+        .unwrap();
+        writeln!(
+            file,
+            "{}",
+            r#"{"type":"event_msg","timestamp":"2026-04-18T13:17:41Z","payload":{"type":"user_message","message":"Delegate this"}}"#
+        )
+        .unwrap();
+        writeln!(
+            file,
+            "{}",
+            r#"{"type":"event_msg","timestamp":"2026-04-18T13:17:42Z","payload":{"type":"collab_agent_spawn_end","call_id":"call_spawn_1","sender_thread_id":"codex-no-downgrade","new_thread_id":"child-1","new_agent_nickname":"Kierkegaard","new_agent_role":"default","prompt":"Inspect","status":"running"}}"#
+        )
+        .unwrap();
+        writeln!(
+            file,
+            "{}",
+            r#"{"type":"event_msg","timestamp":"2026-04-18T13:17:43Z","payload":{"type":"collab_waiting_end","call_id":"call_spawn_1","sender_thread_id":"codex-no-downgrade","agent_statuses":[{"thread_id":"child-1","agent_nickname":"Kierkegaard","agent_role":"default","status":{"completed":"detailed delegated answer"}}]}}"#
+        )
+        .unwrap();
+        // close_end with coarse "shutdown" must not downgrade the detailed summary.
+        writeln!(
+            file,
+            "{}",
+            r#"{"type":"event_msg","timestamp":"2026-04-18T13:17:44Z","payload":{"type":"collab_close_end","call_id":"call_close_1","sender_thread_id":"codex-no-downgrade","receiver_thread_id":"child-1","receiver_agent_nickname":"Kierkegaard","receiver_agent_role":"default","status":"shutdown"}}"#
+        )
+        .unwrap();
+
+        let parsed = CodexParser.parse(file.path()).unwrap();
+        assert_eq!(parsed.subagents.len(), 1);
+        assert_eq!(
+            parsed.subagents[0].result_summary.as_deref(),
+            Some("detailed delegated answer")
+        );
+    }
+
+    #[test]
+    fn parse_close_end_shutdown_fills_empty_summary() {
+        let mut file = tempfile::NamedTempFile::new().unwrap();
+        writeln!(
+            file,
+            "{}",
+            r#"{"type":"session_meta","payload":{"id":"codex-coarse-only","timestamp":"2026-04-18T13:17:40Z","cwd":"/tmp/project"}}"#
+        )
+        .unwrap();
+        writeln!(
+            file,
+            "{}",
+            r#"{"type":"event_msg","timestamp":"2026-04-18T13:17:41Z","payload":{"type":"user_message","message":"Delegate this"}}"#
+        )
+        .unwrap();
+        writeln!(
+            file,
+            "{}",
+            r#"{"type":"event_msg","timestamp":"2026-04-18T13:17:42Z","payload":{"type":"collab_agent_spawn_end","call_id":"call_spawn_1","sender_thread_id":"codex-coarse-only","new_thread_id":"child-1","new_agent_nickname":"Kierkegaard","new_agent_role":"default","prompt":"Inspect","status":"running"}}"#
+        )
+        .unwrap();
+        writeln!(
+            file,
+            "{}",
+            r#"{"type":"event_msg","timestamp":"2026-04-18T13:17:43Z","payload":{"type":"collab_close_end","call_id":"call_close_1","sender_thread_id":"codex-coarse-only","receiver_thread_id":"child-1","receiver_agent_nickname":"Kierkegaard","receiver_agent_role":"default","status":"shutdown"}}"#
+        )
+        .unwrap();
+
+        let parsed = CodexParser.parse(file.path()).unwrap();
+        assert_eq!(
+            parsed.subagents[0].result_summary.as_deref(),
+            Some("Shutdown")
         );
     }
 
