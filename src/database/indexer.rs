@@ -762,6 +762,7 @@ impl SessionIndexer {
         Self::upsert_session_row_tx(&tx, parsed, file_path, resolved_project_id)?;
         Self::replace_session_contents_tx(&tx, parsed)?;
         Self::link_claude_subagents_tx(&tx, parsed)?;
+        Self::link_codex_subagents_tx(&tx, parsed)?;
         Self::upsert_fingerprint_tx(&tx, fingerprint_path)?;
         tx.commit()?;
         Ok(())
@@ -820,6 +821,53 @@ impl SessionIndexer {
                 )?;
             }
         }
+
+        Ok(())
+    }
+
+    fn link_codex_subagents_tx(
+        tx: &rusqlite::Transaction<'_>,
+        parsed: &ParsedSession,
+    ) -> Result<()> {
+        if parsed.session.tool != AiAssistant::Codex {
+            return Ok(());
+        }
+
+        if !parsed.session.is_subagent {
+            for subagent in &parsed.subagents {
+                let Some(agent_id) = subagent.agent_id.as_deref() else {
+                    continue;
+                };
+
+                let child_exists: bool = tx.query_row(
+                    "SELECT EXISTS(SELECT 1 FROM sessions WHERE id = ?1)",
+                    [agent_id],
+                    |row| row.get(0),
+                )?;
+
+                if child_exists {
+                    tx.execute(
+                        "UPDATE subagents
+                         SET child_session_id = ?1
+                         WHERE session_id = ?2 AND id = ?3",
+                        rusqlite::params![agent_id, &parsed.session.id, &subagent.id],
+                    )?;
+                }
+            }
+
+            return Ok(());
+        }
+
+        let Some(parent_session_id) = parsed.session.parent_session_id.as_deref() else {
+            return Ok(());
+        };
+
+        tx.execute(
+            "UPDATE subagents
+             SET child_session_id = ?1
+             WHERE session_id = ?2 AND agent_id = ?3",
+            rusqlite::params![&parsed.session.id, parent_session_id, &parsed.session.id],
+        )?;
 
         Ok(())
     }

@@ -22,6 +22,7 @@ Cross-tool comparison of Claude Code, Codex, OpenCode, and Mistral Vibe session 
 - ✅ Codex parser implemented
 - ✅ Mistral Vibe parser implemented
 - ✅ OpenCode parent-child detection implemented (`parentID` sessions are indexed as subagents)
+- ✅ Codex collab/thread-spawn linkage implemented (child sessions + parent-side subagent rows)
 - ✅ Tool-call wire formats documented for Claude, OpenCode, Mistral Vibe, and Codex rollouts
 - ✅ LLM model metadata availability mapped (per message vs per turn vs per session)
 - ✅ Current parser behavior: tool-call/tool-result content is indexed (Phase 6 delivered)
@@ -178,9 +179,8 @@ Goal: determine whether model information is available per message, per turn, an
    - Or displayed as separate sessions with parent reference?
    - How deep can nesting go?
 
-3. **Codex Collaboration Mapping**:
-   - Should Codex `collab_*` events map to the same "subagent" concept as OpenCode `parentID` sessions?
-   - Do we show child thread IDs as navigable links in the UI?
+3. **Codex Retry / Duplicate Thread Display**:
+   - When multiple Codex parent subagent rows share the same child session, should the UI surface them as separate attempts or collapse them behind one child-session link?
 
 4. **OpenCode Session Diffs**:
    - Should `session_diff/ses_xxx.json` be ingested for richer "changes made" previews?
@@ -233,10 +233,8 @@ Each tool can persist token usage metrics, but **the granularity and presence ar
    - Keep existing user/assistant + current tool/subagent indexing as baseline behavior
 
 2. **Subagent graph model**:
-   - Prototype a unified parent-child relation that can represent:
-     - OpenCode session-level `parentID`
-     - Codex collab/thread-spawn links
-     - Claude sidechain indicators
+   - Extend the unified parent-child relation beyond the current OpenCode + Codex + Claude linkage primitives
+   - Revisit whether the UI should expose Codex duplicate-thread / retry history explicitly when multiple parent subagent rows point at the same child session
 
 3. **UI surfacing experiment**:
    - Add optional expandable "Tool Activity" and "Subtasks/Subagents" sections in session details

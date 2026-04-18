@@ -1,13 +1,14 @@
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
 use serde_json::Value;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::path::Path;
 
 use crate::models::{
-    AiAssistant, Message, ReasoningAttachment, Role, Session, TokenUsage, ToolCall, ToolCallStatus,
+    AiAssistant, Message, ReasoningAttachment, Role, Session, Subagent, TokenUsage, ToolCall,
+    ToolCallStatus,
 };
 use crate::models::{TranscriptItem, TranscriptItemKind};
 use crate::parsers::model::normalize_model;
@@ -23,6 +24,71 @@ pub enum ParseError {
     InvalidSessionMetaJson(String),
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum SubagentEventPriority {
+    Interaction = 1,
+    Waiting = 2,
+    Close = 3,
+}
+
+#[derive(Debug, Clone)]
+struct StatusUpdate {
+    summary: Option<String>,
+    terminal: bool,
+    // true for generic unit labels like "Shutdown"/"Not found" that should
+    // never overwrite a detailed summary from `completed`/`errored`.
+    coarse: bool,
+}
+
+fn parse_status_update(status: &Value) -> StatusUpdate {
+    if let Some(unit) = status.as_str() {
+        return match unit {
+            "pending_init" | "running" | "interrupted" => StatusUpdate {
+                summary: None,
+                terminal: false,
+                coarse: false,
+            },
+            "shutdown" => StatusUpdate {
+                summary: Some("Shutdown".to_string()),
+                terminal: true,
+                coarse: true,
+            },
+            "not_found" => StatusUpdate {
+                summary: Some("Not found".to_string()),
+                terminal: true,
+                coarse: true,
+            },
+            _ => StatusUpdate {
+                summary: None,
+                terminal: false,
+                coarse: false,
+            },
+        };
+    }
+
+    if let Some(completed) = status.get("completed") {
+        return StatusUpdate {
+            summary: completed.as_str().map(str::to_string),
+            terminal: true,
+            coarse: false,
+        };
+    }
+
+    if let Some(errored) = status.get("errored").and_then(|v| v.as_str()) {
+        return StatusUpdate {
+            summary: Some(format!("Error: {errored}")),
+            terminal: true,
+            coarse: false,
+        };
+    }
+
+    StatusUpdate {
+        summary: None,
+        terminal: false,
+        coarse: false,
+    }
+}
+
 /// Mutable parsing state accumulator for Codex sessions.
 struct ParseState {
     session_id: String,
@@ -34,11 +100,19 @@ struct ParseState {
     // Output collections
     messages: Vec<Message>,
     tool_calls: Vec<ToolCall>,
+    subagents: Vec<Subagent>,
     transcript_items: Vec<TranscriptItem>,
     reasoning_attachments: Vec<ReasoningAttachment>,
 
     // Correlation: call_id -> index in tool_calls
     call_id_to_tc_idx: HashMap<String, usize>,
+    subagent_idx_by_call_id: HashMap<String, usize>,
+    subagent_indexes_by_agent_id: HashMap<String, Vec<usize>>,
+    subagent_priority_by_id: HashMap<String, SubagentEventPriority>,
+    // Tracks whether the current `result_summary` came from a coarse unit
+    // status label, so a later coarse terminal event cannot downgrade a
+    // detailed `completed`/`errored` summary.
+    subagent_summary_is_coarse: HashMap<String, bool>,
 
     // Counters
     msg_counter: i64,
@@ -56,9 +130,14 @@ impl ParseState {
             has_user_message: false,
             messages: Vec::new(),
             tool_calls: Vec::new(),
+            subagents: Vec::new(),
             transcript_items: Vec::new(),
             reasoning_attachments: Vec::new(),
             call_id_to_tc_idx: HashMap::new(),
+            subagent_idx_by_call_id: HashMap::new(),
+            subagent_indexes_by_agent_id: HashMap::new(),
+            subagent_priority_by_id: HashMap::new(),
+            subagent_summary_is_coarse: HashMap::new(),
             msg_counter: 0,
             item_counter: 0,
             pending_reasoning: PendingReasoning::default(),
@@ -144,6 +223,154 @@ impl ParseState {
 
     fn queue_reasoning(&mut self, reasoning: PendingReasoning) {
         self.pending_reasoning.merge(reasoning);
+    }
+
+    fn record_subagent_spawn(&mut self, payload: &Value) {
+        let call_id = match payload.get("call_id").and_then(|v| v.as_str()) {
+            Some(call_id) if !call_id.is_empty() => call_id,
+            _ => {
+                tracing::warn!("collab_agent_spawn_end missing call_id, skipping");
+                return;
+            }
+        };
+
+        if self.subagent_idx_by_call_id.contains_key(call_id) {
+            return;
+        }
+
+        let agent_id = payload
+            .get("new_thread_id")
+            .and_then(|v| v.as_str())
+            .filter(|value| !value.is_empty())
+            .map(str::to_string);
+        let title = payload
+            .get("new_agent_nickname")
+            .and_then(|v| v.as_str())
+            .filter(|value| !value.is_empty())
+            .unwrap_or("Codex subagent")
+            .to_string();
+        let prompt = payload
+            .get("prompt")
+            .and_then(|v| v.as_str())
+            .filter(|value| !value.is_empty())
+            .map(str::to_string);
+
+        let subagent_idx = self.subagents.len();
+        self.subagents.push(Subagent {
+            id: call_id.to_string(),
+            agent_id: agent_id.clone(),
+            session_id: self.session_id.clone(),
+            title,
+            prompt,
+            result_summary: None,
+            child_session_id: None,
+            parser_ref: Some(call_id.to_string()),
+        });
+        self.subagent_idx_by_call_id
+            .insert(call_id.to_string(), subagent_idx);
+        self.subagent_priority_by_id
+            .insert(call_id.to_string(), SubagentEventPriority::Interaction);
+        if let Some(agent_id) = agent_id {
+            self.subagent_indexes_by_agent_id
+                .entry(agent_id)
+                .or_default()
+                .push(subagent_idx);
+        }
+
+        self.transcript_items.push(TranscriptItem {
+            session_id: self.session_id.clone(),
+            item_index: self.item_counter,
+            kind: TranscriptItemKind::Subagent,
+            message_index: None,
+            tool_call_id: None,
+            subagent_id: Some(call_id.to_string()),
+        });
+        self.flush_pending_reasoning_to_item(self.item_counter);
+        self.item_counter += 1;
+    }
+
+    fn update_subagent_from_status(
+        &mut self,
+        call_id: Option<&str>,
+        receiver_thread_id: Option<&str>,
+        title: Option<&str>,
+        prompt: Option<&str>,
+        status: &Value,
+        priority: SubagentEventPriority,
+    ) {
+        // Prefer per-thread resolution when the event carries an explicit
+        // thread_id: waiting_end fan-out shares a single call_id across
+        // multiple agent_statuses, so resolving by call_id first would
+        // funnel every status update onto the same subagent row.
+        let subagent_index = receiver_thread_id
+            .filter(|id| !id.is_empty())
+            .and_then(|thread_id| self.subagent_indexes_by_agent_id.get(thread_id))
+            .and_then(|indexes| indexes.last().copied())
+            .or_else(|| {
+                call_id
+                    .filter(|id| !id.is_empty())
+                    .and_then(|id| self.subagent_idx_by_call_id.get(id).copied())
+            });
+
+        let Some(index) = subagent_index else {
+            tracing::debug!("dropping orphan collab enrichment event with no matching spawn");
+            return;
+        };
+
+        let update = parse_status_update(status);
+        let subagent_id = self.subagents[index].id.clone();
+        let current_priority = self
+            .subagent_priority_by_id
+            .get(&subagent_id)
+            .copied()
+            .unwrap_or(SubagentEventPriority::Interaction);
+
+        {
+            let subagent = &mut self.subagents[index];
+            if let Some(title) = title.filter(|value| !value.is_empty()) {
+                subagent.title = title.to_string();
+            }
+            if subagent.prompt.is_none() {
+                subagent.prompt = prompt.map(str::to_string);
+            }
+        }
+
+        if !update.terminal || priority < current_priority {
+            return;
+        }
+
+        if let Some(summary) = update.summary.filter(|value| !value.is_empty()) {
+            let current_is_coarse = self
+                .subagent_summary_is_coarse
+                .get(&subagent_id)
+                .copied()
+                .unwrap_or(true);
+            let has_existing_summary = self.subagents[index]
+                .result_summary
+                .as_deref()
+                .is_some_and(|s| !s.is_empty());
+
+            // Never let a coarse unit label overwrite a detailed summary
+            // from `completed`/`errored`, even if the new event has higher
+            // priority (e.g. close_end:"shutdown" after waiting_end:completed).
+            if update.coarse && has_existing_summary && !current_is_coarse {
+                self.subagent_priority_by_id.insert(subagent_id, priority);
+                return;
+            }
+
+            self.subagents[index].result_summary = Some(summary);
+            self.subagent_summary_is_coarse
+                .insert(subagent_id.clone(), update.coarse);
+            self.subagent_priority_by_id.insert(subagent_id, priority);
+            return;
+        }
+
+        if self.subagents[index].result_summary.is_none() {
+            self.subagents[index].result_summary = Some(String::new());
+            self.subagent_summary_is_coarse
+                .insert(subagent_id.clone(), true);
+        }
+        self.subagent_priority_by_id.insert(subagent_id, priority);
     }
 
     fn flush_pending_reasoning_to_item(&mut self, transcript_item_index: i64) {
@@ -438,6 +665,81 @@ impl ParseState {
                 );
             }
 
+            Some("collab_agent_spawn_begin") => {}
+
+            Some("collab_agent_spawn_end") => {
+                self.record_subagent_spawn(payload);
+            }
+
+            Some("collab_waiting_end") => {
+                let call_id = payload.get("call_id").and_then(|v| v.as_str());
+                let mut thread_ids_with_agent_status = HashSet::new();
+
+                if let Some(agent_statuses) =
+                    payload.get("agent_statuses").and_then(|v| v.as_array())
+                {
+                    for agent_status in agent_statuses {
+                        if let Some(thread_id) =
+                            agent_status.get("thread_id").and_then(|v| v.as_str())
+                        {
+                            thread_ids_with_agent_status.insert(thread_id.to_string());
+                        }
+
+                        self.update_subagent_from_status(
+                            call_id,
+                            agent_status.get("thread_id").and_then(|v| v.as_str()),
+                            agent_status.get("agent_nickname").and_then(|v| v.as_str()),
+                            None,
+                            agent_status.get("status").unwrap_or(&Value::Null),
+                            SubagentEventPriority::Waiting,
+                        );
+                    }
+                }
+
+                if let Some(statuses) = payload.get("statuses").and_then(|v| v.as_object()) {
+                    for (thread_id, status) in statuses {
+                        if thread_ids_with_agent_status.contains(thread_id) {
+                            continue;
+                        }
+
+                        self.update_subagent_from_status(
+                            call_id,
+                            Some(thread_id.as_str()),
+                            None,
+                            None,
+                            status,
+                            SubagentEventPriority::Waiting,
+                        );
+                    }
+                }
+            }
+
+            Some("collab_close_end") => {
+                self.update_subagent_from_status(
+                    payload.get("call_id").and_then(|v| v.as_str()),
+                    payload.get("receiver_thread_id").and_then(|v| v.as_str()),
+                    payload
+                        .get("receiver_agent_nickname")
+                        .and_then(|v| v.as_str()),
+                    None,
+                    payload.get("status").unwrap_or(&Value::Null),
+                    SubagentEventPriority::Close,
+                );
+            }
+
+            Some("collab_agent_interaction_end") => {
+                self.update_subagent_from_status(
+                    payload.get("call_id").and_then(|v| v.as_str()),
+                    payload.get("receiver_thread_id").and_then(|v| v.as_str()),
+                    payload
+                        .get("receiver_agent_nickname")
+                        .and_then(|v| v.as_str()),
+                    payload.get("prompt").and_then(|v| v.as_str()),
+                    payload.get("status").unwrap_or(&Value::Null),
+                    SubagentEventPriority::Interaction,
+                );
+            }
+
             _ => {}
         }
     }
@@ -487,6 +789,29 @@ impl ParseState {
 }
 
 pub struct CodexParser;
+
+// Codex rollouts use two different keys for the subagent source variant:
+// upstream `SessionSource` serializes as `sub_agent` (snake_case), but older
+// rollouts emit `subagent` (no underscore). Both shapes appear in the wild,
+// so accept either.
+fn extract_parent_thread_id(source: Option<&Value>) -> Option<String> {
+    let source = source?;
+
+    source
+        .get("subagent")
+        .and_then(|subagent| subagent.get("thread_spawn"))
+        .and_then(|spawn| spawn.get("parent_thread_id"))
+        .and_then(|value| value.as_str())
+        .map(str::to_string)
+        .or_else(|| {
+            source
+                .get("sub_agent")
+                .and_then(|subagent| subagent.get("thread_spawn"))
+                .and_then(|spawn| spawn.get("parent_thread_id"))
+                .and_then(|value| value.as_str())
+                .map(str::to_string)
+        })
+}
 
 impl CodexParser {
     pub fn parse(&self, file_path: &Path) -> Result<ParsedSession> {
@@ -542,6 +867,8 @@ impl CodexParser {
             .get("cwd")
             .and_then(|v| v.as_str())
             .map(str::to_string);
+        let parent_session_id = extract_parent_thread_id(payload.get("source"));
+        let is_subagent = parent_session_id.is_some();
 
         let mut state = ParseState::new(session_id.clone(), start_time);
 
@@ -617,8 +944,8 @@ impl CodexParser {
                 last_updated: state.last_updated,
                 pinned_at: None,
                 first_prompt,
-                parent_session_id: None,
-                is_subagent: false,
+                parent_session_id,
+                is_subagent,
                 token_usage: None,
                 edit_count: 0,
                 read_count: 0,
@@ -627,7 +954,7 @@ impl CodexParser {
             },
             messages: state.messages,
             tool_calls: state.tool_calls,
-            subagents: Vec::new(),
+            subagents: state.subagents,
             transcript_items: state.transcript_items,
             reasoning_attachments: state.reasoning_attachments,
             token_usage,
@@ -919,6 +1246,473 @@ mod tests {
         writeln!(file, r#"{{"type":"event_msg","timestamp":"2026-01-01T00:00:03Z","payload":{{"type":"agent_message","message":"Done"}}}}"#).unwrap();
         let parsed = CodexParser.parse(file.path()).unwrap();
         assert!(parsed.token_usage.is_none());
+    }
+
+    #[test]
+    fn parse_child_session_marks_session_as_subagent_for_sub_agent_source() {
+        let mut file = tempfile::NamedTempFile::new().unwrap();
+        writeln!(file, r#"{{"type":"session_meta","payload":{{"id":"child-sub-agent","timestamp":"2026-01-01T00:00:00Z","cwd":"/tmp","source":{{"sub_agent":{{"thread_spawn":{{"parent_thread_id":"019da0bb-541a-74e2-ae0a-6693c5e4fe04"}}}}}}}}}}"#).unwrap();
+        writeln!(file, r#"{{"type":"event_msg","timestamp":"2026-01-01T00:00:01Z","payload":{{"type":"user_message","message":"Hi"}}}}"#).unwrap();
+        writeln!(file, r#"{{"type":"event_msg","timestamp":"2026-01-01T00:00:02Z","payload":{{"type":"agent_message","message":"Done"}}}}"#).unwrap();
+
+        let parsed = CodexParser.parse(file.path()).unwrap();
+
+        assert!(parsed.session.is_subagent);
+        assert_eq!(
+            parsed.session.parent_session_id.as_deref(),
+            Some("019da0bb-541a-74e2-ae0a-6693c5e4fe04")
+        );
+    }
+
+    #[test]
+    fn parse_child_session_marks_session_as_subagent_for_subagent_source() {
+        let mut file = tempfile::NamedTempFile::new().unwrap();
+        writeln!(file, r#"{{"type":"session_meta","payload":{{"id":"child-subagent","timestamp":"2026-01-01T00:00:00Z","cwd":"/tmp","source":{{"subagent":{{"thread_spawn":{{"parent_thread_id":"019da0bb-541a-74e2-ae0a-6693c5e4fe04"}}}}}}}}}}"#).unwrap();
+        writeln!(file, r#"{{"type":"event_msg","timestamp":"2026-01-01T00:00:01Z","payload":{{"type":"user_message","message":"Hi"}}}}"#).unwrap();
+        writeln!(file, r#"{{"type":"event_msg","timestamp":"2026-01-01T00:00:02Z","payload":{{"type":"agent_message","message":"Done"}}}}"#).unwrap();
+
+        let parsed = CodexParser.parse(file.path()).unwrap();
+
+        assert!(parsed.session.is_subagent);
+        assert_eq!(
+            parsed.session.parent_session_id.as_deref(),
+            Some("019da0bb-541a-74e2-ae0a-6693c5e4fe04")
+        );
+    }
+
+    #[test]
+    fn parse_collab_agent_spawn_end_creates_subagent_and_transcript_item() {
+        let mut file = tempfile::NamedTempFile::new().unwrap();
+        writeln!(
+            file,
+            r#"{{"type":"session_meta","payload":{{"id":"codex-subagent","timestamp":"2026-01-01T00:00:00Z","cwd":"/tmp"}}}}"#
+        )
+        .unwrap();
+        writeln!(
+            file,
+            r#"{{"type":"event_msg","timestamp":"2026-01-01T00:00:01Z","payload":{{"type":"user_message","message":"Inspect parser behavior"}}}}"#
+        )
+        .unwrap();
+        writeln!(
+            file,
+            r#"{{"type":"event_msg","timestamp":"2026-01-01T00:00:02Z","payload":{{"type":"collab_agent_spawn_end","call_id":"call_spawn_1","new_thread_id":"019da0bd-3df2-7191-a1a8-e326b55fe052","new_agent_nickname":"Kierkegaard","prompt":"Inspect the failing parser tests"}}}}"#
+        )
+        .unwrap();
+
+        let parsed = CodexParser.parse(file.path()).unwrap();
+
+        assert_eq!(parsed.subagents.len(), 1);
+        assert_eq!(parsed.subagents[0].id, "call_spawn_1");
+        assert_eq!(
+            parsed.subagents[0].agent_id.as_deref(),
+            Some("019da0bd-3df2-7191-a1a8-e326b55fe052")
+        );
+        assert_eq!(parsed.subagents[0].title, "Kierkegaard");
+        assert_eq!(
+            parsed.subagents[0].prompt.as_deref(),
+            Some("Inspect the failing parser tests")
+        );
+
+        assert_eq!(parsed.transcript_items.len(), 2);
+        assert!(matches!(
+            parsed.transcript_items[1].kind,
+            TranscriptItemKind::Subagent
+        ));
+        assert_eq!(
+            parsed.transcript_items[1].subagent_id.as_deref(),
+            Some("call_spawn_1")
+        );
+    }
+
+    #[test]
+    fn parse_collab_agent_spawn_begin_without_end_does_not_create_subagent() {
+        let mut file = tempfile::NamedTempFile::new().unwrap();
+        writeln!(
+            file,
+            r#"{{"type":"session_meta","payload":{{"id":"codex-subagent-begin-only","timestamp":"2026-01-01T00:00:00Z","cwd":"/tmp"}}}}"#
+        )
+        .unwrap();
+        writeln!(
+            file,
+            r#"{{"type":"event_msg","timestamp":"2026-01-01T00:00:01Z","payload":{{"type":"user_message","message":"Inspect parser behavior"}}}}"#
+        )
+        .unwrap();
+        writeln!(
+            file,
+            r#"{{"type":"event_msg","timestamp":"2026-01-01T00:00:02Z","payload":{{"type":"collab_agent_spawn_begin","call_id":"call_spawn_1","new_thread_id":"019da0bd-3df2-7191-a1a8-e326b55fe052","new_agent_nickname":"Kierkegaard","prompt":"Inspect the failing parser tests"}}}}"#
+        )
+        .unwrap();
+
+        let parsed = CodexParser.parse(file.path()).unwrap();
+
+        assert!(parsed.subagents.is_empty());
+        assert_eq!(parsed.transcript_items.len(), 1);
+    }
+
+    #[test]
+    fn parse_close_end_overrides_waiting_end_summary_for_same_subagent() {
+        let mut file = tempfile::NamedTempFile::new().unwrap();
+        writeln!(
+            file,
+            "{}",
+            r#"{"type":"session_meta","payload":{"id":"019da0bb-541a-74e2-ae0a-6693c5e4fe04","timestamp":"2026-04-18T13:17:40Z","cwd":"/tmp/project"}}"#
+        )
+        .unwrap();
+        writeln!(
+            file,
+            "{}",
+            r#"{"type":"event_msg","timestamp":"2026-04-18T13:17:41Z","payload":{"type":"user_message","message":"Delegate this"}}"#
+        )
+        .unwrap();
+        writeln!(
+            file,
+            "{}",
+            r#"{"type":"event_msg","timestamp":"2026-04-18T13:17:42Z","payload":{"type":"collab_agent_spawn_end","call_id":"call_spawn_1","sender_thread_id":"019da0bb-541a-74e2-ae0a-6693c5e4fe04","new_thread_id":"019da0bd-3df2-7191-a1a8-e326b55fe052","new_agent_nickname":"Kierkegaard","new_agent_role":"default","prompt":"Inspect the failing parser tests","status":"running"}}"#
+        )
+        .unwrap();
+        writeln!(
+            file,
+            "{}",
+            r#"{"type":"event_msg","timestamp":"2026-04-18T13:17:43Z","payload":{"type":"collab_waiting_end","call_id":"call_spawn_1","sender_thread_id":"019da0bb-541a-74e2-ae0a-6693c5e4fe04","agent_statuses":[{"thread_id":"019da0bd-3df2-7191-a1a8-e326b55fe052","agent_nickname":"Kierkegaard","agent_role":"default","status":{"completed":"intermediate summary"}}],"statuses":{"019da0bd-3df2-7191-a1a8-e326b55fe052":{"completed":"intermediate summary"}}}}"#
+        )
+        .unwrap();
+        writeln!(
+            file,
+            "{}",
+            r#"{"type":"event_msg","timestamp":"2026-04-18T13:17:44Z","payload":{"type":"collab_close_end","call_id":"call_close_1","sender_thread_id":"019da0bb-541a-74e2-ae0a-6693c5e4fe04","receiver_thread_id":"019da0bd-3df2-7191-a1a8-e326b55fe052","receiver_agent_nickname":"Kierkegaard","receiver_agent_role":"default","status":{"completed":"final delegated answer"}}}"#
+        )
+        .unwrap();
+
+        let parsed = CodexParser.parse(file.path()).unwrap();
+        assert_eq!(parsed.subagents.len(), 1);
+        assert_eq!(
+            parsed.subagents[0].result_summary.as_deref(),
+            Some("final delegated answer")
+        );
+    }
+
+    #[test]
+    fn parse_running_status_does_not_overwrite_completed_summary() {
+        let mut file = tempfile::NamedTempFile::new().unwrap();
+        writeln!(
+            file,
+            "{}",
+            r#"{"type":"session_meta","payload":{"id":"codex-non-terminal","timestamp":"2026-04-18T13:17:40Z","cwd":"/tmp/project"}}"#
+        )
+        .unwrap();
+        writeln!(
+            file,
+            "{}",
+            r#"{"type":"event_msg","timestamp":"2026-04-18T13:17:41Z","payload":{"type":"user_message","message":"Delegate this"}}"#
+        )
+        .unwrap();
+        writeln!(
+            file,
+            "{}",
+            r#"{"type":"event_msg","timestamp":"2026-04-18T13:17:42Z","payload":{"type":"collab_agent_spawn_end","call_id":"call_spawn_1","sender_thread_id":"codex-non-terminal","new_thread_id":"child-1","new_agent_nickname":"Kierkegaard","new_agent_role":"default","prompt":"Inspect the failing parser tests","status":"running"}}"#
+        )
+        .unwrap();
+        writeln!(
+            file,
+            "{}",
+            r#"{"type":"event_msg","timestamp":"2026-04-18T13:17:43Z","payload":{"type":"collab_waiting_end","call_id":"call_spawn_1","sender_thread_id":"codex-non-terminal","agent_statuses":[{"thread_id":"child-1","agent_nickname":"Kierkegaard","agent_role":"default","status":{"completed":"done already"}}],"statuses":{"child-1":{"completed":"done already"}}}}"#
+        )
+        .unwrap();
+        writeln!(
+            file,
+            "{}",
+            r#"{"type":"event_msg","timestamp":"2026-04-18T13:17:44Z","payload":{"type":"collab_waiting_end","call_id":"call_spawn_1","sender_thread_id":"codex-non-terminal","agent_statuses":[{"thread_id":"child-1","agent_nickname":"Kierkegaard","agent_role":"default","status":"running"}],"statuses":{"child-1":"running"}}}"#
+        )
+        .unwrap();
+
+        let parsed = CodexParser.parse(file.path()).unwrap();
+        assert_eq!(
+            parsed.subagents[0].result_summary.as_deref(),
+            Some("done already")
+        );
+    }
+
+    #[test]
+    fn parse_unknown_agent_status_does_not_fail_session_parse() {
+        let mut file = tempfile::NamedTempFile::new().unwrap();
+        writeln!(
+            file,
+            "{}",
+            r#"{"type":"session_meta","payload":{"id":"codex-unknown-status","timestamp":"2026-04-18T13:17:40Z","cwd":"/tmp/project"}}"#
+        )
+        .unwrap();
+        writeln!(
+            file,
+            "{}",
+            r#"{"type":"event_msg","timestamp":"2026-04-18T13:17:41Z","payload":{"type":"user_message","message":"Delegate this"}}"#
+        )
+        .unwrap();
+        writeln!(
+            file,
+            "{}",
+            r#"{"type":"event_msg","timestamp":"2026-04-18T13:17:42Z","payload":{"type":"collab_agent_spawn_end","call_id":"call_spawn_1","sender_thread_id":"codex-unknown-status","new_thread_id":"child-1","new_agent_nickname":"Kierkegaard","new_agent_role":"default","prompt":"Inspect the failing parser tests","status":"running"}}"#
+        )
+        .unwrap();
+        writeln!(
+            file,
+            "{}",
+            r#"{"type":"event_msg","timestamp":"2026-04-18T13:17:43Z","payload":{"type":"collab_close_end","call_id":"call_close_1","sender_thread_id":"codex-unknown-status","receiver_thread_id":"child-1","receiver_agent_nickname":"Kierkegaard","receiver_agent_role":"default","status":{"paused_for_human":"needs approval"}}}"#
+        )
+        .unwrap();
+
+        let parsed = CodexParser.parse(file.path()).unwrap();
+        assert_eq!(parsed.subagents.len(), 1);
+    }
+
+    #[test]
+    fn parse_waiting_end_falls_back_to_statuses_map_when_agent_statuses_is_missing() {
+        let mut file = tempfile::NamedTempFile::new().unwrap();
+        writeln!(
+            file,
+            "{}",
+            r#"{"type":"session_meta","payload":{"id":"codex-status-map","timestamp":"2026-04-18T13:17:40Z","cwd":"/tmp/project"}}"#
+        )
+        .unwrap();
+        writeln!(
+            file,
+            "{}",
+            r#"{"type":"event_msg","timestamp":"2026-04-18T13:17:41Z","payload":{"type":"user_message","message":"Delegate this"}}"#
+        )
+        .unwrap();
+        writeln!(
+            file,
+            "{}",
+            r#"{"type":"event_msg","timestamp":"2026-04-18T13:17:42Z","payload":{"type":"collab_agent_spawn_end","call_id":"call_spawn_1","sender_thread_id":"codex-status-map","new_thread_id":"child-1","new_agent_nickname":"Kierkegaard","new_agent_role":"default","prompt":"Inspect the failing parser tests","status":"running"}}"#
+        )
+        .unwrap();
+        writeln!(
+            file,
+            "{}",
+            r#"{"type":"event_msg","timestamp":"2026-04-18T13:17:43Z","payload":{"type":"collab_waiting_end","call_id":"call_spawn_1","sender_thread_id":"codex-status-map","statuses":{"child-1":{"errored":"permission denied"}}}}"#
+        )
+        .unwrap();
+
+        let parsed = CodexParser.parse(file.path()).unwrap();
+        assert_eq!(
+            parsed.subagents[0].result_summary.as_deref(),
+            Some("Error: permission denied")
+        );
+    }
+
+    #[test]
+    fn parse_waiting_end_falls_back_to_statuses_map_when_agent_statuses_is_partial() {
+        let mut file = tempfile::NamedTempFile::new().unwrap();
+        writeln!(
+            file,
+            "{}",
+            r#"{"type":"session_meta","payload":{"id":"codex-status-map-partial","timestamp":"2026-04-18T13:17:40Z","cwd":"/tmp/project"}}"#
+        )
+        .unwrap();
+        writeln!(
+            file,
+            "{}",
+            r#"{"type":"event_msg","timestamp":"2026-04-18T13:17:41Z","payload":{"type":"user_message","message":"Delegate this"}}"#
+        )
+        .unwrap();
+        writeln!(
+            file,
+            "{}",
+            r#"{"type":"event_msg","timestamp":"2026-04-18T13:17:42Z","payload":{"type":"collab_agent_spawn_end","call_id":"call_spawn_1","sender_thread_id":"codex-status-map-partial","new_thread_id":"child-1","new_agent_nickname":"Kierkegaard","new_agent_role":"default","prompt":"Inspect parser behavior","status":"running"}}"#
+        )
+        .unwrap();
+        writeln!(
+            file,
+            "{}",
+            r#"{"type":"event_msg","timestamp":"2026-04-18T13:17:43Z","payload":{"type":"collab_agent_spawn_end","call_id":"call_spawn_2","sender_thread_id":"codex-status-map-partial","new_thread_id":"child-2","new_agent_nickname":"Camus","new_agent_role":"default","prompt":"Inspect parser behavior","status":"running"}}"#
+        )
+        .unwrap();
+        writeln!(
+            file,
+            "{}",
+            r#"{"type":"event_msg","timestamp":"2026-04-18T13:17:44Z","payload":{"type":"collab_waiting_end","call_id":"call_wait_1","sender_thread_id":"codex-status-map-partial","agent_statuses":[{"thread_id":"child-1","agent_nickname":"Kierkegaard","agent_role":"default","status":{"completed":"first done"}}],"statuses":{"child-1":{"completed":"first done"},"child-2":{"errored":"second failed"}}}}"#
+        )
+        .unwrap();
+
+        let parsed = CodexParser.parse(file.path()).unwrap();
+        assert_eq!(parsed.subagents.len(), 2);
+        assert_eq!(
+            parsed.subagents[0].result_summary.as_deref(),
+            Some("first done")
+        );
+        assert_eq!(
+            parsed.subagents[1].result_summary.as_deref(),
+            Some("Error: second failed")
+        );
+    }
+
+    #[test]
+    fn parse_enrichment_without_call_id_updates_latest_matching_thread_row() {
+        let mut file = tempfile::NamedTempFile::new().unwrap();
+        writeln!(
+            file,
+            "{}",
+            r#"{"type":"session_meta","payload":{"id":"codex-retry","timestamp":"2026-04-18T13:17:40Z","cwd":"/tmp/project"}}"#
+        )
+        .unwrap();
+        writeln!(
+            file,
+            "{}",
+            r#"{"type":"event_msg","timestamp":"2026-04-18T13:17:41Z","payload":{"type":"user_message","message":"Delegate twice"}}"#
+        )
+        .unwrap();
+        writeln!(
+            file,
+            "{}",
+            r#"{"type":"event_msg","timestamp":"2026-04-18T13:17:42Z","payload":{"type":"collab_agent_spawn_end","call_id":"call_spawn_1","sender_thread_id":"codex-retry","new_thread_id":"child-1","new_agent_nickname":"Kierkegaard","new_agent_role":"default","prompt":"first attempt","status":"running"}}"#
+        )
+        .unwrap();
+        writeln!(
+            file,
+            "{}",
+            r#"{"type":"event_msg","timestamp":"2026-04-18T13:17:43Z","payload":{"type":"collab_agent_spawn_end","call_id":"call_spawn_2","sender_thread_id":"codex-retry","new_thread_id":"child-1","new_agent_nickname":"Kierkegaard","new_agent_role":"default","prompt":"second attempt","status":"running"}}"#
+        )
+        .unwrap();
+        writeln!(
+            file,
+            "{}",
+            r#"{"type":"event_msg","timestamp":"2026-04-18T13:17:44Z","payload":{"type":"collab_close_end","sender_thread_id":"codex-retry","receiver_thread_id":"child-1","receiver_agent_nickname":"Kierkegaard","receiver_agent_role":"default","status":{"completed":"second attempt finished"}}}"#
+        )
+        .unwrap();
+
+        let parsed = CodexParser.parse(file.path()).unwrap();
+        assert_eq!(parsed.subagents.len(), 2);
+        assert_eq!(parsed.subagents[0].result_summary, None);
+        assert_eq!(
+            parsed.subagents[1].result_summary.as_deref(),
+            Some("second attempt finished")
+        );
+    }
+
+    #[test]
+    fn parse_waiting_end_fans_out_per_thread_when_call_id_matches_a_spawn() {
+        let mut file = tempfile::NamedTempFile::new().unwrap();
+        writeln!(
+            file,
+            "{}",
+            r#"{"type":"session_meta","payload":{"id":"codex-fanout","timestamp":"2026-04-18T13:17:40Z","cwd":"/tmp/project"}}"#
+        )
+        .unwrap();
+        writeln!(
+            file,
+            "{}",
+            r#"{"type":"event_msg","timestamp":"2026-04-18T13:17:41Z","payload":{"type":"user_message","message":"Delegate to two"}}"#
+        )
+        .unwrap();
+        writeln!(
+            file,
+            "{}",
+            r#"{"type":"event_msg","timestamp":"2026-04-18T13:17:42Z","payload":{"type":"collab_agent_spawn_end","call_id":"call_spawn_1","sender_thread_id":"codex-fanout","new_thread_id":"child-1","new_agent_nickname":"Kierkegaard","new_agent_role":"default","prompt":"Inspect A","status":"running"}}"#
+        )
+        .unwrap();
+        writeln!(
+            file,
+            "{}",
+            r#"{"type":"event_msg","timestamp":"2026-04-18T13:17:43Z","payload":{"type":"collab_agent_spawn_end","call_id":"call_spawn_2","sender_thread_id":"codex-fanout","new_thread_id":"child-2","new_agent_nickname":"Camus","new_agent_role":"default","prompt":"Inspect B","status":"running"}}"#
+        )
+        .unwrap();
+        // waiting_end reuses call_spawn_1 as its call_id, yet carries agent_statuses
+        // for BOTH threads. Resolver must fan out per thread, not funnel both
+        // updates onto call_spawn_1's row.
+        writeln!(
+            file,
+            "{}",
+            r#"{"type":"event_msg","timestamp":"2026-04-18T13:17:44Z","payload":{"type":"collab_waiting_end","call_id":"call_spawn_1","sender_thread_id":"codex-fanout","agent_statuses":[{"thread_id":"child-1","agent_nickname":"Kierkegaard","agent_role":"default","status":{"completed":"first done"}},{"thread_id":"child-2","agent_nickname":"Camus","agent_role":"default","status":{"completed":"second done"}}]}}"#
+        )
+        .unwrap();
+
+        let parsed = CodexParser.parse(file.path()).unwrap();
+        assert_eq!(parsed.subagents.len(), 2);
+        assert_eq!(
+            parsed.subagents[0].result_summary.as_deref(),
+            Some("first done")
+        );
+        assert_eq!(
+            parsed.subagents[1].result_summary.as_deref(),
+            Some("second done")
+        );
+    }
+
+    #[test]
+    fn parse_close_end_shutdown_does_not_overwrite_detailed_completed_summary() {
+        let mut file = tempfile::NamedTempFile::new().unwrap();
+        writeln!(
+            file,
+            "{}",
+            r#"{"type":"session_meta","payload":{"id":"codex-no-downgrade","timestamp":"2026-04-18T13:17:40Z","cwd":"/tmp/project"}}"#
+        )
+        .unwrap();
+        writeln!(
+            file,
+            "{}",
+            r#"{"type":"event_msg","timestamp":"2026-04-18T13:17:41Z","payload":{"type":"user_message","message":"Delegate this"}}"#
+        )
+        .unwrap();
+        writeln!(
+            file,
+            "{}",
+            r#"{"type":"event_msg","timestamp":"2026-04-18T13:17:42Z","payload":{"type":"collab_agent_spawn_end","call_id":"call_spawn_1","sender_thread_id":"codex-no-downgrade","new_thread_id":"child-1","new_agent_nickname":"Kierkegaard","new_agent_role":"default","prompt":"Inspect","status":"running"}}"#
+        )
+        .unwrap();
+        writeln!(
+            file,
+            "{}",
+            r#"{"type":"event_msg","timestamp":"2026-04-18T13:17:43Z","payload":{"type":"collab_waiting_end","call_id":"call_spawn_1","sender_thread_id":"codex-no-downgrade","agent_statuses":[{"thread_id":"child-1","agent_nickname":"Kierkegaard","agent_role":"default","status":{"completed":"detailed delegated answer"}}]}}"#
+        )
+        .unwrap();
+        // close_end with coarse "shutdown" must not downgrade the detailed summary.
+        writeln!(
+            file,
+            "{}",
+            r#"{"type":"event_msg","timestamp":"2026-04-18T13:17:44Z","payload":{"type":"collab_close_end","call_id":"call_close_1","sender_thread_id":"codex-no-downgrade","receiver_thread_id":"child-1","receiver_agent_nickname":"Kierkegaard","receiver_agent_role":"default","status":"shutdown"}}"#
+        )
+        .unwrap();
+
+        let parsed = CodexParser.parse(file.path()).unwrap();
+        assert_eq!(parsed.subagents.len(), 1);
+        assert_eq!(
+            parsed.subagents[0].result_summary.as_deref(),
+            Some("detailed delegated answer")
+        );
+    }
+
+    #[test]
+    fn parse_close_end_shutdown_fills_empty_summary() {
+        let mut file = tempfile::NamedTempFile::new().unwrap();
+        writeln!(
+            file,
+            "{}",
+            r#"{"type":"session_meta","payload":{"id":"codex-coarse-only","timestamp":"2026-04-18T13:17:40Z","cwd":"/tmp/project"}}"#
+        )
+        .unwrap();
+        writeln!(
+            file,
+            "{}",
+            r#"{"type":"event_msg","timestamp":"2026-04-18T13:17:41Z","payload":{"type":"user_message","message":"Delegate this"}}"#
+        )
+        .unwrap();
+        writeln!(
+            file,
+            "{}",
+            r#"{"type":"event_msg","timestamp":"2026-04-18T13:17:42Z","payload":{"type":"collab_agent_spawn_end","call_id":"call_spawn_1","sender_thread_id":"codex-coarse-only","new_thread_id":"child-1","new_agent_nickname":"Kierkegaard","new_agent_role":"default","prompt":"Inspect","status":"running"}}"#
+        )
+        .unwrap();
+        writeln!(
+            file,
+            "{}",
+            r#"{"type":"event_msg","timestamp":"2026-04-18T13:17:43Z","payload":{"type":"collab_close_end","call_id":"call_close_1","sender_thread_id":"codex-coarse-only","receiver_thread_id":"child-1","receiver_agent_nickname":"Kierkegaard","receiver_agent_role":"default","status":"shutdown"}}"#
+        )
+        .unwrap();
+
+        let parsed = CodexParser.parse(file.path()).unwrap();
+        assert_eq!(
+            parsed.subagents[0].result_summary.as_deref(),
+            Some("Shutdown")
+        );
     }
 
     #[derive(Clone, Default)]

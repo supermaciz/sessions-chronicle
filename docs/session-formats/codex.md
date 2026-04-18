@@ -341,9 +341,10 @@ Current implementation: `src/parsers/codex.rs`
 
 - Indexes `event_msg.payload.type == user_message|agent_message`
 - Indexes tool lifecycle pairs for `mcp_tool_call_begin|end` and `exec_command_begin|end`
-- Currently does not map `collab_*` events into subagent records
-- Does not yet extract Codex skill invocations from `$skill-name` / `<skill>`
-  pairs
+- Indexes Codex child rollouts as subagent sessions when `session_meta.payload.source.sub_agent.thread_spawn.parent_thread_id` or `source.subagent.thread_spawn.parent_thread_id` is present
+- Indexes `collab_agent_spawn_end` as parent-side `Subagent` rows and transcript items
+- Enriches parent-side subagents from `collab_waiting_end`, `collab_close_end`, and `collab_agent_interaction_end`
+- Does not yet extract Codex skill invocations from `$skill-name` / `<skill>` pairs
 
 **Title extraction:** First `event_msg.payload.type == "user_message"` event (`payload.message`).
 
@@ -370,8 +371,7 @@ fn extract_content_codex_event_msg(event: &Value) -> Option<(Role, String)> {
 - Raw data is emitted via `event_msg.payload.type` variants: `exec_command_*`, `mcp_tool_call_*`,
   `web_search_*`, and collab `collab_*`.
 - Tool call correlation typically uses `call_id`.
-- Current parser behavior: indexes `exec_command_*` and `mcp_tool_call_*` begin/end pairs as
-  tool calls; `collab_*` events are not yet mapped to subagent records.
+- Current parser behavior: indexes `exec_command_*` and `mcp_tool_call_*` begin/end pairs as tool calls; maps Codex `collab_*` lifecycle events into parent `Subagent` rows plus child-session linkage when the child rollout is present.
 
 **Streaming:** Use `BufReader` line-by-line iteration — do not load entire JSONL into memory.
 
