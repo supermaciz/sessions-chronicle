@@ -256,6 +256,10 @@ The project uses GitHub Actions for continuous integration and releases. Workflo
 
 Builds the stable Flatpak bundle using the `build-aux/io.github.supermaciz.sessionschronicle.json` manifest, generates a SHA256 checksum, and uploads both to the release.
 
+### Flatpak Repository (`flatpak-repository.yml`) — runs when a GitHub release is published or manually
+
+Builds a signed Flatpak repository from the stable manifest, stores the payload in a dedicated branch, and deploys it under `https://sessions-chronicle.maciz.dev/flatpak/` as part of the GitHub Pages website. See `docs/FLATPAK_REPOSITORY.md` for signing-key setup, publishing details, and install commands.
+
 ### Build manifests
 
 Two Flatpak manifests exist in `build-aux/`:
