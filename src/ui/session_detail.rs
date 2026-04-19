@@ -829,22 +829,23 @@ impl SimpleComponent for SessionDetail {
                 };
 
                 if let Some(child_index) = target.child_index
-                    && let Some(expander) = row_widget
-                        .first_child()
-                        .and_then(|w| w.downcast::<gtk::Expander>().ok())
+                    && let Some((header_button, revealer)) =
+                        Self::tool_burst_header_and_revealer(&row_widget)
                 {
-                    expander.set_expanded(true);
+                    if !revealer.reveals_child() {
+                        header_button.emit_clicked();
+                    }
                     let scroll_child_for_tick = scroll_child.clone();
-                    let expander_for_tick = expander.clone();
+                    let revealer_for_tick = revealer.clone();
                     let tick_count = std::cell::Cell::new(0u32);
-                    expander.add_tick_callback(move |_, _| {
+                    revealer.add_tick_callback(move |_, _| {
                         let ticks = tick_count.get() + 1;
                         tick_count.set(ticks);
                         if ticks > 60 {
                             return glib::ControlFlow::Break;
                         }
 
-                        let Some(child_box) = expander_for_tick
+                        let Some(child_box) = revealer_for_tick
                             .child()
                             .and_then(|w| w.downcast::<gtk::Box>().ok())
                         else {
@@ -1118,6 +1119,22 @@ impl SessionDetail {
             tracing::debug!("Clearing window focus before replacing transcript rows");
             gtk::prelude::GtkWindowExt::set_focus(&window, Option::<&gtk::Widget>::None);
         }
+    }
+
+    /// Looks up the `(header_button, revealer)` pair for a tool-burst transcript
+    /// row. The row widget is a vertical `gtk::Box` whose first child is the
+    /// header toggle button and whose second child is the `gtk::Revealer`
+    /// holding the grouped tool call rows.
+    fn tool_burst_header_and_revealer(
+        row_widget: &gtk::Widget,
+    ) -> Option<(gtk::Button, gtk::Revealer)> {
+        let header_button = row_widget
+            .first_child()
+            .and_then(|w| w.downcast::<gtk::Button>().ok())?;
+        let revealer = header_button
+            .next_sibling()
+            .and_then(|w| w.downcast::<gtk::Revealer>().ok())?;
+        Some((header_button, revealer))
     }
 
     fn scroll_widget_into_view(widget: &gtk::Widget, scroll_child: &gtk::Box) {

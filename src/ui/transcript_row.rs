@@ -943,11 +943,31 @@ impl TranscriptRow {
 
         root.add_css_class("tool-call-group");
 
-        let expander = gtk::Expander::new(None);
-        expander.set_expanded(burst.default_expanded);
+        let header_button = gtk::Button::new();
+        header_button.add_css_class("flat");
+        header_button.add_css_class("tool-call-group-header-button");
+        header_button.set_hexpand(true);
 
-        let header = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+        let header_row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+        header_row.set_hexpand(true);
+
+        let arrow_icon = gtk::Image::from_icon_name("pan-end-symbolic");
+        arrow_icon.set_valign(gtk::Align::Start);
+        arrow_icon.add_css_class("tool-call-group-arrow");
+        header_row.append(&arrow_icon);
+
+        let header = gtk::FlowBox::new();
+        header.set_selection_mode(gtk::SelectionMode::None);
+        header.set_row_spacing(4);
+        header.set_column_spacing(8);
+        header.set_min_children_per_line(1);
+        header.set_max_children_per_line(u32::MAX);
+        header.set_hexpand(true);
         header.add_css_class("tool-call-group-header");
+
+        let append_to_header = |child: &gtk::Widget| {
+            header.insert(child, -1);
+        };
 
         for (name, count) in &burst.category_counts {
             let pill_box = gtk::Box::new(gtk::Orientation::Horizontal, 4);
@@ -962,14 +982,14 @@ impl TranscriptRow {
             let pill_label = gtk::Label::new(Some(&format!("{count} {name}")));
             pill_box.append(&pill_label);
 
-            header.append(&pill_box);
+            append_to_header(pill_box.upcast_ref());
         }
 
         if let Some(total_ms) = burst.total_duration_ms {
             let duration = gtk::Label::new(Some(&format_duration_ms(total_ms)));
             duration.add_css_class("caption");
             duration.add_css_class("dim-label");
-            header.append(&duration);
+            append_to_header(duration.upcast_ref());
         }
 
         if let Some(reasoning_label) = format_reasoning_burst_label(
@@ -984,13 +1004,13 @@ impl TranscriptRow {
             } else {
                 badge.add_css_class("reasoning-pill-encrypted");
             }
-            header.append(&badge);
+            append_to_header(badge.upcast_ref());
         }
 
         let total = gtk::Label::new(Some(&format!("{} tool calls", burst.tool_calls.len())));
         total.add_css_class("caption");
         total.add_css_class("dim-label");
-        header.append(&total);
+        append_to_header(total.upcast_ref());
 
         if burst.error_count > 0 {
             let error_label = gtk::Label::new(Some(&format!(
@@ -1004,7 +1024,7 @@ impl TranscriptRow {
             )));
             error_label.add_css_class("caption");
             error_label.add_css_class("status-error");
-            header.append(&error_label);
+            append_to_header(error_label.upcast_ref());
         }
 
         let burst_match_count: usize = burst.child_match_counts.iter().sum();
@@ -1015,16 +1035,18 @@ impl TranscriptRow {
             badge.add_css_class("tool-call-group-pill");
             let badge_a11y = format_tool_burst_match_badge_accessible_label(burst_match_count);
             badge.update_property(&[gtk::accessible::Property::Label(&badge_a11y)]);
-            header.append(&badge);
+            append_to_header(badge.upcast_ref());
         }
 
-        expander.set_label_widget(Some(&header));
-        let expander_a11y = format_tool_burst_accessible_label(
+        header_row.append(&header);
+        header_button.set_child(Some(&header_row));
+
+        let header_a11y = format_tool_burst_accessible_label(
             &burst.category_counts,
             burst.tool_calls.len(),
             burst.error_count,
         );
-        expander.update_property(&[gtk::accessible::Property::Label(&expander_a11y)]);
+        header_button.update_property(&[gtk::accessible::Property::Label(&header_a11y)]);
 
         let children = gtk::Box::new(gtk::Orientation::Vertical, 0);
         for tool_call in &burst.tool_calls {
@@ -1051,8 +1073,35 @@ impl TranscriptRow {
             children.append(&child.root);
         }
 
-        expander.set_child(Some(&children));
-        root.append(&expander);
+        let revealer = gtk::Revealer::new();
+        revealer.set_transition_type(gtk::RevealerTransitionType::SlideDown);
+        revealer.set_reveal_child(burst.default_expanded);
+        revealer.set_child(Some(&children));
+
+        if burst.default_expanded {
+            arrow_icon.set_icon_name(Some("pan-down-symbolic"));
+        }
+
+        {
+            let revealer = revealer.clone();
+            let arrow_icon = arrow_icon.clone();
+            header_button.connect_clicked(move |btn| {
+                let expanded = !revealer.reveals_child();
+                revealer.set_reveal_child(expanded);
+                arrow_icon.set_icon_name(Some(if expanded {
+                    "pan-down-symbolic"
+                } else {
+                    "pan-end-symbolic"
+                }));
+                btn.update_state(&[gtk::accessible::State::Expanded(Some(expanded))]);
+            });
+        }
+        header_button.update_state(&[gtk::accessible::State::Expanded(Some(
+            burst.default_expanded,
+        ))]);
+
+        root.append(&header_button);
+        root.append(&revealer);
 
         self.rendered_match_count = burst_match_count;
         sender
