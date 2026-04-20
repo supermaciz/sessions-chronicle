@@ -1,0 +1,120 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="640" font-family="'Iowan Old Style', 'Charter', Georgia, serif">
+  <defs>
+    <style>
+      .paper { fill: #f4ede0; }
+      .ink { fill: #1f1a14; }
+      .ink-dim { fill: #6b5e4a; }
+      .rule { stroke: #1f1a14; stroke-width: 1; }
+      .rule-thin { stroke: #1f1a14; stroke-width: 0.5; }
+      .masthead { fill: #1f1a14; font-size: 56px; font-weight: 900; letter-spacing: -2px; font-family: 'Playfair Display', 'Iowan Old Style', serif; }
+      .subhead { fill: #1f1a14; font-size: 14px; font-style: italic; }
+      .meta { fill: #6b5e4a; font-size: 10px; letter-spacing: 2px; }
+      .body { fill: #1f1a14; font-size: 12px; }
+      .small-cap { fill: #1f1a14; font-size: 11px; font-weight: 700; letter-spacing: 1.5px; }
+      .roman { fill: #1f1a14; font-size: 22px; font-family: 'Playfair Display', serif; font-style: italic; }
+      .drop { fill: #8b1a1a; font-size: 56px; font-family: 'Playfair Display', serif; font-weight: 900; }
+      .shot { fill: #d8cfba; stroke: #1f1a14; stroke-width: 1; }
+      .shot-line { stroke: #6b5e4a; stroke-width: 0.5; }
+      .stamp { fill: none; stroke: #8b1a1a; stroke-width: 1.5; }
+      .stamp-text { fill: #8b1a1a; font-size: 9px; font-weight: 700; letter-spacing: 1px; }
+      .accent-btn { fill: #1f1a14; }
+      .accent-btn-text { fill: #f4ede0; font-size: 12px; letter-spacing: 1px; font-weight: 700; }
+    </style>
+  </defs>
+
+  <rect width="960" height="640" class="paper"/>
+
+  <!-- Top meta bar -->
+  <line x1="32" y1="34" x2="928" y2="34" class="rule-thin"/>
+  <text x="32" y="28" class="meta">VOL. I · NO. 1</text>
+  <text x="480" y="28" class="meta" text-anchor="middle">SESSIONS · CHRONICLE · GNOME</text>
+  <text x="928" y="28" class="meta" text-anchor="end">MMXXVI</text>
+
+  <!-- Masthead -->
+  <text x="480" y="100" class="masthead" text-anchor="middle">Sessions Chronicle</text>
+  <text x="480" y="124" class="subhead" text-anchor="middle">A local archive of every conversation you have ever had with a machine.</text>
+  <line x1="32" y1="146" x2="928" y2="146" class="rule"/>
+  <line x1="32" y1="150" x2="928" y2="150" class="rule-thin"/>
+
+  <!-- Two column layout: column 1 article, column 2 plate -->
+  <!-- Column heading -->
+  <text x="32" y="184" class="small-cap">FROM THE EDITOR</text>
+  <line x1="32" y1="192" x2="380" y2="192" class="rule-thin"/>
+
+  <text x="32" y="248" class="drop">T</text>
+  <text x="68" y="220" class="body">housands of prompts. Hundreds of tool</text>
+  <text x="68" y="236" class="body">calls. A few moments of genuine insight,</text>
+  <text x="68" y="252" class="body">scattered across four assistants and a</text>
+  <text x="32" y="268" class="body">dozen project folders. Sessions Chronicle indexes</text>
+  <text x="32" y="284" class="body">every transcript on your machine — Claude Code,</text>
+  <text x="32" y="300" class="body">OpenCode, Codex, Mistral Vibe — into one searchable</text>
+  <text x="32" y="316" class="body">archive. Nothing leaves your disk.</text>
+
+  <text x="32" y="356" class="roman">"Find the conversation. Read the reasoning.</text>
+  <text x="32" y="382" class="roman">Resume the session."</text>
+
+  <text x="32" y="420" class="body">Open source under MIT. Distributed as a Flatpak.</text>
+  <text x="32" y="436" class="body">Designed for GNOME, comfortable on KDE, usable</text>
+  <text x="32" y="452" class="body">anywhere libadwaita runs.</text>
+
+  <!-- Stamp -->
+  <g transform="translate(60,478) rotate(-6)">
+    <rect x="0" y="0" width="160" height="40" class="stamp"/>
+    <text x="80" y="17" class="stamp-text" text-anchor="middle">FIRST EDITION</text>
+    <text x="80" y="32" class="stamp-text" text-anchor="middle">v1.0 · 2026</text>
+  </g>
+
+  <!-- Column rule -->
+  <line x1="468" y1="170" x2="468" y2="600" class="rule-thin"/>
+
+  <!-- Column 2: Plate (illustration of the app as woodblock print) -->
+  <text x="500" y="184" class="small-cap">PLATE I — THE LIBRARY</text>
+  <line x1="500" y1="192" x2="928" y2="192" class="rule-thin"/>
+
+  <rect x="500" y="208" width="428" height="240" class="shot"/>
+  <line x1="500" y1="232" x2="928" y2="232" class="shot-line"/>
+  <line x1="600" y1="232" x2="600" y2="448" class="shot-line"/>
+  <text x="510" y="226" class="meta">FILE</text>
+  <text x="540" y="226" class="meta">VIEW</text>
+  <text x="570" y="226" class="meta">HELP</text>
+  <!-- sidebar -->
+  <line x1="510" y1="252" x2="592" y2="252" class="shot-line"/>
+  <line x1="510" y1="272" x2="592" y2="272" class="shot-line"/>
+  <line x1="510" y1="292" x2="592" y2="292" class="shot-line"/>
+  <line x1="510" y1="312" x2="592" y2="312" class="shot-line"/>
+  <line x1="510" y1="332" x2="592" y2="332" class="shot-line"/>
+  <line x1="510" y1="352" x2="570" y2="352" class="shot-line"/>
+  <!-- list area cross-hatch -->
+  <g stroke="#6b5e4a" stroke-width="0.4">
+    <line x1="608" y1="248" x2="920" y2="248"/>
+    <line x1="608" y1="262" x2="920" y2="262"/>
+    <line x1="608" y1="276" x2="900" y2="276"/>
+    <line x1="608" y1="290" x2="920" y2="290"/>
+    <line x1="608" y1="304" x2="880" y2="304"/>
+    <line x1="608" y1="318" x2="920" y2="318"/>
+    <line x1="608" y1="332" x2="860" y2="332"/>
+    <line x1="608" y1="346" x2="920" y2="346"/>
+    <line x1="608" y1="360" x2="900" y2="360"/>
+    <line x1="608" y1="374" x2="920" y2="374"/>
+    <line x1="608" y1="388" x2="840" y2="388"/>
+    <line x1="608" y1="402" x2="920" y2="402"/>
+    <line x1="608" y1="416" x2="900" y2="416"/>
+    <line x1="608" y1="430" x2="860" y2="430"/>
+  </g>
+
+  <text x="500" y="468" class="meta">FIG. 1 — THE LIBRARY VIEW, RENDERED IN WOODCUT</text>
+
+  <!-- Volume / chapters -->
+  <text x="500" y="496" class="small-cap">VOLUMES</text>
+  <line x1="500" y1="504" x2="928" y2="504" class="rule-thin"/>
+  <text x="500" y="528" class="roman">I.</text> <text x="528" y="528" class="body">Search every transcript with FTS5.</text>
+  <text x="500" y="552" class="roman">II.</text> <text x="528" y="552" class="body">Inspect tool calls and subagent threads.</text>
+  <text x="500" y="576" class="roman">III.</text> <text x="528" y="576" class="body">Pin sessions worth revisiting.</text>
+  <text x="500" y="600" class="roman">IV.</text> <text x="528" y="600" class="body">Resume the conversation in your terminal.</text>
+
+  <!-- Footer CTA bar -->
+  <line x1="32" y1="618" x2="928" y2="618" class="rule"/>
+  <rect x="32" y="624" width="120" height="14" class="accent-btn"/>
+  <text x="92" y="635" class="accent-btn-text" text-anchor="middle">SUBSCRIBE → GITHUB</text>
+  <text x="928" y="635" class="meta" text-anchor="end">PRINTED WITH LIBADWAITA · MMXXVI</text>
+</svg>

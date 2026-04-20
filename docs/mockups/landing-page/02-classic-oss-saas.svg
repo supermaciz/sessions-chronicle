@@ -1,0 +1,104 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="640" font-family="Inter, 'IBM Plex Sans', system-ui, sans-serif">
+  <defs>
+    <style>
+      .bg { fill: #0b0d10; }
+      .nav { fill: #0b0d10; }
+      .text { fill: #e6e9ef; font-size: 13px; }
+      .text-dim { fill: #8b94a3; font-size: 12px; }
+      .h1 { fill: #ffffff; font-size: 42px; font-weight: 800; letter-spacing: -1px; }
+      .sub { fill: #b9c1cf; font-size: 15px; }
+      .accent-btn { fill: #f0f1f3; rx: 6; }
+      .accent-text { fill: #0b0d10; font-size: 13px; font-weight: 700; }
+      .ghost-btn { fill: none; stroke: #2a2f37; stroke-width: 1; rx: 6; }
+      .card { fill: #11151a; stroke: #1c2128; stroke-width: 1; rx: 10; }
+      .term { fill: #0e1217; stroke: #1c2128; stroke-width: 1; rx: 8; }
+      .term-text { fill: #c9d1d9; font-size: 12px; font-family: 'JetBrains Mono', monospace; }
+      .term-prompt { fill: #58a6ff; font-size: 12px; font-family: 'JetBrains Mono', monospace; }
+      .glow { fill: #58a6ff; opacity: 0.08; }
+      .accent { fill: #58a6ff; }
+      .badge { fill: #161b22; rx: 4; stroke: #2a2f37; stroke-width: 1; }
+      .shot { fill: #161b22; }
+      .shot-row { fill: #1f262e; }
+      .shot-accent { fill: #58a6ff; opacity: 0.7; }
+    </style>
+  </defs>
+
+  <rect width="960" height="640" class="bg"/>
+  <ellipse cx="700" cy="120" rx="380" ry="180" class="glow"/>
+
+  <!-- Nav -->
+  <rect width="960" height="56" class="nav"/>
+  <rect x="32" y="20" width="16" height="16" class="accent" rx="3"/>
+  <text x="56" y="33" class="text" font-weight="700">sessions-chronicle</text>
+  <text x="640" y="33" class="text-dim">Features</text>
+  <text x="700" y="33" class="text-dim">Install</text>
+  <text x="752" y="33" class="text-dim">Docs</text>
+  <rect x="800" y="14" width="58" height="28" class="badge"/>
+  <text x="829" y="33" class="text" text-anchor="middle" font-size="11">★ 1.2k</text>
+  <rect x="868" y="14" width="60" height="28" class="accent-btn"/>
+  <text x="898" y="33" class="accent-text" text-anchor="middle">GitHub</text>
+
+  <!-- Hero left -->
+  <text x="48" y="148" class="text-dim" font-size="11" letter-spacing="2">v1.0 · OPEN SOURCE · GNOME</text>
+  <text x="48" y="200" class="h1">Every AI session,</text>
+  <text x="48" y="244" class="h1">one searchable home.</text>
+  <text x="48" y="280" class="sub">Index Claude Code, OpenCode, Codex and Mistral Vibe</text>
+  <text x="48" y="300" class="sub">transcripts locally. Find any conversation in milliseconds.</text>
+
+  <rect x="48" y="324" width="120" height="40" class="accent-btn"/>
+  <text x="108" y="350" class="accent-text" text-anchor="middle">Get the Flatpak →</text>
+  <rect x="178" y="324" width="120" height="40" class="ghost-btn"/>
+  <text x="238" y="350" class="text" text-anchor="middle" font-weight="600">Star on GitHub</text>
+
+  <!-- Terminal block -->
+  <rect x="48" y="384" width="400" height="64" class="term"/>
+  <text x="62" y="410" class="term-prompt">$</text>
+  <text x="78" y="410" class="term-text">flatpak install sessions-chronicle</text>
+  <text x="62" y="432" class="term-prompt">$</text>
+  <text x="78" y="432" class="term-text">sessions-chronicle</text>
+
+  <!-- Hero right: tilted screenshot -->
+  <g transform="translate(530,110) rotate(-4)">
+    <rect x="0" y="0" width="380" height="240" class="card"/>
+    <rect x="0" y="0" width="380" height="22" fill="#0e1217"/>
+    <circle cx="14" cy="11" r="3" fill="#ed5b5b"/>
+    <circle cx="26" cy="11" r="3" fill="#f1c40f"/>
+    <circle cx="38" cy="11" r="3" fill="#27ae60"/>
+    <rect x="0" y="22" width="120" height="218" fill="#0d1116"/>
+    <rect x="120" y="22" width="260" height="218" class="shot"/>
+    <rect x="10" y="34" width="100" height="16" class="shot-row"/>
+    <rect x="10" y="56" width="100" height="16" class="shot-accent"/>
+    <rect x="10" y="78" width="100" height="16" class="shot-row"/>
+    <rect x="10" y="100" width="100" height="16" class="shot-row"/>
+    <rect x="10" y="122" width="100" height="16" class="shot-row"/>
+    <rect x="132" y="34" width="234" height="14" fill="#2a3340"/>
+    <rect x="132" y="56" width="180" height="8" class="shot-row"/>
+    <rect x="132" y="70" width="220" height="8" class="shot-row"/>
+    <rect x="132" y="84" width="200" height="8" class="shot-row"/>
+    <rect x="132" y="108" width="234" height="60" fill="#0d1116" stroke="#1c2128"/>
+    <rect x="140" y="116" width="80" height="6" class="shot-accent"/>
+    <rect x="140" y="128" width="180" height="4" class="shot-row"/>
+    <rect x="140" y="138" width="200" height="4" class="shot-row"/>
+    <rect x="140" y="148" width="160" height="4" class="shot-row"/>
+    <rect x="132" y="180" width="234" height="50" class="shot-row"/>
+  </g>
+
+  <!-- Three feature columns -->
+  <rect x="48" y="488" width="280" height="120" class="card"/>
+  <rect x="60" y="500" width="20" height="20" class="accent" rx="4"/>
+  <text x="60" y="544" class="text" font-weight="700">Full-text search</text>
+  <text x="60" y="566" class="text-dim">SQLite FTS5 across every transcript,</text>
+  <text x="60" y="582" class="text-dim">tool call, and reasoning block.</text>
+
+  <rect x="340" y="488" width="280" height="120" class="card"/>
+  <rect x="352" y="500" width="20" height="20" fill="#a371f7" rx="4"/>
+  <text x="352" y="544" class="text" font-weight="700">Tool call inspection</text>
+  <text x="352" y="566" class="text-dim">Drill into bursts, subagents, and</text>
+  <text x="352" y="582" class="text-dim">reasoning — without leaving the row.</text>
+
+  <rect x="632" y="488" width="280" height="120" class="card"/>
+  <rect x="644" y="500" width="20" height="20" fill="#3fb950" rx="4"/>
+  <text x="644" y="544" class="text" font-weight="700">Resume in your terminal</text>
+  <text x="644" y="566" class="text-dim">One click reopens the session</text>
+  <text x="644" y="582" class="text-dim">with the right assistant.</text>
+</svg>

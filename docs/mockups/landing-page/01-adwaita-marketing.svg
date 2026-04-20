@@ -1,0 +1,90 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="640" font-family="Cantarell, 'Adwaita Sans', sans-serif">
+  <defs>
+    <style>
+      .bg { fill: #fafafa; }
+      .surface { fill: #ffffff; }
+      .header { fill: #ffffff; stroke: #e6e6e6; stroke-width: 1; }
+      .text { fill: #1d1d1d; font-size: 14px; }
+      .text-dim { fill: #6b6b6b; font-size: 12px; }
+      .h1 { fill: #1d1d1d; font-size: 36px; font-weight: 800; letter-spacing: -0.5px; }
+      .h2 { fill: #1d1d1d; font-size: 18px; font-weight: 700; }
+      .accent-btn { fill: #3584e4; rx: 8; }
+      .accent-text { fill: #ffffff; font-size: 14px; font-weight: 600; }
+      .ghost-btn { fill: none; stroke: #d0d0d0; stroke-width: 1; rx: 8; }
+      .card { fill: #ffffff; stroke: #e6e6e6; stroke-width: 1; rx: 12; }
+      .pill { fill: #f0f0f0; rx: 12; }
+      .pill-text { fill: #4a4a4a; font-size: 11px; font-weight: 600; }
+      .icon-circle { fill: url(#iconGrad); }
+      .shot { fill: #2a2a2a; }
+      .shot-side { fill: #1e1e1e; }
+      .shot-row { fill: #303030; }
+      .shot-text { fill: #999; font-size: 8px; }
+      .footer { fill: #f3f3f3; }
+    </style>
+    <linearGradient id="iconGrad" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#3584e4"/>
+      <stop offset="1" stop-color="#1c5fb0"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="960" height="640" class="bg"/>
+
+  <!-- Top nav (Adwaita header) -->
+  <rect x="0" y="0" width="960" height="56" class="header"/>
+  <circle cx="32" cy="28" r="12" class="icon-circle"/>
+  <text x="52" y="33" class="text" font-weight="700">Sessions Chronicle</text>
+  <text x="780" y="33" class="text-dim">Releases</text>
+  <text x="850" y="33" class="text-dim">GitHub</text>
+  <rect x="900" y="14" width="44" height="28" class="ghost-btn"/>
+  <text x="922" y="33" class="text" text-anchor="middle" font-size="12">★ 1.2k</text>
+
+  <!-- Hero (centered, generous whitespace, Adwaita "About" feel) -->
+  <circle cx="480" cy="158" r="40" class="icon-circle"/>
+  <text x="480" y="232" class="h1" text-anchor="middle">Sessions Chronicle</text>
+  <text x="480" y="262" class="text-dim" text-anchor="middle" font-size="15">
+    Browse, search, and resume your AI assistant sessions.
+  </text>
+  <text x="480" y="282" class="text-dim" text-anchor="middle" font-size="15">
+    Local-first. Built for GNOME.
+  </text>
+
+  <!-- CTAs -->
+  <rect x="392" y="306" width="100" height="40" class="accent-btn"/>
+  <text x="442" y="331" class="accent-text" text-anchor="middle">Install</text>
+  <rect x="500" y="306" width="100" height="40" class="ghost-btn"/>
+  <text x="550" y="331" class="text" text-anchor="middle" font-weight="600" font-size="13">View on GitHub</text>
+
+  <!-- Assistant pills -->
+  <text x="480" y="372" class="text-dim" text-anchor="middle" font-size="11">SUPPORTS</text>
+  <rect x="356" y="384" width="84" height="22" class="pill"/>
+  <text x="398" y="399" class="pill-text" text-anchor="middle">Claude Code</text>
+  <rect x="448" y="384" width="68" height="22" class="pill"/>
+  <text x="482" y="399" class="pill-text" text-anchor="middle">OpenCode</text>
+  <rect x="524" y="384" width="50" height="22" class="pill"/>
+  <text x="549" y="399" class="pill-text" text-anchor="middle">Codex</text>
+  <rect x="582" y="384" width="78" height="22" class="pill"/>
+  <text x="621" y="399" class="pill-text" text-anchor="middle">Mistral Vibe</text>
+
+  <!-- Screenshot frame (mock app window) -->
+  <rect x="120" y="430" width="720" height="170" class="card"/>
+  <rect x="120" y="430" width="720" height="22" fill="#f0f0f0"/>
+  <circle cx="134" cy="441" r="4" fill="#ed5b5b"/>
+  <circle cx="148" cy="441" r="4" fill="#f1c40f"/>
+  <circle cx="162" cy="441" r="4" fill="#27ae60"/>
+  <rect x="120" y="452" width="160" height="148" class="shot-side"/>
+  <rect x="280" y="452" width="560" height="148" class="shot"/>
+  <rect x="135" y="465" width="130" height="14" class="shot-row"/>
+  <rect x="135" y="485" width="130" height="14" class="shot-row"/>
+  <rect x="135" y="505" width="130" height="14" class="shot-row"/>
+  <rect x="295" y="465" width="530" height="22" class="shot-row"/>
+  <rect x="295" y="494" width="380" height="10" class="shot-row"/>
+  <rect x="295" y="510" width="420" height="10" class="shot-row"/>
+  <rect x="295" y="526" width="350" height="10" class="shot-row"/>
+  <rect x="295" y="552" width="530" height="36" class="shot-row"/>
+
+  <!-- Footer hint -->
+  <rect x="0" y="612" width="960" height="28" class="footer"/>
+  <text x="480" y="630" class="text-dim" text-anchor="middle" font-size="11">
+    apps.gnome.org-style page · light/dark via prefers-color-scheme · Cantarell
+  </text>
+</svg>
