@@ -54,7 +54,7 @@ website/
 ├── package-lock.json
 ├── tsconfig.json
 ├── public/
-│   ├── CNAME                          # sessions-chronicle.maciz.dev
+│   ├── CNAME                          # optional: kept for Astro deploy-guide parity
 │   ├── favicon.svg
 │   ├── fonts/
 │   │   ├── AdwaitaSans-Regular.woff2
@@ -64,7 +64,7 @@ website/
 │   └── og-image.png                   # 1200×630 Open Graph card
 ├── src/
 │   ├── assets/
-│   │   └── screenshots/               # processed by Astro <Image>
+│   │   └── screenshots/               # processed by Astro <Picture>/<Image>
 │   ├── components/
 │   │   ├── adwaita/
 │   │   │   ├── Banner.astro
@@ -274,7 +274,7 @@ Layered screenshot composition. No tilt/3D — simple XY offsets + shadows.
 - Front layer: `analytics_light.png` (~50% crop), bottom-right corner, smaller.
 - **Adwaita overlays:** one `Banner` floating at the top ("New: Codex sessions now indexed.") and one `Toast` at the bottom ("Session resumed in terminal · Undo").
 
-**LCP candidate:** the back layer image. Must use `<Image loading="eager" fetchpriority="high">`.
+**LCP candidate:** the back layer image. Must use `<Picture loading="eager" fetchpriority="high">`.
 
 ### `AtlasGrid.astro`
 
@@ -354,8 +354,8 @@ No social networks, no newsletter.
 ## Image Pipeline
 
 - Source PNGs placed in `website/src/assets/screenshots/` (imported from `docs/screenshots/` at build time — copy, not symlink, so Astro's import graph resolves).
-- Use Astro's built-in `<Image>` component (backed by sharp in 6.x).
-- Output formats: AVIF (preferred) + WebP (fallback) + PNG (final fallback) via `<picture>`.
+- Use Astro's built-in `<Picture>` component for screenshot assets that need AVIF + WebP + PNG output, and `<Image>` only where a single optimized source is sufficient.
+- Output formats for screenshot plates and hero layers: AVIF (preferred) + WebP (fallback) + PNG (final fallback) via Astro's `<Picture>`.
 - Responsive widths: `widths={[400, 800, 1200]}` with `sizes="(max-width: 768px) 100vw, 50vw"`.
 - File hash in filename → infinite cache via GH Pages response headers.
 
@@ -367,9 +367,9 @@ No social networks, no newsletter.
 | Hero mid/front | `eager` | (default) | ≥ 960px / 720px |
 | Atlas plates | `lazy` | (default) | ≥ 720px |
 
-**Layout stability:** every `<Image>` has explicit `width`/`height` → no CLS.
+**Layout stability:** every `<Picture>` / `<Image>` renders with explicit `width`/`height` from imported metadata or explicit props → no CLS.
 
-**Placeholders:** Astro's built-in blurhash placeholder generation; no extra config needed.
+**Placeholders:** no custom placeholder pipeline in v1. Rely on explicit dimensions, eager loading for hero imagery, and Astro's optimized output formats. If a blurred placeholder is still desired later, add it as a separate implementation task with a documented custom approach.
 
 **OG image:** `public/og-image.png` (1200×630), statically authored, not processed through the image pipeline.
 
@@ -385,16 +385,18 @@ Domain: `maciz.dev`, DNS Zone →
 
 ### CNAME file
 
-`website/public/CNAME` — single line, no protocol, no slash:
+`website/public/CNAME` — optional, single line, no protocol, no slash:
 ```
 sessions-chronicle.maciz.dev
 ```
 
+Astro's GitHub Pages guide still recommends committing `public/CNAME` for custom-domain deployments. However, for a GitHub Pages site published via a custom GitHub Actions workflow, GitHub's Pages settings remain the source of truth for the binding itself: the deployed `CNAME` is not used to auto-populate the repository's custom-domain setting and is not required for the site to bind correctly.
+
 ### GitHub Pages settings
 
 - **Source:** GitHub Actions (not "Deploy from a branch")
-- **Custom domain:** auto-populated from the deployed `CNAME`
-- **Enforce HTTPS:** enable after Let's Encrypt cert is issued (~10 min after DNS resolves)
+- **Custom domain:** set manually in GitHub → Settings → Pages as `sessions-chronicle.maciz.dev`
+- **Enforce HTTPS:** enable after GitHub Pages exposes the option; DNS propagation and certificate issuance can take up to 24 hours
 
 ### Workflow: `.github/workflows/deploy-website.yml`
 
@@ -451,14 +453,15 @@ jobs:
 
 ### Bootstrap order
 
-1. Scaffold `website/` with `CNAME` in place; first commit.
+1. Scaffold `website/`; include `public/CNAME` if following Astro's custom-domain guide.
 2. Push. The build step passes; the deploy step fails (Pages not yet enabled) — expected.
 3. GitHub → Settings → Pages → Source = "GitHub Actions".
-4. Re-run the workflow via `workflow_dispatch`.
-5. Add the OVHcloud CNAME record.
-6. Wait for DNS propagation (5–60 min) and Let's Encrypt cert issuance.
-7. Tick "Enforce HTTPS".
-8. Verify `https://sessions-chronicle.maciz.dev` loads.
+4. GitHub → Settings → Pages → Custom domain = `sessions-chronicle.maciz.dev`.
+5. Re-run the workflow via `workflow_dispatch` so the first successful artifact is published.
+6. Add the OVHcloud CNAME record.
+7. Wait for DNS propagation and GitHub Pages certificate issuance (allow up to 24 hours).
+8. Tick "Enforce HTTPS".
+9. Verify `https://sessions-chronicle.maciz.dev` loads.
 
 ### Rollback
 
