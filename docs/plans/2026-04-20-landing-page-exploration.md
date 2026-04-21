@@ -236,230 +236,146 @@ promise.
 
 ---
 
-## Proposal E — App-In-Place *(UI Designer)*
+## Proposal E — Component Composition *(Adwaita unframed)*
 
-**Reference:** libadwaita `AdwOverlaySplitView` + `AdwHeaderBar` +
-`AdwBanner`; the actual Sessions Chronicle window shell.
-**One-line:** Don't show a screenshot of the app. Make the page *be* the app.
+**Reference:** `AdwBanner`, `AdwClamp`, `AdwActionRow`,
+`AdwPreferencesGroup`, filter chips, and toast patterns from libadwaita.
+**One-line:** Use Adwaita as a design grammar for the web page, not as
+costume for a fake app window.
 
-![App-in-place landing page](../mockups/landing-page/05-ui-designer-app-in-place.svg)
+![Component composition landing page](../mockups/landing-page/05-ui-designer-app-in-place.svg)
 
 ### Direction
 
-The viewport is rendered as a single Adwaita window — rounded corners,
-headerbar with WindowControls, sidebar with realistic-looking session
-rows on the left, and a content pane on the right. The marketing copy
-lives *inside* the content pane as if it were the currently selected
-session ("Browse, search, resume." — Claude Code, just now). An
-`AdwBanner` across the top of the content pane carries the install CTA,
-exactly the way the real app surfaces release notices.
+The page is unmistakably a website: no window controls, no wallpaper,
+no pretend desktop shell. But its visual language comes directly from
+libadwaita. The hero is composed from familiar GNOME components that
+have escaped the app frame and been re-laid as marketing modules:
+banner, search entry, chip row, action rows, quiet cards, toast.
 
-This is meaningfully different from Proposal A's centered "About"
-treatment: A imitates apps.gnome.org's *page about an app*; E imitates
-*the app itself*. Same vocabulary (Cantarell, `#3584e4`, 12px radii,
-hairline borders), opposite stance — instead of presenting the product
-on a calm marketing canvas, the page asks the visitor to look directly
-at the working window. Visitors who have never opened a GNOME app still
-read it as "a real desktop application", which is the trust signal that
-matters.
+This keeps what was smart about the old E/F concepts — "the product
+should feel native immediately" — while dropping the pastiche. The page
+does not impersonate Sessions Chronicle. It speaks the same language.
 
 ### Layout
 
-- **Desktop frame:** Soft warm-gray "wallpaper" (`#d6d3ce`) behind a
-  shadowed 920×600 window with 12px rounded corners, edge-to-edge.
-- **Headerbar (libadwaita-faithful):**
-  - Left: app name, sidebar-toggle icon button.
-  - Center: search entry styled as the in-app `Search transcripts` field.
-  - Right: menu button + three `WindowControls` (minimize, maximize,
-    close — close in red on hover state).
-- **Sidebar (left pane, 280px):**
-  - Top: PROJECTS section (`All sessions`, `sessions-chronicle`,
-    `relm4-experiments`, `infra-notes`) with right-aligned counts —
-    mirrors the real project filter.
-  - Middle: RECENT SESSIONS list. The first row is selected and
-    rendered with the accent-blue selection state — its title is the
-    one-line value prop ("Browse, search, resume."). The remaining six
-    rows cycle through all four supported AI assistants (Claude Code,
-    OpenCode, Codex, Mistral Vibe), grounding the four-assistant story
-    without a "logo strip".
-  - Footer: green status dot + `Indexed · 412 sessions` and
-    `LOCAL ONLY · NEVER LEAVES YOUR DISK` — the privacy promise lives
-    where the real indexing status lives.
-- **Content pane (right, ~608px wide):**
-  1. `AdwBanner` at the top: *"Version 1.0 is out — local-first, four
-     AI assistants, zero telemetry."* + `Install Flatpak` action button.
-  2. Hero copy as if it were a session header: small-caps meta
-     (`SESSION · CHRONICLE · v1.0 · MMXXVI`), 30px headline with one
-     accent-blue word, 13px dim subtitle.
-  3. Four assistant chips styled exactly like in-app filter pills
-     (Claude Code highlighted in accent tint).
-  4. Primary `Install on GNOME` button + ghost `View source` + a quiet
-     `★ 1.2k · MIT` line.
-  5. A "session preview" card titled *"Why a chronicle?"* containing a
-     real-feeling assistant bubble, a user bubble, and one inline
-     `TOOL CALL` chip — this is the "screenshot moment", except it's
-     interactive HTML, not a PNG.
-- **Bottom hint:** `ESC to close · ⌘F to search · ENTER to resume in
-  terminal` — the floating shortcut hint that lives in the real app.
+- **Top bar:** Site nav with libadwaita spacing, rounded ghost buttons,
+  and a single primary Install button.
+- **Hero split:**
+  - Left: headline, short value prop, primary and secondary CTAs.
+  - Right: a composed stack of Adwaita-like components rather than a
+    full fake app shell.
+- **Component stack (the proof surface):**
+  1. `AdwBanner`-style release banner with CTA.
+  2. Search entry with a real query example.
+  3. Four assistant chips in the style of in-app filters.
+  4. `AdwPreferencesGroup`-style card containing three `ActionRow`
+     feature lines: search, inspect tool calls, resume in terminal.
+  5. Transcript preview card with one assistant bubble, one user
+     bubble, and one inline `tool call` token.
+  6. Small toast in the lower corner carrying the privacy promise or a
+     quick install/status cue.
+- **Below fold (not in mockup):** three horizontal chapters using the
+  same component grammar, each paired with one real screenshot crop.
 
 ### Typography
 
-- Cantarell / Adwaita Sans throughout — same as Proposal A.
-- JetBrains Mono only for the inline `tool call` token (one place,
-  earned).
-- Headline 30/14/13/12, faint small-caps 10px with 0.5px tracking for
-  section labels (the libadwaita "FROM" / "RECENT" idiom).
-- Accent applied to a single hero word, not paragraphs.
+- Cantarell / Adwaita Sans throughout.
+- JetBrains Mono only for install commands and the inline `tool call`
+  token.
+- Headline 34px, body 14px, captions 12px.
+- Uses libadwaita-like density and spacing rather than web-style
+  oversized hero typography.
 
 ### Trade-offs
 
 | + | - |
 |---|---|
-| Strongest possible "this is a real GNOME app" signal — the page literally is the app shell | Visitors who don't recognize libadwaita chrome may briefly think they landed inside a webapp dashboard |
-| Four-assistant story is told by the sidebar rows themselves — no extra "Supported by" strip needed | Sidebar copy must stay believable; lorem-ipsum session titles would break the illusion immediately |
-| `AdwBanner` doubles as install CTA *and* a teaching moment for how the real app announces things | Two-pane layout must collapse cleanly on mobile (sidebar becomes a top sheet or is dropped — explicit responsive design needed) |
-| Tool-call chip + user/assistant bubbles preview features without a separate "Features" section | More moving parts than Proposal A — every detail (window controls, selected-row state, status dot) has to be right or it reads as costume |
-| Light/dark via `prefers-color-scheme` is still trivial — same libadwaita tokens | Harder to A/B-tune copy: hero, banner, and "session" content all have to stay coherent as one composition |
-| Differentiates strongly from A while staying inside the same design language | Risks reading as a clever-trick page if the marketing copy isn't pulled all the way through below the fold |
+| Very GNOME-native without pretending to be a running app | Needs discipline so the component stack does not become visual clutter |
+| More distinctive than A/B because the page grammar itself is product-specific | If overdone, it can still drift into "UI kit demo" territory |
+| Easier to implement responsively than the old E/F window concepts | Requires careful hierarchy so headline and CTA still win over the parts |
+| Lets us showcase tool calls, assistant support, and privacy as UI primitives | Needs a real design eye; the wrong spacing makes it look like random cards |
+| Keeps room for screenshots below the fold instead of replacing them | Slightly more custom CSS work than a standard hero + screenshot page |
 
 ---
 
-## Proposal F — Self-Indexed Window *(Mii Beta)*
+## Proposal F — Preferences Narrative *(Structured, native-web)*
 
-**Reference:** the running app itself — `AdwApplicationWindow` +
-`AdwOverlaySplitView` + `AdwToolbarView`, as already shipped in
-`src/ui/`. No external aesthetic.
-**One-line:** The page is not *about* Sessions Chronicle. It **is** an
-`AdwApplicationWindow` rendered at viewport scale, indexing exactly one
-session: its own launch.
+**Reference:** `AdwPreferencesPage`, `AdwPreferencesGroup`,
+`AdwActionRow`, `AdwViewSwitcher`, and boxed-list patterns from
+libadwaita.
+**One-line:** Build the landing page like a sequence of GNOME
+preference groups, but for storytelling instead of settings.
 
-![Self-indexed window landing page](../mockups/landing-page/06-mii-self-indexed.svg)
-
-### Critique of the convention being departed from
-
-Proposal A treats the page as a brochure that quotes libadwaita tokens
-(blue accent, Cantarell, 12px radius) and parks a screenshot of the
-real app in the lower half. That is a screenshot of the product
-*surrounded by a marketing page*. Two surfaces solving one job. The
-naming is wrong too: it calls itself a "landing page" but its actual
-behavior is "static fan art of a GTK window." If the screenshot is the
-most honest asset on the page, stop hiding it behind a hero block —
-make the window the page.
-
-Proposal D already does "product as hero" with a black canvas and
-floating cards. That is web art direction wearing the product's data
-as decoration. Proposal F does the inverse: web art direction zero,
-real chrome one hundred percent.
+![Preferences narrative landing page](../mockups/landing-page/06-mii-self-indexed.svg)
 
 ### Direction
 
-A single `AdwApplicationWindow` fills the browser viewport with a 12px
-window radius and a hairline border. Inside, the real grammar of the
-app: header bar, sidebar of assistants and projects, list of sessions,
-detail pane. The marketing payload is **embedded as data the app would
-plausibly hold**:
+This option is calmer and more architectural than E. Instead of an
+"exploded components" hero, the whole page adopts the structure of a
+native preferences page translated into web terms: grouped sections,
+quiet section headers, boxed lists, action rows with suffix metadata,
+and one clean screenshot per section.
 
-- The four assistants live in the sidebar, with real-looking session
-  counts, exactly where filters live in the running app.
-- The five product features are **session rows**: title = feature
-  headline, subtitle = `assistant · project · N tool calls`, preview
-  = the feature's two-line pitch.
-- The selected row opens in the detail pane as a transcript — a USER
-  bubble asks "What is Sessions Chronicle?", an ASSISTANT bubble
-  answers, and a `tool_use · bash` block contains the install command.
-- The install CTA in the header bar is a real button. The "GitHub ★
-  1.2k" pill is the same control the app uses for filters.
-- An `AdwToast` at the bottom reads `Indexed this page in 0.04 s.` with
-  an `Open ↗` action — a small, true joke that also serves as the
-  secondary CTA.
-
-There is no hero text outside the chrome. There is no screenshot
-*of* the app, because the page is not next to the app — the page is
-the app, populated.
+The result is strongly Adwaita-like, but not theatrical. It feels like
+the product came from GNOME thinking, not like the browser is wearing a
+GTK Halloween costume.
 
 ### Layout
 
-- **HeaderBar (46 px):** app icon + title + "indexed 1 session · just
-  now" subtitle, centered search entry, primary `Install` button, ghost
-  `GitHub ★ 1.2k`, menu button. Window controls present, GNOME-correct.
-- **Sidebar (220 px, `AdwOverlaySplitView` start pane):**
-  - `ASSISTANTS` group: Claude Code (selected, with focus row), OpenCode,
-    Codex, Mistral Vibe — each with a colored dot and a session count.
-  - `PROJECTS` group: starred + a few real-looking project names.
-  - `VIEWS` group: Sessions / Analytics.
-  - Bottom: small `GET IT` block with a copyable Flatpak command in
-    the same slot the app uses for status.
-- **List column (320 px):** filter bar + five session rows. The first
-  row is selected (blue rail + tinted background) and carries the
-  hero headline. Rows two through five are the feature story. Row six
-  is the license/colophon, framed as a row instead of a footer.
-- **Detail pane (~420 px, `AdwToolbarView`):** title bar with `Resume`
-  and `★ Pin` actions, a two-message transcript, an expandable
-  `tool_use · bash` block holding the install commands, a linked
-  subagent card pointing to the GitHub repo, and a metadata block
-  (stack, storage, license, platform) styled like the existing utility
-  pane.
-- **Toast overlay:** the only piece of explicitly "marketing" copy.
+- **Hero:** concise top statement, Install / GitHub CTAs, and a small
+  `ViewSwitcher`-style row for the four supported AI assistants.
+- **Section rhythm:** each major story block is a `PreferencesGroup`:
+  1. **Browse** group with a large screenshot and two explanatory rows.
+  2. **Inspect** group with tool-call and reasoning highlights.
+  3. **Resume** group with terminal handoff, pinned sessions, and
+     analytics summary.
+- **Row grammar:** each feature is introduced as an `ActionRow` with a
+  title, subdued subtitle, and a meaningful suffix (`local only`,
+  `FTS5`, `terminal`, `MIT`), not as generic marketing cards.
+- **Status/footer area:** a compact boxed strip using toast/status
+  semantics for `Local-first`, `No telemetry`, `Open source`, and the
+  final install action.
 
-**Adaptive:** at narrow widths the `AdwOverlaySplitView` collapses
-exactly like the real app — sidebar becomes a drawer, list and detail
-stack via `AdwNavigationView`. The page inherits the app's responsive
-story for free; no separate mobile design needed.
+This direction is less "heroic" than E and more systematized. Its
+distinctiveness comes from information architecture, not from a bold
+centerpiece.
 
 ### Typography
 
-- **Cantarell / Adwaita Sans** throughout the chrome. Same scale as
-  the running app: 13 px body, 11 px dim, 10 px tiny labels with 0.6
-  letter-spacing for section headers.
-- **JetBrains Mono** only inside the `tool_use` block and the sidebar
-  install hint — same rule the app already follows for code blocks.
-- No marketing display face. If a font choice on the page differs from
-  what the app actually uses, the lie has started.
-
-### Honesty checks
-
-- **Does the name match the behavior?** Yes — every "marketing"
-  affordance is the GTK affordance it appears to be. The Install
-  button installs. The search entry would search the page. The toast
-  is an `AdwToast` with one action.
-- **How many surfaces?** One. `AdwApplicationWindow`. Hero, screenshot,
-  feature grid, install CTA, footer, and assistant pills are all
-  collapsed into the same split view.
-- **What does it cost to maintain?** When the app's chrome changes,
-  the page changes by re-running the app and re-cropping. There is no
-  parallel design system to drift.
-- **What it is not:** an animation showcase, a scroll-jacked demo, a
-  dark canvas with floating cards, or a serif manifesto. The page
-  does not move. It sits there, looking like the thing.
+- Cantarell / Adwaita Sans throughout.
+- JetBrains Mono only for command snippets and short technical labels.
+- Headline 30px, group titles 18px, row titles 14px, metadata 11-12px.
+- Quiet, dense, and very legible; the page reads like native product
+  documentation, not a SaaS campaign.
 
 ### Trade-offs
 
 | + | - |
 |---|---|
-| One surface, not three — the chrome IS the marketing | First-time visitors might mistake it for an embedded web demo |
-| Updates from real screenshots; zero illustration debt | Requires the page to ship pixel-honest GTK CSS — no shortcuts |
-| Adaptive falls out of the `AdwOverlaySplitView` collapse story | Loses some "above the fold sales pitch" punch versus B |
-| The strongest possible "this is a GNOME app" signal | Risks looking too in-jokey if Flathub visitors don't get the bit |
-| Cannot be confused with any other dev-tool landing page | Hard to A/B-tune later; the page resists conventional CRO |
-| Toast as CTA is small, true, and reusable as the OG image | Search entry must either work or be obviously decorative — no middle ground |
+| Strong Adwaita identity with very low risk of pastiche | Less instantly dramatic than E/C/D |
+| Information architecture is highly reusable for the final implementation | Needs excellent copy to avoid reading like settings documentation |
+| Natural mobile story: groups and rows stack cleanly | Can feel too restrained if the screenshots are weak |
+| Distinctive because the page structure is unusual on the web, but coherent | Slightly less shareable as a single hero image than E |
+| Good fit for a local-first GNOME app: sober, trustworthy, specific | Requires restraint so it does not become visually monotonous |
 
 ---
 
 ## Comparison Matrix
 
-| Aspect | A: Adwaita | B: Classic OSS | C: Editorial | D: Mosaic | E: App-In-Place | F: Self-Indexed |
+| Aspect | A: Adwaita | B: Classic OSS | C: Editorial | D: Mosaic | E: Component Composition | F: Preferences Narrative |
 |---|---|---|---|---|---|---|
-| **Aesthetic risk** | Low | Low | High | High | Low-Medium | Medium |
+| **Aesthetic risk** | Low | Low | High | High | Medium | Low-Medium |
 | **Identity with GNOME** | Strong | Weak | Neutral | Weak | Very Strong | Very Strong |
-| **Memorability** | Low | Medium | Very High | Very High | High | High |
+| **Memorability** | Low | Medium | Very High | Very High | High | Medium-High |
 | **Conversion clarity** | High | Very High | Medium | Medium-Low | High | High |
 | **Implementation cost** | Low | Low-Medium | Medium | Medium-High | Medium | Medium |
-| **Custom illustration needed** | None | None | Yes (plates) | No (cards from real data) | None (HTML chrome) | None (HTML chrome) |
-| **Mobile story** | Easy | Easy | Easy (single col) | Hard (mosaic must collapse) | Medium (sidebar must collapse) | Free (inherits app collapse) |
+| **Custom illustration needed** | None | None | Yes (plates) | No (cards from real data) | None (HTML components) | None (HTML components) |
+| **Mobile story** | Easy | Easy | Easy (single col) | Hard (mosaic must collapse) | Easy-Medium | Easy |
 | **Reduced-motion story** | Trivial | Trivial | Trivial | Must design upfront | Trivial | Trivial |
 | **Risk of looking "AI slop"** | Low | Medium-High | Very Low | Medium | Very Low | Very Low |
-| **Time to first visitor "gets it"** | ~3s | ~2s | ~6s | ~4s (after one scroll) | ~3s | ~3s |
-| **Best when the goal is...** | Trust | Conversion | Distinction | Demonstration | Native-app proof | Honesty / proof-by-existence |
+| **Time to first visitor "gets it"** | ~3s | ~2s | ~6s | ~4s (after one scroll) | ~3s | ~4s |
+| **Best when the goal is...** | Trust | Conversion | Distinction | Demonstration | Native-web identity | Structured trust |
 
 ## Open Questions
 
@@ -471,15 +387,19 @@ story for free; no separate mobile design needed.
 - **GNOME identity vs. broader reach:** Do we want the page to clearly
   signal "GNOME-native" (favors A), or do we want to attract Linux
   developers who don't yet care about GNOME (favors B / D)?
+- **Component expression:** Do we want Adwaita to appear as a bold
+  compositional language on the page itself (E), or as a quieter
+  structural system for grouped storytelling (F)?
 - **Maintenance budget:** Are we OK with a page that needs an
   illustrator's hand to refresh (C), or does it need to update from
-  screenshots alone (A / B / D)?
+  screenshots and reusable web components alone (A / B / E / F)?
 
 ## Recommendation Slot
 
-*To be filled in after team review. The four proposals span the full
-risk spectrum on purpose — pick the one that matches the appetite for
-distinctiveness vs. familiarity.*
+*Revised after feedback on pastiche risk: the new E/F keep the
+libadwaita DNA, but remove the fake-window premise. If the goal is "the
+page feels GNOME-native without becoming cosplay", E and F are the
+serious options.*
 
 ## Next Step
 

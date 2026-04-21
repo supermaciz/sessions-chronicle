@@ -1,293 +1,107 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="960" height="640" font-family="Cantarell, 'Adwaita Sans', sans-serif">
   <defs>
     <style>
-      .win-bg { fill: #fafafa; }
-      .headerbar { fill: #ebebeb; }
-      .headerbar-border { stroke: #d4d4d4; stroke-width: 1; fill: none; }
-      .sidebar { fill: #f3f3f3; }
-      .sidebar-border { stroke: #e0e0e0; stroke-width: 1; }
-      .list-bg { fill: #ffffff; }
-      .detail-bg { fill: #ffffff; }
-      .divider { stroke: #e6e6e6; stroke-width: 1; }
-      .hairline { stroke: #ececec; stroke-width: 1; }
-
-      .text { fill: #1d1d1d; font-size: 13px; }
-      .text-strong { fill: #1d1d1d; font-size: 13px; font-weight: 700; }
-      .text-dim { fill: #6f6f6f; font-size: 11px; }
-      .text-tiny { fill: #8a8a8a; font-size: 10px; }
-      .mono { font-family: 'JetBrains Mono', 'Source Code Pro', monospace; font-size: 11px; fill: #1d1d1d; }
-      .mono-dim { font-family: 'JetBrains Mono', 'Source Code Pro', monospace; font-size: 11px; fill: #6f6f6f; }
-
-      .accent-btn { fill: #3584e4; }
-      .accent-text { fill: #ffffff; font-size: 12px; font-weight: 600; }
-      .ghost-btn { fill: #ffffff; stroke: #cfcfcf; stroke-width: 1; }
-      .flat-btn { fill: none; }
-
-      .row-selected { fill: #d6e6fb; }
-      .row-hover { fill: #f4f4f4; }
-
-      .pill-group { fill: #e8e8e8; }
-      .pill-text { fill: #444; font-size: 10px; font-weight: 600; }
-
-      .accent-dot { fill: #3584e4; }
-      .ok-dot { fill: #2ec27e; }
-      .warn-dot { fill: #e5a50a; }
-
-      .toast { fill: #303030; }
-      .toast-text { fill: #ffffff; font-size: 12px; }
-      .toast-action { fill: #62a0ea; font-size: 12px; font-weight: 600; }
-
-      .code-bg { fill: #f5f3ef; stroke: #e2ddd2; stroke-width: 1; }
-      .badge { fill: #f0f0f0; stroke: #dcdcdc; stroke-width: 1; }
-      .badge-text { fill: #555; font-size: 9px; font-weight: 700; letter-spacing: 0.4px; }
-
-      .focus-ring { fill: none; stroke: #3584e4; stroke-width: 2; }
+      .bg { fill: #f7f4ef; }
+      .header { fill: #f7f4ef; stroke: #e4ded5; stroke-width: 1; }
+      .group { fill: #fffdf9; stroke: #e2dbd3; stroke-width: 1; }
+      .row { fill: #ffffff; stroke: #ebe5dd; stroke-width: 1; }
+      .text { fill: #1f1f1f; font-size: 14px; }
+      .text-dim { fill: #6d6761; font-size: 12px; }
+      .text-faint { fill: #898179; font-size: 11px; letter-spacing: 0.7px; }
+      .h1 { fill: #1f1f1f; font-size: 30px; font-weight: 800; letter-spacing: -0.6px; }
+      .h2 { fill: #1f1f1f; font-size: 18px; font-weight: 700; }
+      .button { fill: #3584e4; }
+      .button-text { fill: #ffffff; font-size: 13px; font-weight: 700; }
+      .ghost { fill: #ffffff; stroke: #d8d1c8; stroke-width: 1; }
+      .switcher { fill: #ece7e0; }
+      .switcher-active { fill: #ffffff; stroke: #d7d0c7; stroke-width: 1; }
+      .switcher-text { fill: #5a534d; font-size: 11px; font-weight: 700; }
+      .switcher-text-active { fill: #1f1f1f; font-size: 11px; font-weight: 700; }
+      .shot { fill: #fbfbfb; stroke: #d7d1c8; stroke-width: 1; }
+      .shot-head { fill: #ececec; stroke: #d6d6d6; stroke-width: 1; }
+      .shot-side { fill: #f3f2f1; }
+      .line-dark { fill: #2f2f2f; }
+      .line-mid { fill: #7a7a7a; }
+      .line-light { fill: #c7c7c7; }
+      .suffix { fill: #ece7e0; }
+      .suffix-text { fill: #5a534d; font-size: 10px; font-weight: 700; }
+      .footer-strip { fill: #2f2f2f; }
+      .footer-text { fill: #ffffff; font-size: 12px; }
+      .footer-link { fill: #8fc9ff; font-size: 12px; font-weight: 700; }
     </style>
-    <linearGradient id="iconGrad" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0" stop-color="#3584e4"/>
-      <stop offset="1" stop-color="#1c5fb0"/>
-    </linearGradient>
-    <clipPath id="winClip"><rect x="0" y="0" width="960" height="640" rx="12"/></clipPath>
   </defs>
 
-  <!-- Window -->
-  <g clip-path="url(#winClip)">
-    <rect width="960" height="640" class="win-bg"/>
+  <rect width="960" height="640" class="bg"/>
 
-    <!-- ============ HeaderBar (AdwHeaderBar) ============ -->
-    <rect x="0" y="0" width="960" height="46" class="headerbar"/>
-    <line x1="0" y1="46" x2="960" y2="46" class="headerbar-border"/>
+  <rect x="0" y="0" width="960" height="56" class="header"/>
+  <rect x="28" y="16" width="24" height="24" rx="7" fill="#3584e4"/>
+  <text x="62" y="33" class="text" font-weight="700">Sessions Chronicle</text>
+  <text x="708" y="33" class="text-dim">GitHub</text>
+  <text x="770" y="33" class="text-dim">Releases</text>
+  <rect x="840" y="14" width="92" height="28" rx="8" class="ghost"/>
+  <text x="886" y="33" class="text" text-anchor="middle" font-size="12" font-weight="700">Install</text>
 
-    <!-- window controls (left, GNOME convention: close right; here: minimal) -->
-    <circle cx="18" cy="23" r="6" fill="#ed5b5b"/>
+  <text x="48" y="98" class="text-faint">PREFERENCES NARRATIVE</text>
+  <text x="48" y="140" class="h1">A landing page built from</text>
+  <text x="48" y="176" class="h1">GNOME section grammar.</text>
+  <text x="48" y="206" class="text-dim">Not a faux app. Not a SaaS card grid.</text>
+  <text x="48" y="226" class="text-dim">A sequence of groups, rows, proofs, and screenshots.</text>
 
-    <!-- App icon + title (centered title group) -->
-    <rect x="40" y="11" width="24" height="24" rx="6" fill="url(#iconGrad)"/>
-    <text x="72" y="24" class="text-strong">Sessions Chronicle</text>
-    <text x="72" y="38" class="text-dim">v1.0 · indexed 1 session · just now</text>
+  <rect x="48" y="246" width="112" height="40" rx="10" class="button"/>
+  <text x="104" y="272" class="button-text" text-anchor="middle">Install</text>
+  <rect x="172" y="246" width="128" height="40" rx="10" class="ghost"/>
+  <text x="236" y="272" class="text" text-anchor="middle" font-size="13" font-weight="700">View source</text>
 
-    <!-- Search entry (center) -->
-    <rect x="320" y="9" width="280" height="28" rx="6" fill="#ffffff" stroke="#cfcfcf"/>
-    <text x="334" y="27" class="text-dim" font-size="12">⌕  Search this page…</text>
-    <text x="582" y="27" class="text-tiny" text-anchor="end">Ctrl+F</text>
+  <rect x="48" y="302" width="360" height="34" rx="17" class="switcher"/>
+  <rect x="52" y="306" width="98" height="26" rx="13" class="switcher-active"/>
+  <text x="101" y="323" class="switcher-text-active" text-anchor="middle">Claude Code</text>
+  <text x="194" y="323" class="switcher-text" text-anchor="middle">OpenCode</text>
+  <text x="270" y="323" class="switcher-text" text-anchor="middle">Codex</text>
+  <text x="350" y="323" class="switcher-text" text-anchor="middle">Mistral Vibe</text>
 
-    <!-- Header CTAs (right) -->
-    <rect x="700" y="9" width="92" height="28" rx="6" class="accent-btn"/>
-    <text x="746" y="27" class="accent-text" text-anchor="middle">⤓  Install</text>
-    <rect x="800" y="9" width="92" height="28" rx="6" class="ghost-btn"/>
-    <text x="846" y="27" class="text" text-anchor="middle" font-size="12" font-weight="600">GitHub ★ 1.2k</text>
-    <rect x="900" y="9" width="36" height="28" rx="6" class="flat-btn"/>
-    <text x="918" y="28" text-anchor="middle" class="text" font-size="14">☰</text>
+  <!-- Group 1 -->
+  <rect x="48" y="356" width="864" height="96" rx="18" class="group"/>
+  <text x="72" y="382" class="text-faint">BROWSE</text>
+  <text x="72" y="406" class="h2">One archive for every session</text>
+  <text x="72" y="428" class="text-dim">Lead with the library view, then explain it with one sentence and one proof line.</text>
 
-    <!-- ============ Sidebar (assistants as filters) ============ -->
-    <rect x="0" y="46" width="220" height="594" class="sidebar"/>
-    <line x1="220" y1="46" x2="220" y2="640" class="sidebar-border"/>
+  <rect x="522" y="372" width="368" height="62" rx="12" class="shot"/>
+  <rect x="522" y="372" width="368" height="18" rx="12" class="shot-head"/>
+  <rect x="522" y="390" width="104" height="44" class="shot-side"/>
+  <rect x="638" y="402" width="194" height="8" rx="3" class="line-dark"/>
+  <rect x="638" y="416" width="166" height="6" rx="3" class="line-mid"/>
+  <rect x="638" y="426" width="208" height="6" rx="3" class="line-light"/>
 
-    <text x="20" y="74" class="text-tiny" font-weight="700" letter-spacing="0.6">ASSISTANTS</text>
+  <!-- Group 2 -->
+  <rect x="48" y="470" width="864" height="58" rx="18" class="group"/>
+  <text x="72" y="494" class="text-faint">INSPECT</text>
+  <rect x="72" y="498" width="388" height="22" rx="10" class="row"/>
+  <text x="88" y="513" class="text" font-size="13" font-weight="700">Inspect tool calls and reasoning blocks inline</text>
+  <rect x="380" y="501" width="66" height="16" rx="8" class="suffix"/>
+  <text x="413" y="512" class="suffix-text" text-anchor="middle">DETAILS</text>
 
-    <!-- assistant rows (act as filter facets) -->
-    <g>
-      <rect x="8" y="86" width="204" height="34" rx="8" class="row-selected"/>
-      <circle cx="24" cy="103" r="6" fill="#c87837"/>
-      <text x="40" y="101" class="text-strong" font-size="12">Claude Code</text>
-      <text x="40" y="114" class="text-dim">12,438 sessions</text>
-      <text x="200" y="107" class="text-dim" text-anchor="end">⏎</text>
-    </g>
-    <g>
-      <rect x="8" y="124" width="204" height="34" rx="8" fill="none"/>
-      <circle cx="24" cy="141" r="6" fill="#5e9ed1"/>
-      <text x="40" y="139" class="text" font-size="12">OpenCode</text>
-      <text x="40" y="152" class="text-dim">3,902 sessions</text>
-    </g>
-    <g>
-      <rect x="8" y="162" width="204" height="34" rx="8" fill="none"/>
-      <circle cx="24" cy="179" r="6" fill="#222"/>
-      <text x="40" y="177" class="text" font-size="12">Codex</text>
-      <text x="40" y="190" class="text-dim">2,114 sessions</text>
-    </g>
-    <g>
-      <rect x="8" y="200" width="204" height="34" rx="8" fill="none"/>
-      <circle cx="24" cy="217" r="6" fill="#ff6f3c"/>
-      <text x="40" y="215" class="text" font-size="12">Mistral Vibe</text>
-      <text x="40" y="228" class="text-dim">587 sessions</text>
-    </g>
+  <rect x="486" y="498" width="404" height="22" rx="10" class="row"/>
+  <text x="502" y="513" class="text" font-size="13" font-weight="700">Follow subagent threads without losing context</text>
+  <rect x="824" y="501" width="52" height="16" rx="8" class="suffix"/>
+  <text x="850" y="512" class="suffix-text" text-anchor="middle">LINKS</text>
 
-    <line x1="16" y1="252" x2="204" y2="252" class="hairline"/>
+  <!-- Group 3 -->
+  <rect x="48" y="546" width="864" height="58" rx="18" class="group"/>
+  <text x="72" y="570" class="text-faint">RESUME</text>
+  <rect x="72" y="574" width="388" height="22" rx="10" class="row"/>
+  <text x="88" y="589" class="text" font-size="13" font-weight="700">Resume any session in your terminal</text>
+  <rect x="384" y="577" width="62" height="16" rx="8" class="suffix"/>
+  <text x="415" y="588" class="suffix-text" text-anchor="middle">SHELL</text>
 
-    <text x="20" y="274" class="text-tiny" font-weight="700" letter-spacing="0.6">PROJECTS</text>
-    <text x="20" y="294" class="text" font-size="12">★  sessions-chronicle</text>
-    <text x="20" y="312" class="text" font-size="12" fill="#6f6f6f">   relm4-experiments</text>
-    <text x="20" y="330" class="text" font-size="12" fill="#6f6f6f">   gnome-builder-plugin</text>
-    <text x="20" y="348" class="text" font-size="12" fill="#6f6f6f">   …  (47 more)</text>
+  <rect x="486" y="574" width="404" height="22" rx="10" class="row"/>
+  <text x="502" y="589" class="text" font-size="13" font-weight="700">Review pinned sessions, analytics, and cost locally</text>
+  <rect x="810" y="577" width="66" height="16" rx="8" class="suffix"/>
+  <text x="843" y="588" class="suffix-text" text-anchor="middle">LOCAL</text>
 
-    <line x1="16" y1="372" x2="204" y2="372" class="hairline"/>
-
-    <text x="20" y="394" class="text-tiny" font-weight="700" letter-spacing="0.6">VIEWS</text>
-    <text x="20" y="414" class="text" font-size="12">▦  Sessions</text>
-    <text x="20" y="432" class="text" font-size="12" fill="#6f6f6f">▤  Analytics</text>
-
-    <!-- bottom: install hint, lives in the sidebar where settings normally live -->
-    <line x1="16" y1="556" x2="204" y2="556" class="hairline"/>
-    <text x="20" y="576" class="text-tiny" font-weight="700" letter-spacing="0.6">GET IT</text>
-    <rect x="16" y="586" width="188" height="40" rx="6" class="code-bg"/>
-    <text x="24" y="601" class="mono-dim">$ flatpak install flathub</text>
-    <text x="24" y="615" class="mono">  io.github.…SessionsChronicle</text>
-
-    <!-- ============ List column (the marketing content as session rows) ============ -->
-    <rect x="220" y="46" width="320" height="594" class="list-bg"/>
-    <line x1="540" y1="46" x2="540" y2="640" class="divider"/>
-
-    <!-- list filter bar -->
-    <rect x="220" y="46" width="320" height="36" fill="#fbfbfb"/>
-    <line x1="220" y1="82" x2="540" y2="82" class="hairline"/>
-    <text x="236" y="68" class="text-dim">5 results · sorted by relevance</text>
-    <rect x="478" y="54" width="48" height="20" rx="4" class="badge"/>
-    <text x="502" y="68" class="badge-text" text-anchor="middle">FILTERS</text>
-
-    <!-- selected row: the manifesto / hero -->
-    <g>
-      <rect x="220" y="82" width="320" height="92" class="row-selected"/>
-      <rect x="220" y="82" width="3" height="92" fill="#3584e4"/>
-      <circle cx="240" cy="100" r="4" class="accent-dot"/>
-      <text x="252" y="104" class="text-strong">A chronicle of every session.</text>
-      <text x="236" y="124" class="text-dim">claude-code · sessions-chronicle · 2 messages</text>
-      <text x="236" y="144" class="text" font-size="12">Browse, search, and resume the AI</text>
-      <text x="236" y="158" class="text" font-size="12">assistant sessions already on your disk.</text>
-      <rect x="236" y="164" width="36" height="14" rx="3" class="pill-group"/>
-      <text x="254" y="174" class="pill-text" text-anchor="middle">HERO</text>
-    </g>
-
-    <!-- row 2: search -->
-    <g>
-      <rect x="220" y="174" width="320" height="76" class="list-bg"/>
-      <line x1="236" y1="174" x2="524" y2="174" class="hairline"/>
-      <circle cx="240" cy="192" r="4" class="ok-dot"/>
-      <text x="252" y="196" class="text-strong" font-size="12">Full-text search across 19,041 messages</text>
-      <text x="236" y="214" class="text-dim">opencode · global · 47 tool calls</text>
-      <text x="236" y="234" class="text" font-size="12">SQLite FTS5. Filter by assistant, project,</text>
-      <text x="236" y="248" class="text" font-size="12">tool call, time. No cloud round-trip.</text>
-    </g>
-
-    <!-- row 3: tool call inspection -->
-    <g>
-      <rect x="220" y="250" width="320" height="76" class="list-bg"/>
-      <line x1="236" y1="250" x2="524" y2="250" class="hairline"/>
-      <circle cx="240" cy="268" r="4" class="warn-dot"/>
-      <text x="252" y="272" class="text-strong" font-size="12">Inspect every tool call and subagent</text>
-      <text x="236" y="290" class="text-dim">codex · relm4-experiments · 12 tool calls</text>
-      <text x="236" y="310" class="text" font-size="12">Expandable rows show inputs, outputs,</text>
-      <text x="236" y="324" class="text" font-size="12">and child sessions inline.</text>
-    </g>
-
-    <!-- row 4: resume -->
-    <g>
-      <rect x="220" y="326" width="320" height="76" class="list-bg"/>
-      <line x1="236" y1="326" x2="524" y2="326" class="hairline"/>
-      <circle cx="240" cy="344" r="4" fill="#ff6a3d"/>
-      <text x="252" y="348" class="text-strong" font-size="12">Resume any session in your terminal</text>
-      <text x="236" y="366" class="text-dim">mistral-vibe · gnome-builder-plugin</text>
-      <text x="236" y="386" class="text" font-size="12">One click hands the session back to</text>
-      <text x="236" y="400" class="text" font-size="12">the assistant that started it.</text>
-    </g>
-
-    <!-- row 5: analytics -->
-    <g>
-      <rect x="220" y="402" width="320" height="76" class="list-bg"/>
-      <line x1="236" y1="402" x2="524" y2="402" class="hairline"/>
-      <circle cx="240" cy="420" r="4" fill="#9141ac"/>
-      <text x="252" y="424" class="text-strong" font-size="12">Analytics that respect your data</text>
-      <text x="236" y="442" class="text-dim">all · last 30 days · 412k tokens</text>
-      <text x="236" y="462" class="text" font-size="12">Heatmaps, token cost, model mix.</text>
-      <text x="236" y="476" class="text" font-size="12">Every byte stays on your machine.</text>
-    </g>
-
-    <!-- row 6: license / footer-as-row -->
-    <g>
-      <rect x="220" y="478" width="320" height="60" class="list-bg"/>
-      <line x1="236" y1="478" x2="524" y2="478" class="hairline"/>
-      <circle cx="240" cy="496" r="4" fill="#a0a0a0"/>
-      <text x="252" y="500" class="text" font-size="12">MIT · Free software · GNOME Circle nominee</text>
-      <text x="236" y="518" class="text-dim">Built with Rust, GTK 4, libadwaita, Relm4.</text>
-    </g>
-
-    <line x1="220" y1="538" x2="540" y2="538" class="hairline"/>
-
-    <!-- ============ Detail pane (hero row "opened") ============ -->
-    <rect x="540" y="46" width="420" height="594" class="detail-bg"/>
-
-    <!-- Detail toolbar -->
-    <rect x="540" y="46" width="420" height="44" fill="#fbfbfb"/>
-    <line x1="540" y1="90" x2="960" y2="90" class="hairline"/>
-    <text x="556" y="64" class="text-strong" font-size="13">A chronicle of every session.</text>
-    <text x="556" y="80" class="text-dim">claude-code · started just now · this transcript IS the page</text>
-
-    <rect x="836" y="56" width="48" height="24" rx="6" class="ghost-btn"/>
-    <text x="860" y="71" text-anchor="middle" class="text" font-size="11">Resume</text>
-    <rect x="892" y="56" width="56" height="24" rx="6" class="ghost-btn"/>
-    <text x="920" y="71" text-anchor="middle" class="text" font-size="11">★ Pin</text>
-
-    <!-- Transcript: USER message -->
-    <g>
-      <rect x="556" y="106" width="32" height="20" rx="4" fill="#3584e4"/>
-      <text x="572" y="120" text-anchor="middle" class="accent-text" font-size="10">YOU</text>
-      <text x="596" y="120" class="text" font-size="12">What is Sessions Chronicle?</text>
-    </g>
-
-    <!-- Transcript: ASSISTANT message -->
-    <g>
-      <rect x="556" y="138" width="56" height="20" rx="4" fill="#ebebeb" stroke="#d4d4d4"/>
-      <text x="584" y="152" text-anchor="middle" class="text" font-size="10" font-weight="700">ASSISTANT</text>
-      <text x="556" y="178" class="text" font-size="12">A native GNOME app that indexes your local</text>
-      <text x="556" y="194" class="text" font-size="12">AI assistant sessions and gives them a</text>
-      <text x="556" y="210" class="text" font-size="12">single, searchable home.</text>
-
-      <text x="556" y="234" class="text" font-size="12">Four assistants today — Claude Code,</text>
-      <text x="556" y="250" class="text" font-size="12">OpenCode, Codex, Mistral Vibe — read</text>
-      <text x="556" y="266" class="text" font-size="12">straight from disk. Nothing is uploaded.</text>
-    </g>
-
-    <!-- Tool call block (the install command, framed as a literal tool_use) -->
-    <g>
-      <rect x="556" y="288" width="388" height="118" rx="8" fill="#fbfbf7" stroke="#e2ddd2"/>
-      <rect x="556" y="288" width="388" height="24" rx="8" fill="#f0ece2"/>
-      <circle cx="572" cy="300" r="4" fill="#62a0ea"/>
-      <text x="584" y="304" class="text" font-size="11" font-weight="700">tool_use · bash</text>
-      <text x="932" y="304" class="text-tiny" text-anchor="end">▾ collapse</text>
-
-      <text x="568" y="330" class="mono">$ flatpak install flathub \</text>
-      <text x="568" y="346" class="mono">    io.github.supermaciz.SessionsChronicle</text>
-      <text x="568" y="372" class="mono-dim"># or build from source:</text>
-      <text x="568" y="388" class="mono">$ git clone github.com/supermaciz/sessions-chronicle</text>
-    </g>
-
-    <!-- Subagent / linked card -->
-    <g>
-      <rect x="556" y="418" width="388" height="60" rx="8" fill="#f7f9fc" stroke="#dbe5f3"/>
-      <text x="572" y="438" class="text-strong" font-size="11">↳  Linked: Read the README</text>
-      <text x="572" y="454" class="text-dim">subagent · github.com/supermaciz/sessions-chronicle</text>
-      <text x="572" y="470" class="text-dim">Source, issues, releases, license.</text>
-    </g>
-
-    <!-- Metadata footer (utility pane vibe) -->
-    <line x1="556" y1="498" x2="944" y2="498" class="hairline"/>
-    <text x="556" y="516" class="text-tiny" font-weight="700" letter-spacing="0.6">METADATA</text>
-    <text x="556" y="534" class="text-dim">Stack</text>
-    <text x="660" y="534" class="text" font-size="11">Rust · GTK 4 · libadwaita · Relm4</text>
-    <text x="556" y="552" class="text-dim">Storage</text>
-    <text x="660" y="552" class="text" font-size="11">SQLite (FTS5) · ~/.local/share</text>
-    <text x="556" y="570" class="text-dim">License</text>
-    <text x="660" y="570" class="text" font-size="11">MIT</text>
-    <text x="556" y="588" class="text-dim">Platform</text>
-    <text x="660" y="588" class="text" font-size="11">GNOME 46+ · Flatpak · Linux</text>
-
-    <!-- AdwToastOverlay: the "marketing banner" lives here, where the app would put one -->
-    <g>
-      <rect x="606" y="600" width="288" height="30" rx="15" class="toast"/>
-      <text x="624" y="619" class="toast-text">Indexed this page in 0.04 s.</text>
-      <text x="876" y="619" class="toast-action" text-anchor="end">Open ↗</text>
-    </g>
-  </g>
-
-  <!-- Window border -->
-  <rect x="0.5" y="0.5" width="959" height="639" rx="12" fill="none" stroke="#c9c9c9"/>
+  <!-- Footer strip as status area -->
+  <rect x="48" y="612" width="864" height="20" rx="10" class="footer-strip"/>
+  <text x="68" y="626" class="footer-text">Local-first</text>
+  <text x="166" y="626" class="footer-text">No telemetry</text>
+  <text x="288" y="626" class="footer-text">Open source</text>
+  <text x="890" y="626" class="footer-link" text-anchor="end">Install Flatpak</text>
 </svg>

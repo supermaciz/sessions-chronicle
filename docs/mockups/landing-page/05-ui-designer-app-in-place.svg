@@ -1,200 +1,138 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="960" height="640" font-family="Cantarell, 'Adwaita Sans', sans-serif">
   <defs>
     <style>
-      .desktop-bg { fill: #d6d3ce; }
-      .window { fill: #fafafa; stroke: #c4c0bb; stroke-width: 1; }
-      .headerbar { fill: #ebebeb; stroke: #d4d4d4; stroke-width: 1; }
-      .sidebar { fill: #f3f2f1; }
-      .sidebar-divider { stroke: #dcdad6; stroke-width: 1; }
-      .content { fill: #fafafa; }
-      .text { fill: #1d1d1d; font-size: 13px; }
-      .text-strong { fill: #1d1d1d; font-size: 13px; font-weight: 700; }
-      .text-dim { fill: #6b6b6b; font-size: 12px; }
-      .text-faint { fill: #8a8a8a; font-size: 10px; letter-spacing: 0.5px; }
-      .h1 { fill: #1d1d1d; font-size: 30px; font-weight: 800; letter-spacing: -0.6px; }
-      .h2 { fill: #1d1d1d; font-size: 14px; font-weight: 700; }
-      .accent { fill: #3584e4; }
-      .accent-btn { fill: #3584e4; }
-      .accent-text { fill: #ffffff; font-size: 13px; font-weight: 600; }
-      .ghost-btn { fill: #ffffff; stroke: #d0cdc7; stroke-width: 1; }
-      .row-selected { fill: #3584e4; }
-      .row-selected-text { fill: #ffffff; font-size: 13px; font-weight: 600; }
-      .row-selected-sub { fill: #cfe1f8; font-size: 11px; }
-      .row-text { fill: #1d1d1d; font-size: 13px; }
-      .row-sub { fill: #7a7a7a; font-size: 11px; }
-      .banner { fill: #eaf3fd; stroke: #c8def8; stroke-width: 1; }
-      .banner-text { fill: #1a4f8a; font-size: 12px; font-weight: 600; }
-      .card { fill: #ffffff; stroke: #e6e3de; stroke-width: 1; }
-      .pill { fill: #ececec; }
-      .pill-text { fill: #4a4a4a; font-size: 10px; font-weight: 600; letter-spacing: 0.3px; }
-      .pill-accent { fill: #e3efff; }
-      .pill-accent-text { fill: #1a4f8a; font-size: 10px; font-weight: 700; letter-spacing: 0.3px; }
-      .mono { font-family: 'JetBrains Mono', 'Source Code Pro', monospace; }
-      .bubble-user { fill: #e8f1fc; }
-      .bubble-assistant { fill: #f3f2f1; }
+      .bg { fill: #f6f2ec; }
+      .surface { fill: #fffdf9; stroke: #e3ddd5; stroke-width: 1; }
+      .header { fill: #f6f2ec; stroke: #e6dfd8; stroke-width: 1; }
+      .text { fill: #1f1f1f; font-size: 14px; }
+      .text-dim { fill: #6d6862; font-size: 13px; }
+      .text-faint { fill: #89827a; font-size: 11px; letter-spacing: 0.7px; }
+      .h1 { fill: #1f1f1f; font-size: 34px; font-weight: 800; letter-spacing: -0.7px; }
+      .h2 { fill: #1f1f1f; font-size: 18px; font-weight: 700; }
+      .button { fill: #3584e4; }
+      .button-text { fill: #ffffff; font-size: 13px; font-weight: 700; }
+      .ghost { fill: #ffffff; stroke: #d8d1c8; stroke-width: 1; }
+      .banner { fill: #eaf3fd; stroke: #cadef7; stroke-width: 1; }
+      .banner-text { fill: #1b4f89; font-size: 12px; font-weight: 700; }
+      .entry { fill: #ffffff; stroke: #d5cfc7; stroke-width: 1; }
+      .chip { fill: #ece8e2; }
+      .chip-active { fill: #dce9fb; }
+      .chip-text { fill: #57514b; font-size: 10px; font-weight: 700; letter-spacing: 0.3px; }
+      .chip-text-active { fill: #1b4f89; font-size: 10px; font-weight: 700; letter-spacing: 0.3px; }
+      .group { fill: #fffdf9; stroke: #e1dbd4; stroke-width: 1; }
+      .row { fill: #ffffff; stroke: #ece7e0; stroke-width: 1; }
+      .row-title { fill: #1f1f1f; font-size: 13px; font-weight: 700; }
+      .row-sub { fill: #6d6862; font-size: 11px; }
+      .suffix { fill: #e9e4dd; }
+      .suffix-text { fill: #5b554f; font-size: 10px; font-weight: 700; }
+      .bubble-a { fill: #f2f1ee; stroke: #e5dfd7; stroke-width: 1; }
+      .bubble-u { fill: #e8f1fc; stroke: #cadef7; stroke-width: 1; }
+      .tool { fill: #f8f5f0; stroke: #e4ddd2; stroke-width: 1; }
+      .tool-rail { fill: #3584e4; }
+      .toast { fill: #303030; }
+      .toast-text { fill: #ffffff; font-size: 12px; }
+      .toast-link { fill: #8cc5ff; font-size: 12px; font-weight: 700; }
+      .orb-a { fill: #efe8dc; }
+      .orb-b { fill: #e3eefb; }
+      .mono { font-family: 'JetBrains Mono', monospace; font-size: 11px; fill: #1f1f1f; }
     </style>
   </defs>
 
-  <!-- Desktop wallpaper -->
-  <rect width="960" height="640" class="desktop-bg"/>
+  <rect width="960" height="640" class="bg"/>
+  <circle cx="860" cy="120" r="160" class="orb-a"/>
+  <circle cx="750" cy="510" r="120" class="orb-b"/>
 
-  <!-- App window with rounded corners + soft drop shadow -->
-  <rect x="20" y="20" width="920" height="600" rx="12" fill="#000" opacity="0.12"/>
-  <rect x="20" y="18" width="920" height="600" rx="12" class="window"/>
+  <rect x="0" y="0" width="960" height="56" class="header"/>
+  <rect x="28" y="16" width="24" height="24" rx="7" fill="#3584e4"/>
+  <text x="62" y="33" class="text" font-weight="700">Sessions Chronicle</text>
+  <text x="670" y="33" class="text-dim">Features</text>
+  <text x="738" y="33" class="text-dim">Install</text>
+  <text x="794" y="33" class="text-dim">GitHub</text>
+  <rect x="850" y="14" width="82" height="28" rx="8" class="ghost"/>
+  <text x="891" y="33" class="text" text-anchor="middle" font-size="12" font-weight="700">Releases</text>
 
-  <!-- ========= HEADERBAR ========= -->
-  <path d="M20,30 a12,12 0 0 1 12,-12 h896 a12,12 0 0 1 12,12 v18 h-920 z" class="headerbar"/>
-  <line x1="20" y1="48" x2="940" y2="48" stroke="#d4d4d4" stroke-width="1"/>
+  <text x="48" y="112" class="text-faint">ADWAITA UNFRAMED</text>
+  <text x="48" y="162" class="h1">The page speaks</text>
+  <text x="48" y="200" class="h1">the app's language.</text>
+  <text x="48" y="238" class="text-dim">No fake desktop. No pretend GTK window.</text>
+  <text x="48" y="258" class="text-dim">Just libadwaita grammar translated into a marketing surface.</text>
 
-  <!-- WindowControls (left, GNOME convention: close right; we put them right) -->
-  <!-- Title (centered region in libadwaita is the AdwViewSwitcher / title) -->
-  <text x="44" y="40" class="text-strong">Sessions Chronicle</text>
+  <rect x="48" y="292" width="118" height="40" rx="10" class="button"/>
+  <text x="107" y="318" class="button-text" text-anchor="middle">Install</text>
+  <rect x="178" y="292" width="130" height="40" rx="10" class="ghost"/>
+  <text x="243" y="318" class="text" text-anchor="middle" font-size="13" font-weight="700">View on GitHub</text>
 
-  <!-- Sidebar toggle button (icon stand-in) -->
-  <rect x="170" y="24" width="28" height="22" rx="6" fill="none" stroke="#cfcbc5"/>
-  <line x1="177" y1="31" x2="191" y2="31" stroke="#5a5a5a" stroke-width="1.5"/>
-  <line x1="177" y1="35" x2="191" y2="35" stroke="#5a5a5a" stroke-width="1.5"/>
-  <line x1="177" y1="39" x2="191" y2="39" stroke="#5a5a5a" stroke-width="1.5"/>
+  <text x="48" y="370" class="text-faint">WHY THIS WORKS</text>
+  <text x="48" y="398" class="text">Adwaita components become the composition.</text>
+  <text x="48" y="418" class="text-dim">Banner, chips, rows, transcript bubbles, toast.</text>
+  <text x="48" y="438" class="text-dim">Recognizably GNOME-native, but clearly still a web page.</text>
 
-  <!-- Search entry (centered) -->
-  <rect x="350" y="24" width="260" height="22" rx="11" fill="#ffffff" stroke="#d4d0ca"/>
-  <circle cx="364" cy="35" r="4" fill="none" stroke="#8a8a8a" stroke-width="1.2"/>
-  <line x1="367" y1="38" x2="370" y2="41" stroke="#8a8a8a" stroke-width="1.2"/>
-  <text x="378" y="39" class="text-dim">Search transcripts</text>
+  <rect x="48" y="484" width="272" height="108" rx="16" class="surface"/>
+  <text x="68" y="514" class="h2">Not a screenshot replacement</text>
+  <text x="68" y="538" class="text-dim">This hero proves the interaction model, then</text>
+  <text x="68" y="556" class="text-dim">real screenshots can carry the chapters below.</text>
+  <rect x="68" y="568" width="98" height="18" rx="9" class="chip"/>
+  <text x="117" y="581" class="chip-text" text-anchor="middle">LOCAL-FIRST</text>
 
-  <!-- Menu button -->
-  <rect x="800" y="24" width="28" height="22" rx="6" fill="none" stroke="#cfcbc5"/>
-  <circle cx="809" cy="35" r="1.4" fill="#5a5a5a"/>
-  <circle cx="814" cy="35" r="1.4" fill="#5a5a5a"/>
-  <circle cx="819" cy="35" r="1.4" fill="#5a5a5a"/>
+  <!-- Component composition -->
+  <g transform="translate(390,86)">
+    <rect x="0" y="0" width="516" height="440" rx="24" class="surface"/>
 
-  <!-- WindowControls: minimize / maximize / close -->
-  <circle cx="852" cy="35" r="7" fill="#dcd9d4" stroke="#c4c0bb" stroke-width="0.5"/>
-  <circle cx="872" cy="35" r="7" fill="#dcd9d4" stroke="#c4c0bb" stroke-width="0.5"/>
-  <circle cx="892" cy="35" r="7" fill="#e8624c" stroke="#c84e3a" stroke-width="0.5"/>
-  <line x1="848" y1="35" x2="856" y2="35" stroke="#5a5a5a" stroke-width="1.2"/>
-  <rect x="868.5" y="31.5" width="7" height="7" fill="none" stroke="#5a5a5a" stroke-width="1.1"/>
-  <line x1="889" y1="32" x2="895" y2="38" stroke="#ffffff" stroke-width="1.4"/>
-  <line x1="895" y1="32" x2="889" y2="38" stroke="#ffffff" stroke-width="1.4"/>
+    <rect x="26" y="24" width="464" height="38" rx="10" class="banner"/>
+    <text x="44" y="47" class="banner-text">Version 1.0 is out — local-first, four AI assistants, zero telemetry.</text>
+    <rect x="404" y="32" width="74" height="22" rx="7" fill="#3584e4"/>
+    <text x="441" y="47" class="button-text" text-anchor="middle" font-size="11">Install</text>
 
-  <!-- ========= SIDEBAR (AdwOverlaySplitView left pane) ========= -->
-  <rect x="20" y="49" width="280" height="569" class="sidebar"/>
-  <line x1="300" y1="49" x2="300" y2="618" class="sidebar-divider"/>
+    <rect x="26" y="82" width="464" height="42" rx="12" class="entry"/>
+    <circle cx="48" cy="103" r="5" fill="none" stroke="#8a847d" stroke-width="1.2"/>
+    <line x1="52" y1="107" x2="56" y2="111" stroke="#8a847d" stroke-width="1.2"/>
+    <text x="66" y="108" class="text-dim">tool:Bash assistant:codex project:relm</text>
 
-  <!-- Sidebar header / filter -->
-  <text x="40" y="78" class="text-faint">PROJECTS</text>
-  <text x="40" y="100" class="text">All sessions</text>
-  <text x="270" y="100" class="text-dim" text-anchor="end">412</text>
-  <text x="40" y="122" class="text-dim">sessions-chronicle</text>
-  <text x="270" y="122" class="text-dim" text-anchor="end">128</text>
-  <text x="40" y="142" class="text-dim">relm4-experiments</text>
-  <text x="270" y="142" class="text-dim" text-anchor="end">64</text>
-  <text x="40" y="162" class="text-dim">infra-notes</text>
-  <text x="270" y="162" class="text-dim" text-anchor="end">22</text>
+    <rect x="26" y="142" width="92" height="22" rx="11" class="chip-active"/>
+    <text x="72" y="157" class="chip-text-active" text-anchor="middle">CLAUDE CODE</text>
+    <rect x="126" y="142" width="84" height="22" rx="11" class="chip"/>
+    <text x="168" y="157" class="chip-text" text-anchor="middle">OPENCODE</text>
+    <rect x="218" y="142" width="60" height="22" rx="11" class="chip"/>
+    <text x="248" y="157" class="chip-text" text-anchor="middle">CODEX</text>
+    <rect x="286" y="142" width="94" height="22" rx="11" class="chip"/>
+    <text x="333" y="157" class="chip-text" text-anchor="middle">MISTRAL VIBE</text>
 
-  <line x1="32" y1="178" x2="288" y2="178" stroke="#dcdad6"/>
-  <text x="40" y="200" class="text-faint">RECENT SESSIONS</text>
+    <rect x="26" y="184" width="464" height="144" rx="16" class="group"/>
+    <text x="44" y="210" class="text-faint">FEATURE GROUP</text>
 
-  <!-- Selected row (the "marketing" row) -->
-  <rect x="32" y="212" width="256" height="58" rx="9" class="row-selected"/>
-  <text x="46" y="232" class="row-selected-text">Browse, search, resume.</text>
-  <text x="46" y="250" class="row-selected-sub">Claude Code · just now · 1.2k msgs</text>
-  <circle cx="272" cy="241" r="4" fill="#ffffff" opacity="0.85"/>
+    <rect x="40" y="222" width="436" height="28" rx="10" class="row"/>
+    <text x="56" y="240" class="row-title">Search every transcript in one archive</text>
+    <rect x="398" y="228" width="64" height="16" rx="8" class="suffix"/>
+    <text x="430" y="239" class="suffix-text" text-anchor="middle">FTS5</text>
 
-  <!-- Other rows -->
-  <text x="46" y="290" class="row-text">Refactor parser pipeline</text>
-  <text x="46" y="306" class="row-sub">OpenCode · 2h ago · 84 msgs</text>
+    <rect x="40" y="256" width="436" height="28" rx="10" class="row"/>
+    <text x="56" y="274" class="row-title">Inspect tool calls and reasoning inline</text>
+    <rect x="366" y="262" width="96" height="16" rx="8" class="suffix"/>
+    <text x="414" y="273" class="suffix-text" text-anchor="middle">TOOL CALLS</text>
 
-  <text x="46" y="334" class="row-text">Indexing diagnostics</text>
-  <text x="46" y="350" class="row-sub">Codex · yesterday · 31 msgs</text>
+    <rect x="40" y="290" width="436" height="28" rx="10" class="row"/>
+    <text x="56" y="308" class="row-title">Resume any session in your terminal</text>
+    <rect x="382" y="296" width="80" height="16" rx="8" class="suffix"/>
+    <text x="422" y="307" class="suffix-text" text-anchor="middle">TERMINAL</text>
 
-  <text x="46" y="378" class="row-text">Adwaita banner placement</text>
-  <text x="46" y="394" class="row-sub">Mistral Vibe · 2d ago · 47 msgs</text>
+    <rect x="26" y="346" width="464" height="126" rx="16" class="group"/>
+    <text x="44" y="372" class="text-faint">TRANSCRIPT PREVIEW</text>
 
-  <text x="46" y="422" class="row-text">Tool call inspector</text>
-  <text x="46" y="438" class="row-sub">Claude Code · 3d ago · 219 msgs</text>
+    <rect x="44" y="386" width="286" height="44" rx="12" class="bubble-a"/>
+    <text x="58" y="403" class="text-faint">ASSISTANT</text>
+    <text x="58" y="420" class="text">Find the conversation. Read the reasoning.</text>
 
-  <text x="46" y="466" class="row-text">Search highlight pass</text>
-  <text x="46" y="482" class="row-sub">OpenCode · 4d ago · 56 msgs</text>
+    <rect x="208" y="438" width="268" height="24" rx="12" class="bubble-u"/>
+    <text x="222" y="454" class="text">tool:Bash · assistant:codex · project:relm</text>
 
-  <text x="46" y="510" class="row-text">Resume-in-terminal flow</text>
-  <text x="46" y="526" class="row-sub">Codex · last week · 12 msgs</text>
+    <rect x="44" y="438" width="150" height="24" rx="8" class="tool"/>
+    <rect x="44" y="438" width="4" height="24" rx="2" class="tool-rail"/>
+    <text x="58" y="454" class="mono">resume_in_terminal()</text>
+  </g>
 
-  <!-- Sidebar footer: indexing status -->
-  <line x1="32" y1="560" x2="288" y2="560" stroke="#dcdad6"/>
-  <circle cx="44" cy="582" r="4" fill="#33d17a"/>
-  <text x="56" y="586" class="text-dim">Indexed · 412 sessions</text>
-  <text x="56" y="602" class="text-faint">LOCAL ONLY · NEVER LEAVES YOUR DISK</text>
-
-  <!-- ========= CONTENT PANE ========= -->
-  <!-- AdwBanner -->
-  <rect x="316" y="64" width="608" height="34" rx="8" class="banner"/>
-  <circle cx="335" cy="81" r="6" fill="none" stroke="#1a4f8a" stroke-width="1.3"/>
-  <line x1="335" y1="78" x2="335" y2="84" stroke="#1a4f8a" stroke-width="1.3"/>
-  <circle cx="335" cy="76" r="0.8" fill="#1a4f8a"/>
-  <text x="350" y="85" class="banner-text">Version 1.0 is out — local-first, four AI assistants, zero telemetry.</text>
-  <rect x="820" y="71" width="92" height="20" rx="6" fill="#3584e4"/>
-  <text x="866" y="85" class="accent-text" text-anchor="middle" font-size="11">Install Flatpak</text>
-
-  <!-- Hero block (acts like a "session detail" header) -->
-  <text x="316" y="138" class="text-faint">SESSION · CHRONICLE · v1.0 · MMXXVI</text>
-
-  <text x="316" y="174" class="h1">A local archive of every</text>
-  <text x="316" y="208" class="h1">conversation you have</text>
-  <text x="316" y="242" class="h1">with an <tspan class="accent">AI assistant.</tspan></text>
-
-  <text x="316" y="272" class="text-dim" font-size="13">
-    Browse, search, and resume sessions from Claude Code, OpenCode,
-  </text>
-  <text x="316" y="290" class="text-dim" font-size="13">
-    Codex, and Mistral Vibe — in one native GNOME window.
-  </text>
-
-  <!-- Assistant chips, styled like in-app filter pills -->
-  <rect x="316" y="306" width="86" height="22" rx="11" class="pill-accent"/>
-  <text x="359" y="321" class="pill-accent-text" text-anchor="middle">CLAUDE CODE</text>
-  <rect x="408" y="306" width="76" height="22" rx="11" class="pill"/>
-  <text x="446" y="321" class="pill-text" text-anchor="middle">OPENCODE</text>
-  <rect x="490" y="306" width="58" height="22" rx="11" class="pill"/>
-  <text x="519" y="321" class="pill-text" text-anchor="middle">CODEX</text>
-  <rect x="554" y="306" width="84" height="22" rx="11" class="pill"/>
-  <text x="596" y="321" class="pill-text" text-anchor="middle">MISTRAL VIBE</text>
-
-  <!-- CTAs -->
-  <rect x="316" y="346" width="132" height="36" rx="8" class="accent-btn"/>
-  <text x="382" y="370" class="accent-text" text-anchor="middle">Install on GNOME</text>
-  <rect x="456" y="346" width="124" height="36" rx="8" class="ghost-btn"/>
-  <text x="518" y="370" class="text" text-anchor="middle" font-weight="600">View source</text>
-  <text x="592" y="369" class="text-dim" font-size="12">★ 1.2k · MIT</text>
-
-  <!-- Transcript-style "preview" card (the screenshot moment, embedded as a session bubble) -->
-  <rect x="316" y="400" width="608" height="200" rx="10" class="card"/>
-
-  <!-- card header -->
-  <text x="332" y="424" class="h2">Why a chronicle?</text>
-  <text x="332" y="440" class="text-dim" font-size="11">From the README · 2 min read</text>
-  <rect x="850" y="412" width="60" height="20" rx="10" class="pill"/>
-  <text x="880" y="426" class="pill-text" text-anchor="middle">PINNED</text>
-
-  <line x1="332" y1="452" x2="908" y2="452" stroke="#ececec"/>
-
-  <!-- assistant bubble -->
-  <rect x="332" y="464" width="370" height="58" rx="10" class="bubble-assistant"/>
-  <text x="346" y="482" class="text-faint">CLAUDE CODE · 14:02</text>
-  <text x="346" y="500" class="text">Your sessions are a record of how you think.</text>
-  <text x="346" y="516" class="text">Sessions Chronicle keeps that record searchable.</text>
-
-  <!-- user bubble -->
-  <rect x="540" y="530" width="372" height="44" rx="10" class="bubble-user"/>
-  <text x="554" y="548" class="text-faint">YOU · 14:02</text>
-  <text x="554" y="566" class="text">Find: tool:Bash · project:relm · assistant:codex</text>
-
-  <!-- inline tool call chip -->
-  <rect x="332" y="538" width="200" height="32" rx="6" fill="#f7f5f1" stroke="#e3dfd8"/>
-  <rect x="332" y="538" width="4" height="32" fill="#3584e4"/>
-  <text x="346" y="552" class="text-faint">TOOL CALL</text>
-  <text x="346" y="566" class="mono text" font-size="11">resume_in_terminal()</text>
-
-  <!-- subtle bottom hint, like the floating search nav bar -->
-  <text x="316" y="618" class="text-faint">ESC to close · ⌘F to search · ENTER to resume in terminal</text>
+  <g transform="translate(676,544)">
+    <rect x="0" y="0" width="236" height="42" rx="12" class="toast"/>
+    <text x="18" y="25" class="toast-text">Local-only indexing</text>
+    <text x="214" y="25" class="toast-link" text-anchor="end">MIT</text>
+  </g>
 </svg>
