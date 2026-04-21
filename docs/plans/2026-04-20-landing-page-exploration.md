@@ -1,8 +1,8 @@
 # Exploration: Landing Page (Issue #124)
 
-**Date:** 2026-04-20
-**Issue:** [#124 — Create a static landing page for Sessions Chronicle](https://github.com/supermaciz/sessions-chronicle/issues/124)
-**Type:** Design exploration — 6 visual directions for the v1 marketing page
+**Date:** 2026-04-20  
+**Issue:** [#124 — Create a static landing page for Sessions Chronicle](https://github.com/supermaciz/sessions-chronicle/issues/124)  
+**Type:** Design exploration — 6 visual directions for the v1 marketing page  
 **Status:** Open — awaiting decision
 
 ## Problem
@@ -42,7 +42,7 @@ typography, and the metaphor used to frame the product.**
 
 ## Proposal A — Adwaita Marketing *(GNOME-native)*
 
-**Reference:** [apps.gnome.org](https://apps.gnome.org), GNOME Circle pages.
+**Reference:** [apps.gnome.org](https://apps.gnome.org), GNOME Circle pages.  
 **One-line:** The page looks like the app belongs to GNOME — because it does.
 
 ![Adwaita marketing landing page](../mockups/landing-page/01-adwaita-marketing.svg)
@@ -86,7 +86,7 @@ a polished GNOME app, scaled up to a marketing surface.
 
 ## Proposal B — Classic OSS / SaaS *(Familiar, conversion-tuned)*
 
-**Reference:** Linear, Tauri, Astro, Zed, Raycast OSS pages.
+**Reference:** Linear, Tauri, Astro, Zed, Raycast OSS pages.  
 **One-line:** The page a dev expects to land on when they click a GitHub link.
 
 ![Classic OSS / SaaS landing page](../mockups/landing-page/02-classic-oss-saas.svg)
@@ -132,7 +132,7 @@ Optimized for "I get it, where do I install" in 5 seconds.
 
 **Reference:** New York Times print front pages, *Pitchfork* feature
 articles, the [Werner Herzog "Chronicle" aesthetic](https://www.are.na/),
-Edward Tufte handouts.
+Edward Tufte handouts.  
 **One-line:** The product is called *Chronicle*. The page acts like one.
 
 ![Editorial chronicle landing page](../mockups/landing-page/03-editorial-chronicle.svg)
@@ -185,7 +185,7 @@ from what GNOME visitors expect.
 ## Proposal D — Mosaic Canvas *(Creative, product-as-hero)*
 
 **Reference:** Are.na, Linear's launch page experiments, Obsidian's
-graph view, the [Vercel "/templates" page](https://vercel.com/templates).
+graph view, the [Vercel "/templates" page](https://vercel.com/templates).  
 **One-line:** Skip the hero text. The product *is* the hero.
 
 ![Mosaic canvas landing page](../mockups/landing-page/04-mosaic-canvas.svg)
@@ -239,11 +239,11 @@ promise.
 ## Proposal E — Component Composition *(Adwaita unframed)*
 
 **Reference:** `AdwBanner`, `AdwClamp`, `AdwActionRow`,
-`AdwPreferencesGroup`, filter chips, and toast patterns from libadwaita.
+`AdwPreferencesGroup`, filter chips, and toast patterns from libadwaita.  
 **One-line:** Use Adwaita as a design grammar for the web page, not as
 costume for a fake app window.
 
-![Component composition landing page](../mockups/landing-page/05-ui-designer-app-in-place.svg)
+![Component composition landing page](../mockups/landing-page/05-component-composition.svg)
 
 ### Direction
 
@@ -299,83 +299,151 @@ does not impersonate Sessions Chronicle. It speaks the same language.
 
 ---
 
-## Proposal F — Preferences Narrative *(Structured, native-web)*
+## Proposal F — Product Atlas *(Screenshot-led, Adwaita-framed)*
 
-**Reference:** `AdwPreferencesPage`, `AdwPreferencesGroup`,
-`AdwActionRow`, `AdwViewSwitcher`, and boxed-list patterns from
-libadwaita.
-**One-line:** Build the landing page like a sequence of GNOME
-preference groups, but for storytelling instead of settings.
+**Reference:** apps.gnome.org gallery pages, Linear's old screenshot
+showcases (without the tilt), Raycast's "Stories" rows, Apple's
+product pages — but with libadwaita as the binding instead of glass
+morphism.  
+**One-line:** The screenshots are the heroes. Adwaita is the gallery
+that holds them up.
 
-![Preferences narrative landing page](../mockups/landing-page/06-mii-self-indexed.svg)
+![Product atlas landing page](../mockups/landing-page/06-product-atlas.svg)
 
-### Direction
+### The thesis
 
-This option is calmer and more architectural than E. Instead of an
-"exploded components" hero, the whole page adopts the structure of a
-native preferences page translated into web terms: grouped sections,
-quiet section headers, boxed lists, action rows with suffix metadata,
-and one clean screenshot per section.
+Proposal E uses libadwaita components *as* the marketing payload — a
+fake `AdwBanner` stands in for the release announcement, a chip row
+stands in for the assistant story, a synthetic transcript card stands
+in for the product. The page is a UI kit composition that *implies*
+the product.
 
-The result is strongly Adwaita-like, but not theatrical. It feels like
-the product came from GNOME thinking, not like the browser is wearing a
-GTK Halloween costume.
+F flips that relationship. The screenshots of the actual application
+are the heroes — front and center, multiple, layered, real. Adwaita
+components are still the visual language, but they serve the gallery:
+banners *label* the screenshots, action rows *caption* them,
+preference-group headings *organize* them. Visitors see what they
+will install before they decide to install it.
+
+This is the most honest visual story available to a local-first app:
+"this is the product, photographed, presented in its own native
+chrome, framed in its own native components." No imitation, no
+metaphor, no editorial pastiche. Just real product visibility, calmly
+arranged.
 
 ### Layout
 
-- **Hero:** concise top statement, Install / GitHub CTAs, and a small
-  `ViewSwitcher`-style row for the four supported AI assistants.
-- **Section rhythm:** each major story block is a `PreferencesGroup`:
-  1. **Browse** group with a large screenshot and two explanatory rows.
-  2. **Inspect** group with tool-call and reasoning highlights.
-  3. **Resume** group with terminal handoff, pinned sessions, and
-     analytics summary.
-- **Row grammar:** each feature is introduced as an `ActionRow` with a
-  title, subdued subtitle, and a meaningful suffix (`local only`,
-  `FTS5`, `terminal`, `MIT`), not as generic marketing cards.
-- **Status/footer area:** a compact boxed strip using toast/status
-  semantics for `Local-first`, `No telemetry`, `Open source`, and the
-  final install action.
-
-This direction is less "heroic" than E and more systematized. Its
-distinctiveness comes from information architecture, not from a bold
-centerpiece.
+- **Top bar:** Adwaita-styled site nav. App icon + name on the left,
+  ghost text buttons (Features · Install · GitHub) and a single
+  primary `Install on GNOME` button on the right. Hairline border
+  below, 56px tall.
+- **Hero (asymmetric, ~30/70):**
+  - Left (~30%): A 42px headline with one accent-blue word, a 14px
+    dim subtitle, two CTAs (`Install on GNOME` + ghost `View on
+    GitHub`), and a row of four assistant chips styled as in-app
+    filter pills (Claude Code · OpenCode · Codex · Mistral Vibe). All
+    Cantarell, all calm.
+  - Right (~70%): A **layered composition of three real screenshot
+    crops**, deliberately *not* tilted:
+    - Back layer: the full application window (sidebar + list +
+      detail), softly faded so the foreground reads first.
+    - Mid layer: a tighter crop on the search results panel, with
+      filter chips and highlighted matches visible. Offset down-right
+      by ~24px.
+    - Front layer: the smallest crop, focused on an expanded tool
+      call card showing args + result. Offset down-right by another
+      ~24px from the mid layer.
+    - All three: 12px radius, 1px hairline border, soft drop shadow,
+      no rotation. Depth comes from offset and shadow alone.
+  - **Two Adwaita component overlays** float across the screenshot
+    stack — these are the only "fake" UI on the page, and they earn
+    their keep by labeling what's behind them:
+    - An `AdwBanner`-style pill at the top of the back layer:
+      *"v1.0 · local-first · zero telemetry"* + small `Install` action.
+    - An `AdwToast`-style notification near the bottom-left of the
+      composition: *"Indexed 412 sessions in 0.3 s"* with an `Open`
+      action. Doubles as proof that indexing is fast.
+- **The Atlas (below the fold, the showcase grid):**
+  - Section header styled as an `AdwPreferencesGroup` heading:
+    small-caps `THE ATLAS · WHAT YOU'RE INSTALLING`, with a hairline
+    rule beneath.
+  - Six "plates" arranged 3×2 on desktop, 2×3 on tablet, 1×6 on
+    mobile. Each plate = one large real screenshot crop (16:10) sat
+    on a 1px-bordered card with 12px radius, with an
+    `AdwActionRow`-style caption *underneath* the screenshot:
+    - **Title** (Cantarell 14px bold) — e.g. *"Browse by project"*.
+    - **Subtitle** (Cantarell 12px dim) — e.g. *"Sidebar filters by
+      assistant, project, or pinned status."*
+    - **Suffix tag** (right-aligned, 11px small-caps, in a quiet
+      tinted pill) — e.g. `LOCAL INDEX`, `EXPANDABLE`, `TERMINAL`,
+      `FTS5`, `MIT`, `ALL FORMATS`.
+  - The six plates: *Browse by project* · *Inspect tool calls* ·
+    *Resume in your terminal* · *Read the ledger* · *Search every
+    transcript* · *Four assistants, one home*.
+- **Spec strip (footer band):** A boxed list in libadwaita style
+  with four status rows: `Local-first ✓` · `No telemetry ✓` ·
+  `Open source · MIT ✓` · `Flatpak · GNOME 46+ ✓`. Final
+  `Install on GNOME` button on the right, GitHub star count + link
+  on the left.
 
 ### Typography
 
-- Cantarell / Adwaita Sans throughout.
-- JetBrains Mono only for command snippets and short technical labels.
-- Headline 30px, group titles 18px, row titles 14px, metadata 11-12px.
-- Quiet, dense, and very legible; the page reads like native product
-  documentation, not a SaaS campaign.
+- **Cantarell / Adwaita Sans throughout.** No serif. No editorial
+  display face. The page is product photography in a GNOME frame.
+- **JetBrains Mono** appears in exactly two places: the inline
+  `tool call` token inside one of the screenshots, and the
+  `flatpak install` command in the spec strip. Earned, not
+  decorative.
+- Headline 42px tight (-1px tracking), subhead 14px dim, plate titles
+  14px bold, captions 12px dim, suffix tags 11px small-caps with 1px
+  tracking.
+- Single accent color (`#3584e4`), used on exactly one hero word, the
+  primary CTA, and the highlighted assistant chip. Restraint is the
+  rule.
+
+### Visual identity rules
+
+- **No tilt.** Tilted screenshots are the canonical dev-tool cliché
+  of the last five years. The layered offset + shadow does the depth
+  work without rotating the product into a marketing pose.
+- **No mockup illustrations.** Every screenshot crop is from the real
+  app, real fixture data, real GTK chrome. The two Adwaita component
+  overlays (banner + toast) are the only synthetic UI on the page,
+  and both *point at* something real.
+- **No logo strip.** The four assistants live in the screenshots
+  (sidebar) and in the chip row beside the headline. They don't need
+  a separate "Works with" band.
+- **Light + dark by `prefers-color-scheme`.** Both themes get
+  matching screenshot sets — dark mode is not an afterthought.
 
 ### Trade-offs
 
 | + | - |
 |---|---|
-| Strong Adwaita identity with very low risk of pastiche | Less instantly dramatic than E/C/D |
-| Information architecture is highly reusable for the final implementation | Needs excellent copy to avoid reading like settings documentation |
-| Natural mobile story: groups and rows stack cleanly | Can feel too restrained if the screenshots are weak |
-| Distinctive because the page structure is unusual on the web, but coherent | Slightly less shareable as a single hero image than E |
-| Good fit for a local-first GNOME app: sober, trustworthy, specific | Requires restraint so it does not become visually monotonous |
+| Real product visibility above the fold — visitors *see* what they're getting before they decide | Requires a curated set of high-quality screenshot crops in both light and dark themes — real production work |
+| Layered montage is visually punchy and shareable as a single OG image, without resorting to tilt clichés | Six plates = six screenshots to keep in sync when the app's UI changes |
+| Adwaita framing keeps the page unmistakably GNOME without making it a UI-kit demo | Less conceptually distinctive than C or the dropped Chronicle Entry — closer to "a really good apps.gnome.org page" |
+| Differentiates from E by inverting the component/screenshot relationship — components serve product, not the other way around | Hero composition needs real art direction; sloppy layering = generic SaaS hero |
+| The two Adwaita overlays (banner + toast) double as feature proofs (release status + indexing speed) | Risk of looking like Linear or Raycast if the layered cards are too glossy — must stay Adwaita-quiet |
+| Strongest "this is a real, polished, shipping app" signal of any proposal | Mobile story is real work: layered hero must collapse cleanly to a single front-layer crop |
 
 ---
 
 ## Comparison Matrix
 
-| Aspect | A: Adwaita | B: Classic OSS | C: Editorial | D: Mosaic | E: Component Composition | F: Preferences Narrative |
+| Aspect | A: Adwaita | B: Classic OSS | C: Editorial | D: Mosaic | E: Component Composition | F: Product Atlas |
 |---|---|---|---|---|---|---|
 | **Aesthetic risk** | Low | Low | High | High | Medium | Low-Medium |
-| **Identity with GNOME** | Strong | Weak | Neutral | Weak | Very Strong | Very Strong |
-| **Memorability** | Low | Medium | Very High | Very High | High | Medium-High |
-| **Conversion clarity** | High | Very High | Medium | Medium-Low | High | High |
-| **Implementation cost** | Low | Low-Medium | Medium | Medium-High | Medium | Medium |
-| **Custom illustration needed** | None | None | Yes (plates) | No (cards from real data) | None (HTML components) | None (HTML components) |
-| **Mobile story** | Easy | Easy | Easy (single col) | Hard (mosaic must collapse) | Easy-Medium | Easy |
+| **Identity with GNOME** | Strong | Weak | Neutral | Weak | Very Strong | Strong (via real chrome + Adwaita frame) |
+| **Memorability** | Low | Medium | Very High | Very High | High | High |
+| **Conversion clarity** | High | Very High | Medium | Medium-Low | High | Very High |
+| **Implementation cost** | Low | Low-Medium | Medium | Medium-High | Medium | Medium-High (six curated crops × 2 themes) |
+| **Custom illustration needed** | None | None | Yes (plates) | No (cards from real data) | None (HTML components) | None (real screenshots only) |
+| **Mobile story** | Easy | Easy | Easy (single col) | Hard (mosaic must collapse) | Easy-Medium | Medium (layered hero must collapse) |
 | **Reduced-motion story** | Trivial | Trivial | Trivial | Must design upfront | Trivial | Trivial |
-| **Risk of looking "AI slop"** | Low | Medium-High | Very Low | Medium | Very Low | Very Low |
-| **Time to first visitor "gets it"** | ~3s | ~2s | ~6s | ~4s (after one scroll) | ~3s | ~4s |
-| **Best when the goal is...** | Trust | Conversion | Distinction | Demonstration | Native-web identity | Structured trust |
+| **Risk of looking "AI slop"** | Low | Medium-High | Very Low | Medium | Very Low | Low |
+| **Time to first visitor "gets it"** | ~3s | ~2s | ~6s | ~4s (after one scroll) | ~3s | ~2s |
+| **Best when the goal is...** | Trust | Conversion | Distinction | Demonstration | Native-web identity | Real product visibility |
 
 ## Open Questions
 
@@ -387,19 +455,36 @@ centerpiece.
 - **GNOME identity vs. broader reach:** Do we want the page to clearly
   signal "GNOME-native" (favors A), or do we want to attract Linux
   developers who don't yet care about GNOME (favors B / D)?
-- **Component expression:** Do we want Adwaita to appear as a bold
-  compositional language on the page itself (E), or as a quieter
-  structural system for grouped storytelling (F)?
+- **Component vs. screenshot priority:** Do we want libadwaita
+  components to *be* the marketing payload (E), or to *frame* a
+  curated set of real screenshots (F)? Both are GNOME-native; the
+  difference is whether visitors see the product before or after
+  install.
 - **Maintenance budget:** Are we OK with a page that needs an
   illustrator's hand to refresh (C), or does it need to update from
-  screenshots and reusable web components alone (A / B / E / F)?
+  reusable web components alone (A / B / E), or from a curated set
+  of real screenshot crops kept in sync with the app (F)?
 
 ## Recommendation Slot
 
-*Revised after feedback on pastiche risk: the new E/F keep the
-libadwaita DNA, but remove the fake-window premise. If the goal is "the
-page feels GNOME-native without becoming cosplay", E and F are the
-serious options.*
+*Revised after feedback on pastiche risk and screenshot visibility:*
+
+- *E and F are the two serious finalists, and they sit on opposite
+  ends of the same spectrum: how visible is the real product on the
+  page itself.*
+- ***E** = "GNOME as the page's grammar" — composed Adwaita-like
+  components imply the product. No screenshots above the fold.
+  Fastest "gets it" time for visitors who already trust GNOME apps,
+  lightest maintenance, but lower direct product visibility.*
+- ***F** = "real product, Adwaita-framed" — a layered montage of
+  three real screenshot crops anchors the hero, with two Adwaita
+  component overlays (banner + toast) labeling them. Below the fold,
+  six captioned plates form an "Atlas" of the app. Highest direct
+  product visibility, strongest "this ships" signal, at the cost of
+  more screenshot maintenance.*
+- *A, B, C, D remain on the table as references for fallback safety
+  (A/B), distinctiveness ceiling (C), or visual ambition (D), but the
+  decision is most likely between E and F.*
 
 ## Next Step
 
