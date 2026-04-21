@@ -1,0 +1,27 @@
+---
+interface Props {
+  padding?: 'none' | 'sm' | 'md' | 'lg';
+  as?: 'div' | 'article' | 'section';
+  elevated?: boolean;
+  class?: string;
+}
+
+const { padding = 'md', as: Tag = 'div', elevated = false, class: className } = Astro.props;
+const padMap = { none: '0', sm: 'var(--space-3)', md: 'var(--space-4)', lg: 'var(--space-6)' };
+const padValue = padMap[padding];
+---
+<Tag class:list={['card', elevated && 'card--elevated', className]} style={`padding: ${padValue};`}>
+  <slot />
+</Tag>
+
+<style>
+  .card {
+    background: var(--card-bg-color);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-card);
+    overflow: hidden;
+  }
+  .card--elevated {
+    box-shadow: var(--shadow-window);
+  }
+</style>

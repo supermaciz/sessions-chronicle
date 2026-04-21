@@ -1,0 +1,51 @@
+---
+interface Props {
+  variant?: 'suggested' | 'flat' | 'pill';
+  href?: string;
+  type?: 'button' | 'submit';
+  class?: string;
+}
+const { variant = 'suggested', href, type = 'button', class: className } = Astro.props;
+const classes = ['btn', `btn--${variant}`, className];
+---
+{href ? (
+  <a class:list={classes} href={href}><slot /></a>
+) : (
+  <button class:list={classes} type={type}><slot /></button>
+)}
+
+<style>
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: var(--space-2);
+    padding: 10px 18px;
+    font-family: var(--font-sans);
+    font-size: var(--text-body);
+    font-weight: 600;
+    line-height: 1;
+    border: 0;
+    cursor: pointer;
+    transition: background-color 120ms ease, color 120ms ease;
+  }
+  .btn--suggested {
+    background: var(--accent-bg-color);
+    color: var(--accent-fg-color);
+    border-radius: var(--radius-sm);
+  }
+  .btn--suggested:hover { background: #2d78d4; }
+  .btn--flat {
+    background: transparent;
+    color: var(--window-fg-color);
+    border-radius: var(--radius-sm);
+  }
+  .btn--flat:hover { background: rgba(0, 0, 6, 0.07); }
+  .btn--pill {
+    background: var(--accent-bg-color);
+    color: var(--accent-fg-color);
+    border-radius: 9999px;
+    padding: 12px 22px;
+  }
+  .btn--pill:hover { background: #2d78d4; }
+</style>
