@@ -1,8 +1,6 @@
 ---
 import { Picture } from 'astro:assets';
 import Button from '../adwaita/Button.astro';
-import Banner from '../adwaita/Banner.astro';
-import Toast from '../adwaita/Toast.astro';
 import Card from '../adwaita/Card.astro';
 import sessionList from '../../assets/screenshots/session_list.png';
 import sessionDetail from '../../assets/screenshots/session_detail.png';
@@ -51,13 +49,6 @@ const githubUrl = 'https://github.com/supermaciz/sessions-chronicle';
           alt="A single Claude Code session showing tool calls inline"
         />
       </Card>
-
-      <div class="hero__banner" aria-hidden="true">
-        <Banner variant="accent">New: Codex sessions now indexed.</Banner>
-      </div>
-      <div class="hero__toast" aria-hidden="true">
-        <Toast message="Session resumed in terminal" actionLabel="Undo" />
-      </div>
     </div>
   </div>
 </section>
@@ -112,14 +103,20 @@ const githubUrl = 'https://github.com/supermaciz/sessions-chronicle';
 
   .hero__visual {
     position: relative;
-    min-height: clamp(340px, 42vw, 560px);
-    max-width: 760px;
+    width: 100%;
+    max-width: 780px;
+    aspect-ratio: 16 / 10;
     margin-inline: auto;
-    padding: 24px 28px 28px 0;
+    padding: 0 0 44px;
   }
   .hero__frame {
-    position: absolute;
     overflow: hidden;
+  }
+  .hero__frame--main {
+    position: relative;
+    width: 84%;
+    height: 100%;
+    aspect-ratio: 16 / 10;
   }
   .hero__frame :global(picture),
   .hero__frame :global(img) {
@@ -130,51 +127,42 @@ const githubUrl = 'https://github.com/supermaciz/sessions-chronicle';
   .hero__frame :global(img) {
     object-fit: cover;
   }
-  .hero__frame--main {
-    inset: 4% 12% 8% 0;
-  }
   .hero__frame--main :global(img) {
     object-position: center top;
   }
   .hero__frame--overlay {
+    position: absolute;
     right: 0;
     bottom: 0;
-    width: clamp(180px, 34%, 280px);
+    width: clamp(200px, 42%, 320px);
     aspect-ratio: 16 / 10;
   }
   .hero__frame--overlay :global(img) {
     object-position: center top;
   }
 
-  .hero__banner { position: absolute; top: 0; left: 4%; max-width: 62%; z-index: 2; }
-  .hero__toast { position: absolute; left: 18%; bottom: -16px; z-index: 2; }
-
   @media (max-width: 1023px) {
     .hero__visual {
-      min-height: clamp(300px, 72vw, 460px);
-      padding: 20px 24px 24px 0;
+      max-width: 640px;
+      padding-bottom: 34px;
     }
     .hero__frame--main {
-      inset: 6% 10% 10% 0;
+      width: 88%;
     }
     .hero__frame--overlay {
-      width: clamp(160px, 38%, 240px);
+      width: clamp(170px, 40%, 250px);
     }
   }
   @media (max-width: 640px) {
     .hero__visual {
-      min-height: 300px;
-      padding: 0 0 18px;
+      aspect-ratio: 4 / 3;
+      padding-bottom: 18px;
     }
     .hero__frame--main {
-      inset: 0 10% 16% 0;
+      width: 92%;
     }
     .hero__frame--overlay {
-      width: 48%;
-    }
-    .hero__banner,
-    .hero__toast {
-      display: none;
+      width: 54%;
     }
   }
 </style>
