@@ -6,7 +6,6 @@ import Toast from '../adwaita/Toast.astro';
 import Card from '../adwaita/Card.astro';
 import sessionList from '../../assets/screenshots/session_list.png';
 import sessionDetail from '../../assets/screenshots/session_detail.png';
-import analytics from '../../assets/screenshots/analytics_light.png';
 
 const flathubUrl = 'https://flathub.org/apps/io.github.supermaciz.sessionschronicle';
 const githubUrl = 'https://github.com/supermaciz/sessions-chronicle';
@@ -28,7 +27,7 @@ const githubUrl = 'https://github.com/supermaciz/sessions-chronicle';
     </div>
 
     <div class="hero__visual">
-      <Card elevated padding="none" class="hero__layer hero__layer--back">
+      <Card elevated padding="none" class="hero__frame hero__frame--main">
         <Picture
           src={sessionList}
           formats={['avif', 'webp']}
@@ -41,27 +40,15 @@ const githubUrl = 'https://github.com/supermaciz/sessions-chronicle';
         />
       </Card>
 
-      <Card elevated padding="none" class="hero__layer hero__layer--mid">
+      <Card elevated padding="none" class="hero__frame hero__frame--overlay">
         <Picture
           src={sessionDetail}
           formats={['avif', 'webp']}
           fallbackFormat="png"
           widths={[400, 720, 960]}
-          sizes="(max-width: 768px) 80vw, 480px"
+          sizes="(max-width: 768px) 62vw, 360px"
           loading="eager"
           alt="A single Claude Code session showing tool calls inline"
-        />
-      </Card>
-
-      <Card elevated padding="none" class="hero__layer hero__layer--front">
-        <Picture
-          src={analytics}
-          formats={['avif', 'webp']}
-          fallbackFormat="png"
-          widths={[320, 560, 720]}
-          sizes="(max-width: 768px) 60vw, 360px"
-          loading="eager"
-          alt="Analytics view showing usage breakdown by assistant"
         />
       </Card>
 
@@ -125,24 +112,69 @@ const githubUrl = 'https://github.com/supermaciz/sessions-chronicle';
 
   .hero__visual {
     position: relative;
-    aspect-ratio: 16 / 11;
-    min-height: 360px;
+    min-height: clamp(340px, 42vw, 560px);
+    max-width: 760px;
+    margin-inline: auto;
+    padding: 24px 28px 28px 0;
   }
-  .hero__layer { position: absolute; }
-  .hero__layer--back  { left: 0; top: 6%; width: 78%; }
-  .hero__layer--mid   { right: 0; top: 0; width: 58%; }
-  .hero__layer--front { right: 6%; bottom: 0; width: 44%; }
+  .hero__frame {
+    position: absolute;
+    overflow: hidden;
+  }
+  .hero__frame :global(picture),
+  .hero__frame :global(img) {
+    display: block;
+    width: 100%;
+    height: 100%;
+  }
+  .hero__frame :global(img) {
+    object-fit: cover;
+  }
+  .hero__frame--main {
+    inset: 4% 12% 8% 0;
+  }
+  .hero__frame--main :global(img) {
+    object-position: center top;
+  }
+  .hero__frame--overlay {
+    right: 0;
+    bottom: 0;
+    width: clamp(180px, 34%, 280px);
+    aspect-ratio: 16 / 10;
+  }
+  .hero__frame--overlay :global(img) {
+    object-position: center top;
+  }
 
-  .hero__banner { position: absolute; top: -24px; left: 4%; max-width: 60%; }
-  .hero__toast  { position: absolute; bottom: -20px; left: 20%; }
+  .hero__banner { position: absolute; top: 0; left: 4%; max-width: 62%; z-index: 2; }
+  .hero__toast { position: absolute; left: 18%; bottom: -16px; z-index: 2; }
 
   @media (max-width: 1023px) {
-    .hero__visual { aspect-ratio: 4 / 3; }
-    .hero__layer--back  { width: 88%; left: 0; top: 8%; }
-    .hero__layer--mid   { width: 66%; right: 0; top: 0; }
-    .hero__layer--front { width: 52%; right: 4%; bottom: 0; }
+    .hero__visual {
+      min-height: clamp(300px, 72vw, 460px);
+      padding: 20px 24px 24px 0;
+    }
+    .hero__frame--main {
+      inset: 6% 10% 10% 0;
+    }
+    .hero__frame--overlay {
+      width: clamp(160px, 38%, 240px);
+    }
   }
   @media (max-width: 640px) {
-    .hero__banner, .hero__toast { display: none; }
+    .hero__visual {
+      min-height: 300px;
+      padding: 0 0 18px;
+    }
+    .hero__frame--main {
+      inset: 0 10% 16% 0;
+    }
+    .hero__frame--overlay {
+      width: 48%;
+    }
+    .hero__banner,
+    .hero__toast {
+      display: none;
+    }
   }
 </style>
