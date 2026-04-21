@@ -24,3 +24,10 @@ Push to `main`; GitHub Actions publishes via Pages.
 ## Font licenses
 - Adwaita Sans - SIL Open Font License 1.1 (https://gitlab.gnome.org/GNOME/adwaita-fonts)
 - JetBrains Mono - SIL Open Font License 1.1 (https://www.jetbrains.com/lp/mono)
+
+## Last local verification (2026-04-21)
+- Lighthouse mobile: pending manual run
+- Lighthouse desktop: pending manual run
+- html-validate: 0 errors
+- Responsive 360/768/1024/1440: pending manual run
+- Font loading on Slow 3G: pending manual run
