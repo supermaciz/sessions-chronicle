@@ -1,0 +1,148 @@
+---
+import { Picture } from 'astro:assets';
+import Button from '../adwaita/Button.astro';
+import Banner from '../adwaita/Banner.astro';
+import Toast from '../adwaita/Toast.astro';
+import Card from '../adwaita/Card.astro';
+import sessionList from '../../assets/screenshots/session_list.png';
+import sessionDetail from '../../assets/screenshots/session_detail.png';
+import analytics from '../../assets/screenshots/analytics_light.png';
+
+const flathubUrl = 'https://flathub.org/apps/io.github.supermaciz.sessionschronicle';
+const githubUrl = 'https://github.com/supermaciz/sessions-chronicle';
+---
+<section class="hero">
+  <div class="container hero__grid">
+    <div class="hero__text">
+      <p class="hero__eyebrow">OPEN SOURCE · LOCAL-FIRST · GTK 4</p>
+      <h1 class="hero__title">Every conversation you've had with a machine.</h1>
+      <p class="hero__sub">
+        Sessions Chronicle indexes Claude Code, OpenCode, Codex, and Mistral Vibe
+        transcripts on your disk into one searchable archive. Nothing leaves your machine.
+      </p>
+      <div class="hero__ctas">
+        <Button variant="pill" href={flathubUrl}>Get on Flathub</Button>
+        <Button variant="flat" href={githubUrl}>View on GitHub →</Button>
+      </div>
+      <p class="hero__meta">MIT · Flatpak · Linux</p>
+    </div>
+
+    <div class="hero__visual">
+      <Card elevated padding="none" class="hero__layer hero__layer--back">
+        <Picture
+          src={sessionList}
+          formats={['avif', 'webp']}
+          fallbackFormat="png"
+          widths={[640, 1024, 1280]}
+          sizes="(max-width: 768px) 100vw, 640px"
+          loading="eager"
+          fetchpriority="high"
+          alt="Sessions Chronicle main window listing recent AI assistant conversations"
+        />
+      </Card>
+
+      <Card elevated padding="none" class="hero__layer hero__layer--mid">
+        <Picture
+          src={sessionDetail}
+          formats={['avif', 'webp']}
+          fallbackFormat="png"
+          widths={[400, 720, 960]}
+          sizes="(max-width: 768px) 80vw, 480px"
+          loading="eager"
+          alt="A single Claude Code session showing tool calls inline"
+        />
+      </Card>
+
+      <Card elevated padding="none" class="hero__layer hero__layer--front">
+        <Picture
+          src={analytics}
+          formats={['avif', 'webp']}
+          fallbackFormat="png"
+          widths={[320, 560, 720]}
+          sizes="(max-width: 768px) 60vw, 360px"
+          loading="eager"
+          alt="Analytics view showing usage breakdown by assistant"
+        />
+      </Card>
+
+      <div class="hero__banner" aria-hidden="true">
+        <Banner variant="accent">New: Codex sessions now indexed.</Banner>
+      </div>
+      <div class="hero__toast" aria-hidden="true">
+        <Toast message="Session resumed in terminal" actionLabel="Undo" />
+      </div>
+    </div>
+  </div>
+</section>
+
+<style>
+  .hero {
+    padding-block: var(--space-16) var(--space-12);
+    background: var(--window-bg-color);
+  }
+  .hero__grid {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: var(--space-12);
+    align-items: center;
+  }
+  @media (min-width: 1024px) {
+    .hero__grid { grid-template-columns: 40% 1fr; gap: var(--space-16); }
+  }
+
+  .hero__eyebrow {
+    font-family: var(--font-mono);
+    font-size: var(--text-caption);
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--accent-color);
+    margin-bottom: var(--space-4);
+  }
+  .hero__title {
+    font-size: clamp(36px, 5vw, var(--text-display));
+    line-height: var(--line-tight);
+    font-weight: 700;
+    margin-bottom: var(--space-4);
+    letter-spacing: -0.01em;
+  }
+  .hero__sub {
+    font-size: clamp(var(--text-body), 1.4vw, 18px);
+    color: color-mix(in srgb, var(--window-fg-color) 80%, transparent);
+    margin-bottom: var(--space-6);
+    max-width: 42ch;
+  }
+  .hero__ctas {
+    display: flex;
+    gap: var(--space-3);
+    flex-wrap: wrap;
+    margin-bottom: var(--space-4);
+  }
+  .hero__meta {
+    font-family: var(--font-mono);
+    font-size: var(--text-small);
+    color: color-mix(in srgb, var(--window-fg-color) 55%, transparent);
+  }
+
+  .hero__visual {
+    position: relative;
+    aspect-ratio: 16 / 11;
+    min-height: 360px;
+  }
+  .hero__layer { position: absolute; }
+  .hero__layer--back  { left: 0; top: 6%; width: 78%; }
+  .hero__layer--mid   { right: 0; top: 0; width: 58%; }
+  .hero__layer--front { right: 6%; bottom: 0; width: 44%; }
+
+  .hero__banner { position: absolute; top: -24px; left: 4%; max-width: 60%; }
+  .hero__toast  { position: absolute; bottom: -20px; left: 20%; }
+
+  @media (max-width: 1023px) {
+    .hero__visual { aspect-ratio: 4 / 3; }
+    .hero__layer--back  { width: 88%; left: 0; top: 8%; }
+    .hero__layer--mid   { width: 66%; right: 0; top: 0; }
+    .hero__layer--front { width: 52%; right: 4%; bottom: 0; }
+  }
+  @media (max-width: 640px) {
+    .hero__banner, .hero__toast { display: none; }
+  }
+</style>

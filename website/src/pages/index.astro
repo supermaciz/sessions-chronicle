@@ -1,12 +1,16 @@
 ---
 import BaseLayout from '../layouts/BaseLayout.astro';
+import Hero from '../components/sections/Hero.astro';
+import AtlasGrid from '../components/sections/AtlasGrid.astro';
+import SpecStrip from '../components/sections/SpecStrip.astro';
+import Footer from '../components/sections/Footer.astro';
 ---
 <BaseLayout
   title="Sessions Chronicle - every conversation you've had with a machine"
   description="Sessions Chronicle indexes Claude Code, OpenCode, Codex, and Mistral Vibe transcripts on your disk into one searchable archive. Nothing leaves your machine."
 >
-  <main class="container" style="padding-block: var(--space-16);">
-    <h1>Sessions Chronicle</h1>
-    <p>Landing scaffolded. Sections wired in subsequent tasks.</p>
-  </main>
+  <Hero />
+  <AtlasGrid />
+  <SpecStrip />
+  <Footer />
 </BaseLayout>

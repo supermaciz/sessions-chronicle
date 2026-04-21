@@ -7,10 +7,8 @@ interface Props {
 }
 
 const { padding = 'md', as: Tag = 'div', elevated = false, class: className } = Astro.props;
-const padMap = { none: '0', sm: 'var(--space-3)', md: 'var(--space-4)', lg: 'var(--space-6)' };
-const padValue = padMap[padding];
 ---
-<Tag class:list={['card', elevated && 'card--elevated', className]} style={`padding: ${padValue};`}>
+<Tag class:list={['card', `card--pad-${padding}`, elevated && 'card--elevated', className]}>
   <slot />
 </Tag>
 
@@ -21,6 +19,10 @@ const padValue = padMap[padding];
     box-shadow: var(--shadow-card);
     overflow: hidden;
   }
+  .card--pad-none { padding: 0; }
+  .card--pad-sm { padding: var(--space-3); }
+  .card--pad-md { padding: var(--space-4); }
+  .card--pad-lg { padding: var(--space-6); }
   .card--elevated {
     box-shadow: var(--shadow-window);
   }

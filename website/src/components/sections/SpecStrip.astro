@@ -1,0 +1,70 @@
+---
+---
+<section class="spec">
+  <div class="container spec__grid">
+    <div class="spec__col">
+      <div class="spec__label">Stack</div>
+      <div class="spec__value">Rust 2024</div>
+      <div class="spec__value">GTK 4</div>
+      <div class="spec__value">libadwaita</div>
+      <div class="spec__value">SQLite FTS5</div>
+    </div>
+    <div class="spec__col">
+      <div class="spec__label">Distribution</div>
+      <div class="spec__value">Flatpak</div>
+      <div class="spec__value">Flathub-ready</div>
+      <div class="spec__value">MIT</div>
+    </div>
+    <div class="spec__col">
+      <div class="spec__label">Privacy</div>
+      <div class="spec__value">100% local</div>
+      <div class="spec__value">No network calls</div>
+      <div class="spec__value">No telemetry</div>
+    </div>
+    <div class="spec__col">
+      <div class="spec__label">Source</div>
+      <div class="spec__value">
+        <a href="https://github.com/supermaciz/sessions-chronicle">
+          github.com/supermaciz/sessions-chronicle
+        </a>
+      </div>
+    </div>
+  </div>
+</section>
+
+<style>
+  .spec {
+    background: var(--card-shade-color);
+    padding-block: var(--space-12);
+  }
+  .spec__grid {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: var(--space-8);
+  }
+  @media (min-width: 768px) {
+    .spec__grid { grid-template-columns: repeat(2, 1fr); }
+  }
+  @media (min-width: 1024px) {
+    .spec__grid { grid-template-columns: repeat(4, 1fr); gap: var(--space-6); }
+  }
+  .spec__col { display: flex; flex-direction: column; gap: 6px; }
+  .spec__label {
+    font-family: var(--font-sans);
+    font-size: var(--text-caption);
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: color-mix(in srgb, var(--window-fg-color) 55%, transparent);
+    margin-bottom: var(--space-2);
+  }
+  .spec__value {
+    font-family: var(--font-mono);
+    font-size: var(--text-body);
+    color: var(--window-fg-color);
+  }
+  .spec__value a {
+    color: var(--accent-color);
+    word-break: break-all;
+  }
+  .spec__value a:hover { text-decoration: underline; }
+</style>
