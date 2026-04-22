@@ -84,7 +84,7 @@ const plateImg = {
         </div>
       </Card>
 
-      <Card class="plate" padding="lg">
+      <Card class="plate" padding="none">
         <div class="plate__visual plate__visual--settings">
           <PreferencesGroup title="Appearance">
             <ActionRow title="Theme" subtitle="Follow system">
@@ -168,8 +168,6 @@ const plateImg = {
   .plate__visual--detail :global(img) {
     object-position: center top;
   }
-  .plate__visual--settings,
-  .plate__visual--composite { background: var(--view-bg-color); }
   .plate__body { padding: var(--space-6); }
   .plate__title {
     font-size: var(--text-h3);

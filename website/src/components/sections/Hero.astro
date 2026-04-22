@@ -1,7 +1,6 @@
 ---
 import { Picture } from 'astro:assets';
 import Button from '../adwaita/Button.astro';
-import Card from '../adwaita/Card.astro';
 import sessionList from '../../assets/screenshots/session_list.png';
 import sessionDetail from '../../assets/screenshots/session_detail.png';
 
@@ -26,32 +25,28 @@ const githubUrl = 'https://github.com/supermaciz/sessions-chronicle';
 
     <div class="hero__visual">
       <div class="hero__slot hero__slot--main">
-        <Card elevated padding="none">
-          <Picture
-            src={sessionList}
-            formats={['avif', 'webp']}
-            fallbackFormat="png"
-            widths={[400, 640, 960, 1280]}
-            sizes="(max-width: 640px) 88vw, (max-width: 1023px) 70vw, 620px"
-            loading="eager"
-            fetchpriority="high"
-            alt="Sessions Chronicle main window listing recent AI assistant conversations"
-          />
-        </Card>
+        <Picture
+          src={sessionList}
+          formats={['avif', 'webp']}
+          fallbackFormat="png"
+          widths={[400, 640, 960, 1280]}
+          sizes="(max-width: 640px) 88vw, (max-width: 1023px) 70vw, 620px"
+          loading="eager"
+          fetchpriority="high"
+          alt="Sessions Chronicle main window listing recent AI assistant conversations"
+        />
       </div>
 
       <div class="hero__slot hero__slot--overlay">
-        <Card elevated padding="none">
-          <Picture
-            src={sessionDetail}
-            formats={['avif', 'webp']}
-            fallbackFormat="png"
-            widths={[240, 360, 480, 720]}
-            sizes="(max-width: 640px) 42vw, (max-width: 1023px) 28vw, 260px"
-            loading="eager"
-            alt="A single Claude Code session showing tool calls inline"
-          />
-        </Card>
+        <Picture
+          src={sessionDetail}
+          formats={['avif', 'webp']}
+          fallbackFormat="png"
+          widths={[240, 360, 480, 720]}
+          sizes="(max-width: 640px) 42vw, (max-width: 1023px) 28vw, 260px"
+          loading="eager"
+          alt="A single Claude Code session showing tool calls inline"
+        />
       </div>
     </div>
   </div>
@@ -110,22 +105,25 @@ const githubUrl = 'https://github.com/supermaciz/sessions-chronicle';
     width: 100%;
     max-width: 760px;
     margin-inline: auto;
-    padding-right: clamp(28px, 5vw, 64px);
-    padding-bottom: clamp(8px, 2vw, 18px);
   }
   .hero__slot {
-    overflow: hidden;
+    overflow: visible;
   }
   .hero__slot--main {
     position: relative;
     width: 84%;
     z-index: 1;
   }
-  .hero__slot :global(picture),
-  .hero__slot :global(img) {
+  .hero__slot :global(picture) {
     display: block;
+    width: 100%;
+    line-height: 0;
+    border-radius: var(--radius-lg);
+    overflow: hidden;
+    border: 1px solid color-mix(in srgb, var(--accent-color) 42%, white);
   }
   .hero__slot :global(img) {
+    display: block;
     width: 100%;
     height: auto;
   }
@@ -140,7 +138,6 @@ const githubUrl = 'https://github.com/supermaciz/sessions-chronicle';
   @media (max-width: 1023px) {
     .hero__visual {
       max-width: 640px;
-      padding-right: clamp(20px, 4vw, 40px);
     }
     .hero__slot--main {
       width: 86%;
@@ -151,9 +148,6 @@ const githubUrl = 'https://github.com/supermaciz/sessions-chronicle';
     }
   }
   @media (max-width: 640px) {
-    .hero__visual {
-      padding-right: 0;
-    }
     .hero__slot--main {
       width: 88%;
     }
