@@ -25,30 +25,34 @@ const githubUrl = 'https://github.com/supermaciz/sessions-chronicle';
     </div>
 
     <div class="hero__visual">
-      <Card elevated padding="none" class="hero__frame hero__frame--main">
-        <Picture
-          src={sessionList}
-          formats={['avif', 'webp']}
-          fallbackFormat="png"
-          widths={[640, 1024, 1280]}
-          sizes="(max-width: 768px) 100vw, 640px"
-          loading="eager"
-          fetchpriority="high"
-          alt="Sessions Chronicle main window listing recent AI assistant conversations"
-        />
-      </Card>
+      <div class="hero__slot hero__slot--main">
+        <Card elevated padding="none">
+          <Picture
+            src={sessionList}
+            formats={['avif', 'webp']}
+            fallbackFormat="png"
+            widths={[400, 640, 960, 1280]}
+            sizes="(max-width: 640px) 88vw, (max-width: 1023px) 70vw, 620px"
+            loading="eager"
+            fetchpriority="high"
+            alt="Sessions Chronicle main window listing recent AI assistant conversations"
+          />
+        </Card>
+      </div>
 
-      <Card elevated padding="none" class="hero__frame hero__frame--overlay">
-        <Picture
-          src={sessionDetail}
-          formats={['avif', 'webp']}
-          fallbackFormat="png"
-          widths={[400, 720, 960]}
-          sizes="(max-width: 768px) 62vw, 360px"
-          loading="eager"
-          alt="A single Claude Code session showing tool calls inline"
-        />
-      </Card>
+      <div class="hero__slot hero__slot--overlay">
+        <Card elevated padding="none">
+          <Picture
+            src={sessionDetail}
+            formats={['avif', 'webp']}
+            fallbackFormat="png"
+            widths={[240, 360, 480, 720]}
+            sizes="(max-width: 640px) 42vw, (max-width: 1023px) 28vw, 260px"
+            loading="eager"
+            alt="A single Claude Code session showing tool calls inline"
+          />
+        </Card>
+      </div>
     </div>
   </div>
 </section>
@@ -104,65 +108,59 @@ const githubUrl = 'https://github.com/supermaciz/sessions-chronicle';
   .hero__visual {
     position: relative;
     width: 100%;
-    max-width: 780px;
-    aspect-ratio: 16 / 10;
+    max-width: 760px;
     margin-inline: auto;
-    padding: 0 0 44px;
+    padding-right: clamp(28px, 5vw, 64px);
+    padding-bottom: clamp(8px, 2vw, 18px);
   }
-  .hero__frame {
+  .hero__slot {
     overflow: hidden;
   }
-  .hero__frame--main {
+  .hero__slot--main {
     position: relative;
     width: 84%;
-    height: 100%;
-    aspect-ratio: 16 / 10;
+    z-index: 1;
   }
-  .hero__frame :global(picture),
-  .hero__frame :global(img) {
+  .hero__slot :global(picture),
+  .hero__slot :global(img) {
     display: block;
+  }
+  .hero__slot :global(img) {
     width: 100%;
-    height: 100%;
+    height: auto;
   }
-  .hero__frame :global(img) {
-    object-fit: cover;
-  }
-  .hero__frame--main :global(img) {
-    object-position: center top;
-  }
-  .hero__frame--overlay {
+  .hero__slot--overlay {
     position: absolute;
     right: 0;
-    bottom: 0;
-    width: clamp(200px, 42%, 320px);
-    aspect-ratio: 16 / 10;
-  }
-  .hero__frame--overlay :global(img) {
-    object-position: center top;
+    bottom: 2%;
+    width: 38%;
+    z-index: 2;
   }
 
   @media (max-width: 1023px) {
     .hero__visual {
       max-width: 640px;
-      padding-bottom: 34px;
+      padding-right: clamp(20px, 4vw, 40px);
     }
-    .hero__frame--main {
-      width: 88%;
+    .hero__slot--main {
+      width: 86%;
     }
-    .hero__frame--overlay {
-      width: clamp(170px, 40%, 250px);
+    .hero__slot--overlay {
+      width: 40%;
+      bottom: 1%;
     }
   }
   @media (max-width: 640px) {
     .hero__visual {
-      aspect-ratio: 4 / 3;
-      padding-bottom: 18px;
+      padding-right: 0;
     }
-    .hero__frame--main {
-      width: 92%;
+    .hero__slot--main {
+      width: 88%;
     }
-    .hero__frame--overlay {
-      width: 54%;
+    .hero__slot--overlay {
+      width: 44%;
+      right: 0;
+      bottom: 0;
     }
   }
 </style>
