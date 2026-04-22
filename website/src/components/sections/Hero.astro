@@ -26,26 +26,26 @@ const githubUrl = 'https://github.com/supermaciz/sessions-chronicle';
     <div class="hero__visual">
       <div class="hero__slot hero__slot--main">
         <Picture
-          src={sessionList}
+          src={sessionDetail}
           formats={['avif', 'webp']}
           fallbackFormat="png"
           widths={[400, 640, 960, 1280]}
           sizes="(max-width: 640px) 88vw, (max-width: 1023px) 70vw, 620px"
           loading="eager"
           fetchpriority="high"
-          alt="Sessions Chronicle main window listing recent AI assistant conversations"
+          alt="A single Claude Code session showing tool calls inline"
         />
       </div>
 
       <div class="hero__slot hero__slot--overlay">
         <Picture
-          src={sessionDetail}
+          src={sessionList}
           formats={['avif', 'webp']}
           fallbackFormat="png"
           widths={[240, 360, 480, 720]}
           sizes="(max-width: 640px) 42vw, (max-width: 1023px) 28vw, 260px"
           loading="eager"
-          alt="A single Claude Code session showing tool calls inline"
+          alt="Sessions Chronicle main window listing recent AI assistant conversations"
         />
       </div>
     </div>
@@ -120,7 +120,6 @@ const githubUrl = 'https://github.com/supermaciz/sessions-chronicle';
     line-height: 0;
     border-radius: var(--radius-lg);
     overflow: hidden;
-    border: 1px solid color-mix(in srgb, var(--accent-color) 42%, white);
   }
   .hero__slot :global(img) {
     display: block;
