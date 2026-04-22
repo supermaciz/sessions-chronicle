@@ -1,20 +1,23 @@
 ---
-import { Picture } from 'astro:assets';
-import Button from '../adwaita/Button.astro';
-import sessionList from '../../assets/screenshots/session_list.png';
-import sessionDetail from '../../assets/screenshots/session_detail.png';
+import { Picture } from "astro:assets";
+import Button from "../adwaita/Button.astro";
+import sessionList from "../../assets/screenshots/session_list.png";
+import sessionDetail from "../../assets/screenshots/session_detail.png";
 
-const flathubUrl = 'https://flathub.org/apps/io.github.supermaciz.sessionschronicle';
-const githubUrl = 'https://github.com/supermaciz/sessions-chronicle';
+const flathubUrl =
+  "https://flathub.org/apps/io.github.supermaciz.sessionschronicle";
+const githubUrl = "https://github.com/supermaciz/sessions-chronicle";
 ---
+
 <section class="hero">
   <div class="container hero__grid">
     <div class="hero__text">
       <p class="hero__eyebrow">OPEN SOURCE · LOCAL-FIRST · GTK 4</p>
       <h1 class="hero__title">Every conversation you've had with a machine.</h1>
       <p class="hero__sub">
-        Sessions Chronicle indexes Claude Code, OpenCode, Codex, and Mistral Vibe
-        transcripts on your disk into one searchable archive. Nothing leaves your machine.
+        Sessions Chronicle indexes Claude Code, OpenCode, Codex, and Mistral
+        Vibe transcripts on your disk into one searchable archive. Nothing
+        leaves your machine.
       </p>
       <div class="hero__ctas">
         <Button variant="pill" href={flathubUrl}>Get on Flathub</Button>
@@ -27,7 +30,7 @@ const githubUrl = 'https://github.com/supermaciz/sessions-chronicle';
       <div class="hero__slot hero__slot--main">
         <Picture
           src={sessionDetail}
-          formats={['avif', 'webp']}
+          formats={["avif", "webp"]}
           fallbackFormat="png"
           widths={[400, 640, 960, 1280]}
           sizes="(max-width: 640px) 88vw, (max-width: 1023px) 70vw, 620px"
@@ -40,7 +43,7 @@ const githubUrl = 'https://github.com/supermaciz/sessions-chronicle';
       <div class="hero__slot hero__slot--overlay">
         <Picture
           src={sessionList}
-          formats={['avif', 'webp']}
+          formats={["avif", "webp"]}
           fallbackFormat="png"
           widths={[240, 360, 480, 720]}
           sizes="(max-width: 640px) 42vw, (max-width: 1023px) 28vw, 260px"
@@ -64,7 +67,10 @@ const githubUrl = 'https://github.com/supermaciz/sessions-chronicle';
     align-items: center;
   }
   @media (min-width: 1024px) {
-    .hero__grid { grid-template-columns: 40% 1fr; gap: var(--space-16); }
+    .hero__grid {
+      grid-template-columns: 40% 1fr;
+      gap: var(--space-16);
+    }
   }
 
   .hero__eyebrow {
@@ -120,6 +126,7 @@ const githubUrl = 'https://github.com/supermaciz/sessions-chronicle';
     line-height: 0;
     border-radius: var(--radius-lg);
     overflow: hidden;
+    border: 1px solid color-mix(in srgb, var(--accent-bg-color) 42%, white);
   }
   .hero__slot :global(img) {
     display: block;
