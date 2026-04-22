@@ -1,5 +1,6 @@
 ---
 import BaseLayout from '../layouts/BaseLayout.astro';
+import TopBar from '../components/sections/TopBar.astro';
 import Hero from '../components/sections/Hero.astro';
 import AtlasGrid from '../components/sections/AtlasGrid.astro';
 import SpecStrip from '../components/sections/SpecStrip.astro';
@@ -9,6 +10,7 @@ import Footer from '../components/sections/Footer.astro';
   title="Sessions Chronicle - every conversation you've had with a machine"
   description="Sessions Chronicle indexes Claude Code, OpenCode, Codex, and Mistral Vibe transcripts on your disk into one searchable archive. Nothing leaves your machine."
 >
+  <TopBar />
   <Hero />
   <AtlasGrid />
   <SpecStrip />
