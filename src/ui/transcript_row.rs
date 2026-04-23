@@ -482,6 +482,59 @@ fn build_tool_call_widget(
     }
 }
 
+fn build_subagent_header_row(
+    title: Option<&str>,
+    reasoning_preview: Option<ReasoningPreview>,
+    on_inspect: impl Fn() + 'static,
+    on_inspect_reasoning: impl Fn() + 'static,
+) -> gtk::Box {
+    let row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    row.set_margin_start(8);
+    row.set_margin_end(4);
+    row.set_margin_top(4);
+    row.set_margin_bottom(4);
+
+    let icon = gtk::Image::new();
+    icon.set_icon_name(Some("system-run-symbolic"));
+    icon.set_pixel_size(16);
+    row.append(&icon);
+
+    let title_label = gtk::Label::new(title);
+    title_label.set_halign(gtk::Align::Start);
+    title_label.set_hexpand(false);
+    title_label.set_ellipsize(gtk::pango::EllipsizeMode::End);
+    row.append(&title_label);
+
+    if let Some(reasoning_preview) = reasoning_preview {
+        if reasoning_preview.has_visible_reasoning {
+            let reasoning_btn = gtk::Button::with_label("Thinking");
+            reasoning_btn.add_css_class("flat");
+            reasoning_btn.add_css_class("pill");
+            reasoning_btn.add_css_class("reasoning-pill");
+            reasoning_btn.connect_clicked(move |_| on_inspect_reasoning());
+            row.append(&reasoning_btn);
+        } else if reasoning_preview.encrypted_only {
+            let encrypted_label = gtk::Label::new(Some("Thinking (encrypted)"));
+            encrypted_label.add_css_class("pill");
+            encrypted_label.add_css_class("reasoning-pill-encrypted");
+            row.append(&encrypted_label);
+        }
+    }
+
+    let inspect_btn = gtk::Button::new();
+    inspect_btn.set_icon_name("view-reveal-symbolic");
+    inspect_btn.set_tooltip_text(Some("Inspect subagent"));
+    inspect_btn.add_css_class("flat");
+    inspect_btn.connect_clicked(move |_| on_inspect());
+
+    let spacer = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+    spacer.set_hexpand(true);
+    row.append(&spacer);
+    row.append(&inspect_btn);
+
+    row
+}
+
 impl FactoryComponent for TranscriptRow {
     type Init = TranscriptItemInit;
     type Input = TranscriptRowMsg;
@@ -1132,74 +1185,34 @@ impl TranscriptRow {
         root.set_margin_top(2);
         root.set_margin_bottom(2);
 
-        let row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-        row.set_margin_start(8);
-        row.set_margin_end(4);
-        row.set_margin_top(4);
-        row.set_margin_bottom(4);
-
-        // Subagent icon
-        let icon = gtk::Image::new();
-        icon.set_icon_name(Some("system-run-symbolic"));
-        icon.set_pixel_size(16);
-        row.append(&icon);
-
-        // Title
-        let title_label = gtk::Label::new(self.subagent_title.as_deref());
-        title_label.set_halign(gtk::Align::Start);
-        title_label.set_hexpand(false);
-        title_label.set_ellipsize(gtk::pango::EllipsizeMode::End);
-        row.append(&title_label);
-
-        if let Some(reasoning_preview) = self.reasoning_preview {
-            if reasoning_preview.has_visible_reasoning {
-                let reasoning_btn = gtk::Button::with_label("Thinking");
-                reasoning_btn.add_css_class("flat");
-                reasoning_btn.add_css_class("pill");
-                reasoning_btn.add_css_class("reasoning-pill");
+        let on_inspect = {
+            let sender = sender.clone();
+            move || sender.input(TranscriptRowMsg::InspectClicked)
+        };
+        let on_inspect_reasoning = {
+            let sender = sender.clone();
+            let session_id = self.session_id.clone();
+            let transcript_item_index = self.transcript_item_index;
+            move || {
+                if let (Some(session_id), Some(transcript_item_index)) =
+                    (session_id.clone(), transcript_item_index)
                 {
-                    let sender = sender.clone();
-                    let session_id = self.session_id.clone();
-                    let transcript_item_index = self.transcript_item_index;
-                    reasoning_btn.connect_clicked(move |_| {
-                        if let (Some(session_id), Some(transcript_item_index)) =
-                            (session_id.clone(), transcript_item_index)
-                        {
-                            sender
-                                .output(TranscriptRowOutput::InspectReasoning {
-                                    session_id,
-                                    transcript_item_index,
-                                })
-                                .ok();
-                        }
-                    });
+                    sender
+                        .output(TranscriptRowOutput::InspectReasoning {
+                            session_id,
+                            transcript_item_index,
+                        })
+                        .ok();
                 }
-                row.append(&reasoning_btn);
-            } else if reasoning_preview.encrypted_only {
-                let encrypted_label = gtk::Label::new(Some("Thinking (encrypted)"));
-                encrypted_label.add_css_class("pill");
-                encrypted_label.add_css_class("reasoning-pill-encrypted");
-                row.append(&encrypted_label);
             }
-        }
+        };
 
-        // Inspect button
-        let inspect_btn = gtk::Button::new();
-        inspect_btn.set_icon_name("view-reveal-symbolic");
-        inspect_btn.set_tooltip_text(Some("Inspect subagent"));
-        inspect_btn.add_css_class("flat");
-        {
-            let s = sender.clone();
-            inspect_btn.connect_clicked(move |_| {
-                s.input(TranscriptRowMsg::InspectClicked);
-            });
-        }
-
-        let spacer = gtk::Box::new(gtk::Orientation::Horizontal, 0);
-        spacer.set_hexpand(true);
-        row.append(&spacer);
-        row.append(&inspect_btn);
-
+        let row = build_subagent_header_row(
+            self.subagent_title.as_deref(),
+            self.reasoning_preview,
+            on_inspect,
+            on_inspect_reasoning,
+        );
         root.append(&row);
 
         // Return dummy widgets struct
@@ -1551,6 +1564,76 @@ mod tests {
             .and_then(|w| w.downcast::<gtk::Button>().ok())
             .expect("reasoning button should remain in the left metadata flow");
         assert_eq!(reasoning.label().as_deref(), Some("Thinking"));
+    }
+
+    #[gtk::test]
+    fn subagent_reasoning_pill_stays_left_of_trailing_actions() {
+        let row = build_subagent_header_row(
+            Some("Explore"),
+            Some(ReasoningPreview {
+                has_reasoning: true,
+                has_visible_reasoning: true,
+                encrypted_only: false,
+            }),
+            || {},
+            || {},
+        );
+
+        let children = row_box_children(&row);
+
+        let inspect = children
+            .last()
+            .cloned()
+            .and_then(|w| w.downcast::<gtk::Button>().ok())
+            .expect("inspect button should stay last");
+        assert_eq!(inspect.icon_name().as_deref(), Some("view-reveal-symbolic"));
+
+        let spacer = inspect
+            .prev_sibling()
+            .and_then(|w| w.downcast::<gtk::Box>().ok())
+            .expect("subagent row should insert a spacer before inspect");
+        assert!(spacer.hexpands());
+
+        let reasoning = spacer
+            .prev_sibling()
+            .and_then(|w| w.downcast::<gtk::Button>().ok())
+            .expect("reasoning button should remain in the left metadata flow");
+        assert_eq!(reasoning.label().as_deref(), Some("Thinking"));
+    }
+
+    #[gtk::test]
+    fn subagent_encrypted_reasoning_label_stays_left_of_trailing_actions() {
+        let row = build_subagent_header_row(
+            Some("Explore"),
+            Some(ReasoningPreview {
+                has_reasoning: true,
+                has_visible_reasoning: false,
+                encrypted_only: true,
+            }),
+            || {},
+            || {},
+        );
+
+        let children = row_box_children(&row);
+
+        let inspect = children
+            .last()
+            .cloned()
+            .and_then(|w| w.downcast::<gtk::Button>().ok())
+            .expect("inspect button should stay last");
+        assert_eq!(inspect.icon_name().as_deref(), Some("view-reveal-symbolic"));
+
+        let spacer = inspect
+            .prev_sibling()
+            .and_then(|w| w.downcast::<gtk::Box>().ok())
+            .expect("subagent row should insert a spacer before inspect");
+        assert!(spacer.hexpands());
+
+        let encrypted = spacer
+            .prev_sibling()
+            .and_then(|w| w.downcast::<gtk::Label>().ok())
+            .expect("encrypted-only label should remain in the left metadata flow");
+        assert_eq!(encrypted.label().as_str(), "Thinking (encrypted)");
     }
 
     #[test]
