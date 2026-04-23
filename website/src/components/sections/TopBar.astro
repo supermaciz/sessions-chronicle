@@ -1,7 +1,4 @@
 ---
-import Button from '../adwaita/Button.astro';
-
-const flathubUrl = 'https://flathub.org/apps/io.github.supermaciz.sessionschronicle';
 const githubUrl = 'https://github.com/supermaciz/sessions-chronicle';
 ---
 <header class="topbar">
@@ -21,7 +18,6 @@ const githubUrl = 'https://github.com/supermaciz/sessions-chronicle';
     <nav class="topbar__nav" aria-label="Primary">
       <a class="topbar__link" href="#features">Features</a>
       <a class="topbar__link" href={githubUrl} rel="noopener">GitHub</a>
-      <Button variant="suggested" href={flathubUrl}>Install</Button>
     </nav>
   </div>
 </header>
@@ -85,21 +81,12 @@ const githubUrl = 'https://github.com/supermaciz/sessions-chronicle';
   .topbar__link:hover {
     background: rgba(0, 0, 6, 0.07);
   }
-  .topbar__nav :global(.btn) {
-    margin-inline-start: var(--space-2);
-    padding: 8px 16px;
-  }
-
   @media (max-width: 640px) {
     .topbar__name {
       display: none;
     }
     .topbar__link {
       padding: 0 var(--space-2);
-    }
-    .topbar__nav :global(.btn) {
-      margin-inline-start: var(--space-1);
-      padding: 8px 14px;
     }
   }
 </style>
