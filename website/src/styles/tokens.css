@@ -1,0 +1,61 @@
+:root {
+  --window-bg-color: #fafafa;
+  --window-fg-color: rgba(0, 0, 6, 0.8);
+  --view-bg-color: #ffffff;
+  --view-fg-color: rgba(0, 0, 6, 0.8);
+  --headerbar-bg-color: #ebebeb;
+  --card-bg-color: #ffffff;
+  --card-shade-color: rgba(0, 0, 6, 0.07);
+
+  --accent-bg-color: #3584e4;
+  --accent-fg-color: #ffffff;
+  --accent-color: #1c71d8;
+
+  --success-color: #26a269;
+  --warning-color: #cd9309;
+  --error-color: #c01c28;
+
+  --border-color: rgba(0, 0, 6, 0.15);
+  --separator-color: rgba(0, 0, 6, 0.07);
+
+  --toast-bg-color: #2e2e2e;
+  --toast-fg-color: #ffffff;
+
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-12: 48px;
+  --space-16: 64px;
+
+  --radius-sm: 6px;
+  --radius-md: 9px;
+  --radius-lg: 12px;
+  --radius-xl: 16px;
+
+  --shadow-card: 0 1px 3px rgba(0, 0, 6, 0.05),
+    0 0 0 1px var(--border-color);
+  --shadow-window: 0 8px 32px rgba(0, 0, 6, 0.12),
+    0 2px 8px rgba(0, 0, 6, 0.06);
+  --shadow-toast: 0 6px 16px rgba(0, 0, 6, 0.18);
+
+  --font-sans: "Adwaita Sans", system-ui, -apple-system, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, monospace;
+
+  --text-display: 56px;
+  --text-h1: 32px;
+  --text-h2: 22px;
+  --text-h3: 18px;
+  --text-body: 14px;
+  --text-small: 12px;
+  --text-caption: 11px;
+  --line-tight: 1.15;
+  --line-body: 1.5;
+
+  --container-max: 1280px;
+  --container-pad: var(--space-6);
+}
+
+/* @media (prefers-color-scheme: dark) { :root { ... } } */

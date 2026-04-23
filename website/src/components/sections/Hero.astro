@@ -1,0 +1,228 @@
+---
+import { Picture } from "astro:assets";
+import Button from "../adwaita/Button.astro";
+import sessionList from "../../assets/screenshots/session_list.png";
+import sessionDetail from "../../assets/screenshots/session_detail.png";
+
+const githubUrl = "https://github.com/supermaciz/sessions-chronicle";
+const supportedAssistants = [
+  {
+    name: "Claude Code",
+    icon: "/icons/assistants/claude-code-symbolic.svg",
+  },
+  {
+    name: "OpenCode",
+    icon: "/icons/assistants/opencode-symbolic.svg",
+  },
+  {
+    name: "Codex",
+    icon: "/icons/assistants/codex-symbolic.svg",
+  },
+  {
+    name: "Mistral Vibe",
+    icon: "/icons/assistants/mistral-vibe-symbolic.svg",
+  },
+] as const;
+---
+
+<section class="hero">
+  <div class="container hero__grid">
+    <div class="hero__text">
+      <p class="hero__eyebrow">OPEN SOURCE · LOCAL-FIRST · GTK 4</p>
+      <h1 class="hero__title">Every conversation you've had with a machine.</h1>
+      <p class="hero__sub">
+        Sessions Chronicle indexes your coding agents transcripts on your disk into one searchable archive. Nothing
+        leaves your machine.
+      </p>
+      <ul class="hero__assistants" aria-label="Supported AI assistants">
+        {supportedAssistants.map((assistant) => (
+          <li class="hero__assistant-pill">
+            <span class="hero__assistant-icon" style={`--assistant-icon: url('${assistant.icon}')`} aria-hidden="true"></span>
+            <span>{assistant.name}</span>
+          </li>
+        ))}
+      </ul>
+      <div class="hero__ctas">
+        <Button variant="pill" href={githubUrl}>View on GitHub →</Button>
+      </div>
+      <p class="hero__meta">MIT · Flatpak · Linux</p>
+    </div>
+
+    <div class="hero__visual">
+      <div class="hero__slot hero__slot--main">
+        <Picture
+          src={sessionDetail}
+          formats={["avif", "webp"]}
+          fallbackFormat="png"
+          widths={[400, 640, 960, 1280]}
+          sizes="(max-width: 640px) 88vw, (max-width: 1023px) 70vw, 620px"
+          loading="eager"
+          fetchpriority="high"
+          alt="A single Claude Code session showing tool calls inline"
+        />
+      </div>
+
+      <div class="hero__slot hero__slot--overlay">
+        <Picture
+          src={sessionList}
+          formats={["avif", "webp"]}
+          fallbackFormat="png"
+          widths={[240, 360, 480, 720]}
+          sizes="(max-width: 640px) 42vw, (max-width: 1023px) 28vw, 260px"
+          loading="eager"
+          alt="Sessions Chronicle main window listing recent AI assistant conversations"
+        />
+      </div>
+    </div>
+  </div>
+</section>
+
+<style>
+  .hero {
+    padding-block: var(--space-16) var(--space-12);
+    background: var(--window-bg-color);
+  }
+  .hero__grid {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: var(--space-12);
+    align-items: center;
+  }
+  @media (min-width: 1024px) {
+    .hero__grid {
+      grid-template-columns: 40% 1fr;
+      gap: var(--space-16);
+    }
+  }
+
+  .hero__eyebrow {
+    font-family: var(--font-mono);
+    font-size: var(--text-caption);
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--accent-color);
+    margin-bottom: var(--space-4);
+  }
+  .hero__title {
+    font-size: clamp(36px, 5vw, var(--text-display));
+    line-height: var(--line-tight);
+    font-weight: 700;
+    margin-bottom: var(--space-4);
+    letter-spacing: -0.01em;
+  }
+  .hero__sub {
+    font-size: clamp(var(--text-body), 1.4vw, 18px);
+    color: color-mix(in srgb, var(--window-fg-color) 80%, transparent);
+    margin-bottom: var(--space-4);
+    max-width: 42ch;
+  }
+  .hero__assistants {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-2);
+    list-style: none;
+    padding: 0;
+    margin: 0 0 var(--space-6);
+    max-width: 42ch;
+  }
+  .hero__assistant-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-2);
+    padding: 8px 12px;
+    border-radius: 9999px;
+    background: color-mix(in srgb, var(--view-bg-color) 92%, var(--window-bg-color));
+    border: 1px solid color-mix(in srgb, var(--window-fg-color) 14%, transparent);
+    color: color-mix(in srgb, var(--window-fg-color) 88%, transparent);
+    font-size: var(--text-body);
+    font-weight: 600;
+    line-height: 1;
+    white-space: nowrap;
+    box-shadow: 0 1px 2px rgba(0, 0, 6, 0.03);
+  }
+  .hero__assistant-icon {
+    display: inline-block;
+    width: 16px;
+    height: 16px;
+    flex: none;
+    opacity: 0.76;
+    background: currentColor;
+    -webkit-mask-image: var(--assistant-icon);
+    mask-image: var(--assistant-icon);
+    -webkit-mask-repeat: no-repeat;
+    mask-repeat: no-repeat;
+    -webkit-mask-position: center;
+    mask-position: center;
+    -webkit-mask-size: 16px 16px;
+    mask-size: 16px 16px;
+  }
+  .hero__ctas {
+    display: flex;
+    gap: var(--space-3);
+    flex-wrap: wrap;
+    margin-bottom: var(--space-4);
+  }
+  .hero__meta {
+    font-family: var(--font-mono);
+    font-size: var(--text-small);
+    color: color-mix(in srgb, var(--window-fg-color) 55%, transparent);
+  }
+
+  .hero__visual {
+    position: relative;
+    width: 100%;
+    max-width: 760px;
+    margin-inline: auto;
+  }
+  .hero__slot {
+    overflow: visible;
+  }
+  .hero__slot--main {
+    position: relative;
+    width: 84%;
+    z-index: 1;
+  }
+  .hero__slot :global(picture) {
+    display: block;
+    width: 100%;
+    line-height: 0;
+    border-radius: var(--radius-lg);
+    overflow: hidden;
+    border: 1px solid color-mix(in srgb, var(--accent-bg-color) 42%, white);
+  }
+  .hero__slot :global(img) {
+    display: block;
+    width: 100%;
+    height: auto;
+  }
+  .hero__slot--overlay {
+    position: absolute;
+    right: 0;
+    bottom: 2%;
+    width: 38%;
+    z-index: 2;
+  }
+
+  @media (max-width: 1023px) {
+    .hero__visual {
+      max-width: 640px;
+    }
+    .hero__slot--main {
+      width: 86%;
+    }
+    .hero__slot--overlay {
+      width: 40%;
+      bottom: 1%;
+    }
+  }
+  @media (max-width: 640px) {
+    .hero__slot--main {
+      width: 88%;
+    }
+    .hero__slot--overlay {
+      width: 44%;
+      right: 0;
+      bottom: 0;
+    }
+  }
+</style>

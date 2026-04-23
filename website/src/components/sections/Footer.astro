@@ -1,0 +1,40 @@
+---
+const year = new Date().getFullYear();
+---
+<footer class="footer">
+  <div class="container footer__row">
+    <div class="footer__left">Sessions Chronicle © {year} · Mathieu Cizo · MIT License</div>
+    <nav class="footer__links" aria-label="Footer links">
+      <a href="https://github.com/supermaciz/sessions-chronicle">GitHub</a>
+      <a href="https://github.com/supermaciz/sessions-chronicle/issues">Issues</a>
+      <a href="https://github.com/supermaciz/sessions-chronicle/releases">Releases</a>
+    </nav>
+  </div>
+</footer>
+
+<style>
+  .footer {
+    padding-block: var(--space-8);
+    border-top: 1px solid var(--separator-color);
+    font-size: var(--text-small);
+    color: color-mix(in srgb, var(--window-fg-color) 60%, transparent);
+  }
+  .footer__row {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: var(--space-3);
+    align-items: center;
+  }
+  @media (min-width: 768px) {
+    .footer__row { grid-template-columns: 1fr auto 1fr; }
+    .footer__right { text-align: right; }
+  }
+  .footer__links {
+    display: flex;
+    gap: var(--space-4);
+    justify-content: center;
+    flex-wrap: wrap;
+  }
+  .footer__links a { color: var(--accent-color); }
+  .footer__links a:hover { text-decoration: underline; }
+</style>

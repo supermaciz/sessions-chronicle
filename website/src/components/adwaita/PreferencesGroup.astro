@@ -1,0 +1,32 @@
+---
+interface Props {
+  title?: string;
+  description?: string;
+}
+const { title, description } = Astro.props;
+---
+<section class="group">
+  {title && <h3 class="group__title">{title}</h3>}
+  {description && <p class="group__desc">{description}</p>}
+  <div class="group__rows"><slot /></div>
+</section>
+
+<style>
+  .group { display: flex; flex-direction: column; gap: var(--space-2); }
+  .group__title {
+    font-size: var(--text-h3);
+    font-weight: 700;
+    color: var(--window-fg-color);
+    margin: 0;
+  }
+  .group__desc {
+    font-size: var(--text-small);
+    color: color-mix(in srgb, var(--window-fg-color) 60%, transparent);
+  }
+  .group__rows {
+    background: var(--card-bg-color);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-card);
+    overflow: hidden;
+  }
+</style>

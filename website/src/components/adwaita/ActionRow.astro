@@ -1,0 +1,37 @@
+---
+interface Props {
+  title: string;
+  subtitle?: string;
+}
+const { title, subtitle } = Astro.props;
+---
+<div class="row">
+  <div class="row__prefix"><slot name="prefix" /></div>
+  <div class="row__text">
+    <div class="row__title">{title}</div>
+    {subtitle && <div class="row__subtitle">{subtitle}</div>}
+  </div>
+  <div class="row__suffix"><slot name="suffix" /></div>
+</div>
+
+<style>
+  .row {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+    min-height: 56px;
+    padding: var(--space-3) var(--space-4);
+  }
+  .row + .row { border-top: 1px solid var(--separator-color); }
+  .row__prefix { display: flex; align-items: center; color: var(--window-fg-color); }
+  .row__prefix:empty { display: none; }
+  .row__text { flex: 1; min-width: 0; }
+  .row__title { font-weight: 500; color: var(--window-fg-color); }
+  .row__subtitle {
+    font-size: var(--text-small);
+    color: color-mix(in srgb, var(--window-fg-color) 60%, transparent);
+    margin-top: 2px;
+  }
+  .row__suffix { display: flex; align-items: center; gap: var(--space-2); }
+  .row__suffix:empty { display: none; }
+</style>

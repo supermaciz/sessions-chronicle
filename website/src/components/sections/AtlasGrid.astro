@@ -1,0 +1,215 @@
+---
+import { Picture } from "astro:assets";
+import Card from "../adwaita/Card.astro";
+import search from "../../assets/screenshots/session_list_search_light.png";
+import detailToolCalls from "../../assets/screenshots/session_detail_tool_calls.png";
+import analytics from "../../assets/screenshots/analytics_light.png";
+import pinned from "../../assets/screenshots/session_list_pinned_light.png";
+
+const plateImg = {
+  formats: ["avif", "webp"] as const,
+  fallbackFormat: "png" as const,
+  widths: [360, 720, 1080],
+  sizes: "(max-width: 768px) 100vw, (max-width: 1024px) 50vw, 33vw",
+  loading: "lazy" as const,
+};
+---
+
+<section class="atlas" id="features">
+  <div class="container">
+    <header class="atlas__header">
+      <h2 class="atlas__title">An atlas of what it does.</h2>
+      <p class="atlas__sub">
+        Four views onto a local-first tool for browsing and searching every
+        assistant session you've had.
+      </p>
+    </header>
+
+    <div class="atlas__grid">
+      <Card class="plate" padding="none">
+        <div class="plate__visual plate__visual--search">
+          <Picture
+            src={search}
+            {...plateImg}
+            alt="Session list with search focused, filtered results visible"
+          />
+        </div>
+        <div class="plate__body">
+          <h3 class="plate__title">Search every transcript</h3>
+          <p>
+            FTS5 over every prompt, response, and tool call. Filter by
+            assistant, project, or date.
+          </p>
+        </div>
+      </Card>
+
+      <Card class="plate" padding="none">
+        <div class="plate__visual plate__visual--detail">
+          <Picture
+            src={detailToolCalls}
+            {...plateImg}
+            alt="Session detail showing a burst of tool calls"
+          />
+        </div>
+        <div class="plate__body">
+          <h3 class="plate__title">Inspect tool calls</h3>
+          <p>
+            Every Bash, Edit, and subagent call rendered with arguments
+            and output.
+          </p>
+        </div>
+      </Card>
+
+      <Card class="plate" padding="none">
+        <div class="plate__visual plate__visual--pinned">
+          <Picture
+            src={pinned}
+            {...plateImg}
+            alt="Session list with a pinned row highlighted"
+          />
+        </div>
+        <div class="plate__body">
+          <h3 class="plate__title">Pin sessions worth keeping</h3>
+          <p>Star the breakthroughs. Skip the noise.</p>
+        </div>
+      </Card>
+
+      <Card class="plate" padding="none">
+        <div class="plate__visual plate__visual--analytics">
+          <Picture
+            src={analytics}
+            {...plateImg}
+            alt="Analytics dashboard showing usage by assistant and project"
+          />
+        </div>
+        <div class="plate__body">
+          <h3 class="plate__title">Track your habits</h3>
+          <p>
+            See which assistant you reach for, which projects consume your time,
+            and when you actually code.
+          </p>
+        </div>
+      </Card>
+    </div>
+  </div>
+</section>
+
+<style>
+  .atlas {
+    padding-block: var(--space-16);
+    background: var(--window-bg-color);
+  }
+  .atlas__header {
+    margin-bottom: var(--space-12);
+    text-align: center;
+  }
+  .atlas__title {
+    font-size: clamp(28px, 3vw, var(--text-h1));
+    font-weight: 700;
+    letter-spacing: -0.01em;
+    margin-bottom: var(--space-3);
+  }
+  .atlas__sub {
+    color: color-mix(in srgb, var(--window-fg-color) 70%, transparent);
+    max-width: 52ch;
+    margin-inline: auto;
+  }
+
+  .atlas__grid {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: var(--space-6);
+  }
+  @media (min-width: 768px) {
+    .atlas__grid {
+      grid-template-columns: repeat(2, 1fr);
+      gap: var(--space-8);
+    }
+  }
+
+  .plate {
+    display: flex;
+    flex-direction: column;
+  }
+  .plate__visual {
+    background: var(--headerbar-bg-color);
+    padding: var(--space-4);
+    aspect-ratio: 16 / 10;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+  }
+  .plate__visual :global(picture) {
+    display: block;
+    width: 100%;
+    height: 100%;
+    border-radius: var(--radius-md);
+    overflow: hidden;
+    box-shadow: var(--shadow-card);
+  }
+  .plate__visual :global(img) {
+    display: block;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    object-position: center;
+  }
+
+  .plate__visual--analytics :global(img) {
+    object-position: center top;
+  }
+  .plate__visual--detail :global(img) {
+    object-position: center top;
+  }
+  .plate__body {
+    padding: var(--space-6);
+  }
+  .plate__title {
+    font-size: var(--text-h3);
+    font-weight: 700;
+    margin-bottom: var(--space-2);
+  }
+  .plate__body p {
+    color: color-mix(in srgb, var(--window-fg-color) 70%, transparent);
+    font-size: var(--text-body);
+  }
+
+  .settings-value {
+    font-family: var(--font-mono);
+    font-size: var(--text-small);
+    color: color-mix(in srgb, var(--window-fg-color) 70%, transparent);
+  }
+  .settings-swatch {
+    display: block;
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    border: 1px solid var(--border-color);
+    background: var(--accent-bg-color);
+  }
+  .settings-toggle {
+    width: 40px;
+    height: 22px;
+    border-radius: 9999px;
+    background: var(--card-shade-color);
+    position: relative;
+    transition: background 120ms ease;
+  }
+  .settings-toggle--on {
+    background: var(--accent-bg-color);
+  }
+  .settings-toggle__dot {
+    position: absolute;
+    top: 2px;
+    left: 2px;
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    background: #fff;
+    transition: transform 120ms ease;
+  }
+  .settings-toggle--on .settings-toggle__dot {
+    transform: translateX(18px);
+  }
+</style>

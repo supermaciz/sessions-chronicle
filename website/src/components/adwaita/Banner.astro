@@ -1,0 +1,33 @@
+---
+interface Props {
+  variant?: 'info' | 'accent';
+  class?: string;
+}
+const { variant = 'accent', class: className } = Astro.props;
+---
+<div class:list={['banner', `banner--${variant}`, className]}>
+  <slot name="icon" />
+  <span class="banner__message"><slot /></span>
+</div>
+
+<style>
+  .banner {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+    padding: var(--space-3) var(--space-4);
+    border-radius: var(--radius-md);
+    border: 1px solid var(--border-color);
+    font-size: var(--text-body);
+  }
+  .banner--accent {
+    background: color-mix(in srgb, var(--accent-bg-color) 8%, transparent);
+    color: var(--accent-color);
+    border-color: color-mix(in srgb, var(--accent-bg-color) 22%, transparent);
+  }
+  .banner--info {
+    background: var(--card-shade-color);
+    color: var(--window-fg-color);
+  }
+  .banner__message { font-weight: 500; }
+</style>

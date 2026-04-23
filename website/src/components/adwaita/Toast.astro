@@ -1,0 +1,32 @@
+---
+interface Props {
+  message: string;
+  actionLabel?: string;
+  class?: string;
+}
+const { message, actionLabel, class: className } = Astro.props;
+---
+<div class:list={['toast', className]} aria-hidden="true">
+  <span class="toast__msg">{message}</span>
+  {actionLabel && <span class="toast__action">{actionLabel}</span>}
+</div>
+
+<style>
+  .toast {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-3);
+    padding: var(--space-2) var(--space-3);
+    background: var(--toast-bg-color);
+    color: var(--toast-fg-color);
+    border-radius: var(--radius-md);
+    box-shadow: var(--shadow-toast);
+    font-size: var(--text-body);
+    max-width: min(420px, 90vw);
+  }
+  .toast__msg { opacity: 0.92; }
+  .toast__action {
+    font-weight: 600;
+    color: #93c2ff;
+  }
+</style>

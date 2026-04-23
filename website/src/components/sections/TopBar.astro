@@ -1,0 +1,92 @@
+---
+const githubUrl = 'https://github.com/supermaciz/sessions-chronicle';
+---
+<header class="topbar">
+  <div class="container topbar__row">
+    <a class="topbar__brand" href="/" aria-label="Sessions Chronicle — home">
+      <img
+        class="topbar__icon"
+        src="/icon.svg"
+        alt=""
+        width="38"
+        height="38"
+        decoding="async"
+      />
+      <span class="topbar__name">Sessions Chronicle</span>
+    </a>
+
+    <nav class="topbar__nav" aria-label="Primary">
+      <a class="topbar__link" href="#features">Features</a>
+      <a class="topbar__link" href={githubUrl} rel="noopener">GitHub</a>
+    </nav>
+  </div>
+</header>
+
+<style>
+  .topbar {
+    position: sticky;
+    top: 0;
+    z-index: 10;
+    background: var(--headerbar-bg-color);
+    border-bottom: 1px solid var(--separator-color);
+  }
+  .topbar__row {
+    height: 56px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-4);
+  }
+  .topbar__brand {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-2);
+    color: var(--window-fg-color);
+    font-weight: 600;
+    text-decoration: none;
+    padding: var(--space-1) var(--space-2);
+    margin-inline-start: calc(var(--space-2) * -1);
+    border-radius: var(--radius-sm);
+  }
+  .topbar__brand:hover {
+    background: rgba(0, 0, 6, 0.05);
+  }
+  .topbar__icon {
+    display: block;
+    width: 38px;
+    height: 38px;
+  }
+  .topbar__name {
+    font-size: var(--text-h3);
+    letter-spacing: -0.005em;
+  }
+
+  .topbar__nav {
+    display: flex;
+    align-items: center;
+    gap: var(--space-1);
+  }
+  .topbar__link {
+    display: inline-flex;
+    align-items: center;
+    height: 36px;
+    padding: 0 var(--space-3);
+    font-size: var(--text-body);
+    font-weight: 500;
+    color: var(--window-fg-color);
+    text-decoration: none;
+    border-radius: var(--radius-sm);
+    transition: background-color 120ms ease;
+  }
+  .topbar__link:hover {
+    background: rgba(0, 0, 6, 0.07);
+  }
+  @media (max-width: 640px) {
+    .topbar__name {
+      display: none;
+    }
+    .topbar__link {
+      padding: 0 var(--space-2);
+    }
+  }
+</style>

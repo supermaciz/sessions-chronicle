@@ -1,0 +1,29 @@
+---
+interface Props {
+  padding?: 'none' | 'sm' | 'md' | 'lg';
+  as?: 'div' | 'article' | 'section';
+  elevated?: boolean;
+  class?: string;
+}
+
+const { padding = 'md', as: Tag = 'div', elevated = false, class: className } = Astro.props;
+---
+<Tag class:list={['card', `card--pad-${padding}`, elevated && 'card--elevated', className]}>
+  <slot />
+</Tag>
+
+<style>
+  .card {
+    background: var(--card-bg-color);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-card);
+    overflow: hidden;
+  }
+  .card--pad-none { padding: 0; }
+  .card--pad-sm { padding: var(--space-3); }
+  .card--pad-md { padding: var(--space-4); }
+  .card--pad-lg { padding: var(--space-6); }
+  .card--elevated {
+    box-shadow: var(--shadow-window);
+  }
+</style>
