@@ -398,7 +398,7 @@ fn build_tool_call_widget(
     let name_label = gtk::Label::new(None);
     name_label.add_css_class("monospace");
     name_label.set_halign(gtk::Align::Start);
-    name_label.set_hexpand(true);
+    name_label.set_hexpand(false);
     name_label.set_ellipsize(gtk::pango::EllipsizeMode::End);
     if let Some(query) = init.highlight_query.as_deref() {
         let (markup, _) = highlight::highlight_text(&init.tool_name, query);
@@ -450,6 +450,11 @@ fn build_tool_call_widget(
         let on_inspect = on_inspect.clone();
         inspect_btn.connect_clicked(move |_| on_inspect(id.clone()));
     }
+
+    let spacer = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+    spacer.set_hexpand(true);
+    row.append(&spacer);
+
     row.append(&inspect_btn);
     root.append(&row);
 
@@ -1142,22 +1147,9 @@ impl TranscriptRow {
         // Title
         let title_label = gtk::Label::new(self.subagent_title.as_deref());
         title_label.set_halign(gtk::Align::Start);
-        title_label.set_hexpand(true);
+        title_label.set_hexpand(false);
         title_label.set_ellipsize(gtk::pango::EllipsizeMode::End);
         row.append(&title_label);
-
-        // Inspect button
-        let inspect_btn = gtk::Button::new();
-        inspect_btn.set_icon_name("view-reveal-symbolic");
-        inspect_btn.set_tooltip_text(Some("Inspect subagent"));
-        inspect_btn.add_css_class("flat");
-        {
-            let s = sender.clone();
-            inspect_btn.connect_clicked(move |_| {
-                s.input(TranscriptRowMsg::InspectClicked);
-            });
-        }
-        row.append(&inspect_btn);
 
         if let Some(reasoning_preview) = self.reasoning_preview {
             if reasoning_preview.has_visible_reasoning {
@@ -1190,6 +1182,23 @@ impl TranscriptRow {
                 row.append(&encrypted_label);
             }
         }
+
+        // Inspect button
+        let inspect_btn = gtk::Button::new();
+        inspect_btn.set_icon_name("view-reveal-symbolic");
+        inspect_btn.set_tooltip_text(Some("Inspect subagent"));
+        inspect_btn.add_css_class("flat");
+        {
+            let s = sender.clone();
+            inspect_btn.connect_clicked(move |_| {
+                s.input(TranscriptRowMsg::InspectClicked);
+            });
+        }
+
+        let spacer = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+        spacer.set_hexpand(true);
+        row.append(&spacer);
+        row.append(&inspect_btn);
 
         root.append(&row);
 
@@ -1379,6 +1388,18 @@ pub fn transcript_item_init_from_display_item(
 mod tests {
     use super::*;
 
+    fn row_box_children(row: &gtk::Box) -> Vec<gtk::Widget> {
+        let mut children = Vec::new();
+        let mut child = row.first_child();
+
+        while let Some(widget) = child {
+            child = widget.next_sibling();
+            children.push(widget);
+        }
+
+        children
+    }
+
     fn tool_row(
         item_index: i64,
         tool_name: &str,
@@ -1479,6 +1500,57 @@ mod tests {
         };
         // "Read" in tool_name + "read" in summary fallback = 2.
         assert_eq!(count_tool_call_matches(&with_summary_fallback), 2);
+    }
+
+    #[gtk::test]
+    fn tool_call_reasoning_pill_stays_left_of_trailing_actions() {
+        let refs = build_tool_call_widget(
+            &ToolCallItemInit {
+                item_index: 1,
+                transcript_item_index: 1,
+                session_id: "session-1".to_string(),
+                tool_call_id: "call-1".to_string(),
+                tool_name: "Read".to_string(),
+                status: ToolCallStatus::Completed,
+                preview: Some("src/ui/transcript_row.rs:1-20".to_string()),
+                summary: None,
+                duration_ms: Some(12),
+                highlight_query: None,
+                reasoning_preview: ReasoningPreview {
+                    has_reasoning: true,
+                    has_visible_reasoning: true,
+                    encrypted_only: false,
+                },
+            },
+            |_| {},
+            |_, _| {},
+        );
+
+        let header = refs
+            .root
+            .first_child()
+            .and_then(|w| w.downcast::<gtk::Box>().ok())
+            .expect("tool-call header row");
+        let children = row_box_children(&header);
+
+        let inspect = children
+            .last()
+            .cloned()
+            .and_then(|w| w.downcast::<gtk::Button>().ok())
+            .expect("inspect button should stay last");
+        assert_eq!(inspect.icon_name().as_deref(), Some("view-reveal-symbolic"));
+
+        let spacer = inspect
+            .prev_sibling()
+            .and_then(|w| w.downcast::<gtk::Box>().ok())
+            .expect("tool-call row should insert a spacer before inspect");
+        assert!(spacer.hexpands());
+
+        let reasoning = spacer
+            .prev_sibling()
+            .and_then(|w| w.downcast::<gtk::Button>().ok())
+            .expect("reasoning button should remain in the left metadata flow");
+        assert_eq!(reasoning.label().as_deref(), Some("Thinking"));
     }
 
     #[test]
