@@ -5,6 +5,24 @@ import sessionList from "../../assets/screenshots/session_list.png";
 import sessionDetail from "../../assets/screenshots/session_detail.png";
 
 const githubUrl = "https://github.com/supermaciz/sessions-chronicle";
+const supportedAssistants = [
+  {
+    name: "Claude Code",
+    icon: "/icons/assistants/claude-code-symbolic.svg",
+  },
+  {
+    name: "OpenCode",
+    icon: "/icons/assistants/opencode-symbolic.svg",
+  },
+  {
+    name: "Codex",
+    icon: "/icons/assistants/codex-symbolic.svg",
+  },
+  {
+    name: "Mistral Vibe",
+    icon: "/icons/assistants/mistral-vibe-symbolic.svg",
+  },
+] as const;
 ---
 
 <section class="hero">
@@ -13,10 +31,17 @@ const githubUrl = "https://github.com/supermaciz/sessions-chronicle";
       <p class="hero__eyebrow">OPEN SOURCE · LOCAL-FIRST · GTK 4</p>
       <h1 class="hero__title">Every conversation you've had with a machine.</h1>
       <p class="hero__sub">
-        Sessions Chronicle indexes Claude Code, OpenCode, Codex, and Mistral
-        Vibe transcripts on your disk into one searchable archive. Nothing
+        Sessions Chronicle indexes your coding agents transcripts on your disk into one searchable archive. Nothing
         leaves your machine.
       </p>
+      <ul class="hero__assistants" aria-label="Supported AI assistants">
+        {supportedAssistants.map((assistant) => (
+          <li class="hero__assistant-pill">
+            <img class="hero__assistant-icon" src={assistant.icon} alt="" width="16" height="16" aria-hidden="true" />
+            <span>{assistant.name}</span>
+          </li>
+        ))}
+      </ul>
       <div class="hero__ctas">
         <Button variant="pill" href={githubUrl}>View on GitHub →</Button>
       </div>
@@ -88,8 +113,36 @@ const githubUrl = "https://github.com/supermaciz/sessions-chronicle";
   .hero__sub {
     font-size: clamp(var(--text-body), 1.4vw, 18px);
     color: color-mix(in srgb, var(--window-fg-color) 80%, transparent);
-    margin-bottom: var(--space-6);
+    margin-bottom: var(--space-4);
     max-width: 42ch;
+  }
+  .hero__assistants {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-2);
+    list-style: none;
+    padding: 0;
+    margin: 0 0 var(--space-6);
+    max-width: 42ch;
+  }
+  .hero__assistant-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-2);
+    padding: 8px 12px;
+    border-radius: 9999px;
+    background: color-mix(in srgb, var(--view-bg-color) 92%, var(--window-bg-color));
+    border: 1px solid color-mix(in srgb, var(--window-fg-color) 10%, transparent);
+    color: color-mix(in srgb, var(--window-fg-color) 88%, transparent);
+    font-size: var(--text-body);
+    font-weight: 600;
+    line-height: 1;
+  }
+  .hero__assistant-icon {
+    width: 16px;
+    height: 16px;
+    flex: none;
+    opacity: 0.72;
   }
   .hero__ctas {
     display: flex;
