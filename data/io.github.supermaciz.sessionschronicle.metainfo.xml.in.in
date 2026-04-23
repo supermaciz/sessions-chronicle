@@ -49,6 +49,18 @@
   </categories>
   <content_rating type="oars-1.1" />
   <releases>
+    <release version="0.4.5" date="2026-04-24">
+      <description>
+        <p>Adds Codex and Claude Code subagent linkage and improves UI responsiveness.</p>
+        <ul>
+          <li>Link Claude Code subagent transcripts to child sessions</li>
+          <li>Link Codex subagent tool calls to child sessions</li>
+          <li>Wrap tool-burst header pills for better narrow-window layout</li>
+          <li>Keep reasoning pills left-aligned in transcript rows</li>
+          <li>Use dynamic agent icons and expand Web tool category recognition</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.4.4" date="2026-04-16">
       <description>
         <p>Improves transcript rendering, OpenCode parsing, and indexing reliability.</p>
