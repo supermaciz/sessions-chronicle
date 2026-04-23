@@ -106,7 +106,7 @@ pub fn classify_tool_name(name: &str) -> ToolCategory {
         "Agent" | "Task" | "TaskCreate" | "TaskUpdate" => ToolCategory::Agent,
 
         // Web (network operations)
-        "WebSearch" | "WebFetch" => ToolCategory::Web,
+        "WebSearch" | "WebFetch" | "websearch" | "webfetch" => ToolCategory::Web,
 
         // Everything else
         _ => ToolCategory::Other,

@@ -495,7 +495,7 @@ fn build_subagent_header_row(
     row.set_margin_bottom(4);
 
     let icon = gtk::Image::new();
-    icon.set_icon_name(Some("system-run-symbolic"));
+    icon.set_icon_name(Some(TOOL_ICONS.agent));
     icon.set_pixel_size(16);
     row.append(&icon);
 
@@ -1564,6 +1564,18 @@ mod tests {
             .and_then(|w| w.downcast::<gtk::Button>().ok())
             .expect("reasoning button should remain in the left metadata flow");
         assert_eq!(reasoning.label().as_deref(), Some("Thinking"));
+    }
+
+    #[gtk::test]
+    fn subagent_header_uses_agent_icon() {
+        let row = build_subagent_header_row(Some("Explore"), None, || {}, || {});
+
+        let icon = row
+            .first_child()
+            .and_then(|w| w.downcast::<gtk::Image>().ok())
+            .expect("subagent row should start with an icon");
+
+        assert_eq!(icon.icon_name().as_deref(), Some(icon_names::SMART_TOY));
     }
 
     #[gtk::test]
