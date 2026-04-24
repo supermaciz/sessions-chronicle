@@ -1,0 +1,8 @@
+[Flatpak Repo]
+Title=Sessions Chronicle
+Url=https://sessions-chronicle.maciz.dev/flatpak/
+Homepage=https://github.com/supermaciz/sessions-chronicle
+Comment=Flatpak repository for Sessions Chronicle
+Description=Flatpak repository for Sessions Chronicle
+Icon=https://raw.githubusercontent.com/supermaciz/sessions-chronicle/main/data/icons/dev.maciz.sessionschronicle.svg
+GPGKey=mDMEaeu2xxYJKwYBBAHaRw8BAQdAFqXaw9LmQrJPpLAF9pM95B2sKKdx3x689bNZFwyNHG+0LVNlc3Npb25zIENocm9uaWNsZSBGbGF0cGFrIDxtYWNpekBvdXRsb29rLmZyPoiTBBMWCgA7FiEE+Ah2Jk3LEpnGbiHQUMS82W/losEFAmnrtscCGwMFCwkIBwICIgIGFQoJCAsCBBYCAwECHgcCF4AACgkQUMS82W/losEtYgEA1gpSgy4MtcOST12HXYouc7H2s34+3HNyqYhQ6vcfMWoA/2Gc7RioWjLy/e3gtq5+zyU5b2V4cz2mZdTk0vreJ+8B

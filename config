@@ -1,0 +1,12 @@
+[core]
+repo_version=1
+mode=archive-z2
+indexed-deltas=true
+
+[flatpak]
+title=Sessions Chronicle
+comment=Flatpak repository for Sessions Chronicle
+description=Flatpak repository for Sessions Chronicle
+homepage=https://github.com/supermaciz/sessions-chronicle
+icon=https://raw.githubusercontent.com/supermaciz/sessions-chronicle/main/data/icons/dev.maciz.sessionschronicle.svg
+default-branch=master
