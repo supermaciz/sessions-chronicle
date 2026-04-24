@@ -29,57 +29,60 @@ const supportedAssistants = [
 ---
 
 <section class="hero">
-  <div class="container hero__grid">
-    <div class="hero__text">
-      <p class="hero__eyebrow">OPEN SOURCE · LOCAL-FIRST · GTK 4</p>
-      <h1 class="hero__title">Every conversation you've had with a machine.</h1>
-      <p class="hero__sub">
-        Sessions Chronicle indexes your coding agents transcripts on your disk into one searchable archive. Nothing
-        leaves your machine.
-      </p>
-      <ul class="hero__assistants" aria-label="Supported AI assistants">
-        {supportedAssistants.map((assistant) => (
-          <li class="hero__assistant-pill">
-            <span class="hero__assistant-icon" style={`--assistant-icon: url('${assistant.icon}')`} aria-hidden="true"></span>
-            <span>{assistant.name}</span>
-          </li>
-        ))}
-      </ul>
-      <div class="hero__ctas">
-        <Button variant="pill" href={githubUrl}>View on GitHub →</Button>
+  <div class="container">
+    <div class="hero__grid">
+      <div class="hero__text">
+        <p class="hero__eyebrow">OPEN SOURCE · LOCAL-FIRST · GTK 4</p>
+        <h1 class="hero__title">Every conversation you've had with a machine.</h1>
+        <p class="hero__sub">
+          Sessions Chronicle indexes your coding agents transcripts on your disk into one searchable archive. Nothing
+          leaves your machine.
+        </p>
+        <ul class="hero__assistants" aria-label="Supported AI assistants">
+          {supportedAssistants.map((assistant) => (
+            <li class="hero__assistant-pill">
+              <span class="hero__assistant-icon" style={`--assistant-icon: url('${assistant.icon}')`} aria-hidden="true"></span>
+              <span>{assistant.name}</span>
+            </li>
+          ))}
+        </ul>
+        <div class="hero__ctas">
+          <Button variant="pill" href={githubUrl}>View on GitHub →</Button>
+        </div>
+        <p class="hero__meta">MIT · Self-hosted Flatpak · Linux</p>
       </div>
-      <div class="hero__commands" aria-label="Flatpak install commands">
-        <code>{flatpakInstallCommand}</code>
-        <code>{flatpakRunCommand}</code>
+
+      <div class="hero__visual">
+        <div class="hero__slot hero__slot--main">
+          <Picture
+            src={sessionDetail}
+            formats={["avif", "webp"]}
+            fallbackFormat="png"
+            widths={[400, 640, 960, 1280]}
+            sizes="(max-width: 640px) 88vw, (max-width: 1023px) 70vw, 620px"
+            loading="eager"
+            fetchpriority="high"
+            alt="A single Claude Code session showing tool calls inline"
+          />
+        </div>
+
+        <div class="hero__slot hero__slot--overlay">
+          <Picture
+            src={sessionList}
+            formats={["avif", "webp"]}
+            fallbackFormat="png"
+            widths={[240, 360, 480, 720]}
+            sizes="(max-width: 640px) 42vw, (max-width: 1023px) 28vw, 260px"
+            loading="eager"
+            alt="Sessions Chronicle main window listing recent AI assistant conversations"
+          />
+        </div>
       </div>
-      <p class="hero__meta">MIT · Self-hosted Flatpak · Linux</p>
     </div>
 
-    <div class="hero__visual">
-      <div class="hero__slot hero__slot--main">
-        <Picture
-          src={sessionDetail}
-          formats={["avif", "webp"]}
-          fallbackFormat="png"
-          widths={[400, 640, 960, 1280]}
-          sizes="(max-width: 640px) 88vw, (max-width: 1023px) 70vw, 620px"
-          loading="eager"
-          fetchpriority="high"
-          alt="A single Claude Code session showing tool calls inline"
-        />
-      </div>
-
-      <div class="hero__slot hero__slot--overlay">
-        <Picture
-          src={sessionList}
-          formats={["avif", "webp"]}
-          fallbackFormat="png"
-          widths={[240, 360, 480, 720]}
-          sizes="(max-width: 640px) 42vw, (max-width: 1023px) 28vw, 260px"
-          loading="eager"
-          alt="Sessions Chronicle main window listing recent AI assistant conversations"
-        />
-      </div>
+    <div class="hero__commands" aria-label="Flatpak install commands">
+      <code>{flatpakInstallCommand}</code>
+      <code>{flatpakRunCommand}</code>
     </div>
   </div>
 </section>
@@ -177,8 +180,8 @@ const supportedAssistants = [
   .hero__commands {
     display: grid;
     gap: var(--space-2);
-    margin-bottom: var(--space-4);
-    max-width: min(100%, 42rem);
+    width: min(100%, 42rem);
+    margin: var(--space-10) auto 0;
   }
   .hero__commands code {
     display: block;
