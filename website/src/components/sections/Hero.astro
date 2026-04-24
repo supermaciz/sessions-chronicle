@@ -5,9 +5,8 @@ import sessionList from "../../assets/screenshots/session_list.png";
 import sessionDetail from "../../assets/screenshots/session_detail.png";
 
 const githubUrl = "https://github.com/supermaciz/sessions-chronicle";
-const flatpakInstallCommand = `flatpak install --user \\
+const flatpakInstallCommand = `flatpak install --user --from \\
   https://sessions-chronicle.maciz.dev/flatpak/dev.maciz.sessionschronicle.flatpakref`;
-const flatpakRunCommand = "flatpak run dev.maciz.sessionschronicle";
 const supportedAssistants = [
   {
     name: "Claude Code",
@@ -80,12 +79,43 @@ const supportedAssistants = [
       </div>
     </div>
 
-    <div class="hero__commands" aria-label="Flatpak install commands">
-      <code>{`${flatpakInstallCommand}
-${flatpakRunCommand}`}</code>
+    <div class="hero__commands" aria-label="Flatpak install commands" data-install-command={flatpakInstallCommand}>
+      <code>{flatpakInstallCommand}</code>
+      <button class="hero__copy" type="button" aria-label="Copy install command">
+        <svg class="hero__copy-icon" viewBox="0 0 16 16" aria-hidden="true">
+          <path d="M5 1.5h7.5v9H11v-7H5v-2Z" />
+          <path d="M3.5 4h7v10.5h-7V4Zm1.5 1.5V13h4V5.5H5Z" />
+        </svg>
+        <svg class="hero__copied-icon" viewBox="0 0 16 16" aria-hidden="true">
+          <path d="M6.4 11.7 2.8 8.1l1.1-1.1 2.5 2.5 5.7-5.7 1.1 1.1-6.8 6.8Z" />
+        </svg>
+      </button>
     </div>
   </div>
 </section>
+
+<script>
+  const commandBlock = document.querySelector<HTMLElement>(".hero__commands");
+  const copyButton = commandBlock?.querySelector<HTMLButtonElement>(".hero__copy");
+  let copyResetTimeout: number | undefined;
+
+  copyButton?.addEventListener("click", async () => {
+    const command = commandBlock?.dataset.installCommand;
+    if (!command) {
+      return;
+    }
+
+    await navigator.clipboard.writeText(command);
+    window.clearTimeout(copyResetTimeout);
+    copyButton.setAttribute("aria-label", "Install command copied");
+    copyButton.dataset.copied = "true";
+
+    copyResetTimeout = window.setTimeout(() => {
+      copyButton.setAttribute("aria-label", "Copy install command");
+      delete copyButton.dataset.copied;
+    }, 1800);
+  });
+</script>
 
 <style>
   .hero {
@@ -178,19 +208,20 @@ ${flatpakRunCommand}`}</code>
     color: color-mix(in srgb, var(--window-fg-color) 55%, transparent);
   }
   .hero__commands {
-    display: flex;
-    justify-content: center;
-    margin: var(--space-10) auto 0;
+    position: relative;
+    display: block;
+    margin: var(--space-12) auto 0;
+    max-width: min(100%, 42rem);
   }
   .hero__commands code {
     display: block;
-    width: max-content;
-    max-width: min(100%, 42rem);
-    padding: 12px 16px;
+    width: 100%;
+    box-sizing: border-box;
+    padding: 14px 60px 14px 18px;
     border-radius: var(--radius-sm);
     background: var(--toast-bg-color);
     font-family: var(--font-mono);
-    font-size: var(--text-small);
+    font-size: var(--text-body);
     color: var(--toast-fg-color);
     text-align: left;
     white-space: pre;
@@ -200,6 +231,52 @@ ${flatpakRunCommand}`}</code>
     content: "$ ";
     color: rgba(255, 255, 255, 0.4);
     user-select: none;
+  }
+  .hero__copy {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    position: absolute;
+    top: 9px;
+    right: 9px;
+    width: 34px;
+    min-height: 26px;
+    padding: 0;
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    border-radius: 6px;
+    background: rgba(255, 255, 255, 0.08);
+    color: var(--toast-fg-color);
+    font-size: var(--text-caption);
+    font-weight: 600;
+    cursor: pointer;
+    transition: background-color 120ms ease, border-color 120ms ease, color 120ms ease;
+  }
+  .hero__copy:hover {
+    background: rgba(255, 255, 255, 0.14);
+    border-color: rgba(255, 255, 255, 0.22);
+  }
+  .hero__copy:focus-visible {
+    outline: 2px solid var(--accent-bg-color);
+    outline-offset: 2px;
+  }
+  .hero__copy[data-copied="true"] {
+    color: #57e389;
+  }
+  .hero__copy-icon,
+  .hero__copied-icon {
+    width: 13px;
+    height: 13px;
+    fill: currentColor;
+    flex: none;
+  }
+  .hero__copied-icon {
+    display: none;
+  }
+  .hero__copy[data-copied="true"] .hero__copy-icon {
+    display: none;
+  }
+  .hero__copy[data-copied="true"] .hero__copied-icon {
+    display: block;
   }
 
   .hero__visual {
@@ -250,6 +327,10 @@ ${flatpakRunCommand}`}</code>
     }
   }
   @media (max-width: 640px) {
+    .hero__commands code {
+      padding-right: 16px;
+      padding-top: 44px;
+    }
     .hero__slot--main {
       width: 88%;
     }
