@@ -37,7 +37,8 @@ Enable GitHub Pages for the repository:
 Create a dedicated GPG signing key for this Flatpak repository. Do not reuse a personal or package-signing key.
 
 ```bash
-gpg --quick-generate-key "Sessions Chronicle Flatpak <maciz@outlook.fr>" ed25519 sign never
+gpg --batch --pinentry-mode loopback --passphrase '' \
+  --quick-generate-key "Sessions Chronicle Flatpak <maciz@outlook.fr>" ed25519 sign never
 gpg --list-secret-keys --keyid-format=long
 ```
 
