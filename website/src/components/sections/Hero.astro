@@ -5,9 +5,8 @@ import sessionList from "../../assets/screenshots/session_list.png";
 import sessionDetail from "../../assets/screenshots/session_detail.png";
 
 const githubUrl = "https://github.com/supermaciz/sessions-chronicle";
-const flatpakRefUrl = "/flatpak/dev.maciz.sessionschronicle.flatpakref";
-const flatpakInstallCommand =
-  "flatpak install --user https://sessions-chronicle.maciz.dev/flatpak/dev.maciz.sessionschronicle.flatpakref";
+const flatpakInstallCommand = `flatpak install --user \\
+  https://sessions-chronicle.maciz.dev/flatpak/dev.maciz.sessionschronicle.flatpakref`;
 const flatpakRunCommand = "flatpak run dev.maciz.sessionschronicle";
 const supportedAssistants = [
   {
@@ -47,7 +46,6 @@ const supportedAssistants = [
         ))}
       </ul>
       <div class="hero__ctas">
-        <Button variant="pill" href={flatpakRefUrl}>Install via Flatpak →</Button>
         <Button variant="pill" href={githubUrl}>View on GitHub →</Button>
       </div>
       <div class="hero__commands" aria-label="Flatpak install commands">
@@ -184,15 +182,19 @@ const supportedAssistants = [
   }
   .hero__commands code {
     display: block;
-    overflow-x: auto;
-    padding: 10px 12px;
+    padding: 12px 16px;
     border-radius: var(--radius-sm);
-    background: color-mix(in srgb, var(--view-bg-color) 94%, var(--window-bg-color));
-    border: 1px solid color-mix(in srgb, var(--window-fg-color) 12%, transparent);
+    background: var(--toast-bg-color);
     font-family: var(--font-mono);
     font-size: var(--text-small);
-    color: color-mix(in srgb, var(--window-fg-color) 82%, transparent);
-    white-space: nowrap;
+    color: var(--toast-fg-color);
+    white-space: pre;
+    overflow-x: auto;
+  }
+  .hero__commands code::before {
+    content: "$ ";
+    color: rgba(255, 255, 255, 0.4);
+    user-select: none;
   }
 
   .hero__visual {
