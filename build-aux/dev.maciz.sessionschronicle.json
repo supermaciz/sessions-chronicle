@@ -1,5 +1,5 @@
 {
-    "id": "io.github.supermaciz.sessionschronicle",
+    "id": "dev.maciz.sessionschronicle",
     "runtime": "org.gnome.Platform",
     "runtime-version": "49",
     "sdk": "org.gnome.Sdk",

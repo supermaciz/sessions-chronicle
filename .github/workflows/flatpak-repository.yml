@@ -13,14 +13,14 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  APP_ID: io.github.supermaciz.sessionschronicle
+  APP_ID: dev.maciz.sessionschronicle
   FLATPAK_BRANCH: master
   FLATPAK_DATA_BRANCH: flatpak-repo-data
   FLATPAK_REMOTE_NAME: sessions-chronicle
   FLATPAK_REPO_URL: https://sessions-chronicle.maciz.dev/flatpak/
   HOMEPAGE_URL: https://github.com/supermaciz/sessions-chronicle
-  ICON_URL: https://raw.githubusercontent.com/supermaciz/sessions-chronicle/main/data/icons/io.github.supermaciz.sessionschronicle.svg
-  MANIFEST_PATH: build-aux/io.github.supermaciz.sessionschronicle.json
+  ICON_URL: https://raw.githubusercontent.com/supermaciz/sessions-chronicle/main/data/icons/dev.maciz.sessionschronicle.svg
+  MANIFEST_PATH: build-aux/dev.maciz.sessionschronicle.json
   RUNTIME_REPO: https://dl.flathub.org/repo/flathub.flatpakrepo
 
 jobs:

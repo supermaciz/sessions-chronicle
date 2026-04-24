@@ -58,9 +58,9 @@ Task-by-task execution plan used to implement a validated design.
 **Process**: Exploration -> Decision -> Design -> Implementation Plan -> Implementation
 
 ## Fast Dev Loop
-- `flatpak-builder --user flatpak_app build-aux/io.github.supermaciz.sessionschronicle.Devel.json --force-clean`: build the GNOME Flatpak bundle.
-- `flatpak-builder --run flatpak_app build-aux/io.github.supermaciz.sessionschronicle.Devel.json sessions-chronicle`: run with local session data.
-- `flatpak-builder --run flatpak_app build-aux/io.github.supermaciz.sessionschronicle.Devel.json sessions-chronicle --sessions-dir tests/fixtures`: run with fixture data.
+- `flatpak-builder --user flatpak_app build-aux/dev.maciz.sessionschronicle.Devel.json --force-clean`: build the GNOME Flatpak bundle.
+- `flatpak-builder --run flatpak_app build-aux/dev.maciz.sessionschronicle.Devel.json sessions-chronicle`: run with local session data.
+- `flatpak-builder --run flatpak_app build-aux/dev.maciz.sessionschronicle.Devel.json sessions-chronicle --sessions-dir tests/fixtures`: run with fixture data.
 - `cargo fmt --all -- --check && cargo clippy --all -- -D warnings && cargo test --all --no-fail-fast`: run CI-parity checks locally.
 
 ## Coding Style & Naming Conventions

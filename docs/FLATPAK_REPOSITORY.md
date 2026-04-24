@@ -13,13 +13,13 @@ The Pages site contains:
 - the Astro landing site at `https://sessions-chronicle.maciz.dev/`
 - the OSTree Flatpak repository under `https://sessions-chronicle.maciz.dev/flatpak/`
 - `sessions-chronicle.flatpakrepo` for adding the remote
-- `io.github.supermaciz.sessionschronicle.flatpakref` for one-command install
+- `dev.maciz.sessionschronicle.flatpakref` for one-command install
 - a small `flatpak/index.html` with the install command
 
 The repository currently builds the stable manifest for `x86_64` only:
 
 ```bash
-build-aux/io.github.supermaciz.sessionschronicle.json
+build-aux/dev.maciz.sessionschronicle.json
 ```
 
 The Flatpak branch is `master` to match the branch used by the existing release bundles.
@@ -61,7 +61,7 @@ The workflow expects a CI signing key that can sign non-interactively after impo
 Publishing a non-prerelease GitHub release triggers:
 
 1. import the Flatpak GPG signing key
-2. build `io.github.supermaciz.sessionschronicle` from the stable manifest
+2. build `dev.maciz.sessionschronicle` from the stable manifest
 3. export the app into `public/` as branch `master`
 4. sign the repository summary and generate static deltas
 5. publish the generated repository payload to the `flatpak-repo-data` branch
@@ -79,15 +79,17 @@ Pre-releases intentionally do not publish this repository. Keep them as standalo
 One-command install:
 
 ```bash
-flatpak install --user https://sessions-chronicle.maciz.dev/flatpak/io.github.supermaciz.sessionschronicle.flatpakref
+flatpak install --user https://sessions-chronicle.maciz.dev/flatpak/dev.maciz.sessionschronicle.flatpakref
 ```
+
+This App ID replaces the earlier `io.github.supermaciz.sessionschronicle` self-hosted build. Existing installs do not migrate automatically; reinstall the app under the new ID.
 
 Manual remote setup:
 
 ```bash
 flatpak remote-add --user --if-not-exists sessions-chronicle \
   https://sessions-chronicle.maciz.dev/flatpak/sessions-chronicle.flatpakrepo
-flatpak install --user sessions-chronicle io.github.supermaciz.sessionschronicle//master
+flatpak install --user sessions-chronicle dev.maciz.sessionschronicle//master
 ```
 
 Updates then arrive through:
@@ -105,11 +107,11 @@ curl -I https://sessions-chronicle.maciz.dev/flatpak/summary
 flatpak remote-add --user --if-not-exists sessions-chronicle \
   https://sessions-chronicle.maciz.dev/flatpak/sessions-chronicle.flatpakrepo
 flatpak remote-ls sessions-chronicle
-flatpak install --user sessions-chronicle io.github.supermaciz.sessionschronicle//master
-flatpak run io.github.supermaciz.sessionschronicle
+flatpak install --user sessions-chronicle dev.maciz.sessionschronicle//master
+flatpak run dev.maciz.sessionschronicle
 ```
 
-If install metadata fails to load, check that `sessions-chronicle.flatpakrepo` and `io.github.supermaciz.sessionschronicle.flatpakref` include the generated `GPGKey=` value and that the Pages URL matches `FLATPAK_REPO_URL` in the workflow.
+If install metadata fails to load, check that `sessions-chronicle.flatpakrepo` and `dev.maciz.sessionschronicle.flatpakref` include the generated `GPGKey=` value and that the Pages URL matches `FLATPAK_REPO_URL` in the workflow.
 
 ## References
 

@@ -5,13 +5,13 @@
 ### Via Flatpak
 
 ```bash
-flatpak-builder --user flatpak_app build-aux/io.github.supermaciz.sessionschronicle.Devel.json --force-clean
+flatpak-builder --user flatpak_app build-aux/dev.maciz.sessionschronicle.Devel.json --force-clean
 ```
 
 Run with:
 
 ```bash
-flatpak-builder --run flatpak_app build-aux/io.github.supermaciz.sessionschronicle.Devel.json sessions-chronicle
+flatpak-builder --run flatpak_app build-aux/dev.maciz.sessionschronicle.Devel.json sessions-chronicle
 ```
 
 Use this path when you want the closest match to the packaged app environment.
@@ -62,7 +62,7 @@ The `--sessions-dir` flag overrides session source paths **for all assistants**.
 
 ```bash
 # Override with the full fixture root — maps all four assistants
-flatpak-builder --run flatpak_app build-aux/io.github.supermaciz.sessionschronicle.Devel.json sessions-chronicle --sessions-dir tests/fixtures
+flatpak-builder --run flatpak_app build-aux/dev.maciz.sessionschronicle.Devel.json sessions-chronicle --sessions-dir tests/fixtures
 ```
 
 Meson-installed build equivalent:
@@ -90,7 +90,7 @@ You can also point to a single assistant's directory:
 
 ```bash
 # Override with Claude-only data — all assistants fall back to this path
-flatpak-builder --run flatpak_app build-aux/io.github.supermaciz.sessionschronicle.Devel.json sessions-chronicle --sessions-dir tests/fixtures/claude_sessions
+flatpak-builder --run flatpak_app build-aux/dev.maciz.sessionschronicle.Devel.json sessions-chronicle --sessions-dir tests/fixtures/claude_sessions
 ```
 
 ### Override mode and database isolation
@@ -172,10 +172,10 @@ Enable trace logging by setting `RUST_LOG`:
 
 ```bash
 # Debug level
-RUST_LOG=debug flatpak-builder --run flatpak_app build-aux/io.github.supermaciz.sessionschronicle.Devel.json sessions-chronicle
+RUST_LOG=debug flatpak-builder --run flatpak_app build-aux/dev.maciz.sessionschronicle.Devel.json sessions-chronicle
 
 # Filter to specific modules
-RUST_LOG=sessions_chronicle::parsers=trace flatpak-builder --run flatpak_app build-aux/io.github.supermaciz.sessionschronicle.Devel.json sessions-chronicle
+RUST_LOG=sessions_chronicle::parsers=trace flatpak-builder --run flatpak_app build-aux/dev.maciz.sessionschronicle.Devel.json sessions-chronicle
 ```
 
 Meson-installed build equivalent:
@@ -254,7 +254,7 @@ The project uses GitHub Actions for continuous integration and releases. Workflo
 
 ### Release (`release.yml`) — runs when a GitHub release is published
 
-Builds the stable Flatpak bundle using the `build-aux/io.github.supermaciz.sessionschronicle.json` manifest, generates a SHA256 checksum, and uploads both to the release.
+Builds the stable Flatpak bundle using the `build-aux/dev.maciz.sessionschronicle.json` manifest, generates a SHA256 checksum, and uploads both to the release.
 
 ### Flatpak Repository (`flatpak-repository.yml`) — runs when a GitHub release is published or manually
 
@@ -266,13 +266,13 @@ Two Flatpak manifests exist in `build-aux/`:
 
 | Manifest | Purpose |
 |----------|---------|
-| `io.github.supermaciz.sessionschronicle.Devel.json` | Development builds (used in CI and local dev) |
-| `io.github.supermaciz.sessionschronicle.json` | Stable release builds (used by release workflow) |
+| `dev.maciz.sessionschronicle.Devel.json` | Development builds (used in CI and local dev) |
+| `dev.maciz.sessionschronicle.json` | Stable release builds (used by release workflow) |
 
 ## Summary
 
-- **Flatpak build**: `flatpak-builder --user flatpak_app build-aux/io.github.supermaciz.sessionschronicle.Devel.json --force-clean`
-- **Flatpak run**: `flatpak-builder --run flatpak_app build-aux/io.github.supermaciz.sessionschronicle.Devel.json sessions-chronicle`
+- **Flatpak build**: `flatpak-builder --user flatpak_app build-aux/dev.maciz.sessionschronicle.Devel.json --force-clean`
+- **Flatpak run**: `flatpak-builder --run flatpak_app build-aux/dev.maciz.sessionschronicle.Devel.json sessions-chronicle`
 - **Meson setup**: `meson setup builddir -Dprofile=development --prefix="$HOME/.local"`
 - **Meson rebuild**: `meson compile -C builddir && meson install -C builddir`
 - **Meson run**: `"$HOME/.local/bin/sessions-chronicle"`

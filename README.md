@@ -1,4 +1,4 @@
-<img src="data/icons/io.github.supermaciz.sessionschronicle.svg" alt="App Icon" width="80" height="80" align="left"/>
+<img src="data/icons/dev.maciz.sessionschronicle.svg" alt="App Icon" width="80" height="80" align="left"/>
 
 # Sessions Chronicle
 <br clear="left"/>
@@ -29,18 +29,19 @@ and pick up where you left off.
 
 ## Installation
 
-1. Download the latest `.flatpak` file from the [Releases page](https://github.com/supermaciz/sessions-chronicle/releases)
-2. Install it:
+1. Install the self-hosted Flatpak remote:
 
 ```bash
-flatpak install sessions-chronicle-*.flatpak
+flatpak install --user https://sessions-chronicle.maciz.dev/flatpak/dev.maciz.sessionschronicle.flatpakref
 ```
 
-3. Launch **Sessions Chronicle** from your app menu, or run:
+2. Launch **Sessions Chronicle** from your app menu, or run:
 
 ```bash
-flatpak run io.github.supermaciz.sessionschronicle
+flatpak run dev.maciz.sessionschronicle
 ```
+
+If you prefer a standalone bundle, download the latest `.flatpak` file from the [Releases page](https://github.com/supermaciz/sessions-chronicle/releases) and install it with `flatpak install ./sessions-chronicle-<version>.flatpak`.
 
 
 ## Screenshots

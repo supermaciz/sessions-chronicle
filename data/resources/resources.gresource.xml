@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <gresources>
-  <gresource prefix="/io/github/supermaciz/sessionschronicle/">
+  <gresource prefix="/dev/maciz/sessionschronicle/">
     <file compressed="true">style.css</file>
   </gresource>
 </gresources>

@@ -7,20 +7,20 @@ This repository already has most of the “GNOME desktop integration” plumbing
 
 ## What you already have (baseline GNOME integration)
 
-- **App ID + build profiles**: Meson computes `application_id` / `profile` and generates `src/config.rs` (`src/meson.build`). The app is identified as `io.github.supermaciz.sessionschronicle` (and `…Devel` in dev builds).
-- **Desktop entry**: Installed from `data/io.github.supermaciz.sessionschronicle.desktop.in.in` via `data/meson.build`. This makes the app show up in GNOME Shell’s app grid, overview search (as an app), etc.
-- **AppStream (GNOME Software metadata)**: Installed from `data/io.github.supermaciz.sessionschronicle.metainfo.xml.in.in` via `data/meson.build`. GNOME Software uses this for name/summary/screenshots/releases.
+- **App ID + build profiles**: Meson computes `application_id` / `profile` and generates `src/config.rs` (`src/meson.build`). The app is identified as `dev.maciz.sessionschronicle` (and `…Devel` in dev builds).
+- **Desktop entry**: Installed from `data/dev.maciz.sessionschronicle.desktop.in.in` via `data/meson.build`. This makes the app show up in GNOME Shell’s app grid, overview search (as an app), etc.
+- **AppStream (GNOME Software metadata)**: Installed from `data/dev.maciz.sessionschronicle.metainfo.xml.in.in` via `data/meson.build`. GNOME Software uses this for name/summary/screenshots/releases.
 - **Icons**: Installed by `data/icons/meson.build` so GNOME Shell has the right app icon (including a symbolic icon).
-- **GSettings schema**: Installed from `data/io.github.supermaciz.sessionschronicle.gschema.xml.in` via `data/meson.build`. The app already uses it for window size/maximized state (`src/app.rs`).
-- **Flatpak manifest**: `build-aux/io.github.supermaciz.sessionschronicle.Devel.json` sets you up on `org.gnome.Platform` and ensures the app behaves like a GNOME app when installed.
+- **GSettings schema**: Installed from `data/dev.maciz.sessionschronicle.gschema.xml.in` via `data/meson.build`. The app already uses it for window size/maximized state (`src/app.rs`).
+- **Flatpak manifest**: `build-aux/dev.maciz.sessionschronicle.Devel.json` sets you up on `org.gnome.Platform` and ensures the app behaves like a GNOME app when installed.
 
 ## The “must do” to look/feel properly integrated
 
 > **Status (2026-02-15):** The About dialog has been fixed (commit `085a3a5`) with correct app name, links, and developer info. However, the desktop file and AppStream metainfo templates below are **still pending** and need to be updated.
 
 - **Replace template metadata with real content**:
-  - Update the desktop file template `data/io.github.supermaciz.sessionschronicle.desktop.in.in` — it still says `Comment=Write a GTK + Rust application` and has generic `Keywords`.
-  - Update the AppStream template `data/io.github.supermaciz.sessionschronicle.metainfo.xml.in.in` — it still has the boilerplate description, old template URLs pointing to `gitlab.gnome.org/bilelmoussaoui`, a broken screenshot URL, and placeholder branding colors.
+  - Keep the desktop file template `data/dev.maciz.sessionschronicle.desktop.in.in` aligned with the public app ID, launch command, and keywords.
+  - Keep the AppStream template `data/dev.maciz.sessionschronicle.metainfo.xml.in.in` aligned with current screenshots, links, and release metadata.
 - **Make `Exec=` match how users actually run it**:
   - If you want GNOME to be able to “open” things (files/URIs), you’ll typically add `%U` (or `%f/%F`) in `Exec=` and implement `open()` / command-line handling in the app.
 
@@ -45,7 +45,7 @@ This integrates with GNOME’s notification center and respects user settings.
 
 ### Portals + tighter Flatpak permissions
 
-Your current Flatpak dev manifest uses `--filesystem=host` (`build-aux/io.github.supermaciz.sessionschronicle.Devel.json`), which works but is very broad.
+Your current Flatpak dev manifest uses `--filesystem=host` (`build-aux/dev.maciz.sessionschronicle.Devel.json`), which works but is very broad.
 
 For a GNOME-friendly sandboxed app:
 
