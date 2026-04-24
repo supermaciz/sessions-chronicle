@@ -21,8 +21,33 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v6
+      - name: Sync Flatpak repository payload
+        run: |
+          rm -rf website/public/flatpak
+          mkdir -p website/public/flatpak
+
+          if git fetch --depth=1 origin flatpak-repo-data; then
+            git archive origin/flatpak-repo-data | tar -x -C website/public/flatpak
+          else
+            cat > website/public/flatpak/index.html <<'EOF'
+          <!doctype html>
+          <html lang="en">
+            <head>
+              <meta charset="utf-8">
+              <meta name="viewport" content="width=device-width, initial-scale=1">
+              <title>Sessions Chronicle Flatpak Repository</title>
+            </head>
+            <body>
+              <h1>Sessions Chronicle Flatpak Repository</h1>
+              <p>The self-hosted Flatpak repository will appear here after the first release publish.</p>
+            </body>
+          </html>
+          EOF
+          fi
+
+          touch website/public/.nojekyll
+      - uses: actions/setup-node@v6
         with:
           node-version: '22'
           cache: 'npm'
@@ -33,7 +58,7 @@ jobs:
       - name: Build
         run: npm run build
         working-directory: website
-      - uses: actions/upload-pages-artifact@v3
+      - uses: actions/upload-pages-artifact@v5
         with:
           path: website/dist
 
@@ -45,4 +70,4 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - id: deployment
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@v5

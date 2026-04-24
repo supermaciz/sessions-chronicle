@@ -1,0 +1,232 @@
+on:
+  workflow_dispatch:
+  release:
+    types: [published]
+
+name: Flatpak Repository
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+env:
+  APP_ID: dev.maciz.sessionschronicle
+  FLATPAK_BRANCH: master
+  FLATPAK_DATA_BRANCH: flatpak-repo-data
+  FLATPAK_REMOTE_NAME: sessions-chronicle
+  FLATPAK_REPO_URL: https://sessions-chronicle.maciz.dev/flatpak/
+  HOMEPAGE_URL: https://github.com/supermaciz/sessions-chronicle
+  ICON_URL: https://raw.githubusercontent.com/supermaciz/sessions-chronicle/main/data/icons/dev.maciz.sessionschronicle.svg
+  MANIFEST_PATH: build-aux/dev.maciz.sessionschronicle.json
+  RUNTIME_REPO: https://dl.flathub.org/repo/flathub.flatpakrepo
+
+jobs:
+  build-repository:
+    name: Build Flatpak Repository
+    if: ${{ github.event_name != 'release' || !github.event.release.prerelease }}
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/flathub-infra/flatpak-github-actions:gnome-49
+      options: --privileged
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Import signing key
+        env:
+          FLATPAK_GPG_KEY_ID: ${{ secrets.FLATPAK_GPG_KEY_ID }}
+          FLATPAK_GPG_PRIVATE_KEY: ${{ secrets.FLATPAK_GPG_PRIVATE_KEY }}
+        run: |
+          if [ -z "$FLATPAK_GPG_KEY_ID" ]; then
+            echo "::error::Missing FLATPAK_GPG_KEY_ID secret"
+            exit 1
+          fi
+
+          if [ -z "$FLATPAK_GPG_PRIVATE_KEY" ]; then
+            echo "::error::Missing FLATPAK_GPG_PRIVATE_KEY secret"
+            exit 1
+          fi
+
+          install -m 700 -d "$HOME/.gnupg"
+          printf '%s\n' "$FLATPAK_GPG_PRIVATE_KEY" | gpg --batch --import
+          gpg --batch --list-secret-keys "$FLATPAK_GPG_KEY_ID"
+
+      - name: Build signed repository
+        env:
+          FLATPAK_GPG_KEY_ID: ${{ secrets.FLATPAK_GPG_KEY_ID }}
+        run: |
+          flatpak remote-add --user --if-not-exists flathub "$RUNTIME_REPO"
+
+          flatpak-builder \
+            --user \
+            --assumeyes \
+            --install-deps-from=flathub \
+            --gpg-sign="$FLATPAK_GPG_KEY_ID" \
+            --disable-rofiles-fuse \
+            --disable-updates \
+            --force-clean \
+            --repo=public \
+            --default-branch="$FLATPAK_BRANCH" \
+            build-dir \
+            "$MANIFEST_PATH"
+
+          flatpak build-update-repo \
+            --gpg-sign="$FLATPAK_GPG_KEY_ID" \
+            --default-branch="$FLATPAK_BRANCH" \
+            --title="Sessions Chronicle" \
+            --comment="Flatpak repository for Sessions Chronicle" \
+            --description="Flatpak repository for Sessions Chronicle" \
+            --homepage="$HOMEPAGE_URL" \
+            --icon="$ICON_URL" \
+            --generate-static-deltas \
+            --prune \
+            public
+
+      - name: Generate install metadata
+        env:
+          FLATPAK_GPG_KEY_ID: ${{ secrets.FLATPAK_GPG_KEY_ID }}
+        run: |
+          GPG_KEY="$(gpg --export "$FLATPAK_GPG_KEY_ID" | base64 --wrap=0)"
+
+          cat > public/sessions-chronicle.flatpakrepo <<EOF
+          [Flatpak Repo]
+          Title=Sessions Chronicle
+          Url=${FLATPAK_REPO_URL}
+          Homepage=${HOMEPAGE_URL}
+          Comment=Flatpak repository for Sessions Chronicle
+          Description=Flatpak repository for Sessions Chronicle
+          Icon=${ICON_URL}
+          GPGKey=${GPG_KEY}
+          EOF
+
+          cat > public/${APP_ID}.flatpakref <<EOF
+          [Flatpak Ref]
+          Title=Sessions Chronicle
+          Name=${APP_ID}
+          Branch=${FLATPAK_BRANCH}
+          Url=${FLATPAK_REPO_URL}
+          SuggestRemoteName=${FLATPAK_REMOTE_NAME}
+          Homepage=${HOMEPAGE_URL}
+          Icon=${ICON_URL}
+          RuntimeRepo=${RUNTIME_REPO}
+          IsRuntime=false
+          GPGKey=${GPG_KEY}
+          EOF
+
+          cat > public/index.html <<EOF
+          <!doctype html>
+          <html lang="en">
+            <head>
+              <meta charset="utf-8">
+              <meta name="viewport" content="width=device-width, initial-scale=1">
+              <title>Sessions Chronicle Flatpak Repository</title>
+            </head>
+            <body>
+              <h1>Sessions Chronicle Flatpak Repository</h1>
+              <p>Install with:</p>
+              <pre>flatpak install --user ${FLATPAK_REPO_URL}${APP_ID}.flatpakref</pre>
+            </body>
+          </html>
+          EOF
+
+          touch public/.nojekyll
+
+      - name: Upload Flatpak repository artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: flatpak-repository
+          path: public
+
+  publish-data:
+    name: Publish Flatpak Repository Data
+    if: ${{ github.event_name != 'release' || !github.event.release.prerelease }}
+    needs: build-repository
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/download-artifact@v8
+        with:
+          name: flatpak-repository
+          path: flatpak-public
+
+      - name: Publish repository payload branch
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git fetch origin "$FLATPAK_DATA_BRANCH" || true
+
+          if git show-ref --verify --quiet "refs/remotes/origin/$FLATPAK_DATA_BRANCH"; then
+            git worktree add flatpak-branch "origin/$FLATPAK_DATA_BRANCH"
+            cd flatpak-branch
+            git checkout -B "$FLATPAK_DATA_BRANCH" "origin/$FLATPAK_DATA_BRANCH"
+          else
+            git worktree add --detach flatpak-branch
+            cd flatpak-branch
+            git checkout --orphan "$FLATPAK_DATA_BRANCH"
+            git rm -rf . >/dev/null 2>&1 || true
+          fi
+
+          find . -mindepth 1 -maxdepth 1 ! -name .git -exec rm -rf {} +
+          cp -a ../flatpak-public/. .
+          touch .nojekyll
+
+          git add --all
+
+          if git diff --cached --quiet; then
+            echo "Flatpak repository payload branch already up to date."
+            exit 0
+          fi
+
+          git commit -m "chore: update flatpak repository"
+          git push origin "$FLATPAK_DATA_BRANCH"
+
+  build-site:
+    name: Build Website With Flatpak Repository
+    if: ${{ github.event_name != 'release' || !github.event.release.prerelease }}
+    needs: build-repository
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/download-artifact@v8
+        with:
+          name: flatpak-repository
+          path: website/public/flatpak
+      - name: Prepare website artifact
+        run: touch website/public/.nojekyll
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: website/package-lock.json
+      - name: Install
+        run: npm ci
+        working-directory: website
+      - name: Build
+        run: npm run build
+        working-directory: website
+      - uses: actions/upload-pages-artifact@v5
+        with:
+          path: website/dist
+
+  deploy:
+    name: Deploy Website And Flatpak Repository
+    if: ${{ github.event_name != 'release' || !github.event.release.prerelease }}
+    needs:
+      - publish-data
+      - build-site
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v5

@@ -5,6 +5,8 @@ import sessionList from "../../assets/screenshots/session_list.png";
 import sessionDetail from "../../assets/screenshots/session_detail.png";
 
 const githubUrl = "https://github.com/supermaciz/sessions-chronicle";
+const flatpakInstallCommand = `flatpak install --user --from \\
+  https://sessions-chronicle.maciz.dev/flatpak/dev.maciz.sessionschronicle.flatpakref`;
 const supportedAssistants = [
   {
     name: "Claude Code",
@@ -26,56 +28,94 @@ const supportedAssistants = [
 ---
 
 <section class="hero">
-  <div class="container hero__grid">
-    <div class="hero__text">
-      <p class="hero__eyebrow">OPEN SOURCE · LOCAL-FIRST · GTK 4</p>
-      <h1 class="hero__title">Every conversation you've had with a machine.</h1>
-      <p class="hero__sub">
-        Sessions Chronicle indexes your coding agents transcripts on your disk into one searchable archive. Nothing
-        leaves your machine.
-      </p>
-      <ul class="hero__assistants" aria-label="Supported AI assistants">
-        {supportedAssistants.map((assistant) => (
-          <li class="hero__assistant-pill">
-            <span class="hero__assistant-icon" style={`--assistant-icon: url('${assistant.icon}')`} aria-hidden="true"></span>
-            <span>{assistant.name}</span>
-          </li>
-        ))}
-      </ul>
-      <div class="hero__ctas">
-        <Button variant="pill" href={githubUrl}>View on GitHub →</Button>
+  <div class="container">
+    <div class="hero__grid">
+      <div class="hero__text">
+        <p class="hero__eyebrow">OPEN SOURCE · LOCAL-FIRST · GTK 4</p>
+        <h1 class="hero__title">Every conversation you've had with a machine.</h1>
+        <p class="hero__sub">
+          Sessions Chronicle indexes your coding agents transcripts on your disk into one searchable archive. Nothing
+          leaves your machine.
+        </p>
+        <ul class="hero__assistants" aria-label="Supported AI assistants">
+          {supportedAssistants.map((assistant) => (
+            <li class="hero__assistant-pill">
+              <span class="hero__assistant-icon" style={`--assistant-icon: url('${assistant.icon}')`} aria-hidden="true"></span>
+              <span>{assistant.name}</span>
+            </li>
+          ))}
+        </ul>
+        <div class="hero__ctas">
+          <Button variant="pill" href={githubUrl}>View on GitHub →</Button>
+        </div>
+        <p class="hero__meta">MIT · Self-hosted Flatpak · Linux</p>
       </div>
-      <p class="hero__meta">MIT · Flatpak · Linux</p>
+
+      <div class="hero__visual">
+        <div class="hero__slot hero__slot--main">
+          <Picture
+            src={sessionDetail}
+            formats={["avif", "webp"]}
+            fallbackFormat="png"
+            widths={[400, 640, 960, 1280]}
+            sizes="(max-width: 640px) 88vw, (max-width: 1023px) 70vw, 620px"
+            loading="eager"
+            fetchpriority="high"
+            alt="A single Claude Code session showing tool calls inline"
+          />
+        </div>
+
+        <div class="hero__slot hero__slot--overlay">
+          <Picture
+            src={sessionList}
+            formats={["avif", "webp"]}
+            fallbackFormat="png"
+            widths={[240, 360, 480, 720]}
+            sizes="(max-width: 640px) 42vw, (max-width: 1023px) 28vw, 260px"
+            loading="eager"
+            alt="Sessions Chronicle main window listing recent AI assistant conversations"
+          />
+        </div>
+      </div>
     </div>
 
-    <div class="hero__visual">
-      <div class="hero__slot hero__slot--main">
-        <Picture
-          src={sessionDetail}
-          formats={["avif", "webp"]}
-          fallbackFormat="png"
-          widths={[400, 640, 960, 1280]}
-          sizes="(max-width: 640px) 88vw, (max-width: 1023px) 70vw, 620px"
-          loading="eager"
-          fetchpriority="high"
-          alt="A single Claude Code session showing tool calls inline"
-        />
-      </div>
-
-      <div class="hero__slot hero__slot--overlay">
-        <Picture
-          src={sessionList}
-          formats={["avif", "webp"]}
-          fallbackFormat="png"
-          widths={[240, 360, 480, 720]}
-          sizes="(max-width: 640px) 42vw, (max-width: 1023px) 28vw, 260px"
-          loading="eager"
-          alt="Sessions Chronicle main window listing recent AI assistant conversations"
-        />
-      </div>
+    <div class="hero__commands" aria-label="Flatpak install commands" data-install-command={flatpakInstallCommand}>
+      <code>{flatpakInstallCommand}</code>
+      <button class="hero__copy" type="button" aria-label="Copy install command" title="Copy install command">
+        <svg class="hero__copy-icon" viewBox="0 0 16 16" aria-hidden="true">
+          <path d="M6 2.5h7.5v7.5H12V4H6V2.5Z" />
+          <path d="M2.5 6h7.5v7.5H2.5V6Zm1.5 1.5V12h4.5V7.5H4Z" />
+        </svg>
+        <svg class="hero__copied-icon" viewBox="0 0 16 16" aria-hidden="true">
+          <path d="M6.4 11.7 2.8 8.1l1.1-1.1 2.5 2.5 5.7-5.7 1.1 1.1-6.8 6.8Z" />
+        </svg>
+      </button>
     </div>
   </div>
 </section>
+
+<script>
+  const commandBlock = document.querySelector<HTMLElement>(".hero__commands");
+  const copyButton = commandBlock?.querySelector<HTMLButtonElement>(".hero__copy");
+  let copyResetTimeout: number | undefined;
+
+  copyButton?.addEventListener("click", async () => {
+    const command = commandBlock?.dataset.installCommand;
+    if (!command) {
+      return;
+    }
+
+    await navigator.clipboard.writeText(command);
+    window.clearTimeout(copyResetTimeout);
+    copyButton.setAttribute("aria-label", "Install command copied");
+    copyButton.dataset.copied = "true";
+
+    copyResetTimeout = window.setTimeout(() => {
+      copyButton.setAttribute("aria-label", "Copy install command");
+      delete copyButton.dataset.copied;
+    }, 1800);
+  });
+</script>
 
 <style>
   .hero {
@@ -167,6 +207,82 @@ const supportedAssistants = [
     font-size: var(--text-small);
     color: color-mix(in srgb, var(--window-fg-color) 55%, transparent);
   }
+  .hero__commands {
+    position: relative;
+    display: block;
+    margin: var(--space-12) auto 0;
+    max-width: min(100%, 42rem);
+  }
+  .hero__commands code {
+    display: block;
+    width: 100%;
+    box-sizing: border-box;
+    padding: 14px 60px 14px 18px;
+    border-radius: var(--radius-sm);
+    background: var(--toast-bg-color);
+    font-family: var(--font-mono);
+    font-size: var(--text-body);
+    color: var(--toast-fg-color);
+    text-align: left;
+    white-space: pre;
+    overflow-x: auto;
+  }
+  .hero__commands code::before {
+    content: "$ ";
+    color: rgba(255, 255, 255, 0.4);
+    user-select: none;
+  }
+  .hero__copy {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    position: absolute;
+    top: 9px;
+    right: 9px;
+    width: 34px;
+    min-height: 26px;
+    padding: 0;
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    border-radius: 6px;
+    background: rgba(255, 255, 255, 0.08);
+    color: var(--toast-fg-color);
+    font-size: var(--text-caption);
+    font-weight: 600;
+    cursor: pointer;
+    transition: background-color 120ms ease, border-color 120ms ease, color 120ms ease;
+  }
+  .hero__copy:hover {
+    background: rgba(255, 255, 255, 0.14);
+    border-color: rgba(255, 255, 255, 0.22);
+  }
+  .hero__copy:focus-visible {
+    outline: 2px solid var(--accent-bg-color);
+    outline-offset: 2px;
+  }
+  .hero__copy[data-copied="true"] {
+    color: #57e389;
+  }
+  .hero__copy-icon,
+  .hero__copied-icon {
+    width: 13px;
+    height: 13px;
+    flex: none;
+  }
+  .hero__copy-icon {
+    fill: currentColor;
+  }
+  .hero__copied-icon {
+    fill: currentColor;
+  }
+  .hero__copied-icon {
+    display: none;
+  }
+  .hero__copy[data-copied="true"] .hero__copy-icon {
+    display: none;
+  }
+  .hero__copy[data-copied="true"] .hero__copied-icon {
+    display: block;
+  }
 
   .hero__visual {
     position: relative;
@@ -216,6 +332,10 @@ const supportedAssistants = [
     }
   }
   @media (max-width: 640px) {
+    .hero__commands code {
+      padding-right: 16px;
+      padding-top: 44px;
+    }
     .hero__slot--main {
       width: 88%;
     }

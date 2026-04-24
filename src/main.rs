@@ -80,7 +80,7 @@ fn main() {
     gtk::Window::set_default_icon_name(APP_ID);
 
     let app = main_application();
-    app.set_resource_base_path(Some("/io/github/supermaciz/sessionschronicle/"));
+    app.set_resource_base_path(Some("/dev/maciz/sessionschronicle/"));
 
     let program_invocation = env::args()
         .next()
@@ -92,7 +92,7 @@ fn main() {
 
     let data = res
         .lookup_data(
-            "/io/github/supermaciz/sessionschronicle/style.css",
+            "/dev/maciz/sessionschronicle/style.css",
             gio::ResourceLookupFlags::NONE,
         )
         .unwrap();

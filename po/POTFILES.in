@@ -1,6 +1,6 @@
-data/io.github.supermaciz.sessionschronicle.desktop.in.in
-data/io.github.supermaciz.sessionschronicle.gschema.xml.in
-data/io.github.supermaciz.sessionschronicle.metainfo.xml.in.in
+data/dev.maciz.sessionschronicle.desktop.in.in
+data/dev.maciz.sessionschronicle.gschema.xml.in
+data/dev.maciz.sessionschronicle.metainfo.xml.in.in
 src/app.rs
 src/main.rs
 src/ui/modals/shortcuts.rs

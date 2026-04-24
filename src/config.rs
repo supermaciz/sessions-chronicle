@@ -1,4 +1,4 @@
-pub const APP_ID: &str = "io.github.supermaciz.sessionschronicle";
+pub const APP_ID: &str = "dev.maciz.sessionschronicle";
 pub const GETTEXT_PACKAGE: &str = "sessions-chronicle";
 pub const LOCALEDIR: &str = "/usr/local/share/locale";
 #[allow(unused)]

@@ -36,7 +36,7 @@ Validation:
 | `Cargo.toml` | Set `[package].version = "<new_version>"` |
 | `meson.build` | Set `project(..., version: '<new_version>', ...)` |
 | `src/config.rs.in` | Keep `pub const VERSION: &str = @VERSION@;` (never edit `src/config.rs`) |
-| `data/io.github.supermaciz.sessionschronicle.metainfo.xml.in.in` | Add newest `<release version="<new_version>" date="YYYY-MM-DD">...</release>` |
+| `data/dev.maciz.sessionschronicle.metainfo.xml.in.in` | Add newest `<release version="<new_version>" date="YYYY-MM-DD">...</release>` |
 
 ## Implementation Workflow
 
@@ -52,7 +52,7 @@ Validation:
 8. Run final verification command:
 
 ```bash
-flatpak-builder --user flatpak_app build-aux/io.github.supermaciz.sessionschronicle.Devel.json --force-clean
+flatpak-builder --user flatpak_app build-aux/dev.maciz.sessionschronicle.Devel.json --force-clean
 ```
 
 ## Example Release Entry

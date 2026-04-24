@@ -1,6 +1,6 @@
 # Sessions Chronicle - Landing site
 
-Static Astro site for https://sessions-chronicle.maciz.dev.
+Static Astro site for https://sessions-chronicle.maciz.dev, including the self-hosted Flatpak remote under `/flatpak/`.
 
 ## Prerequisites
 - Node 22+
