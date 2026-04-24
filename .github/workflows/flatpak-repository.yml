@@ -134,7 +134,7 @@ jobs:
           touch public/.nojekyll
 
       - name: Upload Flatpak repository artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: flatpak-repository
           path: public
@@ -148,7 +148,7 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@v6
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: flatpak-repository
           path: flatpak-public
@@ -191,14 +191,14 @@ jobs:
     needs: build-repository
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@v6
+      - uses: actions/download-artifact@v8
         with:
           name: flatpak-repository
           path: website/public/flatpak
       - name: Prepare website artifact
         run: touch website/public/.nojekyll
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
           node-version: '22'
           cache: 'npm'
@@ -209,7 +209,7 @@ jobs:
       - name: Build
         run: npm run build
         working-directory: website
-      - uses: actions/upload-pages-artifact@v4
+      - uses: actions/upload-pages-artifact@v5
         with:
           path: website/dist
 
@@ -229,4 +229,4 @@ jobs:
     steps:
       - name: Deploy to GitHub Pages
         id: deployment
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@v5

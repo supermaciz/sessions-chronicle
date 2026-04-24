@@ -84,6 +84,8 @@ flatpak install --user https://sessions-chronicle.maciz.dev/flatpak/dev.maciz.se
 
 This App ID replaces the earlier `io.github.supermaciz.sessionschronicle` self-hosted build. Existing installs do not migrate automatically; reinstall the app under the new ID.
 
+The GSettings schema path also changed (from `/io/github/supermaciz/sessionschronicle/` to `/dev/maciz/sessionschronicle/`), so user preferences (window size, maximized state) stored under the old path are not carried over.
+
 Manual remote setup:
 
 ```bash

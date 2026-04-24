@@ -5,7 +5,7 @@ import sessionList from "../../assets/screenshots/session_list.png";
 import sessionDetail from "../../assets/screenshots/session_detail.png";
 
 const githubUrl = "https://github.com/supermaciz/sessions-chronicle";
-const flatpakRepoUrl = "/flatpak/";
+const flatpakRefUrl = "/flatpak/dev.maciz.sessionschronicle.flatpakref";
 const flatpakInstallCommand =
   "flatpak install --user https://sessions-chronicle.maciz.dev/flatpak/dev.maciz.sessionschronicle.flatpakref";
 const flatpakRunCommand = "flatpak run dev.maciz.sessionschronicle";
@@ -47,7 +47,7 @@ const supportedAssistants = [
         ))}
       </ul>
       <div class="hero__ctas">
-        <Button variant="pill" href={flatpakRepoUrl}>Install via Flatpak →</Button>
+        <Button variant="pill" href={flatpakRefUrl}>Install via Flatpak →</Button>
         <Button variant="pill" href={githubUrl}>View on GitHub →</Button>
       </div>
       <div class="hero__commands" aria-label="Flatpak install commands">
