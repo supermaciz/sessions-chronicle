@@ -2,6 +2,7 @@ use std::cell::Cell;
 use std::collections::{BTreeMap, VecDeque};
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use gtk::glib;
 use gtk::prelude::*;
@@ -75,6 +76,14 @@ struct BoundaryAppendPlan {
 
 struct PendingRenderBatch {
     request_id: u64,
+    offset: usize,
+    source_row_count: usize,
+    total_items: usize,
+    rendered_items: usize,
+    batch_count: usize,
+    queued_at: Instant,
+    total_push_duration: Duration,
+    max_push_duration: Duration,
     items: VecDeque<TranscriptItemInit>,
 }
 
@@ -82,6 +91,11 @@ impl std::fmt::Debug for PendingRenderBatch {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("PendingRenderBatch")
             .field("request_id", &self.request_id)
+            .field("offset", &self.offset)
+            .field("source_row_count", &self.source_row_count)
+            .field("total_items", &self.total_items)
+            .field("rendered_items", &self.rendered_items)
+            .field("batch_count", &self.batch_count)
             .field("remaining_items", &self.items.len())
             .finish()
     }
@@ -138,6 +152,7 @@ pub enum SessionDetailCmd {
         session_id: String,
         offset: usize,
         limit: usize,
+        load_duration_ms: u128,
         result: Result<Vec<crate::database::TranscriptItemRow>, String>,
     },
 }
@@ -704,22 +719,7 @@ impl Component for SessionDetail {
         sender: ComponentSender<Self>,
         _root: &Self::Root,
     ) {
-        match message {
-            SessionDetailCmd::TranscriptPageLoaded {
-                request_id,
-                session_id,
-                offset,
-                limit,
-                result,
-            } => self.apply_transcript_page_result(
-                &sender,
-                request_id,
-                &session_id,
-                offset,
-                limit,
-                result,
-            ),
-        }
+        self.apply_transcript_page_result(&sender, message);
     }
 
     fn post_view(&self, widgets: &mut Self::Widgets) {
@@ -1013,6 +1013,7 @@ impl SessionDetail {
         let preview_len = self.preview_len as i64;
 
         sender.spawn_oneshot_command(move || {
+            let started_at = Instant::now();
             let result = load_transcript_items(
                 &db_path,
                 &session_id,
@@ -1021,12 +1022,14 @@ impl SessionDetail {
                 preview_len,
             )
             .map_err(|err| format!("{err:#}"));
+            let load_duration_ms = started_at.elapsed().as_millis();
 
             SessionDetailCmd::TranscriptPageLoaded {
                 request_id,
                 session_id,
                 offset,
                 limit,
+                load_duration_ms,
                 result,
             }
         });
@@ -1043,10 +1046,28 @@ impl SessionDetail {
         &mut self,
         sender: &ComponentSender<Self>,
         request_id: u64,
+        offset: usize,
+        source_row_count: usize,
         items: Vec<TranscriptItemInit>,
     ) {
+        let total_items = items.len();
+        tracing::info!(
+            request_id,
+            offset,
+            source_row_count,
+            display_item_count = total_items,
+            "Queued transcript render batch"
+        );
         self.pending_render_batch = Some(PendingRenderBatch {
             request_id,
+            offset,
+            source_row_count,
+            total_items,
+            rendered_items: 0,
+            batch_count: 0,
+            queued_at: Instant::now(),
+            total_push_duration: Duration::ZERO,
+            max_push_duration: Duration::ZERO,
             items: items.into(),
         });
         self.schedule_transcript_render_batch(sender, request_id);
@@ -1065,18 +1086,57 @@ impl SessionDetail {
         }
 
         let mut guard = self.messages.guard();
+        let push_started_at = Instant::now();
+        let mut rendered_this_batch = 0usize;
         for _ in 0..RENDER_BATCH_SIZE {
             let Some(item) = batch.items.pop_front() else {
                 break;
             };
             guard.push_back(item);
+            rendered_this_batch += 1;
         }
+        let push_duration = push_started_at.elapsed();
         let has_more_items = !batch.items.is_empty();
+        batch.rendered_items += rendered_this_batch;
+        batch.batch_count += 1;
+        batch.total_push_duration += push_duration;
+        batch.max_push_duration = batch.max_push_duration.max(push_duration);
+        let remaining_items = batch.items.len();
+        let rendered_items = batch.rendered_items;
+        let total_items = batch.total_items;
+        let batch_count = batch.batch_count;
+        let offset = batch.offset;
+        let source_row_count = batch.source_row_count;
+        let total_push_duration_ms = batch.total_push_duration.as_millis();
+        let max_push_duration_ms = batch.max_push_duration.as_millis();
+        let total_duration_ms = batch.queued_at.elapsed().as_millis();
         drop(guard);
 
         if has_more_items {
+            tracing::debug!(
+                request_id,
+                offset,
+                rendered_this_batch,
+                rendered_items,
+                total_items,
+                remaining_items,
+                push_duration_ms = push_duration.as_millis(),
+                "Rendered transcript batch"
+            );
             self.schedule_transcript_render_batch(sender, request_id);
         } else {
+            tracing::info!(
+                request_id,
+                offset,
+                source_row_count,
+                display_item_count = total_items,
+                rendered_items,
+                batch_count,
+                total_push_duration_ms,
+                max_push_duration_ms,
+                total_duration_ms,
+                "Finished rendering transcript page"
+            );
             self.pending_render_batch = None;
         }
     }
@@ -1097,8 +1157,19 @@ impl SessionDetail {
         let db_path = self.db_path.clone();
         self.track_pending_boundary_tool_rows(&rows);
         self.clear_messages_safely();
+        let build_started_at = Instant::now();
+        let source_row_count = rows.len();
         let items = Self::build_display_items(rows, session_id, highlight, db_path, 0);
-        self.queue_transcript_items_for_render(sender, request_id, items);
+        tracing::info!(
+            request_id,
+            session_id,
+            offset = 0usize,
+            source_row_count,
+            display_item_count = items.len(),
+            build_duration_ms = build_started_at.elapsed().as_millis(),
+            "Prepared first transcript page"
+        );
+        self.queue_transcript_items_for_render(sender, request_id, 0, source_row_count, items);
     }
 
     fn handle_transcript_page_error(&mut self, session_id: &str, offset: usize, err: String) {
@@ -1123,12 +1194,17 @@ impl SessionDetail {
     fn apply_transcript_page_result(
         &mut self,
         sender: &ComponentSender<Self>,
-        request_id: u64,
-        session_id: &str,
-        offset: usize,
-        limit: usize,
-        result: Result<Vec<crate::database::TranscriptItemRow>, String>,
+        message: SessionDetailCmd,
     ) {
+        let SessionDetailCmd::TranscriptPageLoaded {
+            request_id,
+            session_id,
+            offset,
+            limit,
+            load_duration_ms,
+            result,
+        } = message;
+
         if request_id != self.transcript_request_id {
             tracing::debug!(
                 "Ignoring stale transcript page for session {} at offset {}",
@@ -1153,10 +1229,30 @@ impl SessionDetail {
 
         match result {
             Ok(rows) if offset == 0 => {
-                self.apply_first_page_rows(sender, request_id, session_id, limit, rows)
+                tracing::info!(
+                    request_id,
+                    session_id = session_id.as_str(),
+                    offset,
+                    limit,
+                    source_row_count = rows.len(),
+                    load_duration_ms,
+                    "Loaded first transcript page"
+                );
+                self.apply_first_page_rows(sender, request_id, &session_id, limit, rows)
             }
-            Ok(rows) => self.apply_next_page_rows(sender, request_id, session_id, rows),
-            Err(err) => self.handle_transcript_page_error(session_id, offset, err),
+            Ok(rows) => {
+                tracing::info!(
+                    request_id,
+                    session_id = session_id.as_str(),
+                    offset,
+                    limit,
+                    source_row_count = rows.len(),
+                    load_duration_ms,
+                    "Loaded next transcript page"
+                );
+                self.apply_next_page_rows(sender, request_id, offset, &session_id, rows)
+            }
+            Err(err) => self.handle_transcript_page_error(&session_id, offset, err),
         }
     }
 
@@ -1257,9 +1353,11 @@ impl SessionDetail {
         &mut self,
         sender: &ComponentSender<Self>,
         request_id: u64,
+        offset: usize,
         session_id: &str,
         rows: Vec<crate::database::TranscriptItemRow>,
     ) {
+        let apply_started_at = Instant::now();
         self.loading_next_page = false;
         let source_len = rows.len();
         self.has_more_messages = source_len == self.page_size;
@@ -1273,6 +1371,7 @@ impl SessionDetail {
             replacement_items,
             rows,
         } = self.regroup_next_page_boundary(rows);
+        let replacement_item_count = replacement_items.len();
 
         {
             let mut guard = self.messages.guard();
@@ -1300,8 +1399,18 @@ impl SessionDetail {
             let start_index = guard.len();
             let items =
                 Self::build_display_items(rows, session_id, highlight, db_path, start_index);
+            tracing::info!(
+                request_id,
+                session_id,
+                offset,
+                source_row_count = source_len,
+                replacement_item_count,
+                display_item_count = items.len(),
+                prepare_duration_ms = apply_started_at.elapsed().as_millis(),
+                "Prepared next transcript page"
+            );
             drop(guard);
-            self.queue_transcript_items_for_render(sender, request_id, items);
+            self.queue_transcript_items_for_render(sender, request_id, offset, source_len, items);
         }
 
         if !self.has_more_messages {
