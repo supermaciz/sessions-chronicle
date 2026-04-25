@@ -2,7 +2,7 @@ use anyhow::Result;
 use rusqlite::Connection;
 
 #[cfg(test)]
-const CURRENT_DB_VERSION: i64 = 11;
+const CURRENT_DB_VERSION: i64 = 12;
 
 fn column_exists(conn: &Connection, table_name: &str, column_name: &str) -> Result<bool> {
     Ok(conn.query_row(
@@ -32,6 +32,7 @@ fn column_exists(conn: &Connection, table_name: &str, column_name: &str) -> Resu
 ///   9 – reasoning_attachments side table and clear file_fingerprints
 ///   10 – clear file_fingerprints to rebuild transcripts after parser changes
 ///   11 – subagents gains nullable agent_id and clear file_fingerprints
+///   12 – add session-list ordering indexes for faster startup/filter reloads
 pub fn initialize_database(conn: &Connection) -> Result<()> {
     let version: i64 = conn.query_row("PRAGMA user_version", [], |row| row.get(0))?;
 
@@ -67,6 +68,9 @@ pub fn initialize_database(conn: &Connection) -> Result<()> {
     }
     if version < 11 {
         apply_v11_migration(conn)?;
+    }
+    if version < 12 {
+        apply_v12_migration(conn)?;
     }
 
     Ok(())
@@ -454,10 +458,55 @@ fn apply_v11_migration(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
+/// Migrate from v11 to v12.
+///
+/// Adds ordering indexes used by the session list queries. These avoid scanning
+/// all sessions and building temporary sort tables on every reload.
+fn apply_v12_migration(conn: &Connection) -> Result<()> {
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_sessions_top_level_last_updated
+         ON sessions(is_subagent, last_updated DESC)",
+        [],
+    )?;
+
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_sessions_project_last_updated
+         ON sessions(is_subagent, project_id, last_updated DESC)",
+        [],
+    )?;
+
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_sessions_tool_last_updated
+         ON sessions(is_subagent, tool, last_updated DESC)",
+        [],
+    )?;
+
+    conn.execute_batch("PRAGMA user_version = 12")?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use rusqlite::Connection;
+
+    fn index_exists(conn: &Connection, name: &str) -> bool {
+        conn.query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name = ?1",
+            [name],
+            |row| row.get::<_, i64>(0),
+        )
+        .unwrap()
+            > 0
+    }
+
+    fn index_columns(conn: &Connection, name: &str) -> Vec<String> {
+        let mut stmt = conn.prepare(&format!("PRAGMA index_info({name})")).unwrap();
+        stmt.query_map([], |row| row.get::<_, String>(2))
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap()
+    }
 
     #[test]
     fn fresh_db_initializes_to_latest() {
@@ -512,6 +561,79 @@ mod tests {
             )
             .unwrap();
         assert_eq!(encrypted_content_column, 0);
+    }
+
+    #[test]
+    fn migration_creates_session_list_ordering_indexes() {
+        let conn = Connection::open_in_memory().unwrap();
+        initialize_database(&conn).unwrap();
+
+        assert!(index_exists(&conn, "idx_sessions_top_level_last_updated"));
+        assert!(index_exists(&conn, "idx_sessions_project_last_updated"));
+        assert!(index_exists(&conn, "idx_sessions_tool_last_updated"));
+        assert_eq!(
+            index_columns(&conn, "idx_sessions_top_level_last_updated"),
+            vec!["is_subagent", "last_updated"]
+        );
+        assert_eq!(
+            index_columns(&conn, "idx_sessions_project_last_updated"),
+            vec!["is_subagent", "project_id", "last_updated"]
+        );
+        assert_eq!(
+            index_columns(&conn, "idx_sessions_tool_last_updated"),
+            vec!["is_subagent", "tool", "last_updated"]
+        );
+    }
+
+    #[test]
+    fn v11_to_v12_migration_preserves_sessions_and_fingerprints() {
+        let conn = Connection::open_in_memory().unwrap();
+        initialize_database(&conn).unwrap();
+        conn.execute_batch(
+            "DROP INDEX idx_sessions_top_level_last_updated;
+             DROP INDEX idx_sessions_project_last_updated;
+             DROP INDEX idx_sessions_tool_last_updated;
+             PRAGMA user_version = 11;",
+        )
+        .unwrap();
+
+        conn.execute(
+            "INSERT INTO sessions (id, tool, start_time, message_count, file_path, last_updated)
+             VALUES ('kept', 'opencode', 1, 2, '/tmp/kept.jsonl', 3)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO file_fingerprints (file_path, mtime_ns, size)
+             VALUES ('/tmp/kept.jsonl', 4, 5)",
+            [],
+        )
+        .unwrap();
+
+        initialize_database(&conn).unwrap();
+
+        let version: i64 = conn
+            .query_row("PRAGMA user_version", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(version, CURRENT_DB_VERSION);
+
+        let session_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sessions WHERE id = 'kept'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(session_count, 1);
+
+        let fingerprint_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM file_fingerprints WHERE file_path = '/tmp/kept.jsonl'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(fingerprint_count, 1);
     }
 
     #[test]
