@@ -21,6 +21,7 @@ pub enum IndexingWorkerOutput {
     Completed {
         indexed: usize,
         skipped: usize,
+        removed: usize,
         per_source: Vec<PerSourceResult>,
         errors_detail: Vec<IndexingError>,
     },
@@ -54,6 +55,7 @@ impl Worker for IndexingWorker {
                 let _ = sender.output(IndexingWorkerOutput::Completed {
                     indexed: run_result.totals.indexed,
                     skipped: run_result.totals.skipped,
+                    removed: run_result.totals.removed,
                     per_source: run_result.per_source,
                     errors_detail: run_result.errors_detail,
                 });

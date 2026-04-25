@@ -90,6 +90,7 @@ struct SourceRowState {
     expandable: bool,
     indexed: usize,
     skipped: usize,
+    removed: usize,
     errors: usize,
 }
 
@@ -142,6 +143,7 @@ impl SourceRowState {
             expandable: !matches!(result.status, SourceStatus::NotFound),
             indexed: result.indexed,
             skipped: result.skipped,
+            removed: result.removed,
             errors: result.errors,
         }
     }
@@ -357,6 +359,10 @@ impl IndexingStatusDialog {
                 source_row.add_row(&Self::stat_row("Already Indexed", row.skipped));
             }
 
+            if row.removed > 0 {
+                source_row.add_row(&Self::stat_row("Stale Sessions Removed", row.removed));
+            }
+
             if row.errors > 0 {
                 let parse_errors_row = adw::ActionRow::builder()
                     .title("Parse Errors")
@@ -434,6 +440,7 @@ fn derive_summary_state(results: &[PerSourceResult], indexing: bool) -> SummaryS
 
     let indexed_total: usize = results.iter().map(|result| result.indexed).sum();
     let skipped_total: usize = results.iter().map(|result| result.skipped).sum();
+    let removed_total: usize = results.iter().map(|result| result.removed).sum();
     let errors_total: usize = results.iter().map(|result| result.errors).sum();
     let no_detected_sources = results
         .iter()
@@ -443,6 +450,7 @@ fn derive_summary_state(results: &[PerSourceResult], indexing: bool) -> SummaryS
         .any(|result| matches!(result.status, SourceStatus::Empty))
         && indexed_total == 0
         && skipped_total == 0
+        && removed_total == 0
         && !no_detected_sources;
 
     if no_detected_sources {
@@ -462,10 +470,30 @@ fn derive_summary_state(results: &[PerSourceResult], indexing: bool) -> SummaryS
     }
 
     if errors_total > 0 {
+        let subtitle = if removed_total > 0 {
+            format!(
+                "Removed {}; completed with {errors_total} errors",
+                stale_sessions_removed_text(removed_total)
+            )
+        } else {
+            format!("Completed with {errors_total} errors")
+        };
+
         return SummaryState::new(
             &format!("{indexed_total} sessions indexed"),
-            Some(&format!("Completed with {errors_total} errors")),
+            Some(&subtitle),
             "dialog-warning-symbolic",
+        );
+    }
+
+    if removed_total > 0 {
+        return SummaryState::new(
+            &format!("{indexed_total} sessions indexed"),
+            Some(&format!(
+                "Removed {}",
+                stale_sessions_removed_text(removed_total)
+            )),
+            "object-select-symbolic",
         );
     }
 
@@ -474,6 +502,14 @@ fn derive_summary_state(results: &[PerSourceResult], indexing: bool) -> SummaryS
         Some("Completed successfully"),
         "object-select-symbolic",
     )
+}
+
+fn stale_sessions_removed_text(count: usize) -> String {
+    if count == 1 {
+        "1 stale session".to_string()
+    } else {
+        format!("{count} stale sessions")
+    }
 }
 
 fn build_source_rows(results: &[PerSourceResult]) -> Vec<SourceRowState> {
@@ -615,11 +651,24 @@ mod tests {
         errors: usize,
         display_path: &str,
     ) -> PerSourceResult {
+        make_result_with_removed(assistant, status, indexed, skipped, 0, errors, display_path)
+    }
+
+    fn make_result_with_removed(
+        assistant: AiAssistant,
+        status: SourceStatus,
+        indexed: usize,
+        skipped: usize,
+        removed: usize,
+        errors: usize,
+        display_path: &str,
+    ) -> PerSourceResult {
         PerSourceResult {
             assistant,
             display_path: display_path.to_string(),
             indexed,
             skipped,
+            removed,
             errors,
             status,
         }
@@ -699,6 +748,26 @@ mod tests {
                 "No sessions found",
                 Some("Session sources detected, but no sessions were found"),
                 "dialog-warning-symbolic",
+            )
+        );
+
+        assert_eq!(
+            derive_summary_state(
+                &[make_result_with_removed(
+                    AiAssistant::OpenCode,
+                    SourceStatus::Indexed,
+                    0,
+                    0,
+                    1,
+                    0,
+                    "/tmp/opencode",
+                )],
+                false,
+            ),
+            SummaryState::new(
+                "0 sessions indexed",
+                Some("Removed 1 stale session"),
+                "object-select-symbolic",
             )
         );
 
@@ -788,6 +857,21 @@ mod tests {
 
         assert_eq!(row.subtitle, "/tmp/claude");
         assert!(!row.subtitle.contains("<tt>"));
+    }
+
+    #[test]
+    fn indexing_status_source_row_preserves_removed_count() {
+        let row = SourceRowState::from_result(&make_result_with_removed(
+            AiAssistant::OpenCode,
+            SourceStatus::Indexed,
+            0,
+            0,
+            2,
+            0,
+            "/tmp/opencode",
+        ));
+
+        assert_eq!(row.removed, 2);
     }
 
     #[test]
@@ -984,6 +1068,7 @@ mod tests {
                 display_path: "/tmp/opencode".into(),
                 indexed: 0,
                 skipped: 0,
+                removed: 0,
                 errors: 0,
                 status: SourceStatus::Empty,
             }],

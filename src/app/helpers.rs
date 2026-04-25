@@ -116,6 +116,14 @@ pub(super) fn analytics_indexing_completion_outcome(
     }
 }
 
+pub(super) fn should_reload_sessions_after_indexing(
+    indexed: usize,
+    removed: usize,
+    pending_reindex_feedback: bool,
+) -> bool {
+    indexed > 0 || removed > 0 || pending_reindex_feedback
+}
+
 pub(super) fn banner_title(results: &[PerSourceResult]) -> Option<String> {
     let problematic = results
         .iter()
@@ -198,6 +206,7 @@ mod tests {
                 _ => 0,
             },
             skipped: 0,
+            removed: 0,
             errors: match status {
                 SourceStatus::Degraded | SourceStatus::Failed => 1,
                 _ => 0,

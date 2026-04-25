@@ -53,7 +53,8 @@ use helpers::workspace_allows_search;
 use helpers::{
     active_search_query, analytics_indexing_completion_outcome, detail_pop_sync_decision,
     parent_session_load_failure_messages, resolve_escape_action, resolve_search_mode_change,
-    search_query_update_messages, transition_to_detail, workspace_header_visibility,
+    search_query_update_messages, should_reload_sessions_after_indexing, transition_to_detail,
+    workspace_header_visibility,
 };
 use helpers::{retained_project_filter, transition_to_list};
 #[cfg(test)]
@@ -181,6 +182,7 @@ pub(super) enum AppMsg {
     IndexingCompleted {
         indexed: usize,
         skipped: usize,
+        removed: usize,
         per_source: Vec<crate::models::PerSourceResult>,
         errors_detail: Vec<crate::models::IndexingError>,
     },
@@ -559,9 +561,12 @@ impl SimpleComponent for App {
             AppMsg::IndexingCompleted {
                 indexed,
                 skipped,
+                removed,
                 per_source,
                 errors_detail,
-            } => self.handle_indexing_completed(indexed, skipped, per_source, errors_detail),
+            } => {
+                self.handle_indexing_completed(indexed, skipped, removed, per_source, errors_detail)
+            }
             AppMsg::IndexingFailed => self.handle_indexing_failed(),
             AppMsg::AnalyticsRefreshRequested => self.handle_analytics_refresh_requested(),
             AppMsg::AnalyticsLoaded(data) => self.handle_analytics_loaded(data),
@@ -836,6 +841,7 @@ mod tests {
         controller.emit(AppMsg::IndexingCompleted {
             indexed: 0,
             skipped: 0,
+            removed: 0,
             per_source: vec![],
             errors_detail: vec![],
         });
@@ -901,6 +907,7 @@ mod tests {
         controller.emit(AppMsg::IndexingCompleted {
             indexed: 1,
             skipped: 0,
+            removed: 0,
             per_source: vec![],
             errors_detail: expected_errors.clone(),
         });
@@ -1104,6 +1111,14 @@ mod tests {
     #[test]
     fn reindex_request_starts_full_reindex_when_idle() {
         assert_eq!(decide_reindex_action(false), ReindexAction::StartFull);
+    }
+
+    #[test]
+    fn skipped_only_incremental_indexing_does_not_need_session_reload() {
+        assert!(!should_reload_sessions_after_indexing(0, 0, false));
+        assert!(should_reload_sessions_after_indexing(1, 0, false));
+        assert!(should_reload_sessions_after_indexing(0, 1, false));
+        assert!(should_reload_sessions_after_indexing(0, 0, true));
     }
 
     #[test]

@@ -27,6 +27,7 @@ pub enum SessionListMsg {
         project_filter: ProjectFilter,
     },
     SetSearchQuery(String),
+    Reload,
     SetIndexing(bool),
     SetSourceResults(Vec<PerSourceResult>),
     SessionActivated(i32),
@@ -265,13 +266,29 @@ impl SimpleComponent for SessionList {
                 tools,
                 project_filter,
             } => {
+                if !Self::filters_changed(
+                    &self.active_tools,
+                    &self.project_filter,
+                    &tools,
+                    &project_filter,
+                ) {
+                    return;
+                }
+
                 self.active_tools = tools.clone();
                 self.project_filter = project_filter;
                 self.all_tools_selected = tools.len() == AiAssistant::ALL.len();
                 self.reload_sessions();
             }
             SessionListMsg::SetSearchQuery(query) => {
+                if !Self::search_query_changed(&self.search_query, &query) {
+                    return;
+                }
+
                 self.search_query = query;
+                self.reload_sessions();
+            }
+            SessionListMsg::Reload => {
                 self.reload_sessions();
             }
             SessionListMsg::SetIndexing(indexing) => {
@@ -372,6 +389,19 @@ impl SimpleComponent for SessionList {
 }
 
 impl SessionList {
+    fn filters_changed(
+        current_tools: &[AiAssistant],
+        current_project_filter: &ProjectFilter,
+        next_tools: &[AiAssistant],
+        next_project_filter: &ProjectFilter,
+    ) -> bool {
+        current_tools != next_tools || current_project_filter != next_project_filter
+    }
+
+    fn search_query_changed(current_query: &str, next_query: &str) -> bool {
+        current_query != next_query
+    }
+
     /// Scroll the ancestor `ScrolledWindow` so that `row` is fully visible.
     fn scroll_row_into_view(row: &gtk::ListBoxRow, list_box: &gtk::ListBox) {
         let Some(sw) = list_box
@@ -849,6 +879,85 @@ mod tests {
         assert_eq!(ids, vec!["alpha-claude-new", "alpha-claude-old"]);
     }
 
+    #[test]
+    fn unchanged_filters_do_not_need_reload() {
+        let tools = vec![AiAssistant::ClaudeCode, AiAssistant::OpenCode];
+
+        assert!(!SessionList::filters_changed(
+            &tools,
+            &ProjectFilter::Project(1),
+            &tools,
+            &ProjectFilter::Project(1),
+        ));
+        assert!(SessionList::filters_changed(
+            &tools,
+            &ProjectFilter::Project(1),
+            &[AiAssistant::ClaudeCode],
+            &ProjectFilter::Project(1),
+        ));
+        assert!(SessionList::filters_changed(
+            &tools,
+            &ProjectFilter::Project(1),
+            &tools,
+            &ProjectFilter::AllSessions,
+        ));
+    }
+
+    #[test]
+    fn unchanged_search_query_does_not_need_reload() {
+        assert!(!SessionList::search_query_changed("needle", "needle"));
+        assert!(SessionList::search_query_changed("needle", "other"));
+    }
+
+    #[gtk::test]
+    fn explicit_reload_refreshes_even_when_filters_are_unchanged() {
+        let temp_db = TempDatabase::new();
+        temp_db.seed_project_sidebar_fixture();
+
+        let controller = SessionList::builder().launch(temp_db.path.clone());
+
+        pump_main_context(|| {
+            let parts = controller.state().get();
+            parts.model.sessions.len() == 5
+        });
+
+        temp_db
+            .connection
+            .execute(
+                "INSERT INTO sessions (id, tool, project_path, project_id, start_time, message_count, file_path, last_updated)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                rusqlite::params![
+                    "fresh-claude",
+                    "claude_code",
+                    Some("/projects/alpha"),
+                    Some(1_i64),
+                    60_i64,
+                    1_i64,
+                    "/tmp/fresh-claude.jsonl",
+                    600_i64,
+                ],
+            )
+            .expect("Failed to insert fresh session");
+
+        controller.emit(SessionListMsg::Reload);
+
+        pump_main_context(|| {
+            let parts = controller.state().get();
+            parts.model.sessions.len() == 6
+        });
+
+        let first_session_id = {
+            let parts = controller.state().get();
+            parts
+                .model
+                .sessions
+                .get(0)
+                .map(|row| row.session_id().to_string())
+        };
+
+        assert_eq!(first_session_id.as_deref(), Some("fresh-claude"));
+    }
+
     #[gtk::test]
     fn project_sidebar_session_list_set_filters_supports_pinned_destination() {
         let temp_db = TempDatabase::new();
@@ -1164,6 +1273,7 @@ mod tests {
             display_path: "/tmp/claude".into(),
             indexed: 0,
             skipped: 0,
+            removed: 0,
             errors: 0,
             status: SourceStatus::Empty,
         }]));

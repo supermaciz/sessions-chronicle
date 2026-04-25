@@ -24,6 +24,7 @@ pub struct SessionIndexer {
 pub struct IndexingStats {
     pub indexed: usize,
     pub skipped: usize,
+    pub removed: usize,
     pub errors: usize,
 }
 
@@ -73,6 +74,7 @@ fn build_per_source_result(
         display_path,
         indexed: stats.indexed,
         skipped: stats.skipped,
+        removed: stats.removed,
         errors: stats.errors,
         status: derive_source_status(source_available, stats.indexed, stats.skipped, stats.errors),
     }
@@ -196,7 +198,12 @@ impl SessionIndexer {
             }
 
             if Self::is_prunable_claude_sidechain_file(path, sessions_dir) {
-                self.prune_sidechain_session(AiAssistant::ClaudeCode, path, errors_detail);
+                self.prune_sidechain_session(
+                    AiAssistant::ClaudeCode,
+                    path,
+                    &mut stats,
+                    errors_detail,
+                );
                 continue;
             }
 
@@ -257,7 +264,8 @@ impl SessionIndexer {
             self.index_opencode_json_sessions(storage_root, &mut context)?;
         }
 
-        self.prune_stale_opencode_sessions_if_needed(incremental, flags, &indexed_ids)?;
+        stats.removed +=
+            self.prune_stale_opencode_sessions_if_needed(incremental, flags, &indexed_ids)?;
 
         self.prune_orphan_fingerprints()?;
 
@@ -376,6 +384,7 @@ impl SessionIndexer {
                     self.prune_session_after_parse_skip(
                         AiAssistant::MistralVibe,
                         path,
+                        stats,
                         errors_detail,
                     );
                 } else {
@@ -408,6 +417,7 @@ impl SessionIndexer {
                     self.prune_session_after_parse_skip(
                         AiAssistant::ClaudeCode,
                         path,
+                        stats,
                         errors_detail,
                     );
                 } else {
@@ -435,7 +445,12 @@ impl SessionIndexer {
             Err(err) => {
                 if is_codex_error(&err) {
                     tracing::debug!("Skipped Codex session {}: {}", path.display(), err);
-                    self.prune_session_after_parse_skip(AiAssistant::Codex, path, errors_detail);
+                    self.prune_session_after_parse_skip(
+                        AiAssistant::Codex,
+                        path,
+                        stats,
+                        errors_detail,
+                    );
                 } else {
                     self.record_index_failure(AiAssistant::Codex, path, &err, stats, errors_detail);
                 }
@@ -488,20 +503,24 @@ impl SessionIndexer {
         &mut self,
         assistant: AiAssistant,
         path: &Path,
+        stats: &mut IndexingStats,
         errors_detail: &mut VecDeque<IndexingError>,
     ) {
-        if let Err(err) = self.remove_session_for_file(path) {
-            tracing::warn!(
-                "Failed to prune sidechain session {}: {}",
-                path.display(),
-                err
-            );
-            push_indexing_error(
-                errors_detail,
-                assistant,
-                Some(path.display().to_string()),
-                format!("Failed to prune sidechain session: {err}"),
-            );
+        match self.remove_session_for_file(path) {
+            Ok(removed) => stats.removed += removed,
+            Err(err) => {
+                tracing::warn!(
+                    "Failed to prune sidechain session {}: {}",
+                    path.display(),
+                    err
+                );
+                push_indexing_error(
+                    errors_detail,
+                    assistant,
+                    Some(path.display().to_string()),
+                    format!("Failed to prune sidechain session: {err}"),
+                );
+            }
         }
     }
 
@@ -728,6 +747,7 @@ impl SessionIndexer {
                     self.prune_session_after_parse_skip(
                         AiAssistant::OpenCode,
                         path,
+                        context.stats,
                         context.errors_detail,
                     );
                 } else {
@@ -1163,32 +1183,36 @@ impl SessionIndexer {
         incremental: bool,
         flags: OpencodeEnumerationFlags,
         indexed_ids: &HashSet<String>,
-    ) -> Result<()> {
+    ) -> Result<usize> {
         if incremental {
             if flags.sqlite_enumerated {
-                self.prune_stale_opencode_sessions(indexed_ids)?;
+                return self.prune_stale_opencode_sessions(indexed_ids);
             }
         } else if flags.enumeration_succeeded {
-            self.prune_stale_opencode_sessions(indexed_ids)?;
+            return self.prune_stale_opencode_sessions(indexed_ids);
         }
 
-        Ok(())
+        Ok(0)
     }
 
     fn prune_session_after_parse_skip(
         &mut self,
         assistant: AiAssistant,
         path: &Path,
+        stats: &mut IndexingStats,
         errors_detail: &mut VecDeque<IndexingError>,
     ) {
-        if let Err(remove_err) = self.remove_session_for_file(path) {
-            tracing::warn!("Failed to prune session {}: {}", path.display(), remove_err);
-            push_indexing_error(
-                errors_detail,
-                assistant,
-                Some(path.display().to_string()),
-                format!("Failed to prune session: {remove_err}"),
-            );
+        match self.remove_session_for_file(path) {
+            Ok(removed) => stats.removed += removed,
+            Err(remove_err) => {
+                tracing::warn!("Failed to prune session {}: {}", path.display(), remove_err);
+                push_indexing_error(
+                    errors_detail,
+                    assistant,
+                    Some(path.display().to_string()),
+                    format!("Failed to prune session: {remove_err}"),
+                );
+            }
         }
     }
 
@@ -1343,6 +1367,7 @@ impl SessionIndexer {
             .fold(IndexingStats::default(), |mut acc, result| {
                 acc.indexed += result.indexed;
                 acc.skipped += result.skipped;
+                acc.removed += result.removed;
                 acc.errors += result.errors;
                 acc
             });
@@ -1354,10 +1379,10 @@ impl SessionIndexer {
         }
     }
 
-    fn remove_session_for_file(&mut self, file_path: &Path) -> Result<()> {
+    fn remove_session_for_file(&mut self, file_path: &Path) -> Result<usize> {
         let Some(file_path_str) = file_path.to_str() else {
             tracing::warn!("Cannot prune session with non-UTF8 path: {:?}", file_path);
-            return Ok(());
+            return Ok(0);
         };
 
         let tx = self.db.transaction()?;
@@ -1382,14 +1407,14 @@ impl SessionIndexer {
             "DELETE FROM messages WHERE session_id IN (SELECT id FROM sessions WHERE file_path = ?1)",
             [file_path_str],
         )?;
-        tx.execute("DELETE FROM sessions WHERE file_path = ?1", [file_path_str])?;
+        let removed = tx.execute("DELETE FROM sessions WHERE file_path = ?1", [file_path_str])?;
 
         tx.commit()?;
 
-        Ok(())
+        Ok(removed)
     }
 
-    fn prune_stale_opencode_sessions(&mut self, indexed_ids: &HashSet<String>) -> Result<()> {
+    fn prune_stale_opencode_sessions(&mut self, indexed_ids: &HashSet<String>) -> Result<usize> {
         let existing_ids: Vec<String> = {
             let mut stmt = self
                 .db
@@ -1398,16 +1423,17 @@ impl SessionIndexer {
                 .collect::<std::result::Result<Vec<_>, _>>()?
         };
 
+        let mut removed = 0;
         for id in existing_ids {
             if !indexed_ids.contains(&id) {
-                self.remove_session_by_id(&id)?;
+                removed += self.remove_session_by_id(&id)?;
             }
         }
 
-        Ok(())
+        Ok(removed)
     }
 
-    fn remove_session_by_id(&mut self, session_id: &str) -> Result<()> {
+    fn remove_session_by_id(&mut self, session_id: &str) -> Result<usize> {
         let tx = self.db.transaction()?;
         tx.execute(
             "DELETE FROM transcript_items WHERE session_id = ?1",
@@ -1420,9 +1446,9 @@ impl SessionIndexer {
         tx.execute("DELETE FROM tool_calls WHERE session_id = ?1", [session_id])?;
         tx.execute("DELETE FROM subagents WHERE session_id = ?1", [session_id])?;
         tx.execute("DELETE FROM messages WHERE session_id = ?1", [session_id])?;
-        tx.execute("DELETE FROM sessions WHERE id = ?1", [session_id])?;
+        let removed = tx.execute("DELETE FROM sessions WHERE id = ?1", [session_id])?;
         tx.commit()?;
-        Ok(())
+        Ok(removed)
     }
 }
 
@@ -2198,6 +2224,33 @@ mod tests {
             after_count, initial_count,
             "Existing sessions must survive when enumeration fails"
         );
+    }
+
+    #[test]
+    fn opencode_stale_prune_reports_removed_sessions() {
+        let temp_db = NamedTempFile::new().unwrap();
+        let mut indexer = SessionIndexer::new(temp_db.path()).unwrap();
+
+        indexer
+            .db
+            .execute(
+                "INSERT INTO sessions (id, tool, start_time, message_count, file_path, last_updated)
+                 VALUES ('stale-opencode', 'opencode', 0, 1, '/tmp/stale.json', 0)",
+                [],
+            )
+            .unwrap();
+
+        let removed = indexer
+            .prune_stale_opencode_sessions(&HashSet::new())
+            .unwrap();
+
+        let remaining: i64 = indexer
+            .db
+            .query_row("SELECT COUNT(*) FROM sessions", [], |row| row.get(0))
+            .unwrap();
+
+        assert_eq!(removed, 1);
+        assert_eq!(remaining, 0);
     }
 
     #[test]

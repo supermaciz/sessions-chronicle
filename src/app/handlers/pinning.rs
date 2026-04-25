@@ -24,8 +24,11 @@ impl App {
                 self.toast_overlay
                     .add_toast(adw::Toast::builder().title(title).timeout(2).build());
 
-                self.refresh_sidebar_projects();
-                self.emit_session_list_filters();
+                if self.refresh_sidebar_projects() {
+                    self.emit_session_list_filters();
+                } else {
+                    self.session_list.emit(SessionListMsg::Reload);
+                }
             }
             Err(err) => {
                 tracing::warn!("Failed to toggle pin for '{}': {}", session_id, err);
