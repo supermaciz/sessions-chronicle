@@ -659,8 +659,9 @@ pub fn load_message_full_content(
     let db = open_connection(db_path)?;
     let message_table = direct_message_table_for_session(&db, session_id)?;
 
-    let sql =
-        format!("SELECT content FROM {message_table} WHERE session_id = ?1 AND message_index = ?2");
+    let sql = format!(
+        "SELECT content FROM {message_table} WHERE session_id = ?1 AND CAST(message_index AS INTEGER) = ?2"
+    );
     let mut stmt = db.prepare(&sql)?;
 
     let mut rows = stmt
@@ -698,7 +699,7 @@ pub fn load_message_previews_for_session(
     let sql = format!(
         "SELECT
           session_id,
-          message_index,
+          CAST(message_index AS INTEGER) AS message_index,
           role,
           substr(content, 1, ?2) AS content_preview,
           length(content) AS content_len,
@@ -706,7 +707,7 @@ pub fn load_message_previews_for_session(
           model
         FROM {message_table}
         WHERE session_id = ?1
-        ORDER BY message_index ASC
+        ORDER BY CAST(message_index AS INTEGER) ASC
         LIMIT ?3 OFFSET ?4"
     );
     let mut stmt = db.prepare(&sql)?;
@@ -767,7 +768,7 @@ pub fn load_transcript_items(
     let message_table = direct_message_table_for_session(&db, session_id)?;
     let message_join = format!(
         "LEFT JOIN {message_table} m ON ti.session_id = m.session_id
-                             AND ti.message_index = m.message_index"
+                             AND ti.message_index = CAST(m.message_index AS INTEGER)"
     );
 
     let sql = format!(
