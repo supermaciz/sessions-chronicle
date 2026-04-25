@@ -23,8 +23,7 @@ use crate::ui::transcript_row::{
 const INITIAL_PAGE_SIZE: usize = 75;
 const NEXT_PAGE_SIZE: usize = 100;
 const PREVIEW_LEN: usize = 2000;
-const RENDER_BATCH_SIZE: usize = 50;
-const RENDER_BATCH_INTERVAL_MS: u64 = 16;
+const RENDER_BATCH_SIZE: usize = 3;
 const DEFERRED_CLEAR_DELAY_MS: u64 = 250;
 
 /// Detail view for a single indexed session.
@@ -1082,7 +1081,7 @@ impl SessionDetail {
 
     fn schedule_transcript_render_batch(&self, sender: &ComponentSender<Self>, request_id: u64) {
         let input_sender = sender.input_sender().clone();
-        glib::timeout_add_local_once(Duration::from_millis(RENDER_BATCH_INTERVAL_MS), move || {
+        glib::idle_add_local_once(move || {
             let _ = input_sender.send(SessionDetailMsg::RenderNextTranscriptBatch { request_id });
         });
     }
