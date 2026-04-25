@@ -1,5 +1,5 @@
 use std::cell::Cell;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, VecDeque};
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -22,6 +22,7 @@ use crate::ui::transcript_row::{
 const INITIAL_PAGE_SIZE: usize = 75;
 const NEXT_PAGE_SIZE: usize = 200;
 const PREVIEW_LEN: usize = 2000;
+const RENDER_BATCH_SIZE: usize = 12;
 
 /// Detail view for a single indexed session.
 ///
@@ -41,6 +42,7 @@ pub struct SessionDetail {
     loading_first_page: bool,
     loading_next_page: bool,
     transcript_request_id: u64,
+    pending_render_batch: Option<PendingRenderBatch>,
     pending_boundary_tool_rows: Vec<crate::database::TranscriptItemRow>,
     search_query: Option<String>,
     /// Keyed by top-level display index in the transcript factory.
@@ -69,6 +71,20 @@ struct ScrollTarget {
 struct BoundaryAppendPlan {
     replacement_items: Vec<DisplayTranscriptItem>,
     rows: Vec<crate::database::TranscriptItemRow>,
+}
+
+struct PendingRenderBatch {
+    request_id: u64,
+    items: VecDeque<TranscriptItemInit>,
+}
+
+impl std::fmt::Debug for PendingRenderBatch {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PendingRenderBatch")
+            .field("request_id", &self.request_id)
+            .field("remaining_items", &self.items.len())
+            .finish()
+    }
 }
 
 /// Parent-facing actions emitted by [`SessionDetail`].
@@ -103,6 +119,9 @@ pub enum SessionDetailMsg {
     /// Receives per-row match counts from [`TranscriptRow`] children; one count
     /// per segment (burst child or single row).
     MatchSegments(usize, Vec<usize>),
+    RenderNextTranscriptBatch {
+        request_id: u64,
+    },
     /// Indicates that a transcript row failed to expand to its full content and
     /// should trigger the shared toast notification path.
     ShowExpandLoadFailure,
@@ -472,7 +491,9 @@ impl Component for SessionDetail {
                                 #[watch]
                                 set_visible: model.has_more_messages,
                                 #[watch]
-                                set_sensitive: !model.loading_next_page && !model.loading_first_page,
+                                set_sensitive: !model.loading_next_page
+                                    && !model.loading_first_page
+                                    && model.pending_render_batch.is_none(),
                                 #[watch]
                                 set_label: if model.loading_next_page { "Loading..." } else { "Load more" },
                                 connect_clicked => SessionDetailMsg::LoadMore,
@@ -577,6 +598,7 @@ impl Component for SessionDetail {
             loading_first_page: false,
             loading_next_page: false,
             transcript_request_id: 0,
+            pending_render_batch: None,
             pending_boundary_tool_rows: Vec::new(),
             search_query: None,
             match_segments: BTreeMap::new(),
@@ -635,6 +657,9 @@ impl Component for SessionDetail {
             SessionDetailMsg::MatchSegments(display_index, segments) => {
                 self.update_match_segments(display_index, segments);
             }
+            SessionDetailMsg::RenderNextTranscriptBatch { request_id } => {
+                self.render_next_transcript_batch(&sender, request_id);
+            }
             SessionDetailMsg::ShowExpandLoadFailure => {
                 tracing::warn!("Could not load full message content");
                 self.pending_toast.set(true);
@@ -652,6 +677,7 @@ impl Component for SessionDetail {
                 self.has_more_messages = false;
                 self.loading_first_page = false;
                 self.loading_next_page = false;
+                self.pending_render_batch = None;
                 self.search_query = None;
                 self.reset_search_matches();
                 self.clear_pending_boundary_tool_rows();
@@ -675,7 +701,7 @@ impl Component for SessionDetail {
     fn update_cmd(
         &mut self,
         message: Self::CommandOutput,
-        _sender: ComponentSender<Self>,
+        sender: ComponentSender<Self>,
         _root: &Self::Root,
     ) {
         match message {
@@ -685,7 +711,14 @@ impl Component for SessionDetail {
                 offset,
                 limit,
                 result,
-            } => self.apply_transcript_page_result(request_id, &session_id, offset, limit, result),
+            } => self.apply_transcript_page_result(
+                &sender,
+                request_id,
+                &session_id,
+                offset,
+                limit,
+                result,
+            ),
         }
     }
 
@@ -947,6 +980,7 @@ impl SessionDetail {
 
     fn invalidate_transcript_requests(&mut self) {
         self.transcript_request_id = self.transcript_request_id.wrapping_add(1);
+        self.pending_render_batch = None;
     }
 
     fn start_first_page_load(&mut self, sender: &ComponentSender<Self>, session_id: &str) {
@@ -998,8 +1032,59 @@ impl SessionDetail {
         });
     }
 
+    fn schedule_transcript_render_batch(&self, sender: &ComponentSender<Self>, request_id: u64) {
+        let input_sender = sender.input_sender().clone();
+        glib::idle_add_local_once(move || {
+            let _ = input_sender.send(SessionDetailMsg::RenderNextTranscriptBatch { request_id });
+        });
+    }
+
+    fn queue_transcript_items_for_render(
+        &mut self,
+        sender: &ComponentSender<Self>,
+        request_id: u64,
+        items: Vec<TranscriptItemInit>,
+    ) {
+        self.pending_render_batch = Some(PendingRenderBatch {
+            request_id,
+            items: items.into(),
+        });
+        self.schedule_transcript_render_batch(sender, request_id);
+    }
+
+    fn render_next_transcript_batch(&mut self, sender: &ComponentSender<Self>, request_id: u64) {
+        if request_id != self.transcript_request_id {
+            return;
+        }
+
+        let Some(batch) = &mut self.pending_render_batch else {
+            return;
+        };
+        if batch.request_id != request_id {
+            return;
+        }
+
+        let mut guard = self.messages.guard();
+        for _ in 0..RENDER_BATCH_SIZE {
+            let Some(item) = batch.items.pop_front() else {
+                break;
+            };
+            guard.push_back(item);
+        }
+        let has_more_items = !batch.items.is_empty();
+        drop(guard);
+
+        if has_more_items {
+            self.schedule_transcript_render_batch(sender, request_id);
+        } else {
+            self.pending_render_batch = None;
+        }
+    }
+
     fn apply_first_page_rows(
         &mut self,
+        sender: &ComponentSender<Self>,
+        request_id: u64,
         session_id: &str,
         limit: usize,
         rows: Vec<crate::database::TranscriptItemRow>,
@@ -1012,10 +1097,8 @@ impl SessionDetail {
         let db_path = self.db_path.clone();
         self.track_pending_boundary_tool_rows(&rows);
         self.clear_messages_safely();
-        let mut guard = self.messages.guard();
-        for item in Self::build_display_items(rows, session_id, highlight, db_path, 0) {
-            guard.push_back(item);
-        }
+        let items = Self::build_display_items(rows, session_id, highlight, db_path, 0);
+        self.queue_transcript_items_for_render(sender, request_id, items);
     }
 
     fn handle_transcript_page_error(&mut self, session_id: &str, offset: usize, err: String) {
@@ -1039,6 +1122,7 @@ impl SessionDetail {
 
     fn apply_transcript_page_result(
         &mut self,
+        sender: &ComponentSender<Self>,
         request_id: u64,
         session_id: &str,
         offset: usize,
@@ -1068,8 +1152,10 @@ impl SessionDetail {
         }
 
         match result {
-            Ok(rows) if offset == 0 => self.apply_first_page_rows(session_id, limit, rows),
-            Ok(rows) => self.apply_next_page_rows(session_id, rows),
+            Ok(rows) if offset == 0 => {
+                self.apply_first_page_rows(sender, request_id, session_id, limit, rows)
+            }
+            Ok(rows) => self.apply_next_page_rows(sender, request_id, session_id, rows),
             Err(err) => self.handle_transcript_page_error(session_id, offset, err),
         }
     }
@@ -1147,7 +1233,11 @@ impl SessionDetail {
             return;
         };
 
-        if self.loading_first_page || self.loading_next_page || !self.has_more_messages {
+        if self.loading_first_page
+            || self.loading_next_page
+            || self.pending_render_batch.is_some()
+            || !self.has_more_messages
+        {
             return;
         }
 
@@ -1165,6 +1255,8 @@ impl SessionDetail {
 
     fn apply_next_page_rows(
         &mut self,
+        sender: &ComponentSender<Self>,
+        request_id: u64,
         session_id: &str,
         rows: Vec<crate::database::TranscriptItemRow>,
     ) {
@@ -1206,10 +1298,10 @@ impl SessionDetail {
             }
 
             let start_index = guard.len();
-            for item in Self::build_display_items(rows, session_id, highlight, db_path, start_index)
-            {
-                guard.push_back(item);
-            }
+            let items =
+                Self::build_display_items(rows, session_id, highlight, db_path, start_index);
+            drop(guard);
+            self.queue_transcript_items_for_render(sender, request_id, items);
         }
 
         if !self.has_more_messages {
@@ -1490,7 +1582,7 @@ mod tests {
     }
 
     #[gtk::test]
-    fn session_detail_loads_transcript_pages_in_background() {
+    fn session_detail_loads_transcript_pages_incrementally() {
         let temp_db = tempfile::NamedTempFile::new().expect("temp db");
         seed_message_transcript(temp_db.path(), "test-session-123", INITIAL_PAGE_SIZE + 5);
 
@@ -1508,9 +1600,16 @@ mod tests {
         {
             let parts = controller.state().get();
             assert_eq!(parts.model.loaded_count, INITIAL_PAGE_SIZE);
-            assert_eq!(parts.model.messages.len(), INITIAL_PAGE_SIZE);
+            assert!(parts.model.messages.len() < INITIAL_PAGE_SIZE);
+            assert!(parts.model.pending_render_batch.is_some());
             assert!(parts.model.has_more_messages);
         }
+
+        pump_main_context(|| {
+            let parts = controller.state().get();
+            parts.model.pending_render_batch.is_none()
+                && parts.model.messages.len() == INITIAL_PAGE_SIZE
+        });
 
         controller.emit(SessionDetailMsg::LoadMore);
 
@@ -1519,9 +1618,19 @@ mod tests {
             !parts.model.loading_next_page && parts.model.loaded_count == INITIAL_PAGE_SIZE + 5
         });
 
+        {
+            let parts = controller.state().get();
+            assert_eq!(parts.model.loaded_count, INITIAL_PAGE_SIZE + 5);
+            assert!(parts.model.messages.len() < INITIAL_PAGE_SIZE + 5);
+        }
+
+        pump_main_context(|| {
+            let parts = controller.state().get();
+            parts.model.pending_render_batch.is_none()
+                && parts.model.messages.len() == INITIAL_PAGE_SIZE + 5
+        });
+
         let parts = controller.state().get();
-        assert_eq!(parts.model.loaded_count, INITIAL_PAGE_SIZE + 5);
-        assert_eq!(parts.model.messages.len(), INITIAL_PAGE_SIZE + 5);
         assert!(!parts.model.has_more_messages);
     }
 
