@@ -719,12 +719,14 @@ impl FactoryComponent for TranscriptRow {
                     self.update_expand_button(widgets, preview);
                     if count != self.rendered_match_count {
                         self.rendered_match_count = count;
-                        sender
-                            .output(TranscriptRowOutput::MatchSegmentsChanged {
-                                display_index: self.item_index,
-                                segments: vec![count],
-                            })
-                            .ok();
+                        if self.highlight_query.is_some() {
+                            sender
+                                .output(TranscriptRowOutput::MatchSegmentsChanged {
+                                    display_index: self.item_index,
+                                    segments: vec![count],
+                                })
+                                .ok();
+                        }
                     }
                 } else if let Some(ref full) = self.full_content {
                     // Expand with cached content
@@ -738,12 +740,14 @@ impl FactoryComponent for TranscriptRow {
                     self.update_expand_button(widgets, preview);
                     if count != self.rendered_match_count {
                         self.rendered_match_count = count;
-                        sender
-                            .output(TranscriptRowOutput::MatchSegmentsChanged {
-                                display_index: self.item_index,
-                                segments: vec![count],
-                            })
-                            .ok();
+                        if self.highlight_query.is_some() {
+                            sender
+                                .output(TranscriptRowOutput::MatchSegmentsChanged {
+                                    display_index: self.item_index,
+                                    segments: vec![count],
+                                })
+                                .ok();
+                        }
                     }
                 } else {
                     // Fetch full content from DB
@@ -805,12 +809,14 @@ impl FactoryComponent for TranscriptRow {
                 self.update_expand_button(widgets, preview);
                 if count != self.rendered_match_count {
                     self.rendered_match_count = count;
-                    sender
-                        .output(TranscriptRowOutput::MatchSegmentsChanged {
-                            display_index: self.item_index,
-                            segments: vec![count],
-                        })
-                        .ok();
+                    if self.highlight_query.is_some() {
+                        sender
+                            .output(TranscriptRowOutput::MatchSegmentsChanged {
+                                display_index: self.item_index,
+                                segments: vec![count],
+                            })
+                            .ok();
+                    }
                 }
             }
             TranscriptRowCmd::FullContentLoaded(Err(err)) => {
@@ -965,12 +971,14 @@ impl TranscriptRow {
             );
         }
         self.rendered_match_count = match_count;
-        sender
-            .output(TranscriptRowOutput::MatchSegmentsChanged {
-                display_index: self.item_index,
-                segments: vec![match_count],
-            })
-            .ok();
+        if self.highlight_query.is_some() {
+            sender
+                .output(TranscriptRowOutput::MatchSegmentsChanged {
+                    display_index: self.item_index,
+                    segments: vec![match_count],
+                })
+                .ok();
+        }
 
         TranscriptRowWidgets {
             content_container,
@@ -1034,12 +1042,14 @@ impl TranscriptRow {
         );
         root.append(&refs.root);
         self.rendered_match_count = refs.match_count;
-        sender
-            .output(TranscriptRowOutput::MatchSegmentsChanged {
-                display_index: self.item_index,
-                segments: vec![refs.match_count],
-            })
-            .ok();
+        if self.tool_highlight_query.is_some() {
+            sender
+                .output(TranscriptRowOutput::MatchSegmentsChanged {
+                    display_index: self.item_index,
+                    segments: vec![refs.match_count],
+                })
+                .ok();
+        }
 
         TranscriptRowWidgets {
             content_container: gtk::Box::new(gtk::Orientation::Vertical, 0),
@@ -1236,12 +1246,18 @@ impl TranscriptRow {
         root.append(&revealer);
 
         self.rendered_match_count = burst_match_count;
-        sender
-            .output(TranscriptRowOutput::MatchSegmentsChanged {
-                display_index: self.item_index,
-                segments: burst.child_match_counts.clone(),
-            })
-            .ok();
+        if burst
+            .tool_calls
+            .iter()
+            .any(|tool_call| tool_call.highlight_query.is_some())
+        {
+            sender
+                .output(TranscriptRowOutput::MatchSegmentsChanged {
+                    display_index: self.item_index,
+                    segments: burst.child_match_counts.clone(),
+                })
+                .ok();
+        }
 
         TranscriptRowWidgets {
             content_container: gtk::Box::new(gtk::Orientation::Vertical, 0),

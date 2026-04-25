@@ -1,6 +1,7 @@
 use std::path::Path;
 
 use relm4::ComponentController;
+use relm4::gtk::prelude::WidgetExt;
 
 use crate::database::load_session;
 use crate::models::Session;
@@ -42,6 +43,7 @@ impl App {
     pub(crate) fn handle_session_selected(&mut self, id: String) {
         tracing::debug!("Session selected: {}", id);
 
+        self.session_detail.widget().set_visible(true);
         let search_query = active_search_query(&self.search_query);
 
         match load_session(&self.db_path, &id) {

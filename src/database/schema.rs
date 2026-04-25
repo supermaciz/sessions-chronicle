@@ -2,7 +2,7 @@ use anyhow::Result;
 use rusqlite::Connection;
 
 #[cfg(test)]
-const CURRENT_DB_VERSION: i64 = 12;
+const CURRENT_DB_VERSION: i64 = 13;
 
 fn column_exists(conn: &Connection, table_name: &str, column_name: &str) -> Result<bool> {
     Ok(conn.query_row(
@@ -33,6 +33,7 @@ fn column_exists(conn: &Connection, table_name: &str, column_name: &str) -> Resu
 ///   10 – clear file_fingerprints to rebuild transcripts after parser changes
 ///   11 – subagents gains nullable agent_id and clear file_fingerprints
 ///   12 – add session-list ordering indexes for faster startup/filter reloads
+///   13 – add indexed message_cache table for direct transcript lookups
 pub fn initialize_database(conn: &Connection) -> Result<()> {
     let version: i64 = conn.query_row("PRAGMA user_version", [], |row| row.get(0))?;
 
@@ -71,6 +72,9 @@ pub fn initialize_database(conn: &Connection) -> Result<()> {
     }
     if version < 12 {
         apply_v12_migration(conn)?;
+    }
+    if version < 13 {
+        apply_v13_migration(conn)?;
     }
 
     Ok(())
@@ -491,6 +495,51 @@ fn apply_v12_migration(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
+/// Migrate from v12 to v13.
+///
+/// FTS5 remains the source for full-text search, but direct transcript detail
+/// loads need indexed lookup by `(session_id, message_index)`. FTS5 cannot index
+/// those unindexed metadata columns, so keep a normalized mirror table for
+/// non-search reads.
+fn apply_v13_migration(conn: &Connection) -> Result<()> {
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS message_cache (
+            session_id TEXT NOT NULL,
+            message_index INTEGER NOT NULL,
+            role TEXT NOT NULL,
+            content TEXT NOT NULL,
+            timestamp INTEGER NOT NULL,
+            model TEXT,
+            PRIMARY KEY (session_id, message_index)
+        )",
+        [],
+    )?;
+
+    let messages_exists: bool = conn.query_row(
+        "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name = 'messages'",
+        [],
+        |row| row.get::<_, i64>(0),
+    )? > 0;
+
+    if messages_exists {
+        conn.execute(
+            "INSERT OR REPLACE INTO message_cache
+             (session_id, message_index, role, content, timestamp, model)
+             SELECT session_id,
+                    CAST(message_index AS INTEGER),
+                    role,
+                    content,
+                    CAST(timestamp AS INTEGER),
+                    model
+             FROM messages",
+            [],
+        )?;
+    }
+
+    conn.execute_batch("PRAGMA user_version = 13")?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -499,6 +548,16 @@ mod tests {
     fn index_exists(conn: &Connection, name: &str) -> bool {
         conn.query_row(
             "SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name = ?1",
+            [name],
+            |row| row.get::<_, i64>(0),
+        )
+        .unwrap()
+            > 0
+    }
+
+    fn table_exists(conn: &Connection, name: &str) -> bool {
+        conn.query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name = ?1",
             [name],
             |row| row.get::<_, i64>(0),
         )
@@ -532,14 +591,14 @@ mod tests {
             .unwrap();
         assert_eq!(pinned_column_exists, 1);
 
-        let table_exists: i64 = conn
+        let file_fingerprints_table_exists: i64 = conn
             .query_row(
                 "SELECT count(*) FROM sqlite_master WHERE type='table' AND name='file_fingerprints'",
                 [],
                 |r| r.get(0),
             )
             .unwrap();
-        assert_eq!(table_exists, 1);
+        assert_eq!(file_fingerprints_table_exists, 1);
 
         let reasoning_table_exists: i64 = conn
             .query_row(
@@ -567,6 +626,8 @@ mod tests {
             )
             .unwrap();
         assert_eq!(encrypted_content_column, 0);
+
+        assert!(table_exists(&conn, "message_cache"));
     }
 
     #[test]
@@ -646,6 +707,61 @@ mod tests {
             )
             .unwrap();
         assert_eq!(fingerprint_count, 1);
+    }
+
+    #[test]
+    fn v12_to_v13_migration_backfills_message_cache() {
+        let conn = Connection::open_in_memory().unwrap();
+        initialize_database(&conn).unwrap();
+        conn.execute_batch(
+            "DROP TABLE message_cache;
+             PRAGMA user_version = 12;",
+        )
+        .unwrap();
+
+        conn.execute(
+            "INSERT INTO messages
+             (session_id, message_index, role, content, timestamp, model)
+             VALUES ('s1', '42', 'assistant', 'cached body', '1234', 'gpt-fixture')",
+            [],
+        )
+        .unwrap();
+
+        initialize_database(&conn).unwrap();
+
+        let version: i64 = conn
+            .query_row("PRAGMA user_version", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(version, CURRENT_DB_VERSION);
+        assert!(table_exists(&conn, "message_cache"));
+
+        let cached: (i64, String, String, i64, String) = conn
+            .query_row(
+                "SELECT message_index, role, content, timestamp, model
+                 FROM message_cache
+                 WHERE session_id = 's1'",
+                [],
+                |row| {
+                    Ok((
+                        row.get(0)?,
+                        row.get(1)?,
+                        row.get(2)?,
+                        row.get(3)?,
+                        row.get(4)?,
+                    ))
+                },
+            )
+            .unwrap();
+        assert_eq!(
+            cached,
+            (
+                42,
+                "assistant".to_string(),
+                "cached body".to_string(),
+                1234,
+                "gpt-fixture".to_string()
+            )
+        );
     }
 
     #[test]

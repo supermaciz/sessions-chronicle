@@ -21,9 +21,11 @@ use crate::ui::transcript_row::{
 };
 
 const INITIAL_PAGE_SIZE: usize = 75;
-const NEXT_PAGE_SIZE: usize = 200;
+const NEXT_PAGE_SIZE: usize = 100;
 const PREVIEW_LEN: usize = 2000;
-const RENDER_BATCH_SIZE: usize = 12;
+const RENDER_BATCH_SIZE: usize = 50;
+const RENDER_BATCH_INTERVAL_MS: u64 = 16;
+const DEFERRED_CLEAR_DELAY_MS: u64 = 250;
 
 /// Detail view for a single indexed session.
 ///
@@ -136,6 +138,13 @@ pub enum SessionDetailMsg {
     RenderNextTranscriptBatch {
         request_id: u64,
     },
+    /// Stop active transcript work before the detail page is popped. The heavy
+    /// widget teardown is deferred so it does not compete with the navigation
+    /// animation.
+    PrepareForNavigationBack,
+    DeferredClear {
+        request_id: u64,
+    },
     /// Indicates that a transcript row failed to expand to its full content and
     /// should trigger the shared toast notification path.
     ShowExpandLoadFailure,
@@ -145,7 +154,6 @@ pub enum SessionDetailMsg {
     InspectReasoning(i64),
 }
 
-#[derive(Debug)]
 pub enum SessionDetailCmd {
     TranscriptPageLoaded {
         request_id: u64,
@@ -155,6 +163,35 @@ pub enum SessionDetailCmd {
         load_duration_ms: u128,
         result: Result<Vec<crate::database::TranscriptItemRow>, String>,
     },
+}
+
+impl std::fmt::Debug for SessionDetailCmd {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::TranscriptPageLoaded {
+                request_id,
+                session_id,
+                offset,
+                limit,
+                load_duration_ms,
+                result,
+            } => {
+                let result_summary = match result {
+                    Ok(rows) => format!("Ok({} rows)", rows.len()),
+                    Err(err) => format!("Err({err})"),
+                };
+
+                f.debug_struct("TranscriptPageLoaded")
+                    .field("request_id", request_id)
+                    .field("session_id", session_id)
+                    .field("offset", offset)
+                    .field("limit", limit)
+                    .field("load_duration_ms", load_duration_ms)
+                    .field("result", &result_summary)
+                    .finish()
+            }
+        }
+    }
 }
 
 #[relm4::component(pub)]
@@ -675,6 +712,14 @@ impl Component for SessionDetail {
             SessionDetailMsg::RenderNextTranscriptBatch { request_id } => {
                 self.render_next_transcript_batch(&sender, request_id);
             }
+            SessionDetailMsg::PrepareForNavigationBack => {
+                self.prepare_for_navigation_back(&sender);
+            }
+            SessionDetailMsg::DeferredClear { request_id } => {
+                if request_id == self.transcript_request_id {
+                    self.clear_for_navigation_back();
+                }
+            }
             SessionDetailMsg::ShowExpandLoadFailure => {
                 tracing::warn!("Could not load full message content");
                 self.pending_toast.set(true);
@@ -1037,9 +1082,31 @@ impl SessionDetail {
 
     fn schedule_transcript_render_batch(&self, sender: &ComponentSender<Self>, request_id: u64) {
         let input_sender = sender.input_sender().clone();
-        glib::idle_add_local_once(move || {
+        glib::timeout_add_local_once(Duration::from_millis(RENDER_BATCH_INTERVAL_MS), move || {
             let _ = input_sender.send(SessionDetailMsg::RenderNextTranscriptBatch { request_id });
         });
+    }
+
+    fn prepare_for_navigation_back(&mut self, sender: &ComponentSender<Self>) {
+        self.invalidate_transcript_requests();
+        self.loading_first_page = false;
+        self.loading_next_page = false;
+        self.clear_pending_boundary_tool_rows();
+
+        let request_id = self.transcript_request_id;
+        let input_sender = sender.input_sender().clone();
+        glib::timeout_add_local_once(Duration::from_millis(DEFERRED_CLEAR_DELAY_MS), move || {
+            let _ = input_sender.send(SessionDetailMsg::DeferredClear { request_id });
+        });
+    }
+
+    fn clear_for_navigation_back(&mut self) {
+        self.session = None;
+        self.clear_messages_safely();
+        self.loaded_count = 0;
+        self.has_more_messages = false;
+        self.search_query = None;
+        self.reset_search_matches();
     }
 
     fn queue_transcript_items_for_render(

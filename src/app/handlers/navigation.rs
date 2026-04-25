@@ -1,6 +1,8 @@
 use adw::prelude::NavigationPageExt;
+use relm4::gtk::prelude::WidgetExt;
 use relm4::{ComponentController, ComponentSender};
 
+use crate::ui::session_detail::SessionDetailMsg;
 use crate::ui::session_list::SessionListMsg;
 
 use super::super::helpers::{
@@ -57,6 +59,9 @@ impl App {
 
     pub(crate) fn handle_request_navigate_back(&mut self) {
         if self.detail_visible {
+            self.session_detail.widget().set_visible(false);
+            self.session_detail
+                .emit(SessionDetailMsg::PrepareForNavigationBack);
             let visible_page_tag = self.nav_view.visible_page().and_then(|p| p.tag());
             if visible_page_tag.as_deref() == Some("detail") {
                 self.suppress_next_detail_pop_sync = true;
@@ -72,6 +77,9 @@ impl App {
             detail_pop_sync_decision(self.suppress_next_detail_pop_sync, self.detail_visible);
         self.suppress_next_detail_pop_sync = suppress_next;
         if should_sync {
+            self.session_detail.widget().set_visible(false);
+            self.session_detail
+                .emit(SessionDetailMsg::PrepareForNavigationBack);
             self.transition_to_session_list_mode();
             self.session_list.emit(SessionListMsg::RestoreFocus);
         }
