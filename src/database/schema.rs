@@ -501,6 +501,12 @@ fn apply_v12_migration(conn: &Connection) -> Result<()> {
 /// loads need indexed lookup by `(session_id, message_index)`. FTS5 cannot index
 /// those unindexed metadata columns, so keep a normalized mirror table for
 /// non-search reads.
+///
+/// TODO: migrate to FTS5 external content tables (`content='message_cache'`)
+/// so `message_cache` becomes the single source of truth and `messages` only
+/// stores the inverted index. Eliminates the content duplication and the
+/// dual-write invariant maintained in `indexer.rs`. Out of scope until the
+/// transcript render path is virtualized — DB is no longer the bottleneck.
 fn apply_v13_migration(conn: &Connection) -> Result<()> {
     conn.execute(
         "CREATE TABLE IF NOT EXISTS message_cache (
