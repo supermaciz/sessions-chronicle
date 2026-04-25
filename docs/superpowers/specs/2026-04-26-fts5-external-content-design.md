@@ -95,10 +95,11 @@ END;
 
 Notes:
 
-- `id INTEGER PRIMARY KEY AUTOINCREMENT` is required so `content_rowid` is
-  stable. Without `AUTOINCREMENT`, SQLite reuses ids of deleted rows, which
-  can cause a stale FTS index entry to point at the wrong content during a
-  delete/insert cycle.
+- `id INTEGER PRIMARY KEY AUTOINCREMENT` is a defensive choice so rowids are
+  never reused after deletes. FTS5 external content only requires a stable
+  rowid for each live row, so `INTEGER PRIMARY KEY` would be sufficient if the
+  sync triggers always remain correct; avoiding reuse makes stale-index bugs
+  less likely to point at unrelated new content.
 - `UNIQUE(session_id, message_index)` creates the lookup index used by the
   read path; no additional `CREATE INDEX` is needed.
 - No `tokenize=` clause: the v0 virtual table did not specify one either, so
@@ -121,48 +122,49 @@ The v13 migration is rewritten end-to-end. There is no v14.
 /// `file_fingerprints` causes the indexer to repopulate from JSONL on the
 /// next run. JSONL files are the authoritative source.
 fn apply_v13_migration(conn: &Connection) -> Result<()> {
-    conn.execute("DROP TABLE IF EXISTS messages", [])?;
-
-    conn.execute(
-        "CREATE TABLE messages (
-            id            INTEGER PRIMARY KEY AUTOINCREMENT,
-            session_id    TEXT NOT NULL,
-            message_index INTEGER NOT NULL,
-            role          TEXT NOT NULL,
-            content       TEXT NOT NULL,
-            timestamp     INTEGER NOT NULL,
-            model         TEXT,
-            UNIQUE(session_id, message_index)
-        )",
-        [],
-    )?;
-
-    conn.execute(
-        "CREATE VIRTUAL TABLE messages_fts USING fts5(
-            content,
-            content='messages',
-            content_rowid='id'
-        )",
-        [],
-    )?;
-
     conn.execute_batch(
-        "CREATE TRIGGER messages_ai AFTER INSERT ON messages BEGIN
-            INSERT INTO messages_fts(rowid, content) VALUES (new.id, new.content);
+        "BEGIN IMMEDIATE;
+         DROP TRIGGER IF EXISTS messages_ai;
+         DROP TRIGGER IF EXISTS messages_ad;
+         DROP TRIGGER IF EXISTS messages_au;
+         DROP TABLE IF EXISTS messages_fts;
+         DROP TABLE IF EXISTS messages;
+
+         CREATE TABLE messages (
+             id            INTEGER PRIMARY KEY AUTOINCREMENT,
+             session_id    TEXT NOT NULL,
+             message_index INTEGER NOT NULL,
+             role          TEXT NOT NULL,
+             content       TEXT NOT NULL,
+             timestamp     INTEGER NOT NULL,
+             model         TEXT,
+             UNIQUE(session_id, message_index)
+         );
+
+         CREATE VIRTUAL TABLE messages_fts USING fts5(
+             content,
+             content='messages',
+             content_rowid='id'
+         );
+
+         CREATE TRIGGER messages_ai AFTER INSERT ON messages BEGIN
+             INSERT INTO messages_fts(rowid, content) VALUES (new.id, new.content);
          END;
          CREATE TRIGGER messages_ad AFTER DELETE ON messages BEGIN
-            INSERT INTO messages_fts(messages_fts, rowid, content)
-                VALUES('delete', old.id, old.content);
+             INSERT INTO messages_fts(messages_fts, rowid, content)
+                 VALUES('delete', old.id, old.content);
          END;
          CREATE TRIGGER messages_au AFTER UPDATE ON messages BEGIN
-            INSERT INTO messages_fts(messages_fts, rowid, content)
-                VALUES('delete', old.id, old.content);
-            INSERT INTO messages_fts(rowid, content) VALUES (new.id, new.content);
-         END;",
+             INSERT INTO messages_fts(messages_fts, rowid, content)
+                 VALUES('delete', old.id, old.content);
+             INSERT INTO messages_fts(rowid, content) VALUES (new.id, new.content);
+         END;
+
+         DELETE FROM file_fingerprints;
+         PRAGMA user_version = 13;
+         COMMIT;",
     )?;
 
-    conn.execute("DELETE FROM file_fingerprints", [])?;
-    conn.execute_batch("PRAGMA user_version = 13")?;
     Ok(())
 }
 ```
@@ -242,9 +244,10 @@ The `messages_ai` trigger keeps `messages_fts` in sync.
 session_id = ?1`. The `messages_ad` trigger keeps `messages_fts` in sync.
 The `DELETE FROM message_cache` line is removed.
 
-Other delete sites in `indexer.rs` (lines 1281, 1426, 1471) keep their SQL
-unchanged but now drive triggers. Bulk-delete trigger overhead is a known
-issue (AgentsView documents it); not addressed here, see "Out of scope".
+Other delete sites in `indexer.rs` keep their `DELETE FROM messages ...` SQL
+unchanged but remove their paired `DELETE FROM message_cache ...` statements.
+Those `messages` deletes now drive triggers. Bulk-delete trigger overhead is a
+known issue (AgentsView documents it); not addressed here, see "Out of scope".
 
 ### `src/ui/session_detail.rs`
 
