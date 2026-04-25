@@ -481,6 +481,12 @@ fn apply_v12_migration(conn: &Connection) -> Result<()> {
         [],
     )?;
 
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_sessions_pinned_last_updated
+         ON sessions(is_subagent, pinned_at, last_updated DESC)",
+        [],
+    )?;
+
     conn.execute_batch("PRAGMA user_version = 12")?;
     Ok(())
 }
@@ -571,6 +577,7 @@ mod tests {
         assert!(index_exists(&conn, "idx_sessions_top_level_last_updated"));
         assert!(index_exists(&conn, "idx_sessions_project_last_updated"));
         assert!(index_exists(&conn, "idx_sessions_tool_last_updated"));
+        assert!(index_exists(&conn, "idx_sessions_pinned_last_updated"));
         assert_eq!(
             index_columns(&conn, "idx_sessions_top_level_last_updated"),
             vec!["is_subagent", "last_updated"]
@@ -583,6 +590,10 @@ mod tests {
             index_columns(&conn, "idx_sessions_tool_last_updated"),
             vec!["is_subagent", "tool", "last_updated"]
         );
+        assert_eq!(
+            index_columns(&conn, "idx_sessions_pinned_last_updated"),
+            vec!["is_subagent", "pinned_at", "last_updated"]
+        );
     }
 
     #[test]
@@ -593,6 +604,7 @@ mod tests {
             "DROP INDEX idx_sessions_top_level_last_updated;
              DROP INDEX idx_sessions_project_last_updated;
              DROP INDEX idx_sessions_tool_last_updated;
+             DROP INDEX idx_sessions_pinned_last_updated;
              PRAGMA user_version = 11;",
         )
         .unwrap();
