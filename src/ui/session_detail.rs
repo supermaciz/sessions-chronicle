@@ -6,7 +6,7 @@ use std::sync::Arc;
 use gtk::glib;
 use gtk::prelude::*;
 use relm4::factory::FactoryVecDeque;
-use relm4::{ComponentParts, ComponentSender, RelmWidgetExt, SimpleComponent, adw, gtk};
+use relm4::{Component, ComponentParts, ComponentSender, RelmWidgetExt, adw, gtk};
 
 use crate::database::load_transcript_items;
 use crate::models::Session;
@@ -19,6 +19,10 @@ use crate::ui::transcript_row::{
     TranscriptItemInit, TranscriptRow, TranscriptRowOutput, transcript_item_init_from_display_item,
 };
 
+const INITIAL_PAGE_SIZE: usize = 75;
+const NEXT_PAGE_SIZE: usize = 200;
+const PREVIEW_LEN: usize = 2000;
+
 /// Detail view for a single indexed session.
 ///
 /// This component owns the session summary header, paginated transcript
@@ -29,10 +33,14 @@ pub struct SessionDetail {
     db_path: Arc<PathBuf>,
     session: Option<Session>,
     messages: FactoryVecDeque<TranscriptRow>,
+    initial_page_size: usize,
     page_size: usize,
     preview_len: usize,
     loaded_count: usize,
     has_more_messages: bool,
+    loading_first_page: bool,
+    loading_next_page: bool,
+    transcript_request_id: u64,
     pending_boundary_tool_rows: Vec<crate::database::TranscriptItemRow>,
     search_query: Option<String>,
     /// Keyed by top-level display index in the transcript factory.
@@ -104,11 +112,23 @@ pub enum SessionDetailMsg {
     InspectReasoning(i64),
 }
 
+#[derive(Debug)]
+pub enum SessionDetailCmd {
+    TranscriptPageLoaded {
+        request_id: u64,
+        session_id: String,
+        offset: usize,
+        limit: usize,
+        result: Result<Vec<crate::database::TranscriptItemRow>, String>,
+    },
+}
+
 #[relm4::component(pub)]
-impl SimpleComponent for SessionDetail {
+impl Component for SessionDetail {
     type Init = PathBuf;
     type Input = SessionDetailMsg;
     type Output = SessionDetailOutput;
+    type CommandOutput = SessionDetailCmd;
     type Widgets = SessionDetailWidgets;
 
     view! {
@@ -446,12 +466,15 @@ impl SimpleComponent for SessionDetail {
 
                             #[name = "load_more_button"]
                             gtk::Button {
-                                set_label: "Load more",
                                 set_halign: gtk::Align::Center,
                                 set_margin_top: 12,
                                 set_margin_bottom: 12,
                                 #[watch]
                                 set_visible: model.has_more_messages,
+                                #[watch]
+                                set_sensitive: !model.loading_next_page && !model.loading_first_page,
+                                #[watch]
+                                set_label: if model.loading_next_page { "Loading..." } else { "Load more" },
                                 connect_clicked => SessionDetailMsg::LoadMore,
                             },
                         },
@@ -546,10 +569,14 @@ impl SimpleComponent for SessionDetail {
             db_path,
             session: None,
             messages,
-            page_size: 200,
-            preview_len: 2000,
+            initial_page_size: INITIAL_PAGE_SIZE,
+            page_size: NEXT_PAGE_SIZE,
+            preview_len: PREVIEW_LEN,
             loaded_count: 0,
             has_more_messages: false,
+            loading_first_page: false,
+            loading_next_page: false,
+            transcript_request_id: 0,
             pending_boundary_tool_rows: Vec::new(),
             search_query: None,
             match_segments: BTreeMap::new(),
@@ -569,7 +596,7 @@ impl SimpleComponent for SessionDetail {
         ComponentParts { model, widgets }
     }
 
-    fn update(&mut self, message: Self::Input, sender: ComponentSender<Self>) {
+    fn update(&mut self, message: Self::Input, sender: ComponentSender<Self>, _root: &Self::Root) {
         match message {
             SessionDetailMsg::SetSession {
                 session,
@@ -580,15 +607,15 @@ impl SimpleComponent for SessionDetail {
                 let session = *session;
                 let session_id = session.id.clone();
                 self.session = Some(session);
-                self.load_first_page(&session_id);
+                self.start_first_page_load(&sender, &session_id);
             }
             SessionDetailMsg::UpdateSearchQuery(query) => {
                 self.search_query = query;
                 self.reset_search_matches();
-                self.reload_current_session();
+                self.reload_current_session(&sender);
             }
             SessionDetailMsg::LoadMore => {
-                self.load_next_page();
+                self.load_next_page(&sender);
             }
             SessionDetailMsg::PrevMatch => {
                 if self.total_matches > 0 {
@@ -615,13 +642,16 @@ impl SimpleComponent for SessionDetail {
             SessionDetailMsg::ClearSearch => {
                 self.search_query = None;
                 self.reset_search_matches();
-                self.reload_current_session();
+                self.reload_current_session(&sender);
             }
             SessionDetailMsg::Clear => {
+                self.invalidate_transcript_requests();
                 self.session = None;
                 self.clear_messages_safely();
                 self.loaded_count = 0;
                 self.has_more_messages = false;
+                self.loading_first_page = false;
+                self.loading_next_page = false;
                 self.search_query = None;
                 self.reset_search_matches();
                 self.clear_pending_boundary_tool_rows();
@@ -639,6 +669,23 @@ impl SimpleComponent for SessionDetail {
                     })
                     .ok();
             }
+        }
+    }
+
+    fn update_cmd(
+        &mut self,
+        message: Self::CommandOutput,
+        _sender: ComponentSender<Self>,
+        _root: &Self::Root,
+    ) {
+        match message {
+            SessionDetailCmd::TranscriptPageLoaded {
+                request_id,
+                session_id,
+                offset,
+                limit,
+                result,
+            } => self.apply_transcript_page_result(request_id, &session_id, offset, limit, result),
         }
     }
 
@@ -898,37 +945,132 @@ impl SessionDetail {
             .collect()
     }
 
-    fn load_first_page(&mut self, session_id: &str) {
-        match load_transcript_items(
-            &self.db_path,
-            session_id,
-            self.page_size as i64,
+    fn invalidate_transcript_requests(&mut self) {
+        self.transcript_request_id = self.transcript_request_id.wrapping_add(1);
+    }
+
+    fn start_first_page_load(&mut self, sender: &ComponentSender<Self>, session_id: &str) {
+        self.invalidate_transcript_requests();
+        self.loading_first_page = true;
+        self.loading_next_page = false;
+        self.loaded_count = 0;
+        self.has_more_messages = false;
+        self.clear_pending_boundary_tool_rows();
+        self.clear_messages_safely();
+
+        self.spawn_transcript_page_load(
+            sender,
+            self.transcript_request_id,
+            session_id.to_string(),
             0,
-            self.preview_len as i64,
-        ) {
-            Ok(rows) => {
-                self.has_more_messages = rows.len() == self.page_size;
-                self.loaded_count = rows.len();
-                let highlight = self.search_query.clone();
-                let db_path = self.db_path.clone();
-                self.track_pending_boundary_tool_rows(&rows);
-                self.clear_messages_safely();
-                let mut guard = self.messages.guard();
-                for item in Self::build_display_items(rows, session_id, highlight, db_path, 0) {
-                    guard.push_back(item);
-                }
+            self.initial_page_size,
+        );
+    }
+
+    fn spawn_transcript_page_load(
+        &self,
+        sender: &ComponentSender<Self>,
+        request_id: u64,
+        session_id: String,
+        offset: usize,
+        limit: usize,
+    ) {
+        let db_path = self.db_path.clone();
+        let preview_len = self.preview_len as i64;
+
+        sender.spawn_oneshot_command(move || {
+            let result = load_transcript_items(
+                &db_path,
+                &session_id,
+                limit as i64,
+                offset as i64,
+                preview_len,
+            )
+            .map_err(|err| format!("{err:#}"));
+
+            SessionDetailCmd::TranscriptPageLoaded {
+                request_id,
+                session_id,
+                offset,
+                limit,
+                result,
             }
-            Err(err) => {
-                tracing::error!(
-                    "Failed to load transcript items for {}: {}",
-                    session_id,
-                    err
-                );
-                self.clear_messages_safely();
-                self.loaded_count = 0;
-                self.has_more_messages = false;
-                self.clear_pending_boundary_tool_rows();
-            }
+        });
+    }
+
+    fn apply_first_page_rows(
+        &mut self,
+        session_id: &str,
+        limit: usize,
+        rows: Vec<crate::database::TranscriptItemRow>,
+    ) {
+        self.loading_first_page = false;
+        self.loading_next_page = false;
+        self.has_more_messages = rows.len() == limit;
+        self.loaded_count = rows.len();
+        let highlight = self.search_query.clone();
+        let db_path = self.db_path.clone();
+        self.track_pending_boundary_tool_rows(&rows);
+        self.clear_messages_safely();
+        let mut guard = self.messages.guard();
+        for item in Self::build_display_items(rows, session_id, highlight, db_path, 0) {
+            guard.push_back(item);
+        }
+    }
+
+    fn handle_transcript_page_error(&mut self, session_id: &str, offset: usize, err: String) {
+        tracing::error!(
+            "Failed to load transcript items for {} at offset {}: {}",
+            session_id,
+            offset,
+            err
+        );
+
+        if offset == 0 {
+            self.clear_messages_safely();
+            self.loaded_count = 0;
+            self.has_more_messages = false;
+            self.clear_pending_boundary_tool_rows();
+        }
+
+        self.loading_first_page = false;
+        self.loading_next_page = false;
+    }
+
+    fn apply_transcript_page_result(
+        &mut self,
+        request_id: u64,
+        session_id: &str,
+        offset: usize,
+        limit: usize,
+        result: Result<Vec<crate::database::TranscriptItemRow>, String>,
+    ) {
+        if request_id != self.transcript_request_id {
+            tracing::debug!(
+                "Ignoring stale transcript page for session {} at offset {}",
+                session_id,
+                offset
+            );
+            return;
+        }
+
+        let active_session_matches = self
+            .session
+            .as_ref()
+            .is_some_and(|session| session.id == session_id);
+        if !active_session_matches {
+            tracing::debug!(
+                "Ignoring transcript page for inactive session {} at offset {}",
+                session_id,
+                offset
+            );
+            return;
+        }
+
+        match result {
+            Ok(rows) if offset == 0 => self.apply_first_page_rows(session_id, limit, rows),
+            Ok(rows) => self.apply_next_page_rows(session_id, rows),
+            Err(err) => self.handle_transcript_page_error(session_id, offset, err),
         }
     }
 
@@ -938,10 +1080,10 @@ impl SessionDetail {
         self.total_matches = 0;
     }
 
-    fn reload_current_session(&mut self) {
+    fn reload_current_session(&mut self, sender: &ComponentSender<Self>) {
         if let Some(session) = &self.session {
             let session_id = session.id.clone();
-            self.load_first_page(&session_id);
+            self.start_first_page_load(sender, &session_id);
         }
     }
 
@@ -1000,27 +1142,33 @@ impl SessionDetail {
     /// grouped correctly until the next page is available. When that happens,
     /// the component replaces the affected tail items before appending the new
     /// page so display rows and their search indexes stay stable.
-    fn load_next_page(&mut self) {
+    fn load_next_page(&mut self, sender: &ComponentSender<Self>) {
         let Some(session) = &self.session else {
             return;
         };
+
+        if self.loading_first_page || self.loading_next_page || !self.has_more_messages {
+            return;
+        }
+
         let session_id = session.id.clone();
         let offset = self.loaded_count;
-        let rows = match load_transcript_items(
-            &self.db_path,
-            &session_id,
-            self.page_size as i64,
-            offset as i64,
-            self.preview_len as i64,
-        ) {
-            Ok(rows) => rows,
-            Err(err) => {
-                tracing::error!("Failed to load more transcript items: {}", err);
-                self.has_more_messages = false;
-                return;
-            }
-        };
+        self.loading_next_page = true;
+        self.spawn_transcript_page_load(
+            sender,
+            self.transcript_request_id,
+            session_id,
+            offset,
+            self.page_size,
+        );
+    }
 
+    fn apply_next_page_rows(
+        &mut self,
+        session_id: &str,
+        rows: Vec<crate::database::TranscriptItemRow>,
+    ) {
+        self.loading_next_page = false;
         let source_len = rows.len();
         self.has_more_messages = source_len == self.page_size;
         self.loaded_count += source_len;
@@ -1047,7 +1195,7 @@ impl SessionDetail {
                         transcript_item_init_from_display_item(
                             start_index + offset,
                             &item,
-                            &session_id,
+                            session_id,
                             highlight.clone(),
                             db_path.clone(),
                         )
@@ -1058,8 +1206,7 @@ impl SessionDetail {
             }
 
             let start_index = guard.len();
-            for item in
-                Self::build_display_items(rows, &session_id, highlight, db_path, start_index)
+            for item in Self::build_display_items(rows, session_id, highlight, db_path, start_index)
             {
                 guard.push_back(item);
             }
@@ -1188,7 +1335,10 @@ impl SessionDetail {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::Duration;
+
     use relm4::{Component, ComponentController};
+    use rusqlite::{Connection, params};
 
     fn build_test_session(
         first_prompt: Option<&str>,
@@ -1217,6 +1367,45 @@ mod tests {
             read_count,
             command_count,
             ending_status: crate::models::SessionEndingStatus::Clean,
+        }
+    }
+
+    fn pump_main_context(condition: impl Fn() -> bool) {
+        let context = gtk::glib::MainContext::default();
+        let deadline = std::time::Instant::now() + Duration::from_millis(1000);
+        while std::time::Instant::now() < deadline {
+            if condition() {
+                return;
+            }
+
+            if !context.iteration(false) {
+                std::thread::sleep(Duration::from_millis(2));
+            }
+        }
+    }
+
+    fn seed_message_transcript(db_path: &std::path::Path, session_id: &str, count: usize) {
+        let conn = Connection::open(db_path).expect("open temp db");
+        crate::database::schema::initialize_database(&conn).expect("initialize db");
+
+        for index in 0..count {
+            conn.execute(
+                "INSERT INTO messages (session_id, message_index, role, content, timestamp, model)
+                 VALUES (?1, ?2, 'user', ?3, ?4, NULL)",
+                params![
+                    session_id,
+                    index.to_string(),
+                    format!("message {index}"),
+                    index as i64,
+                ],
+            )
+            .expect("insert message");
+            conn.execute(
+                "INSERT INTO transcript_items (session_id, item_index, kind, message_index)
+                 VALUES (?1, ?2, 'message', ?2)",
+                params![session_id, index as i64],
+            )
+            .expect("insert transcript item");
         }
     }
 
@@ -1298,6 +1487,42 @@ mod tests {
 
         assert_eq!(items.len(), 2);
         assert!(matches!(items[1], TranscriptItemInit::ToolBurst(_)));
+    }
+
+    #[gtk::test]
+    fn session_detail_loads_transcript_pages_in_background() {
+        let temp_db = tempfile::NamedTempFile::new().expect("temp db");
+        seed_message_transcript(temp_db.path(), "test-session-123", INITIAL_PAGE_SIZE + 5);
+
+        let controller = SessionDetail::builder().launch(temp_db.path().to_path_buf());
+        controller.emit(SessionDetailMsg::SetSession {
+            session: Box::new(build_test_session(None, None, 0, 0, 0)),
+            search_query: None,
+        });
+
+        pump_main_context(|| {
+            let parts = controller.state().get();
+            !parts.model.loading_first_page && parts.model.loaded_count == INITIAL_PAGE_SIZE
+        });
+
+        {
+            let parts = controller.state().get();
+            assert_eq!(parts.model.loaded_count, INITIAL_PAGE_SIZE);
+            assert_eq!(parts.model.messages.len(), INITIAL_PAGE_SIZE);
+            assert!(parts.model.has_more_messages);
+        }
+
+        controller.emit(SessionDetailMsg::LoadMore);
+
+        pump_main_context(|| {
+            let parts = controller.state().get();
+            !parts.model.loading_next_page && parts.model.loaded_count == INITIAL_PAGE_SIZE + 5
+        });
+
+        let parts = controller.state().get();
+        assert_eq!(parts.model.loaded_count, INITIAL_PAGE_SIZE + 5);
+        assert_eq!(parts.model.messages.len(), INITIAL_PAGE_SIZE + 5);
+        assert!(!parts.model.has_more_messages);
     }
 
     #[test]
