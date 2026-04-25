@@ -1,6 +1,6 @@
 # Similar Projects
 
-Last reviewed: 2026-04-14
+Last reviewed: 2026-04-25
 
 A shortlist of projects in the same product space as Sessions Chronicle:
 tools that index, browse, search, or analyze local AI assistant sessions.
@@ -11,11 +11,11 @@ Projects listed here should be:
 
 - meaningfully similar to Sessions Chronicle's core problem space
 - publicly available (open source or source-available)
-- actively maintained as of 2026-03-21
+- actively maintained as of 2026-04-25
 - not archived
 
 For this document, "actively maintained" means there was visible recent repository
-activity on GitHub such as pushes or release work in March 2026.
+activity on GitHub such as pushes or release work in March or April 2026.
 
 ## Closest matches
 
@@ -119,6 +119,21 @@ alerts on leaked credentials in session history. Installable via Homebrew cask.
   Silicon, 14+), and menu-bar-first rather than a standalone multi-assistant
   session browser.
 - **Maintenance signal:** GitHub repo shows pushes on 2026-04-13 (v0.6.0).
+
+### [Chronicle / claude-history-manager](https://github.com/JosephYaduvanshi/claude-history-manager)
+
+Native macOS app in SwiftUI (8 stars) for browsing Claude Code session history
+from `~/.claude/projects/`. Indexes sessions into local SQLite with FTS5 and
+provides search filters, transcript reading, tags, pins, archive/soft-delete,
+smart folders, stats dashboards, menu bar access, Quick Look, metadata-only
+iCloud sync, and resume/open actions for terminals and editors.
+
+- **Why it's similar:** Local-first native desktop session browser with SQLite
+  indexing, full-text search, transcript reading, analytics, and resume flows.
+- **How it differs from Sessions Chronicle:** Claude Code-only and macOS-only,
+  with SwiftUI/AppKit packaging rather than GNOME/GTK.
+- **Maintenance signal:** GitHub repo was created and pushed on 2026-04-25,
+  with release/install documentation.
 
 ### [CodMate](https://github.com/loocor/codmate)
 
