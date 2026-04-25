@@ -63,4 +63,7 @@ flatpak_app/
 .flatpak-builder/
 builddir/
 
+website/dist/
+website/nodes_modules/
+
 

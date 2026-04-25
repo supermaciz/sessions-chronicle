@@ -18,7 +18,7 @@ impl SimpleComponent for AboutDialog {
             .application_icon(APP_ID)
             .license_type(gtk::License::MitX11)
             // Insert your website here
-            .website("https://github.com/supermaciz/sessions-chronicle")
+            .website("https://sessions-chronicle.maciz.dev")
             // Insert your Issues page
             .issue_url("https://github.com/supermaciz/sessions-chronicle/issues")
             // Insert your application name here
