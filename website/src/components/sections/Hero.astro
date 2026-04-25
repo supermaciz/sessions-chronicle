@@ -32,18 +32,24 @@ const supportedAssistants = [
     <div class="hero__grid">
       <div class="hero__text">
         <p class="hero__eyebrow">OPEN SOURCE · LOCAL-FIRST · GTK 4</p>
-        <h1 class="hero__title">Every conversation you've had with a machine.</h1>
+        <h1 class="hero__title">Your coding agent sessions. Searchable.</h1>
         <p class="hero__sub">
-          Sessions Chronicle indexes your coding agents transcripts on your disk into one searchable archive. Nothing
-          leaves your machine.
+          Sessions Chronicle indexes your coding agents transcripts on your disk
+          into one searchable archive. Nothing leaves your machine.
         </p>
         <ul class="hero__assistants" aria-label="Supported AI assistants">
-          {supportedAssistants.map((assistant) => (
-            <li class="hero__assistant-pill">
-              <span class="hero__assistant-icon" style={`--assistant-icon: url('${assistant.icon}')`} aria-hidden="true"></span>
-              <span>{assistant.name}</span>
-            </li>
-          ))}
+          {
+            supportedAssistants.map((assistant) => (
+              <li class="hero__assistant-pill">
+                <span
+                  class="hero__assistant-icon"
+                  style={`--assistant-icon: url('${assistant.icon}')`}
+                  aria-hidden="true"
+                />
+                <span>{assistant.name}</span>
+              </li>
+            ))
+          }
         </ul>
         <div class="hero__ctas">
           <Button variant="pill" href={githubUrl}>View on GitHub →</Button>
@@ -79,15 +85,25 @@ const supportedAssistants = [
       </div>
     </div>
 
-    <div class="hero__commands" aria-label="Flatpak install commands" data-install-command={flatpakInstallCommand}>
+    <div
+      class="hero__commands"
+      aria-label="Flatpak install commands"
+      data-install-command={flatpakInstallCommand}
+    >
       <code>{flatpakInstallCommand}</code>
-      <button class="hero__copy" type="button" aria-label="Copy install command" title="Copy install command">
+      <button
+        class="hero__copy"
+        type="button"
+        aria-label="Copy install command"
+        title="Copy install command"
+      >
         <svg class="hero__copy-icon" viewBox="0 0 16 16" aria-hidden="true">
-          <path d="M6 2.5h7.5v7.5H12V4H6V2.5Z" />
-          <path d="M2.5 6h7.5v7.5H2.5V6Zm1.5 1.5V12h4.5V7.5H4Z" />
+          <path d="M6 2.5h7.5v7.5H12V4H6V2.5Z"></path>
+          <path d="M2.5 6h7.5v7.5H2.5V6Zm1.5 1.5V12h4.5V7.5H4Z"></path>
         </svg>
         <svg class="hero__copied-icon" viewBox="0 0 16 16" aria-hidden="true">
-          <path d="M6.4 11.7 2.8 8.1l1.1-1.1 2.5 2.5 5.7-5.7 1.1 1.1-6.8 6.8Z" />
+          <path d="M6.4 11.7 2.8 8.1l1.1-1.1 2.5 2.5 5.7-5.7 1.1 1.1-6.8 6.8Z"
+          ></path>
         </svg>
       </button>
     </div>
@@ -96,7 +112,8 @@ const supportedAssistants = [
 
 <script>
   const commandBlock = document.querySelector<HTMLElement>(".hero__commands");
-  const copyButton = commandBlock?.querySelector<HTMLButtonElement>(".hero__copy");
+  const copyButton =
+    commandBlock?.querySelector<HTMLButtonElement>(".hero__copy");
   let copyResetTimeout: number | undefined;
 
   copyButton?.addEventListener("click", async () => {
@@ -171,8 +188,13 @@ const supportedAssistants = [
     gap: var(--space-2);
     padding: 8px 12px;
     border-radius: 9999px;
-    background: color-mix(in srgb, var(--view-bg-color) 92%, var(--window-bg-color));
-    border: 1px solid color-mix(in srgb, var(--window-fg-color) 14%, transparent);
+    background: color-mix(
+      in srgb,
+      var(--view-bg-color) 92%,
+      var(--window-bg-color)
+    );
+    border: 1px solid
+      color-mix(in srgb, var(--window-fg-color) 14%, transparent);
     color: color-mix(in srgb, var(--window-fg-color) 88%, transparent);
     font-size: var(--text-body);
     font-weight: 600;
@@ -249,7 +271,10 @@ const supportedAssistants = [
     font-size: var(--text-caption);
     font-weight: 600;
     cursor: pointer;
-    transition: background-color 120ms ease, border-color 120ms ease, color 120ms ease;
+    transition:
+      background-color 120ms ease,
+      border-color 120ms ease,
+      color 120ms ease;
   }
   .hero__copy:hover {
     background: rgba(255, 255, 255, 0.14);
