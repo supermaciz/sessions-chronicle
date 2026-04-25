@@ -24,7 +24,6 @@ const INITIAL_PAGE_SIZE: usize = 75;
 const NEXT_PAGE_SIZE: usize = 200;
 const PREVIEW_LEN: usize = 2000;
 const RENDER_BATCH_SIZE: usize = 12;
-const RENDER_FRAME_BUDGET: Duration = Duration::from_millis(12);
 
 /// Detail view for a single indexed session.
 ///
@@ -1086,52 +1085,22 @@ impl SessionDetail {
             return;
         }
 
-        let frame_started_at = Instant::now();
-        let mut rendered_this_frame = 0usize;
-        let mut chunks_this_frame = 0usize;
         let mut guard = self.messages.guard();
-
-        loop {
-            let push_started_at = Instant::now();
-            let mut rendered_this_chunk = 0usize;
-            for _ in 0..RENDER_BATCH_SIZE {
-                let Some(item) = batch.items.pop_front() else {
-                    break;
-                };
-                guard.push_back(item);
-                rendered_this_chunk += 1;
-            }
-
-            if rendered_this_chunk == 0 {
+        let push_started_at = Instant::now();
+        let mut rendered_this_batch = 0usize;
+        for _ in 0..RENDER_BATCH_SIZE {
+            let Some(item) = batch.items.pop_front() else {
                 break;
-            }
-
-            let push_duration = push_started_at.elapsed();
-            batch.rendered_items += rendered_this_chunk;
-            batch.batch_count += 1;
-            batch.total_push_duration += push_duration;
-            batch.max_push_duration = batch.max_push_duration.max(push_duration);
-            rendered_this_frame += rendered_this_chunk;
-            chunks_this_frame += 1;
-
-            tracing::debug!(
-                request_id,
-                offset = batch.offset,
-                rendered_this_chunk,
-                rendered_items = batch.rendered_items,
-                total_items = batch.total_items,
-                remaining_items = batch.items.len(),
-                push_duration_us = push_duration.as_micros(),
-                frame_elapsed_ms = frame_started_at.elapsed().as_millis(),
-                "Rendered transcript chunk"
-            );
-
-            if batch.items.is_empty() || frame_started_at.elapsed() >= RENDER_FRAME_BUDGET {
-                break;
-            }
+            };
+            guard.push_back(item);
+            rendered_this_batch += 1;
         }
-
+        let push_duration = push_started_at.elapsed();
         let has_more_items = !batch.items.is_empty();
+        batch.rendered_items += rendered_this_batch;
+        batch.batch_count += 1;
+        batch.total_push_duration += push_duration;
+        batch.max_push_duration = batch.max_push_duration.max(push_duration);
         let remaining_items = batch.items.len();
         let rendered_items = batch.rendered_items;
         let total_items = batch.total_items;
@@ -1147,14 +1116,12 @@ impl SessionDetail {
             tracing::debug!(
                 request_id,
                 offset,
-                rendered_this_frame,
-                chunks_this_frame,
+                rendered_this_batch,
                 rendered_items,
                 total_items,
                 remaining_items,
-                frame_duration_ms = frame_started_at.elapsed().as_millis(),
-                frame_budget_ms = RENDER_FRAME_BUDGET.as_millis(),
-                "Rendered transcript frame"
+                push_duration_ms = push_duration.as_millis(),
+                "Rendered transcript batch"
             );
             self.schedule_transcript_render_batch(sender, request_id);
         } else {
