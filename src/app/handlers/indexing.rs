@@ -10,7 +10,7 @@ use crate::ui::sidebar::SidebarMsg;
 use super::super::App;
 use super::super::helpers::{
     analytics_indexing_completion_outcome, banner_button_label, banner_title,
-    completion_toast_title, decide_reindex_action,
+    completion_toast_title, decide_reindex_action, should_reload_sessions_after_indexing,
 };
 use super::super::types::ReindexAction;
 
@@ -47,13 +47,15 @@ impl App {
         &mut self,
         indexed: usize,
         skipped: usize,
+        removed: usize,
         per_source: Vec<PerSourceResult>,
         errors_detail: Vec<IndexingError>,
     ) {
         tracing::info!(
-            "Background indexing complete: indexed={}, skipped={}",
+            "Background indexing complete: indexed={}, skipped={}, removed={}",
             indexed,
-            skipped
+            skipped,
+            removed
         );
         self.indexing = false;
         self.session_list.emit(SessionListMsg::SetIndexing(false));
@@ -96,8 +98,13 @@ impl App {
         self.session_list
             .emit(SessionListMsg::SetSourceResults(per_source.clone()));
 
-        self.refresh_sidebar_projects();
-        self.emit_session_list_filters();
+        if should_reload_sessions_after_indexing(indexed, removed, self.pending_reindex_feedback) {
+            if self.refresh_sidebar_projects() {
+                self.emit_session_list_filters();
+            } else {
+                self.session_list.emit(SessionListMsg::Reload);
+            }
+        }
 
         let analytics_outcome = analytics_indexing_completion_outcome(self.active_workspace);
         if analytics_outcome.mark_stale {

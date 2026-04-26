@@ -207,10 +207,11 @@ fn search_sessions_with_query(
                         s.input_tokens, s.output_tokens, s.cache_read_tokens,
                         s.cache_write_tokens, s.reasoning_tokens,
                         s.edit_count, s.read_count, s.command_count, s.ending_status,
-                        bm25(messages) AS rank
-                 FROM messages
-                 JOIN sessions s ON s.id = messages.session_id
-                 WHERE messages MATCH ?
+                        bm25(messages_fts) AS rank
+                 FROM messages_fts
+                 JOIN messages m ON m.id = messages_fts.rowid
+                 JOIN sessions s ON s.id = m.session_id
+                 WHERE messages_fts MATCH ?
                    AND s.is_subagent = 0
                     {}
                  ORDER BY rank ASC, s.last_updated DESC",
@@ -228,10 +229,11 @@ fn search_sessions_with_query(
                         s.input_tokens, s.output_tokens, s.cache_read_tokens,
                         s.cache_write_tokens, s.reasoning_tokens,
                         s.edit_count, s.read_count, s.command_count, s.ending_status,
-                        bm25(messages) AS rank
-                 FROM messages
-                 JOIN sessions s ON s.id = messages.session_id
-                 WHERE messages MATCH ?
+                        bm25(messages_fts) AS rank
+                 FROM messages_fts
+                 JOIN messages m ON m.id = messages_fts.rowid
+                 JOIN sessions s ON s.id = m.session_id
+                 WHERE messages_fts MATCH ?
                    AND s.tool IN ({})
                    AND s.is_subagent = 0
                     {}
@@ -633,9 +635,9 @@ pub fn load_message_full_content(
     message_index: usize,
 ) -> Result<String> {
     let db = open_connection(db_path)?;
-
     let mut stmt = db.prepare(
-        "SELECT content FROM messages WHERE session_id = ?1 AND CAST(message_index AS INTEGER) = ?2",
+        "SELECT content FROM messages
+         WHERE session_id = ?1 AND message_index = ?2",
     )?;
 
     let mut rows = stmt
@@ -668,20 +670,15 @@ pub fn load_message_previews_for_session(
     }
 
     let db = open_connection(db_path)?;
-
     let mut stmt = db.prepare(
-        "SELECT
-          session_id,
-          CAST(message_index AS INTEGER) AS message_index,
-          role,
-          substr(content, 1, ?2) AS content_preview,
-          length(content) AS content_len,
-          timestamp,
-          model
-        FROM messages
-        WHERE session_id = ?1
-        ORDER BY CAST(message_index AS INTEGER) ASC
-        LIMIT ?3 OFFSET ?4",
+        "SELECT session_id, message_index, role,
+                substr(content, 1, ?2) AS content_preview,
+                length(content) AS content_len,
+                timestamp, model
+         FROM messages
+         WHERE session_id = ?1
+         ORDER BY message_index ASC
+         LIMIT ?3 OFFSET ?4",
     )?;
 
     let mut rows = stmt
@@ -738,7 +735,7 @@ pub fn load_transcript_items(
 
     let db = open_connection(db_path)?;
 
-    let mut stmt = db.prepare(
+    let sql =
         "SELECT ti.item_index, ti.kind, ti.message_index, ti.tool_call_id, ti.subagent_id,
                 COALESCE((ra.visible_text IS NOT NULL OR ra.summary_text IS NOT NULL OR ra.has_encrypted_content = 1), 0) AS has_reasoning,
                 (ra.visible_text IS NOT NULL OR ra.summary_text IS NOT NULL) AS has_visible_reasoning,
@@ -754,15 +751,15 @@ pub fn load_transcript_items(
          LEFT JOIN reasoning_attachments ra ON ti.session_id = ra.session_id
                                         AND ti.item_index = ra.transcript_item_index
          LEFT JOIN messages m ON ti.session_id = m.session_id
-                             AND ti.message_index = CAST(m.message_index AS INTEGER)
+                             AND ti.message_index = m.message_index
          LEFT JOIN tool_calls tc ON ti.session_id = tc.session_id
                                 AND ti.tool_call_id = tc.id
          LEFT JOIN subagents sa ON ti.session_id = sa.session_id
                                AND ti.subagent_id = sa.id
          WHERE ti.session_id = ?1
          ORDER BY ti.item_index
-         LIMIT ?3 OFFSET ?4",
-    )?;
+         LIMIT ?3 OFFSET ?4";
+    let mut stmt = db.prepare(sql)?;
 
     // Resolve column names to indices once before iterating rows.
     let col_item_index = stmt.column_index("item_index")?;

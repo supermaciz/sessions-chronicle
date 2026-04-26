@@ -1,12 +1,13 @@
 use std::cell::Cell;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, VecDeque};
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use gtk::glib;
 use gtk::prelude::*;
 use relm4::factory::FactoryVecDeque;
-use relm4::{ComponentParts, ComponentSender, RelmWidgetExt, SimpleComponent, adw, gtk};
+use relm4::{Component, ComponentParts, ComponentSender, RelmWidgetExt, adw, gtk};
 
 use crate::database::load_transcript_items;
 use crate::models::Session;
@@ -19,6 +20,12 @@ use crate::ui::transcript_row::{
     TranscriptItemInit, TranscriptRow, TranscriptRowOutput, transcript_item_init_from_display_item,
 };
 
+const INITIAL_PAGE_SIZE: usize = 75;
+const NEXT_PAGE_SIZE: usize = 100;
+const PREVIEW_LEN: usize = 2000;
+const RENDER_BATCH_SIZE: usize = 3;
+const DEFERRED_CLEAR_DELAY_MS: u64 = 250;
+
 /// Detail view for a single indexed session.
 ///
 /// This component owns the session summary header, paginated transcript
@@ -29,10 +36,15 @@ pub struct SessionDetail {
     db_path: Arc<PathBuf>,
     session: Option<Session>,
     messages: FactoryVecDeque<TranscriptRow>,
+    initial_page_size: usize,
     page_size: usize,
     preview_len: usize,
     loaded_count: usize,
     has_more_messages: bool,
+    loading_first_page: bool,
+    loading_next_page: bool,
+    transcript_request_id: u64,
+    pending_render_batch: Option<PendingRenderBatch>,
     pending_boundary_tool_rows: Vec<crate::database::TranscriptItemRow>,
     search_query: Option<String>,
     /// Keyed by top-level display index in the transcript factory.
@@ -61,6 +73,33 @@ struct ScrollTarget {
 struct BoundaryAppendPlan {
     replacement_items: Vec<DisplayTranscriptItem>,
     rows: Vec<crate::database::TranscriptItemRow>,
+}
+
+struct PendingRenderBatch {
+    request_id: u64,
+    offset: usize,
+    source_row_count: usize,
+    total_items: usize,
+    rendered_items: usize,
+    batch_count: usize,
+    queued_at: Instant,
+    total_push_duration: Duration,
+    max_push_duration: Duration,
+    items: VecDeque<TranscriptItemInit>,
+}
+
+impl std::fmt::Debug for PendingRenderBatch {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PendingRenderBatch")
+            .field("request_id", &self.request_id)
+            .field("offset", &self.offset)
+            .field("source_row_count", &self.source_row_count)
+            .field("total_items", &self.total_items)
+            .field("rendered_items", &self.rendered_items)
+            .field("batch_count", &self.batch_count)
+            .field("remaining_items", &self.items.len())
+            .finish()
+    }
 }
 
 /// Parent-facing actions emitted by [`SessionDetail`].
@@ -95,6 +134,16 @@ pub enum SessionDetailMsg {
     /// Receives per-row match counts from [`TranscriptRow`] children; one count
     /// per segment (burst child or single row).
     MatchSegments(usize, Vec<usize>),
+    RenderNextTranscriptBatch {
+        request_id: u64,
+    },
+    /// Stop active transcript work before the detail page is popped. The heavy
+    /// widget teardown is deferred so it does not compete with the navigation
+    /// animation.
+    PrepareForNavigationBack,
+    DeferredClear {
+        request_id: u64,
+    },
     /// Indicates that a transcript row failed to expand to its full content and
     /// should trigger the shared toast notification path.
     ShowExpandLoadFailure,
@@ -104,11 +153,52 @@ pub enum SessionDetailMsg {
     InspectReasoning(i64),
 }
 
+pub enum SessionDetailCmd {
+    TranscriptPageLoaded {
+        request_id: u64,
+        session_id: String,
+        offset: usize,
+        limit: usize,
+        load_duration_ms: u128,
+        result: Result<Vec<crate::database::TranscriptItemRow>, String>,
+    },
+}
+
+impl std::fmt::Debug for SessionDetailCmd {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::TranscriptPageLoaded {
+                request_id,
+                session_id,
+                offset,
+                limit,
+                load_duration_ms,
+                result,
+            } => {
+                let result_summary = match result {
+                    Ok(rows) => format!("Ok({} rows)", rows.len()),
+                    Err(err) => format!("Err({err})"),
+                };
+
+                f.debug_struct("TranscriptPageLoaded")
+                    .field("request_id", request_id)
+                    .field("session_id", session_id)
+                    .field("offset", offset)
+                    .field("limit", limit)
+                    .field("load_duration_ms", load_duration_ms)
+                    .field("result", &result_summary)
+                    .finish()
+            }
+        }
+    }
+}
+
 #[relm4::component(pub)]
-impl SimpleComponent for SessionDetail {
+impl Component for SessionDetail {
     type Init = PathBuf;
     type Input = SessionDetailMsg;
     type Output = SessionDetailOutput;
+    type CommandOutput = SessionDetailCmd;
     type Widgets = SessionDetailWidgets;
 
     view! {
@@ -446,12 +536,17 @@ impl SimpleComponent for SessionDetail {
 
                             #[name = "load_more_button"]
                             gtk::Button {
-                                set_label: "Load more",
                                 set_halign: gtk::Align::Center,
                                 set_margin_top: 12,
                                 set_margin_bottom: 12,
                                 #[watch]
                                 set_visible: model.has_more_messages,
+                                #[watch]
+                                set_sensitive: !model.loading_next_page
+                                    && !model.loading_first_page
+                                    && model.pending_render_batch.is_none(),
+                                #[watch]
+                                set_label: if model.loading_next_page { "Loading..." } else { "Load more" },
                                 connect_clicked => SessionDetailMsg::LoadMore,
                             },
                         },
@@ -546,10 +641,15 @@ impl SimpleComponent for SessionDetail {
             db_path,
             session: None,
             messages,
-            page_size: 200,
-            preview_len: 2000,
+            initial_page_size: INITIAL_PAGE_SIZE,
+            page_size: NEXT_PAGE_SIZE,
+            preview_len: PREVIEW_LEN,
             loaded_count: 0,
             has_more_messages: false,
+            loading_first_page: false,
+            loading_next_page: false,
+            transcript_request_id: 0,
+            pending_render_batch: None,
             pending_boundary_tool_rows: Vec::new(),
             search_query: None,
             match_segments: BTreeMap::new(),
@@ -569,7 +669,7 @@ impl SimpleComponent for SessionDetail {
         ComponentParts { model, widgets }
     }
 
-    fn update(&mut self, message: Self::Input, sender: ComponentSender<Self>) {
+    fn update(&mut self, message: Self::Input, sender: ComponentSender<Self>, _root: &Self::Root) {
         match message {
             SessionDetailMsg::SetSession {
                 session,
@@ -580,15 +680,15 @@ impl SimpleComponent for SessionDetail {
                 let session = *session;
                 let session_id = session.id.clone();
                 self.session = Some(session);
-                self.load_first_page(&session_id);
+                self.start_first_page_load(&sender, &session_id);
             }
             SessionDetailMsg::UpdateSearchQuery(query) => {
                 self.search_query = query;
                 self.reset_search_matches();
-                self.reload_current_session();
+                self.reload_current_session(&sender);
             }
             SessionDetailMsg::LoadMore => {
-                self.load_next_page();
+                self.load_next_page(&sender);
             }
             SessionDetailMsg::PrevMatch => {
                 if self.total_matches > 0 {
@@ -608,6 +708,17 @@ impl SimpleComponent for SessionDetail {
             SessionDetailMsg::MatchSegments(display_index, segments) => {
                 self.update_match_segments(display_index, segments);
             }
+            SessionDetailMsg::RenderNextTranscriptBatch { request_id } => {
+                self.render_next_transcript_batch(&sender, request_id);
+            }
+            SessionDetailMsg::PrepareForNavigationBack => {
+                self.prepare_for_navigation_back(&sender);
+            }
+            SessionDetailMsg::DeferredClear { request_id } => {
+                if request_id == self.transcript_request_id {
+                    self.clear_for_navigation_back();
+                }
+            }
             SessionDetailMsg::ShowExpandLoadFailure => {
                 tracing::warn!("Could not load full message content");
                 self.pending_toast.set(true);
@@ -615,13 +726,17 @@ impl SimpleComponent for SessionDetail {
             SessionDetailMsg::ClearSearch => {
                 self.search_query = None;
                 self.reset_search_matches();
-                self.reload_current_session();
+                self.reload_current_session(&sender);
             }
             SessionDetailMsg::Clear => {
+                self.invalidate_transcript_requests();
                 self.session = None;
                 self.clear_messages_safely();
                 self.loaded_count = 0;
                 self.has_more_messages = false;
+                self.loading_first_page = false;
+                self.loading_next_page = false;
+                self.pending_render_batch = None;
                 self.search_query = None;
                 self.reset_search_matches();
                 self.clear_pending_boundary_tool_rows();
@@ -640,6 +755,15 @@ impl SimpleComponent for SessionDetail {
                     .ok();
             }
         }
+    }
+
+    fn update_cmd(
+        &mut self,
+        message: Self::CommandOutput,
+        sender: ComponentSender<Self>,
+        _root: &Self::Root,
+    ) {
+        self.apply_transcript_page_result(&sender, message);
     }
 
     fn post_view(&self, widgets: &mut Self::Widgets) {
@@ -898,37 +1022,303 @@ impl SessionDetail {
             .collect()
     }
 
-    fn load_first_page(&mut self, session_id: &str) {
-        match load_transcript_items(
-            &self.db_path,
-            session_id,
-            self.page_size as i64,
+    fn invalidate_transcript_requests(&mut self) {
+        self.transcript_request_id = self.transcript_request_id.wrapping_add(1);
+        self.pending_render_batch = None;
+    }
+
+    fn start_first_page_load(&mut self, sender: &ComponentSender<Self>, session_id: &str) {
+        self.invalidate_transcript_requests();
+        self.loading_first_page = true;
+        self.loading_next_page = false;
+        self.loaded_count = 0;
+        self.has_more_messages = false;
+        self.clear_pending_boundary_tool_rows();
+        self.clear_messages_safely();
+
+        self.spawn_transcript_page_load(
+            sender,
+            self.transcript_request_id,
+            session_id.to_string(),
             0,
-            self.preview_len as i64,
-        ) {
-            Ok(rows) => {
-                self.has_more_messages = rows.len() == self.page_size;
-                self.loaded_count = rows.len();
-                let highlight = self.search_query.clone();
-                let db_path = self.db_path.clone();
-                self.track_pending_boundary_tool_rows(&rows);
-                self.clear_messages_safely();
-                let mut guard = self.messages.guard();
-                for item in Self::build_display_items(rows, session_id, highlight, db_path, 0) {
-                    guard.push_back(item);
-                }
+            self.initial_page_size,
+        );
+    }
+
+    fn spawn_transcript_page_load(
+        &self,
+        sender: &ComponentSender<Self>,
+        request_id: u64,
+        session_id: String,
+        offset: usize,
+        limit: usize,
+    ) {
+        let db_path = self.db_path.clone();
+        let preview_len = self.preview_len as i64;
+
+        sender.spawn_oneshot_command(move || {
+            let started_at = Instant::now();
+            let result = load_transcript_items(
+                &db_path,
+                &session_id,
+                limit as i64,
+                offset as i64,
+                preview_len,
+            )
+            .map_err(|err| format!("{err:#}"));
+            let load_duration_ms = started_at.elapsed().as_millis();
+
+            SessionDetailCmd::TranscriptPageLoaded {
+                request_id,
+                session_id,
+                offset,
+                limit,
+                load_duration_ms,
+                result,
             }
-            Err(err) => {
-                tracing::error!(
-                    "Failed to load transcript items for {}: {}",
-                    session_id,
-                    err
+        });
+    }
+
+    fn schedule_transcript_render_batch(&self, sender: &ComponentSender<Self>, request_id: u64) {
+        let input_sender = sender.input_sender().clone();
+        glib::idle_add_local_once(move || {
+            let _ = input_sender.send(SessionDetailMsg::RenderNextTranscriptBatch { request_id });
+        });
+    }
+
+    fn prepare_for_navigation_back(&mut self, sender: &ComponentSender<Self>) {
+        self.invalidate_transcript_requests();
+        self.loading_first_page = false;
+        self.loading_next_page = false;
+        self.clear_pending_boundary_tool_rows();
+
+        let request_id = self.transcript_request_id;
+        let input_sender = sender.input_sender().clone();
+        glib::timeout_add_local_once(Duration::from_millis(DEFERRED_CLEAR_DELAY_MS), move || {
+            let _ = input_sender.send(SessionDetailMsg::DeferredClear { request_id });
+        });
+    }
+
+    fn clear_for_navigation_back(&mut self) {
+        self.session = None;
+        self.clear_messages_safely();
+        self.loaded_count = 0;
+        self.has_more_messages = false;
+        self.search_query = None;
+        self.reset_search_matches();
+    }
+
+    fn queue_transcript_items_for_render(
+        &mut self,
+        sender: &ComponentSender<Self>,
+        request_id: u64,
+        offset: usize,
+        source_row_count: usize,
+        items: Vec<TranscriptItemInit>,
+    ) {
+        let total_items = items.len();
+        tracing::info!(
+            request_id,
+            offset,
+            source_row_count,
+            display_item_count = total_items,
+            "Queued transcript render batch"
+        );
+        self.pending_render_batch = Some(PendingRenderBatch {
+            request_id,
+            offset,
+            source_row_count,
+            total_items,
+            rendered_items: 0,
+            batch_count: 0,
+            queued_at: Instant::now(),
+            total_push_duration: Duration::ZERO,
+            max_push_duration: Duration::ZERO,
+            items: items.into(),
+        });
+        self.schedule_transcript_render_batch(sender, request_id);
+    }
+
+    fn render_next_transcript_batch(&mut self, sender: &ComponentSender<Self>, request_id: u64) {
+        if request_id != self.transcript_request_id {
+            return;
+        }
+
+        let Some(batch) = &mut self.pending_render_batch else {
+            return;
+        };
+        if batch.request_id != request_id {
+            return;
+        }
+
+        let mut guard = self.messages.guard();
+        let push_started_at = Instant::now();
+        let mut rendered_this_batch = 0usize;
+        for _ in 0..RENDER_BATCH_SIZE {
+            let Some(item) = batch.items.pop_front() else {
+                break;
+            };
+            guard.push_back(item);
+            rendered_this_batch += 1;
+        }
+        let push_duration = push_started_at.elapsed();
+        let has_more_items = !batch.items.is_empty();
+        batch.rendered_items += rendered_this_batch;
+        batch.batch_count += 1;
+        batch.total_push_duration += push_duration;
+        batch.max_push_duration = batch.max_push_duration.max(push_duration);
+        let remaining_items = batch.items.len();
+        let rendered_items = batch.rendered_items;
+        let total_items = batch.total_items;
+        let batch_count = batch.batch_count;
+        let offset = batch.offset;
+        let source_row_count = batch.source_row_count;
+        let total_push_duration_ms = batch.total_push_duration.as_millis();
+        let max_push_duration_ms = batch.max_push_duration.as_millis();
+        let total_duration_ms = batch.queued_at.elapsed().as_millis();
+        drop(guard);
+
+        if has_more_items {
+            tracing::debug!(
+                request_id,
+                offset,
+                rendered_this_batch,
+                rendered_items,
+                total_items,
+                remaining_items,
+                push_duration_ms = push_duration.as_millis(),
+                "Rendered transcript batch"
+            );
+            self.schedule_transcript_render_batch(sender, request_id);
+        } else {
+            tracing::info!(
+                request_id,
+                offset,
+                source_row_count,
+                display_item_count = total_items,
+                rendered_items,
+                batch_count,
+                total_push_duration_ms,
+                max_push_duration_ms,
+                total_duration_ms,
+                "Finished rendering transcript page"
+            );
+            self.pending_render_batch = None;
+        }
+    }
+
+    fn apply_first_page_rows(
+        &mut self,
+        sender: &ComponentSender<Self>,
+        request_id: u64,
+        session_id: &str,
+        limit: usize,
+        rows: Vec<crate::database::TranscriptItemRow>,
+    ) {
+        self.loading_first_page = false;
+        self.loading_next_page = false;
+        self.has_more_messages = rows.len() == limit;
+        self.loaded_count = rows.len();
+        let highlight = self.search_query.clone();
+        let db_path = self.db_path.clone();
+        self.track_pending_boundary_tool_rows(&rows);
+        self.clear_messages_safely();
+        let build_started_at = Instant::now();
+        let source_row_count = rows.len();
+        let items = Self::build_display_items(rows, session_id, highlight, db_path, 0);
+        tracing::info!(
+            request_id,
+            session_id,
+            offset = 0usize,
+            source_row_count,
+            display_item_count = items.len(),
+            build_duration_ms = build_started_at.elapsed().as_millis(),
+            "Prepared first transcript page"
+        );
+        self.queue_transcript_items_for_render(sender, request_id, 0, source_row_count, items);
+    }
+
+    fn handle_transcript_page_error(&mut self, session_id: &str, offset: usize, err: String) {
+        tracing::error!(
+            "Failed to load transcript items for {} at offset {}: {}",
+            session_id,
+            offset,
+            err
+        );
+
+        if offset == 0 {
+            self.clear_messages_safely();
+            self.loaded_count = 0;
+            self.has_more_messages = false;
+            self.clear_pending_boundary_tool_rows();
+        }
+
+        self.loading_first_page = false;
+        self.loading_next_page = false;
+    }
+
+    fn apply_transcript_page_result(
+        &mut self,
+        sender: &ComponentSender<Self>,
+        message: SessionDetailCmd,
+    ) {
+        let SessionDetailCmd::TranscriptPageLoaded {
+            request_id,
+            session_id,
+            offset,
+            limit,
+            load_duration_ms,
+            result,
+        } = message;
+
+        if request_id != self.transcript_request_id {
+            tracing::debug!(
+                "Ignoring stale transcript page for session {} at offset {}",
+                session_id,
+                offset
+            );
+            return;
+        }
+
+        let active_session_matches = self
+            .session
+            .as_ref()
+            .is_some_and(|session| session.id == session_id);
+        if !active_session_matches {
+            tracing::debug!(
+                "Ignoring transcript page for inactive session {} at offset {}",
+                session_id,
+                offset
+            );
+            return;
+        }
+
+        match result {
+            Ok(rows) if offset == 0 => {
+                tracing::info!(
+                    request_id,
+                    session_id = session_id.as_str(),
+                    offset,
+                    limit,
+                    source_row_count = rows.len(),
+                    load_duration_ms,
+                    "Loaded first transcript page"
                 );
-                self.clear_messages_safely();
-                self.loaded_count = 0;
-                self.has_more_messages = false;
-                self.clear_pending_boundary_tool_rows();
+                self.apply_first_page_rows(sender, request_id, &session_id, limit, rows)
             }
+            Ok(rows) => {
+                tracing::info!(
+                    request_id,
+                    session_id = session_id.as_str(),
+                    offset,
+                    limit,
+                    source_row_count = rows.len(),
+                    load_duration_ms,
+                    "Loaded next transcript page"
+                );
+                self.apply_next_page_rows(sender, request_id, offset, &session_id, rows)
+            }
+            Err(err) => self.handle_transcript_page_error(&session_id, offset, err),
         }
     }
 
@@ -938,10 +1328,10 @@ impl SessionDetail {
         self.total_matches = 0;
     }
 
-    fn reload_current_session(&mut self) {
+    fn reload_current_session(&mut self, sender: &ComponentSender<Self>) {
         if let Some(session) = &self.session {
             let session_id = session.id.clone();
-            self.load_first_page(&session_id);
+            self.start_first_page_load(sender, &session_id);
         }
     }
 
@@ -1000,27 +1390,41 @@ impl SessionDetail {
     /// grouped correctly until the next page is available. When that happens,
     /// the component replaces the affected tail items before appending the new
     /// page so display rows and their search indexes stay stable.
-    fn load_next_page(&mut self) {
+    fn load_next_page(&mut self, sender: &ComponentSender<Self>) {
         let Some(session) = &self.session else {
             return;
         };
+
+        if self.loading_first_page
+            || self.loading_next_page
+            || self.pending_render_batch.is_some()
+            || !self.has_more_messages
+        {
+            return;
+        }
+
         let session_id = session.id.clone();
         let offset = self.loaded_count;
-        let rows = match load_transcript_items(
-            &self.db_path,
-            &session_id,
-            self.page_size as i64,
-            offset as i64,
-            self.preview_len as i64,
-        ) {
-            Ok(rows) => rows,
-            Err(err) => {
-                tracing::error!("Failed to load more transcript items: {}", err);
-                self.has_more_messages = false;
-                return;
-            }
-        };
+        self.loading_next_page = true;
+        self.spawn_transcript_page_load(
+            sender,
+            self.transcript_request_id,
+            session_id,
+            offset,
+            self.page_size,
+        );
+    }
 
+    fn apply_next_page_rows(
+        &mut self,
+        sender: &ComponentSender<Self>,
+        request_id: u64,
+        offset: usize,
+        session_id: &str,
+        rows: Vec<crate::database::TranscriptItemRow>,
+    ) {
+        let apply_started_at = Instant::now();
+        self.loading_next_page = false;
         let source_len = rows.len();
         self.has_more_messages = source_len == self.page_size;
         self.loaded_count += source_len;
@@ -1033,6 +1437,7 @@ impl SessionDetail {
             replacement_items,
             rows,
         } = self.regroup_next_page_boundary(rows);
+        let replacement_item_count = replacement_items.len();
 
         {
             let mut guard = self.messages.guard();
@@ -1047,7 +1452,7 @@ impl SessionDetail {
                         transcript_item_init_from_display_item(
                             start_index + offset,
                             &item,
-                            &session_id,
+                            session_id,
                             highlight.clone(),
                             db_path.clone(),
                         )
@@ -1058,11 +1463,20 @@ impl SessionDetail {
             }
 
             let start_index = guard.len();
-            for item in
-                Self::build_display_items(rows, &session_id, highlight, db_path, start_index)
-            {
-                guard.push_back(item);
-            }
+            let items =
+                Self::build_display_items(rows, session_id, highlight, db_path, start_index);
+            tracing::info!(
+                request_id,
+                session_id,
+                offset,
+                source_row_count = source_len,
+                replacement_item_count,
+                display_item_count = items.len(),
+                prepare_duration_ms = apply_started_at.elapsed().as_millis(),
+                "Prepared next transcript page"
+            );
+            drop(guard);
+            self.queue_transcript_items_for_render(sender, request_id, offset, source_len, items);
         }
 
         if !self.has_more_messages {
@@ -1188,7 +1602,10 @@ impl SessionDetail {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::Duration;
+
     use relm4::{Component, ComponentController};
+    use rusqlite::{Connection, params};
 
     fn build_test_session(
         first_prompt: Option<&str>,
@@ -1217,6 +1634,45 @@ mod tests {
             read_count,
             command_count,
             ending_status: crate::models::SessionEndingStatus::Clean,
+        }
+    }
+
+    fn pump_main_context(condition: impl Fn() -> bool) {
+        let context = gtk::glib::MainContext::default();
+        let deadline = std::time::Instant::now() + Duration::from_millis(1000);
+        while std::time::Instant::now() < deadline {
+            if condition() {
+                return;
+            }
+
+            if !context.iteration(false) {
+                std::thread::sleep(Duration::from_millis(2));
+            }
+        }
+    }
+
+    fn seed_message_transcript(db_path: &std::path::Path, session_id: &str, count: usize) {
+        let conn = Connection::open(db_path).expect("open temp db");
+        crate::database::schema::initialize_database(&conn).expect("initialize db");
+
+        for index in 0..count {
+            conn.execute(
+                "INSERT INTO messages (session_id, message_index, role, content, timestamp, model)
+                 VALUES (?1, ?2, 'user', ?3, ?4, NULL)",
+                params![
+                    session_id,
+                    index as i64,
+                    format!("message {index}"),
+                    index as i64,
+                ],
+            )
+            .expect("insert message");
+            conn.execute(
+                "INSERT INTO transcript_items (session_id, item_index, kind, message_index)
+                 VALUES (?1, ?2, 'message', ?2)",
+                params![session_id, index as i64],
+            )
+            .expect("insert transcript item");
         }
     }
 
@@ -1298,6 +1754,59 @@ mod tests {
 
         assert_eq!(items.len(), 2);
         assert!(matches!(items[1], TranscriptItemInit::ToolBurst(_)));
+    }
+
+    #[gtk::test]
+    fn session_detail_loads_transcript_pages_incrementally() {
+        let temp_db = tempfile::NamedTempFile::new().expect("temp db");
+        seed_message_transcript(temp_db.path(), "test-session-123", INITIAL_PAGE_SIZE + 5);
+
+        let controller = SessionDetail::builder().launch(temp_db.path().to_path_buf());
+        controller.emit(SessionDetailMsg::SetSession {
+            session: Box::new(build_test_session(None, None, 0, 0, 0)),
+            search_query: None,
+        });
+
+        pump_main_context(|| {
+            let parts = controller.state().get();
+            !parts.model.loading_first_page && parts.model.loaded_count == INITIAL_PAGE_SIZE
+        });
+
+        {
+            let parts = controller.state().get();
+            assert_eq!(parts.model.loaded_count, INITIAL_PAGE_SIZE);
+            assert!(parts.model.messages.len() < INITIAL_PAGE_SIZE);
+            assert!(parts.model.pending_render_batch.is_some());
+            assert!(parts.model.has_more_messages);
+        }
+
+        pump_main_context(|| {
+            let parts = controller.state().get();
+            parts.model.pending_render_batch.is_none()
+                && parts.model.messages.len() == INITIAL_PAGE_SIZE
+        });
+
+        controller.emit(SessionDetailMsg::LoadMore);
+
+        pump_main_context(|| {
+            let parts = controller.state().get();
+            !parts.model.loading_next_page && parts.model.loaded_count == INITIAL_PAGE_SIZE + 5
+        });
+
+        {
+            let parts = controller.state().get();
+            assert_eq!(parts.model.loaded_count, INITIAL_PAGE_SIZE + 5);
+            assert!(parts.model.messages.len() < INITIAL_PAGE_SIZE + 5);
+        }
+
+        pump_main_context(|| {
+            let parts = controller.state().get();
+            parts.model.pending_render_batch.is_none()
+                && parts.model.messages.len() == INITIAL_PAGE_SIZE + 5
+        });
+
+        let parts = controller.state().get();
+        assert!(!parts.model.has_more_messages);
     }
 
     #[test]

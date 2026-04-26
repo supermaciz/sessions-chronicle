@@ -1,6 +1,10 @@
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::{collections::BTreeMap, rc::Rc};
+use std::{
+    collections::BTreeMap,
+    rc::Rc,
+    time::{Duration, Instant},
+};
 
 use anyhow::Result;
 use chrono::{TimeZone, Utc};
@@ -26,6 +30,8 @@ const TOOL_ICONS: ToolCategoryIcons = ToolCategoryIcons {
     web: icon_names::EARTH,
     other: icon_names::BUILD,
 };
+const SLOW_ROW_WIDGET_BUILD: Duration = Duration::from_millis(10);
+const SLOW_CONTENT_RENDER: Duration = Duration::from_millis(10);
 
 /// Return the model display text for a transcript header.
 /// Only assistant messages with a non-empty model value produce output.
@@ -657,12 +663,33 @@ impl FactoryComponent for TranscriptRow {
         _returned_widget: &gtk::Widget,
         sender: FactorySender<Self>,
     ) -> Self::Widgets {
-        match self.kind {
+        let started_at = Instant::now();
+        let widgets = match self.kind {
             TranscriptRowKind::Message => self.build_message_widgets(&root, sender),
             TranscriptRowKind::ToolCall => self.build_tool_call_widgets(&root, sender),
             TranscriptRowKind::ToolBurst => self.build_tool_burst_widgets(&root, sender),
             TranscriptRowKind::Subagent => self.build_subagent_widgets(&root, sender),
+        };
+        let duration = started_at.elapsed();
+
+        tracing::debug!(
+            item_index = self.item_index,
+            transcript_item_index = ?self.transcript_item_index,
+            kind = ?self.kind,
+            build_duration_ms = duration.as_millis(),
+            "Built transcript row widgets"
+        );
+        if duration >= SLOW_ROW_WIDGET_BUILD {
+            tracing::info!(
+                item_index = self.item_index,
+                transcript_item_index = ?self.transcript_item_index,
+                kind = ?self.kind,
+                build_duration_ms = duration.as_millis(),
+                "Slow transcript row widget build"
+            );
         }
+
+        widgets
     }
 
     fn update_with_view(
@@ -692,12 +719,14 @@ impl FactoryComponent for TranscriptRow {
                     self.update_expand_button(widgets, preview);
                     if count != self.rendered_match_count {
                         self.rendered_match_count = count;
-                        sender
-                            .output(TranscriptRowOutput::MatchSegmentsChanged {
-                                display_index: self.item_index,
-                                segments: vec![count],
-                            })
-                            .ok();
+                        if self.highlight_query.is_some() {
+                            sender
+                                .output(TranscriptRowOutput::MatchSegmentsChanged {
+                                    display_index: self.item_index,
+                                    segments: vec![count],
+                                })
+                                .ok();
+                        }
                     }
                 } else if let Some(ref full) = self.full_content {
                     // Expand with cached content
@@ -711,12 +740,14 @@ impl FactoryComponent for TranscriptRow {
                     self.update_expand_button(widgets, preview);
                     if count != self.rendered_match_count {
                         self.rendered_match_count = count;
-                        sender
-                            .output(TranscriptRowOutput::MatchSegmentsChanged {
-                                display_index: self.item_index,
-                                segments: vec![count],
-                            })
-                            .ok();
+                        if self.highlight_query.is_some() {
+                            sender
+                                .output(TranscriptRowOutput::MatchSegmentsChanged {
+                                    display_index: self.item_index,
+                                    segments: vec![count],
+                                })
+                                .ok();
+                        }
                     }
                 } else {
                     // Fetch full content from DB
@@ -778,12 +809,14 @@ impl FactoryComponent for TranscriptRow {
                 self.update_expand_button(widgets, preview);
                 if count != self.rendered_match_count {
                     self.rendered_match_count = count;
-                    sender
-                        .output(TranscriptRowOutput::MatchSegmentsChanged {
-                            display_index: self.item_index,
-                            segments: vec![count],
-                        })
-                        .ok();
+                    if self.highlight_query.is_some() {
+                        sender
+                            .output(TranscriptRowOutput::MatchSegmentsChanged {
+                                display_index: self.item_index,
+                                segments: vec![count],
+                            })
+                            .ok();
+                    }
                 }
             }
             TranscriptRowCmd::FullContentLoaded(Err(err)) => {
@@ -909,19 +942,43 @@ impl TranscriptRow {
         root.append(&expand_button);
 
         // Render initial content
+        let render_started_at = Instant::now();
         let match_count = render_content(
             &content_container,
             &preview.content_preview,
             preview.role,
             self.highlight_query.as_deref(),
         );
+        let render_duration = render_started_at.elapsed();
+        tracing::debug!(
+            item_index = self.item_index,
+            transcript_item_index = ?self.transcript_item_index,
+            role = ?preview.role,
+            content_len = preview.content_preview.len(),
+            match_count,
+            render_duration_ms = render_duration.as_millis(),
+            "Rendered transcript message content"
+        );
+        if render_duration >= SLOW_CONTENT_RENDER {
+            tracing::info!(
+                item_index = self.item_index,
+                transcript_item_index = ?self.transcript_item_index,
+                role = ?preview.role,
+                content_len = preview.content_preview.len(),
+                match_count,
+                render_duration_ms = render_duration.as_millis(),
+                "Slow transcript message content render"
+            );
+        }
         self.rendered_match_count = match_count;
-        sender
-            .output(TranscriptRowOutput::MatchSegmentsChanged {
-                display_index: self.item_index,
-                segments: vec![match_count],
-            })
-            .ok();
+        if self.highlight_query.is_some() {
+            sender
+                .output(TranscriptRowOutput::MatchSegmentsChanged {
+                    display_index: self.item_index,
+                    segments: vec![match_count],
+                })
+                .ok();
+        }
 
         TranscriptRowWidgets {
             content_container,
@@ -952,6 +1009,7 @@ impl TranscriptRow {
             reasoning_preview: self.reasoning_preview.unwrap_or_default(),
         };
 
+        let build_started_at = Instant::now();
         let refs = build_tool_call_widget(
             &init,
             {
@@ -972,14 +1030,26 @@ impl TranscriptRow {
                 }
             },
         );
+        let build_duration = build_started_at.elapsed();
+        tracing::debug!(
+            item_index = self.item_index,
+            transcript_item_index = ?self.transcript_item_index,
+            tool_name = init.tool_name.as_str(),
+            preview_len = init.displayed_preview().map(str::len).unwrap_or_default(),
+            match_count = refs.match_count,
+            build_duration_ms = build_duration.as_millis(),
+            "Built transcript tool call widget"
+        );
         root.append(&refs.root);
         self.rendered_match_count = refs.match_count;
-        sender
-            .output(TranscriptRowOutput::MatchSegmentsChanged {
-                display_index: self.item_index,
-                segments: vec![refs.match_count],
-            })
-            .ok();
+        if self.tool_highlight_query.is_some() {
+            sender
+                .output(TranscriptRowOutput::MatchSegmentsChanged {
+                    display_index: self.item_index,
+                    segments: vec![refs.match_count],
+                })
+                .ok();
+        }
 
         TranscriptRowWidgets {
             content_container: gtk::Box::new(gtk::Orientation::Vertical, 0),
@@ -1107,7 +1177,10 @@ impl TranscriptRow {
         header_button.update_property(&[gtk::accessible::Property::Label(&header_a11y)]);
 
         let children = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        let children_started_at = Instant::now();
+        let mut max_child_build_duration = Duration::ZERO;
         for tool_call in &burst.tool_calls {
+            let child_started_at = Instant::now();
             let child = build_tool_call_widget(
                 tool_call,
                 {
@@ -1128,8 +1201,19 @@ impl TranscriptRow {
                     }
                 },
             );
+            let child_duration = child_started_at.elapsed();
+            max_child_build_duration = max_child_build_duration.max(child_duration);
             children.append(&child.root);
         }
+        let children_duration = children_started_at.elapsed();
+        tracing::debug!(
+            item_index = self.item_index,
+            tool_call_count = burst.tool_calls.len(),
+            children_build_duration_ms = children_duration.as_millis(),
+            max_child_build_duration_ms = max_child_build_duration.as_millis(),
+            match_count = burst_match_count,
+            "Built transcript tool burst children"
+        );
 
         let revealer = gtk::Revealer::new();
         revealer.set_transition_type(gtk::RevealerTransitionType::SlideDown);
@@ -1162,12 +1246,18 @@ impl TranscriptRow {
         root.append(&revealer);
 
         self.rendered_match_count = burst_match_count;
-        sender
-            .output(TranscriptRowOutput::MatchSegmentsChanged {
-                display_index: self.item_index,
-                segments: burst.child_match_counts.clone(),
-            })
-            .ok();
+        if burst
+            .tool_calls
+            .iter()
+            .any(|tool_call| tool_call.highlight_query.is_some())
+        {
+            sender
+                .output(TranscriptRowOutput::MatchSegmentsChanged {
+                    display_index: self.item_index,
+                    segments: burst.child_match_counts.clone(),
+                })
+                .ok();
+        }
 
         TranscriptRowWidgets {
             content_container: gtk::Box::new(gtk::Orientation::Vertical, 0),

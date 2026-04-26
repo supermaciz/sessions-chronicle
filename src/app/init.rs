@@ -110,11 +110,13 @@ pub(super) fn init_child_components(
             IndexingWorkerOutput::Completed {
                 indexed,
                 skipped,
+                removed,
                 per_source,
                 errors_detail,
             } => AppMsg::IndexingCompleted {
                 indexed,
                 skipped,
+                removed,
                 per_source,
                 errors_detail,
             },

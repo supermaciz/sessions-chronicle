@@ -2,12 +2,20 @@ use anyhow::Result;
 use rusqlite::Connection;
 
 #[cfg(test)]
-const CURRENT_DB_VERSION: i64 = 11;
+const CURRENT_DB_VERSION: i64 = 13;
 
 fn column_exists(conn: &Connection, table_name: &str, column_name: &str) -> Result<bool> {
     Ok(conn.query_row(
         "SELECT COUNT(*) FROM pragma_table_info(?1) WHERE name = ?2",
         [table_name, column_name],
+        |row| row.get::<_, i64>(0),
+    )? > 0)
+}
+
+fn table_exists(conn: &Connection, name: &str) -> Result<bool> {
+    Ok(conn.query_row(
+        "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?1",
+        [name],
         |row| row.get::<_, i64>(0),
     )? > 0)
 }
@@ -32,6 +40,10 @@ fn column_exists(conn: &Connection, table_name: &str, column_name: &str) -> Resu
 ///   9 – reasoning_attachments side table and clear file_fingerprints
 ///   10 – clear file_fingerprints to rebuild transcripts after parser changes
 ///   11 – subagents gains nullable agent_id and clear file_fingerprints
+///   12 – add session-list ordering indexes for faster startup/filter reloads
+///   13 – replace FTS5-virtual `messages` with a b-tree source table backed
+///        by an FTS5 external-content `messages_fts` index; clear
+///        file_fingerprints to force reindexing from JSONL
 pub fn initialize_database(conn: &Connection) -> Result<()> {
     let version: i64 = conn.query_row("PRAGMA user_version", [], |row| row.get(0))?;
 
@@ -67,6 +79,12 @@ pub fn initialize_database(conn: &Connection) -> Result<()> {
     }
     if version < 11 {
         apply_v11_migration(conn)?;
+    }
+    if version < 12 {
+        apply_v12_migration(conn)?;
+    }
+    if version < 13 {
+        apply_v13_migration(conn)?;
     }
 
     Ok(())
@@ -454,10 +472,165 @@ fn apply_v11_migration(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
+/// Migrate from v11 to v12.
+///
+/// Adds ordering indexes used by the session list queries. These avoid scanning
+/// all sessions and building temporary sort tables on every reload.
+fn apply_v12_migration(conn: &Connection) -> Result<()> {
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_sessions_top_level_last_updated
+         ON sessions(is_subagent, last_updated DESC)",
+        [],
+    )?;
+
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_sessions_project_last_updated
+         ON sessions(is_subagent, project_id, last_updated DESC)",
+        [],
+    )?;
+
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_sessions_tool_last_updated
+         ON sessions(is_subagent, tool, last_updated DESC)",
+        [],
+    )?;
+
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_sessions_pinned_last_updated
+         ON sessions(is_subagent, pinned_at, last_updated DESC)",
+        [],
+    )?;
+
+    conn.execute_batch("PRAGMA user_version = 12")?;
+    Ok(())
+}
+
+/// Migrate from v12 to v13.
+///
+/// Replace the FTS5-virtual `messages` table inherited from v0 with a
+/// b-tree source-of-truth `messages` table backed by an FTS5
+/// external-content `messages_fts` index. The transcript read path no
+/// longer needs runtime table routing or CAST(message_index AS INTEGER).
+///
+/// Existing message data is intentionally not preserved: clearing
+/// `file_fingerprints` causes the indexer to repopulate from JSONL on the
+/// next run. JSONL files are the authoritative source.
+///
+/// Dependent transcript tables (`transcript_items`, `tool_calls`,
+/// `reasoning_attachments`, `subagents`) are wiped in the same step so the
+/// transcript LEFT JOINs don't render empty rows during the reindex window.
+/// `sessions` is preserved to keep user state (pinned_at, etc.).
+fn apply_v13_migration(conn: &Connection) -> Result<()> {
+    conn.execute_batch(
+        "BEGIN IMMEDIATE;
+         DROP TRIGGER IF EXISTS messages_ai;
+         DROP TRIGGER IF EXISTS messages_ad;
+         DROP TRIGGER IF EXISTS messages_au;
+         DROP TABLE IF EXISTS messages_fts;
+         DROP TABLE IF EXISTS messages;",
+    )?;
+
+    for table in [
+        "transcript_items",
+        "tool_calls",
+        "reasoning_attachments",
+        "subagents",
+    ] {
+        if table_exists(conn, table)? {
+            conn.execute(&format!("DELETE FROM {table}"), [])?;
+        }
+    }
+
+    conn.execute_batch(
+        "CREATE TABLE messages (
+             id            INTEGER PRIMARY KEY AUTOINCREMENT,
+             session_id    TEXT NOT NULL,
+             message_index INTEGER NOT NULL,
+             role          TEXT NOT NULL,
+             content       TEXT NOT NULL,
+             timestamp     INTEGER NOT NULL,
+             model         TEXT,
+             UNIQUE(session_id, message_index)
+         );
+
+         CREATE VIRTUAL TABLE messages_fts USING fts5(
+             content,
+             content='messages',
+             content_rowid='id'
+         );
+
+         CREATE TRIGGER messages_ai AFTER INSERT ON messages BEGIN
+             INSERT INTO messages_fts(rowid, content) VALUES (new.id, new.content);
+         END;
+         CREATE TRIGGER messages_ad AFTER DELETE ON messages BEGIN
+             INSERT INTO messages_fts(messages_fts, rowid, content)
+                 VALUES('delete', old.id, old.content);
+         END;
+         CREATE TRIGGER messages_au AFTER UPDATE ON messages BEGIN
+             INSERT INTO messages_fts(messages_fts, rowid, content)
+                 VALUES('delete', old.id, old.content);
+             INSERT INTO messages_fts(rowid, content) VALUES (new.id, new.content);
+         END;
+
+         DELETE FROM file_fingerprints;
+         PRAGMA user_version = 13;
+         COMMIT;",
+    )?;
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use rusqlite::Connection;
+
+    fn index_exists(conn: &Connection, name: &str) -> bool {
+        conn.query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name = ?1",
+            [name],
+            |row| row.get::<_, i64>(0),
+        )
+        .unwrap()
+            > 0
+    }
+
+    fn table_exists(conn: &Connection, name: &str) -> bool {
+        conn.query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name = ?1",
+            [name],
+            |row| row.get::<_, i64>(0),
+        )
+        .unwrap()
+            > 0
+    }
+
+    fn trigger_exists(conn: &Connection, name: &str) -> bool {
+        conn.query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='trigger' AND name = ?1",
+            [name],
+            |row| row.get::<_, i64>(0),
+        )
+        .unwrap()
+            > 0
+    }
+
+    fn table_sql(conn: &Connection, name: &str) -> String {
+        conn.query_row(
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name = ?1",
+            [name],
+            |row| row.get::<_, String>(0),
+        )
+        .unwrap()
+    }
+
+    fn index_columns(conn: &Connection, name: &str) -> Vec<String> {
+        let mut stmt = conn.prepare(&format!("PRAGMA index_info({name})")).unwrap();
+        stmt.query_map([], |row| row.get::<_, String>(2))
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap()
+    }
 
     #[test]
     fn fresh_db_initializes_to_latest() {
@@ -477,14 +650,14 @@ mod tests {
             .unwrap();
         assert_eq!(pinned_column_exists, 1);
 
-        let table_exists: i64 = conn
+        let file_fingerprints_table_exists: i64 = conn
             .query_row(
                 "SELECT count(*) FROM sqlite_master WHERE type='table' AND name='file_fingerprints'",
                 [],
                 |r| r.get(0),
             )
             .unwrap();
-        assert_eq!(table_exists, 1);
+        assert_eq!(file_fingerprints_table_exists, 1);
 
         let reasoning_table_exists: i64 = conn
             .query_row(
@@ -512,6 +685,284 @@ mod tests {
             )
             .unwrap();
         assert_eq!(encrypted_content_column, 0);
+
+        assert!(table_exists(&conn, "messages"));
+        assert!(table_exists(&conn, "messages_fts"));
+        assert!(!table_exists(&conn, "message_cache"));
+        assert!(trigger_exists(&conn, "messages_ai"));
+        assert!(trigger_exists(&conn, "messages_ad"));
+        assert!(trigger_exists(&conn, "messages_au"));
+    }
+
+    #[test]
+    fn migration_creates_session_list_ordering_indexes() {
+        let conn = Connection::open_in_memory().unwrap();
+        initialize_database(&conn).unwrap();
+
+        assert!(index_exists(&conn, "idx_sessions_top_level_last_updated"));
+        assert!(index_exists(&conn, "idx_sessions_project_last_updated"));
+        assert!(index_exists(&conn, "idx_sessions_tool_last_updated"));
+        assert!(index_exists(&conn, "idx_sessions_pinned_last_updated"));
+        assert_eq!(
+            index_columns(&conn, "idx_sessions_top_level_last_updated"),
+            vec!["is_subagent", "last_updated"]
+        );
+        assert_eq!(
+            index_columns(&conn, "idx_sessions_project_last_updated"),
+            vec!["is_subagent", "project_id", "last_updated"]
+        );
+        assert_eq!(
+            index_columns(&conn, "idx_sessions_tool_last_updated"),
+            vec!["is_subagent", "tool", "last_updated"]
+        );
+        assert_eq!(
+            index_columns(&conn, "idx_sessions_pinned_last_updated"),
+            vec!["is_subagent", "pinned_at", "last_updated"]
+        );
+    }
+
+    #[test]
+    fn v11_to_v13_migration_preserves_sessions_clears_fingerprints() {
+        let conn = Connection::open_in_memory().unwrap();
+        initialize_database(&conn).unwrap();
+        conn.execute_batch(
+            "DROP INDEX idx_sessions_top_level_last_updated;
+             DROP INDEX idx_sessions_project_last_updated;
+             DROP INDEX idx_sessions_tool_last_updated;
+             DROP INDEX idx_sessions_pinned_last_updated;
+             PRAGMA user_version = 11;",
+        )
+        .unwrap();
+
+        conn.execute(
+            "INSERT INTO sessions (id, tool, start_time, message_count, file_path, last_updated)
+             VALUES ('kept', 'opencode', 1, 2, '/tmp/kept.jsonl', 3)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO file_fingerprints (file_path, mtime_ns, size)
+             VALUES ('/tmp/kept.jsonl', 4, 5)",
+            [],
+        )
+        .unwrap();
+
+        initialize_database(&conn).unwrap();
+
+        let version: i64 = conn
+            .query_row("PRAGMA user_version", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(version, CURRENT_DB_VERSION);
+
+        let session_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sessions WHERE id = 'kept'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(session_count, 1);
+
+        let fingerprint_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM file_fingerprints WHERE file_path = '/tmp/kept.jsonl'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(fingerprint_count, 0);
+    }
+
+    #[test]
+    fn v13_migration_creates_messages_and_fts_index() {
+        let conn = Connection::open_in_memory().unwrap();
+        initialize_database(&conn).unwrap();
+
+        let version: i64 = conn
+            .query_row("PRAGMA user_version", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(version, CURRENT_DB_VERSION);
+
+        assert!(table_exists(&conn, "messages"));
+        assert!(table_exists(&conn, "messages_fts"));
+        assert!(!table_exists(&conn, "message_cache"));
+
+        let id_type: String = conn
+            .query_row(
+                "SELECT type FROM pragma_table_info('messages') WHERE name = 'id'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let id_pk: i64 = conn
+            .query_row(
+                "SELECT pk FROM pragma_table_info('messages') WHERE name = 'id'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let message_index_type: String = conn
+            .query_row(
+                "SELECT type FROM pragma_table_info('messages') WHERE name = 'message_index'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let timestamp_type: String = conn
+            .query_row(
+                "SELECT type FROM pragma_table_info('messages') WHERE name = 'timestamp'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+
+        assert_eq!(id_type.to_uppercase(), "INTEGER");
+        assert_eq!(id_pk, 1);
+        assert_eq!(message_index_type.to_uppercase(), "INTEGER");
+        assert_eq!(timestamp_type.to_uppercase(), "INTEGER");
+
+        let unique_index_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM pragma_index_list('messages') WHERE origin = 'u'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(unique_index_count, 1);
+
+        let fts_sql = table_sql(&conn, "messages_fts");
+        assert!(fts_sql.contains("USING fts5"));
+        assert!(fts_sql.contains("content='messages'"));
+        assert!(fts_sql.contains("content_rowid='id'"));
+
+        assert!(trigger_exists(&conn, "messages_ai"));
+        assert!(trigger_exists(&conn, "messages_ad"));
+        assert!(trigger_exists(&conn, "messages_au"));
+    }
+
+    #[test]
+    fn v11_to_v13_clears_fingerprints_and_drops_old_messages() {
+        let conn = Connection::open_in_memory().unwrap();
+        initialize_database(&conn).unwrap();
+
+        conn.execute_batch(
+            "DROP TRIGGER IF EXISTS messages_ai;
+             DROP TRIGGER IF EXISTS messages_ad;
+             DROP TRIGGER IF EXISTS messages_au;
+             DROP TABLE IF EXISTS messages_fts;
+             DROP TABLE IF EXISTS messages;
+             DROP TABLE IF EXISTS message_cache;
+             CREATE VIRTUAL TABLE messages USING fts5(
+                 session_id UNINDEXED,
+                 message_index UNINDEXED,
+                 role UNINDEXED,
+                 content,
+                 timestamp UNINDEXED,
+                 model UNINDEXED
+             );
+             PRAGMA user_version = 11;",
+        )
+        .unwrap();
+
+        conn.execute(
+            "INSERT INTO messages
+             (session_id, message_index, role, content, timestamp, model)
+             VALUES ('s1', '42', 'assistant', 'old body', '1234', 'gpt-fixture')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO file_fingerprints (file_path, mtime_ns, size)
+             VALUES ('/tmp/old.jsonl', 10, 20)",
+            [],
+        )
+        .unwrap();
+
+        initialize_database(&conn).unwrap();
+
+        let version: i64 = conn
+            .query_row("PRAGMA user_version", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(version, CURRENT_DB_VERSION);
+        assert!(table_exists(&conn, "messages"));
+        assert!(table_exists(&conn, "messages_fts"));
+        assert!(!table_exists(&conn, "message_cache"));
+
+        let message_count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM messages", [], |row| row.get(0))
+            .unwrap();
+        let fingerprint_count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM file_fingerprints", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+
+        assert_eq!(message_count, 0);
+        assert_eq!(fingerprint_count, 0);
+    }
+
+    #[test]
+    fn messages_fts_stays_in_sync_via_triggers() {
+        let conn = Connection::open_in_memory().unwrap();
+        initialize_database(&conn).unwrap();
+
+        conn.execute(
+            "INSERT INTO messages (session_id, message_index, role, content, timestamp, model)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            rusqlite::params![
+                "s1",
+                0_i64,
+                "user",
+                "old searchable token",
+                100_i64,
+                Option::<String>::None
+            ],
+        )
+        .unwrap();
+
+        let old_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM messages_fts WHERE messages_fts MATCH 'old'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(old_count, 1);
+
+        conn.execute(
+            "UPDATE messages SET content = 'new searchable token' WHERE session_id = 's1' AND message_index = 0",
+            [],
+        )
+        .unwrap();
+
+        let old_count_after_update: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM messages_fts WHERE messages_fts MATCH 'old'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let new_count_after_update: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM messages_fts WHERE messages_fts MATCH 'new'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(old_count_after_update, 0);
+        assert_eq!(new_count_after_update, 1);
+
+        conn.execute("DELETE FROM messages WHERE session_id = 's1'", [])
+            .unwrap();
+
+        let new_count_after_delete: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM messages_fts WHERE messages_fts MATCH 'new'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(new_count_after_delete, 0);
     }
 
     #[test]

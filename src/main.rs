@@ -26,6 +26,7 @@ use app::App;
 
 use clap::Parser;
 use session_sources::{SessionSources, select_db_filename};
+use tracing_subscriber::EnvFilter;
 
 #[derive(Parser)]
 struct Args {
@@ -62,9 +63,10 @@ fn main() {
     relm4_icons::initialize_icons(icon_names::GRESOURCE_BYTES, icon_names::RESOURCE_PREFIX);
 
     // Enable logging
+    let log_filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
     tracing_subscriber::fmt()
         .with_span_events(tracing_subscriber::fmt::format::FmtSpan::FULL)
-        .with_max_level(tracing::Level::INFO)
+        .with_env_filter(log_filter)
         .init();
 
     // setup gettext

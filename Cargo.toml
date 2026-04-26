@@ -15,7 +15,7 @@ relm4 = { version = "0.10.0", features = ["libadwaita", "gnome_48"] }
 relm4-icons = { git = "https://github.com/Relm4/icons", rev = "647a5fadad8eb5b5e66ecef329770ab4597c5e4d" }
 adw = { version = "0.8.1", package = "libadwaita", features = ["v1_8"] }
 tracing = "0.1.44"
-tracing-subscriber = "0.3.23"
+tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.149"
 walkdir = "2.5.0"

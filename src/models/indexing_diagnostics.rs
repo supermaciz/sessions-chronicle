@@ -21,6 +21,7 @@ pub struct PerSourceResult {
     pub display_path: String,
     pub indexed: usize,
     pub skipped: usize,
+    pub removed: usize,
     pub errors: usize,
     pub status: SourceStatus,
 }
