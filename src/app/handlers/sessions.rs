@@ -5,13 +5,11 @@ use relm4::gtk::prelude::WidgetExt;
 
 use crate::database::load_session;
 use crate::models::Session;
-use crate::ui::{session_detail::SessionDetailMsg, tool_inspector_pane::ToolInspectorPaneMsg};
+use crate::ui::session_detail::SessionDetailMsg;
 
 use super::super::App;
-use super::super::helpers::{
-    active_search_query, parent_session_load_failure_messages, transition_to_detail,
-};
-use super::super::types::{ActiveSessionRef, UtilityPaneMode};
+use super::super::helpers::{active_search_query, parent_session_load_failure_message};
+use super::super::types::ActiveSessionRef;
 
 impl App {
     fn project_name_from_session(session: &Session) -> String {
@@ -63,59 +61,11 @@ impl App {
         }
 
         if !self.detail_visible {
+            self.filters_open_before_detail = self.filters_open;
+            self.filters_open = false;
             self.nav_view.push(&self.detail_page);
             self.detail_visible = true;
             self.banner.set_revealed(false);
-        }
-
-        transition_to_detail(&mut self.pane_mode, &mut self.pane_open);
-        self.apply_pane_stack_switch();
-    }
-
-    fn open_inspector_for_active_session(&mut self) -> Option<String> {
-        let session_id = self
-            .active_session
-            .as_ref()
-            .map(|session| session.id.clone())?;
-        self.pane_mode = UtilityPaneMode::ToolInspector;
-        self.pane_open = true;
-        self.apply_pane_stack_switch();
-        Some(session_id)
-    }
-
-    pub(crate) fn handle_inspect_tool_call(&mut self, tool_call_id: String) {
-        tracing::debug!("Inspect tool call: {}", tool_call_id);
-        if let Some(session_id) = self.open_inspector_for_active_session() {
-            self.tool_inspector_pane
-                .emit(ToolInspectorPaneMsg::SelectToolCall {
-                    session_id,
-                    tool_call_id,
-                });
-        }
-    }
-
-    pub(crate) fn handle_inspect_subagent(&mut self, subagent_id: String) {
-        tracing::debug!("Inspect subagent: {}", subagent_id);
-        if let Some(session_id) = self.open_inspector_for_active_session() {
-            self.tool_inspector_pane
-                .emit(ToolInspectorPaneMsg::SelectSubagent {
-                    session_id,
-                    subagent_id,
-                });
-        }
-    }
-
-    pub(crate) fn handle_inspect_reasoning(&mut self, transcript_item_index: i64) {
-        tracing::debug!(
-            "Inspect reasoning for transcript item {}",
-            transcript_item_index
-        );
-        if let Some(session_id) = self.open_inspector_for_active_session() {
-            self.tool_inspector_pane
-                .emit(ToolInspectorPaneMsg::SelectReasoning {
-                    session_id,
-                    transcript_item_index,
-                });
         }
     }
 
@@ -127,7 +77,6 @@ impl App {
         match load_session(&self.db_path, &child_session_id) {
             Ok(Some(session)) => {
                 self.set_active_session_and_detail(session, search_query);
-                self.tool_inspector_pane.emit(ToolInspectorPaneMsg::Clear);
             }
             Ok(None) => {
                 tracing::warn!("Child session not found: {}", child_session_id);
@@ -153,21 +102,18 @@ impl App {
                         session: Box::new(session),
                         search_query,
                     });
-                    self.tool_inspector_pane.emit(ToolInspectorPaneMsg::Clear);
                 }
                 Ok(None) => {
                     tracing::warn!("Parent session no longer found; resetting");
                     self.active_session = None;
-                    let (detail_msg, inspector_msg) = parent_session_load_failure_messages();
-                    self.session_detail.emit(detail_msg);
-                    self.tool_inspector_pane.emit(inspector_msg);
+                    self.session_detail
+                        .emit(parent_session_load_failure_message());
                 }
                 Err(err) => {
                     tracing::error!("Failed to load parent session: {}", err);
                     self.active_session = None;
-                    let (detail_msg, inspector_msg) = parent_session_load_failure_messages();
-                    self.session_detail.emit(detail_msg);
-                    self.tool_inspector_pane.emit(inspector_msg);
+                    self.session_detail
+                        .emit(parent_session_load_failure_message());
                 }
             }
         }

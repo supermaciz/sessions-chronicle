@@ -1,5 +1,4 @@
 use std::path::Path;
-use std::sync::Arc;
 
 use relm4::{
     Component, ComponentController, ComponentSender, Controller, WorkerController,
@@ -23,14 +22,14 @@ use crate::ui::{
     session_detail::{SessionDetail, SessionDetailOutput},
     session_list::{SessionList, SessionListMsg, SessionListOutput},
     sidebar::{Sidebar, SidebarOutput},
-    tool_inspector_pane::{ToolInspectorPane, ToolInspectorPaneOutput},
 };
 
 use super::helpers::workspace_allows_search;
 use super::types::Workspace;
 use super::{
     AboutAction, App, AppMsg, EscapeAction, IndexingStatusAction, PreferencesAction, QuitAction,
-    ShortcutsAction, ShowSearchAction, TogglePaneAction, TogglePinAction, WindowActionGroup,
+    ShortcutsAction, ShowSearchAction, ToggleFiltersAction, ToggleInspectorAction, TogglePinAction,
+    ToggleSidePaneAction, WindowActionGroup,
 };
 
 /// Holds all child controllers and workers created during init.
@@ -39,17 +38,15 @@ pub(super) struct ChildComponents {
     pub(super) analytics_view: Controller<AnalyticsView>,
     pub(super) session_detail: Controller<SessionDetail>,
     pub(super) sidebar: Controller<Sidebar>,
-    pub(super) tool_inspector_pane: Controller<ToolInspectorPane>,
     pub(super) preferences_dialog: Controller<PreferencesDialog>,
     pub(super) indexing_worker: WorkerController<IndexingWorker>,
     pub(super) analytics_worker: WorkerController<AnalyticsWorker>,
 }
 
-/// Holds the NavigationView, detail page, and pane stack built during init.
+/// Holds the NavigationView and detail page built during init.
 pub(super) struct NavigationSetup {
     pub(super) nav_view: adw::NavigationView,
     pub(super) detail_page: adw::NavigationPage,
-    pub(super) pane_stack: gtk::Stack,
 }
 
 pub(super) fn init_child_components(
@@ -73,11 +70,10 @@ pub(super) fn init_child_components(
     let session_detail = SessionDetail::builder()
         .launch(db_path.to_path_buf())
         .forward(sender.input_sender(), |msg| match msg {
-            SessionDetailOutput::InspectToolCall(id) => AppMsg::InspectToolCall(id),
-            SessionDetailOutput::InspectSubagent(id) => AppMsg::InspectSubagent(id),
-            SessionDetailOutput::InspectReasoning {
-                transcript_item_index,
-            } => AppMsg::InspectReasoning(transcript_item_index),
+            SessionDetailOutput::InspectorVisibilityChanged(visible) => {
+                AppMsg::InspectorVisibilityChanged(visible)
+            }
+            SessionDetailOutput::OpenChildSession(id) => AppMsg::OpenChildSession(id),
         });
     let sidebar =
         Sidebar::builder()
@@ -91,11 +87,6 @@ pub(super) fn init_child_components(
                     project_filter,
                 },
             });
-    let tool_inspector_pane = ToolInspectorPane::builder()
-        .launch(Arc::new(db_path.to_path_buf()))
-        .forward(sender.input_sender(), |output| match output {
-            ToolInspectorPaneOutput::OpenChildSession(id) => AppMsg::OpenChildSession(id),
-        });
 
     // Create preferences dialog once, with forwarded outputs
     let preferences_dialog = PreferencesDialog::builder()
@@ -135,7 +126,6 @@ pub(super) fn init_child_components(
         analytics_view,
         session_detail,
         sidebar,
-        tool_inspector_pane,
         preferences_dialog,
         indexing_worker,
         analytics_worker,
@@ -145,8 +135,6 @@ pub(super) fn init_child_components(
 pub(super) fn build_navigation(
     session_list_widget: &impl IsA<gtk::Widget>,
     session_detail_widget: &impl IsA<gtk::Widget>,
-    sidebar_widget: &impl IsA<gtk::Widget>,
-    tool_inspector_widget: &impl IsA<gtk::Widget>,
     sender: &ComponentSender<App>,
 ) -> NavigationSetup {
     // Create NavigationView and pages before model
@@ -180,27 +168,10 @@ pub(super) fn build_navigation(
         }
     });
 
-    // Build the utility pane Stack (sidebar content switcher)
-    let pane_stack = build_pane_stack(sidebar_widget, tool_inspector_widget);
-
     NavigationSetup {
         nav_view,
         detail_page,
-        pane_stack,
     }
-}
-
-pub(super) fn build_pane_stack(
-    sidebar_widget: &impl IsA<gtk::Widget>,
-    tool_inspector_widget: &impl IsA<gtk::Widget>,
-) -> gtk::Stack {
-    let pane_stack = gtk::Stack::new();
-    pane_stack.set_transition_type(gtk::StackTransitionType::None);
-    pane_stack.set_hhomogeneous(false);
-    pane_stack.add_named(sidebar_widget, Some("filters"));
-    pane_stack.add_named(tool_inspector_widget, Some("tool-inspector"));
-    pane_stack.set_visible_child_name("filters");
-    pane_stack
 }
 
 pub(super) fn wire_search_bar(
@@ -280,8 +251,8 @@ pub(super) fn setup_workspace_stack(
     nav_view: &adw::NavigationView,
     sender: &ComponentSender<App>,
 ) {
-    // Set up OverlaySplitView: sidebar = pane Stack, content = NavigationView
-    overlay_split.set_sidebar(Some(&model.pane_stack));
+    // Outer OverlaySplitView: sidebar = Filters (Sidebar), content = NavigationView
+    overlay_split.set_sidebar(Some(model.sidebar.widget()));
     overlay_split.set_content(Some(nav_view));
     overlay_split.set_max_sidebar_width(720.0);
 
@@ -365,7 +336,7 @@ pub(super) fn setup_workspace_stack(
     let visibility_sender = sender.input_sender().clone();
     overlay_split.connect_show_sidebar_notify(move |split| {
         visibility_sender
-            .send(AppMsg::PaneVisibilityChanged(split.shows_sidebar()))
+            .send(AppMsg::FiltersVisibilityChanged(split.shows_sidebar()))
             .ok();
     });
 }
@@ -446,10 +417,24 @@ pub(super) fn register_actions(
         })
     };
 
-    let toggle_pane_action = {
+    let toggle_filters_action = {
         let sender = sender.clone();
-        RelmAction::<TogglePaneAction>::new_stateless(move |_| {
-            sender.input(AppMsg::TogglePane);
+        RelmAction::<ToggleFiltersAction>::new_stateless(move |_| {
+            sender.input(AppMsg::ToggleFilters);
+        })
+    };
+
+    let toggle_inspector_action = {
+        let sender = sender.clone();
+        RelmAction::<ToggleInspectorAction>::new_stateless(move |_| {
+            sender.input(AppMsg::ToggleInspector);
+        })
+    };
+
+    let toggle_side_pane_action = {
+        let sender = sender.clone();
+        RelmAction::<ToggleSidePaneAction>::new_stateless(move |_| {
+            sender.input(AppMsg::ToggleActiveSidePane);
         })
     };
 
@@ -481,7 +466,7 @@ pub(super) fn register_actions(
 
     // Connect actions with hotkeys
     app.set_accelerators_for_action::<QuitAction>(&["<Control>q"]);
-    app.set_accelerators_for_action::<TogglePaneAction>(&["F9"]);
+    app.set_accelerators_for_action::<ToggleSidePaneAction>(&["F9"]);
     app.set_accelerators_for_action::<TogglePinAction>(&["<Control>d"]);
     app.set_accelerators_for_action::<ShowSearchAction>(&["<Control>f"]);
     app.set_accelerators_for_action::<ShortcutsAction>(&["<Control>question"]);
@@ -494,7 +479,9 @@ pub(super) fn register_actions(
     actions.add_action(indexing_status_action);
     actions.add_action(about_action);
     actions.add_action(show_search_action);
-    actions.add_action(toggle_pane_action);
+    actions.add_action(toggle_filters_action);
+    actions.add_action(toggle_inspector_action);
+    actions.add_action(toggle_side_pane_action);
     actions.add_action(toggle_pin_action);
     actions.add_action(quit_action);
     actions.add_action(escape_action);

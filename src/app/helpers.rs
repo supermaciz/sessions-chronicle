@@ -1,12 +1,8 @@
 use crate::models::{PerSourceResult, ProjectFilter, ProjectInfo, SourceStatus};
-use crate::ui::{
-    session_detail::SessionDetailMsg, session_list::SessionListMsg,
-    tool_inspector_pane::ToolInspectorPaneMsg,
-};
+use crate::ui::{session_detail::SessionDetailMsg, session_list::SessionListMsg};
 
 use super::types::{
-    AnalyticsIndexingOutcome, EscapeResolution, ReindexAction, UtilityPaneMode, Workspace,
-    WorkspaceHeaderVisibility,
+    AnalyticsIndexingOutcome, EscapeResolution, ReindexAction, Workspace, WorkspaceHeaderVisibility,
 };
 
 pub(super) fn active_search_query(query: &str) -> Option<String> {
@@ -35,35 +31,24 @@ pub(super) fn resolve_search_mode_change(workspace: Workspace, enabled: bool) ->
     workspace_allows_search(workspace) && enabled
 }
 
-pub(super) fn parent_session_load_failure_messages() -> (SessionDetailMsg, ToolInspectorPaneMsg) {
-    (SessionDetailMsg::Clear, ToolInspectorPaneMsg::Clear)
+pub(super) fn parent_session_load_failure_message() -> SessionDetailMsg {
+    SessionDetailMsg::Clear
 }
 
 pub(super) fn resolve_escape_action(
     search_visible: bool,
     detail_visible: bool,
-    pane_open: bool,
-    pane_mode: UtilityPaneMode,
+    inspector_open: bool,
 ) -> EscapeResolution {
     if search_visible {
         EscapeResolution::CloseSearch
-    } else if detail_visible && pane_open && pane_mode == UtilityPaneMode::ToolInspector {
+    } else if detail_visible && inspector_open {
         EscapeResolution::CloseInspector
     } else if detail_visible {
         EscapeResolution::NavigateBack
     } else {
         EscapeResolution::Noop
     }
-}
-
-pub(super) fn transition_to_detail(pane_mode: &mut UtilityPaneMode, pane_open: &mut bool) {
-    *pane_mode = UtilityPaneMode::ToolInspector;
-    *pane_open = false;
-}
-
-pub(super) fn transition_to_list(pane_mode: &mut UtilityPaneMode, pane_open: &mut bool) {
-    *pane_mode = UtilityPaneMode::Filters;
-    *pane_open = true;
 }
 
 pub(super) fn detail_pop_sync_decision(

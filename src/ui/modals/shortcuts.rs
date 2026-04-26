@@ -51,7 +51,7 @@ impl SimpleComponent for ShortcutsDialog {
         // View section
         let view = adw::ShortcutsSection::new(Some(&gettext("View")));
         view.add(adw::ShortcutsItem::new(
-            &gettext("Toggle utility pane"),
+            &gettext("Toggle side pane (filters in list, inspector in detail)"),
             "F9",
         ));
         widgets.add(view);

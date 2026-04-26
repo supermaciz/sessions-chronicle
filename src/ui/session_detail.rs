@@ -7,11 +7,17 @@ use std::time::{Duration, Instant};
 use gtk::glib;
 use gtk::prelude::*;
 use relm4::factory::FactoryVecDeque;
-use relm4::{Component, ComponentParts, ComponentSender, RelmWidgetExt, adw, gtk};
+use relm4::{
+    Component, ComponentController, ComponentParts, ComponentSender, Controller, RelmWidgetExt,
+    adw, gtk,
+};
 
 use crate::database::load_transcript_items;
 use crate::models::Session;
 use crate::ui::activity_bar::SessionActivityBar;
+use crate::ui::tool_inspector_pane::{
+    ToolInspectorPane, ToolInspectorPaneMsg, ToolInspectorPaneOutput,
+};
 use crate::ui::transcript_display::{
     DisplayTranscriptItem, group_transcript_rows, regroup_boundary, trailing_tool_call_rows,
     trailing_tool_rows_from_display,
@@ -29,9 +35,8 @@ const DEFERRED_CLEAR_DELAY_MS: u64 = 250;
 /// Detail view for a single indexed session.
 ///
 /// This component owns the session summary header, paginated transcript
-/// rendering, transcript search navigation, and forwarding of inspection
-/// actions back to the parent app.
-#[derive(Debug)]
+/// rendering, the inspector pane (right-hand split sidebar), and transcript
+/// search navigation.
 pub struct SessionDetail {
     db_path: Arc<PathBuf>,
     session: Option<Session>,
@@ -57,6 +62,8 @@ pub struct SessionDetail {
     total_matches: usize,
     scroll_to_item: Cell<Option<ScrollTarget>>,
     pending_toast: Cell<bool>,
+    inspector: Controller<ToolInspectorPane>,
+    inspector_open: bool,
 }
 
 /// Resolved scroll destination for global search navigation.
@@ -103,12 +110,12 @@ impl std::fmt::Debug for PendingRenderBatch {
 }
 
 /// Parent-facing actions emitted by [`SessionDetail`].
-#[allow(clippy::enum_variant_names)]
 #[derive(Debug)]
 pub enum SessionDetailOutput {
-    InspectToolCall(String),
-    InspectSubagent(String),
-    InspectReasoning { transcript_item_index: i64 },
+    /// Inspector visibility changed (user toggled, gesture, or programmatic).
+    InspectorVisibilityChanged(bool),
+    /// User asked to open a child session linked from a subagent inside the inspector.
+    OpenChildSession(String),
 }
 
 /// Input messages accepted by [`SessionDetail`].
@@ -151,6 +158,14 @@ pub enum SessionDetailMsg {
     InspectToolCall(String),
     InspectSubagent(String),
     InspectReasoning(i64),
+    /// Toggle the internal inspector pane visibility.
+    ToggleInspector,
+    /// Force the internal inspector pane to be hidden (e.g. Escape key from App).
+    CloseInspector,
+    /// Sync inspector state with widget gesture/collapse changes.
+    InspectorWidgetVisibilityChanged(bool),
+    /// Open the child session linked from the inspector (forwarded to App).
+    OpenChildSession(String),
 }
 
 pub enum SessionDetailCmd {
@@ -228,7 +243,20 @@ impl Component for SessionDetail {
                     gtk::Overlay {
 
                     #[wrap(Some)]
-                    set_child = &gtk::ScrolledWindow {
+                    #[name = "inspector_split"]
+                    set_child = &adw::OverlaySplitView {
+                        set_vexpand: true,
+                        set_sidebar_position: gtk::PackType::End,
+                        set_min_sidebar_width: 360.0,
+                        set_max_sidebar_width: 720.0,
+                        set_sidebar_width_fraction: 0.32,
+                        set_enable_show_gesture: true,
+                        set_enable_hide_gesture: true,
+                        #[watch]
+                        set_show_sidebar: model.inspector_open,
+
+                    #[wrap(Some)]
+                    set_content = &gtk::ScrolledWindow {
                         set_vexpand: true,
                         set_hscrollbar_policy: gtk::PolicyType::Never,
 
@@ -551,6 +579,7 @@ impl Component for SessionDetail {
                             },
                         },
                     },
+                    }, // close inspector_split (adw::OverlaySplitView)
 
                     // Floating search navigation bar
                     add_overlay = &gtk::Box {
@@ -637,6 +666,14 @@ impl Component for SessionDetail {
             });
 
         let db_path = Arc::new(db_path);
+        let inspector = ToolInspectorPane::builder()
+            .launch(db_path.clone())
+            .forward(sender.input_sender(), |output| match output {
+                ToolInspectorPaneOutput::OpenChildSession(id) => {
+                    SessionDetailMsg::OpenChildSession(id)
+                }
+            });
+
         let model = Self {
             db_path,
             session: None,
@@ -657,6 +694,8 @@ impl Component for SessionDetail {
             total_matches: 0,
             scroll_to_item: Cell::new(None),
             pending_toast: Cell::new(false),
+            inspector,
+            inspector_open: false,
         };
 
         let messages_box = model.messages.widget();
@@ -665,6 +704,22 @@ impl Component for SessionDetail {
         widgets
             .content_stack
             .set_visible_child(&widgets.loading_state);
+
+        // Mount the ToolInspectorPane widget as the inner OverlaySplitView's sidebar
+        // and wire its visibility back into the model so user gestures stay in sync.
+        widgets
+            .inspector_split
+            .set_sidebar(Some(model.inspector.widget()));
+        let visibility_sender = sender.input_sender().clone();
+        widgets
+            .inspector_split
+            .connect_show_sidebar_notify(move |split| {
+                visibility_sender
+                    .send(SessionDetailMsg::InspectorWidgetVisibilityChanged(
+                        split.shows_sidebar(),
+                    ))
+                    .ok();
+            });
 
         ComponentParts { model, widgets }
     }
@@ -681,6 +736,8 @@ impl Component for SessionDetail {
                 let session_id = session.id.clone();
                 self.session = Some(session);
                 self.start_first_page_load(&sender, &session_id);
+                self.inspector.emit(ToolInspectorPaneMsg::Clear);
+                self.set_inspector_open(false, &sender);
             }
             SessionDetailMsg::UpdateSearchQuery(query) => {
                 self.search_query = query;
@@ -740,18 +797,53 @@ impl Component for SessionDetail {
                 self.search_query = None;
                 self.reset_search_matches();
                 self.clear_pending_boundary_tool_rows();
+                self.inspector.emit(ToolInspectorPaneMsg::Clear);
+                self.set_inspector_open(false, &sender);
             }
             SessionDetailMsg::InspectToolCall(id) => {
-                sender.output(SessionDetailOutput::InspectToolCall(id)).ok();
+                if let Some(session_id) = self.session.as_ref().map(|s| s.id.clone()) {
+                    self.inspector.emit(ToolInspectorPaneMsg::SelectToolCall {
+                        session_id,
+                        tool_call_id: id,
+                    });
+                    self.set_inspector_open(true, &sender);
+                }
             }
             SessionDetailMsg::InspectSubagent(id) => {
-                sender.output(SessionDetailOutput::InspectSubagent(id)).ok();
+                if let Some(session_id) = self.session.as_ref().map(|s| s.id.clone()) {
+                    self.inspector.emit(ToolInspectorPaneMsg::SelectSubagent {
+                        session_id,
+                        subagent_id: id,
+                    });
+                    self.set_inspector_open(true, &sender);
+                }
             }
             SessionDetailMsg::InspectReasoning(transcript_item_index) => {
-                sender
-                    .output(SessionDetailOutput::InspectReasoning {
+                if let Some(session_id) = self.session.as_ref().map(|s| s.id.clone()) {
+                    self.inspector.emit(ToolInspectorPaneMsg::SelectReasoning {
+                        session_id,
                         transcript_item_index,
-                    })
+                    });
+                    self.set_inspector_open(true, &sender);
+                }
+            }
+            SessionDetailMsg::ToggleInspector => {
+                self.set_inspector_open(!self.inspector_open, &sender);
+            }
+            SessionDetailMsg::CloseInspector => {
+                self.set_inspector_open(false, &sender);
+            }
+            SessionDetailMsg::InspectorWidgetVisibilityChanged(visible) => {
+                if self.inspector_open != visible {
+                    self.inspector_open = visible;
+                    sender
+                        .output(SessionDetailOutput::InspectorVisibilityChanged(visible))
+                        .ok();
+                }
+            }
+            SessionDetailMsg::OpenChildSession(child_session_id) => {
+                sender
+                    .output(SessionDetailOutput::OpenChildSession(child_session_id))
                     .ok();
             }
         }
@@ -1025,6 +1117,18 @@ impl SessionDetail {
     fn invalidate_transcript_requests(&mut self) {
         self.transcript_request_id = self.transcript_request_id.wrapping_add(1);
         self.pending_render_batch = None;
+    }
+
+    /// Update internal inspector visibility and notify the parent.  Idempotent:
+    /// no-op when the requested state matches the current one.
+    fn set_inspector_open(&mut self, open: bool, sender: &ComponentSender<Self>) {
+        if self.inspector_open == open {
+            return;
+        }
+        self.inspector_open = open;
+        sender
+            .output(SessionDetailOutput::InspectorVisibilityChanged(open))
+            .ok();
     }
 
     fn start_first_page_load(&mut self, sender: &ComponentSender<Self>, session_id: &str) {
@@ -1832,17 +1936,66 @@ mod tests {
     }
 
     #[test]
-    fn inspect_reasoning_output_is_forwarded_to_parent() {
-        let output = SessionDetailOutput::InspectReasoning {
-            transcript_item_index: 42,
-        };
-
+    fn inspector_visibility_output_carries_state() {
+        let output = SessionDetailOutput::InspectorVisibilityChanged(true);
         assert!(matches!(
             output,
-            SessionDetailOutput::InspectReasoning {
-                transcript_item_index: 42
-            }
+            SessionDetailOutput::InspectorVisibilityChanged(true)
         ));
+    }
+
+    #[gtk::test]
+    fn inspect_tool_call_opens_inspector_when_session_active() {
+        let temp_db = tempfile::NamedTempFile::new().expect("temp db");
+        let controller = SessionDetail::builder().launch(temp_db.path().to_path_buf());
+
+        controller.emit(SessionDetailMsg::SetSession {
+            session: Box::new(build_test_session(None, None, 0, 0, 0)),
+            search_query: None,
+        });
+        pump_main_context(|| {
+            let parts = controller.state().get();
+            parts.model.session.is_some()
+        });
+
+        controller.emit(SessionDetailMsg::InspectToolCall("call-123".to_string()));
+        pump_main_context(|| {
+            let parts = controller.state().get();
+            parts.model.inspector_open
+        });
+
+        let parts = controller.state().get();
+        assert!(parts.model.inspector_open);
+    }
+
+    #[gtk::test]
+    fn close_inspector_resets_inspector_open() {
+        let temp_db = tempfile::NamedTempFile::new().expect("temp db");
+        let controller = SessionDetail::builder().launch(temp_db.path().to_path_buf());
+
+        controller.emit(SessionDetailMsg::SetSession {
+            session: Box::new(build_test_session(None, None, 0, 0, 0)),
+            search_query: None,
+        });
+        pump_main_context(|| {
+            let parts = controller.state().get();
+            parts.model.session.is_some()
+        });
+
+        controller.emit(SessionDetailMsg::InspectToolCall("call-1".to_string()));
+        pump_main_context(|| {
+            let parts = controller.state().get();
+            parts.model.inspector_open
+        });
+
+        controller.emit(SessionDetailMsg::CloseInspector);
+        pump_main_context(|| {
+            let parts = controller.state().get();
+            !parts.model.inspector_open
+        });
+
+        let parts = controller.state().get();
+        assert!(!parts.model.inspector_open);
     }
 
     #[test]

@@ -29,14 +29,12 @@ use crate::ui::modals::{
     indexing_status::{IndexingStatusDialog, IndexingStatusMsg, IndexingStatusOutput},
     preferences::PreferencesDialog,
 };
-#[cfg(test)]
 use crate::ui::session_detail::SessionDetailMsg;
 use crate::ui::{
     analytics_view::AnalyticsView,
     session_detail::SessionDetail,
     session_list::{SessionList, SessionListMsg},
     sidebar::{Sidebar, SidebarMsg},
-    tool_inspector_pane::{ToolInspectorPane, ToolInspectorPaneMsg},
 };
 use crate::utils::terminal;
 
@@ -47,21 +45,21 @@ mod types;
 
 #[cfg(test)]
 use helpers::decide_reindex_action;
+use helpers::retained_project_filter;
 #[cfg(test)]
 use helpers::workspace_allows_search;
 #[cfg(test)]
 use helpers::{
     active_search_query, analytics_indexing_completion_outcome, detail_pop_sync_decision,
-    parent_session_load_failure_messages, resolve_escape_action, resolve_search_mode_change,
-    search_query_update_messages, should_reload_sessions_after_indexing, transition_to_detail,
+    parent_session_load_failure_message, resolve_escape_action, resolve_search_mode_change,
+    search_query_update_messages, should_reload_sessions_after_indexing,
     workspace_header_visibility,
 };
-use helpers::{retained_project_filter, transition_to_list};
 #[cfg(test)]
 use types::EscapeResolution;
 #[cfg(test)]
 use types::ReindexAction;
-use types::{ActiveSessionRef, FilterState, UtilityPaneMode, Workspace};
+use types::{ActiveSessionRef, FilterState, Workspace};
 
 /// Timeout in seconds for resume failure toast notifications
 const RESUME_FAILURE_TOAST_TIMEOUT_SECS: u32 = 4;
@@ -109,8 +107,14 @@ pub(super) struct App {
     /// Uses `Cell` because `post_view` takes `&self`.
     sync_search_bar: Cell<bool>,
     detail_visible: bool,
-    pane_open: bool,
-    pane_mode: UtilityPaneMode,
+    /// Outer OverlaySplitView visibility (Filters pane in the Sessions list view).
+    filters_open: bool,
+    /// Snapshot of `filters_open` taken when the detail page is pushed, so the
+    /// previous state is restored on pop. Filters are scoped to the list view.
+    filters_open_before_detail: bool,
+    /// Mirror of the inner SessionDetail's inspector pane visibility, used to
+    /// drive the inspector toggle button state and the Escape resolver.
+    inspector_open: bool,
     active_session: Option<ActiveSessionRef>,
     /// When the user opens a child session from the inspector, this holds the
     /// originating parent session so a one-hop return is possible.
@@ -121,8 +125,6 @@ pub(super) struct App {
     session_detail: Controller<SessionDetail>,
     #[allow(dead_code)] // Controller must stay alive to keep the widget
     sidebar: Controller<Sidebar>,
-    #[allow(dead_code)] // Controller must stay alive to keep the widget
-    tool_inspector_pane: Controller<ToolInspectorPane>,
     preferences_dialog: Controller<PreferencesDialog>,
     indexing_worker: WorkerController<IndexingWorker>,
     analytics_worker: WorkerController<AnalyticsWorker>,
@@ -133,7 +135,6 @@ pub(super) struct App {
     nav_view: adw::NavigationView,
     detail_page: adw::NavigationPage,
     suppress_next_detail_pop_sync: bool,
-    pane_stack: gtk::Stack,
     toast_overlay: adw::ToastOverlay,
     filter_state: FilterState,
     db_path: PathBuf,
@@ -149,8 +150,16 @@ pub(super) struct App {
 pub(super) enum AppMsg {
     Quit,
     SearchModeChanged(bool),
-    TogglePane,
-    PaneVisibilityChanged(bool),
+    /// Toggle the outer Filters pane (Sessions list view).
+    ToggleFilters,
+    /// Filters pane visibility changed (gesture, collapse, etc.).
+    FiltersVisibilityChanged(bool),
+    /// Toggle the inner Inspector pane (Session detail view).
+    ToggleInspector,
+    /// F9 dispatcher: route to filters in list view, inspector in detail view.
+    ToggleActiveSidePane,
+    /// SessionDetail reports its inspector visibility changed.
+    InspectorVisibilityChanged(bool),
     SearchQueryChanged(String),
     WorkspaceChanged(Workspace),
     FiltersChanged {
@@ -165,16 +174,13 @@ pub(super) enum AppMsg {
     ResumeSession(String, AiAssistant),
     /// Resume the currently active session (triggered from the header bar button).
     ResumeActiveSession,
-    InspectToolCall(String),
-    InspectSubagent(String),
-    InspectReasoning(i64),
     TogglePinRequested(String),
     TogglePinShortcutRequested,
     /// Inspector pane requested opening a child session.
     OpenChildSession(String),
     /// Header-bar button: return to the one-hop parent session.
     ReturnToParentSession,
-    /// Esc key: pop inspector drill-down (native) → close pane → navigate back.
+    /// Esc key: close search → close inspector → navigate back.
     Escape,
     ShowPreferences,
     ShowIndexingStatus,
@@ -198,7 +204,10 @@ relm4::new_stateless_action!(IndexingStatusAction, WindowActionGroup, "indexing-
 relm4::new_stateless_action!(pub(super) ShortcutsAction, WindowActionGroup, "show-help-overlay");
 relm4::new_stateless_action!(AboutAction, WindowActionGroup, "about");
 relm4::new_stateless_action!(QuitAction, WindowActionGroup, "quit");
-relm4::new_stateless_action!(TogglePaneAction, WindowActionGroup, "toggle-pane");
+relm4::new_stateless_action!(ToggleFiltersAction, WindowActionGroup, "toggle-filters");
+relm4::new_stateless_action!(ToggleInspectorAction, WindowActionGroup, "toggle-inspector");
+// F9 dispatcher — toggles filters in list view, inspector in detail view.
+relm4::new_stateless_action!(ToggleSidePaneAction, WindowActionGroup, "toggle-side-pane");
 relm4::new_stateless_action!(TogglePinAction, WindowActionGroup, "toggle-pin");
 relm4::new_stateless_action!(ShowSearchAction, WindowActionGroup, "show-search");
 relm4::new_stateless_action!(EscapeAction, WindowActionGroup, "escape");
@@ -298,15 +307,26 @@ impl SimpleComponent for App {
                             connect_clicked => AppMsg::ResumeActiveSession,
                         },
 
-                        #[name = "pane_toggle"]
+                        #[name = "filters_toggle"]
                         pack_end = &gtk::ToggleButton {
                             set_icon_name: "sidebar-show-symbolic",
-                            set_tooltip_text: Some("Toggle utility pane (F9)"),
-                            set_action_name: Some("win.toggle-pane"),
+                            set_tooltip_text: Some("Toggle filters pane (F9)"),
+                            set_action_name: Some("win.toggle-filters"),
                             #[watch]
-                            set_active: model.pane_open,
+                            set_active: model.filters_open,
                             #[watch]
-                            set_visible: model.is_pane_controls_visible(),
+                            set_visible: model.is_filters_toggle_visible(),
+                        },
+
+                        #[name = "inspector_toggle"]
+                        pack_end = &gtk::ToggleButton {
+                            set_icon_name: "sidebar-show-right-symbolic",
+                            set_tooltip_text: Some("Toggle inspector pane (F9)"),
+                            set_action_name: Some("win.toggle-inspector"),
+                            #[watch]
+                            set_active: model.inspector_open,
+                            #[watch]
+                            set_visible: model.is_inspector_toggle_visible(),
                         },
 
                         pack_end = &gtk::Spinner {
@@ -346,16 +366,13 @@ impl SimpleComponent for App {
                         #[name = "overlay_split"]
                         adw::OverlaySplitView {
                             set_vexpand: true,
-                            #[watch]
-                            set_show_sidebar: model.pane_open,
-                            #[watch]
-                            set_sidebar_position: model.pane_mode.sidebar_position(),
-                            #[watch]
-                            set_min_sidebar_width: model.pane_mode.sidebar_min_width(),
-                            #[watch]
-                            set_sidebar_width_fraction: model.pane_mode.sidebar_width_fraction(),
+                            set_sidebar_position: gtk::PackType::Start,
+                            set_min_sidebar_width: 200.0,
+                            set_sidebar_width_fraction: 0.18,
                             set_enable_show_gesture: true,
                             set_enable_hide_gesture: true,
+                            #[watch]
+                            set_show_sidebar: model.filters_open,
                         },
 
                         #[name = "workspace_switcher_bar"]
@@ -399,8 +416,6 @@ impl SimpleComponent for App {
         let nav_setup = init::build_navigation(
             components.session_list.widget(),
             components.session_detail.widget(),
-            components.sidebar.widget(),
-            components.tool_inspector_pane.widget(),
             &sender,
         );
 
@@ -413,8 +428,9 @@ impl SimpleComponent for App {
             search_visible: false,
             sync_search_bar: Cell::new(false),
             detail_visible: false,
-            pane_open: true,
-            pane_mode: UtilityPaneMode::Filters,
+            filters_open: true,
+            filters_open_before_detail: true,
+            inspector_open: false,
             active_session: None,
             parent_session: None,
             search_query: String::new(),
@@ -422,7 +438,6 @@ impl SimpleComponent for App {
             analytics_view: components.analytics_view,
             session_detail: components.session_detail,
             sidebar: components.sidebar,
-            tool_inspector_pane: components.tool_inspector_pane,
             preferences_dialog: components.preferences_dialog,
             indexing_worker: components.indexing_worker,
             analytics_worker: components.analytics_worker,
@@ -433,7 +448,6 @@ impl SimpleComponent for App {
             nav_view: nav_setup.nav_view.clone(),
             detail_page: nav_setup.detail_page.clone(),
             suppress_next_detail_pop_sync: false,
-            pane_stack: nav_setup.pane_stack,
             toast_overlay: adw::ToastOverlay::new(),
             filter_state: FilterState::default(),
             db_path,
@@ -514,8 +528,15 @@ impl SimpleComponent for App {
         match message {
             AppMsg::Quit => main_application().quit(),
             AppMsg::SearchModeChanged(enabled) => self.handle_search_mode_changed(enabled),
-            AppMsg::TogglePane => self.handle_toggle_pane(),
-            AppMsg::PaneVisibilityChanged(visible) => self.handle_pane_visibility_changed(visible),
+            AppMsg::ToggleFilters => self.handle_toggle_filters(),
+            AppMsg::FiltersVisibilityChanged(visible) => {
+                self.handle_filters_visibility_changed(visible)
+            }
+            AppMsg::ToggleInspector => self.handle_toggle_inspector(),
+            AppMsg::ToggleActiveSidePane => self.handle_toggle_active_side_pane(),
+            AppMsg::InspectorVisibilityChanged(visible) => {
+                self.handle_inspector_visibility_changed(visible)
+            }
             AppMsg::SearchQueryChanged(query) => self.handle_search_query_changed(query),
             AppMsg::WorkspaceChanged(workspace) => self.handle_workspace_changed(workspace),
             AppMsg::FiltersChanged {
@@ -573,11 +594,6 @@ impl SimpleComponent for App {
             AppMsg::AnalyticsLoadFailed(error) => self.handle_analytics_load_failed(error),
             AppMsg::ResumeSession(session_id, tool) => self.handle_resume_session(session_id, tool),
             AppMsg::ResumeActiveSession => self.handle_resume_active_session(&sender),
-            AppMsg::InspectToolCall(tool_call_id) => self.handle_inspect_tool_call(tool_call_id),
-            AppMsg::InspectSubagent(subagent_id) => self.handle_inspect_subagent(subagent_id),
-            AppMsg::InspectReasoning(transcript_item_index) => {
-                self.handle_inspect_reasoning(transcript_item_index)
-            }
             AppMsg::TogglePinRequested(session_id) => self.handle_toggle_pin_requested(session_id),
             AppMsg::TogglePinShortcutRequested => self.handle_toggle_pin_shortcut_requested(),
             AppMsg::OpenChildSession(child_session_id) => {
@@ -616,26 +632,14 @@ impl App {
         self.detail_visible = false;
         self.active_session = None;
         self.parent_session = None;
-        self.tool_inspector_pane.emit(ToolInspectorPaneMsg::Clear);
-        transition_to_list(&mut self.pane_mode, &mut self.pane_open);
-        self.apply_pane_stack_switch();
+        self.inspector_open = false;
+        self.filters_open = self.filters_open_before_detail;
+        // The inspector lives inside SessionDetail; popping the page tears the
+        // widget tree down, but we still want a clean state when the page is
+        // pushed again later.
+        self.session_detail.emit(SessionDetailMsg::CloseInspector);
         if self.banner_has_issues {
             self.banner.set_revealed(true);
-        }
-    }
-
-    /// Apply the current `pane_mode` to the Stack widget, with verification.
-    fn apply_pane_stack_switch(&self) {
-        let target = self.pane_mode.stack_child_name();
-        self.pane_stack.set_visible_child_name(target);
-
-        let actual = self.pane_stack.visible_child_name();
-        if actual.as_deref() != Some(target) {
-            tracing::warn!(
-                "Pane stack switch failed: requested '{}', got {:?}",
-                target,
-                actual
-            );
         }
     }
 
@@ -943,11 +947,10 @@ mod tests {
     }
 
     #[test]
-    fn parent_session_load_failure_clears_detail_and_inspector() {
-        let (detail_msg, inspector_msg) = parent_session_load_failure_messages();
+    fn parent_session_load_failure_clears_detail() {
+        let detail_msg = parent_session_load_failure_message();
 
         assert!(matches!(detail_msg, SessionDetailMsg::Clear));
-        assert!(matches!(inspector_msg, ToolInspectorPaneMsg::Clear));
     }
 
     #[test]
@@ -961,61 +964,25 @@ mod tests {
     }
 
     #[test]
-    fn transition_to_detail_sets_tool_inspector_and_pane_closed() {
-        let mut mode = UtilityPaneMode::Filters;
-        let mut open = true;
-        transition_to_detail(&mut mode, &mut open);
-        assert_eq!(mode, UtilityPaneMode::ToolInspector);
-        assert!(!open);
+    fn toggle_filters_flips_filters_open() {
+        let mut filters_open = false;
+
+        filters_open = !filters_open;
+        assert!(filters_open);
+
+        filters_open = !filters_open;
+        assert!(!filters_open);
     }
 
     #[test]
-    fn transition_to_list_sets_filters_and_reopens_pane() {
-        let mut mode = UtilityPaneMode::ToolInspector;
-        let mut open = false;
-        transition_to_list(&mut mode, &mut open);
-        assert_eq!(mode, UtilityPaneMode::Filters);
-        assert!(open);
-    }
-
-    #[test]
-    fn toggle_flips_pane_open_without_changing_mode() {
-        let mut pane_open = false;
-        let pane_mode = UtilityPaneMode::ToolInspector;
-
-        pane_open = !pane_open;
-        assert!(pane_open);
-        assert_eq!(pane_mode, UtilityPaneMode::ToolInspector);
-
-        pane_open = !pane_open;
-        assert!(!pane_open);
-        assert_eq!(pane_mode, UtilityPaneMode::ToolInspector);
-    }
-
-    #[test]
-    fn pane_visibility_changed_mirrors_widget_state() {
-        let mut pane_open = true;
+    fn filters_visibility_changed_mirrors_widget_state() {
+        let mut filters_open = true;
 
         let visible = false;
-        if pane_open != visible {
-            pane_open = visible;
+        if filters_open != visible {
+            filters_open = visible;
         }
-        assert!(!pane_open);
-
-        let visible = false;
-        if pane_open != visible {
-            pane_open = visible;
-        }
-        assert!(!pane_open);
-    }
-
-    #[test]
-    fn utility_pane_mode_maps_to_correct_stack_child_name() {
-        assert_eq!(UtilityPaneMode::Filters.stack_child_name(), "filters");
-        assert_eq!(
-            UtilityPaneMode::ToolInspector.stack_child_name(),
-            "tool-inspector"
-        );
+        assert!(!filters_open);
     }
 
     #[test]
@@ -1048,29 +1015,6 @@ mod tests {
     #[test]
     fn clamped_window_size_keeps_larger_dimensions() {
         assert_eq!(clamped_window_size((1280, 900)), (1280, 900));
-    }
-
-    #[test]
-    fn utility_pane_mode_maps_to_correct_sidebar_position() {
-        assert_eq!(
-            UtilityPaneMode::Filters.sidebar_position(),
-            gtk::PackType::Start
-        );
-        assert_eq!(
-            UtilityPaneMode::ToolInspector.sidebar_position(),
-            gtk::PackType::End
-        );
-    }
-
-    #[gtk::test]
-    fn pane_stack_sizes_to_visible_child_instead_of_widest_child() {
-        let filters = gtk::Box::new(gtk::Orientation::Vertical, 0);
-        let inspector = gtk::Box::new(gtk::Orientation::Vertical, 0);
-
-        let pane_stack = init::build_pane_stack(&filters, &inspector);
-
-        assert!(!pane_stack.is_hhomogeneous());
-        assert_eq!(pane_stack.visible_child_name().as_deref(), Some("filters"));
     }
 
     #[test]
@@ -1125,29 +1069,28 @@ mod tests {
     fn escape_priority_chain_search_then_inspector_then_back() {
         let mut search_visible = true;
         let mut detail_visible = true;
-        let mut pane_open = true;
-        let pane_mode = UtilityPaneMode::ToolInspector;
+        let mut inspector_open = true;
 
         assert_eq!(
-            resolve_escape_action(search_visible, detail_visible, pane_open, pane_mode),
+            resolve_escape_action(search_visible, detail_visible, inspector_open),
             EscapeResolution::CloseSearch
         );
         search_visible = false;
 
         assert_eq!(
-            resolve_escape_action(search_visible, detail_visible, pane_open, pane_mode),
+            resolve_escape_action(search_visible, detail_visible, inspector_open),
             EscapeResolution::CloseInspector
         );
-        pane_open = false;
+        inspector_open = false;
 
         assert_eq!(
-            resolve_escape_action(search_visible, detail_visible, pane_open, pane_mode),
+            resolve_escape_action(search_visible, detail_visible, inspector_open),
             EscapeResolution::NavigateBack
         );
         detail_visible = false;
 
         assert_eq!(
-            resolve_escape_action(search_visible, detail_visible, pane_open, pane_mode),
+            resolve_escape_action(search_visible, detail_visible, inspector_open),
             EscapeResolution::Noop
         );
     }

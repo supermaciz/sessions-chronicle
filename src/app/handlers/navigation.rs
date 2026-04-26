@@ -34,20 +34,45 @@ impl App {
         }
     }
 
-    pub(crate) fn handle_toggle_pane(&mut self) {
-        if self.active_workspace.is_analytics() {
+    pub(crate) fn handle_toggle_filters(&mut self) {
+        if self.active_workspace.is_analytics() || self.detail_visible {
             return;
         }
-        self.pane_open = !self.pane_open;
+        self.filters_open = !self.filters_open;
     }
 
-    pub(crate) fn handle_pane_visibility_changed(&mut self, visible: bool) {
+    pub(crate) fn handle_filters_visibility_changed(&mut self, visible: bool) {
+        if self.active_workspace.is_analytics() || self.detail_visible {
+            return;
+        }
+        if self.filters_open != visible {
+            self.filters_open = visible;
+        }
+    }
+
+    pub(crate) fn handle_toggle_inspector(&mut self) {
+        if !self.detail_visible {
+            return;
+        }
+        self.session_detail.emit(SessionDetailMsg::ToggleInspector);
+    }
+
+    /// Single-shortcut dispatcher (F9): toggle the side pane that belongs to
+    /// the currently visible view. Skipped in Analytics, where neither pane
+    /// applies.
+    pub(crate) fn handle_toggle_active_side_pane(&mut self) {
         if self.active_workspace.is_analytics() {
             return;
         }
-        if self.pane_open != visible {
-            self.pane_open = visible;
+        if self.detail_visible {
+            self.handle_toggle_inspector();
+        } else {
+            self.handle_toggle_filters();
         }
+    }
+
+    pub(crate) fn handle_inspector_visibility_changed(&mut self, visible: bool) {
+        self.inspector_open = visible;
     }
 
     pub(crate) fn handle_search_query_changed(&mut self, query: String) {
@@ -89,8 +114,7 @@ impl App {
         match resolve_escape_action(
             self.search_visible,
             self.detail_visible,
-            self.pane_open,
-            self.pane_mode,
+            self.inspector_open,
         ) {
             EscapeResolution::CloseSearch => {
                 self.search_visible = false;
@@ -104,7 +128,7 @@ impl App {
                 }
             }
             EscapeResolution::CloseInspector => {
-                self.pane_open = false;
+                self.session_detail.emit(SessionDetailMsg::CloseInspector);
             }
             EscapeResolution::NavigateBack => {
                 sender.input(AppMsg::RequestNavigateBack);

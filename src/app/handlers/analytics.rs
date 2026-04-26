@@ -55,6 +55,14 @@ impl App {
         .pane_controls_visible
     }
 
+    pub(crate) fn is_filters_toggle_visible(&self) -> bool {
+        self.is_pane_controls_visible() && !self.detail_visible
+    }
+
+    pub(crate) fn is_inspector_toggle_visible(&self) -> bool {
+        self.is_pane_controls_visible() && self.detail_visible
+    }
+
     pub(crate) fn are_detail_actions_visible(&self) -> bool {
         workspace_header_visibility(
             self.active_workspace,
