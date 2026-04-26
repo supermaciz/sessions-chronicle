@@ -1000,20 +1000,6 @@ impl SessionIndexer {
                     &msg.model,
                 ],
             )?;
-
-            tx.execute(
-                "INSERT OR REPLACE INTO message_cache
-                 (session_id, message_index, role, content, timestamp, model)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-                rusqlite::params![
-                    session_id,
-                    msg.index as i64,
-                    format!("{:?}", msg.role).to_lowercase(),
-                    &msg.content,
-                    msg.timestamp.timestamp(),
-                    &msg.model,
-                ],
-            )?;
         }
 
         for tool_call in &parsed.tool_calls {
@@ -1037,10 +1023,6 @@ impl SessionIndexer {
 
     fn delete_session_contents_tx(tx: &rusqlite::Transaction<'_>, session_id: &str) -> Result<()> {
         tx.execute("DELETE FROM messages WHERE session_id = ?1", [session_id])?;
-        tx.execute(
-            "DELETE FROM message_cache WHERE session_id = ?1",
-            [session_id],
-        )?;
         tx.execute(
             "DELETE FROM transcript_items WHERE session_id = ?1",
             [session_id],
@@ -1270,8 +1252,8 @@ impl SessionIndexer {
 
     /// Clear all indexed sessions and messages.
     ///
-    /// Note: `messages` is an FTS5 virtual table. Standard `DELETE FROM` works
-    /// correctly on FTS5 tables and participates in transactions normally.
+    /// Note: `messages` is the b-tree source table for transcript content.
+    /// Deleting rows drives the FTS5 external-content delete trigger.
     pub fn clear_all_sessions(&mut self) -> Result<()> {
         let tx = self.db.transaction()?;
         tx.execute("DELETE FROM reasoning_attachments", [])?;
@@ -1279,7 +1261,6 @@ impl SessionIndexer {
         tx.execute("DELETE FROM tool_calls", [])?;
         tx.execute("DELETE FROM subagents", [])?;
         tx.execute("DELETE FROM messages", [])?;
-        tx.execute("DELETE FROM message_cache", [])?;
         tx.execute("DELETE FROM sessions", [])?;
         tx.execute("DELETE FROM file_fingerprints", [])?;
         tx.commit()?;
@@ -1426,10 +1407,6 @@ impl SessionIndexer {
             "DELETE FROM messages WHERE session_id IN (SELECT id FROM sessions WHERE file_path = ?1)",
             [file_path_str],
         )?;
-        tx.execute(
-            "DELETE FROM message_cache WHERE session_id IN (SELECT id FROM sessions WHERE file_path = ?1)",
-            [file_path_str],
-        )?;
         let removed = tx.execute("DELETE FROM sessions WHERE file_path = ?1", [file_path_str])?;
 
         tx.commit()?;
@@ -1469,10 +1446,6 @@ impl SessionIndexer {
         tx.execute("DELETE FROM tool_calls WHERE session_id = ?1", [session_id])?;
         tx.execute("DELETE FROM subagents WHERE session_id = ?1", [session_id])?;
         tx.execute("DELETE FROM messages WHERE session_id = ?1", [session_id])?;
-        tx.execute(
-            "DELETE FROM message_cache WHERE session_id = ?1",
-            [session_id],
-        )?;
         let removed = tx.execute("DELETE FROM sessions WHERE id = ?1", [session_id])?;
         tx.commit()?;
         Ok(removed)

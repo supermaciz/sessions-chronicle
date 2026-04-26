@@ -1661,7 +1661,7 @@ mod tests {
                  VALUES (?1, ?2, 'user', ?3, ?4, NULL)",
                 params![
                     session_id,
-                    index.to_string(),
+                    index as i64,
                     format!("message {index}"),
                     index as i64,
                 ],
