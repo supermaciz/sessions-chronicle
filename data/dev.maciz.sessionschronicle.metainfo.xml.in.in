@@ -49,6 +49,16 @@
   </categories>
   <content_rating type="oars-1.1" />
   <releases>
+    <release version="0.4.6" date="2026-04-26">
+      <description>
+        <p>Improves large session responsiveness and release publishing metadata.</p>
+        <ul>
+          <li>Speed up large session detail loading</li>
+          <li>Add self-hosted Flatpak repository publishing workflow</li>
+          <li>Point homepage links to the product website</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.4.5" date="2026-04-24">
       <description>
         <p>Adds Codex and Claude Code subagent linkage and improves UI responsiveness.</p>
