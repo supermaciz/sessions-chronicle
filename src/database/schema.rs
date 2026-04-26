@@ -12,6 +12,14 @@ fn column_exists(conn: &Connection, table_name: &str, column_name: &str) -> Resu
     )? > 0)
 }
 
+fn table_exists(conn: &Connection, name: &str) -> Result<bool> {
+    Ok(conn.query_row(
+        "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?1",
+        [name],
+        |row| row.get::<_, i64>(0),
+    )? > 0)
+}
+
 /// Initialize (or migrate) the database to the current schema version.
 ///
 /// Versioning uses `PRAGMA user_version`:
@@ -507,6 +515,11 @@ fn apply_v12_migration(conn: &Connection) -> Result<()> {
 /// Existing message data is intentionally not preserved: clearing
 /// `file_fingerprints` causes the indexer to repopulate from JSONL on the
 /// next run. JSONL files are the authoritative source.
+///
+/// Dependent transcript tables (`transcript_items`, `tool_calls`,
+/// `reasoning_attachments`, `subagents`) are wiped in the same step so the
+/// transcript LEFT JOINs don't render empty rows during the reindex window.
+/// `sessions` is preserved to keep user state (pinned_at, etc.).
 fn apply_v13_migration(conn: &Connection) -> Result<()> {
     conn.execute_batch(
         "BEGIN IMMEDIATE;
@@ -514,9 +527,22 @@ fn apply_v13_migration(conn: &Connection) -> Result<()> {
          DROP TRIGGER IF EXISTS messages_ad;
          DROP TRIGGER IF EXISTS messages_au;
          DROP TABLE IF EXISTS messages_fts;
-         DROP TABLE IF EXISTS messages;
+         DROP TABLE IF EXISTS messages;",
+    )?;
 
-         CREATE TABLE messages (
+    for table in [
+        "transcript_items",
+        "tool_calls",
+        "reasoning_attachments",
+        "subagents",
+    ] {
+        if table_exists(conn, table)? {
+            conn.execute(&format!("DELETE FROM {table}"), [])?;
+        }
+    }
+
+    conn.execute_batch(
+        "CREATE TABLE messages (
              id            INTEGER PRIMARY KEY AUTOINCREMENT,
              session_id    TEXT NOT NULL,
              message_index INTEGER NOT NULL,
