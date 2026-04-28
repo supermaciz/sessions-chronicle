@@ -103,7 +103,7 @@ mod imp {
             ];
 
             let mut x = 0.0;
-            for (width, color) in widths.into_iter().zip(colors.into_iter()) {
+            for (width, color) in widths.into_iter().zip(colors) {
                 if width <= 0.0 {
                     continue;
                 }
