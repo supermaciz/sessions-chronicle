@@ -59,6 +59,9 @@ compile_commands.json
 !.claude/agents/design-ui-designer.md
 !.claude/agents/mii-beta-gtk-designer.md
 
+# No need to commit superpowers implementation plans, design docs are enough
+docs/superpowers/plans/
+
 flatpak_app/
 .flatpak-builder/
 builddir/
