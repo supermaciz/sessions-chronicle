@@ -33,6 +33,12 @@ const TOOL_ICONS: ToolCategoryIcons = ToolCategoryIcons {
 const SLOW_ROW_WIDGET_BUILD: Duration = Duration::from_millis(10);
 const SLOW_CONTENT_RENDER: Duration = Duration::from_millis(10);
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RenderContentMode {
+    Preview,
+    Full,
+}
+
 /// Return the model display text for a transcript header.
 /// Only assistant messages with a non-empty model value produce output.
 fn model_label_text(role: Role, model: Option<&str>) -> Option<String> {
@@ -239,6 +245,7 @@ fn render_content(
     content: &str,
     role: Role,
     highlight_query: Option<&str>,
+    mode: RenderContentMode,
 ) -> usize {
     while let Some(child) = container.first_child() {
         container.remove(&child);
@@ -246,7 +253,7 @@ fn render_content(
 
     let mut match_count = 0usize;
 
-    if role == Role::Assistant {
+    if should_render_markdown(role, mode) {
         let (widget, count) = markdown::render_markdown_to_textview(content, highlight_query);
         match_count = count;
         container.append(&widget);
@@ -272,6 +279,10 @@ fn render_content(
     }
 
     match_count
+}
+
+fn should_render_markdown(role: Role, mode: RenderContentMode) -> bool {
+    role == Role::Assistant && mode == RenderContentMode::Full
 }
 
 fn count_tool_call_matches(init: &ToolCallItemInit) -> usize {
@@ -715,6 +726,7 @@ impl FactoryComponent for TranscriptRow {
                         &preview.content_preview,
                         preview.role,
                         self.highlight_query.as_deref(),
+                        RenderContentMode::Preview,
                     );
                     self.update_expand_button(widgets, preview);
                     if count != self.rendered_match_count {
@@ -736,6 +748,7 @@ impl FactoryComponent for TranscriptRow {
                         full,
                         preview.role,
                         self.highlight_query.as_deref(),
+                        RenderContentMode::Full,
                     );
                     self.update_expand_button(widgets, preview);
                     if count != self.rendered_match_count {
@@ -805,6 +818,7 @@ impl FactoryComponent for TranscriptRow {
                     &content,
                     preview.role,
                     self.highlight_query.as_deref(),
+                    RenderContentMode::Full,
                 );
                 self.update_expand_button(widgets, preview);
                 if count != self.rendered_match_count {
@@ -948,6 +962,7 @@ impl TranscriptRow {
             &preview.content_preview,
             preview.role,
             self.highlight_query.as_deref(),
+            RenderContentMode::Preview,
         );
         let render_duration = render_started_at.elapsed();
         tracing::debug!(
@@ -1566,6 +1581,23 @@ mod tests {
         assert_eq!(model_label_text(Role::User, Some("o3-mini")), None);
         assert_eq!(model_label_text(Role::ToolResult, Some("o3-mini")), None);
         assert_eq!(model_label_text(Role::ToolCall, Some("o3-mini")), None);
+    }
+
+    #[test]
+    fn should_render_markdown_only_for_assistant_full_content() {
+        assert!(!should_render_markdown(
+            Role::Assistant,
+            RenderContentMode::Preview
+        ));
+        assert!(should_render_markdown(
+            Role::Assistant,
+            RenderContentMode::Full
+        ));
+        assert!(!should_render_markdown(Role::User, RenderContentMode::Full));
+        assert!(!should_render_markdown(
+            Role::ToolResult,
+            RenderContentMode::Full
+        ));
     }
 
     #[test]

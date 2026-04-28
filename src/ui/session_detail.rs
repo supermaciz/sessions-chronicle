@@ -111,6 +111,10 @@ struct RenderMetrics {
     source_row_count: usize,
     display_item_count: usize,
     batch_count: usize,
+    wall_duration_ms: u128,
+    total_duration_ms: u128,
+    total_push_duration_ms: u128,
+    max_push_duration_ms: u128,
     message_count: usize,
     tool_call_count: usize,
     tool_burst_count: usize,
@@ -1361,6 +1365,10 @@ impl SessionDetail {
                 source_row_count,
                 display_item_count: total_items,
                 batch_count,
+                wall_duration_ms: 0,
+                total_duration_ms,
+                total_push_duration_ms,
+                max_push_duration_ms,
                 message_count: row_kind_counts.message_count,
                 tool_call_count: row_kind_counts.tool_call_count,
                 tool_burst_count: row_kind_counts.tool_burst_count,
@@ -1839,6 +1847,105 @@ mod tests {
         }
     }
 
+    fn seed_tool_burst_transcript(db_path: &std::path::Path, session_id: &str, count: usize) {
+        let conn = Connection::open(db_path).expect("open temp db");
+        crate::database::schema::initialize_database(&conn).expect("initialize db");
+
+        for index in 0..count {
+            let tool_call_id = format!("call-{index}");
+            conn.execute(
+                "INSERT INTO tool_calls (
+                    id, session_id, tool_name, status, summary, input_json, output_text, duration_ms
+                 ) VALUES (?1, ?2, ?3, 'completed', ?4, ?5, ?6, ?7)",
+                params![
+                    tool_call_id,
+                    session_id,
+                    if index % 2 == 0 { "Read" } else { "Edit" },
+                    format!("tool summary {index}"),
+                    format!(r#"{{"path":"/tmp/file-{index}.rs"}}"#),
+                    format!("tool output line {index}"),
+                    index as i64,
+                ],
+            )
+            .expect("insert tool call");
+            conn.execute(
+                "INSERT INTO transcript_items (session_id, item_index, kind, tool_call_id)
+                 VALUES (?1, ?2, 'tool_call', ?3)",
+                params![session_id, index as i64, tool_call_id],
+            )
+            .expect("insert transcript item");
+        }
+    }
+
+    fn seed_markdown_transcript(db_path: &std::path::Path, session_id: &str, count: usize) {
+        let conn = Connection::open(db_path).expect("open temp db");
+        crate::database::schema::initialize_database(&conn).expect("initialize db");
+
+        let content = "# Synthetic assistant response\n\n\
+This paragraph contains a needle used for search-highlight measurements.\n\n\
+```rust\n\
+fn synthetic_measurement(input: &str) -> String {\n\
+    format!(\"needle {input}\")\n\
+}\n\
+```\n\n\
+| file | status |\n\
+| --- | --- |\n\
+| src/ui/session_detail.rs | measured |\n\n"
+            .repeat(12);
+
+        for index in 0..count {
+            conn.execute(
+                "INSERT INTO messages (session_id, message_index, role, content, timestamp, model)
+                 VALUES (?1, ?2, 'assistant', ?3, ?4, 'synthetic-model')",
+                params![session_id, index as i64, content, index as i64],
+            )
+            .expect("insert message");
+            conn.execute(
+                "INSERT INTO transcript_items (session_id, item_index, kind, message_index)
+                 VALUES (?1, ?2, 'message', ?2)",
+                params![session_id, index as i64],
+            )
+            .expect("insert transcript item");
+        }
+    }
+
+    fn measure_session_detail_perf_scenario(
+        name: &str,
+        seed: impl FnOnce(&std::path::Path),
+    ) -> RenderMetrics {
+        measure_session_detail_perf_scenario_with_query(name, None, seed)
+    }
+
+    fn measure_session_detail_perf_scenario_with_query(
+        _name: &str,
+        search_query: Option<&str>,
+        seed: impl FnOnce(&std::path::Path),
+    ) -> RenderMetrics {
+        let temp_db = tempfile::NamedTempFile::new().expect("temp db");
+        seed(temp_db.path());
+
+        let controller = SessionDetail::builder().launch(temp_db.path().to_path_buf());
+        let started_at = Instant::now();
+        controller.emit(SessionDetailMsg::SetSession {
+            session: Box::new(build_test_session(None, None, 0, 0, 0)),
+            search_query: search_query.map(str::to_string),
+        });
+
+        pump_main_context(|| {
+            let parts = controller.state().get();
+            parts.model.pending_render_batch.is_none() && parts.model.last_render_metrics.is_some()
+        });
+
+        let parts = controller.state().get();
+        let mut metrics = parts
+            .model
+            .last_render_metrics
+            .clone()
+            .expect("scenario should record render metrics");
+        metrics.wall_duration_ms = started_at.elapsed().as_millis();
+        metrics
+    }
+
     fn transcript_message_row(
         item_index: i64,
         role: crate::models::Role,
@@ -2106,6 +2213,42 @@ mod tests {
         assert_eq!(counts.tool_call_count, 0);
         assert_eq!(counts.tool_burst_count, 1);
         assert_eq!(counts.subagent_count, 1);
+    }
+
+    #[gtk::test]
+    #[ignore = "manual performance smoke test for issue #127"]
+    fn session_detail_perf_smoke_measures_synthetic_scenarios() {
+        let message_metrics = measure_session_detail_perf_scenario("messages", |path| {
+            seed_message_transcript(path, "test-session-123", INITIAL_PAGE_SIZE);
+        });
+        let tool_burst_metrics = measure_session_detail_perf_scenario("tool-burst", |path| {
+            seed_tool_burst_transcript(path, "test-session-123", INITIAL_PAGE_SIZE);
+        });
+        let markdown_metrics = measure_session_detail_perf_scenario("markdown", |path| {
+            seed_markdown_transcript(path, "test-session-123", INITIAL_PAGE_SIZE);
+        });
+        let markdown_search_metrics = measure_session_detail_perf_scenario_with_query(
+            "markdown-search",
+            Some("needle"),
+            |path| {
+                seed_markdown_transcript(path, "test-session-123", INITIAL_PAGE_SIZE);
+            },
+        );
+
+        println!("messages: {message_metrics:?}");
+        println!("tool-burst: {tool_burst_metrics:?}");
+        println!("markdown: {markdown_metrics:?}");
+        println!("markdown-search: {markdown_search_metrics:?}");
+
+        assert_eq!(message_metrics.source_row_count, INITIAL_PAGE_SIZE);
+        assert_eq!(message_metrics.message_count, INITIAL_PAGE_SIZE);
+        assert_eq!(tool_burst_metrics.source_row_count, INITIAL_PAGE_SIZE);
+        assert_eq!(tool_burst_metrics.display_item_count, 1);
+        assert_eq!(tool_burst_metrics.tool_burst_count, 1);
+        assert_eq!(markdown_metrics.source_row_count, INITIAL_PAGE_SIZE);
+        assert_eq!(markdown_metrics.message_count, INITIAL_PAGE_SIZE);
+        assert_eq!(markdown_search_metrics.source_row_count, INITIAL_PAGE_SIZE);
+        assert_eq!(markdown_search_metrics.message_count, INITIAL_PAGE_SIZE);
     }
 
     #[test]
