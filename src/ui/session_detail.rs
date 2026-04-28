@@ -770,7 +770,7 @@ impl Component for SessionDetail {
                 let session = *session;
                 let session_id = session.id.clone();
                 self.session = Some(session);
-                self.start_first_page_load(&sender, &session_id);
+                self.start_first_page_load(&sender, &session_id, true);
                 self.inspector.emit(ToolInspectorPaneMsg::Clear);
                 self.set_inspector_open(false, &sender);
             }
@@ -1185,7 +1185,22 @@ impl SessionDetail {
             .ok();
     }
 
-    fn start_first_page_load(&mut self, sender: &ComponentSender<Self>, session_id: &str) {
+    /// Reset transcript state and trigger the first-page load.
+    ///
+    /// Pass `defer = true` only when a fresh session is being opened: the load
+    /// is delayed by `DEFERRED_FIRST_PAGE_LOAD_DELAY_MS` so the navigation
+    /// animation can complete before transcript widgets start rendering.
+    ///
+    /// Pass `defer = false` for in-place reloads (search query updates,
+    /// `ClearSearch`). Deferring those would leave the transcript blank for
+    /// 250 ms after every keystroke, since this method clears the existing
+    /// rows synchronously before scheduling the load.
+    fn start_first_page_load(
+        &mut self,
+        sender: &ComponentSender<Self>,
+        session_id: &str,
+        defer: bool,
+    ) {
         self.invalidate_transcript_requests();
         self.loading_first_page = true;
         self.loading_next_page = false;
@@ -1196,16 +1211,27 @@ impl SessionDetail {
 
         let request_id = self.transcript_request_id;
         let session_id = session_id.to_string();
-        let input_sender = sender.input_sender().clone();
-        glib::timeout_add_local_once(
-            Duration::from_millis(DEFERRED_FIRST_PAGE_LOAD_DELAY_MS),
-            move || {
-                let _ = input_sender.send(SessionDetailMsg::StartDeferredFirstPageLoad {
-                    request_id,
-                    session_id,
-                });
-            },
-        );
+
+        if defer {
+            let input_sender = sender.input_sender().clone();
+            glib::timeout_add_local_once(
+                Duration::from_millis(DEFERRED_FIRST_PAGE_LOAD_DELAY_MS),
+                move || {
+                    let _ = input_sender.send(SessionDetailMsg::StartDeferredFirstPageLoad {
+                        request_id,
+                        session_id,
+                    });
+                },
+            );
+        } else {
+            self.spawn_transcript_page_load(
+                sender,
+                request_id,
+                session_id,
+                0,
+                self.initial_page_size,
+            );
+        }
     }
 
     fn spawn_transcript_page_load(
@@ -1546,7 +1572,7 @@ impl SessionDetail {
     fn reload_current_session(&mut self, sender: &ComponentSender<Self>) {
         if let Some(session) = &self.session {
             let session_id = session.id.clone();
-            self.start_first_page_load(sender, &session_id);
+            self.start_first_page_load(sender, &session_id, false);
         }
     }
 
