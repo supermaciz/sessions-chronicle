@@ -22,8 +22,14 @@
 - `data/` holds desktop metadata, GSettings schema, icons, CSS, and UI resources in `data/resources/`.
 - `tests/` contains integration tests; `tests/fixtures/` contains sample sessions for Claude Code, OpenCode, Codex, and Mistral Vibe.
 - `build-aux/` contains Flatpak manifests (dev and stable) and the vendor script for offline builds.
-- `docs/` hosts architecture notes plus exploration, design, and implementation plans.
-  - `docs/explorations/` contains plan files following these naming conventions: `YYYY-MM-DD-feature-name-exploration.md`, `YYYY-MM-DD-feature-name-design.md`, and implementation plans as `YYYY-MM-DD-feature-name.md` (preferred) or `YYYY-MM-DD-feature-name-implementation.md` (optional).
+- `docs/` hosts architecture notes plus exploration and design documentation.
+  - `docs/explorations/` contains exploration docs (`YYYY-MM-DD-feature-name-exploration.md`) and related mockups.
+    - Use exploration docs when multiple implementation approaches exist.
+    - Compare at least two alternatives with trade-offs.
+    - Include visual mockups when relevant.
+    - End with a clear decision and rationale.
+    - Example: `2026-02-10-session-row-prompt-preview-exploration.md`.
+  - `docs/superpowers/specs/` contains design specs (`YYYY-MM-DD-feature-name-design.md`).
 - `flatpak_app/` is generated build output; do not edit it directly.
 
 
