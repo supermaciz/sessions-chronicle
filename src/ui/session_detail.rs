@@ -115,7 +115,6 @@ struct RenderMetrics {
     source_row_count: usize,
     display_item_count: usize,
     batch_count: usize,
-    wall_duration_ms: u128,
     total_duration_ms: u128,
     total_push_duration_ms: u128,
     max_push_duration_ms: u128,
@@ -1410,7 +1409,6 @@ impl SessionDetail {
                 source_row_count,
                 display_item_count: total_items,
                 batch_count,
-                wall_duration_ms: 0,
                 total_duration_ms,
                 total_push_duration_ms,
                 max_push_duration_ms,
@@ -1971,7 +1969,6 @@ fn synthetic_measurement(input: &str) -> String {\n\
         seed(temp_db.path());
 
         let controller = SessionDetail::builder().launch(temp_db.path().to_path_buf());
-        let started_at = Instant::now();
         controller.emit(SessionDetailMsg::SetSession {
             session: Box::new(build_test_session(None, None, 0, 0, 0)),
             search_query: search_query.map(str::to_string),
@@ -1983,13 +1980,11 @@ fn synthetic_measurement(input: &str) -> String {\n\
         });
 
         let parts = controller.state().get();
-        let mut metrics = parts
+        parts
             .model
             .last_render_metrics
             .clone()
-            .expect("scenario should record render metrics");
-        metrics.wall_duration_ms = started_at.elapsed().as_millis();
-        metrics
+            .expect("scenario should record render metrics")
     }
 
     fn transcript_message_row(
