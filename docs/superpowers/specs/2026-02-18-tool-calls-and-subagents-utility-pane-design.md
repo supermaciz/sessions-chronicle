@@ -1,6 +1,6 @@
 # Tool Calls and Subagents Utility Pane Design
 
-**Status:** Proposed  
+**Status:** Implemented [#36](https://github.com/supermaciz/sessions-chronicle/pull/36)  
 **Date:** 2026-02-18  
 **Based on:** [Tool Calls and Subagents - UI Exploration](2026-02-16-tool-calls-and-subagents-exploration.md) proposal F  
 **Supersedes (for phase 6):** [Tool Calls and Subagents Display](2026-01-30-tool-calls-and-subagents-design.md)

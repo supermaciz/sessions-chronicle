@@ -1,6 +1,6 @@
 # Mistral Vibe v2 Parser Design
 
-**Status**: Implemented  
+**Status:** Implemented [#11](https://github.com/supermaciz/sessions-chronicle/pull/11)  
 **Date**: 2026-02-04  
 
 Design document for adding Mistral Vibe v2 session support to Sessions Chronicle.

@@ -1,7 +1,7 @@
 # Landing Page — Astro Implementation Design (Proposal F)
 
 **Date:** 2026-04-21  
-**Status:** Design, pending user review  
+**Status:** Implemented [#125](https://github.com/supermaciz/sessions-chronicle/pull/125)  
 **Related:** [`docs/explorations/2026-04-20-landing-page-exploration.md`](../../plans/2026-04-20-landing-page-exploration.md) (Proposal F — Product Atlas), [issue #124](https://github.com/supermaciz/sessions-chronicle/issues/124)
 
 ## Problem Statement

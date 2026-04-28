@@ -1,7 +1,7 @@
 # Design: Code Block Widget with Segment-Based Rendering
 
 **Date:** 2026-03-22  
-**Status:** Approved  
+**Status:** Implemented [#88](https://github.com/supermaciz/sessions-chronicle/pull/88)  
 **Issue:** [#73](https://github.com/supermaciz/sessions-chronicle/issues/73)  
 **Problem:** Blank lines inside fenced code blocks are not rendered as part of the
 code block. The `code-block` TextTag uses `paragraph_background`, which GTK does not

@@ -1,5 +1,7 @@
 # Tool Inspector Design (Issue #46)
 
+**Status:** Implemented [#70](https://github.com/supermaciz/sessions-chronicle/pull/70)
+
 ## Problem
 
 The current Tool Inspector shows raw text blocks for `input_json`, `output_text`,

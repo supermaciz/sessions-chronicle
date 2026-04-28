@@ -1,5 +1,7 @@
 # Claude Code Subagent Linkage Design
 
+**Status:** Implemented [#121](https://github.com/supermaciz/sessions-chronicle/pull/121)
+
 ## Problem
 
 Sessions Chronicle currently detects Claude Code subagent launches in the parent

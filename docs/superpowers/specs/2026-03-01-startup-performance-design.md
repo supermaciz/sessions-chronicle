@@ -1,5 +1,7 @@
 # Startup Performance Design (Issue #59)
 
+**Status:** Implemented [#60](https://github.com/supermaciz/sessions-chronicle/pull/60)
+
 ## Problem
 
 Startup is currently UI-blocking on large session datasets.

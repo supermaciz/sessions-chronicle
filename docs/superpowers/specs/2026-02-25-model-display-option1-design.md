@@ -2,6 +2,8 @@
 
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
+**Status:** Implemented [#41](https://github.com/supermaciz/sessions-chronicle/pull/41)
+
 **Goal:** Display the raw assistant model slug inline in each message header as `ASSISTANT · <model> · HH:MM:SS`, with no custom widget and no model transformation.
 
 **Architecture:** Extend the existing transcript preview pipeline end-to-end (`messages.model` -> `TranscriptItemRow` -> `MessagePreview` -> `TranscriptRow`). Keep rendering logic simple and deterministic: only assistant messages with non-empty model values show the extra label and separators. Preserve existing role colors, message layout, and truncation behavior.

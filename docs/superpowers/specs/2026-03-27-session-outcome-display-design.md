@@ -3,7 +3,7 @@
 **Issue:** [#90 -- Session outcome display and stopping point in session list](https://github.com/supermaciz/sessions-chronicle/issues/90)  
 **Date:** 2026-03-27  
 **Type:** Design plan  
-**Status:** Draft  
+**Status:** Implemented [#98](https://github.com/supermaciz/sessions-chronicle/pull/98)  
 **Exploration:** `docs/explorations/2026-03-27-session-outcome-display-exploration.md` -- Proposal C with Proposal D's colored ending text signal
 
 ## Problem

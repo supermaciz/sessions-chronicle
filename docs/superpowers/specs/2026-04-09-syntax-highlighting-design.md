@@ -1,7 +1,7 @@
 # Design: Syntax Highlighting for Code Blocks with GtkSourceView
 
 **Date:** 2026-04-09  
-**Status:** Approved  
+**Status:** Implemented [#118](https://github.com/supermaciz/sessions-chronicle/pull/118)  
 **Issue:** [#49](https://github.com/supermaciz/sessions-chronicle/issues/49)  
 **Problem:** Code blocks in the transcript view render in monospace without syntax
 coloring, making large code snippets hard to read.  

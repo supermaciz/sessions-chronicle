@@ -1,7 +1,7 @@
 # OpenCode SQLite Dual-Read Parser Design
 
 **Date:** 2026-02-21  
-**Status:** Approved  
+**Status:** Implemented [#37](https://github.com/supermaciz/sessions-chronicle/pull/37)  
 **Scope:** Update the OpenCode parser to read from both the new SQLite database
 (`opencode.db`) and the legacy JSON file tree, with deduplication.
 

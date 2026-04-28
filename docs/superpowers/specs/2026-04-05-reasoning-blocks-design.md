@@ -3,6 +3,7 @@
 **Issue:** [#45](https://github.com/supermaciz/sessions-chronicle/issues/45)  
 **Exploration:** [2026-04-05-reasoning-blocks-exploration.md](2026-04-05-reasoning-blocks-exploration.md)  
 **Date:** 2026-04-05  
+**Status:** Implemented [#117](https://github.com/supermaciz/sessions-chronicle/pull/117)  
 **Decision:** Proposal B — Inspector Pill, revised around transcript attachments
 
 ---

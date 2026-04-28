@@ -1,5 +1,7 @@
 # Reasoning Encrypted Presence Design
 
+**Status:** Implemented [#117](https://github.com/supermaciz/sessions-chronicle/pull/117)
+
 ## Problem
 
 The current reasoning attachment model stores opaque encrypted payloads in

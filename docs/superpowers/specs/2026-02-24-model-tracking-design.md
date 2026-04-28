@@ -1,8 +1,9 @@
 # Model Tracking - Design Document
 
-**Date**: 2026-02-24  
-**Phase**: 8  
-**Scope**: Parsers + DB schema only (UI in a separate PR)
+**Date:** 2026-02-24  
+**Status:** Implemented [#39](https://github.com/supermaciz/sessions-chronicle/pull/39)  
+**Phase:** 8  
+**Scope:** Parsers + DB schema only (UI in a separate PR)
 
 ---
 

@@ -1,6 +1,7 @@
 # Design: Pin Filter (Issue #109)
 
 **Date:** 2026-04-02  
+**Status:** Implemented [#115](https://github.com/supermaciz/sessions-chronicle/pull/115)  
 **Issue:** [#109 — feat: favorite sessions for quick revisit](https://github.com/supermaciz/sessions-chronicle/issues/109)  
 **Exploration:** [2026-04-02-favorite-sessions-exploration.md](2026-04-02-favorite-sessions-exploration.md)  
 **Decision:** Proposal F — Pin Filter  

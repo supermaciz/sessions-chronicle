@@ -1,7 +1,7 @@
 # Design: TextView-based Markdown Rendering
 
 **Date:** 2026-02-26
-**Status:** Approved
+**Status:** Implemented [#42](https://github.com/supermaciz/sessions-chronicle/pull/42)
 **Problem:** Text selection in assistant messages is limited to one line/block at a time because the current markdown renderer creates separate `gtk::Label` widgets per block. GTK does not allow text selection across widget boundaries.
 **Solution:** Replace the multi-widget renderer with a single `gtk::TextView` per assistant message, using `TextBuffer` + `TextTag`s for formatting.
 

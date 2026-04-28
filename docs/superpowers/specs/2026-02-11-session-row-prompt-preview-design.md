@@ -2,7 +2,7 @@
 
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
-**Status:** Implemented
+**Status:** Implemented [#30](https://github.com/supermaciz/sessions-chronicle/pull/30)
 
 **Goal:** Replace session row project-path-first labeling with first user prompt preview, remove inline resume button from the row, and expose resume via right-click context menu.
 

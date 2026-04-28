@@ -1,7 +1,7 @@
 # Design: Hybrid Table Rendering with GtkTextChildAnchor
 
 **Date:** 2026-03-20  
-**Status:** Approved with implementation spike  
+**Status:** Implemented [#87](https://github.com/supermaciz/sessions-chronicle/pull/87)  
 **Problem:** Tables in assistant messages are rendered as fixed-width monospace text
 in the `TextBuffer`. Column widths are calculated once at render time and baked into
 the text as space-padding. When the window is resized, tables do not reflow - they

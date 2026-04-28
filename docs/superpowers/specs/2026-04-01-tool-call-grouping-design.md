@@ -1,5 +1,7 @@
 # Tool Call Grouping Design (Issue #89)
 
+**Status:** Implemented [#110](https://github.com/supermaciz/sessions-chronicle/pull/110)
+
 ## Problem
 
 The session detail view currently renders each tool call as its own transcript row.

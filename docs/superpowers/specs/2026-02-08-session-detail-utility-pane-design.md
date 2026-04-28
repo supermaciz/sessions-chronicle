@@ -1,6 +1,6 @@
 # Session Detail Utility Pane Design
 
-**Status:** Implemented  
+**Status:** Implemented [#27](https://github.com/supermaciz/sessions-chronicle/pull/27)  
 **Date:** 2026-02-08  
 
 ## Goal

@@ -1,7 +1,7 @@
 # Keyboard Navigation Design
 
 **Date:** 2026-02-22
-**Status:** Approved (revised)
+**Status:** Implemented [#38](https://github.com/supermaciz/sessions-chronicle/pull/38)
 
 ## Problem
 

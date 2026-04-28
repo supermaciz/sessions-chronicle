@@ -1,7 +1,7 @@
 # Token Cache in Analytics and Token Semantics UX - Design
 
 **Date:** 2026-03-14  
-**Status:** Proposed  
+**Status:** Implemented [#79](https://github.com/supermaciz/sessions-chronicle/pull/79)  
 **Related:** `2026-03-07-basic-analytics-design.md`, `2026-02-28-token-usage-display-design.md`
 
 ## Decision Summary

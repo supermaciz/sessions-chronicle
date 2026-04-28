@@ -1,5 +1,7 @@
 # Expand/Collapse Truncated Messages
 
+**Status:** Implemented [#35](https://github.com/supermaciz/sessions-chronicle/pull/35)
+
 ## Context
 
 Long messages in the session transcript are truncated to 2000 characters at the database query level (`substr(content, 1, 2000)`). A static label "(content truncated)" appears but users have no way to see the full content. This feature adds an inline expand/collapse toggle so users can view the complete message without leaving the transcript view.

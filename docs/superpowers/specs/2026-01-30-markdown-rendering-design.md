@@ -9,7 +9,7 @@ tables) that is currently rendered as-is, hurting readability.
 This design adds markdown rendering for assistant messages using native GTK4
 widgets and Pango markup — no WebKit dependency.
 
-**Status**: ✅ Implemented
+**Status:** Implemented [#12](https://github.com/supermaciz/sessions-chronicle/pull/12)
 
 ## Design Decisions
 

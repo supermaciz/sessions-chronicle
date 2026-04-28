@@ -1,7 +1,7 @@
 # Search Term Highlighting — Design Document
 
 **Date**: 2026-02-07  
-**Status**: Implemented ✅
+**Status:** Implemented [#17](https://github.com/supermaciz/sessions-chronicle/pull/17)
 **Proposal**: A (Inline Highlight + Floating Search Navigation Bar)  
 **Exploration**: [2026-02-07-search-highlighting-exploration.md](2026-02-07-search-highlighting-exploration.md)
 
