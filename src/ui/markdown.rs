@@ -356,11 +356,10 @@ impl MarkdownBufferWriter {
                 self.in_image = true;
                 self.write_inline_with_active_tags("[image: ");
             }
-            Tag::Paragraph => {
-                if self.list_stack.is_empty() && !self.in_table {
-                    self.block_separator();
-                }
+            Tag::Paragraph if self.list_stack.is_empty() && !self.in_table => {
+                self.block_separator();
             }
+            Tag::Paragraph => {}
             Tag::Heading { level, .. } => {
                 self.block_separator();
                 let heading_tag = Self::heading_tag_name(level);
@@ -422,12 +421,11 @@ impl MarkdownBufferWriter {
                 self.in_image = false;
                 self.write_inline_with_active_tags("]");
             }
-            TagEnd::Paragraph => {
-                if self.list_stack.is_empty() && !self.in_table {
-                    self.insert_with_tags("\n", &[]);
-                    self.has_content = true;
-                }
+            TagEnd::Paragraph if self.list_stack.is_empty() && !self.in_table => {
+                self.insert_with_tags("\n", &[]);
+                self.has_content = true;
             }
+            TagEnd::Paragraph => {}
             TagEnd::Heading(level) => {
                 self.insert_with_tags("\n", &[]);
                 self.has_content = true;
@@ -454,11 +452,10 @@ impl MarkdownBufferWriter {
                 self.table_headers = std::mem::take(&mut self.table_row);
                 self.in_table_head = false;
             }
-            TagEnd::TableRow => {
-                if !self.in_table_head {
-                    self.table_rows.push(std::mem::take(&mut self.table_row));
-                }
+            TagEnd::TableRow if !self.in_table_head => {
+                self.table_rows.push(std::mem::take(&mut self.table_row));
             }
+            TagEnd::TableRow => {}
             TagEnd::TableCell => {
                 self.table_row.push(std::mem::take(&mut self.inline_buf));
             }
