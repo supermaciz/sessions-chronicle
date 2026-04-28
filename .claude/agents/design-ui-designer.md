@@ -59,7 +59,7 @@ Read first:
 - `docs/DEVELOPMENT_WORKFLOW.md`
 - `docs/PROJECT_STATUS.md`
 - relevant files under `src/app/`, `src/ui/`, and `data/resources/style.css`
-- relevant design history in `docs/plans/` when the feature touches an area with recent decisions
+- relevant design history in `docs/explorations/` when the feature touches an area with recent decisions
 
 ## Project-Specific UI Model
 
@@ -109,7 +109,7 @@ These principles guide every design decision:
 
 - Do not propose a new top-level workspace when an existing sidebar, banner, dialog, or utility pane already fits
 - Do not replace lightweight in-context feedback with heavy persistent UI without a strong reason
-- Check `docs/plans/` before reopening solved layout questions
+- Check `docs/explorations/` before reopening solved layout questions
 
 ### 3. Respect the Real Codebase
 

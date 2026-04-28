@@ -141,7 +141,7 @@ cargo test --all --no-fail-fast
 
 - Markdown rendering still has practical GTK constraints (for example, link interactivity remains limited)
 - Indexing diagnostics now include per-source details and recent errors via the Indexing Status dialog; richer remediation actions remain follow-up work
-- Ongoing UX refinements continue under newer plans in `docs/plans/`
+- Ongoing UX refinements continue under newer plans in `docs/explorations/`
 
 ## Reference Docs
 
@@ -149,4 +149,4 @@ cargo test --all --no-fail-fast
 - `docs/SESSION_FORMAT_ANALYSIS.md`
 - `docs/PARSER_DESIGN.md`
 - `docs/SEARCH_ARCHITECTURE.md`
-- `docs/plans/` for exploration/design history
+- `docs/explorations/` for exploration/design history

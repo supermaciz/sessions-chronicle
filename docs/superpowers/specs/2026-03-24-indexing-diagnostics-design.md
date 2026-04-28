@@ -4,7 +4,7 @@
 **Date:** 2026-03-24  
 **Type:**  Design plan  
 **Status:** Implemented [#95](https://github.com/supermaciz/sessions-chronicle/pull/95)  
-**Exploration:** `docs/plans/2026-03-23-indexing-diagnostics-exploration.md` — Proposal C  
+**Exploration:** `docs/explorations/2026-03-23-indexing-diagnostics-exploration.md` — Proposal C  
 **Related:** Issue #94 will add the dedicated diagnostics dialog (Proposal B) in a follow-up PR.
 
 ## Problem
@@ -319,7 +319,7 @@ No CI pipeline changes. New unit tests are covered by `cargo test --all --no-fai
 
 - [GNOME HIG — Feedback patterns](https://developer.gnome.org/hig/patterns/feedback/)
 - [AdwBanner documentation](https://gnome.pages.gitlab.gnome.org/libadwaita/doc/main/class.Banner.html)
-- Exploration: `docs/plans/2026-03-23-indexing-diagnostics-exploration.md`
+- Exploration: `docs/explorations/2026-03-23-indexing-diagnostics-exploration.md`
 - `src/indexing_worker.rs` — current worker output
 - `src/database/indexer.rs` — current `IndexingStats` and error handling
 - `src/ui/sidebar.rs` — current assistant filter rows

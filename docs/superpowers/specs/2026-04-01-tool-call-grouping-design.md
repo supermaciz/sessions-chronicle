@@ -13,7 +13,7 @@ of assistant activity between conversational messages.
 ## Decision Summary
 
 This design implements the decision recorded in
-`docs/plans/2026-04-01-tool-call-grouping-exploration.md`:
+`docs/explorations/2026-04-01-tool-call-grouping-exploration.md`:
 
 - Use a GNOME-native `GtkExpander` burst row.
 - Group all consecutive tool calls into one burst when the run length is `>= 2`.

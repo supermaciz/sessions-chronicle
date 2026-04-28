@@ -46,7 +46,7 @@ This directory contains project documentation, architecture notes, and implement
 
 ### Plans
 
-Plan file types in `docs/plans/`:
+Plan file types in `docs/explorations/`:
 - `YYYY-MM-DD-feature-name-exploration.md`: exploration plan (compare alternatives and capture decision)
 - `YYYY-MM-DD-feature-name-design.md`: design plan (typically produced via `brainstorming`)
 - `YYYY-MM-DD-feature-name.md` (preferred) or `YYYY-MM-DD-feature-name-implementation.md` (optional): implementation plan (typically produced via `writing-plans`, generally not committed)
@@ -216,4 +216,4 @@ All mockups are SVG files in the `mockups/` subfolder (open in browser or image 
 **Last Updated**: 2026-03-25
 
 **Current Status**: Analytics workspace, project filtering, token usage display, incremental indexing, and indexing diagnostics are implemented.  
-**Next Milestone**: Ongoing UX/documentation polish and follow-up refinements tracked in newer files under `docs/plans/`, including deeper indexing diagnostics.
+**Next Milestone**: Ongoing UX/documentation polish and follow-up refinements tracked in newer files under `docs/explorations/`, including deeper indexing diagnostics.

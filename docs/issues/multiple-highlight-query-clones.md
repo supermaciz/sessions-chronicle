@@ -51,4 +51,4 @@ Keep current implementation. Only consider optimization if profiling shows this 
 
 ## References
 - Identified in code review: https://github.com/supermaciz/sessions-chronicle/pull/...
-- Design doc: docs/plans/2026-02-07-search-highlighting-design.md
+- Design doc: docs/explorations/2026-02-07-search-highlighting-design.md

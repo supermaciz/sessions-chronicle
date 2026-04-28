@@ -382,7 +382,7 @@ Release gating:
 
 ## References
 
-- Exploration basis: `docs/plans/2026-03-05-tool-inspector-exploration.md`
+- Exploration basis: `docs/explorations/2026-03-05-tool-inspector-exploration.md`
 - Tool format analysis: `docs/TOOL_CALLS_ANALYSIS.md`
 - Relm4 Book (components/factory/commands):
   - https://raw.githubusercontent.com/Relm4/book/refs/heads/main/src/components.md

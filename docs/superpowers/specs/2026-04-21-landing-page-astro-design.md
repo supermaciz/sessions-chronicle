@@ -2,7 +2,7 @@
 
 **Date:** 2026-04-21  
 **Status:** Design, pending user review  
-**Related:** [`docs/plans/2026-04-20-landing-page-exploration.md`](../../plans/2026-04-20-landing-page-exploration.md) (Proposal F — Product Atlas), [issue #124](https://github.com/supermaciz/sessions-chronicle/issues/124)
+**Related:** [`docs/explorations/2026-04-20-landing-page-exploration.md`](../../plans/2026-04-20-landing-page-exploration.md) (Proposal F — Product Atlas), [issue #124](https://github.com/supermaciz/sessions-chronicle/issues/124)
 
 ## Problem Statement
 
@@ -550,7 +550,7 @@ DevTools → Network → "Slow 3G" throttle → reload. Expect a flash of system
 ## References
 
 - Proposal F mockup: [`docs/mockups/landing-page/06-product-atlas.svg`](../../mockups/landing-page/06-product-atlas.svg)
-- Exploration doc: [`docs/plans/2026-04-20-landing-page-exploration.md`](../../plans/2026-04-20-landing-page-exploration.md)
+- Exploration doc: [`docs/explorations/2026-04-20-landing-page-exploration.md`](../../plans/2026-04-20-landing-page-exploration.md)
 - libadwaita named colors: https://gnome.pages.gitlab.gnome.org/libadwaita/doc/main/named-colors.html
 - Astro docs: https://docs.astro.build
 - GitHub Pages custom domains: https://docs.github.com/en/pages/configuring-a-custom-domain-for-your-github-pages-site

@@ -4,7 +4,7 @@
 **Date:** 2026-03-27  
 **Type:** Design plan  
 **Status:** Draft  
-**Exploration:** `docs/plans/2026-03-27-session-outcome-display-exploration.md` -- Proposal C with Proposal D's colored ending text signal
+**Exploration:** `docs/explorations/2026-03-27-session-outcome-display-exploration.md` -- Proposal C with Proposal D's colored ending text signal
 
 ## Problem
 

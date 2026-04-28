@@ -83,7 +83,7 @@
     <text x="50" y="31" class="cmd-label">/superpowers-extended-cc:brainstorming</text>
     <!-- Multiline args below -->
     <text x="50" y="54" class="msg-text" font-size="12" fill="#636363">Je veux créer un design plan pour les analytics</text>
-    <text x="50" y="72" class="msg-text" font-size="12" fill="#636363">docs/plans/2026-03-02-basic-analytics-exploration.md proposition A</text>
+    <text x="50" y="72" class="msg-text" font-size="12" fill="#636363">docs/explorations/2026-03-02-basic-analytics-exploration.md proposition A</text>
     <text x="50" y="86" class="msg-text" font-size="12" fill="#999999">…</text>
   </g>
 

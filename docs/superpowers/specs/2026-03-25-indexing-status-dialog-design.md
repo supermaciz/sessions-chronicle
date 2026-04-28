@@ -3,8 +3,8 @@
 **Issue:** [#94](https://github.com/supermaciz/sessions-chronicle/issues/94)  
 **Date:** 2026-03-25  
 **Type:** Design plan  
-**Exploration:** `docs/plans/2026-03-23-indexing-diagnostics-exploration.md` — Proposal B  
-**Prerequisite:** Proposal C implemented in [#95](https://github.com/supermaciz/sessions-chronicle/pull/95) (`docs/plans/2026-03-24-indexing-diagnostics-design.md`)
+**Exploration:** `docs/explorations/2026-03-23-indexing-diagnostics-exploration.md` — Proposal B  
+**Prerequisite:** Proposal C implemented in [#95](https://github.com/supermaciz/sessions-chronicle/pull/95) (`docs/explorations/2026-03-24-indexing-diagnostics-design.md`)
 
 ## Problem
 
@@ -361,8 +361,8 @@ No pipeline changes. New unit tests covered by `cargo test --all --no-fail-fast`
 
 - [GNOME HIG — Dialogs](https://developer.gnome.org/hig/patterns/feedback/dialogs.html)
 - [AdwDialog documentation](https://gnome.pages.gitlab.gnome.org/libadwaita/doc/main/class.Dialog.html)
-- Exploration: `docs/plans/2026-03-23-indexing-diagnostics-exploration.md` — Proposal B
-- Proposal C design: `docs/plans/2026-03-24-indexing-diagnostics-design.md`
+- Exploration: `docs/explorations/2026-03-23-indexing-diagnostics-exploration.md` — Proposal B
+- Proposal C design: `docs/explorations/2026-03-24-indexing-diagnostics-design.md`
 - `src/indexing_worker.rs` — current worker output and `PerSourceResult`
 - `src/app/handlers/indexing.rs` — current banner and toast logic
 - `src/ui/modals/preferences.rs` — modal pattern reference

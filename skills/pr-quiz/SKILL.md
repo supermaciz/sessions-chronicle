@@ -26,7 +26,7 @@ Do not use when user asks for direct refactoring or direct bugfix implementation
    - local repo + base branch (usually `main`)
 2. Build context before quiz:
    - PR intent (title, description, commits)
-   - related design doc in `docs/plans/*-design.md` or `*-exploration.md` when available
+   - related design doc in `docs/explorations/*-design.md` or `*-exploration.md` when available
    - full diff scope (`base...HEAD`)
 3. Reduce scope if diff is large (>15 files or >400 changed lines):
    - announce scope reduction

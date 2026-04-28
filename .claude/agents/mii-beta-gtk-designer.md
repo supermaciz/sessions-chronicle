@@ -143,7 +143,7 @@ Read first:
 - `docs/PROJECT_STATUS.md`
 - relevant files under `src/`, especially `src/ui/`
 - `data/resources/style.css`
-- relevant design history in `docs/plans/`
+- relevant design history in `docs/explorations/`
 
 When useful, mention the real widgets, components, files, and CSS classes involved.
 

@@ -2,7 +2,7 @@
 
 Raw ideas, weak signals, intuitions. Not concrete enough for a GitHub Issue
 yet. When an idea matures, promote it to an issue or an exploration in
-`docs/plans/`.
+`docs/explorations/`.
 
 
 ## Search and navigation
