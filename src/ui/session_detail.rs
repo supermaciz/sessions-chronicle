@@ -30,6 +30,8 @@ const INITIAL_PAGE_SIZE: usize = 75;
 const NEXT_PAGE_SIZE: usize = 100;
 const PREVIEW_LEN: usize = 2000;
 const RENDER_BATCH_SIZE: usize = 3;
+const RENDER_BATCH_DELAY_MS: u64 = 16;
+const DEFERRED_FIRST_PAGE_LOAD_DELAY_MS: u64 = 250;
 const DEFERRED_CLEAR_DELAY_MS: u64 = 250;
 
 /// Detail view for a single indexed session.
@@ -91,8 +93,10 @@ struct PendingRenderBatch {
     rendered_items: usize,
     batch_count: usize,
     queued_at: Instant,
+    last_batch_completed_at: Option<Instant>,
     total_push_duration: Duration,
     max_push_duration: Duration,
+    max_schedule_gap: Duration,
     row_kind_counts: RenderRowKindCounts,
     items: VecDeque<TranscriptItemInit>,
 }
@@ -115,6 +119,7 @@ struct RenderMetrics {
     total_duration_ms: u128,
     total_push_duration_ms: u128,
     max_push_duration_ms: u128,
+    max_schedule_gap_ms: u128,
     message_count: usize,
     tool_call_count: usize,
     tool_burst_count: usize,
@@ -169,6 +174,10 @@ pub enum SessionDetailMsg {
     MatchSegments(usize, Vec<usize>),
     RenderNextTranscriptBatch {
         request_id: u64,
+    },
+    StartDeferredFirstPageLoad {
+        request_id: u64,
+        session_id: String,
     },
     /// Stop active transcript work before the detail page is popped. The heavy
     /// widget teardown is deferred so it does not compete with the navigation
@@ -795,6 +804,24 @@ impl Component for SessionDetail {
             SessionDetailMsg::RenderNextTranscriptBatch { request_id } => {
                 self.render_next_transcript_batch(&sender, request_id);
             }
+            SessionDetailMsg::StartDeferredFirstPageLoad {
+                request_id,
+                session_id,
+            } => {
+                let active_session_matches = self
+                    .session
+                    .as_ref()
+                    .is_some_and(|session| session.id == session_id);
+                if request_id == self.transcript_request_id && active_session_matches {
+                    self.spawn_transcript_page_load(
+                        &sender,
+                        request_id,
+                        session_id,
+                        0,
+                        self.initial_page_size,
+                    );
+                }
+            }
             SessionDetailMsg::PrepareForNavigationBack => {
                 self.prepare_for_navigation_back(&sender);
             }
@@ -1168,12 +1195,17 @@ impl SessionDetail {
         self.clear_pending_boundary_tool_rows();
         self.clear_messages_safely();
 
-        self.spawn_transcript_page_load(
-            sender,
-            self.transcript_request_id,
-            session_id.to_string(),
-            0,
-            self.initial_page_size,
+        let request_id = self.transcript_request_id;
+        let session_id = session_id.to_string();
+        let input_sender = sender.input_sender().clone();
+        glib::timeout_add_local_once(
+            Duration::from_millis(DEFERRED_FIRST_PAGE_LOAD_DELAY_MS),
+            move || {
+                let _ = input_sender.send(SessionDetailMsg::StartDeferredFirstPageLoad {
+                    request_id,
+                    session_id,
+                });
+            },
         );
     }
 
@@ -1213,7 +1245,7 @@ impl SessionDetail {
 
     fn schedule_transcript_render_batch(&self, sender: &ComponentSender<Self>, request_id: u64) {
         let input_sender = sender.input_sender().clone();
-        glib::idle_add_local_once(move || {
+        glib::timeout_add_local_once(Duration::from_millis(RENDER_BATCH_DELAY_MS), move || {
             let _ = input_sender.send(SessionDetailMsg::RenderNextTranscriptBatch { request_id });
         });
     }
@@ -1270,8 +1302,10 @@ impl SessionDetail {
             rendered_items: 0,
             batch_count: 0,
             queued_at: Instant::now(),
+            last_batch_completed_at: None,
             total_push_duration: Duration::ZERO,
             max_push_duration: Duration::ZERO,
+            max_schedule_gap: Duration::ZERO,
             row_kind_counts,
             items: items.into(),
         });
@@ -1303,6 +1337,12 @@ impl SessionDetail {
             return;
         }
 
+        let schedule_gap = batch
+            .last_batch_completed_at
+            .map(|completed_at| completed_at.elapsed())
+            .unwrap_or(Duration::ZERO);
+        batch.max_schedule_gap = batch.max_schedule_gap.max(schedule_gap);
+
         let mut guard = self.messages.guard();
         let push_started_at = Instant::now();
         let mut rendered_this_batch = 0usize;
@@ -1327,8 +1367,10 @@ impl SessionDetail {
         let source_row_count = batch.source_row_count;
         let total_push_duration_ms = batch.total_push_duration.as_millis();
         let max_push_duration_ms = batch.max_push_duration.as_millis();
+        let max_schedule_gap_ms = batch.max_schedule_gap.as_millis();
         let total_duration_ms = batch.queued_at.elapsed().as_millis();
         let row_kind_counts = batch.row_kind_counts.clone();
+        batch.last_batch_completed_at = Some(Instant::now());
         drop(guard);
 
         if has_more_items {
@@ -1340,6 +1382,8 @@ impl SessionDetail {
                 total_items,
                 remaining_items,
                 push_duration_ms = push_duration.as_millis(),
+                schedule_gap_ms = schedule_gap.as_millis(),
+                max_schedule_gap_ms,
                 "Rendered transcript batch"
             );
             self.schedule_transcript_render_batch(sender, request_id);
@@ -1358,6 +1402,7 @@ impl SessionDetail {
                 tool_call_count = row_kind_counts.tool_call_count,
                 tool_burst_count = row_kind_counts.tool_burst_count,
                 subagent_count = row_kind_counts.subagent_count,
+                max_schedule_gap_ms,
                 "Finished rendering transcript page"
             );
             self.last_render_metrics = Some(RenderMetrics {
@@ -1369,6 +1414,7 @@ impl SessionDetail {
                 total_duration_ms,
                 total_push_duration_ms,
                 max_push_duration_ms,
+                max_schedule_gap_ms,
                 message_count: row_kind_counts.message_count,
                 tool_call_count: row_kind_counts.tool_call_count,
                 tool_burst_count: row_kind_counts.tool_burst_count,
@@ -2100,6 +2146,35 @@ fn synthetic_measurement(input: &str) -> String {\n\
 
         assert_eq!(items.len(), 2);
         assert!(matches!(items[1], TranscriptItemInit::ToolBurst(_)));
+    }
+
+    #[gtk::test]
+    fn session_detail_defers_initial_transcript_load_after_session_change() {
+        let temp_db = tempfile::NamedTempFile::new().expect("temp db");
+        seed_message_transcript(temp_db.path(), "test-session-123", INITIAL_PAGE_SIZE);
+
+        let controller = SessionDetail::builder().launch(temp_db.path().to_path_buf());
+        controller.emit(SessionDetailMsg::SetSession {
+            session: Box::new(build_test_session(None, None, 0, 0, 0)),
+            search_query: None,
+        });
+
+        pump_main_context(|| {
+            let parts = controller.state().get();
+            parts.model.session.is_some() && parts.model.loading_first_page
+        });
+
+        let context = gtk::glib::MainContext::default();
+        let deadline = std::time::Instant::now() + Duration::from_millis(50);
+        while std::time::Instant::now() < deadline {
+            context.iteration(false);
+            std::thread::sleep(Duration::from_millis(2));
+        }
+
+        let parts = controller.state().get();
+        assert_eq!(parts.model.loaded_count, 0);
+        assert_eq!(parts.model.messages.len(), 0);
+        assert!(parts.model.pending_render_batch.is_none());
     }
 
     #[gtk::test]
