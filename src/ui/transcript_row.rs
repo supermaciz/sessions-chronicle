@@ -282,8 +282,8 @@ fn render_content(
     match_count
 }
 
-fn should_render_markdown(role: Role, mode: RenderContentMode) -> bool {
-    role == Role::Assistant && mode == RenderContentMode::Full
+fn should_render_markdown(role: Role, _mode: RenderContentMode) -> bool {
+    role == Role::Assistant
 }
 
 fn count_tool_call_matches(init: &ToolCallItemInit) -> usize {
@@ -1611,8 +1611,8 @@ mod tests {
     }
 
     #[test]
-    fn should_render_markdown_only_for_assistant_full_content() {
-        assert!(!should_render_markdown(
+    fn should_render_markdown_for_assistant_preview_and_full_content() {
+        assert!(should_render_markdown(
             Role::Assistant,
             RenderContentMode::Preview
         ));
