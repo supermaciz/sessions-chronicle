@@ -50,6 +50,7 @@ pub struct SessionDetail {
     loading_next_page: bool,
     transcript_request_id: u64,
     pending_render_batch: Option<PendingRenderBatch>,
+    last_render_metrics: Option<RenderMetrics>,
     pending_boundary_tool_rows: Vec<crate::database::TranscriptItemRow>,
     search_query: Option<String>,
     /// Keyed by top-level display index in the transcript factory.
@@ -92,7 +93,28 @@ struct PendingRenderBatch {
     queued_at: Instant,
     total_push_duration: Duration,
     max_push_duration: Duration,
+    row_kind_counts: RenderRowKindCounts,
     items: VecDeque<TranscriptItemInit>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+struct RenderRowKindCounts {
+    message_count: usize,
+    tool_call_count: usize,
+    tool_burst_count: usize,
+    subagent_count: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct RenderMetrics {
+    offset: usize,
+    source_row_count: usize,
+    display_item_count: usize,
+    batch_count: usize,
+    message_count: usize,
+    tool_call_count: usize,
+    tool_burst_count: usize,
+    subagent_count: usize,
 }
 
 impl std::fmt::Debug for PendingRenderBatch {
@@ -687,6 +709,7 @@ impl Component for SessionDetail {
             loading_next_page: false,
             transcript_request_id: 0,
             pending_render_batch: None,
+            last_render_metrics: None,
             pending_boundary_tool_rows: Vec::new(),
             search_query: None,
             match_segments: BTreeMap::new(),
@@ -1117,6 +1140,7 @@ impl SessionDetail {
     fn invalidate_transcript_requests(&mut self) {
         self.transcript_request_id = self.transcript_request_id.wrapping_add(1);
         self.pending_render_batch = None;
+        self.last_render_metrics = None;
     }
 
     /// Update internal inspector visibility and notify the parent.  Idempotent:
@@ -1221,13 +1245,19 @@ impl SessionDetail {
         items: Vec<TranscriptItemInit>,
     ) {
         let total_items = items.len();
+        let row_kind_counts = Self::count_render_item_kinds(&items);
         tracing::info!(
             request_id,
             offset,
             source_row_count,
             display_item_count = total_items,
+            message_count = row_kind_counts.message_count,
+            tool_call_count = row_kind_counts.tool_call_count,
+            tool_burst_count = row_kind_counts.tool_burst_count,
+            subagent_count = row_kind_counts.subagent_count,
             "Queued transcript render batch"
         );
+        self.last_render_metrics = None;
         self.pending_render_batch = Some(PendingRenderBatch {
             request_id,
             offset,
@@ -1238,9 +1268,23 @@ impl SessionDetail {
             queued_at: Instant::now(),
             total_push_duration: Duration::ZERO,
             max_push_duration: Duration::ZERO,
+            row_kind_counts,
             items: items.into(),
         });
         self.schedule_transcript_render_batch(sender, request_id);
+    }
+
+    fn count_render_item_kinds(items: &[TranscriptItemInit]) -> RenderRowKindCounts {
+        let mut counts = RenderRowKindCounts::default();
+        for item in items {
+            match item {
+                TranscriptItemInit::Message(_) => counts.message_count += 1,
+                TranscriptItemInit::ToolCall(_) => counts.tool_call_count += 1,
+                TranscriptItemInit::ToolBurst(_) => counts.tool_burst_count += 1,
+                TranscriptItemInit::Subagent(_) => counts.subagent_count += 1,
+            }
+        }
+        counts
     }
 
     fn render_next_transcript_batch(&mut self, sender: &ComponentSender<Self>, request_id: u64) {
@@ -1280,6 +1324,7 @@ impl SessionDetail {
         let total_push_duration_ms = batch.total_push_duration.as_millis();
         let max_push_duration_ms = batch.max_push_duration.as_millis();
         let total_duration_ms = batch.queued_at.elapsed().as_millis();
+        let row_kind_counts = batch.row_kind_counts.clone();
         drop(guard);
 
         if has_more_items {
@@ -1305,8 +1350,22 @@ impl SessionDetail {
                 total_push_duration_ms,
                 max_push_duration_ms,
                 total_duration_ms,
+                message_count = row_kind_counts.message_count,
+                tool_call_count = row_kind_counts.tool_call_count,
+                tool_burst_count = row_kind_counts.tool_burst_count,
+                subagent_count = row_kind_counts.subagent_count,
                 "Finished rendering transcript page"
             );
+            self.last_render_metrics = Some(RenderMetrics {
+                offset,
+                source_row_count,
+                display_item_count: total_items,
+                batch_count,
+                message_count: row_kind_counts.message_count,
+                tool_call_count: row_kind_counts.tool_call_count,
+                tool_burst_count: row_kind_counts.tool_burst_count,
+                subagent_count: row_kind_counts.subagent_count,
+            });
             self.pending_render_batch = None;
         }
     }
@@ -1780,6 +1839,82 @@ mod tests {
         }
     }
 
+    fn transcript_message_row(
+        item_index: i64,
+        role: crate::models::Role,
+        content: &str,
+    ) -> crate::database::TranscriptItemRow {
+        crate::database::TranscriptItemRow {
+            item_index,
+            kind: crate::models::TranscriptItemKind::Message,
+            reasoning_preview: crate::models::ReasoningPreview::default(),
+            message_index: Some(item_index),
+            role: Some(role),
+            content_preview: Some(content.to_string()),
+            content_len: Some(content.len() as i64),
+            timestamp: Some(item_index),
+            model: None,
+            tool_call_id: None,
+            tool_name: None,
+            tool_status: None,
+            tool_summary: None,
+            tool_input_json: None,
+            tool_output_text: None,
+            duration_ms: None,
+            subagent_id: None,
+            subagent_title: None,
+            subagent_prompt: None,
+        }
+    }
+
+    fn transcript_tool_row(item_index: i64, tool_name: &str) -> crate::database::TranscriptItemRow {
+        crate::database::TranscriptItemRow {
+            item_index,
+            kind: crate::models::TranscriptItemKind::ToolCall,
+            reasoning_preview: crate::models::ReasoningPreview::default(),
+            message_index: None,
+            role: None,
+            content_preview: None,
+            content_len: None,
+            timestamp: None,
+            model: None,
+            tool_call_id: Some(format!("call-{item_index}")),
+            tool_name: Some(tool_name.to_string()),
+            tool_status: Some(crate::models::ToolCallStatus::Completed),
+            tool_summary: Some(format!("{tool_name} summary")),
+            tool_input_json: Some("{}".to_string()),
+            tool_output_text: None,
+            duration_ms: Some(1),
+            subagent_id: None,
+            subagent_title: None,
+            subagent_prompt: None,
+        }
+    }
+
+    fn transcript_subagent_row(item_index: i64, title: &str) -> crate::database::TranscriptItemRow {
+        crate::database::TranscriptItemRow {
+            item_index,
+            kind: crate::models::TranscriptItemKind::Subagent,
+            reasoning_preview: crate::models::ReasoningPreview::default(),
+            message_index: None,
+            role: None,
+            content_preview: None,
+            content_len: None,
+            timestamp: None,
+            model: None,
+            tool_call_id: None,
+            tool_name: None,
+            tool_status: None,
+            tool_summary: None,
+            tool_input_json: None,
+            tool_output_text: None,
+            duration_ms: None,
+            subagent_id: Some(format!("subagent-{item_index}")),
+            subagent_title: Some(title.to_string()),
+            subagent_prompt: Some("investigate".to_string()),
+        }
+    }
+
     #[test]
     fn build_display_items_groups_two_tool_calls_into_one_tool_burst() {
         let rows = vec![
@@ -1911,6 +2046,66 @@ mod tests {
 
         let parts = controller.state().get();
         assert!(!parts.model.has_more_messages);
+    }
+
+    #[gtk::test]
+    fn session_detail_records_render_batch_measurements() {
+        let temp_db = tempfile::NamedTempFile::new().expect("temp db");
+        seed_message_transcript(temp_db.path(), "test-session-123", INITIAL_PAGE_SIZE + 5);
+
+        let controller = SessionDetail::builder().launch(temp_db.path().to_path_buf());
+        controller.emit(SessionDetailMsg::SetSession {
+            session: Box::new(build_test_session(None, None, 0, 0, 0)),
+            search_query: None,
+        });
+
+        pump_main_context(|| {
+            let parts = controller.state().get();
+            parts.model.pending_render_batch.is_none()
+                && parts.model.messages.len() == INITIAL_PAGE_SIZE
+        });
+
+        let parts = controller.state().get();
+        let metrics = parts
+            .model
+            .last_render_metrics
+            .as_ref()
+            .expect("first page should record render metrics");
+        assert_eq!(metrics.offset, 0);
+        assert_eq!(metrics.source_row_count, INITIAL_PAGE_SIZE);
+        assert_eq!(metrics.display_item_count, INITIAL_PAGE_SIZE);
+        assert_eq!(
+            metrics.batch_count,
+            INITIAL_PAGE_SIZE.div_ceil(RENDER_BATCH_SIZE)
+        );
+        assert_eq!(metrics.message_count, INITIAL_PAGE_SIZE);
+        assert_eq!(metrics.tool_call_count, 0);
+        assert_eq!(metrics.tool_burst_count, 0);
+        assert_eq!(metrics.subagent_count, 0);
+    }
+
+    #[test]
+    fn render_item_kind_counts_capture_heterogeneous_rows() {
+        let rows = vec![
+            transcript_message_row(0, crate::models::Role::Assistant, "hello"),
+            transcript_tool_row(1, "Read"),
+            transcript_tool_row(2, "Edit"),
+            transcript_subagent_row(3, "Explore"),
+        ];
+
+        let items = SessionDetail::build_display_items(
+            rows,
+            "session-1",
+            None,
+            Arc::new(PathBuf::from("/tmp/test.db")),
+            0,
+        );
+        let counts = SessionDetail::count_render_item_kinds(&items);
+
+        assert_eq!(counts.message_count, 1);
+        assert_eq!(counts.tool_call_count, 0);
+        assert_eq!(counts.tool_burst_count, 1);
+        assert_eq!(counts.subagent_count, 1);
     }
 
     #[test]
