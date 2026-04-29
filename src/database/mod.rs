@@ -54,6 +54,11 @@ pub struct TranscriptItemRow {
     pub subagent_prompt: Option<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MatchPosition {
+    pub item_index: i64,
+}
+
 fn session_from_row(row: &Row) -> rusqlite::Result<Session> {
     let tool_value: String = row.get("tool")?;
     let tool = AiAssistant::from_storage(&tool_value).unwrap_or(AiAssistant::ClaudeCode);
@@ -183,6 +188,78 @@ pub fn search_sessions_for_filter(
             }
         }
     }
+}
+
+pub fn find_session_match_positions(
+    db: &Connection,
+    session_id: &str,
+    query: &str,
+) -> Result<Vec<MatchPosition>> {
+    let query = query.trim();
+    if query.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    match find_session_match_positions_with_query(db, session_id, query) {
+        Ok(positions) => Ok(positions),
+        Err(err) => {
+            if let Some(sanitized) = sanitize_search_query(query) {
+                tracing::warn!(
+                    "Session detail search query failed, retrying with sanitized query '{}': {}",
+                    sanitized,
+                    err
+                );
+                match find_session_match_positions_with_query(db, session_id, &sanitized) {
+                    Ok(positions) => Ok(positions),
+                    Err(retry_err) => {
+                        tracing::warn!(
+                            "Sanitized session detail search query failed '{}': {}",
+                            sanitized,
+                            retry_err
+                        );
+                        Ok(Vec::new())
+                    }
+                }
+            } else {
+                tracing::warn!(
+                    "Session detail search query failed and could not be sanitized: {}",
+                    err
+                );
+                Ok(Vec::new())
+            }
+        }
+    }
+}
+
+fn find_session_match_positions_with_query(
+    db: &Connection,
+    session_id: &str,
+    query: &str,
+) -> Result<Vec<MatchPosition>> {
+    let mut stmt = db.prepare(
+        "SELECT ti.item_index
+         FROM messages_fts
+         JOIN messages m ON m.id = messages_fts.rowid
+         JOIN transcript_items ti
+           ON ti.session_id = m.session_id
+          AND ti.message_index = m.message_index
+         WHERE messages_fts MATCH ?1
+           AND m.session_id = ?2
+         ORDER BY ti.item_index ASC",
+    )?;
+
+    let rows = stmt.query_map(rusqlite::params![query, session_id], |row| {
+        Ok(MatchPosition {
+            item_index: row.get(0)?,
+        })
+    })?;
+
+    let mut positions = Vec::new();
+    for row in rows {
+        positions.push(row?);
+    }
+
+    Ok(positions)
 }
 
 fn search_sessions_with_query(

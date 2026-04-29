@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use sessions_chronicle::database::schema::initialize_database;
-use sessions_chronicle::database::search_sessions_for_filter;
+use sessions_chronicle::database::{find_session_match_positions, search_sessions_for_filter};
 use sessions_chronicle::models::{AiAssistant, ProjectFilter};
 
 struct TempDatabase {
@@ -149,6 +149,48 @@ impl TempDatabase {
     }
 }
 
+fn seed_match_session(db: &TempDatabase, session_id: &str, tool: &str, last_updated: i64) {
+    db.connection
+        .execute(
+            "INSERT INTO sessions (id, tool, project_path, project_id, start_time, message_count, file_path, last_updated)
+             VALUES (?1, ?2, ?3, NULL, ?4, ?5, ?6, ?7)",
+            rusqlite::params![
+                session_id,
+                tool,
+                Some(format!("/projects/{session_id}")),
+                last_updated - 10,
+                0_i64,
+                format!("/tmp/{session_id}.jsonl"),
+                last_updated,
+            ],
+        )
+        .expect("Failed to insert match-position session");
+}
+
+fn insert_message_item(
+    db: &TempDatabase,
+    session_id: &str,
+    message_index: i64,
+    item_index: i64,
+    content: &str,
+) {
+    db.connection
+        .execute(
+            "INSERT INTO messages (session_id, message_index, role, content, timestamp, model)
+             VALUES (?1, ?2, 'assistant', ?3, ?4, NULL)",
+            rusqlite::params![session_id, message_index, content, message_index],
+        )
+        .expect("Failed to insert message item message");
+
+    db.connection
+        .execute(
+            "INSERT INTO transcript_items (session_id, item_index, kind, message_index)
+             VALUES (?1, ?2, 'message', ?3)",
+            rusqlite::params![session_id, item_index, message_index],
+        )
+        .expect("Failed to insert message transcript item");
+}
+
 impl Drop for TempDatabase {
     fn drop(&mut self) {
         let _ = std::fs::remove_file(&self.path);
@@ -207,4 +249,84 @@ fn search_sessions_sanitizes_invalid_query() {
     assert_eq!(sessions.len(), 1);
     assert_eq!(sessions[0].id, "session-a");
     assert_eq!(sessions[0].project_id, Some(1));
+}
+
+#[test]
+fn find_session_match_positions_returns_ordered_message_matches() {
+    let db = TempDatabase::new();
+    seed_match_session(&db, "session-match", "claude_code", 100);
+    insert_message_item(&db, "session-match", 0, 8, "needle later item");
+    insert_message_item(&db, "session-match", 1, 2, "needle earlier item");
+    insert_message_item(&db, "session-match", 2, 5, "no matching token here");
+    insert_message_item(&db, "session-match", 3, 13, "needle final item");
+
+    let positions = find_session_match_positions(&db.connection, "session-match", "needle")
+        .expect("match position query should succeed");
+    let item_indexes: Vec<i64> = positions
+        .iter()
+        .map(|position| position.item_index)
+        .collect();
+
+    assert_eq!(item_indexes, vec![2, 8, 13]);
+}
+
+#[test]
+fn find_session_match_positions_filters_by_session() {
+    let db = TempDatabase::new();
+    seed_match_session(&db, "session-one", "claude_code", 100);
+    seed_match_session(&db, "session-two", "opencode", 200);
+    insert_message_item(&db, "session-one", 0, 4, "shared needle in first session");
+    insert_message_item(&db, "session-two", 0, 7, "shared needle in second session");
+
+    let positions = find_session_match_positions(&db.connection, "session-one", "needle")
+        .expect("match position query should succeed");
+
+    assert_eq!(positions.len(), 1);
+    assert_eq!(positions[0].item_index, 4);
+}
+
+#[test]
+fn find_session_match_positions_retries_sanitized_invalid_query() {
+    let db = TempDatabase::new();
+    seed_match_session(&db, "session-sanitize", "claude_code", 100);
+    insert_message_item(&db, "session-sanitize", 0, 3, "alpha survives sanitization");
+
+    let positions = find_session_match_positions(&db.connection, "session-sanitize", "\"alpha")
+        .expect("sanitized query should not surface an FTS syntax error");
+
+    assert_eq!(positions.len(), 1);
+    assert_eq!(positions[0].item_index, 3);
+}
+
+#[test]
+fn find_session_match_positions_invalid_punctuation_only_query() {
+    let db = TempDatabase::new();
+    seed_match_session(&db, "session-punctuation", "claude_code", 100);
+    insert_message_item(
+        &db,
+        "session-punctuation",
+        0,
+        3,
+        "alpha exists but punctuation does not",
+    );
+
+    let positions = find_session_match_positions(&db.connection, "session-punctuation", "\"*()")
+        .expect("punctuation-only query should return an empty result");
+
+    assert!(positions.is_empty());
+}
+
+#[test]
+fn find_session_match_positions_empty_query() {
+    let db = TempDatabase::new();
+    seed_match_session(&db, "session-empty", "claude_code", 100);
+    insert_message_item(&db, "session-empty", 0, 3, "alpha exists");
+
+    let blank = find_session_match_positions(&db.connection, "session-empty", "   ")
+        .expect("blank query should return an empty result");
+    let empty = find_session_match_positions(&db.connection, "session-empty", "")
+        .expect("empty query should return an empty result");
+
+    assert!(blank.is_empty());
+    assert!(empty.is_empty());
 }
