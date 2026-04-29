@@ -1967,11 +1967,7 @@ impl SessionDetail {
             return;
         };
 
-        if self.loading_first_page
-            || self.loading_next_page
-            || self.pending_render_batch.is_some()
-            || !self.has_more_messages
-        {
+        if self.is_transcript_loading() || !self.has_more_messages {
             return;
         }
 
