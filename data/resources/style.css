@@ -125,6 +125,16 @@
   min-width: 60px;
 }
 
+.search-nav-bar .search-jump-spinner {
+  min-width: 16px;
+  min-height: 16px;
+}
+
+.search-nav-bar .loaded-match-counter {
+  font-size: 0.9em;
+  font-variant-numeric: tabular-nums;
+}
+
 /* Expand/collapse toggle for truncated messages */
 .message-row .expand-toggle {
   padding: 2px 8px;
