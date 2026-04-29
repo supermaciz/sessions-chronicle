@@ -49,6 +49,15 @@
   </categories>
   <content_rating type="oars-1.1" />
   <releases>
+    <release version="0.4.7" date="2026-04-29">
+      <description>
+        <p>Improves session detail smoothness and panel layout.</p>
+        <ul>
+          <li>Improve render fluidity in session detail view</li>
+          <li>Split filters and inspector into independent panes</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.4.6" date="2026-04-26">
       <description>
         <p>Improves large session responsiveness and release publishing metadata.</p>
