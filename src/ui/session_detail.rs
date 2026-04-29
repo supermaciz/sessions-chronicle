@@ -1,5 +1,5 @@
 use std::cell::Cell;
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -55,14 +55,9 @@ pub struct SessionDetail {
     last_render_metrics: Option<RenderMetrics>,
     pending_boundary_tool_rows: Vec<crate::database::TranscriptItemRow>,
     search_query: Option<String>,
-    /// Keyed by top-level display index in the transcript factory.
-    ///
-    /// This is intentionally a UI index, not the original database
-    /// `transcript_items.item_index`, because grouped tool bursts collapse
-    /// multiple source rows into one displayed row.
-    match_segments: BTreeMap<usize, Vec<usize>>,
+    match_positions: Vec<crate::database::MatchPosition>,
+    display_targets_by_item_index: BTreeMap<i64, ScrollTarget>,
     current_match: usize,
-    total_matches: usize,
     scroll_to_item: Cell<Option<ScrollTarget>>,
     pending_toast: Cell<bool>,
     inspector: Controller<ToolInspectorPane>,
@@ -78,6 +73,11 @@ pub struct SessionDetail {
 struct ScrollTarget {
     display_index: usize,
     child_index: Option<usize>,
+}
+
+struct PreparedTranscriptItems {
+    items: Vec<TranscriptItemInit>,
+    display_targets_by_item_index: BTreeMap<i64, ScrollTarget>,
 }
 
 struct BoundaryAppendPlan {
@@ -638,7 +638,7 @@ impl Component for SessionDetail {
                             set_tooltip_text: Some("Previous match"),
                             add_css_class: "flat",
                             #[watch]
-                            set_sensitive: model.total_matches > 0,
+                            set_sensitive: !model.match_positions.is_empty(),
                             connect_clicked => SessionDetailMsg::PrevMatch,
                         },
 
@@ -647,8 +647,8 @@ impl Component for SessionDetail {
                             add_css_class: "match-counter",
                             set_halign: gtk::Align::Center,
                             #[watch]
-                            set_label: &if model.total_matches > 0 {
-                                format!("{} / {}", model.current_match + 1, model.total_matches)
+                            set_label: &if !model.match_positions.is_empty() {
+                                format!("{} / {}", model.current_match + 1, model.match_positions.len())
                             } else {
                                 "0 matches".to_string()
                             },
@@ -659,7 +659,7 @@ impl Component for SessionDetail {
                             set_tooltip_text: Some("Next match"),
                             add_css_class: "flat",
                             #[watch]
-                            set_sensitive: model.total_matches > 0,
+                            set_sensitive: !model.match_positions.is_empty(),
                             connect_clicked => SessionDetailMsg::NextMatch,
                         },
 
@@ -724,9 +724,9 @@ impl Component for SessionDetail {
             last_render_metrics: None,
             pending_boundary_tool_rows: Vec::new(),
             search_query: None,
-            match_segments: BTreeMap::new(),
+            match_positions: Vec::new(),
+            display_targets_by_item_index: BTreeMap::new(),
             current_match: 0,
-            total_matches: 0,
             scroll_to_item: Cell::new(None),
             pending_toast: Cell::new(false),
             inspector,
@@ -783,23 +783,19 @@ impl Component for SessionDetail {
                 self.load_next_page(&sender);
             }
             SessionDetailMsg::PrevMatch => {
-                if self.total_matches > 0 {
+                if !self.match_positions.is_empty() {
                     self.current_match = match self.current_match {
-                        0 => self.total_matches - 1,
+                        0 => self.match_positions.len() - 1,
                         n => n - 1,
                     };
-                    self.scroll_to_current_match();
                 }
             }
             SessionDetailMsg::NextMatch => {
-                if self.total_matches > 0 {
-                    self.current_match = (self.current_match + 1) % self.total_matches;
-                    self.scroll_to_current_match();
+                if !self.match_positions.is_empty() {
+                    self.current_match = (self.current_match + 1) % self.match_positions.len();
                 }
             }
-            SessionDetailMsg::MatchSegments(display_index, segments) => {
-                self.update_match_segments(display_index, segments);
-            }
+            SessionDetailMsg::MatchSegments(_, _) => {}
             SessionDetailMsg::RenderNextTranscriptBatch { request_id } => {
                 self.render_next_transcript_batch(&sender, request_id);
             }
@@ -1142,29 +1138,101 @@ impl Component for SessionDetail {
 }
 
 impl SessionDetail {
-    /// Converts database transcript rows into display items, assigning
-    /// factory display indexes (starting from `base_display_index`) for
-    /// search-match bookkeeping.
+    fn current_match_item_indexes(&self) -> BTreeSet<i64> {
+        self.match_positions
+            .iter()
+            .map(|position| position.item_index)
+            .collect()
+    }
+
+    fn display_targets_for_item(
+        display_index: usize,
+        item: &DisplayTranscriptItem,
+    ) -> BTreeMap<i64, ScrollTarget> {
+        let mut targets = BTreeMap::new();
+        match item {
+            DisplayTranscriptItem::Single(row) => {
+                targets.insert(
+                    row.item_index,
+                    ScrollTarget {
+                        display_index,
+                        child_index: None,
+                    },
+                );
+            }
+            DisplayTranscriptItem::ToolBurst(burst) => {
+                for (child_index, row) in burst.rows.iter().enumerate() {
+                    targets.insert(
+                        row.item_index,
+                        ScrollTarget {
+                            display_index,
+                            child_index: Some(child_index),
+                        },
+                    );
+                }
+            }
+        }
+        targets
+    }
+
+    fn remove_display_targets_for_items(&mut self, items: &[DisplayTranscriptItem]) {
+        for item in items {
+            match item {
+                DisplayTranscriptItem::Single(row) => {
+                    self.display_targets_by_item_index.remove(&row.item_index);
+                }
+                DisplayTranscriptItem::ToolBurst(burst) => {
+                    for row in &burst.rows {
+                        self.display_targets_by_item_index.remove(&row.item_index);
+                    }
+                }
+            }
+        }
+    }
+
+    fn extend_display_targets(&mut self, targets: BTreeMap<i64, ScrollTarget>) {
+        self.display_targets_by_item_index.extend(targets);
+    }
+
     fn build_display_items(
         rows: Vec<crate::database::TranscriptItemRow>,
         session_id: &str,
         highlight_query: Option<String>,
+        matched_item_indexes: &BTreeSet<i64>,
         db_path: Arc<PathBuf>,
         base_display_index: usize,
-    ) -> Vec<TranscriptItemInit> {
-        group_transcript_rows(rows)
-            .into_iter()
-            .enumerate()
-            .map(|(offset, item)| {
-                transcript_item_init_from_display_item(
-                    base_display_index + offset,
-                    &item,
-                    session_id,
-                    highlight_query.clone(),
-                    db_path.clone(),
-                )
-            })
-            .collect()
+    ) -> PreparedTranscriptItems {
+        let mut items = Vec::new();
+        let mut display_targets_by_item_index = BTreeMap::new();
+
+        for (offset, item) in group_transcript_rows(rows).into_iter().enumerate() {
+            let display_index = base_display_index + offset;
+            display_targets_by_item_index
+                .extend(Self::display_targets_for_item(display_index, &item));
+
+            let item_highlight = match &item {
+                DisplayTranscriptItem::Single(row)
+                    if row.kind == crate::models::TranscriptItemKind::Message
+                        && matched_item_indexes.contains(&row.item_index) =>
+                {
+                    highlight_query.clone()
+                }
+                _ => None,
+            };
+
+            items.push(transcript_item_init_from_display_item(
+                display_index,
+                &item,
+                session_id,
+                item_highlight,
+                db_path.clone(),
+            ));
+        }
+
+        PreparedTranscriptItems {
+            items,
+            display_targets_by_item_index,
+        }
     }
 
     fn invalidate_transcript_requests(&mut self) {
@@ -1466,17 +1534,33 @@ impl SessionDetail {
         self.clear_messages_safely();
         let build_started_at = Instant::now();
         let source_row_count = rows.len();
-        let items = Self::build_display_items(rows, session_id, highlight, db_path, 0);
+        let matched_item_indexes = self.current_match_item_indexes();
+        let prepared = Self::build_display_items(
+            rows,
+            session_id,
+            highlight,
+            &matched_item_indexes,
+            db_path,
+            0,
+        );
+        let display_item_count = prepared.items.len();
+        self.extend_display_targets(prepared.display_targets_by_item_index);
         tracing::info!(
             request_id,
             session_id,
             offset = 0usize,
             source_row_count,
-            display_item_count = items.len(),
+            display_item_count,
             build_duration_ms = build_started_at.elapsed().as_millis(),
             "Prepared first transcript page"
         );
-        self.queue_transcript_items_for_render(sender, request_id, 0, source_row_count, items);
+        self.queue_transcript_items_for_render(
+            sender,
+            request_id,
+            0,
+            source_row_count,
+            prepared.items,
+        );
     }
 
     fn handle_transcript_page_error(&mut self, session_id: &str, offset: usize, err: String) {
@@ -1564,9 +1648,8 @@ impl SessionDetail {
     }
 
     fn reset_search_matches(&mut self) {
-        self.match_segments.clear();
+        self.match_positions.clear();
         self.current_match = 0;
-        self.total_matches = 0;
     }
 
     fn reload_current_session(&mut self, sender: &ComponentSender<Self>) {
@@ -1574,11 +1657,6 @@ impl SessionDetail {
             let session_id = session.id.clone();
             self.start_first_page_load(sender, &session_id, false);
         }
-    }
-
-    fn scroll_to_current_match(&self) {
-        let target = Self::find_match_target(&self.match_segments, self.current_match);
-        self.scroll_to_item.set(Some(target));
     }
 
     fn clear_pending_boundary_tool_rows(&mut self) {
@@ -1680,80 +1758,91 @@ impl SessionDetail {
         } = self.regroup_next_page_boundary(rows);
         let replacement_item_count = replacement_items.len();
 
+        let need_replacement = !replacement_items.is_empty();
+        if need_replacement {
+            self.remove_display_targets_for_items(&replacement_items);
+        }
+        let matched_item_indexes = self.current_match_item_indexes();
+
+        let pre_replacement_len = self.messages.len() - if need_replacement { 1 } else { 0 };
+
+        let mut replacement_targets = BTreeMap::new();
+        let mut replacement_inits = Vec::new();
+        if need_replacement {
+            for (offset, item) in replacement_items.iter().enumerate() {
+                let display_index = pre_replacement_len + offset;
+                replacement_targets.extend(Self::display_targets_for_item(display_index, item));
+                let item_highlight = match item {
+                    DisplayTranscriptItem::Single(row)
+                        if row.kind == crate::models::TranscriptItemKind::Message
+                            && matched_item_indexes.contains(&row.item_index) =>
+                    {
+                        highlight.clone()
+                    }
+                    _ => None,
+                };
+                replacement_inits.push(transcript_item_init_from_display_item(
+                    display_index,
+                    item,
+                    session_id,
+                    item_highlight,
+                    db_path.clone(),
+                ));
+            }
+        }
+
+        let page_start = pre_replacement_len + replacement_inits.len();
+        let prepared = Self::build_display_items(
+            rows,
+            session_id,
+            highlight,
+            &matched_item_indexes,
+            db_path,
+            page_start,
+        );
+        let display_item_count = prepared.items.len();
+
         {
             let mut guard = self.messages.guard();
-
-            if !replacement_items.is_empty() {
+            if need_replacement {
                 let _ = guard.pop_back();
-                let start_index = guard.len();
-                for item in replacement_items
-                    .into_iter()
-                    .enumerate()
-                    .map(|(offset, item)| {
-                        transcript_item_init_from_display_item(
-                            start_index + offset,
-                            &item,
-                            session_id,
-                            highlight.clone(),
-                            db_path.clone(),
-                        )
-                    })
-                {
+                for item in replacement_inits {
                     guard.push_back(item);
                 }
             }
-
-            let start_index = guard.len();
-            let items =
-                Self::build_display_items(rows, session_id, highlight, db_path, start_index);
-            tracing::info!(
-                request_id,
-                session_id,
-                offset,
-                source_row_count = source_len,
-                replacement_item_count,
-                display_item_count = items.len(),
-                prepare_duration_ms = apply_started_at.elapsed().as_millis(),
-                "Prepared next transcript page"
-            );
             drop(guard);
-            self.queue_transcript_items_for_render(sender, request_id, offset, source_len, items);
         }
+
+        self.extend_display_targets(replacement_targets);
+        self.extend_display_targets(prepared.display_targets_by_item_index);
+        tracing::info!(
+            request_id,
+            session_id,
+            offset,
+            source_row_count = source_len,
+            replacement_item_count,
+            display_item_count,
+            prepare_duration_ms = apply_started_at.elapsed().as_millis(),
+            "Prepared next transcript page"
+        );
+        self.queue_transcript_items_for_render(
+            sender,
+            request_id,
+            offset,
+            source_len,
+            prepared.items,
+        );
 
         if !self.has_more_messages {
             self.clear_pending_boundary_tool_rows();
         }
     }
 
-    /// Merges per-row match counts reported by child rows into global search
-    /// navigation state.
-    ///
-    /// `display_index` is the current top-level factory position for the row,
-    /// not the original database `item_index`.
-    fn update_match_segments(&mut self, display_index: usize, segments: Vec<usize>) {
-        let was_empty = self.total_matches == 0;
-        self.match_segments.insert(display_index, segments);
-        self.total_matches = self
-            .match_segments
-            .values()
-            .map(|parts| parts.iter().sum::<usize>())
-            .sum();
-        if was_empty && self.total_matches > 0 && self.search_query.is_some() {
-            self.current_match = 0;
-            let target = Self::find_match_target(&self.match_segments, 0);
-            self.scroll_to_item.set(Some(target));
-        }
-        self.current_match = match self.total_matches {
-            0 => 0,
-            n if self.current_match >= n => n - 1,
-            _ => self.current_match,
-        };
-    }
-
     /// Clear transcript rows after releasing focus from any currently-focused row widget.
     fn clear_messages_safely(&mut self) {
         self.release_focus_from_transcript_if_needed();
         self.messages.guard().clear();
+        self.display_targets_by_item_index.clear();
     }
 
     /// Avoid GTK focus traversing a row subtree while it is being replaced.
@@ -1807,36 +1896,6 @@ impl SessionDetail {
         let vadj = scrolled_window.vadjustment();
         let target_y = (point.y() as f64) - (vadj.page_size() / 3.0);
         vadj.set_value(target_y.max(0.0));
-    }
-
-    /// Maps a global match ordinal to the row, and optional burst child,
-    /// containing that match.
-    fn find_match_target(
-        segments_by_display_index: &BTreeMap<usize, Vec<usize>>,
-        global_index: usize,
-    ) -> ScrollTarget {
-        let mut remaining = global_index;
-
-        for (&display_index, segments) in segments_by_display_index {
-            for (child_index, count) in segments.iter().copied().enumerate() {
-                if remaining < count {
-                    return ScrollTarget {
-                        display_index,
-                        child_index: (segments.len() > 1).then_some(child_index),
-                    };
-                }
-                remaining = remaining.saturating_sub(count);
-            }
-        }
-
-        ScrollTarget {
-            display_index: segments_by_display_index
-                .keys()
-                .last()
-                .copied()
-                .unwrap_or(0),
-            child_index: None,
-        }
     }
 }
 
@@ -2092,81 +2151,100 @@ fn synthetic_measurement(input: &str) -> String {\n\
     #[test]
     fn build_display_items_groups_two_tool_calls_into_one_tool_burst() {
         let rows = vec![
-            crate::database::TranscriptItemRow {
-                item_index: 0,
-                kind: crate::models::TranscriptItemKind::Message,
-                reasoning_preview: crate::models::ReasoningPreview::default(),
-                message_index: Some(0),
-                role: Some(crate::models::Role::Assistant),
-                content_preview: Some("hello".to_string()),
-                content_len: Some(5),
-                timestamp: Some(0),
-                model: None,
-                tool_call_id: None,
-                tool_name: None,
-                tool_status: None,
-                tool_summary: None,
-                tool_input_json: None,
-                tool_output_text: None,
-                duration_ms: None,
-                subagent_id: None,
-                subagent_title: None,
-                subagent_prompt: None,
-            },
-            crate::database::TranscriptItemRow {
-                item_index: 1,
-                kind: crate::models::TranscriptItemKind::ToolCall,
-                reasoning_preview: crate::models::ReasoningPreview::default(),
-                message_index: None,
-                role: None,
-                content_preview: None,
-                content_len: None,
-                timestamp: None,
-                model: None,
-                tool_call_id: Some("call-1".to_string()),
-                tool_name: Some("Read".to_string()),
-                tool_status: Some(crate::models::ToolCallStatus::Completed),
-                tool_summary: Some("read a file".to_string()),
-                tool_input_json: Some("{}".to_string()),
-                tool_output_text: None,
-                duration_ms: Some(5),
-                subagent_id: None,
-                subagent_title: None,
-                subagent_prompt: None,
-            },
-            crate::database::TranscriptItemRow {
-                item_index: 2,
-                kind: crate::models::TranscriptItemKind::ToolCall,
-                reasoning_preview: crate::models::ReasoningPreview::default(),
-                message_index: None,
-                role: None,
-                content_preview: None,
-                content_len: None,
-                timestamp: None,
-                model: None,
-                tool_call_id: Some("call-2".to_string()),
-                tool_name: Some("Edit".to_string()),
-                tool_status: Some(crate::models::ToolCallStatus::Completed),
-                tool_summary: Some("edit a file".to_string()),
-                tool_input_json: Some("{}".to_string()),
-                tool_output_text: None,
-                duration_ms: Some(7),
-                subagent_id: None,
-                subagent_title: None,
-                subagent_prompt: None,
-            },
+            transcript_message_row(0, crate::models::Role::Assistant, "hello"),
+            transcript_tool_row(1, "Read"),
+            transcript_tool_row(2, "Edit"),
         ];
+        let matched_item_indexes = BTreeSet::new();
 
-        let items = SessionDetail::build_display_items(
+        let prepared = SessionDetail::build_display_items(
             rows,
             "session-1",
             None,
+            &matched_item_indexes,
             Arc::new(PathBuf::from("/tmp/test.db")),
             0,
         );
 
-        assert_eq!(items.len(), 2);
-        assert!(matches!(items[1], TranscriptItemInit::ToolBurst(_)));
+        assert_eq!(prepared.items.len(), 2);
+        assert!(matches!(
+            prepared.items[1],
+            TranscriptItemInit::ToolBurst(_)
+        ));
+        assert_eq!(
+            prepared.display_targets_by_item_index.get(&0),
+            Some(&ScrollTarget {
+                display_index: 0,
+                child_index: None,
+            })
+        );
+        assert_eq!(
+            prepared.display_targets_by_item_index.get(&1),
+            Some(&ScrollTarget {
+                display_index: 1,
+                child_index: Some(0),
+            })
+        );
+        assert_eq!(
+            prepared.display_targets_by_item_index.get(&2),
+            Some(&ScrollTarget {
+                display_index: 1,
+                child_index: Some(1),
+            })
+        );
+    }
+
+    #[test]
+    fn build_display_items_highlights_only_matching_message_rows_during_search() {
+        let rows = vec![
+            transcript_message_row(0, crate::models::Role::Assistant, "needle in counted row"),
+            transcript_tool_row(1, "Read"),
+            transcript_message_row(
+                2,
+                crate::models::Role::Assistant,
+                "needle outside fts result",
+            ),
+        ];
+        let matched_item_indexes = BTreeSet::from([0_i64]);
+
+        let prepared = SessionDetail::build_display_items(
+            rows,
+            "session-1",
+            Some("needle".to_string()),
+            &matched_item_indexes,
+            Arc::new(PathBuf::from("/tmp/test.db")),
+            0,
+        );
+
+        match &prepared.items[0] {
+            TranscriptItemInit::Message(message) => {
+                assert_eq!(message.highlight_query.as_deref(), Some("needle"));
+            }
+            other => panic!(
+                "expected first item to be a message, got {:?}",
+                std::mem::discriminant(other)
+            ),
+        }
+
+        match &prepared.items[1] {
+            TranscriptItemInit::ToolCall(tool_call) => {
+                assert!(tool_call.highlight_query.is_none());
+            }
+            other => panic!(
+                "expected second item to be a tool call, got {:?}",
+                std::mem::discriminant(other)
+            ),
+        }
+
+        match &prepared.items[2] {
+            TranscriptItemInit::Message(message) => {
+                assert!(message.highlight_query.is_none());
+            }
+            other => panic!(
+                "expected third item to be a message, got {:?}",
+                std::mem::discriminant(other)
+            ),
+        }
     }
 
     #[gtk::test]
@@ -2296,14 +2374,16 @@ fn synthetic_measurement(input: &str) -> String {\n\
             transcript_subagent_row(3, "Explore"),
         ];
 
-        let items = SessionDetail::build_display_items(
+        let matched_item_indexes = BTreeSet::new();
+        let prepared = SessionDetail::build_display_items(
             rows,
             "session-1",
             None,
+            &matched_item_indexes,
             Arc::new(PathBuf::from("/tmp/test.db")),
             0,
         );
-        let counts = SessionDetail::count_render_item_kinds(&items);
+        let counts = SessionDetail::count_render_item_kinds(&prepared.items);
 
         assert_eq!(counts.message_count, 1);
         assert_eq!(counts.tool_call_count, 0);
@@ -2345,28 +2425,6 @@ fn synthetic_measurement(input: &str) -> String {\n\
         assert_eq!(markdown_metrics.message_count, INITIAL_PAGE_SIZE);
         assert_eq!(markdown_search_metrics.source_row_count, INITIAL_PAGE_SIZE);
         assert_eq!(markdown_search_metrics.message_count, INITIAL_PAGE_SIZE);
-    }
-
-    #[test]
-    fn find_match_target_returns_child_index_for_burst_matches() {
-        let mut segments = BTreeMap::new();
-        segments.insert(0, vec![2]);
-        segments.insert(1, vec![0, 3, 1]);
-
-        assert_eq!(
-            SessionDetail::find_match_target(&segments, 3),
-            ScrollTarget {
-                display_index: 1,
-                child_index: Some(1),
-            }
-        );
-        assert_eq!(
-            SessionDetail::find_match_target(&segments, 5),
-            ScrollTarget {
-                display_index: 1,
-                child_index: Some(2),
-            }
-        );
     }
 
     #[test]
@@ -2430,21 +2488,6 @@ fn synthetic_measurement(input: &str) -> String {\n\
 
         let parts = controller.state().get();
         assert!(!parts.model.inspector_open);
-    }
-
-    #[test]
-    fn next_match_after_top_level_row_targets_burst_child() {
-        let mut segments = BTreeMap::new();
-        segments.insert(0, vec![1]);
-        segments.insert(1, vec![0, 2]);
-
-        assert_eq!(
-            SessionDetail::find_match_target(&segments, 1),
-            ScrollTarget {
-                display_index: 1,
-                child_index: Some(1),
-            }
-        );
     }
 
     #[gtk::test]
