@@ -12,7 +12,7 @@ use relm4::{
     adw, gtk,
 };
 
-use crate::database::load_transcript_items;
+use crate::database::{MatchPosition, find_session_match_positions, load_transcript_items};
 use crate::models::Session;
 use crate::ui::activity_bar::SessionActivityBar;
 use crate::ui::tool_inspector_pane::{
@@ -58,6 +58,9 @@ pub struct SessionDetail {
     match_positions: Vec<crate::database::MatchPosition>,
     display_targets_by_item_index: BTreeMap<i64, ScrollTarget>,
     current_match: usize,
+    pending_jump: Option<usize>,
+    loading_jump: bool,
+    search_request_id: u64,
     scroll_to_item: Cell<Option<ScrollTarget>>,
     pending_toast: Cell<bool>,
     inspector: Controller<ToolInspectorPane>,
@@ -164,6 +167,11 @@ pub enum SessionDetailMsg {
     /// Updates the active transcript search query and reloads the current
     /// session so match highlighting stays in sync with displayed rows.
     UpdateSearchQuery(Option<String>),
+    SetMatchPositions {
+        request_id: u64,
+        session_id: String,
+        positions: Vec<MatchPosition>,
+    },
     LoadMore,
     PrevMatch,
     NextMatch,
@@ -211,6 +219,11 @@ pub enum SessionDetailCmd {
         load_duration_ms: u128,
         result: Result<Vec<crate::database::TranscriptItemRow>, String>,
     },
+    SearchPositionsLoaded {
+        request_id: u64,
+        session_id: String,
+        result: Result<Vec<MatchPosition>, String>,
+    },
 }
 
 impl std::fmt::Debug for SessionDetailCmd {
@@ -235,6 +248,21 @@ impl std::fmt::Debug for SessionDetailCmd {
                     .field("offset", offset)
                     .field("limit", limit)
                     .field("load_duration_ms", load_duration_ms)
+                    .field("result", &result_summary)
+                    .finish()
+            }
+            Self::SearchPositionsLoaded {
+                request_id,
+                session_id,
+                result,
+            } => {
+                let result_summary = match result {
+                    Ok(positions) => format!("Ok({} positions)", positions.len()),
+                    Err(err) => format!("Err({err})"),
+                };
+                f.debug_struct("SearchPositionsLoaded")
+                    .field("request_id", request_id)
+                    .field("session_id", session_id)
                     .field("result", &result_summary)
                     .finish()
             }
@@ -727,6 +755,9 @@ impl Component for SessionDetail {
             match_positions: Vec::new(),
             display_targets_by_item_index: BTreeMap::new(),
             current_match: 0,
+            pending_jump: None,
+            loading_jump: false,
+            search_request_id: 0,
             scroll_to_item: Cell::new(None),
             pending_toast: Cell::new(false),
             inspector,
@@ -765,19 +796,63 @@ impl Component for SessionDetail {
                 session,
                 search_query,
             } => {
-                self.search_query = search_query;
+                self.invalidate_search_requests();
+                let normalized = search_query.and_then(|query| {
+                    let trimmed = query.trim().to_string();
+                    (!trimmed.is_empty()).then_some(trimmed)
+                });
+                self.search_query = normalized.clone();
                 self.reset_search_matches();
                 let session = *session;
                 let session_id = session.id.clone();
                 self.session = Some(session);
                 self.start_first_page_load(&sender, &session_id, true);
+                if let Some(query) = normalized {
+                    let request_id = self.search_request_id;
+                    self.spawn_match_positions_load(&sender, request_id, session_id.clone(), query);
+                }
                 self.inspector.emit(ToolInspectorPaneMsg::Clear);
                 self.set_inspector_open(false, &sender);
             }
             SessionDetailMsg::UpdateSearchQuery(query) => {
-                self.search_query = query;
+                let normalized = query.and_then(|query| {
+                    let trimmed = query.trim().to_string();
+                    (!trimmed.is_empty()).then_some(trimmed)
+                });
+                self.search_query = normalized.clone();
+                self.invalidate_search_requests();
                 self.reset_search_matches();
-                self.reload_current_session(&sender);
+
+                if let (Some(session), Some(query)) = (&self.session, normalized) {
+                    let request_id = self.search_request_id;
+                    self.spawn_match_positions_load(&sender, request_id, session.id.clone(), query);
+                } else {
+                    self.reload_current_session(&sender);
+                }
+            }
+            SessionDetailMsg::SetMatchPositions {
+                request_id,
+                session_id,
+                positions,
+            } => {
+                let active_session_matches = self
+                    .session
+                    .as_ref()
+                    .is_some_and(|session| session.id == session_id);
+                if request_id != self.search_request_id || !active_session_matches {
+                    tracing::debug!(
+                        request_id,
+                        session_id,
+                        "Ignoring stale session detail search results"
+                    );
+                    return;
+                }
+
+                self.match_positions = positions;
+                self.current_match = 0;
+                self.pending_jump = None;
+                self.loading_jump = false;
+                self.start_first_page_load(&sender, &session_id, false);
             }
             SessionDetailMsg::LoadMore => {
                 self.load_next_page(&sender);
@@ -831,11 +906,13 @@ impl Component for SessionDetail {
             }
             SessionDetailMsg::ClearSearch => {
                 self.search_query = None;
+                self.invalidate_search_requests();
                 self.reset_search_matches();
                 self.reload_current_session(&sender);
             }
             SessionDetailMsg::Clear => {
                 self.invalidate_transcript_requests();
+                self.invalidate_search_requests();
                 self.session = None;
                 self.clear_messages_safely();
                 self.loaded_count = 0;
@@ -904,7 +981,36 @@ impl Component for SessionDetail {
         sender: ComponentSender<Self>,
         _root: &Self::Root,
     ) {
-        self.apply_transcript_page_result(&sender, message);
+        match message {
+            SessionDetailCmd::TranscriptPageLoaded { .. } => {
+                self.apply_transcript_page_result(&sender, message);
+            }
+            SessionDetailCmd::SearchPositionsLoaded {
+                request_id,
+                session_id,
+                result,
+            } => {
+                let positions = match result {
+                    Ok(positions) => positions,
+                    Err(err) => {
+                        tracing::error!(
+                            request_id,
+                            session_id,
+                            "Failed to load session detail search positions: {}",
+                            err
+                        );
+                        Vec::new()
+                    }
+                };
+                let _ = sender
+                    .input_sender()
+                    .send(SessionDetailMsg::SetMatchPositions {
+                        request_id,
+                        session_id,
+                        positions,
+                    });
+            }
+        }
     }
 
     fn post_view(&self, widgets: &mut Self::Widgets) {
@@ -1241,6 +1347,31 @@ impl SessionDetail {
         self.last_render_metrics = None;
     }
 
+    fn invalidate_search_requests(&mut self) {
+        self.search_request_id = self.search_request_id.wrapping_add(1);
+    }
+
+    fn spawn_match_positions_load(
+        &self,
+        sender: &ComponentSender<Self>,
+        request_id: u64,
+        session_id: String,
+        query: String,
+    ) {
+        let db_path = self.db_path.clone();
+        sender.spawn_oneshot_command(move || {
+            let result = crate::database::open_connection(&db_path)
+                .and_then(|db| find_session_match_positions(&db, &session_id, &query))
+                .map_err(|err| format!("{err:#}"));
+
+            SessionDetailCmd::SearchPositionsLoaded {
+                request_id,
+                session_id,
+                result,
+            }
+        });
+    }
+
     /// Update internal inspector visibility and notify the parent.  Idempotent:
     /// no-op when the requested state matches the current one.
     fn set_inspector_open(&mut self, open: bool, sender: &ComponentSender<Self>) {
@@ -1357,6 +1488,7 @@ impl SessionDetail {
     }
 
     fn clear_for_navigation_back(&mut self) {
+        self.invalidate_search_requests();
         self.session = None;
         self.clear_messages_safely();
         self.loaded_count = 0;
@@ -1594,7 +1726,10 @@ impl SessionDetail {
             limit,
             load_duration_ms,
             result,
-        } = message;
+        } = message
+        else {
+            return;
+        };
 
         if request_id != self.transcript_request_id {
             tracing::debug!(
@@ -1650,6 +1785,8 @@ impl SessionDetail {
     fn reset_search_matches(&mut self) {
         self.match_positions.clear();
         self.current_match = 0;
+        self.pending_jump = None;
+        self.loading_jump = false;
     }
 
     fn reload_current_session(&mut self, sender: &ComponentSender<Self>) {
@@ -1973,6 +2110,36 @@ mod tests {
                 params![session_id, index as i64],
             )
             .expect("insert transcript item");
+        }
+    }
+
+    fn seed_search_transcript(
+        db_path: &std::path::Path,
+        session_id: &str,
+        count: usize,
+        matching_indexes: &[usize],
+    ) {
+        let conn = Connection::open(db_path).expect("open temp db");
+        crate::database::schema::initialize_database(&conn).expect("initialize db");
+
+        for index in 0..count {
+            let content = if matching_indexes.contains(&index) {
+                format!("needle message {index}")
+            } else {
+                format!("ordinary message {index}")
+            };
+            conn.execute(
+                "INSERT INTO messages (session_id, message_index, role, content, timestamp, model)
+                 VALUES (?1, ?2, 'user', ?3, ?4, NULL)",
+                params![session_id, index as i64, content, index as i64],
+            )
+            .expect("insert search message");
+            conn.execute(
+                "INSERT INTO transcript_items (session_id, item_index, kind, message_index)
+                 VALUES (?1, ?2, 'message', ?2)",
+                params![session_id, index as i64],
+            )
+            .expect("insert search transcript item");
         }
     }
 
@@ -2601,5 +2768,82 @@ fn synthetic_measurement(input: &str) -> String {\n\
                 .has_css_class("ending-failed")
         );
         assert!(parts.widgets.activity_bar.has_css_class("activity-bar"));
+    }
+
+    #[gtk::test]
+    fn update_search_query_populates_match_positions_and_reloads_first_page() {
+        let temp_db = tempfile::NamedTempFile::new().expect("temp db");
+        seed_search_transcript(
+            temp_db.path(),
+            "test-session-123",
+            INITIAL_PAGE_SIZE + 10,
+            &[10, 80],
+        );
+
+        let controller = SessionDetail::builder().launch(temp_db.path().to_path_buf());
+        controller.emit(SessionDetailMsg::SetSession {
+            session: Box::new(build_test_session(None, None, 0, 0, 0)),
+            search_query: None,
+        });
+        pump_main_context(|| {
+            let parts = controller.state().get();
+            parts.model.pending_render_batch.is_none()
+                && parts.model.loaded_count == INITIAL_PAGE_SIZE
+        });
+
+        controller.emit(SessionDetailMsg::UpdateSearchQuery(Some(
+            "needle".to_string(),
+        )));
+        pump_main_context(|| {
+            let parts = controller.state().get();
+            parts.model.match_positions.len() == 2
+                && parts.model.pending_render_batch.is_none()
+                && parts.model.display_targets_by_item_index.contains_key(&10)
+        });
+
+        let parts = controller.state().get();
+        let indexes: Vec<i64> = parts
+            .model
+            .match_positions
+            .iter()
+            .map(|p| p.item_index)
+            .collect();
+        assert_eq!(indexes, vec![10, 80]);
+        assert_eq!(parts.model.current_match, 0);
+        assert_eq!(parts.model.search_query.as_deref(), Some("needle"));
+    }
+
+    #[gtk::test]
+    fn stale_search_result_is_discarded() {
+        let temp_db = tempfile::NamedTempFile::new().expect("temp db");
+        seed_search_transcript(temp_db.path(), "test-session-123", INITIAL_PAGE_SIZE, &[5]);
+
+        let controller = SessionDetail::builder().launch(temp_db.path().to_path_buf());
+        controller.emit(SessionDetailMsg::SetSession {
+            session: Box::new(build_test_session(None, None, 0, 0, 0)),
+            search_query: None,
+        });
+        pump_main_context(|| controller.state().get().model.session.is_some());
+
+        controller.emit(SessionDetailMsg::UpdateSearchQuery(Some(
+            "needle".to_string(),
+        )));
+        controller.emit(SessionDetailMsg::UpdateSearchQuery(Some(
+            "ordinary".to_string(),
+        )));
+        let active_request = controller.state().get().model.search_request_id;
+        controller.emit(SessionDetailMsg::SetMatchPositions {
+            request_id: active_request.wrapping_sub(1),
+            session_id: "test-session-123".to_string(),
+            positions: vec![crate::database::MatchPosition { item_index: 5 }],
+        });
+
+        pump_main_context(|| {
+            let parts = controller.state().get();
+            parts.model.search_query.as_deref() == Some("ordinary")
+        });
+
+        let parts = controller.state().get();
+        assert!(parts.model.match_positions.is_empty());
     }
 }
