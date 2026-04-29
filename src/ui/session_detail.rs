@@ -1374,6 +1374,17 @@ impl SessionDetail {
         self.search_request_id = self.search_request_id.wrapping_add(1);
     }
 
+    /// Returns `true` while transcript content is in flight and the display
+    /// index is therefore unstable.
+    ///
+    /// Search-jump bookkeeping (`continue_pending_jump`) must wait for this to
+    /// be `false` before resolving an `item_index` to a `ScrollTarget`,
+    /// because `display_targets_by_item_index` is only populated as pages
+    /// finish rendering.
+    fn is_transcript_loading(&self) -> bool {
+        self.loading_first_page || self.loading_next_page || self.pending_render_batch.is_some()
+    }
+
     fn spawn_match_positions_load(
         &self,
         sender: &ComponentSender<Self>,
@@ -1855,8 +1866,7 @@ impl SessionDetail {
             return;
         };
 
-        if self.loading_first_page || self.loading_next_page || self.pending_render_batch.is_some()
-        {
+        if self.is_transcript_loading() {
             return;
         }
 
