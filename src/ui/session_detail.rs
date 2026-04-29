@@ -701,7 +701,7 @@ impl Component for SessionDetail {
                                 && model.loaded_match_count() < model.match_positions.len(),
                             #[watch]
                             set_label: &format!(
-                                "({}/{} chargés)",
+                                "({}/{} loaded)",
                                 model.loaded_match_count(),
                                 model.match_positions.len()
                             ),
