@@ -652,6 +652,15 @@ impl Component for SessionDetail {
                         #[watch]
                         set_visible: model.search_query.is_some(),
 
+                        #[name = "search_jump_spinner"]
+                        gtk::Spinner {
+                            add_css_class: "search-jump-spinner",
+                            #[watch]
+                            set_visible: model.loading_jump,
+                            #[watch]
+                            set_spinning: model.loading_jump,
+                        },
+
                         #[name = "search_term_label"]
                         gtk::Label {
                             add_css_class: "dim-label",
@@ -661,12 +670,13 @@ impl Component for SessionDetail {
                                 .unwrap_or_default(),
                         },
 
+                        #[name = "previous_match_button"]
                         gtk::Button {
                             set_icon_name: "go-up-symbolic",
                             set_tooltip_text: Some("Previous match"),
                             add_css_class: "flat",
                             #[watch]
-                            set_sensitive: !model.match_positions.is_empty(),
+                            set_sensitive: !model.loading_jump && !model.match_positions.is_empty(),
                             connect_clicked => SessionDetailMsg::PrevMatch,
                         },
 
@@ -678,16 +688,32 @@ impl Component for SessionDetail {
                             set_label: &if !model.match_positions.is_empty() {
                                 format!("{} / {}", model.current_match + 1, model.match_positions.len())
                             } else {
-                                "0 matches".to_string()
+                                "0 résultat".to_string()
                             },
                         },
 
+                        #[name = "loaded_match_counter_label"]
+                        gtk::Label {
+                            add_css_class: "dim-label",
+                            add_css_class: "loaded-match-counter",
+                            #[watch]
+                            set_visible: model.loading_jump
+                                && model.loaded_match_count() < model.match_positions.len(),
+                            #[watch]
+                            set_label: &format!(
+                                "({}/{} chargés)",
+                                model.loaded_match_count(),
+                                model.match_positions.len()
+                            ),
+                        },
+
+                        #[name = "next_match_button"]
                         gtk::Button {
                             set_icon_name: "go-down-symbolic",
                             set_tooltip_text: Some("Next match"),
                             add_css_class: "flat",
                             #[watch]
-                            set_sensitive: !model.match_positions.is_empty(),
+                            set_sensitive: !model.loading_jump && !model.match_positions.is_empty(),
                             connect_clicked => SessionDetailMsg::NextMatch,
                         },
 
@@ -3058,5 +3084,40 @@ fn synthetic_measurement(input: &str) -> String {\n\
 
         let parts = controller.state().get();
         assert_eq!(parts.model.current_match, 0);
+    }
+
+    #[gtk::test]
+    fn search_nav_bar_reflects_loading_jump_state() {
+        let temp_db = tempfile::NamedTempFile::new().expect("temp db");
+        seed_search_transcript(
+            temp_db.path(),
+            "test-session-123",
+            INITIAL_PAGE_SIZE + NEXT_PAGE_SIZE + 10,
+            &[10, 160],
+        );
+
+        let controller = SessionDetail::builder().launch(temp_db.path().to_path_buf());
+        controller.emit(SessionDetailMsg::SetSession {
+            session: Box::new(build_test_session(None, None, 0, 0, 0)),
+            search_query: Some("needle".to_string()),
+        });
+        pump_main_context(|| {
+            let parts = controller.state().get();
+            parts.model.match_positions.len() == 2 && !parts.model.loading_jump
+        });
+
+        controller.emit(SessionDetailMsg::NextMatch);
+        pump_main_context(|| controller.state().get().model.loading_jump);
+
+        let parts = controller.state().get();
+        assert!(parts.widgets.search_jump_spinner.is_visible());
+        assert!(parts.widgets.search_jump_spinner.is_spinning());
+        assert!(parts.widgets.loaded_match_counter_label.is_visible());
+        assert_eq!(
+            parts.widgets.loaded_match_counter_label.label(),
+            "(1/2 chargés)"
+        );
+        assert!(!parts.widgets.previous_match_button.is_sensitive());
+        assert!(!parts.widgets.next_match_button.is_sensitive());
     }
 }
