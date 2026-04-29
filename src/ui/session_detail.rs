@@ -178,7 +178,7 @@ pub enum SessionDetailMsg {
     ClearSearch,
     /// Receives per-row match counts from [`TranscriptRow`] children; one count
     /// per segment (burst child or single row).
-    MatchSegments(usize, Vec<usize>),
+    MatchSegments,
     RenderNextTranscriptBatch {
         request_id: u64,
     },
@@ -738,10 +738,7 @@ impl Component for SessionDetail {
         let messages: FactoryVecDeque<TranscriptRow> = FactoryVecDeque::builder()
             .launch_default()
             .forward(sender.input_sender(), |output| match output {
-                TranscriptRowOutput::MatchSegmentsChanged {
-                    display_index,
-                    segments,
-                } => SessionDetailMsg::MatchSegments(display_index, segments),
+                TranscriptRowOutput::MatchSegmentsChanged => SessionDetailMsg::MatchSegments,
                 TranscriptRowOutput::ExpandLoadFailed { .. } => {
                     SessionDetailMsg::ShowExpandLoadFailure
                 }
@@ -901,7 +898,7 @@ impl Component for SessionDetail {
                     self.jump_to(target, &sender);
                 }
             }
-            SessionDetailMsg::MatchSegments(_, _) => {}
+            SessionDetailMsg::MatchSegments => {}
             SessionDetailMsg::RenderNextTranscriptBatch { request_id } => {
                 self.render_next_transcript_batch(&sender, request_id);
             }

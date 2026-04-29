@@ -147,14 +147,7 @@ pub enum TranscriptRowCmd {
 
 #[derive(Debug)]
 pub enum TranscriptRowOutput {
-    MatchSegmentsChanged {
-        /// Top-level display index in the transcript factory.
-        ///
-        /// This differs from the source database `item_index` whenever the UI
-        /// groups consecutive tool calls into a single burst row.
-        display_index: usize,
-        segments: Vec<usize>,
-    },
+    MatchSegmentsChanged,
     ExpandLoadFailed {
         #[allow(dead_code)]
         item_index: usize,
@@ -771,10 +764,7 @@ impl FactoryComponent for TranscriptRow {
                         self.rendered_match_count = count;
                         if self.highlight_query.is_some() {
                             sender
-                                .output(TranscriptRowOutput::MatchSegmentsChanged {
-                                    display_index: self.item_index,
-                                    segments: vec![count],
-                                })
+                                .output(TranscriptRowOutput::MatchSegmentsChanged)
                                 .ok();
                         }
                     }
@@ -792,10 +782,7 @@ impl FactoryComponent for TranscriptRow {
                         self.rendered_match_count = count;
                         if self.highlight_query.is_some() {
                             sender
-                                .output(TranscriptRowOutput::MatchSegmentsChanged {
-                                    display_index: self.item_index,
-                                    segments: vec![count],
-                                })
+                                .output(TranscriptRowOutput::MatchSegmentsChanged)
                                 .ok();
                         }
                     }
@@ -861,10 +848,7 @@ impl FactoryComponent for TranscriptRow {
                     self.rendered_match_count = count;
                     if self.highlight_query.is_some() {
                         sender
-                            .output(TranscriptRowOutput::MatchSegmentsChanged {
-                                display_index: self.item_index,
-                                segments: vec![count],
-                            })
+                            .output(TranscriptRowOutput::MatchSegmentsChanged)
                             .ok();
                     }
                 }
@@ -1023,10 +1007,7 @@ impl TranscriptRow {
         self.rendered_match_count = match_count;
         if self.highlight_query.is_some() {
             sender
-                .output(TranscriptRowOutput::MatchSegmentsChanged {
-                    display_index: self.item_index,
-                    segments: vec![match_count],
-                })
+                .output(TranscriptRowOutput::MatchSegmentsChanged)
                 .ok();
         }
 
@@ -1094,10 +1075,7 @@ impl TranscriptRow {
         self.rendered_match_count = refs.match_count;
         if self.tool_highlight_query.is_some() {
             sender
-                .output(TranscriptRowOutput::MatchSegmentsChanged {
-                    display_index: self.item_index,
-                    segments: vec![refs.match_count],
-                })
+                .output(TranscriptRowOutput::MatchSegmentsChanged)
                 .ok();
         }
 
@@ -1279,10 +1257,7 @@ impl TranscriptRow {
             .any(|tool_call| tool_call.highlight_query.is_some())
         {
             sender
-                .output(TranscriptRowOutput::MatchSegmentsChanged {
-                    display_index: self.item_index,
-                    segments: burst.child_match_counts.clone(),
-                })
+                .output(TranscriptRowOutput::MatchSegmentsChanged)
                 .ok();
         }
 
