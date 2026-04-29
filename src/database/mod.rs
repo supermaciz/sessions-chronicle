@@ -245,6 +245,7 @@ fn find_session_match_positions_with_query(
           AND ti.message_index = m.message_index
          WHERE messages_fts MATCH ?1
            AND m.session_id = ?2
+           AND ti.kind = 'message'
          ORDER BY ti.item_index ASC",
     )?;
 

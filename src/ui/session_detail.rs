@@ -176,9 +176,6 @@ pub enum SessionDetailMsg {
     PrevMatch,
     NextMatch,
     ClearSearch,
-    /// Receives per-row match counts from [`TranscriptRow`] children; one count
-    /// per segment (burst child or single row).
-    MatchSegments,
     RenderNextTranscriptBatch {
         request_id: u64,
     },
@@ -688,7 +685,7 @@ impl Component for SessionDetail {
                             set_label: &if !model.match_positions.is_empty() {
                                 format!("{} / {}", model.current_match + 1, model.match_positions.len())
                             } else {
-                                "0 résultat".to_string()
+                                "0 results".to_string()
                             },
                         },
 
@@ -738,7 +735,6 @@ impl Component for SessionDetail {
         let messages: FactoryVecDeque<TranscriptRow> = FactoryVecDeque::builder()
             .launch_default()
             .forward(sender.input_sender(), |output| match output {
-                TranscriptRowOutput::MatchSegmentsChanged => SessionDetailMsg::MatchSegments,
                 TranscriptRowOutput::ExpandLoadFailed { .. } => {
                     SessionDetailMsg::ShowExpandLoadFailure
                 }
@@ -898,7 +894,6 @@ impl Component for SessionDetail {
                     self.jump_to(target, &sender);
                 }
             }
-            SessionDetailMsg::MatchSegments => {}
             SessionDetailMsg::RenderNextTranscriptBatch { request_id } => {
                 self.render_next_transcript_batch(&sender, request_id);
             }
@@ -1881,6 +1876,19 @@ impl SessionDetail {
                 item_index = position.item_index,
                 loaded_count = self.loaded_count,
                 "search match position is outside loaded transcript range"
+            );
+            self.pending_jump = None;
+            self.loading_jump = false;
+        } else {
+            debug_assert!(
+                false,
+                "match item_index {} is within loaded range ({}) but absent from display_targets_by_item_index",
+                position.item_index, self.loaded_count
+            );
+            tracing::warn!(
+                item_index = position.item_index,
+                loaded_count = self.loaded_count,
+                "search match position is loaded but missing from display index"
             );
             self.pending_jump = None;
             self.loading_jump = false;
@@ -3112,7 +3120,7 @@ fn synthetic_measurement(input: &str) -> String {\n\
         assert!(parts.widgets.loaded_match_counter_label.is_visible());
         assert_eq!(
             parts.widgets.loaded_match_counter_label.label(),
-            "(1/2 chargés)"
+            "(1/2 loaded)"
         );
         assert!(!parts.widgets.previous_match_button.is_sensitive());
         assert!(!parts.widgets.next_match_button.is_sensitive());

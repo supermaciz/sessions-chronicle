@@ -147,7 +147,6 @@ pub enum TranscriptRowCmd {
 
 #[derive(Debug)]
 pub enum TranscriptRowOutput {
-    MatchSegmentsChanged,
     ExpandLoadFailed {
         #[allow(dead_code)]
         item_index: usize,
@@ -192,7 +191,6 @@ pub struct TranscriptRow {
     expanded: bool,
     full_content: Option<String>,
     loading_full_content: bool,
-    rendered_match_count: usize,
 
     // --- ToolCall state ---
     tool_call_id: Option<String>,
@@ -612,7 +610,6 @@ impl FactoryComponent for TranscriptRow {
                 expanded: false,
                 full_content: None,
                 loading_full_content: false,
-                rendered_match_count: 0,
                 tool_call_id: None,
                 tool_name: None,
                 tool_status: None,
@@ -636,7 +633,6 @@ impl FactoryComponent for TranscriptRow {
                 expanded: false,
                 full_content: None,
                 loading_full_content: false,
-                rendered_match_count: 0,
                 tool_call_id: Some(tc.tool_call_id),
                 tool_name: Some(tc.tool_name),
                 tool_status: Some(tc.status),
@@ -660,7 +656,6 @@ impl FactoryComponent for TranscriptRow {
                 expanded: false,
                 full_content: None,
                 loading_full_content: false,
-                rendered_match_count: tb.match_count,
                 tool_call_id: None,
                 tool_name: None,
                 tool_status: None,
@@ -684,7 +679,6 @@ impl FactoryComponent for TranscriptRow {
                 expanded: false,
                 full_content: None,
                 loading_full_content: false,
-                rendered_match_count: 0,
                 tool_call_id: None,
                 tool_name: None,
                 tool_status: None,
@@ -753,39 +747,23 @@ impl FactoryComponent for TranscriptRow {
                 if self.expanded {
                     // Collapse: show preview
                     self.expanded = false;
-                    let count = render_content(
+                    render_content(
                         &widgets.content_container,
                         &preview.content_preview,
                         preview.role,
                         self.highlight_query.as_deref(),
                     );
                     self.update_expand_button(widgets, preview);
-                    if count != self.rendered_match_count {
-                        self.rendered_match_count = count;
-                        if self.highlight_query.is_some() {
-                            sender
-                                .output(TranscriptRowOutput::MatchSegmentsChanged)
-                                .ok();
-                        }
-                    }
                 } else if let Some(ref full) = self.full_content {
                     // Expand with cached content
                     self.expanded = true;
-                    let count = render_content(
+                    render_content(
                         &widgets.content_container,
                         full,
                         preview.role,
                         self.highlight_query.as_deref(),
                     );
                     self.update_expand_button(widgets, preview);
-                    if count != self.rendered_match_count {
-                        self.rendered_match_count = count;
-                        if self.highlight_query.is_some() {
-                            sender
-                                .output(TranscriptRowOutput::MatchSegmentsChanged)
-                                .ok();
-                        }
-                    }
                 } else {
                     // Fetch full content from DB
                     self.loading_full_content = true;
@@ -837,21 +815,13 @@ impl FactoryComponent for TranscriptRow {
                 self.full_content = Some(content.clone());
                 self.expanded = true;
                 self.loading_full_content = false;
-                let count = render_content(
+                render_content(
                     &widgets.content_container,
                     &content,
                     preview.role,
                     self.highlight_query.as_deref(),
                 );
                 self.update_expand_button(widgets, preview);
-                if count != self.rendered_match_count {
-                    self.rendered_match_count = count;
-                    if self.highlight_query.is_some() {
-                        sender
-                            .output(TranscriptRowOutput::MatchSegmentsChanged)
-                            .ok();
-                    }
-                }
             }
             TranscriptRowCmd::FullContentLoaded(Err(err)) => {
                 let Some(ref preview) = self.preview else {
@@ -1004,13 +974,6 @@ impl TranscriptRow {
                 "Slow transcript message content render"
             );
         }
-        self.rendered_match_count = match_count;
-        if self.highlight_query.is_some() {
-            sender
-                .output(TranscriptRowOutput::MatchSegmentsChanged)
-                .ok();
-        }
-
         TranscriptRowWidgets {
             content_container,
             expand_button,
@@ -1072,12 +1035,6 @@ impl TranscriptRow {
             "Built transcript tool call widget"
         );
         root.append(&refs.root);
-        self.rendered_match_count = refs.match_count;
-        if self.tool_highlight_query.is_some() {
-            sender
-                .output(TranscriptRowOutput::MatchSegmentsChanged)
-                .ok();
-        }
 
         TranscriptRowWidgets {
             content_container: gtk::Box::new(gtk::Orientation::Vertical, 0),
@@ -1249,17 +1206,6 @@ impl TranscriptRow {
 
         root.append(&header_button);
         root.append(&revealer);
-
-        self.rendered_match_count = burst_match_count;
-        if burst
-            .tool_calls
-            .iter()
-            .any(|tool_call| tool_call.highlight_query.is_some())
-        {
-            sender
-                .output(TranscriptRowOutput::MatchSegmentsChanged)
-                .ok();
-        }
 
         TranscriptRowWidgets {
             content_container: gtk::Box::new(gtk::Orientation::Vertical, 0),
