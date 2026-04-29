@@ -849,25 +849,30 @@ impl Component for SessionDetail {
                 }
 
                 self.match_positions = positions;
-                self.current_match = 0;
+                self.clamp_current_match();
                 self.pending_jump = None;
                 self.loading_jump = false;
                 self.start_first_page_load(&sender, &session_id, false);
+                if !self.match_positions.is_empty() {
+                    self.jump_to(0, &sender);
+                }
             }
             SessionDetailMsg::LoadMore => {
                 self.load_next_page(&sender);
             }
             SessionDetailMsg::PrevMatch => {
-                if !self.match_positions.is_empty() {
-                    self.current_match = match self.current_match {
+                if !self.match_positions.is_empty() && !self.loading_jump {
+                    let target = match self.current_match {
                         0 => self.match_positions.len() - 1,
                         n => n - 1,
                     };
+                    self.jump_to(target, &sender);
                 }
             }
             SessionDetailMsg::NextMatch => {
-                if !self.match_positions.is_empty() {
-                    self.current_match = (self.current_match + 1) % self.match_positions.len();
+                if !self.match_positions.is_empty() && !self.loading_jump {
+                    let target = (self.current_match + 1) % self.match_positions.len();
+                    self.jump_to(target, &sender);
                 }
             }
             SessionDetailMsg::MatchSegments(_, _) => {}
@@ -1645,6 +1650,7 @@ impl SessionDetail {
                 subagent_count: row_kind_counts.subagent_count,
             });
             self.pending_render_batch = None;
+            self.continue_pending_jump(sender);
         }
     }
 
@@ -1693,6 +1699,7 @@ impl SessionDetail {
             source_row_count,
             prepared.items,
         );
+        self.continue_pending_jump(sender);
     }
 
     fn handle_transcript_page_error(&mut self, session_id: &str, offset: usize, err: String) {
@@ -1712,6 +1719,8 @@ impl SessionDetail {
 
         self.loading_first_page = false;
         self.loading_next_page = false;
+        self.pending_jump = None;
+        self.loading_jump = false;
     }
 
     fn apply_transcript_page_result(
@@ -1787,6 +1796,72 @@ impl SessionDetail {
         self.current_match = 0;
         self.pending_jump = None;
         self.loading_jump = false;
+    }
+
+    fn loaded_match_count(&self) -> usize {
+        self.match_positions
+            .iter()
+            .filter(|position| {
+                self.display_targets_by_item_index
+                    .contains_key(&position.item_index)
+            })
+            .count()
+    }
+
+    fn clamp_current_match(&mut self) {
+        self.current_match = match self.match_positions.len() {
+            0 => 0,
+            len if self.current_match >= len => len - 1,
+            _ => self.current_match,
+        };
+    }
+
+    fn jump_to(&mut self, target: usize, sender: &ComponentSender<Self>) {
+        if self.match_positions.get(target).is_none() {
+            return;
+        }
+
+        self.current_match = target;
+        self.pending_jump = Some(target);
+        self.loading_jump = true;
+        self.continue_pending_jump(sender);
+    }
+
+    fn continue_pending_jump(&mut self, sender: &ComponentSender<Self>) {
+        let Some(target) = self.pending_jump else {
+            return;
+        };
+        let Some(position) = self.match_positions.get(target) else {
+            self.pending_jump = None;
+            self.loading_jump = false;
+            return;
+        };
+
+        if self.loading_first_page || self.loading_next_page || self.pending_render_batch.is_some()
+        {
+            return;
+        }
+
+        if let Some(scroll_target) = self
+            .display_targets_by_item_index
+            .get(&position.item_index)
+            .copied()
+            && self.messages.len() > scroll_target.display_index
+        {
+            self.pending_jump = None;
+            self.loading_jump = false;
+            self.scroll_to_item.set(Some(scroll_target));
+        } else if (position.item_index as usize) >= self.loaded_count && self.has_more_messages {
+            self.load_next_page(sender);
+        } else if !self.has_more_messages && (position.item_index as usize) >= self.loaded_count {
+            tracing::warn!(
+                item_index = position.item_index,
+                loaded_count = self.loaded_count,
+                "search match position is outside loaded transcript range"
+            );
+            self.pending_jump = None;
+            self.loading_jump = false;
+        }
     }
 
     fn reload_current_session(&mut self, sender: &ComponentSender<Self>) {
@@ -1973,6 +2048,7 @@ impl SessionDetail {
         if !self.has_more_messages {
             self.clear_pending_boundary_tool_rows();
         }
+        self.continue_pending_jump(sender);
     }
 
     /// Clear transcript rows after releasing focus from any currently-focused row widget.
@@ -2845,5 +2921,142 @@ fn synthetic_measurement(input: &str) -> String {\n\
 
         let parts = controller.state().get();
         assert!(parts.model.match_positions.is_empty());
+    }
+
+    #[gtk::test]
+    fn jump_to_loaded_match_scrolls_without_loading() {
+        let temp_db = tempfile::NamedTempFile::new().expect("temp db");
+        seed_search_transcript(
+            temp_db.path(),
+            "test-session-123",
+            INITIAL_PAGE_SIZE,
+            &[10, 20],
+        );
+
+        let controller = SessionDetail::builder().launch(temp_db.path().to_path_buf());
+        controller.emit(SessionDetailMsg::SetSession {
+            session: Box::new(build_test_session(None, None, 0, 0, 0)),
+            search_query: None,
+        });
+        pump_main_context(|| {
+            let parts = controller.state().get();
+            parts.model.pending_render_batch.is_none()
+                && parts.model.loaded_count == INITIAL_PAGE_SIZE
+        });
+
+        let active_request = controller.state().get().model.search_request_id;
+        controller.emit(SessionDetailMsg::SetMatchPositions {
+            request_id: active_request,
+            session_id: "test-session-123".to_string(),
+            positions: vec![
+                MatchPosition { item_index: 10 },
+                MatchPosition { item_index: 20 },
+            ],
+        });
+        pump_main_context(|| {
+            let parts = controller.state().get();
+            !parts.model.loading_jump && parts.model.display_targets_by_item_index.contains_key(&10)
+        });
+
+        let parts = controller.state().get();
+        assert_eq!(parts.model.current_match, 0);
+        assert!(!parts.model.loading_jump);
+        assert!(parts.model.display_targets_by_item_index.contains_key(&10));
+    }
+
+    #[gtk::test]
+    fn jump_to_loaded_but_unrendered_match_waits_for_render_batch() {
+        let temp_db = tempfile::NamedTempFile::new().expect("temp db");
+        seed_search_transcript(temp_db.path(), "test-session-123", INITIAL_PAGE_SIZE, &[70]);
+
+        let controller = SessionDetail::builder().launch(temp_db.path().to_path_buf());
+        controller.emit(SessionDetailMsg::SetSession {
+            session: Box::new(build_test_session(None, None, 0, 0, 0)),
+            search_query: None,
+        });
+        pump_main_context(|| {
+            let parts = controller.state().get();
+            parts.model.loaded_count == INITIAL_PAGE_SIZE
+                && parts.model.pending_render_batch.is_some()
+        });
+
+        let active_request = controller.state().get().model.search_request_id;
+        controller.emit(SessionDetailMsg::SetMatchPositions {
+            request_id: active_request,
+            session_id: "test-session-123".to_string(),
+            positions: vec![MatchPosition { item_index: 70 }],
+        });
+
+        pump_main_context(|| {
+            let parts = controller.state().get();
+            parts.model.pending_render_batch.is_none() && !parts.model.loading_jump
+        });
+
+        let parts = controller.state().get();
+        assert!(!parts.model.loading_jump);
+        assert!(parts.model.display_targets_by_item_index.contains_key(&70));
+    }
+
+    #[gtk::test]
+    fn jump_to_unloaded_match_triggers_progressive_loading_after_each_render_batch() {
+        let temp_db = tempfile::NamedTempFile::new().expect("temp db");
+        seed_search_transcript(
+            temp_db.path(),
+            "test-session-123",
+            INITIAL_PAGE_SIZE + NEXT_PAGE_SIZE + 10,
+            &[10, 160],
+        );
+
+        let controller = SessionDetail::builder().launch(temp_db.path().to_path_buf());
+        controller.emit(SessionDetailMsg::SetSession {
+            session: Box::new(build_test_session(None, None, 0, 0, 0)),
+            search_query: Some("needle".to_string()),
+        });
+        pump_main_context(|| {
+            let parts = controller.state().get();
+            parts.model.match_positions.len() == 2 && !parts.model.loading_jump
+        });
+
+        controller.emit(SessionDetailMsg::NextMatch);
+        pump_main_context(|| {
+            let parts = controller.state().get();
+            parts.model.loaded_count == INITIAL_PAGE_SIZE + NEXT_PAGE_SIZE
+                && parts.model.pending_render_batch.is_none()
+                && !parts.model.loading_jump
+        });
+
+        let parts = controller.state().get();
+        assert_eq!(parts.model.current_match, 1);
+        assert!(!parts.model.loading_jump);
+        assert!(parts.model.display_targets_by_item_index.contains_key(&160));
+    }
+
+    #[gtk::test]
+    fn prev_next_wrap_around_match_positions() {
+        let temp_db = tempfile::NamedTempFile::new().expect("temp db");
+        seed_search_transcript(
+            temp_db.path(),
+            "test-session-123",
+            INITIAL_PAGE_SIZE,
+            &[2, 4],
+        );
+
+        let controller = SessionDetail::builder().launch(temp_db.path().to_path_buf());
+        controller.emit(SessionDetailMsg::SetSession {
+            session: Box::new(build_test_session(None, None, 0, 0, 0)),
+            search_query: Some("needle".to_string()),
+        });
+        pump_main_context(|| {
+            let parts = controller.state().get();
+            parts.model.match_positions.len() == 2 && !parts.model.loading_jump
+        });
+
+        controller.emit(SessionDetailMsg::PrevMatch);
+        pump_main_context(|| controller.state().get().model.current_match == 1);
+        controller.emit(SessionDetailMsg::NextMatch);
+        pump_main_context(|| controller.state().get().model.current_match == 0);
+
+        let parts = controller.state().get();
+        assert_eq!(parts.model.current_match, 0);
     }
 }
