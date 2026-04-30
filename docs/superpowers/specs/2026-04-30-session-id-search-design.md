@@ -34,6 +34,7 @@ The brainstorming dialogue resolved these rules explicitly:
 3. **Matching is exact after trim.** `id: abc ` matches only `abc`.
 4. **Unknown or empty ID values produce a dedicated empty state.** The UI should say `No session found with this ID` rather than reusing the generic search-empty message.
 5. **Only lowercase `id:` is recognized in v1.** This keeps the rule explicit and minimal.
+6. **The ID empty state takes precedence over other search-empty variants.** For example, `id:abc` with `Pinned` selected should still show the session-ID-specific empty state when no pinned session matches.
 
 ## Architecture
 
@@ -63,7 +64,7 @@ SessionList reloads:
    - otherwise -> search_sessions_for_filter(...) using FTS
 ```
 
-`SessionDetail` continues to receive the shared query exactly as it does today. This design does not add a cross-component mode flag. The `id:` behavior is purely a local interpretation in `SessionList`; in `SessionDetail`, an input such as `id:abc` remains just an ordinary transcript query string.
+`SessionDetail` continues to receive the shared query exactly as it does today. This design does not add a cross-component mode flag. The `id:` behavior is purely a local interpretation in `SessionList`; in `SessionDetail`, an input such as `id:abc` intentionally remains just an ordinary transcript query string in v1.
 
 ## Database layer
 
@@ -91,26 +92,41 @@ No migration is needed because `sessions.id` already exists and is the canonical
 
 ## UI layer
 
-`SessionList::fetch_sessions` becomes a 3-way branch:
+Add one small local parser helper in `session_list.rs`, used by both loading and empty-state decisions:
+
+```rust
+fn parse_session_id_query(query: &str) -> Option<&str>;
+```
+
+Expected behavior:
+- Trim the whole query before checking the prefix.
+- Recognize only lowercase `id:`.
+- Trim the suffix before returning it.
+- Return `Some("")` for `id:` or `id:   ` so the UI can still identify the query as an explicit session-ID lookup and show the dedicated empty state.
+- Return `None` for all non-prefixed queries.
+
+`SessionList::fetch_sessions` then becomes a 3-way branch:
 
 1. Empty trimmed query: load the normal filtered list.
 2. Query with lowercase `id:` prefix: extract the suffix, trim it, and run the exact ID lookup.
 3. Any other non-empty query: keep the current FTS search path.
 
-The prefix parser should stay small and local to `session_list.rs`. No global search-mode enum is needed.
+No global search-mode enum is needed.
 
-`compute_empty_state(...)` should distinguish this explicit lookup mode from ordinary text search. When the active query is an `id:` lookup and the resulting list is empty, the empty state should be:
+`compute_empty_state(...)` should use the same parser helper to distinguish this explicit lookup mode from ordinary text search. When the active query is an `id:` lookup and the resulting list is empty, the empty state should be:
 
 - Title: `No session found with this ID`
 - Description: `Try a different session ID or adjust filters`
 
 This rule also applies when the user enters `id:` with no usable suffix after trimming.
 
+This check should run before the existing `has_search && pinned_selected` and generic `has_search` empty-state branches. The explicit ID lookup copy is more specific than the pinned-search copy.
+
 ## Error handling
 
 - Missing database file or query errors continue to follow the current list behavior: log the error and return an empty list.
 - `id:` with an empty or whitespace-only suffix is not a validation error. It is treated as a lookup with no match and shows the dedicated empty state.
-- `SessionDetail` gets no special-case suppression or rerouting. Supporting or disabling `id:` there would require broader global-search semantics and is explicitly deferred.
+- `SessionDetail` gets no special-case suppression or rerouting. `id:abc` remains an ordinary transcript query string there. Any future behavior that disables, annotates, or reroutes `id:` in detail view would require broader global-search semantics and is explicitly deferred.
 
 ## Testing
 
@@ -123,10 +139,12 @@ Database tests in `tests/search_sessions.rs`:
 
 `SessionList` tests in `src/ui/session_list.rs`:
 - `id:` queries use the dedicated empty state copy
+- `id:` queries use the dedicated empty state even when `Pinned` is selected
 - ordinary text queries keep the current generic search empty state
 - `id: abc ` is normalized to `abc`
 - successful `id:` lookup reloads the list with the expected filtered session
 - `id:` with no suffix yields the dedicated empty state
+- `id:` with no suffix does not need a database-specific test if the local parser and list behavior already cover it
 
 Regression expectation:
 - non-prefixed search continues to use the current FTS behavior with no ranking or sanitization changes.
