@@ -3,7 +3,9 @@ use relm4::factory::FactoryVecDeque;
 use relm4::{ComponentParts, ComponentSender, SimpleComponent, adw, gtk};
 use std::path::{Path, PathBuf};
 
-use crate::database::{load_sessions_for_filter, search_sessions_for_filter};
+use crate::database::{
+    load_session_by_id_for_filter, load_sessions_for_filter, search_sessions_for_filter,
+};
 use crate::models::{AiAssistant, PerSourceResult, ProjectFilter, Session, SourceStatus};
 use crate::ui::session_row::{SessionRow, SessionRowInit, SessionRowOutput};
 
@@ -57,6 +59,10 @@ struct EmptyStateViewModel {
     show_source_results: bool,
 }
 
+fn parse_session_id_query(query: &str) -> Option<&str> {
+    query.trim().strip_prefix("id:").map(str::trim)
+}
+
 fn compute_empty_state(
     sessions_empty: bool,
     search_query: &str,
@@ -74,8 +80,17 @@ fn compute_empty_state(
         };
     }
 
+    let session_id_lookup = parse_session_id_query(search_query).is_some();
     let has_search = !search_query.trim().is_empty();
     let pinned_selected = *project_filter == ProjectFilter::Pinned;
+
+    if session_id_lookup {
+        return EmptyStateViewModel {
+            title: "No session found with this ID",
+            description: "Try a different session ID or adjust filters",
+            show_source_results: false,
+        };
+    }
 
     if has_search && pinned_selected {
         return EmptyStateViewModel {
@@ -435,6 +450,8 @@ impl SessionList {
         let query = query.trim();
         let sessions = if query.is_empty() {
             load_sessions_for_filter(db_path, tools, project_filter)
+        } else if let Some(session_id) = parse_session_id_query(query) {
+            load_session_by_id_for_filter(db_path, tools, project_filter, session_id)
         } else {
             search_sessions_for_filter(db_path, tools, project_filter, query)
         };
@@ -909,6 +926,75 @@ mod tests {
         assert!(SessionList::search_query_changed("needle", "other"));
     }
 
+    #[test]
+    fn parse_session_id_query_recognizes_lowercase_prefix_and_trims_suffix() {
+        assert_eq!(parse_session_id_query("id:abc"), Some("abc"));
+        assert_eq!(parse_session_id_query(" id: abc "), Some("abc"));
+        assert_eq!(parse_session_id_query("id:   "), Some(""));
+        assert_eq!(parse_session_id_query("ID:abc"), None);
+        assert_eq!(parse_session_id_query("abc"), None);
+    }
+
+    #[test]
+    fn session_id_search_empty_state_has_specific_copy() {
+        let state = compute_empty_state(
+            true,
+            "id:missing-session",
+            true,
+            false,
+            false,
+            true,
+            &ProjectFilter::AllSessions,
+        );
+
+        assert_eq!(state.title, "No session found with this ID");
+        assert_eq!(
+            state.description,
+            "Try a different session ID or adjust filters"
+        );
+        assert!(!state.show_source_results);
+    }
+
+    #[test]
+    fn session_id_search_empty_state_overrides_pinned_search_copy() {
+        let state = compute_empty_state(
+            true,
+            "id:missing-session",
+            true,
+            false,
+            false,
+            false,
+            &ProjectFilter::Pinned,
+        );
+
+        assert_eq!(state.title, "No session found with this ID");
+        assert_eq!(
+            state.description,
+            "Try a different session ID or adjust filters"
+        );
+        assert!(!state.show_source_results);
+    }
+
+    #[test]
+    fn blank_session_id_search_empty_state_has_specific_copy() {
+        let state = compute_empty_state(
+            true,
+            "id:   ",
+            true,
+            false,
+            false,
+            false,
+            &ProjectFilter::AllSessions,
+        );
+
+        assert_eq!(state.title, "No session found with this ID");
+        assert_eq!(
+            state.description,
+            "Try a different session ID or adjust filters"
+        );
+        assert!(!state.show_source_results);
+    }
+
     #[gtk::test]
     fn explicit_reload_refreshes_even_when_filters_are_unchanged() {
         let temp_db = TempDatabase::new();
@@ -991,6 +1077,61 @@ mod tests {
         };
 
         assert_eq!(ids, vec!["beta-claude", "alpha-claude-new"]);
+    }
+
+    #[gtk::test]
+    fn session_list_id_search_filters_to_exact_session_id() {
+        let temp_db = TempDatabase::new();
+        temp_db.seed_project_sidebar_fixture();
+
+        let controller = SessionList::builder().launch(temp_db.path.clone());
+
+        controller.emit(SessionListMsg::SetSearchQuery(
+            " id: alpha-claude-old ".to_string(),
+        ));
+
+        pump_main_context(|| {
+            let parts = controller.state().get();
+            parts.model.sessions.len() == 1
+        });
+
+        let ids: Vec<String> = {
+            let parts = controller.state().get();
+            (0..parts.model.sessions.len())
+                .filter_map(|index| parts.model.sessions.get(index))
+                .map(|row| row.session_id().to_string())
+                .collect()
+        };
+
+        assert_eq!(ids, vec!["alpha-claude-old"]);
+    }
+
+    #[gtk::test]
+    fn session_list_id_search_respects_active_filters() {
+        let temp_db = TempDatabase::new();
+        temp_db.seed_project_sidebar_fixture();
+
+        let controller = SessionList::builder().launch(temp_db.path.clone());
+
+        controller.emit(SessionListMsg::SetFilters {
+            tools: vec![AiAssistant::OpenCode],
+            project_filter: ProjectFilter::AllSessions,
+        });
+        controller.emit(SessionListMsg::SetSearchQuery(
+            "id:alpha-claude-old".to_string(),
+        ));
+
+        pump_main_context(|| {
+            let parts = controller.state().get();
+            parts.model.sessions.is_empty()
+        });
+
+        let title = {
+            let parts = controller.state().get();
+            parts.widgets.empty_state.title().to_string()
+        };
+
+        assert_eq!(title, "No session found with this ID");
     }
 
     #[gtk::test]
