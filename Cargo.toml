@@ -1,6 +1,6 @@
 [package]
 name = "sessions-chronicle"
-version = "0.4.7"
+version = "0.4.8"
 authors = ["Mathieu Cizo <maciz@outlook.fr>"]
 edition = "2024"
 publish = false

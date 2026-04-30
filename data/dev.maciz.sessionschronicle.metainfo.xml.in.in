@@ -49,6 +49,15 @@
   </categories>
   <content_rating type="oars-1.1" />
   <releases>
+    <release version="0.4.8" date="2026-05-14">
+      <description>
+        <p>Adds explicit session ID search and FTS-backed pagination for session search.</p>
+        <ul>
+          <li>Add explicit session ID search in session list</li>
+          <li>Implement FTS-backed session search pagination</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.4.7" date="2026-04-29">
       <description>
         <p>Improves session detail smoothness and panel layout.</p>
