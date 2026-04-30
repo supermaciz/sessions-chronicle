@@ -3,7 +3,9 @@ use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use sessions_chronicle::database::schema::initialize_database;
-use sessions_chronicle::database::{find_session_match_positions, search_sessions_for_filter};
+use sessions_chronicle::database::{
+    find_session_match_positions, load_session_by_id_for_filter, search_sessions_for_filter,
+};
 use sessions_chronicle::models::{AiAssistant, ProjectFilter};
 
 struct TempDatabase {
@@ -249,6 +251,136 @@ fn search_sessions_sanitizes_invalid_query() {
     assert_eq!(sessions.len(), 1);
     assert_eq!(sessions[0].id, "session-a");
     assert_eq!(sessions[0].project_id, Some(1));
+}
+
+#[test]
+fn load_session_by_id_for_filter_matches_exact_id() {
+    let db = TempDatabase::new();
+    db.seed();
+
+    let sessions = load_session_by_id_for_filter(
+        &db.path,
+        &AiAssistant::ALL,
+        &ProjectFilter::AllSessions,
+        "session-b",
+    )
+    .expect("Session ID lookup failed");
+    let ids: Vec<&str> = sessions.iter().map(|session| session.id.as_str()).collect();
+
+    assert_eq!(ids, vec!["session-b"]);
+}
+
+#[test]
+fn load_session_by_id_for_filter_requires_exact_id() {
+    let db = TempDatabase::new();
+    db.seed();
+
+    let sessions = load_session_by_id_for_filter(
+        &db.path,
+        &AiAssistant::ALL,
+        &ProjectFilter::AllSessions,
+        "session",
+    )
+    .expect("Session ID lookup failed");
+
+    assert!(sessions.is_empty());
+}
+
+#[test]
+fn load_session_by_id_for_filter_respects_tool_filter() {
+    let db = TempDatabase::new();
+    db.seed();
+
+    let matching = load_session_by_id_for_filter(
+        &db.path,
+        &[AiAssistant::OpenCode],
+        &ProjectFilter::AllSessions,
+        "session-b",
+    )
+    .expect("Session ID lookup with matching tool failed");
+    let blocked = load_session_by_id_for_filter(
+        &db.path,
+        &[AiAssistant::ClaudeCode],
+        &ProjectFilter::AllSessions,
+        "session-b",
+    )
+    .expect("Session ID lookup with blocked tool failed");
+
+    assert_eq!(matching.len(), 1);
+    assert_eq!(matching[0].id, "session-b");
+    assert!(blocked.is_empty());
+}
+
+#[test]
+fn load_session_by_id_for_filter_respects_project_filter() {
+    let db = TempDatabase::new();
+    db.seed();
+
+    let matching = load_session_by_id_for_filter(
+        &db.path,
+        &AiAssistant::ALL,
+        &ProjectFilter::Project(2),
+        "session-b",
+    )
+    .expect("Session ID lookup with matching project failed");
+    let blocked = load_session_by_id_for_filter(
+        &db.path,
+        &AiAssistant::ALL,
+        &ProjectFilter::Project(1),
+        "session-b",
+    )
+    .expect("Session ID lookup with blocked project failed");
+
+    assert_eq!(matching.len(), 1);
+    assert_eq!(matching[0].id, "session-b");
+    assert!(blocked.is_empty());
+}
+
+#[test]
+fn load_session_by_id_for_filter_respects_pinned_filter() {
+    let db = TempDatabase::new();
+    db.seed();
+    db.connection
+        .execute(
+            "UPDATE sessions SET pinned_at = ?1 WHERE id = ?2",
+            rusqlite::params![123_i64, "session-b"],
+        )
+        .expect("Failed to pin fixture session");
+
+    let matching = load_session_by_id_for_filter(
+        &db.path,
+        &AiAssistant::ALL,
+        &ProjectFilter::Pinned,
+        "session-b",
+    )
+    .expect("Pinned session ID lookup failed");
+    let blocked = load_session_by_id_for_filter(
+        &db.path,
+        &AiAssistant::ALL,
+        &ProjectFilter::Pinned,
+        "session-a",
+    )
+    .expect("Unpinned session ID lookup failed");
+
+    assert_eq!(matching.len(), 1);
+    assert_eq!(matching[0].id, "session-b");
+    assert!(blocked.is_empty());
+}
+
+#[test]
+fn load_session_by_id_for_filter_returns_empty_for_unknown_id() {
+    let db = TempDatabase::new();
+    db.seed();
+
+    let sessions = load_session_by_id_for_filter(
+        &db.path,
+        &AiAssistant::ALL,
+        &ProjectFilter::AllSessions,
+        "missing-session",
+    )
+    .expect("Unknown session ID lookup failed");
+
+    assert!(sessions.is_empty());
 }
 
 #[test]

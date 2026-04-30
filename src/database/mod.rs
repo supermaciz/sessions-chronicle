@@ -17,6 +17,12 @@ use crate::models::{
 pub use indexer::{IndexingStats, SessionIndexer};
 
 const SQLITE_BUSY_TIMEOUT_SECS: u64 = 5;
+const SESSION_SELECT_COLUMNS: &str =
+    "id, tool, project_path, project_id, start_time, message_count, file_path,
+        last_updated, pinned_at, first_prompt, parent_session_id, is_subagent,
+        input_tokens, output_tokens, cache_read_tokens,
+        cache_write_tokens, reasoning_tokens,
+        edit_count, read_count, command_count, ending_status";
 
 pub(crate) fn open_connection(db_path: &Path) -> Result<Connection> {
     let conn = Connection::open(db_path).context("Failed to open database")?;
@@ -188,6 +194,91 @@ pub fn search_sessions_for_filter(
             }
         }
     }
+}
+
+pub fn load_session_by_id_for_filter(
+    db_path: &Path,
+    tools: &[AiAssistant],
+    project_filter: &ProjectFilter,
+    session_id: &str,
+) -> Result<Vec<Session>> {
+    if !db_path.exists() {
+        return Ok(Vec::new());
+    }
+
+    if tools.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let session_id = session_id.trim();
+    if session_id.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let db = open_connection(db_path)?;
+
+    let project_clause = match project_filter {
+        ProjectFilter::AllSessions => String::new(),
+        ProjectFilter::Pinned => " AND pinned_at IS NOT NULL".to_string(),
+        ProjectFilter::Project(_) => " AND project_id = ?".to_string(),
+        ProjectFilter::Unassigned => " AND project_id IS NULL".to_string(),
+    };
+
+    let (query, tool_strings): (String, Vec<String>) = if tools.len() == AiAssistant::ALL.len() {
+        (
+            format!(
+                "SELECT {}
+                 FROM sessions
+                 WHERE id = ?
+                   AND is_subagent = 0
+                    {}
+                 ORDER BY last_updated DESC",
+                SESSION_SELECT_COLUMNS, project_clause
+            ),
+            vec![],
+        )
+    } else {
+        let placeholders: Vec<String> = tools.iter().map(|_| "?".to_string()).collect();
+        let tool_strings: Vec<String> = tools.iter().map(|t| t.to_storage()).collect::<Vec<_>>();
+        (
+            format!(
+                "SELECT {}
+                 FROM sessions
+                 WHERE id = ?
+                   AND tool IN ({})
+                   AND is_subagent = 0
+                    {}
+                 ORDER BY last_updated DESC",
+                SESSION_SELECT_COLUMNS,
+                placeholders.join(","),
+                project_clause
+            ),
+            tool_strings,
+        )
+    };
+
+    let mut stmt = db.prepare(&query)?;
+
+    let mut params: Vec<&dyn ToSql> = Vec::with_capacity(2 + tool_strings.len());
+    params.push(&session_id);
+    for tool in &tool_strings {
+        params.push(tool as &dyn ToSql);
+    }
+    let project_id = match project_filter {
+        ProjectFilter::Project(id) => Some(*id),
+        _ => None,
+    };
+    if let Some(project_id) = project_id.as_ref() {
+        params.push(project_id as &dyn ToSql);
+    }
+
+    let sessions = stmt
+        .query_map(params.as_slice(), session_from_row)
+        .context("Failed to query session by ID")?
+        .collect::<Result<Vec<_>, _>>()
+        .context("Failed to load session by ID")?;
+
+    Ok(sessions)
 }
 
 pub fn find_session_match_positions(
@@ -378,16 +469,12 @@ pub fn load_sessions_for_filter(
     let (query, tool_strings): (String, Vec<String>) = if tools.len() == AiAssistant::ALL.len() {
         (
             format!(
-                "SELECT id, tool, project_path, project_id, start_time, message_count, file_path,
-                        last_updated, pinned_at, first_prompt, parent_session_id, is_subagent,
-                        input_tokens, output_tokens, cache_read_tokens,
-                        cache_write_tokens, reasoning_tokens,
-                        edit_count, read_count, command_count, ending_status
+                "SELECT {}
                  FROM sessions
                  WHERE is_subagent = 0
                     {}
                  ORDER BY last_updated DESC",
-                project_clause
+                SESSION_SELECT_COLUMNS, project_clause
             ),
             vec![],
         )
@@ -396,16 +483,13 @@ pub fn load_sessions_for_filter(
         let tool_strings: Vec<String> = tools.iter().map(|t| t.to_storage()).collect::<Vec<_>>();
         (
             format!(
-                "SELECT id, tool, project_path, project_id, start_time, message_count, file_path,
-                        last_updated, pinned_at, first_prompt, parent_session_id, is_subagent,
-                        input_tokens, output_tokens, cache_read_tokens,
-                        cache_write_tokens, reasoning_tokens,
-                        edit_count, read_count, command_count, ending_status
+                "SELECT {}
                  FROM sessions
                  WHERE tool IN ({})
                    AND is_subagent = 0
                     {}
                  ORDER BY last_updated DESC",
+                SESSION_SELECT_COLUMNS,
                 placeholders.join(","),
                 project_clause
             ),
