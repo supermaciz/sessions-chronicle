@@ -840,7 +840,6 @@ impl Component for SessionDetail {
                 let message_count = session.message_count;
                 let has_search_query = normalized.is_some();
                 let query_len = normalized.as_ref().map(|query| query.len()).unwrap_or(0);
-                self.session_opened_at = Some(Instant::now());
                 self.session = Some(session);
                 self.start_first_page_load(&sender, &session_id, true, "open");
                 tracing::info!(
@@ -1551,6 +1550,7 @@ impl SessionDetail {
         self.has_more_messages = false;
         self.clear_pending_boundary_tool_rows();
         self.clear_messages_safely_with_metrics(clear_reason);
+        self.session_opened_at = Some(Instant::now());
 
         let request_id = self.transcript_request_id;
         let session_id = session_id.to_string();
