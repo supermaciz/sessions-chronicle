@@ -921,7 +921,7 @@ impl Component for SessionDetail {
                     .as_ref()
                     .is_some_and(|session| session.id == session_id);
                 if request_id == self.transcript_request_id && active_session_matches {
-                    tracing::info!(
+                    tracing::debug!(
                         request_id,
                         session_id = session_id.as_str(),
                         configured_delay_ms = DEFERRED_FIRST_PAGE_LOAD_DELAY_MS,
