@@ -1,6 +1,7 @@
 use std::cell::Cell;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Instant;
 
 use adw::prelude::*;
 use chrono::TimeZone;
@@ -209,22 +210,26 @@ pub enum ToolInspectorPaneCmd {
         request_id: u64,
         session_id: String,
         tool_call_id: String,
+        load_duration_ms: u128,
         result: Result<Option<ToolCall>, String>,
     },
     Subagent {
         request_id: u64,
         session_id: String,
         subagent_id: String,
+        load_duration_ms: u128,
         subagent_result: Result<Option<Subagent>, String>,
         tools_result: Result<Vec<ToolCall>, String>,
     },
     Reasoning {
         request_id: u64,
+        load_duration_ms: u128,
         result: Result<Option<ReasoningAttachment>, String>,
     },
     DrillTool {
         session_id: String,
         tool_call_id: String,
+        load_duration_ms: u128,
         result: Result<Option<ToolCall>, String>,
     },
 }
@@ -319,39 +324,56 @@ impl Component for ToolInspectorPane {
                 request_id,
                 session_id,
                 tool_call_id,
+                load_duration_ms,
                 result,
-            } => self.apply_tool_call_cmd(request_id, &session_id, &tool_call_id, result),
+            } => self.apply_tool_call_cmd(
+                request_id,
+                &session_id,
+                &tool_call_id,
+                load_duration_ms,
+                result,
+            ),
             ToolInspectorPaneCmd::Subagent {
                 request_id,
                 session_id,
                 subagent_id,
+                load_duration_ms,
                 subagent_result,
                 tools_result,
             } => self.apply_subagent_cmd(
                 request_id,
                 &session_id,
                 &subagent_id,
+                load_duration_ms,
                 subagent_result,
                 tools_result,
             ),
-            ToolInspectorPaneCmd::Reasoning { request_id, result } => {
-                self.apply_reasoning_cmd(request_id, result)
-            }
+            ToolInspectorPaneCmd::Reasoning {
+                request_id,
+                load_duration_ms,
+                result,
+            } => self.apply_reasoning_cmd(request_id, load_duration_ms, result),
             ToolInspectorPaneCmd::DrillTool {
                 session_id,
                 tool_call_id,
+                load_duration_ms,
                 result,
-            } => self.apply_drill_tool_cmd(&session_id, &tool_call_id, result),
+            } => self.apply_drill_tool_cmd(&session_id, &tool_call_id, load_duration_ms, result),
         }
     }
 
     fn post_view(&self, _widgets: &mut Self::Widgets) {
+        let started_at = Instant::now();
         self.content_stack
             .set_visible_child_name(self.visible_page_name());
         self.render_tool_call_section();
         self.render_subagent_section();
         self.render_reasoning_section();
         self.sync_drilldown_page();
+        tracing::debug!(
+            duration_ms = started_at.elapsed().as_millis(),
+            "Updated tool inspector pane view"
+        );
     }
 }
 
@@ -381,13 +403,25 @@ impl ToolInspectorPane {
             tool_call_id: tool_call_id.clone(),
         };
         let request_id = self.begin_selection_load();
-        let db_path = self.db_path.clone();
-        sender.spawn_oneshot_command(move || ToolInspectorPaneCmd::ToolCall {
+        tracing::info!(
             request_id,
-            session_id: session_id.clone(),
-            tool_call_id: tool_call_id.clone(),
-            result: load_tool_call(db_path.as_path(), &session_id, &tool_call_id)
-                .map_err(|err| err.to_string()),
+            session_id = session_id.as_str(),
+            tool_call_id = tool_call_id.as_str(),
+            "Inspector tool call selection started"
+        );
+        let db_path = self.db_path.clone();
+        sender.spawn_oneshot_command(move || {
+            let started_at = Instant::now();
+            let result = load_tool_call(db_path.as_path(), &session_id, &tool_call_id)
+                .map_err(|err| err.to_string());
+            let load_duration_ms = started_at.elapsed().as_millis();
+            ToolInspectorPaneCmd::ToolCall {
+                request_id,
+                session_id: session_id.clone(),
+                tool_call_id: tool_call_id.clone(),
+                load_duration_ms,
+                result,
+            }
         });
     }
 
@@ -402,19 +436,29 @@ impl ToolInspectorPane {
             subagent_id: subagent_id.clone(),
         };
         let request_id = self.begin_selection_load();
-        let db_path = self.db_path.clone();
-        sender.spawn_oneshot_command(move || ToolInspectorPaneCmd::Subagent {
+        tracing::info!(
             request_id,
-            session_id: session_id.clone(),
-            subagent_id: subagent_id.clone(),
-            subagent_result: load_subagent(db_path.as_path(), &session_id, &subagent_id)
-                .map_err(|err| err.to_string()),
-            tools_result: load_tool_calls_for_subagent(
-                db_path.as_path(),
-                &session_id,
-                &subagent_id,
-            )
-            .map_err(|err| err.to_string()),
+            session_id = session_id.as_str(),
+            subagent_id = subagent_id.as_str(),
+            "Inspector subagent selection started"
+        );
+        let db_path = self.db_path.clone();
+        sender.spawn_oneshot_command(move || {
+            let started_at = Instant::now();
+            let subagent_result = load_subagent(db_path.as_path(), &session_id, &subagent_id)
+                .map_err(|err| err.to_string());
+            let tools_result =
+                load_tool_calls_for_subagent(db_path.as_path(), &session_id, &subagent_id)
+                    .map_err(|err| err.to_string());
+            let load_duration_ms = started_at.elapsed().as_millis();
+            ToolInspectorPaneCmd::Subagent {
+                request_id,
+                session_id: session_id.clone(),
+                subagent_id: subagent_id.clone(),
+                load_duration_ms,
+                subagent_result,
+                tools_result,
+            }
         });
     }
 
@@ -429,15 +473,24 @@ impl ToolInspectorPane {
             transcript_item_index,
         };
         let request_id = self.begin_selection_load();
-        let db_path = self.db_path.clone();
-        sender.spawn_oneshot_command(move || ToolInspectorPaneCmd::Reasoning {
+        tracing::info!(
             request_id,
-            result: load_reasoning_attachment(
-                db_path.as_path(),
-                &session_id,
-                transcript_item_index,
-            )
-            .map_err(|err| err.to_string()),
+            session_id = session_id.as_str(),
+            transcript_item_index,
+            "Inspector reasoning selection started"
+        );
+        let db_path = self.db_path.clone();
+        sender.spawn_oneshot_command(move || {
+            let started_at = Instant::now();
+            let result =
+                load_reasoning_attachment(db_path.as_path(), &session_id, transcript_item_index)
+                    .map_err(|err| err.to_string());
+            let load_duration_ms = started_at.elapsed().as_millis();
+            ToolInspectorPaneCmd::Reasoning {
+                request_id,
+                load_duration_ms,
+                result,
+            }
         });
     }
 
@@ -465,12 +518,23 @@ impl ToolInspectorPane {
 
         self.pending_drill_tool_id = Some(tool_call_id.clone());
         let selection_session_id = session_id.clone();
+        tracing::info!(
+            session_id = selection_session_id.as_str(),
+            tool_call_id = tool_call_id.as_str(),
+            "Inspector drill-down tool selection started"
+        );
         let db_path = self.db_path.clone();
-        sender.spawn_oneshot_command(move || ToolInspectorPaneCmd::DrillTool {
-            session_id: selection_session_id.clone(),
-            tool_call_id: tool_call_id.clone(),
-            result: load_tool_call(db_path.as_path(), &selection_session_id, &tool_call_id)
-                .map_err(|err| err.to_string()),
+        sender.spawn_oneshot_command(move || {
+            let started_at = Instant::now();
+            let result = load_tool_call(db_path.as_path(), &selection_session_id, &tool_call_id)
+                .map_err(|err| err.to_string());
+            let load_duration_ms = started_at.elapsed().as_millis();
+            ToolInspectorPaneCmd::DrillTool {
+                session_id: selection_session_id.clone(),
+                tool_call_id: tool_call_id.clone(),
+                load_duration_ms,
+                result,
+            }
         });
     }
 
@@ -501,11 +565,24 @@ impl ToolInspectorPane {
         request_id: u64,
         session_id: &str,
         tool_call_id: &str,
+        load_duration_ms: u128,
         result: Result<Option<ToolCall>, String>,
     ) {
         if !self.accept_request_result(request_id, &result) {
             return;
         }
+
+        let success = result.is_ok();
+        let found = result.as_ref().map(|tool| tool.is_some()).unwrap_or(false);
+        tracing::info!(
+            request_id,
+            session_id,
+            tool_call_id,
+            success,
+            found,
+            load_duration_ms,
+            "Inspector tool call load completed"
+        );
 
         match result {
             Ok(tool_call) => {
@@ -530,6 +607,7 @@ impl ToolInspectorPane {
         request_id: u64,
         session_id: &str,
         subagent_id: &str,
+        load_duration_ms: u128,
         subagent_result: Result<Option<Subagent>, String>,
         tools_result: Result<Vec<ToolCall>, String>,
     ) {
@@ -544,6 +622,23 @@ impl ToolInspectorPane {
         {
             return;
         }
+
+        let success = subagent_result.is_ok();
+        let found = subagent_result
+            .as_ref()
+            .map(|subagent| subagent.is_some())
+            .unwrap_or(false);
+        let subagent_tools_count = tools_result.as_ref().map(|tools| tools.len()).unwrap_or(0);
+        tracing::info!(
+            request_id,
+            session_id,
+            subagent_id,
+            success,
+            found,
+            subagent_tools_count,
+            load_duration_ms,
+            "Inspector subagent load completed"
+        );
 
         match subagent_result {
             Ok(subagent) => {
@@ -574,11 +669,25 @@ impl ToolInspectorPane {
     fn apply_reasoning_cmd(
         &mut self,
         request_id: u64,
+        load_duration_ms: u128,
         result: Result<Option<ReasoningAttachment>, String>,
     ) {
         if !self.accept_request_result(request_id, &result) {
             return;
         }
+
+        let success = result.is_ok();
+        let found = result
+            .as_ref()
+            .map(|reasoning| reasoning.is_some())
+            .unwrap_or(false);
+        tracing::info!(
+            request_id,
+            success,
+            found,
+            load_duration_ms,
+            "Inspector reasoning load completed"
+        );
 
         match result {
             Ok(attachment) => {
@@ -595,6 +704,7 @@ impl ToolInspectorPane {
         &mut self,
         session_id: &str,
         tool_call_id: &str,
+        load_duration_ms: u128,
         result: Result<Option<ToolCall>, String>,
     ) {
         if !matches!(
@@ -610,6 +720,17 @@ impl ToolInspectorPane {
         if self.pending_drill_tool_id.as_deref() != Some(tool_call_id) {
             return;
         }
+
+        let success = result.is_ok();
+        let found = result.as_ref().map(|tool| tool.is_some()).unwrap_or(false);
+        tracing::info!(
+            session_id,
+            tool_call_id,
+            success,
+            found,
+            load_duration_ms,
+            "Inspector drill-down tool load completed"
+        );
 
         self.pending_drill_tool_id = None;
         match result {
@@ -668,6 +789,7 @@ impl ToolInspectorPane {
     }
 
     fn rebuild_subagent_tool_rows(&self) {
+        let started_at = Instant::now();
         while let Some(child) = self.subagent_tools_list.first_child() {
             self.subagent_tools_list.remove(&child);
         }
@@ -676,6 +798,11 @@ impl ToolInspectorPane {
             self.subagent_tools_list
                 .append(&build_subagent_tool_row(tool, &self.sender));
         }
+        tracing::debug!(
+            subagent_tools_count = self.subagent_tools.len(),
+            duration_ms = started_at.elapsed().as_millis(),
+            "Rebuilt inspector subagent tool rows"
+        );
     }
 
     fn render_reasoning_section(&self) {
@@ -1295,6 +1422,7 @@ fn build_subagent_tool_row(
 }
 
 fn apply_renderer_stack(views: &RendererStackViews, tool_call: &ToolCall) {
+    let started_at = Instant::now();
     let init = renderer_init_from_tool_call(tool_call);
     let renderer_kind = resolve_renderer(&init.tool_name);
     views.stack.set_visible_child_name(renderer_kind.as_str());
@@ -1337,6 +1465,12 @@ fn apply_renderer_stack(views: &RendererStackViews, tool_call: &ToolCall) {
             views.generic_container.append(&widget);
         }
     }
+
+    tracing::debug!(
+        renderer_kind = renderer_kind.as_str(),
+        duration_ms = started_at.elapsed().as_millis(),
+        "Rendered inspector tool renderer"
+    );
 }
 
 fn clear_container(container: &gtk::Box) {
@@ -1848,6 +1982,21 @@ mod tests {
 
         assert!(apply_load_result(request_id, &mut state, in_flight, Ok(())).is_none());
         assert_eq!(state, LoadState::Idle);
+    }
+
+    #[test]
+    fn inspector_tool_call_command_debug_includes_load_duration() {
+        let cmd = ToolInspectorPaneCmd::ToolCall {
+            request_id: 1,
+            session_id: "session-1".to_string(),
+            tool_call_id: "call-1".to_string(),
+            load_duration_ms: 9,
+            result: Ok(None),
+        };
+
+        let debug = format!("{cmd:?}");
+        assert!(debug.contains("load_duration_ms"));
+        assert!(debug.contains("9"));
     }
 
     #[test]
