@@ -42,6 +42,7 @@ const DEFERRED_CLEAR_DELAY_MS: u64 = 250;
 pub struct SessionDetail {
     db_path: Arc<PathBuf>,
     session: Option<Session>,
+    session_opened_at: Option<Instant>,
     messages: FactoryVecDeque<TranscriptRow>,
     initial_page_size: usize,
     page_size: usize,
@@ -122,6 +123,7 @@ struct RenderMetrics {
     total_push_duration_ms: u128,
     max_push_duration_ms: u128,
     max_schedule_gap_ms: u128,
+    open_to_factory_push_ms: Option<u128>,
     message_count: usize,
     tool_call_count: usize,
     tool_burst_count: usize,
@@ -758,6 +760,7 @@ impl Component for SessionDetail {
         let model = Self {
             db_path,
             session: None,
+            session_opened_at: None,
             messages,
             initial_page_size: INITIAL_PAGE_SIZE,
             page_size: NEXT_PAGE_SIZE,
@@ -824,8 +827,20 @@ impl Component for SessionDetail {
                 self.reset_search_matches();
                 let session = *session;
                 let session_id = session.id.clone();
+                let message_count = session.message_count;
+                let has_search_query = normalized.is_some();
+                let query_len = normalized.as_ref().map(|query| query.len()).unwrap_or(0);
+                self.session_opened_at = Some(Instant::now());
                 self.session = Some(session);
                 self.start_first_page_load(&sender, &session_id, true);
+                tracing::info!(
+                    request_id = self.transcript_request_id,
+                    session_id = session_id.as_str(),
+                    message_count,
+                    has_search_query,
+                    query_len,
+                    "Session detail open started"
+                );
                 if let Some(query) = normalized {
                     let request_id = self.search_request_id;
                     self.spawn_match_positions_load(&sender, request_id, session_id.clone(), query);
@@ -906,6 +921,12 @@ impl Component for SessionDetail {
                     .as_ref()
                     .is_some_and(|session| session.id == session_id);
                 if request_id == self.transcript_request_id && active_session_matches {
+                    tracing::info!(
+                        request_id,
+                        session_id = session_id.as_str(),
+                        configured_delay_ms = DEFERRED_FIRST_PAGE_LOAD_DELAY_MS,
+                        "Session detail deferred first page load started"
+                    );
                     self.spawn_transcript_page_load(
                         &sender,
                         request_id,
@@ -937,6 +958,7 @@ impl Component for SessionDetail {
                 self.invalidate_transcript_requests();
                 self.invalidate_search_requests();
                 self.session = None;
+                self.session_opened_at = None;
                 self.clear_messages_safely();
                 self.loaded_count = 0;
                 self.has_more_messages = false;
@@ -1524,6 +1546,7 @@ impl SessionDetail {
     fn clear_for_navigation_back(&mut self) {
         self.invalidate_search_requests();
         self.session = None;
+        self.session_opened_at = None;
         self.clear_messages_safely();
         self.loaded_count = 0;
         self.has_more_messages = false;
@@ -1589,6 +1612,8 @@ impl SessionDetail {
             return;
         }
 
+        let session_opened_at = self.session_opened_at;
+
         let Some(batch) = &mut self.pending_render_batch else {
             return;
         };
@@ -1647,6 +1672,26 @@ impl SessionDetail {
             );
             self.schedule_transcript_render_batch(sender, request_id);
         } else {
+            let open_to_factory_push_ms = if offset == 0 {
+                session_opened_at.map(|opened_at| opened_at.elapsed().as_millis())
+            } else {
+                None
+            };
+            if offset == 0 {
+                tracing::info!(
+                    request_id,
+                    offset,
+                    source_row_count,
+                    display_item_count = total_items,
+                    batch_count,
+                    total_push_duration_ms,
+                    max_push_duration_ms,
+                    total_duration_ms,
+                    max_schedule_gap_ms,
+                    open_to_factory_push_ms,
+                    "First transcript page factory push complete"
+                );
+            }
             tracing::info!(
                 request_id,
                 offset,
@@ -1673,6 +1718,7 @@ impl SessionDetail {
                 total_push_duration_ms,
                 max_push_duration_ms,
                 max_schedule_gap_ms,
+                open_to_factory_push_ms,
                 message_count: row_kind_counts.message_count,
                 tool_call_count: row_kind_counts.tool_call_count,
                 tool_burst_count: row_kind_counts.tool_burst_count,
@@ -2557,6 +2603,25 @@ fn synthetic_measurement(input: &str) -> String {\n\
     }
 
     #[gtk::test]
+    fn session_open_timestamp_tracks_active_session_lifecycle() {
+        let temp_db = tempfile::NamedTempFile::new().expect("temp db");
+        seed_message_transcript(temp_db.path(), "test-session-123", INITIAL_PAGE_SIZE);
+
+        let controller = SessionDetail::builder().launch(temp_db.path().to_path_buf());
+        controller.emit(SessionDetailMsg::SetSession {
+            session: Box::new(build_test_session(None, None, 0, 0, 0)),
+            search_query: None,
+        });
+
+        pump_main_context(|| controller.state().get().model.session_opened_at.is_some());
+        assert!(controller.state().get().model.session_opened_at.is_some());
+
+        controller.emit(SessionDetailMsg::Clear);
+        pump_main_context(|| controller.state().get().model.session.is_none());
+        assert!(controller.state().get().model.session_opened_at.is_none());
+    }
+
+    #[gtk::test]
     fn session_detail_loads_transcript_pages_incrementally() {
         let temp_db = tempfile::NamedTempFile::new().expect("temp db");
         seed_message_transcript(temp_db.path(), "test-session-123", INITIAL_PAGE_SIZE + 5);
@@ -2643,6 +2708,7 @@ fn synthetic_measurement(input: &str) -> String {\n\
         assert_eq!(metrics.tool_call_count, 0);
         assert_eq!(metrics.tool_burst_count, 0);
         assert_eq!(metrics.subagent_count, 0);
+        assert!(metrics.open_to_factory_push_ms.is_some());
     }
 
     #[test]
