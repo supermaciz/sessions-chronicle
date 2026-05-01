@@ -13,7 +13,7 @@ Add targeted tracing instrumentation that makes the dominant `SessionDetail` cos
 The instrumentation must cover:
 
 - session open;
-- first visible transcript content;
+- first transcript page factory push completion;
 - transcript render batches;
 - clear and rebuild paths;
 - in-session search updates;
@@ -60,6 +60,8 @@ When `SessionDetailMsg::SetSession` is handled, log a `Session detail open start
 - whether a search query is already active;
 - `query_len` when applicable.
 
+Store `session_opened_at: Option<Instant>` for the active open cycle. This is intentionally the only cross-stage timing state in `SessionDetail`; it exists to report `open_to_factory_push_ms` when the first page finishes pushing into the row factory. Replace it on each new `SetSession` and clear it when the session is cleared.
+
 The deferred first-page load path should log `Session detail deferred first page load started` when the delayed message is accepted. Include:
 
 - `request_id`;
@@ -69,11 +71,11 @@ The deferred first-page load path should log `Session detail deferred first page
 
 If exact elapsed delay would require extra model state, log the configured delay only. The render-batch metrics will still expose main-loop starvation through schedule gaps.
 
-### First Visible Transcript Content
+### First Transcript Page Factory Push
 
-The existing `Finished rendering transcript page` event should remain the final render-page metric. When `offset == 0`, it also represents the first fully rendered visible transcript content for the first page.
+The existing `Finished rendering transcript page` event should remain the final render-page metric. When `offset == 0`, it also represents the point where the first transcript page has been pushed into the row factory.
 
-Add a specific `First transcript page visible` event immediately before or after that final event for `offset == 0`, with:
+Add a specific `First transcript page factory push complete` event immediately before or after that final event for `offset == 0`, with:
 
 - `request_id`;
 - `source_row_count`;
@@ -82,9 +84,10 @@ Add a specific `First transcript page visible` event immediately before or after
 - `total_duration_ms`;
 - `total_push_duration_ms`;
 - `max_push_duration_ms`;
-- `max_schedule_gap_ms`.
+- `max_schedule_gap_ms`;
+- `open_to_factory_push_ms` when the current session open timestamp is available.
 
-This event should not imply a GTK frame has been painted. It means the first page has been pushed into the transcript row factory and is available for GTK to render.
+This event should not imply a GTK frame has been painted. It means the first page has been pushed into the transcript row factory and is available for GTK to render. The wording deliberately avoids `visible` so the logs do not overstate what is measured.
 
 ### Render Batches
 
@@ -187,7 +190,7 @@ IDs, counts, durations, row kinds, and renderer kinds are acceptable. Existing e
 
 The logs should make these comparisons possible from a single run:
 
-- session open to first transcript page queued;
+- session open to first transcript page factory push completion;
 - database load versus display-item preparation;
 - preparation versus factory push time;
 - factory push time versus schedule gaps;
@@ -217,12 +220,12 @@ Suggested launch command:
 RUST_LOG=info,sessions_chronicle=debug /home/mcizo/.local/bin/sessions-chronicle > /tmp/sessions-chronicle-issue-127.log 2>&1
 ```
 
-The resulting log should contain all issue-127 coverage areas: open, first visible transcript content, render batches, clear/rebuild, search update, and inspector-side updates.
+The resulting log should contain all issue-127 coverage areas: open, first transcript page factory push completion, render batches, clear/rebuild, search update, and inspector-side updates.
 
 ## Acceptance Mapping
 
 - Logs exist for session open: `Session detail open started` and deferred first-page load events.
-- Logs exist for first visible transcript content: `First transcript page visible` for `offset == 0`.
+- Logs exist for first transcript page completion: `First transcript page factory push complete` for `offset == 0`.
 - Logs exist for render batches: existing queued/per-batch/final render events remain.
 - Logs exist for clear/rebuild: clear duration and reason events around `clear_messages_safely`.
 - Logs exist for search updates: search update, positions load, and match application events.
@@ -231,7 +234,7 @@ The resulting log should contain all issue-127 coverage areas: open, first visib
 
 ## Implementation Decisions
 
-- Do not add a broad metrics state object. Use local `Instant::now()` measurements and existing request IDs unless one timestamp field is necessary for an accurate stage duration.
+- Do not add a broad metrics state object. Add at most one timestamp field, such as `session_opened_at: Option<Instant>`, so the first-page factory push event can report `open_to_factory_push_ms` directly. Invalidate or replace it whenever transcript requests are invalidated for a new session open.
 - Measure clear duration with a small wrapper/helper around `clear_messages_safely` that accepts a static reason string. Avoid changing clear behavior.
 - Use `info` for lifecycle milestones that map to issue-127 acceptance criteria, and `debug` for high-frequency or noisy details such as individual inspector render passes.
 
