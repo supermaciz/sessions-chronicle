@@ -63,7 +63,7 @@ First open cycle:
 - `Loaded first transcript page` at line `3095`
 - `Prepared first transcript page` at line `3097`
 - `First transcript page factory push complete` at line `3211`
-- `open_to_factory_push_ms=7835`
+- `first_page_load_to_factory_push_ms=7835`
 - `total_duration_ms=7792`
 - `max_schedule_gap_ms=1409`
 
@@ -72,7 +72,7 @@ Second open/reload cycle:
 - `Loaded first transcript page` at line `3250`
 - `Prepared first transcript page` at line `3252`
 - `First transcript page factory push complete` at line `3362`
-- `open_to_factory_push_ms=19045`
+- `first_page_load_to_factory_push_ms=19045`
 - `total_duration_ms=7664`
 - `max_schedule_gap_ms=1380`
 
@@ -141,13 +141,13 @@ The `max_schedule_gap_ms` values above one second are especially important becau
 
 - This was not a clean-room run after indexing completion.
 - The capture included an active search query, which triggered an additional reload path.
-- The `open_to_factory_push_ms` value from the second cycle (`19045`) should not be treated as a pure session-open metric because it spans a reloaded state, not only the initial open.
+- The `first_page_load_to_factory_push_ms` value from the second cycle (`19045`) should not be treated as a pure session-open metric because it spans a reloaded state, not only the initial open.
 
 ## Recommended Next Steps
 
 1. Re-run the same scenario after indexing completes and with no active search query in `SessionDetail`.
 2. Capture a clean open of the same session and compare:
-   - `open_to_factory_push_ms`
+   - `first_page_load_to_factory_push_ms`
    - `total_duration_ms`
    - `max_schedule_gap_ms`
 3. If the clean run still shows multi-second delays, focus the next optimization pass on render scheduling and expensive row/widget construction rather than database work.

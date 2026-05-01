@@ -42,7 +42,7 @@ const DEFERRED_CLEAR_DELAY_MS: u64 = 250;
 pub struct SessionDetail {
     db_path: Arc<PathBuf>,
     session: Option<Session>,
-    session_opened_at: Option<Instant>,
+    first_page_load_started_at: Option<Instant>,
     messages: FactoryVecDeque<TranscriptRow>,
     initial_page_size: usize,
     page_size: usize,
@@ -123,7 +123,7 @@ struct RenderMetrics {
     total_push_duration_ms: u128,
     max_push_duration_ms: u128,
     max_schedule_gap_ms: u128,
-    open_to_factory_push_ms: Option<u128>,
+    first_page_load_to_factory_push_ms: Option<u128>,
     message_count: usize,
     tool_call_count: usize,
     tool_burst_count: usize,
@@ -770,7 +770,7 @@ impl Component for SessionDetail {
         let model = Self {
             db_path,
             session: None,
-            session_opened_at: None,
+            first_page_load_started_at: None,
             messages,
             initial_page_size: INITIAL_PAGE_SIZE,
             page_size: NEXT_PAGE_SIZE,
@@ -990,7 +990,7 @@ impl Component for SessionDetail {
                 self.invalidate_transcript_requests();
                 self.invalidate_search_requests();
                 self.session = None;
-                self.session_opened_at = None;
+                self.first_page_load_started_at = None;
                 self.clear_messages_safely_with_metrics("component_clear");
                 self.loaded_count = 0;
                 self.has_more_messages = false;
@@ -1550,7 +1550,7 @@ impl SessionDetail {
         self.has_more_messages = false;
         self.clear_pending_boundary_tool_rows();
         self.clear_messages_safely_with_metrics(clear_reason);
-        self.session_opened_at = Some(Instant::now());
+        self.first_page_load_started_at = Some(Instant::now());
 
         let request_id = self.transcript_request_id;
         let session_id = session_id.to_string();
@@ -1634,7 +1634,7 @@ impl SessionDetail {
     fn clear_for_navigation_back(&mut self) {
         self.invalidate_search_requests();
         self.session = None;
-        self.session_opened_at = None;
+        self.first_page_load_started_at = None;
         self.clear_messages_safely_with_metrics("navigation_back");
         self.loaded_count = 0;
         self.has_more_messages = false;
@@ -1700,7 +1700,7 @@ impl SessionDetail {
             return;
         }
 
-        let session_opened_at = self.session_opened_at;
+        let first_page_load_started_at = self.first_page_load_started_at;
 
         let Some(batch) = &mut self.pending_render_batch else {
             return;
@@ -1760,8 +1760,8 @@ impl SessionDetail {
             );
             self.schedule_transcript_render_batch(sender, request_id);
         } else {
-            let open_to_factory_push_ms = if offset == 0 {
-                session_opened_at.map(|opened_at| opened_at.elapsed().as_millis())
+            let first_page_load_to_factory_push_ms = if offset == 0 {
+                first_page_load_started_at.map(|started_at| started_at.elapsed().as_millis())
             } else {
                 None
             };
@@ -1776,7 +1776,7 @@ impl SessionDetail {
                     max_push_duration_ms,
                     total_duration_ms,
                     max_schedule_gap_ms,
-                    open_to_factory_push_ms,
+                    first_page_load_to_factory_push_ms,
                     "First transcript page factory push complete"
                 );
             }
@@ -1806,7 +1806,7 @@ impl SessionDetail {
                 total_push_duration_ms,
                 max_push_duration_ms,
                 max_schedule_gap_ms,
-                open_to_factory_push_ms,
+                first_page_load_to_factory_push_ms,
                 message_count: row_kind_counts.message_count,
                 tool_call_count: row_kind_counts.tool_call_count,
                 tool_burst_count: row_kind_counts.tool_burst_count,
@@ -2725,12 +2725,33 @@ fn synthetic_measurement(input: &str) -> String {\n\
             search_query: None,
         });
 
-        pump_main_context(|| controller.state().get().model.session_opened_at.is_some());
-        assert!(controller.state().get().model.session_opened_at.is_some());
+        pump_main_context(|| {
+            controller
+                .state()
+                .get()
+                .model
+                .first_page_load_started_at
+                .is_some()
+        });
+        assert!(
+            controller
+                .state()
+                .get()
+                .model
+                .first_page_load_started_at
+                .is_some()
+        );
 
         controller.emit(SessionDetailMsg::Clear);
         pump_main_context(|| controller.state().get().model.session.is_none());
-        assert!(controller.state().get().model.session_opened_at.is_none());
+        assert!(
+            controller
+                .state()
+                .get()
+                .model
+                .first_page_load_started_at
+                .is_none()
+        );
     }
 
     #[gtk::test]
@@ -2862,7 +2883,7 @@ fn synthetic_measurement(input: &str) -> String {\n\
         assert_eq!(metrics.tool_call_count, 0);
         assert_eq!(metrics.tool_burst_count, 0);
         assert_eq!(metrics.subagent_count, 0);
-        assert!(metrics.open_to_factory_push_ms.is_some());
+        assert!(metrics.first_page_load_to_factory_push_ms.is_some());
     }
 
     #[test]

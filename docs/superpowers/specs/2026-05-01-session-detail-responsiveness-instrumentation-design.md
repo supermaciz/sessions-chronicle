@@ -60,7 +60,7 @@ When `SessionDetailMsg::SetSession` is handled, log a `Session detail open start
 - whether a search query is already active;
 - `query_len` when applicable.
 
-Store `session_opened_at: Option<Instant>` for the active open cycle. This is intentionally the only cross-stage timing state in `SessionDetail`; it exists to report `open_to_factory_push_ms` when the first page finishes pushing into the row factory. Replace it on each new `SetSession` and clear it when the session is cleared.
+Store `first_page_load_started_at: Option<Instant>` for the active first-page load cycle. This is intentionally the only cross-stage timing state in `SessionDetail`; it exists to report `first_page_load_to_factory_push_ms` when the first page finishes pushing into the row factory. Replace it whenever a first-page load starts and clear it when the session is cleared.
 
 The deferred first-page load path should log `Session detail deferred first page load started` when the delayed message is accepted. Include:
 
@@ -85,7 +85,7 @@ Add a specific `First transcript page factory push complete` event immediately b
 - `total_push_duration_ms`;
 - `max_push_duration_ms`;
 - `max_schedule_gap_ms`;
-- `open_to_factory_push_ms` when the current session open timestamp is available.
+- `first_page_load_to_factory_push_ms` when the current first-page load timestamp is available.
 
 This event should not imply a GTK frame has been painted. It means the first page has been pushed into the transcript row factory and is available for GTK to render. The wording deliberately avoids `visible` so the logs do not overstate what is measured.
 
@@ -234,7 +234,7 @@ The resulting log should contain all issue-127 coverage areas: open, first trans
 
 ## Implementation Decisions
 
-- Do not add a broad metrics state object. Add at most one timestamp field, such as `session_opened_at: Option<Instant>`, so the first-page factory push event can report `open_to_factory_push_ms` directly. Invalidate or replace it whenever transcript requests are invalidated for a new session open.
+- Do not add a broad metrics state object. Add at most one timestamp field, such as `first_page_load_started_at: Option<Instant>`, so the first-page factory push event can report `first_page_load_to_factory_push_ms` directly. Invalidate or replace it whenever transcript requests are invalidated for a first-page load.
 - Measure clear duration with a small wrapper/helper around `clear_messages_safely` that accepts a static reason string. Avoid changing clear behavior.
 - Use `info` for lifecycle milestones that map to issue-127 acceptance criteria, and `debug` for high-frequency or noisy details such as individual inspector render passes.
 

@@ -110,7 +110,7 @@ Recorded values:
 - `max_push_duration_ms=0`
 - `total_duration_ms=7558`
 - `max_schedule_gap_ms=1398`
-- `open_to_factory_push_ms=7875`
+- `first_page_load_to_factory_push_ms=7875`
 
 Relevant log line:
 
@@ -147,7 +147,7 @@ Instead, the delay is concentrated between the moment the first page is already 
 
 The two strongest signals are:
 
-- `open_to_factory_push_ms=7875`
+- `first_page_load_to_factory_push_ms=7875`
 - `max_schedule_gap_ms=1398`
 
 This strongly suggests that the bottleneck is in the incremental render pipeline and main-loop scheduling behavior, not in the database layer.
