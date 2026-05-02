@@ -23,7 +23,8 @@ use crate::ui::transcript_display::{
     trailing_tool_rows_from_display,
 };
 use crate::ui::transcript_row::{
-    TranscriptItemInit, TranscriptRow, TranscriptRowOutput, transcript_item_init_from_display_item,
+    TranscriptItemInit, TranscriptRow, TranscriptRowBuildKind, TranscriptRowOutput,
+    transcript_item_init_from_display_item,
 };
 
 const INITIAL_PAGE_SIZE: usize = 75;
@@ -101,6 +102,11 @@ struct PendingRenderBatch {
     total_push_duration: Duration,
     max_push_duration: Duration,
     max_schedule_gap: Duration,
+    row_build_totals: RenderRowBuildTotals,
+    row_build_count: usize,
+    worst_row_kind: Option<TranscriptRowBuildKind>,
+    worst_row_duration: Duration,
+    batch_breakdowns: Vec<RenderBatchBreakdown>,
     row_kind_counts: RenderRowKindCounts,
     items: VecDeque<TranscriptItemInit>,
 }
@@ -113,6 +119,42 @@ struct RenderRowKindCounts {
     subagent_count: usize,
 }
 
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+struct RenderRowBuildTotals {
+    message_duration: Duration,
+    tool_call_duration: Duration,
+    tool_burst_duration: Duration,
+    subagent_duration: Duration,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct RenderBatchBreakdown {
+    render_batch_index: usize,
+    pushed_row_count: usize,
+    row_build_count: usize,
+    schedule_gap: Duration,
+    row_build_duration: Duration,
+    logged: bool,
+}
+
+impl RenderRowBuildTotals {
+    fn add(&mut self, kind: TranscriptRowBuildKind, duration: Duration) {
+        match kind {
+            TranscriptRowBuildKind::Message => self.message_duration += duration,
+            TranscriptRowBuildKind::ToolCall => self.tool_call_duration += duration,
+            TranscriptRowBuildKind::ToolBurst => self.tool_burst_duration += duration,
+            TranscriptRowBuildKind::Subagent => self.subagent_duration += duration,
+        }
+    }
+
+    fn total(&self) -> Duration {
+        self.message_duration
+            + self.tool_call_duration
+            + self.tool_burst_duration
+            + self.subagent_duration
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct RenderMetrics {
     offset: usize,
@@ -123,6 +165,14 @@ struct RenderMetrics {
     total_push_duration_ms: u128,
     max_push_duration_ms: u128,
     max_schedule_gap_ms: u128,
+    message_build_duration_ms: u128,
+    tool_call_build_duration_ms: u128,
+    tool_burst_build_duration_ms: u128,
+    subagent_build_duration_ms: u128,
+    total_row_build_duration_ms: u128,
+    worst_row_kind: Option<TranscriptRowBuildKind>,
+    worst_row_build_duration_ms: u128,
+    max_post_drop_residual_ms: u128,
     first_page_load_to_factory_push_ms: Option<u128>,
     message_count: usize,
     tool_call_count: usize,
@@ -202,6 +252,12 @@ pub enum SessionDetailMsg {
     /// Indicates that a transcript row failed to expand to its full content and
     /// should trigger the shared toast notification path.
     ShowExpandLoadFailure,
+    RowBuilt {
+        item_index: usize,
+        render_batch_index: usize,
+        kind: TranscriptRowBuildKind,
+        build_duration_ms: u128,
+    },
     Clear,
     InspectToolCall(String),
     InspectSubagent(String),
@@ -756,6 +812,17 @@ impl Component for SessionDetail {
                     transcript_item_index,
                     ..
                 } => SessionDetailMsg::InspectReasoning(transcript_item_index),
+                TranscriptRowOutput::RowBuilt {
+                    item_index,
+                    render_batch_index,
+                    kind,
+                    build_duration_ms,
+                } => SessionDetailMsg::RowBuilt {
+                    item_index,
+                    render_batch_index,
+                    kind,
+                    build_duration_ms,
+                },
             });
 
         let db_path = Arc::new(db_path);
@@ -979,6 +1046,20 @@ impl Component for SessionDetail {
             SessionDetailMsg::ShowExpandLoadFailure => {
                 tracing::warn!("Could not load full message content");
                 self.pending_toast.set(true);
+            }
+            SessionDetailMsg::RowBuilt {
+                item_index,
+                render_batch_index,
+                kind,
+                build_duration_ms,
+            } => {
+                self.record_transcript_row_build(
+                    sender,
+                    item_index,
+                    render_batch_index,
+                    kind,
+                    build_duration_ms,
+                );
             }
             SessionDetailMsg::ClearSearch => {
                 self.search_query = None;
@@ -1676,6 +1757,11 @@ impl SessionDetail {
             total_push_duration: Duration::ZERO,
             max_push_duration: Duration::ZERO,
             max_schedule_gap: Duration::ZERO,
+            row_build_totals: RenderRowBuildTotals::default(),
+            row_build_count: 0,
+            worst_row_kind: None,
+            worst_row_duration: Duration::ZERO,
+            batch_breakdowns: Vec::new(),
             row_kind_counts,
             items: items.into(),
         });
@@ -1718,10 +1804,12 @@ impl SessionDetail {
         let mut guard = self.messages.guard();
         let push_started_at = Instant::now();
         let mut rendered_this_batch = 0usize;
+        let render_batch_index = batch.batch_count + 1;
         for _ in 0..RENDER_BATCH_SIZE {
-            let Some(item) = batch.items.pop_front() else {
+            let Some(mut item) = batch.items.pop_front() else {
                 break;
             };
+            item.set_render_batch_index(render_batch_index);
             guard.push_back(item);
             rendered_this_batch += 1;
         }
@@ -1741,7 +1829,14 @@ impl SessionDetail {
         let max_push_duration_ms = batch.max_push_duration.as_millis();
         let max_schedule_gap_ms = batch.max_schedule_gap.as_millis();
         let total_duration_ms = batch.queued_at.elapsed().as_millis();
-        let row_kind_counts = batch.row_kind_counts.clone();
+        batch.batch_breakdowns.push(RenderBatchBreakdown {
+            render_batch_index,
+            pushed_row_count: rendered_this_batch,
+            row_build_count: 0,
+            schedule_gap,
+            row_build_duration: Duration::ZERO,
+            logged: false,
+        });
         batch.last_batch_completed_at = Some(Instant::now());
         drop(guard);
 
@@ -1780,41 +1875,161 @@ impl SessionDetail {
                     "First transcript page factory push complete"
                 );
             }
-            tracing::info!(
+            self.maybe_complete_transcript_render(sender, first_page_load_to_factory_push_ms);
+        }
+    }
+
+    fn record_transcript_row_build(
+        &mut self,
+        sender: ComponentSender<Self>,
+        item_index: usize,
+        render_batch_index: usize,
+        kind: TranscriptRowBuildKind,
+        build_duration_ms: u128,
+    ) {
+        let Some(batch) = &mut self.pending_render_batch else {
+            return;
+        };
+
+        let duration = Duration::from_millis(build_duration_ms.try_into().unwrap_or(u64::MAX));
+        batch.row_build_totals.add(kind, duration);
+        batch.row_build_count += 1;
+        if batch.worst_row_kind.is_none() || duration > batch.worst_row_duration {
+            batch.worst_row_duration = duration;
+            batch.worst_row_kind = Some(kind);
+        }
+
+        let request_id = batch.request_id;
+        let offset = batch.offset;
+        if let Some(breakdown) = batch
+            .batch_breakdowns
+            .iter_mut()
+            .find(|breakdown| breakdown.render_batch_index == render_batch_index)
+        {
+            breakdown.row_build_count += 1;
+            breakdown.row_build_duration += duration;
+            if !breakdown.logged && breakdown.row_build_count >= breakdown.pushed_row_count {
+                breakdown.logged = true;
+                let post_drop_residual = breakdown
+                    .schedule_gap
+                    .saturating_sub(breakdown.row_build_duration);
+                tracing::debug!(
+                    request_id,
+                    offset,
+                    render_batch_index,
+                    pushed_row_count = breakdown.pushed_row_count,
+                    row_build_count = breakdown.row_build_count,
+                    measured_row_build_ms = breakdown.row_build_duration.as_millis(),
+                    schedule_gap_ms = breakdown.schedule_gap.as_millis(),
+                    post_drop_residual_ms = post_drop_residual.as_millis(),
+                    "Measured transcript render batch breakdown"
+                );
+            }
+        } else {
+            tracing::debug!(
                 request_id,
                 offset,
-                source_row_count,
-                display_item_count = total_items,
-                rendered_items,
-                batch_count,
-                total_push_duration_ms,
-                max_push_duration_ms,
-                total_duration_ms,
-                message_count = row_kind_counts.message_count,
-                tool_call_count = row_kind_counts.tool_call_count,
-                tool_burst_count = row_kind_counts.tool_burst_count,
-                subagent_count = row_kind_counts.subagent_count,
-                max_schedule_gap_ms,
-                "Finished rendering transcript page"
+                item_index,
+                render_batch_index,
+                kind = ?kind,
+                build_duration_ms,
+                "Ignoring transcript row build metric without matching render batch"
             );
-            self.last_render_metrics = Some(RenderMetrics {
-                offset,
-                source_row_count,
-                display_item_count: total_items,
-                batch_count,
-                total_duration_ms,
-                total_push_duration_ms,
-                max_push_duration_ms,
-                max_schedule_gap_ms,
-                first_page_load_to_factory_push_ms,
-                message_count: row_kind_counts.message_count,
-                tool_call_count: row_kind_counts.tool_call_count,
-                tool_burst_count: row_kind_counts.tool_burst_count,
-                subagent_count: row_kind_counts.subagent_count,
-            });
-            self.pending_render_batch = None;
-            self.continue_pending_jump(sender);
         }
+
+        let first_page_load_to_factory_push_ms = if batch.offset == 0 {
+            self.first_page_load_started_at
+                .map(|started_at| started_at.elapsed().as_millis())
+        } else {
+            None
+        };
+        self.maybe_complete_transcript_render(&sender, first_page_load_to_factory_push_ms);
+    }
+
+    fn maybe_complete_transcript_render(
+        &mut self,
+        sender: &ComponentSender<Self>,
+        first_page_load_to_factory_push_ms: Option<u128>,
+    ) {
+        let Some(batch) = &self.pending_render_batch else {
+            return;
+        };
+        if !batch.items.is_empty() || batch.row_build_count < batch.rendered_items {
+            return;
+        }
+
+        let batch = self
+            .pending_render_batch
+            .take()
+            .expect("pending batch checked above");
+        let total_push_duration_ms = batch.total_push_duration.as_millis();
+        let max_push_duration_ms = batch.max_push_duration.as_millis();
+        let max_schedule_gap_ms = batch.max_schedule_gap.as_millis();
+        let total_duration_ms = batch.queued_at.elapsed().as_millis();
+        let total_row_build_duration_ms = batch.row_build_totals.total().as_millis();
+        let max_post_drop_residual_ms = batch
+            .batch_breakdowns
+            .iter()
+            .map(|breakdown| {
+                breakdown
+                    .schedule_gap
+                    .saturating_sub(breakdown.row_build_duration)
+            })
+            .max()
+            .unwrap_or(Duration::ZERO)
+            .as_millis();
+
+        tracing::info!(
+            request_id = batch.request_id,
+            offset = batch.offset,
+            source_row_count = batch.source_row_count,
+            display_item_count = batch.total_items,
+            rendered_items = batch.rendered_items,
+            row_build_count = batch.row_build_count,
+            batch_count = batch.batch_count,
+            total_push_duration_ms,
+            max_push_duration_ms,
+            total_duration_ms,
+            message_count = batch.row_kind_counts.message_count,
+            tool_call_count = batch.row_kind_counts.tool_call_count,
+            tool_burst_count = batch.row_kind_counts.tool_burst_count,
+            subagent_count = batch.row_kind_counts.subagent_count,
+            message_build_duration_ms = batch.row_build_totals.message_duration.as_millis(),
+            tool_call_build_duration_ms = batch.row_build_totals.tool_call_duration.as_millis(),
+            tool_burst_build_duration_ms = batch.row_build_totals.tool_burst_duration.as_millis(),
+            subagent_build_duration_ms = batch.row_build_totals.subagent_duration.as_millis(),
+            total_row_build_duration_ms,
+            worst_row_kind = ?batch.worst_row_kind,
+            worst_row_build_duration_ms = batch.worst_row_duration.as_millis(),
+            max_schedule_gap_ms,
+            max_post_drop_residual_ms,
+            "Finished rendering transcript page"
+        );
+
+        self.last_render_metrics = Some(RenderMetrics {
+            offset: batch.offset,
+            source_row_count: batch.source_row_count,
+            display_item_count: batch.total_items,
+            batch_count: batch.batch_count,
+            total_duration_ms,
+            total_push_duration_ms,
+            max_push_duration_ms,
+            max_schedule_gap_ms,
+            message_build_duration_ms: batch.row_build_totals.message_duration.as_millis(),
+            tool_call_build_duration_ms: batch.row_build_totals.tool_call_duration.as_millis(),
+            tool_burst_build_duration_ms: batch.row_build_totals.tool_burst_duration.as_millis(),
+            subagent_build_duration_ms: batch.row_build_totals.subagent_duration.as_millis(),
+            total_row_build_duration_ms,
+            worst_row_kind: batch.worst_row_kind,
+            worst_row_build_duration_ms: batch.worst_row_duration.as_millis(),
+            max_post_drop_residual_ms,
+            first_page_load_to_factory_push_ms,
+            message_count: batch.row_kind_counts.message_count,
+            tool_call_count: batch.row_kind_counts.tool_call_count,
+            tool_burst_count: batch.row_kind_counts.tool_burst_count,
+            subagent_count: batch.row_kind_counts.subagent_count,
+        });
+        self.continue_pending_jump(sender);
     }
 
     fn apply_first_page_rows(
@@ -2359,6 +2574,20 @@ mod tests {
         }
     }
 
+    fn pump_main_context_for(timeout: Duration, condition: impl Fn() -> bool) {
+        let context = gtk::glib::MainContext::default();
+        let deadline = std::time::Instant::now() + timeout;
+        while std::time::Instant::now() < deadline {
+            if condition() {
+                return;
+            }
+
+            if !context.iteration(false) {
+                std::thread::sleep(Duration::from_millis(2));
+            }
+        }
+    }
+
     fn seed_message_transcript(db_path: &std::path::Path, session_id: &str, count: usize) {
         let conn = Connection::open(db_path).expect("open temp db");
         crate::database::schema::initialize_database(&conn).expect("initialize db");
@@ -2508,6 +2737,29 @@ fn synthetic_measurement(input: &str) -> String {\n\
             .last_render_metrics
             .clone()
             .expect("scenario should record render metrics")
+    }
+
+    fn measure_session_detail_metrics_for_session(
+        db_path: &std::path::Path,
+        session: Session,
+    ) -> RenderMetrics {
+        let controller = SessionDetail::builder().launch(db_path.to_path_buf());
+        controller.emit(SessionDetailMsg::SetSession {
+            session: Box::new(session),
+            search_query: None,
+        });
+
+        pump_main_context_for(Duration::from_secs(30), || {
+            let parts = controller.state().get();
+            parts.model.pending_render_batch.is_none() && parts.model.last_render_metrics.is_some()
+        });
+
+        let parts = controller.state().get();
+        parts
+            .model
+            .last_render_metrics
+            .clone()
+            .expect("session should record render metrics")
     }
 
     fn transcript_message_row(
@@ -2883,6 +3135,17 @@ fn synthetic_measurement(input: &str) -> String {\n\
         assert_eq!(metrics.tool_call_count, 0);
         assert_eq!(metrics.tool_burst_count, 0);
         assert_eq!(metrics.subagent_count, 0);
+        assert_eq!(
+            metrics.worst_row_kind,
+            Some(TranscriptRowBuildKind::Message)
+        );
+        assert_eq!(
+            metrics.total_row_build_duration_ms,
+            metrics.message_build_duration_ms
+                + metrics.tool_call_build_duration_ms
+                + metrics.tool_burst_build_duration_ms
+                + metrics.subagent_build_duration_ms
+        );
         assert!(metrics.first_page_load_to_factory_push_ms.is_some());
     }
 
@@ -2946,6 +3209,46 @@ fn synthetic_measurement(input: &str) -> String {\n\
         assert_eq!(markdown_metrics.message_count, INITIAL_PAGE_SIZE);
         assert_eq!(markdown_search_metrics.source_row_count, INITIAL_PAGE_SIZE);
         assert_eq!(markdown_search_metrics.message_count, INITIAL_PAGE_SIZE);
+    }
+
+    #[gtk::test]
+    #[ignore = "manual issue #140 reference-session measurement; requires local Codex session file"]
+    fn session_detail_issue_140_reference_session_breakdown() {
+        const SESSION_ID: &str = "019dc51a-f0cd-79c1-ba79-45fedac889c2";
+        let source_file = std::env::var("SESSION_DETAIL_ISSUE_140_SOURCE_FILE")
+            .expect("SESSION_DETAIL_ISSUE_140_SOURCE_FILE must point to the reference JSONL file");
+        let source_file = std::path::Path::new(&source_file);
+        assert!(
+            source_file.exists(),
+            "reference Codex session file must exist at {}",
+            source_file.display()
+        );
+
+        let temp_root = tempfile::tempdir().expect("temp session root");
+        let target_dir = temp_root.path().join("2026/04/25");
+        std::fs::create_dir_all(&target_dir).expect("create session fixture dir");
+        std::fs::copy(
+            source_file,
+            target_dir.join(source_file.file_name().expect("source file name")),
+        )
+        .expect("copy reference session");
+
+        let temp_db = tempfile::NamedTempFile::new().expect("temp db");
+        let mut indexer = crate::database::SessionIndexer::new(temp_db.path()).expect("indexer");
+        indexer
+            .index_codex_sessions(temp_root.path())
+            .expect("index reference Codex session");
+        let session = crate::database::load_session(temp_db.path(), SESSION_ID)
+            .expect("load reference session")
+            .expect("reference session should be indexed");
+
+        let metrics = measure_session_detail_metrics_for_session(temp_db.path(), session);
+        println!("issue-140-reference: {metrics:#?}");
+
+        assert_eq!(metrics.offset, 0);
+        assert_eq!(metrics.source_row_count, INITIAL_PAGE_SIZE);
+        assert!(metrics.total_row_build_duration_ms > 0);
+        assert!(metrics.worst_row_kind.is_some());
     }
 
     #[test]
