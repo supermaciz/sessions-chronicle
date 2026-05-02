@@ -103,10 +103,13 @@ struct PendingRenderBatch {
     max_push_duration: Duration,
     max_schedule_gap: Duration,
     row_build_totals: RenderRowBuildTotals,
+    #[cfg(debug_assertions)]
     row_build_count: usize,
     worst_row_kind: Option<TranscriptRowBuildKind>,
     worst_row_duration: Duration,
     batch_breakdowns: Vec<RenderBatchBreakdown>,
+    #[cfg(debug_assertions)]
+    item_render_batch_indices: std::collections::HashMap<usize, usize>,
     row_kind_counts: RenderRowKindCounts,
     items: VecDeque<TranscriptItemInit>,
 }
@@ -138,6 +141,7 @@ struct RenderBatchBreakdown {
 }
 
 impl RenderRowBuildTotals {
+    #[cfg(debug_assertions)]
     fn add(&mut self, kind: TranscriptRowBuildKind, duration: Duration) {
         match kind {
             TranscriptRowBuildKind::Message => self.message_duration += duration,
@@ -252,9 +256,9 @@ pub enum SessionDetailMsg {
     /// Indicates that a transcript row failed to expand to its full content and
     /// should trigger the shared toast notification path.
     ShowExpandLoadFailure,
+    #[cfg(debug_assertions)]
     RowBuilt {
         item_index: usize,
-        render_batch_index: usize,
         kind: TranscriptRowBuildKind,
         build_duration_ms: u128,
     },
@@ -812,14 +816,13 @@ impl Component for SessionDetail {
                     transcript_item_index,
                     ..
                 } => SessionDetailMsg::InspectReasoning(transcript_item_index),
+                #[cfg(debug_assertions)]
                 TranscriptRowOutput::RowBuilt {
                     item_index,
-                    render_batch_index,
                     kind,
                     build_duration_ms,
                 } => SessionDetailMsg::RowBuilt {
                     item_index,
-                    render_batch_index,
                     kind,
                     build_duration_ms,
                 },
@@ -1047,19 +1050,13 @@ impl Component for SessionDetail {
                 tracing::warn!("Could not load full message content");
                 self.pending_toast.set(true);
             }
+            #[cfg(debug_assertions)]
             SessionDetailMsg::RowBuilt {
                 item_index,
-                render_batch_index,
                 kind,
                 build_duration_ms,
             } => {
-                self.record_transcript_row_build(
-                    sender,
-                    item_index,
-                    render_batch_index,
-                    kind,
-                    build_duration_ms,
-                );
+                self.record_transcript_row_build(sender, item_index, kind, build_duration_ms);
             }
             SessionDetailMsg::ClearSearch => {
                 self.search_query = None;
@@ -1758,10 +1755,13 @@ impl SessionDetail {
             max_push_duration: Duration::ZERO,
             max_schedule_gap: Duration::ZERO,
             row_build_totals: RenderRowBuildTotals::default(),
+            #[cfg(debug_assertions)]
             row_build_count: 0,
             worst_row_kind: None,
             worst_row_duration: Duration::ZERO,
             batch_breakdowns: Vec::new(),
+            #[cfg(debug_assertions)]
+            item_render_batch_indices: std::collections::HashMap::new(),
             row_kind_counts,
             items: items.into(),
         });
@@ -1806,10 +1806,13 @@ impl SessionDetail {
         let mut rendered_this_batch = 0usize;
         let render_batch_index = batch.batch_count + 1;
         for _ in 0..RENDER_BATCH_SIZE {
-            let Some(mut item) = batch.items.pop_front() else {
+            let Some(item) = batch.items.pop_front() else {
                 break;
             };
-            item.set_render_batch_index(render_batch_index);
+            #[cfg(debug_assertions)]
+            batch
+                .item_render_batch_indices
+                .insert(item.item_index(), render_batch_index);
             guard.push_back(item);
             rendered_this_batch += 1;
         }
@@ -1879,11 +1882,11 @@ impl SessionDetail {
         }
     }
 
+    #[cfg(debug_assertions)]
     fn record_transcript_row_build(
         &mut self,
         sender: ComponentSender<Self>,
         item_index: usize,
-        render_batch_index: usize,
         kind: TranscriptRowBuildKind,
         build_duration_ms: u128,
     ) {
@@ -1891,7 +1894,20 @@ impl SessionDetail {
             return;
         };
 
-        let duration = Duration::from_millis(build_duration_ms.try_into().unwrap_or(u64::MAX));
+        let render_batch_index = match batch.item_render_batch_indices.get(&item_index) {
+            Some(&idx) => idx,
+            None => {
+                tracing::debug!(
+                    item_index,
+                    kind = ?kind,
+                    build_duration_ms,
+                    "Ignoring transcript row build metric without batch mapping"
+                );
+                return;
+            }
+        };
+
+        let duration = Duration::from_millis(build_duration_ms as u64);
         batch.row_build_totals.add(kind, duration);
         batch.row_build_count += 1;
         if batch.worst_row_kind.is_none() || duration > batch.worst_row_duration {
@@ -1904,7 +1920,7 @@ impl SessionDetail {
         if let Some(breakdown) = batch
             .batch_breakdowns
             .iter_mut()
-            .find(|breakdown| breakdown.render_batch_index == render_batch_index)
+            .find(|b| b.render_batch_index == render_batch_index)
         {
             breakdown.row_build_count += 1;
             breakdown.row_build_duration += duration;
@@ -1925,16 +1941,6 @@ impl SessionDetail {
                     "Measured transcript render batch breakdown"
                 );
             }
-        } else {
-            tracing::debug!(
-                request_id,
-                offset,
-                item_index,
-                render_batch_index,
-                kind = ?kind,
-                build_duration_ms,
-                "Ignoring transcript row build metric without matching render batch"
-            );
         }
 
         let first_page_load_to_factory_push_ms = if batch.offset == 0 {
@@ -1954,7 +1960,11 @@ impl SessionDetail {
         let Some(batch) = &self.pending_render_batch else {
             return;
         };
-        if !batch.items.is_empty() || batch.row_build_count < batch.rendered_items {
+        if !batch.items.is_empty() {
+            return;
+        }
+        #[cfg(debug_assertions)]
+        if batch.row_build_count < batch.rendered_items {
             return;
         }
 
@@ -1966,18 +1976,6 @@ impl SessionDetail {
         let max_push_duration_ms = batch.max_push_duration.as_millis();
         let max_schedule_gap_ms = batch.max_schedule_gap.as_millis();
         let total_duration_ms = batch.queued_at.elapsed().as_millis();
-        let total_row_build_duration_ms = batch.row_build_totals.total().as_millis();
-        let max_post_drop_residual_ms = batch
-            .batch_breakdowns
-            .iter()
-            .map(|breakdown| {
-                breakdown
-                    .schedule_gap
-                    .saturating_sub(breakdown.row_build_duration)
-            })
-            .max()
-            .unwrap_or(Duration::ZERO)
-            .as_millis();
 
         tracing::info!(
             request_id = batch.request_id,
@@ -1985,7 +1983,6 @@ impl SessionDetail {
             source_row_count = batch.source_row_count,
             display_item_count = batch.total_items,
             rendered_items = batch.rendered_items,
-            row_build_count = batch.row_build_count,
             batch_count = batch.batch_count,
             total_push_duration_ms,
             max_push_duration_ms,
@@ -1994,17 +1991,37 @@ impl SessionDetail {
             tool_call_count = batch.row_kind_counts.tool_call_count,
             tool_burst_count = batch.row_kind_counts.tool_burst_count,
             subagent_count = batch.row_kind_counts.subagent_count,
-            message_build_duration_ms = batch.row_build_totals.message_duration.as_millis(),
-            tool_call_build_duration_ms = batch.row_build_totals.tool_call_duration.as_millis(),
-            tool_burst_build_duration_ms = batch.row_build_totals.tool_burst_duration.as_millis(),
-            subagent_build_duration_ms = batch.row_build_totals.subagent_duration.as_millis(),
-            total_row_build_duration_ms,
-            worst_row_kind = ?batch.worst_row_kind,
-            worst_row_build_duration_ms = batch.worst_row_duration.as_millis(),
             max_schedule_gap_ms,
-            max_post_drop_residual_ms,
             "Finished rendering transcript page"
         );
+
+        #[cfg(debug_assertions)]
+        {
+            let total_row_build_duration_ms = batch.row_build_totals.total().as_millis();
+            let max_post_drop_residual_ms = batch
+                .batch_breakdowns
+                .iter()
+                .map(|b| b.schedule_gap.saturating_sub(b.row_build_duration))
+                .max()
+                .unwrap_or(Duration::ZERO)
+                .as_millis();
+            tracing::info!(
+                request_id = batch.request_id,
+                offset = batch.offset,
+                row_build_count = batch.row_build_count,
+                message_build_duration_ms = batch.row_build_totals.message_duration.as_millis(),
+                tool_call_build_duration_ms =
+                    batch.row_build_totals.tool_call_duration.as_millis(),
+                tool_burst_build_duration_ms =
+                    batch.row_build_totals.tool_burst_duration.as_millis(),
+                subagent_build_duration_ms = batch.row_build_totals.subagent_duration.as_millis(),
+                total_row_build_duration_ms,
+                worst_row_kind = ?batch.worst_row_kind,
+                worst_row_build_duration_ms = batch.worst_row_duration.as_millis(),
+                max_post_drop_residual_ms,
+                "Transcript page row-build breakdown"
+            );
+        }
 
         self.last_render_metrics = Some(RenderMetrics {
             offset: batch.offset,
@@ -2019,10 +2036,16 @@ impl SessionDetail {
             tool_call_build_duration_ms: batch.row_build_totals.tool_call_duration.as_millis(),
             tool_burst_build_duration_ms: batch.row_build_totals.tool_burst_duration.as_millis(),
             subagent_build_duration_ms: batch.row_build_totals.subagent_duration.as_millis(),
-            total_row_build_duration_ms,
+            total_row_build_duration_ms: batch.row_build_totals.total().as_millis(),
             worst_row_kind: batch.worst_row_kind,
             worst_row_build_duration_ms: batch.worst_row_duration.as_millis(),
-            max_post_drop_residual_ms,
+            max_post_drop_residual_ms: batch
+                .batch_breakdowns
+                .iter()
+                .map(|b| b.schedule_gap.saturating_sub(b.row_build_duration))
+                .max()
+                .unwrap_or(Duration::ZERO)
+                .as_millis(),
             first_page_load_to_factory_push_ms,
             message_count: batch.row_kind_counts.message_count,
             tool_call_count: batch.row_kind_counts.tool_call_count,

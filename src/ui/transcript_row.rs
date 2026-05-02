@@ -57,7 +57,6 @@ pub struct MessageItemInit {
     pub preview: MessagePreview,
     pub highlight_query: Option<String>,
     pub db_path: Arc<PathBuf>,
-    pub render_batch_index: usize,
 }
 
 #[derive(Debug, Clone)]
@@ -91,8 +90,6 @@ pub struct ToolCallItemInit {
     pub highlight_query: Option<String>,
     /// Presence flags for associated reasoning attachment.
     pub reasoning_preview: ReasoningPreview,
-    /// Instrumentation-only batch ordinal assigned by `SessionDetail`.
-    pub render_batch_index: usize,
 }
 
 impl ToolCallItemInit {
@@ -115,7 +112,6 @@ pub struct ToolBurstItemInit {
     pub visible_reasoning_child_count: usize,
     pub encrypted_only_child_count: usize,
     pub default_expanded: bool,
-    pub render_batch_index: usize,
 }
 
 pub struct SubagentItemInit {
@@ -125,7 +121,6 @@ pub struct SubagentItemInit {
     pub subagent_id: String,
     pub title: String,
     pub reasoning_preview: ReasoningPreview,
-    pub render_batch_index: usize,
 }
 
 pub enum TranscriptItemInit {
@@ -136,12 +131,13 @@ pub enum TranscriptItemInit {
 }
 
 impl TranscriptItemInit {
-    pub fn set_render_batch_index(&mut self, render_batch_index: usize) {
+    #[cfg(debug_assertions)]
+    pub fn item_index(&self) -> usize {
         match self {
-            Self::Message(init) => init.render_batch_index = render_batch_index,
-            Self::ToolCall(init) => init.render_batch_index = render_batch_index,
-            Self::ToolBurst(init) => init.render_batch_index = render_batch_index,
-            Self::Subagent(init) => init.render_batch_index = render_batch_index,
+            Self::Message(init) => init.item_index,
+            Self::ToolCall(init) => init.item_index,
+            Self::ToolBurst(init) => init.item_index,
+            Self::Subagent(init) => init.item_index,
         }
     }
 }
@@ -174,9 +170,9 @@ pub enum TranscriptRowOutput {
         session_id: String,
         transcript_item_index: i64,
     },
+    #[cfg(debug_assertions)]
     RowBuilt {
         item_index: usize,
-        render_batch_index: usize,
         kind: TranscriptRowBuildKind,
         build_duration_ms: u128,
     },
@@ -220,7 +216,6 @@ impl From<TranscriptRowKind> for TranscriptRowBuildKind {
 #[derive(Debug)]
 pub struct TranscriptRow {
     item_index: usize,
-    render_batch_index: usize,
     transcript_item_index: Option<i64>,
     session_id: Option<String>,
     reasoning_preview: Option<ReasoningPreview>,
@@ -363,7 +358,6 @@ pub fn build_tool_burst_init(
         visible_reasoning_child_count,
         encrypted_only_child_count,
         default_expanded,
-        render_batch_index: 0,
     }
 }
 
@@ -643,7 +637,6 @@ impl FactoryComponent for TranscriptRow {
         match init {
             TranscriptItemInit::Message(m) => Self {
                 item_index: m.item_index,
-                render_batch_index: m.render_batch_index,
                 transcript_item_index: Some(m.transcript_item_index),
                 session_id: Some(m.preview.session_id.clone()),
                 reasoning_preview: Some(m.preview.reasoning_preview),
@@ -667,7 +660,6 @@ impl FactoryComponent for TranscriptRow {
             },
             TranscriptItemInit::ToolCall(tc) => Self {
                 item_index: tc.item_index,
-                render_batch_index: tc.render_batch_index,
                 transcript_item_index: Some(tc.transcript_item_index),
                 session_id: Some(tc.session_id.clone()),
                 reasoning_preview: Some(tc.reasoning_preview),
@@ -691,7 +683,6 @@ impl FactoryComponent for TranscriptRow {
             },
             TranscriptItemInit::ToolBurst(tb) => Self {
                 item_index: tb.item_index,
-                render_batch_index: tb.render_batch_index,
                 transcript_item_index: None,
                 session_id: None,
                 reasoning_preview: None,
@@ -715,7 +706,6 @@ impl FactoryComponent for TranscriptRow {
             },
             TranscriptItemInit::Subagent(sa) => Self {
                 item_index: sa.item_index,
-                render_batch_index: sa.render_batch_index,
                 transcript_item_index: Some(sa.transcript_item_index),
                 session_id: Some(sa.session_id),
                 reasoning_preview: Some(sa.reasoning_preview),
@@ -772,10 +762,10 @@ impl FactoryComponent for TranscriptRow {
                 "Slow transcript row widget build"
             );
         }
+        #[cfg(debug_assertions)]
         sender
             .output(TranscriptRowOutput::RowBuilt {
                 item_index: self.item_index,
-                render_batch_index: self.render_batch_index,
                 kind: self.kind.into(),
                 build_duration_ms: duration.as_millis(),
             })
@@ -1056,7 +1046,6 @@ impl TranscriptRow {
             duration_ms: self.tool_duration_ms,
             highlight_query: self.tool_highlight_query.clone(),
             reasoning_preview: self.reasoning_preview.unwrap_or_default(),
-            render_batch_index: self.render_batch_index,
         };
 
         let build_started_at = Instant::now();
@@ -1386,7 +1375,6 @@ fn transcript_item_init_from_row_with_index(
                 },
                 highlight_query,
                 db_path,
-                render_batch_index: 0,
             })
         }
         TranscriptItemKind::ToolCall => TranscriptItemInit::ToolCall(ToolCallItemInit {
@@ -1409,7 +1397,6 @@ fn transcript_item_init_from_row_with_index(
             duration_ms: row.duration_ms,
             highlight_query,
             reasoning_preview: row.reasoning_preview,
-            render_batch_index: 0,
         }),
         TranscriptItemKind::Subagent => TranscriptItemInit::Subagent(SubagentItemInit {
             item_index,
@@ -1421,7 +1408,6 @@ fn transcript_item_init_from_row_with_index(
                 .clone()
                 .unwrap_or_else(|| "Subagent".to_string()),
             reasoning_preview: row.reasoning_preview,
-            render_batch_index: 0,
         }),
         TranscriptItemKind::Unknown => {
             tracing::warn!(
@@ -1443,7 +1429,6 @@ fn transcript_item_init_from_row_with_index(
                 },
                 highlight_query,
                 db_path,
-                render_batch_index: 0,
             })
         }
     }
@@ -1591,7 +1576,6 @@ mod tests {
             duration_ms: Some(12),
             highlight_query: Some("read".to_string()),
             reasoning_preview: ReasoningPreview::default(),
-            render_batch_index: 0,
         };
         // Only "Read" in tool_name matches; preview has no "read", summary is hidden.
         assert_eq!(count_tool_call_matches(&with_preview), 1);
@@ -1609,7 +1593,6 @@ mod tests {
             duration_ms: Some(12),
             highlight_query: Some("read".to_string()),
             reasoning_preview: ReasoningPreview::default(),
-            render_batch_index: 0,
         };
         // "Read" in tool_name + "read" in summary fallback = 2.
         assert_eq!(count_tool_call_matches(&with_summary_fallback), 2);
@@ -1634,7 +1617,6 @@ mod tests {
                     has_visible_reasoning: true,
                     encrypted_only: false,
                 },
-                render_batch_index: 0,
             },
             |_| {},
             |_, _| {},
@@ -1764,7 +1746,6 @@ mod tests {
                 duration_ms: Some(5),
                 highlight_query: Some("read".to_string()),
                 reasoning_preview: ReasoningPreview::default(),
-                render_batch_index: 0,
             },
             ToolCallItemInit {
                 item_index: 2,
@@ -1778,7 +1759,6 @@ mod tests {
                 duration_ms: Some(8),
                 highlight_query: Some("edit".to_string()),
                 reasoning_preview: ReasoningPreview::default(),
-                render_batch_index: 0,
             },
         ];
 
