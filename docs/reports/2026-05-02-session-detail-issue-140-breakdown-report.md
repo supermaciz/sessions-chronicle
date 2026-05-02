@@ -6,12 +6,12 @@
 - Target session: `019dc51a-f0cd-79c1-ba79-45fedac889c2`
 - AI assistant: Codex
 - Reference baseline: `docs/reports/2026-05-01-session-detail-issue-127-clean-run-log-report.md`
-- Source log file: `/tmp/sessions-chronicle-issue-140-full-app.log`
+- Source log file: `/tmp/sessions-chronicle-issue-140-full-app-rerun.log`
 - Measurement type: real full-app run
 - Measurement command:
 
 ```bash
-RUST_LOG=info,sessions_chronicle=debug sessions-chronicle > /tmp/sessions-chronicle-issue-140-full-app.log 2>&1
+RUST_LOG=info,sessions_chronicle=debug sessions-chronicle > /tmp/sessions-chronicle-issue-140-full-app-rerun.log 2>&1
 ```
 
 ## Scenario
@@ -31,11 +31,11 @@ Unlike the earlier isolated component run, this capture includes the real app na
 
 The app logged:
 
-- `Background indexing complete: indexed=1249, skipped=657, removed=0`
+- `Background indexing complete: indexed=1244, skipped=662, removed=0`
 
 Relevant log line:
 
-- `/tmp/sessions-chronicle-issue-140-full-app.log:2998`
+- `/tmp/sessions-chronicle-issue-140-full-app-rerun.log:2999`
 
 ### The detail view opened with no active search query
 
@@ -45,7 +45,7 @@ The `SetSession` payload shows:
 
 Relevant log lines:
 
-- `/tmp/sessions-chronicle-issue-140-full-app.log:3043-3046`
+- `/tmp/sessions-chronicle-issue-140-full-app-rerun.log:3044-3047`
 
 ## Key Measurements
 
@@ -60,17 +60,17 @@ The app logged:
 
 Relevant log line:
 
-- `/tmp/sessions-chronicle-issue-140-full-app.log:3046`
+- `/tmp/sessions-chronicle-issue-140-full-app-rerun.log:3047`
 
 ### 2. First transcript page loading remained negligible
 
 The first transcript page load logged:
 
-- `load_duration_ms=3`
+- `load_duration_ms=1`
 
 Relevant log line:
 
-- `/tmp/sessions-chronicle-issue-140-full-app.log:3061`
+- `/tmp/sessions-chronicle-issue-140-full-app-rerun.log:3062`
 
 ### 3. First-page preparation remained effectively free
 
@@ -83,7 +83,7 @@ The preparation step logged:
 
 Relevant log line:
 
-- `/tmp/sessions-chronicle-issue-140-full-app.log:3063`
+- `/tmp/sessions-chronicle-issue-140-full-app-rerun.log:3064`
 
 ### 4. The full-app first-page delay is still present
 
@@ -99,13 +99,13 @@ Recorded values:
 - `batch_count=11`
 - `total_push_duration_ms=1`
 - `max_push_duration_ms=0`
-- `total_duration_ms=7429`
-- `max_schedule_gap_ms=1311`
-- `first_page_load_to_factory_push_ms=7813`
+- `total_duration_ms=7452`
+- `max_schedule_gap_ms=1361`
+- `first_page_load_to_factory_push_ms=7766`
 
 Relevant log line:
 
-- `/tmp/sessions-chronicle-issue-140-full-app.log:3303`
+- `/tmp/sessions-chronicle-issue-140-full-app-rerun.log:3304`
 
 ### 5. Row-build instrumentation is now visible in the real run
 
@@ -119,29 +119,29 @@ The final row-build breakdown logged:
 - `total_row_build_duration_ms=6`
 - `worst_row_kind=Some(Message)`
 - `worst_row_build_duration_ms=1`
-- `max_post_drop_residual_ms=1310`
+- `max_post_drop_residual_ms=1361`
 
 Relevant log line:
 
-- `/tmp/sessions-chronicle-issue-140-full-app.log:3318`
+- `/tmp/sessions-chronicle-issue-140-full-app-rerun.log:3319`
 
 ### 6. Per-batch breakdown confirms scheduling dominates the delay
 
 Representative batch breakdowns:
 
-- batch 2: `schedule_gap_ms=680`, `measured_row_build_ms=0`, `post_drop_residual_ms=680`
-- batch 4: `schedule_gap_ms=1307`, `measured_row_build_ms=1`, `post_drop_residual_ms=1306`
-- batch 8: `schedule_gap_ms=1311`, `measured_row_build_ms=1`, `post_drop_residual_ms=1310`
-- batch 10: `schedule_gap_ms=1303`, `measured_row_build_ms=1`, `post_drop_residual_ms=1302`
-- batch 11: `schedule_gap_ms=654`, `measured_row_build_ms=0`, `post_drop_residual_ms=654`
+- batch 2: `schedule_gap_ms=662`, `measured_row_build_ms=0`, `post_drop_residual_ms=662`
+- batch 4: `schedule_gap_ms=1361`, `measured_row_build_ms=0`, `post_drop_residual_ms=1361`
+- batch 8: `schedule_gap_ms=1332`, `measured_row_build_ms=1`, `post_drop_residual_ms=1331`
+- batch 10: `schedule_gap_ms=1339`, `measured_row_build_ms=1`, `post_drop_residual_ms=1338`
+- batch 11: `schedule_gap_ms=661`, `measured_row_build_ms=0`, `post_drop_residual_ms=661`
 
 Relevant log lines:
 
-- `/tmp/sessions-chronicle-issue-140-full-app.log:3110`
-- `/tmp/sessions-chronicle-issue-140-full-app.log:3155`
-- `/tmp/sessions-chronicle-issue-140-full-app.log:3248`
-- `/tmp/sessions-chronicle-issue-140-full-app.log:3293`
-- `/tmp/sessions-chronicle-issue-140-full-app.log:3316`
+- `/tmp/sessions-chronicle-issue-140-full-app-rerun.log:3111`
+- `/tmp/sessions-chronicle-issue-140-full-app-rerun.log:3156`
+- `/tmp/sessions-chronicle-issue-140-full-app-rerun.log:3249`
+- `/tmp/sessions-chronicle-issue-140-full-app-rerun.log:3294`
+- `/tmp/sessions-chronicle-issue-140-full-app-rerun.log:3317`
 
 ## First-Page Breakdown
 
@@ -152,11 +152,11 @@ The first transcript page produced:
 | Source transcript rows | 75 |
 | Display rows after grouping | 33 |
 | Render batches | 11 |
-| Total page render duration | 7431 ms |
-| First-page load to factory push | 7813 ms |
+| Total page render duration | 7454 ms |
+| First-page load to factory push | 7766 ms |
 | Total factory push duration | 1 ms |
-| Max schedule gap | 1311 ms |
-| Max post-drop residual | 1310 ms |
+| Max schedule gap | 1361 ms |
+| Max post-drop residual | 1361 ms |
 
 Row mix:
 
@@ -178,7 +178,7 @@ Worst row:
 | --- | ---: | ---: | ---: | ---: |
 | Issue #127 full app clean run | ~7.9 s | 1398 ms | not measured | not measured |
 | Issue #140 isolated component run | 519 ms | 69 ms | 57 ms | 68 ms |
-| Issue #140 full app run | 7813 ms | 1311 ms | 6 ms | 1310 ms |
+| Issue #140 full app run | 7766 ms | 1361 ms | 6 ms | 1361 ms |
 
 ## Interpretation
 
@@ -186,11 +186,11 @@ This full-app run reproduces the issue #127 latency almost exactly, but now with
 
 The strongest conclusions are:
 
-- database loading is still negligible (`load_duration_ms=3`);
+- database loading is still negligible (`load_duration_ms=1`);
 - first-page preparation is still negligible (`build_duration_ms=0`);
 - row widget construction is also negligible in aggregate (`total_row_build_duration_ms=6`);
 - the dominant delay remains between scheduled render batches on the main loop;
-- `max_post_drop_residual_ms=1310` nearly matches `max_schedule_gap_ms=1311`, which means the long gaps are not explained by row construction itself.
+- `max_post_drop_residual_ms=1361` exactly matches `max_schedule_gap_ms=1361`, which means the long gaps are not explained by row construction itself.
 
 The full-app measurement therefore supports the same top-level diagnosis as issue #127, but more strongly than before: the bottleneck is not transcript fetch, transcript preparation, or row construction. It is scheduling or other main-loop contention around the detail-open path.
 
@@ -206,4 +206,4 @@ Defer #134. Transcript virtualization or windowing would reduce mounted rows, bu
 
 Defer #138. Off-main-thread data preparation is not supported by this run because transcript fetch and first-page preparation are already negligible.
 
-Do not close #132 from this run alone, but this report materially narrows it: the next decision-grade investigation should target why the full app experiences repeated 650-1310 ms scheduling gaps after batches are queued, not why transcript rows are expensive to build.
+Do not close #132 from this run alone, but this report materially narrows it: the next decision-grade investigation should target why the full app experiences repeated 660-1361 ms scheduling gaps after batches are queued, not why transcript rows are expensive to build.
