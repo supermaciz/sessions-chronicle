@@ -158,6 +158,41 @@ impl RenderRowBuildTotals {
     }
 }
 
+fn render_metrics_for_batch(batch: &PendingRenderBatch, total_duration_ms: u128) -> RenderMetrics {
+    let total_row_build_duration_ms = batch.row_build_totals.total().as_millis();
+    let max_post_drop_residual_ms = batch
+        .batch_breakdowns
+        .iter()
+        .map(|b| b.schedule_gap.saturating_sub(b.row_build_duration))
+        .max()
+        .unwrap_or(Duration::ZERO)
+        .as_millis();
+
+    RenderMetrics {
+        offset: batch.offset,
+        source_row_count: batch.source_row_count,
+        display_item_count: batch.total_items,
+        batch_count: batch.batch_count,
+        total_duration_ms,
+        total_push_duration_ms: batch.total_push_duration.as_millis(),
+        max_push_duration_ms: batch.max_push_duration.as_millis(),
+        max_schedule_gap_ms: batch.max_schedule_gap.as_millis(),
+        message_build_duration_ms: batch.row_build_totals.message_duration.as_millis(),
+        tool_call_build_duration_ms: batch.row_build_totals.tool_call_duration.as_millis(),
+        tool_burst_build_duration_ms: batch.row_build_totals.tool_burst_duration.as_millis(),
+        subagent_build_duration_ms: batch.row_build_totals.subagent_duration.as_millis(),
+        total_row_build_duration_ms,
+        worst_row_kind: batch.worst_row_kind,
+        worst_row_build_duration_ms: batch.worst_row_duration.as_millis(),
+        max_post_drop_residual_ms,
+        first_page_load_to_factory_push_ms: batch.first_page_load_to_factory_push_ms,
+        message_count: batch.row_kind_counts.message_count,
+        tool_call_count: batch.row_kind_counts.tool_call_count,
+        tool_burst_count: batch.row_kind_counts.tool_burst_count,
+        subagent_count: batch.row_kind_counts.subagent_count,
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct RenderMetrics {
     offset: usize,
@@ -1989,29 +2024,10 @@ impl SessionDetail {
             "Transcript page row-build breakdown"
         );
 
-        self.last_render_metrics = Some(RenderMetrics {
-            offset: batch.offset,
-            source_row_count: batch.source_row_count,
-            display_item_count: batch.total_items,
-            batch_count: batch.batch_count,
-            total_duration_ms: batch.queued_at.elapsed().as_millis(),
-            total_push_duration_ms: batch.total_push_duration.as_millis(),
-            max_push_duration_ms: batch.max_push_duration.as_millis(),
-            max_schedule_gap_ms: batch.max_schedule_gap.as_millis(),
-            message_build_duration_ms: batch.row_build_totals.message_duration.as_millis(),
-            tool_call_build_duration_ms: batch.row_build_totals.tool_call_duration.as_millis(),
-            tool_burst_build_duration_ms: batch.row_build_totals.tool_burst_duration.as_millis(),
-            subagent_build_duration_ms: batch.row_build_totals.subagent_duration.as_millis(),
-            total_row_build_duration_ms,
-            worst_row_kind: batch.worst_row_kind,
-            worst_row_build_duration_ms: batch.worst_row_duration.as_millis(),
-            max_post_drop_residual_ms,
-            first_page_load_to_factory_push_ms: batch.first_page_load_to_factory_push_ms,
-            message_count: batch.row_kind_counts.message_count,
-            tool_call_count: batch.row_kind_counts.tool_call_count,
-            tool_burst_count: batch.row_kind_counts.tool_burst_count,
-            subagent_count: batch.row_kind_counts.subagent_count,
-        });
+        self.last_render_metrics = Some(render_metrics_for_batch(
+            &batch,
+            batch.queued_at.elapsed().as_millis(),
+        ));
     }
 
     fn complete_transcript_render_push(&mut self, sender: &ComponentSender<Self>) {
@@ -2068,6 +2084,9 @@ impl SessionDetail {
             max_schedule_gap_ms,
             "Finished rendering transcript page"
         );
+        if let Some(batch) = self.pending_render_batch.as_ref() {
+            self.last_render_metrics = Some(render_metrics_for_batch(batch, total_duration_ms));
+        }
         self.continue_pending_jump(sender);
     }
 
@@ -3212,6 +3231,58 @@ fn synthetic_measurement(input: &str) -> String {\n\
         assert_eq!(counts.tool_call_count, 0);
         assert_eq!(counts.tool_burst_count, 1);
         assert_eq!(counts.subagent_count, 1);
+    }
+
+    #[test]
+    fn render_metrics_for_batch_captures_push_metrics_without_row_builds() {
+        let queued_at = Instant::now();
+        let batch = PendingRenderBatch {
+            request_id: 1,
+            offset: 0,
+            source_row_count: 5,
+            total_items: 5,
+            rendered_items: 5,
+            batch_count: 2,
+            queued_at,
+            last_batch_completed_at: Some(queued_at),
+            total_push_duration: Duration::from_millis(12),
+            max_push_duration: Duration::from_millis(9),
+            max_schedule_gap: Duration::from_millis(15),
+            row_build_totals: RenderRowBuildTotals::default(),
+            row_build_count: 0,
+            worst_row_kind: None,
+            worst_row_duration: Duration::ZERO,
+            batch_breakdowns: vec![],
+            item_render_batch_indices: std::collections::HashMap::new(),
+            row_kind_counts: RenderRowKindCounts {
+                message_count: 5,
+                tool_call_count: 0,
+                tool_burst_count: 0,
+                subagent_count: 0,
+            },
+            items: VecDeque::new(),
+            first_page_load_to_factory_push_ms: Some(42),
+            push_complete: true,
+        };
+
+        let metrics = render_metrics_for_batch(&batch, 100);
+        assert_eq!(metrics.offset, 0);
+        assert_eq!(metrics.source_row_count, 5);
+        assert_eq!(metrics.display_item_count, 5);
+        assert_eq!(metrics.batch_count, 2);
+        assert_eq!(metrics.total_duration_ms, 100);
+        assert_eq!(metrics.total_push_duration_ms, 12);
+        assert_eq!(metrics.max_push_duration_ms, 9);
+        assert_eq!(metrics.max_schedule_gap_ms, 15);
+        assert_eq!(metrics.total_row_build_duration_ms, 0);
+        assert_eq!(metrics.worst_row_kind, None);
+        assert_eq!(metrics.worst_row_build_duration_ms, 0);
+        assert_eq!(metrics.max_post_drop_residual_ms, 0);
+        assert_eq!(metrics.first_page_load_to_factory_push_ms, Some(42));
+        assert_eq!(metrics.message_count, 5);
+        assert_eq!(metrics.tool_call_count, 0);
+        assert_eq!(metrics.tool_burst_count, 0);
+        assert_eq!(metrics.subagent_count, 0);
     }
 
     #[gtk::test]
