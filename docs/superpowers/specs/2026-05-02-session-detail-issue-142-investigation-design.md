@@ -97,7 +97,7 @@ No code changes. 3 runs. Establishes the median `max_schedule_gap_ms` and `first
 **Neutralization**: disable transitions on the navigation view for the duration of the run. Either:
 
 - call the appropriate "no animation" setter on `nav_view` before `nav_view.push(&self.detail_page)` in `handle_session_selected`, or
-- push the detail page before emitting `SetSession` so the slide finishes before any batch is queued.
+- delay emitting `SetSession` until after the navigation transition has had time to complete, so no first-page batch can be queued during the slide.
 
 Either approach is acceptable for the variant; pick whichever is less invasive in the current code.
 
@@ -111,7 +111,7 @@ Either approach is acceptable for the variant; pick whichever is less invasive i
 
 Run only if A2 meets the threshold and we want to discriminate between `TextView` cost and Markdown/highlight cost.
 
-**Hypothesis**: most of the A2 cost is in `markdown::*` rendering and `highlight::*` calls, not in `GtkTextView` itself.
+**Hypothesis**: some meaningful share of the A2 cost is in `markdown::*` rendering and `highlight::*` calls, not in `GtkTextView` realization, layout, measure, or snapshot work. This is a discriminator after A2, not the primary suspect: existing #140 row-build instrumentation already includes markdown/highlight execution and measured only a few milliseconds of synchronous row construction.
 
 **Neutralization**: keep the production `transcript_row` widget tree, but short-circuit `markdown::render_*` and `highlight::*` to return raw text. This isolates the markdown/highlight contribution from the rest of the row.
 
