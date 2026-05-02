@@ -130,6 +130,17 @@ pub enum TranscriptItemInit {
     Subagent(SubagentItemInit),
 }
 
+impl TranscriptItemInit {
+    pub fn item_index(&self) -> usize {
+        match self {
+            Self::Message(init) => init.item_index,
+            Self::ToolCall(init) => init.item_index,
+            Self::ToolBurst(init) => init.item_index,
+            Self::Subagent(init) => init.item_index,
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Messages and outputs
 // ---------------------------------------------------------------------------
@@ -158,6 +169,11 @@ pub enum TranscriptRowOutput {
         session_id: String,
         transcript_item_index: i64,
     },
+    RowBuilt {
+        item_index: usize,
+        kind: TranscriptRowBuildKind,
+        build_duration_ms: u128,
+    },
 }
 
 // ---------------------------------------------------------------------------
@@ -170,6 +186,25 @@ enum TranscriptRowKind {
     ToolCall,
     ToolBurst,
     Subagent,
+}
+
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+pub enum TranscriptRowBuildKind {
+    Message,
+    ToolCall,
+    ToolBurst,
+    Subagent,
+}
+
+impl From<TranscriptRowKind> for TranscriptRowBuildKind {
+    fn from(kind: TranscriptRowKind) -> Self {
+        match kind {
+            TranscriptRowKind::Message => Self::Message,
+            TranscriptRowKind::ToolCall => Self::ToolCall,
+            TranscriptRowKind::ToolBurst => Self::ToolBurst,
+            TranscriptRowKind::Subagent => Self::Subagent,
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -702,10 +737,10 @@ impl FactoryComponent for TranscriptRow {
     ) -> Self::Widgets {
         let started_at = Instant::now();
         let widgets = match self.kind {
-            TranscriptRowKind::Message => self.build_message_widgets(&root, sender),
-            TranscriptRowKind::ToolCall => self.build_tool_call_widgets(&root, sender),
-            TranscriptRowKind::ToolBurst => self.build_tool_burst_widgets(&root, sender),
-            TranscriptRowKind::Subagent => self.build_subagent_widgets(&root, sender),
+            TranscriptRowKind::Message => self.build_message_widgets(&root, sender.clone()),
+            TranscriptRowKind::ToolCall => self.build_tool_call_widgets(&root, sender.clone()),
+            TranscriptRowKind::ToolBurst => self.build_tool_burst_widgets(&root, sender.clone()),
+            TranscriptRowKind::Subagent => self.build_subagent_widgets(&root, sender.clone()),
         };
         let duration = started_at.elapsed();
 
@@ -725,6 +760,13 @@ impl FactoryComponent for TranscriptRow {
                 "Slow transcript row widget build"
             );
         }
+        sender
+            .output(TranscriptRowOutput::RowBuilt {
+                item_index: self.item_index,
+                kind: self.kind.into(),
+                build_duration_ms: duration.as_millis(),
+            })
+            .ok();
 
         widgets
     }
