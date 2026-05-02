@@ -27,7 +27,7 @@ clap = { version = "4.6", features = ["derive"] }
 which = "8.0.2"
 pulldown-cmark = { version = "0.13", default-features = false, features = ["simd"] }
 regex = "1"
-similar = "3.0.0"
+similar = "3.1.0"
 sourceview5 = "0.10"
 
 [build-dependencies]
