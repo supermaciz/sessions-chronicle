@@ -16,7 +16,7 @@ Reduce wasted scheduling overhead on cheap rows by replacing the fixed `RENDER_B
 
 This is a throughput improvement for the common case where transcript rows are inexpensive to enqueue. With 75 inexpensive rows on the first page, the current code performs `25` scheduled passes, each separated by `RENDER_BATCH_DELAY_MS = 16 ms`, adding roughly `400 ms` of pure scheduling delay before factory push completes. Allowing more rows per pass when push duration stays under budget cuts that scheduling tax.
 
-This change is **not expected to materially help** sessions whose dominant cost is per-row widget construction or Markdown/`TextView` layout. When a single row already costs more than the budget, the loop falls back to "push one row, schedule next pass" — identical in shape to today. Reducing per-row cost or moving widget layout off the critical path is a separate, larger effort tracked under the follow-up.
+This change is **not expected to materially help** sessions whose dominant cost is per-row widget construction or Markdown/`TextView` layout. When a single row already costs more than the budget, the adaptive loop falls back to "push one row, schedule next pass." That is **not** identical to today's fixed `RENDER_BATCH_SIZE = 3` behavior: it improves fairness by avoiding multiple expensive rows in the same pass, but it does not reduce the cost of the expensive row itself. Reducing per-row cost or moving widget layout off the critical path is a separate, larger effort tracked under the follow-up.
 
 The user-approved budget target is `6 ms`, implemented with the smallest safe change to the current pipeline.
 
@@ -111,7 +111,7 @@ No transcript content, tool call payload, command output, or Markdown body shoul
 
 Cheap rows may render up to `RENDER_BATCH_MAX_ITEMS = 8` per pass instead of `3`, reducing the number of `RENDER_BATCH_DELAY_MS` yields between page start and final factory push. On a `75`-row first page where every push completes well under budget, this should drop `batch_count` from `25` to roughly `10` and trim the scheduling tax visible in `total_duration_ms`.
 
-Expensive rows produce a batch of size `1` and behave the same as today; the time budget does not retroactively shrink the cost of a row already pushed. Per-pass latency for those rows is unchanged, and the only observable difference is that `budget_exceeded = true` will appear in the per-batch log.
+Expensive rows produce batches of size `1` instead of today's fixed-size batches of up to `3`. The time budget does not retroactively shrink the cost of a row already pushed, so per-row latency remains high, but each pass yields sooner and avoids stacking multiple expensive rows into one callback. The observable effects should be higher `batch_count`, lower worst-case per-pass work, and `budget_exceeded = true` in the per-batch log.
 
 Search-driven reloads, grouped tool call bursts, pagination, and pending search jumps should continue to behave as they do today because the surrounding render pipeline is unchanged.
 
