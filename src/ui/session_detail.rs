@@ -111,6 +111,7 @@ struct PendingRenderBatch {
     row_kind_counts: RenderRowKindCounts,
     items: VecDeque<TranscriptItemInit>,
     first_page_load_to_factory_push_ms: Option<u128>,
+    push_complete: bool,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -1560,7 +1561,12 @@ impl SessionDetail {
     /// because `display_targets_by_item_index` is only populated as pages
     /// finish rendering.
     fn is_transcript_loading(&self) -> bool {
-        self.loading_first_page || self.loading_next_page || self.pending_render_batch.is_some()
+        self.loading_first_page
+            || self.loading_next_page
+            || self
+                .pending_render_batch
+                .as_ref()
+                .is_some_and(|b| !b.push_complete)
     }
 
     fn spawn_match_positions_load(
@@ -1758,6 +1764,7 @@ impl SessionDetail {
             row_kind_counts,
             items: items.into(),
             first_page_load_to_factory_push_ms: None,
+            push_complete: false,
         });
         self.schedule_transcript_render_batch(sender, request_id);
     }
@@ -1873,8 +1880,9 @@ impl SessionDetail {
             }
             if let Some(batch) = self.pending_render_batch.as_mut() {
                 batch.first_page_load_to_factory_push_ms = first_page_load_to_factory_push_ms;
+                batch.push_complete = true;
             }
-            self.maybe_complete_transcript_render(sender);
+            self.complete_transcript_render_push(sender);
         }
     }
 
@@ -1938,14 +1946,14 @@ impl SessionDetail {
             }
         }
 
-        self.maybe_complete_transcript_render(&sender);
+        self.maybe_log_row_build_breakdown(&sender);
     }
 
-    fn maybe_complete_transcript_render(&mut self, sender: &ComponentSender<Self>) {
+    fn maybe_log_row_build_breakdown(&mut self, _sender: &ComponentSender<Self>) {
         let Some(batch) = &self.pending_render_batch else {
             return;
         };
-        if !batch.items.is_empty() {
+        if !batch.push_complete {
             return;
         }
         if batch.row_build_count < batch.rendered_items {
@@ -1956,29 +1964,6 @@ impl SessionDetail {
             .pending_render_batch
             .take()
             .expect("pending batch checked above");
-        let total_push_duration_ms = batch.total_push_duration.as_millis();
-        let max_push_duration_ms = batch.max_push_duration.as_millis();
-        let max_schedule_gap_ms = batch.max_schedule_gap.as_millis();
-        let total_duration_ms = batch.queued_at.elapsed().as_millis();
-
-        tracing::info!(
-            request_id = batch.request_id,
-            offset = batch.offset,
-            source_row_count = batch.source_row_count,
-            display_item_count = batch.total_items,
-            rendered_items = batch.rendered_items,
-            batch_count = batch.batch_count,
-            total_push_duration_ms,
-            max_push_duration_ms,
-            total_duration_ms,
-            message_count = batch.row_kind_counts.message_count,
-            tool_call_count = batch.row_kind_counts.tool_call_count,
-            tool_burst_count = batch.row_kind_counts.tool_burst_count,
-            subagent_count = batch.row_kind_counts.subagent_count,
-            max_schedule_gap_ms,
-            "Finished rendering transcript page"
-        );
-
         let total_row_build_duration_ms = batch.row_build_totals.total().as_millis();
         let max_post_drop_residual_ms = batch
             .batch_breakdowns
@@ -2009,30 +1994,80 @@ impl SessionDetail {
             source_row_count: batch.source_row_count,
             display_item_count: batch.total_items,
             batch_count: batch.batch_count,
-            total_duration_ms,
-            total_push_duration_ms,
-            max_push_duration_ms,
-            max_schedule_gap_ms,
+            total_duration_ms: batch.queued_at.elapsed().as_millis(),
+            total_push_duration_ms: batch.total_push_duration.as_millis(),
+            max_push_duration_ms: batch.max_push_duration.as_millis(),
+            max_schedule_gap_ms: batch.max_schedule_gap.as_millis(),
             message_build_duration_ms: batch.row_build_totals.message_duration.as_millis(),
             tool_call_build_duration_ms: batch.row_build_totals.tool_call_duration.as_millis(),
             tool_burst_build_duration_ms: batch.row_build_totals.tool_burst_duration.as_millis(),
             subagent_build_duration_ms: batch.row_build_totals.subagent_duration.as_millis(),
-            total_row_build_duration_ms: batch.row_build_totals.total().as_millis(),
+            total_row_build_duration_ms,
             worst_row_kind: batch.worst_row_kind,
             worst_row_build_duration_ms: batch.worst_row_duration.as_millis(),
-            max_post_drop_residual_ms: batch
-                .batch_breakdowns
-                .iter()
-                .map(|b| b.schedule_gap.saturating_sub(b.row_build_duration))
-                .max()
-                .unwrap_or(Duration::ZERO)
-                .as_millis(),
+            max_post_drop_residual_ms,
             first_page_load_to_factory_push_ms: batch.first_page_load_to_factory_push_ms,
             message_count: batch.row_kind_counts.message_count,
             tool_call_count: batch.row_kind_counts.tool_call_count,
             tool_burst_count: batch.row_kind_counts.tool_burst_count,
             subagent_count: batch.row_kind_counts.subagent_count,
         });
+    }
+
+    fn complete_transcript_render_push(&mut self, sender: &ComponentSender<Self>) {
+        let (
+            total_push_duration_ms,
+            max_push_duration_ms,
+            max_schedule_gap_ms,
+            total_duration_ms,
+            request_id,
+            offset,
+            source_row_count,
+            total_items,
+            rendered_items,
+            batch_count,
+            message_count,
+            tool_call_count,
+            tool_burst_count,
+            subagent_count,
+        ) = {
+            let Some(batch) = &self.pending_render_batch else {
+                return;
+            };
+            (
+                batch.total_push_duration.as_millis(),
+                batch.max_push_duration.as_millis(),
+                batch.max_schedule_gap.as_millis(),
+                batch.queued_at.elapsed().as_millis(),
+                batch.request_id,
+                batch.offset,
+                batch.source_row_count,
+                batch.total_items,
+                batch.rendered_items,
+                batch.batch_count,
+                batch.row_kind_counts.message_count,
+                batch.row_kind_counts.tool_call_count,
+                batch.row_kind_counts.tool_burst_count,
+                batch.row_kind_counts.subagent_count,
+            )
+        };
+        tracing::info!(
+            request_id,
+            offset,
+            source_row_count,
+            display_item_count = total_items,
+            rendered_items,
+            batch_count,
+            total_push_duration_ms,
+            max_push_duration_ms,
+            total_duration_ms,
+            message_count,
+            tool_call_count,
+            tool_burst_count,
+            subagent_count,
+            max_schedule_gap_ms,
+            "Finished rendering transcript page"
+        );
         self.continue_pending_jump(sender);
     }
 
