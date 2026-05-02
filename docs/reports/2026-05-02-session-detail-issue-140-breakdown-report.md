@@ -6,19 +6,142 @@
 - Target session: `019dc51a-f0cd-79c1-ba79-45fedac889c2`
 - AI assistant: Codex
 - Reference baseline: `docs/reports/2026-05-01-session-detail-issue-127-clean-run-log-report.md`
+- Source log file: `/tmp/sessions-chronicle-issue-140-full-app.log`
+- Measurement type: real full-app run
 - Measurement command:
 
 ```bash
-SESSION_DETAIL_ISSUE_140_SOURCE_FILE=/home/mcizo/.codex/sessions/2026/04/25/rollout-2026-04-25T16-46-10-019dc51a-f0cd-79c1-ba79-45fedac889c2.jsonl \
-  RUST_LOG=info,sessions_chronicle=debug \
-  cargo test session_detail_issue_140_reference_session_breakdown -- --ignored --nocapture
+RUST_LOG=info,sessions_chronicle=debug sessions-chronicle > /tmp/sessions-chronicle-issue-140-full-app.log 2>&1
 ```
 
 ## Scenario
 
-The issue-140 measurement copied the local Codex session file into a temporary Codex session root, indexed it into a temporary database, and opened it through the `SessionDetail` component test harness.
+This run used the same workflow as the issue #127 clean baseline:
 
-This keeps the input session directly comparable with issue #127 while removing full-app noise from session list rendering, background indexing, and manual click timing.
+1. Launch the installed application with debug logs redirected to a file.
+2. Wait for background indexing to complete.
+3. Click session `019dc51a-f0cd-79c1-ba79-45fedac889c2`.
+4. Do not perform any search before opening the session detail view.
+
+Unlike the earlier isolated component run, this capture includes the real app navigation path, main-loop scheduling, and full GTK workload around opening the detail view.
+
+## Cleanliness Checks
+
+### Indexing finished before the click
+
+The app logged:
+
+- `Background indexing complete: indexed=1249, skipped=657, removed=0`
+
+Relevant log line:
+
+- `/tmp/sessions-chronicle-issue-140-full-app.log:2998`
+
+### The detail view opened with no active search query
+
+The `SetSession` payload shows:
+
+- `search_query: None`
+
+Relevant log lines:
+
+- `/tmp/sessions-chronicle-issue-140-full-app.log:3043-3046`
+
+## Key Measurements
+
+### 1. Session open started normally
+
+The app logged:
+
+- `Session detail open started`
+- `request_id=1`
+- `message_count=244`
+- `has_search_query=false`
+
+Relevant log line:
+
+- `/tmp/sessions-chronicle-issue-140-full-app.log:3046`
+
+### 2. First transcript page loading remained negligible
+
+The first transcript page load logged:
+
+- `load_duration_ms=3`
+
+Relevant log line:
+
+- `/tmp/sessions-chronicle-issue-140-full-app.log:3061`
+
+### 3. First-page preparation remained effectively free
+
+The preparation step logged:
+
+- `Prepared first transcript page`
+- `source_row_count=75`
+- `display_item_count=33`
+- `build_duration_ms=0`
+
+Relevant log line:
+
+- `/tmp/sessions-chronicle-issue-140-full-app.log:3063`
+
+### 4. The full-app first-page delay is still present
+
+The main completion event logged:
+
+- `First transcript page factory push complete`
+
+Recorded values:
+
+- `request_id=1`
+- `source_row_count=75`
+- `display_item_count=33`
+- `batch_count=11`
+- `total_push_duration_ms=1`
+- `max_push_duration_ms=0`
+- `total_duration_ms=7429`
+- `max_schedule_gap_ms=1311`
+- `first_page_load_to_factory_push_ms=7813`
+
+Relevant log line:
+
+- `/tmp/sessions-chronicle-issue-140-full-app.log:3303`
+
+### 5. Row-build instrumentation is now visible in the real run
+
+The final row-build breakdown logged:
+
+- `row_build_count=33`
+- `message_build_duration_ms=6`
+- `tool_call_build_duration_ms=0`
+- `tool_burst_build_duration_ms=0`
+- `subagent_build_duration_ms=0`
+- `total_row_build_duration_ms=6`
+- `worst_row_kind=Some(Message)`
+- `worst_row_build_duration_ms=1`
+- `max_post_drop_residual_ms=1310`
+
+Relevant log line:
+
+- `/tmp/sessions-chronicle-issue-140-full-app.log:3318`
+
+### 6. Per-batch breakdown confirms scheduling dominates the delay
+
+Representative batch breakdowns:
+
+- batch 2: `schedule_gap_ms=680`, `measured_row_build_ms=0`, `post_drop_residual_ms=680`
+- batch 4: `schedule_gap_ms=1307`, `measured_row_build_ms=1`, `post_drop_residual_ms=1306`
+- batch 8: `schedule_gap_ms=1311`, `measured_row_build_ms=1`, `post_drop_residual_ms=1310`
+- batch 10: `schedule_gap_ms=1303`, `measured_row_build_ms=1`, `post_drop_residual_ms=1302`
+- batch 11: `schedule_gap_ms=654`, `measured_row_build_ms=0`, `post_drop_residual_ms=654`
+
+Relevant log lines:
+
+- `/tmp/sessions-chronicle-issue-140-full-app.log:3110`
+- `/tmp/sessions-chronicle-issue-140-full-app.log:3155`
+- `/tmp/sessions-chronicle-issue-140-full-app.log:3248`
+- `/tmp/sessions-chronicle-issue-140-full-app.log:3293`
+- `/tmp/sessions-chronicle-issue-140-full-app.log:3316`
 
 ## First-Page Breakdown
 
@@ -29,17 +152,17 @@ The first transcript page produced:
 | Source transcript rows | 75 |
 | Display rows after grouping | 33 |
 | Render batches | 11 |
-| Total page render duration | 263 ms |
-| First-page load to factory push | 519 ms |
-| Total factory push duration | 2 ms |
-| Max schedule gap | 69 ms |
-| Max post-drop residual | 68 ms |
+| Total page render duration | 7431 ms |
+| First-page load to factory push | 7813 ms |
+| Total factory push duration | 1 ms |
+| Max schedule gap | 1311 ms |
+| Max post-drop residual | 1310 ms |
 
 Row mix:
 
 | Row kind | Count | Measured build time |
 | --- | ---: | ---: |
-| Message | 20 | 57 ms |
+| Message | 20 | 6 ms |
 | ToolCall | 1 | 0 ms |
 | ToolBurst | 12 | 0 ms |
 | Subagent | 0 | 0 ms |
@@ -47,36 +170,40 @@ Row mix:
 Worst row:
 
 - Kind: `Message`
-- Duration: 49 ms
+- Duration: `1 ms`
+
+## Comparison With Prior Measurements
+
+| Run | First-page completion | Max schedule gap | Total measured row build | Max post-drop residual |
+| --- | ---: | ---: | ---: | ---: |
+| Issue #127 full app clean run | ~7.9 s | 1398 ms | not measured | not measured |
+| Issue #140 isolated component run | 519 ms | 69 ms | 57 ms | 68 ms |
+| Issue #140 full app run | 7813 ms | 1311 ms | 6 ms | 1310 ms |
 
 ## Interpretation
 
-In the isolated `SessionDetail` run, row construction does not explain the previous clean-run latency.
+This full-app run reproduces the issue #127 latency almost exactly, but now with row-build breakdown inside the real application path.
 
-The most important contrast with issue #127 is:
+The strongest conclusions are:
 
-| Run | First-page completion | Max schedule gap | Total measured row build |
-| --- | ---: | ---: | ---: |
-| Issue #127 full app clean run | ~7.9 s | 1398 ms | not measured |
-| Issue #140 isolated component run | 519 ms | 69 ms | 57 ms |
+- database loading is still negligible (`load_duration_ms=3`);
+- first-page preparation is still negligible (`build_duration_ms=0`);
+- row widget construction is also negligible in aggregate (`total_row_build_duration_ms=6`);
+- the dominant delay remains between scheduled render batches on the main loop;
+- `max_post_drop_residual_ms=1310` nearly matches `max_schedule_gap_ms=1311`, which means the long gaps are not explained by row construction itself.
 
-The new row-build instrumentation shows that:
+The full-app measurement therefore supports the same top-level diagnosis as issue #127, but more strongly than before: the bottleneck is not transcript fetch, transcript preparation, or row construction. It is scheduling or other main-loop contention around the detail-open path.
 
-- `Message` rows are the only non-zero measured row-build cost in this reference first page.
-- Collapsed `ToolBurst` rows are not expensive at mount time in this run.
-- The first-page cost is not dominated by factory `push_back`.
-- The large issue-127 delay is not reproduced when `SessionDetail` is measured in isolation.
-
-That points away from database loading, transcript preparation, and ordinary row widget construction as the primary explanation. The remaining hypothesis is full-app main-loop contention or scheduling noise around the detail open path.
+The isolated component run is still useful as a contrast, but it is no longer necessary to infer the problem indirectly. The real run now shows the same story directly.
 
 ## Recommendation
 
-Prioritize #132 only as a narrow scheduling/main-loop investigation, not as a blind adaptive-batch implementation. The data says schedule gaps are the suspicious dimension in the full app, but the isolated component does not reproduce the 7.9 s delay.
+Prioritize #132 as a narrow full-app scheduling and main-loop investigation.
 
-Defer #133. Markdown render caching is not supported by this first-page breakdown because total message row construction was 36 ms.
+Defer #133. Markdown render caching is not supported by this run because total measured message row construction was only `6 ms`.
 
-Defer #134. Transcript virtualization/windowing would reduce mounted rows, but this reference first page mounted only 33 display rows and row construction was not the bottleneck.
+Defer #134. Transcript virtualization or windowing would reduce mounted rows, but the first page still mounts only `33` display rows and row construction is not the bottleneck.
 
-Defer #138. Off-main-thread data preparation is not supported by either issue #127 or issue #140: database load and first-page preparation are already negligible.
+Defer #138. Off-main-thread data preparation is not supported by this run because transcript fetch and first-page preparation are already negligible.
 
-Do not close #132, #133, #134, or #138 from this run alone. The next decision-grade measurement should run the same instrumentation in the full app clean-run scenario to confirm whether the previous 1398 ms schedule gaps now appear as `post_drop_residual_ms`.
+Do not close #132 from this run alone, but this report materially narrows it: the next decision-grade investigation should target why the full app experiences repeated 650-1310 ms scheduling gaps after batches are queued, not why transcript rows are expensive to build.

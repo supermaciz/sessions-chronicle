@@ -131,7 +131,6 @@ pub enum TranscriptItemInit {
 }
 
 impl TranscriptItemInit {
-    #[cfg(debug_assertions)]
     pub fn item_index(&self) -> usize {
         match self {
             Self::Message(init) => init.item_index,
@@ -170,7 +169,6 @@ pub enum TranscriptRowOutput {
         session_id: String,
         transcript_item_index: i64,
     },
-    #[cfg(debug_assertions)]
     RowBuilt {
         item_index: usize,
         kind: TranscriptRowBuildKind,
@@ -762,7 +760,6 @@ impl FactoryComponent for TranscriptRow {
                 "Slow transcript row widget build"
             );
         }
-        #[cfg(debug_assertions)]
         sender
             .output(TranscriptRowOutput::RowBuilt {
                 item_index: self.item_index,
