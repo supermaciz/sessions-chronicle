@@ -110,6 +110,7 @@ struct PendingRenderBatch {
     item_render_batch_indices: std::collections::HashMap<usize, usize>,
     row_kind_counts: RenderRowKindCounts,
     items: VecDeque<TranscriptItemInit>,
+    first_page_load_to_factory_push_ms: Option<u128>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -1756,6 +1757,7 @@ impl SessionDetail {
             item_render_batch_indices: std::collections::HashMap::new(),
             row_kind_counts,
             items: items.into(),
+            first_page_load_to_factory_push_ms: None,
         });
         self.schedule_transcript_render_batch(sender, request_id);
     }
@@ -1869,7 +1871,10 @@ impl SessionDetail {
                     "First transcript page factory push complete"
                 );
             }
-            self.maybe_complete_transcript_render(sender, first_page_load_to_factory_push_ms);
+            if let Some(batch) = self.pending_render_batch.as_mut() {
+                batch.first_page_load_to_factory_push_ms = first_page_load_to_factory_push_ms;
+            }
+            self.maybe_complete_transcript_render(sender);
         }
     }
 
@@ -1933,20 +1938,10 @@ impl SessionDetail {
             }
         }
 
-        let first_page_load_to_factory_push_ms = if batch.offset == 0 {
-            self.first_page_load_started_at
-                .map(|started_at| started_at.elapsed().as_millis())
-        } else {
-            None
-        };
-        self.maybe_complete_transcript_render(&sender, first_page_load_to_factory_push_ms);
+        self.maybe_complete_transcript_render(&sender);
     }
 
-    fn maybe_complete_transcript_render(
-        &mut self,
-        sender: &ComponentSender<Self>,
-        first_page_load_to_factory_push_ms: Option<u128>,
-    ) {
+    fn maybe_complete_transcript_render(&mut self, sender: &ComponentSender<Self>) {
         let Some(batch) = &self.pending_render_batch else {
             return;
         };
@@ -2032,7 +2027,7 @@ impl SessionDetail {
                 .max()
                 .unwrap_or(Duration::ZERO)
                 .as_millis(),
-            first_page_load_to_factory_push_ms,
+            first_page_load_to_factory_push_ms: batch.first_page_load_to_factory_push_ms,
             message_count: batch.row_kind_counts.message_count,
             tool_call_count: batch.row_kind_counts.tool_call_count,
             tool_burst_count: batch.row_kind_counts.tool_burst_count,
