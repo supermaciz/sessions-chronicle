@@ -1,7 +1,8 @@
 # SessionDetail Issue #142 Investigation - Design
 
 **Date:** 2026-05-02  
-**Status:** Investigation (in progress)
+**Status:** Investigation complete  
+**Report:** `docs/reports/2026-05-02-session-detail-issue-142-investigation-report.md`
 
 ## Context
 
