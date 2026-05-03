@@ -58,6 +58,8 @@ compile_commands.json
 .opencode/
 !.claude/agents/design-ui-designer.md
 !.claude/agents/mii-beta-gtk-designer.md
+.superpowers/
+.codex/
 
 # No need to commit superpowers implementation plans, design docs are enough
 docs/superpowers/plans/
