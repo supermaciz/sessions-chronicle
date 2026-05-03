@@ -16,11 +16,11 @@ This repository already has most of the “GNOME desktop integration” plumbing
 
 ## The “must do” to look/feel properly integrated
 
-> **Status (2026-02-15):** The About dialog has been fixed (commit `085a3a5`) with correct app name, links, and developer info. However, the desktop file and AppStream metainfo templates below are **still pending** and need to be updated.
+> **Status (2026-05-03):** The About dialog has been fixed (commit `085a3a5`) with correct app name, links, and developer info. The desktop file and AppStream metainfo templates have been filled with real content.
 
 - **Replace template metadata with real content**:
-  - Keep the desktop file template `data/dev.maciz.sessionschronicle.desktop.in.in` aligned with the public app ID, launch command, and keywords.
-  - Keep the AppStream template `data/dev.maciz.sessionschronicle.metainfo.xml.in.in` aligned with current screenshots, links, and release metadata.
+  - Desktop file template `data/dev.maciz.sessionschronicle.desktop.in.in` has proper app ID (`dev.maciz.sessionschronicle`), launch command, categories, and keywords.
+  - AppStream template `data/dev.maciz.sessionschronicle.metainfo.xml.in.in` includes screenshots, homepage URL (`https://sessions-chronicle.maciz.dev`), bugtracker, and complete release history up to v0.4.8.
 - **Make `Exec=` match how users actually run it**:
   - If you want GNOME to be able to “open” things (files/URIs), you’ll typically add `%U` (or `%f/%F`) in `Exec=` and implement `open()` / command-line handling in the app.
 

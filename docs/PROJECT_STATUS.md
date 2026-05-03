@@ -1,7 +1,7 @@
 # Sessions Chronicle - Project Status
 
-Last updated: 2026-04-05
-Branch snapshot: `main` (`v0.4.1`)
+Last updated: 2026-05-03
+Branch snapshot: `main` (`v0.4.8`)
 
 ## Current Product State
 
@@ -9,18 +9,20 @@ Sessions Chronicle is a GNOME desktop app that indexes local AI coding assistant
 
 - Cross-assistant session browsing and filtering (Claude Code, OpenCode, Codex, Mistral Vibe)
 - Project sidebar filtering with cross-filtered session queries
-- Full-text search via SQLite FTS5 with in-transcript highlighting
+- Full-text search via SQLite FTS5 with in-transcript highlighting and pagination-aware navigation
 - Session detail views with markdown rendering, inline tool calls, and subagent inspection
 - Resume-in-terminal flows from list and detail views
 - Keyboard navigation and search shortcuts aligned with GNOME patterns
 - Token usage display in session detail (input/output, optional reasoning, optional cache read/write)
 - Incremental indexing with file fingerprints and startup background indexing feedback
-- Indexing diagnostics with assistant health dots, persistent issue banner, and empty-state source visibility
+- Indexing diagnostics with assistant health dots, persistent issue banner, empty-state source visibility, and dedicated Indexing Status dialog
 - Session rows show message count, activity count, and ending status for at-a-glance context
 - Structured summary header in session detail view (model, timestamps, token totals, project)
 - Favorite sessions pinning: toggle pin from list or detail header bar; `pinned_at` stored in `sessions` table (schema `user_version = 8`)
 - Pin Filter in sidebar: dedicated "Pinned" entry with live badge count; filters session list to pinned-only; compatible with AI assistant toggles and search
 - Consecutive tool calls in session detail grouped into collapsible bursts (`DisplayToolBurst`), reducing visual clutter and preserving page-boundary correctness
+- Explicit `id:` search filter in session list for direct session ID lookup
+- Responsiveness instrumentation for session detail rendering with row-build breakdown metrics
 
 ## Terminology
 
@@ -30,14 +32,22 @@ Sessions Chronicle is a GNOME desktop app that indexes local AI coding assistant
 
 ## Recently Landed Work
 
+- Self-hosted Flatpak repository workflow: signed repository published via GitHub Pages at `https://sessions-chronicle.maciz.dev/flatpak/`; stable App ID `dev.maciz.sessionschronicle` (#123)
+- Astro landing page at `https://sessions-chronicle.maciz.dev` with screenshots and feature overview (#125)
+- FTS5-backed session detail search with pagination-aware navigation; matches across all loaded transcript content (#129)
+- Performance: FTS5 external content table for messages to speed up large session detail loading (#126)
+- Performance: improved session detail render fluidity with deferred page load and paced render batches (#128)
+- Explicit `id:` session ID search filter in session list for direct lookup (#136)
+- Session detail responsiveness instrumentation with row-build breakdown metrics for issue #127 (#137)
+- Full-app metrics capture for issue #140 with row construction timing in real application path (#141)
 - Favorite sessions pinning and Pin Filter: pin toggle in session list and detail header bar; "Pinned" sidebar filter with live count; `sessions.pinned_at` column (schema v8) (#115)
 - Tool call grouping in session detail: consecutive tool calls collapsed into expandable bursts; page-boundary regrouping handles splits across pagination (#110)
-- Parser correctness fixes: closed drift regressions across Claude Code, OpenCode, Codex, and Mistral Vibe parsers (8f4d0c9)
+- Indexing status dialog: detailed per-source diagnostics with source summaries, recent errors, and direct re-index action (#96)
+- Indexing diagnostics: persistent issue banner, assistant sidebar status dots, and empty-state source results (`PerSourceResult`, `SourceStatus`) (#95)
 - Structured session summary header in session detail view: model slug, start/end timestamps, token totals, and project path (#105)
 - Session rows show message count, activity count, and ending status; duration replaced by message count (#98, #104)
 - AI assistant filter rows in sidebar streamlined for a cleaner layout (#103)
-- Indexing status dialog: detailed per-source diagnostics with source summaries, recent errors, and direct re-index action (#96)
-- Indexing diagnostics: persistent issue banner, assistant sidebar status dots, and empty-state source results (`PerSourceResult`, `SourceStatus`) (#95)
+- Parser correctness fixes: closed drift regressions across Claude Code, OpenCode, Codex, and Mistral Vibe parsers (8f4d0c9)
 - Project detection and indexing: git-root resolution, `projects` table, and `project_id` FK on sessions (schema `user_version = 6`)
 - Project sidebar filtering with cross-filtered session queries; sidebar shows project list alongside AI assistant filters (#81)
 - App init extracted into `src/app/init.rs`; `analytics_worker.rs` and `project_resolver.rs` added as dedicated modules
