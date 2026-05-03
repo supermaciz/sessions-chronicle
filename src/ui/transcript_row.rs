@@ -761,8 +761,8 @@ impl FactoryComponent for TranscriptRow {
                 transcript_item_index = ?transcript_item_index,
                 kind = ?kind,
                 first_frame_delay_ms = first_frame_started_at.elapsed().as_millis(),
-                allocated_width = widget.allocated_width(),
-                allocated_height = widget.allocated_height(),
+                allocated_width = widget.width(),
+                allocated_height = widget.height(),
                 "Transcript row reached first frame"
             );
             gtk::glib::ControlFlow::Break
