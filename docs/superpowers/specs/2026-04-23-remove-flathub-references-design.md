@@ -1,6 +1,7 @@
 # Remove Flathub References from the Website
 
-**Date:** 2026-04-23
+**Date:** 2026-04-23  
+**Status:** Implemented (website cleanup)  
 **Scope:** `website/` only
 
 ## Problem

@@ -1,5 +1,8 @@
 # Session Detail Issue 140 Full-App Metrics - Design
 
+**Date:** 2026-05-02  
+**Status:** Implemented [#141](https://github.com/supermaciz/sessions-chronicle/pull/141)
+
 ## Context
 
 The current `more-metrics` branch adds useful row-build instrumentation, but the main manual report for issue #140 was generated from an isolated `SessionDetail` harness rather than the real application open path.

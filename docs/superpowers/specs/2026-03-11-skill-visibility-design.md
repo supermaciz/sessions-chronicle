@@ -1,5 +1,8 @@
 # Skill Visibility — Folded Rows Design (Issue #47)
 
+**Date:** 2026-03-11  
+**Status:** Draft
+
 Implements **Proposal A** from the
 [skill visibility exploration](2026-03-10-skill-visibility-exploration.md):
 each skill lifecycle event becomes a distinct, typed row in the transcript.

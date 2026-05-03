@@ -1,5 +1,8 @@
 # Reasoning Pill Alignment Design
 
+**Date:** 2026-04-23  
+**Status:** Implemented (commit e46f972)
+
 ## Problem
 
 Reasoning-related pills in the transcript UI do not follow a single placement

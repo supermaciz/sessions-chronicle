@@ -1,6 +1,7 @@
 # Website Hero Supported AI Assistants
 
-**Date:** 2026-04-23
+**Date:** 2026-04-23  
+**Status:** Implemented (commit 9941310)  
 **Scope:** `website/` only
 
 ## Problem

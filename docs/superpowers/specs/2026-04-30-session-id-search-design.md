@@ -1,7 +1,7 @@
 # Session List Search - Explicit `id:` Session ID Filter
 
 **Date:** 2026-04-30  
-**Status:** Accepted
+**Status:** Implemented [#136](https://github.com/supermaciz/sessions-chronicle/pull/136)
 
 ## Problem
 

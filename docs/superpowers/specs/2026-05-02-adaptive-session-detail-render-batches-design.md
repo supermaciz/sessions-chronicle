@@ -1,5 +1,8 @@
 # Adaptive SessionDetail Render Batches - Design
 
+**Date:** 2026-05-02  
+**Status:** Draft
+
 ## Context
 
 GitHub issue #132 tracks a focused performance improvement for `SessionDetail`: replace fixed-size transcript render batches with adaptive time-budgeted batches.

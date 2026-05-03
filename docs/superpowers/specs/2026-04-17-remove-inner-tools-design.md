@@ -1,5 +1,8 @@
 # Remove Inner Tools From Subagent Inspector
 
+**Date:** 2026-04-17  
+**Status:** Draft
+
 ## Problem
 
 The subagent detail view in the tool inspector always renders an `Inner Tools`

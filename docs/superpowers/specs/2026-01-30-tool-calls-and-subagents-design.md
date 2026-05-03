@@ -1,8 +1,9 @@
 # Tool Calls & Subagents Display
 
-> **Status:** Superseded (2026-02-18).  
-> **Superseded by:** [Tool Calls and Subagents Utility Pane Design](2026-02-18-tool-calls-and-subagents-utility-pane-design.md).  
-> **Note:** Kept as historical reference for the initial badges + lateral panel approach.
+**Date:** 2026-01-30  
+**Status:** Superseded (2026-02-18)  
+**Superseded by:** [Tool Calls and Subagents Utility Pane Design](2026-02-18-tool-calls-and-subagents-utility-pane-design.md)  
+**Note:** Kept as historical reference for the initial badges + lateral panel approach.
 
 ## Context
 

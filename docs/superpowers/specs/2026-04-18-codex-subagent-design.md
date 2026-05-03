@@ -1,7 +1,7 @@
 # Codex Subagent Support Design
 
-Date: 2026-04-18
-Status: Implemented [#122](https://github.com/supermaciz/sessions-chronicle/pull/122)
+**Date:** 2026-04-18  
+**Status:** Implemented [#122](https://github.com/supermaciz/sessions-chronicle/pull/122)
 
 ## Problem
 

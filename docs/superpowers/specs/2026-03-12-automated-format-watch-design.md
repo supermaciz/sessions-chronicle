@@ -1,5 +1,8 @@
 # Automated Format Watch Design
 
+**Date:** 2026-03-12  
+**Status:** Draft
+
 ## Problem
 
 Sessions Chronicle depends on storage and transcript formats owned by external AI

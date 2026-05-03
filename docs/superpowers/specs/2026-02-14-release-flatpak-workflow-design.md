@@ -1,5 +1,8 @@
 # Plan: GitHub Actions Release Workflow for Stable Flatpak
 
+**Date:** 2026-02-14  
+**Status:** Implemented [#123](https://github.com/supermaciz/sessions-chronicle/pull/123)
+
 ## Context
 
 The project has a Devel Flatpak manifest and CI that builds it on every push/PR, but no stable Flatpak build and no release automation. We need a GitHub Actions workflow that builds a stable (non-Devel) Flatpak bundle when a release is published on GitHub, and attaches it as a release asset.

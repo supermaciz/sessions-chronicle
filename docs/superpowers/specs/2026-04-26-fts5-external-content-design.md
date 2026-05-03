@@ -1,7 +1,7 @@
 # FTS5 External Content for Messages
 
-Date: 2026-04-26
-Status: Implemented [#126](https://github.com/supermaciz/sessions-chronicle/pull/126)
+**Date:** 2026-04-26  
+**Status:** Implemented [#126](https://github.com/supermaciz/sessions-chronicle/pull/126)
 
 ## Problem
 

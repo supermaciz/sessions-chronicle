@@ -1,5 +1,8 @@
 # Session Detail Responsiveness Instrumentation - Design
 
+**Date:** 2026-05-01  
+**Status:** Implemented [#137](https://github.com/supermaciz/sessions-chronicle/pull/137)
+
 ## Context
 
 GitHub issue 127 tracks focused instrumentation for `SessionDetail` responsiveness. The remaining problem is not known to be database-bound; the likely cost is synchronous GTK work around transcript row creation, Markdown and `TextView` rendering, render-batch scheduling, clear/rebuild paths, search updates, and inspector-side rerenders.

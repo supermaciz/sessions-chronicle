@@ -1,6 +1,7 @@
 # Design: Pinned as Navigation Target (Issue #109)
 
 **Date:** 2026-04-04  
+**Status:** Implemented [#115](https://github.com/supermaciz/sessions-chronicle/pull/115)  
 **Issue:** [#109 — feat: favorite sessions for quick revisit](https://github.com/supermaciz/sessions-chronicle/issues/109)  
 **Prior design:** [2026-04-02-favorite-sessions-design.md](2026-04-02-favorite-sessions-design.md)  
 **Exploration:** [2026-04-02-favorite-sessions-exploration.md](2026-04-02-favorite-sessions-exploration.md) (Post-Implementation Review section)  

@@ -1,5 +1,8 @@
 # SessionDetail Issue #142 Investigation - Design
 
+**Date:** 2026-05-02  
+**Status:** Investigation (in progress)
+
 ## Context
 
 GitHub issue #142 asks why opening a large session in the full app exhibits multi-hundred-millisecond to ~1.4 s scheduling gaps between transcript render batches, even though prior reports have ruled out the obvious suspects.

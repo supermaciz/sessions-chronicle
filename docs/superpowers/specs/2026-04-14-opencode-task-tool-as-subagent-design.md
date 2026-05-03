@@ -1,7 +1,7 @@
 # OpenCode `tool == "task"` as Subagent — Design
 
-Date: 2026-04-14
-Status: Implemented [#120](https://github.com/supermaciz/sessions-chronicle/pull/120)
+**Date:** 2026-04-14  
+**Status:** Implemented [#120](https://github.com/supermaciz/sessions-chronicle/pull/120)
 
 ## Problem
 

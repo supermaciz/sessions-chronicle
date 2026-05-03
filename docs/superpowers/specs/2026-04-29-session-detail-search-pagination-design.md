@@ -1,7 +1,7 @@
 # Session Detail Search — Pagination-Aware Navigation
 
 **Date:** 2026-04-29  
-**Status:** Accepted (revised after code review)
+**Status:** Implemented [#129](https://github.com/supermaciz/sessions-chronicle/pull/129)
 
 ## Problem
 

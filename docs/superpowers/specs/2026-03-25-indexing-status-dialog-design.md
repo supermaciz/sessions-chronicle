@@ -2,6 +2,7 @@
 
 **Issue:** [#94](https://github.com/supermaciz/sessions-chronicle/issues/94)  
 **Date:** 2026-03-25  
+**Status:** Implemented [#96](https://github.com/supermaciz/sessions-chronicle/pull/96)  
 **Type:** Design plan  
 **Exploration:** `docs/explorations/2026-03-23-indexing-diagnostics-exploration.md` — Proposal B  
 **Prerequisite:** Proposal C implemented in [#95](https://github.com/supermaciz/sessions-chronicle/pull/95) (`docs/explorations/2026-03-24-indexing-diagnostics-design.md`)
