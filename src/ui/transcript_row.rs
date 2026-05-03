@@ -751,6 +751,22 @@ impl FactoryComponent for TranscriptRow {
             build_duration_ms = duration.as_millis(),
             "Built transcript row widgets"
         );
+        let first_frame_started_at = Instant::now();
+        let item_index = self.item_index;
+        let transcript_item_index = self.transcript_item_index;
+        let kind = self.kind;
+        root.add_tick_callback(move |widget, _clock| {
+            tracing::debug!(
+                item_index,
+                transcript_item_index = ?transcript_item_index,
+                kind = ?kind,
+                first_frame_delay_ms = first_frame_started_at.elapsed().as_millis(),
+                allocated_width = widget.allocated_width(),
+                allocated_height = widget.allocated_height(),
+                "Transcript row reached first frame"
+            );
+            gtk::glib::ControlFlow::Break
+        });
         if duration >= SLOW_ROW_WIDGET_BUILD {
             tracing::info!(
                 item_index = self.item_index,
