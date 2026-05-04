@@ -15,6 +15,11 @@
   margin-bottom: 8px;
 }
 
+.transcript-row-placeholder {
+  border-radius: 6px;
+  background: alpha(currentColor, 0.035);
+}
+
 /* Role-specific accent colors */
 .role-user {
   border-left-color: #3584e4;

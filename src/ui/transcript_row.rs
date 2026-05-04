@@ -309,9 +309,30 @@ pub struct TranscriptRowWidgets {
     // Message widgets
     content_container: gtk::Box,
     expand_button: gtk::Button,
+    placeholder: Option<gtk::Box>,
+    tool_call_preview_container: Option<gtk::Box>,
+    tool_burst_children: Option<gtk::Box>,
+    tool_burst_revealer: Option<gtk::Revealer>,
+    tool_burst_arrow_icon: Option<gtk::Image>,
+    tool_burst_header_button: Option<gtk::Button>,
     // ToolCall widgets (needed for inspect button sensitivity)
     // Subagent widgets
     // (Nothing dynamic for tool/subagent in Phase 3)
+}
+
+impl TranscriptRowWidgets {
+    fn inert() -> Self {
+        Self {
+            content_container: gtk::Box::new(gtk::Orientation::Vertical, 0),
+            expand_button: gtk::Button::new(),
+            placeholder: None,
+            tool_call_preview_container: None,
+            tool_burst_children: None,
+            tool_burst_revealer: None,
+            tool_burst_arrow_icon: None,
+            tool_burst_header_button: None,
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -489,13 +510,38 @@ pub fn format_tool_burst_match_badge_accessible_label(match_count: usize) -> Str
     format!("{match_count} search matches inside this group")
 }
 
-fn should_build_tool_burst_children_on_mount(default_expanded: bool) -> bool {
-    default_expanded
+fn should_build_tool_burst_children_on_mount(_default_expanded: bool) -> bool {
+    false
 }
 
 struct ToolCallWidgetRefs {
     root: gtk::Box,
+    preview_container: gtk::Box,
     match_count: usize,
+}
+
+fn hydrate_tool_call_preview(container: &gtk::Box, init: &ToolCallItemInit) {
+    while let Some(child) = container.first_child() {
+        container.remove(&child);
+    }
+
+    if let Some(preview) = init.displayed_preview() {
+        let preview_label = gtk::Label::new(None);
+        preview_label.add_css_class("caption");
+        preview_label.add_css_class("dim-label");
+        preview_label.add_css_class("preview-label");
+        preview_label.set_halign(gtk::Align::Start);
+        preview_label.set_margin_start(32);
+        preview_label.set_margin_bottom(4);
+        preview_label.set_ellipsize(gtk::pango::EllipsizeMode::End);
+        if let Some(query) = init.highlight_query.as_deref() {
+            let (markup, _) = highlight::highlight_text(preview, query);
+            preview_label.set_markup(&markup);
+        } else {
+            preview_label.set_label(preview);
+        }
+        container.append(&preview_label);
+    }
 }
 
 fn build_tool_call_widget(
@@ -584,26 +630,12 @@ fn build_tool_call_widget(
     row.append(&inspect_btn);
     root.append(&row);
 
-    if let Some(preview) = init.displayed_preview() {
-        let preview_label = gtk::Label::new(None);
-        preview_label.add_css_class("caption");
-        preview_label.add_css_class("dim-label");
-        preview_label.add_css_class("preview-label");
-        preview_label.set_halign(gtk::Align::Start);
-        preview_label.set_margin_start(32);
-        preview_label.set_margin_bottom(4);
-        preview_label.set_ellipsize(gtk::pango::EllipsizeMode::End);
-        if let Some(query) = init.highlight_query.as_deref() {
-            let (markup, _) = highlight::highlight_text(preview, query);
-            preview_label.set_markup(&markup);
-        } else {
-            preview_label.set_label(preview);
-        }
-        root.append(&preview_label);
-    }
+    let preview_container = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    root.append(&preview_container);
 
     ToolCallWidgetRefs {
         root,
+        preview_container,
         match_count: count_tool_call_matches(init),
     }
 }
@@ -781,7 +813,7 @@ impl FactoryComponent for TranscriptRow {
                 reasoning_preview: None,
                 kind: TranscriptRowKind::ToolBurst,
                 request_id: tb.request_id,
-                hydrated: tb.default_expanded,
+                hydrated: false,
                 placeholder_height_request: TOOL_BURST_HEADER_HEIGHT_PX,
                 preview: None,
                 highlight_query: None,
@@ -807,7 +839,7 @@ impl FactoryComponent for TranscriptRow {
                 reasoning_preview: Some(sa.reasoning_preview),
                 kind: TranscriptRowKind::Subagent,
                 request_id: sa.request_id,
-                hydrated: true,
+                hydrated: false,
                 placeholder_height_request: SUBAGENT_PLACEHOLDER_HEIGHT_PX,
                 preview: None,
                 highlight_query: None,
@@ -899,6 +931,11 @@ impl FactoryComponent for TranscriptRow {
                 if self.kind != TranscriptRowKind::Message {
                     return;
                 }
+                self.hydrate_deferred_content(
+                    widgets,
+                    DeferredHydrationReason::UserExpand,
+                    &sender,
+                );
                 let Some(ref preview) = self.preview else {
                     return;
                 };
@@ -941,6 +978,11 @@ impl FactoryComponent for TranscriptRow {
             }
             TranscriptRowMsg::InspectClicked => match self.kind {
                 TranscriptRowKind::ToolCall => {
+                    self.hydrate_deferred_content(
+                        widgets,
+                        DeferredHydrationReason::UserInspect,
+                        &sender,
+                    );
                     if let Some(ref id) = self.tool_call_id {
                         sender
                             .output(TranscriptRowOutput::InspectToolCall(id.clone()))
@@ -949,6 +991,11 @@ impl FactoryComponent for TranscriptRow {
                 }
                 TranscriptRowKind::ToolBurst => {}
                 TranscriptRowKind::Subagent => {
+                    self.hydrate_deferred_content(
+                        widgets,
+                        DeferredHydrationReason::UserInspect,
+                        &sender,
+                    );
                     if let Some(ref id) = self.subagent_id {
                         sender
                             .output(TranscriptRowOutput::InspectSubagent(id.clone()))
@@ -957,8 +1004,36 @@ impl FactoryComponent for TranscriptRow {
                 }
                 TranscriptRowKind::Message => {}
             },
-            TranscriptRowMsg::ToggleToolBurst => {}
-            TranscriptRowMsg::HydrateDeferredContent { .. } => {}
+            TranscriptRowMsg::ToggleToolBurst => {
+                if self.kind != TranscriptRowKind::ToolBurst {
+                    return;
+                }
+                self.hydrate_deferred_content(
+                    widgets,
+                    DeferredHydrationReason::UserToolBurstToggle,
+                    &sender,
+                );
+                let Some(revealer) = widgets.tool_burst_revealer.as_ref() else {
+                    return;
+                };
+                let Some(arrow_icon) = widgets.tool_burst_arrow_icon.as_ref() else {
+                    return;
+                };
+                let Some(header_button) = widgets.tool_burst_header_button.as_ref() else {
+                    return;
+                };
+                let expanded = !revealer.reveals_child();
+                revealer.set_reveal_child(expanded);
+                arrow_icon.set_icon_name(Some(if expanded {
+                    "pan-down-symbolic"
+                } else {
+                    "pan-end-symbolic"
+                }));
+                header_button.update_state(&[gtk::accessible::State::Expanded(Some(expanded))]);
+            }
+            TranscriptRowMsg::HydrateDeferredContent { reason } => {
+                self.hydrate_deferred_content(widgets, reason, &sender);
+            }
         }
     }
 
@@ -1013,6 +1088,101 @@ impl TranscriptRow {
 
     pub fn is_hydrated(&self) -> bool {
         self.hydrated
+    }
+
+    fn emit_deferred_hydrated(
+        &self,
+        sender: &FactorySender<Self>,
+        reason: DeferredHydrationReason,
+        duration_ms: u128,
+    ) {
+        sender
+            .output(TranscriptRowOutput::DeferredContentHydrated {
+                request_id: self.request_id,
+                item_index: self.item_index,
+                kind: self.kind.into(),
+                reason,
+                duration_ms,
+            })
+            .ok();
+    }
+
+    fn tool_call_init_for_render(&self) -> ToolCallItemInit {
+        ToolCallItemInit {
+            item_index: self.item_index,
+            transcript_item_index: self.transcript_item_index.unwrap_or_default(),
+            session_id: self.session_id.clone().unwrap_or_default(),
+            tool_call_id: self.tool_call_id.clone().unwrap_or_default(),
+            tool_name: self
+                .tool_name
+                .clone()
+                .unwrap_or_else(|| "unknown".to_string()),
+            status: self.tool_status.unwrap_or(ToolCallStatus::Unknown),
+            preview: self.tool_preview.clone(),
+            summary: self.tool_summary.clone(),
+            duration_ms: self.tool_duration_ms,
+            highlight_query: self.tool_highlight_query.clone(),
+            reasoning_preview: self.reasoning_preview.unwrap_or_default(),
+            request_id: self.request_id,
+        }
+    }
+
+    fn hydrate_deferred_content(
+        &mut self,
+        widgets: &mut TranscriptRowWidgets,
+        reason: DeferredHydrationReason,
+        sender: &FactorySender<Self>,
+    ) -> bool {
+        let started_at = Instant::now();
+        let mut hydrated_now = false;
+
+        match self.kind {
+            TranscriptRowKind::Message => {
+                if let Some(placeholder) = widgets.placeholder.take() {
+                    widgets.content_container.remove(&placeholder);
+                }
+                if let Some(preview) = self.preview.as_ref() {
+                    render_content(
+                        &widgets.content_container,
+                        &preview.content_preview,
+                        preview.role,
+                        self.highlight_query.as_deref(),
+                    );
+                }
+                hydrated_now = true;
+            }
+            TranscriptRowKind::ToolCall => {
+                if let Some(container) = widgets.tool_call_preview_container.as_ref() {
+                    hydrate_tool_call_preview(container, &self.tool_call_init_for_render());
+                }
+                hydrated_now = true;
+            }
+            TranscriptRowKind::ToolBurst => {
+                if let (Some(children), Some(burst)) = (
+                    widgets.tool_burst_children.as_ref(),
+                    self.tool_burst.as_ref(),
+                ) {
+                    if children.first_child().is_none() {
+                        populate_tool_burst_children(children, burst, sender, self.item_index);
+                    }
+                }
+                hydrated_now = true;
+            }
+            TranscriptRowKind::Subagent => {
+                hydrated_now = true;
+            }
+        }
+
+        if !self.hydrated {
+            self.hydrated = true;
+            self.emit_deferred_hydrated(sender, reason, started_at.elapsed().as_millis());
+            return true;
+        }
+
+        if hydrated_now {
+            self.emit_deferred_hydrated(sender, reason, started_at.elapsed().as_millis());
+        }
+        false
     }
 
     /// Build the widget tree for a message transcript item.
@@ -1114,38 +1284,18 @@ impl TranscriptRow {
         }
         root.append(&expand_button);
 
-        // Render initial content
-        let render_started_at = Instant::now();
-        let match_count = render_content(
-            &content_container,
-            &preview.content_preview,
-            preview.role,
-            self.highlight_query.as_deref(),
-        );
-        let render_duration = render_started_at.elapsed();
-        tracing::debug!(
-            item_index = self.item_index,
-            transcript_item_index = ?self.transcript_item_index,
-            role = ?preview.role,
-            content_len = preview.content_preview.len(),
-            match_count,
-            render_duration_ms = render_duration.as_millis(),
-            "Rendered transcript message content"
-        );
-        if render_duration >= SLOW_CONTENT_RENDER {
-            tracing::info!(
-                item_index = self.item_index,
-                transcript_item_index = ?self.transcript_item_index,
-                role = ?preview.role,
-                content_len = preview.content_preview.len(),
-                match_count,
-                render_duration_ms = render_duration.as_millis(),
-                "Slow transcript message content render"
-            );
-        }
+        let placeholder = placeholder_widget(self.placeholder_height_request);
+        content_container.append(&placeholder);
+
         TranscriptRowWidgets {
             content_container,
             expand_button,
+            placeholder: Some(placeholder),
+            tool_call_preview_container: None,
+            tool_burst_children: None,
+            tool_burst_revealer: None,
+            tool_burst_arrow_icon: None,
+            tool_burst_header_button: None,
         }
     }
 
@@ -1155,23 +1305,7 @@ impl TranscriptRow {
         root: &gtk::Box,
         sender: FactorySender<Self>,
     ) -> TranscriptRowWidgets {
-        let init = ToolCallItemInit {
-            item_index: self.item_index,
-            transcript_item_index: self.transcript_item_index.unwrap_or_default(),
-            session_id: self.session_id.clone().unwrap_or_default(),
-            tool_call_id: self.tool_call_id.clone().unwrap_or_default(),
-            tool_name: self
-                .tool_name
-                .clone()
-                .unwrap_or_else(|| "unknown".to_string()),
-            status: self.tool_status.unwrap_or(ToolCallStatus::Unknown),
-            preview: self.tool_preview.clone(),
-            summary: self.tool_summary.clone(),
-            duration_ms: self.tool_duration_ms,
-            highlight_query: self.tool_highlight_query.clone(),
-            reasoning_preview: self.reasoning_preview.unwrap_or_default(),
-            request_id: self.request_id,
-        };
+        let init = self.tool_call_init_for_render();
 
         let build_started_at = Instant::now();
         let refs = build_tool_call_widget(
@@ -1209,6 +1343,12 @@ impl TranscriptRow {
         TranscriptRowWidgets {
             content_container: gtk::Box::new(gtk::Orientation::Vertical, 0),
             expand_button: gtk::Button::new(),
+            placeholder: None,
+            tool_call_preview_container: Some(refs.preview_container),
+            tool_burst_children: None,
+            tool_burst_revealer: None,
+            tool_burst_arrow_icon: None,
+            tool_burst_header_button: None,
         }
     }
 
@@ -1218,10 +1358,7 @@ impl TranscriptRow {
         sender: FactorySender<Self>,
     ) -> TranscriptRowWidgets {
         let Some(burst) = self.tool_burst.as_ref() else {
-            return TranscriptRowWidgets {
-                content_container: gtk::Box::new(gtk::Orientation::Vertical, 0),
-                expand_button: gtk::Button::new(),
-            };
+            return TranscriptRowWidgets::inert();
         };
 
         root.add_css_class("tool-call-group");
@@ -1348,26 +1485,9 @@ impl TranscriptRow {
         }
 
         {
-            let revealer = revealer.clone();
-            let arrow_icon = arrow_icon.clone();
-            let children = children.clone();
-            let children_built = children_built.clone();
-            let burst = burst.clone();
             let sender = sender.clone();
-            let item_index = self.item_index;
-            header_button.connect_clicked(move |btn| {
-                let expanded = !revealer.reveals_child();
-                if expanded && !children_built.get() {
-                    populate_tool_burst_children(&children, &burst, &sender, item_index);
-                    children_built.set(true);
-                }
-                revealer.set_reveal_child(expanded);
-                arrow_icon.set_icon_name(Some(if expanded {
-                    "pan-down-symbolic"
-                } else {
-                    "pan-end-symbolic"
-                }));
-                btn.update_state(&[gtk::accessible::State::Expanded(Some(expanded))]);
+            header_button.connect_clicked(move |_| {
+                sender.input(TranscriptRowMsg::ToggleToolBurst);
             });
         }
         header_button.update_state(&[gtk::accessible::State::Expanded(Some(
@@ -1380,6 +1500,12 @@ impl TranscriptRow {
         TranscriptRowWidgets {
             content_container: gtk::Box::new(gtk::Orientation::Vertical, 0),
             expand_button: gtk::Button::new(),
+            placeholder: None,
+            tool_call_preview_container: None,
+            tool_burst_children: Some(children),
+            tool_burst_revealer: Some(revealer),
+            tool_burst_arrow_icon: Some(arrow_icon),
+            tool_burst_header_button: Some(header_button),
         }
     }
 
@@ -1424,10 +1550,7 @@ impl TranscriptRow {
         root.append(&row);
 
         // Return dummy widgets struct
-        TranscriptRowWidgets {
-            content_container: gtk::Box::new(gtk::Orientation::Vertical, 0),
-            expand_button: gtk::Button::new(),
-        }
+        TranscriptRowWidgets::inert()
     }
 
     /// Update expand button label/sensitivity after state changes.
@@ -1920,7 +2043,91 @@ mod tests {
     #[test]
     fn tool_burst_children_are_built_only_when_initially_expanded() {
         assert!(!should_build_tool_burst_children_on_mount(false));
-        assert!(should_build_tool_burst_children_on_mount(true));
+        assert!(!should_build_tool_burst_children_on_mount(true));
+    }
+
+    #[gtk::test]
+    fn message_shell_mounts_placeholder_without_textview() {
+        let content_container = gtk::Box::new(gtk::Orientation::Vertical, 4);
+        let placeholder = placeholder_widget(48);
+        content_container.append(&placeholder);
+
+        let first = content_container.first_child().expect("placeholder child");
+        assert!(first.downcast_ref::<gtk::Box>().is_some());
+        assert!(
+            content_container
+                .observe_children()
+                .iter::<gtk::Widget>()
+                .flatten()
+                .all(|child| child.downcast_ref::<gtk::TextView>().is_none())
+        );
+    }
+
+    #[gtk::test]
+    fn hydrate_message_replaces_placeholder_and_is_idempotent() {
+        let content_container = gtk::Box::new(gtk::Orientation::Vertical, 4);
+        let placeholder = placeholder_widget(48);
+        content_container.append(&placeholder);
+
+        let preview = MessagePreview {
+            session_id: "session-1".to_string(),
+            message_index: 0,
+            role: Role::User,
+            content_preview: "hello world".to_string(),
+            content_len: 11,
+            timestamp: Utc::now(),
+            model: None,
+            reasoning_preview: ReasoningPreview::default(),
+        };
+
+        content_container.remove(&placeholder);
+        render_content(
+            &content_container,
+            &preview.content_preview,
+            preview.role,
+            None,
+        );
+        let first_hydration_children = content_container.observe_children().n_items();
+
+        render_content(
+            &content_container,
+            &preview.content_preview,
+            preview.role,
+            None,
+        );
+        let second_hydration_children = content_container.observe_children().n_items();
+
+        assert_eq!(first_hydration_children, 1);
+        assert_eq!(second_hydration_children, 1);
+        assert!(
+            content_container
+                .first_child()
+                .and_then(|w| w.downcast::<gtk::Label>().ok())
+                .is_some()
+        );
+    }
+
+    #[gtk::test]
+    fn tool_burst_children_are_not_mounted_until_hydration() {
+        let children = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        assert!(children.first_child().is_none());
+
+        let init = ToolCallItemInit {
+            item_index: 1,
+            transcript_item_index: 1,
+            session_id: "session-1".to_string(),
+            tool_call_id: "call-1".to_string(),
+            tool_name: "Read".to_string(),
+            status: ToolCallStatus::Completed,
+            preview: Some("src/main.rs:1-20".to_string()),
+            summary: None,
+            duration_ms: Some(5),
+            highlight_query: None,
+            reasoning_preview: ReasoningPreview::default(),
+            request_id: 1,
+        };
+        hydrate_tool_call_preview(&children, &init);
+        assert!(children.first_child().is_some());
     }
 
     #[test]
