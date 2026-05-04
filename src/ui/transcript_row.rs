@@ -1745,6 +1745,87 @@ pub fn transcript_item_init_from_display_item(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use relm4::factory::FactoryVecDeque;
+
+    fn pump_main_context() {
+        let context = gtk::glib::MainContext::default();
+        while context.pending() {
+            context.iteration(false);
+        }
+    }
+
+    fn collect_descendants(root: &gtk::Widget) -> Vec<gtk::Widget> {
+        let mut stack = Vec::new();
+        let mut out = Vec::new();
+        stack.push(root.clone());
+        while let Some(widget) = stack.pop() {
+            out.push(widget.clone());
+            if let Some(mut child) = widget.first_child() {
+                loop {
+                    stack.push(child.clone());
+                    let Some(next) = child.next_sibling() else {
+                        break;
+                    };
+                    child = next;
+                }
+            }
+        }
+        out
+    }
+
+    fn first_factory_row_root(rows: &FactoryVecDeque<TranscriptRow>) -> gtk::Box {
+        rows.widget()
+            .first_child()
+            .and_then(|child| child.downcast::<gtk::Box>().ok())
+            .expect("factory should mount a transcript row")
+    }
+
+    fn first_message_content_container(row_root: &gtk::Box) -> gtk::Box {
+        row_root
+            .first_child()
+            .and_then(|header| header.next_sibling())
+            .and_then(|content| content.downcast::<gtk::Box>().ok())
+            .expect("message row should contain a content container")
+    }
+
+    fn message_init(content_preview: &str) -> TranscriptItemInit {
+        TranscriptItemInit::Message(MessageItemInit {
+            item_index: 0,
+            transcript_item_index: 0,
+            preview: MessagePreview {
+                session_id: "session-1".to_string(),
+                message_index: 0,
+                role: Role::User,
+                content_preview: content_preview.to_string(),
+                content_len: content_preview.len(),
+                timestamp: Utc::now(),
+                model: None,
+                reasoning_preview: ReasoningPreview::default(),
+            },
+            highlight_query: None,
+            db_path: Arc::new(PathBuf::from("/tmp/sessions-chronicle-test.db")),
+            request_id: 1,
+        })
+    }
+
+    fn single_tool_burst_init() -> TranscriptItemInit {
+        let tool_call = ToolCallItemInit {
+            item_index: 1,
+            transcript_item_index: 1,
+            session_id: "session-1".to_string(),
+            tool_call_id: "call-1".to_string(),
+            tool_name: "Read".to_string(),
+            status: ToolCallStatus::Completed,
+            preview: Some("src/main.rs:1-20".to_string()),
+            summary: None,
+            duration_ms: Some(5),
+            highlight_query: None,
+            reasoning_preview: ReasoningPreview::default(),
+            request_id: 1,
+        };
+
+        TranscriptItemInit::ToolBurst(build_tool_burst_init(10, vec![tool_call], false, 1))
+    }
 
     fn row_box_children(row: &gtk::Box) -> Vec<gtk::Widget> {
         let mut children = Vec::new();
@@ -2048,86 +2129,132 @@ mod tests {
 
     #[gtk::test]
     fn message_shell_mounts_placeholder_without_textview() {
-        let content_container = gtk::Box::new(gtk::Orientation::Vertical, 4);
-        let placeholder = placeholder_widget(48);
-        content_container.append(&placeholder);
+        let mut rows: FactoryVecDeque<TranscriptRow> =
+            FactoryVecDeque::builder().launch_default().detach();
+        {
+            let mut guard = rows.guard();
+            guard.push_back(message_init("hello world"));
+        }
+        pump_main_context();
 
-        let first = content_container.first_child().expect("placeholder child");
-        assert!(first.downcast_ref::<gtk::Box>().is_some());
+        let row_root = first_factory_row_root(&rows);
+        let content_container = first_message_content_container(&row_root);
+        let placeholder = content_container
+            .first_child()
+            .expect("placeholder should be mounted initially");
         assert!(
-            content_container
-                .observe_children()
-                .iter::<gtk::Widget>()
-                .flatten()
+            placeholder
+                .css_classes()
+                .iter()
+                .any(|class_name| class_name.as_str() == "transcript-row-placeholder")
+        );
+
+        let descendants = collect_descendants(content_container.upcast_ref());
+        assert!(
+            descendants
+                .iter()
                 .all(|child| child.downcast_ref::<gtk::TextView>().is_none())
+        );
+        assert!(
+            descendants
+                .iter()
+                .all(|child| child.downcast_ref::<gtk::Label>().is_none())
         );
     }
 
     #[gtk::test]
     fn hydrate_message_replaces_placeholder_and_is_idempotent() {
-        let content_container = gtk::Box::new(gtk::Orientation::Vertical, 4);
-        let placeholder = placeholder_widget(48);
-        content_container.append(&placeholder);
+        let mut rows: FactoryVecDeque<TranscriptRow> =
+            FactoryVecDeque::builder().launch_default().detach();
+        {
+            let mut guard = rows.guard();
+            guard.push_back(message_init("hello world"));
+        }
+        pump_main_context();
 
-        let preview = MessagePreview {
-            session_id: "session-1".to_string(),
-            message_index: 0,
-            role: Role::User,
-            content_preview: "hello world".to_string(),
-            content_len: 11,
-            timestamp: Utc::now(),
-            model: None,
-            reasoning_preview: ReasoningPreview::default(),
-        };
-
-        content_container.remove(&placeholder);
-        render_content(
-            &content_container,
-            &preview.content_preview,
-            preview.role,
-            None,
+        rows.send(
+            0,
+            TranscriptRowMsg::HydrateDeferredContent {
+                reason: DeferredHydrationReason::InitialViewport,
+            },
         );
+        pump_main_context();
+
+        let row_root = first_factory_row_root(&rows);
+        let content_container = first_message_content_container(&row_root);
         let first_hydration_children = content_container.observe_children().n_items();
-
-        render_content(
-            &content_container,
-            &preview.content_preview,
-            preview.role,
-            None,
+        let first_child = content_container
+            .first_child()
+            .expect("hydration should render content");
+        assert!(
+            !first_child
+                .css_classes()
+                .iter()
+                .any(|class_name| class_name.as_str() == "transcript-row-placeholder")
         );
+
+        rows.send(
+            0,
+            TranscriptRowMsg::HydrateDeferredContent {
+                reason: DeferredHydrationReason::InitialViewport,
+            },
+        );
+        pump_main_context();
+
+        let row_root = first_factory_row_root(&rows);
+        let content_container = first_message_content_container(&row_root);
         let second_hydration_children = content_container.observe_children().n_items();
 
         assert_eq!(first_hydration_children, 1);
         assert_eq!(second_hydration_children, 1);
-        assert!(
-            content_container
-                .first_child()
-                .and_then(|w| w.downcast::<gtk::Label>().ok())
-                .is_some()
-        );
     }
 
     #[gtk::test]
     fn tool_burst_children_are_not_mounted_until_hydration() {
-        let children = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        let mut rows: FactoryVecDeque<TranscriptRow> =
+            FactoryVecDeque::builder().launch_default().detach();
+        {
+            let mut guard = rows.guard();
+            guard.push_back(single_tool_burst_init());
+        }
+        pump_main_context();
+
+        let row_root = first_factory_row_root(&rows);
+        let revealer = row_root
+            .last_child()
+            .and_then(|child| child.downcast::<gtk::Revealer>().ok())
+            .expect("tool burst row should mount a revealer");
+        let children = revealer
+            .child()
+            .and_then(|child| child.downcast::<gtk::Box>().ok())
+            .expect("tool burst revealer should contain a children box");
         assert!(children.first_child().is_none());
 
-        let init = ToolCallItemInit {
-            item_index: 1,
-            transcript_item_index: 1,
-            session_id: "session-1".to_string(),
-            tool_call_id: "call-1".to_string(),
-            tool_name: "Read".to_string(),
-            status: ToolCallStatus::Completed,
-            preview: Some("src/main.rs:1-20".to_string()),
-            summary: None,
-            duration_ms: Some(5),
-            highlight_query: None,
-            reasoning_preview: ReasoningPreview::default(),
-            request_id: 1,
-        };
-        hydrate_tool_call_preview(&children, &init);
-        assert!(children.first_child().is_some());
+        rows.send(0, TranscriptRowMsg::ToggleToolBurst);
+        pump_main_context();
+
+        let row_root = first_factory_row_root(&rows);
+        let revealer = row_root
+            .last_child()
+            .and_then(|child| child.downcast::<gtk::Revealer>().ok())
+            .expect("tool burst row should keep a revealer after hydration");
+        let children = revealer
+            .child()
+            .and_then(|child| child.downcast::<gtk::Box>().ok())
+            .expect("tool burst revealer should keep a children box");
+        let first_hydrated_children = children.observe_children().n_items();
+
+        rows.send(
+            0,
+            TranscriptRowMsg::HydrateDeferredContent {
+                reason: DeferredHydrationReason::InitialViewport,
+            },
+        );
+        pump_main_context();
+
+        let second_hydrated_children = children.observe_children().n_items();
+        assert_eq!(first_hydrated_children, 1);
+        assert_eq!(second_hydrated_children, 1);
     }
 
     #[test]
