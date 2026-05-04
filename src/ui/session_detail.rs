@@ -75,8 +75,9 @@ pub struct SessionDetail {
     current_match: usize,
     pending_jump: Option<usize>,
     loading_jump: bool,
+    pending_search_hydration_target: Option<ScrollTarget>,
     search_request_id: u64,
-    scroll_to_item: Cell<Option<ScrollTarget>>,
+    pending_scroll_after_layout: Cell<Option<ScrollTarget>>,
     pending_toast: Cell<bool>,
     inspector: Controller<ToolInspectorPane>,
     inspector_open: bool,
@@ -91,6 +92,33 @@ pub struct SessionDetail {
 struct ScrollTarget {
     display_index: usize,
     child_index: Option<usize>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct PendingLayoutBarrier {
+    tick_count: Cell<u8>,
+    request_id: u64,
+    target: ScrollTarget,
+}
+
+impl PendingLayoutBarrier {
+    fn new(request_id: u64, target: ScrollTarget) -> Self {
+        Self {
+            tick_count: Cell::new(0),
+            request_id,
+            target,
+        }
+    }
+
+    fn next_tick(&self) -> glib::ControlFlow {
+        let ticks = self.tick_count.get().saturating_add(1);
+        self.tick_count.set(ticks);
+        if ticks < 2 {
+            glib::ControlFlow::Continue
+        } else {
+            glib::ControlFlow::Break
+        }
+    }
 }
 
 struct PreparedTranscriptItems {
@@ -958,8 +986,9 @@ impl Component for SessionDetail {
             current_match: 0,
             pending_jump: None,
             loading_jump: false,
+            pending_search_hydration_target: None,
             search_request_id: 0,
-            scroll_to_item: Cell::new(None),
+            pending_scroll_after_layout: Cell::new(None),
             pending_toast: Cell::new(false),
             inspector,
             inspector_open: false,
@@ -1204,7 +1233,11 @@ impl Component for SessionDetail {
                     hydrated_item_count = self.deferred_hydrated_items.len(),
                     "Accepted deferred hydration output"
                 );
-                self.continue_pending_jump(&sender);
+                if reason == DeferredHydrationReason::SearchTarget
+                    && self.pending_search_hydration_target.is_some()
+                {
+                    self.continue_pending_jump(&sender);
+                }
             }
             SessionDetailMsg::ScrollPositionChanged => {
                 if self.scroll_debounce_scheduled.get() {
@@ -1601,17 +1634,37 @@ impl Component for SessionDetail {
             self.schedule_hydration_drain();
         }
 
-        if let Some(target) = self.scroll_to_item.take() {
+        if let Some(target) = self.pending_scroll_after_layout.take() {
             let messages_widget = self.messages.widget().clone();
             let scroll_child = widgets.scroll_child.clone();
-            glib::idle_add_local_once(move || {
+            let layout_barrier = PendingLayoutBarrier::new(self.transcript_request_id, target);
+            widgets.scroll_child.add_tick_callback(move |_, _| {
+                if layout_barrier.next_tick() == glib::ControlFlow::Continue {
+                    return glib::ControlFlow::Continue;
+                }
+
+                let target = layout_barrier.target;
                 let Some(row_widget) = messages_widget
                     .observe_children()
                     .item(target.display_index as u32)
                     .and_then(|obj| obj.downcast::<gtk::Widget>().ok())
                 else {
-                    return;
+                    tracing::warn!(
+                        request_id = layout_barrier.request_id,
+                        display_index = target.display_index,
+                        "Abandoning delayed search scroll: target row missing after layout barrier"
+                    );
+                    return glib::ControlFlow::Break;
                 };
+
+                if row_widget.height() <= 0 {
+                    tracing::warn!(
+                        request_id = layout_barrier.request_id,
+                        display_index = target.display_index,
+                        "Abandoning delayed search scroll: target row has zero height after layout barrier"
+                    );
+                    return glib::ControlFlow::Break;
+                }
 
                 if let Some(child_index) = target.child_index
                     && let Some((header_button, revealer)) =
@@ -1648,10 +1701,11 @@ impl Component for SessionDetail {
                         Self::scroll_widget_into_view(&child_widget, &scroll_child_for_tick);
                         glib::ControlFlow::Break
                     });
-                    return;
+                    return glib::ControlFlow::Break;
                 }
 
                 Self::scroll_widget_into_view(&row_widget, &scroll_child);
+                glib::ControlFlow::Break
             });
         }
     }
@@ -1768,6 +1822,8 @@ impl SessionDetail {
         self.pending_viewport_hydration_scan.set(None);
         self.scroll_debounce_scheduled.set(false);
         self.resize_debounce_scheduled.set(false);
+        self.pending_search_hydration_target = None;
+        self.pending_scroll_after_layout.set(None);
     }
 
     fn row_intersects_hydration_window(
@@ -2608,6 +2664,8 @@ impl SessionDetail {
         self.current_match = 0;
         self.pending_jump = None;
         self.loading_jump = false;
+        self.pending_search_hydration_target = None;
+        self.pending_scroll_after_layout.set(None);
     }
 
     fn loaded_match_count(&self) -> usize {
@@ -2659,9 +2717,33 @@ impl SessionDetail {
             .copied()
             && self.messages.len() > scroll_target.display_index
         {
+            let Ok(item_index) = usize::try_from(position.item_index) else {
+                tracing::warn!(
+                    item_index = position.item_index,
+                    "search match position is negative and cannot be hydrated"
+                );
+                self.pending_jump = None;
+                self.loading_jump = false;
+                self.pending_search_hydration_target = None;
+                return;
+            };
+
+            if !self.deferred_hydrated_items.contains(&item_index) {
+                self.pending_search_hydration_target = Some(scroll_target);
+                self.queue_deferred_hydration_target(DeferredHydrationTarget {
+                    request_id: self.transcript_request_id,
+                    display_index: scroll_target.display_index,
+                    item_index,
+                    reason: DeferredHydrationReason::SearchTarget,
+                });
+                self.drain_search_target_hydration(scroll_target, item_index);
+                return;
+            }
+
             self.pending_jump = None;
             self.loading_jump = false;
-            self.scroll_to_item.set(Some(scroll_target));
+            self.pending_search_hydration_target = None;
+            self.pending_scroll_after_layout.set(Some(scroll_target));
         } else if (position.item_index as usize) >= self.loaded_count && self.has_more_messages {
             self.load_next_page(sender);
         } else if !self.has_more_messages && (position.item_index as usize) >= self.loaded_count {
@@ -2686,6 +2768,37 @@ impl SessionDetail {
             self.pending_jump = None;
             self.loading_jump = false;
         }
+    }
+
+    fn drain_search_target_hydration(&self, scroll_target: ScrollTarget, item_index: usize) {
+        self.deferred_hydration_queued_items
+            .borrow_mut()
+            .remove(&item_index);
+        self.deferred_hydration_queue
+            .borrow_mut()
+            .retain(|target| target.item_index != item_index);
+
+        if scroll_target.display_index >= self.messages.len()
+            || self.deferred_hydrated_items.contains(&item_index)
+        {
+            return;
+        }
+
+        if !Self::deferred_target_matches_row(
+            self.messages
+                .get(scroll_target.display_index)
+                .map(|row| row.item_index()),
+            item_index,
+        ) {
+            return;
+        }
+
+        self.messages.send(
+            scroll_target.display_index,
+            TranscriptRowMsg::HydrateDeferredContent {
+                reason: DeferredHydrationReason::SearchTarget,
+            },
+        );
     }
 
     fn reload_current_session(
@@ -3429,6 +3542,65 @@ fn synthetic_measurement(input: &str) -> String {\n\
 
         let parts = controller.state().get();
         assert!(parts.model.deferred_hydrated_items.is_empty());
+    }
+
+    #[gtk::test]
+    fn jump_to_loaded_unhydrated_match_waits_for_hydration_output() {
+        let temp_db = tempfile::NamedTempFile::new().expect("temp db");
+        seed_search_transcript(temp_db.path(), "test-session-123", INITIAL_PAGE_SIZE, &[70]);
+
+        let controller = SessionDetail::builder().launch(temp_db.path().to_path_buf());
+        controller.emit(SessionDetailMsg::SetSession {
+            session: Box::new(build_test_session(None, None, 0, 0, 0)),
+            search_query: Some("needle".to_string()),
+        });
+
+        pump_main_context_for(Duration::from_secs(5), || {
+            let parts = controller.state().get();
+            parts.model.pending_search_hydration_target.is_some()
+        });
+
+        {
+            let parts = controller.state().get();
+            assert_eq!(parts.model.pending_jump, Some(0));
+            assert!(parts.model.loading_jump);
+            assert!(parts.model.pending_search_hydration_target.is_some());
+            assert!(parts.model.pending_scroll_after_layout.get().is_none());
+        }
+
+        let request_id = controller.state().get().model.transcript_request_id;
+        controller.emit(SessionDetailMsg::DeferredContentHydrated {
+            request_id,
+            item_index: 70,
+            kind: TranscriptRowBuildKind::Message,
+            reason: DeferredHydrationReason::SearchTarget,
+            duration_ms: 1,
+        });
+
+        pump_main_context_for(Duration::from_secs(5), || {
+            let parts = controller.state().get();
+            !parts.model.loading_jump && parts.model.pending_search_hydration_target.is_none()
+        });
+
+        let parts = controller.state().get();
+        assert_eq!(parts.model.pending_jump, None);
+        assert!(!parts.model.loading_jump);
+        assert!(parts.model.pending_search_hydration_target.is_none());
+        assert!(parts.model.deferred_hydrated_items.contains(&70));
+    }
+
+    #[test]
+    fn two_tick_layout_barrier_requires_second_tick() {
+        let barrier = PendingLayoutBarrier::new(
+            9,
+            ScrollTarget {
+                display_index: 4,
+                child_index: Some(1),
+            },
+        );
+
+        assert_eq!(barrier.next_tick(), glib::ControlFlow::Continue);
+        assert_eq!(barrier.next_tick(), glib::ControlFlow::Break);
     }
 
     #[gtk::test]
@@ -4228,9 +4400,15 @@ fn synthetic_measurement(input: &str) -> String {\n\
         });
 
         controller.emit(SessionDetailMsg::PrevMatch);
-        pump_main_context(|| controller.state().get().model.current_match == 1);
+        pump_main_context(|| {
+            let parts = controller.state().get();
+            parts.model.current_match == 1 && !parts.model.loading_jump
+        });
         controller.emit(SessionDetailMsg::NextMatch);
-        pump_main_context(|| controller.state().get().model.current_match == 0);
+        pump_main_context(|| {
+            let parts = controller.state().get();
+            parts.model.current_match == 0 && !parts.model.loading_jump
+        });
 
         let parts = controller.state().get();
         assert_eq!(parts.model.current_match, 0);
