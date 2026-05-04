@@ -68,10 +68,12 @@ Risks: larger rewrite, more risk to `display_targets_by_item_index`, grouped too
 The parent-child contract changes as follows:
 
 - `TranscriptRow::init_widgets` creates a shell and returns immediately.
-- `TranscriptRowMsg::HydrateDeferredContent` asks a row to build its heavy content.
-- Hydration is idempotent; a hydrated row ignores duplicate requests.
-- `TranscriptRowOutput::DeferredContentHydrated { item_index }` tells `SessionDetail` that search jumps can continue.
-- Hydration requests include the current transcript request context at the parent level so stale work can be ignored after session changes.
+- `TranscriptRowMsg::HydrateDeferredContent { reason }` asks a row to build its heavy content.
+- Hydration is idempotent at two layers:
+  - The row owns an internal `hydrated: bool` flag and ignores duplicate `HydrateDeferredContent` inputs without consulting the request id.
+  - `SessionDetail` filters incoming `DeferredContentHydrated` outputs against the active transcript request id, so outputs that arrive after a session change or transcript invalidation are dropped.
+- `TranscriptRowOutput::DeferredContentHydrated { item_index, reason }` tells `SessionDetail` that search jumps and dependent UI can continue.
+- The row never sees the request id; the parent owns staleness, the child owns idempotency.
 
 The shell includes CSS classes, row-level metadata, low-cost labels, actionable inspect buttons where applicable, and a placeholder area with a conservative height estimate. The heavy subtree is appended or swapped in during hydration.
 
@@ -88,9 +90,23 @@ The first-page open flow remains close to the existing code:
 7. Subsequent scroll and resize events re-run the viewport selection.
 8. Search jumps can insert a target row at the front of the hydration queue.
 
-Hydration should be drained in small timer or idle batches, starting with 1 to 3 rows per tick. The batch size can be tuned after measurement, but the design must prefer schedule-gap stability over throughput.
+Hydration should be drained in small timer or idle batches. The starting default is 2 rows per tick; see `Implementation Tuning Defaults` for the full set. The batch size can be tuned after measurement, but the design must prefer schedule-gap stability over throughput.
+
+User-initiated hydration bypasses the background batch budget. See `Interaction Behavior` for the synchronous carve-out applied to expand clicks, tool burst toggles, and inspect actions.
 
 The existing `max_schedule_gap_ms` metric remains the primary verdict. Additional debug logs should record deferred hydration batch size, reason, duration, and remaining queue length.
+
+## Shell Weight Validation
+
+The #142 investigation reached `21 ms` median `max_schedule_gap_ms` by replacing rows with minimal labels. The shell described in `Row Shells` is heavier than that minimal label: it builds a header with role, model, timestamp, reasoning pill, expand button, and inspect button where applicable, plus CSS classes and a placeholder area.
+
+Before locking the tuning defaults below, the implementation must measure the shell-only first-page push on the #142 reference Codex session and record the median `max_schedule_gap_ms` over at least 3 runs.
+
+- If the shell-only median is at or below `50 ms`, proceed with the defaults.
+- If the shell-only median is between `50 ms` and `150 ms`, reduce the initial hydration batch and shrink the viewport margin before retrying; the bottleneck is shell weight rather than hydration scheduling.
+- If the shell-only median exceeds `150 ms`, the shell itself is too heavy. Collapse the header into a single markup-formatted `Label`, drop the inspect button into hydration, and remove non-essential CSS classes from the shell before re-measuring.
+
+This gate exists because hydration tuning cannot rescue a shell that already misses the goal at first push.
 
 ## Viewport Detection
 
@@ -100,23 +116,48 @@ The viewport calculation uses:
 
 - `vadjustment().value()` as viewport top.
 - `vadjustment().page_size()` as visible height.
-- `row_widget.compute_point(scroll_child, Point::zero())` as row Y position.
-- `row_widget.height()` as row height after allocation.
+- `row_widget.compute_point(reference, Point::zero())` as row Y position. The `reference` widget must be the direct child of the `gtk::Viewport` inside `gtk::ScrolledWindow` (the widget whose origin matches `vadjustment.value() == 0`); if `compute_point` returns `None` because the row is not yet in a parented chain, the row is skipped and rescheduled on the next scan.
+- `row_widget.height()` as row height after allocation. Rows that have not yet been allocated (`height() == 0`) fall back to their reserved placeholder height for the intersection test.
 - A vertical margin of roughly `1.5x page_size` above and below the viewport.
 
 A row is a hydration candidate when `[row_y, row_y + row_height]` intersects `[viewport_top - margin, viewport_bottom + margin]`.
 
 Scanning all loaded row widgets is acceptable in v1 because pages are currently 75 and 100 source rows. The scan runs after first-page push, after next-page push, on debounced `vadjustment::value` changes, on debounced viewport size changes, and before scroll-to-match.
 
+Scroll debounce defaults to `60 ms`; `16 ms` is too tight for a sustained user scroll and produces redundant scans. Resize debounce defaults to `120 ms`. Both can be tuned after measurement but must remain coarse enough that a continuous gesture does not produce more than one scan per tick.
+
+Each scan emits at most one `Queued deferred transcript hydration` log entry summarising the result; the log is not emitted per row.
+
+## Scroll Anchoring
+
+Hydrating rows above the current viewport grows their measured height beyond the placeholder reservation. Without compensation, every above-viewport hydration shifts the visible content downward by the height delta, which is perceived as the transcript "jumping" while the user reads.
+
+The hydration scheduler must therefore anchor scroll position when it hydrates above-viewport rows. The protocol per batch:
+
+1. Before hydration, capture `vadjustment.value()` as `pre_value` and the cumulative reserved height of the rows about to be hydrated whose row Y is below `pre_value`. Call this `pre_above_height`.
+2. Run the batch hydration.
+3. On the next allocation tick (`add_tick_callback` one-shot, see `Search And Scroll-To-Match`), recompute the cumulative measured height of the same rows; call this `post_above_height`.
+4. If `delta = post_above_height - pre_above_height > 0`, set `vadjustment.set_value(pre_value + delta)`. The user-visible content stays put; only `vadjustment.upper` and the scrollbar thumb size change.
+5. The compensation only applies to rows strictly above the current viewport top. Rows intersecting the viewport are allowed to grow naturally; the user already sees them and a small height correction there is preferable to a scroll jump that breaks the reading position.
+
+The anchor protocol is skipped when `pre_value <= 0` (already at top), when no row in the batch sits above the viewport, or when the batch is the initial first-page hydration (no anchored reading position to preserve yet).
+
+The first-page hydration burst is the one exception that may proceed without anchoring. Once the user has scrolled at all, anchoring is mandatory for every subsequent above-viewport hydration.
+
 ## Resize Behavior
 
 Window resizing can change both viewport height and row wrapping. The design treats resize as a viewport invalidation, not as a row rebuild.
 
-`SessionDetail` should observe `vadjustment::page-size` changes and a width-related notification on the scrollable content or scrolled window. These events should be debounced before scheduling hydration.
+`SessionDetail` should observe `vadjustment::page-size` changes and a width-related notification on the scrollable content or scrolled window. These events should be debounced before scheduling hydration (default `120 ms`).
 
 After resize, `SessionDetail` scans the viewport plus margin and hydrates any newly relevant shells. Rows that are already hydrated remain hydrated. The v1 design does not dehydrate or rebuild hydrated rows on resize.
 
-Shell height estimation should be width-independent in v1. Resize should trigger viewport scanning and hydration only; it should not recalculate placeholder heights or rebuild hydrated rows.
+Shell height estimation is width-independent in v1. This is a deliberate v1 simplification with two known consequences that must be acknowledged in metrics rather than fixed:
+
+- After a large width change, unhydrated placeholders far below the viewport keep their pre-resize estimate. The error compounds across many rows, so `vadjustment.upper` will correct itself in visible chunks as the user scrolls into those regions.
+- Hydrated Markdown rows reflow naturally via GTK on width change; their height delta is absorbed by GTK's allocation cycle, not by this design.
+
+If post-resize scrolling shows jarring `upper` corrections in practice, v2 may revisit width-aware placeholder estimates; v1 accepts the drift in exchange for simpler height code.
 
 ## Row Shells
 
@@ -130,18 +171,21 @@ Subagent rows are already lightweight and can be effectively hydrated by the she
 
 ## Height Stability
 
-Shell placeholders should reserve enough vertical space to avoid large post-hydration jumps.
+Shell placeholders reserve vertical space to bound post-hydration layout shifts. The estimate is biased toward over-reservation rather than under-reservation:
 
-The estimate should be conservative but bounded:
+- An over-estimated placeholder shrinks on hydration. Below the viewport this is invisible; above the viewport, scroll anchoring (see `Scroll Anchoring`) absorbs the delta as a thumb-size change without moving visible content.
+- An under-estimated placeholder grows on hydration. This produces the worst user experience: visible content is pushed off the viewport, and `vadjustment.upper` jumps.
+
+Estimation rules:
 
 - Reserve a minimum height per row kind.
-- Estimate message content height from preview length and expected line count.
-- Reserve more for assistant Markdown than for simple user text.
-- Cap very long previews so placeholders do not become huge.
+- Estimate message content height from preview length and observed line breaks (count `\n` in the preview, then add wrapped-line estimate from remaining characters).
+- Reserve more for assistant messages than for simple user text. Assistant content is the dominant Markdown source and the most likely to under-reserve.
+- Cap very long previews, but cap them generously rather than tightly. The cap exists to avoid pathological multi-screen placeholders, not to be tight against typical content.
 - Reserve only the header height for closed tool bursts.
-- Remove or relax the placeholder height request after hydration.
+- Remove or relax the placeholder height request after hydration so the row can shrink to its real measured height.
 
-Small height corrections after hydration are acceptable. The viewport margin and priority hydration should make visible blank space short-lived and prevent persistent blank rows after scrolling stops.
+Small downward corrections after hydration are acceptable and absorbed by scroll anchoring. Persistent blank rows after scrolling stops are not acceptable and indicate a hydration scheduling bug, not an estimation bug.
 
 ## Search And Scroll-To-Match
 
@@ -153,19 +197,32 @@ Search match positions remain database-driven and page-aware through the existin
 2. If the target display row is loaded but not hydrated, enqueue it with search-target priority.
 3. Wait for `DeferredContentHydrated { item_index }`.
 4. For `ToolBurst` child targets, ensure the burst is hydrated and expanded.
-5. Set `scroll_to_item` only after the target content needed for the match exists.
+5. Defer `scroll_to_item` by one allocation cycle. `DeferredContentHydrated` only confirms widget construction; GTK has not yet run measure/allocate, so the row's `height()` is still its placeholder reservation. Schedule the scroll via `add_tick_callback` (one-shot) on the row widget or via `glib::idle_add_local_once`. Without this delay, `scroll_to_item` jumps to the wrong Y position whenever the hydrated content exceeds the placeholder height.
+6. Set `scroll_to_item` inside the deferred callback, only after the target content needed for the match exists and has been allocated at its real height.
 
 Rows hydrated late use the same `highlight_query` already present in their init data, so highlight rendering remains consistent with current behavior.
 
-If the target disappears because of stale requests, session changes, or boundary regrouping, the jump should be abandoned with a warning rather than panicking.
+If the target disappears between `DeferredContentHydrated` and the deferred scroll callback because of stale requests, session changes, or boundary regrouping, the deferred callback must verify the target still maps to a current widget before scrolling and abandon the jump with a warning otherwise.
 
 ## Interaction Behavior
 
-Message expansion remains lazy. If the user clicks expand before preview hydration, the row hydrates its preview shell first, then runs the existing full-content load flow. Existing full-content load failure handling and toast behavior remain unchanged.
+User-initiated hydration must not be throttled by the background hydration queue. The queue exists to spread off-screen work over many frames; an explicit user gesture is the opposite case and demands immediate response.
 
-Tool burst expansion builds child tool call widgets on demand. If the burst was already hydrated for search, the user click only toggles visibility.
+The synchronous carve-out applies to:
 
-Inspector actions remain available from shell metadata for tool call and subagent rows. If a shell does not yet include enough data for an inspect action, hydration should be triggered before routing the action.
+- Message expand button click.
+- Tool burst expand/collapse toggle.
+- Inspect button click on tool call or subagent rows.
+
+In each case, the row's hydration runs synchronously in the same input handler before the rest of the action proceeds. For tool bursts specifically, all child rows of the burst hydrate in a single synchronous pass when the burst is opened, even if that pass exceeds the per-tick batch budget; otherwise a 30-child burst would take roughly `30 / 2 * 16 ms = 240 ms` of placeholders before showing real content, which feels broken on a click.
+
+Concrete behavior per gesture:
+
+- Message expand: if not yet hydrated, hydrate the preview shell synchronously, then run the existing full-content load flow. Existing full-content load failure handling and toast behavior remain unchanged.
+- Tool burst expand: if not yet hydrated, hydrate the burst header (already done at shell mount) and synchronously hydrate every child tool call row, then toggle visibility. If already hydrated for search, the click only toggles visibility.
+- Inspect: if the shell already carries enough data to route the inspect action (id, kind, model when relevant), route immediately. Otherwise hydrate the row synchronously, then route.
+
+Synchronous hydration must still emit `DeferredContentHydrated { item_index, reason }` so that any pending search jump waiting on that row is unblocked.
 
 ## Error Handling
 
@@ -192,9 +249,10 @@ Existing logs remain important:
 
 New debug logs should make hydration measurable without logging transcript content:
 
-- `Queued deferred transcript hydration` with request id, reason, target count, visible count, margin count.
+- `Queued deferred transcript hydration` with request id, reason, target count, visible count, margin count. Emitted at most once per viewport scan, never per row.
 - `Hydrated deferred transcript batch` with request id, hydrated count, duration, max row hydration duration, remaining count.
 - `Deferred transcript row hydrated` with item index, row kind, reason, duration, and whether it was search-critical.
+- `Anchored transcript scroll on hydration` with request id, anchored row count, and applied delta in pixels. Emitted only when scroll anchoring (see `Scroll Anchoring`) actually adjusts `vadjustment.value`.
 
 No transcript content, tool call payload, command output, or Markdown body text should be logged.
 
@@ -203,10 +261,12 @@ No transcript content, tool call payload, command output, or Markdown body text 
 Automated tests should cover:
 
 - Message `TranscriptRow::init_widgets` creates a shell without initial Markdown `TextView` content.
-- `HydrateDeferredContent` replaces the placeholder with rendered content and is idempotent.
+- `HydrateDeferredContent` replaces the placeholder with rendered content and is idempotent across repeated inputs.
+- `SessionDetail` filters `DeferredContentHydrated` outputs whose request id no longer matches the active transcript request.
 - Late hydration applies `highlight_query` to message content.
 - Tool burst children are not built at shell mount and are built on expansion or search-target hydration.
-- `SessionDetail::continue_pending_jump` waits for target hydration before setting `scroll_to_item`.
+- Tool burst expand click hydrates all children synchronously in a single pass, regardless of background batch budget.
+- `SessionDetail::continue_pending_jump` waits for target hydration AND defers `scroll_to_item` by one allocation tick before setting it.
 - Existing transcript pagination, search navigation, grouped tool call row, and inspector tests continue to pass.
 
 Manual verification should cover:
@@ -216,7 +276,9 @@ Manual verification should cover:
 - Confirm initially visible content is readable within `200 ms`.
 - Scroll quickly through a large transcript and stop; no blank row should persist at rest.
 - Resize the window; newly visible or near-visible rows should hydrate without full rebuild.
-- Search for a match outside the initial page; the app should load, hydrate, and scroll to the target correctly.
+- Search for a match outside the initial page; the app should load, hydrate, and scroll to the target correctly. The match position must be correct on the first paint, not after a visible re-scroll.
+- Scroll into the middle of a long transcript, then scroll back up. Above-viewport rows that hydrate during the back-scroll must not visibly push current content; the scrollbar thumb may shrink but text should stay anchored.
+- Rapid expand of a tool burst with many children must reveal all child rows immediately, not progressively over multiple frames.
 
 CI verification should include:
 
@@ -226,11 +288,12 @@ CI verification should include:
 
 ## Acceptance Criteria Mapping
 
-- `max_schedule_gap_ms <= 50 ms`: achieved by shell-only first push and bounded hydration batches.
+- `max_schedule_gap_ms <= 50 ms`: achieved by shell-only first push and bounded hydration batches, validated by the Shell Weight Validation gate before defaults are locked.
 - Initial content readable within `200 ms`: achieved by viewport-priority hydration immediately after first push.
 - Progressive population during scroll: achieved by debounced viewport scans and margin-based hydration.
-- Stable enough layout: achieved by conservative bounded placeholders and no v1 dehydration.
-- Search highlight and scroll-to-match: achieved by search-priority hydration gate before final scroll.
+- Stable enough layout: achieved by over-biased placeholder estimates and scroll anchoring on above-viewport hydration.
+- Search highlight and scroll-to-match: achieved by synchronous search-target hydration plus a one-tick allocation delay before `scroll_to_item`.
+- Responsive user gestures: achieved by the synchronous hydration carve-out for expand, burst toggle, and inspect actions.
 - Empty, short, malformed transcripts: handled by existing fallbacks plus no-op hydration queues.
 - Existing tests pass: covered by preserving current pagination and row mapping contracts.
 
@@ -241,9 +304,14 @@ The implementation should start with explicit conservative defaults and tune the
 - Initial hydration batch size: 2 rows per tick.
 - Hydration tick delay: 16 ms.
 - Viewport margin multiplier: `1.5x page_size`.
-- Message placeholder lines: `ceil(content_preview.len() / 100)`, clamped to 2 through 12 lines.
-- Assistant message placeholder: add 2 estimated lines before clamping to account for Markdown structure.
-- Estimated line height: use a fixed conservative value such as 20 px rather than measuring Pango text.
+- Scroll debounce on `vadjustment::value`: 60 ms.
+- Resize debounce on `page-size` and width notifications: 120 ms.
+- Message placeholder lines: count `\n` in `content_preview`, plus `ceil(remaining_chars / 80)` for wrapped lines, clamped to a minimum of 2 lines.
+- Message placeholder upper cap: 24 lines (generous; the cap avoids pathological multi-screen placeholders, not typical content).
+- Assistant message placeholder: add 4 estimated lines before clamping to account for Markdown structure (paragraphs, code fences, lists). Assistant content is the most likely to under-reserve, and over-reservation here is preferable.
+- Estimated line height: use a fixed conservative value such as 22 px rather than measuring Pango text. Slightly over the typical body line height so the placeholder rarely under-reserves.
 - Tool call secondary previews: deferred until hydration.
+- Tool burst child hydration on user-initiated expand: synchronous, all children in one pass, regardless of batch budget.
+- Search-target hydration: synchronous on the target row, with `scroll_to_item` deferred one allocation tick.
 
-These constants affect performance tuning but do not change the design direction.
+These constants affect performance tuning but do not change the design direction. The Shell Weight Validation gate runs before these defaults are accepted as final.
