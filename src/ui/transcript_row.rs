@@ -388,7 +388,7 @@ fn estimate_message_placeholder_lines(preview: &MessagePreview) -> usize {
         .filter(|ch| *ch != '\n')
         .count();
     let wrapped_lines = non_newline_chars.div_ceil(MESSAGE_PLACEHOLDER_WRAP_CHARS);
-    let content_lines = explicit_lines.max(wrapped_lines);
+    let content_lines = explicit_lines + wrapped_lines;
     let role_bias = if preview.role == Role::Assistant {
         MESSAGE_PLACEHOLDER_ASSISTANT_EXTRA_LINES
     } else {
@@ -1085,11 +1085,6 @@ impl FactoryComponent for TranscriptRow {
 impl TranscriptRow {
     pub fn item_index(&self) -> usize {
         self.item_index
-    }
-
-    #[allow(dead_code)]
-    pub fn is_hydrated(&self) -> bool {
-        self.hydrated
     }
 
     fn emit_deferred_hydrated(
@@ -2492,7 +2487,7 @@ mod tests {
     }
 
     #[test]
-    fn placeholder_lines_do_not_double_count_single_long_line() {
+    fn placeholder_lines_sum_explicit_breaks_and_wrapped_remainder() {
         let long_line = "x".repeat(MESSAGE_PLACEHOLDER_WRAP_CHARS * 2);
         let preview = MessagePreview {
             session_id: "session-1".to_string(),
@@ -2505,11 +2500,12 @@ mod tests {
             reasoning_preview: ReasoningPreview::default(),
         };
 
-        assert_eq!(estimate_message_placeholder_lines(&preview), 2);
+        // Spec: explicit_lines (1) + wrapped_lines (2) = 3
+        assert_eq!(estimate_message_placeholder_lines(&preview), 3);
     }
 
     #[test]
-    fn placeholder_lines_keep_explicit_multiline_count_without_wrap_growth() {
+    fn placeholder_lines_add_wrapped_remainder_to_explicit_breaks() {
         let preview = MessagePreview {
             session_id: "session-1".to_string(),
             message_index: 1,
@@ -2521,6 +2517,7 @@ mod tests {
             reasoning_preview: ReasoningPreview::default(),
         };
 
-        assert_eq!(estimate_message_placeholder_lines(&preview), 2);
+        // Spec: explicit_lines (2) + wrapped_lines (1) = 3
+        assert_eq!(estimate_message_placeholder_lines(&preview), 3);
     }
 }

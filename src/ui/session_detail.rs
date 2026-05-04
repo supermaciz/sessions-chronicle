@@ -1076,7 +1076,8 @@ impl Component for SessionDetail {
                 .ok();
         });
         let resize_sender = sender.input_sender().clone();
-        widgets.scroll_child.connect_width_request_notify(move |_| {
+        let hadjustment = widgets.transcript_scrolled_window.hadjustment();
+        hadjustment.connect_page_size_notify(move |_| {
             resize_sender
                 .send(SessionDetailMsg::ViewportSizeChanged)
                 .ok();
@@ -4478,6 +4479,9 @@ fn synthetic_measurement(input: &str) -> String {\n\
         assert!(metrics.worst_row_kind.is_some());
     }
 
+    // Shell-weight gate only: measures the initial first-page push budget, not
+    // viewport-driven hydration tick stability. Hydration tick cost is validated
+    // manually against large fixtures.
     #[gtk::test]
     #[ignore = "manual issue #142 shell-weight gate; requires local Codex session file"]
     fn session_detail_issue_142_shell_weight_gate_reference_session() {
