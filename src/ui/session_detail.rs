@@ -1809,6 +1809,13 @@ impl SessionDetail {
         });
     }
 
+    fn deferred_target_matches_row(
+        current_item_index: Option<usize>,
+        target_item_index: usize,
+    ) -> bool {
+        matches!(current_item_index, Some(item_index) if item_index == target_item_index)
+    }
+
     fn invalidate_search_requests(&mut self) {
         self.search_request_id = self.search_request_id.wrapping_add(1);
     }
@@ -2420,6 +2427,15 @@ impl SessionDetail {
                 || target.display_index >= self.messages.len()
                 || self.deferred_hydrated_items.contains(&target.item_index)
             {
+                continue;
+            }
+
+            if !Self::deferred_target_matches_row(
+                self.messages
+                    .get(target.display_index)
+                    .map(|row| row.item_index()),
+                target.item_index,
+            ) {
                 continue;
             }
 
@@ -3618,6 +3634,13 @@ fn synthetic_measurement(input: &str) -> String {\n\
                 .borrow()
                 .contains(&42)
         );
+    }
+
+    #[test]
+    fn deferred_target_identity_guard_rejects_mismatch() {
+        assert!(!SessionDetail::deferred_target_matches_row(Some(4), 5));
+        assert!(!SessionDetail::deferred_target_matches_row(None, 5));
+        assert!(SessionDetail::deferred_target_matches_row(Some(5), 5));
     }
 
     #[gtk::test]
