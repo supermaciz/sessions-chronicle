@@ -32,7 +32,6 @@ const TOOL_ICONS: ToolCategoryIcons = ToolCategoryIcons {
     other: icon_names::BUILD,
 };
 const SLOW_ROW_WIDGET_BUILD: Duration = Duration::from_millis(10);
-const SLOW_CONTENT_RENDER: Duration = Duration::from_millis(10);
 
 const MESSAGE_PLACEHOLDER_MIN_LINES: usize = 2;
 const MESSAGE_PLACEHOLDER_MAX_LINES: usize = 24;
@@ -154,6 +153,7 @@ impl TranscriptItemInit {
         }
     }
 
+    #[allow(dead_code)]
     pub fn request_id(&self) -> u64 {
         match self {
             Self::Message(init) => init.request_id,
@@ -180,6 +180,7 @@ pub enum DeferredHydrationReason {
 }
 
 impl DeferredHydrationReason {
+    #[allow(dead_code)]
     pub fn is_search_critical(self) -> bool {
         matches!(self, Self::SearchTarget)
     }
@@ -1086,6 +1087,7 @@ impl TranscriptRow {
         self.item_index
     }
 
+    #[allow(dead_code)]
     pub fn is_hydrated(&self) -> bool {
         self.hydrated
     }
@@ -1134,7 +1136,6 @@ impl TranscriptRow {
         sender: &FactorySender<Self>,
     ) -> bool {
         let started_at = Instant::now();
-        let mut hydrated_now = false;
 
         match self.kind {
             TranscriptRowKind::Message => {
@@ -1149,28 +1150,22 @@ impl TranscriptRow {
                         self.highlight_query.as_deref(),
                     );
                 }
-                hydrated_now = true;
             }
             TranscriptRowKind::ToolCall => {
                 if let Some(container) = widgets.tool_call_preview_container.as_ref() {
                     hydrate_tool_call_preview(container, &self.tool_call_init_for_render());
                 }
-                hydrated_now = true;
             }
             TranscriptRowKind::ToolBurst => {
                 if let (Some(children), Some(burst)) = (
                     widgets.tool_burst_children.as_ref(),
                     self.tool_burst.as_ref(),
-                ) {
-                    if children.first_child().is_none() {
-                        populate_tool_burst_children(children, burst, sender, self.item_index);
-                    }
+                ) && children.first_child().is_none()
+                {
+                    populate_tool_burst_children(children, burst, sender, self.item_index);
                 }
-                hydrated_now = true;
             }
-            TranscriptRowKind::Subagent => {
-                hydrated_now = true;
-            }
+            TranscriptRowKind::Subagent => {}
         }
 
         if !self.hydrated {
@@ -1179,9 +1174,7 @@ impl TranscriptRow {
             return true;
         }
 
-        if hydrated_now {
-            self.emit_deferred_hydrated(sender, reason, started_at.elapsed().as_millis());
-        }
+        self.emit_deferred_hydrated(sender, reason, started_at.elapsed().as_millis());
         false
     }
 
