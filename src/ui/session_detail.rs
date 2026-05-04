@@ -1740,6 +1740,26 @@ impl Component for SessionDetail {
                 );
             } else {
                 let vadj = widgets.transcript_scrolled_window.vadjustment();
+                let current_value = vadj.value();
+                if !Self::should_apply_hydration_anchor_compensation(
+                    pending_compensation.request_id,
+                    self.transcript_request_id,
+                    pending_compensation.pre_value,
+                    current_value,
+                    HYDRATION_COMPENSATION_SCROLL_EPSILON,
+                ) {
+                    tracing::debug!(
+                        request_id = pending_compensation.request_id,
+                        current_request_id = self.transcript_request_id,
+                        pre_value = pending_compensation.pre_value,
+                        observed_value = current_value,
+                        delta = pending_compensation.delta,
+                        epsilon = HYDRATION_COMPENSATION_SCROLL_EPSILON,
+                        "Skipping hydration anchor compensation at apply"
+                    );
+                    return;
+                }
+
                 let anchored_value = Self::compute_anchored_scroll_value(
                     pending_compensation.pre_value,
                     pending_compensation.delta,
@@ -4227,6 +4247,30 @@ fn synthetic_measurement(input: &str) -> String {\n\
             10,
             160.0,
             160.5,
+            HYDRATION_COMPENSATION_SCROLL_EPSILON,
+        ));
+    }
+
+    #[test]
+    fn hydration_anchor_compensation_rechecks_for_late_user_scroll_drift() {
+        let request_id = 10;
+        let transcript_request_id = 10;
+        let pre_value = 160.0;
+        let sampled_value = 160.5;
+        let apply_value = 166.0;
+
+        assert!(SessionDetail::should_apply_hydration_anchor_compensation(
+            request_id,
+            transcript_request_id,
+            pre_value,
+            sampled_value,
+            HYDRATION_COMPENSATION_SCROLL_EPSILON,
+        ));
+        assert!(!SessionDetail::should_apply_hydration_anchor_compensation(
+            request_id,
+            transcript_request_id,
+            pre_value,
+            apply_value,
             HYDRATION_COMPENSATION_SCROLL_EPSILON,
         ));
     }
