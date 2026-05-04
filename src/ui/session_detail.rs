@@ -23,8 +23,8 @@ use crate::ui::transcript_display::{
     trailing_tool_rows_from_display,
 };
 use crate::ui::transcript_row::{
-    TranscriptItemInit, TranscriptRow, TranscriptRowBuildKind, TranscriptRowOutput,
-    transcript_item_init_from_display_item,
+    DeferredHydrationReason, TranscriptItemInit, TranscriptRow, TranscriptRowBuildKind,
+    TranscriptRowMsg, TranscriptRowOutput, transcript_item_init_from_display_item,
 };
 
 const INITIAL_PAGE_SIZE: usize = 75;
@@ -55,6 +55,7 @@ pub struct SessionDetail {
     transcript_request_id: u64,
     pending_render_batch: Option<PendingRenderBatch>,
     last_render_metrics: Option<RenderMetrics>,
+    deferred_hydrated_items: BTreeSet<usize>,
     pending_boundary_tool_rows: Vec<crate::database::TranscriptItemRow>,
     search_query: Option<String>,
     match_positions: Vec<crate::database::MatchPosition>,
@@ -294,6 +295,13 @@ pub enum SessionDetailMsg {
         item_index: usize,
         kind: TranscriptRowBuildKind,
         build_duration_ms: u128,
+    },
+    DeferredContentHydrated {
+        request_id: u64,
+        item_index: usize,
+        kind: TranscriptRowBuildKind,
+        reason: DeferredHydrationReason,
+        duration_ms: u128,
     },
     Clear,
     InspectToolCall(String),
@@ -858,6 +866,19 @@ impl Component for SessionDetail {
                     kind,
                     build_duration_ms,
                 },
+                TranscriptRowOutput::DeferredContentHydrated {
+                    request_id,
+                    item_index,
+                    kind,
+                    reason,
+                    duration_ms,
+                } => SessionDetailMsg::DeferredContentHydrated {
+                    request_id,
+                    item_index,
+                    kind,
+                    reason,
+                    duration_ms,
+                },
             });
 
         let db_path = Arc::new(db_path);
@@ -884,6 +905,7 @@ impl Component for SessionDetail {
             transcript_request_id: 0,
             pending_render_batch: None,
             last_render_metrics: None,
+            deferred_hydrated_items: BTreeSet::new(),
             pending_boundary_tool_rows: Vec::new(),
             search_query: None,
             match_positions: Vec::new(),
@@ -1088,6 +1110,36 @@ impl Component for SessionDetail {
                 build_duration_ms,
             } => {
                 self.record_transcript_row_build(sender, item_index, kind, build_duration_ms);
+            }
+            SessionDetailMsg::DeferredContentHydrated {
+                ref request_id,
+                item_index,
+                kind,
+                reason,
+                duration_ms,
+            } => {
+                if *request_id != self.transcript_request_id {
+                    tracing::debug!(
+                        request_id,
+                        current_request_id = self.transcript_request_id,
+                        item_index,
+                        ?kind,
+                        "Dropping stale deferred hydration notification"
+                    );
+                    return;
+                }
+                self.deferred_hydrated_items.insert(item_index);
+                tracing::info!(
+                    request_id,
+                    item_index,
+                    ?kind,
+                    ?reason,
+                    duration_ms,
+                    row_msg_type = %std::any::type_name::<TranscriptRowMsg>(),
+                    hydrated_item_count = self.deferred_hydrated_items.len(),
+                    "Accepted deferred hydration output"
+                );
+                self.continue_pending_jump(&sender);
             }
             SessionDetailMsg::ClearSearch => {
                 self.search_query = None;
@@ -1544,6 +1596,7 @@ impl SessionDetail {
         matched_item_indexes: &BTreeSet<i64>,
         db_path: Arc<PathBuf>,
         base_display_index: usize,
+        request_id: u64,
     ) -> PreparedTranscriptItems {
         let mut items = Vec::new();
         let mut display_targets_by_item_index = BTreeMap::new();
@@ -1569,6 +1622,7 @@ impl SessionDetail {
                 session_id,
                 item_highlight,
                 db_path.clone(),
+                request_id,
             ));
         }
 
@@ -1582,6 +1636,7 @@ impl SessionDetail {
         self.transcript_request_id = self.transcript_request_id.wrapping_add(1);
         self.pending_render_batch = None;
         self.last_render_metrics = None;
+        self.deferred_hydrated_items.clear();
     }
 
     fn invalidate_search_requests(&mut self) {
@@ -2116,6 +2171,7 @@ impl SessionDetail {
             &matched_item_indexes,
             db_path,
             0,
+            request_id,
         );
         let display_item_count = prepared.items.len();
         self.extend_display_targets(prepared.display_targets_by_item_index);
@@ -2447,6 +2503,7 @@ impl SessionDetail {
                     session_id,
                     item_highlight,
                     db_path.clone(),
+                    request_id,
                 ));
             }
         }
@@ -2459,6 +2516,7 @@ impl SessionDetail {
             &matched_item_indexes,
             db_path,
             page_start,
+            request_id,
         );
         let display_item_count = prepared.items.len();
 
@@ -2912,6 +2970,7 @@ fn synthetic_measurement(input: &str) -> String {\n\
             &matched_item_indexes,
             Arc::new(PathBuf::from("/tmp/test.db")),
             0,
+            1,
         );
 
         assert_eq!(prepared.items.len(), 2);
@@ -2962,6 +3021,7 @@ fn synthetic_measurement(input: &str) -> String {\n\
             &matched_item_indexes,
             Arc::new(PathBuf::from("/tmp/test.db")),
             0,
+            1,
         );
 
         match &prepared.items[0] {
@@ -2993,6 +3053,62 @@ fn synthetic_measurement(input: &str) -> String {\n\
                 std::mem::discriminant(other)
             ),
         }
+    }
+
+    #[test]
+    fn build_display_items_assigns_active_transcript_request_id() {
+        let rows = vec![
+            transcript_message_row(0, crate::models::Role::Assistant, "hello"),
+            transcript_tool_row(1, "Read"),
+            transcript_subagent_row(2, "Explore"),
+        ];
+        let matched_item_indexes = BTreeSet::new();
+
+        let prepared = SessionDetail::build_display_items(
+            rows,
+            "session-1",
+            None,
+            &matched_item_indexes,
+            Arc::new(PathBuf::from("/tmp/test.db")),
+            0,
+            77,
+        );
+
+        assert_eq!(prepared.items.len(), 3);
+        for item in &prepared.items {
+            assert_eq!(item.request_id(), 77);
+        }
+    }
+
+    #[gtk::test]
+    fn stale_deferred_hydration_output_is_discarded() {
+        let temp_db = tempfile::NamedTempFile::new().expect("temp db");
+        seed_message_transcript(temp_db.path(), "test-session-123", INITIAL_PAGE_SIZE);
+
+        let controller = SessionDetail::builder().launch(temp_db.path().to_path_buf());
+        controller.emit(SessionDetailMsg::SetSession {
+            session: Box::new(build_test_session(None, None, 0, 0, 0)),
+            search_query: None,
+        });
+
+        pump_main_context(|| {
+            let parts = controller.state().get();
+            !parts.model.loading_first_page && parts.model.pending_render_batch.is_none()
+        });
+
+        let current_request_id = controller.state().get().model.transcript_request_id;
+        controller.emit(SessionDetailMsg::DeferredContentHydrated {
+            request_id: current_request_id.wrapping_add(1),
+            item_index: 0,
+            kind: TranscriptRowBuildKind::Message,
+            reason: DeferredHydrationReason::SearchTarget,
+            duration_ms: 3,
+        });
+
+        pump_main_context(|| true);
+
+        let parts = controller.state().get();
+        assert!(parts.model.deferred_hydrated_items.is_empty());
     }
 
     #[gtk::test]
@@ -3224,6 +3340,7 @@ fn synthetic_measurement(input: &str) -> String {\n\
             &matched_item_indexes,
             Arc::new(PathBuf::from("/tmp/test.db")),
             0,
+            1,
         );
         let counts = SessionDetail::count_render_item_kinds(&prepared.items);
 
