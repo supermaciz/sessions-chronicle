@@ -64,6 +64,7 @@ pub struct SessionDetail {
     input_sender: relm4::Sender<SessionDetailMsg>,
     deferred_hydration_queue: RefCell<VecDeque<DeferredHydrationTarget>>,
     deferred_hydration_queued_items: RefCell<BTreeSet<usize>>,
+    pending_anchor_targets: RefCell<Vec<DeferredHydrationTarget>>,
     deferred_hydration_tick_scheduled: Cell<bool>,
     pending_viewport_hydration_scan: Cell<Option<PendingViewportHydrationScan>>,
     scroll_debounce_scheduled: Cell<bool>,
@@ -163,6 +164,19 @@ struct DeferredHydrationTarget {
     display_index: usize,
     item_index: usize,
     reason: DeferredHydrationReason,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct HydrationAnchorRow {
+    display_index: usize,
+    pre_height: i32,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+struct PendingHydrationAnchor {
+    request_id: u64,
+    pre_value: f64,
+    rows: Vec<HydrationAnchorRow>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -987,6 +1001,7 @@ impl Component for SessionDetail {
             input_sender: sender.input_sender().clone(),
             deferred_hydration_queue: RefCell::new(VecDeque::new()),
             deferred_hydration_queued_items: RefCell::new(BTreeSet::new()),
+            pending_anchor_targets: RefCell::new(Vec::new()),
             deferred_hydration_tick_scheduled: Cell::new(false),
             pending_viewport_hydration_scan: Cell::new(None),
             scroll_debounce_scheduled: Cell::new(false),
@@ -1657,6 +1672,16 @@ impl Component for SessionDetail {
                 .add_toast(adw::Toast::new("Could not load full message."));
         }
 
+        let pending_anchor_targets = self.pending_anchor_targets.replace(Vec::new());
+        if let Some(request_id) = pending_anchor_targets
+            .first()
+            .map(|target| target.request_id)
+            && let Some(anchor) =
+                self.capture_hydration_anchor(widgets, request_id, &pending_anchor_targets)
+        {
+            self.schedule_hydration_anchor_compensation(widgets, anchor);
+        }
+
         if let Some(scan) = self.pending_viewport_hydration_scan.take() {
             self.queue_visible_deferred_hydration(widgets, scan);
             self.schedule_hydration_drain();
@@ -1856,6 +1881,7 @@ impl SessionDetail {
         self.deferred_hydrated_items.clear();
         self.deferred_hydration_queue.borrow_mut().clear();
         self.deferred_hydration_queued_items.borrow_mut().clear();
+        self.pending_anchor_targets.borrow_mut().clear();
         self.deferred_hydration_tick_scheduled.set(false);
         self.pending_viewport_hydration_scan.set(None);
         self.scroll_debounce_scheduled.set(false);
@@ -1878,6 +1904,126 @@ impl SessionDetail {
         let hydration_top = viewport_top - margin;
         let hydration_bottom = viewport_top + viewport_page_size + margin;
         row_bottom >= hydration_top && row_top <= hydration_bottom
+    }
+
+    fn row_is_strictly_above_viewport(row_y: f64, row_height: f64, viewport_top: f64) -> bool {
+        row_y + row_height < viewport_top
+    }
+
+    fn compute_anchored_scroll_value(
+        pre_value: f64,
+        delta: f64,
+        lower: f64,
+        upper: f64,
+        page_size: f64,
+    ) -> f64 {
+        let max_value = (upper - page_size).max(lower);
+        (pre_value + delta).clamp(lower, max_value)
+    }
+
+    fn capture_hydration_anchor(
+        &self,
+        widgets: &SessionDetailWidgets,
+        request_id: u64,
+        batch: &[DeferredHydrationTarget],
+    ) -> Option<PendingHydrationAnchor> {
+        let vadj = widgets.transcript_scrolled_window.vadjustment();
+        let pre_value = vadj.value();
+        if pre_value <= 0.0 {
+            return None;
+        }
+        if batch
+            .iter()
+            .all(|target| target.reason == DeferredHydrationReason::InitialViewport)
+        {
+            return None;
+        }
+
+        let mut rows = Vec::new();
+        let messages_widget = self.messages.widget();
+        let viewport_top = pre_value;
+        for target in batch {
+            if target.request_id != request_id || target.display_index >= self.messages.len() {
+                continue;
+            }
+            let Some(row_widget) = messages_widget
+                .observe_children()
+                .item(target.display_index as u32)
+                .and_then(|obj| obj.downcast::<gtk::Widget>().ok())
+            else {
+                continue;
+            };
+            let Some(point) = row_widget
+                .compute_point(&widgets.scroll_child, &gtk::graphene::Point::new(0.0, 0.0))
+            else {
+                continue;
+            };
+            let row_height = row_widget.height().max(1) as f64;
+            if !Self::row_is_strictly_above_viewport(point.y() as f64, row_height, viewport_top) {
+                continue;
+            }
+            rows.push(HydrationAnchorRow {
+                display_index: target.display_index,
+                pre_height: row_widget.height().max(1),
+            });
+        }
+
+        if rows.is_empty() {
+            None
+        } else {
+            Some(PendingHydrationAnchor {
+                request_id,
+                pre_value,
+                rows,
+            })
+        }
+    }
+
+    fn schedule_hydration_anchor_compensation(
+        &self,
+        widgets: &SessionDetailWidgets,
+        anchor: PendingHydrationAnchor,
+    ) {
+        let tick_count = Cell::new(0u8);
+        let messages_widget = self.messages.widget().clone();
+        let vadj = widgets.transcript_scrolled_window.vadjustment();
+        widgets.scroll_child.add_tick_callback(move |_, _| {
+            let ticks = tick_count.get().saturating_add(1);
+            tick_count.set(ticks);
+            if ticks < 2 {
+                return glib::ControlFlow::Continue;
+            }
+
+            let mut delta = 0.0f64;
+            for row in &anchor.rows {
+                let Some(row_widget) = messages_widget
+                    .observe_children()
+                    .item(row.display_index as u32)
+                    .and_then(|obj| obj.downcast::<gtk::Widget>().ok())
+                else {
+                    continue;
+                };
+                let post_height = row_widget.height().max(1);
+                delta += f64::from(post_height - row.pre_height);
+            }
+
+            if delta != 0.0 {
+                let anchored_value = Self::compute_anchored_scroll_value(
+                    anchor.pre_value,
+                    delta,
+                    vadj.lower(),
+                    vadj.upper(),
+                    vadj.page_size(),
+                );
+                vadj.set_value(anchored_value);
+                tracing::debug!(
+                    request_id = anchor.request_id,
+                    delta,
+                    "Anchored transcript scroll on hydration"
+                );
+            }
+            glib::ControlFlow::Break
+        });
     }
 
     fn queue_deferred_hydration_target(&self, target: DeferredHydrationTarget) {
@@ -2510,6 +2656,7 @@ impl SessionDetail {
         let started_at = Instant::now();
         let mut hydrated_count = 0usize;
         let mut max_row_hydration_duration = Duration::ZERO;
+        let mut batch_targets = Vec::new();
 
         for _ in 0..HYDRATION_BATCH_SIZE {
             let Some(target) = self.deferred_hydration_queue.borrow_mut().pop_front() else {
@@ -2535,6 +2682,14 @@ impl SessionDetail {
                 continue;
             }
 
+            batch_targets.push(target);
+        }
+
+        if !batch_targets.is_empty() {
+            *self.pending_anchor_targets.borrow_mut() = batch_targets.clone();
+        }
+
+        for target in batch_targets {
             let row_started_at = Instant::now();
             self.messages.send(
                 target.display_index,
@@ -3932,6 +4087,33 @@ fn synthetic_measurement(input: &str) -> String {\n\
         assert!(!SessionDetail::deferred_target_matches_row(Some(4), 5));
         assert!(!SessionDetail::deferred_target_matches_row(None, 5));
         assert!(SessionDetail::deferred_target_matches_row(Some(5), 5));
+    }
+
+    #[test]
+    fn scroll_anchor_delta_clamps_to_adjustment_range() {
+        let anchored = SessionDetail::compute_anchored_scroll_value(120.0, 50.0, 0.0, 200.0, 60.0);
+        assert_eq!(anchored, 140.0);
+
+        let clamped_low =
+            SessionDetail::compute_anchored_scroll_value(10.0, -50.0, 0.0, 200.0, 60.0);
+        assert_eq!(clamped_low, 0.0);
+
+        let clamped_high =
+            SessionDetail::compute_anchored_scroll_value(190.0, 50.0, 0.0, 200.0, 60.0);
+        assert_eq!(clamped_high, 140.0);
+    }
+
+    #[test]
+    fn rows_strictly_above_viewport_are_anchor_candidates() {
+        assert!(SessionDetail::row_is_strictly_above_viewport(
+            20.0, 30.0, 60.0
+        ));
+        assert!(!SessionDetail::row_is_strictly_above_viewport(
+            40.0, 20.0, 60.0
+        ));
+        assert!(!SessionDetail::row_is_strictly_above_viewport(
+            65.0, 20.0, 60.0
+        ));
     }
 
     #[gtk::test]
