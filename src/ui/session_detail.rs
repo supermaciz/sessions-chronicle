@@ -4478,6 +4478,56 @@ fn synthetic_measurement(input: &str) -> String {\n\
         assert!(metrics.worst_row_kind.is_some());
     }
 
+    #[gtk::test]
+    #[ignore = "manual issue #142 shell-weight gate; requires local Codex session file"]
+    fn session_detail_issue_142_shell_weight_gate_reference_session() {
+        let source_file = std::env::var("SESSION_DETAIL_ISSUE_142_SOURCE_FILE")
+            .expect("SESSION_DETAIL_ISSUE_142_SOURCE_FILE must point to the reference JSONL file");
+        let source_file = std::path::Path::new(&source_file);
+        assert!(
+            source_file.exists(),
+            "reference Codex session file must exist at {}",
+            source_file.display()
+        );
+
+        let temp_root = tempfile::tempdir().expect("temp session root");
+        let target_dir = temp_root.path().join("2026/04/25");
+        std::fs::create_dir_all(&target_dir).expect("create session fixture dir");
+        std::fs::copy(
+            source_file,
+            target_dir.join(source_file.file_name().expect("source file name")),
+        )
+        .expect("copy reference session");
+
+        let temp_db = tempfile::NamedTempFile::new().expect("temp db");
+        let mut indexer = crate::database::SessionIndexer::new(temp_db.path()).expect("indexer");
+        indexer
+            .index_codex_sessions(temp_root.path())
+            .expect("index reference Codex session");
+
+        let sessions = crate::database::load_sessions_for_filter(
+            temp_db.path(),
+            &[crate::models::AiAssistant::Codex],
+            &crate::models::ProjectFilter::AllSessions,
+        )
+        .expect("load indexed sessions");
+        let session = sessions
+            .into_iter()
+            .next()
+            .expect("reference session should be indexed");
+
+        let metrics = measure_session_detail_metrics_for_session(temp_db.path(), session);
+        println!("issue-142-reference: {metrics:#?}");
+
+        assert_eq!(metrics.offset, 0);
+        assert_eq!(metrics.source_row_count, INITIAL_PAGE_SIZE);
+        assert!(
+            metrics.max_schedule_gap_ms <= 50,
+            "max_schedule_gap_ms exceeded gate: {}",
+            metrics.max_schedule_gap_ms
+        );
+    }
+
     #[test]
     fn inspector_visibility_output_carries_state() {
         let output = SessionDetailOutput::InspectorVisibilityChanged(true);
