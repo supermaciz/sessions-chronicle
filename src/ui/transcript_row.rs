@@ -34,6 +34,16 @@ const TOOL_ICONS: ToolCategoryIcons = ToolCategoryIcons {
 const SLOW_ROW_WIDGET_BUILD: Duration = Duration::from_millis(10);
 const SLOW_CONTENT_RENDER: Duration = Duration::from_millis(10);
 
+const MESSAGE_PLACEHOLDER_MIN_LINES: usize = 2;
+const MESSAGE_PLACEHOLDER_MAX_LINES: usize = 24;
+const MESSAGE_PLACEHOLDER_WRAP_CHARS: usize = 80;
+const MESSAGE_PLACEHOLDER_ASSISTANT_EXTRA_LINES: usize = 4;
+const ESTIMATED_LINE_HEIGHT_PX: i32 = 22;
+const MESSAGE_HEADER_AND_SPACING_HEIGHT_PX: i32 = 56;
+const TOOL_CALL_PLACEHOLDER_HEIGHT_PX: i32 = 48;
+const TOOL_BURST_HEADER_HEIGHT_PX: i32 = 44;
+const SUBAGENT_PLACEHOLDER_HEIGHT_PX: i32 = 40;
+
 /// Return the model display text for a transcript header.
 /// Only assistant messages with a non-empty model value produce output.
 fn model_label_text(role: Role, model: Option<&str>) -> Option<String> {
@@ -57,6 +67,7 @@ pub struct MessageItemInit {
     pub preview: MessagePreview,
     pub highlight_query: Option<String>,
     pub db_path: Arc<PathBuf>,
+    pub request_id: u64,
 }
 
 #[derive(Debug, Clone)]
@@ -90,6 +101,7 @@ pub struct ToolCallItemInit {
     pub highlight_query: Option<String>,
     /// Presence flags for associated reasoning attachment.
     pub reasoning_preview: ReasoningPreview,
+    pub request_id: u64,
 }
 
 impl ToolCallItemInit {
@@ -112,6 +124,7 @@ pub struct ToolBurstItemInit {
     pub visible_reasoning_child_count: usize,
     pub encrypted_only_child_count: usize,
     pub default_expanded: bool,
+    pub request_id: u64,
 }
 
 pub struct SubagentItemInit {
@@ -121,6 +134,7 @@ pub struct SubagentItemInit {
     pub subagent_id: String,
     pub title: String,
     pub reasoning_preview: ReasoningPreview,
+    pub request_id: u64,
 }
 
 pub enum TranscriptItemInit {
@@ -139,6 +153,36 @@ impl TranscriptItemInit {
             Self::Subagent(init) => init.item_index,
         }
     }
+
+    pub fn request_id(&self) -> u64 {
+        match self {
+            Self::Message(init) => init.request_id,
+            Self::ToolCall(init) => init.request_id,
+            Self::ToolBurst(init) => init.request_id,
+            Self::Subagent(init) => init.request_id,
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Hydration reason
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DeferredHydrationReason {
+    InitialViewport,
+    ScrollViewport,
+    ResizeViewport,
+    SearchTarget,
+    UserExpand,
+    UserInspect,
+    UserToolBurstToggle,
+}
+
+impl DeferredHydrationReason {
+    pub fn is_search_critical(self) -> bool {
+        matches!(self, Self::SearchTarget)
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -148,7 +192,9 @@ impl TranscriptItemInit {
 #[derive(Debug)]
 pub enum TranscriptRowMsg {
     ToggleExpand,
+    ToggleToolBurst,
     InspectClicked,
+    HydrateDeferredContent { reason: DeferredHydrationReason },
 }
 
 #[derive(Debug)]
@@ -173,6 +219,13 @@ pub enum TranscriptRowOutput {
         item_index: usize,
         kind: TranscriptRowBuildKind,
         build_duration_ms: u128,
+    },
+    DeferredContentHydrated {
+        request_id: u64,
+        item_index: usize,
+        kind: TranscriptRowBuildKind,
+        reason: DeferredHydrationReason,
+        duration_ms: u128,
     },
 }
 
@@ -212,12 +265,16 @@ impl From<TranscriptRowKind> for TranscriptRowBuildKind {
 // ---------------------------------------------------------------------------
 
 #[derive(Debug)]
+#[allow(dead_code)]
 pub struct TranscriptRow {
     item_index: usize,
     transcript_item_index: Option<i64>,
     session_id: Option<String>,
     reasoning_preview: Option<ReasoningPreview>,
     kind: TranscriptRowKind,
+    request_id: u64,
+    hydrated: bool,
+    placeholder_height_request: i32,
 
     // --- Message state ---
     preview: Option<MessagePreview>,
@@ -301,6 +358,36 @@ fn render_content(
     match_count
 }
 
+fn estimate_message_placeholder_lines(preview: &MessagePreview) -> usize {
+    let explicit_lines = preview.content_preview.matches('\n').count() + 1;
+    let non_newline_chars = preview
+        .content_preview
+        .chars()
+        .filter(|ch| *ch != '\n')
+        .count();
+    let wrapped_lines = non_newline_chars.div_ceil(MESSAGE_PLACEHOLDER_WRAP_CHARS);
+    let role_bias = if preview.role == Role::Assistant {
+        MESSAGE_PLACEHOLDER_ASSISTANT_EXTRA_LINES
+    } else {
+        0
+    };
+
+    (explicit_lines + wrapped_lines + role_bias)
+        .clamp(MESSAGE_PLACEHOLDER_MIN_LINES, MESSAGE_PLACEHOLDER_MAX_LINES)
+}
+
+fn estimate_message_placeholder_height(preview: &MessagePreview) -> i32 {
+    (estimate_message_placeholder_lines(preview) as i32 * ESTIMATED_LINE_HEIGHT_PX)
+        + MESSAGE_HEADER_AND_SPACING_HEIGHT_PX
+}
+
+fn placeholder_widget(height_request: i32) -> gtk::Box {
+    let placeholder = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    placeholder.add_css_class("transcript-row-placeholder");
+    placeholder.set_size_request(-1, height_request.max(1));
+    placeholder
+}
+
 fn count_tool_call_matches(init: &ToolCallItemInit) -> usize {
     let Some(query) = init.highlight_query.as_deref() else {
         return 0;
@@ -317,6 +404,7 @@ pub fn build_tool_burst_init(
     item_index: usize,
     tool_calls: Vec<ToolCallItemInit>,
     default_expanded: bool,
+    request_id: u64,
 ) -> ToolBurstItemInit {
     let mut category_counts = BTreeMap::new();
     let mut error_count = 0usize;
@@ -356,6 +444,7 @@ pub fn build_tool_burst_init(
         visible_reasoning_child_count,
         encrypted_only_child_count,
         default_expanded,
+        request_id,
     }
 }
 
@@ -639,6 +728,9 @@ impl FactoryComponent for TranscriptRow {
                 session_id: Some(m.preview.session_id.clone()),
                 reasoning_preview: Some(m.preview.reasoning_preview),
                 kind: TranscriptRowKind::Message,
+                request_id: m.request_id,
+                hydrated: false,
+                placeholder_height_request: estimate_message_placeholder_height(&m.preview),
                 preview: Some(m.preview),
                 highlight_query: m.highlight_query,
                 db_path: Some(m.db_path),
@@ -662,6 +754,9 @@ impl FactoryComponent for TranscriptRow {
                 session_id: Some(tc.session_id.clone()),
                 reasoning_preview: Some(tc.reasoning_preview),
                 kind: TranscriptRowKind::ToolCall,
+                request_id: tc.request_id,
+                hydrated: false,
+                placeholder_height_request: TOOL_CALL_PLACEHOLDER_HEIGHT_PX,
                 preview: None,
                 highlight_query: None,
                 db_path: None,
@@ -685,6 +780,9 @@ impl FactoryComponent for TranscriptRow {
                 session_id: None,
                 reasoning_preview: None,
                 kind: TranscriptRowKind::ToolBurst,
+                request_id: tb.request_id,
+                hydrated: tb.default_expanded,
+                placeholder_height_request: TOOL_BURST_HEADER_HEIGHT_PX,
                 preview: None,
                 highlight_query: None,
                 db_path: None,
@@ -708,6 +806,9 @@ impl FactoryComponent for TranscriptRow {
                 session_id: Some(sa.session_id),
                 reasoning_preview: Some(sa.reasoning_preview),
                 kind: TranscriptRowKind::Subagent,
+                request_id: sa.request_id,
+                hydrated: true,
+                placeholder_height_request: SUBAGENT_PLACEHOLDER_HEIGHT_PX,
                 preview: None,
                 highlight_query: None,
                 db_path: None,
@@ -856,6 +957,8 @@ impl FactoryComponent for TranscriptRow {
                 }
                 TranscriptRowKind::Message => {}
             },
+            TranscriptRowMsg::ToggleToolBurst => {}
+            TranscriptRowMsg::HydrateDeferredContent { .. } => {}
         }
     }
 
@@ -904,6 +1007,14 @@ impl FactoryComponent for TranscriptRow {
 }
 
 impl TranscriptRow {
+    pub fn item_index(&self) -> usize {
+        self.item_index
+    }
+
+    pub fn is_hydrated(&self) -> bool {
+        self.hydrated
+    }
+
     /// Build the widget tree for a message transcript item.
     fn build_message_widgets(
         &mut self,
@@ -1059,6 +1170,7 @@ impl TranscriptRow {
             duration_ms: self.tool_duration_ms,
             highlight_query: self.tool_highlight_query.clone(),
             reasoning_preview: self.reasoning_preview.unwrap_or_default(),
+            request_id: self.request_id,
         };
 
         let build_started_at = Instant::now();
@@ -1351,6 +1463,7 @@ fn transcript_item_init_from_row(
         session_id,
         highlight_query,
         db_path,
+        1,
     )
 }
 
@@ -1360,6 +1473,7 @@ fn transcript_item_init_from_row_with_index(
     session_id: &str,
     highlight_query: Option<String>,
     db_path: Arc<PathBuf>,
+    request_id: u64,
 ) -> TranscriptItemInit {
     use crate::models::{ToolCallStatus, TranscriptItemKind};
 
@@ -1388,6 +1502,7 @@ fn transcript_item_init_from_row_with_index(
                 },
                 highlight_query,
                 db_path,
+                request_id,
             })
         }
         TranscriptItemKind::ToolCall => TranscriptItemInit::ToolCall(ToolCallItemInit {
@@ -1410,6 +1525,7 @@ fn transcript_item_init_from_row_with_index(
             duration_ms: row.duration_ms,
             highlight_query,
             reasoning_preview: row.reasoning_preview,
+            request_id,
         }),
         TranscriptItemKind::Subagent => TranscriptItemInit::Subagent(SubagentItemInit {
             item_index,
@@ -1421,6 +1537,7 @@ fn transcript_item_init_from_row_with_index(
                 .clone()
                 .unwrap_or_else(|| "Subagent".to_string()),
             reasoning_preview: row.reasoning_preview,
+            request_id,
         }),
         TranscriptItemKind::Unknown => {
             tracing::warn!(
@@ -1442,6 +1559,7 @@ fn transcript_item_init_from_row_with_index(
                 },
                 highlight_query,
                 db_path,
+                request_id,
             })
         }
     }
@@ -1453,6 +1571,7 @@ pub fn transcript_item_init_from_display_item(
     session_id: &str,
     highlight_query: Option<String>,
     db_path: Arc<PathBuf>,
+    request_id: u64,
 ) -> TranscriptItemInit {
     match item {
         crate::ui::transcript_display::DisplayTranscriptItem::Single(row) => {
@@ -1462,6 +1581,7 @@ pub fn transcript_item_init_from_display_item(
                 session_id,
                 highlight_query,
                 db_path,
+                request_id,
             )
         }
         crate::ui::transcript_display::DisplayTranscriptItem::ToolBurst(burst) => {
@@ -1475,6 +1595,7 @@ pub fn transcript_item_init_from_display_item(
                         session_id,
                         highlight_query.clone(),
                         db_path.clone(),
+                        request_id,
                     ) {
                         TranscriptItemInit::ToolCall(tool_call) => Some(tool_call),
                         other => {
@@ -1488,7 +1609,12 @@ pub fn transcript_item_init_from_display_item(
                     }
                 })
                 .collect();
-            TranscriptItemInit::ToolBurst(build_tool_burst_init(display_index, tool_calls, false))
+            TranscriptItemInit::ToolBurst(build_tool_burst_init(
+                display_index,
+                tool_calls,
+                false,
+                request_id,
+            ))
         }
     }
 }
@@ -1589,6 +1715,7 @@ mod tests {
             duration_ms: Some(12),
             highlight_query: Some("read".to_string()),
             reasoning_preview: ReasoningPreview::default(),
+            request_id: 1,
         };
         // Only "Read" in tool_name matches; preview has no "read", summary is hidden.
         assert_eq!(count_tool_call_matches(&with_preview), 1);
@@ -1606,6 +1733,7 @@ mod tests {
             duration_ms: Some(12),
             highlight_query: Some("read".to_string()),
             reasoning_preview: ReasoningPreview::default(),
+            request_id: 1,
         };
         // "Read" in tool_name + "read" in summary fallback = 2.
         assert_eq!(count_tool_call_matches(&with_summary_fallback), 2);
@@ -1630,6 +1758,7 @@ mod tests {
                     has_visible_reasoning: true,
                     encrypted_only: false,
                 },
+                request_id: 1,
             },
             |_| {},
             |_, _| {},
@@ -1759,6 +1888,7 @@ mod tests {
                 duration_ms: Some(5),
                 highlight_query: Some("read".to_string()),
                 reasoning_preview: ReasoningPreview::default(),
+                request_id: 1,
             },
             ToolCallItemInit {
                 item_index: 2,
@@ -1772,10 +1902,11 @@ mod tests {
                 duration_ms: Some(8),
                 highlight_query: Some("edit".to_string()),
                 reasoning_preview: ReasoningPreview::default(),
+                request_id: 1,
             },
         ];
 
-        let burst = build_tool_burst_init(10, tool_calls, false);
+        let burst = build_tool_burst_init(10, tool_calls, false, 1);
         assert_eq!(burst.error_count, 1);
         assert_eq!(burst.total_duration_ms, Some(13));
         assert_eq!(burst.match_count, 4);
@@ -1828,6 +1959,7 @@ mod tests {
             "session-1",
             None,
             Arc::new(PathBuf::from("/tmp/test.db")),
+            1,
         );
 
         let TranscriptItemInit::ToolBurst(burst_init) = init else {
@@ -1951,5 +2083,84 @@ mod tests {
             preview_from_row(&row).as_deref(),
             Some("fallback summary from db")
         );
+    }
+
+    #[test]
+    fn transcript_item_init_from_display_item_carries_request_id() {
+        let item = crate::ui::transcript_display::DisplayTranscriptItem::Single(Box::new(
+            crate::database::TranscriptItemRow {
+                item_index: 42,
+                kind: crate::models::TranscriptItemKind::Message,
+                reasoning_preview: crate::models::ReasoningPreview::default(),
+                message_index: Some(42),
+                role: Some(Role::Assistant),
+                content_preview: Some("hello".to_string()),
+                content_len: Some(5),
+                timestamp: Some(0),
+                model: Some("test-model".to_string()),
+                tool_call_id: None,
+                tool_name: None,
+                tool_status: None,
+                tool_summary: None,
+                tool_input_json: None,
+                tool_output_text: None,
+                duration_ms: None,
+                subagent_id: None,
+                subagent_title: None,
+                subagent_prompt: None,
+            },
+        ));
+
+        let init = transcript_item_init_from_display_item(
+            3,
+            &item,
+            "session-1",
+            None,
+            Arc::new(PathBuf::from("/tmp/test.db")),
+            99,
+        );
+
+        assert_eq!(init.request_id(), 99);
+    }
+
+    #[test]
+    fn message_placeholder_height_biases_assistant_rows_upward() {
+        let user_preview = MessagePreview {
+            session_id: "session-1".to_string(),
+            message_index: 1,
+            role: Role::User,
+            content_preview: "short question".to_string(),
+            content_len: 14,
+            timestamp: Utc.timestamp_opt(0, 0).single().unwrap(),
+            model: None,
+            reasoning_preview: ReasoningPreview::default(),
+        };
+        let assistant_preview = MessagePreview {
+            role: Role::Assistant,
+            model: Some("test-model".to_string()),
+            ..user_preview.clone()
+        };
+
+        assert!(
+            estimate_message_placeholder_height(&assistant_preview)
+                > estimate_message_placeholder_height(&user_preview)
+        );
+    }
+
+    #[test]
+    fn placeholder_height_caps_very_long_message_previews() {
+        let preview = MessagePreview {
+            session_id: "session-1".to_string(),
+            message_index: 1,
+            role: Role::Assistant,
+            content_preview: "very long assistant line ".repeat(500),
+            content_len: 12_000,
+            timestamp: Utc.timestamp_opt(0, 0).single().unwrap(),
+            model: Some("test-model".to_string()),
+            reasoning_preview: ReasoningPreview::default(),
+        };
+
+        assert_eq!(estimate_message_placeholder_lines(&preview), 24);
+        assert_eq!(estimate_message_placeholder_height(&preview), 24 * 22 + 56);
     }
 }
