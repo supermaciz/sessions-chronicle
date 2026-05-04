@@ -39,6 +39,7 @@ const HYDRATION_TICK_DELAY_MS: u64 = 16;
 const VIEWPORT_MARGIN_MULTIPLIER: f64 = 1.5;
 const SCROLL_DEBOUNCE_MS: u64 = 60;
 const RESIZE_DEBOUNCE_MS: u64 = 120;
+const HYDRATION_COMPENSATION_SCROLL_EPSILON: f64 = 1.0;
 
 /// Detail view for a single indexed session.
 ///
@@ -67,6 +68,7 @@ pub struct SessionDetail {
     pending_anchor_targets: RefCell<Vec<DeferredHydrationTarget>>,
     deferred_hydration_tick_scheduled: Cell<bool>,
     pending_viewport_hydration_scan: Cell<Option<PendingViewportHydrationScan>>,
+    pending_hydration_anchor_compensation: Cell<Option<PendingHydrationAnchorCompensation>>,
     scroll_debounce_scheduled: Cell<bool>,
     resize_debounce_scheduled: Cell<bool>,
     pending_boundary_tool_rows: Vec<crate::database::TranscriptItemRow>,
@@ -183,6 +185,13 @@ struct PendingHydrationAnchor {
 struct PendingViewportHydrationScan {
     request_id: u64,
     reason: DeferredHydrationReason,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct PendingHydrationAnchorCompensation {
+    request_id: u64,
+    pre_value: f64,
+    delta: f64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -393,6 +402,12 @@ pub enum SessionDetailMsg {
     ExecuteDelayedSearchScroll {
         request_id: u64,
         target: ScrollTarget,
+    },
+    ApplyHydrationAnchorCompensation {
+        request_id: u64,
+        pre_value: f64,
+        delta: f64,
+        observed_value: f64,
     },
     Clear,
     InspectToolCall(String),
@@ -1004,6 +1019,7 @@ impl Component for SessionDetail {
             pending_anchor_targets: RefCell::new(Vec::new()),
             deferred_hydration_tick_scheduled: Cell::new(false),
             pending_viewport_hydration_scan: Cell::new(None),
+            pending_hydration_anchor_compensation: Cell::new(None),
             scroll_debounce_scheduled: Cell::new(false),
             resize_debounce_scheduled: Cell::new(false),
             pending_boundary_tool_rows: Vec::new(),
@@ -1336,6 +1352,39 @@ impl Component for SessionDetail {
                         "Dropping stale delayed search scroll callback"
                     );
                 }
+            }
+            SessionDetailMsg::ApplyHydrationAnchorCompensation {
+                request_id,
+                pre_value,
+                delta,
+                observed_value,
+            } => {
+                if !Self::should_apply_hydration_anchor_compensation(
+                    request_id,
+                    self.transcript_request_id,
+                    pre_value,
+                    observed_value,
+                    HYDRATION_COMPENSATION_SCROLL_EPSILON,
+                ) {
+                    tracing::debug!(
+                        request_id,
+                        current_request_id = self.transcript_request_id,
+                        pre_value,
+                        observed_value,
+                        delta,
+                        epsilon = HYDRATION_COMPENSATION_SCROLL_EPSILON,
+                        "Skipping hydration anchor compensation"
+                    );
+                    return;
+                }
+
+                self.pending_hydration_anchor_compensation.set(Some(
+                    PendingHydrationAnchorCompensation {
+                        request_id,
+                        pre_value,
+                        delta,
+                    },
+                ));
             }
             SessionDetailMsg::ClearSearch => {
                 self.search_query = None;
@@ -1682,6 +1731,32 @@ impl Component for SessionDetail {
             self.schedule_hydration_anchor_compensation(widgets, anchor);
         }
 
+        if let Some(pending_compensation) = self.pending_hydration_anchor_compensation.take() {
+            if pending_compensation.request_id != self.transcript_request_id {
+                tracing::debug!(
+                    request_id = pending_compensation.request_id,
+                    current_request_id = self.transcript_request_id,
+                    "Dropping stale hydration anchor compensation"
+                );
+            } else {
+                let vadj = widgets.transcript_scrolled_window.vadjustment();
+                let anchored_value = Self::compute_anchored_scroll_value(
+                    pending_compensation.pre_value,
+                    pending_compensation.delta,
+                    vadj.lower(),
+                    vadj.upper(),
+                    vadj.page_size(),
+                );
+                vadj.set_value(anchored_value);
+                tracing::debug!(
+                    request_id = pending_compensation.request_id,
+                    delta = pending_compensation.delta,
+                    anchored_value,
+                    "Anchored transcript scroll on hydration"
+                );
+            }
+        }
+
         if let Some(scan) = self.pending_viewport_hydration_scan.take() {
             self.queue_visible_deferred_hydration(widgets, scan);
             self.schedule_hydration_drain();
@@ -1884,6 +1959,7 @@ impl SessionDetail {
         self.pending_anchor_targets.borrow_mut().clear();
         self.deferred_hydration_tick_scheduled.set(false);
         self.pending_viewport_hydration_scan.set(None);
+        self.pending_hydration_anchor_compensation.set(None);
         self.scroll_debounce_scheduled.set(false);
         self.resize_debounce_scheduled.set(false);
         self.pending_search_hydration_target = None;
@@ -1919,6 +1995,20 @@ impl SessionDetail {
     ) -> f64 {
         let max_value = (upper - page_size).max(lower);
         (pre_value + delta).clamp(lower, max_value)
+    }
+
+    fn should_apply_hydration_anchor_compensation(
+        request_id: u64,
+        transcript_request_id: u64,
+        pre_value: f64,
+        observed_value: f64,
+        epsilon: f64,
+    ) -> bool {
+        if request_id != transcript_request_id {
+            return false;
+        }
+
+        (observed_value - pre_value).abs() <= epsilon
     }
 
     fn capture_hydration_anchor(
@@ -1987,6 +2077,7 @@ impl SessionDetail {
         let tick_count = Cell::new(0u8);
         let messages_widget = self.messages.widget().clone();
         let vadj = widgets.transcript_scrolled_window.vadjustment();
+        let input_sender = self.input_sender.clone();
         widgets.scroll_child.add_tick_callback(move |_, _| {
             let ticks = tick_count.get().saturating_add(1);
             tick_count.set(ticks);
@@ -2008,19 +2099,14 @@ impl SessionDetail {
             }
 
             if delta != 0.0 {
-                let anchored_value = Self::compute_anchored_scroll_value(
-                    anchor.pre_value,
-                    delta,
-                    vadj.lower(),
-                    vadj.upper(),
-                    vadj.page_size(),
-                );
-                vadj.set_value(anchored_value);
-                tracing::debug!(
-                    request_id = anchor.request_id,
-                    delta,
-                    "Anchored transcript scroll on hydration"
-                );
+                input_sender
+                    .send(SessionDetailMsg::ApplyHydrationAnchorCompensation {
+                        request_id: anchor.request_id,
+                        pre_value: anchor.pre_value,
+                        delta,
+                        observed_value: vadj.value(),
+                    })
+                    .ok();
             }
             glib::ControlFlow::Break
         });
@@ -4113,6 +4199,35 @@ fn synthetic_measurement(input: &str) -> String {\n\
         ));
         assert!(!SessionDetail::row_is_strictly_above_viewport(
             65.0, 20.0, 60.0
+        ));
+    }
+
+    #[test]
+    fn stale_hydration_anchor_compensation_is_ignored_after_request_change() {
+        assert!(!SessionDetail::should_apply_hydration_anchor_compensation(
+            10,
+            11,
+            160.0,
+            160.0,
+            HYDRATION_COMPENSATION_SCROLL_EPSILON,
+        ));
+    }
+
+    #[test]
+    fn hydration_anchor_compensation_is_skipped_after_user_scroll_change() {
+        assert!(!SessionDetail::should_apply_hydration_anchor_compensation(
+            10,
+            10,
+            160.0,
+            166.0,
+            HYDRATION_COMPENSATION_SCROLL_EPSILON,
+        ));
+        assert!(SessionDetail::should_apply_hydration_anchor_compensation(
+            10,
+            10,
+            160.0,
+            160.5,
+            HYDRATION_COMPENSATION_SCROLL_EPSILON,
         ));
     }
 
