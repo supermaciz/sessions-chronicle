@@ -76,8 +76,10 @@ pub struct SessionDetail {
     pending_jump: Option<usize>,
     loading_jump: bool,
     pending_search_hydration_target: Option<ScrollTarget>,
+    pending_search_hydration_item_index: Option<usize>,
     search_request_id: u64,
     pending_scroll_after_layout: Cell<Option<ScrollTarget>>,
+    pending_delayed_search_scroll: Cell<Option<PendingDelayedSearchScroll>>,
     pending_toast: Cell<bool>,
     inspector: Controller<ToolInspectorPane>,
     inspector_open: bool,
@@ -89,7 +91,7 @@ pub struct SessionDetail {
 /// `child_index` is present, the target is a child entry inside an expanded
 /// burst row rather than the row container itself.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct ScrollTarget {
+pub(crate) struct ScrollTarget {
     display_index: usize,
     child_index: Option<usize>,
 }
@@ -167,6 +169,12 @@ struct DeferredHydrationTarget {
 struct PendingViewportHydrationScan {
     request_id: u64,
     reason: DeferredHydrationReason,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct PendingDelayedSearchScroll {
+    request_id: u64,
+    target: ScrollTarget,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -367,6 +375,10 @@ pub enum SessionDetailMsg {
     },
     DrainDeferredHydration {
         request_id: u64,
+    },
+    ExecuteDelayedSearchScroll {
+        request_id: u64,
+        target: ScrollTarget,
     },
     Clear,
     InspectToolCall(String),
@@ -987,8 +999,10 @@ impl Component for SessionDetail {
             pending_jump: None,
             loading_jump: false,
             pending_search_hydration_target: None,
+            pending_search_hydration_item_index: None,
             search_request_id: 0,
             pending_scroll_after_layout: Cell::new(None),
+            pending_delayed_search_scroll: Cell::new(None),
             pending_toast: Cell::new(false),
             inspector,
             inspector_open: false,
@@ -1235,6 +1249,7 @@ impl Component for SessionDetail {
                 );
                 if reason == DeferredHydrationReason::SearchTarget
                     && self.pending_search_hydration_target.is_some()
+                    && self.pending_search_hydration_item_index == Some(item_index)
                 {
                     self.continue_pending_jump(&sender);
                 }
@@ -1293,6 +1308,19 @@ impl Component for SessionDetail {
             }
             SessionDetailMsg::DrainDeferredHydration { request_id } => {
                 self.drain_deferred_hydration_batch(request_id);
+            }
+            SessionDetailMsg::ExecuteDelayedSearchScroll { request_id, target } => {
+                if request_id == self.transcript_request_id {
+                    self.pending_delayed_search_scroll
+                        .set(Some(PendingDelayedSearchScroll { request_id, target }));
+                } else {
+                    tracing::debug!(
+                        request_id,
+                        current_request_id = self.transcript_request_id,
+                        display_index = target.display_index,
+                        "Dropping stale delayed search scroll callback"
+                    );
+                }
             }
             SessionDetailMsg::ClearSearch => {
                 self.search_query = None;
@@ -1635,78 +1663,88 @@ impl Component for SessionDetail {
         }
 
         if let Some(target) = self.pending_scroll_after_layout.take() {
-            let messages_widget = self.messages.widget().clone();
-            let scroll_child = widgets.scroll_child.clone();
+            let input_sender = self.input_sender.clone();
             let layout_barrier = PendingLayoutBarrier::new(self.transcript_request_id, target);
             widgets.scroll_child.add_tick_callback(move |_, _| {
                 if layout_barrier.next_tick() == glib::ControlFlow::Continue {
                     return glib::ControlFlow::Continue;
                 }
 
-                let target = layout_barrier.target;
-                let Some(row_widget) = messages_widget
-                    .observe_children()
-                    .item(target.display_index as u32)
-                    .and_then(|obj| obj.downcast::<gtk::Widget>().ok())
-                else {
-                    tracing::warn!(
-                        request_id = layout_barrier.request_id,
-                        display_index = target.display_index,
-                        "Abandoning delayed search scroll: target row missing after layout barrier"
-                    );
-                    return glib::ControlFlow::Break;
-                };
-
-                if row_widget.height() <= 0 {
-                    tracing::warn!(
-                        request_id = layout_barrier.request_id,
-                        display_index = target.display_index,
-                        "Abandoning delayed search scroll: target row has zero height after layout barrier"
-                    );
-                    return glib::ControlFlow::Break;
-                }
-
-                if let Some(child_index) = target.child_index
-                    && let Some((header_button, revealer)) =
-                        Self::tool_burst_header_and_revealer(&row_widget)
-                {
-                    if !revealer.reveals_child() {
-                        header_button.emit_clicked();
-                    }
-                    let scroll_child_for_tick = scroll_child.clone();
-                    let revealer_for_tick = revealer.clone();
-                    let tick_count = std::cell::Cell::new(0u32);
-                    revealer.add_tick_callback(move |_, _| {
-                        let ticks = tick_count.get() + 1;
-                        tick_count.set(ticks);
-                        if ticks > 60 {
-                            return glib::ControlFlow::Break;
-                        }
-
-                        let Some(child_box) = revealer_for_tick
-                            .child()
-                            .and_then(|w| w.downcast::<gtk::Box>().ok())
-                        else {
-                            return glib::ControlFlow::Break;
-                        };
-
-                        let Some(child_widget) = child_box
-                            .observe_children()
-                            .item(child_index as u32)
-                            .and_then(|obj| obj.downcast::<gtk::Widget>().ok())
-                        else {
-                            return glib::ControlFlow::Continue;
-                        };
-
-                        Self::scroll_widget_into_view(&child_widget, &scroll_child_for_tick);
-                        glib::ControlFlow::Break
-                    });
-                    return glib::ControlFlow::Break;
-                }
-
-                Self::scroll_widget_into_view(&row_widget, &scroll_child);
+                input_sender
+                    .send(SessionDetailMsg::ExecuteDelayedSearchScroll {
+                        request_id: layout_barrier.request_id,
+                        target: layout_barrier.target,
+                    })
+                    .ok();
                 glib::ControlFlow::Break
             });
+        }
+
+        if let Some(pending_scroll) = self.pending_delayed_search_scroll.take() {
+            let target = pending_scroll.target;
+            let messages_widget = self.messages.widget().clone();
+            let scroll_child = widgets.scroll_child.clone();
+            let Some(row_widget) = messages_widget
+                .observe_children()
+                .item(target.display_index as u32)
+                .and_then(|obj| obj.downcast::<gtk::Widget>().ok())
+            else {
+                tracing::warn!(
+                    request_id = pending_scroll.request_id,
+                    display_index = target.display_index,
+                    "Abandoning delayed search scroll: target row missing after layout barrier"
+                );
+                return;
+            };
+
+            if row_widget.height() <= 0 {
+                tracing::warn!(
+                    request_id = pending_scroll.request_id,
+                    display_index = target.display_index,
+                    "Abandoning delayed search scroll: target row has zero height after layout barrier"
+                );
+                return;
+            }
+
+            if let Some(child_index) = target.child_index
+                && let Some((header_button, revealer)) =
+                    Self::tool_burst_header_and_revealer(&row_widget)
+            {
+                if !revealer.reveals_child() {
+                    header_button.emit_clicked();
+                }
+                let scroll_child_for_tick = scroll_child.clone();
+                let revealer_for_tick = revealer.clone();
+                let tick_count = std::cell::Cell::new(0u32);
+                revealer.add_tick_callback(move |_, _| {
+                    let ticks = tick_count.get() + 1;
+                    tick_count.set(ticks);
+                    if ticks > 60 {
+                        return glib::ControlFlow::Break;
+                    }
+
+                    let Some(child_box) = revealer_for_tick
+                        .child()
+                        .and_then(|w| w.downcast::<gtk::Box>().ok())
+                    else {
+                        return glib::ControlFlow::Break;
+                    };
+
+                    let Some(child_widget) = child_box
+                        .observe_children()
+                        .item(child_index as u32)
+                        .and_then(|obj| obj.downcast::<gtk::Widget>().ok())
+                    else {
+                        return glib::ControlFlow::Continue;
+                    };
+
+                    Self::scroll_widget_into_view(&child_widget, &scroll_child_for_tick);
+                    glib::ControlFlow::Break
+                });
+                return;
+            }
+
+            Self::scroll_widget_into_view(&row_widget, &scroll_child);
         }
     }
 }
@@ -1823,7 +1861,9 @@ impl SessionDetail {
         self.scroll_debounce_scheduled.set(false);
         self.resize_debounce_scheduled.set(false);
         self.pending_search_hydration_target = None;
+        self.pending_search_hydration_item_index = None;
         self.pending_scroll_after_layout.set(None);
+        self.pending_delayed_search_scroll.set(None);
     }
 
     fn row_intersects_hydration_window(
@@ -2665,7 +2705,9 @@ impl SessionDetail {
         self.pending_jump = None;
         self.loading_jump = false;
         self.pending_search_hydration_target = None;
+        self.pending_search_hydration_item_index = None;
         self.pending_scroll_after_layout.set(None);
+        self.pending_delayed_search_scroll.set(None);
     }
 
     fn loaded_match_count(&self) -> usize {
@@ -2725,11 +2767,13 @@ impl SessionDetail {
                 self.pending_jump = None;
                 self.loading_jump = false;
                 self.pending_search_hydration_target = None;
+                self.pending_search_hydration_item_index = None;
                 return;
             };
 
             if !self.deferred_hydrated_items.contains(&item_index) {
                 self.pending_search_hydration_target = Some(scroll_target);
+                self.pending_search_hydration_item_index = Some(item_index);
                 self.queue_deferred_hydration_target(DeferredHydrationTarget {
                     request_id: self.transcript_request_id,
                     display_index: scroll_target.display_index,
@@ -2743,6 +2787,7 @@ impl SessionDetail {
             self.pending_jump = None;
             self.loading_jump = false;
             self.pending_search_hydration_target = None;
+            self.pending_search_hydration_item_index = None;
             self.pending_scroll_after_layout.set(Some(scroll_target));
         } else if (position.item_index as usize) >= self.loaded_count && self.has_more_messages {
             self.load_next_page(sender);
@@ -2754,6 +2799,7 @@ impl SessionDetail {
             );
             self.pending_jump = None;
             self.loading_jump = false;
+            self.pending_search_hydration_item_index = None;
         } else {
             debug_assert!(
                 false,
@@ -2767,6 +2813,7 @@ impl SessionDetail {
             );
             self.pending_jump = None;
             self.loading_jump = false;
+            self.pending_search_hydration_item_index = None;
         }
     }
 
@@ -3565,6 +3612,7 @@ fn synthetic_measurement(input: &str) -> String {\n\
             assert_eq!(parts.model.pending_jump, Some(0));
             assert!(parts.model.loading_jump);
             assert!(parts.model.pending_search_hydration_target.is_some());
+            assert_eq!(parts.model.pending_search_hydration_item_index, Some(70));
             assert!(parts.model.pending_scroll_after_layout.get().is_none());
         }
 
@@ -3586,7 +3634,78 @@ fn synthetic_measurement(input: &str) -> String {\n\
         assert_eq!(parts.model.pending_jump, None);
         assert!(!parts.model.loading_jump);
         assert!(parts.model.pending_search_hydration_target.is_none());
+        assert!(parts.model.pending_search_hydration_item_index.is_none());
         assert!(parts.model.deferred_hydrated_items.contains(&70));
+    }
+
+    #[gtk::test]
+    fn stale_delayed_search_scroll_callback_is_ignored_after_request_change() {
+        let temp_db = tempfile::NamedTempFile::new().expect("temp db");
+        seed_message_transcript(temp_db.path(), "test-session-123", INITIAL_PAGE_SIZE);
+
+        let controller = SessionDetail::builder().launch(temp_db.path().to_path_buf());
+        controller.emit(SessionDetailMsg::SetSession {
+            session: Box::new(build_test_session(None, None, 0, 0, 0)),
+            search_query: None,
+        });
+
+        pump_main_context(|| {
+            let parts = controller.state().get();
+            !parts.model.loading_first_page && parts.model.pending_render_batch.is_none()
+        });
+
+        let stale_request_id = controller.state().get().model.transcript_request_id;
+        controller.emit(SessionDetailMsg::Clear);
+        pump_main_context(|| controller.state().get().model.session.is_none());
+
+        controller.emit(SessionDetailMsg::ExecuteDelayedSearchScroll {
+            request_id: stale_request_id,
+            target: ScrollTarget {
+                display_index: 0,
+                child_index: None,
+            },
+        });
+        pump_main_context(|| true);
+
+        let parts = controller.state().get();
+        assert!(parts.model.pending_delayed_search_scroll.get().is_none());
+    }
+
+    #[gtk::test]
+    fn search_target_hydration_resume_requires_matching_item_index() {
+        let temp_db = tempfile::NamedTempFile::new().expect("temp db");
+        seed_search_transcript(temp_db.path(), "test-session-123", INITIAL_PAGE_SIZE, &[70]);
+
+        let controller = SessionDetail::builder().launch(temp_db.path().to_path_buf());
+        controller.emit(SessionDetailMsg::SetSession {
+            session: Box::new(build_test_session(None, None, 0, 0, 0)),
+            search_query: Some("needle".to_string()),
+        });
+
+        pump_main_context_for(Duration::from_secs(5), || {
+            controller
+                .state()
+                .get()
+                .model
+                .pending_search_hydration_item_index
+                == Some(70)
+        });
+
+        let request_id = controller.state().get().model.transcript_request_id;
+        controller.emit(SessionDetailMsg::DeferredContentHydrated {
+            request_id,
+            item_index: 71,
+            kind: TranscriptRowBuildKind::Message,
+            reason: DeferredHydrationReason::SearchTarget,
+            duration_ms: 1,
+        });
+        pump_main_context(|| true);
+
+        let parts = controller.state().get();
+        assert_eq!(parts.model.pending_jump, Some(0));
+        assert!(parts.model.loading_jump);
+        assert_eq!(parts.model.pending_search_hydration_item_index, Some(70));
+        assert!(parts.model.pending_scroll_after_layout.get().is_none());
     }
 
     #[test]
