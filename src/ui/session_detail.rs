@@ -1,4 +1,4 @@
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -34,6 +34,11 @@ const RENDER_BATCH_SIZE: usize = 3;
 const RENDER_BATCH_DELAY_MS: u64 = 16;
 const DEFERRED_FIRST_PAGE_LOAD_DELAY_MS: u64 = 250;
 const DEFERRED_CLEAR_DELAY_MS: u64 = 250;
+const HYDRATION_BATCH_SIZE: usize = 2;
+const HYDRATION_TICK_DELAY_MS: u64 = 16;
+const VIEWPORT_MARGIN_MULTIPLIER: f64 = 1.5;
+const SCROLL_DEBOUNCE_MS: u64 = 60;
+const RESIZE_DEBOUNCE_MS: u64 = 120;
 
 /// Detail view for a single indexed session.
 ///
@@ -56,6 +61,13 @@ pub struct SessionDetail {
     pending_render_batch: Option<PendingRenderBatch>,
     last_render_metrics: Option<RenderMetrics>,
     deferred_hydrated_items: BTreeSet<usize>,
+    input_sender: relm4::Sender<SessionDetailMsg>,
+    deferred_hydration_queue: RefCell<VecDeque<DeferredHydrationTarget>>,
+    deferred_hydration_queued_items: RefCell<BTreeSet<usize>>,
+    deferred_hydration_tick_scheduled: Cell<bool>,
+    pending_viewport_hydration_scan: Cell<Option<PendingViewportHydrationScan>>,
+    scroll_debounce_scheduled: Cell<bool>,
+    resize_debounce_scheduled: Cell<bool>,
     pending_boundary_tool_rows: Vec<crate::database::TranscriptItemRow>,
     search_query: Option<String>,
     match_positions: Vec<crate::database::MatchPosition>,
@@ -113,6 +125,20 @@ struct PendingRenderBatch {
     items: VecDeque<TranscriptItemInit>,
     first_page_load_to_factory_push_ms: Option<u128>,
     push_complete: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct DeferredHydrationTarget {
+    request_id: u64,
+    display_index: usize,
+    item_index: usize,
+    reason: DeferredHydrationReason,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct PendingViewportHydrationScan {
+    request_id: u64,
+    reason: DeferredHydrationReason,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -303,6 +329,17 @@ pub enum SessionDetailMsg {
         reason: DeferredHydrationReason,
         duration_ms: u128,
     },
+    ScrollPositionChanged,
+    ViewportSizeChanged,
+    RunScrollDebouncedHydrationScan {
+        request_id: u64,
+    },
+    RunResizeDebouncedHydrationScan {
+        request_id: u64,
+    },
+    DrainDeferredHydration {
+        request_id: u64,
+    },
     Clear,
     InspectToolCall(String),
     InspectSubagent(String),
@@ -428,6 +465,7 @@ impl Component for SessionDetail {
                         set_show_sidebar: model.inspector_open,
 
                     #[wrap(Some)]
+                    #[name = "transcript_scrolled_window"]
                     set_content = &gtk::ScrolledWindow {
                         set_vexpand: true,
                         set_hscrollbar_policy: gtk::PolicyType::Never,
@@ -906,6 +944,13 @@ impl Component for SessionDetail {
             pending_render_batch: None,
             last_render_metrics: None,
             deferred_hydrated_items: BTreeSet::new(),
+            input_sender: sender.input_sender().clone(),
+            deferred_hydration_queue: RefCell::new(VecDeque::new()),
+            deferred_hydration_queued_items: RefCell::new(BTreeSet::new()),
+            deferred_hydration_tick_scheduled: Cell::new(false),
+            pending_viewport_hydration_scan: Cell::new(None),
+            scroll_debounce_scheduled: Cell::new(false),
+            resize_debounce_scheduled: Cell::new(false),
             pending_boundary_tool_rows: Vec::new(),
             search_query: None,
             match_positions: Vec::new(),
@@ -942,6 +987,26 @@ impl Component for SessionDetail {
                     ))
                     .ok();
             });
+
+        let scroll_sender = sender.input_sender().clone();
+        let vadjustment = widgets.transcript_scrolled_window.vadjustment();
+        vadjustment.connect_value_changed(move |_| {
+            scroll_sender
+                .send(SessionDetailMsg::ScrollPositionChanged)
+                .ok();
+        });
+        let viewport_sender = sender.input_sender().clone();
+        vadjustment.connect_page_size_notify(move |_| {
+            viewport_sender
+                .send(SessionDetailMsg::ViewportSizeChanged)
+                .ok();
+        });
+        let resize_sender = sender.input_sender().clone();
+        widgets.scroll_child.connect_width_request_notify(move |_| {
+            resize_sender
+                .send(SessionDetailMsg::ViewportSizeChanged)
+                .ok();
+        });
 
         ComponentParts { model, widgets }
     }
@@ -1140,6 +1205,61 @@ impl Component for SessionDetail {
                     "Accepted deferred hydration output"
                 );
                 self.continue_pending_jump(&sender);
+            }
+            SessionDetailMsg::ScrollPositionChanged => {
+                if self.scroll_debounce_scheduled.get() {
+                    return;
+                }
+                self.scroll_debounce_scheduled.set(true);
+                let input_sender = self.input_sender.clone();
+                let request_id = self.transcript_request_id;
+                glib::timeout_add_local_once(
+                    Duration::from_millis(SCROLL_DEBOUNCE_MS),
+                    move || {
+                        input_sender
+                            .send(SessionDetailMsg::RunScrollDebouncedHydrationScan { request_id })
+                            .ok();
+                    },
+                );
+            }
+            SessionDetailMsg::ViewportSizeChanged => {
+                if self.resize_debounce_scheduled.get() {
+                    return;
+                }
+                self.resize_debounce_scheduled.set(true);
+                let input_sender = self.input_sender.clone();
+                let request_id = self.transcript_request_id;
+                glib::timeout_add_local_once(
+                    Duration::from_millis(RESIZE_DEBOUNCE_MS),
+                    move || {
+                        input_sender
+                            .send(SessionDetailMsg::RunResizeDebouncedHydrationScan { request_id })
+                            .ok();
+                    },
+                );
+            }
+            SessionDetailMsg::RunScrollDebouncedHydrationScan { request_id } => {
+                self.scroll_debounce_scheduled.set(false);
+                if request_id == self.transcript_request_id {
+                    self.pending_viewport_hydration_scan
+                        .set(Some(PendingViewportHydrationScan {
+                            request_id,
+                            reason: DeferredHydrationReason::ScrollViewport,
+                        }));
+                }
+            }
+            SessionDetailMsg::RunResizeDebouncedHydrationScan { request_id } => {
+                self.resize_debounce_scheduled.set(false);
+                if request_id == self.transcript_request_id {
+                    self.pending_viewport_hydration_scan
+                        .set(Some(PendingViewportHydrationScan {
+                            request_id,
+                            reason: DeferredHydrationReason::ResizeViewport,
+                        }));
+                }
+            }
+            SessionDetailMsg::DrainDeferredHydration { request_id } => {
+                self.drain_deferred_hydration_batch(request_id);
             }
             SessionDetailMsg::ClearSearch => {
                 self.search_query = None;
@@ -1476,6 +1596,11 @@ impl Component for SessionDetail {
                 .add_toast(adw::Toast::new("Could not load full message."));
         }
 
+        if let Some(scan) = self.pending_viewport_hydration_scan.take() {
+            self.queue_visible_deferred_hydration(widgets, scan);
+            self.schedule_hydration_drain();
+        }
+
         if let Some(target) = self.scroll_to_item.take() {
             let messages_widget = self.messages.widget().clone();
             let scroll_child = widgets.scroll_child.clone();
@@ -1637,6 +1762,51 @@ impl SessionDetail {
         self.pending_render_batch = None;
         self.last_render_metrics = None;
         self.deferred_hydrated_items.clear();
+        self.deferred_hydration_queue.borrow_mut().clear();
+        self.deferred_hydration_queued_items.borrow_mut().clear();
+        self.deferred_hydration_tick_scheduled.set(false);
+        self.pending_viewport_hydration_scan.set(None);
+        self.scroll_debounce_scheduled.set(false);
+        self.resize_debounce_scheduled.set(false);
+    }
+
+    fn row_intersects_hydration_window(
+        row_top: f64,
+        row_height: f64,
+        viewport_top: f64,
+        viewport_page_size: f64,
+        margin_multiplier: f64,
+    ) -> bool {
+        let row_bottom = row_top + row_height;
+        let margin = viewport_page_size * margin_multiplier;
+        let hydration_top = viewport_top - margin;
+        let hydration_bottom = viewport_top + viewport_page_size + margin;
+        row_bottom >= hydration_top && row_top <= hydration_bottom
+    }
+
+    fn queue_deferred_hydration_target(&self, target: DeferredHydrationTarget) {
+        let mut queued_items = self.deferred_hydration_queued_items.borrow_mut();
+        if !queued_items.insert(target.item_index) {
+            return;
+        }
+        self.deferred_hydration_queue.borrow_mut().push_back(target);
+    }
+
+    fn schedule_hydration_drain(&self) {
+        if self.deferred_hydration_tick_scheduled.get()
+            || self.deferred_hydration_queue.borrow().is_empty()
+        {
+            return;
+        }
+
+        self.deferred_hydration_tick_scheduled.set(true);
+        let input_sender = self.input_sender.clone();
+        let request_id = self.transcript_request_id;
+        glib::timeout_add_local_once(Duration::from_millis(HYDRATION_TICK_DELAY_MS), move || {
+            input_sender
+                .send(SessionDetailMsg::DrainDeferredHydration { request_id })
+                .ok();
+        });
     }
 
     fn invalidate_search_requests(&mut self) {
@@ -2142,7 +2312,141 @@ impl SessionDetail {
         if let Some(batch) = self.pending_render_batch.as_ref() {
             self.last_render_metrics = Some(render_metrics_for_batch(batch, total_duration_ms));
         }
+        self.pending_viewport_hydration_scan
+            .set(Some(PendingViewportHydrationScan {
+                request_id,
+                reason: if offset == 0 {
+                    DeferredHydrationReason::InitialViewport
+                } else {
+                    DeferredHydrationReason::ScrollViewport
+                },
+            }));
         self.continue_pending_jump(sender);
+    }
+
+    fn queue_visible_deferred_hydration(
+        &self,
+        widgets: &SessionDetailWidgets,
+        scan: PendingViewportHydrationScan,
+    ) {
+        if scan.request_id != self.transcript_request_id {
+            return;
+        }
+
+        let viewport_top = widgets.transcript_scrolled_window.vadjustment().value();
+        let viewport_page_size = widgets.transcript_scrolled_window.vadjustment().page_size();
+        let mut queued_count = 0usize;
+        let messages_widget = self.messages.widget();
+
+        for display_index in 0..self.messages.len() {
+            let Some(row_widget) = messages_widget
+                .observe_children()
+                .item(display_index as u32)
+                .and_then(|obj| obj.downcast::<gtk::Widget>().ok())
+            else {
+                continue;
+            };
+
+            let Some(row_point) = row_widget
+                .compute_point(&widgets.scroll_child, &gtk::graphene::Point::new(0.0, 0.0))
+            else {
+                continue;
+            };
+
+            let row_top = row_point.y() as f64;
+            let row_height = row_widget.height() as f64;
+            if !Self::row_intersects_hydration_window(
+                row_top,
+                row_height,
+                viewport_top,
+                viewport_page_size,
+                VIEWPORT_MARGIN_MULTIPLIER,
+            ) {
+                continue;
+            }
+
+            let Some(item_index) = self
+                .messages
+                .get(display_index)
+                .map(|item| item.item_index())
+            else {
+                continue;
+            };
+            if self.deferred_hydrated_items.contains(&item_index) {
+                continue;
+            }
+
+            self.queue_deferred_hydration_target(DeferredHydrationTarget {
+                request_id: scan.request_id,
+                display_index,
+                item_index,
+                reason: scan.reason,
+            });
+            queued_count += 1;
+        }
+
+        if queued_count > 0 {
+            tracing::debug!(
+                request_id = scan.request_id,
+                ?scan.reason,
+                queued_count,
+                queue_len = self.deferred_hydration_queue.borrow().len(),
+                "Queued viewport deferred hydration targets"
+            );
+        }
+    }
+
+    fn drain_deferred_hydration_batch(&mut self, request_id: u64) {
+        self.deferred_hydration_tick_scheduled.set(false);
+        if request_id != self.transcript_request_id {
+            self.deferred_hydration_queue.borrow_mut().clear();
+            self.deferred_hydration_queued_items.borrow_mut().clear();
+            return;
+        }
+
+        let started_at = Instant::now();
+        let mut hydrated_count = 0usize;
+        let mut max_row_hydration_duration = Duration::ZERO;
+
+        for _ in 0..HYDRATION_BATCH_SIZE {
+            let Some(target) = self.deferred_hydration_queue.borrow_mut().pop_front() else {
+                break;
+            };
+            self.deferred_hydration_queued_items
+                .borrow_mut()
+                .remove(&target.item_index);
+
+            if target.request_id != self.transcript_request_id
+                || target.display_index >= self.messages.len()
+                || self.deferred_hydrated_items.contains(&target.item_index)
+            {
+                continue;
+            }
+
+            let row_started_at = Instant::now();
+            self.messages.send(
+                target.display_index,
+                TranscriptRowMsg::HydrateDeferredContent {
+                    reason: target.reason,
+                },
+            );
+            let row_duration = row_started_at.elapsed();
+            max_row_hydration_duration = max_row_hydration_duration.max(row_duration);
+            hydrated_count += 1;
+        }
+
+        tracing::debug!(
+            request_id,
+            hydrated_count,
+            duration_ms = started_at.elapsed().as_millis(),
+            max_row_hydration_duration_ms = max_row_hydration_duration.as_millis(),
+            remaining_count = self.deferred_hydration_queue.borrow().len(),
+            "Drained deferred hydration batch"
+        );
+
+        if !self.deferred_hydration_queue.borrow().is_empty() {
+            self.schedule_hydration_drain();
+        }
     }
 
     fn apply_first_page_rows(
@@ -3273,6 +3577,47 @@ fn synthetic_measurement(input: &str) -> String {\n\
 
         let parts = controller.state().get();
         assert!(!parts.model.has_more_messages);
+    }
+
+    #[test]
+    fn viewport_intersection_uses_margin() {
+        let intersects_without_margin =
+            SessionDetail::row_intersects_hydration_window(210.0, 20.0, 0.0, 100.0, 0.0);
+        assert!(!intersects_without_margin);
+
+        let intersects_with_margin =
+            SessionDetail::row_intersects_hydration_window(210.0, 20.0, 0.0, 100.0, 1.5);
+        assert!(intersects_with_margin);
+    }
+
+    #[gtk::test]
+    fn queue_deferred_hydration_deduplicates_targets() {
+        let temp_db = tempfile::NamedTempFile::new().expect("temp db");
+        let controller = SessionDetail::builder().launch(temp_db.path().to_path_buf());
+        pump_main_context(|| true);
+        let parts = controller.state().get();
+
+        let target = DeferredHydrationTarget {
+            request_id: 1,
+            display_index: 0,
+            item_index: 42,
+            reason: DeferredHydrationReason::InitialViewport,
+        };
+        parts.model.queue_deferred_hydration_target(target);
+        parts.model.queue_deferred_hydration_target(target);
+
+        assert_eq!(parts.model.deferred_hydration_queue.borrow().len(), 1);
+        assert_eq!(
+            parts.model.deferred_hydration_queued_items.borrow().len(),
+            1
+        );
+        assert!(
+            parts
+                .model
+                .deferred_hydration_queued_items
+                .borrow()
+                .contains(&42)
+        );
     }
 
     #[gtk::test]
