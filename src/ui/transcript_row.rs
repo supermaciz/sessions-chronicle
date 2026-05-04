@@ -366,14 +366,14 @@ fn estimate_message_placeholder_lines(preview: &MessagePreview) -> usize {
         .filter(|ch| *ch != '\n')
         .count();
     let wrapped_lines = non_newline_chars.div_ceil(MESSAGE_PLACEHOLDER_WRAP_CHARS);
+    let content_lines = explicit_lines.max(wrapped_lines);
     let role_bias = if preview.role == Role::Assistant {
         MESSAGE_PLACEHOLDER_ASSISTANT_EXTRA_LINES
     } else {
         0
     };
 
-    (explicit_lines + wrapped_lines + role_bias)
-        .clamp(MESSAGE_PLACEHOLDER_MIN_LINES, MESSAGE_PLACEHOLDER_MAX_LINES)
+    (content_lines + role_bias).clamp(MESSAGE_PLACEHOLDER_MIN_LINES, MESSAGE_PLACEHOLDER_MAX_LINES)
 }
 
 fn estimate_message_placeholder_height(preview: &MessagePreview) -> i32 {
@@ -2162,5 +2162,38 @@ mod tests {
 
         assert_eq!(estimate_message_placeholder_lines(&preview), 24);
         assert_eq!(estimate_message_placeholder_height(&preview), 24 * 22 + 56);
+    }
+
+    #[test]
+    fn placeholder_lines_do_not_double_count_single_long_line() {
+        let long_line = "x".repeat(MESSAGE_PLACEHOLDER_WRAP_CHARS * 2);
+        let preview = MessagePreview {
+            session_id: "session-1".to_string(),
+            message_index: 1,
+            role: Role::User,
+            content_preview: long_line,
+            content_len: 1_000,
+            timestamp: Utc.timestamp_opt(0, 0).single().unwrap(),
+            model: None,
+            reasoning_preview: ReasoningPreview::default(),
+        };
+
+        assert_eq!(estimate_message_placeholder_lines(&preview), 2);
+    }
+
+    #[test]
+    fn placeholder_lines_keep_explicit_multiline_count_without_wrap_growth() {
+        let preview = MessagePreview {
+            session_id: "session-1".to_string(),
+            message_index: 1,
+            role: Role::User,
+            content_preview: "short\nline".to_string(),
+            content_len: 10,
+            timestamp: Utc.timestamp_opt(0, 0).single().unwrap(),
+            model: None,
+            reasoning_preview: ReasoningPreview::default(),
+        };
+
+        assert_eq!(estimate_message_placeholder_lines(&preview), 2);
     }
 }
