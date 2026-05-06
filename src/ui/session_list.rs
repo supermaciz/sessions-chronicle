@@ -3,6 +3,7 @@ use gtk::glib;
 use relm4::factory::FactoryVecDeque;
 use relm4::{ComponentParts, ComponentSender, SimpleComponent, adw, gtk};
 use std::{
+    collections::VecDeque,
     fmt,
     path::{Path, PathBuf},
     sync::{
@@ -209,6 +210,75 @@ impl ActivePostIndexingMeasurement {
         self.selection_restore_attempted = attempted;
         self.selection_restore_succeeded = succeeded;
         self.ensure_selection_fallback_ran = fallback_ran;
+    }
+}
+
+const POST_INDEXING_RELOAD_BATCH_SIZE: usize = 64;
+
+#[derive(Debug)]
+struct PendingPostIndexingBatch {
+    token: MeasurementToken,
+    remaining_sessions: VecDeque<Session>,
+    total_row_count: usize,
+    previously_selected_id: Option<String>,
+    user_selection_changed: bool,
+}
+
+impl PendingPostIndexingBatch {
+    fn new(
+        token: MeasurementToken,
+        sessions: Vec<Session>,
+        previously_selected_id: Option<String>,
+    ) -> Self {
+        let total_row_count = sessions.len();
+        Self {
+            token,
+            remaining_sessions: sessions.into(),
+            total_row_count,
+            previously_selected_id,
+            user_selection_changed: false,
+        }
+    }
+
+    fn token(&self) -> MeasurementToken {
+        self.token.clone()
+    }
+
+    fn token_matches(&self, token: &MeasurementToken) -> bool {
+        self.token.is_valid() && self.token.same_identity(token)
+    }
+
+    fn invalidate(&self) {
+        self.token.invalidate();
+    }
+
+    fn take_next_rows(&mut self, batch_size: usize) -> Vec<Session> {
+        let take_count = batch_size.min(self.remaining_sessions.len());
+        self.remaining_sessions.drain(..take_count).collect()
+    }
+
+    fn is_exhausted(&self) -> bool {
+        self.remaining_sessions.is_empty()
+    }
+
+    fn remaining_row_count(&self) -> usize {
+        self.remaining_sessions.len()
+    }
+
+    fn total_row_count(&self) -> usize {
+        self.total_row_count
+    }
+
+    fn previously_selected_id(&self) -> Option<&str> {
+        self.previously_selected_id.as_deref()
+    }
+
+    fn user_selection_changed(&self) -> bool {
+        self.user_selection_changed
+    }
+
+    fn mark_user_selection_changed(&mut self) {
+        self.user_selection_changed = true;
     }
 }
 
@@ -1353,6 +1423,58 @@ mod tests {
 
         assert!(!token.is_valid());
         assert!(!stale_callback_token.is_valid());
+    }
+
+    #[test]
+    fn pending_post_indexing_batch_takes_bounded_rows_and_tracks_progress() {
+        let token = MeasurementToken::new();
+        let sessions = vec![
+            make_test_session("batch-1"),
+            make_test_session("batch-2"),
+            make_test_session("batch-3"),
+        ];
+        let mut batch =
+            PendingPostIndexingBatch::new(token.clone(), sessions, Some("batch-2".to_string()));
+
+        assert_eq!(batch.total_row_count(), 3);
+        assert_eq!(batch.remaining_row_count(), 3);
+        assert_eq!(batch.previously_selected_id(), Some("batch-2"));
+        assert!(!batch.is_exhausted());
+
+        let first = batch.take_next_rows(2);
+        assert_eq!(first.len(), 2);
+        assert_eq!(first[0].id, "batch-1");
+        assert_eq!(first[1].id, "batch-2");
+        assert_eq!(batch.remaining_row_count(), 1);
+        assert!(!batch.is_exhausted());
+
+        let second = batch.take_next_rows(2);
+        assert_eq!(second.len(), 1);
+        assert_eq!(second[0].id, "batch-3");
+        assert_eq!(batch.remaining_row_count(), 0);
+        assert!(batch.is_exhausted());
+    }
+
+    #[test]
+    fn pending_post_indexing_batch_invalidates_token_and_records_user_selection_change() {
+        let token = MeasurementToken::new();
+        let callback_token = token.clone();
+        let mut batch = PendingPostIndexingBatch::new(
+            token,
+            vec![make_test_session("batch-1")],
+            Some("batch-1".to_string()),
+        );
+
+        assert!(callback_token.is_valid());
+        assert!(batch.token_matches(&callback_token));
+        assert!(!batch.user_selection_changed());
+
+        batch.mark_user_selection_changed();
+        assert!(batch.user_selection_changed());
+
+        batch.invalidate();
+        assert!(!callback_token.is_valid());
+        assert!(!batch.token_matches(&callback_token));
     }
 
     #[gtk::test]
