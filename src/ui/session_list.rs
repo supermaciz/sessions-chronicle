@@ -1,7 +1,16 @@
 use adw::prelude::*;
+use gtk::glib;
 use relm4::factory::FactoryVecDeque;
 use relm4::{ComponentParts, ComponentSender, SimpleComponent, adw, gtk};
-use std::path::{Path, PathBuf};
+use std::{
+    fmt,
+    path::{Path, PathBuf},
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
+    time::{Duration, Instant},
+};
 
 use crate::database::{
     load_session_by_id_for_filter, load_sessions_for_filter, search_sessions_for_filter,
@@ -20,6 +29,7 @@ pub struct SessionList {
     sessions: FactoryVecDeque<SessionRow>,
     source_results: Vec<PerSourceResult>,
     source_results_available: bool,
+    active_post_indexing_measurement: Option<ActivePostIndexingMeasurement>,
 }
 
 #[derive(Debug)]
@@ -30,6 +40,19 @@ pub enum SessionListMsg {
     },
     SetSearchQuery(String),
     Reload,
+    ReloadAfterIndexing {
+        assistants: Vec<AiAssistant>,
+        project_filter: ProjectFilter,
+        context: IndexingReloadContext,
+    },
+    PostIndexingReloadIdleMeasured {
+        token: MeasurementToken,
+        delay_ms: u128,
+    },
+    PostIndexingReloadFrameMeasured {
+        token: MeasurementToken,
+        delay_ms: u128,
+    },
     SetIndexing(bool),
     SetSourceResults(Vec<PerSourceResult>),
     SessionActivated(i32),
@@ -50,6 +73,143 @@ pub enum SessionListOutput {
     TogglePinRequested(String),
     SelectedSessionForPin(String),
     ResumeRequested(String, AiAssistant),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct IndexingReloadContext {
+    pub indexed: usize,
+    pub skipped: usize,
+    pub removed: usize,
+    pub pending_reindex_feedback: bool,
+    pub errors_present: bool,
+}
+
+#[derive(Clone)]
+pub struct MeasurementToken {
+    valid: Arc<AtomicBool>,
+}
+
+impl MeasurementToken {
+    fn new() -> Self {
+        Self {
+            valid: Arc::new(AtomicBool::new(true)),
+        }
+    }
+
+    fn invalidate(&self) {
+        self.valid.store(false, Ordering::Relaxed);
+    }
+
+    fn is_valid(&self) -> bool {
+        self.valid.load(Ordering::Relaxed)
+    }
+
+    fn same_identity(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.valid, &other.valid)
+    }
+}
+
+impl fmt::Debug for MeasurementToken {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("MeasurementToken")
+            .field("valid", &self.valid.load(Ordering::Relaxed))
+            .finish_non_exhaustive()
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CallbackTiming {
+    Pending,
+    Available(u128),
+    Unavailable,
+}
+
+impl CallbackTiming {
+    fn is_pending(self) -> bool {
+        matches!(self, CallbackTiming::Pending)
+    }
+
+    fn as_option(self) -> Option<u128> {
+        match self {
+            CallbackTiming::Available(ms) => Some(ms),
+            CallbackTiming::Pending | CallbackTiming::Unavailable => None,
+        }
+    }
+
+    fn is_unavailable(self) -> bool {
+        matches!(self, CallbackTiming::Unavailable)
+    }
+}
+
+#[derive(Debug)]
+struct ActivePostIndexingMeasurement {
+    token: MeasurementToken,
+    started_at: Instant,
+    context: IndexingReloadContext,
+    assistant_filters: Vec<AiAssistant>,
+    project_filter: ProjectFilter,
+    search_query_present: bool,
+    search_query_len: usize,
+    previously_selected_id_present: bool,
+    fetch_duration: Duration,
+    clear_duration: Duration,
+    push_duration: Duration,
+    row_count: usize,
+    selection_restore_attempted: bool,
+    selection_restore_succeeded: bool,
+    ensure_selection_fallback_ran: bool,
+    next_idle_delay: CallbackTiming,
+    next_frame_delay: CallbackTiming,
+}
+
+impl ActivePostIndexingMeasurement {
+    fn new(
+        context: IndexingReloadContext,
+        assistant_filters: &[AiAssistant],
+        project_filter: &ProjectFilter,
+        search_query: &str,
+    ) -> Self {
+        Self {
+            token: MeasurementToken::new(),
+            started_at: Instant::now(),
+            context,
+            assistant_filters: assistant_filters.to_vec(),
+            project_filter: project_filter.clone(),
+            search_query_present: !search_query.trim().is_empty(),
+            search_query_len: search_query.len(),
+            previously_selected_id_present: false,
+            fetch_duration: Duration::ZERO,
+            clear_duration: Duration::ZERO,
+            push_duration: Duration::ZERO,
+            row_count: 0,
+            selection_restore_attempted: false,
+            selection_restore_succeeded: false,
+            ensure_selection_fallback_ran: false,
+            next_idle_delay: CallbackTiming::Pending,
+            next_frame_delay: CallbackTiming::Pending,
+        }
+    }
+
+    fn record_sync_phases(
+        &mut self,
+        previously_selected_id_present: bool,
+        fetch_duration: Duration,
+        clear_duration: Duration,
+        push_duration: Duration,
+        row_count: usize,
+    ) {
+        self.previously_selected_id_present = previously_selected_id_present;
+        self.fetch_duration = fetch_duration;
+        self.clear_duration = clear_duration;
+        self.push_duration = push_duration;
+        self.row_count = row_count;
+    }
+
+    fn record_selection(&mut self, attempted: bool, succeeded: bool, fallback_ran: bool) {
+        self.selection_restore_attempted = attempted;
+        self.selection_restore_succeeded = succeeded;
+        self.ensure_selection_fallback_ran = fallback_ran;
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -242,6 +402,7 @@ impl SimpleComponent for SessionList {
             sessions,
             source_results: vec![],
             source_results_available: false,
+            active_post_indexing_measurement: None,
         };
 
         // Populate initial data
@@ -293,7 +454,7 @@ impl SimpleComponent for SessionList {
                 self.active_tools = tools.clone();
                 self.project_filter = project_filter;
                 self.all_tools_selected = tools.len() == AiAssistant::ALL.len();
-                self.reload_sessions();
+                self.reload_sessions(&sender);
             }
             SessionListMsg::SetSearchQuery(query) => {
                 if !Self::search_query_changed(&self.search_query, &query) {
@@ -301,10 +462,27 @@ impl SimpleComponent for SessionList {
                 }
 
                 self.search_query = query;
-                self.reload_sessions();
+                self.reload_sessions(&sender);
             }
             SessionListMsg::Reload => {
-                self.reload_sessions();
+                self.reload_sessions(&sender);
+            }
+            SessionListMsg::ReloadAfterIndexing {
+                assistants,
+                project_filter,
+                context,
+            } => {
+                self.active_tools = assistants;
+                self.all_tools_selected = self.active_tools.len() == AiAssistant::ALL.len();
+                self.project_filter = project_filter;
+                self.start_post_indexing_measurement(context);
+                self.reload_sessions(&sender);
+            }
+            SessionListMsg::PostIndexingReloadIdleMeasured { token, delay_ms } => {
+                self.record_post_indexing_idle(token, delay_ms);
+            }
+            SessionListMsg::PostIndexingReloadFrameMeasured { token, delay_ms } => {
+                self.record_post_indexing_frame(token, delay_ms);
             }
             SessionListMsg::SetIndexing(indexing) => {
                 self.indexing = indexing;
@@ -494,27 +672,194 @@ impl SessionList {
         false
     }
 
-    fn reload_sessions(&mut self) {
+    fn start_post_indexing_measurement(&mut self, context: IndexingReloadContext) {
+        if let Some(active) = &self.active_post_indexing_measurement {
+            active.token.invalidate();
+        }
+
+        self.active_post_indexing_measurement = Some(ActivePostIndexingMeasurement::new(
+            context,
+            &self.active_tools,
+            &self.project_filter,
+            &self.search_query,
+        ));
+    }
+
+    fn current_post_indexing_measurement_mut(
+        &mut self,
+        token: &MeasurementToken,
+    ) -> Option<&mut ActivePostIndexingMeasurement> {
+        self.active_post_indexing_measurement
+            .as_mut()
+            .filter(|active| active.token.is_valid() && active.token.same_identity(token))
+    }
+
+    fn schedule_post_indexing_callbacks(
+        &mut self,
+        sender: &ComponentSender<Self>,
+        token: MeasurementToken,
+        after_drop_at: Instant,
+    ) {
+        let idle_sender = sender.input_sender().clone();
+        let idle_token = token.clone();
+        glib::idle_add_local_once(move || {
+            if idle_token.is_valid() {
+                let _ = idle_sender.send(SessionListMsg::PostIndexingReloadIdleMeasured {
+                    token: idle_token,
+                    delay_ms: after_drop_at.elapsed().as_millis(),
+                });
+            }
+        });
+
+        let list_widget = self.sessions.widget().clone();
+        if list_widget.root().is_none() {
+            self.mark_post_indexing_frame_unavailable(&token);
+            return;
+        }
+
+        let frame_sender = sender.input_sender().clone();
+        let frame_token = token;
+        list_widget.add_tick_callback(move |_, _| {
+            if frame_token.is_valid() {
+                let _ = frame_sender.send(SessionListMsg::PostIndexingReloadFrameMeasured {
+                    token: frame_token.clone(),
+                    delay_ms: after_drop_at.elapsed().as_millis(),
+                });
+            }
+            glib::ControlFlow::Break
+        });
+    }
+
+    fn record_post_indexing_idle(&mut self, token: MeasurementToken, delay_ms: u128) {
+        if let Some(active) = self.current_post_indexing_measurement_mut(&token) {
+            active.next_idle_delay = CallbackTiming::Available(delay_ms);
+        }
+        self.maybe_emit_post_indexing_measurement();
+    }
+
+    fn record_post_indexing_frame(&mut self, token: MeasurementToken, delay_ms: u128) {
+        if let Some(active) = self.current_post_indexing_measurement_mut(&token) {
+            active.next_frame_delay = CallbackTiming::Available(delay_ms);
+        }
+        self.maybe_emit_post_indexing_measurement();
+    }
+
+    fn mark_post_indexing_frame_unavailable(&mut self, token: &MeasurementToken) {
+        if let Some(active) = self.current_post_indexing_measurement_mut(token) {
+            active.next_frame_delay = CallbackTiming::Unavailable;
+        }
+    }
+
+    fn maybe_emit_post_indexing_measurement(&mut self) {
+        let Some(active) = &self.active_post_indexing_measurement else {
+            return;
+        };
+
+        if active.next_idle_delay.is_pending() || active.next_frame_delay.is_pending() {
+            return;
+        }
+
+        tracing::info!(
+            reason = "post_indexing_completion",
+            indexed = active.context.indexed,
+            skipped = active.context.skipped,
+            removed = active.context.removed,
+            pending_reindex_feedback = active.context.pending_reindex_feedback,
+            errors_present = active.context.errors_present,
+            assistant_filter_count = active.assistant_filters.len(),
+            assistant_filters = ?active.assistant_filters,
+            all_assistants_selected = active.assistant_filters.len() == AiAssistant::ALL.len(),
+            project_filter = ?active.project_filter,
+            project_filter_active = active.project_filter != ProjectFilter::AllSessions,
+            search_query_present = active.search_query_present,
+            search_query_len = active.search_query_len,
+            previously_selected_id_present = active.previously_selected_id_present,
+            fetch_ms = active.fetch_duration.as_millis(),
+            clear_ms = active.clear_duration.as_millis(),
+            push_ms = active.push_duration.as_millis(),
+            row_count = active.row_count,
+            selection_restore_attempted = active.selection_restore_attempted,
+            selection_restore_succeeded = active.selection_restore_succeeded,
+            ensure_selection_fallback_ran = active.ensure_selection_fallback_ran,
+            next_idle_delay_ms = active.next_idle_delay.as_option(),
+            next_idle_delay_unavailable = active.next_idle_delay.is_unavailable(),
+            next_frame_delay_ms = active.next_frame_delay.as_option(),
+            next_frame_delay_unavailable = active.next_frame_delay.is_unavailable(),
+            total_reload_ms = active.started_at.elapsed().as_millis(),
+            "sessionlist.post_indexing_reload.measured"
+        );
+
+        active.token.invalidate();
+        self.active_post_indexing_measurement = None;
+    }
+
+    fn reload_sessions(&mut self, sender: &ComponentSender<Self>) {
         let previously_selected_id = self.selected_session_id();
+
+        let fetch_started_at = Instant::now();
         let fetched = Self::fetch_sessions(
             &self.db_path,
             &self.active_tools,
             &self.project_filter,
             &self.search_query,
         );
+        let fetch_duration = fetch_started_at.elapsed();
+        let row_count = fetched.len();
+
         let mut guard = self.sessions.guard();
+
+        let clear_started_at = Instant::now();
         guard.clear();
+        let clear_duration = clear_started_at.elapsed();
+
+        let push_started_at = Instant::now();
         for session in fetched {
             guard.push_back(SessionRowInit { session });
         }
+        let push_duration = push_started_at.elapsed();
         drop(guard);
 
+        let maybe_token = self
+            .active_post_indexing_measurement
+            .as_ref()
+            .map(|active| active.token.clone());
+
+        if let Some(active) = self.active_post_indexing_measurement.as_mut() {
+            active.record_sync_phases(
+                previously_selected_id.is_some(),
+                fetch_duration,
+                clear_duration,
+                push_duration,
+                row_count,
+            );
+        }
+
+        if let Some(token) = maybe_token {
+            self.schedule_post_indexing_callbacks(sender, token, Instant::now());
+        }
+
+        let mut selection_restore_attempted = false;
+        let mut selection_restore_succeeded = false;
+        let mut ensure_selection_fallback_ran = false;
+
         if let Some(session_id) = previously_selected_id {
-            if !self.select_session_by_id(&session_id) {
+            selection_restore_attempted = true;
+            selection_restore_succeeded = self.select_session_by_id(&session_id);
+            if !selection_restore_succeeded {
+                ensure_selection_fallback_ran = true;
                 self.ensure_selection();
             }
         } else {
+            ensure_selection_fallback_ran = true;
             self.ensure_selection();
+        }
+
+        if let Some(active) = self.active_post_indexing_measurement.as_mut() {
+            active.record_selection(
+                selection_restore_attempted,
+                selection_restore_succeeded,
+                ensure_selection_fallback_ran,
+            );
         }
     }
 }
@@ -995,6 +1340,21 @@ mod tests {
         assert!(!state.show_source_results);
     }
 
+    #[test]
+    fn post_indexing_measurement_token_invalidates_stale_callbacks() {
+        let token = MeasurementToken::new();
+        let stale_callback_token = token.clone();
+
+        assert!(token.is_valid());
+        assert!(stale_callback_token.is_valid());
+        assert!(token.same_identity(&stale_callback_token));
+
+        token.invalidate();
+
+        assert!(!token.is_valid());
+        assert!(!stale_callback_token.is_valid());
+    }
+
     #[gtk::test]
     fn explicit_reload_refreshes_even_when_filters_are_unchanged() {
         let temp_db = TempDatabase::new();
@@ -1042,6 +1402,46 @@ mod tests {
         };
 
         assert_eq!(first_session_id.as_deref(), Some("fresh-claude"));
+    }
+
+    #[gtk::test]
+    fn reload_after_indexing_applies_filters_and_refreshes_sessions() {
+        let temp_db = TempDatabase::new();
+        temp_db.seed_project_sidebar_fixture();
+
+        let controller = SessionList::builder().launch(temp_db.path.clone());
+
+        pump_main_context(|| {
+            let parts = controller.state().get();
+            parts.model.sessions.len() == 5
+        });
+
+        controller.emit(SessionListMsg::ReloadAfterIndexing {
+            assistants: vec![AiAssistant::OpenCode],
+            project_filter: ProjectFilter::Project(1),
+            context: IndexingReloadContext {
+                indexed: 1,
+                skipped: 2,
+                removed: 3,
+                pending_reindex_feedback: true,
+                errors_present: false,
+            },
+        });
+
+        pump_main_context(|| {
+            let parts = controller.state().get();
+            parts.model.sessions.len() == 1
+        });
+
+        let ids: Vec<String> = {
+            let parts = controller.state().get();
+            (0..parts.model.sessions.len())
+                .filter_map(|index| parts.model.sessions.get(index))
+                .map(|row| row.session_id().to_string())
+                .collect()
+        };
+
+        assert_eq!(ids, vec!["alpha-opencode"]);
     }
 
     #[gtk::test]

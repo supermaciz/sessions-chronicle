@@ -4,7 +4,7 @@ use crate::indexing_worker::IndexingWorkerInput;
 use crate::models::{IndexingError, PerSourceResult};
 use crate::ui::analytics_view::AnalyticsViewMsg;
 use crate::ui::modals::indexing_status::IndexingStatusMsg;
-use crate::ui::session_list::SessionListMsg;
+use crate::ui::session_list::{IndexingReloadContext, SessionListMsg};
 use crate::ui::sidebar::SidebarMsg;
 
 use super::super::App;
@@ -99,11 +99,18 @@ impl App {
             .emit(SessionListMsg::SetSourceResults(per_source.clone()));
 
         if should_reload_sessions_after_indexing(indexed, removed, self.pending_reindex_feedback) {
-            if self.refresh_sidebar_projects() {
-                self.emit_session_list_filters();
-            } else {
-                self.session_list.emit(SessionListMsg::Reload);
-            }
+            self.refresh_sidebar_projects();
+            self.session_list.emit(SessionListMsg::ReloadAfterIndexing {
+                assistants: self.filter_state.tools.clone(),
+                project_filter: self.filter_state.project_filter.clone(),
+                context: IndexingReloadContext {
+                    indexed,
+                    skipped,
+                    removed,
+                    pending_reindex_feedback: self.pending_reindex_feedback,
+                    errors_present: !self.last_errors_detail.is_empty(),
+                },
+            });
         }
 
         let analytics_outcome = analytics_indexing_completion_outcome(self.active_workspace);
