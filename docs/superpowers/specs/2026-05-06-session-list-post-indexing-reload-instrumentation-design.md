@@ -8,22 +8,22 @@
 
 GitHub issue 145 tracks a brief visible freeze in `SessionList` at the end of background indexing.
 
-The likely path is the reload triggered from `App::handle_indexing_completed`: once indexing finishes, the app can emit `SessionListMsg::Reload`, and `SessionList::reload_sessions()` then synchronously fetches sessions, clears the row factory, pushes all `SessionRow` entries, and restores selection on the main thread.
+The likely path is the reload triggered from `App::handle_indexing_completed`: once indexing finishes, the app emits `SessionListMsg::Reload`, and `SessionList::reload_sessions()` synchronously fetches sessions, clears the row factory, pushes all `SessionRow` entries, and restores selection on the main thread.
 
-This is a separate problem from the recent `SessionDetail` responsiveness work. The issue is not yet whether `SessionList` needs batching, diff-based updates, pagination, or asynchronous fetching. The first job is to measure which part of the post-indexing completion reload causes the brief user-visible freeze.
+This is a separate problem from the recent `SessionDetail` responsiveness work. The first job is to measure which part of the post-indexing reload causes the freeze, before deciding whether to invest in batching, diff-based updates, pagination, or asynchronous fetching.
 
 ## Goal
 
-Add focused instrumentation that makes the post-indexing completion `SessionList` freeze measurable and actionable.
+Add focused instrumentation that makes the post-indexing `SessionList` freeze measurable and actionable.
 
 The instrumentation must distinguish:
 
 - database fetch time;
 - factory clear time;
-- total row insertion time and row count;
+- row insertion time and row count;
 - selection restoration behavior;
 - delay after `drop(guard)` until the next main-loop idle callback;
-- delay after `drop(guard)` until the next GTK frame callback.
+- delay after `drop(guard)` until the next GTK frame callback (`WidgetExt::add_tick_callback`, fired by the widget's `FrameClock`).
 
 The resulting logs and report must support a narrow recommendation for the next implementation step.
 
@@ -31,226 +31,198 @@ The resulting logs and report must support a narrow recommendation for the next 
 
 - No `SessionList` optimization in this issue.
 - No `SessionDetail` transcript rendering changes.
-- No redesign of the session list UI.
 - No persistent telemetry subsystem or metrics storage.
-- No broad instrumentation for every `SessionList` reload path beyond what is needed for comparison or safety.
+- No instrumentation of unrelated reload paths (search, filter, pin) beyond what is needed to disambiguate the measured cycle.
 - No batching, diff-based updates, pagination, or windowing implementation before the bottleneck is measured.
 
 ## Recommended Approach
 
-Use small inline instrumentation in the existing post-indexing reload flow, with structured `tracing` fields and `Instant` timestamps, following the same general style used for the recent `SessionDetail` responsiveness instrumentation.
+Use small inline instrumentation in the existing post-indexing reload flow, with structured `tracing` fields and `Instant` timestamps, in the same style as the recent `SessionDetail` responsiveness instrumentation.
 
-The preferred design is to measure a single reload cycle tagged as `reason = "post_indexing_completion"`, starting from the reload triggered after `handle_indexing_completed` and ending after the first observed idle/frame callback following the row-factory push.
+Measure a single reload cycle tagged `reason = "post_indexing_completion"`, starting when `handle_indexing_completed` requests the reload and ending after both the post-`drop(guard)` idle and frame callbacks have fired (or been declared unavailable).
 
-This is preferred over a reusable metrics framework because issue 145 needs a targeted diagnosis, not a new observability layer. Keeping the instrumentation close to the measured code paths keeps the diff small, reduces invalidation risk, and makes the logs easier to interpret.
+Keep the instrumentation close to the measured code paths. A reusable metrics framework would be broader than the issue requires and would invite drift between measurement and code.
 
 ## Alternatives Considered
 
 ### Measure `reload_sessions()` Only
 
-This would log `fetch_sessions`, `guard.clear()`, and `push_back` time only.
+Log `fetch_sessions`, `guard.clear()`, and `push_back` time only.
 
-Trade-off: the diff would stay tiny, but it would miss the likely GTK/layout work that happens after `drop(guard)`. That would be insufficient for an issue whose visible symptom is a brief freeze at the end of indexing.
+Trade-off: tiny diff, but misses the GTK/layout work after `drop(guard)` — which is the most likely source of a brief end-of-indexing freeze. Insufficient on its own.
 
-### Add A Generic `SessionListMetrics` Subsystem
+### Generic `SessionListMetrics` Subsystem
 
-A reusable struct or helper module could track every reload reason and aggregate metrics across them.
+A reusable struct tracking every reload reason and aggregating across them.
 
-Trade-off: this could be useful later, but it is broader than the issue requires and adds state that is easier to make stale when multiple reloads overlap. It would turn a narrow investigation into framework work.
+Trade-off: turns a narrow diagnosis into framework work and adds shared state that ages badly when reload causes overlap.
 
 ### Instrument Every Reload Reason Equally
 
-All reloads could receive the same heavy instrumentation, regardless of whether they are caused by indexing, pinning, search, or filter changes.
+Same heavy instrumentation on indexing, pinning, search, filter reloads.
 
-Trade-off: this would improve comparability, but it would also add noise and make the target symptom harder to isolate. The post-indexing completion path should be the primary measured flow, with other reloads remaining out of scope or lightly tagged only if needed to avoid ambiguity.
+Trade-off: more comparable, but adds noise that hides the target symptom. Other reloads stay out of scope.
 
 ## Instrumentation Design
 
-### Trigger Context
+### Tagging The Measured Cycle
 
-When `App::handle_indexing_completed` triggers a `SessionList` reload, pass the post-indexing completion context through a dedicated reload message, for example `SessionListMsg::ReloadAfterIndexing(IndexingReloadContext)`, instead of overloading the existing generic `SessionListMsg::Reload` path.
+Do **not** introduce a new `SessionListMsg` variant. The instrumentation must not change the message surface.
 
-The context should include:
+Instead, just before `handle_indexing_completed` emits `SessionListMsg::Reload`, set a small field on `SessionList`:
 
-- `indexed`;
-- `skipped`;
-- `removed`;
+```rust
+self.pending_measurement = Some(PendingMeasurement::new(IndexingReloadContext { .. }));
+```
+
+`reload_sessions()` then takes the `Option` at the top of the function. If `Some`, the reload is the measured cycle and runs the instrumented path; if `None`, the reload is unmeasured and behaves exactly as today. This keeps the message enum unchanged and the tagging local to the indexing→list path.
+
+`IndexingReloadContext` carries:
+
+- `indexed`, `skipped`, `removed`;
 - whether `pending_reindex_feedback` was active;
-- whether indexing completed with any errors;
-- whether the dedicated reload was emitted directly from completion handling or after project refresh/filter propagation.
+- whether indexing reported errors;
+- whether the reload is emitted directly from completion handling or after the project-refresh path.
 
-This keeps ordinary reloads unambiguous and makes the measured cycle explicitly tied to the end-of-indexing freeze. The context exists to explain why the measured reload happened. It should not introduce new behavior.
+If the project-refresh path resends filters before the indexing-driven reload fires, the `pending_measurement` should survive the intermediate `SetFilters`/`SetSearchQuery` reloads without being consumed by them — i.e. only `Reload` (or the specific message that carries the post-indexing reload today) consumes it. The plan should pick the minimal site that matches the actual code path, without refactoring reload routing.
 
-If the current project refresh flow causes filters to be resent before the list reloads, the final reload that is still caused by indexing completion should carry the same dedicated context. The plan should choose the smallest code path that preserves current filter behavior while avoiding a broad reload-message refactor.
+### Cycle Identity And Invalidation
 
-### Reload Cycle Identity
+A single `Option<PendingMeasurement>` is enough — at most one measured cycle is tracked at a time. No numeric `reload_id` is needed.
 
-When `SessionList` starts a measured post-indexing completion reload, assign a simple `reload_id` or equivalent request identifier.
+Invalidation rules:
 
-The identifier is used only to correlate:
+- if a new measured cycle starts before the previous one completed (i.e. `pending_measurement` is replaced while idle/frame callbacks are still pending), the older callbacks discover their cycle has been superseded via a weak reference / generation token kept by the callback closure, and exit without emitting;
+- if the widget is dropped before the frame callback fires, the callback exits silently;
+- if the idle or frame callback never fires, no summary is emitted (best-effort by design).
 
-- the synchronous reload timings;
-- the post-`drop(guard)` idle callback;
-- the post-`drop(guard)` frame callback;
-- invalidation when a newer reload replaces the measured one.
-
-At most one measured post-indexing completion cycle needs to be tracked at a time.
+The "generation token" can be as simple as a `Rc<Cell<bool>>` flag that the new cycle marks `false` when it overwrites the old one. Avoid building a numeric ID scheme around this.
 
 ### Synchronous Reload Phases
 
-Inside `SessionList::reload_sessions()`, capture the following separately for the measured post-indexing completion cycle:
+Inside the measured branch of `reload_sessions()`, capture:
 
-- whether `previously_selected_id` was present;
-- active AI assistant filters;
-- current `project_filter`;
-- whether a search query is present and its length;
+- `previously_selected_id.is_some()`;
+- active AI assistant filters (enum/count, not user data);
+- `project_filter` presence;
+- search query presence and length (not the text);
 - `fetch_sessions_duration_ms`;
 - `factory_clear_duration_ms`;
 - `row_push_duration_ms`;
 - `row_count`;
-- whether selection restoration was attempted;
-- whether selection restoration succeeded;
-- whether fallback `ensure_selection()` ran.
+- `selection_restore_attempted`;
+- `selection_restore_succeeded`;
+- `ensure_selection_fallback_ran`.
 
-The instrumentation should make it obvious whether the synchronous cost is dominated by database fetch, factory clear, or row insertion.
+The split must make it obvious whether the synchronous cost is dominated by DB fetch, factory clear, or row push.
 
 ### Post-Drop Main-Loop And Frame Timing
 
-Immediately after `drop(guard)`, schedule two best-effort follow-up measurements:
+Immediately after `drop(guard)`, capture `t_after_drop = Instant::now()` and schedule:
 
-- a `glib::idle_add_local` callback to capture `next_idle_delay_ms`;
-- a GTK tick or frame callback on the list widget to capture `next_frame_delay_ms`.
-
-These callbacks exist to expose work that happens after row insertion has completed from Rust's point of view.
+- `glib::idle_add_local_once(...)` → records `next_idle_delay_ms = elapsed since t_after_drop`;
+- `list_widget.add_tick_callback(...)` → records `next_frame_delay_ms` on first invocation, then returns `ControlFlow::Break`.
 
 Interpretation:
 
-- a large `next_idle_delay_ms` suggests the main loop did not regain control promptly after the synchronous reload work;
-- a large `next_frame_delay_ms` with moderate synchronous timings suggests GTK realization, layout, or paint-adjacent work is the likely user-visible cost.
+- a large `next_idle_delay_ms` indicates the main loop did not regain control promptly after the synchronous reload work;
+- a large `next_frame_delay_ms` with moderate synchronous timings points at GTK realization, layout, or paint-adjacent cost.
 
-The wording of these events must avoid overstating what is measured. A frame callback means GTK advanced to the next frame cycle, not necessarily that all visual work is complete.
+A frame callback only means the widget's `FrameClock` advanced; it does not prove all visual work is on screen. The summary event wording must reflect that.
 
 ### Final Summary Event
 
-Emit one final `info` event for the measured cycle, for example `SessionList post-indexing reload measured`, containing:
+When both idle and frame callbacks have either fired or been marked unavailable, emit one `info` event `sessionlist.post_indexing_reload.measured` with:
 
-- `reload_id`;
-- trigger context from indexing completion;
+- trigger context fields;
 - filter/search context;
-- `fetch_ms`;
-- `clear_ms`;
-- `push_ms`;
-- `row_count`;
+- `fetch_ms`, `clear_ms`, `push_ms`, `row_count`;
 - selection restoration fields;
-- `next_idle_delay_ms` when captured;
-- `next_frame_delay_ms` when captured;
-- `total_reload_ms` for the measured cycle.
+- `next_idle_delay_ms` (or `unavailable`);
+- `next_frame_delay_ms` (or `unavailable`);
+- `total_reload_ms` (from start of measured cycle to last captured callback).
 
-Additional sub-phase events may use `debug` if needed, but the final summary event should be sufficient for the report.
+Sub-phase events may use `debug` if needed; the final summary alone should be sufficient to write the report.
 
-Because the idle and frame callbacks complete separately, the measured cycle should keep the synchronous timings plus optional callback results until a final summary can be emitted. Emit the final summary when both idle and frame timings have been captured. If one callback cannot be scheduled because the widget is unavailable, mark that field as unavailable and emit the summary after the remaining callback is captured. If a newer reload invalidates the cycle first, discard the stale pending summary rather than logging it as current.
+If a newer measured cycle invalidates the pending one before its callbacks fire, the stale summary is dropped — never emitted as if current.
 
-## Error Handling And Invalidation
+## Error Handling
 
-The instrumentation must be best-effort and must not affect user behavior.
+Instrumentation is best-effort and must not affect user behavior:
 
-Rules:
-
-- if indexing completes but the measured reload path does not actually run, no behavior changes and no fatal logging path is added;
-- if the target widget is unavailable for the frame callback, the cycle may log incomplete post-drop data rather than failing;
-- if a newer reload supersedes the measured cycle before idle or frame callbacks fire, the older cycle is invalidated by `reload_id` and must not report stale timings as current;
-- no retries, debouncing, waiting, or scheduling changes are added for this issue.
-
-This keeps the measurement reliable on the normal path without introducing a functional dependency on tracing state.
+- if the measured reload path does not actually run, no behavior changes and nothing is logged;
+- if the list widget is unavailable when scheduling the frame callback, that field is marked `unavailable` and the summary still fires after the idle callback;
+- no retries, no debouncing, no scheduling changes are added.
 
 ## Data Safety
 
-Instrumentation must not log session titles, transcript content, search text, tool call payloads, raw command output, or other user data beyond existing safe metadata.
+Logs must not contain session titles, transcript content, search text, tool call payloads, raw command output, or any other user data beyond existing safe metadata.
 
-Acceptable fields include:
-
-- counts;
-- durations;
-- boolean flags;
-- enum-like reload reasons or filter states;
-- row counts;
-- issue-level indexing counts.
-
-If the presence of a search query is useful context, log only presence and length, not the query text.
+Acceptable: counts, durations, booleans, enum-like reload reasons or filter states, row counts, indexing counts, search query length.
 
 ## Reproduction And Reporting
 
-Manual verification should focus on the exact symptom: the brief `SessionList` freeze at the end of indexing.
-
-Suggested run pattern:
+Suggested run:
 
 ```bash
 RUST_LOG=info,sessions_chronicle=debug ~/.local/bin/sessions-chronicle > /tmp/sessions-chronicle-issue-145.log 2>&1
 ```
 
-Suggested protocol:
+Protocol:
 
-1. Start from a clean launch.
+1. Clean launch.
 2. Wait for background indexing to complete.
 3. Observe the transition from indexing completion into the `SessionList` reload.
-4. Repeat at least two or three times.
-5. Prefer a large real session dataset; use representative fixture data only if it can reproduce similar scale.
+4. Repeat 3+ times.
+5. Use a representative real session dataset; fixtures only if they reach comparable scale.
 
-The resulting report in `docs/reports/` should include:
+Report (in `docs/reports/`) must include date, environment, build/run commands, dataset description, run-by-run measurements, median + worst run for the key fields, whether the freeze is user-noticeable at the tested scale, and the recommended next step.
 
-- date and environment;
-- build and run commands;
-- dataset description;
-- run-by-run measurements;
-- median or observed range for the important fields;
-- whether the freeze is user-noticeable at the tested scale;
-- the recommended smallest next step.
+### Initial Interpretation Thresholds
 
-Initial interpretation threshold:
+These are starting reference points, to be recalibrated from the measured median and worst-run values in the report:
 
-- treat `total_reload_ms`, `next_idle_delay_ms`, or `next_frame_delay_ms` above roughly 100 ms as potentially user-noticeable;
-- treat values above roughly 250 ms as clearly problematic for the end-of-indexing transition;
-- use the measured median and observed worst run to define the target threshold for the next fix in the report.
+- ~16 ms = one display frame at 60 Hz; below this, no perceptible jank;
+- ~100 ms = the commonly cited threshold above which a UI transition feels non-instantaneous (Nielsen, *Response Times: The 3 Important Limits*);
+- ~250 ms is treated here as clearly problematic for an end-of-indexing transition that occurs without explicit user action.
 
-## Decision Rules For The Follow-Up Recommendation
+The report defines the operational target threshold for the next fix using its own measurements rather than these defaults.
 
-The report should recommend the narrowest next implementation path supported by the measurements:
+## Decision Rules And Acceptance
 
-- if `fetch_ms` dominates, investigate asynchronous fetch or query/index improvements;
-- if `clear_ms` dominates, investigate whether full clear/rebuild is the wrong update strategy;
-- if `push_ms` dominates, investigate batched insertion or a smaller incremental update path;
-- if post-drop idle or frame delay dominates, investigate GTK-facing cost first, such as batched row insertion, pagination, windowing, or another minimal experiment that reduces realization/layout pressure;
-- if no single phase dominates, recommend the smallest next experiment instead of a broad rewrite.
+The report recommends the narrowest next implementation step justified by the measurements:
 
-The recommendation should explicitly avoid a large refactor unless the measurements justify it.
+| Dominant phase | Recommended next investigation |
+|---|---|
+| `fetch_ms` | asynchronous fetch or query/index improvement |
+| `clear_ms` | rethink full clear/rebuild as the update strategy |
+| `push_ms` | batched insertion or incremental update |
+| post-drop idle / frame delay | reduce GTK realization/layout pressure (batched insertion, pagination, windowing) |
+| no single dominant phase | smallest next experiment, not a broad rewrite |
+
+The instrumentation work is accepted when:
+
+- the synchronous and post-drop phases above are individually visible in logs;
+- a reproducible run captures the freeze at realistic scale;
+- the report concludes whether the freeze is user-noticeable and recommends one of the rows above (or an explicit "no action") with measured evidence;
+- no user-facing behavior changes beyond logging.
 
 ## Testing Strategy
 
-Automated tests should remain light because the issue adds diagnostics, not user-facing behavior.
-
-Recommended checks:
+Diagnostics-only change. Light automated checks:
 
 - `cargo fmt --all -- --check`;
-- targeted tests only for any small extracted state or invalidation helper, if one is introduced;
-- `cargo test --all --no-fail-fast` only if the final code diff touches enough shared logic to justify it.
+- targeted unit test for the `PendingMeasurement` invalidation helper if one is extracted;
+- `cargo test --all --no-fail-fast` only if the diff touches enough shared logic to justify it.
 
-Manual verification is the primary validation method for this issue. The important success condition is that the logs clearly distinguish synchronous reload cost from post-drop main-loop/frame delay.
-
-## Acceptance Mapping
-
-- Logs distinguish DB fetch time, factory clear time, row push time, and post-drop idle/frame delay.
-- Measurements include row count, filter/search context, indexing completion counts, and selection restoration behavior.
-- A reproducible run captures the end-of-indexing freeze on a large session set.
-- The report states whether the freeze is user-noticeable at the tested scale and defines the threshold for the next fix.
-- The result recommends the narrowest justified next path: async fetch, better query/indexing, diff-based update, batched insertion, pagination/windowing, or a smaller follow-up experiment.
-- No intended user-facing behavior change is introduced beyond instrumentation.
+Manual verification is primary. Success = logs clearly separate synchronous reload cost from post-drop main-loop/frame delay.
 
 ## Implementation Decisions
 
-- Keep the instrumentation inline near `handle_indexing_completed` and `SessionList::reload_sessions()`.
-- Measure only the post-indexing completion reload heavily; avoid turning every reload into a high-noise diagnostic event.
-- Use a single lightweight reload identity to correlate synchronous and asynchronous timing points.
-- Use `info` for the final summary event and `debug` for any supporting phase logs.
-- Prefer the smallest additional state needed to invalidate stale callbacks and publish one coherent summary.
+- Keep instrumentation inline near `handle_indexing_completed` and `SessionList::reload_sessions()`.
+- Tag the measured cycle through a `pending_measurement: Option<PendingMeasurement>` field, **not** a new `SessionListMsg` variant.
+- Use a single `Option` plus a generation flag for invalidation; no numeric IDs.
+- Use `glib::idle_add_local_once` and `WidgetExt::add_tick_callback` (one-shot) for post-drop timings.
+- `info` for the final summary event, `debug` for supporting phase logs.
 
-These decisions keep issue 145 focused on diagnosis and preserve room for a later fix to be chosen from measured evidence instead of guesswork.
+These choices keep issue 145 a diagnosis, with room for the later fix to follow measured evidence.
