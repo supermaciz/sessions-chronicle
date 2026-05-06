@@ -161,6 +161,9 @@ struct ActivePostIndexingMeasurement {
     clear_duration: Duration,
     push_duration: Duration,
     row_count: usize,
+    batch_count: usize,
+    batch_size: usize,
+    max_batch_push_duration: Duration,
     selection_restore_attempted: bool,
     selection_restore_succeeded: bool,
     ensure_selection_fallback_ran: bool,
@@ -189,6 +192,9 @@ impl ActivePostIndexingMeasurement {
             clear_duration: Duration::ZERO,
             push_duration: Duration::ZERO,
             row_count: 0,
+            batch_count: 0,
+            batch_size: POST_INDEXING_RELOAD_BATCH_SIZE,
+            max_batch_push_duration: Duration::ZERO,
             selection_restore_attempted: false,
             selection_restore_succeeded: false,
             ensure_selection_fallback_ran: false,
@@ -220,7 +226,9 @@ impl ActivePostIndexingMeasurement {
     }
 
     fn record_batch_push(&mut self, duration: Duration) {
+        self.batch_count += 1;
         self.push_duration += duration;
+        self.max_batch_push_duration = self.max_batch_push_duration.max(duration);
     }
 }
 
@@ -972,9 +980,14 @@ impl SessionList {
             clear_ms = active.clear_duration.as_millis(),
             push_ms = active.push_duration.as_millis(),
             row_count = active.row_count,
+            batch_count = active.batch_count,
+            batch_size = active.batch_size,
+            max_batch_push_ms = active.max_batch_push_duration.as_millis(),
+            total_batch_push_ms = active.push_duration.as_millis(),
             selection_restore_attempted = active.selection_restore_attempted,
             selection_restore_succeeded = active.selection_restore_succeeded,
             ensure_selection_fallback_ran = active.ensure_selection_fallback_ran,
+            user_selection_changed_during_batch = active.user_selection_changed_during_batch,
             next_idle_delay_ms = active.next_idle_delay.as_option(),
             next_idle_delay_unavailable = active.next_idle_delay.is_unavailable(),
             next_frame_delay_ms = active.next_frame_delay.as_option(),
@@ -1672,6 +1685,35 @@ mod tests {
         batch.invalidate();
         assert!(!callback_token.is_valid());
         assert!(!batch.token_matches(&callback_token));
+    }
+
+    #[test]
+    fn post_indexing_measurement_accumulates_batch_push_metrics() {
+        let context = IndexingReloadContext {
+            indexed: 3,
+            skipped: 0,
+            removed: 0,
+            pending_reindex_feedback: false,
+            errors_present: false,
+        };
+        let mut measurement = ActivePostIndexingMeasurement::new(
+            context,
+            &[AiAssistant::ClaudeCode],
+            &ProjectFilter::AllSessions,
+            "",
+        );
+
+        measurement.record_batch_push(Duration::from_millis(2));
+        measurement.record_batch_push(Duration::from_millis(5));
+        measurement.record_batch_push(Duration::from_millis(3));
+
+        assert_eq!(measurement.batch_count, 3);
+        assert_eq!(measurement.batch_size, POST_INDEXING_RELOAD_BATCH_SIZE);
+        assert_eq!(measurement.push_duration, Duration::from_millis(10));
+        assert_eq!(
+            measurement.max_batch_push_duration,
+            Duration::from_millis(5)
+        );
     }
 
     #[gtk::test]
