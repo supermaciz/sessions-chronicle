@@ -238,7 +238,6 @@ const POST_INDEXING_RELOAD_BATCH_SIZE: usize = 64;
 struct PendingPostIndexingBatch {
     token: MeasurementToken,
     remaining_sessions: VecDeque<Session>,
-    total_row_count: usize,
     previously_selected_id: Option<String>,
     user_selection_changed: bool,
 }
@@ -249,18 +248,12 @@ impl PendingPostIndexingBatch {
         sessions: Vec<Session>,
         previously_selected_id: Option<String>,
     ) -> Self {
-        let total_row_count = sessions.len();
         Self {
             token,
             remaining_sessions: sessions.into(),
-            total_row_count,
             previously_selected_id,
             user_selection_changed: false,
         }
-    }
-
-    fn token(&self) -> MeasurementToken {
-        self.token.clone()
     }
 
     fn token_matches(&self, token: &MeasurementToken) -> bool {
@@ -280,12 +273,9 @@ impl PendingPostIndexingBatch {
         self.remaining_sessions.is_empty()
     }
 
+    #[cfg(test)]
     fn remaining_row_count(&self) -> usize {
         self.remaining_sessions.len()
-    }
-
-    fn total_row_count(&self) -> usize {
-        self.total_row_count
     }
 
     fn previously_selected_id(&self) -> Option<&str> {
@@ -1655,7 +1645,6 @@ mod tests {
         let mut batch =
             PendingPostIndexingBatch::new(token.clone(), sessions, Some("batch-2".to_string()));
 
-        assert_eq!(batch.total_row_count(), 3);
         assert_eq!(batch.remaining_row_count(), 3);
         assert_eq!(batch.previously_selected_id(), Some("batch-2"));
         assert!(!batch.is_exhausted());
