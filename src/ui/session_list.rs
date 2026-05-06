@@ -32,6 +32,7 @@ pub struct SessionList {
     source_results_available: bool,
     active_post_indexing_measurement: Option<ActivePostIndexingMeasurement>,
     pending_post_indexing_batch: Option<PendingPostIndexingBatch>,
+    selection_signal_handler: Option<glib::SignalHandlerId>,
 }
 
 #[derive(Debug)]
@@ -240,6 +241,7 @@ struct PendingPostIndexingBatch {
     remaining_sessions: VecDeque<Session>,
     previously_selected_id: Option<String>,
     user_selection_changed: bool,
+    had_focus_before_reload: bool,
 }
 
 impl PendingPostIndexingBatch {
@@ -253,7 +255,17 @@ impl PendingPostIndexingBatch {
             remaining_sessions: sessions.into(),
             previously_selected_id,
             user_selection_changed: false,
+            had_focus_before_reload: false,
         }
+    }
+
+    fn with_focus_state(mut self, had_focus_before_reload: bool) -> Self {
+        self.had_focus_before_reload = had_focus_before_reload;
+        self
+    }
+
+    fn had_focus_before_reload(&self) -> bool {
+        self.had_focus_before_reload
     }
 
     fn token_matches(&self, token: &MeasurementToken) -> bool {
@@ -300,6 +312,17 @@ struct EmptyStateViewModel {
 
 fn parse_session_id_query(query: &str) -> Option<&str> {
     query.trim().strip_prefix("id:").map(str::trim)
+}
+
+fn focus_is_within(widget: &impl IsA<gtk::Widget>) -> bool {
+    let widget_ref = widget.upcast_ref::<gtk::Widget>();
+    let Some(root) = widget_ref.root() else {
+        return false;
+    };
+    let Some(focused) = root.focus() else {
+        return false;
+    };
+    focused.eq(widget_ref) || focused.is_ancestor(widget_ref)
 }
 
 fn compute_empty_state(
@@ -483,6 +506,7 @@ impl SimpleComponent for SessionList {
             source_results_available: false,
             active_post_indexing_measurement: None,
             pending_post_indexing_batch: None,
+            selection_signal_handler: None,
         };
 
         // Populate initial data
@@ -502,9 +526,10 @@ impl SimpleComponent for SessionList {
         });
 
         let selection_sender = sender.input_sender().clone();
-        session_list_box.connect_selected_rows_changed(move |_| {
+        let selection_signal_handler = session_list_box.connect_selected_rows_changed(move |_| {
             let _ = selection_sender.send(SessionListMsg::PostIndexingSelectionChanged);
         });
+        model.selection_signal_handler = Some(selection_signal_handler);
 
         if model.sessions.is_empty() {
             widgets
@@ -810,6 +835,12 @@ impl SessionList {
                 ensure_selection_fallback_ran = true;
                 self.ensure_selection();
             }
+
+            if batch.had_focus_before_reload()
+                && let Some(row) = self.sessions.widget().selected_row()
+            {
+                row.grab_focus();
+            }
         }
 
         if let Some(active) = self.active_post_indexing_measurement.as_mut() {
@@ -1003,11 +1034,20 @@ impl SessionList {
         let fetch_duration = fetch_started_at.elapsed();
         let row_count = fetched.len();
 
+        let list_box = self.sessions.widget().clone();
+        let had_focus_before_reload = focus_is_within(&list_box);
+        let blocked_handler = self.selection_signal_handler.as_ref();
+        if let Some(handler) = blocked_handler {
+            list_box.block_signal(handler);
+        }
         let mut guard = self.sessions.guard();
         let clear_started_at = Instant::now();
         guard.clear();
         let clear_duration = clear_started_at.elapsed();
         drop(guard);
+        if let Some(handler) = blocked_handler {
+            list_box.unblock_signal(handler);
+        }
 
         let Some(token) = self
             .active_post_indexing_measurement
@@ -1027,11 +1067,10 @@ impl SessionList {
             );
         }
 
-        self.pending_post_indexing_batch = Some(PendingPostIndexingBatch::new(
-            token.clone(),
-            fetched,
-            previously_selected_id,
-        ));
+        self.pending_post_indexing_batch = Some(
+            PendingPostIndexingBatch::new(token.clone(), fetched, previously_selected_id)
+                .with_focus_state(had_focus_before_reload),
+        );
 
         let after_setup_at = Instant::now();
         self.schedule_post_indexing_callbacks(sender, token.clone(), after_setup_at);
@@ -2127,6 +2166,151 @@ mod tests {
         };
 
         assert_eq!(selected_session_id, "alpha-claude-new");
+    }
+
+    #[gtk::test]
+    fn previously_selected_session_survives_post_indexing_reload_with_no_user_interaction() {
+        let temp_db = TempDatabase::new();
+        temp_db.seed_project_sidebar_fixture();
+
+        let controller = SessionList::builder().launch(temp_db.path.clone());
+
+        pump_main_context(|| {
+            let parts = controller.state().get();
+            parts.model.sessions.len() == 5
+        });
+
+        let root = controller.widget().clone().upcast::<gtk::Widget>();
+        let list_box = find_list_box(&root).expect("list box");
+
+        let target_index = {
+            let parts = controller.state().get();
+            (0..parts.model.sessions.len())
+                .find(|index| {
+                    parts
+                        .model
+                        .sessions
+                        .get(*index)
+                        .map(|row| row.session_id() == "alpha-claude-old")
+                        .unwrap_or(false)
+                })
+                .expect("alpha-claude-old in initial dataset")
+        };
+
+        let target_row = list_box
+            .row_at_index(target_index as i32)
+            .expect("alpha-claude-old row");
+        list_box.select_row(Some(&target_row));
+        pump_main_context(|| {
+            list_box.selected_row().map(|row| row.index()) == Some(target_index as i32)
+        });
+
+        controller.emit(SessionListMsg::ReloadAfterIndexing {
+            assistants: vec![AiAssistant::ClaudeCode],
+            project_filter: ProjectFilter::Project(1),
+            context: IndexingReloadContext {
+                indexed: 1,
+                skipped: 0,
+                removed: 0,
+                pending_reindex_feedback: false,
+                errors_present: false,
+            },
+        });
+
+        pump_main_context(|| {
+            let parts = controller.state().get();
+            parts.model.pending_post_indexing_batch.is_none() && parts.model.sessions.len() == 2
+        });
+
+        drain_main_context();
+
+        let final_selected_id = {
+            let parts = controller.state().get();
+            let selected_index = list_box
+                .selected_row()
+                .map(|row| row.index() as usize)
+                .expect("a row should remain selected after the post-indexing reload");
+            parts
+                .model
+                .sessions
+                .get(selected_index)
+                .map(|row| row.session_id().to_string())
+                .expect("selected session present")
+        };
+
+        assert_eq!(final_selected_id, "alpha-claude-old");
+    }
+
+    #[gtk::test]
+    fn post_indexing_reload_restores_focus_when_listbox_was_focused() {
+        let temp_db = TempDatabase::new();
+        temp_db.seed_project_sidebar_fixture();
+
+        let controller = SessionList::builder().launch(temp_db.path.clone());
+
+        let window = gtk::Window::new();
+        window.set_child(Some(controller.widget()));
+        window.present();
+
+        pump_main_context(|| {
+            let parts = controller.state().get();
+            parts.model.sessions.len() == 5
+        });
+
+        let root = controller.widget().clone().upcast::<gtk::Widget>();
+        let list_box = find_list_box(&root).expect("list box");
+
+        let target_index = {
+            let parts = controller.state().get();
+            (0..parts.model.sessions.len())
+                .find(|index| {
+                    parts
+                        .model
+                        .sessions
+                        .get(*index)
+                        .map(|row| row.session_id() == "alpha-claude-old")
+                        .unwrap_or(false)
+                })
+                .expect("alpha-claude-old in initial dataset")
+        };
+
+        let target_row = list_box
+            .row_at_index(target_index as i32)
+            .expect("alpha-claude-old row");
+        list_box.select_row(Some(&target_row));
+        target_row.grab_focus();
+        pump_main_context(|| target_row.has_focus());
+        assert!(
+            target_row.has_focus(),
+            "row should have focus before reload"
+        );
+
+        controller.emit(SessionListMsg::ReloadAfterIndexing {
+            assistants: vec![AiAssistant::ClaudeCode],
+            project_filter: ProjectFilter::Project(1),
+            context: IndexingReloadContext {
+                indexed: 1,
+                skipped: 0,
+                removed: 0,
+                pending_reindex_feedback: false,
+                errors_present: false,
+            },
+        });
+
+        pump_main_context(|| {
+            let parts = controller.state().get();
+            parts.model.pending_post_indexing_batch.is_none() && parts.model.sessions.len() == 2
+        });
+
+        drain_main_context();
+
+        let restored_row = list_box.selected_row().expect("selected row after reload");
+        assert!(
+            restored_row.has_focus(),
+            "selected row should regain focus after the post-indexing reload"
+        );
+
+        window.set_child(None::<&gtk::Widget>);
     }
 
     #[gtk::test]
