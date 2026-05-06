@@ -1357,6 +1357,15 @@ mod tests {
         }
     }
 
+    fn drain_main_context() {
+        let context = gtk::glib::MainContext::default();
+        for _ in 0..20 {
+            if !context.iteration(false) {
+                break;
+            }
+        }
+    }
+
     #[gtk::test]
     fn pump_main_context_waits_for_timeout_callbacks() {
         let done = Rc::new(RefCell::new(false));
@@ -1955,6 +1964,180 @@ mod tests {
         assert_eq!(ids[0], "alpha-claude-new");
         assert_eq!(ids[1], "alpha-claude-old");
         assert_eq!(ids.len(), 72);
+    }
+
+    #[gtk::test]
+    fn second_reload_after_indexing_invalidates_first_pending_batch() {
+        let temp_db = TempDatabase::new();
+        temp_db.seed_project_sidebar_fixture();
+        temp_db.seed_many_claude_sessions(130);
+
+        let controller = SessionList::builder().launch(temp_db.path.clone());
+
+        pump_main_context(|| {
+            let parts = controller.state().get();
+            parts.model.sessions.len() == 135
+        });
+
+        controller.emit(SessionListMsg::ReloadAfterIndexing {
+            assistants: vec![AiAssistant::ClaudeCode],
+            project_filter: ProjectFilter::Project(1),
+            context: IndexingReloadContext {
+                indexed: 130,
+                skipped: 0,
+                removed: 0,
+                pending_reindex_feedback: false,
+                errors_present: false,
+            },
+        });
+
+        pump_main_context(|| {
+            let parts = controller.state().get();
+            parts.model.sessions.len() == POST_INDEXING_RELOAD_BATCH_SIZE
+        });
+
+        controller.emit(SessionListMsg::ReloadAfterIndexing {
+            assistants: vec![AiAssistant::OpenCode],
+            project_filter: ProjectFilter::Project(1),
+            context: IndexingReloadContext {
+                indexed: 1,
+                skipped: 0,
+                removed: 0,
+                pending_reindex_feedback: false,
+                errors_present: false,
+            },
+        });
+
+        pump_main_context(|| {
+            let parts = controller.state().get();
+            parts.model.pending_post_indexing_batch.is_none() && parts.model.sessions.len() == 1
+        });
+
+        drain_main_context();
+
+        let ids: Vec<String> = {
+            let parts = controller.state().get();
+            (0..parts.model.sessions.len())
+                .filter_map(|index| parts.model.sessions.get(index))
+                .map(|row| row.session_id().to_string())
+                .collect()
+        };
+
+        assert_eq!(ids, vec!["alpha-opencode"]);
+    }
+
+    #[gtk::test]
+    fn ordinary_reload_cancels_active_post_indexing_batch() {
+        let temp_db = TempDatabase::new();
+        temp_db.seed_project_sidebar_fixture();
+        temp_db.seed_many_claude_sessions(130);
+
+        let controller = SessionList::builder().launch(temp_db.path.clone());
+
+        pump_main_context(|| {
+            let parts = controller.state().get();
+            parts.model.sessions.len() == 135
+        });
+
+        controller.emit(SessionListMsg::ReloadAfterIndexing {
+            assistants: vec![AiAssistant::ClaudeCode],
+            project_filter: ProjectFilter::Project(1),
+            context: IndexingReloadContext {
+                indexed: 130,
+                skipped: 0,
+                removed: 0,
+                pending_reindex_feedback: false,
+                errors_present: false,
+            },
+        });
+
+        pump_main_context(|| {
+            let parts = controller.state().get();
+            parts.model.sessions.len() == POST_INDEXING_RELOAD_BATCH_SIZE
+        });
+
+        controller.emit(SessionListMsg::SetSearchQuery(
+            "id:alpha-claude-new".to_string(),
+        ));
+
+        pump_main_context(|| {
+            let parts = controller.state().get();
+            parts.model.pending_post_indexing_batch.is_none() && parts.model.sessions.len() == 1
+        });
+
+        drain_main_context();
+
+        let ids: Vec<String> = {
+            let parts = controller.state().get();
+            (0..parts.model.sessions.len())
+                .filter_map(|index| parts.model.sessions.get(index))
+                .map(|row| row.session_id().to_string())
+                .collect()
+        };
+
+        assert_eq!(ids, vec!["alpha-claude-new"]);
+    }
+
+    #[gtk::test]
+    fn user_selection_during_batch_is_not_overwritten_by_final_restore() {
+        let temp_db = TempDatabase::new();
+        temp_db.seed_project_sidebar_fixture();
+        temp_db.seed_many_claude_sessions(130);
+
+        let controller = SessionList::builder().launch(temp_db.path.clone());
+
+        pump_main_context(|| {
+            let parts = controller.state().get();
+            parts.model.sessions.len() == 135
+        });
+
+        let root = controller.widget().clone().upcast::<gtk::Widget>();
+        let list_box = find_list_box(&root).expect("list box");
+        let old_row = list_box.row_at_index(1).expect("alpha old row");
+        list_box.select_row(Some(&old_row));
+        pump_main_context(|| list_box.selected_row().map(|row| row.index()) == Some(1));
+
+        controller.emit(SessionListMsg::ReloadAfterIndexing {
+            assistants: vec![AiAssistant::ClaudeCode],
+            project_filter: ProjectFilter::Project(1),
+            context: IndexingReloadContext {
+                indexed: 130,
+                skipped: 0,
+                removed: 0,
+                pending_reindex_feedback: false,
+                errors_present: false,
+            },
+        });
+
+        pump_main_context(|| {
+            let parts = controller.state().get();
+            parts.model.sessions.len() == POST_INDEXING_RELOAD_BATCH_SIZE
+        });
+
+        let new_row = list_box.row_at_index(0).expect("alpha new row");
+        list_box.select_row(Some(&new_row));
+        pump_main_context(|| list_box.selected_row().map(|row| row.index()) == Some(0));
+
+        pump_main_context(|| {
+            let parts = controller.state().get();
+            parts.model.pending_post_indexing_batch.is_none() && parts.model.sessions.len() == 132
+        });
+
+        let selected_session_id = {
+            let parts = controller.state().get();
+            let selected_index = list_box
+                .selected_row()
+                .map(|row| row.index() as usize)
+                .expect("selected row");
+            parts
+                .model
+                .sessions
+                .get(selected_index)
+                .map(|row| row.session_id().to_string())
+                .expect("selected session")
+        };
+
+        assert_eq!(selected_session_id, "alpha-claude-new");
     }
 
     #[gtk::test]
