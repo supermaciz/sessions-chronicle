@@ -218,6 +218,10 @@ impl ActivePostIndexingMeasurement {
         self.selection_restore_succeeded = succeeded;
         self.ensure_selection_fallback_ran = fallback_ran;
     }
+
+    fn record_batch_push(&mut self, duration: Duration) {
+        self.push_duration += duration;
+    }
 }
 
 const POST_INDEXING_RELOAD_BATCH_SIZE: usize = 64;
@@ -559,7 +563,7 @@ impl SimpleComponent for SessionList {
                 self.all_tools_selected = self.active_tools.len() == AiAssistant::ALL.len();
                 self.project_filter = project_filter;
                 self.start_post_indexing_measurement(context);
-                self.reload_sessions(&sender);
+                self.reload_sessions_after_indexing(&sender);
             }
             SessionListMsg::PostIndexingReloadIdleMeasured { token, delay_ms } => {
                 self.record_post_indexing_idle(token, delay_ms);
@@ -791,11 +795,72 @@ impl SessionList {
         }
     }
 
-    fn run_post_indexing_batch(
-        &mut self,
-        _sender: &ComponentSender<Self>,
-        _token: MeasurementToken,
-    ) {
+    fn finalize_post_indexing_batch(&mut self, batch: PendingPostIndexingBatch) {
+        let mut selection_restore_attempted = false;
+        let mut selection_restore_succeeded = false;
+        let mut ensure_selection_fallback_ran = false;
+
+        if !batch.user_selection_changed() {
+            if let Some(session_id) = batch.previously_selected_id() {
+                selection_restore_attempted = true;
+                selection_restore_succeeded = self.select_session_by_id(session_id);
+                if !selection_restore_succeeded {
+                    ensure_selection_fallback_ran = true;
+                    self.ensure_selection();
+                }
+            } else {
+                ensure_selection_fallback_ran = true;
+                self.ensure_selection();
+            }
+        }
+
+        if let Some(active) = self.active_post_indexing_measurement.as_mut() {
+            active.record_selection(
+                selection_restore_attempted,
+                selection_restore_succeeded,
+                ensure_selection_fallback_ran,
+            );
+            active.user_selection_changed_during_batch = batch.user_selection_changed();
+        }
+
+        self.maybe_emit_post_indexing_measurement();
+    }
+
+    fn run_post_indexing_batch(&mut self, sender: &ComponentSender<Self>, token: MeasurementToken) {
+        let Some(batch) = self.pending_post_indexing_batch.as_mut() else {
+            return;
+        };
+
+        if !batch.token_matches(&token) {
+            return;
+        }
+
+        let rows = batch.take_next_rows(POST_INDEXING_RELOAD_BATCH_SIZE);
+        let batch_push_started_at = Instant::now();
+        {
+            let mut guard = self.sessions.guard();
+            for session in rows {
+                guard.push_back(SessionRowInit { session });
+            }
+        }
+        let batch_push_duration = batch_push_started_at.elapsed();
+
+        if let Some(active) = self.current_post_indexing_measurement_mut(&token) {
+            active.record_batch_push(batch_push_duration);
+        }
+
+        let exhausted = self
+            .pending_post_indexing_batch
+            .as_ref()
+            .is_some_and(PendingPostIndexingBatch::is_exhausted);
+
+        if exhausted {
+            if let Some(batch) = self.pending_post_indexing_batch.take() {
+                self.finalize_post_indexing_batch(batch);
+            }
+        } else {
+            self.schedule_post_indexing_batch(sender, token);
+        }
     }
 
     fn current_post_indexing_measurement_mut(
@@ -843,6 +908,19 @@ impl SessionList {
         });
     }
 
+    fn schedule_post_indexing_batch(
+        &self,
+        sender: &ComponentSender<Self>,
+        token: MeasurementToken,
+    ) {
+        let batch_sender = sender.input_sender().clone();
+        glib::idle_add_local_once(move || {
+            if token.is_valid() {
+                let _ = batch_sender.send(SessionListMsg::PostIndexingReloadBatch { token });
+            }
+        });
+    }
+
     fn record_post_indexing_idle(&mut self, token: MeasurementToken, delay_ms: u128) {
         if let Some(active) = self.current_post_indexing_measurement_mut(&token) {
             active.next_idle_delay = CallbackTiming::Available(delay_ms);
@@ -868,7 +946,10 @@ impl SessionList {
             return;
         };
 
-        if active.next_idle_delay.is_pending() || active.next_frame_delay.is_pending() {
+        if active.next_idle_delay.is_pending()
+            || active.next_frame_delay.is_pending()
+            || self.pending_post_indexing_batch.is_some()
+        {
             return;
         }
 
@@ -906,7 +987,57 @@ impl SessionList {
         self.active_post_indexing_measurement = None;
     }
 
+    fn reload_sessions_after_indexing(&mut self, sender: &ComponentSender<Self>) {
+        let previously_selected_id = self.selected_session_id();
+
+        let fetch_started_at = Instant::now();
+        let fetched = Self::fetch_sessions(
+            &self.db_path,
+            &self.active_tools,
+            &self.project_filter,
+            &self.search_query,
+        );
+        let fetch_duration = fetch_started_at.elapsed();
+        let row_count = fetched.len();
+
+        let mut guard = self.sessions.guard();
+        let clear_started_at = Instant::now();
+        guard.clear();
+        let clear_duration = clear_started_at.elapsed();
+        drop(guard);
+
+        let Some(token) = self
+            .active_post_indexing_measurement
+            .as_ref()
+            .map(|active| active.token.clone())
+        else {
+            return;
+        };
+
+        if let Some(active) = self.active_post_indexing_measurement.as_mut() {
+            active.record_sync_phases(
+                previously_selected_id.is_some(),
+                fetch_duration,
+                clear_duration,
+                Duration::ZERO,
+                row_count,
+            );
+        }
+
+        self.pending_post_indexing_batch = Some(PendingPostIndexingBatch::new(
+            token.clone(),
+            fetched,
+            previously_selected_id,
+        ));
+
+        let after_setup_at = Instant::now();
+        self.schedule_post_indexing_callbacks(sender, token.clone(), after_setup_at);
+        self.schedule_post_indexing_batch(sender, token);
+    }
+
     fn reload_sessions(&mut self, sender: &ComponentSender<Self>) {
+        self.cancel_post_indexing_batch();
+
         let previously_selected_id = self.selected_session_id();
 
         let fetch_started_at = Instant::now();
@@ -1116,6 +1247,29 @@ mod tests {
                     ],
                 )
                 .expect("Failed to insert beta claude session");
+        }
+
+        fn seed_many_claude_sessions(&self, count: usize) {
+            for index in 0..count {
+                let id = format!("bulk-claude-{index:03}");
+                let file_path = format!("/tmp/{id}.jsonl");
+                self.connection
+                    .execute(
+                        "INSERT INTO sessions (id, tool, project_path, project_id, start_time, message_count, file_path, last_updated)
+                         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                        rusqlite::params![
+                            id,
+                            "claude_code",
+                            Some("/projects/alpha"),
+                            Some(1_i64),
+                            index as i64,
+                            1_i64,
+                            file_path,
+                            index as i64,
+                        ],
+                    )
+                    .expect("Failed to insert bulk claude session");
+            }
         }
     }
 
@@ -1700,6 +1854,65 @@ mod tests {
         };
 
         assert_eq!(ids, vec!["alpha-opencode"]);
+    }
+
+    #[gtk::test]
+    fn reload_after_indexing_finishes_batched_reload_with_expected_rows() {
+        let temp_db = TempDatabase::new();
+        temp_db.seed_project_sidebar_fixture();
+        temp_db.seed_many_claude_sessions(70);
+
+        let controller = SessionList::builder().launch(temp_db.path.clone());
+
+        pump_main_context(|| {
+            let parts = controller.state().get();
+            parts.model.sessions.len() == 75
+        });
+
+        controller.emit(SessionListMsg::ReloadAfterIndexing {
+            assistants: vec![AiAssistant::ClaudeCode],
+            project_filter: ProjectFilter::Project(1),
+            context: IndexingReloadContext {
+                indexed: 70,
+                skipped: 0,
+                removed: 0,
+                pending_reindex_feedback: false,
+                errors_present: false,
+            },
+        });
+
+        pump_main_context(|| {
+            let parts = controller.state().get();
+            parts.model.sessions.len() == 0 && parts.model.pending_post_indexing_batch.is_some()
+        });
+
+        {
+            let parts = controller.state().get();
+            assert_eq!(parts.model.sessions.len(), 0);
+            assert!(parts.model.pending_post_indexing_batch.is_some());
+        }
+
+        pump_main_context(|| {
+            let parts = controller.state().get();
+            parts.model.sessions.len() == POST_INDEXING_RELOAD_BATCH_SIZE
+        });
+
+        pump_main_context(|| {
+            let parts = controller.state().get();
+            parts.model.pending_post_indexing_batch.is_none() && parts.model.sessions.len() == 72
+        });
+
+        let ids: Vec<String> = {
+            let parts = controller.state().get();
+            (0..parts.model.sessions.len())
+                .filter_map(|index| parts.model.sessions.get(index))
+                .map(|row| row.session_id().to_string())
+                .collect()
+        };
+
+        assert_eq!(ids[0], "alpha-claude-new");
+        assert_eq!(ids[1], "alpha-claude-old");
+        assert_eq!(ids.len(), 72);
     }
 
     #[gtk::test]
