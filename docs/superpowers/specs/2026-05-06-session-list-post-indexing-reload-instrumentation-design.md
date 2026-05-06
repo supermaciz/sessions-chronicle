@@ -67,15 +67,25 @@ Trade-off: more comparable, but adds noise that hides the target symptom. Other 
 
 ### Tagging The Measured Cycle
 
-Do **not** introduce a new `SessionListMsg` variant. The instrumentation must not change the message surface.
+`App` reaches `SessionList` through its Relm4 `Controller`, so the post-indexing measurement context must be passed as a component input, not by mutating `SessionList` state directly from `App`.
 
-Instead, just before `handle_indexing_completed` emits `SessionListMsg::Reload`, set a small field on `SessionList`:
+Add a narrow dedicated input for the measured path, for example:
 
 ```rust
-self.pending_measurement = Some(PendingMeasurement::new(IndexingReloadContext { .. }));
+SessionListMsg::ReloadAfterIndexing {
+    tools: Vec<AiAssistant>,
+    project_filter: ProjectFilter,
+    context: IndexingReloadContext,
+}
 ```
 
-`reload_sessions()` then takes the `Option` at the top of the function. If `Some`, the reload is the measured cycle and runs the instrumented path; if `None`, the reload is unmeasured and behaves exactly as today. This keeps the message enum unchanged and the tagging local to the indexing→list path.
+This message:
+
+- applies the current filter state from `App`;
+- marks the reload as the measured post-indexing cycle;
+- immediately runs `reload_sessions()`.
+
+Ordinary reloads (`Reload`, search, pin, manual filter changes) remain unmeasured and keep their current behavior. The dedicated message exists only because the indexing-completion path needs to carry extra context across the component boundary cleanly.
 
 `IndexingReloadContext` carries:
 
@@ -84,19 +94,32 @@ self.pending_measurement = Some(PendingMeasurement::new(IndexingReloadContext { 
 - whether indexing reported errors;
 - whether the reload is emitted directly from completion handling or after the project-refresh path.
 
-If the project-refresh path resends filters before the indexing-driven reload fires, the `pending_measurement` should survive the intermediate `SetFilters`/`SetSearchQuery` reloads without being consumed by them — i.e. only `Reload` (or the specific message that carries the post-indexing reload today) consumes it. The plan should pick the minimal site that matches the actual code path, without refactoring reload routing.
+If `refresh_sidebar_projects()` changes the retained project filter, `App` should emit the dedicated measured message with the updated `tools` / `project_filter` values instead of routing through a separate `SetFilters` followed by an implicit reload. That keeps one unambiguous measured cycle and avoids consuming measurement state on an intermediate message.
 
 ### Cycle Identity And Invalidation
 
-A single `Option<PendingMeasurement>` is enough — at most one measured cycle is tracked at a time. No numeric `reload_id` is needed.
+Keep a dedicated in-flight measurement state on `SessionList` until the summary has been emitted, for example:
+
+```rust
+active_post_indexing_measurement: Option<ActiveMeasurement>
+```
+
+`ActiveMeasurement` holds:
+
+- the immutable `IndexingReloadContext`;
+- synchronous timings collected during `reload_sessions()`;
+- slots for `next_idle_delay_ms` and `next_frame_delay_ms`;
+- a small invalidation token shared with the idle/frame callback closures.
+
+At most one measured post-indexing cycle is tracked at a time.
 
 Invalidation rules:
 
-- if a new measured cycle starts before the previous one completed (i.e. `pending_measurement` is replaced while idle/frame callbacks are still pending), the older callbacks discover their cycle has been superseded via a weak reference / generation token kept by the callback closure, and exit without emitting;
+- if a new measured cycle starts before the previous one completed, `SessionList` first invalidates the existing `active_post_indexing_measurement`, then replaces it; stale callbacks discover this through the shared invalidation token and exit without emitting;
 - if the widget is dropped before the frame callback fires, the callback exits silently;
 - if the idle or frame callback never fires, no summary is emitted (best-effort by design).
 
-The "generation token" can be as simple as a `Rc<Cell<bool>>` flag that the new cycle marks `false` when it overwrites the old one. Avoid building a numeric ID scheme around this.
+The invalidation token can be as simple as a `Rc<Cell<bool>>` flag that the new cycle marks `false` before replacing the previous `ActiveMeasurement`. A numeric `reload_id` is not required.
 
 ### Synchronous Reload Phases
 
@@ -132,7 +155,7 @@ A frame callback only means the widget's `FrameClock` advanced; it does not prov
 
 ### Final Summary Event
 
-When both idle and frame callbacks have either fired or been marked unavailable, emit one `info` event `sessionlist.post_indexing_reload.measured` with:
+When both idle and frame callbacks have either fired or been marked unavailable, emit one `info` event `sessionlist.post_indexing_reload.measured` from the still-active `ActiveMeasurement` with:
 
 - trigger context fields;
 - filter/search context;
@@ -140,11 +163,11 @@ When both idle and frame callbacks have either fired or been marked unavailable,
 - selection restoration fields;
 - `next_idle_delay_ms` (or `unavailable`);
 - `next_frame_delay_ms` (or `unavailable`);
-- `total_reload_ms` (from start of measured cycle to last captured callback).
+- `total_reload_ms` (from start of measured cycle to the last captured callback).
 
 Sub-phase events may use `debug` if needed; the final summary alone should be sufficient to write the report.
 
-If a newer measured cycle invalidates the pending one before its callbacks fire, the stale summary is dropped — never emitted as if current.
+If a newer measured cycle invalidates the active one before its callbacks fire, the stale summary is dropped — never emitted as if current.
 
 ## Error Handling
 
@@ -212,7 +235,7 @@ The instrumentation work is accepted when:
 Diagnostics-only change. Light automated checks:
 
 - `cargo fmt --all -- --check`;
-- targeted unit test for the `PendingMeasurement` invalidation helper if one is extracted;
+- targeted unit test for the `ActiveMeasurement` invalidation helper if one is extracted;
 - `cargo test --all --no-fail-fast` only if the diff touches enough shared logic to justify it.
 
 Manual verification is primary. Success = logs clearly separate synchronous reload cost from post-drop main-loop/frame delay.
@@ -220,8 +243,8 @@ Manual verification is primary. Success = logs clearly separate synchronous relo
 ## Implementation Decisions
 
 - Keep instrumentation inline near `handle_indexing_completed` and `SessionList::reload_sessions()`.
-- Tag the measured cycle through a `pending_measurement: Option<PendingMeasurement>` field, **not** a new `SessionListMsg` variant.
-- Use a single `Option` plus a generation flag for invalidation; no numeric IDs.
+- Pass the post-indexing measurement context through a narrow dedicated `SessionListMsg`, because `App` reaches `SessionList` through a Relm4 controller boundary.
+- Keep a separate `active_post_indexing_measurement: Option<ActiveMeasurement>` alive until idle/frame completion, plus a lightweight invalidation flag; no numeric IDs.
 - Use `glib::idle_add_local_once` and `WidgetExt::add_tick_callback` (one-shot) for post-drop timings.
 - `info` for the final summary event, `debug` for supporting phase logs.
 
