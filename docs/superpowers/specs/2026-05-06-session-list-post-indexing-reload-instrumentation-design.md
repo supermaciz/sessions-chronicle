@@ -73,7 +73,7 @@ Add a narrow dedicated input for the measured path, for example:
 
 ```rust
 SessionListMsg::ReloadAfterIndexing {
-    tools: Vec<AiAssistant>,
+    assistants: Vec<AiAssistant>,
     project_filter: ProjectFilter,
     context: IndexingReloadContext,
 }
@@ -87,14 +87,15 @@ This message:
 
 Ordinary reloads (`Reload`, search, pin, manual filter changes) remain unmeasured and keep their current behavior. The dedicated message exists only because the indexing-completion path needs to carry extra context across the component boundary cleanly.
 
+`App` is the canonical owner of active AI assistant filters and `project_filter`. `SessionList` stores only the latest applied copy needed to render and reload from its local component state.
+
 `IndexingReloadContext` carries:
 
 - `indexed`, `skipped`, `removed`;
 - whether `pending_reindex_feedback` was active;
-- whether indexing reported errors;
-- whether the reload is emitted directly from completion handling or after the project-refresh path.
+- whether indexing reported errors.
 
-If `refresh_sidebar_projects()` changes the retained project filter, `App` should emit the dedicated measured message with the updated `tools` / `project_filter` values instead of routing through a separate `SetFilters` followed by an implicit reload. That keeps one unambiguous measured cycle and avoids consuming measurement state on an intermediate message.
+If `refresh_sidebar_projects()` changes the retained project filter, `App` should emit the dedicated measured message with the updated `assistants` / `project_filter` values instead of routing through a separate `SetFilters` followed by an implicit reload. That keeps one unambiguous measured cycle and avoids consuming measurement state on an intermediate message.
 
 ### Cycle Identity And Invalidation
 
