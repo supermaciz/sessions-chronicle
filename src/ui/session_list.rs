@@ -31,6 +31,7 @@ pub struct SessionList {
     source_results: Vec<PerSourceResult>,
     source_results_available: bool,
     active_post_indexing_measurement: Option<ActivePostIndexingMeasurement>,
+    pending_post_indexing_batch: Option<PendingPostIndexingBatch>,
 }
 
 #[derive(Debug)]
@@ -54,6 +55,10 @@ pub enum SessionListMsg {
         token: MeasurementToken,
         delay_ms: u128,
     },
+    PostIndexingReloadBatch {
+        token: MeasurementToken,
+    },
+    PostIndexingSelectionChanged,
     SetIndexing(bool),
     SetSourceResults(Vec<PerSourceResult>),
     SessionActivated(i32),
@@ -159,6 +164,7 @@ struct ActivePostIndexingMeasurement {
     selection_restore_attempted: bool,
     selection_restore_succeeded: bool,
     ensure_selection_fallback_ran: bool,
+    user_selection_changed_during_batch: bool,
     next_idle_delay: CallbackTiming,
     next_frame_delay: CallbackTiming,
 }
@@ -186,6 +192,7 @@ impl ActivePostIndexingMeasurement {
             selection_restore_attempted: false,
             selection_restore_succeeded: false,
             ensure_selection_fallback_ran: false,
+            user_selection_changed_during_batch: false,
             next_idle_delay: CallbackTiming::Pending,
             next_frame_delay: CallbackTiming::Pending,
         }
@@ -473,6 +480,7 @@ impl SimpleComponent for SessionList {
             source_results: vec![],
             source_results_available: false,
             active_post_indexing_measurement: None,
+            pending_post_indexing_batch: None,
         };
 
         // Populate initial data
@@ -489,6 +497,11 @@ impl SimpleComponent for SessionList {
         let input_sender = sender.input_sender().clone();
         session_list_box.connect_row_activated(move |_, row| {
             let _ = input_sender.send(SessionListMsg::SessionActivated(row.index()));
+        });
+
+        let selection_sender = sender.input_sender().clone();
+        session_list_box.connect_selected_rows_changed(move |_| {
+            let _ = selection_sender.send(SessionListMsg::PostIndexingSelectionChanged);
         });
 
         if model.sessions.is_empty() {
@@ -553,6 +566,12 @@ impl SimpleComponent for SessionList {
             }
             SessionListMsg::PostIndexingReloadFrameMeasured { token, delay_ms } => {
                 self.record_post_indexing_frame(token, delay_ms);
+            }
+            SessionListMsg::PostIndexingReloadBatch { token } => {
+                self.run_post_indexing_batch(&sender, token);
+            }
+            SessionListMsg::PostIndexingSelectionChanged => {
+                self.mark_post_indexing_selection_changed();
             }
             SessionListMsg::SetIndexing(indexing) => {
                 self.indexing = indexing;
@@ -743,9 +762,7 @@ impl SessionList {
     }
 
     fn start_post_indexing_measurement(&mut self, context: IndexingReloadContext) {
-        if let Some(active) = &self.active_post_indexing_measurement {
-            active.token.invalidate();
-        }
+        self.cancel_post_indexing_batch();
 
         self.active_post_indexing_measurement = Some(ActivePostIndexingMeasurement::new(
             context,
@@ -753,6 +770,32 @@ impl SessionList {
             &self.project_filter,
             &self.search_query,
         ));
+    }
+
+    fn cancel_post_indexing_batch(&mut self) {
+        if let Some(batch) = self.pending_post_indexing_batch.take() {
+            batch.invalidate();
+        }
+
+        if let Some(active) = self.active_post_indexing_measurement.take() {
+            active.token.invalidate();
+        }
+    }
+
+    fn mark_post_indexing_selection_changed(&mut self) {
+        if let Some(batch) = self.pending_post_indexing_batch.as_mut() {
+            batch.mark_user_selection_changed();
+            if let Some(active) = self.active_post_indexing_measurement.as_mut() {
+                active.user_selection_changed_during_batch = true;
+            }
+        }
+    }
+
+    fn run_post_indexing_batch(
+        &mut self,
+        _sender: &ComponentSender<Self>,
+        _token: MeasurementToken,
+    ) {
     }
 
     fn current_post_indexing_measurement_mut(
@@ -1475,6 +1518,99 @@ mod tests {
         batch.invalidate();
         assert!(!callback_token.is_valid());
         assert!(!batch.token_matches(&callback_token));
+    }
+
+    #[gtk::test]
+    fn cancel_post_indexing_batch_invalidates_pending_batch_and_measurement() {
+        let temp_db = tempfile::NamedTempFile::new().expect("temp db");
+        let controller = SessionList::builder().launch(temp_db.path().to_path_buf());
+        let context = IndexingReloadContext {
+            indexed: 1,
+            skipped: 0,
+            removed: 0,
+            pending_reindex_feedback: false,
+            errors_present: false,
+        };
+
+        let callback_token = {
+            let mut parts = controller.state().get_mut();
+            parts.model.start_post_indexing_measurement(context);
+            let token = parts
+                .model
+                .active_post_indexing_measurement
+                .as_ref()
+                .expect("active measurement")
+                .token
+                .clone();
+            parts.model.pending_post_indexing_batch = Some(PendingPostIndexingBatch::new(
+                token.clone(),
+                vec![make_test_session("pending")],
+                None,
+            ));
+            token
+        };
+
+        {
+            let mut parts = controller.state().get_mut();
+            parts.model.cancel_post_indexing_batch();
+            assert!(parts.model.pending_post_indexing_batch.is_none());
+            assert!(parts.model.active_post_indexing_measurement.is_none());
+        }
+
+        assert!(!callback_token.is_valid());
+    }
+
+    #[gtk::test]
+    fn start_post_indexing_measurement_cancels_previous_pending_batch() {
+        let temp_db = tempfile::NamedTempFile::new().expect("temp db");
+        let controller = SessionList::builder().launch(temp_db.path().to_path_buf());
+        let first_context = IndexingReloadContext {
+            indexed: 1,
+            skipped: 0,
+            removed: 0,
+            pending_reindex_feedback: false,
+            errors_present: false,
+        };
+        let second_context = IndexingReloadContext {
+            indexed: 2,
+            skipped: 0,
+            removed: 0,
+            pending_reindex_feedback: false,
+            errors_present: false,
+        };
+
+        let first_token = {
+            let mut parts = controller.state().get_mut();
+            parts.model.start_post_indexing_measurement(first_context);
+            let token = parts
+                .model
+                .active_post_indexing_measurement
+                .as_ref()
+                .expect("first measurement")
+                .token
+                .clone();
+            parts.model.pending_post_indexing_batch = Some(PendingPostIndexingBatch::new(
+                token.clone(),
+                vec![make_test_session("first")],
+                None,
+            ));
+            parts.model.start_post_indexing_measurement(second_context);
+            token
+        };
+
+        let parts = controller.state().get();
+        assert!(parts.model.pending_post_indexing_batch.is_none());
+        assert!(!first_token.is_valid());
+        assert_eq!(
+            parts
+                .model
+                .active_post_indexing_measurement
+                .as_ref()
+                .expect("second measurement")
+                .context
+                .indexed,
+            2
+        );
     }
 
     #[gtk::test]
