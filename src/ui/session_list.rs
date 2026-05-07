@@ -242,6 +242,7 @@ struct PendingPostIndexingBatch {
     previously_selected_id: Option<String>,
     user_selection_changed: bool,
     had_focus_before_reload: bool,
+    needs_clear: bool,
 }
 
 impl PendingPostIndexingBatch {
@@ -256,6 +257,7 @@ impl PendingPostIndexingBatch {
             previously_selected_id,
             user_selection_changed: false,
             had_focus_before_reload: false,
+            needs_clear: true,
         }
     }
 
@@ -866,12 +868,30 @@ impl SessionList {
 
         let rows = batch.take_next_rows(POST_INDEXING_RELOAD_BATCH_SIZE);
         let batch_push_started_at = Instant::now();
-        {
+
+        if batch.needs_clear {
+            let list_box = self.sessions.widget().clone();
+            let blocked_handler = self.selection_signal_handler.as_ref();
+            if let Some(handler) = blocked_handler {
+                list_box.block_signal(handler);
+            }
+            let mut guard = self.sessions.guard();
+            guard.clear();
+            for session in rows {
+                guard.push_back(SessionRowInit { session });
+            }
+            drop(guard);
+            if let Some(handler) = blocked_handler {
+                list_box.unblock_signal(handler);
+            }
+            batch.needs_clear = false;
+        } else {
             let mut guard = self.sessions.guard();
             for session in rows {
                 guard.push_back(SessionRowInit { session });
             }
         }
+
         let batch_push_duration = batch_push_started_at.elapsed();
 
         if let Some(active) = self.current_post_indexing_measurement_mut(&token) {
@@ -1036,18 +1056,6 @@ impl SessionList {
 
         let list_box = self.sessions.widget().clone();
         let had_focus_before_reload = focus_is_within(&list_box);
-        let blocked_handler = self.selection_signal_handler.as_ref();
-        if let Some(handler) = blocked_handler {
-            list_box.block_signal(handler);
-        }
-        let mut guard = self.sessions.guard();
-        let clear_started_at = Instant::now();
-        guard.clear();
-        let clear_duration = clear_started_at.elapsed();
-        drop(guard);
-        if let Some(handler) = blocked_handler {
-            list_box.unblock_signal(handler);
-        }
 
         let Some(token) = self
             .active_post_indexing_measurement
@@ -1061,7 +1069,7 @@ impl SessionList {
             active.record_sync_phases(
                 previously_selected_id.is_some(),
                 fetch_duration,
-                clear_duration,
+                Duration::ZERO,
                 Duration::ZERO,
                 row_count,
             );
@@ -1962,12 +1970,12 @@ mod tests {
 
         pump_main_context(|| {
             let parts = controller.state().get();
-            parts.model.sessions.len() == 0 && parts.model.pending_post_indexing_batch.is_some()
+            parts.model.pending_post_indexing_batch.is_some() && parts.model.sessions.len() == 75
         });
 
         {
             let parts = controller.state().get();
-            assert_eq!(parts.model.sessions.len(), 0);
+            assert_eq!(parts.model.sessions.len(), 75);
             assert!(parts.model.pending_post_indexing_batch.is_some());
         }
 
