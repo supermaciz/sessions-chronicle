@@ -231,6 +231,10 @@ impl ActivePostIndexingMeasurement {
         self.push_duration += duration;
         self.max_batch_push_duration = self.max_batch_push_duration.max(duration);
     }
+
+    fn record_deferred_clear(&mut self, duration: Duration) {
+        self.clear_duration = duration;
+    }
 }
 
 const POST_INDEXING_RELOAD_BATCH_SIZE: usize = 64;
@@ -867,8 +871,9 @@ impl SessionList {
         }
 
         let rows = batch.take_next_rows(POST_INDEXING_RELOAD_BATCH_SIZE);
-        let batch_push_started_at = Instant::now();
+        let mut deferred_clear_duration: Option<Duration> = None;
 
+        let batch_push_started_at = Instant::now();
         if batch.needs_clear {
             let list_box = self.sessions.widget().clone();
             let blocked_handler = self.selection_signal_handler.as_ref();
@@ -876,7 +881,9 @@ impl SessionList {
                 list_box.block_signal(handler);
             }
             let mut guard = self.sessions.guard();
+            let clear_started_at = Instant::now();
             guard.clear();
+            deferred_clear_duration = Some(clear_started_at.elapsed());
             for session in rows {
                 guard.push_back(SessionRowInit { session });
             }
@@ -891,10 +898,14 @@ impl SessionList {
                 guard.push_back(SessionRowInit { session });
             }
         }
-
-        let batch_push_duration = batch_push_started_at.elapsed();
+        let batch_push_duration = batch_push_started_at
+            .elapsed()
+            .saturating_sub(deferred_clear_duration.unwrap_or(Duration::ZERO));
 
         if let Some(active) = self.current_post_indexing_measurement_mut(&token) {
+            if let Some(clear_duration) = deferred_clear_duration {
+                active.record_deferred_clear(clear_duration);
+            }
             active.record_batch_push(batch_push_duration);
         }
 
