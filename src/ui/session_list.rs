@@ -860,6 +860,7 @@ impl SessionList {
                 && let Some(row) = self.sessions.widget().selected_row()
             {
                 row.grab_focus();
+                Self::scroll_row_into_view(&row, self.sessions.widget());
             }
         }
 
@@ -935,6 +936,7 @@ impl SessionList {
             && let Some(row) = self.sessions.widget().selected_row()
         {
             row.grab_focus();
+            Self::scroll_row_into_view(&row, self.sessions.widget());
         }
         let batch_push_duration = batch_push_started_at
             .elapsed()
