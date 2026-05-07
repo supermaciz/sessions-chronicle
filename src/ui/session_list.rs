@@ -910,6 +910,32 @@ impl SessionList {
                 guard.push_back(SessionRowInit { session });
             }
         }
+
+        // After the first batch's clear+push, the listbox is briefly without
+        // a focused row. GTK then auto-focuses the first row, which is
+        // visible to the user as a flicker before finalize restores the
+        // intended selection. If the previously selected row was in the
+        // first batch (or arrived in any subsequent batch before finalize),
+        // anchor focus on it now so the user never sees row 0.
+        if !self.sessions.widget().selected_row().is_some_and(|row| {
+            self.sessions.get(row.index() as usize).is_some_and(|sr| {
+                self.pending_post_indexing_batch
+                    .as_ref()
+                    .and_then(|b| b.previously_selected_id())
+                    == Some(sr.session_id())
+            })
+        }) && let Some(target_id) = self
+            .pending_post_indexing_batch
+            .as_ref()
+            .and_then(|b| b.previously_selected_id())
+            .map(str::to_string)
+            && self.select_session_by_id(&target_id)
+            && let Some(batch) = self.pending_post_indexing_batch.as_ref()
+            && batch.had_focus_before_reload()
+            && let Some(row) = self.sessions.widget().selected_row()
+        {
+            row.grab_focus();
+        }
         let batch_push_duration = batch_push_started_at
             .elapsed()
             .saturating_sub(deferred_clear_duration.unwrap_or(Duration::ZERO));
