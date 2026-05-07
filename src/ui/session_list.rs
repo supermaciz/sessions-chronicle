@@ -572,7 +572,7 @@ impl SimpleComponent for SessionList {
                 self.active_tools = tools.clone();
                 self.project_filter = project_filter;
                 self.all_tools_selected = tools.len() == AiAssistant::ALL.len();
-                self.reload_sessions(&sender);
+                self.reload_sessions();
             }
             SessionListMsg::SetSearchQuery(query) => {
                 if !Self::search_query_changed(&self.search_query, &query) {
@@ -580,10 +580,10 @@ impl SimpleComponent for SessionList {
                 }
 
                 self.search_query = query;
-                self.reload_sessions(&sender);
+                self.reload_sessions();
             }
             SessionListMsg::Reload => {
-                self.reload_sessions(&sender);
+                self.reload_sessions();
             }
             SessionListMsg::ReloadAfterIndexing {
                 assistants,
@@ -1136,75 +1136,33 @@ impl SessionList {
         self.schedule_post_indexing_batch(sender, token);
     }
 
-    fn reload_sessions(&mut self, sender: &ComponentSender<Self>) {
+    fn reload_sessions(&mut self) {
         self.cancel_post_indexing_batch();
 
         let previously_selected_id = self.selected_session_id();
 
-        let fetch_started_at = Instant::now();
         let fetched = Self::fetch_sessions(
             &self.db_path,
             &self.active_tools,
             &self.project_filter,
             &self.search_query,
         );
-        let fetch_duration = fetch_started_at.elapsed();
-        let row_count = fetched.len();
 
         let mut guard = self.sessions.guard();
 
-        let clear_started_at = Instant::now();
         guard.clear();
-        let clear_duration = clear_started_at.elapsed();
 
-        let push_started_at = Instant::now();
         for session in fetched {
             guard.push_back(SessionRowInit { session });
         }
-        let push_duration = push_started_at.elapsed();
         drop(guard);
 
-        let maybe_token = self
-            .active_post_indexing_measurement
-            .as_ref()
-            .map(|active| active.token.clone());
-
-        if let Some(active) = self.active_post_indexing_measurement.as_mut() {
-            active.record_sync_phases(
-                previously_selected_id.is_some(),
-                fetch_duration,
-                clear_duration,
-                push_duration,
-                row_count,
-            );
-        }
-
-        if let Some(token) = maybe_token {
-            self.schedule_post_indexing_callbacks(sender, token, Instant::now());
-        }
-
-        let mut selection_restore_attempted = false;
-        let mut selection_restore_succeeded = false;
-        let mut ensure_selection_fallback_ran = false;
-
         if let Some(session_id) = previously_selected_id {
-            selection_restore_attempted = true;
-            selection_restore_succeeded = self.select_session_by_id(&session_id);
-            if !selection_restore_succeeded {
-                ensure_selection_fallback_ran = true;
+            if !self.select_session_by_id(&session_id) {
                 self.ensure_selection();
             }
         } else {
-            ensure_selection_fallback_ran = true;
             self.ensure_selection();
-        }
-
-        if let Some(active) = self.active_post_indexing_measurement.as_mut() {
-            active.record_selection(
-                selection_restore_attempted,
-                selection_restore_succeeded,
-                ensure_selection_fallback_ran,
-            );
         }
     }
 }
