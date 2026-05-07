@@ -33,6 +33,7 @@ pub struct SessionList {
     active_post_indexing_measurement: Option<ActivePostIndexingMeasurement>,
     pending_post_indexing_batch: Option<PendingPostIndexingBatch>,
     selection_signal_handler: Option<glib::SignalHandlerId>,
+    selection_signal_blocked_for_batch: bool,
 }
 
 #[derive(Debug)]
@@ -513,6 +514,7 @@ impl SimpleComponent for SessionList {
             active_post_indexing_measurement: None,
             pending_post_indexing_batch: None,
             selection_signal_handler: None,
+            selection_signal_blocked_for_batch: false,
         };
 
         // Populate initial data
@@ -813,6 +815,18 @@ impl SessionList {
         if let Some(active) = self.active_post_indexing_measurement.take() {
             active.token.invalidate();
         }
+
+        self.unblock_selection_signal_after_batch();
+    }
+
+    fn unblock_selection_signal_after_batch(&mut self) {
+        if !self.selection_signal_blocked_for_batch {
+            return;
+        }
+        if let Some(handler) = self.selection_signal_handler.as_ref() {
+            self.sessions.widget().unblock_signal(handler);
+        }
+        self.selection_signal_blocked_for_batch = false;
     }
 
     fn mark_post_indexing_selection_changed(&mut self) {
@@ -858,6 +872,7 @@ impl SessionList {
             active.user_selection_changed_during_batch = batch.user_selection_changed();
         }
 
+        self.unblock_selection_signal_after_batch();
         self.maybe_emit_post_indexing_measurement();
     }
 
@@ -876,10 +891,10 @@ impl SessionList {
         let batch_push_started_at = Instant::now();
         if batch.needs_clear {
             let list_box = self.sessions.widget().clone();
-            let blocked_handler = self.selection_signal_handler.as_ref();
-            if let Some(handler) = blocked_handler {
+            if let Some(handler) = self.selection_signal_handler.as_ref() {
                 list_box.block_signal(handler);
             }
+            self.selection_signal_blocked_for_batch = true;
             let mut guard = self.sessions.guard();
             let clear_started_at = Instant::now();
             guard.clear();
@@ -888,9 +903,6 @@ impl SessionList {
                 guard.push_back(SessionRowInit { session });
             }
             drop(guard);
-            if let Some(handler) = blocked_handler {
-                list_box.unblock_signal(handler);
-            }
             batch.needs_clear = false;
         } else {
             let mut guard = self.sessions.guard();
