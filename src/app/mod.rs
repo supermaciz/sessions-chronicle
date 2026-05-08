@@ -63,7 +63,7 @@ use types::{ActiveSessionRef, FilterState, Workspace};
 
 /// Timeout in seconds for resume failure toast notifications
 const RESUME_FAILURE_TOAST_TIMEOUT_SECS: u32 = 4;
-const MIN_WINDOW_WIDTH: i32 = 900;
+const MIN_WINDOW_WIDTH: i32 = 710;
 const MIN_WINDOW_HEIGHT: i32 = 600;
 
 struct SidebarProjectData {
@@ -1009,7 +1009,7 @@ mod tests {
 
     #[test]
     fn clamped_window_size_enforces_minimum_dimensions() {
-        assert_eq!(clamped_window_size((640, 480)), (900, 600));
+        assert_eq!(clamped_window_size((640, 480)), (710, 600));
     }
 
     #[test]
