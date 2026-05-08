@@ -3,9 +3,11 @@ use gtk::glib;
 use relm4::factory::FactoryVecDeque;
 use relm4::{ComponentParts, ComponentSender, SimpleComponent, adw, gtk};
 use std::{
+    cell::Cell,
     collections::VecDeque,
     fmt,
     path::{Path, PathBuf},
+    rc::Rc,
     sync::{
         Arc,
         atomic::{AtomicBool, Ordering},
@@ -33,7 +35,7 @@ pub struct SessionList {
     active_post_indexing_measurement: Option<ActivePostIndexingMeasurement>,
     pending_post_indexing_batch: Option<PendingPostIndexingBatch>,
     selection_signal_handler: Option<glib::SignalHandlerId>,
-    selection_signal_blocked_for_batch: bool,
+    programmatic_selection: Rc<Cell<bool>>,
 }
 
 #[derive(Debug)]
@@ -311,6 +313,16 @@ impl PendingPostIndexingBatch {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+struct ProgrammaticSelectionGuard {
+    flag: Rc<Cell<bool>>,
+}
+
+impl Drop for ProgrammaticSelectionGuard {
+    fn drop(&mut self) {
+        self.flag.set(false);
+    }
+}
+
 struct EmptyStateViewModel {
     title: &'static str,
     description: &'static str,
@@ -514,7 +526,7 @@ impl SimpleComponent for SessionList {
             active_post_indexing_measurement: None,
             pending_post_indexing_batch: None,
             selection_signal_handler: None,
-            selection_signal_blocked_for_batch: false,
+            programmatic_selection: Rc::new(Cell::new(false)),
         };
 
         // Populate initial data
@@ -534,7 +546,11 @@ impl SimpleComponent for SessionList {
         });
 
         let selection_sender = sender.input_sender().clone();
+        let programmatic_flag = model.programmatic_selection.clone();
         let selection_signal_handler = session_list_box.connect_selected_rows_changed(move |_| {
+            if programmatic_flag.get() {
+                return;
+            }
             let _ = selection_sender.send(SessionListMsg::PostIndexingSelectionChanged);
         });
         model.selection_signal_handler = Some(selection_signal_handler);
@@ -815,18 +831,11 @@ impl SessionList {
         if let Some(active) = self.active_post_indexing_measurement.take() {
             active.token.invalidate();
         }
-
-        self.unblock_selection_signal_after_batch();
     }
 
-    fn unblock_selection_signal_after_batch(&mut self) {
-        if !self.selection_signal_blocked_for_batch {
-            return;
-        }
-        if let Some(handler) = self.selection_signal_handler.as_ref() {
-            self.sessions.widget().unblock_signal(handler);
-        }
-        self.selection_signal_blocked_for_batch = false;
+    fn enter_programmatic_selection(flag: &Rc<Cell<bool>>) -> ProgrammaticSelectionGuard {
+        flag.set(true);
+        ProgrammaticSelectionGuard { flag: flag.clone() }
     }
 
     fn mark_post_indexing_selection_changed(&mut self) {
@@ -844,6 +853,7 @@ impl SessionList {
         let mut ensure_selection_fallback_ran = false;
 
         if !batch.user_selection_changed() {
+            let _prog = Self::enter_programmatic_selection(&self.programmatic_selection);
             if let Some(session_id) = batch.previously_selected_id() {
                 selection_restore_attempted = true;
                 selection_restore_succeeded = self.select_session_by_id(session_id);
@@ -873,7 +883,6 @@ impl SessionList {
             active.user_selection_changed_during_batch = batch.user_selection_changed();
         }
 
-        self.unblock_selection_signal_after_batch();
         self.maybe_emit_post_indexing_measurement();
     }
 
@@ -891,11 +900,7 @@ impl SessionList {
 
         let batch_push_started_at = Instant::now();
         if batch.needs_clear {
-            let list_box = self.sessions.widget().clone();
-            if let Some(handler) = self.selection_signal_handler.as_ref() {
-                list_box.block_signal(handler);
-            }
-            self.selection_signal_blocked_for_batch = true;
+            let _prog = Self::enter_programmatic_selection(&self.programmatic_selection);
             let mut guard = self.sessions.guard();
             let clear_started_at = Instant::now();
             guard.clear();
@@ -918,25 +923,28 @@ impl SessionList {
         // intended selection. If the previously selected row was in the
         // first batch (or arrived in any subsequent batch before finalize),
         // anchor focus on it now so the user never sees row 0.
-        if !self.sessions.widget().selected_row().is_some_and(|row| {
-            self.sessions.get(row.index() as usize).is_some_and(|sr| {
-                self.pending_post_indexing_batch
-                    .as_ref()
-                    .and_then(|b| b.previously_selected_id())
-                    == Some(sr.session_id())
-            })
-        }) && let Some(target_id) = self
-            .pending_post_indexing_batch
-            .as_ref()
-            .and_then(|b| b.previously_selected_id())
-            .map(str::to_string)
-            && self.select_session_by_id(&target_id)
-            && let Some(batch) = self.pending_post_indexing_batch.as_ref()
-            && batch.had_focus_before_reload()
-            && let Some(row) = self.sessions.widget().selected_row()
         {
-            row.grab_focus();
-            Self::scroll_row_into_view(&row, self.sessions.widget());
+            let _prog = Self::enter_programmatic_selection(&self.programmatic_selection);
+            if !self.sessions.widget().selected_row().is_some_and(|row| {
+                self.sessions.get(row.index() as usize).is_some_and(|sr| {
+                    self.pending_post_indexing_batch
+                        .as_ref()
+                        .and_then(|b| b.previously_selected_id())
+                        == Some(sr.session_id())
+                })
+            }) && let Some(target_id) = self
+                .pending_post_indexing_batch
+                .as_ref()
+                .and_then(|b| b.previously_selected_id())
+                .map(str::to_string)
+                && self.select_session_by_id(&target_id)
+                && let Some(batch) = self.pending_post_indexing_batch.as_ref()
+                && batch.had_focus_before_reload()
+                && let Some(row) = self.sessions.widget().selected_row()
+            {
+                row.grab_focus();
+                Self::scroll_row_into_view(&row, self.sessions.widget());
+            }
         }
         let batch_push_duration = batch_push_started_at
             .elapsed()
