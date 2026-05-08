@@ -671,20 +671,19 @@ impl MarkdownBufferWriter {
         }
     }
 
-    /// Minimum width (in characters) a table cell requests — prevents
-    /// columns from collapsing to a single word.
-    const TABLE_CELL_MIN_CHARS: i32 = 12;
-    /// Maximum width (in characters) before a table cell wraps its text.
-    const TABLE_CELL_MAX_CHARS: i32 = 50;
-
     fn create_table_label(text: &str, query: &str, is_header: bool) -> (gtk::Label, usize) {
         let label = gtk::Label::new(None);
         label.set_xalign(0.0);
         label.set_halign(gtk::Align::Start);
-        label.set_width_chars(Self::TABLE_CELL_MIN_CHARS);
-        label.set_max_width_chars(Self::TABLE_CELL_MAX_CHARS);
-        label.set_wrap(true);
-        label.set_wrap_mode(gtk::pango::WrapMode::WordChar);
+        // Do NOT wrap. Wrapping makes the label's natural height depend on
+        // its allocated width, which breaks GtkScrolledWindow's
+        // height-for-width measurement and produces tall blocks of empty
+        // space below tables (issue #149). With non-wrapping labels, the
+        // grid's height is constant regardless of width, so the SW's height
+        // is correct, and tables that don't fit the message area get the
+        // horizontal scrollbar (which is the SW's purpose).
+        label.set_wrap(false);
+        label.set_single_line_mode(false);
         label.add_css_class("markdown-table-cell");
         if is_header {
             label.add_css_class("markdown-table-header");
@@ -713,7 +712,12 @@ impl MarkdownBufferWriter {
 
         // Build the table grid.
         let grid = gtk::Grid::new();
-        grid.set_hexpand(true);
+        // Do NOT hexpand the grid. With non-wrapping cells, hexpand=true
+        // would propagate the grid's full natural width up through the
+        // ScrolledWindow into the message bubble, pushing layout off the
+        // window. The SW handles horizontal scrolling for content wider
+        // than its allocation.
+        grid.set_halign(gtk::Align::Start);
         grid.add_css_class("markdown-table");
         grid.set_row_spacing(4);
         grid.set_column_spacing(12);
@@ -739,8 +743,14 @@ impl MarkdownBufferWriter {
         }
 
         // Wrap in ScrolledWindow for horizontal scrolling of wide tables.
+        // The cells use non-wrapping labels (see `create_table_label`), so the
+        // grid's height is independent of its allocated width — that avoids
+        // GTK4's buggy height-for-width measurement on `ScrolledWindow` that
+        // would otherwise produce excess blank space below tables.
         let table_widget = gtk::ScrolledWindow::builder()
             .hexpand(true)
+            .vexpand(false)
+            .valign(gtk::Align::Start)
             .hscrollbar_policy(gtk::PolicyType::Automatic)
             .vscrollbar_policy(gtk::PolicyType::Never)
             .propagate_natural_height(true)
@@ -829,6 +839,8 @@ fn make_textview(buffer: &gtk::TextBuffer) -> gtk::TextView {
     view.set_cursor_visible(false);
     view.set_wrap_mode(gtk::WrapMode::WordChar);
     view.set_hexpand(true);
+    view.set_vexpand(false);
+    view.set_valign(gtk::Align::Start);
     view.set_top_margin(0);
     view.set_bottom_margin(0);
     view.set_left_margin(0);
@@ -889,12 +901,16 @@ pub fn render_markdown_to_textview(
         }
         // Empty content — return an empty widget.
         let empty = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        empty.set_vexpand(false);
+        empty.set_valign(gtk::Align::Start);
         attach_theme_cleanup(&empty, style_manager, theme_handler);
         return (empty.upcast(), match_count);
     }
 
     // Multiple segments with tables: build a vertical Box.
     let container = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    container.set_vexpand(false);
+    container.set_valign(gtk::Align::Start);
     let mut total_matches = table_match_count;
 
     for segment in segments {
@@ -1241,6 +1257,39 @@ mod tests {
             !labels.is_empty(),
             "expected table widget to contain labels"
         );
+    }
+
+    #[gtk::test]
+    fn textview_table_scroller_does_not_expand_vertically() {
+        let md = "| A | B |\n|---|---|\n| 1 | 2 |\n\nBelow";
+        let (widget, _) = render_markdown_to_textview(md, None);
+        let table = find_table_widgets(&widget)
+            .into_iter()
+            .next()
+            .expect("expected rendered table scroller");
+        let table = table
+            .downcast::<gtk::ScrolledWindow>()
+            .expect("expected GtkScrolledWindow");
+
+        assert_eq!(table.valign(), gtk::Align::Start);
+        assert!(!table.vexpands(), "table scroller should not vexpand");
+    }
+
+    #[gtk::test]
+    fn textview_table_cells_do_not_wrap() {
+        let md = "| A | B |\n|---|---|\n| 1 | 2 |";
+        let (widget, _) = render_markdown_to_textview(md, None);
+        let labels: Vec<gtk::Label> = find_widgets_of_type::<gtk::Label>(&widget)
+            .into_iter()
+            .filter(|l| l.has_css_class("markdown-table-cell"))
+            .collect();
+        assert!(!labels.is_empty(), "expected table cell labels");
+        for label in labels {
+            assert!(
+                !label.wraps(),
+                "table cell labels must not wrap (issue #149)"
+            );
+        }
     }
 
     #[gtk::test]
