@@ -61,7 +61,8 @@ For each transcript render batch, keep the existing metrics and add an explicit 
 
 From `after_drop_at`, schedule:
 
-- One `glib::idle_add_local_once` callback at `glib::Priority::DEFAULT_IDLE`. Document explicitly that this measures "idle dispatched at default-idle priority", not "main loop fully unblocked", so a long `after_drop_to_idle_ms` may indicate either a blocked loop or higher-priority sources running ahead of idle. Add a parallel `glib::idle_add_local_once` at `glib::Priority::HIGH_IDLE` to disambiguate when the default-idle gap is suspicious.
+- One default-idle callback with `glib::idle_add_local_once`. Document explicitly that this measures "idle dispatched at default-idle priority", not "main loop fully unblocked", so a long `after_drop_to_idle_ms` may indicate either a blocked loop or higher-priority sources running ahead of idle.
+- One parallel high-idle callback with `glib::idle_add_local_full(glib::Priority::HIGH_IDLE, move || { ...; glib::ControlFlow::Break })` to disambiguate when the default-idle gap is suspicious.
 - One `WidgetExt::add_tick_callback` callback on the transcript factory widget or the transcript `ScrolledWindow`, whichever is already rooted and easiest to access without broad widget plumbing.
 - A second tick callback whenever a first tick fires, to measure whether the stall straddles one frame (cost concentrated in the first compose/layout/paint cycle) or spans multiple frames (multi-frame deferred work or repeated invalidation). Phrase results as "stall is within first frame" vs "stall spans N frames", not as "first frame cannot explain layout cost".
 
@@ -87,21 +88,31 @@ The probes should follow the existing `SessionList` pattern that already schedul
 
 ### GTK Frame Clock Phase Timings
 
-Before the Sysprof pass, capture per-phase frame timings via `GdkFrameClock` so the logs can distinguish GTK update/layout/paint cost from main-loop scheduling cost without a profiler.
+Before the Sysprof pass, capture per-phase frame timings via `GdkFrameClock` signals so the logs can distinguish GTK update/layout/paint cost from main-loop scheduling cost without relying on profiler availability.
 
-For each tick callback fired during the measured window:
+During the measured window, connect temporary handlers to the rooted widget's frame clock:
 
-- Read `frame_clock.frame_time()` and the most recent `GdkFrameTimings` via `frame_clock.current_timings()`.
-- Log `frame_counter`, `frame_time_us`, `presentation_time_us` (when available), `predicted_presentation_time_us`, and the deltas: `update_to_frame_us` and `frame_to_presentation_us`.
-- Correlate each tick's `frame_counter` with the `request_id` and `render_batch_index` of the most recent batch.
+- `update`
+- `layout`
+- `paint`
+- `after-paint`
+
+Each handler should record a monotonic wall-clock timestamp plus `frame_clock.frame_counter()`. Log per-frame phase deltas such as:
+
+- `update_to_layout_us`
+- `layout_to_paint_us`
+- `paint_to_after_paint_us`
+- `update_to_after_paint_us`
+
+Correlate each frame's `frame_counter` with the `request_id` and `render_batch_index` of the most recent batch. `GdkFrameTimings` may still be logged as context (`presentation_time_us`, `predicted_presentation_time_us`, `refresh_interval_us`, `is_complete`), but do not interpret `frame_time()` as a duration: it is a frame-clock timestamp, not "GTK work time".
 
 This gives a cheap way to attribute the post-drop residual to one of:
 
-- Long `frame_time` (GTK update + layout + paint phase).
-- Long `frame_to_presentation` delta (compositor/swap, not Sessions Chronicle code).
+- Long `update_to_after_paint_us`, especially with a large `layout_to_paint_us` or `update_to_layout_us`, which points to GTK update/layout/paint work.
+- Tick callbacks delayed but no frame-clock phase span large enough to explain the stall, which points back to main-loop scheduling, higher-priority sources, or neighboring app work.
 - Missing or skipped frames (loop blocked, no frame served).
 
-If `GdkFrameTimings` data is unavailable on the active backend, log that explicitly and fall back on tick-callback wall-clock deltas alone.
+If frame-clock signal data is unavailable on the active backend or the widget is not rooted yet, log that explicitly and fall back on tick-callback wall-clock deltas alone.
 
 ### Neighboring Owner Probes
 
@@ -165,7 +176,8 @@ Extract these measurements from the logs:
 - `after_drop_to_idle_ms` at high-idle priority (when used)
 - `after_drop_to_first_frame_ms`
 - `after_drop_to_second_frame_ms`
-- `frame_time_us`, `update_to_frame_us`, and `frame_to_presentation_us` from `GdkFrameTimings` for ticks within the stall window
+- frame-clock phase deltas (`update_to_layout_us`, `layout_to_paint_us`, `paint_to_after_paint_us`, `update_to_after_paint_us`) for frames within the stall window
+- optional `GdkFrameTimings` context (`presentation_time_us`, `predicted_presentation_time_us`, `refresh_interval_us`, `is_complete`) when available
 - heartbeat stall timeline
 - batch context for the largest gap
 - neighboring owner events near the largest gap
@@ -193,7 +205,7 @@ Use these rules to turn the measurements into a recommendation. Apply them in or
 
 - If both default-idle and high-idle `after_drop_to_idle_ms` are within roughly 20% of the largest schedule gap, the main loop is blocked before any idle dispatch. The likely owner is GTK layout/realization, Pango shaping, or synchronous neighboring app work.
 - If high-idle arrives quickly but default-idle is delayed by close to the full stall, higher-priority sources (frame clock, redraw) are saturating the loop ahead of default idle. The likely owner is GTK frame/layout/render pipeline work; this is consistent with the leading hypothesis.
-- If `frame_time_us` (update + layout + paint) accounts for most of the stall and `frame_to_presentation_us` is small, name GTK layout/paint as the likely owner. If `frame_to_presentation_us` dominates instead, name compositor/swap as the likely owner (out of scope for Sessions Chronicle code).
+- If frame-clock phase deltas, especially `update_to_after_paint_us`, account for most of the stall, name GTK update/layout/paint as the likely owner. If `GdkFrameTimings` presentation data is complete and presentation timing dominates while GTK phase spans are small, name compositor/swap as the likely owner (out of scope for Sessions Chronicle code).
 - If heartbeat stalls align with concrete neighboring-owner probes (named Relm4 message variants), name that app path as the likely owner.
 - If Sysprof shows Pango/`gtk_widget_measure`/`gtk_widget_size_allocate`/`gtk_widget_realize` stacks during the suspicious interval and no neighboring app path aligns, name GTK layout/realization (with Pango shaping called out specifically when present) as the likely owner. This confirms the leading hypothesis.
 - If Sysprof shows mostly Relm4/GLib dispatch or scheduling paths without clear GTK layout work, name Relm4/main-loop scheduling as the likely owner.
