@@ -1,6 +1,7 @@
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::path::PathBuf;
+use std::rc::Rc;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -138,6 +139,74 @@ struct RenderBatchBreakdown {
     schedule_gap: Duration,
     row_build_duration: Duration,
     logged: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct FramePhaseDeltas {
+    request_id: u64,
+    render_batch_index: usize,
+    frame_counter: i64,
+    before_paint_to_update_us: Option<u128>,
+    update_to_layout_us: Option<u128>,
+    layout_to_paint_us: Option<u128>,
+    paint_to_after_paint_us: Option<u128>,
+    before_paint_to_after_paint_us: Option<u128>,
+    update_to_after_paint_us: Option<u128>,
+}
+
+#[derive(Debug, Clone)]
+struct FramePhaseSample {
+    request_id: u64,
+    render_batch_index: usize,
+    frame_counter: i64,
+    before_paint_at: Option<Instant>,
+    update_at: Option<Instant>,
+    layout_at: Option<Instant>,
+    paint_at: Option<Instant>,
+    after_paint_at: Option<Instant>,
+}
+
+impl FramePhaseSample {
+    fn new(request_id: u64, render_batch_index: usize, frame_counter: i64) -> Self {
+        Self {
+            request_id,
+            render_batch_index,
+            frame_counter,
+            before_paint_at: None,
+            update_at: None,
+            layout_at: None,
+            paint_at: None,
+            after_paint_at: None,
+        }
+    }
+
+    fn delta_us(start: Option<Instant>, end: Option<Instant>) -> Option<u128> {
+        match (start, end) {
+            (Some(start), Some(end)) => Some(end.duration_since(start).as_micros()),
+            _ => None,
+        }
+    }
+
+    fn deltas(&self) -> Option<FramePhaseDeltas> {
+        if self.after_paint_at.is_none() {
+            return None;
+        }
+
+        Some(FramePhaseDeltas {
+            request_id: self.request_id,
+            render_batch_index: self.render_batch_index,
+            frame_counter: self.frame_counter,
+            before_paint_to_update_us: Self::delta_us(self.before_paint_at, self.update_at),
+            update_to_layout_us: Self::delta_us(self.update_at, self.layout_at),
+            layout_to_paint_us: Self::delta_us(self.layout_at, self.paint_at),
+            paint_to_after_paint_us: Self::delta_us(self.paint_at, self.after_paint_at),
+            before_paint_to_after_paint_us: Self::delta_us(
+                self.before_paint_at,
+                self.after_paint_at,
+            ),
+            update_to_after_paint_us: Self::delta_us(self.update_at, self.after_paint_at),
+        })
+    }
 }
 
 impl RenderRowBuildTotals {
@@ -2587,6 +2656,59 @@ mod tests {
 
     use relm4::{Component, ComponentController};
     use rusqlite::{Connection, params};
+
+    #[test]
+    fn frame_phase_sample_reports_all_deltas_when_all_phases_exist() {
+        let mut sample = FramePhaseSample::new(42, 7, 3);
+        sample.before_paint_at = Some(Instant::now());
+        sample.update_at = sample
+            .before_paint_at
+            .map(|t| t + Duration::from_micros(10));
+        sample.layout_at = sample
+            .before_paint_at
+            .map(|t| t + Duration::from_micros(30));
+        sample.paint_at = sample
+            .before_paint_at
+            .map(|t| t + Duration::from_micros(70));
+        sample.after_paint_at = sample
+            .before_paint_at
+            .map(|t| t + Duration::from_micros(100));
+
+        let deltas = sample
+            .deltas()
+            .expect("all phase timestamps should produce deltas");
+
+        assert_eq!(deltas.request_id, 42);
+        assert_eq!(deltas.render_batch_index, 7);
+        assert_eq!(deltas.frame_counter, 3);
+        assert_eq!(deltas.before_paint_to_update_us, Some(10));
+        assert_eq!(deltas.update_to_layout_us, Some(20));
+        assert_eq!(deltas.layout_to_paint_us, Some(40));
+        assert_eq!(deltas.paint_to_after_paint_us, Some(30));
+        assert_eq!(deltas.before_paint_to_after_paint_us, Some(100));
+        assert_eq!(deltas.update_to_after_paint_us, Some(90));
+    }
+
+    #[test]
+    fn frame_phase_sample_reports_fallback_delta_without_before_paint() {
+        let mut sample = FramePhaseSample::new(11, 2, 9);
+        let started_at = Instant::now();
+        sample.update_at = Some(started_at);
+        sample.layout_at = Some(started_at + Duration::from_micros(15));
+        sample.paint_at = Some(started_at + Duration::from_micros(45));
+        sample.after_paint_at = Some(started_at + Duration::from_micros(60));
+
+        let deltas = sample
+            .deltas()
+            .expect("update through after-paint should produce fallback deltas");
+
+        assert_eq!(deltas.before_paint_to_update_us, None);
+        assert_eq!(deltas.before_paint_to_after_paint_us, None);
+        assert_eq!(deltas.update_to_layout_us, Some(15));
+        assert_eq!(deltas.layout_to_paint_us, Some(30));
+        assert_eq!(deltas.paint_to_after_paint_us, Some(15));
+        assert_eq!(deltas.update_to_after_paint_us, Some(60));
+    }
 
     fn build_test_session(
         first_prompt: Option<&str>,
