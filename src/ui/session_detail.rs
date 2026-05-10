@@ -5,8 +5,8 @@ use std::rc::Rc;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use gtk::glib;
 use gtk::prelude::*;
+use gtk::{gdk, glib};
 use relm4::factory::FactoryVecDeque;
 use relm4::{
     Component, ComponentController, ComponentParts, ComponentSender, Controller, RelmWidgetExt,
@@ -66,6 +66,7 @@ pub struct SessionDetail {
     search_request_id: u64,
     scroll_to_item: Cell<Option<ScrollTarget>>,
     pending_toast: Cell<bool>,
+    probe_window: Option<SessionDetailProbeWindow>,
     inspector: Controller<ToolInspectorPane>,
     inspector_open: bool,
 }
@@ -206,6 +207,95 @@ impl FramePhaseSample {
             ),
             update_to_after_paint_us: Self::delta_us(self.update_at, self.after_paint_at),
         })
+    }
+}
+
+#[derive(Debug, Clone)]
+struct ProbePendingSource {
+    id: Rc<RefCell<Option<glib::SourceId>>>,
+}
+
+impl ProbePendingSource {
+    fn new() -> Self {
+        Self {
+            id: Rc::new(RefCell::new(None)),
+        }
+    }
+
+    fn set(&self, source_id: glib::SourceId) {
+        *self.id.borrow_mut() = Some(source_id);
+    }
+
+    fn clear(&self) {
+        *self.id.borrow_mut() = None;
+    }
+
+    fn remove_if_pending(&self) {
+        if let Some(source_id) = self.id.borrow_mut().take() {
+            source_id.remove();
+        }
+    }
+}
+
+struct SessionDetailProbeWindow {
+    request_id: u64,
+    session_id: Option<String>,
+    started_at: Instant,
+    latest_render_batch_index: Option<usize>,
+    latest_rendered_items: Option<usize>,
+    heartbeat_source: Option<glib::SourceId>,
+    pending_sources: Vec<ProbePendingSource>,
+    tick_callbacks: Vec<gtk::TickCallbackId>,
+    frame_signal_handlers: Vec<(gdk::FrameClock, glib::SignalHandlerId)>,
+    frame_samples: Rc<RefCell<BTreeMap<i64, FramePhaseSample>>>,
+}
+
+impl std::fmt::Debug for SessionDetailProbeWindow {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SessionDetailProbeWindow")
+            .field("request_id", &self.request_id)
+            .field("session_id", &self.session_id)
+            .field("latest_render_batch_index", &self.latest_render_batch_index)
+            .field("latest_rendered_items", &self.latest_rendered_items)
+            .finish()
+    }
+}
+
+impl SessionDetailProbeWindow {
+    fn new(request_id: u64, session_id: String) -> Self {
+        Self {
+            request_id,
+            session_id: Some(session_id),
+            started_at: Instant::now(),
+            latest_render_batch_index: None,
+            latest_rendered_items: None,
+            heartbeat_source: None,
+            pending_sources: Vec::new(),
+            tick_callbacks: Vec::new(),
+            frame_signal_handlers: Vec::new(),
+            frame_samples: Rc::new(RefCell::new(BTreeMap::new())),
+        }
+    }
+
+    fn record_latest_batch(&mut self, render_batch_index: usize, rendered_items: usize) {
+        self.latest_render_batch_index = Some(render_batch_index);
+        self.latest_rendered_items = Some(rendered_items);
+    }
+
+    fn teardown(&mut self) {
+        if let Some(source_id) = self.heartbeat_source.take() {
+            source_id.remove();
+        }
+        for source in self.pending_sources.drain(..) {
+            source.remove_if_pending();
+        }
+        for tick_callback in self.tick_callbacks.drain(..) {
+            tick_callback.remove();
+        }
+        for (frame_clock, handler_id) in self.frame_signal_handlers.drain(..) {
+            frame_clock.disconnect(handler_id);
+        }
+        self.frame_samples.borrow_mut().clear();
     }
 }
 
@@ -963,6 +1053,7 @@ impl Component for SessionDetail {
             search_request_id: 0,
             scroll_to_item: Cell::new(None),
             pending_toast: Cell::new(false),
+            probe_window: None,
             inspector,
             inspector_open: false,
         };
@@ -1013,6 +1104,7 @@ impl Component for SessionDetail {
                 let query_len = normalized.as_ref().map(|query| query.len()).unwrap_or(0);
                 self.session = Some(session);
                 self.start_first_page_load(&sender, &session_id, true, "open");
+                self.start_probe_window(self.transcript_request_id, session_id.clone());
                 tracing::info!(
                     request_id = self.transcript_request_id,
                     session_id = session_id.as_str(),
@@ -1165,6 +1257,7 @@ impl Component for SessionDetail {
                 self.reload_current_session(&sender, "clear_search");
             }
             SessionDetailMsg::Clear => {
+                self.finish_probe_window("component_clear");
                 self.invalidate_transcript_requests();
                 self.invalidate_search_requests();
                 self.session = None;
@@ -1709,6 +1802,30 @@ impl SessionDetail {
             .ok();
     }
 
+    fn start_probe_window(&mut self, request_id: u64, session_id: String) {
+        self.finish_probe_window("replaced");
+        tracing::info!(
+            request_id,
+            session_id = session_id.as_str(),
+            "Session detail issue146 probe window started"
+        );
+        self.probe_window = Some(SessionDetailProbeWindow::new(request_id, session_id));
+    }
+
+    fn finish_probe_window(&mut self, reason: &'static str) {
+        if let Some(mut probe_window) = self.probe_window.take() {
+            let elapsed_ms = probe_window.started_at.elapsed().as_millis();
+            probe_window.teardown();
+            tracing::info!(
+                request_id = probe_window.request_id,
+                session_id = probe_window.session_id.as_deref(),
+                reason,
+                elapsed_ms,
+                "Session detail issue146 probe window finished"
+            );
+        }
+    }
+
     /// Reset transcript state and trigger the first-page load.
     ///
     /// Pass `defer = true` only when a fresh session is being opened: the load
@@ -1815,6 +1932,7 @@ impl SessionDetail {
     }
 
     fn clear_for_navigation_back(&mut self) {
+        self.finish_probe_window("navigation_back");
         self.invalidate_search_requests();
         self.session = None;
         self.first_page_load_started_at = None;
@@ -2708,6 +2826,19 @@ mod tests {
         assert_eq!(deltas.layout_to_paint_us, Some(30));
         assert_eq!(deltas.paint_to_after_paint_us, Some(15));
         assert_eq!(deltas.update_to_after_paint_us, Some(60));
+    }
+
+    #[test]
+    fn session_detail_probe_window_starts_active_and_records_batch_context() {
+        let mut window = SessionDetailProbeWindow::new(5, "session-5".to_string());
+
+        window.record_latest_batch(3, 9);
+
+        assert_eq!(window.request_id, 5);
+        assert_eq!(window.session_id.as_deref(), Some("session-5"));
+        assert_eq!(window.latest_render_batch_index, Some(3));
+        assert_eq!(window.latest_rendered_items, Some(9));
+        assert!(window.started_at.elapsed() < Duration::from_secs(5));
     }
 
     fn build_test_session(
