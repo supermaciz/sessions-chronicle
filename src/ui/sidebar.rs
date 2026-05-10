@@ -161,6 +161,13 @@ impl SimpleComponent for Sidebar {
                 }
             }
             SidebarMsg::AiAssistantToggled(tool, active) => {
+                tracing::debug!(
+                    component = "Sidebar",
+                    message_variant = "SidebarMsg::AiAssistantToggled",
+                    tool = ?tool,
+                    active,
+                    "Session detail issue146 neighboring owner event"
+                );
                 match tool {
                     AiAssistant::ClaudeCode => self.claude_enabled = active,
                     AiAssistant::OpenCode => self.opencode_enabled = active,
@@ -171,6 +178,12 @@ impl SimpleComponent for Sidebar {
                 self.emit_filters_changed(&sender);
             }
             SidebarMsg::ProjectSelected(project_filter) => {
+                tracing::debug!(
+                    component = "Sidebar",
+                    message_variant = "SidebarMsg::ProjectSelected",
+                    project_filter = ?project_filter,
+                    "Session detail issue146 neighboring owner event"
+                );
                 if self.selected_project_filter != project_filter {
                     self.selected_project_filter = project_filter;
                     if !self.rebuilding_projects {
@@ -186,6 +199,17 @@ impl SimpleComponent for Sidebar {
                 show_unassigned,
                 selected_filter,
             } => {
+                tracing::debug!(
+                    component = "Sidebar",
+                    message_variant = "SidebarMsg::ProjectsLoaded",
+                    project_count = projects.len(),
+                    all_sessions_count,
+                    unassigned_count,
+                    pinned_count,
+                    show_unassigned,
+                    selected_filter = ?selected_filter,
+                    "Session detail issue146 neighboring owner event"
+                );
                 self.selected_project_filter = selected_filter;
                 self.rebuilding_projects = true;
                 self.rebuild_project_rows(

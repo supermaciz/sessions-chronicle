@@ -51,6 +51,11 @@ impl App {
     }
 
     pub(crate) fn handle_toggle_inspector(&mut self) {
+        tracing::debug!(
+            method = "App::handle_toggle_inspector",
+            detail_visible = self.detail_visible,
+            "Session detail issue146 neighboring owner event"
+        );
         if !self.detail_visible {
             return;
         }
@@ -72,10 +77,21 @@ impl App {
     }
 
     pub(crate) fn handle_inspector_visibility_changed(&mut self, visible: bool) {
+        tracing::debug!(
+            method = "App::handle_inspector_visibility_changed",
+            visible,
+            "Session detail issue146 neighboring owner event"
+        );
         self.inspector_open = visible;
     }
 
     pub(crate) fn handle_search_query_changed(&mut self, query: String) {
+        tracing::debug!(
+            method = "App::handle_search_query_changed",
+            query_len = query.len(),
+            detail_visible = self.detail_visible,
+            "Session detail issue146 neighboring owner event"
+        );
         self.search_query = query.clone();
         let (list_msg, detail_msg) = search_query_update_messages(query);
         self.session_list.emit(list_msg);

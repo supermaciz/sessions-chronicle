@@ -548,7 +548,14 @@ impl SimpleComponent for App {
                 self.refresh_sidebar_projects();
                 self.emit_session_list_filters();
             }
-            AppMsg::SessionSelected(id) => self.handle_session_selected(id),
+            AppMsg::SessionSelected(id) => {
+                tracing::debug!(
+                    message_variant = "AppMsg::SessionSelected",
+                    session_id = id.as_str(),
+                    "Session detail issue146 neighboring owner event"
+                );
+                self.handle_session_selected(id)
+            }
             AppMsg::RequestNavigateBack => self.handle_request_navigate_back(),
             AppMsg::NavigateBack => self.handle_navigate_back(),
             AppMsg::ShowPreferences => {

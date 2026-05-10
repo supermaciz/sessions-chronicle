@@ -24,6 +24,8 @@ impl App {
 
     fn set_active_session_and_detail(&mut self, session: Session, search_query: Option<String>) {
         let project_name = Self::project_name_from_session(&session);
+        let session_id = session.id.clone();
+        let has_search_query = search_query.is_some();
 
         self.active_session = Some(ActiveSessionRef {
             id: session.id.clone(),
@@ -32,6 +34,12 @@ impl App {
             pinned: session.pinned_at.is_some(),
         });
 
+        tracing::debug!(
+            message_variant = "SessionDetailMsg::SetSession",
+            session_id = session_id.as_str(),
+            has_search_query,
+            "Session detail issue146 neighboring owner event"
+        );
         self.session_detail.emit(SessionDetailMsg::SetSession {
             session: Box::new(session),
             search_query,
@@ -39,13 +47,24 @@ impl App {
     }
 
     pub(crate) fn handle_session_selected(&mut self, id: String) {
-        tracing::debug!("Session selected: {}", id);
+        tracing::debug!(
+            method = "App::handle_session_selected",
+            session_id = id.as_str(),
+            "Session detail issue146 neighboring owner event"
+        );
 
         self.session_detail.widget().set_visible(true);
         let search_query = active_search_query(&self.search_query);
+        let load_started_at = std::time::Instant::now();
 
         match load_session(&self.db_path, &id) {
             Ok(Some(session)) => {
+                tracing::debug!(
+                    method = "load_session",
+                    session_id = id.as_str(),
+                    load_duration_ms = load_started_at.elapsed().as_millis(),
+                    "Session detail issue146 neighboring owner event"
+                );
                 self.set_active_session_and_detail(session, search_query);
             }
             Ok(None) => {
@@ -63,6 +82,12 @@ impl App {
         if !self.detail_visible {
             self.filters_open_before_detail = self.filters_open;
             self.filters_open = false;
+            tracing::debug!(
+                method = "NavigationView::push",
+                page_tag = "detail",
+                session_id = id.as_str(),
+                "Session detail issue146 neighboring owner event"
+            );
             self.nav_view.push(&self.detail_page);
             self.detail_visible = true;
             self.banner.set_revealed(false);
