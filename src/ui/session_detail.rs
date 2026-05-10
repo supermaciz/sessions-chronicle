@@ -2016,6 +2016,8 @@ impl SessionDetail {
             return;
         };
 
+        self.connect_frame_clock_phase_probes();
+
         let first_tick_scrolled_window = scrolled_window.clone();
         let first_tick_session_id = frame_probe_session_id;
         let first_tick_id = scrolled_window.add_tick_callback(move |widget, _clock| {
@@ -2058,6 +2060,135 @@ impl SessionDetail {
             && probe_window.request_id == request_id
         {
             probe_window.tick_callbacks.push(first_tick_id);
+        }
+    }
+
+    fn connect_frame_clock_phase_probes(&mut self) {
+        let Some(probe_window) = self.probe_window.as_ref() else {
+            return;
+        };
+        if !probe_window.frame_signal_handlers.is_empty() {
+            return;
+        }
+
+        let probe_request_id = probe_window.request_id;
+        let probe_session_id = probe_window.session_id.clone();
+        let latest_render_batch_index = probe_window.latest_render_batch_index.unwrap_or(0);
+        let samples = probe_window.frame_samples.clone();
+
+        let Some(scrolled_window) = self.scrolled_window_for_probe() else {
+            tracing::debug!(
+                request_id = probe_request_id,
+                session_id = probe_session_id.as_deref(),
+                "Session detail issue146 frame clock unavailable because scrolled window is not rooted"
+            );
+            return;
+        };
+        let Some(frame_clock) = scrolled_window.frame_clock() else {
+            tracing::debug!(
+                request_id = probe_request_id,
+                session_id = probe_session_id.as_deref(),
+                "Session detail issue146 frame clock unavailable on active backend"
+            );
+            return;
+        };
+
+        let request_id = probe_request_id;
+        let session_id = probe_session_id;
+
+        let before_samples = samples.clone();
+        let before_handler = frame_clock.connect_before_paint(move |clock| {
+            let frame_counter = clock.frame_counter();
+            before_samples.borrow_mut().insert(
+                frame_counter,
+                FramePhaseSample::new(request_id, latest_render_batch_index, frame_counter),
+            );
+            if let Some(sample) = before_samples.borrow_mut().get_mut(&frame_counter) {
+                sample.before_paint_at = Some(Instant::now());
+            }
+        });
+
+        let update_samples = samples.clone();
+        let update_handler = frame_clock.connect_update(move |clock| {
+            let frame_counter = clock.frame_counter();
+            update_samples
+                .borrow_mut()
+                .entry(frame_counter)
+                .or_insert_with(|| {
+                    FramePhaseSample::new(request_id, latest_render_batch_index, frame_counter)
+                })
+                .update_at = Some(Instant::now());
+        });
+
+        let layout_samples = samples.clone();
+        let layout_handler = frame_clock.connect_layout(move |clock| {
+            let frame_counter = clock.frame_counter();
+            layout_samples
+                .borrow_mut()
+                .entry(frame_counter)
+                .or_insert_with(|| {
+                    FramePhaseSample::new(request_id, latest_render_batch_index, frame_counter)
+                })
+                .layout_at = Some(Instant::now());
+        });
+
+        let paint_samples = samples.clone();
+        let paint_handler = frame_clock.connect_paint(move |clock| {
+            let frame_counter = clock.frame_counter();
+            paint_samples
+                .borrow_mut()
+                .entry(frame_counter)
+                .or_insert_with(|| {
+                    FramePhaseSample::new(request_id, latest_render_batch_index, frame_counter)
+                })
+                .paint_at = Some(Instant::now());
+        });
+
+        let after_samples = samples.clone();
+        let after_session_id = session_id.clone();
+        let after_handler = frame_clock.connect_after_paint(move |clock| {
+            let frame_counter = clock.frame_counter();
+            let mut samples = after_samples.borrow_mut();
+            let sample = samples.entry(frame_counter).or_insert_with(|| {
+                FramePhaseSample::new(request_id, latest_render_batch_index, frame_counter)
+            });
+            sample.after_paint_at = Some(Instant::now());
+            if let Some(deltas) = sample.deltas() {
+                tracing::debug!(
+                    request_id = deltas.request_id,
+                    session_id = after_session_id.as_deref(),
+                    render_batch_index = deltas.render_batch_index,
+                    frame_counter = deltas.frame_counter,
+                    before_paint_to_update_us = deltas.before_paint_to_update_us,
+                    update_to_layout_us = deltas.update_to_layout_us,
+                    layout_to_paint_us = deltas.layout_to_paint_us,
+                    paint_to_after_paint_us = deltas.paint_to_after_paint_us,
+                    before_paint_to_after_paint_us = deltas.before_paint_to_after_paint_us,
+                    update_to_after_paint_us = deltas.update_to_after_paint_us,
+                    "Session detail issue146 frame clock phase measured"
+                );
+            }
+            samples.remove(&(frame_counter - 120));
+        });
+
+        if let Some(probe_window) = self.probe_window.as_mut()
+            && probe_window.request_id == request_id
+        {
+            probe_window
+                .frame_signal_handlers
+                .push((frame_clock.clone(), before_handler));
+            probe_window
+                .frame_signal_handlers
+                .push((frame_clock.clone(), update_handler));
+            probe_window
+                .frame_signal_handlers
+                .push((frame_clock.clone(), layout_handler));
+            probe_window
+                .frame_signal_handlers
+                .push((frame_clock.clone(), paint_handler));
+            probe_window
+                .frame_signal_handlers
+                .push((frame_clock, after_handler));
         }
     }
 
