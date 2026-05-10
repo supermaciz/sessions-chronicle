@@ -1105,6 +1105,7 @@ impl Component for SessionDetail {
                 self.session = Some(session);
                 self.start_first_page_load(&sender, &session_id, true, "open");
                 self.start_probe_window(self.transcript_request_id, session_id.clone());
+                self.start_probe_heartbeat();
                 tracing::info!(
                     request_id = self.transcript_request_id,
                     session_id = session_id.as_str(),
@@ -1918,6 +1919,178 @@ impl SessionDetail {
         });
     }
 
+    fn scrolled_window_for_probe(&self) -> Option<gtk::ScrolledWindow> {
+        self.messages
+            .widget()
+            .ancestor(gtk::ScrolledWindow::static_type())
+            .and_then(|w| w.downcast::<gtk::ScrolledWindow>().ok())
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn schedule_post_drop_probes(
+        &mut self,
+        request_id: u64,
+        offset: usize,
+        render_batch_index: usize,
+        rendered_this_batch: usize,
+        rendered_items: usize,
+        remaining_items: usize,
+        display_item_count: usize,
+        push_duration: Duration,
+        schedule_gap: Duration,
+        max_schedule_gap: Duration,
+        after_drop_at: Instant,
+    ) {
+        let Some(probe_window) = self.probe_window.as_mut() else {
+            return;
+        };
+        if probe_window.request_id != request_id {
+            return;
+        }
+
+        probe_window.record_latest_batch(render_batch_index, rendered_items);
+        let session_id = probe_window.session_id.clone();
+        let frame_probe_session_id = probe_window.session_id.clone();
+
+        let default_idle_source = ProbePendingSource::new();
+        let default_idle_source_for_callback = default_idle_source.clone();
+        let default_idle_id = glib::idle_add_local_once(move || {
+            default_idle_source_for_callback.clear();
+            tracing::debug!(
+                request_id,
+                session_id = session_id.as_deref(),
+                offset,
+                render_batch_index,
+                rendered_this_batch,
+                rendered_items,
+                remaining_items,
+                display_item_count,
+                push_duration_ms = push_duration.as_millis(),
+                schedule_gap_ms = schedule_gap.as_millis(),
+                max_schedule_gap_ms = max_schedule_gap.as_millis(),
+                after_drop_to_idle_ms = after_drop_at.elapsed().as_millis(),
+                idle_priority = "default-idle",
+                "Session detail issue146 post-drop idle measured"
+            );
+        });
+        default_idle_source.set(default_idle_id);
+        probe_window.pending_sources.push(default_idle_source);
+
+        let high_idle_source = ProbePendingSource::new();
+        let high_idle_source_for_callback = high_idle_source.clone();
+        let high_idle_session_id = probe_window.session_id.clone();
+        let high_idle_id = glib::idle_add_local_full(glib::Priority::HIGH_IDLE, move || {
+            high_idle_source_for_callback.clear();
+            tracing::debug!(
+                request_id,
+                session_id = high_idle_session_id.as_deref(),
+                offset,
+                render_batch_index,
+                rendered_this_batch,
+                rendered_items,
+                remaining_items,
+                display_item_count,
+                push_duration_ms = push_duration.as_millis(),
+                schedule_gap_ms = schedule_gap.as_millis(),
+                max_schedule_gap_ms = max_schedule_gap.as_millis(),
+                after_drop_to_idle_ms = after_drop_at.elapsed().as_millis(),
+                idle_priority = "high-idle",
+                "Session detail issue146 post-drop idle measured"
+            );
+            glib::ControlFlow::Break
+        });
+        high_idle_source.set(high_idle_id);
+        probe_window.pending_sources.push(high_idle_source);
+
+        let frame_probe_request_id = probe_window.request_id;
+        let rooted_session_id = frame_probe_session_id.clone();
+
+        let Some(scrolled_window) = self.scrolled_window_for_probe() else {
+            tracing::debug!(
+                request_id = frame_probe_request_id,
+                session_id = rooted_session_id.as_deref(),
+                offset,
+                render_batch_index,
+                "Session detail issue146 frame probe unavailable because scrolled window is not rooted"
+            );
+            return;
+        };
+
+        let first_tick_scrolled_window = scrolled_window.clone();
+        let first_tick_session_id = frame_probe_session_id;
+        let first_tick_id = scrolled_window.add_tick_callback(move |widget, _clock| {
+            let vadjustment = first_tick_scrolled_window.vadjustment();
+            tracing::debug!(
+                request_id,
+                session_id = first_tick_session_id.as_deref(),
+                offset,
+                render_batch_index,
+                rendered_this_batch,
+                rendered_items,
+                remaining_items,
+                display_item_count,
+                after_drop_to_first_frame_ms = after_drop_at.elapsed().as_millis(),
+                vadjustment_value = vadjustment.value(),
+                vadjustment_upper = vadjustment.upper(),
+                "Session detail issue146 post-drop first frame measured"
+            );
+            let second_tick_session_id = first_tick_session_id.clone();
+            let second_tick_scrolled_window = first_tick_scrolled_window.clone();
+            widget.add_tick_callback(move |_, _| {
+                let vadjustment = second_tick_scrolled_window.vadjustment();
+                tracing::debug!(
+                    request_id,
+                    session_id = second_tick_session_id.as_deref(),
+                    offset,
+                    render_batch_index,
+                    rendered_items,
+                    remaining_items,
+                    after_drop_to_second_frame_ms = after_drop_at.elapsed().as_millis(),
+                    vadjustment_value = vadjustment.value(),
+                    vadjustment_upper = vadjustment.upper(),
+                    "Session detail issue146 post-drop second frame measured"
+                );
+                glib::ControlFlow::Break
+            });
+            glib::ControlFlow::Break
+        });
+        if let Some(probe_window) = self.probe_window.as_mut()
+            && probe_window.request_id == request_id
+        {
+            probe_window.tick_callbacks.push(first_tick_id);
+        }
+    }
+
+    fn start_probe_heartbeat(&mut self) {
+        let Some(probe_window) = self.probe_window.as_mut() else {
+            return;
+        };
+        if probe_window.heartbeat_source.is_some() {
+            return;
+        }
+
+        let request_id = probe_window.request_id;
+        let session_id = probe_window.session_id.clone();
+        let last_tick = Rc::new(RefCell::new(Instant::now()));
+        let last_tick_for_callback = last_tick.clone();
+        let heartbeat_source = glib::timeout_add_local(Duration::from_millis(16), move || {
+            let now = Instant::now();
+            let mut previous = last_tick_for_callback.borrow_mut();
+            let gap = now.duration_since(*previous);
+            *previous = now;
+            if gap >= Duration::from_millis(50) {
+                tracing::debug!(
+                    request_id,
+                    session_id = session_id.as_deref(),
+                    heartbeat_gap_ms = gap.as_millis(),
+                    "Session detail issue146 heartbeat gap"
+                );
+            }
+            glib::ControlFlow::Continue
+        });
+        probe_window.heartbeat_source = Some(heartbeat_source);
+    }
+
     fn prepare_for_navigation_back(&mut self, sender: &ComponentSender<Self>) {
         self.invalidate_transcript_requests();
         self.loading_first_page = false;
@@ -2052,7 +2225,8 @@ impl SessionDetail {
         let source_row_count = batch.source_row_count;
         let total_push_duration_ms = batch.total_push_duration.as_millis();
         let max_push_duration_ms = batch.max_push_duration.as_millis();
-        let max_schedule_gap_ms = batch.max_schedule_gap.as_millis();
+        let max_schedule_gap = batch.max_schedule_gap;
+        let max_schedule_gap_ms = max_schedule_gap.as_millis();
         let total_duration_ms = batch.queued_at.elapsed().as_millis();
         batch.batch_breakdowns.push(RenderBatchBreakdown {
             render_batch_index,
@@ -2064,6 +2238,30 @@ impl SessionDetail {
         });
         batch.last_batch_completed_at = Some(Instant::now());
         drop(guard);
+        let should_complete_render = !has_more_items;
+        let first_page_load_to_factory_push_ms = if offset == 0 && should_complete_render {
+            first_page_load_started_at.map(|started_at| started_at.elapsed().as_millis())
+        } else {
+            None
+        };
+        if should_complete_render && let Some(batch) = self.pending_render_batch.as_mut() {
+            batch.first_page_load_to_factory_push_ms = first_page_load_to_factory_push_ms;
+            batch.push_complete = true;
+        }
+        let after_drop_at = Instant::now();
+        self.schedule_post_drop_probes(
+            request_id,
+            offset,
+            render_batch_index,
+            rendered_this_batch,
+            rendered_items,
+            remaining_items,
+            total_items,
+            push_duration,
+            schedule_gap,
+            max_schedule_gap,
+            after_drop_at,
+        );
 
         if has_more_items {
             tracing::debug!(
@@ -2080,11 +2278,6 @@ impl SessionDetail {
             );
             self.schedule_transcript_render_batch(sender, request_id);
         } else {
-            let first_page_load_to_factory_push_ms = if offset == 0 {
-                first_page_load_started_at.map(|started_at| started_at.elapsed().as_millis())
-            } else {
-                None
-            };
             if offset == 0 {
                 tracing::info!(
                     request_id,
@@ -2099,10 +2292,6 @@ impl SessionDetail {
                     first_page_load_to_factory_push_ms,
                     "First transcript page factory push complete"
                 );
-            }
-            if let Some(batch) = self.pending_render_batch.as_mut() {
-                batch.first_page_load_to_factory_push_ms = first_page_load_to_factory_push_ms;
-                batch.push_complete = true;
             }
             self.complete_transcript_render_push(sender);
         }
