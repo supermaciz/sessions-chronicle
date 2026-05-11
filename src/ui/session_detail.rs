@@ -2611,6 +2611,8 @@ mod tests {
     use relm4::{Component, ComponentController};
     use rusqlite::{Connection, params};
 
+    const TRANSCRIPT_BATCH_TEST_GRACE: Duration = Duration::from_millis(125);
+
     fn build_test_session(
         first_prompt: Option<&str>,
         token_usage: Option<crate::models::TokenUsage>,
@@ -2662,20 +2664,38 @@ mod tests {
     ) {
         let context = gtk::glib::MainContext::default();
         let deadline = std::time::Instant::now() + timeout;
+        let mut pending_batch_seen_at: Option<(u64, std::time::Instant)> = None;
         while std::time::Instant::now() < deadline {
             if condition() {
                 return;
             }
 
-            let pending_request_id = controller
-                .state()
-                .get()
-                .model
-                .pending_render_batch
-                .as_ref()
-                .map(|batch| batch.request_id);
-            if let Some(request_id) = pending_request_id {
-                controller.emit(SessionDetailMsg::RenderNextTranscriptBatch { request_id });
+            let pending_request_id = {
+                let parts = controller.state().get();
+                parts
+                    .model
+                    .pending_render_batch
+                    .as_ref()
+                    .map(|batch| batch.request_id)
+            };
+            match pending_request_id {
+                Some(request_id) => {
+                    let now = std::time::Instant::now();
+                    let observed_at = match pending_batch_seen_at {
+                        Some((seen_request_id, observed_at)) if seen_request_id == request_id => {
+                            observed_at
+                        }
+                        _ => {
+                            pending_batch_seen_at = Some((request_id, now));
+                            now
+                        }
+                    };
+
+                    if now.duration_since(observed_at) >= TRANSCRIPT_BATCH_TEST_GRACE {
+                        controller.emit(SessionDetailMsg::RenderNextTranscriptBatch { request_id });
+                    }
+                }
+                None => pending_batch_seen_at = None,
             }
 
             if !context.iteration(false) {
@@ -3207,6 +3227,17 @@ fn synthetic_measurement(input: &str) -> String {\n\
             session: Box::new(build_test_session(None, None, 0, 0, 0)),
             search_query: None,
         });
+
+        pump_main_context(|| {
+            let parts = controller.state().get();
+            parts.model.messages.len() > 0
+        });
+
+        {
+            let parts = controller.state().get();
+            assert!(parts.model.pending_render_batch.is_some());
+            assert!(parts.model.messages.len() < INITIAL_PAGE_SIZE);
+        }
 
         pump_main_context_draining_transcript_batches(&controller, Duration::from_secs(5), || {
             let parts = controller.state().get();
