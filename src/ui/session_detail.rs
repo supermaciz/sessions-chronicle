@@ -1,6 +1,7 @@
 use std::cell::Cell;
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::path::PathBuf;
+use std::rc::Rc;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -30,8 +31,10 @@ use crate::ui::transcript_row::{
 const INITIAL_PAGE_SIZE: usize = 75;
 const NEXT_PAGE_SIZE: usize = 100;
 const PREVIEW_LEN: usize = 2000;
-const RENDER_BATCH_SIZE: usize = 3;
-const RENDER_BATCH_DELAY_MS: u64 = 16;
+// Every mounted row participates in transcript container Layout, so per-batch
+// row count directly scales the next frame's GTK layout cost.
+const RENDER_BATCH_SIZE: usize = 1;
+const RENDER_BATCH_WATCHDOG_MS: u64 = 100;
 const DEFERRED_FIRST_PAGE_LOAD_DELAY_MS: u64 = 250;
 const DEFERRED_CLEAR_DELAY_MS: u64 = 250;
 
@@ -45,6 +48,7 @@ pub struct SessionDetail {
     session: Option<Session>,
     first_page_load_started_at: Option<Instant>,
     messages: FactoryVecDeque<TranscriptRow>,
+    transcript_render_widget: gtk::Widget,
     initial_page_size: usize,
     page_size: usize,
     preview_len: usize,
@@ -860,6 +864,7 @@ impl Component for SessionDetail {
                 },
             });
 
+        let transcript_render_widget = messages.widget().clone().upcast::<gtk::Widget>();
         let db_path = Arc::new(db_path);
         let inspector = ToolInspectorPane::builder()
             .launch(db_path.clone())
@@ -874,6 +879,7 @@ impl Component for SessionDetail {
             session: None,
             first_page_load_started_at: None,
             messages,
+            transcript_render_widget,
             initial_page_size: INITIAL_PAGE_SIZE,
             page_size: NEXT_PAGE_SIZE,
             preview_len: PREVIEW_LEN,
@@ -1727,8 +1733,25 @@ impl SessionDetail {
 
     fn schedule_transcript_render_batch(&self, sender: &ComponentSender<Self>, request_id: u64) {
         let input_sender = sender.input_sender().clone();
-        glib::timeout_add_local_once(Duration::from_millis(RENDER_BATCH_DELAY_MS), move || {
-            let _ = input_sender.send(SessionDetailMsg::RenderNextTranscriptBatch { request_id });
+        let fired = Rc::new(Cell::new(false));
+
+        let fired_tick = fired.clone();
+        let input_tick = input_sender.clone();
+        self.transcript_render_widget
+            .add_tick_callback(move |_, _| {
+                if !fired_tick.replace(true) {
+                    let _ =
+                        input_tick.send(SessionDetailMsg::RenderNextTranscriptBatch { request_id });
+                }
+                glib::ControlFlow::Break
+            });
+
+        let fired_watchdog = fired.clone();
+        glib::timeout_add_local_once(Duration::from_millis(RENDER_BATCH_WATCHDOG_MS), move || {
+            if !fired_watchdog.replace(true) {
+                let _ =
+                    input_sender.send(SessionDetailMsg::RenderNextTranscriptBatch { request_id });
+            }
         });
     }
 
@@ -2632,12 +2655,27 @@ mod tests {
         }
     }
 
-    fn pump_main_context_for(timeout: Duration, condition: impl Fn() -> bool) {
+    fn pump_main_context_draining_transcript_batches(
+        controller: &impl ComponentController<SessionDetail>,
+        timeout: Duration,
+        condition: impl Fn() -> bool,
+    ) {
         let context = gtk::glib::MainContext::default();
         let deadline = std::time::Instant::now() + timeout;
         while std::time::Instant::now() < deadline {
             if condition() {
                 return;
+            }
+
+            let pending_request_id = controller
+                .state()
+                .get()
+                .model
+                .pending_render_batch
+                .as_ref()
+                .map(|batch| batch.request_id);
+            if let Some(request_id) = pending_request_id {
+                controller.emit(SessionDetailMsg::RenderNextTranscriptBatch { request_id });
             }
 
             if !context.iteration(false) {
@@ -2784,7 +2822,7 @@ fn synthetic_measurement(input: &str) -> String {\n\
             search_query: search_query.map(str::to_string),
         });
 
-        pump_main_context(|| {
+        pump_main_context_draining_transcript_batches(&controller, Duration::from_secs(5), || {
             let parts = controller.state().get();
             parts.model.pending_render_batch.is_none() && parts.model.last_render_metrics.is_some()
         });
@@ -2807,7 +2845,7 @@ fn synthetic_measurement(input: &str) -> String {\n\
             search_query: None,
         });
 
-        pump_main_context_for(Duration::from_secs(30), || {
+        pump_main_context_draining_transcript_batches(&controller, Duration::from_secs(30), || {
             let parts = controller.state().get();
             parts.model.pending_render_batch.is_none() && parts.model.last_render_metrics.is_some()
         });
@@ -3075,7 +3113,7 @@ fn synthetic_measurement(input: &str) -> String {\n\
             search_query: None,
         });
 
-        pump_main_context(|| {
+        pump_main_context_draining_transcript_batches(&controller, Duration::from_secs(5), || {
             let parts = controller.state().get();
             parts.model.pending_render_batch.is_none()
                 && parts.model.messages.len() == INITIAL_PAGE_SIZE
@@ -3130,7 +3168,7 @@ fn synthetic_measurement(input: &str) -> String {\n\
             assert!(parts.model.has_more_messages);
         }
 
-        pump_main_context(|| {
+        pump_main_context_draining_transcript_batches(&controller, Duration::from_secs(5), || {
             let parts = controller.state().get();
             parts.model.pending_render_batch.is_none()
                 && parts.model.messages.len() == INITIAL_PAGE_SIZE
@@ -3149,7 +3187,7 @@ fn synthetic_measurement(input: &str) -> String {\n\
             assert!(parts.model.messages.len() < INITIAL_PAGE_SIZE + 5);
         }
 
-        pump_main_context(|| {
+        pump_main_context_draining_transcript_batches(&controller, Duration::from_secs(5), || {
             let parts = controller.state().get();
             parts.model.pending_render_batch.is_none()
                 && parts.model.messages.len() == INITIAL_PAGE_SIZE + 5
@@ -3170,7 +3208,7 @@ fn synthetic_measurement(input: &str) -> String {\n\
             search_query: None,
         });
 
-        pump_main_context(|| {
+        pump_main_context_draining_transcript_batches(&controller, Duration::from_secs(5), || {
             let parts = controller.state().get();
             parts.model.pending_render_batch.is_none()
                 && parts.model.messages.len() == INITIAL_PAGE_SIZE
@@ -3552,7 +3590,7 @@ fn synthetic_measurement(input: &str) -> String {\n\
             session: Box::new(build_test_session(None, None, 0, 0, 0)),
             search_query: None,
         });
-        pump_main_context(|| {
+        pump_main_context_draining_transcript_batches(&controller, Duration::from_secs(5), || {
             let parts = controller.state().get();
             parts.model.pending_render_batch.is_none()
                 && parts.model.loaded_count == INITIAL_PAGE_SIZE
@@ -3561,7 +3599,7 @@ fn synthetic_measurement(input: &str) -> String {\n\
         controller.emit(SessionDetailMsg::UpdateSearchQuery(Some(
             "needle".to_string(),
         )));
-        pump_main_context(|| {
+        pump_main_context_draining_transcript_batches(&controller, Duration::from_secs(5), || {
             let parts = controller.state().get();
             parts.model.match_positions.len() == 2
                 && parts.model.pending_render_batch.is_none()
@@ -3629,7 +3667,7 @@ fn synthetic_measurement(input: &str) -> String {\n\
             session: Box::new(build_test_session(None, None, 0, 0, 0)),
             search_query: None,
         });
-        pump_main_context(|| {
+        pump_main_context_draining_transcript_batches(&controller, Duration::from_secs(5), || {
             let parts = controller.state().get();
             parts.model.pending_render_batch.is_none()
                 && parts.model.loaded_count == INITIAL_PAGE_SIZE
@@ -3678,7 +3716,7 @@ fn synthetic_measurement(input: &str) -> String {\n\
             positions: vec![MatchPosition { item_index: 70 }],
         });
 
-        pump_main_context(|| {
+        pump_main_context_draining_transcript_batches(&controller, Duration::from_secs(5), || {
             let parts = controller.state().get();
             parts.model.pending_render_batch.is_none() && !parts.model.loading_jump
         });
@@ -3703,13 +3741,17 @@ fn synthetic_measurement(input: &str) -> String {\n\
             session: Box::new(build_test_session(None, None, 0, 0, 0)),
             search_query: Some("needle".to_string()),
         });
-        pump_main_context(|| {
+        pump_main_context_draining_transcript_batches(&controller, Duration::from_secs(5), || {
             let parts = controller.state().get();
-            parts.model.match_positions.len() == 2 && !parts.model.loading_jump
+            parts.model.match_positions.len() == 2
+                && parts.model.pending_render_batch.is_none()
+                && !parts.model.loading_jump
+                && parts.model.current_match == 0
+                && parts.model.display_targets_by_item_index.contains_key(&10)
         });
 
         controller.emit(SessionDetailMsg::NextMatch);
-        pump_main_context(|| {
+        pump_main_context_draining_transcript_batches(&controller, Duration::from_secs(5), || {
             let parts = controller.state().get();
             parts.model.loaded_count == INITIAL_PAGE_SIZE + NEXT_PAGE_SIZE
                 && parts.model.pending_render_batch.is_none()
