@@ -8,7 +8,7 @@ Related: issue #132, escape hatch issue #134, investigation report `docs/reports
 Reduce the GTK update/layout/paint stall observed when opening `SessionDetail` (median `update_to_layout_us` per batch currently 1 305 530–1 325 982 µs on the frame following the guard drop) by:
 
 1. Pushing fewer transcript rows per render batch.
-2. Spacing successive batches on the GTK frame clock so each batch's Layout phase has a frame to complete before the next push lands.
+2. Spacing successive batches on the GTK frame clock instead of a fixed timeout, so GTK has a better chance to process frame work between pushes.
 
 Target: median `update_to_layout_us` per batch below ~100 ms on a real session, measured in release mode.
 
@@ -28,17 +28,18 @@ All changes live in `src/ui/session_detail.rs`.
 
 **Constants** (currently `src/ui/session_detail.rs:33-34`):
 
-- `RENDER_BATCH_SIZE: usize = 1` (was 3). One-line comment explaining the link to `gtk::ListBox` Layout cost: every mounted row participates in each Layout pass, so per-batch row count scales the per-frame Layout cost.
+- `RENDER_BATCH_SIZE: usize = 1` (was 3). One-line comment explaining the link to transcript container Layout cost: every mounted row participates in each Layout pass, so per-batch row count scales the per-frame Layout cost.
 - `RENDER_BATCH_DELAY_MS` is removed. Replaced by `RENDER_BATCH_WATCHDOG_MS: u64 = 100`, used by the fallback path described below.
 
 **`schedule_transcript_render_batch`** (currently at `src/ui/session_detail.rs:1728`):
 
 Today it uses `glib::timeout_add_local_once(16ms, …)`. After:
 
-- Pose `Widget::add_tick_callback` on the transcript `ListBox`. The callback fires on the next frame clock tick, sends `SessionDetailMsg::RenderNextTranscriptBatch { request_id }`, and returns `glib::ControlFlow::Break`.
+- Pose `Widget::add_tick_callback` on the transcript factory widget, currently the `gtk::Box` returned by `model.messages.widget()`. The callback fires on the next frame clock tick, sends `SessionDetailMsg::RenderNextTranscriptBatch { request_id }`, and returns `glib::ControlFlow::Break`.
+- This is frame-clock throttling, not a strict post-layout barrier: GTK tick callbacks run before a frame and do not by themselves prove that the previous batch's Layout/Paint phase fully completed. The verification report decides whether this looser scheduling contract is sufficient.
 - In parallel, arm a `glib::timeout_add_local_once(RENDER_BATCH_WATCHDOG_MS, …)` watchdog. If the tick callback has not fired before the watchdog (e.g. the widget is not realised, the window is minimised, or the frame clock is otherwise inactive), the watchdog sends the same message.
 - Both paths share an `Rc<Cell<bool>>` "fired" flag. The first one to call `replace(true)` sends the message; the second sees `true` and no-ops. This guarantees at most one `RenderNextTranscriptBatch` per `schedule_transcript_render_batch` call.
-- Best-effort cleanup: when the watchdog fires first, it calls `remove_tick_callback(tick_id)` on the `ListBox` to detach the unused frame callback. If that method is not available in the current `gtk4-rs` version, accept the no-op (the tick callback returns `Break` on its next invocation anyway).
+- Best-effort cleanup: when the watchdog fires first, it calls `tick_id.remove()` to detach the unused frame callback. If cleanup cannot be expressed cleanly during implementation, accept the no-op (the tick callback returns `Break` on its next invocation anyway).
 
 Sketch:
 
@@ -49,7 +50,7 @@ fn schedule_transcript_render_batch(&self, sender: &ComponentSender<Self>, reque
 
     let fired_tick = fired.clone();
     let input_tick = input_sender.clone();
-    let tick_id = self.transcript_list_box.add_tick_callback(move |_, _| {
+    let tick_id = self.transcript_render_widget.add_tick_callback(move |_, _| {
         if !fired_tick.replace(true) {
             let _ = input_tick.send(SessionDetailMsg::RenderNextTranscriptBatch { request_id });
         }
@@ -57,17 +58,16 @@ fn schedule_transcript_render_batch(&self, sender: &ComponentSender<Self>, reque
     });
 
     let fired_wd = fired.clone();
-    let list_box = self.transcript_list_box.clone();
     glib::timeout_add_local_once(Duration::from_millis(RENDER_BATCH_WATCHDOG_MS), move || {
         if !fired_wd.replace(true) {
-            list_box.remove_tick_callback(tick_id);
+            tick_id.remove();
             let _ = input_sender.send(SessionDetailMsg::RenderNextTranscriptBatch { request_id });
         }
     });
 }
 ```
 
-**ListBox access from the model.** `schedule_transcript_render_batch` runs on `&self` of the component model and currently does not have a widget reference. Store a `gtk::ListBox` clone (GObject ref-counted) in the model at init, e.g. `transcript_list_box: gtk::ListBox`, populated from the Relm4 `view!` widget at `init`/post-init.
+**Transcript widget access from the model.** `schedule_transcript_render_batch` runs on `&self` of the component model and currently does not have a widget reference. Store a `gtk::Widget` clone (GObject ref-counted) in the model at init, e.g. `transcript_render_widget: gtk::Widget`, populated from the Relm4 factory widget via `model.messages.widget().clone().upcast::<gtk::Widget>()`.
 
 **Unchanged.** `queue_transcript_items_for_render`, `render_next_transcript_batch`, `request_id` handling, and the metric collection (`max_schedule_gap`, `update_to_layout_us` probe) remain identical. The existing instrumentation already measures exactly what the AC asks about, so we do not need new probes.
 
@@ -118,5 +118,5 @@ The decision is made by reading the verification report numbers; no automated th
 
 ## Open implementation notes
 
-- Verify `remove_tick_callback` availability on `WidgetExt` in the gtk4-rs version pinned by the project. If absent, drop the cleanup call — the tick closure self-terminates with `Break`.
-- Confirm during implementation that the `ListBox` widget exposed to the model is the one that actually holds the transcript rows (not a parent scroller). The tick clock attaches to whichever widget; for correctness any realised widget works, but using the rows' direct container keeps the contract obvious.
+- Verify `TickCallbackId::remove()` availability in the gtk4-rs version pinned by the project. If cleanup becomes awkward because of ownership, drop the cleanup call — the tick closure self-terminates with `Break`.
+- Confirm during implementation that the widget exposed to the model is the transcript factory widget that holds the rendered rows, currently `model.messages.widget()` / `messages_box`, not a parent scroller. The tick clock attaches to whichever widget; for correctness any realised widget works, but using the rows' direct container keeps the contract obvious.
