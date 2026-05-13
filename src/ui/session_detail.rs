@@ -2657,6 +2657,11 @@ mod tests {
         }
     }
 
+    // Headless tests have no frame clock, so `add_tick_callback` never fires;
+    // the production watchdog still does. We let the watchdog drive the first
+    // ~100 ms (preserving real scheduler coverage), then once
+    // `TRANSCRIPT_BATCH_TEST_GRACE` elapses for the same `request_id` we drive
+    // remaining items on every loop iteration so the batch drains quickly.
     fn pump_main_context_draining_transcript_batches(
         controller: &impl ComponentController<SessionDetail>,
         timeout: Duration,
