@@ -140,19 +140,16 @@ impl From<&TranscriptItemKind> for TranscriptRowBuildKind {
 
 fn build_message_page() -> MessagePageWidgets {
     let root = gtk::Box::new(gtk::Orientation::Vertical, 0);
-    root.set_visible(false);
     MessagePageWidgets { root }
 }
 
 fn build_tool_call_page() -> ToolCallPageWidgets {
     let root = gtk::Box::new(gtk::Orientation::Vertical, 0);
-    root.set_visible(false);
     ToolCallPageWidgets { root }
 }
 
 fn build_tool_burst_page() -> ToolBurstPageWidgets {
     let root = gtk::Box::new(gtk::Orientation::Vertical, 0);
-    root.set_visible(false);
     let children = gtk::Box::new(gtk::Orientation::Vertical, 0);
     root.append(&children);
     ToolBurstPageWidgets { root, children }
@@ -160,7 +157,6 @@ fn build_tool_burst_page() -> ToolBurstPageWidgets {
 
 fn build_subagent_page() -> SubagentPageWidgets {
     let root = gtk::Box::new(gtk::Orientation::Vertical, 0);
-    root.set_visible(false);
     SubagentPageWidgets { root }
 }
 
@@ -181,6 +177,7 @@ mod tests {
 
     use chrono::Utc;
     use relm4::gtk;
+    use relm4::gtk::prelude::*;
     use relm4::typed_view::list::RelmListItem;
 
     use crate::models::{MessagePreview, ReasoningPreview, Role, ToolCallStatus};
@@ -324,5 +321,30 @@ mod tests {
         let mut root = gtk::Box::new(gtk::Orientation::Vertical, 0);
         subagent.bind(&mut subagent_widgets, &mut root);
         subagent.unbind(&mut subagent_widgets, &mut root);
+    }
+
+    #[gtk::test]
+    fn bind_shows_selected_stack_page() {
+        let (sender, _receiver) = relm4::channel::<SessionDetailMsg>();
+        let mut message =
+            TranscriptItemData::from_init(TranscriptItemInit::Message(message_init()), sender);
+
+        let list_item: gtk::ListItem = gtk::glib::Object::builder().build();
+        let (_, mut widgets) = TranscriptItemData::setup(&list_item);
+        let mut root = gtk::Box::new(gtk::Orientation::Vertical, 0);
+
+        message.bind(&mut widgets, &mut root);
+
+        assert_eq!(
+            widgets.stack.visible_child_name().as_deref(),
+            Some("message")
+        );
+        assert!(
+            widgets
+                .stack
+                .visible_child()
+                .expect("visible child")
+                .is_visible()
+        );
     }
 }

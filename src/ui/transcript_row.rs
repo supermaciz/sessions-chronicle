@@ -529,37 +529,22 @@ pub(crate) fn populate_tool_burst_children(
     sender: &relm4::Sender<SessionDetailMsg>,
     item_index: usize,
 ) {
-    let children_started_at = Instant::now();
-    let mut max_child_build_duration = Duration::ZERO;
-    for tool_call in &burst.tool_calls {
-        let child_started_at = Instant::now();
-        let child = build_tool_call_widget(
-            tool_call,
-            {
-                let sender = sender.clone();
-                move |id| {
-                    sender.emit(SessionDetailMsg::InspectToolCall(id));
-                }
-            },
-            {
-                let sender = sender.clone();
-                move |_session_id, transcript_item_index| {
-                    sender.emit(SessionDetailMsg::InspectReasoning(transcript_item_index));
-                }
-            },
-        );
-        let child_duration = child_started_at.elapsed();
-        max_child_build_duration = max_child_build_duration.max(child_duration);
-        children.append(&child.root);
-    }
-    let children_duration = children_started_at.elapsed();
-    tracing::debug!(
+    populate_tool_burst_children_impl(
+        children,
+        burst,
+        Rc::new({
+            let sender = sender.clone();
+            move |id| {
+                sender.emit(SessionDetailMsg::InspectToolCall(id));
+            }
+        }),
+        Rc::new({
+            let sender = sender.clone();
+            move |_session_id, transcript_item_index| {
+                sender.emit(SessionDetailMsg::InspectReasoning(transcript_item_index));
+            }
+        }),
         item_index,
-        tool_call_count = burst.tool_calls.len(),
-        children_build_duration_ms = children_duration.as_millis(),
-        max_child_build_duration_ms = max_child_build_duration.as_millis(),
-        match_count = burst.match_count,
-        "Built transcript tool burst children"
     );
 }
 
@@ -569,6 +554,37 @@ fn populate_tool_burst_children_legacy(
     sender: &FactorySender<TranscriptRow>,
     item_index: usize,
 ) {
+    populate_tool_burst_children_impl(
+        children,
+        burst,
+        Rc::new({
+            let sender = sender.clone();
+            move |id| {
+                sender.output(TranscriptRowOutput::InspectToolCall(id)).ok();
+            }
+        }),
+        Rc::new({
+            let sender = sender.clone();
+            move |session_id, transcript_item_index| {
+                sender
+                    .output(TranscriptRowOutput::InspectReasoning {
+                        session_id,
+                        transcript_item_index,
+                    })
+                    .ok();
+            }
+        }),
+        item_index,
+    );
+}
+
+fn populate_tool_burst_children_impl(
+    children: &gtk::Box,
+    burst: &ToolBurstItemInit,
+    on_inspect: Rc<dyn Fn(String)>,
+    on_inspect_reasoning: Rc<dyn Fn(String, i64)>,
+    item_index: usize,
+) {
     let children_started_at = Instant::now();
     let mut max_child_build_duration = Duration::ZERO;
     for tool_call in &burst.tool_calls {
@@ -576,20 +592,15 @@ fn populate_tool_burst_children_legacy(
         let child = build_tool_call_widget(
             tool_call,
             {
-                let sender = sender.clone();
+                let on_inspect = on_inspect.clone();
                 move |id| {
-                    sender.output(TranscriptRowOutput::InspectToolCall(id)).ok();
+                    on_inspect(id);
                 }
             },
             {
-                let sender = sender.clone();
+                let on_inspect_reasoning = on_inspect_reasoning.clone();
                 move |session_id, transcript_item_index| {
-                    sender
-                        .output(TranscriptRowOutput::InspectReasoning {
-                            session_id,
-                            transcript_item_index,
-                        })
-                        .ok();
+                    on_inspect_reasoning(session_id, transcript_item_index);
                 }
             },
         );
@@ -1786,6 +1797,54 @@ mod tests {
             .and_then(|w| w.downcast::<gtk::Label>().ok())
             .expect("encrypted-only label should remain in the left metadata flow");
         assert_eq!(encrypted.label().as_str(), "Thinking (encrypted)");
+    }
+
+    #[gtk::test]
+    fn typed_tool_burst_population_emits_inspect_messages() {
+        let burst = build_tool_burst_init(
+            10,
+            vec![ToolCallItemInit {
+                item_index: 1,
+                transcript_item_index: 41,
+                session_id: "session-1".to_string(),
+                tool_call_id: "call-1".to_string(),
+                tool_name: "Read".to_string(),
+                status: ToolCallStatus::Completed,
+                preview: Some("src/ui/transcript_row.rs:1-20".to_string()),
+                summary: None,
+                duration_ms: Some(12),
+                highlight_query: None,
+                reasoning_preview: ReasoningPreview::default(),
+            }],
+            false,
+        );
+        let children = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        let (sender, receiver) = relm4::channel::<crate::ui::session_detail::SessionDetailMsg>();
+
+        populate_tool_burst_children(&children, &burst, &sender, 10);
+
+        let child = children
+            .first_child()
+            .and_then(|w| w.downcast::<gtk::Box>().ok())
+            .expect("tool burst child root");
+        let header = child
+            .first_child()
+            .and_then(|w| w.downcast::<gtk::Box>().ok())
+            .expect("tool burst child header");
+        let inspect = row_box_children(&header)
+            .last()
+            .cloned()
+            .and_then(|w| w.downcast::<gtk::Button>().ok())
+            .expect("inspect button");
+
+        inspect.emit_clicked();
+
+        assert!(matches!(
+            gtk::glib::MainContext::default()
+                .block_on(receiver.recv())
+                .expect("inspect message"),
+            crate::ui::session_detail::SessionDetailMsg::InspectToolCall(id) if id == "call-1"
+        ));
     }
 
     #[test]
