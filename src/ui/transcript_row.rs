@@ -23,7 +23,7 @@ use crate::ui::highlight;
 use crate::ui::markdown;
 use crate::ui::session_detail::SessionDetailMsg;
 
-const TOOL_ICONS: ToolCategoryIcons = ToolCategoryIcons {
+pub(crate) const TOOL_ICONS: ToolCategoryIcons = ToolCategoryIcons {
     read: icon_names::TEXT_SNIPPET,
     edit: icon_names::EDIT_DOCUMENT,
     command: icon_names::TERMINAL,

@@ -6,15 +6,18 @@ use gtk::prelude::*;
 use relm4::binding::Binding;
 use relm4::{gtk, typed_view::list::RelmListItem};
 
-use crate::models::Role;
+use crate::models::{Role, tool_name_icon};
 use crate::ui::format::{format_duration_ms, tool_status_css_class, tool_status_label};
 use crate::ui::highlight;
 use crate::ui::session_detail::SessionDetailMsg;
 use crate::ui::transcript_item_data::{TranscriptItemData, TranscriptItemKind};
 use crate::ui::transcript_row::{
-    TranscriptRowBuildKind, format_tool_burst_match_badge_accessible_label, model_label_text,
-    populate_tool_burst_children, render_content,
+    TOOL_ICONS, TranscriptRowBuildKind, format_tool_burst_match_badge_accessible_label,
+    model_label_text, populate_tool_burst_children, render_content,
 };
+
+const TOOL_BURST_ARROW_COLLAPSED: &str = "pan-end-symbolic";
+const TOOL_BURST_ARROW_EXPANDED: &str = "pan-down-symbolic";
 
 const MESSAGE_PAGE_NAME: &str = "message";
 const TOOL_CALL_PAGE_NAME: &str = "tool-call";
@@ -51,6 +54,7 @@ pub struct ToolCallPageWidgets {
 pub struct ToolBurstPageWidgets {
     root: gtk::Box,
     header_button: gtk::Button,
+    arrow_icon: gtk::Image,
     summary_label: gtk::Label,
     meta_box: gtk::Box,
     revealer: gtk::Revealer,
@@ -273,7 +277,11 @@ impl TranscriptItemData {
         rebuild_tool_burst_meta_box(&widgets.meta_box, burst);
         clear_box_children(&widgets.children);
         widgets.children_built_for.set(None);
-        set_tool_burst_expanded_state(&widgets.header_button, self.expanded.get());
+        set_tool_burst_expanded_state(
+            &widgets.header_button,
+            &widgets.arrow_icon,
+            self.expanded.get(),
+        );
 
         let notify_id = {
             let children = widgets.children.clone();
@@ -283,9 +291,10 @@ impl TranscriptItemData {
             let burst = burst_with_highlight_query(burst, self.highlight_query.as_deref());
             let item_index = self.item_index;
             let header_button = widgets.header_button.clone();
+            let arrow_icon = widgets.arrow_icon.clone();
             widgets.revealer.connect_reveal_child_notify(move |_| {
                 let expanded = revealer.reveals_child();
-                set_tool_burst_expanded_state(&header_button, expanded);
+                set_tool_burst_expanded_state(&header_button, &arrow_icon, expanded);
                 if expanded {
                     build_tool_burst_children_if_needed(
                         &children,
@@ -379,7 +388,11 @@ impl TranscriptItemData {
         }
         clear_box_children(&widgets.children);
         widgets.children_built_for.set(None);
-        set_tool_burst_expanded_state(&widgets.header_button, widgets.revealer.reveals_child());
+        set_tool_burst_expanded_state(
+            &widgets.header_button,
+            &widgets.arrow_icon,
+            widgets.revealer.reveals_child(),
+        );
     }
 
     pub(crate) fn unbind_subagent_page(&self, widgets: &mut SubagentPageWidgets) {
@@ -502,9 +515,16 @@ fn build_tool_burst_page() -> ToolBurstPageWidgets {
 
     let header_button = gtk::Button::new();
     header_button.add_css_class("flat");
+    header_button.add_css_class("tool-call-group-header-button");
     header_button.set_halign(gtk::Align::Fill);
 
     let header_row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+
+    let arrow_icon = gtk::Image::from_icon_name(TOOL_BURST_ARROW_COLLAPSED);
+    arrow_icon.set_valign(gtk::Align::Start);
+    arrow_icon.add_css_class("tool-call-group-arrow");
+    header_row.append(&arrow_icon);
+
     let summary_label = gtk::Label::new(None);
     summary_label.set_halign(gtk::Align::Start);
     summary_label.set_hexpand(true);
@@ -525,6 +545,7 @@ fn build_tool_burst_page() -> ToolBurstPageWidgets {
     ToolBurstPageWidgets {
         root,
         header_button,
+        arrow_icon,
         summary_label,
         meta_box,
         revealer,
@@ -561,6 +582,12 @@ fn build_tool_call_page_content(
     root.add_css_class("tool-call-row");
 
     let row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+
+    let icon = gtk::Image::new();
+    icon.set_icon_name(Some(tool_name_icon(&init.tool_name, &TOOL_ICONS)));
+    icon.set_pixel_size(16);
+    row.append(&icon);
+
     let name_label = gtk::Label::new(None);
     name_label.add_css_class("monospace");
     name_label.set_halign(gtk::Align::Start);
@@ -661,6 +688,11 @@ fn build_subagent_page_content(
     let root = gtk::Box::new(gtk::Orientation::Horizontal, 8);
     root.add_css_class("subagent-row");
 
+    let icon = gtk::Image::new();
+    icon.set_icon_name(Some(TOOL_ICONS.agent));
+    icon.set_pixel_size(16);
+    root.append(&icon);
+
     let title = gtk::Label::new(Some(&init.title));
     title.set_halign(gtk::Align::Start);
     title.set_hexpand(false);
@@ -754,8 +786,13 @@ fn rebuild_tool_burst_meta_box(
     }
 }
 
-fn set_tool_burst_expanded_state(button: &gtk::Button, expanded: bool) {
+fn set_tool_burst_expanded_state(button: &gtk::Button, arrow_icon: &gtk::Image, expanded: bool) {
     button.update_state(&[gtk::accessible::State::Expanded(Some(expanded))]);
+    arrow_icon.set_icon_name(Some(if expanded {
+        TOOL_BURST_ARROW_EXPANDED
+    } else {
+        TOOL_BURST_ARROW_COLLAPSED
+    }));
 }
 
 fn build_tool_burst_children_if_needed(
@@ -1194,7 +1231,7 @@ mod tests {
 
         tool_call.bind(&mut widgets, &mut root);
         let _ = gtk::glib::MainContext::default().block_on(receiver.recv());
-        let name_label = widgets
+        let row = widgets
             .tool_call
             .root
             .first_child()
@@ -1204,9 +1241,9 @@ mod tests {
             .first_child()
             .expect("tool call row")
             .downcast::<gtk::Box>()
-            .expect("tool call row box")
-            .first_child()
-            .expect("tool name label")
+            .expect("tool call row box");
+        let name_label = collect_box_children(&row)[1]
+            .clone()
             .downcast::<gtk::Label>()
             .expect("tool name label");
 
@@ -1258,7 +1295,12 @@ mod tests {
             .expect("tool call row box");
         let children = collect_box_children(&row);
 
-        let name_label = children[0]
+        assert!(
+            children[0].is::<gtk::Image>(),
+            "tool call row must lead with a category icon"
+        );
+
+        let name_label = children[1]
             .clone()
             .downcast::<gtk::Label>()
             .expect("tool name label");
@@ -1312,7 +1354,12 @@ mod tests {
             .expect("subagent row box");
         let children = collect_box_children(&row);
 
-        let title_label = children[0]
+        assert!(
+            children[0].is::<gtk::Image>(),
+            "subagent row must lead with the agent icon"
+        );
+
+        let title_label = children[1]
             .clone()
             .downcast::<gtk::Label>()
             .expect("subagent title label");
@@ -1326,6 +1373,28 @@ mod tests {
             spacer.is::<gtk::Box>() && spacer.hexpands(),
             "a hexpanding spacer must sit just before the trailing inspect button"
         );
+    }
+
+    #[gtk::test]
+    fn tool_burst_header_shows_and_toggles_expand_chevron() {
+        let (sender, _receiver) = relm4::channel::<SessionDetailMsg>();
+        let mut burst = TranscriptItemData::from_init(
+            TranscriptItemInit::ToolBurst(tool_burst_init(false)),
+            sender,
+        );
+
+        let list_item: gtk::ListItem = gtk::glib::Object::builder().build();
+        let (_, mut widgets) = TranscriptItemData::setup(&list_item);
+        let mut root = gtk::Box::new(gtk::Orientation::Vertical, 0);
+
+        burst.bind(&mut widgets, &mut root);
+
+        let arrow = &widgets.tool_burst.arrow_icon;
+        assert!(arrow.has_css_class("tool-call-group-arrow"));
+        assert_eq!(arrow.icon_name().as_deref(), Some("pan-end-symbolic"));
+
+        tool_burst_header_button(&widgets.tool_burst.root).emit_clicked();
+        assert_eq!(arrow.icon_name().as_deref(), Some("pan-down-symbolic"));
     }
 
     #[gtk::test]
