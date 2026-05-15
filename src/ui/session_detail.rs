@@ -74,15 +74,6 @@ pub struct SessionDetail {
     inspector_open: bool,
 }
 
-fn toggle_typed_message_expanded(items: &[TranscriptItemData], item_index: usize) -> bool {
-    let Some(item) = items.iter().find(|item| item.item_index == item_index) else {
-        return false;
-    };
-
-    item.expanded.set(!item.expanded.get());
-    true
-}
-
 /// Resolved scroll destination for global search navigation.
 ///
 /// `display_index` addresses a top-level transcript row in the factory. When
@@ -2648,42 +2639,6 @@ mod tests {
             command_count,
             ending_status: crate::models::SessionEndingStatus::Clean,
         }
-    }
-
-    #[test]
-    fn toggle_typed_message_expanded_flips_matching_item_binding() {
-        let (sender, _receiver) = relm4::channel::<SessionDetailMsg>();
-        let item = TranscriptItemData::from_init(
-            TranscriptItemInit::Message(crate::ui::transcript_row::MessageItemInit {
-                item_index: 7,
-                transcript_item_index: 11,
-                preview: crate::models::MessagePreview {
-                    session_id: "session-1".to_string(),
-                    message_index: 4,
-                    role: crate::models::Role::Assistant,
-                    content_preview: "preview".to_string(),
-                    content_len: 42,
-                    timestamp: chrono::Utc::now(),
-                    model: Some("gpt-5.4".to_string()),
-                    reasoning_preview: crate::models::ReasoningPreview::default(),
-                },
-                highlight_query: None,
-                db_path: Arc::new(PathBuf::from("/tmp/session-detail-toggle.db")),
-            }),
-            sender,
-        );
-
-        assert!(!item.expanded.get());
-        assert!(toggle_typed_message_expanded(
-            std::slice::from_ref(&item),
-            7
-        ));
-        assert!(item.expanded.get());
-        assert!(!toggle_typed_message_expanded(
-            std::slice::from_ref(&item),
-            8
-        ));
-        assert!(item.expanded.get());
     }
 
     fn pump_main_context(condition: impl Fn() -> bool) {
