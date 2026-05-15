@@ -148,6 +148,8 @@ impl TranscriptItemData {
             return;
         };
 
+        set_role_css_class(&widgets.root, message.preview.role);
+        set_role_css_class(&widgets.role_label, message.preview.role);
         widgets
             .role_label
             .set_label(if message.preview.role == Role::Assistant {
@@ -410,11 +412,14 @@ impl From<&TranscriptItemKind> for TranscriptRowBuildKind {
 
 fn build_message_page() -> MessagePageWidgets {
     let root = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    root.add_css_class("message-row");
     root.set_spacing(4);
 
     let header = gtk::Box::new(gtk::Orientation::Horizontal, 4);
 
     let role_label = gtk::Label::new(None);
+    role_label.add_css_class("caption");
+    role_label.add_css_class("heading");
     role_label.set_halign(gtk::Align::Start);
     header.append(&role_label);
 
@@ -468,6 +473,19 @@ fn build_message_page() -> MessagePageWidgets {
         expand_button,
         connected_handlers: Vec::new(),
     }
+}
+
+fn set_role_css_class(widget: &impl IsA<gtk::Widget>, role: Role) {
+    let widget = widget.as_ref();
+    for class in [
+        Role::User.css_class(),
+        Role::Assistant.css_class(),
+        Role::ToolCall.css_class(),
+        Role::ToolResult.css_class(),
+    ] {
+        widget.remove_css_class(class);
+    }
+    widget.add_css_class(role.css_class());
 }
 
 fn build_tool_call_page() -> ToolCallPageWidgets {
@@ -1127,6 +1145,26 @@ mod tests {
             message_content_text(&widgets.message),
             "loaded full message body"
         );
+    }
+
+    #[gtk::test]
+    fn message_bind_applies_role_border_classes() {
+        let (sender, receiver) = relm4::channel::<SessionDetailMsg>();
+        let mut init = truncated_message_init();
+        init.preview.role = Role::User;
+        let mut message = TranscriptItemData::from_init(TranscriptItemInit::Message(init), sender);
+
+        let list_item: gtk::ListItem = gtk::glib::Object::builder().build();
+        let (_, mut widgets) = TranscriptItemData::setup(&list_item);
+        let mut root = gtk::Box::new(gtk::Orientation::Vertical, 0);
+
+        message.bind(&mut widgets, &mut root);
+        let _ = gtk::glib::MainContext::default().block_on(receiver.recv());
+
+        assert!(widgets.message.root.has_css_class("message-row"));
+        assert!(widgets.message.root.has_css_class("role-user"));
+        assert!(widgets.message.role_label.has_css_class("heading"));
+        assert!(widgets.message.role_label.has_css_class("role-user"));
     }
 
     #[gtk::test]
