@@ -21,6 +21,7 @@ use crate::models::{
 use crate::ui::format::{format_duration_ms, tool_status_css_class, tool_status_label};
 use crate::ui::highlight;
 use crate::ui::markdown;
+use crate::ui::session_detail::SessionDetailMsg;
 
 const TOOL_ICONS: ToolCategoryIcons = ToolCategoryIcons {
     read: icon_names::TEXT_SNIPPET,
@@ -36,7 +37,7 @@ const SLOW_CONTENT_RENDER: Duration = Duration::from_millis(10);
 
 /// Return the model display text for a transcript header.
 /// Only assistant messages with a non-empty model value produce output.
-fn model_label_text(role: Role, model: Option<&str>) -> Option<String> {
+pub(crate) fn model_label_text(role: Role, model: Option<&str>) -> Option<String> {
     if role != Role::Assistant {
         return None;
     }
@@ -264,7 +265,7 @@ pub struct TranscriptRowWidgets {
 // FactoryComponent implementation
 // ---------------------------------------------------------------------------
 
-fn render_content(
+pub(crate) fn render_content(
     container: &gtk::Box,
     content: &str,
     role: Role,
@@ -304,7 +305,7 @@ fn render_content(
     match_count
 }
 
-fn count_tool_call_matches(init: &ToolCallItemInit) -> usize {
+pub(crate) fn count_tool_call_matches(init: &ToolCallItemInit) -> usize {
     let Some(query) = init.highlight_query.as_deref() else {
         return 0;
     };
@@ -399,7 +400,7 @@ fn format_tool_burst_accessible_label(
     label
 }
 
-pub fn format_tool_burst_match_badge_accessible_label(match_count: usize) -> String {
+pub(crate) fn format_tool_burst_match_badge_accessible_label(match_count: usize) -> String {
     format!("{match_count} search matches inside this group")
 }
 
@@ -522,7 +523,47 @@ fn build_tool_call_widget(
     }
 }
 
-fn populate_tool_burst_children(
+pub(crate) fn populate_tool_burst_children(
+    children: &gtk::Box,
+    burst: &ToolBurstItemInit,
+    sender: &relm4::Sender<SessionDetailMsg>,
+    item_index: usize,
+) {
+    let children_started_at = Instant::now();
+    let mut max_child_build_duration = Duration::ZERO;
+    for tool_call in &burst.tool_calls {
+        let child_started_at = Instant::now();
+        let child = build_tool_call_widget(
+            tool_call,
+            {
+                let sender = sender.clone();
+                move |id| {
+                    sender.emit(SessionDetailMsg::InspectToolCall(id));
+                }
+            },
+            {
+                let sender = sender.clone();
+                move |_session_id, transcript_item_index| {
+                    sender.emit(SessionDetailMsg::InspectReasoning(transcript_item_index));
+                }
+            },
+        );
+        let child_duration = child_started_at.elapsed();
+        max_child_build_duration = max_child_build_duration.max(child_duration);
+        children.append(&child.root);
+    }
+    let children_duration = children_started_at.elapsed();
+    tracing::debug!(
+        item_index,
+        tool_call_count = burst.tool_calls.len(),
+        children_build_duration_ms = children_duration.as_millis(),
+        max_child_build_duration_ms = max_child_build_duration.as_millis(),
+        match_count = burst.match_count,
+        "Built transcript tool burst children"
+    );
+}
+
+fn populate_tool_burst_children_legacy(
     children: &gtk::Box,
     burst: &ToolBurstItemInit,
     sender: &FactorySender<TranscriptRow>,
@@ -1225,7 +1266,7 @@ impl TranscriptRow {
         let children = gtk::Box::new(gtk::Orientation::Vertical, 0);
         let children_built = Rc::new(Cell::new(false));
         if should_build_tool_burst_children_on_mount(burst.default_expanded) {
-            populate_tool_burst_children(&children, burst, &sender, self.item_index);
+            populate_tool_burst_children_legacy(&children, burst, &sender, self.item_index);
             children_built.set(true);
         }
 
@@ -1249,7 +1290,7 @@ impl TranscriptRow {
             header_button.connect_clicked(move |btn| {
                 let expanded = !revealer.reveals_child();
                 if expanded && !children_built.get() {
-                    populate_tool_burst_children(&children, &burst, &sender, item_index);
+                    populate_tool_burst_children_legacy(&children, &burst, &sender, item_index);
                     children_built.set(true);
                 }
                 revealer.set_reveal_child(expanded);
