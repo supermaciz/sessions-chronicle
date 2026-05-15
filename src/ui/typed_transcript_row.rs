@@ -1000,6 +1000,14 @@ mod tests {
         let mut root = gtk::Box::new(gtk::Orientation::Vertical, 0);
 
         message.bind(&mut widgets, &mut root);
+
+        assert!(matches!(
+            gtk::glib::MainContext::default()
+                .block_on(receiver.recv())
+                .expect("row built"),
+            SessionDetailMsg::RowBuilt { .. }
+        ));
+
         message_reasoning_button(&widgets.message.root).emit_clicked();
 
         assert!(matches!(
@@ -1023,6 +1031,14 @@ mod tests {
         let mut root = gtk::Box::new(gtk::Orientation::Vertical, 0);
 
         message.bind(&mut widgets, &mut root);
+
+        assert!(matches!(
+            gtk::glib::MainContext::default()
+                .block_on(receiver.recv())
+                .expect("row built"),
+            SessionDetailMsg::RowBuilt { .. }
+        ));
+
         let expand_button = message_expand_button(&widgets.message.root);
 
         assert!(expand_button.is_visible());
