@@ -498,6 +498,7 @@ fn build_tool_call_page() -> ToolCallPageWidgets {
 
 fn build_tool_burst_page() -> ToolBurstPageWidgets {
     let root = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    root.add_css_class("tool-call-group");
 
     let header_button = gtk::Button::new();
     header_button.add_css_class("flat");
@@ -1247,6 +1248,22 @@ mod tests {
         assert!(expanded.expanded.get());
         assert!(expanded_revealer.reveals_child());
         assert_eq!(count_box_children(&expanded_children), 1);
+    }
+
+    #[gtk::test]
+    fn tool_burst_bind_applies_group_border_class() {
+        let (sender, _receiver) = relm4::channel::<SessionDetailMsg>();
+        let mut burst = TranscriptItemData::from_init(
+            TranscriptItemInit::ToolBurst(tool_burst_init(false)),
+            sender,
+        );
+        let list_item: gtk::ListItem = gtk::glib::Object::builder().build();
+        let (_, mut widgets) = TranscriptItemData::setup(&list_item);
+        let mut root = gtk::Box::new(gtk::Orientation::Vertical, 0);
+
+        burst.bind(&mut widgets, &mut root);
+
+        assert!(widgets.tool_burst.root.has_css_class("tool-call-group"));
     }
 
     #[gtk::test]
