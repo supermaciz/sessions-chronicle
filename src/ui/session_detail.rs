@@ -7,6 +7,7 @@ use std::time::{Duration, Instant};
 
 use gtk::glib;
 use gtk::prelude::*;
+use relm4::binding::Binding;
 use relm4::factory::FactoryVecDeque;
 use relm4::{
     Component, ComponentController, ComponentParts, ComponentSender, Controller, RelmWidgetExt,
@@ -23,6 +24,7 @@ use crate::ui::transcript_display::{
     DisplayTranscriptItem, group_transcript_rows, regroup_boundary, trailing_tool_call_rows,
     trailing_tool_rows_from_display,
 };
+use crate::ui::transcript_item_data::TranscriptItemData;
 use crate::ui::transcript_row::{
     TranscriptItemInit, TranscriptRow, TranscriptRowBuildKind, TranscriptRowOutput,
     transcript_item_init_from_display_item,
@@ -71,6 +73,15 @@ pub struct SessionDetail {
     pending_toast: Cell<bool>,
     inspector: Controller<ToolInspectorPane>,
     inspector_open: bool,
+}
+
+fn toggle_typed_message_expanded(items: &[TranscriptItemData], item_index: usize) -> bool {
+    let Some(item) = items.iter().find(|item| item.item_index == item_index) else {
+        return false;
+    };
+
+    item.expanded.set(!item.expanded.get());
+    true
 }
 
 /// Resolved scroll destination for global search navigation.
@@ -294,6 +305,9 @@ pub enum SessionDetailMsg {
     /// Indicates that a transcript row failed to expand to its full content and
     /// should trigger the shared toast notification path.
     ShowExpandLoadFailure,
+    ToggleMessageExpand {
+        item_index: usize,
+    },
     RowBuilt {
         item_index: usize,
         kind: TranscriptRowBuildKind,
@@ -1087,6 +1101,12 @@ impl Component for SessionDetail {
             SessionDetailMsg::ShowExpandLoadFailure => {
                 tracing::warn!("Could not load full message content");
                 self.pending_toast.set(true);
+            }
+            SessionDetailMsg::ToggleMessageExpand { item_index } => {
+                tracing::debug!(
+                    item_index,
+                    "Typed message expand requested before typed view wiring"
+                );
             }
             SessionDetailMsg::RowBuilt {
                 item_index,
@@ -2606,8 +2626,11 @@ impl SessionDetail {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::PathBuf;
+    use std::sync::Arc;
     use std::time::Duration;
 
+    use relm4::binding::Binding;
     use relm4::{Component, ComponentController};
     use rusqlite::{Connection, params};
 
@@ -2641,6 +2664,42 @@ mod tests {
             command_count,
             ending_status: crate::models::SessionEndingStatus::Clean,
         }
+    }
+
+    #[test]
+    fn toggle_typed_message_expanded_flips_matching_item_binding() {
+        let (sender, _receiver) = relm4::channel::<SessionDetailMsg>();
+        let item = TranscriptItemData::from_init(
+            TranscriptItemInit::Message(crate::ui::transcript_row::MessageItemInit {
+                item_index: 7,
+                transcript_item_index: 11,
+                preview: crate::models::MessagePreview {
+                    session_id: "session-1".to_string(),
+                    message_index: 4,
+                    role: crate::models::Role::Assistant,
+                    content_preview: "preview".to_string(),
+                    content_len: 42,
+                    timestamp: chrono::Utc::now(),
+                    model: Some("gpt-5.4".to_string()),
+                    reasoning_preview: crate::models::ReasoningPreview::default(),
+                },
+                highlight_query: None,
+                db_path: Arc::new(PathBuf::from("/tmp/session-detail-toggle.db")),
+            }),
+            sender,
+        );
+
+        assert!(!item.expanded.get());
+        assert!(toggle_typed_message_expanded(
+            std::slice::from_ref(&item),
+            7
+        ));
+        assert!(item.expanded.get());
+        assert!(!toggle_typed_message_expanded(
+            std::slice::from_ref(&item),
+            8
+        ));
+        assert!(item.expanded.get());
     }
 
     fn pump_main_context(condition: impl Fn() -> bool) {

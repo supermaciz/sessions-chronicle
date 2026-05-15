@@ -193,16 +193,10 @@ impl TranscriptItemData {
         });
 
         if can_expand {
-            let expanded = self.expanded.clone();
-            let button = widgets.expand_button.clone();
+            let sender = self.sender.clone();
+            let item_index = self.item_index;
             let id = widgets.expand_button.connect_clicked(move |_| {
-                let next = !expanded.get();
-                expanded.set(next);
-                button.set_label(if next {
-                    "Collapse"
-                } else {
-                    "Show full message"
-                });
+                sender.emit(SessionDetailMsg::ToggleMessageExpand { item_index });
             });
             widgets
                 .connected_handlers
@@ -763,6 +757,12 @@ mod tests {
         init
     }
 
+    fn truncated_message_init() -> MessageItemInit {
+        let mut init = message_init();
+        init.preview.content_len = 64;
+        init
+    }
+
     fn tool_call_init() -> ToolCallItemInit {
         ToolCallItemInit {
             item_index: 2,
@@ -854,6 +854,13 @@ mod tests {
             .expect("message reasoning button")
             .downcast::<gtk::Button>()
             .expect("message reasoning button")
+    }
+
+    fn message_expand_button(root: &gtk::Box) -> gtk::Button {
+        root.last_child()
+            .expect("message expand button")
+            .downcast::<gtk::Button>()
+            .expect("message expand button")
     }
 
     #[test]
@@ -990,6 +997,36 @@ mod tests {
                 .block_on(receiver.recv())
                 .expect("reasoning inspect message"),
             SessionDetailMsg::InspectReasoning(11)
+        ));
+    }
+
+    #[gtk::test]
+    fn message_expand_button_emits_parent_toggle_message() {
+        let (sender, receiver) = relm4::channel::<SessionDetailMsg>();
+        let mut message = TranscriptItemData::from_init(
+            TranscriptItemInit::Message(truncated_message_init()),
+            sender,
+        );
+
+        let list_item: gtk::ListItem = gtk::glib::Object::builder().build();
+        let (_, mut widgets) = TranscriptItemData::setup(&list_item);
+        let mut root = gtk::Box::new(gtk::Orientation::Vertical, 0);
+
+        message.bind(&mut widgets, &mut root);
+        let expand_button = message_expand_button(&widgets.message.root);
+
+        assert!(expand_button.is_visible());
+        assert_eq!(expand_button.label().as_deref(), Some("Show full message"));
+
+        expand_button.emit_clicked();
+
+        assert!(!message.expanded.get());
+        assert_eq!(expand_button.label().as_deref(), Some("Show full message"));
+        assert!(matches!(
+            gtk::glib::MainContext::default()
+                .block_on(receiver.recv())
+                .expect("message expand toggle"),
+            SessionDetailMsg::ToggleMessageExpand { item_index: 1 }
         ));
     }
 
