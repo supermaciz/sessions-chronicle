@@ -25,7 +25,7 @@ refresh strategy, risk mitigation, and Definition of Done.
 |---|-------|----------|
 | 1 | Row polymorphism under one `TypedListView<T>` | Single `TranscriptItemData` struct with `kind` enum; per-slot widget is a `gtk::Stack` with 4 pre-built pages, `bind()` switches visible child |
 | 2 | Full-content cache for expanded rows | None for v1 — re-fetch DB + re-parse on every `bind()`. Measure, add cache later if p99 > frame budget |
-| 3 | Burst expansion / lazy-children state location | In `TranscriptItemData`. Toggle updates the live `Revealer` directly (row is always realized when its button is clicked); a Relm4 message persists the new state into the model via `borrow_mut()` for recycle survival — no `remove`/`insert`, no re-bind |
+| 3 | Burst expansion / lazy-children state location | `expanded` lives in `TranscriptItemData`; widget child-build state lives in the recycled slot's `Widgets`. Toggle updates the live `Revealer` directly and persists `expanded` via `borrow_mut()` — no `remove`/`insert`, no re-bind |
 | 4a | Initial load mode | `extend_from_iter(all_rows)` in one call; no incremental render |
 | 4b | Initial scroll position | Top (no change vs. today) |
 | 5 | Scroll-to-match | `ListView::scroll_to(pos, NONE, None)` + existing idle callback for `compute_point` + 1/3-viewport adjustment + burst sub-child walk |
@@ -49,7 +49,6 @@ pub struct TranscriptItemData {
     pub transcript_item_index: i64,    // stable DB id
     pub kind: TranscriptItemKind,      // variant-specific payload
     pub expanded: Cell<bool>,          // pliage commun (message + burst)
-    pub children_built: Cell<bool>,    // lazy-population flag (burst only)
     pub highlight_query: Option<String>,
 }
 
@@ -107,6 +106,23 @@ pub struct Widgets {
 }
 ```
 
+`ToolBurstPageWidgets` owns the physical child-build state for the recycled
+slot:
+
+```rust
+pub struct ToolBurstPageWidgets {
+    pub revealer: gtk::Revealer,
+    pub children_box: gtk::Box,
+    pub children_built_for: Option<usize>, // TranscriptItemData.item_index
+    // header button, arrow icon, labels, ...
+}
+```
+
+`children_built_for` deliberately lives in `Widgets`, not
+`TranscriptItemData`. It describes whether this physical `children_box` already
+contains GTK child widgets for the currently bound burst. Since GTK recycles
+slots, that is not stable row data.
+
 ---
 
 ## Lifecycle (RelmListItem impl)
@@ -126,9 +142,10 @@ this runs once per pool slot, before any item is bound.
      `highlight_query`.
    - **ToolCall**: fill name, status badge, preview, duration.
    - **ToolBurst**: fill header label (category counts + error count). If
-     `self.expanded.get()`: `revealer.set_reveal_child(true)` and, if
-     `!self.children_built.get()`, build the per-tool-call children inside the
-     revealer's box and set the flag.
+     `self.expanded.get()`: ensure `children_built_for == Some(self.item_index)`
+     by clearing the slot's burst child container when needed and building the
+     per-tool-call children for this item, then
+     `revealer.set_reveal_child(true)`.
    - **Subagent**: fill title, status.
 3. Connect interactive handlers (buttons, inspect actions). Each
    `connect_clicked` returns a `SignalHandlerId`; push it into
@@ -141,7 +158,10 @@ this runs once per pool slot, before any item is bound.
 2. Clear text content of the active page's `TextView` (`buffer.set_text("")`)
    and drop any `sourceview5::View` references in the page (`remove()` from
    their container so their `Buffer` drops).
-3. Leave the `Stack` and per-page skeletons in place — they are reused on the
+3. Clear the burst page's `children_box` and set `children_built_for = None`;
+   burst children are bound to a physical slot and must not leak across
+   recycled items.
+4. Leave the `Stack` and per-page skeletons in place — they are reused on the
    next `bind`.
 
 ### `teardown(list_item)`
@@ -166,27 +186,31 @@ user clicks burst header (row is necessarily realized)
    │
    ├─▶ in the button handler, on the live widget:
    │      revealer.set_reveal_child(new_expanded);
-   │      if new_expanded && !children_built { build children; children_built = true }
+   │      if new_expanded && children_built_for != Some(item_index) {
+   │          clear children_box;
+   │          build children for item_index;
+   │          children_built_for = Some(item_index);
+   │      }
    │      → instant feedback, no items-changed emission, no scroll jitter,
    │        no keyboard-focus loss.
    │
-   └─▶ sender.input(SessionDetailMsg::ToggleBurst { item_index, expanded, children_built })
+   └─▶ sender.input(SessionDetailMsg::ToggleBurst { item_index, expanded })
           │
           ▼
        SessionDetail::update():
           if let Some(item) = self.messages.get(item_index as u32) {
               let mut row = item.borrow_mut();   // TypedListItem::borrow_mut, verified present
               row.expanded.set(expanded);
-              row.children_built.set(children_built);
           }
           → pure persistence write. No remove/insert, no re-bind.
 ```
 
 When the row is later recycled offscreen and scrolled back in, `bind()` reads
-`expanded` / `children_built` from the model and restores the `Revealer` to the
-correct state. The model is the source of truth for *recycled* rows; the live
-widget is authoritative while the row is realized, and the two are kept in sync
-by the handler above.
+`expanded` from the model and restores the `Revealer` to the correct state. If
+the row is expanded, `bind()` also ensures this slot's `children_box` contains
+children for the current `item_index`. The model is the source of truth for
+*recycled* row expansion; the live widget is authoritative while the row is
+realized, and the two are kept in sync by the handler above.
 
 The same pattern handles message expand and any other interactive toggle on a
 realized row. No `Rc<RefCell>` shared between widget closures and the data item.
@@ -385,8 +409,9 @@ these constraints:
    itself; only the 1/3-viewport refinement is degraded.
 
 5. **Burst state persistence regressions.** Test plan: open, scroll out
-   (>1 viewport), scroll back, assert open. Same for closed, plus the
-   children-built flag (children should not duplicate on second bind).
+   (>1 viewport), scroll back, assert open. Same for closed, plus slot reuse:
+   children are rebuilt for the current burst when a recycled slot is reused,
+   and are not duplicated on repeated binds of the same item into the same slot.
 
 ---
 
