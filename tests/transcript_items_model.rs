@@ -210,3 +210,24 @@ fn load_transcript_items_includes_reasoning_flags() {
     assert!(items[0].reasoning_preview.has_visible_reasoning);
     assert!(!items[0].reasoning_preview.encrypted_only);
 }
+
+#[test]
+fn load_all_transcript_items_returns_entire_ordered_session() {
+    let db = TempDatabase::new();
+    let sid = "test-full-session-loader";
+    db.insert_session(sid);
+
+    db.insert_message(sid, 0, "user", "first", None);
+    db.insert_message(sid, 1, "assistant", "second", Some("claude-sonnet"));
+    db.insert_message(sid, 2, "user", "third", None);
+    db.insert_transcript_item(sid, 0, "message", Some(0));
+    db.insert_transcript_item(sid, 1, "message", Some(1));
+    db.insert_transcript_item(sid, 2, "message", Some(2));
+
+    let items = sessions_chronicle::database::load_all_transcript_items(&db.path, sid, 2000)
+        .expect("Failed to load all transcript items");
+
+    let item_indexes: Vec<i64> = items.iter().map(|item| item.item_index).collect();
+    assert_eq!(item_indexes, vec![0, 1, 2]);
+    assert_eq!(items.len(), 3);
+}

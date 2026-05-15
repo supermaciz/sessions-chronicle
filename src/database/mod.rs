@@ -988,6 +988,15 @@ pub fn load_transcript_items(
     Ok(items)
 }
 
+/// Load all ordered transcript items for a session with preview truncation.
+pub fn load_all_transcript_items(
+    db_path: &Path,
+    session_id: &str,
+    preview_len: i64,
+) -> Result<Vec<TranscriptItemRow>> {
+    load_transcript_items(db_path, session_id, i64::MAX, 0, preview_len)
+}
+
 /// Insert a tool call record (upsert by session_id + id).
 pub fn insert_tool_call(conn: &Connection, tc: &ToolCall, session_id: &str) -> Result<()> {
     conn.execute(
