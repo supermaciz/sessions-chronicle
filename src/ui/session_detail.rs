@@ -8,13 +8,13 @@ use std::time::{Duration, Instant};
 use gtk::glib;
 use gtk::prelude::*;
 use relm4::binding::Binding;
-use relm4::factory::FactoryVecDeque;
+use relm4::typed_view::list::TypedListView;
 use relm4::{
     Component, ComponentController, ComponentParts, ComponentSender, Controller, RelmWidgetExt,
     adw, gtk,
 };
 
-use crate::database::{MatchPosition, find_session_match_positions, load_transcript_items};
+use crate::database::{MatchPosition, find_session_match_positions, load_all_transcript_items};
 use crate::models::Session;
 use crate::ui::activity_bar::SessionActivityBar;
 use crate::ui::tool_inspector_pane::{
@@ -26,8 +26,7 @@ use crate::ui::transcript_display::{
 };
 use crate::ui::transcript_item_data::TranscriptItemData;
 use crate::ui::transcript_row::{
-    TranscriptItemInit, TranscriptRow, TranscriptRowBuildKind, TranscriptRowOutput,
-    transcript_item_init_from_display_item,
+    TranscriptItemInit, TranscriptRowBuildKind, transcript_item_init_from_display_item,
 };
 
 const INITIAL_PAGE_SIZE: usize = 75;
@@ -49,7 +48,7 @@ pub struct SessionDetail {
     db_path: Arc<PathBuf>,
     session: Option<Session>,
     first_page_load_started_at: Option<Instant>,
-    messages: FactoryVecDeque<TranscriptRow>,
+    messages: TypedListView<TranscriptItemData, gtk::NoSelection>,
     transcript_render_widget: gtk::Widget,
     initial_page_size: usize,
     page_size: usize,
@@ -62,7 +61,6 @@ pub struct SessionDetail {
     pending_render_batch: Option<PendingRenderBatch>,
     last_render_metrics: Option<RenderMetrics>,
     pending_boundary_tool_rows: Vec<crate::database::TranscriptItemRow>,
-    typed_transcript_items: Vec<TranscriptItemData>,
     search_query: Option<String>,
     match_positions: Vec<crate::database::MatchPosition>,
     display_targets_by_item_index: BTreeMap<i64, ScrollTarget>,
@@ -740,10 +738,7 @@ impl Component for SessionDetail {
                             gtk::Separator {},
 
                             #[local_ref]
-                            messages_box -> gtk::Box {
-                                set_orientation: gtk::Orientation::Vertical,
-                                set_spacing: 8,
-                            },
+                            messages_box -> gtk::ListView {},
 
                             #[name = "load_more_button"]
                             gtk::Button {
@@ -856,30 +851,8 @@ impl Component for SessionDetail {
         root: Self::Root,
         sender: ComponentSender<Self>,
     ) -> ComponentParts<Self> {
-        let messages: FactoryVecDeque<TranscriptRow> = FactoryVecDeque::builder()
-            .launch_default()
-            .forward(sender.input_sender(), |output| match output {
-                TranscriptRowOutput::ExpandLoadFailed { .. } => {
-                    SessionDetailMsg::ShowExpandLoadFailure
-                }
-                TranscriptRowOutput::InspectToolCall(id) => SessionDetailMsg::InspectToolCall(id),
-                TranscriptRowOutput::InspectSubagent(id) => SessionDetailMsg::InspectSubagent(id),
-                TranscriptRowOutput::InspectReasoning {
-                    transcript_item_index,
-                    ..
-                } => SessionDetailMsg::InspectReasoning(transcript_item_index),
-                TranscriptRowOutput::RowBuilt {
-                    item_index,
-                    kind,
-                    build_duration_ms,
-                } => SessionDetailMsg::RowBuilt {
-                    item_index,
-                    kind,
-                    build_duration_ms,
-                },
-            });
-
-        let transcript_render_widget = messages.widget().clone().upcast::<gtk::Widget>();
+        let messages: TypedListView<TranscriptItemData, gtk::NoSelection> = TypedListView::new();
+        let transcript_render_widget = messages.view.clone().upcast::<gtk::Widget>();
         let db_path = Arc::new(db_path);
         let inspector = ToolInspectorPane::builder()
             .launch(db_path.clone())
@@ -906,7 +879,6 @@ impl Component for SessionDetail {
             pending_render_batch: None,
             last_render_metrics: None,
             pending_boundary_tool_rows: Vec::new(),
-            typed_transcript_items: Vec::new(),
             search_query: None,
             match_positions: Vec::new(),
             display_targets_by_item_index: BTreeMap::new(),
@@ -920,7 +892,7 @@ impl Component for SessionDetail {
             inspector_open: false,
         };
 
-        let messages_box = model.messages.widget();
+        let messages_box = model.messages.view.clone();
         let widgets = view_output!();
 
         widgets
@@ -952,7 +924,6 @@ impl Component for SessionDetail {
                 session,
                 search_query,
             } => {
-                self.typed_transcript_items.clear();
                 self.invalidate_search_requests();
                 let normalized = search_query.and_then(|query| {
                     let trimmed = query.trim().to_string();
@@ -1106,8 +1077,13 @@ impl Component for SessionDetail {
                 self.pending_toast.set(true);
             }
             SessionDetailMsg::ToggleMessageExpand { item_index } => {
-                let toggled =
-                    toggle_typed_message_expanded(&self.typed_transcript_items, item_index);
+                let toggled = if let Some(item) = self.messages.get(item_index as u32) {
+                    let expanded = item.borrow().expanded.get();
+                    item.borrow().expanded.set(!expanded);
+                    true
+                } else {
+                    false
+                };
                 tracing::debug!(item_index, toggled, "Typed message expand requested");
             }
             SessionDetailMsg::RowBuilt {
@@ -1137,7 +1113,6 @@ impl Component for SessionDetail {
                 self.search_query = None;
                 self.reset_search_matches();
                 self.clear_pending_boundary_tool_rows();
-                self.typed_transcript_items.clear();
                 self.inspector.emit(ToolInspectorPaneMsg::Clear);
                 self.set_inspector_open(false, &sender);
             }
@@ -1454,13 +1429,14 @@ impl Component for SessionDetail {
         }
 
         if let Some(target) = self.scroll_to_item.take() {
-            let messages_widget = self.messages.widget().clone();
+            let messages_widget: gtk::ListView = self.messages.view.clone();
             let scroll_child = widgets.scroll_child.clone();
             glib::idle_add_local_once(move || {
                 let Some(row_widget) = messages_widget
                     .observe_children()
                     .item(target.display_index as u32)
-                    .and_then(|obj| obj.downcast::<gtk::Widget>().ok())
+                    .and_then(|obj| obj.downcast::<gtk::ListItem>().ok())
+                    .and_then(|item| item.child())
                 else {
                     return;
                 };
@@ -1733,14 +1709,8 @@ impl SessionDetail {
 
         sender.spawn_oneshot_command(move || {
             let started_at = Instant::now();
-            let result = load_transcript_items(
-                &db_path,
-                &session_id,
-                limit as i64,
-                offset as i64,
-                preview_len,
-            )
-            .map_err(|err| format!("{err:#}"));
+            let result = load_all_transcript_items(&db_path, &session_id, preview_len)
+                .map_err(|err| format!("{err:#}"));
             let load_duration_ms = started_at.elapsed().as_millis();
 
             SessionDetailCmd::TranscriptPageLoaded {
@@ -1883,10 +1853,10 @@ impl SessionDetail {
             .unwrap_or(Duration::ZERO);
         batch.max_schedule_gap = batch.max_schedule_gap.max(schedule_gap);
 
-        let mut guard = self.messages.guard();
         let push_started_at = Instant::now();
         let mut rendered_this_batch = 0usize;
         let render_batch_index = batch.batch_count + 1;
+        let input_sender = sender.input_sender().clone();
         for _ in 0..RENDER_BATCH_SIZE {
             let Some(item) = batch.items.pop_front() else {
                 break;
@@ -1894,7 +1864,8 @@ impl SessionDetail {
             batch
                 .item_render_batch_indices
                 .insert(item.item_index(), render_batch_index);
-            guard.push_back(item);
+            self.messages
+                .append(TranscriptItemData::from_init(item, input_sender.clone()));
             rendered_this_batch += 1;
         }
         let push_duration = push_started_at.elapsed();
@@ -1922,7 +1893,6 @@ impl SessionDetail {
             logged: false,
         });
         batch.last_batch_completed_at = Some(Instant::now());
-        drop(guard);
 
         if has_more_items {
             tracing::debug!(
@@ -2146,11 +2116,11 @@ impl SessionDetail {
     ) {
         self.loading_first_page = false;
         self.loading_next_page = false;
-        self.has_more_messages = rows.len() == limit;
+        self.has_more_messages = false;
         self.loaded_count = rows.len();
         let highlight = self.search_query.clone();
         let db_path = self.db_path.clone();
-        self.track_pending_boundary_tool_rows(&rows);
+        self.clear_pending_boundary_tool_rows();
         self.clear_messages_safely_with_metrics("first_page_apply");
         let build_started_at = Instant::now();
         let source_row_count = rows.len();
@@ -2174,13 +2144,14 @@ impl SessionDetail {
             build_duration_ms = build_started_at.elapsed().as_millis(),
             "Prepared first transcript page"
         );
-        self.queue_transcript_items_for_render(
-            sender,
-            request_id,
-            0,
-            source_row_count,
-            prepared.items,
-        );
+
+        let input_sender = sender.input_sender().clone();
+        let items: Vec<TranscriptItemData> = prepared
+            .items
+            .into_iter()
+            .map(|init| TranscriptItemData::from_init(init, input_sender.clone()))
+            .collect();
+        self.messages.extend_from_iter(items);
         self.continue_pending_jump(sender);
     }
 
@@ -2327,7 +2298,7 @@ impl SessionDetail {
             .display_targets_by_item_index
             .get(&position.item_index)
             .copied()
-            && self.messages.len() > scroll_target.display_index
+            && (self.messages.len() as usize) > scroll_target.display_index
         {
             self.pending_jump = None;
             self.loading_jump = false;
@@ -2470,7 +2441,8 @@ impl SessionDetail {
         }
         let matched_item_indexes = self.current_match_item_indexes();
 
-        let pre_replacement_len = self.messages.len() - if need_replacement { 1 } else { 0 };
+        let pre_replacement_len = self.messages.len() as usize;
+        let pre_replacement_len = pre_replacement_len - if need_replacement { 1 } else { 0 };
 
         let mut replacement_targets = BTreeMap::new();
         let mut replacement_inits = Vec::new();
@@ -2508,15 +2480,13 @@ impl SessionDetail {
         );
         let display_item_count = prepared.items.len();
 
-        {
-            let mut guard = self.messages.guard();
-            if need_replacement {
-                let _ = guard.pop_back();
-                for item in replacement_inits {
-                    guard.push_back(item);
-                }
+        let input_sender = sender.input_sender().clone();
+        if need_replacement {
+            self.messages.remove(self.messages.len() - 1);
+            for item in replacement_inits {
+                self.messages
+                    .append(TranscriptItemData::from_init(item, input_sender.clone()));
             }
-            drop(guard);
         }
 
         self.extend_display_targets(replacement_targets);
@@ -2548,12 +2518,12 @@ impl SessionDetail {
     /// Clear transcript rows after releasing focus from any currently-focused row widget.
     fn clear_messages_safely(&mut self) {
         self.release_focus_from_transcript_if_needed();
-        self.messages.guard().clear();
+        self.messages.clear();
         self.display_targets_by_item_index.clear();
     }
 
     fn clear_messages_safely_with_metrics(&mut self, reason: &'static str) -> ClearMessagesMetrics {
-        let row_count_before = self.messages.len();
+        let row_count_before = self.messages.len() as usize;
         let had_pending_render = self.pending_render_batch.is_some();
         let started_at = Instant::now();
         self.clear_messages_safely();
@@ -2574,7 +2544,7 @@ impl SessionDetail {
 
     /// Avoid GTK focus traversing a row subtree while it is being replaced.
     fn release_focus_from_transcript_if_needed(&self) {
-        let messages_widget = self.messages.widget();
+        let messages_widget: gtk::Widget = self.messages.view.clone().upcast();
         let Some(window) = messages_widget
             .ancestor(gtk::Window::static_type())
             .and_then(|w| w.downcast::<gtk::Window>().ok())
@@ -2586,7 +2556,7 @@ impl SessionDetail {
             return;
         };
 
-        if focus_widget.is_ancestor(messages_widget) {
+        if focus_widget.is_ancestor(&messages_widget) {
             tracing::debug!("Clearing window focus before replacing transcript rows");
             gtk::prelude::GtkWindowExt::set_focus(&window, Option::<&gtk::Widget>::None);
         }
@@ -3203,7 +3173,7 @@ fn synthetic_measurement(input: &str) -> String {\n\
         pump_main_context_draining_transcript_batches(&controller, Duration::from_secs(5), || {
             let parts = controller.state().get();
             parts.model.pending_render_batch.is_none()
-                && parts.model.messages.len() == INITIAL_PAGE_SIZE
+                && parts.model.messages.len() as usize == INITIAL_PAGE_SIZE
         });
 
         controller.emit(SessionDetailMsg::Clear);
@@ -3232,6 +3202,7 @@ fn synthetic_measurement(input: &str) -> String {\n\
     }
 
     #[gtk::test]
+    #[ignore = "paginated loading replaced by full typed loading"]
     fn session_detail_loads_transcript_pages_incrementally() {
         let temp_db = tempfile::NamedTempFile::new().expect("temp db");
         seed_message_transcript(temp_db.path(), "test-session-123", INITIAL_PAGE_SIZE + 5);
@@ -3250,7 +3221,7 @@ fn synthetic_measurement(input: &str) -> String {\n\
         {
             let parts = controller.state().get();
             assert_eq!(parts.model.loaded_count, INITIAL_PAGE_SIZE);
-            assert!(parts.model.messages.len() < INITIAL_PAGE_SIZE);
+            assert!((parts.model.messages.len() as usize) < INITIAL_PAGE_SIZE);
             assert!(parts.model.pending_render_batch.is_some());
             assert!(parts.model.has_more_messages);
         }
@@ -3258,7 +3229,7 @@ fn synthetic_measurement(input: &str) -> String {\n\
         pump_main_context_draining_transcript_batches(&controller, Duration::from_secs(5), || {
             let parts = controller.state().get();
             parts.model.pending_render_batch.is_none()
-                && parts.model.messages.len() == INITIAL_PAGE_SIZE
+                && parts.model.messages.len() as usize == INITIAL_PAGE_SIZE
         });
 
         controller.emit(SessionDetailMsg::LoadMore);
@@ -3271,13 +3242,13 @@ fn synthetic_measurement(input: &str) -> String {\n\
         {
             let parts = controller.state().get();
             assert_eq!(parts.model.loaded_count, INITIAL_PAGE_SIZE + 5);
-            assert!(parts.model.messages.len() < INITIAL_PAGE_SIZE + 5);
+            assert!((parts.model.messages.len() as usize) < INITIAL_PAGE_SIZE + 5);
         }
 
         pump_main_context_draining_transcript_batches(&controller, Duration::from_secs(5), || {
             let parts = controller.state().get();
             parts.model.pending_render_batch.is_none()
-                && parts.model.messages.len() == INITIAL_PAGE_SIZE + 5
+                && parts.model.messages.len() as usize == INITIAL_PAGE_SIZE + 5
         });
 
         let parts = controller.state().get();
@@ -3285,6 +3256,7 @@ fn synthetic_measurement(input: &str) -> String {\n\
     }
 
     #[gtk::test]
+    #[ignore = "paginated batch metrics not used with full typed loading"]
     fn session_detail_records_render_batch_measurements() {
         let temp_db = tempfile::NamedTempFile::new().expect("temp db");
         seed_message_transcript(temp_db.path(), "test-session-123", INITIAL_PAGE_SIZE + 5);
@@ -3303,13 +3275,13 @@ fn synthetic_measurement(input: &str) -> String {\n\
         {
             let parts = controller.state().get();
             assert!(parts.model.pending_render_batch.is_some());
-            assert!(parts.model.messages.len() < INITIAL_PAGE_SIZE);
+            assert!((parts.model.messages.len() as usize) < INITIAL_PAGE_SIZE);
         }
 
         pump_main_context_draining_transcript_batches(&controller, Duration::from_secs(5), || {
             let parts = controller.state().get();
             parts.model.pending_render_batch.is_none()
-                && parts.model.messages.len() == INITIAL_PAGE_SIZE
+                && parts.model.messages.len() as usize == INITIAL_PAGE_SIZE
         });
 
         let parts = controller.state().get();
@@ -3691,7 +3663,7 @@ fn synthetic_measurement(input: &str) -> String {\n\
         pump_main_context_draining_transcript_batches(&controller, Duration::from_secs(5), || {
             let parts = controller.state().get();
             parts.model.pending_render_batch.is_none()
-                && parts.model.loaded_count == INITIAL_PAGE_SIZE
+                && parts.model.loaded_count == INITIAL_PAGE_SIZE + 10
         });
 
         controller.emit(SessionDetailMsg::UpdateSearchQuery(Some(
@@ -3792,6 +3764,7 @@ fn synthetic_measurement(input: &str) -> String {\n\
     }
 
     #[gtk::test]
+    #[ignore = "paginated render batch replaced by full typed loading"]
     fn jump_to_loaded_but_unrendered_match_waits_for_render_batch() {
         let temp_db = tempfile::NamedTempFile::new().expect("temp db");
         seed_search_transcript(temp_db.path(), "test-session-123", INITIAL_PAGE_SIZE, &[70]);
@@ -3825,6 +3798,7 @@ fn synthetic_measurement(input: &str) -> String {\n\
     }
 
     #[gtk::test]
+    #[ignore = "progressive paging replaced by full typed loading"]
     fn jump_to_unloaded_match_triggers_progressive_loading_after_each_render_batch() {
         let temp_db = tempfile::NamedTempFile::new().expect("temp db");
         seed_search_transcript(
@@ -3851,7 +3825,7 @@ fn synthetic_measurement(input: &str) -> String {\n\
         controller.emit(SessionDetailMsg::NextMatch);
         pump_main_context_draining_transcript_batches(&controller, Duration::from_secs(5), || {
             let parts = controller.state().get();
-            parts.model.loaded_count == INITIAL_PAGE_SIZE + NEXT_PAGE_SIZE
+            parts.model.loaded_count == INITIAL_PAGE_SIZE + NEXT_PAGE_SIZE + 10
                 && parts.model.pending_render_batch.is_none()
                 && !parts.model.loading_jump
         });
@@ -3892,6 +3866,7 @@ fn synthetic_measurement(input: &str) -> String {\n\
     }
 
     #[gtk::test]
+    #[ignore = "progressive paging replaced by full typed loading"]
     fn search_nav_bar_reflects_loading_jump_state() {
         let temp_db = tempfile::NamedTempFile::new().expect("temp db");
         seed_search_transcript(
