@@ -51,6 +51,7 @@ fn model_label_text(role: Role, model: Option<&str>) -> Option<String> {
 // Init types
 // ---------------------------------------------------------------------------
 
+#[derive(Clone)]
 pub struct MessageItemInit {
     pub item_index: usize,
     pub transcript_item_index: i64,
@@ -114,6 +115,7 @@ pub struct ToolBurstItemInit {
     pub default_expanded: bool,
 }
 
+#[derive(Clone)]
 pub struct SubagentItemInit {
     pub item_index: usize,
     pub transcript_item_index: i64,
@@ -123,6 +125,7 @@ pub struct SubagentItemInit {
     pub reasoning_preview: ReasoningPreview,
 }
 
+#[derive(Clone)]
 pub enum TranscriptItemInit {
     Message(MessageItemInit),
     ToolCall(ToolCallItemInit),
