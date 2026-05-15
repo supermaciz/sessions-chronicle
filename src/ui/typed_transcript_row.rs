@@ -161,6 +161,14 @@ impl TranscriptItemData {
             button.add_css_class("flat");
             button.add_css_class("pill");
             button.add_css_class("reasoning-pill");
+            let sender = self.sender.clone();
+            let transcript_item_index = message.transcript_item_index;
+            let id = button.connect_clicked(move |_| {
+                sender.emit(SessionDetailMsg::InspectReasoning(transcript_item_index));
+            });
+            widgets
+                .connected_handlers
+                .push((button.clone().upcast(), id));
             widgets.reasoning_box.append(&button);
         } else if message.preview.reasoning_preview.encrypted_only {
             let label = gtk::Label::new(Some("Thinking (encrypted)"));
@@ -745,6 +753,16 @@ mod tests {
         }
     }
 
+    fn message_init_with_visible_reasoning() -> MessageItemInit {
+        let mut init = message_init();
+        init.preview.reasoning_preview = ReasoningPreview {
+            has_reasoning: true,
+            has_visible_reasoning: true,
+            encrypted_only: false,
+        };
+        init
+    }
+
     fn tool_call_init() -> ToolCallItemInit {
         ToolCallItemInit {
             item_index: 2,
@@ -817,6 +835,25 @@ mod tests {
             .expect("tool burst children")
             .downcast::<gtk::Box>()
             .expect("tool burst children box")
+    }
+
+    fn message_reasoning_button(root: &gtk::Box) -> gtk::Button {
+        let header = root
+            .first_child()
+            .expect("message header")
+            .downcast::<gtk::Box>()
+            .expect("message header box");
+        let reasoning_box = header
+            .last_child()
+            .expect("message reasoning box")
+            .downcast::<gtk::Box>()
+            .expect("message reasoning box");
+
+        reasoning_box
+            .first_child()
+            .expect("message reasoning button")
+            .downcast::<gtk::Button>()
+            .expect("message reasoning button")
     }
 
     #[test]
@@ -931,6 +968,29 @@ mod tests {
                 .expect("visible child")
                 .is_visible()
         );
+    }
+
+    #[gtk::test]
+    fn message_reasoning_button_emits_inspect_reasoning() {
+        let (sender, receiver) = relm4::channel::<SessionDetailMsg>();
+        let mut message = TranscriptItemData::from_init(
+            TranscriptItemInit::Message(message_init_with_visible_reasoning()),
+            sender,
+        );
+
+        let list_item: gtk::ListItem = gtk::glib::Object::builder().build();
+        let (_, mut widgets) = TranscriptItemData::setup(&list_item);
+        let mut root = gtk::Box::new(gtk::Orientation::Vertical, 0);
+
+        message.bind(&mut widgets, &mut root);
+        message_reasoning_button(&widgets.message.root).emit_clicked();
+
+        assert!(matches!(
+            gtk::glib::MainContext::default()
+                .block_on(receiver.recv())
+                .expect("reasoning inspect message"),
+            SessionDetailMsg::InspectReasoning(11)
+        ));
     }
 
     #[gtk::test]
