@@ -1,8 +1,18 @@
+use std::cell::Cell;
+use std::rc::Rc;
+
 use gtk::prelude::*;
+use relm4::binding::Binding;
 use relm4::{gtk, typed_view::list::RelmListItem};
 
+use crate::models::Role;
+use crate::ui::format::{format_duration_ms, tool_status_css_class, tool_status_label};
+use crate::ui::session_detail::SessionDetailMsg;
 use crate::ui::transcript_item_data::{TranscriptItemData, TranscriptItemKind};
-use crate::ui::transcript_row::TranscriptRowBuildKind;
+use crate::ui::transcript_row::{
+    TranscriptRowBuildKind, format_tool_burst_match_badge_accessible_label, model_label_text,
+    populate_tool_burst_children, render_content,
+};
 
 const MESSAGE_PAGE_NAME: &str = "message";
 const TOOL_CALL_PAGE_NAME: &str = "tool-call";
@@ -19,19 +29,37 @@ pub struct TranscriptRowWidgets {
 
 pub struct MessagePageWidgets {
     root: gtk::Box,
+    role_label: gtk::Label,
+    model_sep: gtk::Label,
+    model_label: gtk::Label,
+    ts_sep: gtk::Label,
+    ts_label: gtk::Label,
+    reasoning_box: gtk::Box,
+    content: gtk::Box,
+    expand_button: gtk::Button,
+    connected_handlers: Vec<(gtk::glib::Object, gtk::glib::SignalHandlerId)>,
 }
 
 pub struct ToolCallPageWidgets {
     root: gtk::Box,
+    connected_handlers: Vec<(gtk::glib::Object, gtk::glib::SignalHandlerId)>,
 }
 
 pub struct ToolBurstPageWidgets {
     root: gtk::Box,
+    header_button: gtk::Button,
+    summary_label: gtk::Label,
+    meta_box: gtk::Box,
+    revealer: gtk::Revealer,
     children: gtk::Box,
+    reveal_binding: Option<gtk::glib::Binding>,
+    children_built_for: Rc<Cell<Option<usize>>>,
+    connected_handlers: Vec<(gtk::glib::Object, gtk::glib::SignalHandlerId)>,
 }
 
 pub struct SubagentPageWidgets {
     root: gtk::Box,
+    connected_handlers: Vec<(gtk::glib::Object, gtk::glib::SignalHandlerId)>,
 }
 
 impl RelmListItem for TranscriptItemData {
@@ -99,21 +127,236 @@ impl RelmListItem for TranscriptItemData {
 }
 
 impl TranscriptItemData {
-    pub(crate) fn bind_message_page(&self, _widgets: &mut MessagePageWidgets) {}
+    pub(crate) fn bind_message_page(&self, widgets: &mut MessagePageWidgets) {
+        let TranscriptItemKind::Message(message) = &self.kind else {
+            return;
+        };
 
-    pub(crate) fn bind_tool_call_page(&self, _widgets: &mut ToolCallPageWidgets) {}
+        widgets
+            .role_label
+            .set_label(if message.preview.role == Role::Assistant {
+                "Assistant"
+            } else {
+                "You"
+            });
 
-    pub(crate) fn bind_tool_burst_page(&self, _widgets: &mut ToolBurstPageWidgets) {}
+        if let Some(model) =
+            model_label_text(message.preview.role, message.preview.model.as_deref())
+        {
+            widgets.model_sep.set_visible(true);
+            widgets.model_label.set_visible(true);
+            widgets.model_label.set_label(&model);
+        } else {
+            widgets.model_sep.set_visible(false);
+            widgets.model_label.set_visible(false);
+            widgets.model_label.set_label("");
+        }
 
-    pub(crate) fn bind_subagent_page(&self, _widgets: &mut SubagentPageWidgets) {}
+        widgets
+            .ts_label
+            .set_label(&message.preview.timestamp.format("%H:%M:%S").to_string());
+        clear_box_children(&widgets.reasoning_box);
+        if message.preview.reasoning_preview.has_visible_reasoning {
+            let button = gtk::Button::with_label("Thinking");
+            button.add_css_class("flat");
+            button.add_css_class("pill");
+            button.add_css_class("reasoning-pill");
+            widgets.reasoning_box.append(&button);
+        } else if message.preview.reasoning_preview.encrypted_only {
+            let label = gtk::Label::new(Some("Thinking (encrypted)"));
+            label.add_css_class("pill");
+            label.add_css_class("reasoning-pill-encrypted");
+            widgets.reasoning_box.append(&label);
+        }
 
-    pub(crate) fn unbind_message_page(&self, _widgets: &mut MessagePageWidgets) {}
+        render_content(
+            &widgets.content,
+            &message.preview.content_preview,
+            message.preview.role,
+            message.highlight_query.as_deref(),
+        );
 
-    pub(crate) fn unbind_tool_call_page(&self, _widgets: &mut ToolCallPageWidgets) {}
+        let can_expand = message.preview.is_truncated() && message.preview.role != Role::ToolResult;
+        widgets.expand_button.set_visible(can_expand);
+        widgets.expand_button.set_label(if self.expanded.get() {
+            "Collapse"
+        } else {
+            "Show full message"
+        });
 
-    pub(crate) fn unbind_tool_burst_page(&self, _widgets: &mut ToolBurstPageWidgets) {}
+        if can_expand {
+            let expanded = self.expanded.clone();
+            let button = widgets.expand_button.clone();
+            let id = widgets.expand_button.connect_clicked(move |_| {
+                let next = !expanded.get();
+                expanded.set(next);
+                button.set_label(if next {
+                    "Collapse"
+                } else {
+                    "Show full message"
+                });
+            });
+            widgets
+                .connected_handlers
+                .push((widgets.expand_button.clone().upcast(), id));
+        }
+    }
 
-    pub(crate) fn unbind_subagent_page(&self, _widgets: &mut SubagentPageWidgets) {}
+    pub(crate) fn bind_tool_call_page(&self, widgets: &mut ToolCallPageWidgets) {
+        let TranscriptItemKind::ToolCall(tool_call) = &self.kind else {
+            return;
+        };
+
+        clear_box_children(&widgets.root);
+        let refs = build_tool_call_page_content(tool_call);
+
+        if let Some(reasoning_button) = refs.reasoning_button {
+            let sender = self.sender.clone();
+            let transcript_item_index = tool_call.transcript_item_index;
+            let id = reasoning_button.connect_clicked(move |_| {
+                sender.emit(SessionDetailMsg::InspectReasoning(transcript_item_index));
+            });
+            widgets
+                .connected_handlers
+                .push((reasoning_button.upcast(), id));
+        }
+
+        let sender = self.sender.clone();
+        let tool_call_id = tool_call.tool_call_id.clone();
+        let id = refs.inspect_button.connect_clicked(move |_| {
+            sender.emit(SessionDetailMsg::InspectToolCall(tool_call_id.clone()));
+        });
+        widgets
+            .connected_handlers
+            .push((refs.inspect_button.clone().upcast(), id));
+
+        widgets.root.append(&refs.root);
+    }
+
+    pub(crate) fn bind_tool_burst_page(&self, widgets: &mut ToolBurstPageWidgets) {
+        let TranscriptItemKind::ToolBurst(burst) = &self.kind else {
+            return;
+        };
+
+        widgets.summary_label.set_label(&format_tool_burst_summary(
+            &burst.category_counts,
+            burst.error_count,
+        ));
+        rebuild_tool_burst_meta_box(&widgets.meta_box, burst);
+        clear_box_children(&widgets.children);
+        widgets.children_built_for.set(None);
+        set_tool_burst_expanded_state(&widgets.header_button, self.expanded.get());
+
+        let notify_id = {
+            let children = widgets.children.clone();
+            let revealer = widgets.revealer.clone();
+            let children_built_for = widgets.children_built_for.clone();
+            let sender = self.sender.clone();
+            let burst = burst.clone();
+            let item_index = self.item_index;
+            let header_button = widgets.header_button.clone();
+            widgets.revealer.connect_reveal_child_notify(move |_| {
+                let expanded = revealer.reveals_child();
+                set_tool_burst_expanded_state(&header_button, expanded);
+                if expanded {
+                    build_tool_burst_children_if_needed(
+                        &children,
+                        &children_built_for,
+                        &burst,
+                        &sender,
+                        item_index,
+                    );
+                }
+            })
+        };
+        widgets
+            .connected_handlers
+            .push((widgets.revealer.clone().upcast(), notify_id));
+
+        if self.expanded.get() {
+            build_tool_burst_children_if_needed(
+                &widgets.children,
+                &widgets.children_built_for,
+                burst,
+                &self.sender,
+                self.item_index,
+            );
+        }
+
+        widgets.reveal_binding = Some(
+            self.expanded
+                .bind_property("value", &widgets.revealer, "reveal-child")
+                .sync_create()
+                .build(),
+        );
+
+        let expanded = self.expanded.clone();
+        let id = widgets.header_button.connect_clicked(move |_| {
+            expanded.set(!expanded.get());
+        });
+        widgets
+            .connected_handlers
+            .push((widgets.header_button.clone().upcast(), id));
+    }
+
+    pub(crate) fn bind_subagent_page(&self, widgets: &mut SubagentPageWidgets) {
+        let TranscriptItemKind::Subagent(subagent) = &self.kind else {
+            return;
+        };
+
+        clear_box_children(&widgets.root);
+        let refs = build_subagent_page_content(subagent);
+
+        if let Some(reasoning_button) = refs.reasoning_button {
+            let sender = self.sender.clone();
+            let transcript_item_index = subagent.transcript_item_index;
+            let id = reasoning_button.connect_clicked(move |_| {
+                sender.emit(SessionDetailMsg::InspectReasoning(transcript_item_index));
+            });
+            widgets
+                .connected_handlers
+                .push((reasoning_button.upcast(), id));
+        }
+
+        let sender = self.sender.clone();
+        let subagent_id = subagent.subagent_id.clone();
+        let id = refs.inspect_button.connect_clicked(move |_| {
+            sender.emit(SessionDetailMsg::InspectSubagent(subagent_id.clone()));
+        });
+        widgets
+            .connected_handlers
+            .push((refs.inspect_button.clone().upcast(), id));
+
+        widgets.root.append(&refs.root);
+    }
+
+    pub(crate) fn unbind_message_page(&self, widgets: &mut MessagePageWidgets) {
+        disconnect_handlers(&mut widgets.connected_handlers);
+        clear_box_children(&widgets.reasoning_box);
+        clear_box_children(&widgets.content);
+        widgets.expand_button.set_visible(false);
+        widgets.expand_button.set_label("Show full message");
+    }
+
+    pub(crate) fn unbind_tool_call_page(&self, widgets: &mut ToolCallPageWidgets) {
+        disconnect_handlers(&mut widgets.connected_handlers);
+        clear_box_children(&widgets.root);
+    }
+
+    pub(crate) fn unbind_tool_burst_page(&self, widgets: &mut ToolBurstPageWidgets) {
+        disconnect_handlers(&mut widgets.connected_handlers);
+        if let Some(binding) = widgets.reveal_binding.take() {
+            binding.unbind();
+        }
+        clear_box_children(&widgets.children);
+        widgets.children_built_for.set(None);
+        set_tool_burst_expanded_state(&widgets.header_button, widgets.revealer.reveals_child());
+    }
+
+    pub(crate) fn unbind_subagent_page(&self, widgets: &mut SubagentPageWidgets) {
+        disconnect_handlers(&mut widgets.connected_handlers);
+        clear_box_children(&widgets.root);
+    }
 }
 
 impl TranscriptRowBuildKind {
@@ -140,28 +383,322 @@ impl From<&TranscriptItemKind> for TranscriptRowBuildKind {
 
 fn build_message_page() -> MessagePageWidgets {
     let root = gtk::Box::new(gtk::Orientation::Vertical, 0);
-    MessagePageWidgets { root }
+    root.set_spacing(4);
+
+    let header = gtk::Box::new(gtk::Orientation::Horizontal, 4);
+
+    let role_label = gtk::Label::new(None);
+    role_label.set_halign(gtk::Align::Start);
+    header.append(&role_label);
+
+    let model_sep = gtk::Label::new(Some("·"));
+    model_sep.add_css_class("caption");
+    model_sep.add_css_class("dim-label");
+    model_sep.set_visible(false);
+    header.append(&model_sep);
+
+    let model_label = gtk::Label::new(None);
+    model_label.add_css_class("caption");
+    model_label.add_css_class("dim-label");
+    model_label.add_css_class("monospace");
+    model_label.set_visible(false);
+    header.append(&model_label);
+
+    let ts_sep = gtk::Label::new(Some("·"));
+    ts_sep.add_css_class("caption");
+    ts_sep.add_css_class("dim-label");
+    header.append(&ts_sep);
+
+    let ts_label = gtk::Label::new(None);
+    ts_label.add_css_class("caption");
+    ts_label.add_css_class("dim-label");
+    header.append(&ts_label);
+
+    let reasoning_box = gtk::Box::new(gtk::Orientation::Horizontal, 4);
+    header.append(&reasoning_box);
+    root.append(&header);
+
+    let content = gtk::Box::new(gtk::Orientation::Vertical, 4);
+    root.append(&content);
+
+    let expand_button = gtk::Button::new();
+    expand_button.add_css_class("flat");
+    expand_button.add_css_class("caption");
+    expand_button.add_css_class("expand-toggle");
+    expand_button.set_halign(gtk::Align::Start);
+    expand_button.set_visible(false);
+    root.append(&expand_button);
+
+    MessagePageWidgets {
+        root,
+        role_label,
+        model_sep,
+        model_label,
+        ts_sep,
+        ts_label,
+        reasoning_box,
+        content,
+        expand_button,
+        connected_handlers: Vec::new(),
+    }
 }
 
 fn build_tool_call_page() -> ToolCallPageWidgets {
     let root = gtk::Box::new(gtk::Orientation::Vertical, 0);
-    ToolCallPageWidgets { root }
+    ToolCallPageWidgets {
+        root,
+        connected_handlers: Vec::new(),
+    }
 }
 
 fn build_tool_burst_page() -> ToolBurstPageWidgets {
     let root = gtk::Box::new(gtk::Orientation::Vertical, 0);
+
+    let header_button = gtk::Button::new();
+    header_button.add_css_class("flat");
+    header_button.set_halign(gtk::Align::Fill);
+
+    let header_row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    let summary_label = gtk::Label::new(None);
+    summary_label.set_halign(gtk::Align::Start);
+    summary_label.set_hexpand(true);
+    summary_label.set_xalign(0.0);
+    header_row.append(&summary_label);
+
+    let meta_box = gtk::Box::new(gtk::Orientation::Horizontal, 4);
+    header_row.append(&meta_box);
+    header_button.set_child(Some(&header_row));
+    root.append(&header_button);
+
     let children = gtk::Box::new(gtk::Orientation::Vertical, 0);
-    root.append(&children);
-    ToolBurstPageWidgets { root, children }
+    let revealer = gtk::Revealer::new();
+    revealer.set_transition_type(gtk::RevealerTransitionType::SlideDown);
+    revealer.set_child(Some(&children));
+    root.append(&revealer);
+
+    ToolBurstPageWidgets {
+        root,
+        header_button,
+        summary_label,
+        meta_box,
+        revealer,
+        children,
+        reveal_binding: None,
+        children_built_for: Rc::new(Cell::new(None)),
+        connected_handlers: Vec::new(),
+    }
 }
 
 fn build_subagent_page() -> SubagentPageWidgets {
     let root = gtk::Box::new(gtk::Orientation::Vertical, 0);
-    SubagentPageWidgets { root }
+    SubagentPageWidgets {
+        root,
+        connected_handlers: Vec::new(),
+    }
 }
 
 fn cleanup_transcript_row_widgets(widgets: &mut TranscriptRowWidgets) {
     clear_box_children(&widgets.tool_burst.children);
+}
+
+struct ToolCallPageContentRefs {
+    root: gtk::Box,
+    inspect_button: gtk::Button,
+    reasoning_button: Option<gtk::Button>,
+}
+
+fn build_tool_call_page_content(
+    init: &crate::ui::transcript_row::ToolCallItemInit,
+) -> ToolCallPageContentRefs {
+    let root = gtk::Box::new(gtk::Orientation::Vertical, 4);
+    root.add_css_class("tool-call-row");
+
+    let row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    let name_label = gtk::Label::new(Some(&init.tool_name));
+    name_label.add_css_class("monospace");
+    name_label.set_halign(gtk::Align::Start);
+    name_label.set_hexpand(true);
+    name_label.set_xalign(0.0);
+    row.append(&name_label);
+
+    let status_label = gtk::Label::new(Some(tool_status_label(init.status)));
+    status_label.add_css_class("caption");
+    status_label.add_css_class(tool_status_css_class(init.status));
+    row.append(&status_label);
+
+    if let Some(ms) = init.duration_ms {
+        let duration = gtk::Label::new(Some(&format_duration_ms(ms)));
+        duration.add_css_class("caption");
+        duration.add_css_class("dim-label");
+        row.append(&duration);
+    }
+
+    let reasoning_button = if init.reasoning_preview.has_visible_reasoning {
+        let button = gtk::Button::with_label("Thinking");
+        button.add_css_class("flat");
+        button.add_css_class("pill");
+        button.add_css_class("reasoning-pill");
+        row.append(&button);
+        Some(button)
+    } else if init.reasoning_preview.encrypted_only {
+        let label = gtk::Label::new(Some("Thinking (encrypted)"));
+        label.add_css_class("pill");
+        label.add_css_class("reasoning-pill-encrypted");
+        row.append(&label);
+        None
+    } else {
+        None
+    };
+
+    let inspect = gtk::Button::new();
+    inspect.set_icon_name("view-reveal-symbolic");
+    inspect.add_css_class("flat");
+    inspect.set_tooltip_text(Some("Inspect tool call"));
+    row.append(&inspect);
+    root.append(&row);
+
+    if let Some(preview) = init.displayed_preview() {
+        let preview_label = gtk::Label::new(Some(preview));
+        preview_label.add_css_class("caption");
+        preview_label.add_css_class("dim-label");
+        preview_label.set_halign(gtk::Align::Start);
+        preview_label.set_xalign(0.0);
+        preview_label.set_wrap(true);
+        root.append(&preview_label);
+    }
+
+    ToolCallPageContentRefs {
+        root,
+        inspect_button: inspect,
+        reasoning_button,
+    }
+}
+
+struct SubagentPageContentRefs {
+    root: gtk::Box,
+    inspect_button: gtk::Button,
+    reasoning_button: Option<gtk::Button>,
+}
+
+fn build_subagent_page_content(
+    init: &crate::ui::transcript_row::SubagentItemInit,
+) -> SubagentPageContentRefs {
+    let root = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    root.add_css_class("subagent-row");
+
+    let title = gtk::Label::new(Some(&init.title));
+    title.set_halign(gtk::Align::Start);
+    title.set_hexpand(true);
+    title.set_xalign(0.0);
+    root.append(&title);
+
+    let reasoning_button = if init.reasoning_preview.has_visible_reasoning {
+        let button = gtk::Button::with_label("Thinking");
+        button.add_css_class("flat");
+        button.add_css_class("pill");
+        button.add_css_class("reasoning-pill");
+        root.append(&button);
+        Some(button)
+    } else if init.reasoning_preview.encrypted_only {
+        let label = gtk::Label::new(Some("Thinking (encrypted)"));
+        label.add_css_class("pill");
+        label.add_css_class("reasoning-pill-encrypted");
+        root.append(&label);
+        None
+    } else {
+        None
+    };
+
+    let inspect = gtk::Button::new();
+    inspect.set_icon_name("view-reveal-symbolic");
+    inspect.add_css_class("flat");
+    inspect.set_tooltip_text(Some("Inspect subagent"));
+    root.append(&inspect);
+
+    SubagentPageContentRefs {
+        root,
+        inspect_button: inspect,
+        reasoning_button,
+    }
+}
+
+fn format_tool_burst_summary(category_counts: &[(String, usize)], error_count: usize) -> String {
+    let mut parts = vec![format!(
+        "{} tool calls",
+        category_counts
+            .iter()
+            .map(|(_, count)| count)
+            .sum::<usize>()
+    )];
+
+    if !category_counts.is_empty() {
+        parts.push(
+            category_counts
+                .iter()
+                .map(|(name, count)| format!("{count} {name}"))
+                .collect::<Vec<_>>()
+                .join(", "),
+        );
+    }
+
+    if error_count > 0 {
+        parts.push(format!(
+            "{error_count} {}",
+            if error_count == 1 { "error" } else { "errors" }
+        ));
+    }
+
+    parts.join(" - ")
+}
+
+fn rebuild_tool_burst_meta_box(
+    meta_box: &gtk::Box,
+    burst: &crate::ui::transcript_row::ToolBurstItemInit,
+) {
+    clear_box_children(meta_box);
+
+    if let Some(ms) = burst.total_duration_ms {
+        let duration = gtk::Label::new(Some(&format_duration_ms(ms)));
+        duration.add_css_class("caption");
+        duration.add_css_class("dim-label");
+        meta_box.append(&duration);
+    }
+
+    if burst.match_count > 0 {
+        let badge = gtk::Label::new(Some(&burst.match_count.to_string()));
+        badge.add_css_class("pill");
+        badge.add_css_class("accent");
+        badge.update_property(&[gtk::accessible::Property::Label(
+            &format_tool_burst_match_badge_accessible_label(burst.match_count),
+        )]);
+        meta_box.append(&badge);
+    }
+}
+
+fn set_tool_burst_expanded_state(button: &gtk::Button, expanded: bool) {
+    button.update_state(&[gtk::accessible::State::Expanded(Some(expanded))]);
+}
+
+fn build_tool_burst_children_if_needed(
+    children: &gtk::Box,
+    children_built_for: &Rc<Cell<Option<usize>>>,
+    burst: &crate::ui::transcript_row::ToolBurstItemInit,
+    sender: &relm4::Sender<SessionDetailMsg>,
+    item_index: usize,
+) {
+    if children_built_for.get() == Some(item_index) {
+        return;
+    }
+
+    clear_box_children(children);
+    populate_tool_burst_children(children, burst, sender, item_index);
+    children_built_for.set(Some(item_index));
+}
+
+fn disconnect_handlers(handlers: &mut Vec<(gtk::glib::Object, gtk::glib::SignalHandlerId)>) {
+    while let Some((object, id)) = handlers.pop() {
+        object.disconnect(id);
+    }
 }
 
 fn clear_box_children(container: &gtk::Box) {
@@ -176,6 +713,7 @@ mod tests {
     use std::sync::Arc;
 
     use chrono::Utc;
+    use relm4::binding::Binding;
     use relm4::gtk;
     use relm4::gtk::prelude::*;
     use relm4::typed_view::list::RelmListItem;
@@ -232,6 +770,53 @@ mod tests {
             title: "Explore".to_string(),
             reasoning_preview: ReasoningPreview::default(),
         }
+    }
+
+    fn tool_burst_init(default_expanded: bool) -> ToolBurstItemInit {
+        ToolBurstItemInit {
+            item_index: 4,
+            tool_calls: vec![tool_call_init()],
+            category_counts: vec![("Read".to_string(), 1)],
+            error_count: 0,
+            total_duration_ms: Some(15),
+            match_count: 2,
+            child_match_counts: vec![2],
+            visible_reasoning_child_count: 0,
+            encrypted_only_child_count: 0,
+            default_expanded,
+        }
+    }
+
+    fn count_box_children(container: &gtk::Box) -> usize {
+        let mut count = 0;
+        let mut child = container.first_child();
+        while let Some(current) = child {
+            count += 1;
+            child = current.next_sibling();
+        }
+        count
+    }
+
+    fn tool_burst_header_button(root: &gtk::Box) -> gtk::Button {
+        root.first_child()
+            .expect("tool burst header button")
+            .downcast::<gtk::Button>()
+            .expect("tool burst header button")
+    }
+
+    fn tool_burst_revealer(root: &gtk::Box) -> gtk::Revealer {
+        root.last_child()
+            .expect("tool burst revealer")
+            .downcast::<gtk::Revealer>()
+            .expect("tool burst revealer")
+    }
+
+    fn tool_burst_children_box(root: &gtk::Box) -> gtk::Box {
+        tool_burst_revealer(root)
+            .child()
+            .expect("tool burst children")
+            .downcast::<gtk::Box>()
+            .expect("tool burst children box")
     }
 
     #[test]
@@ -346,5 +931,87 @@ mod tests {
                 .expect("visible child")
                 .is_visible()
         );
+    }
+
+    #[gtk::test]
+    fn burst_bind_builds_children_only_when_expanded() {
+        let (sender, _receiver) = relm4::channel::<SessionDetailMsg>();
+        let list_item: gtk::ListItem = gtk::glib::Object::builder().build();
+
+        let mut collapsed = TranscriptItemData::from_init(
+            TranscriptItemInit::ToolBurst(tool_burst_init(false)),
+            sender.clone(),
+        );
+        let (_, mut collapsed_widgets) = TranscriptItemData::setup(&list_item);
+        let mut root = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        collapsed.bind(&mut collapsed_widgets, &mut root);
+
+        let collapsed_root = &collapsed_widgets.tool_burst.root;
+        let collapsed_header = tool_burst_header_button(collapsed_root);
+        let collapsed_revealer = tool_burst_revealer(collapsed_root);
+        let collapsed_children = tool_burst_children_box(collapsed_root);
+
+        assert!(!collapsed.expanded.get());
+        assert!(!collapsed_revealer.reveals_child());
+        assert_eq!(count_box_children(&collapsed_children), 0);
+
+        collapsed_header.emit_clicked();
+
+        assert!(collapsed.expanded.get());
+        assert!(collapsed_revealer.reveals_child());
+        assert_eq!(count_box_children(&collapsed_children), 1);
+
+        let mut expanded = TranscriptItemData::from_init(
+            TranscriptItemInit::ToolBurst(tool_burst_init(true)),
+            sender,
+        );
+        let (_, mut expanded_widgets) = TranscriptItemData::setup(&list_item);
+        let mut root = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        expanded.bind(&mut expanded_widgets, &mut root);
+
+        let expanded_root = &expanded_widgets.tool_burst.root;
+        let expanded_revealer = tool_burst_revealer(expanded_root);
+        let expanded_children = tool_burst_children_box(expanded_root);
+
+        assert!(expanded.expanded.get());
+        assert!(expanded_revealer.reveals_child());
+        assert_eq!(count_box_children(&expanded_children), 1);
+    }
+
+    #[gtk::test]
+    fn unbind_disconnects_handlers_and_reveal_binding() {
+        let (sender, _receiver) = relm4::channel::<SessionDetailMsg>();
+        let mut burst = TranscriptItemData::from_init(
+            TranscriptItemInit::ToolBurst(tool_burst_init(false)),
+            sender,
+        );
+
+        let list_item: gtk::ListItem = gtk::glib::Object::builder().build();
+        let (_, mut widgets) = TranscriptItemData::setup(&list_item);
+        let mut root = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        burst.bind(&mut widgets, &mut root);
+
+        let burst_root = &widgets.tool_burst.root;
+        let header = tool_burst_header_button(burst_root);
+        let revealer = tool_burst_revealer(burst_root);
+        let children = tool_burst_children_box(burst_root);
+
+        header.emit_clicked();
+        assert!(burst.expanded.get());
+        assert!(revealer.reveals_child());
+        assert_eq!(count_box_children(&children), 1);
+
+        burst.unbind(&mut widgets, &mut root);
+
+        assert_eq!(count_box_children(&children), 0);
+
+        let reveal_after_unbind = revealer.reveals_child();
+        burst.expanded.set(false);
+        assert_eq!(revealer.reveals_child(), reveal_after_unbind);
+
+        let expanded_after_unbind = burst.expanded.get();
+        header.emit_clicked();
+        assert_eq!(burst.expanded.get(), expanded_after_unbind);
+        assert_eq!(count_box_children(&children), 0);
     }
 }
