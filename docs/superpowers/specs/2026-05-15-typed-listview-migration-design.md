@@ -3,7 +3,7 @@
 **Issue:** [#134](https://github.com/supermaciz/sessions-chronicle/issues/134)
 **Source exploration:** [`docs/explorations/2026-05-14-transcript-virtualization-exploration.md`](../../explorations/2026-05-14-transcript-virtualization-exploration.md)
 **Date:** 2026-05-15
-**Status:** Ready for implementation planning
+**Status:** Design ready; implementation sequencing belongs in a separate plan/PR
 
 ---
 
@@ -11,12 +11,11 @@
 
 Migrate `SessionDetail`'s transcript list from `gtk::ListBox` + `FactoryVecDeque` to
 `relm4::typed_view::list::TypedListView`. The exploration doc above made the
-**why** call (Proposal A); this spec makes the **how** decisions and structures the
-work so it can be reviewed commit by commit.
+**why** call (Proposal A); this spec makes the **how** decisions.
 
 Out of scope of *deciding what to build* — the exploration already settled that.
 In scope here: data model shape, widget recycling discipline, event flow,
-migration sequencing, risk mitigation, and Definition of Done.
+refresh strategy, risk mitigation, and Definition of Done.
 
 ---
 
@@ -26,12 +25,12 @@ migration sequencing, risk mitigation, and Definition of Done.
 |---|-------|----------|
 | 1 | Row polymorphism under one `TypedListView<T>` | Single `TranscriptItemData` struct with `kind` enum; per-slot widget is a `gtk::Stack` with 4 pre-built pages, `bind()` switches visible child |
 | 2 | Full-content cache for expanded rows | None for v1 — re-fetch DB + re-parse on every `bind()`. Measure, add cache later if p99 > frame budget |
-| 3 | Burst expansion / lazy-children state location | In `TranscriptItemData`; user toggle goes through a Relm4 message, parent updates the store, `items_changed` re-fires `bind()` |
+| 3 | Burst expansion / lazy-children state location | In `TranscriptItemData`; user toggle goes through a Relm4 message, parent replaces the item at the same index so GTK rebinds the visible slot |
 | 4a | Initial load mode | `extend_from_iter(all_rows)` in one call; no incremental render |
 | 4b | Initial scroll position | Top (no change vs. today) |
 | 5 | Scroll-to-match | `ListView::scroll_to(pos, NONE, None)` + existing idle callback for `compute_point` + 1/3-viewport adjustment + burst sub-child walk |
 | 6 | Selection model | `gtk::NoSelection` — strict equivalent of today's `gtk::ListBox` with `selection_mode = None`. Keyboard nav at row level is a separate follow-up |
-| 7 | Migration sequencing | One PR, 6 atomic commits |
+| 7 | Implementation sequencing | Separate plan/PR concern; this document records constraints and acceptance criteria only |
 
 ---
 
@@ -44,6 +43,7 @@ Stored in the `gio::ListStore` backing the `TypedListView`. `relm4`'s
 `BoxedAnyObject` plumbing is required by user code.
 
 ```rust
+#[derive(Debug, Clone)]
 pub struct TranscriptItemData {
     pub item_index: usize,             // display position (factory-equivalent)
     pub transcript_item_index: i64,    // stable DB id
@@ -53,6 +53,7 @@ pub struct TranscriptItemData {
     pub highlight_query: Option<String>,
 }
 
+#[derive(Debug, Clone)]
 pub enum TranscriptItemKind {
     Message(MessageItemInit),
     ToolCall(ToolCallItemInit),
@@ -62,8 +63,9 @@ pub enum TranscriptItemKind {
 ```
 
 The existing `*ItemInit` structs from `src/ui/transcript_row.rs:54-124` are
-reused as-is. The conversion from `TranscriptItemInit` (today's enum) to
-`TranscriptItemData` lives in `src/ui/transcript_item_data.rs::from_init`.
+reused after making each variant payload `Clone` where needed. The conversion
+from `TranscriptItemInit` (today's enum) to `TranscriptItemData` lives in
+`src/ui/transcript_item_data.rs::from_init`.
 
 **Why one struct with `kind` rather than four `TypedListView`s:** `TypedListView<T>`
 is parameterized by a single `T`. Four lists would break chronological order
@@ -162,10 +164,11 @@ button handler (connected in bind()):
    │
    ▼
 SessionDetail::update():
-   if let Some(item) = self.messages.get(item_index) {
-       let expanded = !item.borrow().expanded.get();
-       item.borrow().expanded.set(expanded);
-       self.messages.notify_changed(item_index);
+   if let Some(item) = self.messages.get(item_index as u32) {
+       let mut next = item.borrow().clone();
+       next.expanded.set(!next.expanded.get());
+       self.messages.remove(item_index as u32);
+       self.messages.insert(item_index as u32, next);
    }
    │
    ▼
@@ -180,9 +183,14 @@ The same flow handles message expand and any other interactive toggle. No
 `Rc<RefCell>` shared between widget closures and the data item — all
 state lives in the store, all mutation goes through messages.
 
-**Verification at implementation time:** confirm `TypedListView::get(pos)`
-returns a `TypedListItem<T>` whose `borrow_mut()` accessor exists; if not,
-adapt to `find` + `notify_changed`. Either way the pattern holds.
+**Relm4 API constraint:** `TypedListView` in relm4 0.10.1 exposes `get`,
+`remove`, `insert`, `clear`, and `extend_from_iter`, but it does not expose a
+public `notify_changed` / `items_changed` hook for a single mutated item. For
+single-row state changes, replacing the item at the same index is the explicit
+refresh mechanism. If this causes unacceptable scroll-position jitter in
+practice, the implementation should switch the row state to Relm4 bindings or a
+custom GTK model with notifiable properties; that is a design change, not an
+assumption hidden in the implementation.
 
 ---
 
@@ -190,11 +198,12 @@ adapt to `find` + `notify_changed`. Either way the pattern holds.
 
 `start_first_page_load` (today: 75 rows incremental) is simplified:
 
-1. Worker thread: `load_session_messages(db_path, session_id)` returns
-   `Vec<TranscriptItemInit>` for the entire session (current code already
-   supports this; the 75-row cutoff is at the UI layer).
+1. Worker thread: load the entire session transcript through a new
+   non-paginated helper (`load_all_transcript_items`) or an explicit full-range
+   mode on the existing `load_transcript_items(db_path, session_id, limit,
+   offset, preview_len)` query.
 2. UI thread: convert to `Vec<TranscriptItemData>` via `from_init`, then
-   `typed_view.extend_from_iter(items)`. Single `items-changed` emission.
+   `typed_view.extend_from_iter(items)`.
 3. `ListView` realizes only viewport rows on the next layout pass.
 4. No explicit `scroll_to` — natural top position.
 
@@ -231,7 +240,7 @@ let row = messages_widget.observe_children().item(target.display_index as u32);
 
 **After:**
 ```rust
-typed_view.view().scroll_to(
+typed_view.view.scroll_to(
     target.display_index as u32,
     gtk::ListScrollFlags::NONE,
     None, // ScrollInfo
@@ -241,7 +250,7 @@ typed_view.view().scroll_to(
 ```
 
 `gtk::ListView::scroll_to` is GTK 4.12+; the project's Flatpak runtime
-(GNOME 48) provides it. Documented in
+(GNOME 49) provides it. Documented in
 [`gtk4::ListView`](https://gtk-rs.org/gtk4-rs/stable/latest/docs/gtk4/struct.ListView.html).
 
 **Fallback for race:** if the idle callback's widget-tree walk yields `None`
@@ -262,95 +271,60 @@ the exploration. No mitigation in this spec.
 
 ## Search highlight clear / restore
 
-Today: rows are replaced via the factory guard. Tomorrow:
+Today: rows are replaced via the factory guard. Tomorrow, `TypedListView` does
+not provide an in-place public notification API for mutated items, so query
+updates replace the store contents while preserving per-row UI state:
 
 ```rust
-let n = typed_view.len();
-for i in 0..n {
-    let item = typed_view.get(i).unwrap();
-    item.borrow_mut().highlight_query = new_query.clone();
+let mut next_items = Vec::with_capacity(typed_view.len() as usize);
+for item in typed_view.iter() {
+    let mut next = item.borrow().clone();
+    next.highlight_query = new_query.clone();
+    next_items.push(next);
 }
-// Trigger a re-bind for all currently realized rows. The exact API call
-// (whether to drive items_changed via the backing ListStore directly, or
-// to use TypedListView's notify_changed loop) is verified at implementation
-// time against relm4 0.10.1; both options exist in the API surface.
+typed_view.clear();
+typed_view.extend_from_iter(next_items);
 ```
 
-This re-fires `bind()` for visible rows only — bounded by viewport size.
+This is O(n) in data items but still only realizes viewport rows. It avoids
+depending on private `gio::ListStore` internals and keeps the spec aligned with
+Relm4 0.10.1.
 
 ---
 
-## Migration plan: 6 atomic commits in one PR
+## Implementation constraints
 
-PR title: **"Migrate SessionDetail transcript to TypedListView"**.
-Each commit must pass `cargo fmt --all -- --check && cargo clippy --all -- -D warnings && cargo test --all --no-fail-fast`.
+This document is not the implementation plan. A follow-up plan or PR
+description should decide commit boundaries, but the implementation must satisfy
+these constraints:
 
-**Commit 1 — Introduce `TranscriptItemData`**
-- New file `src/ui/transcript_item_data.rs`.
-- Defines `TranscriptItemData`, `TranscriptItemKind`, and `from_init(TranscriptItemInit) -> TranscriptItemData`.
-- Unit tests covering each `kind` variant conversion.
-- No changes to `session_detail.rs` or rendering. Code is dead-shipped.
-
-**Commit 2 — Implement `RelmListItem` for `TranscriptItemData`**
-- In a new module `src/ui/transcript_row_view.rs` (kept separate from the
-  legacy `transcript_row.rs` `FactoryComponent` until commit 6).
-- Defines `Widgets` (with `connected_handlers: Vec<...>`), implements
-  `setup` / `bind` / `unbind` / `teardown`.
-- Reuses existing helpers from `transcript_row.rs` for content rendering
-  (`render_content`, `populate_tool_burst_children`) — these are extracted as
-  pub(crate) where needed, no logic duplication.
-- Tests: snapshot of `setup` structure (stack present, 4 children, correct
-  CSS classes), and per-variant `bind` smoke test via `gtk::test`.
-- Not yet wired into `SessionDetail`.
-
-**Commit 3 — Wire `TypedListView` into `SessionDetail`; remove pagination and batch machinery**
+- Introduce `TranscriptItemData` and its `RelmListItem` implementation before
+  wiring it into `SessionDetail`, so the recycling lifecycle can be tested in
+  isolation.
+- Keep the legacy `FactoryComponent` row code until the `TypedListView` path is
+  wired, manually verified, and measured.
+- Reuse existing content-rendering helpers where practical; if helper extraction
+  would make the legacy row harder to read, prefer a small duplicated adapter
+  over broad churn.
 - Replace `messages: FactoryVecDeque<TranscriptRow>` with
-  `messages: TypedListView<TranscriptItemData, gtk::NoSelection>`.
-- Replace the `Box` from the factory with `typed_view.view()` as `messages_box`.
-- Simplify `start_first_page_load` to load the full session in one DB pass +
-  `extend_from_iter`.
-- Delete: pagination constants and fields, `Load more` button, `LoadMore`
-  message handlers, `PendingRenderBatch`, batch tick scheduler, watchdog.
-- Integration tests adjusted: no more pagination assertions; assertions on
-  total row count via `typed_view.len()`.
-
-**Commit 4 — Migrate scroll-to-match**
-- Swap `observe_children().item(idx)` for
-  `typed_view.view().scroll_to(...)`.
-- Preserve the idle callback, 1/3-viewport `compute_point` step, and burst
-  sub-child walk.
-- Add the single-retry `add_tick_callback` fallback described above.
-- Integration test: search jump on a long fixture, assert the matched row's
-  bounding box lands within `[viewport_h/4, viewport_h/2]` of the viewport top.
-
-**Commit 5 — Migrate burst toggle to the Relm4 message flow**
-- Burst button handler in `bind()` sends `ToggleBurst { item_index }` via the
-  `Sender` stashed in `Widgets`.
-- `SessionDetail::update` handles it by mutating the store item and calling
-  `items_changed(idx, 1, 1)`.
-- Remove all widget-level `Revealer` state plumbing for bursts.
-- Tests: toggle a burst, scroll it out then back in, assert the state
-  persists; same for `children_built` (children are not rebuilt on second
-  bind).
-
-**Commit 6 — Cleanup and measurement**
-- Delete the legacy `FactoryComponent` impl in `transcript_row.rs` (now
-  unused). Keep any shared helpers used by `transcript_row_view.rs`.
-- Add a `bind_duration_us` trace span per variant (matches the existing
-  `update_to_layout_us` style from #146).
-- Update `docs/PROJECT_STATUS.md` if the roadmap referenced the `Load more`
-  button or pagination as current behavior.
+  `messages: TypedListView<TranscriptItemData, gtk::NoSelection>`, and use the
+  public `typed_view.view` field as the `gtk::ListView` widget.
+- Remove pagination and render-batch machinery only after full-session loading
+  and virtualized rendering are working together.
+- Update tests around behavior, not pagination internals: row count, search
+  jump, highlight updates, burst persistence, signal cleanup, and measurement
+  instrumentation.
 
 ---
 
 ## Risks and mitigations
 
 1. **`bind()` cost on fast scroll.** Identified in the exploration § bonus
-   hard point. Mitigation: measure first (commit 6 trace). If p99 > 16 ms,
+   hard point. Mitigation: measure first with a `bind_duration_us` trace. If p99 > 16 ms,
    leverage `sourceview5::View` pooling, `Arc<str>` content cache in the
    data item, or fast-scroll placeholders. None blocks v1.
 
-2. **Signal handler accumulation across recycle cycles.** Hardware of the
+2. **Signal handler accumulation across recycle cycles.** Core risk of the
    `bind`/`unbind` discipline. Mitigation: `connected_handlers: Vec<...>`
    in `Widgets`, every connect pushes, every `unbind` iterates and
    disconnects. Test: 1000-cycle bind/unbind loop on a burst row, assert the
