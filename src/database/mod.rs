@@ -818,7 +818,6 @@ pub fn load_message_full_content(
 }
 
 /// Load message previews for a session with pagination and truncation.
-#[allow(dead_code)]
 pub fn load_message_previews_for_session(
     db_path: &Path,
     session_id: &str,

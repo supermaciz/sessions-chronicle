@@ -31,18 +31,18 @@ const DEFERRED_CLEAR_DELAY_MS: u64 = 250;
 
 /// Detail view for a single indexed session.
 ///
-/// This component owns the session summary header, paginated transcript
+/// This component owns the session summary header, transcript
 /// rendering, the inspector pane (right-hand split sidebar), and transcript
 /// search navigation.
 pub struct SessionDetail {
     db_path: Arc<PathBuf>,
     session: Option<Session>,
-    first_page_load_started_at: Option<Instant>,
+    transcript_load_started_at: Option<Instant>,
     messages: TypedListView<TranscriptItemData, gtk::NoSelection>,
     transcript_render_widget: gtk::Widget,
     preview_len: usize,
     loaded_count: usize,
-    loading_first_page: bool,
+    loading_transcript: bool,
     transcript_request_id: u64,
     search_query: Option<String>,
     match_positions: Vec<crate::database::MatchPosition>,
@@ -149,7 +149,7 @@ pub enum SessionDetailMsg {
 }
 
 pub enum SessionDetailCmd {
-    TranscriptPageLoaded {
+    TranscriptLoaded {
         request_id: u64,
         session_id: String,
         load_duration_ms: u128,
@@ -166,7 +166,7 @@ pub enum SessionDetailCmd {
 impl std::fmt::Debug for SessionDetailCmd {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::TranscriptPageLoaded {
+            Self::TranscriptLoaded {
                 request_id,
                 session_id,
                 load_duration_ms,
@@ -177,7 +177,7 @@ impl std::fmt::Debug for SessionDetailCmd {
                     Err(err) => format!("Err({err})"),
                 };
 
-                f.debug_struct("TranscriptPageLoaded")
+                f.debug_struct("TranscriptLoaded")
                     .field("request_id", request_id)
                     .field("session_id", session_id)
                     .field("load_duration_ms", load_duration_ms)
@@ -665,12 +665,12 @@ impl Component for SessionDetail {
         let model = Self {
             db_path,
             session: None,
-            first_page_load_started_at: None,
+            transcript_load_started_at: None,
             messages,
             transcript_render_widget,
             preview_len: PREVIEW_LEN,
             loaded_count: 0,
-            loading_first_page: false,
+            loading_transcript: false,
             transcript_request_id: 0,
             search_query: None,
             match_positions: Vec::new(),
@@ -730,7 +730,7 @@ impl Component for SessionDetail {
                 let has_search_query = normalized.is_some();
                 let query_len = normalized.as_ref().map(|query| query.len()).unwrap_or(0);
                 self.session = Some(session);
-                self.start_first_page_load(&sender, &session_id, true, "open");
+                self.start_transcript_load(&sender, &session_id, true, "open");
                 tracing::info!(
                     request_id = self.transcript_request_id,
                     session_id = session_id.as_str(),
@@ -813,7 +813,7 @@ impl Component for SessionDetail {
                 self.pending_jump = None;
                 self.loading_jump = false;
                 if self.messages.is_empty() {
-                    self.start_first_page_load(&sender, &session_id, false, "search");
+                    self.start_transcript_load(&sender, &session_id, false, "search");
                 }
                 if !self.match_positions.is_empty() {
                     self.jump_to(0, &sender);
@@ -907,10 +907,10 @@ impl Component for SessionDetail {
                 self.invalidate_transcript_requests();
                 self.invalidate_search_requests();
                 self.session = None;
-                self.first_page_load_started_at = None;
+                self.transcript_load_started_at = None;
                 self.clear_messages_safely_with_metrics("component_clear");
                 self.loaded_count = 0;
-                self.loading_first_page = false;
+                self.loading_transcript = false;
                 self.search_query = None;
                 self.reset_search_matches();
                 self.inspector.emit(ToolInspectorPaneMsg::Clear);
@@ -1009,7 +1009,7 @@ impl Component for SessionDetail {
         _root: &Self::Root,
     ) {
         match message {
-            SessionDetailCmd::TranscriptPageLoaded { .. } => {
+            SessionDetailCmd::TranscriptLoaded { .. } => {
                 self.apply_transcript_page_result(&sender, message);
             }
             SessionDetailCmd::SearchPositionsLoaded {
@@ -1443,7 +1443,7 @@ impl SessionDetail {
     /// because `display_targets_by_item_index` is only populated as pages
     /// finish rendering.
     fn is_transcript_loading(&self) -> bool {
-        self.loading_first_page
+        self.loading_transcript
     }
 
     fn spawn_match_positions_load(
@@ -1492,7 +1492,7 @@ impl SessionDetail {
     /// `ClearSearch`). Deferring those would leave the transcript blank for
     /// 250 ms after every keystroke, since this method clears the existing
     /// rows synchronously before scheduling the load.
-    fn start_first_page_load(
+    fn start_transcript_load(
         &mut self,
         sender: &ComponentSender<Self>,
         session_id: &str,
@@ -1500,10 +1500,10 @@ impl SessionDetail {
         clear_reason: &'static str,
     ) {
         self.invalidate_transcript_requests();
-        self.loading_first_page = true;
+        self.loading_transcript = true;
         self.loaded_count = 0;
         self.clear_messages_safely_with_metrics(clear_reason);
-        self.first_page_load_started_at = Some(Instant::now());
+        self.transcript_load_started_at = Some(Instant::now());
 
         let request_id = self.transcript_request_id;
         let session_id = session_id.to_string();
@@ -1539,7 +1539,7 @@ impl SessionDetail {
                 .map_err(|err| format!("{err:#}"));
             let load_duration_ms = started_at.elapsed().as_millis();
 
-            SessionDetailCmd::TranscriptPageLoaded {
+            SessionDetailCmd::TranscriptLoaded {
                 request_id,
                 session_id,
                 load_duration_ms,
@@ -1548,14 +1548,14 @@ impl SessionDetail {
         });
     }
 
-    fn apply_first_page_rows(
+    fn apply_transcript_rows(
         &mut self,
         sender: &ComponentSender<Self>,
         request_id: u64,
         session_id: &str,
         rows: Vec<crate::database::TranscriptItemRow>,
     ) {
-        self.loading_first_page = false;
+        self.loading_transcript = false;
         self.loaded_count = rows.len();
         let highlight = self.search_query.clone();
         let db_path = self.db_path.clone();
@@ -1600,7 +1600,7 @@ impl SessionDetail {
         );
         self.clear_messages_safely_with_metrics("transcript_error");
         self.loaded_count = 0;
-        self.loading_first_page = false;
+        self.loading_transcript = false;
         self.pending_jump = None;
         self.loading_jump = false;
     }
@@ -1610,7 +1610,7 @@ impl SessionDetail {
         sender: &ComponentSender<Self>,
         message: SessionDetailCmd,
     ) {
-        let SessionDetailCmd::TranscriptPageLoaded {
+        let SessionDetailCmd::TranscriptLoaded {
             request_id,
             session_id,
             load_duration_ms,
@@ -1647,7 +1647,7 @@ impl SessionDetail {
                     load_duration_ms,
                     "Loaded transcript"
                 );
-                self.apply_first_page_rows(sender, request_id, &session_id, rows)
+                self.apply_transcript_rows(sender, request_id, &session_id, rows)
             }
             Err(err) => self.handle_transcript_page_error(&session_id, err),
         }
@@ -1738,7 +1738,7 @@ impl SessionDetail {
 
     fn prepare_for_navigation_back(&mut self, sender: &ComponentSender<Self>) {
         self.invalidate_transcript_requests();
-        self.loading_first_page = false;
+        self.loading_transcript = false;
 
         let request_id = self.transcript_request_id;
         let input_sender = sender.input_sender().clone();
@@ -1750,7 +1750,7 @@ impl SessionDetail {
     fn clear_for_navigation_back(&mut self) {
         self.invalidate_search_requests();
         self.session = None;
-        self.first_page_load_started_at = None;
+        self.transcript_load_started_at = None;
         self.clear_messages_safely_with_metrics("navigation_back");
         self.loaded_count = 0;
         self.search_query = None;
@@ -2171,7 +2171,7 @@ mod tests {
 
         pump_main_context(|| {
             let parts = controller.state().get();
-            parts.model.session.is_some() && parts.model.loading_first_page
+            parts.model.session.is_some() && parts.model.loading_transcript
         });
 
         let context = gtk::glib::MainContext::default();
@@ -2202,7 +2202,7 @@ mod tests {
                 .state()
                 .get()
                 .model
-                .first_page_load_started_at
+                .transcript_load_started_at
                 .is_some()
         });
         assert!(
@@ -2210,7 +2210,7 @@ mod tests {
                 .state()
                 .get()
                 .model
-                .first_page_load_started_at
+                .transcript_load_started_at
                 .is_some()
         );
 
@@ -2221,7 +2221,7 @@ mod tests {
                 .state()
                 .get()
                 .model
-                .first_page_load_started_at
+                .transcript_load_started_at
                 .is_none()
         );
     }
@@ -2239,7 +2239,7 @@ mod tests {
 
         pump_main_context(|| {
             let parts = controller.state().get();
-            !parts.model.loading_first_page && parts.model.messages.len() as usize == 75
+            !parts.model.loading_transcript && parts.model.messages.len() as usize == 75
         });
 
         controller.emit(SessionDetailMsg::Clear);
@@ -2455,7 +2455,7 @@ mod tests {
         });
         pump_main_context(|| {
             let parts = controller.state().get();
-            !parts.model.loading_first_page && parts.model.loaded_count == 85
+            !parts.model.loading_transcript && parts.model.loaded_count == 85
         });
 
         controller.emit(SessionDetailMsg::UpdateSearchQuery(Some(
@@ -2464,7 +2464,7 @@ mod tests {
         pump_main_context(|| {
             let parts = controller.state().get();
             parts.model.match_positions.len() == 2
-                && !parts.model.loading_first_page
+                && !parts.model.loading_transcript
                 && parts.model.display_targets_by_item_index.contains_key(&10)
         });
 
@@ -2526,7 +2526,7 @@ mod tests {
         });
         pump_main_context(|| {
             let parts = controller.state().get();
-            !parts.model.loading_first_page && parts.model.loaded_count == 75
+            !parts.model.loading_transcript && parts.model.loaded_count == 75
         });
 
         let active_request = controller.state().get().model.search_request_id;
@@ -2561,7 +2561,7 @@ mod tests {
         });
         pump_main_context(|| {
             let parts = controller.state().get();
-            parts.model.loaded_count == 75 && !parts.model.loading_first_page
+            parts.model.loaded_count == 75 && !parts.model.loading_transcript
         });
 
         let active_request = controller.state().get().model.search_request_id;
