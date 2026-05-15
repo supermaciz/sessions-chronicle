@@ -25,7 +25,7 @@ refresh strategy, risk mitigation, and Definition of Done.
 |---|-------|----------|
 | 1 | Row polymorphism under one `TypedListView<T>` | Single `TranscriptItemData` struct with `kind` enum; per-slot widget is a `gtk::Stack` with 4 pre-built pages, `bind()` switches visible child |
 | 2 | Full-content cache for expanded rows | None for v1 — re-fetch DB + re-parse on every `bind()`. Measure, add cache later if p99 > frame budget |
-| 3 | Burst expansion / lazy-children state location | `expanded` is a `relm4::binding::BoolBinding` in `TranscriptItemData`, write-only-bound to the burst `Revealer.reveal-child` — no `ToggleBurst` message, no re-bind. Slot-local child-build state (`BurstLazyState`) lives in `Widgets`; lazy population runs in a `notify::reveal-child` handler |
+| 3 | Burst expansion / lazy-children state location | `expanded` is a `relm4::binding::BoolBinding` in `TranscriptItemData`, write-only-bound to the burst `Revealer.reveal-child` — no `ToggleBurst` message, no re-bind. Slot-local `children_built_for: Rc<Cell<Option<usize>>>` lives in `Widgets`. Children are built only when expanded: in `bind()` for rows that arrive expanded, in a `notify::reveal-child` handler for runtime toggles |
 | 4a | Initial load mode | `extend_from_iter(all_rows)` in one call; no incremental render |
 | 4b | Initial scroll position | Top (no change vs. today) |
 | 5 | Scroll-to-match | `ListView::scroll_to(pos, NONE, None)` + existing idle callback for `compute_point` + 1/3-viewport adjustment + burst sub-child walk |
@@ -50,6 +50,7 @@ pub struct TranscriptItemData {
     pub kind: TranscriptItemKind,      // variant-specific payload
     pub expanded: relm4::binding::BoolBinding, // expansion state, recycle-stable
     pub highlight_query: Option<String>,
+    pub sender: relm4::Sender<SessionDetailMsg>, // channel for row-internal actions
 }
 
 #[derive(Debug, Clone)]
@@ -64,7 +65,18 @@ pub enum TranscriptItemKind {
 The existing `*ItemInit` structs from `src/ui/transcript_row.rs:54-124` are
 reused after making each variant payload `Clone` where needed. The conversion
 from `TranscriptItemInit` (today's enum) to `TranscriptItemData` lives in
-`src/ui/transcript_item_data.rs::from_init`.
+`src/ui/transcript_item_data.rs::from_init(init, sender)`.
+
+**Why the data item carries a `Sender`.** `RelmListItem::setup()` and `bind()`
+receive **no** `Sender` — the trait gives a recycled row no channel of its own.
+Row-internal controls (tool-call / subagent "inspect" buttons, the message
+expander, the burst header) must still reach `SessionDetail`. The only handle a
+handler connected in `bind()` can reach is `&mut self`, so the channel travels
+on the data item: `from_init` is given a clone of `SessionDetail`'s input
+`Sender` and stores it. Every interactive handler captures `self.sender.clone()`
+at `bind()` time. (`relm4::Sender` is `Clone`; if it is not `Debug`, drop the
+`derive(Debug)` on `TranscriptItemData` or wrap accordingly — verify at
+implementation time.)
 
 **`expanded` is a `relm4::binding::BoolBinding`, not a `Cell<bool>`.** A
 `BoolBinding` is a `Clone` `glib::Object` carrying a single `bool` "value"
@@ -136,38 +148,29 @@ pub struct ToolBurstPageWidgets {
     /// glib::Binding from the bound item's `expanded` BoolBinding to
     /// `revealer.reveal-child`. `None` between unbind and the next bind.
     pub reveal_binding: Option<glib::Binding>,
-    /// Shared with the `notify::reveal-child` closure so the deferred
-    /// lazy-build can run outside `bind()`'s `&mut` scope.
-    pub lazy: Rc<BurstLazyState>,
-    // arrow icon, header labels, ...
-}
-
-/// Slot-local burst state. Lives in `Widgets`, never in `TranscriptItemData`,
-/// because it describes the *physical* `children_box`, which GTK recycles.
-pub struct BurstLazyState {
     /// `item_index` whose children currently populate `children_box`,
-    /// or `None` if empty.
-    pub built_for: Cell<Option<usize>>,
-    /// `item_index` of the burst currently bound to this slot.
-    pub item_index: Cell<usize>,
-    /// Tool calls of the currently bound burst, stashed by `bind()` so the
-    /// deferred build can read them without reaching the recycled data item.
-    pub tool_calls: RefCell<Rc<[ToolCallItemInit]>>,
+    /// or `None` if empty. `Rc<Cell>` because the `notify::reveal-child`
+    /// handler (connected in `bind()`) also reads and updates it.
+    pub children_built_for: Rc<Cell<Option<usize>>>,
 }
 ```
 
 Two fields deliberately live in `Widgets`, not `TranscriptItemData`:
 
-- `built_for` / the `BurstLazyState` — whether *this physical* `children_box`
-  holds widgets for the current burst. Slots are recycled, so this is not
-  stable row data. A model-resident `children_built` flag would wrongly report
-  "built" for a burst whose children were built into a *different* slot.
+- `children_built_for` — whether *this physical* `children_box` holds widgets
+  for a given burst. Slots are recycled, so this is not stable row data. A
+  model-resident `children_built` flag would wrongly report "built" for a burst
+  whose children were built into a *different* slot. It is an `Rc<Cell<…>>`
+  because both `bind`/`unbind` (`&mut Widgets`) and the `notify::reveal-child`
+  closure must read and write it.
 - `reveal_binding` — the `glib::Binding` handle (see `bind` / `unbind`).
 
-`BurstLazyState` is wrapped in `Rc` because the `notify::reveal-child` closure
-(which performs the lazy build) outlives any single `bind()` call and cannot
-borrow `&mut Widgets`. `bind()` writes `item_index` and `tool_calls` into it;
-the closure reads them and updates `built_for`.
+There is no separate `BurstLazyState` bundle. The `notify::reveal-child` handler
+is connected in `bind()` (it needs `self.sender` and the current `tool_calls`,
+neither available in `setup()`), so it simply captures everything it needs —
+`children_box`, `revealer`, a clone of `children_built_for`, a clone of
+`self.sender`, the burst's `Rc<[ToolCallItemInit]>`, `self.item_index`, and
+`self.highlight_query` — by value at connection time.
 
 ---
 
@@ -176,12 +179,10 @@ the closure reads them and updates `built_for`.
 ### `setup(list_item) -> (Root, Widgets)`
 
 Build the 4-page `gtk::Stack` skeleton described above and the empty
-`Rc<BurstLazyState>`. No item data is consulted — this runs once per pool slot,
-before any item is bound.
-
-`setup()` also connects the burst `notify::reveal-child` handler: it depends
-only on the slot-stable `revealer` and `Rc<BurstLazyState>`, so it is connected
-here once and never disconnected (it is *not* tracked in `connected_handlers`).
+`children_built_for: Rc<Cell<Option<usize>>>`. No item data is consulted, and
+**no signal handlers are connected** — `setup()` receives no `Sender`, so any
+handler needing to reach `SessionDetail` cannot be wired here. This runs once
+per pool slot, before any item is bound.
 
 ### `bind(&mut self, widgets, root)`
 
@@ -195,20 +196,23 @@ here once and never disconnected (it is *not* tracked in `connected_handlers`).
    - **ToolBurst**: fill header label (category counts + error count), then run
      the **burst bind sequence** below.
    - **Subagent**: fill title, status.
-3. Connect interactive handlers (inspect actions, the burst header button).
-   Each `connect_*` returns a `SignalHandlerId`; push `(object, id)` into
-   `widgets.connected_handlers`.
+3. Connect interactive handlers (inspect actions, the burst header button, the
+   burst `notify::reveal-child` handler). Each captures `self.sender.clone()`
+   and any other item-specific data it needs. Each `connect_*` returns a
+   `SignalHandlerId`; push `(object, id)` into `widgets.connected_handlers` so
+   `unbind()` disconnects it.
 
-**Burst bind sequence** (ordering matters — see step c):
+**Burst bind sequence** (ordering matters — see notes):
 
-   a. Stash payload: `lazy.item_index.set(self.item_index)` and
-      `*lazy.tool_calls.borrow_mut() = burst.tool_calls.clone()` (an
-      `Rc<[ToolCallItemInit]>`). This must happen **before** step c.
-   b. If `built_for != Some(self.item_index)`, the slot still holds another
-      burst's children (or none): clear `children_box`, then build the children
-      for this burst, then `built_for.set(Some(self.item_index))`. (An
-      already-correct slot — same item rebinding into the same slot — skips the
-      rebuild.)
+   a. Connect the `notify::reveal-child` handler on `widgets.revealer`. It
+      captures: `children_box`, `revealer`, a clone of `children_built_for`, a
+      clone of `self.sender`, the burst's `Rc<[ToolCallItemInit]>`,
+      `self.item_index`, and `self.highlight_query`. Its body is the **burst
+      child build** below. Push its id into `connected_handlers`.
+   b. **Lazy build, gated on expansion.** If `self.expanded.get()` is `true`,
+      run the burst child build now (so a row that *arrives* expanded shows its
+      children immediately). If `false`, build nothing — a collapsed burst
+      realizes **zero** child widgets. This is the actual laziness.
    c. Establish the reveal binding **write-only**, capturing the handle:
       ```rust
       let handle = self.expanded
@@ -222,9 +226,22 @@ here once and never disconnected (it is *not* tracked in `connected_handlers`).
       recycle. The binding is write-only (`expanded → revealer`); see the
       event-flow section for why bidirectional is unnecessary.
 
-   Step b runs before step c so that, if `sync_create` flips `reveal-child`
-   true synchronously, the `notify::reveal-child` handler (connected in
-   `setup`) finds `children_box` already populated and does nothing.
+**Burst child build** (shared by step b and the `notify::reveal-child`
+handler): if `children_built_for.get() != Some(item_index)`, clear
+`children_box`, build the per-tool-call children for `item_index` (wiring their
+inspect buttons to the captured `sender`), then
+`children_built_for.set(Some(item_index))`. If it already equals `item_index`,
+do nothing — this is what prevents a duplicate build when the same burst is
+expanded twice without an intervening recycle.
+
+**Why not rely on `sync_create` → `notify` for the bind-time build:** a GObject
+`notify::reveal-child` fires only when the value *changes*. A recycled slot
+whose `Revealer` was already `reveal-child = true` (previous item expanded),
+rebound to another expanded burst, gets `sync_create` writing `true → true` —
+no change, no `notify`. Step b therefore builds explicitly, gated on
+`self.expanded.get()`, rather than depending on the signal. The handler from
+step a covers the *other* case: a realized, collapsed burst the user expands at
+runtime (no `bind()` involved).
 
 ### `unbind(&mut self, widgets, root)`
 
@@ -235,11 +252,14 @@ here once and never disconnected (it is *not* tracked in `connected_handlers`).
 3. Clear text content of the active page's `TextView` (`buffer.set_text("")`)
    and drop any `sourceview5::View` references in the page (`remove()` from
    their container so their `Buffer` drops).
-4. Clear the burst page's `children_box` and set `built_for = None`; burst
-   children are tied to a physical slot and must not leak across recycled
-   items.
+4. Clear the burst page's `children_box` and set
+   `children_built_for.set(None)`; burst children are tied to a physical slot
+   and must not leak across recycled items.
 5. Leave the `Stack` and per-page skeletons in place — they are reused on the
    next `bind`.
+
+All handlers — including `notify::reveal-child` — are connected in `bind()` and
+disconnected here in step 1; none is connected in `setup()`.
 
 ### `teardown(list_item)`
 
@@ -254,8 +274,8 @@ Burst expansion needs **no** `SessionDetailMsg` and **no** store re-bind. The
 item (recycle-stable) and `bind()` write-only-binds it to the slot's
 `Revealer.reveal-child`.
 
-Two slot-local signal handlers cooperate. Both are connected during `bind()`
-(or `setup` for the notify handler — see note) and torn down in `unbind()`:
+Two slot-local signal handlers cooperate. **Both are connected in `bind()` and
+disconnected in `unbind()`** (tracked in `connected_handlers`):
 
 ```
 user clicks burst header (row is necessarily realized)
@@ -267,21 +287,25 @@ is a Clone glib::Object):
    │
    │  write-only binding propagates value → revealer.reveal-child
    ▼
-revealer "notify::reveal-child" handler — captures the Rc<BurstLazyState>:
-   if revealer.reveals_child()
-      && lazy.built_for.get() != Some(lazy.item_index.get())
-   {
-       clear children_box;
-       build children from lazy.tool_calls for lazy.item_index;
-       lazy.built_for.set(Some(lazy.item_index.get()));
+revealer "notify::reveal-child" handler — captures children_box, revealer,
+the Rc<Cell> children_built_for, the sender, the Rc<[ToolCallItemInit]>,
+item_index, highlight_query:
+   if revealer.reveals_child() {
+       // burst child build (shared with bind step b)
+       if children_built_for.get() != Some(item_index) {
+           clear children_box;
+           build children for item_index, wiring inspect buttons to sender;
+           children_built_for.set(Some(item_index));
+       }
    }
 ```
 
 - The button handler only flips the binding — instant, no `items-changed`, no
   scroll jitter, no keyboard-focus loss.
-- The notify handler performs lazy child population. It fires for **every**
-  `reveal-child` change — user click *and* the `sync_create` during `bind()` of
-  an already-expanded recycled row — so child building has a single code path.
+- The notify handler performs lazy child population for the **runtime** case: a
+  realized, collapsed burst the user expands. The *arrives-expanded* case is
+  handled explicitly by `bind()` step b (see the burst bind sequence and its
+  note on why `sync_create` → `notify` cannot be relied on).
 - On collapse (`reveal-child` → false) the notify handler does nothing; built
   children stay in `children_box` until `unbind()` or a different burst rebinds
   into the slot.
@@ -294,14 +318,12 @@ directly; the `BoolBinding` is the only write surface. The search-jump path
 that needs a burst expanded (to scroll to a tool-call sub-child) therefore does
 `item.borrow().expanded.set(true)`, not a direct revealer call.
 
-**Handler connection points:**
-
-- *Notify handler* — captures only the `Rc<BurstLazyState>` and the `revealer`,
-  both stable for the slot's lifetime. Connected once in `setup()`, never
-  disconnected; it stays out of the `bind`/`unbind` churn.
-- *Button handler* — captures the current item's `expanded` binding, which
-  differs per bound item. It is therefore reconnected each `bind()` and
-  disconnected each `unbind()` via `connected_handlers`.
+**Handler connection points:** both handlers capture item-specific data — the
+button handler the current item's `expanded` binding, the notify handler the
+current `sender` / `tool_calls` / `item_index`. `RelmListItem::setup()` receives
+no `Sender` and runs before any item exists, so neither can be wired there. Both
+are connected in `bind()`, recorded in `connected_handlers`, and disconnected in
+`unbind()`.
 
 **Relm4 API note (verified against relm4 0.10.1):** `TypedListView`'s backing
 `store: gio::ListStore` is private — there is no public `notify_changed` /
@@ -502,9 +524,9 @@ these constraints:
 
    Test: 1000-cycle bind/unbind loop on a burst row; assert `connected_handlers`
    returns to empty and `reveal_binding` to `None` after each `unbind`, and that
-   the row stays functional. The `setup`-connected `notify::reveal-child`
-   handler is intentionally *not* in this set — it is connected once and lives
-   as long as the slot.
+   the row stays functional. All handlers — button click and
+   `notify::reveal-child` — are connected in `bind()` and so are covered by
+   `connected_handlers`; `setup()` connects none.
 
 3. **Variable-height scrollbar drift.** Known, documented, accepted.
 
