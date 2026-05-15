@@ -62,6 +62,7 @@ pub struct SessionDetail {
     pending_render_batch: Option<PendingRenderBatch>,
     last_render_metrics: Option<RenderMetrics>,
     pending_boundary_tool_rows: Vec<crate::database::TranscriptItemRow>,
+    typed_transcript_items: Vec<TranscriptItemData>,
     search_query: Option<String>,
     match_positions: Vec<crate::database::MatchPosition>,
     display_targets_by_item_index: BTreeMap<i64, ScrollTarget>,
@@ -905,6 +906,7 @@ impl Component for SessionDetail {
             pending_render_batch: None,
             last_render_metrics: None,
             pending_boundary_tool_rows: Vec::new(),
+            typed_transcript_items: Vec::new(),
             search_query: None,
             match_positions: Vec::new(),
             display_targets_by_item_index: BTreeMap::new(),
@@ -950,6 +952,7 @@ impl Component for SessionDetail {
                 session,
                 search_query,
             } => {
+                self.typed_transcript_items.clear();
                 self.invalidate_search_requests();
                 let normalized = search_query.and_then(|query| {
                     let trimmed = query.trim().to_string();
@@ -1103,10 +1106,9 @@ impl Component for SessionDetail {
                 self.pending_toast.set(true);
             }
             SessionDetailMsg::ToggleMessageExpand { item_index } => {
-                tracing::debug!(
-                    item_index,
-                    "Typed message expand requested before typed view wiring"
-                );
+                let toggled =
+                    toggle_typed_message_expanded(&self.typed_transcript_items, item_index);
+                tracing::debug!(item_index, toggled, "Typed message expand requested");
             }
             SessionDetailMsg::RowBuilt {
                 item_index,
@@ -1135,6 +1137,7 @@ impl Component for SessionDetail {
                 self.search_query = None;
                 self.reset_search_matches();
                 self.clear_pending_boundary_tool_rows();
+                self.typed_transcript_items.clear();
                 self.inspector.emit(ToolInspectorPaneMsg::Clear);
                 self.set_inspector_open(false, &sender);
             }

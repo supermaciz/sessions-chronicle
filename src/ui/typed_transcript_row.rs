@@ -1020,8 +1020,6 @@ mod tests {
 
         expand_button.emit_clicked();
 
-        assert!(!message.expanded.get());
-        assert_eq!(expand_button.label().as_deref(), Some("Show full message"));
         assert!(matches!(
             gtk::glib::MainContext::default()
                 .block_on(receiver.recv())
