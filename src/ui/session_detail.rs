@@ -2113,7 +2113,6 @@ impl SessionDetail {
         sender: &ComponentSender<Self>,
         request_id: u64,
         session_id: &str,
-        limit: usize,
         rows: Vec<crate::database::TranscriptItemRow>,
     ) {
         self.loading_first_page = false;
@@ -2228,7 +2227,7 @@ impl SessionDetail {
                     load_duration_ms,
                     "Loaded first transcript page"
                 );
-                self.apply_first_page_rows(sender, request_id, &session_id, limit, rows)
+                self.apply_first_page_rows(sender, request_id, &session_id, rows)
             }
             Ok(rows) => {
                 tracing::info!(

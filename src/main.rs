@@ -2,16 +2,20 @@
 mod config;
 mod analytics_worker;
 mod app;
+#[allow(dead_code)]
 mod database;
+#[allow(dead_code)]
 mod icon_names {
     pub use shipped::*;
     include!(concat!(env!("OUT_DIR"), "/icon_names.rs"));
 }
 mod indexing_worker;
+#[allow(dead_code)]
 mod models;
 mod parsers;
 mod project_resolver;
 mod session_sources;
+#[allow(dead_code)]
 mod ui;
 mod utils;
 
