@@ -40,7 +40,6 @@ pub struct SessionDetail {
     first_page_load_started_at: Option<Instant>,
     messages: TypedListView<TranscriptItemData, gtk::NoSelection>,
     transcript_render_widget: gtk::Widget,
-    initial_page_size: usize,
     preview_len: usize,
     loaded_count: usize,
     loading_first_page: bool,
@@ -153,8 +152,6 @@ pub enum SessionDetailCmd {
     TranscriptPageLoaded {
         request_id: u64,
         session_id: String,
-        offset: usize,
-        limit: usize,
         load_duration_ms: u128,
         result: Result<Vec<crate::database::TranscriptItemRow>, String>,
     },
@@ -172,8 +169,6 @@ impl std::fmt::Debug for SessionDetailCmd {
             Self::TranscriptPageLoaded {
                 request_id,
                 session_id,
-                offset,
-                limit,
                 load_duration_ms,
                 result,
             } => {
@@ -185,8 +180,6 @@ impl std::fmt::Debug for SessionDetailCmd {
                 f.debug_struct("TranscriptPageLoaded")
                     .field("request_id", request_id)
                     .field("session_id", session_id)
-                    .field("offset", offset)
-                    .field("limit", limit)
                     .field("load_duration_ms", load_duration_ms)
                     .field("result", &result_summary)
                     .finish()
@@ -675,7 +668,6 @@ impl Component for SessionDetail {
             first_page_load_started_at: None,
             messages,
             transcript_render_widget,
-            initial_page_size: 0,
             preview_len: PREVIEW_LEN,
             loaded_count: 0,
             loading_first_page: false,
@@ -857,13 +849,7 @@ impl Component for SessionDetail {
                         configured_delay_ms = DEFERRED_FIRST_PAGE_LOAD_DELAY_MS,
                         "Session detail deferred first page load started"
                     );
-                    self.spawn_transcript_page_load(
-                        &sender,
-                        request_id,
-                        session_id,
-                        0,
-                        self.initial_page_size,
-                    );
+                    self.spawn_transcript_page_load(&sender, request_id, session_id);
                 }
             }
             SessionDetailMsg::PrepareForNavigationBack => {
@@ -1396,21 +1382,6 @@ impl SessionDetail {
         targets
     }
 
-    fn remove_display_targets_for_items(&mut self, items: &[DisplayTranscriptItem]) {
-        for item in items {
-            match item {
-                DisplayTranscriptItem::Single(row) => {
-                    self.display_targets_by_item_index.remove(&row.item_index);
-                }
-                DisplayTranscriptItem::ToolBurst(burst) => {
-                    for row in &burst.rows {
-                        self.display_targets_by_item_index.remove(&row.item_index);
-                    }
-                }
-            }
-        }
-    }
-
     fn extend_display_targets(&mut self, targets: BTreeMap<i64, ScrollTarget>) {
         self.display_targets_by_item_index.extend(targets);
     }
@@ -1549,13 +1520,7 @@ impl SessionDetail {
                 },
             );
         } else {
-            self.spawn_transcript_page_load(
-                sender,
-                request_id,
-                session_id,
-                0,
-                self.initial_page_size,
-            );
+            self.spawn_transcript_page_load(sender, request_id, session_id);
         }
     }
 
@@ -1564,8 +1529,6 @@ impl SessionDetail {
         sender: &ComponentSender<Self>,
         request_id: u64,
         session_id: String,
-        offset: usize,
-        limit: usize,
     ) {
         let db_path = self.db_path.clone();
         let preview_len = self.preview_len as i64;
@@ -1579,8 +1542,6 @@ impl SessionDetail {
             SessionDetailCmd::TranscriptPageLoaded {
                 request_id,
                 session_id,
-                offset,
-                limit,
                 load_duration_ms,
                 result,
             }
@@ -1631,19 +1592,14 @@ impl SessionDetail {
         self.continue_pending_jump(sender);
     }
 
-    fn handle_transcript_page_error(&mut self, session_id: &str, offset: usize, err: String) {
+    fn handle_transcript_page_error(&mut self, session_id: &str, err: String) {
         tracing::error!(
-            "Failed to load transcript items for {} at offset {}: {}",
+            "Failed to load transcript items for {}: {}",
             session_id,
-            offset,
             err
         );
-
-        if offset == 0 {
-            self.clear_messages_safely_with_metrics("transcript_error");
-            self.loaded_count = 0;
-        }
-
+        self.clear_messages_safely_with_metrics("transcript_error");
+        self.loaded_count = 0;
         self.loading_first_page = false;
         self.pending_jump = None;
         self.loading_jump = false;
@@ -1657,7 +1613,6 @@ impl SessionDetail {
         let SessionDetailCmd::TranscriptPageLoaded {
             request_id,
             session_id,
-            offset,
             load_duration_ms,
             result,
             ..
@@ -1667,11 +1622,7 @@ impl SessionDetail {
         };
 
         if request_id != self.transcript_request_id {
-            tracing::debug!(
-                "Ignoring stale transcript page for session {} at offset {}",
-                session_id,
-                offset
-            );
+            tracing::debug!("Ignoring stale transcript page for session {}", session_id,);
             return;
         }
 
@@ -1681,9 +1632,8 @@ impl SessionDetail {
             .is_some_and(|session| session.id == session_id);
         if !active_session_matches {
             tracing::debug!(
-                "Ignoring transcript page for inactive session {} at offset {}",
+                "Ignoring transcript page for inactive session {}",
                 session_id,
-                offset
             );
             return;
         }
@@ -1699,7 +1649,7 @@ impl SessionDetail {
                 );
                 self.apply_first_page_rows(sender, request_id, &session_id, rows)
             }
-            Err(err) => self.handle_transcript_page_error(&session_id, offset, err),
+            Err(err) => self.handle_transcript_page_error(&session_id, err),
         }
     }
 
