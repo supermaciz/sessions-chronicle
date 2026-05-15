@@ -564,7 +564,7 @@ fn build_tool_call_page_content(
     let name_label = gtk::Label::new(None);
     name_label.add_css_class("monospace");
     name_label.set_halign(gtk::Align::Start);
-    name_label.set_hexpand(true);
+    name_label.set_hexpand(false);
     name_label.set_xalign(0.0);
     if let Some(query) = highlight_query {
         let (markup, _) = highlight::highlight_text(&init.tool_name, query);
@@ -607,6 +607,10 @@ fn build_tool_call_page_content(
     inspect.set_icon_name("view-reveal-symbolic");
     inspect.add_css_class("flat");
     inspect.set_tooltip_text(Some("Inspect tool call"));
+
+    let spacer = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+    spacer.set_hexpand(true);
+    row.append(&spacer);
     row.append(&inspect);
     root.append(&row);
 
@@ -659,7 +663,7 @@ fn build_subagent_page_content(
 
     let title = gtk::Label::new(Some(&init.title));
     title.set_halign(gtk::Align::Start);
-    title.set_hexpand(true);
+    title.set_hexpand(false);
     title.set_xalign(0.0);
     root.append(&title);
 
@@ -684,6 +688,10 @@ fn build_subagent_page_content(
     inspect.set_icon_name("view-reveal-symbolic");
     inspect.add_css_class("flat");
     inspect.set_tooltip_text(Some("Inspect subagent"));
+
+    let spacer = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+    spacer.set_hexpand(true);
+    root.append(&spacer);
     root.append(&inspect);
 
     SubagentPageContentRefs {
@@ -1203,6 +1211,121 @@ mod tests {
             .expect("tool name label");
 
         assert!(name_label.uses_markup());
+    }
+
+    fn collect_box_children(container: &gtk::Box) -> Vec<gtk::Widget> {
+        let mut children = Vec::new();
+        let mut child = container.first_child();
+        while let Some(current) = child {
+            child = current.next_sibling();
+            children.push(current);
+        }
+        children
+    }
+
+    #[gtk::test]
+    fn tool_call_page_keeps_metadata_left_of_inspect_button() {
+        let (sender, receiver) = relm4::channel::<SessionDetailMsg>();
+        let mut tool_call = TranscriptItemData::from_init(
+            TranscriptItemInit::ToolCall(ToolCallItemInit {
+                reasoning_preview: ReasoningPreview {
+                    has_reasoning: true,
+                    has_visible_reasoning: false,
+                    encrypted_only: true,
+                },
+                ..tool_call_init()
+            }),
+            sender,
+        );
+
+        let list_item: gtk::ListItem = gtk::glib::Object::builder().build();
+        let (_, mut widgets) = TranscriptItemData::setup(&list_item);
+        let mut root = gtk::Box::new(gtk::Orientation::Vertical, 0);
+
+        tool_call.bind(&mut widgets, &mut root);
+        let _ = gtk::glib::MainContext::default().block_on(receiver.recv());
+
+        let row = widgets
+            .tool_call
+            .root
+            .first_child()
+            .expect("tool call content")
+            .downcast::<gtk::Box>()
+            .expect("tool call content box")
+            .first_child()
+            .expect("tool call row")
+            .downcast::<gtk::Box>()
+            .expect("tool call row box");
+        let children = collect_box_children(&row);
+
+        let name_label = children[0]
+            .clone()
+            .downcast::<gtk::Label>()
+            .expect("tool name label");
+        assert!(
+            !name_label.hexpands(),
+            "tool name label must not absorb horizontal slack"
+        );
+
+        let spacer = &children[children.len() - 2];
+        assert!(
+            spacer.is::<gtk::Box>() && spacer.hexpands(),
+            "a hexpanding spacer must sit just before the trailing inspect button"
+        );
+
+        let inspect = children
+            .last()
+            .expect("inspect button")
+            .clone()
+            .downcast::<gtk::Button>()
+            .expect("inspect button");
+        assert!(!inspect.hexpands());
+    }
+
+    #[gtk::test]
+    fn subagent_page_keeps_metadata_left_of_inspect_button() {
+        let (sender, _receiver) = relm4::channel::<SessionDetailMsg>();
+        let mut subagent = TranscriptItemData::from_init(
+            TranscriptItemInit::Subagent(SubagentItemInit {
+                reasoning_preview: ReasoningPreview {
+                    has_reasoning: true,
+                    has_visible_reasoning: false,
+                    encrypted_only: true,
+                },
+                ..subagent_init()
+            }),
+            sender,
+        );
+
+        let list_item: gtk::ListItem = gtk::glib::Object::builder().build();
+        let (_, mut widgets) = TranscriptItemData::setup(&list_item);
+        let mut root = gtk::Box::new(gtk::Orientation::Vertical, 0);
+
+        subagent.bind(&mut widgets, &mut root);
+
+        let row = widgets
+            .subagent
+            .root
+            .first_child()
+            .expect("subagent content")
+            .downcast::<gtk::Box>()
+            .expect("subagent row box");
+        let children = collect_box_children(&row);
+
+        let title_label = children[0]
+            .clone()
+            .downcast::<gtk::Label>()
+            .expect("subagent title label");
+        assert!(
+            !title_label.hexpands(),
+            "subagent title label must not absorb horizontal slack"
+        );
+
+        let spacer = &children[children.len() - 2];
+        assert!(
+            spacer.is::<gtk::Box>() && spacer.hexpands(),
+            "a hexpanding spacer must sit just before the trailing inspect button"
+        );
     }
 
     #[gtk::test]
