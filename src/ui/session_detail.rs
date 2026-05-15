@@ -2401,17 +2401,6 @@ impl SessionDetail {
         }
     }
 
-    fn reload_current_session(
-        &mut self,
-        sender: &ComponentSender<Self>,
-        clear_reason: &'static str,
-    ) {
-        if let Some(session) = &self.session {
-            let session_id = session.id.clone();
-            self.start_first_page_load(sender, &session_id, false, clear_reason);
-        }
-    }
-
     fn clear_pending_boundary_tool_rows(&mut self) {
         self.pending_boundary_tool_rows.clear();
     }

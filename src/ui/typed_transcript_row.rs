@@ -1,5 +1,6 @@
 use std::cell::Cell;
 use std::rc::Rc;
+use std::time::Instant;
 
 use gtk::prelude::*;
 use relm4::binding::Binding;
@@ -101,6 +102,7 @@ impl RelmListItem for TranscriptItemData {
     }
 
     fn bind(&mut self, widgets: &mut Self::Widgets, _root: &mut Self::Root) {
+        let start = Instant::now();
         let kind = TranscriptRowBuildKind::from(&self.kind);
         widgets.stack.set_visible_child_name(kind.page_name());
 
@@ -110,6 +112,14 @@ impl RelmListItem for TranscriptItemData {
             TranscriptRowBuildKind::ToolBurst => self.bind_tool_burst_page(&mut widgets.tool_burst),
             TranscriptRowBuildKind::Subagent => self.bind_subagent_page(&mut widgets.subagent),
         }
+
+        self.sender
+            .send(SessionDetailMsg::RowBuilt {
+                item_index: self.item_index,
+                kind,
+                build_duration_ms: start.elapsed().as_millis(),
+            })
+            .ok();
     }
 
     fn unbind(&mut self, widgets: &mut Self::Widgets, _root: &mut Self::Root) {
