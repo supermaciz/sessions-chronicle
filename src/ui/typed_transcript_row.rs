@@ -181,7 +181,7 @@ impl TranscriptItemData {
             &widgets.content,
             &message.preview.content_preview,
             message.preview.role,
-            message.highlight_query.as_deref(),
+            self.highlight_query.as_deref(),
         );
 
         let can_expand = message.preview.is_truncated() && message.preview.role != Role::ToolResult;

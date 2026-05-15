@@ -1077,13 +1077,24 @@ impl Component for SessionDetail {
                 self.pending_toast.set(true);
             }
             SessionDetailMsg::ToggleMessageExpand { item_index } => {
-                let toggled = if let Some(item) = self.messages.get(item_index as u32) {
-                    let expanded = item.borrow().expanded.get();
-                    item.borrow().expanded.set(!expanded);
-                    true
+                let idx = item_index as u32;
+                let (toggled, clone_opt) = if let Some(item) = self.messages.get(idx) {
+                    let ref_data = item.borrow();
+                    let expanded = ref_data.expanded.get();
+                    ref_data.expanded.set(!expanded);
+                    let clone = ref_data.clone();
+                    (true, Some(clone))
                 } else {
-                    false
+                    (false, None)
                 };
+                if let Some(clone) = clone_opt {
+                    self.messages.remove(idx);
+                    self.messages.insert(idx, clone);
+                    tracing::info!(
+                        item_index,
+                        "Full message content load not yet wired for the typed path"
+                    );
+                }
                 tracing::debug!(item_index, toggled, "Typed message expand requested");
             }
             SessionDetailMsg::RowBuilt {

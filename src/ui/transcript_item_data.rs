@@ -11,8 +11,10 @@ use crate::ui::transcript_row::{
 #[derive(Clone)]
 pub struct TranscriptItemData {
     pub item_index: usize,
+    pub transcript_item_index: Option<i64>,
     pub kind: TranscriptItemKind,
     pub expanded: BoolBinding,
+    pub highlight_query: Option<String>,
     pub sender: Sender<SessionDetailMsg>,
 }
 
@@ -48,29 +50,50 @@ impl fmt::Debug for TranscriptItemData {
 impl TranscriptItemData {
     pub fn from_init(init: TranscriptItemInit, sender: Sender<SessionDetailMsg>) -> Self {
         let item_index = init.item_index();
-        let (kind, expanded) = match init {
+        let (kind, expanded, transcript_item_index, highlight_query) = match init {
             TranscriptItemInit::Message(message) => (
-                TranscriptItemKind::Message(message),
+                TranscriptItemKind::Message(message.clone()),
                 BoolBinding::new(false),
+                Some(message.transcript_item_index),
+                message.highlight_query,
             ),
             TranscriptItemInit::ToolCall(tool_call) => (
-                TranscriptItemKind::ToolCall(tool_call),
+                TranscriptItemKind::ToolCall(tool_call.clone()),
                 BoolBinding::new(false),
+                Some(tool_call.transcript_item_index),
+                tool_call.highlight_query,
             ),
             TranscriptItemInit::ToolBurst(tool_burst) => {
                 let expanded = BoolBinding::new(tool_burst.default_expanded);
-                (TranscriptItemKind::ToolBurst(tool_burst), expanded)
+                let transcript_item_index = tool_burst
+                    .tool_calls
+                    .first()
+                    .map(|tc| tc.transcript_item_index);
+                let highlight_query = tool_burst
+                    .tool_calls
+                    .first()
+                    .and_then(|tc| tc.highlight_query.clone());
+                (
+                    TranscriptItemKind::ToolBurst(tool_burst),
+                    expanded,
+                    transcript_item_index,
+                    highlight_query,
+                )
             }
             TranscriptItemInit::Subagent(subagent) => (
-                TranscriptItemKind::Subagent(subagent),
+                TranscriptItemKind::Subagent(subagent.clone()),
                 BoolBinding::new(false),
+                Some(subagent.transcript_item_index),
+                None,
             ),
         };
 
         Self {
             item_index,
+            transcript_item_index,
             kind,
             expanded,
+            highlight_query,
             sender,
         }
     }
@@ -113,6 +136,8 @@ mod tests {
         let data = TranscriptItemData::from_init(TranscriptItemInit::Message(init), sender);
 
         assert_eq!(data.item_index, 7);
+        assert_eq!(data.transcript_item_index, Some(42));
+        assert_eq!(data.highlight_query.as_deref(), Some("hello"));
         match &data.kind {
             TranscriptItemKind::Message(message) => {
                 assert_eq!(message.transcript_item_index, 42);
