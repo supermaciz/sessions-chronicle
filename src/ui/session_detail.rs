@@ -965,11 +965,16 @@ impl Component for SessionDetail {
                 self.invalidate_search_requests();
                 self.reset_search_matches();
 
+                if !self.messages.is_empty() {
+                    for item in self.messages.iter() {
+                        item.borrow_mut().highlight_query = normalized.clone();
+                    }
+                    self.refresh_typed_rows_preserving_scroll();
+                }
+
                 if let (Some(session), Some(query)) = (&self.session, normalized) {
                     let request_id = self.search_request_id;
                     self.spawn_match_positions_load(&sender, request_id, session.id.clone(), query);
-                } else {
-                    self.reload_current_session(&sender, "search");
                 }
             }
             SessionDetailMsg::SetMatchPositions {
@@ -1005,7 +1010,9 @@ impl Component for SessionDetail {
                 self.clamp_current_match();
                 self.pending_jump = None;
                 self.loading_jump = false;
-                self.start_first_page_load(&sender, &session_id, false, "search");
+                if self.messages.is_empty() {
+                    self.start_first_page_load(&sender, &session_id, false, "search");
+                }
                 if !self.match_positions.is_empty() {
                     self.jump_to(0, &sender);
                 }
@@ -1099,7 +1106,12 @@ impl Component for SessionDetail {
                 self.search_query = None;
                 self.invalidate_search_requests();
                 self.reset_search_matches();
-                self.reload_current_session(&sender, "clear_search");
+                if !self.messages.is_empty() {
+                    for item in self.messages.iter() {
+                        item.borrow_mut().highlight_query = None;
+                    }
+                    self.refresh_typed_rows_preserving_scroll();
+                }
             }
             SessionDetailMsg::Clear => {
                 self.invalidate_transcript_requests();
@@ -1431,15 +1443,74 @@ impl Component for SessionDetail {
         }
 
         if let Some(target) = self.scroll_to_item.take() {
-            let messages_widget: gtk::ListView = self.messages.view.clone();
+            let list_view = self.messages.view.clone();
+            list_view.scroll_to(
+                target.display_index as u32,
+                gtk::ListScrollFlags::NONE,
+                None,
+            );
             let scroll_child = widgets.scroll_child.clone();
             glib::idle_add_local_once(move || {
-                let Some(row_widget) = messages_widget
+                let Some(row_widget) = list_view
                     .observe_children()
                     .item(target.display_index as u32)
                     .and_then(|obj| obj.downcast::<gtk::ListItem>().ok())
                     .and_then(|item| item.child())
                 else {
+                    let list_view_for_tick = list_view.clone();
+                    let scroll_child_for_tick = scroll_child.clone();
+                    let tick_count = std::cell::Cell::new(0u32);
+                    list_view.add_tick_callback(move |_, _| {
+                        let ticks = tick_count.get() + 1;
+                        tick_count.set(ticks);
+                        if ticks > 60 {
+                            return glib::ControlFlow::Break;
+                        }
+                        let Some(row_widget) = list_view_for_tick
+                            .observe_children()
+                            .item(target.display_index as u32)
+                            .and_then(|obj| obj.downcast::<gtk::ListItem>().ok())
+                            .and_then(|item| item.child())
+                        else {
+                            return glib::ControlFlow::Continue;
+                        };
+                        if let Some(child_index) = target.child_index
+                            && let Some((header_button, revealer)) =
+                                Self::tool_burst_header_and_revealer(&row_widget)
+                        {
+                            if !revealer.reveals_child() {
+                                header_button.emit_clicked();
+                            }
+                            let revealer_for_tick = revealer.clone();
+                            let scroll_for_burst = scroll_child_for_tick.clone();
+                            let burst_tick_count = std::cell::Cell::new(0u32);
+                            revealer.add_tick_callback(move |_, _| {
+                                let ticks = burst_tick_count.get() + 1;
+                                burst_tick_count.set(ticks);
+                                if ticks > 60 {
+                                    return glib::ControlFlow::Break;
+                                }
+                                let Some(child_box) = revealer_for_tick
+                                    .child()
+                                    .and_then(|w| w.downcast::<gtk::Box>().ok())
+                                else {
+                                    return glib::ControlFlow::Break;
+                                };
+                                let Some(child_widget) = child_box
+                                    .observe_children()
+                                    .item(child_index as u32)
+                                    .and_then(|obj| obj.downcast::<gtk::Widget>().ok())
+                                else {
+                                    return glib::ControlFlow::Continue;
+                                };
+                                Self::scroll_widget_into_view(&child_widget, &scroll_for_burst);
+                                glib::ControlFlow::Break
+                            });
+                        } else {
+                            Self::scroll_widget_into_view(&row_widget, &scroll_child_for_tick);
+                        }
+                        glib::ControlFlow::Break
+                    });
                     return;
                 };
 
@@ -2291,7 +2362,7 @@ impl SessionDetail {
             return;
         };
 
-        if self.is_transcript_loading() {
+        if self.is_transcript_loading() && self.messages.is_empty() {
             return;
         }
 
@@ -2564,19 +2635,58 @@ impl SessionDetail {
     }
 
     /// Looks up the `(header_button, revealer)` pair for a tool-burst transcript
-    /// row. The row widget is a vertical `gtk::Box` whose first child is the
-    /// header toggle button and whose second child is the `gtk::Revealer`
-    /// holding the grouped tool call rows.
+    /// row. Typed rows wrap the page contents in a `gtk::Stack`; this traverses
+    /// the Stack's "tool-burst" named child to find the header button and
+    /// revealer.
     fn tool_burst_header_and_revealer(
         row_widget: &gtk::Widget,
     ) -> Option<(gtk::Button, gtk::Revealer)> {
-        let header_button = row_widget
+        let stack = row_widget
+            .first_child()
+            .and_then(|w| w.downcast::<gtk::Stack>().ok())?;
+        let tool_burst_page = stack
+            .child_by_name("tool-burst")
+            .and_then(|w| w.downcast::<gtk::Box>().ok())?;
+        let header_button = tool_burst_page
             .first_child()
             .and_then(|w| w.downcast::<gtk::Button>().ok())?;
         let revealer = header_button
             .next_sibling()
             .and_then(|w| w.downcast::<gtk::Revealer>().ok())?;
         Some((header_button, revealer))
+    }
+
+    /// Snapshot scroll position, clone all items, clear and re-extend to force
+    /// GTK re-bind (propagating in-place `highlight_query` mutations), then
+    /// restore scroll position via idle callback.
+    fn refresh_typed_rows_preserving_scroll(&mut self) {
+        let saved_vadj = self
+            .messages
+            .view
+            .ancestor(gtk::ScrolledWindow::static_type())
+            .and_then(|w| w.downcast::<gtk::ScrolledWindow>().ok())
+            .map(|sw| sw.vadjustment().value());
+
+        let items: Vec<TranscriptItemData> = self
+            .messages
+            .iter()
+            .map(|item| item.borrow().clone())
+            .collect();
+
+        self.messages.clear();
+        self.messages.extend_from_iter(items);
+
+        if let Some(saved_value) = saved_vadj {
+            let view = self.messages.view.clone();
+            glib::idle_add_local_once(move || {
+                if let Some(sw) = view
+                    .ancestor(gtk::ScrolledWindow::static_type())
+                    .and_then(|w| w.downcast::<gtk::ScrolledWindow>().ok())
+                {
+                    sw.vadjustment().set_value(saved_value);
+                }
+            });
+        }
     }
 
     fn scroll_widget_into_view(widget: &gtk::Widget, scroll_child: &gtk::Box) {
@@ -3221,7 +3331,7 @@ fn synthetic_measurement(input: &str) -> String {\n\
     }
 
     #[gtk::test]
-    #[ignore = "paginated batch metrics not used with full typed loading"]
+    #[ignore = "first-page typed loading does not create render batches"]
     fn session_detail_records_render_batch_measurements() {
         let temp_db = tempfile::NamedTempFile::new().expect("temp db");
         seed_message_transcript(temp_db.path(), "test-session-123", INITIAL_PAGE_SIZE + 5);
@@ -3729,7 +3839,6 @@ fn synthetic_measurement(input: &str) -> String {\n\
     }
 
     #[gtk::test]
-    #[ignore = "paginated render batch replaced by full typed loading"]
     fn jump_to_loaded_but_unrendered_match_waits_for_render_batch() {
         let temp_db = tempfile::NamedTempFile::new().expect("temp db");
         seed_search_transcript(temp_db.path(), "test-session-123", INITIAL_PAGE_SIZE, &[70]);
