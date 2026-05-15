@@ -8,6 +8,7 @@ use relm4::{gtk, typed_view::list::RelmListItem};
 
 use crate::models::Role;
 use crate::ui::format::{format_duration_ms, tool_status_css_class, tool_status_label};
+use crate::ui::highlight;
 use crate::ui::session_detail::SessionDetailMsg;
 use crate::ui::transcript_item_data::{TranscriptItemData, TranscriptItemKind};
 use crate::ui::transcript_row::{
@@ -19,6 +20,7 @@ const MESSAGE_PAGE_NAME: &str = "message";
 const TOOL_CALL_PAGE_NAME: &str = "tool-call";
 const TOOL_BURST_PAGE_NAME: &str = "tool-burst";
 const SUBAGENT_PAGE_NAME: &str = "subagent";
+pub(crate) const TRANSCRIPT_ROW_WIDGET_NAME_PREFIX: &str = "transcript-row-";
 
 pub struct TranscriptRowWidgets {
     stack: gtk::Stack,
@@ -101,9 +103,13 @@ impl RelmListItem for TranscriptItemData {
         )
     }
 
-    fn bind(&mut self, widgets: &mut Self::Widgets, _root: &mut Self::Root) {
+    fn bind(&mut self, widgets: &mut Self::Widgets, root: &mut Self::Root) {
         let start = Instant::now();
         let kind = TranscriptRowBuildKind::from(&self.kind);
+        root.set_widget_name(&format!(
+            "{TRANSCRIPT_ROW_WIDGET_NAME_PREFIX}{}",
+            self.item_index
+        ));
         widgets.stack.set_visible_child_name(kind.page_name());
 
         match kind {
@@ -187,9 +193,17 @@ impl TranscriptItemData {
             widgets.reasoning_box.append(&label);
         }
 
+        let content = if self.expanded.get() {
+            self.full_content
+                .as_deref()
+                .unwrap_or(&message.preview.content_preview)
+        } else {
+            &message.preview.content_preview
+        };
+
         render_content(
             &widgets.content,
-            &message.preview.content_preview,
+            content,
             message.preview.role,
             self.highlight_query.as_deref(),
         );
@@ -220,7 +234,7 @@ impl TranscriptItemData {
         };
 
         clear_box_children(&widgets.root);
-        let refs = build_tool_call_page_content(tool_call);
+        let refs = build_tool_call_page_content(tool_call, self.highlight_query.as_deref());
 
         if let Some(reasoning_button) = refs.reasoning_button {
             let sender = self.sender.clone();
@@ -264,7 +278,7 @@ impl TranscriptItemData {
             let revealer = widgets.revealer.clone();
             let children_built_for = widgets.children_built_for.clone();
             let sender = self.sender.clone();
-            let burst = burst.clone();
+            let burst = burst_with_highlight_query(burst, self.highlight_query.as_deref());
             let item_index = self.item_index;
             let header_button = widgets.header_button.clone();
             widgets.revealer.connect_reveal_child_notify(move |_| {
@@ -286,10 +300,11 @@ impl TranscriptItemData {
             .push((widgets.revealer.clone().upcast(), notify_id));
 
         if self.expanded.get() {
+            let burst = burst_with_highlight_query(burst, self.highlight_query.as_deref());
             build_tool_burst_children_if_needed(
                 &widgets.children,
                 &widgets.children_built_for,
-                burst,
+                &burst,
                 &self.sender,
                 self.item_index,
             );
@@ -521,16 +536,23 @@ struct ToolCallPageContentRefs {
 
 fn build_tool_call_page_content(
     init: &crate::ui::transcript_row::ToolCallItemInit,
+    highlight_query: Option<&str>,
 ) -> ToolCallPageContentRefs {
     let root = gtk::Box::new(gtk::Orientation::Vertical, 4);
     root.add_css_class("tool-call-row");
 
     let row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-    let name_label = gtk::Label::new(Some(&init.tool_name));
+    let name_label = gtk::Label::new(None);
     name_label.add_css_class("monospace");
     name_label.set_halign(gtk::Align::Start);
     name_label.set_hexpand(true);
     name_label.set_xalign(0.0);
+    if let Some(query) = highlight_query {
+        let (markup, _) = highlight::highlight_text(&init.tool_name, query);
+        name_label.set_markup(&markup);
+    } else {
+        name_label.set_label(&init.tool_name);
+    }
     row.append(&name_label);
 
     let status_label = gtk::Label::new(Some(tool_status_label(init.status)));
@@ -570,12 +592,18 @@ fn build_tool_call_page_content(
     root.append(&row);
 
     if let Some(preview) = init.displayed_preview() {
-        let preview_label = gtk::Label::new(Some(preview));
+        let preview_label = gtk::Label::new(None);
         preview_label.add_css_class("caption");
         preview_label.add_css_class("dim-label");
         preview_label.set_halign(gtk::Align::Start);
         preview_label.set_xalign(0.0);
         preview_label.set_wrap(true);
+        if let Some(query) = highlight_query {
+            let (markup, _) = highlight::highlight_text(preview, query);
+            preview_label.set_markup(&markup);
+        } else {
+            preview_label.set_label(preview);
+        }
         root.append(&preview_label);
     }
 
@@ -584,6 +612,18 @@ fn build_tool_call_page_content(
         inspect_button: inspect,
         reasoning_button,
     }
+}
+
+fn burst_with_highlight_query(
+    burst: &crate::ui::transcript_row::ToolBurstItemInit,
+    highlight_query: Option<&str>,
+) -> crate::ui::transcript_row::ToolBurstItemInit {
+    let mut burst = burst.clone();
+    let highlight_query = highlight_query.map(str::to_string);
+    for tool_call in &mut burst.tool_calls {
+        tool_call.highlight_query = highlight_query.clone();
+    }
+    burst
 }
 
 struct SubagentPageContentRefs {
@@ -873,6 +913,17 @@ mod tests {
             .expect("message expand button")
     }
 
+    fn message_content_text(widgets: &super::MessagePageWidgets) -> String {
+        widgets
+            .content
+            .first_child()
+            .expect("message content child")
+            .downcast::<gtk::Label>()
+            .expect("message content label")
+            .label()
+            .to_string()
+    }
+
     #[test]
     fn transcript_item_kind_maps_to_build_kind() {
         let cases = [
@@ -1052,6 +1103,67 @@ mod tests {
                 .expect("message expand toggle"),
             SessionDetailMsg::ToggleMessageExpand { item_index: 1 }
         ));
+    }
+
+    #[gtk::test]
+    fn expanded_message_renders_loaded_full_content() {
+        let (sender, receiver) = relm4::channel::<SessionDetailMsg>();
+        let mut init = truncated_message_init();
+        init.preview.role = Role::User;
+        init.preview.content_preview = "short preview".to_string();
+        init.preview.content_len = 42;
+        let mut message = TranscriptItemData::from_init(TranscriptItemInit::Message(init), sender);
+        message.expanded.set(true);
+        message.full_content = Some("loaded full message body".to_string());
+
+        let list_item: gtk::ListItem = gtk::glib::Object::builder().build();
+        let (_, mut widgets) = TranscriptItemData::setup(&list_item);
+        let mut root = gtk::Box::new(gtk::Orientation::Vertical, 0);
+
+        message.bind(&mut widgets, &mut root);
+        let _ = gtk::glib::MainContext::default().block_on(receiver.recv());
+
+        assert_eq!(
+            message_content_text(&widgets.message),
+            "loaded full message body"
+        );
+    }
+
+    #[gtk::test]
+    fn tool_call_page_uses_data_level_highlight_query() {
+        let (sender, receiver) = relm4::channel::<SessionDetailMsg>();
+        let mut tool_call = TranscriptItemData::from_init(
+            TranscriptItemInit::ToolCall(ToolCallItemInit {
+                highlight_query: None,
+                ..tool_call_init()
+            }),
+            sender,
+        );
+        tool_call.highlight_query = Some("Read".to_string());
+
+        let list_item: gtk::ListItem = gtk::glib::Object::builder().build();
+        let (_, mut widgets) = TranscriptItemData::setup(&list_item);
+        let mut root = gtk::Box::new(gtk::Orientation::Vertical, 0);
+
+        tool_call.bind(&mut widgets, &mut root);
+        let _ = gtk::glib::MainContext::default().block_on(receiver.recv());
+        let name_label = widgets
+            .tool_call
+            .root
+            .first_child()
+            .expect("tool call content")
+            .downcast::<gtk::Box>()
+            .expect("tool call content box")
+            .first_child()
+            .expect("tool call row")
+            .downcast::<gtk::Box>()
+            .expect("tool call row box")
+            .first_child()
+            .expect("tool name label")
+            .downcast::<gtk::Label>()
+            .expect("tool name label");
+
+        assert!(name_label.uses_markup());
     }
 
     #[gtk::test]

@@ -14,6 +14,7 @@ pub struct TranscriptItemData {
     pub transcript_item_index: Option<i64>,
     pub kind: TranscriptItemKind,
     pub expanded: BoolBinding,
+    pub full_content: Option<String>,
     pub highlight_query: Option<String>,
     pub sender: Sender<SessionDetailMsg>,
 }
@@ -43,6 +44,8 @@ impl fmt::Debug for TranscriptItemData {
             .field("item_index", &self.item_index)
             .field("kind", &self.kind)
             .field("expanded", &self.expanded.get())
+            .field("has_full_content", &self.full_content.is_some())
+            .field("highlight_query", &self.highlight_query)
             .finish_non_exhaustive()
     }
 }
@@ -93,6 +96,7 @@ impl TranscriptItemData {
             transcript_item_index,
             kind,
             expanded,
+            full_content: None,
             highlight_query,
             sender,
         }

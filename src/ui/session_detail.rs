@@ -13,7 +13,10 @@ use relm4::{
     adw, gtk,
 };
 
-use crate::database::{MatchPosition, find_session_match_positions, load_all_transcript_items};
+use crate::database::{
+    MatchPosition, find_session_match_positions, load_all_transcript_items,
+    load_message_full_content,
+};
 use crate::models::Session;
 use crate::ui::activity_bar::SessionActivityBar;
 use crate::ui::tool_inspector_pane::{
@@ -24,6 +27,7 @@ use crate::ui::transcript_item_data::TranscriptItemData;
 use crate::ui::transcript_row::{
     TranscriptItemInit, TranscriptRowBuildKind, transcript_item_init_from_display_item,
 };
+use crate::ui::typed_transcript_row::TRANSCRIPT_ROW_WIDGET_NAME_PREFIX;
 
 const PREVIEW_LEN: usize = 2000;
 const DEFERRED_FIRST_PAGE_LOAD_DELAY_MS: u64 = 250;
@@ -161,6 +165,12 @@ pub enum SessionDetailCmd {
         load_duration_ms: u128,
         result: Result<Vec<MatchPosition>, String>,
     },
+    MessageFullContentReady {
+        item_index: usize,
+        session_id: String,
+        message_index: usize,
+        result: Result<String, String>,
+    },
 }
 
 impl std::fmt::Debug for SessionDetailCmd {
@@ -198,6 +208,23 @@ impl std::fmt::Debug for SessionDetailCmd {
                     .field("request_id", request_id)
                     .field("session_id", session_id)
                     .field("load_duration_ms", load_duration_ms)
+                    .field("result", &result_summary)
+                    .finish()
+            }
+            Self::MessageFullContentReady {
+                item_index,
+                session_id,
+                message_index,
+                result,
+            } => {
+                let result_summary = match result {
+                    Ok(content) => format!("Ok({} chars)", content.len()),
+                    Err(err) => format!("Err({err})"),
+                };
+                f.debug_struct("MessageFullContentReady")
+                    .field("item_index", item_index)
+                    .field("session_id", session_id)
+                    .field("message_index", message_index)
                     .field("result", &result_summary)
                     .finish()
             }
@@ -768,9 +795,7 @@ impl Component for SessionDetail {
                 self.reset_search_matches();
 
                 if !self.messages.is_empty() {
-                    for item in self.messages.iter() {
-                        item.borrow_mut().highlight_query = normalized.clone();
-                    }
+                    self.apply_highlight_query_to_typed_items(normalized.clone());
                     self.refresh_typed_rows_preserving_scroll();
                 }
 
@@ -814,6 +839,9 @@ impl Component for SessionDetail {
                 self.loading_jump = false;
                 if self.messages.is_empty() {
                     self.start_transcript_load(&sender, &session_id, false, "search");
+                } else {
+                    self.apply_highlight_query_to_typed_items(self.search_query.clone());
+                    self.refresh_typed_rows_preserving_scroll();
                 }
                 if !self.match_positions.is_empty() {
                     self.jump_to(0, &sender);
@@ -866,10 +894,23 @@ impl Component for SessionDetail {
             }
             SessionDetailMsg::ToggleMessageExpand { item_index } => {
                 let idx = item_index as u32;
+                let mut load_request = None;
                 let (toggled, clone_opt) = if let Some(item) = self.messages.get(idx) {
                     let ref_data = item.borrow();
                     let expanded = ref_data.expanded.get();
-                    ref_data.expanded.set(!expanded);
+                    let will_expand = !expanded;
+                    ref_data.expanded.set(will_expand);
+                    if will_expand
+                        && ref_data.full_content.is_none()
+                        && let crate::ui::transcript_item_data::TranscriptItemKind::Message(message) =
+                            &ref_data.kind
+                    {
+                        load_request = Some((
+                            message.db_path.clone(),
+                            message.preview.session_id.clone(),
+                            message.preview.message_index,
+                        ));
+                    }
                     let clone = ref_data.clone();
                     (true, Some(clone))
                 } else {
@@ -878,10 +919,21 @@ impl Component for SessionDetail {
                 if let Some(clone) = clone_opt {
                     self.messages.remove(idx);
                     self.messages.insert(idx, clone);
-                    tracing::info!(
-                        item_index,
-                        "Full message content load not yet wired for the typed path"
-                    );
+                    if let Some((db_path, session_id, message_index)) = load_request {
+                        sender.spawn_oneshot_command(move || {
+                            SessionDetailCmd::MessageFullContentReady {
+                                item_index,
+                                session_id: session_id.clone(),
+                                message_index,
+                                result: load_message_full_content(
+                                    &db_path,
+                                    &session_id,
+                                    message_index,
+                                )
+                                .map_err(|err| format!("{err:#}")),
+                            }
+                        });
+                    }
                 }
                 tracing::debug!(item_index, toggled, "Typed message expand requested");
             }
@@ -897,9 +949,7 @@ impl Component for SessionDetail {
                 self.invalidate_search_requests();
                 self.reset_search_matches();
                 if !self.messages.is_empty() {
-                    for item in self.messages.iter() {
-                        item.borrow_mut().highlight_query = None;
-                    }
+                    self.apply_highlight_query_to_typed_items(None);
                     self.refresh_typed_rows_preserving_scroll();
                 }
             }
@@ -1050,6 +1100,35 @@ impl Component for SessionDetail {
                         session_id,
                         positions,
                     });
+            }
+            SessionDetailCmd::MessageFullContentReady {
+                item_index,
+                session_id,
+                message_index,
+                result,
+            } => {
+                if !self.typed_message_full_content_target_matches(
+                    item_index,
+                    &session_id,
+                    message_index,
+                ) {
+                    tracing::debug!(
+                        item_index,
+                        session_id = session_id.as_str(),
+                        message_index,
+                        "Ignoring stale full message content result"
+                    );
+                    return;
+                }
+
+                match result {
+                    Ok(content) => self.set_typed_message_full_content(item_index, content),
+                    Err(err) => {
+                        tracing::error!(item_index, "Failed to load full message content: {err}");
+                        self.reset_typed_message_expansion(item_index);
+                        self.pending_toast.set(true);
+                    }
+                }
             }
         }
     }
@@ -1237,11 +1316,8 @@ impl Component for SessionDetail {
             );
             let scroll_child = widgets.scroll_child.clone();
             glib::idle_add_local_once(move || {
-                let Some(row_widget) = list_view
-                    .observe_children()
-                    .item(target.display_index as u32)
-                    .and_then(|obj| obj.downcast::<gtk::ListItem>().ok())
-                    .and_then(|item| item.child())
+                let Some(row_widget) =
+                    Self::observed_row_widget_for_display_index(&list_view, target.display_index)
                 else {
                     let list_view_for_tick = list_view.clone();
                     let scroll_child_for_tick = scroll_child.clone();
@@ -1252,12 +1328,10 @@ impl Component for SessionDetail {
                         if ticks > 60 {
                             return glib::ControlFlow::Break;
                         }
-                        let Some(row_widget) = list_view_for_tick
-                            .observe_children()
-                            .item(target.display_index as u32)
-                            .and_then(|obj| obj.downcast::<gtk::ListItem>().ok())
-                            .and_then(|item| item.child())
-                        else {
+                        let Some(row_widget) = Self::observed_row_widget_for_display_index(
+                            &list_view_for_tick,
+                            target.display_index,
+                        ) else {
                             return glib::ControlFlow::Continue;
                         };
                         if let Some(child_index) = target.child_index
@@ -1390,7 +1464,7 @@ impl SessionDetail {
         rows: Vec<crate::database::TranscriptItemRow>,
         session_id: &str,
         highlight_query: Option<String>,
-        matched_item_indexes: &BTreeSet<i64>,
+        _matched_item_indexes: &BTreeSet<i64>,
         db_path: Arc<PathBuf>,
         base_display_index: usize,
     ) -> PreparedTranscriptItems {
@@ -1402,15 +1476,7 @@ impl SessionDetail {
             display_targets_by_item_index
                 .extend(Self::display_targets_for_item(display_index, &item));
 
-            let item_highlight = match &item {
-                DisplayTranscriptItem::Single(row)
-                    if row.kind == crate::models::TranscriptItemKind::Message
-                        && matched_item_indexes.contains(&row.item_index) =>
-                {
-                    highlight_query.clone()
-                }
-                _ => None,
-            };
+            let item_highlight = highlight_query.clone();
 
             items.push(transcript_item_init_from_display_item(
                 display_index,
@@ -1736,6 +1802,83 @@ impl SessionDetail {
         }
     }
 
+    fn set_typed_message_full_content(&mut self, item_index: usize, content: String) {
+        let idx = item_index as u32;
+        let Some(item) = self.messages.get(idx) else {
+            return;
+        };
+
+        let mut clone = item.borrow().clone();
+        clone.full_content = Some(content);
+        self.messages.remove(idx);
+        self.messages.insert(idx, clone);
+    }
+
+    fn reset_typed_message_expansion(&mut self, item_index: usize) {
+        let idx = item_index as u32;
+        let Some(item) = self.messages.get(idx) else {
+            return;
+        };
+
+        let clone = {
+            let item = item.borrow();
+            Self::reset_message_expansion_after_full_content_failure(&item);
+            item.clone()
+        };
+        self.messages.remove(idx);
+        self.messages.insert(idx, clone);
+    }
+
+    fn reset_message_expansion_after_full_content_failure(item: &TranscriptItemData) {
+        item.expanded.set(false);
+    }
+
+    fn typed_message_full_content_target_matches(
+        &self,
+        item_index: usize,
+        session_id: &str,
+        message_index: usize,
+    ) -> bool {
+        let active_session_id = self.session.as_ref().map(|session| session.id.as_str());
+        let Some(item) = self.messages.get(item_index as u32) else {
+            return false;
+        };
+
+        Self::message_full_content_target_matches(
+            &item.borrow(),
+            active_session_id,
+            session_id,
+            message_index,
+        )
+    }
+
+    fn message_full_content_target_matches(
+        item: &TranscriptItemData,
+        active_session_id: Option<&str>,
+        session_id: &str,
+        message_index: usize,
+    ) -> bool {
+        let Some(active_session_id) = active_session_id else {
+            return false;
+        };
+        if active_session_id != session_id {
+            return false;
+        }
+
+        let crate::ui::transcript_item_data::TranscriptItemKind::Message(message) = &item.kind
+        else {
+            return false;
+        };
+
+        message.preview.session_id == session_id && message.preview.message_index == message_index
+    }
+
+    fn apply_highlight_query_to_typed_items(&self, query: Option<String>) {
+        for item in self.messages.iter() {
+            item.borrow_mut().highlight_query = query.clone();
+        }
+    }
+
     fn prepare_for_navigation_back(&mut self, sender: &ComponentSender<Self>) {
         self.invalidate_transcript_requests();
         self.loading_transcript = false;
@@ -1821,6 +1964,40 @@ impl SessionDetail {
             .next_sibling()
             .and_then(|w| w.downcast::<gtk::Revealer>().ok())?;
         Some((header_button, revealer))
+    }
+
+    fn list_view_row_widget_from_child(obj: gtk::glib::Object) -> Option<gtk::Widget> {
+        if let Ok(list_item) = obj.clone().downcast::<gtk::ListItem>() {
+            return list_item.child();
+        }
+
+        obj.downcast::<gtk::Widget>().ok()
+    }
+
+    fn observed_row_widget_for_display_index(
+        list_view: &gtk::ListView,
+        display_index: usize,
+    ) -> Option<gtk::Widget> {
+        let children = list_view.observe_children();
+        for index in 0..children.n_items() {
+            let Some(row_widget) = children
+                .item(index)
+                .and_then(Self::list_view_row_widget_from_child)
+            else {
+                continue;
+            };
+
+            if Self::row_widget_matches_display_index(&row_widget, display_index) {
+                return Some(row_widget);
+            }
+        }
+
+        None
+    }
+
+    fn row_widget_matches_display_index(row_widget: &gtk::Widget, display_index: usize) -> bool {
+        row_widget.widget_name().as_str()
+            == format!("{TRANSCRIPT_ROW_WIDGET_NAME_PREFIX}{display_index}")
     }
 
     /// Snapshot scroll position, clone all items, clear and re-extend to force
@@ -2106,7 +2283,7 @@ mod tests {
     }
 
     #[test]
-    fn build_display_items_highlights_only_matching_message_rows_during_search() {
+    fn build_display_items_applies_search_highlight_query_to_all_rows() {
         let rows = vec![
             transcript_message_row(0, crate::models::Role::Assistant, "needle in counted row"),
             transcript_tool_row(1, "Read"),
@@ -2139,7 +2316,7 @@ mod tests {
 
         match &prepared.items[1] {
             TranscriptItemInit::ToolCall(tool_call) => {
-                assert!(tool_call.highlight_query.is_none());
+                assert_eq!(tool_call.highlight_query.as_deref(), Some("needle"));
             }
             other => panic!(
                 "expected second item to be a tool call, got {:?}",
@@ -2149,7 +2326,7 @@ mod tests {
 
         match &prepared.items[2] {
             TranscriptItemInit::Message(message) => {
-                assert!(message.highlight_query.is_none());
+                assert_eq!(message.highlight_query.as_deref(), Some("needle"));
             }
             other => panic!(
                 "expected third item to be a message, got {:?}",
@@ -2512,6 +2689,91 @@ mod tests {
 
         let parts = controller.state().get();
         assert!(parts.model.match_positions.is_empty());
+    }
+
+    #[gtk::test]
+    fn list_view_row_widget_from_child_accepts_realized_widget_child() {
+        let row = gtk::Box::new(gtk::Orientation::Vertical, 0).upcast::<gtk::Widget>();
+
+        let resolved = SessionDetail::list_view_row_widget_from_child(row.clone().upcast())
+            .expect("direct widget child should resolve");
+
+        assert_eq!(resolved, row);
+    }
+
+    #[gtk::test]
+    fn row_widget_matches_display_index_uses_bound_row_identity() {
+        let row = gtk::Box::new(gtk::Orientation::Vertical, 0).upcast::<gtk::Widget>();
+        row.set_widget_name("transcript-row-7");
+
+        assert!(SessionDetail::row_widget_matches_display_index(&row, 7));
+        assert!(!SessionDetail::row_widget_matches_display_index(&row, 8));
+    }
+
+    #[test]
+    fn message_full_content_target_rejects_stale_session_or_message() {
+        let (sender, _receiver) = relm4::channel::<SessionDetailMsg>();
+        let prepared = SessionDetail::build_display_items(
+            vec![transcript_message_row(
+                0,
+                crate::models::Role::User,
+                "preview",
+            )],
+            "session-1",
+            None,
+            &BTreeSet::new(),
+            Arc::new(PathBuf::from("/tmp/test.db")),
+            0,
+        );
+        let item = TranscriptItemData::from_init(
+            prepared.items.into_iter().next().expect("message item"),
+            sender,
+        );
+
+        assert!(SessionDetail::message_full_content_target_matches(
+            &item,
+            Some("session-1"),
+            "session-1",
+            0,
+        ));
+        assert!(!SessionDetail::message_full_content_target_matches(
+            &item,
+            Some("session-2"),
+            "session-1",
+            0,
+        ));
+        assert!(!SessionDetail::message_full_content_target_matches(
+            &item,
+            Some("session-1"),
+            "session-1",
+            1,
+        ));
+    }
+
+    #[test]
+    fn message_full_content_failure_resets_expansion() {
+        let (sender, _receiver) = relm4::channel::<SessionDetailMsg>();
+        let prepared = SessionDetail::build_display_items(
+            vec![transcript_message_row(
+                0,
+                crate::models::Role::User,
+                "preview",
+            )],
+            "session-1",
+            None,
+            &BTreeSet::new(),
+            Arc::new(PathBuf::from("/tmp/test.db")),
+            0,
+        );
+        let item = TranscriptItemData::from_init(
+            prepared.items.into_iter().next().expect("message item"),
+            sender,
+        );
+        item.expanded.set(true);
+
+        SessionDetail::reset_message_expansion_after_full_content_failure(&item);
+
+        assert!(!item.expanded.get());
     }
 
     #[gtk::test]
