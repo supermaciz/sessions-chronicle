@@ -25,7 +25,7 @@ refresh strategy, risk mitigation, and Definition of Done.
 |---|-------|----------|
 | 1 | Row polymorphism under one `TypedListView<T>` | Single `TranscriptItemData` struct with `kind` enum; per-slot widget is a `gtk::Stack` with 4 pre-built pages, `bind()` switches visible child |
 | 2 | Full-content cache for expanded rows | None for v1 — re-fetch DB + re-parse on every `bind()`. Measure, add cache later if p99 > frame budget |
-| 3 | Burst expansion / lazy-children state location | In `TranscriptItemData`; user toggle goes through a Relm4 message, parent replaces the item at the same index so GTK rebinds the visible slot |
+| 3 | Burst expansion / lazy-children state location | In `TranscriptItemData`. Toggle updates the live `Revealer` directly (row is always realized when its button is clicked); a Relm4 message persists the new state into the model via `borrow_mut()` for recycle survival — no `remove`/`insert`, no re-bind |
 | 4a | Initial load mode | `extend_from_iter(all_rows)` in one call; no incremental render |
 | 4b | Initial scroll position | Top (no change vs. today) |
 | 5 | Scroll-to-match | `ListView::scroll_to(pos, NONE, None)` + existing idle callback for `compute_point` + 1/3-viewport adjustment + burst sub-child walk |
@@ -153,44 +153,58 @@ No-op. The default impl suffices; the pool slot is destroyed by GTK.
 ## Event flow: burst expansion toggle
 
 Today the `Revealer` carries widget-level state. Under recycling that state
-must live in the model.
+must also live in the model — but the toggle itself does **not** require a
+re-bind.
+
+**Key observation:** a burst header button can only be clicked when its row is
+realized and on-screen. The handler therefore has direct access to the live
+`Revealer` and can update it immediately. The message to the parent exists only
+to persist the new state into the model, so it survives a later recycle.
 
 ```
-user clicks burst header
+user clicks burst header (row is necessarily realized)
    │
-   ▼
-button handler (connected in bind()):
-   sender.input(SessionDetailMsg::ToggleBurst { item_index })
+   ├─▶ in the button handler, on the live widget:
+   │      revealer.set_reveal_child(new_expanded);
+   │      if new_expanded && !children_built { build children; children_built = true }
+   │      → instant feedback, no items-changed emission, no scroll jitter,
+   │        no keyboard-focus loss.
    │
-   ▼
-SessionDetail::update():
-   if let Some(item) = self.messages.get(item_index as u32) {
-       let mut next = item.borrow().clone();
-       next.expanded.set(!next.expanded.get());
-       self.messages.remove(item_index as u32);
-       self.messages.insert(item_index as u32, next);
-   }
-   │
-   ▼
-TypedListView re-fires bind() for that slot
-   │
-   ▼
-bind() reads expanded; revealer.set_reveal_child(expanded);
-if expanded && !children_built: build children, set flag.
+   └─▶ sender.input(SessionDetailMsg::ToggleBurst { item_index, expanded, children_built })
+          │
+          ▼
+       SessionDetail::update():
+          if let Some(item) = self.messages.get(item_index as u32) {
+              let mut row = item.borrow_mut();   // TypedListItem::borrow_mut, verified present
+              row.expanded.set(expanded);
+              row.children_built.set(children_built);
+          }
+          → pure persistence write. No remove/insert, no re-bind.
 ```
 
-The same flow handles message expand and any other interactive toggle. No
-`Rc<RefCell>` shared between widget closures and the data item — all
-state lives in the store, all mutation goes through messages.
+When the row is later recycled offscreen and scrolled back in, `bind()` reads
+`expanded` / `children_built` from the model and restores the `Revealer` to the
+correct state. The model is the source of truth for *recycled* rows; the live
+widget is authoritative while the row is realized, and the two are kept in sync
+by the handler above.
 
-**Relm4 API constraint:** `TypedListView` in relm4 0.10.1 exposes `get`,
-`remove`, `insert`, `clear`, and `extend_from_iter`, but it does not expose a
-public `notify_changed` / `items_changed` hook for a single mutated item. For
-single-row state changes, replacing the item at the same index is the explicit
-refresh mechanism. If this causes unacceptable scroll-position jitter in
-practice, the implementation should switch the row state to Relm4 bindings or a
-custom GTK model with notifiable properties; that is a design change, not an
-assumption hidden in the implementation.
+The same pattern handles message expand and any other interactive toggle on a
+realized row. No `Rc<RefCell>` shared between widget closures and the data item.
+
+**Relm4 API constraint (verified against relm4 0.10.1):** `TypedListView` exposes
+`get`, `remove`, `insert`, `clear`, `extend_from_iter`, and `iter`. Its backing
+`store: gio::ListStore` is **private** — there is no public `notify_changed` /
+`items_changed` hook to force a re-bind of a single mutated item.
+`TypedListItem::borrow_mut()` (`typed_view/mod.rs:76`) **is** public, so the
+model can be mutated in place; that mutation alone does not re-fire `bind()`.
+
+This is why the toggle updates the live widget directly instead of mutating the
+model and forcing a refresh: for an on-screen row, no refresh primitive is
+needed. `remove` + `insert` at the same index *would* re-bind the slot, but it
+also destroys and recreates the widget — causing scroll jitter and keyboard-focus
+loss — so it is **not** used for the toggle path. It remains available only if a
+future requirement needs an off-screen row to change appearance, which the
+current design does not have.
 
 ---
 
@@ -271,24 +285,56 @@ the exploration. No mitigation in this spec.
 
 ## Search highlight clear / restore
 
-Today: rows are replaced via the factory guard. Tomorrow, `TypedListView` does
-not provide an in-place public notification API for mutated items, so query
-updates replace the store contents while preserving per-row UI state:
+A query change affects **every** row, including off-screen ones — so unlike the
+burst toggle this cannot be handled purely on live widgets. The model must be
+updated for all items; on-screen rows must additionally be re-bound.
+
+**Step 1 — update the model in place (all items, cheap):**
 
 ```rust
-let mut next_items = Vec::with_capacity(typed_view.len() as usize);
 for item in typed_view.iter() {
-    let mut next = item.borrow().clone();
-    next.highlight_query = new_query.clone();
-    next_items.push(next);
+    item.borrow_mut().highlight_query = new_query.clone();
 }
-typed_view.clear();
-typed_view.extend_from_iter(next_items);
 ```
 
-This is O(n) in data items but still only realizes viewport rows. It avoids
-depending on private `gio::ListStore` internals and keeps the spec aligned with
-Relm4 0.10.1.
+`TypedListItem::borrow_mut()` mutates the wrapped value without reallocating the
+`gio::Object` wrappers. Off-screen rows need nothing more — `bind()` reads the
+updated `highlight_query` when they scroll in.
+
+**Step 2 — refresh the on-screen rows.** `TypedListView` exposes no single-item
+re-bind hook (its `store` is private). The available public primitive that
+forces a re-bind is `clear()` + `extend_from_iter()`. Used naively this is a
+**regression**: `clear()` empties the store, which collapses the
+`ScrolledWindow`'s vertical adjustment and resets the scroll position to the
+top. If the highlight refreshes while the user is scrolled into the transcript,
+the list jumps to the top.
+
+The fix is to save and restore the scroll position around the refresh:
+
+```rust
+let vadj = scrolled_window.vadjustment();
+let saved_value = vadj.value();
+
+let refreshed: Vec<_> = typed_view.iter().map(|i| i.borrow().clone()).collect();
+typed_view.clear();
+typed_view.extend_from_iter(refreshed);
+
+// Restore after the next layout pass, once the adjustment upper has grown back.
+glib::idle_add_local_once(clone!(@strong vadj => move || {
+    vadj.set_value(saved_value.min(vadj.upper() - vadj.page_size()));
+}));
+```
+
+Step 1's in-place mutation is still done first so the cloned items in step 2
+already carry the new query.
+
+**Cost and caveat:** step 2 rebuilds all `n` `gio::Object` wrappers. This is
+acceptable for an explicit search submit / clear. If highlight is refreshed on
+every keystroke, the refresh must be debounced (a separate concern from this
+migration) — or replaced with a surgical `remove` + `insert` over only the
+visible index range, which avoids the full rebuild and the scroll-restore dance
+but requires computing that range from the `ListView`. Surgical refresh is the
+documented optimization path; the save/restore approach above is the v1 baseline.
 
 ---
 
