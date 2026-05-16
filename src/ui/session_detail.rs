@@ -1875,7 +1875,7 @@ impl SessionDetail {
 
     fn apply_highlight_query_to_typed_items(&self, query: Option<String>) {
         for item in self.messages.iter() {
-            item.borrow_mut().highlight_query = query.clone();
+            item.borrow_mut().apply_highlight_query(query.clone());
         }
     }
 

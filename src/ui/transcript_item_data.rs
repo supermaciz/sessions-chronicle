@@ -6,6 +6,7 @@ use relm4::binding::{Binding, BoolBinding};
 use crate::ui::session_detail::SessionDetailMsg;
 use crate::ui::transcript_row::{
     MessageItemInit, SubagentItemInit, ToolBurstItemInit, ToolCallItemInit, TranscriptItemInit,
+    count_tool_call_matches,
 };
 
 #[derive(Clone)]
@@ -101,6 +102,28 @@ impl TranscriptItemData {
             sender,
         }
     }
+
+    /// Apply a new transcript search query to this row.
+    ///
+    /// Tool bursts cache per-child and aggregate match counts that feed the
+    /// collapsed group badge, so the query is propagated to each child and
+    /// those counts are recomputed; otherwise the badge would keep showing
+    /// stale counts from whatever query was active when the row was built.
+    pub fn apply_highlight_query(&mut self, query: Option<String>) {
+        self.highlight_query = query.clone();
+
+        if let TranscriptItemKind::ToolBurst(burst) = &mut self.kind {
+            for tool_call in &mut burst.tool_calls {
+                tool_call.highlight_query = query.clone();
+            }
+            burst.child_match_counts = burst
+                .tool_calls
+                .iter()
+                .map(count_tool_call_matches)
+                .collect();
+            burst.match_count = burst.child_match_counts.iter().sum();
+        }
+    }
 }
 
 #[cfg(test)]
@@ -152,6 +175,57 @@ mod tests {
                 assert_eq!(message.preview.model, preview.model);
             }
             other => panic!("expected message item, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn apply_highlight_query_recomputes_tool_burst_match_counts() {
+        use crate::models::ToolCallStatus;
+        use crate::ui::transcript_row::{ToolCallItemInit, build_tool_burst_init};
+
+        let tool_call = ToolCallItemInit {
+            item_index: 1,
+            transcript_item_index: 10,
+            session_id: "session-1".to_string(),
+            tool_call_id: "call-1".to_string(),
+            tool_name: "Read".to_string(),
+            status: ToolCallStatus::Completed,
+            preview: Some("src/needle.rs:1-20".to_string()),
+            summary: None,
+            duration_ms: None,
+            highlight_query: None,
+            reasoning_preview: ReasoningPreview::default(),
+        };
+        let burst = build_tool_burst_init(4, vec![tool_call], false);
+        assert_eq!(
+            burst.match_count, 0,
+            "burst starts with no query, no matches"
+        );
+
+        let (sender, _receiver) = relm4::channel::<SessionDetailMsg>();
+        let mut data = TranscriptItemData::from_init(TranscriptItemInit::ToolBurst(burst), sender);
+
+        data.apply_highlight_query(Some("needle".to_string()));
+
+        assert_eq!(data.highlight_query.as_deref(), Some("needle"));
+        match &data.kind {
+            TranscriptItemKind::ToolBurst(burst) => {
+                assert_eq!(
+                    burst.tool_calls[0].highlight_query.as_deref(),
+                    Some("needle"),
+                    "child tool calls must carry the new query"
+                );
+                assert_eq!(
+                    burst.child_match_counts,
+                    vec![1],
+                    "child match counts must be recomputed against the new query"
+                );
+                assert_eq!(
+                    burst.match_count, 1,
+                    "burst aggregate match count must reflect the new query"
+                );
+            }
+            other => panic!("expected tool burst, got {other:?}"),
         }
     }
 
