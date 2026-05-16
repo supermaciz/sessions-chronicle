@@ -434,7 +434,7 @@ fn build_message_page() -> MessagePageWidgets {
     root.add_css_class("message-row");
     root.set_spacing(4);
 
-    let header = gtk::Box::new(gtk::Orientation::Horizontal, 4);
+    let header = gtk::Box::new(gtk::Orientation::Horizontal, 8);
 
     let role_label = gtk::Label::new(None);
     role_label.add_css_class("caption");
@@ -477,6 +477,7 @@ fn build_message_page() -> MessagePageWidgets {
     expand_button.add_css_class("caption");
     expand_button.add_css_class("expand-toggle");
     expand_button.set_halign(gtk::Align::Start);
+    expand_button.set_margin_top(4);
     expand_button.set_visible(false);
     root.append(&expand_button);
 
@@ -579,10 +580,16 @@ fn build_tool_call_page_content(
     init: &crate::ui::transcript_row::ToolCallItemInit,
     highlight_query: Option<&str>,
 ) -> ToolCallPageContentRefs {
-    let root = gtk::Box::new(gtk::Orientation::Vertical, 4);
+    let root = gtk::Box::new(gtk::Orientation::Vertical, 0);
     root.add_css_class("tool-call-row");
+    root.set_margin_top(2);
+    root.set_margin_bottom(2);
 
     let row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    row.set_margin_start(8);
+    row.set_margin_end(4);
+    row.set_margin_top(4);
+    row.set_margin_bottom(4);
 
     let icon = gtk::Image::new();
     icon.set_icon_name(Some(tool_name_icon(&init.tool_name, &TOOL_ICONS)));
@@ -646,8 +653,11 @@ fn build_tool_call_page_content(
         let preview_label = gtk::Label::new(None);
         preview_label.add_css_class("caption");
         preview_label.add_css_class("dim-label");
+        preview_label.add_css_class("preview-label");
         preview_label.set_halign(gtk::Align::Start);
         preview_label.set_xalign(0.0);
+        preview_label.set_margin_start(32);
+        preview_label.set_margin_bottom(4);
         preview_label.set_wrap(true);
         if let Some(query) = highlight_query {
             let (markup, _) = highlight::highlight_text(preview, query);
@@ -688,6 +698,10 @@ fn build_subagent_page_content(
 ) -> SubagentPageContentRefs {
     let root = gtk::Box::new(gtk::Orientation::Horizontal, 8);
     root.add_css_class("subagent-row");
+    root.set_margin_start(8);
+    root.set_margin_end(4);
+    root.set_margin_top(4);
+    root.set_margin_bottom(4);
 
     let icon = gtk::Image::new();
     icon.set_icon_name(Some(TOOL_ICONS.agent));
@@ -1397,6 +1411,42 @@ mod tests {
         assert!(
             spacer.is::<gtk::Box>() && spacer.hexpands(),
             "a hexpanding spacer must sit just before the trailing inspect button"
+        );
+    }
+
+    #[gtk::test]
+    fn tool_call_page_indents_preview_to_align_with_name() {
+        let (sender, receiver) = relm4::channel::<SessionDetailMsg>();
+        let mut tool_call =
+            TranscriptItemData::from_init(TranscriptItemInit::ToolCall(tool_call_init()), sender);
+
+        let list_item: gtk::ListItem = gtk::glib::Object::builder().build();
+        let (_, mut widgets) = TranscriptItemData::setup(&list_item);
+        let mut root = gtk::Box::new(gtk::Orientation::Vertical, 0);
+
+        tool_call.bind(&mut widgets, &mut root);
+        let _ = gtk::glib::MainContext::default().block_on(receiver.recv());
+
+        let content = widgets
+            .tool_call
+            .root
+            .first_child()
+            .expect("tool call content")
+            .downcast::<gtk::Box>()
+            .expect("tool call content box");
+        let preview = collect_box_children(&content)[1]
+            .clone()
+            .downcast::<gtk::Label>()
+            .expect("tool call preview label");
+
+        assert!(
+            preview.has_css_class("preview-label"),
+            "preview must carry the preview-label style class"
+        );
+        assert_eq!(
+            preview.margin_start(),
+            32,
+            "preview must be indented to align with the tool name, not the icon"
         );
     }
 
