@@ -15,6 +15,15 @@
   margin-bottom: 8px;
 }
 
+/* Transcript list blends into the window background so the gaps between
+   message rows match the message-row backdrop in light and dark mode.
+   A plain ListView otherwise paints @view_bg_color, which is darker than
+   the window background in dark mode. */
+.transcript-list,
+.transcript-list > row {
+  background-color: transparent;
+}
+
 /* Role-specific accent colors */
 .role-user {
   border-left-color: #3584e4;

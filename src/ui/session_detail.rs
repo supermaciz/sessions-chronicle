@@ -581,7 +581,9 @@ impl Component for SessionDetail {
                             gtk::Separator {},
 
                             #[local_ref]
-                            messages_box -> gtk::ListView {},
+                            messages_box -> gtk::ListView {
+                                add_css_class: "transcript-list",
+                            },
                         },
                     },
                     }, // close inspector_split (adw::OverlaySplitView)
