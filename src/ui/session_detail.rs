@@ -4,6 +4,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use adw::prelude::BreakpointBinExt;
 use gtk::glib;
 use gtk::prelude::*;
 use relm4::binding::Binding;
@@ -265,6 +266,15 @@ impl Component for SessionDetail {
 
                     #[name = "detail_overlay"]
                     gtk::Overlay {
+
+                    #[wrap(Some)]
+                    #[name = "inspector_breakpoint_bin"]
+                    set_child = &adw::BreakpointBin {
+                        set_vexpand: true,
+                        // BreakpointBin only collapses the split once it can be
+                        // allocated narrower than the split's natural width, so
+                        // it needs a small minimum size of its own.
+                        set_width_request: 360,
 
                     #[wrap(Some)]
                     #[name = "inspector_split"]
@@ -587,6 +597,7 @@ impl Component for SessionDetail {
                         },
                     },
                     }, // close inspector_split (adw::OverlaySplitView)
+                    }, // close inspector_breakpoint_bin (adw::BreakpointBin)
 
                     // Floating search navigation bar
                     add_overlay = &gtk::Box {
@@ -736,6 +747,25 @@ impl Component for SessionDetail {
                     ))
                     .ok();
             });
+
+        // Collapse the inspector into an overlay when the detail area is too
+        // narrow to host the 360px sidebar beside a readable transcript.
+        // Without this the split keeps the sidebar inline and forces the
+        // window past its minimum width, which in turn disrupts the header bar.
+        //
+        // The threshold sits well above the inline layout's natural minimum
+        // (360px sidebar + a usable transcript): if it were close to that
+        // minimum, there would be a band of widths where the split is still
+        // inline but allocated below its minimum, rendering the pane wrong.
+        let inspector_breakpoint = adw::Breakpoint::new(adw::BreakpointCondition::new_length(
+            adw::BreakpointConditionLengthType::MaxWidth,
+            860.0,
+            adw::LengthUnit::Sp,
+        ));
+        inspector_breakpoint.add_setter(&widgets.inspector_split, "collapsed", Some(&true.into()));
+        widgets
+            .inspector_breakpoint_bin
+            .add_breakpoint(inspector_breakpoint);
 
         ComponentParts { model, widgets }
     }
