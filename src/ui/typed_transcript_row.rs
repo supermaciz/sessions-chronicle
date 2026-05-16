@@ -56,7 +56,7 @@ pub struct ToolBurstPageWidgets {
     root: gtk::Box,
     header_button: gtk::Button,
     arrow_icon: gtk::Image,
-    header_flow: gtk::FlowBox,
+    header_box: gtk::Box,
     revealer: gtk::Revealer,
     children: gtk::Box,
     reveal_binding: Option<gtk::glib::Binding>,
@@ -270,7 +270,7 @@ impl TranscriptItemData {
             return;
         };
 
-        rebuild_tool_burst_header(&widgets.header_flow, burst);
+        rebuild_tool_burst_header(&widgets.header_box, burst);
         widgets
             .header_button
             .update_property(&[gtk::accessible::Property::Label(
@@ -391,7 +391,7 @@ impl TranscriptItemData {
         if let Some(binding) = widgets.reveal_binding.take() {
             binding.unbind();
         }
-        clear_flow_box_children(&widgets.header_flow);
+        clear_box_children(&widgets.header_box);
         clear_box_children(&widgets.children);
         widgets.children_built_for.set(None);
         set_tool_burst_expanded_state(
@@ -531,15 +531,10 @@ fn build_tool_burst_page() -> ToolBurstPageWidgets {
     arrow_icon.add_css_class("tool-call-group-arrow");
     header_row.append(&arrow_icon);
 
-    let header_flow = gtk::FlowBox::new();
-    header_flow.set_selection_mode(gtk::SelectionMode::None);
-    header_flow.set_row_spacing(4);
-    header_flow.set_column_spacing(8);
-    header_flow.set_min_children_per_line(1);
-    header_flow.set_max_children_per_line(u32::MAX);
-    header_flow.set_hexpand(true);
-    header_flow.add_css_class("tool-call-group-header");
-    header_row.append(&header_flow);
+    let header_box = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    header_box.set_hexpand(true);
+    header_box.add_css_class("tool-call-group-header");
+    header_row.append(&header_box);
     header_button.set_child(Some(&header_row));
     root.append(&header_button);
 
@@ -553,7 +548,7 @@ fn build_tool_burst_page() -> ToolBurstPageWidgets {
         root,
         header_button,
         arrow_icon,
-        header_flow,
+        header_box,
         revealer,
         children,
         reveal_binding: None,
@@ -740,10 +735,10 @@ fn build_subagent_page_content(
 }
 
 fn rebuild_tool_burst_header(
-    flow: &gtk::FlowBox,
+    header: &gtk::Box,
     burst: &crate::ui::transcript_row::ToolBurstItemInit,
 ) {
-    clear_flow_box_children(flow);
+    clear_box_children(header);
 
     for (name, count) in &burst.category_counts {
         let pill_box = gtk::Box::new(gtk::Orientation::Horizontal, 4);
@@ -758,14 +753,14 @@ fn rebuild_tool_burst_header(
         let pill_label = gtk::Label::new(Some(&format!("{count} {name}")));
         pill_box.append(&pill_label);
 
-        flow.insert(&pill_box, -1);
+        header.append(&pill_box);
     }
 
     if let Some(ms) = burst.total_duration_ms {
         let duration = gtk::Label::new(Some(&format_duration_ms(ms)));
         duration.add_css_class("caption");
         duration.add_css_class("dim-label");
-        flow.insert(&duration, -1);
+        header.append(&duration);
     }
 
     if let Some(reasoning_label) = format_reasoning_burst_label(
@@ -780,13 +775,13 @@ fn rebuild_tool_burst_header(
         } else {
             badge.add_css_class("reasoning-pill-encrypted");
         }
-        flow.insert(&badge, -1);
+        header.append(&badge);
     }
 
     let total = gtk::Label::new(Some(&format!("{} tool calls", burst.tool_calls.len())));
     total.add_css_class("caption");
     total.add_css_class("dim-label");
-    flow.insert(&total, -1);
+    header.append(&total);
 
     if burst.error_count > 0 {
         let error_label = gtk::Label::new(Some(&format!(
@@ -800,7 +795,7 @@ fn rebuild_tool_burst_header(
         )));
         error_label.add_css_class("caption");
         error_label.add_css_class("status-error");
-        flow.insert(&error_label, -1);
+        header.append(&error_label);
     }
 
     let burst_match_count: usize = burst.child_match_counts.iter().sum();
@@ -812,7 +807,7 @@ fn rebuild_tool_burst_header(
         badge.update_property(&[gtk::accessible::Property::Label(
             &format_tool_burst_match_badge_accessible_label(burst_match_count),
         )]);
-        flow.insert(&badge, -1);
+        header.append(&badge);
     }
 }
 
@@ -850,12 +845,6 @@ fn disconnect_handlers(handlers: &mut Vec<(gtk::glib::Object, gtk::glib::SignalH
 fn clear_box_children(container: &gtk::Box) {
     while let Some(child) = container.first_child() {
         container.remove(&child);
-    }
-}
-
-fn clear_flow_box_children(flow: &gtk::FlowBox) {
-    while let Some(child) = flow.first_child() {
-        flow.remove(&child);
     }
 }
 
@@ -1449,13 +1438,9 @@ mod tests {
 
         let pill_box = widgets
             .tool_burst
-            .header_flow
+            .header_box
             .first_child()
-            .expect("category pill flowbox child")
-            .downcast::<gtk::FlowBoxChild>()
-            .expect("flowbox child")
-            .child()
-            .expect("pill box")
+            .expect("category pill box")
             .downcast::<gtk::Box>()
             .expect("pill box");
         assert!(pill_box.has_css_class("tool-call-group-pill"));

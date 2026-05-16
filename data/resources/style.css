@@ -177,12 +177,6 @@
   min-height: 0;
 }
 
-.tool-call-group-header > flowboxchild {
-  padding: 0;
-  min-width: 0;
-  min-height: 0;
-}
-
 .tool-call-group-arrow {
   margin-top: 4px;
 }
