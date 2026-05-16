@@ -363,7 +363,7 @@ pub fn build_tool_burst_init(
     }
 }
 
-fn format_reasoning_burst_label(
+pub(crate) fn format_reasoning_burst_label(
     visible_reasoning_child_count: usize,
     encrypted_only_child_count: usize,
 ) -> Option<String> {
@@ -376,7 +376,7 @@ fn format_reasoning_burst_label(
     }
 }
 
-fn format_tool_burst_accessible_label(
+pub(crate) fn format_tool_burst_accessible_label(
     category_counts: &[(String, usize)],
     total_tool_calls: usize,
     error_count: usize,

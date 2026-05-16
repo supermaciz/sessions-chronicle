@@ -12,7 +12,8 @@ use crate::ui::highlight;
 use crate::ui::session_detail::SessionDetailMsg;
 use crate::ui::transcript_item_data::{TranscriptItemData, TranscriptItemKind};
 use crate::ui::transcript_row::{
-    TOOL_ICONS, TranscriptRowBuildKind, format_tool_burst_match_badge_accessible_label,
+    TOOL_ICONS, TranscriptRowBuildKind, format_reasoning_burst_label,
+    format_tool_burst_accessible_label, format_tool_burst_match_badge_accessible_label,
     model_label_text, populate_tool_burst_children, render_content,
 };
 
@@ -55,8 +56,7 @@ pub struct ToolBurstPageWidgets {
     root: gtk::Box,
     header_button: gtk::Button,
     arrow_icon: gtk::Image,
-    summary_label: gtk::Label,
-    meta_box: gtk::Box,
+    header_flow: gtk::FlowBox,
     revealer: gtk::Revealer,
     children: gtk::Box,
     reveal_binding: Option<gtk::glib::Binding>,
@@ -270,11 +270,16 @@ impl TranscriptItemData {
             return;
         };
 
-        widgets.summary_label.set_label(&format_tool_burst_summary(
-            &burst.category_counts,
-            burst.error_count,
-        ));
-        rebuild_tool_burst_meta_box(&widgets.meta_box, burst);
+        rebuild_tool_burst_header(&widgets.header_flow, burst);
+        widgets
+            .header_button
+            .update_property(&[gtk::accessible::Property::Label(
+                &format_tool_burst_accessible_label(
+                    &burst.category_counts,
+                    burst.tool_calls.len(),
+                    burst.error_count,
+                ),
+            )]);
         clear_box_children(&widgets.children);
         widgets.children_built_for.set(None);
         set_tool_burst_expanded_state(
@@ -386,6 +391,7 @@ impl TranscriptItemData {
         if let Some(binding) = widgets.reveal_binding.take() {
             binding.unbind();
         }
+        clear_flow_box_children(&widgets.header_flow);
         clear_box_children(&widgets.children);
         widgets.children_built_for.set(None);
         set_tool_burst_expanded_state(
@@ -525,14 +531,15 @@ fn build_tool_burst_page() -> ToolBurstPageWidgets {
     arrow_icon.add_css_class("tool-call-group-arrow");
     header_row.append(&arrow_icon);
 
-    let summary_label = gtk::Label::new(None);
-    summary_label.set_halign(gtk::Align::Start);
-    summary_label.set_hexpand(true);
-    summary_label.set_xalign(0.0);
-    header_row.append(&summary_label);
-
-    let meta_box = gtk::Box::new(gtk::Orientation::Horizontal, 4);
-    header_row.append(&meta_box);
+    let header_flow = gtk::FlowBox::new();
+    header_flow.set_selection_mode(gtk::SelectionMode::None);
+    header_flow.set_row_spacing(4);
+    header_flow.set_column_spacing(8);
+    header_flow.set_min_children_per_line(1);
+    header_flow.set_max_children_per_line(u32::MAX);
+    header_flow.set_hexpand(true);
+    header_flow.add_css_class("tool-call-group-header");
+    header_row.append(&header_flow);
     header_button.set_child(Some(&header_row));
     root.append(&header_button);
 
@@ -546,8 +553,7 @@ fn build_tool_burst_page() -> ToolBurstPageWidgets {
         root,
         header_button,
         arrow_icon,
-        summary_label,
-        meta_box,
+        header_flow,
         revealer,
         children,
         reveal_binding: None,
@@ -733,56 +739,80 @@ fn build_subagent_page_content(
     }
 }
 
-fn format_tool_burst_summary(category_counts: &[(String, usize)], error_count: usize) -> String {
-    let mut parts = vec![format!(
-        "{} tool calls",
-        category_counts
-            .iter()
-            .map(|(_, count)| count)
-            .sum::<usize>()
-    )];
-
-    if !category_counts.is_empty() {
-        parts.push(
-            category_counts
-                .iter()
-                .map(|(name, count)| format!("{count} {name}"))
-                .collect::<Vec<_>>()
-                .join(", "),
-        );
-    }
-
-    if error_count > 0 {
-        parts.push(format!(
-            "{error_count} {}",
-            if error_count == 1 { "error" } else { "errors" }
-        ));
-    }
-
-    parts.join(" - ")
-}
-
-fn rebuild_tool_burst_meta_box(
-    meta_box: &gtk::Box,
+fn rebuild_tool_burst_header(
+    flow: &gtk::FlowBox,
     burst: &crate::ui::transcript_row::ToolBurstItemInit,
 ) {
-    clear_box_children(meta_box);
+    clear_flow_box_children(flow);
+
+    for (name, count) in &burst.category_counts {
+        let pill_box = gtk::Box::new(gtk::Orientation::Horizontal, 4);
+        pill_box.add_css_class("pill");
+        pill_box.add_css_class("tool-call-group-pill");
+
+        let pill_icon = gtk::Image::new();
+        pill_icon.set_icon_name(Some(tool_name_icon(name, &TOOL_ICONS)));
+        pill_icon.set_pixel_size(12);
+        pill_box.append(&pill_icon);
+
+        let pill_label = gtk::Label::new(Some(&format!("{count} {name}")));
+        pill_box.append(&pill_label);
+
+        flow.insert(&pill_box, -1);
+    }
 
     if let Some(ms) = burst.total_duration_ms {
         let duration = gtk::Label::new(Some(&format_duration_ms(ms)));
         duration.add_css_class("caption");
         duration.add_css_class("dim-label");
-        meta_box.append(&duration);
+        flow.insert(&duration, -1);
     }
 
-    if burst.match_count > 0 {
-        let badge = gtk::Label::new(Some(&burst.match_count.to_string()));
+    if let Some(reasoning_label) = format_reasoning_burst_label(
+        burst.visible_reasoning_child_count,
+        burst.encrypted_only_child_count,
+    ) {
+        let badge = gtk::Label::new(Some(&reasoning_label));
+        badge.add_css_class("pill");
+        badge.add_css_class("tool-call-group-pill");
+        if burst.visible_reasoning_child_count > 0 {
+            badge.add_css_class("reasoning-pill");
+        } else {
+            badge.add_css_class("reasoning-pill-encrypted");
+        }
+        flow.insert(&badge, -1);
+    }
+
+    let total = gtk::Label::new(Some(&format!("{} tool calls", burst.tool_calls.len())));
+    total.add_css_class("caption");
+    total.add_css_class("dim-label");
+    flow.insert(&total, -1);
+
+    if burst.error_count > 0 {
+        let error_label = gtk::Label::new(Some(&format!(
+            "{} {}",
+            burst.error_count,
+            if burst.error_count == 1 {
+                "error"
+            } else {
+                "errors"
+            }
+        )));
+        error_label.add_css_class("caption");
+        error_label.add_css_class("status-error");
+        flow.insert(&error_label, -1);
+    }
+
+    let burst_match_count: usize = burst.child_match_counts.iter().sum();
+    if burst_match_count > 0 {
+        let badge = gtk::Label::new(Some(&format!("{burst_match_count} matches")));
         badge.add_css_class("pill");
         badge.add_css_class("accent");
+        badge.add_css_class("tool-call-group-pill");
         badge.update_property(&[gtk::accessible::Property::Label(
-            &format_tool_burst_match_badge_accessible_label(burst.match_count),
+            &format_tool_burst_match_badge_accessible_label(burst_match_count),
         )]);
-        meta_box.append(&badge);
+        flow.insert(&badge, -1);
     }
 }
 
@@ -820,6 +850,12 @@ fn disconnect_handlers(handlers: &mut Vec<(gtk::glib::Object, gtk::glib::SignalH
 fn clear_box_children(container: &gtk::Box) {
     while let Some(child) = container.first_child() {
         container.remove(&child);
+    }
+}
+
+fn clear_flow_box_children(flow: &gtk::FlowBox) {
+    while let Some(child) = flow.first_child() {
+        flow.remove(&child);
     }
 }
 
@@ -1395,6 +1431,44 @@ mod tests {
 
         tool_burst_header_button(&widgets.tool_burst.root).emit_clicked();
         assert_eq!(arrow.icon_name().as_deref(), Some("pan-down-symbolic"));
+    }
+
+    #[gtk::test]
+    fn tool_burst_header_renders_category_pill_with_icon() {
+        let (sender, _receiver) = relm4::channel::<SessionDetailMsg>();
+        let mut burst = TranscriptItemData::from_init(
+            TranscriptItemInit::ToolBurst(tool_burst_init(false)),
+            sender,
+        );
+
+        let list_item: gtk::ListItem = gtk::glib::Object::builder().build();
+        let (_, mut widgets) = TranscriptItemData::setup(&list_item);
+        let mut root = gtk::Box::new(gtk::Orientation::Vertical, 0);
+
+        burst.bind(&mut widgets, &mut root);
+
+        let pill_box = widgets
+            .tool_burst
+            .header_flow
+            .first_child()
+            .expect("category pill flowbox child")
+            .downcast::<gtk::FlowBoxChild>()
+            .expect("flowbox child")
+            .child()
+            .expect("pill box")
+            .downcast::<gtk::Box>()
+            .expect("pill box");
+        assert!(pill_box.has_css_class("tool-call-group-pill"));
+
+        let pill_icon = pill_box
+            .first_child()
+            .expect("pill icon")
+            .downcast::<gtk::Image>()
+            .expect("pill icon");
+        assert!(
+            pill_icon.icon_name().is_some(),
+            "category pill must carry a tool icon"
+        );
     }
 
     #[gtk::test]
