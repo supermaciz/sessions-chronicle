@@ -1450,6 +1450,24 @@ impl Component for SessionDetail {
     }
 }
 
+/// Search highlighting must stay aligned with match navigation: `Next` /
+/// `Previous` and the match counter are produced from `find_session_match_positions`,
+/// which only reports message-kind FTS matches. Highlighting tool calls, tool
+/// bursts, or unmatched messages would show highlights and burst match badges
+/// that navigation can never reach and the counter never includes.
+fn highlight_query_for_navigable_row(
+    is_message: bool,
+    transcript_item_index: i64,
+    matched_item_indexes: &BTreeSet<i64>,
+    highlight_query: Option<&str>,
+) -> Option<String> {
+    if is_message && matched_item_indexes.contains(&transcript_item_index) {
+        highlight_query.map(str::to_string)
+    } else {
+        None
+    }
+}
+
 impl SessionDetail {
     fn current_match_item_indexes(&self) -> BTreeSet<i64> {
         self.match_positions
@@ -1496,7 +1514,7 @@ impl SessionDetail {
         rows: Vec<crate::database::TranscriptItemRow>,
         session_id: &str,
         highlight_query: Option<String>,
-        _matched_item_indexes: &BTreeSet<i64>,
+        matched_item_indexes: &BTreeSet<i64>,
         db_path: Arc<PathBuf>,
         base_display_index: usize,
     ) -> PreparedTranscriptItems {
@@ -1508,7 +1526,15 @@ impl SessionDetail {
             display_targets_by_item_index
                 .extend(Self::display_targets_for_item(display_index, &item));
 
-            let item_highlight = highlight_query.clone();
+            let item_highlight = match &item {
+                DisplayTranscriptItem::Single(row) => highlight_query_for_navigable_row(
+                    row.kind == crate::models::TranscriptItemKind::Message,
+                    row.item_index,
+                    matched_item_indexes,
+                    highlight_query.as_deref(),
+                ),
+                DisplayTranscriptItem::ToolBurst(_) => None,
+            };
 
             items.push(transcript_item_init_from_display_item(
                 display_index,
@@ -1906,8 +1932,23 @@ impl SessionDetail {
     }
 
     fn apply_highlight_query_to_typed_items(&self, query: Option<String>) {
+        let matched_item_indexes = self.current_match_item_indexes();
         for item in self.messages.iter() {
-            item.borrow_mut().apply_highlight_query(query.clone());
+            let mut data = item.borrow_mut();
+            let is_message = matches!(
+                data.kind,
+                crate::ui::transcript_item_data::TranscriptItemKind::Message(_)
+            );
+            let item_query = match data.transcript_item_index {
+                Some(transcript_item_index) => highlight_query_for_navigable_row(
+                    is_message,
+                    transcript_item_index,
+                    &matched_item_indexes,
+                    query.as_deref(),
+                ),
+                None => None,
+            };
+            data.apply_highlight_query(item_query);
         }
     }
 
@@ -1998,12 +2039,15 @@ impl SessionDetail {
         Some((header_button, revealer))
     }
 
+    /// Resolves the named transcript row root from a [`gtk::ListView`] child.
+    ///
+    /// `GtkListView` wraps every factory-produced row in an internal
+    /// `GtkListItemWidget`; the row root we name `transcript-row-{index}` is
+    /// that wrapper's child, so the wrapper itself never carries the name.
+    /// Descend one level when a child exists, otherwise return the widget as-is.
     fn list_view_row_widget_from_child(obj: gtk::glib::Object) -> Option<gtk::Widget> {
-        if let Ok(list_item) = obj.clone().downcast::<gtk::ListItem>() {
-            return list_item.child();
-        }
-
-        obj.downcast::<gtk::Widget>().ok()
+        let widget = obj.downcast::<gtk::Widget>().ok()?;
+        Some(widget.first_child().unwrap_or(widget))
     }
 
     fn observed_row_widget_for_display_index(
@@ -2315,7 +2359,7 @@ mod tests {
     }
 
     #[test]
-    fn build_display_items_applies_search_highlight_query_to_all_rows() {
+    fn build_display_items_limits_search_highlight_to_navigable_matches() {
         let rows = vec![
             transcript_message_row(0, crate::models::Role::Assistant, "needle in counted row"),
             transcript_tool_row(1, "Read"),
@@ -2325,6 +2369,7 @@ mod tests {
                 "needle outside fts result",
             ),
         ];
+        // Only item 0 is an FTS match that Next/Previous can navigate to.
         let matched_item_indexes = BTreeSet::from([0_i64]);
 
         let prepared = SessionDetail::build_display_items(
@@ -2338,7 +2383,11 @@ mod tests {
 
         match &prepared.items[0] {
             TranscriptItemInit::Message(message) => {
-                assert_eq!(message.highlight_query.as_deref(), Some("needle"));
+                assert_eq!(
+                    message.highlight_query.as_deref(),
+                    Some("needle"),
+                    "a matched message row must be highlighted"
+                );
             }
             other => panic!(
                 "expected first item to be a message, got {:?}",
@@ -2348,7 +2397,11 @@ mod tests {
 
         match &prepared.items[1] {
             TranscriptItemInit::ToolCall(tool_call) => {
-                assert_eq!(tool_call.highlight_query.as_deref(), Some("needle"));
+                assert_eq!(
+                    tool_call.highlight_query.as_deref(),
+                    None,
+                    "tool-call rows are not in the FTS match list and must not be highlighted"
+                );
             }
             other => panic!(
                 "expected second item to be a tool call, got {:?}",
@@ -2358,7 +2411,11 @@ mod tests {
 
         match &prepared.items[2] {
             TranscriptItemInit::Message(message) => {
-                assert_eq!(message.highlight_query.as_deref(), Some("needle"));
+                assert_eq!(
+                    message.highlight_query.as_deref(),
+                    None,
+                    "a message row outside the FTS match list must not be highlighted"
+                );
             }
             other => panic!(
                 "expected third item to be a message, got {:?}",
@@ -2690,6 +2747,51 @@ mod tests {
     }
 
     #[gtk::test]
+    fn search_highlight_is_limited_to_navigable_message_matches() {
+        let temp_db = tempfile::NamedTempFile::new().expect("temp db");
+        seed_search_transcript(temp_db.path(), "test-session-123", 12, &[3, 9]);
+
+        let controller = SessionDetail::builder().launch(temp_db.path().to_path_buf());
+        controller.emit(SessionDetailMsg::SetSession {
+            session: Box::new(build_test_session(None, None, 0, 0, 0)),
+            search_query: None,
+        });
+        pump_main_context(|| {
+            let parts = controller.state().get();
+            !parts.model.loading_transcript && parts.model.loaded_count == 12
+        });
+
+        controller.emit(SessionDetailMsg::UpdateSearchQuery(Some(
+            "needle".to_string(),
+        )));
+        pump_main_context(|| {
+            let parts = controller.state().get();
+            parts.model.match_positions.len() == 2 && !parts.model.loading_transcript
+        });
+
+        let parts = controller.state().get();
+        let highlighted: Vec<(i64, bool)> = parts
+            .model
+            .messages
+            .iter()
+            .filter_map(|item| {
+                let data = item.borrow();
+                data.transcript_item_index
+                    .map(|idx| (idx, data.highlight_query.is_some()))
+            })
+            .collect();
+
+        assert_eq!(highlighted.len(), 12);
+        for (idx, has_highlight) in highlighted {
+            let is_navigable_match = idx == 3 || idx == 9;
+            assert_eq!(
+                has_highlight, is_navigable_match,
+                "row {idx} highlight must match whether Next/Previous can reach it"
+            );
+        }
+    }
+
+    #[gtk::test]
     fn stale_search_result_is_discarded() {
         let temp_db = tempfile::NamedTempFile::new().expect("temp db");
         seed_search_transcript(temp_db.path(), "test-session-123", 75, &[5]);
@@ -2731,6 +2833,57 @@ mod tests {
             .expect("direct widget child should resolve");
 
         assert_eq!(resolved, row);
+    }
+
+    /// Builds a realized `GtkListView` whose rows carry `transcript-row-{index}`
+    /// names, mirroring how the typed transcript view names its row roots.
+    fn realized_named_list_view(row_count: u32) -> (gtk::Window, gtk::ListView) {
+        let items: Vec<String> = (0..row_count).map(|i| i.to_string()).collect();
+        let item_refs: Vec<&str> = items.iter().map(String::as_str).collect();
+        let model = gtk::StringList::new(&item_refs);
+        let factory = gtk::SignalListItemFactory::new();
+        factory.connect_setup(|_, list_item| {
+            let list_item = list_item.downcast_ref::<gtk::ListItem>().unwrap();
+            list_item.set_child(Some(&gtk::Label::new(Some("row"))));
+        });
+        factory.connect_bind(|_, list_item| {
+            let list_item = list_item.downcast_ref::<gtk::ListItem>().unwrap();
+            let pos = list_item.position();
+            if let Some(child) = list_item.child() {
+                child.set_widget_name(&format!("{TRANSCRIPT_ROW_WIDGET_NAME_PREFIX}{pos}"));
+            }
+        });
+
+        let selection = gtk::NoSelection::new(Some(model));
+        let list_view = gtk::ListView::new(Some(selection), Some(factory));
+        let window = gtk::Window::new();
+        window.set_default_size(400, 600);
+        window.set_child(Some(&list_view));
+        window.present();
+
+        let deadline = std::time::Instant::now() + Duration::from_millis(800);
+        let context = gtk::glib::MainContext::default();
+        while std::time::Instant::now() < deadline && list_view.observe_children().n_items() == 0 {
+            context.iteration(true);
+        }
+
+        (window, list_view)
+    }
+
+    #[gtk::test]
+    fn observed_row_widget_finds_named_row_through_list_item_wrapper() {
+        let (window, list_view) = realized_named_list_view(3);
+
+        let resolved = SessionDetail::observed_row_widget_for_display_index(&list_view, 1)
+            .expect("row 1 widget must be resolvable from the realized ListView");
+        assert_eq!(
+            resolved.widget_name().as_str(),
+            "transcript-row-1",
+            "the resolved widget must be the named transcript row root, \
+             not the GtkListView's internal list-item wrapper"
+        );
+
+        window.destroy();
     }
 
     #[gtk::test]
