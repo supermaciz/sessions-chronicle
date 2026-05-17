@@ -601,6 +601,7 @@ fn build_tool_call_page_content(
     name_label.set_halign(gtk::Align::Start);
     name_label.set_hexpand(false);
     name_label.set_xalign(0.0);
+    name_label.set_ellipsize(gtk::pango::EllipsizeMode::End);
     if let Some(query) = highlight_query {
         let (markup, _) = highlight::highlight_text(&init.tool_name, query);
         name_label.set_markup(&markup);
@@ -658,7 +659,7 @@ fn build_tool_call_page_content(
         preview_label.set_xalign(0.0);
         preview_label.set_margin_start(32);
         preview_label.set_margin_bottom(4);
-        preview_label.set_wrap(true);
+        preview_label.set_ellipsize(gtk::pango::EllipsizeMode::End);
         if let Some(query) = highlight_query {
             let (markup, _) = highlight::highlight_text(preview, query);
             preview_label.set_markup(&markup);
@@ -712,6 +713,7 @@ fn build_subagent_page_content(
     title.set_halign(gtk::Align::Start);
     title.set_hexpand(false);
     title.set_xalign(0.0);
+    title.set_ellipsize(gtk::pango::EllipsizeMode::End);
     root.append(&title);
 
     let reasoning_button = if init.reasoning_preview.has_visible_reasoning {
@@ -1289,6 +1291,62 @@ mod tests {
         assert!(name_label.uses_markup());
     }
 
+    #[gtk::test]
+    fn tool_call_name_and_preview_truncate_overflow() {
+        let (sender, receiver) = relm4::channel::<SessionDetailMsg>();
+        let mut tool_call = TranscriptItemData::from_init(
+            TranscriptItemInit::ToolCall(ToolCallItemInit {
+                tool_name: "VeryLongToolNameThatShouldNotOverflowTheRow".to_string(),
+                preview: Some("a very long preview that should stay on one line".to_string()),
+                ..tool_call_init()
+            }),
+            sender,
+        );
+
+        let list_item: gtk::ListItem = gtk::glib::Object::builder().build();
+        let (_, mut widgets) = TranscriptItemData::setup(&list_item);
+        let mut root = gtk::Box::new(gtk::Orientation::Vertical, 0);
+
+        tool_call.bind(&mut widgets, &mut root);
+        let _ = gtk::glib::MainContext::default().block_on(receiver.recv());
+
+        let content = widgets
+            .tool_call
+            .root
+            .first_child()
+            .expect("tool call content")
+            .downcast::<gtk::Box>()
+            .expect("tool call content box");
+        let row = content
+            .first_child()
+            .expect("tool call row")
+            .downcast::<gtk::Box>()
+            .expect("tool call row box");
+        let name_label = collect_box_children(&row)[1]
+            .clone()
+            .downcast::<gtk::Label>()
+            .expect("tool name label");
+        let preview_label = collect_box_children(&content)[1]
+            .clone()
+            .downcast::<gtk::Label>()
+            .expect("tool call preview label");
+
+        assert_eq!(
+            name_label.ellipsize(),
+            gtk::pango::EllipsizeMode::End,
+            "tool name must truncate instead of overflowing"
+        );
+        assert_eq!(
+            preview_label.ellipsize(),
+            gtk::pango::EllipsizeMode::End,
+            "tool preview must truncate instead of wrapping"
+        );
+        assert!(
+            !preview_label.wraps(),
+            "tool preview must stay on a single line"
+        );
+    }
+
     fn collect_box_children(container: &gtk::Box) -> Vec<gtk::Widget> {
         let mut children = Vec::new();
         let mut child = container.first_child();
@@ -1411,6 +1469,42 @@ mod tests {
         assert!(
             spacer.is::<gtk::Box>() && spacer.hexpands(),
             "a hexpanding spacer must sit just before the trailing inspect button"
+        );
+    }
+
+    #[gtk::test]
+    fn subagent_title_truncates_overflow() {
+        let (sender, _receiver) = relm4::channel::<SessionDetailMsg>();
+        let mut subagent = TranscriptItemData::from_init(
+            TranscriptItemInit::Subagent(SubagentItemInit {
+                title: "Very long subagent title that should not overflow the row".to_string(),
+                ..subagent_init()
+            }),
+            sender,
+        );
+
+        let list_item: gtk::ListItem = gtk::glib::Object::builder().build();
+        let (_, mut widgets) = TranscriptItemData::setup(&list_item);
+        let mut root = gtk::Box::new(gtk::Orientation::Vertical, 0);
+
+        subagent.bind(&mut widgets, &mut root);
+
+        let row = widgets
+            .subagent
+            .root
+            .first_child()
+            .expect("subagent content")
+            .downcast::<gtk::Box>()
+            .expect("subagent row box");
+        let title_label = collect_box_children(&row)[1]
+            .clone()
+            .downcast::<gtk::Label>()
+            .expect("subagent title label");
+
+        assert_eq!(
+            title_label.ellipsize(),
+            gtk::pango::EllipsizeMode::End,
+            "subagent title must truncate instead of overflowing"
         );
     }
 
