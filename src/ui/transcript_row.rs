@@ -310,9 +310,10 @@ pub(crate) fn count_tool_call_matches(init: &ToolCallItemInit) -> usize {
         return 0;
     };
 
-    let mut count = highlight::find_case_insensitive_matches_in_text(&init.tool_name, query).len();
+    let mut count =
+        crate::utils::text_match::count_case_insensitive_matches(&init.tool_name, query);
     if let Some(text) = init.displayed_preview() {
-        count += highlight::find_case_insensitive_matches_in_text(text, query).len();
+        count += crate::utils::text_match::count_case_insensitive_matches(text, query);
     }
     count
 }

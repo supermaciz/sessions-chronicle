@@ -291,8 +291,8 @@ pub fn find_session_match_positions(
         return Ok(Vec::new());
     }
 
-    match find_session_match_positions_with_query(db, session_id, query) {
-        Ok(positions) => Ok(positions),
+    let matched_messages = match find_session_matched_messages(db, session_id, query) {
+        Ok(messages) => messages,
         Err(err) => {
             if let Some(sanitized) = sanitize_search_query(query) {
                 tracing::warn!(
@@ -300,15 +300,15 @@ pub fn find_session_match_positions(
                     sanitized,
                     err
                 );
-                match find_session_match_positions_with_query(db, session_id, &sanitized) {
-                    Ok(positions) => Ok(positions),
+                match find_session_matched_messages(db, session_id, &sanitized) {
+                    Ok(messages) => messages,
                     Err(retry_err) => {
                         tracing::warn!(
                             "Sanitized session detail search query failed '{}': {}",
                             sanitized,
                             retry_err
                         );
-                        Ok(Vec::new())
+                        return Ok(Vec::new());
                     }
                 }
             } else {
@@ -316,19 +316,44 @@ pub fn find_session_match_positions(
                     "Session detail search query failed and could not be sanitized: {}",
                     err
                 );
-                Ok(Vec::new())
+                return Ok(Vec::new());
             }
         }
+    };
+
+    // Expand each matching message into one position per highlighted
+    // occurrence, so the `X / Y` counter and Next/Previous step in lockstep
+    // with the spans the user sees. Occurrences are counted with the original
+    // query (never the sanitized FTS variant) to match the transcript
+    // highlighter exactly; a message that matches FTS but contains no literal
+    // occurrence contributes nothing, just as it shows no highlight.
+    let mut positions = Vec::new();
+    for message in matched_messages {
+        let occurrences =
+            crate::utils::text_match::count_case_insensitive_matches(&message.content, query);
+        for _ in 0..occurrences {
+            positions.push(MatchPosition {
+                item_index: message.item_index,
+            });
+        }
     }
+
+    Ok(positions)
 }
 
-fn find_session_match_positions_with_query(
+/// A transcript message item whose content matched the FTS query.
+struct MatchedMessage {
+    item_index: i64,
+    content: String,
+}
+
+fn find_session_matched_messages(
     db: &Connection,
     session_id: &str,
-    query: &str,
-) -> Result<Vec<MatchPosition>> {
+    fts_query: &str,
+) -> Result<Vec<MatchedMessage>> {
     let mut stmt = db.prepare(
-        "SELECT ti.item_index
+        "SELECT ti.item_index, m.content
          FROM messages_fts
          JOIN messages m ON m.id = messages_fts.rowid
          JOIN transcript_items ti
@@ -340,18 +365,19 @@ fn find_session_match_positions_with_query(
          ORDER BY ti.item_index ASC",
     )?;
 
-    let rows = stmt.query_map(rusqlite::params![query, session_id], |row| {
-        Ok(MatchPosition {
+    let rows = stmt.query_map(rusqlite::params![fts_query, session_id], |row| {
+        Ok(MatchedMessage {
             item_index: row.get(0)?,
+            content: row.get(1)?,
         })
     })?;
 
-    let mut positions = Vec::new();
+    let mut messages = Vec::new();
     for row in rows {
-        positions.push(row?);
+        messages.push(row?);
     }
 
-    Ok(positions)
+    Ok(messages)
 }
 
 fn search_sessions_with_query(
