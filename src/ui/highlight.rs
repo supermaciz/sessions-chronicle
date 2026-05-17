@@ -13,7 +13,7 @@ pub fn highlight_text(text: &str, query: &str) -> (String, usize) {
         return (pango_escape(text), 0);
     }
 
-    let matches = find_case_insensitive_matches_in_text(text, query);
+    let matches = crate::utils::text_match::find_case_insensitive_matches(text, query);
     let mut result = String::with_capacity(text.len() * 2);
     let mut pos = 0usize;
 
@@ -37,52 +37,6 @@ pub fn highlight_text(text: &str, query: &str) -> (String, usize) {
     result.push_str(&pango_escape(&text[pos..]));
 
     (result, matches.len())
-}
-
-fn fold_query_chars(query: &str) -> Vec<char> {
-    query.chars().flat_map(char::to_lowercase).collect()
-}
-
-pub fn find_case_insensitive_matches_in_text(text: &str, query: &str) -> Vec<(usize, usize)> {
-    let mut folded_units: Vec<(char, usize, usize)> = Vec::new();
-    for (start, ch) in text.char_indices() {
-        let end = start + ch.len_utf8();
-        for lower in ch.to_lowercase() {
-            folded_units.push((lower, start, end));
-        }
-    }
-
-    let query_chars = fold_query_chars(query);
-    find_case_insensitive_matches_in_folded_units(&folded_units, &query_chars)
-}
-
-fn find_case_insensitive_matches_in_folded_units(
-    folded_units: &[(char, usize, usize)],
-    query_chars: &[char],
-) -> Vec<(usize, usize)> {
-    if query_chars.is_empty() || folded_units.is_empty() || query_chars.len() > folded_units.len() {
-        return Vec::new();
-    }
-
-    let mut matches = Vec::new();
-    let mut i = 0usize;
-    while i + query_chars.len() <= folded_units.len() {
-        let is_match = folded_units[i..i + query_chars.len()]
-            .iter()
-            .zip(query_chars.iter())
-            .all(|((ch, _, _), q)| ch == q);
-
-        if is_match {
-            let start = folded_units[i].1;
-            let end = folded_units[i + query_chars.len() - 1].2;
-            matches.push((start, end));
-            i += query_chars.len();
-        } else {
-            i += 1;
-        }
-    }
-
-    matches
 }
 
 #[cfg(test)]

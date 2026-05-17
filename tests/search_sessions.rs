@@ -403,6 +403,25 @@ fn find_session_match_positions_returns_ordered_message_matches() {
 }
 
 #[test]
+fn find_session_match_positions_emits_one_position_per_occurrence() {
+    let db = TempDatabase::new();
+    seed_match_session(&db, "session-occ", "claude_code", 100);
+    insert_message_item(&db, "session-occ", 0, 2, "needle once here");
+    insert_message_item(&db, "session-occ", 1, 5, "needle and needle and needle");
+
+    let positions = find_session_match_positions(&db.connection, "session-occ", "needle")
+        .expect("match position query should succeed");
+    let item_indexes: Vec<i64> = positions
+        .iter()
+        .map(|position| position.item_index)
+        .collect();
+
+    // The counter and Next/Previous step per highlighted occurrence: item 2
+    // contains "needle" once, item 5 contains it three times.
+    assert_eq!(item_indexes, vec![2, 5, 5, 5]);
+}
+
+#[test]
 fn find_session_match_positions_filters_by_session() {
     let db = TempDatabase::new();
     seed_match_session(&db, "session-one", "claude_code", 100);
@@ -421,7 +440,9 @@ fn find_session_match_positions_filters_by_session() {
 fn find_session_match_positions_retries_sanitized_invalid_query() {
     let db = TempDatabase::new();
     seed_match_session(&db, "session-sanitize", "claude_code", 100);
-    insert_message_item(&db, "session-sanitize", 0, 3, "alpha survives sanitization");
+    // The raw query `"alpha` is invalid FTS syntax; the sanitized retry (`alpha`)
+    // finds this message, and occurrences are then counted with the raw query.
+    insert_message_item(&db, "session-sanitize", 0, 3, "they typed \"alpha here");
 
     let positions = find_session_match_positions(&db.connection, "session-sanitize", "\"alpha")
         .expect("sanitized query should not surface an FTS syntax error");

@@ -13,4 +13,6 @@ pub mod tool_inspector_pane;
 pub mod tool_preview;
 pub mod tool_renderers;
 pub mod transcript_display;
+pub mod transcript_item_data;
 pub mod transcript_row;
+pub mod typed_transcript_row;

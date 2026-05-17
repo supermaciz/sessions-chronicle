@@ -1,65 +1,54 @@
 use std::cell::Cell;
-use std::collections::{BTreeMap, BTreeSet, VecDeque};
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
-use std::rc::Rc;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use adw::prelude::BreakpointBinExt;
 use gtk::glib;
 use gtk::prelude::*;
-use relm4::factory::FactoryVecDeque;
+use relm4::binding::Binding;
+use relm4::typed_view::list::TypedListView;
 use relm4::{
     Component, ComponentController, ComponentParts, ComponentSender, Controller, RelmWidgetExt,
     adw, gtk,
 };
 
-use crate::database::{MatchPosition, find_session_match_positions, load_transcript_items};
+use crate::database::{
+    MatchPosition, find_session_match_positions, load_all_transcript_items,
+    load_message_full_content,
+};
 use crate::models::Session;
 use crate::ui::activity_bar::SessionActivityBar;
 use crate::ui::tool_inspector_pane::{
     ToolInspectorPane, ToolInspectorPaneMsg, ToolInspectorPaneOutput,
 };
-use crate::ui::transcript_display::{
-    DisplayTranscriptItem, group_transcript_rows, regroup_boundary, trailing_tool_call_rows,
-    trailing_tool_rows_from_display,
-};
+use crate::ui::transcript_display::{DisplayTranscriptItem, group_transcript_rows};
+use crate::ui::transcript_item_data::TranscriptItemData;
 use crate::ui::transcript_row::{
-    TranscriptItemInit, TranscriptRow, TranscriptRowBuildKind, TranscriptRowOutput,
-    transcript_item_init_from_display_item,
+    TranscriptItemInit, TranscriptRowBuildKind, transcript_item_init_from_display_item,
 };
+use crate::ui::typed_transcript_row::TRANSCRIPT_ROW_WIDGET_NAME_PREFIX;
 
-const INITIAL_PAGE_SIZE: usize = 75;
-const NEXT_PAGE_SIZE: usize = 100;
 const PREVIEW_LEN: usize = 2000;
-// Every mounted row participates in transcript container Layout, so per-batch
-// row count directly scales the next frame's GTK layout cost.
-const RENDER_BATCH_SIZE: usize = 1;
-const RENDER_BATCH_WATCHDOG_MS: u64 = 100;
 const DEFERRED_FIRST_PAGE_LOAD_DELAY_MS: u64 = 250;
 const DEFERRED_CLEAR_DELAY_MS: u64 = 250;
 
 /// Detail view for a single indexed session.
 ///
-/// This component owns the session summary header, paginated transcript
+/// This component owns the session summary header, transcript
 /// rendering, the inspector pane (right-hand split sidebar), and transcript
 /// search navigation.
 pub struct SessionDetail {
     db_path: Arc<PathBuf>,
     session: Option<Session>,
-    first_page_load_started_at: Option<Instant>,
-    messages: FactoryVecDeque<TranscriptRow>,
+    transcript_load_started_at: Option<Instant>,
+    messages: TypedListView<TranscriptItemData, gtk::NoSelection>,
     transcript_render_widget: gtk::Widget,
-    initial_page_size: usize,
-    page_size: usize,
     preview_len: usize,
     loaded_count: usize,
-    has_more_messages: bool,
-    loading_first_page: bool,
-    loading_next_page: bool,
+    loading_transcript: bool,
     transcript_request_id: u64,
-    pending_render_batch: Option<PendingRenderBatch>,
-    last_render_metrics: Option<RenderMetrics>,
-    pending_boundary_tool_rows: Vec<crate::database::TranscriptItemRow>,
     search_query: Option<String>,
     match_positions: Vec<crate::database::MatchPosition>,
     display_targets_by_item_index: BTreeMap<i64, ScrollTarget>,
@@ -89,158 +78,10 @@ struct PreparedTranscriptItems {
     display_targets_by_item_index: BTreeMap<i64, ScrollTarget>,
 }
 
-struct BoundaryAppendPlan {
-    replacement_items: Vec<DisplayTranscriptItem>,
-    rows: Vec<crate::database::TranscriptItemRow>,
-}
-
-struct PendingRenderBatch {
-    request_id: u64,
-    offset: usize,
-    source_row_count: usize,
-    total_items: usize,
-    rendered_items: usize,
-    batch_count: usize,
-    queued_at: Instant,
-    last_batch_completed_at: Option<Instant>,
-    total_push_duration: Duration,
-    max_push_duration: Duration,
-    max_schedule_gap: Duration,
-    row_build_totals: RenderRowBuildTotals,
-    row_build_count: usize,
-    worst_row_kind: Option<TranscriptRowBuildKind>,
-    worst_row_duration: Duration,
-    batch_breakdowns: Vec<RenderBatchBreakdown>,
-    item_render_batch_indices: std::collections::HashMap<usize, usize>,
-    row_kind_counts: RenderRowKindCounts,
-    items: VecDeque<TranscriptItemInit>,
-    first_page_load_to_factory_push_ms: Option<u128>,
-    push_complete: bool,
-}
-
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-struct RenderRowKindCounts {
-    message_count: usize,
-    tool_call_count: usize,
-    tool_burst_count: usize,
-    subagent_count: usize,
-}
-
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-struct RenderRowBuildTotals {
-    message_duration: Duration,
-    tool_call_duration: Duration,
-    tool_burst_duration: Duration,
-    subagent_duration: Duration,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct RenderBatchBreakdown {
-    render_batch_index: usize,
-    pushed_row_count: usize,
-    row_build_count: usize,
-    schedule_gap: Duration,
-    row_build_duration: Duration,
-    logged: bool,
-}
-
-impl RenderRowBuildTotals {
-    fn add(&mut self, kind: TranscriptRowBuildKind, duration: Duration) {
-        match kind {
-            TranscriptRowBuildKind::Message => self.message_duration += duration,
-            TranscriptRowBuildKind::ToolCall => self.tool_call_duration += duration,
-            TranscriptRowBuildKind::ToolBurst => self.tool_burst_duration += duration,
-            TranscriptRowBuildKind::Subagent => self.subagent_duration += duration,
-        }
-    }
-
-    fn total(&self) -> Duration {
-        self.message_duration
-            + self.tool_call_duration
-            + self.tool_burst_duration
-            + self.subagent_duration
-    }
-}
-
-fn render_metrics_for_batch(batch: &PendingRenderBatch, total_duration_ms: u128) -> RenderMetrics {
-    let total_row_build_duration_ms = batch.row_build_totals.total().as_millis();
-    let max_post_drop_residual_ms = batch
-        .batch_breakdowns
-        .iter()
-        .map(|b| b.schedule_gap.saturating_sub(b.row_build_duration))
-        .max()
-        .unwrap_or(Duration::ZERO)
-        .as_millis();
-
-    RenderMetrics {
-        offset: batch.offset,
-        source_row_count: batch.source_row_count,
-        display_item_count: batch.total_items,
-        batch_count: batch.batch_count,
-        total_duration_ms,
-        total_push_duration_ms: batch.total_push_duration.as_millis(),
-        max_push_duration_ms: batch.max_push_duration.as_millis(),
-        max_schedule_gap_ms: batch.max_schedule_gap.as_millis(),
-        message_build_duration_ms: batch.row_build_totals.message_duration.as_millis(),
-        tool_call_build_duration_ms: batch.row_build_totals.tool_call_duration.as_millis(),
-        tool_burst_build_duration_ms: batch.row_build_totals.tool_burst_duration.as_millis(),
-        subagent_build_duration_ms: batch.row_build_totals.subagent_duration.as_millis(),
-        total_row_build_duration_ms,
-        worst_row_kind: batch.worst_row_kind,
-        worst_row_build_duration_ms: batch.worst_row_duration.as_millis(),
-        max_post_drop_residual_ms,
-        first_page_load_to_factory_push_ms: batch.first_page_load_to_factory_push_ms,
-        message_count: batch.row_kind_counts.message_count,
-        tool_call_count: batch.row_kind_counts.tool_call_count,
-        tool_burst_count: batch.row_kind_counts.tool_burst_count,
-        subagent_count: batch.row_kind_counts.subagent_count,
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct RenderMetrics {
-    offset: usize,
-    source_row_count: usize,
-    display_item_count: usize,
-    batch_count: usize,
-    total_duration_ms: u128,
-    total_push_duration_ms: u128,
-    max_push_duration_ms: u128,
-    max_schedule_gap_ms: u128,
-    message_build_duration_ms: u128,
-    tool_call_build_duration_ms: u128,
-    tool_burst_build_duration_ms: u128,
-    subagent_build_duration_ms: u128,
-    total_row_build_duration_ms: u128,
-    worst_row_kind: Option<TranscriptRowBuildKind>,
-    worst_row_build_duration_ms: u128,
-    max_post_drop_residual_ms: u128,
-    first_page_load_to_factory_push_ms: Option<u128>,
-    message_count: usize,
-    tool_call_count: usize,
-    tool_burst_count: usize,
-    subagent_count: usize,
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct ClearMessagesMetrics {
     row_count_before: usize,
-    had_pending_render: bool,
     duration_ms: u128,
-}
-
-impl std::fmt::Debug for PendingRenderBatch {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("PendingRenderBatch")
-            .field("request_id", &self.request_id)
-            .field("offset", &self.offset)
-            .field("source_row_count", &self.source_row_count)
-            .field("total_items", &self.total_items)
-            .field("rendered_items", &self.rendered_items)
-            .field("batch_count", &self.batch_count)
-            .field("remaining_items", &self.items.len())
-            .finish()
-    }
 }
 
 /// Parent-facing actions emitted by [`SessionDetail`].
@@ -273,13 +114,9 @@ pub enum SessionDetailMsg {
         session_id: String,
         positions: Vec<MatchPosition>,
     },
-    LoadMore,
     PrevMatch,
     NextMatch,
     ClearSearch,
-    RenderNextTranscriptBatch {
-        request_id: u64,
-    },
     StartDeferredFirstPageLoad {
         request_id: u64,
         session_id: String,
@@ -294,6 +131,9 @@ pub enum SessionDetailMsg {
     /// Indicates that a transcript row failed to expand to its full content and
     /// should trigger the shared toast notification path.
     ShowExpandLoadFailure,
+    ToggleMessageExpand {
+        item_index: usize,
+    },
     RowBuilt {
         item_index: usize,
         kind: TranscriptRowBuildKind,
@@ -314,11 +154,9 @@ pub enum SessionDetailMsg {
 }
 
 pub enum SessionDetailCmd {
-    TranscriptPageLoaded {
+    TranscriptLoaded {
         request_id: u64,
         session_id: String,
-        offset: usize,
-        limit: usize,
         load_duration_ms: u128,
         result: Result<Vec<crate::database::TranscriptItemRow>, String>,
     },
@@ -328,16 +166,20 @@ pub enum SessionDetailCmd {
         load_duration_ms: u128,
         result: Result<Vec<MatchPosition>, String>,
     },
+    MessageFullContentReady {
+        item_index: usize,
+        session_id: String,
+        message_index: usize,
+        result: Result<String, String>,
+    },
 }
 
 impl std::fmt::Debug for SessionDetailCmd {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::TranscriptPageLoaded {
+            Self::TranscriptLoaded {
                 request_id,
                 session_id,
-                offset,
-                limit,
                 load_duration_ms,
                 result,
             } => {
@@ -346,11 +188,9 @@ impl std::fmt::Debug for SessionDetailCmd {
                     Err(err) => format!("Err({err})"),
                 };
 
-                f.debug_struct("TranscriptPageLoaded")
+                f.debug_struct("TranscriptLoaded")
                     .field("request_id", request_id)
                     .field("session_id", session_id)
-                    .field("offset", offset)
-                    .field("limit", limit)
                     .field("load_duration_ms", load_duration_ms)
                     .field("result", &result_summary)
                     .finish()
@@ -369,6 +209,23 @@ impl std::fmt::Debug for SessionDetailCmd {
                     .field("request_id", request_id)
                     .field("session_id", session_id)
                     .field("load_duration_ms", load_duration_ms)
+                    .field("result", &result_summary)
+                    .finish()
+            }
+            Self::MessageFullContentReady {
+                item_index,
+                session_id,
+                message_index,
+                result,
+            } => {
+                let result_summary = match result {
+                    Ok(content) => format!("Ok({} chars)", content.len()),
+                    Err(err) => format!("Err({err})"),
+                };
+                f.debug_struct("MessageFullContentReady")
+                    .field("item_index", item_index)
+                    .field("session_id", session_id)
+                    .field("message_index", message_index)
                     .field("result", &result_summary)
                     .finish()
             }
@@ -409,6 +266,15 @@ impl Component for SessionDetail {
 
                     #[name = "detail_overlay"]
                     gtk::Overlay {
+
+                    #[wrap(Some)]
+                    #[name = "inspector_breakpoint_bin"]
+                    set_child = &adw::BreakpointBin {
+                        set_vexpand: true,
+                        // BreakpointBin only collapses the split once it can be
+                        // allocated narrower than the split's natural width, so
+                        // it needs a small minimum size of its own.
+                        set_width_request: 360,
 
                     #[wrap(Some)]
                     #[name = "inspector_split"]
@@ -725,29 +591,13 @@ impl Component for SessionDetail {
                             gtk::Separator {},
 
                             #[local_ref]
-                            messages_box -> gtk::Box {
-                                set_orientation: gtk::Orientation::Vertical,
-                                set_spacing: 8,
-                            },
-
-                            #[name = "load_more_button"]
-                            gtk::Button {
-                                set_halign: gtk::Align::Center,
-                                set_margin_top: 12,
-                                set_margin_bottom: 12,
-                                #[watch]
-                                set_visible: model.has_more_messages,
-                                #[watch]
-                                set_sensitive: !model.loading_next_page
-                                    && !model.loading_first_page
-                                    && model.pending_render_batch.is_none(),
-                                #[watch]
-                                set_label: if model.loading_next_page { "Loading..." } else { "Load more" },
-                                connect_clicked => SessionDetailMsg::LoadMore,
+                            messages_box -> gtk::ListView {
+                                add_css_class: "transcript-list",
                             },
                         },
                     },
                     }, // close inspector_split (adw::OverlaySplitView)
+                    }, // close inspector_breakpoint_bin (adw::BreakpointBin)
 
                     // Floating search navigation bar
                     add_overlay = &gtk::Box {
@@ -841,30 +691,8 @@ impl Component for SessionDetail {
         root: Self::Root,
         sender: ComponentSender<Self>,
     ) -> ComponentParts<Self> {
-        let messages: FactoryVecDeque<TranscriptRow> = FactoryVecDeque::builder()
-            .launch_default()
-            .forward(sender.input_sender(), |output| match output {
-                TranscriptRowOutput::ExpandLoadFailed { .. } => {
-                    SessionDetailMsg::ShowExpandLoadFailure
-                }
-                TranscriptRowOutput::InspectToolCall(id) => SessionDetailMsg::InspectToolCall(id),
-                TranscriptRowOutput::InspectSubagent(id) => SessionDetailMsg::InspectSubagent(id),
-                TranscriptRowOutput::InspectReasoning {
-                    transcript_item_index,
-                    ..
-                } => SessionDetailMsg::InspectReasoning(transcript_item_index),
-                TranscriptRowOutput::RowBuilt {
-                    item_index,
-                    kind,
-                    build_duration_ms,
-                } => SessionDetailMsg::RowBuilt {
-                    item_index,
-                    kind,
-                    build_duration_ms,
-                },
-            });
-
-        let transcript_render_widget = messages.widget().clone().upcast::<gtk::Widget>();
+        let messages: TypedListView<TranscriptItemData, gtk::NoSelection> = TypedListView::new();
+        let transcript_render_widget = messages.view.clone().upcast::<gtk::Widget>();
         let db_path = Arc::new(db_path);
         let inspector = ToolInspectorPane::builder()
             .launch(db_path.clone())
@@ -877,20 +705,13 @@ impl Component for SessionDetail {
         let model = Self {
             db_path,
             session: None,
-            first_page_load_started_at: None,
+            transcript_load_started_at: None,
             messages,
             transcript_render_widget,
-            initial_page_size: INITIAL_PAGE_SIZE,
-            page_size: NEXT_PAGE_SIZE,
             preview_len: PREVIEW_LEN,
             loaded_count: 0,
-            has_more_messages: false,
-            loading_first_page: false,
-            loading_next_page: false,
+            loading_transcript: false,
             transcript_request_id: 0,
-            pending_render_batch: None,
-            last_render_metrics: None,
-            pending_boundary_tool_rows: Vec::new(),
             search_query: None,
             match_positions: Vec::new(),
             display_targets_by_item_index: BTreeMap::new(),
@@ -904,7 +725,7 @@ impl Component for SessionDetail {
             inspector_open: false,
         };
 
-        let messages_box = model.messages.widget();
+        let messages_box = model.messages.view.clone();
         let widgets = view_output!();
 
         widgets
@@ -926,6 +747,25 @@ impl Component for SessionDetail {
                     ))
                     .ok();
             });
+
+        // Collapse the inspector into an overlay when the detail area is too
+        // narrow to host the 360px sidebar beside a readable transcript.
+        // Without this the split keeps the sidebar inline and forces the
+        // window past its minimum width, which in turn disrupts the header bar.
+        //
+        // The threshold sits well above the inline layout's natural minimum
+        // (360px sidebar + a usable transcript): if it were close to that
+        // minimum, there would be a band of widths where the split is still
+        // inline but allocated below its minimum, rendering the pane wrong.
+        let inspector_breakpoint = adw::Breakpoint::new(adw::BreakpointCondition::new_length(
+            adw::BreakpointConditionLengthType::MaxWidth,
+            860.0,
+            adw::LengthUnit::Sp,
+        ));
+        inspector_breakpoint.add_setter(&widgets.inspector_split, "collapsed", Some(&true.into()));
+        widgets
+            .inspector_breakpoint_bin
+            .add_breakpoint(inspector_breakpoint);
 
         ComponentParts { model, widgets }
     }
@@ -949,7 +789,7 @@ impl Component for SessionDetail {
                 let has_search_query = normalized.is_some();
                 let query_len = normalized.as_ref().map(|query| query.len()).unwrap_or(0);
                 self.session = Some(session);
-                self.start_first_page_load(&sender, &session_id, true, "open");
+                self.start_transcript_load(&sender, &session_id, true, "open");
                 tracing::info!(
                     request_id = self.transcript_request_id,
                     session_id = session_id.as_str(),
@@ -986,11 +826,14 @@ impl Component for SessionDetail {
                 self.invalidate_search_requests();
                 self.reset_search_matches();
 
+                if !self.messages.is_empty() {
+                    self.apply_highlight_query_to_typed_items(normalized.clone());
+                    self.refresh_typed_rows_preserving_scroll();
+                }
+
                 if let (Some(session), Some(query)) = (&self.session, normalized) {
                     let request_id = self.search_request_id;
                     self.spawn_match_positions_load(&sender, request_id, session.id.clone(), query);
-                } else {
-                    self.reload_current_session(&sender, "search");
                 }
             }
             SessionDetailMsg::SetMatchPositions {
@@ -1026,13 +869,15 @@ impl Component for SessionDetail {
                 self.clamp_current_match();
                 self.pending_jump = None;
                 self.loading_jump = false;
-                self.start_first_page_load(&sender, &session_id, false, "search");
+                if self.messages.is_empty() {
+                    self.start_transcript_load(&sender, &session_id, false, "search");
+                } else {
+                    self.apply_highlight_query_to_typed_items(self.search_query.clone());
+                    self.refresh_typed_rows_preserving_scroll();
+                }
                 if !self.match_positions.is_empty() {
                     self.jump_to(0, &sender);
                 }
-            }
-            SessionDetailMsg::LoadMore => {
-                self.load_next_page(&sender);
             }
             SessionDetailMsg::PrevMatch => {
                 if !self.match_positions.is_empty() && !self.loading_jump {
@@ -1049,9 +894,6 @@ impl Component for SessionDetail {
                     self.jump_to(target, &sender);
                 }
             }
-            SessionDetailMsg::RenderNextTranscriptBatch { request_id } => {
-                self.render_next_transcript_batch(&sender, request_id);
-            }
             SessionDetailMsg::StartDeferredFirstPageLoad {
                 request_id,
                 session_id,
@@ -1067,13 +909,7 @@ impl Component for SessionDetail {
                         configured_delay_ms = DEFERRED_FIRST_PAGE_LOAD_DELAY_MS,
                         "Session detail deferred first page load started"
                     );
-                    self.spawn_transcript_page_load(
-                        &sender,
-                        request_id,
-                        session_id,
-                        0,
-                        self.initial_page_size,
-                    );
+                    self.spawn_transcript_page_load(&sender, request_id, session_id);
                 }
             }
             SessionDetailMsg::PrepareForNavigationBack => {
@@ -1088,33 +924,77 @@ impl Component for SessionDetail {
                 tracing::warn!("Could not load full message content");
                 self.pending_toast.set(true);
             }
+            SessionDetailMsg::ToggleMessageExpand { item_index } => {
+                let idx = item_index as u32;
+                let mut load_request = None;
+                let (toggled, clone_opt) = if let Some(item) = self.messages.get(idx) {
+                    let ref_data = item.borrow();
+                    let expanded = ref_data.expanded.get();
+                    let will_expand = !expanded;
+                    ref_data.expanded.set(will_expand);
+                    if will_expand
+                        && ref_data.full_content.is_none()
+                        && let crate::ui::transcript_item_data::TranscriptItemKind::Message(message) =
+                            &ref_data.kind
+                    {
+                        load_request = Some((
+                            message.db_path.clone(),
+                            message.preview.session_id.clone(),
+                            message.preview.message_index,
+                        ));
+                    }
+                    let clone = ref_data.clone();
+                    (true, Some(clone))
+                } else {
+                    (false, None)
+                };
+                if let Some(clone) = clone_opt {
+                    self.messages.remove(idx);
+                    self.messages.insert(idx, clone);
+                    if let Some((db_path, session_id, message_index)) = load_request {
+                        sender.spawn_oneshot_command(move || {
+                            SessionDetailCmd::MessageFullContentReady {
+                                item_index,
+                                session_id: session_id.clone(),
+                                message_index,
+                                result: load_message_full_content(
+                                    &db_path,
+                                    &session_id,
+                                    message_index,
+                                )
+                                .map_err(|err| format!("{err:#}")),
+                            }
+                        });
+                    }
+                }
+                tracing::debug!(item_index, toggled, "Typed message expand requested");
+            }
             SessionDetailMsg::RowBuilt {
-                item_index,
-                kind,
-                build_duration_ms,
+                item_index: _,
+                kind: _,
+                build_duration_ms: _,
             } => {
-                self.record_transcript_row_build(sender, item_index, kind, build_duration_ms);
+                tracing::trace!("Transcript row built (no-op in typed path)");
             }
             SessionDetailMsg::ClearSearch => {
                 self.search_query = None;
                 self.invalidate_search_requests();
                 self.reset_search_matches();
-                self.reload_current_session(&sender, "clear_search");
+                if !self.messages.is_empty() {
+                    self.apply_highlight_query_to_typed_items(None);
+                    self.refresh_typed_rows_preserving_scroll();
+                }
             }
             SessionDetailMsg::Clear => {
                 self.invalidate_transcript_requests();
                 self.invalidate_search_requests();
                 self.session = None;
-                self.first_page_load_started_at = None;
+                self.transcript_load_started_at = None;
                 self.clear_messages_safely_with_metrics("component_clear");
                 self.loaded_count = 0;
-                self.has_more_messages = false;
-                self.loading_first_page = false;
-                self.loading_next_page = false;
-                self.pending_render_batch = None;
+                self.loading_transcript = false;
                 self.search_query = None;
                 self.reset_search_matches();
-                self.clear_pending_boundary_tool_rows();
                 self.inspector.emit(ToolInspectorPaneMsg::Clear);
                 self.set_inspector_open(false, &sender);
             }
@@ -1211,7 +1091,7 @@ impl Component for SessionDetail {
         _root: &Self::Root,
     ) {
         match message {
-            SessionDetailCmd::TranscriptPageLoaded { .. } => {
+            SessionDetailCmd::TranscriptLoaded { .. } => {
                 self.apply_transcript_page_result(&sender, message);
             }
             SessionDetailCmd::SearchPositionsLoaded {
@@ -1252,6 +1132,35 @@ impl Component for SessionDetail {
                         session_id,
                         positions,
                     });
+            }
+            SessionDetailCmd::MessageFullContentReady {
+                item_index,
+                session_id,
+                message_index,
+                result,
+            } => {
+                if !self.typed_message_full_content_target_matches(
+                    item_index,
+                    &session_id,
+                    message_index,
+                ) {
+                    tracing::debug!(
+                        item_index,
+                        session_id = session_id.as_str(),
+                        message_index,
+                        "Ignoring stale full message content result"
+                    );
+                    return;
+                }
+
+                match result {
+                    Ok(content) => self.set_typed_message_full_content(item_index, content),
+                    Err(err) => {
+                        tracing::error!(item_index, "Failed to load full message content: {err}");
+                        self.reset_typed_message_expansion(item_index);
+                        self.pending_toast.set(true);
+                    }
+                }
             }
         }
     }
@@ -1431,14 +1340,69 @@ impl Component for SessionDetail {
         }
 
         if let Some(target) = self.scroll_to_item.take() {
-            let messages_widget = self.messages.widget().clone();
+            let list_view = self.messages.view.clone();
+            list_view.scroll_to(
+                target.display_index as u32,
+                gtk::ListScrollFlags::NONE,
+                None,
+            );
             let scroll_child = widgets.scroll_child.clone();
             glib::idle_add_local_once(move || {
-                let Some(row_widget) = messages_widget
-                    .observe_children()
-                    .item(target.display_index as u32)
-                    .and_then(|obj| obj.downcast::<gtk::Widget>().ok())
+                let Some(row_widget) =
+                    Self::observed_row_widget_for_display_index(&list_view, target.display_index)
                 else {
+                    let list_view_for_tick = list_view.clone();
+                    let scroll_child_for_tick = scroll_child.clone();
+                    let tick_count = std::cell::Cell::new(0u32);
+                    list_view.add_tick_callback(move |_, _| {
+                        let ticks = tick_count.get() + 1;
+                        tick_count.set(ticks);
+                        if ticks > 60 {
+                            return glib::ControlFlow::Break;
+                        }
+                        let Some(row_widget) = Self::observed_row_widget_for_display_index(
+                            &list_view_for_tick,
+                            target.display_index,
+                        ) else {
+                            return glib::ControlFlow::Continue;
+                        };
+                        if let Some(child_index) = target.child_index
+                            && let Some((header_button, revealer)) =
+                                Self::tool_burst_header_and_revealer(&row_widget)
+                        {
+                            if !revealer.reveals_child() {
+                                header_button.emit_clicked();
+                            }
+                            let revealer_for_tick = revealer.clone();
+                            let scroll_for_burst = scroll_child_for_tick.clone();
+                            let burst_tick_count = std::cell::Cell::new(0u32);
+                            revealer.add_tick_callback(move |_, _| {
+                                let ticks = burst_tick_count.get() + 1;
+                                burst_tick_count.set(ticks);
+                                if ticks > 60 {
+                                    return glib::ControlFlow::Break;
+                                }
+                                let Some(child_box) = revealer_for_tick
+                                    .child()
+                                    .and_then(|w| w.downcast::<gtk::Box>().ok())
+                                else {
+                                    return glib::ControlFlow::Break;
+                                };
+                                let Some(child_widget) = child_box
+                                    .observe_children()
+                                    .item(child_index as u32)
+                                    .and_then(|obj| obj.downcast::<gtk::Widget>().ok())
+                                else {
+                                    return glib::ControlFlow::Continue;
+                                };
+                                Self::scroll_widget_into_view(&child_widget, &scroll_for_burst);
+                                glib::ControlFlow::Break
+                            });
+                        } else {
+                            Self::scroll_widget_into_view(&row_widget, &scroll_child_for_tick);
+                        }
+                        glib::ControlFlow::Break
+                    });
                     return;
                 };
 
@@ -1486,6 +1450,24 @@ impl Component for SessionDetail {
     }
 }
 
+/// Search highlighting must stay aligned with match navigation: `Next` /
+/// `Previous` and the match counter are produced from `find_session_match_positions`,
+/// which only reports message-kind FTS matches. Highlighting tool calls, tool
+/// bursts, or unmatched messages would show highlights and burst match badges
+/// that navigation can never reach and the counter never includes.
+fn highlight_query_for_navigable_row(
+    is_message: bool,
+    transcript_item_index: i64,
+    matched_item_indexes: &BTreeSet<i64>,
+    highlight_query: Option<&str>,
+) -> Option<String> {
+    if is_message && matched_item_indexes.contains(&transcript_item_index) {
+        highlight_query.map(str::to_string)
+    } else {
+        None
+    }
+}
+
 impl SessionDetail {
     fn current_match_item_indexes(&self) -> BTreeSet<i64> {
         self.match_positions
@@ -1524,21 +1506,6 @@ impl SessionDetail {
         targets
     }
 
-    fn remove_display_targets_for_items(&mut self, items: &[DisplayTranscriptItem]) {
-        for item in items {
-            match item {
-                DisplayTranscriptItem::Single(row) => {
-                    self.display_targets_by_item_index.remove(&row.item_index);
-                }
-                DisplayTranscriptItem::ToolBurst(burst) => {
-                    for row in &burst.rows {
-                        self.display_targets_by_item_index.remove(&row.item_index);
-                    }
-                }
-            }
-        }
-    }
-
     fn extend_display_targets(&mut self, targets: BTreeMap<i64, ScrollTarget>) {
         self.display_targets_by_item_index.extend(targets);
     }
@@ -1560,13 +1527,13 @@ impl SessionDetail {
                 .extend(Self::display_targets_for_item(display_index, &item));
 
             let item_highlight = match &item {
-                DisplayTranscriptItem::Single(row)
-                    if row.kind == crate::models::TranscriptItemKind::Message
-                        && matched_item_indexes.contains(&row.item_index) =>
-                {
-                    highlight_query.clone()
-                }
-                _ => None,
+                DisplayTranscriptItem::Single(row) => highlight_query_for_navigable_row(
+                    row.kind == crate::models::TranscriptItemKind::Message,
+                    row.item_index,
+                    matched_item_indexes,
+                    highlight_query.as_deref(),
+                ),
+                DisplayTranscriptItem::ToolBurst(_) => None,
             };
 
             items.push(transcript_item_init_from_display_item(
@@ -1586,8 +1553,6 @@ impl SessionDetail {
 
     fn invalidate_transcript_requests(&mut self) {
         self.transcript_request_id = self.transcript_request_id.wrapping_add(1);
-        self.pending_render_batch = None;
-        self.last_render_metrics = None;
     }
 
     fn invalidate_search_requests(&mut self) {
@@ -1602,12 +1567,7 @@ impl SessionDetail {
     /// because `display_targets_by_item_index` is only populated as pages
     /// finish rendering.
     fn is_transcript_loading(&self) -> bool {
-        self.loading_first_page
-            || self.loading_next_page
-            || self
-                .pending_render_batch
-                .as_ref()
-                .is_some_and(|b| !b.push_complete)
+        self.loading_transcript
     }
 
     fn spawn_match_positions_load(
@@ -1656,7 +1616,7 @@ impl SessionDetail {
     /// `ClearSearch`). Deferring those would leave the transcript blank for
     /// 250 ms after every keystroke, since this method clears the existing
     /// rows synchronously before scheduling the load.
-    fn start_first_page_load(
+    fn start_transcript_load(
         &mut self,
         sender: &ComponentSender<Self>,
         session_id: &str,
@@ -1664,13 +1624,10 @@ impl SessionDetail {
         clear_reason: &'static str,
     ) {
         self.invalidate_transcript_requests();
-        self.loading_first_page = true;
-        self.loading_next_page = false;
+        self.loading_transcript = true;
         self.loaded_count = 0;
-        self.has_more_messages = false;
-        self.clear_pending_boundary_tool_rows();
         self.clear_messages_safely_with_metrics(clear_reason);
-        self.first_page_load_started_at = Some(Instant::now());
+        self.transcript_load_started_at = Some(Instant::now());
 
         let request_id = self.transcript_request_id;
         let session_id = session_id.to_string();
@@ -1687,13 +1644,7 @@ impl SessionDetail {
                 },
             );
         } else {
-            self.spawn_transcript_page_load(
-                sender,
-                request_id,
-                session_id,
-                0,
-                self.initial_page_size,
-            );
+            self.spawn_transcript_page_load(sender, request_id, session_id);
         }
     }
 
@@ -1702,432 +1653,36 @@ impl SessionDetail {
         sender: &ComponentSender<Self>,
         request_id: u64,
         session_id: String,
-        offset: usize,
-        limit: usize,
     ) {
         let db_path = self.db_path.clone();
         let preview_len = self.preview_len as i64;
 
         sender.spawn_oneshot_command(move || {
             let started_at = Instant::now();
-            let result = load_transcript_items(
-                &db_path,
-                &session_id,
-                limit as i64,
-                offset as i64,
-                preview_len,
-            )
-            .map_err(|err| format!("{err:#}"));
+            let result = load_all_transcript_items(&db_path, &session_id, preview_len)
+                .map_err(|err| format!("{err:#}"));
             let load_duration_ms = started_at.elapsed().as_millis();
 
-            SessionDetailCmd::TranscriptPageLoaded {
+            SessionDetailCmd::TranscriptLoaded {
                 request_id,
                 session_id,
-                offset,
-                limit,
                 load_duration_ms,
                 result,
             }
         });
     }
 
-    fn schedule_transcript_render_batch(&self, sender: &ComponentSender<Self>, request_id: u64) {
-        let input_sender = sender.input_sender().clone();
-        let fired = Rc::new(Cell::new(false));
-
-        let fired_tick = fired.clone();
-        let input_tick = input_sender.clone();
-        self.transcript_render_widget
-            .add_tick_callback(move |_, _| {
-                if !fired_tick.replace(true) {
-                    let _ =
-                        input_tick.send(SessionDetailMsg::RenderNextTranscriptBatch { request_id });
-                }
-                glib::ControlFlow::Break
-            });
-
-        let fired_watchdog = fired.clone();
-        glib::timeout_add_local_once(Duration::from_millis(RENDER_BATCH_WATCHDOG_MS), move || {
-            if !fired_watchdog.replace(true) {
-                let _ =
-                    input_sender.send(SessionDetailMsg::RenderNextTranscriptBatch { request_id });
-            }
-        });
-    }
-
-    fn prepare_for_navigation_back(&mut self, sender: &ComponentSender<Self>) {
-        self.invalidate_transcript_requests();
-        self.loading_first_page = false;
-        self.loading_next_page = false;
-        self.clear_pending_boundary_tool_rows();
-
-        let request_id = self.transcript_request_id;
-        let input_sender = sender.input_sender().clone();
-        glib::timeout_add_local_once(Duration::from_millis(DEFERRED_CLEAR_DELAY_MS), move || {
-            let _ = input_sender.send(SessionDetailMsg::DeferredClear { request_id });
-        });
-    }
-
-    fn clear_for_navigation_back(&mut self) {
-        self.invalidate_search_requests();
-        self.session = None;
-        self.first_page_load_started_at = None;
-        self.clear_messages_safely_with_metrics("navigation_back");
-        self.loaded_count = 0;
-        self.has_more_messages = false;
-        self.search_query = None;
-        self.reset_search_matches();
-    }
-
-    fn queue_transcript_items_for_render(
-        &mut self,
-        sender: &ComponentSender<Self>,
-        request_id: u64,
-        offset: usize,
-        source_row_count: usize,
-        items: Vec<TranscriptItemInit>,
-    ) {
-        let total_items = items.len();
-        let row_kind_counts = Self::count_render_item_kinds(&items);
-        tracing::info!(
-            request_id,
-            offset,
-            source_row_count,
-            display_item_count = total_items,
-            message_count = row_kind_counts.message_count,
-            tool_call_count = row_kind_counts.tool_call_count,
-            tool_burst_count = row_kind_counts.tool_burst_count,
-            subagent_count = row_kind_counts.subagent_count,
-            "Queued transcript render batch"
-        );
-        self.last_render_metrics = None;
-        self.pending_render_batch = Some(PendingRenderBatch {
-            request_id,
-            offset,
-            source_row_count,
-            total_items,
-            rendered_items: 0,
-            batch_count: 0,
-            queued_at: Instant::now(),
-            last_batch_completed_at: None,
-            total_push_duration: Duration::ZERO,
-            max_push_duration: Duration::ZERO,
-            max_schedule_gap: Duration::ZERO,
-            row_build_totals: RenderRowBuildTotals::default(),
-            row_build_count: 0,
-            worst_row_kind: None,
-            worst_row_duration: Duration::ZERO,
-            batch_breakdowns: Vec::new(),
-            item_render_batch_indices: std::collections::HashMap::new(),
-            row_kind_counts,
-            items: items.into(),
-            first_page_load_to_factory_push_ms: None,
-            push_complete: false,
-        });
-        self.schedule_transcript_render_batch(sender, request_id);
-    }
-
-    fn count_render_item_kinds(items: &[TranscriptItemInit]) -> RenderRowKindCounts {
-        let mut counts = RenderRowKindCounts::default();
-        for item in items {
-            match item {
-                TranscriptItemInit::Message(_) => counts.message_count += 1,
-                TranscriptItemInit::ToolCall(_) => counts.tool_call_count += 1,
-                TranscriptItemInit::ToolBurst(_) => counts.tool_burst_count += 1,
-                TranscriptItemInit::Subagent(_) => counts.subagent_count += 1,
-            }
-        }
-        counts
-    }
-
-    fn render_next_transcript_batch(&mut self, sender: &ComponentSender<Self>, request_id: u64) {
-        if request_id != self.transcript_request_id {
-            return;
-        }
-
-        let first_page_load_started_at = self.first_page_load_started_at;
-
-        let Some(batch) = &mut self.pending_render_batch else {
-            return;
-        };
-        if batch.request_id != request_id {
-            return;
-        }
-
-        let schedule_gap = batch
-            .last_batch_completed_at
-            .map(|completed_at| completed_at.elapsed())
-            .unwrap_or(Duration::ZERO);
-        batch.max_schedule_gap = batch.max_schedule_gap.max(schedule_gap);
-
-        let mut guard = self.messages.guard();
-        let push_started_at = Instant::now();
-        let mut rendered_this_batch = 0usize;
-        let render_batch_index = batch.batch_count + 1;
-        for _ in 0..RENDER_BATCH_SIZE {
-            let Some(item) = batch.items.pop_front() else {
-                break;
-            };
-            batch
-                .item_render_batch_indices
-                .insert(item.item_index(), render_batch_index);
-            guard.push_back(item);
-            rendered_this_batch += 1;
-        }
-        let push_duration = push_started_at.elapsed();
-        let has_more_items = !batch.items.is_empty();
-        batch.rendered_items += rendered_this_batch;
-        batch.batch_count += 1;
-        batch.total_push_duration += push_duration;
-        batch.max_push_duration = batch.max_push_duration.max(push_duration);
-        let remaining_items = batch.items.len();
-        let rendered_items = batch.rendered_items;
-        let total_items = batch.total_items;
-        let batch_count = batch.batch_count;
-        let offset = batch.offset;
-        let source_row_count = batch.source_row_count;
-        let total_push_duration_ms = batch.total_push_duration.as_millis();
-        let max_push_duration_ms = batch.max_push_duration.as_millis();
-        let max_schedule_gap_ms = batch.max_schedule_gap.as_millis();
-        let total_duration_ms = batch.queued_at.elapsed().as_millis();
-        batch.batch_breakdowns.push(RenderBatchBreakdown {
-            render_batch_index,
-            pushed_row_count: rendered_this_batch,
-            row_build_count: 0,
-            schedule_gap,
-            row_build_duration: Duration::ZERO,
-            logged: false,
-        });
-        batch.last_batch_completed_at = Some(Instant::now());
-        drop(guard);
-
-        if has_more_items {
-            tracing::debug!(
-                request_id,
-                offset,
-                rendered_this_batch,
-                rendered_items,
-                total_items,
-                remaining_items,
-                push_duration_ms = push_duration.as_millis(),
-                schedule_gap_ms = schedule_gap.as_millis(),
-                max_schedule_gap_ms,
-                "Rendered transcript batch"
-            );
-            self.schedule_transcript_render_batch(sender, request_id);
-        } else {
-            let first_page_load_to_factory_push_ms = if offset == 0 {
-                first_page_load_started_at.map(|started_at| started_at.elapsed().as_millis())
-            } else {
-                None
-            };
-            if offset == 0 {
-                tracing::info!(
-                    request_id,
-                    offset,
-                    source_row_count,
-                    display_item_count = total_items,
-                    batch_count,
-                    total_push_duration_ms,
-                    max_push_duration_ms,
-                    total_duration_ms,
-                    max_schedule_gap_ms,
-                    first_page_load_to_factory_push_ms,
-                    "First transcript page factory push complete"
-                );
-            }
-            if let Some(batch) = self.pending_render_batch.as_mut() {
-                batch.first_page_load_to_factory_push_ms = first_page_load_to_factory_push_ms;
-                batch.push_complete = true;
-            }
-            self.complete_transcript_render_push(sender);
-        }
-    }
-
-    fn record_transcript_row_build(
-        &mut self,
-        sender: ComponentSender<Self>,
-        item_index: usize,
-        kind: TranscriptRowBuildKind,
-        build_duration_ms: u128,
-    ) {
-        let Some(batch) = &mut self.pending_render_batch else {
-            return;
-        };
-
-        let render_batch_index = match batch.item_render_batch_indices.get(&item_index) {
-            Some(&idx) => idx,
-            None => {
-                tracing::debug!(
-                    item_index,
-                    kind = ?kind,
-                    build_duration_ms,
-                    "Ignoring transcript row build metric without batch mapping"
-                );
-                return;
-            }
-        };
-
-        let duration = Duration::from_millis(build_duration_ms as u64);
-        batch.row_build_totals.add(kind, duration);
-        batch.row_build_count += 1;
-        if batch.worst_row_kind.is_none() || duration > batch.worst_row_duration {
-            batch.worst_row_duration = duration;
-            batch.worst_row_kind = Some(kind);
-        }
-
-        let request_id = batch.request_id;
-        let offset = batch.offset;
-        if let Some(breakdown) = batch
-            .batch_breakdowns
-            .iter_mut()
-            .find(|b| b.render_batch_index == render_batch_index)
-        {
-            breakdown.row_build_count += 1;
-            breakdown.row_build_duration += duration;
-            if !breakdown.logged && breakdown.row_build_count >= breakdown.pushed_row_count {
-                breakdown.logged = true;
-                let post_drop_residual = breakdown
-                    .schedule_gap
-                    .saturating_sub(breakdown.row_build_duration);
-                tracing::debug!(
-                    request_id,
-                    offset,
-                    render_batch_index,
-                    pushed_row_count = breakdown.pushed_row_count,
-                    row_build_count = breakdown.row_build_count,
-                    measured_row_build_ms = breakdown.row_build_duration.as_millis(),
-                    schedule_gap_ms = breakdown.schedule_gap.as_millis(),
-                    post_drop_residual_ms = post_drop_residual.as_millis(),
-                    "Measured transcript render batch breakdown"
-                );
-            }
-        }
-
-        self.maybe_log_row_build_breakdown(&sender);
-    }
-
-    fn maybe_log_row_build_breakdown(&mut self, _sender: &ComponentSender<Self>) {
-        let Some(batch) = &self.pending_render_batch else {
-            return;
-        };
-        if !batch.push_complete {
-            return;
-        }
-        if batch.row_build_count < batch.rendered_items {
-            return;
-        }
-
-        let batch = self
-            .pending_render_batch
-            .take()
-            .expect("pending batch checked above");
-        let total_row_build_duration_ms = batch.row_build_totals.total().as_millis();
-        let max_post_drop_residual_ms = batch
-            .batch_breakdowns
-            .iter()
-            .map(|b| b.schedule_gap.saturating_sub(b.row_build_duration))
-            .max()
-            .unwrap_or(Duration::ZERO)
-            .as_millis();
-        tracing::debug!(
-            request_id = batch.request_id,
-            offset = batch.offset,
-            row_build_count = batch.row_build_count,
-            message_build_duration_ms = batch.row_build_totals.message_duration.as_millis(),
-            tool_call_build_duration_ms =
-                batch.row_build_totals.tool_call_duration.as_millis(),
-            tool_burst_build_duration_ms =
-                batch.row_build_totals.tool_burst_duration.as_millis(),
-            subagent_build_duration_ms = batch.row_build_totals.subagent_duration.as_millis(),
-            total_row_build_duration_ms,
-            worst_row_kind = ?batch.worst_row_kind,
-            worst_row_build_duration_ms = batch.worst_row_duration.as_millis(),
-            max_post_drop_residual_ms,
-            "Transcript page row-build breakdown"
-        );
-
-        self.last_render_metrics = Some(render_metrics_for_batch(
-            &batch,
-            batch.queued_at.elapsed().as_millis(),
-        ));
-    }
-
-    fn complete_transcript_render_push(&mut self, sender: &ComponentSender<Self>) {
-        let (
-            total_push_duration_ms,
-            max_push_duration_ms,
-            max_schedule_gap_ms,
-            total_duration_ms,
-            request_id,
-            offset,
-            source_row_count,
-            total_items,
-            rendered_items,
-            batch_count,
-            message_count,
-            tool_call_count,
-            tool_burst_count,
-            subagent_count,
-        ) = {
-            let Some(batch) = &self.pending_render_batch else {
-                return;
-            };
-            (
-                batch.total_push_duration.as_millis(),
-                batch.max_push_duration.as_millis(),
-                batch.max_schedule_gap.as_millis(),
-                batch.queued_at.elapsed().as_millis(),
-                batch.request_id,
-                batch.offset,
-                batch.source_row_count,
-                batch.total_items,
-                batch.rendered_items,
-                batch.batch_count,
-                batch.row_kind_counts.message_count,
-                batch.row_kind_counts.tool_call_count,
-                batch.row_kind_counts.tool_burst_count,
-                batch.row_kind_counts.subagent_count,
-            )
-        };
-        tracing::info!(
-            request_id,
-            offset,
-            source_row_count,
-            display_item_count = total_items,
-            rendered_items,
-            batch_count,
-            total_push_duration_ms,
-            max_push_duration_ms,
-            total_duration_ms,
-            message_count,
-            tool_call_count,
-            tool_burst_count,
-            subagent_count,
-            max_schedule_gap_ms,
-            "Finished rendering transcript page"
-        );
-        if let Some(batch) = self.pending_render_batch.as_ref() {
-            self.last_render_metrics = Some(render_metrics_for_batch(batch, total_duration_ms));
-        }
-        self.continue_pending_jump(sender);
-    }
-
-    fn apply_first_page_rows(
+    fn apply_transcript_rows(
         &mut self,
         sender: &ComponentSender<Self>,
         request_id: u64,
         session_id: &str,
-        limit: usize,
         rows: Vec<crate::database::TranscriptItemRow>,
     ) {
-        self.loading_first_page = false;
-        self.loading_next_page = false;
-        self.has_more_messages = rows.len() == limit;
+        self.loading_transcript = false;
         self.loaded_count = rows.len();
         let highlight = self.search_query.clone();
         let db_path = self.db_path.clone();
-        self.track_pending_boundary_tool_rows(&rows);
         self.clear_messages_safely_with_metrics("first_page_apply");
         let build_started_at = Instant::now();
         let source_row_count = rows.len();
@@ -2145,39 +1700,31 @@ impl SessionDetail {
         tracing::info!(
             request_id,
             session_id,
-            offset = 0usize,
             source_row_count,
             display_item_count,
             build_duration_ms = build_started_at.elapsed().as_millis(),
-            "Prepared first transcript page"
+            "Prepared transcript"
         );
-        self.queue_transcript_items_for_render(
-            sender,
-            request_id,
-            0,
-            source_row_count,
-            prepared.items,
-        );
+
+        let input_sender = sender.input_sender().clone();
+        let items: Vec<TranscriptItemData> = prepared
+            .items
+            .into_iter()
+            .map(|init| TranscriptItemData::from_init(init, input_sender.clone()))
+            .collect();
+        self.messages.extend_from_iter(items);
         self.continue_pending_jump(sender);
     }
 
-    fn handle_transcript_page_error(&mut self, session_id: &str, offset: usize, err: String) {
+    fn handle_transcript_page_error(&mut self, session_id: &str, err: String) {
         tracing::error!(
-            "Failed to load transcript items for {} at offset {}: {}",
+            "Failed to load transcript items for {}: {}",
             session_id,
-            offset,
             err
         );
-
-        if offset == 0 {
-            self.clear_messages_safely_with_metrics("transcript_error");
-            self.loaded_count = 0;
-            self.has_more_messages = false;
-            self.clear_pending_boundary_tool_rows();
-        }
-
-        self.loading_first_page = false;
-        self.loading_next_page = false;
+        self.clear_messages_safely_with_metrics("transcript_error");
+        self.loaded_count = 0;
+        self.loading_transcript = false;
         self.pending_jump = None;
         self.loading_jump = false;
     }
@@ -2187,24 +1734,19 @@ impl SessionDetail {
         sender: &ComponentSender<Self>,
         message: SessionDetailCmd,
     ) {
-        let SessionDetailCmd::TranscriptPageLoaded {
+        let SessionDetailCmd::TranscriptLoaded {
             request_id,
             session_id,
-            offset,
-            limit,
             load_duration_ms,
             result,
+            ..
         } = message
         else {
             return;
         };
 
         if request_id != self.transcript_request_id {
-            tracing::debug!(
-                "Ignoring stale transcript page for session {} at offset {}",
-                session_id,
-                offset
-            );
+            tracing::debug!("Ignoring stale transcript page for session {}", session_id,);
             return;
         }
 
@@ -2214,39 +1756,24 @@ impl SessionDetail {
             .is_some_and(|session| session.id == session_id);
         if !active_session_matches {
             tracing::debug!(
-                "Ignoring transcript page for inactive session {} at offset {}",
+                "Ignoring transcript page for inactive session {}",
                 session_id,
-                offset
             );
             return;
         }
 
         match result {
-            Ok(rows) if offset == 0 => {
-                tracing::info!(
-                    request_id,
-                    session_id = session_id.as_str(),
-                    offset,
-                    limit,
-                    source_row_count = rows.len(),
-                    load_duration_ms,
-                    "Loaded first transcript page"
-                );
-                self.apply_first_page_rows(sender, request_id, &session_id, limit, rows)
-            }
             Ok(rows) => {
                 tracing::info!(
                     request_id,
                     session_id = session_id.as_str(),
-                    offset,
-                    limit,
                     source_row_count = rows.len(),
                     load_duration_ms,
-                    "Loaded next transcript page"
+                    "Loaded transcript"
                 );
-                self.apply_next_page_rows(sender, request_id, offset, &session_id, rows)
+                self.apply_transcript_rows(sender, request_id, &session_id, rows)
             }
-            Err(err) => self.handle_transcript_page_error(&session_id, offset, err),
+            Err(err) => self.handle_transcript_page_error(&session_id, err),
         }
     }
 
@@ -2286,7 +1813,7 @@ impl SessionDetail {
         self.continue_pending_jump(sender);
     }
 
-    fn continue_pending_jump(&mut self, sender: &ComponentSender<Self>) {
+    fn continue_pending_jump(&mut self, _sender: &ComponentSender<Self>) {
         let Some(target) = self.pending_jump else {
             return;
         };
@@ -2296,7 +1823,7 @@ impl SessionDetail {
             return;
         };
 
-        if self.is_transcript_loading() {
+        if self.is_transcript_loading() && self.messages.is_empty() {
             return;
         }
 
@@ -2304,14 +1831,12 @@ impl SessionDetail {
             .display_targets_by_item_index
             .get(&position.item_index)
             .copied()
-            && self.messages.len() > scroll_target.display_index
+            && (self.messages.len() as usize) > scroll_target.display_index
         {
             self.pending_jump = None;
             self.loading_jump = false;
             self.scroll_to_item.set(Some(scroll_target));
-        } else if (position.item_index as usize) >= self.loaded_count && self.has_more_messages {
-            self.load_next_page(sender);
-        } else if !self.has_more_messages && (position.item_index as usize) >= self.loaded_count {
+        } else if (position.item_index as usize) >= self.loaded_count {
             tracing::warn!(
                 item_index = position.item_index,
                 loaded_count = self.loaded_count,
@@ -2335,223 +1860,146 @@ impl SessionDetail {
         }
     }
 
-    fn reload_current_session(
-        &mut self,
-        sender: &ComponentSender<Self>,
-        clear_reason: &'static str,
-    ) {
-        if let Some(session) = &self.session {
-            let session_id = session.id.clone();
-            self.start_first_page_load(sender, &session_id, false, clear_reason);
-        }
-    }
-
-    fn clear_pending_boundary_tool_rows(&mut self) {
-        self.pending_boundary_tool_rows.clear();
-    }
-
-    fn track_pending_boundary_tool_rows(&mut self, rows: &[crate::database::TranscriptItemRow]) {
-        self.pending_boundary_tool_rows = if self.has_more_messages {
-            trailing_tool_call_rows(rows)
-        } else {
-            Vec::new()
-        };
-    }
-
-    fn regroup_next_page_boundary(
-        &mut self,
-        rows: Vec<crate::database::TranscriptItemRow>,
-    ) -> BoundaryAppendPlan {
-        if self.pending_boundary_tool_rows.is_empty() {
-            self.track_pending_boundary_tool_rows(&rows);
-            return BoundaryAppendPlan {
-                replacement_items: Vec::new(),
-                rows,
-            };
-        }
-
-        let regrouped =
-            regroup_boundary(std::mem::take(&mut self.pending_boundary_tool_rows), rows);
-        let replacement_items = regrouped.replacement_items;
-        let rows = regrouped.remaining_rows;
-
-        self.pending_boundary_tool_rows = if !self.has_more_messages {
-            Vec::new()
-        } else if rows.is_empty() {
-            trailing_tool_rows_from_display(&replacement_items)
-        } else {
-            trailing_tool_call_rows(&rows)
-        };
-
-        BoundaryAppendPlan {
-            replacement_items,
-            rows,
-        }
-    }
-
-    /// Loads the next transcript page and repairs any tool-burst grouping that
-    /// straddles the previous page boundary.
-    ///
-    /// The last rows of a loaded page may be trailing tool calls that cannot be
-    /// grouped correctly until the next page is available. When that happens,
-    /// the component replaces the affected tail items before appending the new
-    /// page so display rows and their search indexes stay stable.
-    fn load_next_page(&mut self, sender: &ComponentSender<Self>) {
-        let Some(session) = &self.session else {
+    fn set_typed_message_full_content(&mut self, item_index: usize, content: String) {
+        let idx = item_index as u32;
+        let Some(item) = self.messages.get(idx) else {
             return;
         };
 
-        if self.is_transcript_loading() || !self.has_more_messages {
-            return;
-        }
-
-        let session_id = session.id.clone();
-        let offset = self.loaded_count;
-        self.loading_next_page = true;
-        self.spawn_transcript_page_load(
-            sender,
-            self.transcript_request_id,
-            session_id,
-            offset,
-            self.page_size,
-        );
+        let mut clone = item.borrow().clone();
+        clone.full_content = Some(content);
+        self.messages.remove(idx);
+        self.messages.insert(idx, clone);
     }
 
-    fn apply_next_page_rows(
-        &mut self,
-        sender: &ComponentSender<Self>,
-        request_id: u64,
-        offset: usize,
+    fn reset_typed_message_expansion(&mut self, item_index: usize) {
+        let idx = item_index as u32;
+        let Some(item) = self.messages.get(idx) else {
+            return;
+        };
+
+        let clone = {
+            let item = item.borrow();
+            Self::reset_message_expansion_after_full_content_failure(&item);
+            item.clone()
+        };
+        self.messages.remove(idx);
+        self.messages.insert(idx, clone);
+    }
+
+    fn reset_message_expansion_after_full_content_failure(item: &TranscriptItemData) {
+        item.expanded.set(false);
+    }
+
+    fn typed_message_full_content_target_matches(
+        &self,
+        item_index: usize,
         session_id: &str,
-        rows: Vec<crate::database::TranscriptItemRow>,
-    ) {
-        let apply_started_at = Instant::now();
-        self.loading_next_page = false;
-        let source_len = rows.len();
-        self.has_more_messages = source_len == self.page_size;
-        self.loaded_count += source_len;
+        message_index: usize,
+    ) -> bool {
+        let active_session_id = self.session.as_ref().map(|session| session.id.as_str());
+        let Some(item) = self.messages.get(item_index as u32) else {
+            return false;
+        };
 
-        let highlight = self.search_query.clone();
-        let db_path = self.db_path.clone();
-        // Boundary regrouping must run before borrowing `self.messages` since it
-        // mutates `self.pending_boundary_tool_rows`.
-        let BoundaryAppendPlan {
-            replacement_items,
-            rows,
-        } = self.regroup_next_page_boundary(rows);
-        let replacement_item_count = replacement_items.len();
+        Self::message_full_content_target_matches(
+            &item.borrow(),
+            active_session_id,
+            session_id,
+            message_index,
+        )
+    }
 
-        let need_replacement = !replacement_items.is_empty();
-        if need_replacement {
-            self.remove_display_targets_for_items(&replacement_items);
+    fn message_full_content_target_matches(
+        item: &TranscriptItemData,
+        active_session_id: Option<&str>,
+        session_id: &str,
+        message_index: usize,
+    ) -> bool {
+        let Some(active_session_id) = active_session_id else {
+            return false;
+        };
+        if active_session_id != session_id {
+            return false;
         }
+
+        let crate::ui::transcript_item_data::TranscriptItemKind::Message(message) = &item.kind
+        else {
+            return false;
+        };
+
+        message.preview.session_id == session_id && message.preview.message_index == message_index
+    }
+
+    fn apply_highlight_query_to_typed_items(&self, query: Option<String>) {
         let matched_item_indexes = self.current_match_item_indexes();
-
-        let pre_replacement_len = self.messages.len() - if need_replacement { 1 } else { 0 };
-
-        let mut replacement_targets = BTreeMap::new();
-        let mut replacement_inits = Vec::new();
-        if need_replacement {
-            for (offset, item) in replacement_items.iter().enumerate() {
-                let display_index = pre_replacement_len + offset;
-                replacement_targets.extend(Self::display_targets_for_item(display_index, item));
-                let item_highlight = match item {
-                    DisplayTranscriptItem::Single(row)
-                        if row.kind == crate::models::TranscriptItemKind::Message
-                            && matched_item_indexes.contains(&row.item_index) =>
-                    {
-                        highlight.clone()
-                    }
-                    _ => None,
-                };
-                replacement_inits.push(transcript_item_init_from_display_item(
-                    display_index,
-                    item,
-                    session_id,
-                    item_highlight,
-                    db_path.clone(),
-                ));
-            }
+        for item in self.messages.iter() {
+            let mut data = item.borrow_mut();
+            let is_message = matches!(
+                data.kind,
+                crate::ui::transcript_item_data::TranscriptItemKind::Message(_)
+            );
+            let item_query = match data.transcript_item_index {
+                Some(transcript_item_index) => highlight_query_for_navigable_row(
+                    is_message,
+                    transcript_item_index,
+                    &matched_item_indexes,
+                    query.as_deref(),
+                ),
+                None => None,
+            };
+            data.apply_highlight_query(item_query);
         }
+    }
 
-        let page_start = pre_replacement_len + replacement_inits.len();
-        let prepared = Self::build_display_items(
-            rows,
-            session_id,
-            highlight,
-            &matched_item_indexes,
-            db_path,
-            page_start,
-        );
-        let display_item_count = prepared.items.len();
+    fn prepare_for_navigation_back(&mut self, sender: &ComponentSender<Self>) {
+        self.invalidate_transcript_requests();
+        self.loading_transcript = false;
 
-        {
-            let mut guard = self.messages.guard();
-            if need_replacement {
-                let _ = guard.pop_back();
-                for item in replacement_inits {
-                    guard.push_back(item);
-                }
-            }
-            drop(guard);
-        }
+        let request_id = self.transcript_request_id;
+        let input_sender = sender.input_sender().clone();
+        glib::timeout_add_local_once(Duration::from_millis(DEFERRED_CLEAR_DELAY_MS), move || {
+            let _ = input_sender.send(SessionDetailMsg::DeferredClear { request_id });
+        });
+    }
 
-        self.extend_display_targets(replacement_targets);
-        self.extend_display_targets(prepared.display_targets_by_item_index);
-        tracing::info!(
-            request_id,
-            session_id,
-            offset,
-            source_row_count = source_len,
-            replacement_item_count,
-            display_item_count,
-            prepare_duration_ms = apply_started_at.elapsed().as_millis(),
-            "Prepared next transcript page"
-        );
-        self.queue_transcript_items_for_render(
-            sender,
-            request_id,
-            offset,
-            source_len,
-            prepared.items,
-        );
-
-        if !self.has_more_messages {
-            self.clear_pending_boundary_tool_rows();
-        }
-        self.continue_pending_jump(sender);
+    fn clear_for_navigation_back(&mut self) {
+        self.invalidate_search_requests();
+        self.session = None;
+        self.transcript_load_started_at = None;
+        self.clear_messages_safely_with_metrics("navigation_back");
+        self.loaded_count = 0;
+        self.search_query = None;
+        self.reset_search_matches();
     }
 
     /// Clear transcript rows after releasing focus from any currently-focused row widget.
     fn clear_messages_safely(&mut self) {
         self.release_focus_from_transcript_if_needed();
-        self.messages.guard().clear();
+        self.messages.clear();
         self.display_targets_by_item_index.clear();
     }
 
     fn clear_messages_safely_with_metrics(&mut self, reason: &'static str) -> ClearMessagesMetrics {
-        let row_count_before = self.messages.len();
-        let had_pending_render = self.pending_render_batch.is_some();
+        let row_count_before = self.messages.len() as usize;
         let started_at = Instant::now();
         self.clear_messages_safely();
         let duration_ms = started_at.elapsed().as_millis();
         tracing::info!(
             reason,
             row_count_before,
-            had_pending_render,
             duration_ms,
             "Cleared session detail transcript rows"
         );
         ClearMessagesMetrics {
             row_count_before,
-            had_pending_render,
             duration_ms,
         }
     }
 
     /// Avoid GTK focus traversing a row subtree while it is being replaced.
     fn release_focus_from_transcript_if_needed(&self) {
-        let messages_widget = self.messages.widget();
+        let messages_widget: gtk::Widget = self.messages.view.clone().upcast();
         let Some(window) = messages_widget
             .ancestor(gtk::Window::static_type())
             .and_then(|w| w.downcast::<gtk::Window>().ok())
@@ -2563,26 +2011,102 @@ impl SessionDetail {
             return;
         };
 
-        if focus_widget.is_ancestor(messages_widget) {
+        if focus_widget.is_ancestor(&messages_widget) {
             tracing::debug!("Clearing window focus before replacing transcript rows");
             gtk::prelude::GtkWindowExt::set_focus(&window, Option::<&gtk::Widget>::None);
         }
     }
 
     /// Looks up the `(header_button, revealer)` pair for a tool-burst transcript
-    /// row. The row widget is a vertical `gtk::Box` whose first child is the
-    /// header toggle button and whose second child is the `gtk::Revealer`
-    /// holding the grouped tool call rows.
+    /// row. Typed rows wrap the page contents in a `gtk::Stack`; this traverses
+    /// the Stack's "tool-burst" named child to find the header button and
+    /// revealer.
     fn tool_burst_header_and_revealer(
         row_widget: &gtk::Widget,
     ) -> Option<(gtk::Button, gtk::Revealer)> {
-        let header_button = row_widget
+        let stack = row_widget
+            .first_child()
+            .and_then(|w| w.downcast::<gtk::Stack>().ok())?;
+        let tool_burst_page = stack
+            .child_by_name("tool-burst")
+            .and_then(|w| w.downcast::<gtk::Box>().ok())?;
+        let header_button = tool_burst_page
             .first_child()
             .and_then(|w| w.downcast::<gtk::Button>().ok())?;
         let revealer = header_button
             .next_sibling()
             .and_then(|w| w.downcast::<gtk::Revealer>().ok())?;
         Some((header_button, revealer))
+    }
+
+    /// Resolves the named transcript row root from a [`gtk::ListView`] child.
+    ///
+    /// `GtkListView` wraps every factory-produced row in an internal
+    /// `GtkListItemWidget`; the row root we name `transcript-row-{index}` is
+    /// that wrapper's child, so the wrapper itself never carries the name.
+    /// Descend one level when a child exists, otherwise return the widget as-is.
+    fn list_view_row_widget_from_child(obj: gtk::glib::Object) -> Option<gtk::Widget> {
+        let widget = obj.downcast::<gtk::Widget>().ok()?;
+        Some(widget.first_child().unwrap_or(widget))
+    }
+
+    fn observed_row_widget_for_display_index(
+        list_view: &gtk::ListView,
+        display_index: usize,
+    ) -> Option<gtk::Widget> {
+        let children = list_view.observe_children();
+        for index in 0..children.n_items() {
+            let Some(row_widget) = children
+                .item(index)
+                .and_then(Self::list_view_row_widget_from_child)
+            else {
+                continue;
+            };
+
+            if Self::row_widget_matches_display_index(&row_widget, display_index) {
+                return Some(row_widget);
+            }
+        }
+
+        None
+    }
+
+    fn row_widget_matches_display_index(row_widget: &gtk::Widget, display_index: usize) -> bool {
+        row_widget.widget_name().as_str()
+            == format!("{TRANSCRIPT_ROW_WIDGET_NAME_PREFIX}{display_index}")
+    }
+
+    /// Snapshot scroll position, clone all items, clear and re-extend to force
+    /// GTK re-bind (propagating in-place `highlight_query` mutations), then
+    /// restore scroll position via idle callback.
+    fn refresh_typed_rows_preserving_scroll(&mut self) {
+        let saved_vadj = self
+            .messages
+            .view
+            .ancestor(gtk::ScrolledWindow::static_type())
+            .and_then(|w| w.downcast::<gtk::ScrolledWindow>().ok())
+            .map(|sw| sw.vadjustment().value());
+
+        let items: Vec<TranscriptItemData> = self
+            .messages
+            .iter()
+            .map(|item| item.borrow().clone())
+            .collect();
+
+        self.messages.clear();
+        self.messages.extend_from_iter(items);
+
+        if let Some(saved_value) = saved_vadj {
+            let view = self.messages.view.clone();
+            glib::idle_add_local_once(move || {
+                if let Some(sw) = view
+                    .ancestor(gtk::ScrolledWindow::static_type())
+                    .and_then(|w| w.downcast::<gtk::ScrolledWindow>().ok())
+                {
+                    sw.vadjustment().set_value(saved_value);
+                }
+            });
+        }
     }
 
     fn scroll_widget_into_view(widget: &gtk::Widget, scroll_child: &gtk::Box) {
@@ -2606,12 +2130,12 @@ impl SessionDetail {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::PathBuf;
+    use std::sync::Arc;
     use std::time::Duration;
 
     use relm4::{Component, ComponentController};
     use rusqlite::{Connection, params};
-
-    const TRANSCRIPT_BATCH_TEST_GRACE: Duration = Duration::from_millis(125);
 
     fn build_test_session(
         first_prompt: Option<&str>,
@@ -2649,58 +2173,6 @@ mod tests {
         while std::time::Instant::now() < deadline {
             if condition() {
                 return;
-            }
-
-            if !context.iteration(false) {
-                std::thread::sleep(Duration::from_millis(2));
-            }
-        }
-    }
-
-    // Headless tests have no frame clock, so `add_tick_callback` never fires;
-    // the production watchdog still does. We let the watchdog drive the first
-    // ~100 ms (preserving real scheduler coverage), then once
-    // `TRANSCRIPT_BATCH_TEST_GRACE` elapses for the same `request_id` we drive
-    // remaining items on every loop iteration so the batch drains quickly.
-    fn pump_main_context_draining_transcript_batches(
-        controller: &impl ComponentController<SessionDetail>,
-        timeout: Duration,
-        condition: impl Fn() -> bool,
-    ) {
-        let context = gtk::glib::MainContext::default();
-        let deadline = std::time::Instant::now() + timeout;
-        let mut pending_batch_seen_at: Option<(u64, std::time::Instant)> = None;
-        while std::time::Instant::now() < deadline {
-            if condition() {
-                return;
-            }
-
-            let pending_request_id = {
-                let parts = controller.state().get();
-                parts
-                    .model
-                    .pending_render_batch
-                    .as_ref()
-                    .map(|batch| batch.request_id)
-            };
-            match pending_request_id {
-                Some(request_id) => {
-                    let now = std::time::Instant::now();
-                    let observed_at = match pending_batch_seen_at {
-                        Some((seen_request_id, observed_at)) if seen_request_id == request_id => {
-                            observed_at
-                        }
-                        _ => {
-                            pending_batch_seen_at = Some((request_id, now));
-                            now
-                        }
-                    };
-
-                    if now.duration_since(observed_at) >= TRANSCRIPT_BATCH_TEST_GRACE {
-                        controller.emit(SessionDetailMsg::RenderNextTranscriptBatch { request_id });
-                    }
-                }
-                None => pending_batch_seen_at = None,
             }
 
             if !context.iteration(false) {
@@ -2762,125 +2234,6 @@ mod tests {
             )
             .expect("insert search transcript item");
         }
-    }
-
-    fn seed_tool_burst_transcript(db_path: &std::path::Path, session_id: &str, count: usize) {
-        let conn = Connection::open(db_path).expect("open temp db");
-        crate::database::schema::initialize_database(&conn).expect("initialize db");
-
-        for index in 0..count {
-            let tool_call_id = format!("call-{index}");
-            conn.execute(
-                "INSERT INTO tool_calls (
-                    id, session_id, tool_name, status, summary, input_json, output_text, duration_ms
-                 ) VALUES (?1, ?2, ?3, 'completed', ?4, ?5, ?6, ?7)",
-                params![
-                    tool_call_id,
-                    session_id,
-                    if index % 2 == 0 { "Read" } else { "Edit" },
-                    format!("tool summary {index}"),
-                    format!(r#"{{"path":"/tmp/file-{index}.rs"}}"#),
-                    format!("tool output line {index}"),
-                    index as i64,
-                ],
-            )
-            .expect("insert tool call");
-            conn.execute(
-                "INSERT INTO transcript_items (session_id, item_index, kind, tool_call_id)
-                 VALUES (?1, ?2, 'tool_call', ?3)",
-                params![session_id, index as i64, tool_call_id],
-            )
-            .expect("insert transcript item");
-        }
-    }
-
-    fn seed_markdown_transcript(db_path: &std::path::Path, session_id: &str, count: usize) {
-        let conn = Connection::open(db_path).expect("open temp db");
-        crate::database::schema::initialize_database(&conn).expect("initialize db");
-
-        let content = "# Synthetic assistant response\n\n\
-This paragraph contains a needle used for search-highlight measurements.\n\n\
-```rust\n\
-fn synthetic_measurement(input: &str) -> String {\n\
-    format!(\"needle {input}\")\n\
-}\n\
-```\n\n\
-| file | status |\n\
-| --- | --- |\n\
-| src/ui/session_detail.rs | measured |\n\n"
-            .repeat(12);
-
-        for index in 0..count {
-            conn.execute(
-                "INSERT INTO messages (session_id, message_index, role, content, timestamp, model)
-                 VALUES (?1, ?2, 'assistant', ?3, ?4, 'synthetic-model')",
-                params![session_id, index as i64, content, index as i64],
-            )
-            .expect("insert message");
-            conn.execute(
-                "INSERT INTO transcript_items (session_id, item_index, kind, message_index)
-                 VALUES (?1, ?2, 'message', ?2)",
-                params![session_id, index as i64],
-            )
-            .expect("insert transcript item");
-        }
-    }
-
-    fn measure_session_detail_perf_scenario(
-        name: &str,
-        seed: impl FnOnce(&std::path::Path),
-    ) -> RenderMetrics {
-        measure_session_detail_perf_scenario_with_query(name, None, seed)
-    }
-
-    fn measure_session_detail_perf_scenario_with_query(
-        _name: &str,
-        search_query: Option<&str>,
-        seed: impl FnOnce(&std::path::Path),
-    ) -> RenderMetrics {
-        let temp_db = tempfile::NamedTempFile::new().expect("temp db");
-        seed(temp_db.path());
-
-        let controller = SessionDetail::builder().launch(temp_db.path().to_path_buf());
-        controller.emit(SessionDetailMsg::SetSession {
-            session: Box::new(build_test_session(None, None, 0, 0, 0)),
-            search_query: search_query.map(str::to_string),
-        });
-
-        pump_main_context_draining_transcript_batches(&controller, Duration::from_secs(5), || {
-            let parts = controller.state().get();
-            parts.model.pending_render_batch.is_none() && parts.model.last_render_metrics.is_some()
-        });
-
-        let parts = controller.state().get();
-        parts
-            .model
-            .last_render_metrics
-            .clone()
-            .expect("scenario should record render metrics")
-    }
-
-    fn measure_session_detail_metrics_for_session(
-        db_path: &std::path::Path,
-        session: Session,
-    ) -> RenderMetrics {
-        let controller = SessionDetail::builder().launch(db_path.to_path_buf());
-        controller.emit(SessionDetailMsg::SetSession {
-            session: Box::new(session),
-            search_query: None,
-        });
-
-        pump_main_context_draining_transcript_batches(&controller, Duration::from_secs(30), || {
-            let parts = controller.state().get();
-            parts.model.pending_render_batch.is_none() && parts.model.last_render_metrics.is_some()
-        });
-
-        let parts = controller.state().get();
-        parts
-            .model
-            .last_render_metrics
-            .clone()
-            .expect("session should record render metrics")
     }
 
     fn transcript_message_row(
@@ -3006,7 +2359,7 @@ fn synthetic_measurement(input: &str) -> String {\n\
     }
 
     #[test]
-    fn build_display_items_highlights_only_matching_message_rows_during_search() {
+    fn build_display_items_limits_search_highlight_to_navigable_matches() {
         let rows = vec![
             transcript_message_row(0, crate::models::Role::Assistant, "needle in counted row"),
             transcript_tool_row(1, "Read"),
@@ -3016,6 +2369,7 @@ fn synthetic_measurement(input: &str) -> String {\n\
                 "needle outside fts result",
             ),
         ];
+        // Only item 0 is an FTS match that Next/Previous can navigate to.
         let matched_item_indexes = BTreeSet::from([0_i64]);
 
         let prepared = SessionDetail::build_display_items(
@@ -3029,7 +2383,11 @@ fn synthetic_measurement(input: &str) -> String {\n\
 
         match &prepared.items[0] {
             TranscriptItemInit::Message(message) => {
-                assert_eq!(message.highlight_query.as_deref(), Some("needle"));
+                assert_eq!(
+                    message.highlight_query.as_deref(),
+                    Some("needle"),
+                    "a matched message row must be highlighted"
+                );
             }
             other => panic!(
                 "expected first item to be a message, got {:?}",
@@ -3039,7 +2397,11 @@ fn synthetic_measurement(input: &str) -> String {\n\
 
         match &prepared.items[1] {
             TranscriptItemInit::ToolCall(tool_call) => {
-                assert!(tool_call.highlight_query.is_none());
+                assert_eq!(
+                    tool_call.highlight_query.as_deref(),
+                    None,
+                    "tool-call rows are not in the FTS match list and must not be highlighted"
+                );
             }
             other => panic!(
                 "expected second item to be a tool call, got {:?}",
@@ -3049,7 +2411,11 @@ fn synthetic_measurement(input: &str) -> String {\n\
 
         match &prepared.items[2] {
             TranscriptItemInit::Message(message) => {
-                assert!(message.highlight_query.is_none());
+                assert_eq!(
+                    message.highlight_query.as_deref(),
+                    None,
+                    "a message row outside the FTS match list must not be highlighted"
+                );
             }
             other => panic!(
                 "expected third item to be a message, got {:?}",
@@ -3061,7 +2427,7 @@ fn synthetic_measurement(input: &str) -> String {\n\
     #[gtk::test]
     fn session_detail_defers_initial_transcript_load_after_session_change() {
         let temp_db = tempfile::NamedTempFile::new().expect("temp db");
-        seed_message_transcript(temp_db.path(), "test-session-123", INITIAL_PAGE_SIZE);
+        seed_message_transcript(temp_db.path(), "test-session-123", 75);
 
         let controller = SessionDetail::builder().launch(temp_db.path().to_path_buf());
         controller.emit(SessionDetailMsg::SetSession {
@@ -3071,7 +2437,7 @@ fn synthetic_measurement(input: &str) -> String {\n\
 
         pump_main_context(|| {
             let parts = controller.state().get();
-            parts.model.session.is_some() && parts.model.loading_first_page
+            parts.model.session.is_some() && parts.model.loading_transcript
         });
 
         let context = gtk::glib::MainContext::default();
@@ -3084,13 +2450,12 @@ fn synthetic_measurement(input: &str) -> String {\n\
         let parts = controller.state().get();
         assert_eq!(parts.model.loaded_count, 0);
         assert_eq!(parts.model.messages.len(), 0);
-        assert!(parts.model.pending_render_batch.is_none());
     }
 
     #[gtk::test]
     fn session_open_timestamp_tracks_active_session_lifecycle() {
         let temp_db = tempfile::NamedTempFile::new().expect("temp db");
-        seed_message_transcript(temp_db.path(), "test-session-123", INITIAL_PAGE_SIZE);
+        seed_message_transcript(temp_db.path(), "test-session-123", 75);
 
         let controller = SessionDetail::builder().launch(temp_db.path().to_path_buf());
         controller.emit(SessionDetailMsg::SetSession {
@@ -3103,7 +2468,7 @@ fn synthetic_measurement(input: &str) -> String {\n\
                 .state()
                 .get()
                 .model
-                .first_page_load_started_at
+                .transcript_load_started_at
                 .is_some()
         });
         assert!(
@@ -3111,7 +2476,7 @@ fn synthetic_measurement(input: &str) -> String {\n\
                 .state()
                 .get()
                 .model
-                .first_page_load_started_at
+                .transcript_load_started_at
                 .is_some()
         );
 
@@ -3122,7 +2487,7 @@ fn synthetic_measurement(input: &str) -> String {\n\
                 .state()
                 .get()
                 .model
-                .first_page_load_started_at
+                .transcript_load_started_at
                 .is_none()
         );
     }
@@ -3130,7 +2495,7 @@ fn synthetic_measurement(input: &str) -> String {\n\
     #[gtk::test]
     fn clear_message_clears_rows_and_targets() {
         let temp_db = tempfile::NamedTempFile::new().expect("temp db");
-        seed_message_transcript(temp_db.path(), "test-session-123", INITIAL_PAGE_SIZE);
+        seed_message_transcript(temp_db.path(), "test-session-123", 75);
 
         let controller = SessionDetail::builder().launch(temp_db.path().to_path_buf());
         controller.emit(SessionDetailMsg::SetSession {
@@ -3138,10 +2503,9 @@ fn synthetic_measurement(input: &str) -> String {\n\
             search_query: None,
         });
 
-        pump_main_context_draining_transcript_batches(&controller, Duration::from_secs(5), || {
+        pump_main_context(|| {
             let parts = controller.state().get();
-            parts.model.pending_render_batch.is_none()
-                && parts.model.messages.len() == INITIAL_PAGE_SIZE
+            !parts.model.loading_transcript && parts.model.messages.len() as usize == 75
         });
 
         controller.emit(SessionDetailMsg::Clear);
@@ -3167,272 +2531,6 @@ fn synthetic_measurement(input: &str) -> String {\n\
         let debug = format!("{cmd:?}");
         assert!(debug.contains("load_duration_ms"));
         assert!(debug.contains("12"));
-    }
-
-    #[gtk::test]
-    fn session_detail_loads_transcript_pages_incrementally() {
-        let temp_db = tempfile::NamedTempFile::new().expect("temp db");
-        seed_message_transcript(temp_db.path(), "test-session-123", INITIAL_PAGE_SIZE + 5);
-
-        let controller = SessionDetail::builder().launch(temp_db.path().to_path_buf());
-        controller.emit(SessionDetailMsg::SetSession {
-            session: Box::new(build_test_session(None, None, 0, 0, 0)),
-            search_query: None,
-        });
-
-        pump_main_context(|| {
-            let parts = controller.state().get();
-            !parts.model.loading_first_page && parts.model.loaded_count == INITIAL_PAGE_SIZE
-        });
-
-        {
-            let parts = controller.state().get();
-            assert_eq!(parts.model.loaded_count, INITIAL_PAGE_SIZE);
-            assert!(parts.model.messages.len() < INITIAL_PAGE_SIZE);
-            assert!(parts.model.pending_render_batch.is_some());
-            assert!(parts.model.has_more_messages);
-        }
-
-        pump_main_context_draining_transcript_batches(&controller, Duration::from_secs(5), || {
-            let parts = controller.state().get();
-            parts.model.pending_render_batch.is_none()
-                && parts.model.messages.len() == INITIAL_PAGE_SIZE
-        });
-
-        controller.emit(SessionDetailMsg::LoadMore);
-
-        pump_main_context(|| {
-            let parts = controller.state().get();
-            !parts.model.loading_next_page && parts.model.loaded_count == INITIAL_PAGE_SIZE + 5
-        });
-
-        {
-            let parts = controller.state().get();
-            assert_eq!(parts.model.loaded_count, INITIAL_PAGE_SIZE + 5);
-            assert!(parts.model.messages.len() < INITIAL_PAGE_SIZE + 5);
-        }
-
-        pump_main_context_draining_transcript_batches(&controller, Duration::from_secs(5), || {
-            let parts = controller.state().get();
-            parts.model.pending_render_batch.is_none()
-                && parts.model.messages.len() == INITIAL_PAGE_SIZE + 5
-        });
-
-        let parts = controller.state().get();
-        assert!(!parts.model.has_more_messages);
-    }
-
-    #[gtk::test]
-    fn session_detail_records_render_batch_measurements() {
-        let temp_db = tempfile::NamedTempFile::new().expect("temp db");
-        seed_message_transcript(temp_db.path(), "test-session-123", INITIAL_PAGE_SIZE + 5);
-
-        let controller = SessionDetail::builder().launch(temp_db.path().to_path_buf());
-        controller.emit(SessionDetailMsg::SetSession {
-            session: Box::new(build_test_session(None, None, 0, 0, 0)),
-            search_query: None,
-        });
-
-        pump_main_context(|| {
-            let parts = controller.state().get();
-            parts.model.messages.len() > 0
-        });
-
-        {
-            let parts = controller.state().get();
-            assert!(parts.model.pending_render_batch.is_some());
-            assert!(parts.model.messages.len() < INITIAL_PAGE_SIZE);
-        }
-
-        pump_main_context_draining_transcript_batches(&controller, Duration::from_secs(5), || {
-            let parts = controller.state().get();
-            parts.model.pending_render_batch.is_none()
-                && parts.model.messages.len() == INITIAL_PAGE_SIZE
-        });
-
-        let parts = controller.state().get();
-        let metrics = parts
-            .model
-            .last_render_metrics
-            .as_ref()
-            .expect("first page should record render metrics");
-        assert_eq!(metrics.offset, 0);
-        assert_eq!(metrics.source_row_count, INITIAL_PAGE_SIZE);
-        assert_eq!(metrics.display_item_count, INITIAL_PAGE_SIZE);
-        assert_eq!(
-            metrics.batch_count,
-            INITIAL_PAGE_SIZE.div_ceil(RENDER_BATCH_SIZE)
-        );
-        assert_eq!(metrics.message_count, INITIAL_PAGE_SIZE);
-        assert_eq!(metrics.tool_call_count, 0);
-        assert_eq!(metrics.tool_burst_count, 0);
-        assert_eq!(metrics.subagent_count, 0);
-        assert_eq!(
-            metrics.worst_row_kind,
-            Some(TranscriptRowBuildKind::Message)
-        );
-        assert_eq!(
-            metrics.total_row_build_duration_ms,
-            metrics.message_build_duration_ms
-                + metrics.tool_call_build_duration_ms
-                + metrics.tool_burst_build_duration_ms
-                + metrics.subagent_build_duration_ms
-        );
-        assert!(metrics.first_page_load_to_factory_push_ms.is_some());
-    }
-
-    #[test]
-    fn render_item_kind_counts_capture_heterogeneous_rows() {
-        let rows = vec![
-            transcript_message_row(0, crate::models::Role::Assistant, "hello"),
-            transcript_tool_row(1, "Read"),
-            transcript_tool_row(2, "Edit"),
-            transcript_subagent_row(3, "Explore"),
-        ];
-
-        let matched_item_indexes = BTreeSet::new();
-        let prepared = SessionDetail::build_display_items(
-            rows,
-            "session-1",
-            None,
-            &matched_item_indexes,
-            Arc::new(PathBuf::from("/tmp/test.db")),
-            0,
-        );
-        let counts = SessionDetail::count_render_item_kinds(&prepared.items);
-
-        assert_eq!(counts.message_count, 1);
-        assert_eq!(counts.tool_call_count, 0);
-        assert_eq!(counts.tool_burst_count, 1);
-        assert_eq!(counts.subagent_count, 1);
-    }
-
-    #[test]
-    fn render_metrics_for_batch_captures_push_metrics_without_row_builds() {
-        let queued_at = Instant::now();
-        let batch = PendingRenderBatch {
-            request_id: 1,
-            offset: 0,
-            source_row_count: 5,
-            total_items: 5,
-            rendered_items: 5,
-            batch_count: 2,
-            queued_at,
-            last_batch_completed_at: Some(queued_at),
-            total_push_duration: Duration::from_millis(12),
-            max_push_duration: Duration::from_millis(9),
-            max_schedule_gap: Duration::from_millis(15),
-            row_build_totals: RenderRowBuildTotals::default(),
-            row_build_count: 0,
-            worst_row_kind: None,
-            worst_row_duration: Duration::ZERO,
-            batch_breakdowns: vec![],
-            item_render_batch_indices: std::collections::HashMap::new(),
-            row_kind_counts: RenderRowKindCounts {
-                message_count: 5,
-                tool_call_count: 0,
-                tool_burst_count: 0,
-                subagent_count: 0,
-            },
-            items: VecDeque::new(),
-            first_page_load_to_factory_push_ms: Some(42),
-            push_complete: true,
-        };
-
-        let metrics = render_metrics_for_batch(&batch, 100);
-        assert_eq!(metrics.offset, 0);
-        assert_eq!(metrics.source_row_count, 5);
-        assert_eq!(metrics.display_item_count, 5);
-        assert_eq!(metrics.batch_count, 2);
-        assert_eq!(metrics.total_duration_ms, 100);
-        assert_eq!(metrics.total_push_duration_ms, 12);
-        assert_eq!(metrics.max_push_duration_ms, 9);
-        assert_eq!(metrics.max_schedule_gap_ms, 15);
-        assert_eq!(metrics.total_row_build_duration_ms, 0);
-        assert_eq!(metrics.worst_row_kind, None);
-        assert_eq!(metrics.worst_row_build_duration_ms, 0);
-        assert_eq!(metrics.max_post_drop_residual_ms, 0);
-        assert_eq!(metrics.first_page_load_to_factory_push_ms, Some(42));
-        assert_eq!(metrics.message_count, 5);
-        assert_eq!(metrics.tool_call_count, 0);
-        assert_eq!(metrics.tool_burst_count, 0);
-        assert_eq!(metrics.subagent_count, 0);
-    }
-
-    #[gtk::test]
-    #[ignore = "manual performance smoke test for issue #127"]
-    fn session_detail_perf_smoke_measures_synthetic_scenarios() {
-        let message_metrics = measure_session_detail_perf_scenario("messages", |path| {
-            seed_message_transcript(path, "test-session-123", INITIAL_PAGE_SIZE);
-        });
-        let tool_burst_metrics = measure_session_detail_perf_scenario("tool-burst", |path| {
-            seed_tool_burst_transcript(path, "test-session-123", INITIAL_PAGE_SIZE);
-        });
-        let markdown_metrics = measure_session_detail_perf_scenario("markdown", |path| {
-            seed_markdown_transcript(path, "test-session-123", INITIAL_PAGE_SIZE);
-        });
-        let markdown_search_metrics = measure_session_detail_perf_scenario_with_query(
-            "markdown-search",
-            Some("needle"),
-            |path| {
-                seed_markdown_transcript(path, "test-session-123", INITIAL_PAGE_SIZE);
-            },
-        );
-
-        println!("messages: {message_metrics:?}");
-        println!("tool-burst: {tool_burst_metrics:?}");
-        println!("markdown: {markdown_metrics:?}");
-        println!("markdown-search: {markdown_search_metrics:?}");
-
-        assert_eq!(message_metrics.source_row_count, INITIAL_PAGE_SIZE);
-        assert_eq!(message_metrics.message_count, INITIAL_PAGE_SIZE);
-        assert_eq!(tool_burst_metrics.source_row_count, INITIAL_PAGE_SIZE);
-        assert_eq!(tool_burst_metrics.display_item_count, 1);
-        assert_eq!(tool_burst_metrics.tool_burst_count, 1);
-        assert_eq!(markdown_metrics.source_row_count, INITIAL_PAGE_SIZE);
-        assert_eq!(markdown_metrics.message_count, INITIAL_PAGE_SIZE);
-        assert_eq!(markdown_search_metrics.source_row_count, INITIAL_PAGE_SIZE);
-        assert_eq!(markdown_search_metrics.message_count, INITIAL_PAGE_SIZE);
-    }
-
-    #[gtk::test]
-    #[ignore = "manual issue #140 reference-session measurement; requires local Codex session file"]
-    fn session_detail_issue_140_reference_session_breakdown() {
-        const SESSION_ID: &str = "019dc51a-f0cd-79c1-ba79-45fedac889c2";
-        let source_file = std::env::var("SESSION_DETAIL_ISSUE_140_SOURCE_FILE")
-            .expect("SESSION_DETAIL_ISSUE_140_SOURCE_FILE must point to the reference JSONL file");
-        let source_file = std::path::Path::new(&source_file);
-        assert!(
-            source_file.exists(),
-            "reference Codex session file must exist at {}",
-            source_file.display()
-        );
-
-        let temp_root = tempfile::tempdir().expect("temp session root");
-        let target_dir = temp_root.path().join("2026/04/25");
-        std::fs::create_dir_all(&target_dir).expect("create session fixture dir");
-        std::fs::copy(
-            source_file,
-            target_dir.join(source_file.file_name().expect("source file name")),
-        )
-        .expect("copy reference session");
-
-        let temp_db = tempfile::NamedTempFile::new().expect("temp db");
-        let mut indexer = crate::database::SessionIndexer::new(temp_db.path()).expect("indexer");
-        indexer
-            .index_codex_sessions(temp_root.path())
-            .expect("index reference Codex session");
-        let session = crate::database::load_session(temp_db.path(), SESSION_ID)
-            .expect("load reference session")
-            .expect("reference session should be indexed");
-
-        let metrics = measure_session_detail_metrics_for_session(temp_db.path(), session);
-        println!("issue-140-reference: {metrics:#?}");
-
-        assert_eq!(metrics.offset, 0);
-        assert_eq!(metrics.source_row_count, INITIAL_PAGE_SIZE);
-        assert!(metrics.total_row_build_duration_ms > 0);
-        assert!(metrics.worst_row_kind.is_some());
     }
 
     #[test]
@@ -3614,31 +2712,25 @@ fn synthetic_measurement(input: &str) -> String {\n\
     #[gtk::test]
     fn update_search_query_populates_match_positions_and_reloads_first_page() {
         let temp_db = tempfile::NamedTempFile::new().expect("temp db");
-        seed_search_transcript(
-            temp_db.path(),
-            "test-session-123",
-            INITIAL_PAGE_SIZE + 10,
-            &[10, 80],
-        );
+        seed_search_transcript(temp_db.path(), "test-session-123", 85, &[10, 80]);
 
         let controller = SessionDetail::builder().launch(temp_db.path().to_path_buf());
         controller.emit(SessionDetailMsg::SetSession {
             session: Box::new(build_test_session(None, None, 0, 0, 0)),
             search_query: None,
         });
-        pump_main_context_draining_transcript_batches(&controller, Duration::from_secs(5), || {
+        pump_main_context(|| {
             let parts = controller.state().get();
-            parts.model.pending_render_batch.is_none()
-                && parts.model.loaded_count == INITIAL_PAGE_SIZE
+            !parts.model.loading_transcript && parts.model.loaded_count == 85
         });
 
         controller.emit(SessionDetailMsg::UpdateSearchQuery(Some(
             "needle".to_string(),
         )));
-        pump_main_context_draining_transcript_batches(&controller, Duration::from_secs(5), || {
+        pump_main_context(|| {
             let parts = controller.state().get();
             parts.model.match_positions.len() == 2
-                && parts.model.pending_render_batch.is_none()
+                && !parts.model.loading_transcript
                 && parts.model.display_targets_by_item_index.contains_key(&10)
         });
 
@@ -3655,9 +2747,54 @@ fn synthetic_measurement(input: &str) -> String {\n\
     }
 
     #[gtk::test]
+    fn search_highlight_is_limited_to_navigable_message_matches() {
+        let temp_db = tempfile::NamedTempFile::new().expect("temp db");
+        seed_search_transcript(temp_db.path(), "test-session-123", 12, &[3, 9]);
+
+        let controller = SessionDetail::builder().launch(temp_db.path().to_path_buf());
+        controller.emit(SessionDetailMsg::SetSession {
+            session: Box::new(build_test_session(None, None, 0, 0, 0)),
+            search_query: None,
+        });
+        pump_main_context(|| {
+            let parts = controller.state().get();
+            !parts.model.loading_transcript && parts.model.loaded_count == 12
+        });
+
+        controller.emit(SessionDetailMsg::UpdateSearchQuery(Some(
+            "needle".to_string(),
+        )));
+        pump_main_context(|| {
+            let parts = controller.state().get();
+            parts.model.match_positions.len() == 2 && !parts.model.loading_transcript
+        });
+
+        let parts = controller.state().get();
+        let highlighted: Vec<(i64, bool)> = parts
+            .model
+            .messages
+            .iter()
+            .filter_map(|item| {
+                let data = item.borrow();
+                data.transcript_item_index
+                    .map(|idx| (idx, data.highlight_query.is_some()))
+            })
+            .collect();
+
+        assert_eq!(highlighted.len(), 12);
+        for (idx, has_highlight) in highlighted {
+            let is_navigable_match = idx == 3 || idx == 9;
+            assert_eq!(
+                has_highlight, is_navigable_match,
+                "row {idx} highlight must match whether Next/Previous can reach it"
+            );
+        }
+    }
+
+    #[gtk::test]
     fn stale_search_result_is_discarded() {
         let temp_db = tempfile::NamedTempFile::new().expect("temp db");
-        seed_search_transcript(temp_db.path(), "test-session-123", INITIAL_PAGE_SIZE, &[5]);
+        seed_search_transcript(temp_db.path(), "test-session-123", 75, &[5]);
 
         let controller = SessionDetail::builder().launch(temp_db.path().to_path_buf());
         controller.emit(SessionDetailMsg::SetSession {
@@ -3689,24 +2826,154 @@ fn synthetic_measurement(input: &str) -> String {\n\
     }
 
     #[gtk::test]
+    fn list_view_row_widget_from_child_accepts_realized_widget_child() {
+        let row = gtk::Box::new(gtk::Orientation::Vertical, 0).upcast::<gtk::Widget>();
+
+        let resolved = SessionDetail::list_view_row_widget_from_child(row.clone().upcast())
+            .expect("direct widget child should resolve");
+
+        assert_eq!(resolved, row);
+    }
+
+    /// Builds a realized `GtkListView` whose rows carry `transcript-row-{index}`
+    /// names, mirroring how the typed transcript view names its row roots.
+    fn realized_named_list_view(row_count: u32) -> (gtk::Window, gtk::ListView) {
+        let items: Vec<String> = (0..row_count).map(|i| i.to_string()).collect();
+        let item_refs: Vec<&str> = items.iter().map(String::as_str).collect();
+        let model = gtk::StringList::new(&item_refs);
+        let factory = gtk::SignalListItemFactory::new();
+        factory.connect_setup(|_, list_item| {
+            let list_item = list_item.downcast_ref::<gtk::ListItem>().unwrap();
+            list_item.set_child(Some(&gtk::Label::new(Some("row"))));
+        });
+        factory.connect_bind(|_, list_item| {
+            let list_item = list_item.downcast_ref::<gtk::ListItem>().unwrap();
+            let pos = list_item.position();
+            if let Some(child) = list_item.child() {
+                child.set_widget_name(&format!("{TRANSCRIPT_ROW_WIDGET_NAME_PREFIX}{pos}"));
+            }
+        });
+
+        let selection = gtk::NoSelection::new(Some(model));
+        let list_view = gtk::ListView::new(Some(selection), Some(factory));
+        let window = gtk::Window::new();
+        window.set_default_size(400, 600);
+        window.set_child(Some(&list_view));
+        window.present();
+
+        let deadline = std::time::Instant::now() + Duration::from_millis(800);
+        let context = gtk::glib::MainContext::default();
+        while std::time::Instant::now() < deadline && list_view.observe_children().n_items() == 0 {
+            context.iteration(true);
+        }
+
+        (window, list_view)
+    }
+
+    #[gtk::test]
+    fn observed_row_widget_finds_named_row_through_list_item_wrapper() {
+        let (window, list_view) = realized_named_list_view(3);
+
+        let resolved = SessionDetail::observed_row_widget_for_display_index(&list_view, 1)
+            .expect("row 1 widget must be resolvable from the realized ListView");
+        assert_eq!(
+            resolved.widget_name().as_str(),
+            "transcript-row-1",
+            "the resolved widget must be the named transcript row root, \
+             not the GtkListView's internal list-item wrapper"
+        );
+
+        window.destroy();
+    }
+
+    #[gtk::test]
+    fn row_widget_matches_display_index_uses_bound_row_identity() {
+        let row = gtk::Box::new(gtk::Orientation::Vertical, 0).upcast::<gtk::Widget>();
+        row.set_widget_name("transcript-row-7");
+
+        assert!(SessionDetail::row_widget_matches_display_index(&row, 7));
+        assert!(!SessionDetail::row_widget_matches_display_index(&row, 8));
+    }
+
+    #[test]
+    fn message_full_content_target_rejects_stale_session_or_message() {
+        let (sender, _receiver) = relm4::channel::<SessionDetailMsg>();
+        let prepared = SessionDetail::build_display_items(
+            vec![transcript_message_row(
+                0,
+                crate::models::Role::User,
+                "preview",
+            )],
+            "session-1",
+            None,
+            &BTreeSet::new(),
+            Arc::new(PathBuf::from("/tmp/test.db")),
+            0,
+        );
+        let item = TranscriptItemData::from_init(
+            prepared.items.into_iter().next().expect("message item"),
+            sender,
+        );
+
+        assert!(SessionDetail::message_full_content_target_matches(
+            &item,
+            Some("session-1"),
+            "session-1",
+            0,
+        ));
+        assert!(!SessionDetail::message_full_content_target_matches(
+            &item,
+            Some("session-2"),
+            "session-1",
+            0,
+        ));
+        assert!(!SessionDetail::message_full_content_target_matches(
+            &item,
+            Some("session-1"),
+            "session-1",
+            1,
+        ));
+    }
+
+    #[test]
+    fn message_full_content_failure_resets_expansion() {
+        let (sender, _receiver) = relm4::channel::<SessionDetailMsg>();
+        let prepared = SessionDetail::build_display_items(
+            vec![transcript_message_row(
+                0,
+                crate::models::Role::User,
+                "preview",
+            )],
+            "session-1",
+            None,
+            &BTreeSet::new(),
+            Arc::new(PathBuf::from("/tmp/test.db")),
+            0,
+        );
+        let item = TranscriptItemData::from_init(
+            prepared.items.into_iter().next().expect("message item"),
+            sender,
+        );
+        item.expanded.set(true);
+
+        SessionDetail::reset_message_expansion_after_full_content_failure(&item);
+
+        assert!(!item.expanded.get());
+    }
+
+    #[gtk::test]
     fn jump_to_loaded_match_scrolls_without_loading() {
         let temp_db = tempfile::NamedTempFile::new().expect("temp db");
-        seed_search_transcript(
-            temp_db.path(),
-            "test-session-123",
-            INITIAL_PAGE_SIZE,
-            &[10, 20],
-        );
+        seed_search_transcript(temp_db.path(), "test-session-123", 75, &[10, 20]);
 
         let controller = SessionDetail::builder().launch(temp_db.path().to_path_buf());
         controller.emit(SessionDetailMsg::SetSession {
             session: Box::new(build_test_session(None, None, 0, 0, 0)),
             search_query: None,
         });
-        pump_main_context_draining_transcript_batches(&controller, Duration::from_secs(5), || {
+        pump_main_context(|| {
             let parts = controller.state().get();
-            parts.model.pending_render_batch.is_none()
-                && parts.model.loaded_count == INITIAL_PAGE_SIZE
+            !parts.model.loading_transcript && parts.model.loaded_count == 75
         });
 
         let active_request = controller.state().get().model.search_request_id;
@@ -3730,9 +2997,9 @@ fn synthetic_measurement(input: &str) -> String {\n\
     }
 
     #[gtk::test]
-    fn jump_to_loaded_but_unrendered_match_waits_for_render_batch() {
+    fn jump_to_loaded_match_with_typed_view_waits_for_display() {
         let temp_db = tempfile::NamedTempFile::new().expect("temp db");
-        seed_search_transcript(temp_db.path(), "test-session-123", INITIAL_PAGE_SIZE, &[70]);
+        seed_search_transcript(temp_db.path(), "test-session-123", 75, &[70]);
 
         let controller = SessionDetail::builder().launch(temp_db.path().to_path_buf());
         controller.emit(SessionDetailMsg::SetSession {
@@ -3741,8 +3008,7 @@ fn synthetic_measurement(input: &str) -> String {\n\
         });
         pump_main_context(|| {
             let parts = controller.state().get();
-            parts.model.loaded_count == INITIAL_PAGE_SIZE
-                && parts.model.pending_render_batch.is_some()
+            parts.model.loaded_count == 75 && !parts.model.loading_transcript
         });
 
         let active_request = controller.state().get().model.search_request_id;
@@ -3752,9 +3018,9 @@ fn synthetic_measurement(input: &str) -> String {\n\
             positions: vec![MatchPosition { item_index: 70 }],
         });
 
-        pump_main_context_draining_transcript_batches(&controller, Duration::from_secs(5), || {
+        pump_main_context(|| {
             let parts = controller.state().get();
-            parts.model.pending_render_batch.is_none() && !parts.model.loading_jump
+            !parts.model.loading_jump
         });
 
         let parts = controller.state().get();
@@ -3763,52 +3029,9 @@ fn synthetic_measurement(input: &str) -> String {\n\
     }
 
     #[gtk::test]
-    fn jump_to_unloaded_match_triggers_progressive_loading_after_each_render_batch() {
-        let temp_db = tempfile::NamedTempFile::new().expect("temp db");
-        seed_search_transcript(
-            temp_db.path(),
-            "test-session-123",
-            INITIAL_PAGE_SIZE + NEXT_PAGE_SIZE + 10,
-            &[10, 160],
-        );
-
-        let controller = SessionDetail::builder().launch(temp_db.path().to_path_buf());
-        controller.emit(SessionDetailMsg::SetSession {
-            session: Box::new(build_test_session(None, None, 0, 0, 0)),
-            search_query: Some("needle".to_string()),
-        });
-        pump_main_context_draining_transcript_batches(&controller, Duration::from_secs(5), || {
-            let parts = controller.state().get();
-            parts.model.match_positions.len() == 2
-                && parts.model.pending_render_batch.is_none()
-                && !parts.model.loading_jump
-                && parts.model.current_match == 0
-                && parts.model.display_targets_by_item_index.contains_key(&10)
-        });
-
-        controller.emit(SessionDetailMsg::NextMatch);
-        pump_main_context_draining_transcript_batches(&controller, Duration::from_secs(5), || {
-            let parts = controller.state().get();
-            parts.model.loaded_count == INITIAL_PAGE_SIZE + NEXT_PAGE_SIZE
-                && parts.model.pending_render_batch.is_none()
-                && !parts.model.loading_jump
-        });
-
-        let parts = controller.state().get();
-        assert_eq!(parts.model.current_match, 1);
-        assert!(!parts.model.loading_jump);
-        assert!(parts.model.display_targets_by_item_index.contains_key(&160));
-    }
-
-    #[gtk::test]
     fn prev_next_wrap_around_match_positions() {
         let temp_db = tempfile::NamedTempFile::new().expect("temp db");
-        seed_search_transcript(
-            temp_db.path(),
-            "test-session-123",
-            INITIAL_PAGE_SIZE,
-            &[2, 4],
-        );
+        seed_search_transcript(temp_db.path(), "test-session-123", 75, &[2, 4]);
 
         let controller = SessionDetail::builder().launch(temp_db.path().to_path_buf());
         controller.emit(SessionDetailMsg::SetSession {
@@ -3827,40 +3050,5 @@ fn synthetic_measurement(input: &str) -> String {\n\
 
         let parts = controller.state().get();
         assert_eq!(parts.model.current_match, 0);
-    }
-
-    #[gtk::test]
-    fn search_nav_bar_reflects_loading_jump_state() {
-        let temp_db = tempfile::NamedTempFile::new().expect("temp db");
-        seed_search_transcript(
-            temp_db.path(),
-            "test-session-123",
-            INITIAL_PAGE_SIZE + NEXT_PAGE_SIZE + 10,
-            &[10, 160],
-        );
-
-        let controller = SessionDetail::builder().launch(temp_db.path().to_path_buf());
-        controller.emit(SessionDetailMsg::SetSession {
-            session: Box::new(build_test_session(None, None, 0, 0, 0)),
-            search_query: Some("needle".to_string()),
-        });
-        pump_main_context(|| {
-            let parts = controller.state().get();
-            parts.model.match_positions.len() == 2 && !parts.model.loading_jump
-        });
-
-        controller.emit(SessionDetailMsg::NextMatch);
-        pump_main_context(|| controller.state().get().model.loading_jump);
-
-        let parts = controller.state().get();
-        assert!(parts.widgets.search_jump_spinner.is_visible());
-        assert!(parts.widgets.search_jump_spinner.is_spinning());
-        assert!(parts.widgets.loaded_match_counter_label.is_visible());
-        assert_eq!(
-            parts.widgets.loaded_match_counter_label.label(),
-            "(1/2 loaded)"
-        );
-        assert!(!parts.widgets.previous_match_button.is_sensitive());
-        assert!(!parts.widgets.next_match_button.is_sensitive());
     }
 }

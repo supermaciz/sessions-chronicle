@@ -21,8 +21,9 @@ use crate::models::{
 use crate::ui::format::{format_duration_ms, tool_status_css_class, tool_status_label};
 use crate::ui::highlight;
 use crate::ui::markdown;
+use crate::ui::session_detail::SessionDetailMsg;
 
-const TOOL_ICONS: ToolCategoryIcons = ToolCategoryIcons {
+pub(crate) const TOOL_ICONS: ToolCategoryIcons = ToolCategoryIcons {
     read: icon_names::TEXT_SNIPPET,
     edit: icon_names::EDIT_DOCUMENT,
     command: icon_names::TERMINAL,
@@ -36,7 +37,7 @@ const SLOW_CONTENT_RENDER: Duration = Duration::from_millis(10);
 
 /// Return the model display text for a transcript header.
 /// Only assistant messages with a non-empty model value produce output.
-fn model_label_text(role: Role, model: Option<&str>) -> Option<String> {
+pub(crate) fn model_label_text(role: Role, model: Option<&str>) -> Option<String> {
     if role != Role::Assistant {
         return None;
     }
@@ -51,6 +52,7 @@ fn model_label_text(role: Role, model: Option<&str>) -> Option<String> {
 // Init types
 // ---------------------------------------------------------------------------
 
+#[derive(Clone)]
 pub struct MessageItemInit {
     pub item_index: usize,
     pub transcript_item_index: i64,
@@ -114,6 +116,7 @@ pub struct ToolBurstItemInit {
     pub default_expanded: bool,
 }
 
+#[derive(Clone)]
 pub struct SubagentItemInit {
     pub item_index: usize,
     pub transcript_item_index: i64,
@@ -123,6 +126,7 @@ pub struct SubagentItemInit {
     pub reasoning_preview: ReasoningPreview,
 }
 
+#[derive(Clone)]
 pub enum TranscriptItemInit {
     Message(MessageItemInit),
     ToolCall(ToolCallItemInit),
@@ -261,7 +265,7 @@ pub struct TranscriptRowWidgets {
 // FactoryComponent implementation
 // ---------------------------------------------------------------------------
 
-fn render_content(
+pub(crate) fn render_content(
     container: &gtk::Box,
     content: &str,
     role: Role,
@@ -301,14 +305,15 @@ fn render_content(
     match_count
 }
 
-fn count_tool_call_matches(init: &ToolCallItemInit) -> usize {
+pub(crate) fn count_tool_call_matches(init: &ToolCallItemInit) -> usize {
     let Some(query) = init.highlight_query.as_deref() else {
         return 0;
     };
 
-    let mut count = highlight::find_case_insensitive_matches_in_text(&init.tool_name, query).len();
+    let mut count =
+        crate::utils::text_match::count_case_insensitive_matches(&init.tool_name, query);
     if let Some(text) = init.displayed_preview() {
-        count += highlight::find_case_insensitive_matches_in_text(text, query).len();
+        count += crate::utils::text_match::count_case_insensitive_matches(text, query);
     }
     count
 }
@@ -359,7 +364,7 @@ pub fn build_tool_burst_init(
     }
 }
 
-fn format_reasoning_burst_label(
+pub(crate) fn format_reasoning_burst_label(
     visible_reasoning_child_count: usize,
     encrypted_only_child_count: usize,
 ) -> Option<String> {
@@ -372,7 +377,7 @@ fn format_reasoning_burst_label(
     }
 }
 
-fn format_tool_burst_accessible_label(
+pub(crate) fn format_tool_burst_accessible_label(
     category_counts: &[(String, usize)],
     total_tool_calls: usize,
     error_count: usize,
@@ -396,7 +401,7 @@ fn format_tool_burst_accessible_label(
     label
 }
 
-pub fn format_tool_burst_match_badge_accessible_label(match_count: usize) -> String {
+pub(crate) fn format_tool_burst_match_badge_accessible_label(match_count: usize) -> String {
     format!("{match_count} search matches inside this group")
 }
 
@@ -519,10 +524,66 @@ fn build_tool_call_widget(
     }
 }
 
-fn populate_tool_burst_children(
+pub(crate) fn populate_tool_burst_children(
+    children: &gtk::Box,
+    burst: &ToolBurstItemInit,
+    sender: &relm4::Sender<SessionDetailMsg>,
+    item_index: usize,
+) {
+    populate_tool_burst_children_impl(
+        children,
+        burst,
+        Rc::new({
+            let sender = sender.clone();
+            move |id| {
+                sender.emit(SessionDetailMsg::InspectToolCall(id));
+            }
+        }),
+        Rc::new({
+            let sender = sender.clone();
+            move |_session_id, transcript_item_index| {
+                sender.emit(SessionDetailMsg::InspectReasoning(transcript_item_index));
+            }
+        }),
+        item_index,
+    );
+}
+
+fn populate_tool_burst_children_legacy(
     children: &gtk::Box,
     burst: &ToolBurstItemInit,
     sender: &FactorySender<TranscriptRow>,
+    item_index: usize,
+) {
+    populate_tool_burst_children_impl(
+        children,
+        burst,
+        Rc::new({
+            let sender = sender.clone();
+            move |id| {
+                sender.output(TranscriptRowOutput::InspectToolCall(id)).ok();
+            }
+        }),
+        Rc::new({
+            let sender = sender.clone();
+            move |session_id, transcript_item_index| {
+                sender
+                    .output(TranscriptRowOutput::InspectReasoning {
+                        session_id,
+                        transcript_item_index,
+                    })
+                    .ok();
+            }
+        }),
+        item_index,
+    );
+}
+
+fn populate_tool_burst_children_impl(
+    children: &gtk::Box,
+    burst: &ToolBurstItemInit,
+    on_inspect: Rc<dyn Fn(String)>,
+    on_inspect_reasoning: Rc<dyn Fn(String, i64)>,
     item_index: usize,
 ) {
     let children_started_at = Instant::now();
@@ -532,20 +593,15 @@ fn populate_tool_burst_children(
         let child = build_tool_call_widget(
             tool_call,
             {
-                let sender = sender.clone();
+                let on_inspect = on_inspect.clone();
                 move |id| {
-                    sender.output(TranscriptRowOutput::InspectToolCall(id)).ok();
+                    on_inspect(id);
                 }
             },
             {
-                let sender = sender.clone();
+                let on_inspect_reasoning = on_inspect_reasoning.clone();
                 move |session_id, transcript_item_index| {
-                    sender
-                        .output(TranscriptRowOutput::InspectReasoning {
-                            session_id,
-                            transcript_item_index,
-                        })
-                        .ok();
+                    on_inspect_reasoning(session_id, transcript_item_index);
                 }
             },
         );
@@ -1222,7 +1278,7 @@ impl TranscriptRow {
         let children = gtk::Box::new(gtk::Orientation::Vertical, 0);
         let children_built = Rc::new(Cell::new(false));
         if should_build_tool_burst_children_on_mount(burst.default_expanded) {
-            populate_tool_burst_children(&children, burst, &sender, self.item_index);
+            populate_tool_burst_children_legacy(&children, burst, &sender, self.item_index);
             children_built.set(true);
         }
 
@@ -1246,7 +1302,7 @@ impl TranscriptRow {
             header_button.connect_clicked(move |btn| {
                 let expanded = !revealer.reveals_child();
                 if expanded && !children_built.get() {
-                    populate_tool_burst_children(&children, &burst, &sender, item_index);
+                    populate_tool_burst_children_legacy(&children, &burst, &sender, item_index);
                     children_built.set(true);
                 }
                 revealer.set_reveal_child(expanded);
@@ -1742,6 +1798,54 @@ mod tests {
             .and_then(|w| w.downcast::<gtk::Label>().ok())
             .expect("encrypted-only label should remain in the left metadata flow");
         assert_eq!(encrypted.label().as_str(), "Thinking (encrypted)");
+    }
+
+    #[gtk::test]
+    fn typed_tool_burst_population_emits_inspect_messages() {
+        let burst = build_tool_burst_init(
+            10,
+            vec![ToolCallItemInit {
+                item_index: 1,
+                transcript_item_index: 41,
+                session_id: "session-1".to_string(),
+                tool_call_id: "call-1".to_string(),
+                tool_name: "Read".to_string(),
+                status: ToolCallStatus::Completed,
+                preview: Some("src/ui/transcript_row.rs:1-20".to_string()),
+                summary: None,
+                duration_ms: Some(12),
+                highlight_query: None,
+                reasoning_preview: ReasoningPreview::default(),
+            }],
+            false,
+        );
+        let children = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        let (sender, receiver) = relm4::channel::<crate::ui::session_detail::SessionDetailMsg>();
+
+        populate_tool_burst_children(&children, &burst, &sender, 10);
+
+        let child = children
+            .first_child()
+            .and_then(|w| w.downcast::<gtk::Box>().ok())
+            .expect("tool burst child root");
+        let header = child
+            .first_child()
+            .and_then(|w| w.downcast::<gtk::Box>().ok())
+            .expect("tool burst child header");
+        let inspect = row_box_children(&header)
+            .last()
+            .cloned()
+            .and_then(|w| w.downcast::<gtk::Button>().ok())
+            .expect("inspect button");
+
+        inspect.emit_clicked();
+
+        assert!(matches!(
+            gtk::glib::MainContext::default()
+                .block_on(receiver.recv())
+                .expect("inspect message"),
+            crate::ui::session_detail::SessionDetailMsg::InspectToolCall(id) if id == "call-1"
+        ));
     }
 
     #[test]

@@ -30,62 +30,6 @@ pub fn group_transcript_rows(rows: Vec<TranscriptItemRow>) -> Vec<DisplayTranscr
     grouped
 }
 
-pub fn trailing_tool_call_rows(rows: &[TranscriptItemRow]) -> Vec<TranscriptItemRow> {
-    let mut trailing = Vec::new();
-    for row in rows.iter().rev() {
-        if row.kind != TranscriptItemKind::ToolCall {
-            break;
-        }
-        trailing.push(row.clone());
-    }
-    trailing.reverse();
-    trailing
-}
-
-pub struct BoundaryRegroupResult {
-    pub replacement_items: Vec<DisplayTranscriptItem>,
-    pub remaining_rows: Vec<TranscriptItemRow>,
-}
-
-pub fn regroup_boundary(
-    previous_trailing_tools: Vec<TranscriptItemRow>,
-    mut next_page_rows: Vec<TranscriptItemRow>,
-) -> BoundaryRegroupResult {
-    let leading_tool_count = next_page_rows
-        .iter()
-        .take_while(|row| row.kind == TranscriptItemKind::ToolCall)
-        .count();
-
-    if leading_tool_count == 0 {
-        return BoundaryRegroupResult {
-            replacement_items: Vec::new(),
-            remaining_rows: next_page_rows,
-        };
-    }
-
-    let mut merged_rows = previous_trailing_tools;
-    let leading_rows: Vec<_> = next_page_rows.drain(..leading_tool_count).collect();
-    merged_rows.extend(leading_rows);
-
-    let replacement_items = group_transcript_rows(merged_rows);
-    BoundaryRegroupResult {
-        replacement_items,
-        remaining_rows: next_page_rows,
-    }
-}
-
-/// Extract the raw tool call rows from the tail of a display item list.
-/// Used to determine boundary candidates when `merged_rows` is no longer available.
-pub fn trailing_tool_rows_from_display(items: &[DisplayTranscriptItem]) -> Vec<TranscriptItemRow> {
-    match items.last() {
-        Some(DisplayTranscriptItem::ToolBurst(burst)) => burst.rows.clone(),
-        Some(DisplayTranscriptItem::Single(row)) if row.kind == TranscriptItemKind::ToolCall => {
-            vec![row.as_ref().clone()]
-        }
-        _ => Vec::new(),
-    }
-}
-
 fn flush_pending_tool_rows(
     grouped: &mut Vec<DisplayTranscriptItem>,
     pending_tool_rows: &mut Vec<TranscriptItemRow>,
@@ -291,36 +235,5 @@ mod tests {
             .map(|row| row.tool_name.as_deref().unwrap_or(""))
             .collect();
         assert_eq!(names, vec!["Read", "Read", "Grep", "Edit", "Bash"]);
-    }
-
-    #[test]
-    fn trailing_tool_calls_are_reported_as_boundary_candidates() {
-        let rows = vec![message_row(0), tool_row(1, "Read"), tool_row(2, "Edit")];
-        let trailing = trailing_tool_call_rows(&rows);
-        assert_eq!(trailing.len(), 2);
-    }
-
-    #[test]
-    fn regroup_boundary_merges_previous_trailing_tools_with_next_page_prefix() {
-        let previous = vec![tool_row(1, "Read"), tool_row(2, "Edit")];
-        let next_page = vec![tool_row(3, "Bash"), message_row(4)];
-
-        let result = regroup_boundary(previous, next_page);
-        assert_eq!(result.replacement_items.len(), 1);
-        assert!(matches!(
-            result.replacement_items[0],
-            DisplayTranscriptItem::ToolBurst(_)
-        ));
-        assert_eq!(result.remaining_rows.len(), 1);
-    }
-
-    #[test]
-    fn regroup_boundary_does_nothing_when_next_page_starts_with_message() {
-        let previous = vec![tool_row(1, "Read"), tool_row(2, "Edit")];
-        let next_page = vec![message_row(3)];
-
-        let result = regroup_boundary(previous, next_page);
-        assert!(result.replacement_items.is_empty());
-        assert_eq!(result.remaining_rows.len(), 1);
     }
 }

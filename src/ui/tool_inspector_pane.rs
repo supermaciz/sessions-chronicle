@@ -1629,6 +1629,9 @@ fn build_diff_widget(rendered: &crate::ui::tool_renderers::diff::DiffRenderedDat
         let header = gtk::Label::new(Some(&hunk.header));
         header.add_css_class("diff-hunk-header");
         header.set_halign(gtk::Align::Start);
+        header.set_xalign(0.0);
+        header.set_wrap(true);
+        header.set_wrap_mode(gtk::pango::WrapMode::WordChar);
         header.set_selectable(true);
         hunk_box.append(&header);
 
@@ -1673,6 +1676,9 @@ fn build_file_widget(rendered: &crate::ui::tool_renderers::file::FileRenderedDat
         let header_label = gtk::Label::new(Some(header));
         header_label.add_css_class("file-header");
         header_label.set_halign(gtk::Align::Start);
+        header_label.set_xalign(0.0);
+        header_label.set_wrap(true);
+        header_label.set_wrap_mode(gtk::pango::WrapMode::WordChar);
         header_label.set_selectable(true);
         container.append(&header_label);
     }
@@ -1714,6 +1720,9 @@ fn build_results_widget(
             let path_label = gtk::Label::new(Some(&entry.path));
             path_label.add_css_class("monospace");
             path_label.set_halign(gtk::Align::Start);
+            path_label.set_xalign(0.0);
+            path_label.set_wrap(true);
+            path_label.set_wrap_mode(gtk::pango::WrapMode::WordChar);
             row.append(&path_label);
 
             if let Some(line_num) = entry.line {
@@ -2106,6 +2115,113 @@ mod tests {
             "permission denied while opening the file"
         );
         assert!(views.label.is_selectable());
+    }
+
+    #[gtk::test]
+    fn diff_hunk_header_wraps_so_it_does_not_lock_a_min_width() {
+        use crate::ui::tool_renderers::diff::{DiffHunk, DiffRenderedData};
+
+        let rendered = DiffRenderedData {
+            old_text: None,
+            new_text: None,
+            hunks: vec![DiffHunk {
+                header: "@@ -1,4 +1,4 @@ fn an_extremely_long_function_signature_here()"
+                    .to_string(),
+                lines: Vec::new(),
+            }],
+        };
+
+        let widget = build_diff_widget(&rendered);
+        let container = widget
+            .downcast::<gtk::ScrolledWindow>()
+            .expect("diff scroll")
+            .child()
+            .expect("diff viewport")
+            .downcast::<gtk::Viewport>()
+            .expect("diff viewport")
+            .child()
+            .expect("diff container")
+            .downcast::<gtk::Box>()
+            .expect("diff container box");
+        let hunk_box = container
+            .first_child()
+            .expect("hunk box")
+            .downcast::<gtk::Box>()
+            .expect("hunk box");
+        let header = hunk_box
+            .first_child()
+            .expect("hunk header")
+            .downcast::<gtk::Label>()
+            .expect("hunk header label");
+
+        assert!(header.wraps(), "diff hunk header must wrap");
+    }
+
+    #[gtk::test]
+    fn file_header_wraps_so_it_does_not_lock_a_min_width() {
+        use crate::models::ToolCallStatus;
+        use crate::ui::tool_renderers::file::FileRenderedData;
+
+        let rendered = FileRenderedData {
+            header: Some("/an/extremely/long/absolute/path/to/some/source/file.rs".to_string()),
+            output_text: None,
+            error_text: None,
+            status: ToolCallStatus::Completed,
+            duration_ms: None,
+        };
+
+        let widget = build_file_widget(&rendered);
+        let header = widget
+            .downcast::<gtk::Box>()
+            .expect("file container box")
+            .first_child()
+            .expect("file header")
+            .downcast::<gtk::Label>()
+            .expect("file header label");
+
+        assert!(header.wraps(), "file header must wrap");
+    }
+
+    #[gtk::test]
+    fn results_entry_path_wraps_so_it_does_not_lock_a_min_width() {
+        use crate::models::ToolCallStatus;
+        use crate::ui::tool_renderers::results::{ResultsEntry, ResultsRenderedData};
+
+        let rendered = ResultsRenderedData {
+            entries: vec![ResultsEntry {
+                path: "/an/extremely/long/absolute/path/to/some/matched/file.rs".to_string(),
+                line: Some(42),
+                content: "let x = 1;".to_string(),
+            }],
+            output_text: None,
+            error_text: None,
+            status: ToolCallStatus::Completed,
+            duration_ms: None,
+        };
+
+        let widget = build_results_widget(&rendered);
+        let row = widget
+            .downcast::<gtk::ScrolledWindow>()
+            .expect("results scroll")
+            .child()
+            .expect("results viewport")
+            .downcast::<gtk::Viewport>()
+            .expect("results viewport")
+            .child()
+            .expect("results container")
+            .downcast::<gtk::Box>()
+            .expect("results container box")
+            .first_child()
+            .expect("results row")
+            .downcast::<gtk::Box>()
+            .expect("results row box");
+        let path = row
+            .first_child()
+            .expect("results path")
+            .downcast::<gtk::Label>()
+            .expect("results path label");
+
+        assert!(path.wraps(), "results entry path must wrap");
     }
 
     fn sample_tool_call(status: ToolCallStatus) -> ToolCall {
