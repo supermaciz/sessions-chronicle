@@ -4,7 +4,7 @@ use std::time::Instant;
 
 use gtk::prelude::*;
 use relm4::binding::Binding;
-use relm4::{gtk, typed_view::list::RelmListItem};
+use relm4::{adw, gtk, typed_view::list::RelmListItem};
 
 use crate::models::{Role, tool_name_icon};
 use crate::ui::format::{format_duration_ms, tool_status_css_class, tool_status_label};
@@ -56,7 +56,7 @@ pub struct ToolBurstPageWidgets {
     root: gtk::Box,
     header_button: gtk::Button,
     arrow_icon: gtk::Image,
-    header_box: gtk::Box,
+    header_wrap: adw::WrapBox,
     revealer: gtk::Revealer,
     children: gtk::Box,
     reveal_binding: Option<gtk::glib::Binding>,
@@ -270,7 +270,7 @@ impl TranscriptItemData {
             return;
         };
 
-        rebuild_tool_burst_header(&widgets.header_box, burst);
+        rebuild_tool_burst_header(&widgets.header_wrap, burst);
         widgets
             .header_button
             .update_property(&[gtk::accessible::Property::Label(
@@ -391,7 +391,7 @@ impl TranscriptItemData {
         if let Some(binding) = widgets.reveal_binding.take() {
             binding.unbind();
         }
-        clear_box_children(&widgets.header_box);
+        widgets.header_wrap.remove_all();
         clear_box_children(&widgets.children);
         widgets.children_built_for.set(None);
         set_tool_burst_expanded_state(
@@ -532,10 +532,15 @@ fn build_tool_burst_page() -> ToolBurstPageWidgets {
     arrow_icon.add_css_class("tool-call-group-arrow");
     header_row.append(&arrow_icon);
 
-    let header_box = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-    header_box.set_hexpand(true);
-    header_box.add_css_class("tool-call-group-header");
-    header_row.append(&header_box);
+    // AdwWrapBox (not GtkFlowBox): pills flow like words in a wrapping label,
+    // so they reflow onto extra lines on narrow windows. GtkFlowBox here caused
+    // a session-open freeze inside the recycled GtkListView rows.
+    let header_wrap = adw::WrapBox::new();
+    header_wrap.set_child_spacing(8);
+    header_wrap.set_line_spacing(4);
+    header_wrap.set_hexpand(true);
+    header_wrap.add_css_class("tool-call-group-header");
+    header_row.append(&header_wrap);
     header_button.set_child(Some(&header_row));
     root.append(&header_button);
 
@@ -549,7 +554,7 @@ fn build_tool_burst_page() -> ToolBurstPageWidgets {
         root,
         header_button,
         arrow_icon,
-        header_box,
+        header_wrap,
         revealer,
         children,
         reveal_binding: None,
@@ -751,10 +756,10 @@ fn build_subagent_page_content(
 }
 
 fn rebuild_tool_burst_header(
-    header: &gtk::Box,
+    header: &adw::WrapBox,
     burst: &crate::ui::transcript_row::ToolBurstItemInit,
 ) {
-    clear_box_children(header);
+    header.remove_all();
 
     for (name, count) in &burst.category_counts {
         let pill_box = gtk::Box::new(gtk::Orientation::Horizontal, 4);
@@ -870,6 +875,7 @@ mod tests {
     use std::sync::Arc;
 
     use chrono::Utc;
+    use relm4::adw;
     use relm4::binding::Binding;
     use relm4::gtk;
     use relm4::gtk::prelude::*;
@@ -1567,6 +1573,34 @@ mod tests {
     }
 
     #[gtk::test]
+    fn tool_burst_header_uses_wrap_box_so_pills_can_wrap() {
+        let (sender, _receiver) = relm4::channel::<SessionDetailMsg>();
+        let mut burst = TranscriptItemData::from_init(
+            TranscriptItemInit::ToolBurst(tool_burst_init(false)),
+            sender,
+        );
+
+        let list_item: gtk::ListItem = gtk::glib::Object::builder().build();
+        let (_, mut widgets) = TranscriptItemData::setup(&list_item);
+        let mut root = gtk::Box::new(gtk::Orientation::Vertical, 0);
+
+        burst.bind(&mut widgets, &mut root);
+
+        let header_container = tool_burst_header_button(&widgets.tool_burst.root)
+            .child()
+            .expect("header row")
+            .downcast::<gtk::Box>()
+            .expect("header row box")
+            .last_child()
+            .expect("header pill container");
+        assert!(
+            header_container.is::<adw::WrapBox>(),
+            "tool burst pills must live in an AdwWrapBox so they wrap onto \
+             multiple lines instead of overflowing on narrow windows"
+        );
+    }
+
+    #[gtk::test]
     fn tool_burst_header_renders_category_pill_with_icon() {
         let (sender, _receiver) = relm4::channel::<SessionDetailMsg>();
         let mut burst = TranscriptItemData::from_init(
@@ -1582,7 +1616,7 @@ mod tests {
 
         let pill_box = widgets
             .tool_burst
-            .header_box
+            .header_wrap
             .first_child()
             .expect("category pill box")
             .downcast::<gtk::Box>()
