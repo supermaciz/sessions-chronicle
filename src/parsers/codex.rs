@@ -29,6 +29,7 @@ enum SubagentEventPriority {
     Interaction = 1,
     Waiting = 2,
     Close = 3,
+    Resume = 4,
 }
 
 #[derive(Debug, Clone)]
@@ -874,6 +875,19 @@ impl ParseState {
                     None,
                     payload.get("status").unwrap_or(&Value::Null),
                     SubagentEventPriority::Close,
+                );
+            }
+
+            Some("collab_resume_end") => {
+                self.update_subagent_from_status(
+                    payload.get("call_id").and_then(|v| v.as_str()),
+                    payload.get("receiver_thread_id").and_then(|v| v.as_str()),
+                    payload
+                        .get("receiver_agent_nickname")
+                        .and_then(|v| v.as_str()),
+                    None,
+                    payload.get("status").unwrap_or(&Value::Null),
+                    SubagentEventPriority::Resume,
                 );
             }
 
@@ -1862,6 +1876,88 @@ mod tests {
         assert_eq!(
             parsed.subagents[0].result_summary.as_deref(),
             Some("Shutdown")
+        );
+    }
+
+    #[test]
+    fn parse_resume_end_replaces_earlier_coarse_close_summary() {
+        let mut file = tempfile::NamedTempFile::new().unwrap();
+        writeln!(
+            file,
+            "{}",
+            r#"{"type":"session_meta","payload":{"id":"codex-resume-over-close","timestamp":"2026-04-18T13:17:40Z","cwd":"/tmp/project"}}"#
+        )
+        .unwrap();
+        writeln!(
+            file,
+            "{}",
+            r#"{"type":"event_msg","timestamp":"2026-04-18T13:17:41Z","payload":{"type":"user_message","message":"Delegate this"}}"#
+        )
+        .unwrap();
+        writeln!(
+            file,
+            "{}",
+            r#"{"type":"event_msg","timestamp":"2026-04-18T13:17:42Z","payload":{"type":"collab_agent_spawn_end","call_id":"call_spawn_1","new_thread_id":"child-1","new_agent_nickname":"Kierkegaard","prompt":"Inspect","status":"running"}}"#
+        )
+        .unwrap();
+        writeln!(
+            file,
+            "{}",
+            r#"{"type":"event_msg","timestamp":"2026-04-18T13:17:43Z","payload":{"type":"collab_close_end","call_id":"call_close_1","receiver_thread_id":"child-1","receiver_agent_nickname":"Kierkegaard","status":"shutdown"}}"#
+        )
+        .unwrap();
+        writeln!(
+            file,
+            "{}",
+            r#"{"type":"event_msg","timestamp":"2026-04-18T13:17:44Z","payload":{"type":"collab_resume_end","call_id":"call_resume_1","receiver_thread_id":"child-1","receiver_agent_nickname":"Kierkegaard","status":{"completed":"resumed final answer"}}}"#
+        )
+        .unwrap();
+
+        let parsed = CodexParser.parse(file.path()).unwrap();
+        assert_eq!(
+            parsed.subagents[0].result_summary.as_deref(),
+            Some("resumed final answer")
+        );
+    }
+
+    #[test]
+    fn parse_resume_end_shutdown_does_not_overwrite_detailed_waiting_summary() {
+        let mut file = tempfile::NamedTempFile::new().unwrap();
+        writeln!(
+            file,
+            "{}",
+            r#"{"type":"session_meta","payload":{"id":"codex-resume-no-downgrade","timestamp":"2026-04-18T13:17:40Z","cwd":"/tmp/project"}}"#
+        )
+        .unwrap();
+        writeln!(
+            file,
+            "{}",
+            r#"{"type":"event_msg","timestamp":"2026-04-18T13:17:41Z","payload":{"type":"user_message","message":"Delegate this"}}"#
+        )
+        .unwrap();
+        writeln!(
+            file,
+            "{}",
+            r#"{"type":"event_msg","timestamp":"2026-04-18T13:17:42Z","payload":{"type":"collab_agent_spawn_end","call_id":"call_spawn_1","new_thread_id":"child-1","new_agent_nickname":"Kierkegaard","prompt":"Inspect","status":"running"}}"#
+        )
+        .unwrap();
+        writeln!(
+            file,
+            "{}",
+            r#"{"type":"event_msg","timestamp":"2026-04-18T13:17:43Z","payload":{"type":"collab_waiting_end","call_id":"call_wait_1","agent_statuses":[{"thread_id":"child-1","agent_nickname":"Kierkegaard","status":{"completed":"detailed waiting answer"}}]}}"#
+        )
+        .unwrap();
+        writeln!(
+            file,
+            "{}",
+            r#"{"type":"event_msg","timestamp":"2026-04-18T13:17:44Z","payload":{"type":"collab_resume_end","call_id":"call_resume_1","receiver_thread_id":"child-1","receiver_agent_nickname":"Kierkegaard","status":"shutdown"}}"#
+        )
+        .unwrap();
+
+        let parsed = CodexParser.parse(file.path()).unwrap();
+        assert_eq!(
+            parsed.subagents[0].result_summary.as_deref(),
+            Some("detailed waiting answer")
         );
     }
 

@@ -114,10 +114,10 @@ fn codex_response_item_spawn_wait_transcript_contains_subagent_not_tool_calls() 
 
 // Synthetic fixture: no real `collab_resume_end` event exists in captured
 // rollouts, so this is derived from the upstream `CollabResumeEndEvent` struct
-// (codex-rs/protocol/src/protocol.rs). It guards that an unhandled `collab_*`
-// event is ignored gracefully without breaking indexing of the spawn row.
+// (codex-rs/protocol/src/protocol.rs). It guards that resume enriches an
+// existing spawn row without creating a separate subagent.
 #[test]
-fn codex_collab_resume_end_is_ignored_without_breaking_indexing() {
+fn codex_collab_resume_end_enriches_existing_subagent() {
     let temp_db = NamedTempFile::new().unwrap();
     let mut indexer = SessionIndexer::new(temp_db.path()).unwrap();
     indexer
@@ -129,12 +129,14 @@ fn codex_collab_resume_end_is_ignored_without_breaking_indexing() {
         .expect("resume fixture session should be indexed");
     assert!(!session.is_subagent);
 
+    assert_eq!(subagent_count(temp_db.path(), RESUME_SESSION), 1);
+
     let subagent = load_subagent(temp_db.path(), RESUME_SESSION, "call_spawn_1")
         .unwrap()
         .expect("collab_agent_spawn_end should still produce a subagent row");
     assert_eq!(subagent.title, "Sartre");
-
-    // Current parser behavior: `collab_resume_end` is not used to enrich
-    // parent-side subagents, so the spawn row carries no result summary.
-    assert_eq!(subagent.result_summary, None);
+    assert_eq!(
+        subagent.result_summary.as_deref(),
+        Some("Parser changes look correct.")
+    );
 }
