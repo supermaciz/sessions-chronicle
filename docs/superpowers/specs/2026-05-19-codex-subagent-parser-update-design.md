@@ -73,8 +73,9 @@ Out of scope:
 
 A response-item subagent spawns over two events: the `spawn_agent` `function_call`
 (has `call_id` + `arguments`, no `agent_id`) and the `function_call_output`
-(has `agent_id` + `nickname`). The `Subagent` row is created at the output,
-when all data is available.
+(has `agent_id` + `nickname`). The `Subagent` row is created at the
+`function_call`, so truncated or in-flight rollouts still preserve the spawn in
+the transcript. The output only enriches the existing row.
 
 ### Parser state additions
 
@@ -101,7 +102,8 @@ collab payload that calls `push_subagent_row`.
 
 Before `push_tool_call`, match on `name`:
 
-- `spawn_agent`: parse `arguments` (a JSON string) → store
+- `spawn_agent`: parse `arguments` (a JSON string) → create an unlinked
+  `Subagent` row from `agent_type` / `message`, then store
   `PendingSpawn { agent_type, message }` keyed by `call_id`. No tool call.
 - `wait_agent`: insert `call_id` into `pending_waits`. No tool call.
 - otherwise: existing `push_tool_call`.
@@ -114,9 +116,8 @@ is skipped with a warning (current behavior), no pending entry.
 Before `complete_tool_call`, test the `call_id`:
 
 - in `pending_spawns`: parse `output` (a JSON string) with `serde_json::from_str`
-  → `agent_id`, `nickname`. Call
-  `push_subagent_row(id = call_id, agent_id, title = nickname ?? agent_type ?? "Codex subagent", prompt = message)`.
-  Consume the pending entry.
+  → `agent_id`, `nickname`. Enrich the existing `Subagent` row with the
+  `agent_id` and `nickname`. Consume the pending entry.
 - in `pending_waits`: parse `output` → `status` object map
   `{ agent_id → AgentStatus }`. For each entry,
   `update_subagent_from_status(None, Some(agent_id), None, None, &status, SubagentEventPriority::Waiting)`.
@@ -126,8 +127,11 @@ Before `complete_tool_call`, test the `call_id`:
 ### Robustness
 
 - `output` is a JSON string containing JSON — `serde_json::from_str` required.
-- Spawn output that fails to parse or has no `agent_id`: no row created, pending
-  entry consumed, `tracing::debug!` logged. The session still indexes.
+- Truncated spawn with no output: the begin-side unlinked `Subagent` row remains
+  in the transcript.
+- Spawn output that fails to parse or has no `agent_id`: the begin-side unlinked
+  `Subagent` row remains, pending entry consumed, `tracing::debug!` logged. The
+  session still indexes.
 - `wait_agent` output with an empty `status` map: no enrichment (matches the
   empty `collab_waiting_end` behavior).
 - `wait_agent` referencing an `agent_id` with no matching spawn: orphan-drop via
@@ -156,6 +160,8 @@ at index time exactly as for the `collab_*` form (`agent_id` → child session).
   - Priority/coarse guard test: a detailed resume/wait summary must not be
     downgraded by a later coarse status such as `"shutdown"`, while
     `collab_resume_end` can still replace an earlier coarse close summary.
+  - Truncated response-item spawn test: `spawn_agent` `function_call` without a
+    matching `function_call_output` still records an unlinked `Subagent` row.
 - `tests/codex_subagent_linkage.rs` (collab form) must pass unchanged.
 - `cargo fmt --all -- --check`, `cargo clippy --all -- -D warnings`,
   `cargo test --all --no-fail-fast`.

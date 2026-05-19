@@ -492,10 +492,6 @@ impl ParseState {
         pending: PendingSpawn,
         response_item: &Value,
     ) {
-        // The output may be missing, unparseable, or lack `agent_id` (a
-        // rejected/failed spawn). The begin event already short-circuited
-        // before `push_tool_call`, so still record an unlinked subagent row
-        // rather than dropping the spawn from the transcript entirely.
         let output =
             Self::parse_response_item_json_string(response_item, "output", call_id, "spawn_agent");
 
@@ -507,19 +503,36 @@ impl ParseState {
             .map(str::to_string);
         if agent_id.is_none() {
             tracing::debug!(
-                "response-item spawn_agent for call {call_id} has no agent_id; recording unlinked subagent"
+                "response-item spawn_agent for call {call_id} has no agent_id; keeping unlinked subagent"
             );
         }
 
-        let title = output
+        let nickname = output
             .as_ref()
             .and_then(|output| output.get("nickname"))
             .and_then(|v| v.as_str())
             .filter(|value| !value.is_empty())
-            .map(str::to_string)
+            .map(str::to_string);
+
+        if let Some(&subagent_idx) = self.subagent_idx_by_call_id.get(call_id) {
+            if let Some(agent_id) = agent_id {
+                self.subagents[subagent_idx].agent_id = Some(agent_id.clone());
+                self.subagent_indexes_by_agent_id
+                    .entry(agent_id)
+                    .or_default()
+                    .push(subagent_idx);
+            }
+            if let Some(nickname) = nickname {
+                self.subagents[subagent_idx].title = nickname;
+            }
+            return;
+        }
+
+        // Defensive fallback for malformed or future streams where the output
+        // is observed without the begin-side row having been created.
+        let title = nickname
             .or(pending.agent_type)
             .unwrap_or_else(|| "Codex subagent".to_string());
-
         self.push_subagent_row(call_id.to_string(), agent_id, title, pending.message);
     }
 
@@ -568,6 +581,16 @@ impl ParseState {
                     "spawn_agent" => {
                         let pending =
                             Self::pending_spawn_from_response_item(response_item, &call_id);
+                        let title = pending
+                            .agent_type
+                            .clone()
+                            .unwrap_or_else(|| "Codex subagent".to_string());
+                        self.push_subagent_row(
+                            call_id.clone(),
+                            None,
+                            title,
+                            pending.message.clone(),
+                        );
                         self.pending_spawns.insert(call_id, pending);
                         return;
                     }
@@ -1297,6 +1320,34 @@ mod tests {
             parsed.transcript_items.last().unwrap().kind,
             TranscriptItemKind::Subagent
         ));
+    }
+
+    #[test]
+    fn parse_response_item_spawn_without_output_still_records_subagent() {
+        let mut file = tempfile::NamedTempFile::new().unwrap();
+        writeln!(file, r#"{{"type":"session_meta","payload":{{"id":"codex-spawn-truncated","timestamp":"2026-01-01T00:00:00Z","cwd":"/tmp"}}}}"#).unwrap();
+        writeln!(file, r#"{{"type":"event_msg","timestamp":"2026-01-01T00:00:01Z","payload":{{"type":"user_message","message":"delegate"}}}}"#).unwrap();
+        writeln!(file, r#"{{"type":"response_item","timestamp":"2026-01-01T00:00:02Z","payload":{{"type":"function_call","name":"spawn_agent","call_id":"call_spawn_truncated","arguments":"{{\"agent_type\":\"product-manager\",\"message\":\"Advise the next milestone\"}}"}}}}"#).unwrap();
+
+        let parsed = CodexParser.parse(file.path()).unwrap();
+
+        assert!(parsed.tool_calls.is_empty());
+        assert_eq!(parsed.subagents.len(), 1);
+        assert_eq!(parsed.subagents[0].id, "call_spawn_truncated");
+        assert_eq!(parsed.subagents[0].agent_id, None);
+        assert_eq!(parsed.subagents[0].title, "product-manager");
+        assert_eq!(
+            parsed.subagents[0].prompt.as_deref(),
+            Some("Advise the next milestone")
+        );
+        assert_eq!(
+            parsed
+                .transcript_items
+                .iter()
+                .filter(|item| item.kind == TranscriptItemKind::Subagent)
+                .count(),
+            1
+        );
     }
 
     #[test]
