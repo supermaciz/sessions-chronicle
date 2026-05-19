@@ -434,6 +434,112 @@ impl ParseState {
         self.current_turn_model = normalize_model(payload.get("model"));
     }
 
+    fn parse_response_item_json_string(
+        response_item: &Value,
+        field_name: &str,
+        call_id: &str,
+        tool_name: &str,
+    ) -> Option<Value> {
+        let Some(raw) = response_item.get(field_name).and_then(|v| v.as_str()) else {
+            tracing::debug!(
+                "response-item subagent {tool_name} call {call_id} field {field_name} is missing or is not a JSON string"
+            );
+            return None;
+        };
+
+        match serde_json::from_str(raw) {
+            Ok(value) => Some(value),
+            Err(err) => {
+                tracing::debug!(
+                    "failed to parse response-item subagent {tool_name} call {call_id} field {field_name}: {err}"
+                );
+                None
+            }
+        }
+    }
+
+    fn pending_spawn_from_response_item(response_item: &Value, call_id: &str) -> PendingSpawn {
+        let Some(arguments) = Self::parse_response_item_json_string(
+            response_item,
+            "arguments",
+            call_id,
+            "spawn_agent",
+        ) else {
+            return PendingSpawn {
+                agent_type: None,
+                message: None,
+            };
+        };
+
+        PendingSpawn {
+            agent_type: arguments
+                .get("agent_type")
+                .and_then(|v| v.as_str())
+                .filter(|value| !value.is_empty())
+                .map(str::to_string),
+            message: arguments
+                .get("message")
+                .and_then(|v| v.as_str())
+                .filter(|value| !value.is_empty())
+                .map(str::to_string),
+        }
+    }
+
+    fn complete_pending_spawn(
+        &mut self,
+        call_id: &str,
+        pending: PendingSpawn,
+        response_item: &Value,
+    ) {
+        let Some(output) =
+            Self::parse_response_item_json_string(response_item, "output", call_id, "spawn_agent")
+        else {
+            return;
+        };
+        let Some(agent_id) = output
+            .get("agent_id")
+            .and_then(|v| v.as_str())
+            .filter(|value| !value.is_empty())
+            .map(str::to_string)
+        else {
+            tracing::debug!(
+                "dropping response-item spawn_agent output without agent_id for call {call_id}"
+            );
+            return;
+        };
+        let title = output
+            .get("nickname")
+            .and_then(|v| v.as_str())
+            .filter(|value| !value.is_empty())
+            .map(str::to_string)
+            .or(pending.agent_type)
+            .unwrap_or_else(|| "Codex subagent".to_string());
+
+        self.push_subagent_row(call_id.to_string(), Some(agent_id), title, pending.message);
+    }
+
+    fn complete_pending_wait(&mut self, call_id: &str, response_item: &Value) {
+        let Some(output) =
+            Self::parse_response_item_json_string(response_item, "output", call_id, "wait_agent")
+        else {
+            return;
+        };
+        let Some(statuses) = output.get("status").and_then(|v| v.as_object()) else {
+            return;
+        };
+
+        for (agent_id, status) in statuses {
+            self.update_subagent_from_status(
+                None,
+                Some(agent_id.as_str()),
+                None,
+                None,
+                status,
+                SubagentEventPriority::Waiting,
+            );
+        }
+    }
+
     fn handle_response_item(&mut self, payload: &Value, event_ts: Option<DateTime<Utc>>) {
         let response_item = payload.get("response_item").unwrap_or(payload);
         match response_item.get("type").and_then(|v| v.as_str()) {
@@ -452,6 +558,20 @@ impl ParseState {
                     .and_then(|v| v.as_str())
                     .unwrap_or("unknown")
                     .to_string();
+
+                match tool_name.as_str() {
+                    "spawn_agent" => {
+                        let pending =
+                            Self::pending_spawn_from_response_item(response_item, &call_id);
+                        self.pending_spawns.insert(call_id, pending);
+                        return;
+                    }
+                    "wait_agent" => {
+                        self.pending_waits.insert(call_id);
+                        return;
+                    }
+                    _ => {}
+                }
 
                 let input_json = response_item
                     .get("arguments")
@@ -477,6 +597,16 @@ impl ParseState {
                         return;
                     }
                 };
+
+                if let Some(pending) = self.pending_spawns.remove(call_id) {
+                    self.complete_pending_spawn(call_id, pending, response_item);
+                    return;
+                }
+
+                if self.pending_waits.take(call_id).is_some() {
+                    self.complete_pending_wait(call_id, response_item);
+                    return;
+                }
 
                 let output_text = response_item.get("output").and_then(|v| {
                     if let Some(s) = v.as_str() {
