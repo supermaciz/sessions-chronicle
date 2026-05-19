@@ -343,6 +343,31 @@ Wait output can also carry a per-agent status map:
 }
 ```
 
+After `wait_agent` resolves, the same rollout also persists a `response_item`
+`message` with `role == "user"` whose `input_text` wraps a
+`<subagent_notification>` payload. It duplicates the per-agent status under
+`agent_path` and `status`:
+
+```json
+{
+  "type": "response_item",
+  "payload": {
+    "type": "message",
+    "role": "user",
+    "content": [
+      {
+        "type": "input_text",
+        "text": "<subagent_notification>\n{\"agent_path\":\"019e382d-e986-7b62-9f97-b015c5cc70f5\",\"status\":{\"completed\":\"...\"}}\n</subagent_notification>"
+      }
+    ]
+  }
+}
+```
+
+This marker is informational only: the status it carries is the same as the
+`wait_agent` `function_call_output`. The current parser ignores `response_item`
+`message` items, so it is not double-counted.
+
 The linked child rollout still uses structured session provenance:
 
 ```json
@@ -375,6 +400,8 @@ Parser implication:
   `output.status.{agent_id}`.
 - Current Sessions Chronicle parser indexes these as generic tool calls, but
   does not yet map them into parent-side `Subagent` rows.
+- The trailing `<subagent_notification>` `response_item` `message` is ignored
+  by the parser and carries no information beyond the `wait_agent` output.
 
 ### Encrypted Reasoning
 

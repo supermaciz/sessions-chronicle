@@ -2274,7 +2274,7 @@ mod tests {
         let sessions_dir = PathBuf::from("tests/fixtures/codex_sessions");
 
         let count = indexer.index_codex_sessions(&sessions_dir).unwrap();
-        assert_eq!(count, 3);
+        assert_eq!(count, 4);
 
         let sessions: Vec<(String, String)> = indexer
             .db
@@ -2285,7 +2285,7 @@ mod tests {
             .collect::<Result<Vec<_>, _>>()
             .unwrap();
 
-        assert_eq!(sessions.len(), 3);
+        assert_eq!(sessions.len(), 4);
         assert!(sessions.iter().all(|(_, tool)| tool == "codex"));
     }
 
