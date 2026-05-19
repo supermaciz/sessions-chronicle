@@ -216,14 +216,22 @@ Observed semantics:
 
 ### Collaboration / Subagent Events
 
+Current upstream Codex protocol exposes subagent work through the `collab_*`
+`event_msg.payload.type` family. These events are emitted by the multi-agent
+callable surface (`spawn_agent`, `send_message`, `followup_task`,
+`wait_agent`, `close_agent`, and resume flows).
+
 ```json
 {
   "type": "event_msg",
   "payload": {
     "type": "collab_agent_spawn_begin",
     "call_id": "spawn_1",
+    "started_at_ms": 1770000000000,
     "sender_thread_id": "thr_parent",
-    "prompt": "Investigate failing tests"
+    "prompt": "Investigate failing tests",
+    "model": "gpt-5.1-codex",
+    "reasoning_effort": "medium"
   }
 }
 {
@@ -231,14 +239,142 @@ Observed semantics:
   "payload": {
     "type": "collab_agent_spawn_end",
     "call_id": "spawn_1",
+    "completed_at_ms": 1770000001000,
     "sender_thread_id": "thr_parent",
     "new_thread_id": "thr_child",
+    "new_agent_nickname": "reviewer-a",
+    "new_agent_role": "reviewer",
+    "prompt": "Investigate failing tests",
+    "model": "gpt-5.1-codex",
+    "reasoning_effort": "medium",
     "status": "completed"
   }
 }
 ```
 
-Additional collab event types: `collab_waiting_*`, `collab_resume_*`, `collab_close_*`.
+Current collab event types:
+
+- `collab_agent_spawn_begin` / `collab_agent_spawn_end`
+- `collab_agent_interaction_begin` / `collab_agent_interaction_end`
+- `collab_waiting_begin` / `collab_waiting_end`
+- `collab_close_begin` / `collab_close_end`
+- `collab_resume_begin` / `collab_resume_end`
+
+Current parser-relevant fields:
+
+| Event | Key fields |
+|-------|------------|
+| `collab_agent_spawn_end` | `call_id`, `sender_thread_id`, `new_thread_id`, `new_agent_nickname`, `new_agent_role`, `prompt`, `model`, `reasoning_effort`, `status`, `completed_at_ms` |
+| `collab_agent_interaction_end` | `call_id`, `sender_thread_id`, `receiver_thread_id`, `receiver_agent_nickname`, `receiver_agent_role`, `prompt`, `status`, `completed_at_ms` |
+| `collab_waiting_end` | `call_id`, `sender_thread_id`, `agent_statuses[]`, `statuses{thread_id -> status}`, `completed_at_ms` |
+| `collab_close_end` | `call_id`, `sender_thread_id`, `receiver_thread_id`, `receiver_agent_nickname`, `receiver_agent_role`, `status`, `completed_at_ms` |
+| `collab_resume_end` | `call_id`, `sender_thread_id`, `receiver_thread_id`, `receiver_agent_nickname`, `receiver_agent_role`, `status`, `completed_at_ms` |
+
+`AgentStatus` currently serializes with these variants:
+
+- `"pending_init"`
+- `"running"`
+- `"interrupted"`
+- `{ "completed": "<final assistant message>" }` or `{ "completed": null }`
+- `{ "errored": "<error message>" }`
+- `"shutdown"`
+- `"not_found"`
+
+Notes:
+
+- Timing fields are useful for ordering and future duration display, but the
+  current parser uses the rollout-line `timestamp` for session ordering.
+- `model` and `reasoning_effort` describe the effective spawned agent settings.
+  They are currently not stored by Sessions Chronicle's subagent model.
+- `collab_resume_end` has the same status-bearing shape as close/interaction
+  events, but the current parser does not yet use it for subagent summary
+  enrichment.
+- `wait_agent` can emit `collab_waiting_end` with empty `agent_statuses` and
+  empty `statuses`; treat this as no per-agent status update.
+
+### Subagent Tool Calls in Response Items
+
+Local Codex `0.130.0` rollouts can persist subagent operations as ordinary
+`response_item` tool calls instead of `event_msg.payload.type == "collab_*"`.
+This shape was observed in a real local parent rollout with
+`originator == "codex-tui"` and `cli_version == "0.130.0"`.
+
+Spawn call:
+
+```json
+{
+  "type": "response_item",
+  "payload": {
+    "type": "function_call",
+    "call_id": "call_spawn",
+    "name": "spawn_agent",
+    "arguments": {
+      "agent_type": "product-manager",
+      "message": "...",
+      "reasoning_effort": "medium"
+    }
+  }
+}
+```
+
+Spawn output:
+
+```json
+{
+  "type": "response_item",
+  "payload": {
+    "type": "function_call_output",
+    "call_id": "call_spawn",
+    "output": "{\"agent_id\":\"019e382d-e986-7b62-9f97-b015c5cc70f5\",\"nickname\":\"Nord\"}"
+  }
+}
+```
+
+Wait output can also carry a per-agent status map:
+
+```json
+{
+  "type": "response_item",
+  "payload": {
+    "type": "function_call_output",
+    "call_id": "call_wait",
+    "output": "{\"status\":{\"019e382d-e986-7b62-9f97-b015c5cc70f5\":{\"completed\":\"...\"}},\"timed_out\":false}"
+  }
+}
+```
+
+The linked child rollout still uses structured session provenance:
+
+```json
+{
+  "type": "session_meta",
+  "payload": {
+    "id": "019e382d-e986-7b62-9f97-b015c5cc70f5",
+    "source": {
+      "subagent": {
+        "thread_spawn": {
+          "parent_thread_id": "019e3829-1153-77d3-acc5-8d683325f21d",
+          "depth": 1,
+          "agent_nickname": "Nord",
+          "agent_role": "product-manager"
+        }
+      }
+    },
+    "thread_source": "subagent",
+    "agent_nickname": "Nord",
+    "agent_role": "product-manager"
+  }
+}
+```
+
+Parser implication:
+
+- `spawn_agent` `function_call_output` can identify a parent-side subagent via
+  `output.agent_id` and optional `output.nickname`.
+- `wait_agent` `function_call_output` can carry terminal summaries in
+  `output.status.{agent_id}`.
+- Current Sessions Chronicle parser indexes these as generic tool calls, but
+  does not yet map them into parent-side `Subagent` rows.
 
 ### Encrypted Reasoning
 
@@ -344,6 +480,12 @@ Current implementation: `src/parsers/codex.rs`
 - Indexes Codex child rollouts as subagent sessions when `session_meta.payload.source.sub_agent.thread_spawn.parent_thread_id` or `source.subagent.thread_spawn.parent_thread_id` is present
 - Indexes `collab_agent_spawn_end` as parent-side `Subagent` rows and transcript items
 - Enriches parent-side subagents from `collab_waiting_end`, `collab_close_end`, and `collab_agent_interaction_end`
+- Does not yet enrich subagents from `collab_resume_end`
+- Ignores collab timing fields, spawned-agent `model`, and spawned-agent `reasoning_effort`
+- Indexes `response_item` `function_call` / `function_call_output` pairs as
+  generic tool calls, including `spawn_agent` and `wait_agent`
+- Does not yet map `spawn_agent` / `wait_agent` response-item outputs into
+  parent-side `Subagent` rows
 - Does not yet extract Codex skill invocations from `$skill-name` / `<skill>` pairs
 
 **Title extraction:** First `event_msg.payload.type == "user_message"` event (`payload.message`).
@@ -368,10 +510,15 @@ fn extract_content_codex_event_msg(event: &Value) -> Option<(Role, String)> {
 
 **Tool call handling:**
 
-- Raw data is emitted via `event_msg.payload.type` variants: `exec_command_*`, `mcp_tool_call_*`,
-  `web_search_*`, and collab `collab_*`.
+- Raw data is emitted via `event_msg.payload.type` variants:
+  `exec_command_*`, `mcp_tool_call_*`, `web_search_*`, and collab `collab_*`;
+  local rollouts can also emit tool calls as `response_item` `function_call`
+  / `function_call_output`.
 - Tool call correlation typically uses `call_id`.
-- Current parser behavior: indexes `exec_command_*` and `mcp_tool_call_*` begin/end pairs as tool calls; maps Codex `collab_*` lifecycle events into parent `Subagent` rows plus child-session linkage when the child rollout is present.
+- Current parser behavior: indexes `exec_command_*` and `mcp_tool_call_*`
+  begin/end pairs plus `response_item` function calls as tool calls; maps Codex
+  `collab_*` lifecycle events into parent `Subagent` rows plus child-session
+  linkage when the child rollout is present.
 
 **Streaming:** Use `BufReader` line-by-line iteration — do not load entire JSONL into memory.
 

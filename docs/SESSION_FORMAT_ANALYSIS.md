@@ -75,7 +75,7 @@ Cross-tool comparison of Claude Code, Codex, OpenCode, and Mistral Vibe session 
 
 | Field Category | Claude Code | Codex | OpenCode | Mistral Vibe |
 |----------------|-------------|-------|----------|-------------|
-| **Event Type** | `type` (`user`, `assistant`, `system`, `summary`, `progress`, `queue-operation`, `saved_hook_context`, `pr-link`, `file-history-snapshot`, ...); current `system` subtypes observed locally include `local_command`, `turn_duration`, and `compact_boundary` | Rollout envelope `type` (`session_meta`, `event_msg`, `response_item`, `turn_context`, ...); nested `event_msg.payload.type` (`user_message`, `agent_message`, `exec_command_*`, `mcp_tool_call_*`, `collab_*`, ...) | Session metadata only (messages in separate files) | `role` (`system`, `user`, `assistant`, `tool`) in `messages.jsonl`; tool calls on assistant messages via `tool_calls` |
+| **Event Type** | `type` (`user`, `assistant`, `system`, `summary`, `progress`, `queue-operation`, `saved_hook_context`, `pr-link`, `file-history-snapshot`, ...); current `system` subtypes observed locally include `local_command`, `turn_duration`, and `compact_boundary` | Rollout envelope `type` (`session_meta`, `event_msg`, `response_item`, `turn_context`, ...); nested `event_msg.payload.type` (`user_message`, `agent_message`, `exec_command_*`, `mcp_tool_call_*`, `collab_agent_*`, `collab_waiting_*`, `collab_close_*`, `collab_resume_*`, ...); tool calls can also appear as `response_item` `function_call` / `function_call_output` | Session metadata only (messages in separate files) | `role` (`system`, `user`, `assistant`, `tool`) in `messages.jsonl`; tool calls on assistant messages via `tool_calls` |
 | **Identity** | `uuid`, `parentUuid` (tree structure), plus `promptId` on user turns, `agentId` in subagent logs, and `logicalParentUuid` on some compaction events | Session id at `session_meta.payload.id`; event-specific IDs like `call_id`, `sender_thread_id`, `receiver_thread_id` | `id`, `parentID` (hierarchical sessions) | `message_id` (UUID, optional) on `user`/`assistant` messages; absent on `tool` role. Tool calls have an `id` and tool responses reference it via `tool_call_id` |
 | **Timestamp** | `timestamp` (ISO-8601) | Top-level rollout-line `timestamp` (ISO-8601 string) | `time.created`, `time.updated` (session level) | Session-level only in `meta.json`: `start_time`, `end_time` (ISO-8601). No per-message timestamps |
 | **Content** | Nested: `message.content`; tool results also appear inline as `tool_result` blocks, can be duplicated in top-level `toolUseResult`, and large outputs may be materialized under `tool-results/` | Usually in `event_msg.payload` (for example `message`, command output deltas, MCP results), plus optional `response_item.payload.content[]` blocks; skills can also be injected as `response_item` user messages wrapped in `<skill>...</skill>` | Stored in `message/ses_xxx/` directory + `part/msg_xxx/` | `messages.jsonl` lines with `content`; tool output stored as `role: "tool"` messages |
@@ -85,7 +85,7 @@ Cross-tool comparison of Claude Code, Codex, OpenCode, and Mistral Vibe session 
 
 **Threading Model:**
 - **Claude Code**: Tree structure via `uuid`/`parentUuid` + `isSidechain` flag; some newer compaction events also include `logicalParentUuid`
-- **Codex**: Thread-based rollouts (`session_meta.payload.id` thread id); source provenance now comes from structured `session_meta.payload.source` (`cli`, `vscode`, `exec`, custom, or structured `subAgent` variants), with additional child-thread linkage visible in collab events (`collab_agent_spawn_*`, `collab_resume_*`, ...)
+- **Codex**: Thread-based rollouts (`session_meta.payload.id` thread id); source provenance now comes from structured `session_meta.payload.source` (`cli`, `vscode`, `exec`, custom, or structured `subAgent` variants), with additional child-thread linkage visible in collab events (`collab_agent_spawn_*`, `collab_agent_interaction_*`, `collab_waiting_*`, `collab_close_*`, `collab_resume_*`) or local response-item tool calls such as `spawn_agent`
 - **OpenCode**: Parent-child sessions via `parentID` (subagent sessions)
 - **Mistral Vibe**: Linear message list in `messages.jsonl`; tool calls are embedded in assistant messages and resolved by subsequent `tool` role messages
 
@@ -101,8 +101,10 @@ Cross-tool comparison of Claude Code, Codex, OpenCode, and Mistral Vibe session 
 **Content Access:**
 - **Claude Code**: `event.message.content` (nested in JSONL events); some current tool-result user events also include top-level `toolUseResult`
 - **Codex**: `event_msg.payload.message` for user/assistant text; tool/collab
-  info in event-specific payload fields; loaded skills can appear as injected
-  `response_item` user messages wrapped in `<skill>...</skill>`
+  info in event-specific payload fields; tool calls can also appear as
+  `response_item` `function_call` / `function_call_output`; loaded skills can
+  appear as injected `response_item` user messages wrapped in
+  `<skill>...</skill>`
 - **OpenCode**: Message content lives in `message`/`part`; skill loading has a
   structural marker via `part.type == "tool"` and `part.tool == "skill"`
 - **Mistral Vibe**: `messages.jsonl` holds message entries (one JSON object per
@@ -142,6 +144,7 @@ Goal: determine whether model information is available per message, per turn, an
 - **Claude Code**: JSONL format, tree-structured events, project-based organization; current local logs add `turn_duration` and `compact_boundary` system events, confirm subagent transcripts under `<session-id>/subagents/agent-*.jsonl`, and show large materialized tool output under `<session-id>/tool-results/`; model slug is available on assistant events (`message.model`) in recent logs; **token usage is commonly available per assistant message** (`message.usage`, optional and version-dependent), with cache fields reported separately from uncached input
 - **Claude Code subagent/tool naming**: Current local v2.1.87 sessions show subagent launches as `tool_use` with `name == "Agent"` and `input.subagent_type`; older local fixtures and parser assumptions still reference `Task`
 - **Codex**: JSONL rollout envelope (`session_meta`/`event_msg`/`turn_context`/...); model provider can exist at session level, and model slug is captured at turn level (`turn_context.model`); **token usage is emitted as `event_msg` `token_count` events** (running totals + last-call deltas), where cached input is a subset of `input_tokens`
+- **Codex subagents**: Current upstream Codex protocol defines subagent lifecycle data through `collab_*` events. Spawn events include `new_thread_id`, nickname/role metadata, effective `model`, `reasoning_effort`, status, and timing fields. Waiting, interaction, close, and resume events carry receiver thread IDs and `AgentStatus` payloads. A real local Codex `0.130.0` rollout instead persisted `spawn_agent` and `wait_agent` as `response_item` `function_call` / `function_call_output`, with `spawn_agent` output carrying `agent_id` and `nickname`; the linked child rollout still used `session_meta.payload.source.subagent.thread_spawn.parent_thread_id`. Sessions Chronicle currently indexes `collab_*` spawn/waiting/interaction/close data as parent-side subagents, but does not yet use `collab_resume_end` or response-item `spawn_agent` / `wait_agent` outputs for parent-side subagent rows.
 - **Codex skills**: Sampled local rollouts show explicit `$skill-name`
   `user_message` events followed by injected `<skill>` payloads in
   `response_item` user messages. The injected payload includes `<name>` and
@@ -182,21 +185,29 @@ Goal: determine whether model information is available per message, per turn, an
 3. **Codex Retry / Duplicate Thread Display**:
    - When multiple Codex parent subagent rows share the same child session, should the UI surface them as separate attempts or collapse them behind one child-session link?
 
-4. **OpenCode Session Diffs**:
+4. **Codex Resume Event Enrichment**:
+   - Should `collab_resume_end` update existing parent-side subagent summaries the same way `collab_agent_interaction_end` and `collab_close_end` do?
+   - Should collab timing fields (`started_at_ms`, `completed_at_ms`) be stored for future subagent duration display?
+
+5. **Codex Response-Item Subagent Calls**:
+   - Should `response_item.function_call_output` for `spawn_agent` create parent-side `Subagent` rows when it carries `agent_id` and `nickname`?
+   - Should `response_item.function_call_output` for `wait_agent` enrich those rows from `status.{agent_id}`?
+
+6. **OpenCode Session Diffs**:
    - Should `session_diff/ses_xxx.json` be ingested for richer "changes made" previews?
    - How should diff metadata be surfaced without overwhelming session list/search?
 
-5. **Image/Attachment Handling in Tool Results**:
+7. **Image/Attachment Handling in Tool Results**:
    - How should we present tool-result attachments (data URLs, image/pdf, references) safely?
    - Should remote references require explicit user opt-in before fetch?
 
-6. **Error Handling for Malformed Data**:
+8. **Error Handling for Malformed Data**:
    - How should parser handle malformed JSON/JSONL lines?
    - Skip and continue, or fail entire session?
    - What about missing required fields?
    - Recommendation: Log warnings, skip problematic entries, continue indexing
 
-7. **Memory Management for Large Sessions**:
+9. **Memory Management for Large Sessions**:
    - What's the practical limit for session size?
    - Should large messages be truncated for display?
    - How to handle sessions with 10,000+ messages?
@@ -235,6 +246,8 @@ Each tool can persist token usage metrics, but **the granularity and presence ar
 2. **Subagent graph model**:
    - Extend the unified parent-child relation beyond the current OpenCode + Codex + Claude linkage primitives
    - Revisit whether the UI should expose Codex duplicate-thread / retry history explicitly when multiple parent subagent rows point at the same child session
+   - Decide whether `collab_resume_end` should participate in Codex subagent summary enrichment
+   - Decide whether response-item `spawn_agent` / `wait_agent` outputs should participate in Codex parent-side subagent extraction
 
 3. **UI surfacing experiment**:
    - Add optional expandable "Tool Activity" and "Subtasks/Subagents" sections in session details
