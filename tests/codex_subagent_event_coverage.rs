@@ -1,5 +1,8 @@
 use rusqlite::Connection;
-use sessions_chronicle::database::{SessionIndexer, load_session, load_subagent, load_tool_call};
+use sessions_chronicle::database::{
+    SessionIndexer, load_all_transcript_items, load_session, load_subagent, load_tool_call,
+};
+use sessions_chronicle::models::TranscriptItemKind;
 use std::path::Path;
 use tempfile::NamedTempFile;
 
@@ -25,7 +28,7 @@ fn subagent_count(db_path: &Path, session_id: &str) -> i64 {
 // instead of `event_msg` `collab_*` events. The child rollout still links back
 // through `session_meta.payload.source.subagent.thread_spawn.parent_thread_id`.
 #[test]
-fn codex_response_item_spawn_wait_indexes_as_tool_calls_and_links_child() {
+fn codex_response_item_spawn_wait_indexes_as_subagent_and_links_child() {
     let temp_db = NamedTempFile::new().unwrap();
     let mut indexer = SessionIndexer::new(temp_db.path()).unwrap();
     indexer
@@ -46,20 +49,67 @@ fn codex_response_item_spawn_wait_indexes_as_tool_calls_and_links_child() {
         Some(RESPONSE_ITEM_PARENT)
     );
 
-    let spawn = load_tool_call(temp_db.path(), RESPONSE_ITEM_PARENT, "call_spawn_ri_1")
-        .unwrap()
-        .expect("spawn_agent should be indexed as a tool call");
-    assert_eq!(spawn.tool_name, "spawn_agent");
+    assert!(
+        load_tool_call(temp_db.path(), RESPONSE_ITEM_PARENT, "call_spawn_ri_1")
+            .unwrap()
+            .is_none(),
+        "spawn_agent should not be indexed as a generic tool call"
+    );
+    assert!(
+        load_tool_call(temp_db.path(), RESPONSE_ITEM_PARENT, "call_wait_ri_1")
+            .unwrap()
+            .is_none(),
+        "wait_agent should not be indexed as a generic tool call"
+    );
 
-    let wait = load_tool_call(temp_db.path(), RESPONSE_ITEM_PARENT, "call_wait_ri_1")
-        .unwrap()
-        .expect("wait_agent should be indexed as a tool call");
-    assert_eq!(wait.tool_name, "wait_agent");
+    assert_eq!(subagent_count(temp_db.path(), RESPONSE_ITEM_PARENT), 1);
 
-    // Current parser behavior: the response-item `spawn_agent` / `wait_agent`
-    // form is not yet mapped into parent-side `Subagent` rows. This guards that
-    // gap so a future enrichment change updates the assertion deliberately.
-    assert_eq!(subagent_count(temp_db.path(), RESPONSE_ITEM_PARENT), 0);
+    let subagent = load_subagent(temp_db.path(), RESPONSE_ITEM_PARENT, "call_spawn_ri_1")
+        .unwrap()
+        .expect("response-item spawn_agent should become a subagent");
+    assert_eq!(subagent.title, "Nord");
+    assert_eq!(subagent.agent_id.as_deref(), Some(RESPONSE_ITEM_CHILD));
+    assert_eq!(
+        subagent.child_session_id.as_deref(),
+        Some(RESPONSE_ITEM_CHILD)
+    );
+    assert_eq!(
+        subagent.prompt.as_deref(),
+        Some("Advise the next milestone")
+    );
+    assert_eq!(
+        subagent.result_summary.as_deref(),
+        Some("Recommend the project timeline view next.")
+    );
+}
+
+#[test]
+fn codex_response_item_spawn_wait_transcript_contains_subagent_not_tool_calls() {
+    let temp_db = NamedTempFile::new().unwrap();
+    let mut indexer = SessionIndexer::new(temp_db.path()).unwrap();
+    indexer
+        .index_codex_sessions(Path::new(RESPONSE_ITEM_FIXTURE))
+        .unwrap();
+
+    let transcript = load_all_transcript_items(temp_db.path(), RESPONSE_ITEM_PARENT, 512).unwrap();
+
+    let subagent_rows: Vec<_> = transcript
+        .iter()
+        .filter(|item| item.kind == TranscriptItemKind::Subagent)
+        .collect();
+    assert_eq!(subagent_rows.len(), 1);
+    assert_eq!(
+        subagent_rows[0].subagent_id.as_deref(),
+        Some("call_spawn_ri_1")
+    );
+    assert_eq!(subagent_rows[0].subagent_title.as_deref(), Some("Nord"));
+
+    let tool_names: Vec<_> = transcript
+        .iter()
+        .filter_map(|item| item.tool_name.as_deref())
+        .collect();
+    assert!(!tool_names.contains(&"spawn_agent"));
+    assert!(!tool_names.contains(&"wait_agent"));
 }
 
 // Synthetic fixture: no real `collab_resume_end` event exists in captured
