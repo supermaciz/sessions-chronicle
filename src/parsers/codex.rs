@@ -89,6 +89,12 @@ fn parse_status_update(status: &Value) -> StatusUpdate {
     }
 }
 
+#[derive(Debug, Clone)]
+struct PendingSpawn {
+    agent_type: Option<String>,
+    message: Option<String>,
+}
+
 /// Mutable parsing state accumulator for Codex sessions.
 struct ParseState {
     session_id: String,
@@ -113,6 +119,8 @@ struct ParseState {
     // status label, so a later coarse terminal event cannot downgrade a
     // detailed `completed`/`errored` summary.
     subagent_summary_is_coarse: HashMap<String, bool>,
+    pending_spawns: HashMap<String, PendingSpawn>,
+    pending_waits: HashSet<String>,
 
     // Counters
     msg_counter: i64,
@@ -138,6 +146,8 @@ impl ParseState {
             subagent_indexes_by_agent_id: HashMap::new(),
             subagent_priority_by_id: HashMap::new(),
             subagent_summary_is_coarse: HashMap::new(),
+            pending_spawns: HashMap::new(),
+            pending_waits: HashSet::new(),
             msg_counter: 0,
             item_counter: 0,
             pending_reasoning: PendingReasoning::default(),
@@ -225,6 +235,51 @@ impl ParseState {
         self.pending_reasoning.merge(reasoning);
     }
 
+    fn push_subagent_row(
+        &mut self,
+        id: String,
+        agent_id: Option<String>,
+        title: String,
+        prompt: Option<String>,
+    ) {
+        if self.subagent_idx_by_call_id.contains_key(&id) {
+            return;
+        }
+
+        let subagent_idx = self.subagents.len();
+        self.subagents.push(Subagent {
+            id: id.clone(),
+            agent_id: agent_id.clone(),
+            session_id: self.session_id.clone(),
+            title,
+            prompt,
+            result_summary: None,
+            child_session_id: None,
+            parser_ref: Some(id.clone()),
+        });
+        self.subagent_idx_by_call_id
+            .insert(id.clone(), subagent_idx);
+        self.subagent_priority_by_id
+            .insert(id.clone(), SubagentEventPriority::Interaction);
+        if let Some(agent_id) = agent_id {
+            self.subagent_indexes_by_agent_id
+                .entry(agent_id)
+                .or_default()
+                .push(subagent_idx);
+        }
+
+        self.transcript_items.push(TranscriptItem {
+            session_id: self.session_id.clone(),
+            item_index: self.item_counter,
+            kind: TranscriptItemKind::Subagent,
+            message_index: None,
+            tool_call_id: None,
+            subagent_id: Some(id),
+        });
+        self.flush_pending_reasoning_to_item(self.item_counter);
+        self.item_counter += 1;
+    }
+
     fn record_subagent_spawn(&mut self, payload: &Value) {
         let call_id = match payload.get("call_id").and_then(|v| v.as_str()) {
             Some(call_id) if !call_id.is_empty() => call_id,
@@ -233,10 +288,6 @@ impl ParseState {
                 return;
             }
         };
-
-        if self.subagent_idx_by_call_id.contains_key(call_id) {
-            return;
-        }
 
         let agent_id = payload
             .get("new_thread_id")
@@ -255,38 +306,7 @@ impl ParseState {
             .filter(|value| !value.is_empty())
             .map(str::to_string);
 
-        let subagent_idx = self.subagents.len();
-        self.subagents.push(Subagent {
-            id: call_id.to_string(),
-            agent_id: agent_id.clone(),
-            session_id: self.session_id.clone(),
-            title,
-            prompt,
-            result_summary: None,
-            child_session_id: None,
-            parser_ref: Some(call_id.to_string()),
-        });
-        self.subagent_idx_by_call_id
-            .insert(call_id.to_string(), subagent_idx);
-        self.subagent_priority_by_id
-            .insert(call_id.to_string(), SubagentEventPriority::Interaction);
-        if let Some(agent_id) = agent_id {
-            self.subagent_indexes_by_agent_id
-                .entry(agent_id)
-                .or_default()
-                .push(subagent_idx);
-        }
-
-        self.transcript_items.push(TranscriptItem {
-            session_id: self.session_id.clone(),
-            item_index: self.item_counter,
-            kind: TranscriptItemKind::Subagent,
-            message_index: None,
-            tool_call_id: None,
-            subagent_id: Some(call_id.to_string()),
-        });
-        self.flush_pending_reasoning_to_item(self.item_counter);
-        self.item_counter += 1;
+        self.push_subagent_row(call_id.to_string(), agent_id, title, prompt);
     }
 
     fn update_subagent_from_status(
