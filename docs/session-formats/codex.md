@@ -395,7 +395,9 @@ The linked child rollout still uses structured session provenance:
 Parser implication:
 
 - `spawn_agent` `function_call_output` identifies a parent-side subagent via
-  `output.agent_id` and optional `output.nickname`.
+  `output.agent_id` and optional `output.nickname`. When the output is missing,
+  unparseable, or omits `agent_id` (a rejected spawn), the parser still records
+  an unlinked `Subagent` row rather than dropping the spawn from the transcript.
 - `wait_agent` `function_call_output` carries terminal summaries in
   `output.status.{agent_id}` and enriches the matching parent-side `Subagent` rows.
 - Sessions Chronicle maps response-item `spawn_agent` and `wait_agent` pairs

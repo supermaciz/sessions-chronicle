@@ -54,6 +54,7 @@ Subagent linkage fixtures live under `tests/fixtures/codex_subagent_linkage/`:
 
 - `2026/04/18/` (parent + child pair using `event_msg` `collab_agent_spawn_end`)
 - `2026/05/18/` (parent + child pair using the response-item form: `response_item` `function_call` / `function_call_output` for `spawn_agent` / `wait_agent`, anonymized from a real Codex `0.130.0` rollout)
+- `2026/05/20/` (**synthetic** parent-only rollout where `spawn_agent`'s `function_call_output` omits `agent_id` — a rejected spawn — guarding that the spawn still degrades to an unlinked subagent row instead of vanishing)
 
 ## Vibe Session Format
 

@@ -13,6 +13,9 @@ const RESPONSE_ITEM_CHILD: &str = "019e382d-e986-7b62-9f97-b015c5cc70f5";
 const RESUME_FIXTURE: &str = "tests/fixtures/codex_sessions/2026/05/19";
 const RESUME_SESSION: &str = "019e3d94-0000-7000-8000-000000000001";
 
+const SPAWN_NO_AGENT_FIXTURE: &str = "tests/fixtures/codex_subagent_linkage/2026/05/20";
+const SPAWN_NO_AGENT_PARENT: &str = "019e3f00-0000-7000-8000-000000000001";
+
 fn subagent_count(db_path: &Path, session_id: &str) -> i64 {
     let conn = Connection::open(db_path).unwrap();
     conn.query_row(
@@ -110,6 +113,53 @@ fn codex_response_item_spawn_wait_transcript_contains_subagent_not_tool_calls() 
         .collect();
     assert!(!tool_names.contains(&"spawn_agent"));
     assert!(!tool_names.contains(&"wait_agent"));
+}
+
+// Codex rollouts can persist a `spawn_agent` whose `function_call_output`
+// omits `agent_id` (a rejected/failed spawn, or an unexpected output shape).
+// The begin event already short-circuits before `push_tool_call`, so the spawn
+// must still degrade to an unlinked subagent row rather than vanishing from
+// both the transcript and the subagent tables.
+#[test]
+fn codex_response_item_spawn_without_agent_id_degrades_to_unlinked_subagent() {
+    let temp_db = NamedTempFile::new().unwrap();
+    let mut indexer = SessionIndexer::new(temp_db.path()).unwrap();
+    indexer
+        .index_codex_sessions(Path::new(SPAWN_NO_AGENT_FIXTURE))
+        .unwrap();
+
+    let parent = load_session(temp_db.path(), SPAWN_NO_AGENT_PARENT)
+        .unwrap()
+        .expect("parent session should be indexed");
+    assert!(!parent.is_subagent);
+
+    assert!(
+        load_tool_call(
+            temp_db.path(),
+            SPAWN_NO_AGENT_PARENT,
+            "call_spawn_noagent_1"
+        )
+        .unwrap()
+        .is_none(),
+        "spawn_agent should not regress to a generic tool call"
+    );
+
+    assert_eq!(subagent_count(temp_db.path(), SPAWN_NO_AGENT_PARENT), 1);
+
+    let subagent = load_subagent(
+        temp_db.path(),
+        SPAWN_NO_AGENT_PARENT,
+        "call_spawn_noagent_1",
+    )
+    .unwrap()
+    .expect("spawn_agent without agent_id should still become a subagent");
+    assert_eq!(subagent.title, "product-manager");
+    assert_eq!(subagent.agent_id, None);
+    assert_eq!(subagent.child_session_id, None);
+    assert_eq!(
+        subagent.prompt.as_deref(),
+        Some("Advise the next milestone")
+    );
 }
 
 // Synthetic fixture: no real `collab_resume_end` event exists in captured

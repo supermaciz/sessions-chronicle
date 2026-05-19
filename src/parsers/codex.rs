@@ -492,31 +492,35 @@ impl ParseState {
         pending: PendingSpawn,
         response_item: &Value,
     ) {
-        let Some(output) =
-            Self::parse_response_item_json_string(response_item, "output", call_id, "spawn_agent")
-        else {
-            return;
-        };
-        let Some(agent_id) = output
-            .get("agent_id")
+        // The output may be missing, unparseable, or lack `agent_id` (a
+        // rejected/failed spawn). The begin event already short-circuited
+        // before `push_tool_call`, so still record an unlinked subagent row
+        // rather than dropping the spawn from the transcript entirely.
+        let output =
+            Self::parse_response_item_json_string(response_item, "output", call_id, "spawn_agent");
+
+        let agent_id = output
+            .as_ref()
+            .and_then(|output| output.get("agent_id"))
             .and_then(|v| v.as_str())
             .filter(|value| !value.is_empty())
-            .map(str::to_string)
-        else {
+            .map(str::to_string);
+        if agent_id.is_none() {
             tracing::debug!(
-                "dropping response-item spawn_agent output without agent_id for call {call_id}"
+                "response-item spawn_agent for call {call_id} has no agent_id; recording unlinked subagent"
             );
-            return;
-        };
+        }
+
         let title = output
-            .get("nickname")
+            .as_ref()
+            .and_then(|output| output.get("nickname"))
             .and_then(|v| v.as_str())
             .filter(|value| !value.is_empty())
             .map(str::to_string)
             .or(pending.agent_type)
             .unwrap_or_else(|| "Codex subagent".to_string());
 
-        self.push_subagent_row(call_id.to_string(), Some(agent_id), title, pending.message);
+        self.push_subagent_row(call_id.to_string(), agent_id, title, pending.message);
     }
 
     fn complete_pending_wait(&mut self, call_id: &str, response_item: &Value) {
@@ -1265,6 +1269,56 @@ mod tests {
             Some("Process exited with code 0")
         );
         assert_eq!(parsed.tool_calls[0].error_text, None);
+    }
+
+    #[test]
+    fn parse_response_item_spawn_without_agent_id_still_records_subagent() {
+        let mut file = tempfile::NamedTempFile::new().unwrap();
+        writeln!(file, r#"{{"type":"session_meta","payload":{{"id":"codex-spawn-noid","timestamp":"2026-01-01T00:00:00Z","cwd":"/tmp"}}}}"#).unwrap();
+        writeln!(file, r#"{{"type":"event_msg","timestamp":"2026-01-01T00:00:01Z","payload":{{"type":"user_message","message":"delegate"}}}}"#).unwrap();
+        writeln!(file, r#"{{"type":"response_item","timestamp":"2026-01-01T00:00:02Z","payload":{{"type":"function_call","name":"spawn_agent","call_id":"call_spawn_noid","arguments":"{{\"agent_type\":\"product-manager\",\"message\":\"Advise the next milestone\"}}"}}}}"#).unwrap();
+        writeln!(file, r#"{{"type":"response_item","timestamp":"2026-01-01T00:00:03Z","payload":{{"type":"function_call_output","call_id":"call_spawn_noid","output":"{{\"error\":\"spawn rejected\"}}"}}}}"#).unwrap();
+
+        let parsed = CodexParser.parse(file.path()).unwrap();
+
+        // spawn_agent must not regress to a generic tool call.
+        assert!(parsed.tool_calls.is_empty());
+
+        // The spawn action still surfaces as a subagent row, just unlinked.
+        assert_eq!(parsed.subagents.len(), 1);
+        assert_eq!(parsed.subagents[0].id, "call_spawn_noid");
+        assert_eq!(parsed.subagents[0].agent_id, None);
+        assert_eq!(parsed.subagents[0].title, "product-manager");
+        assert_eq!(
+            parsed.subagents[0].prompt.as_deref(),
+            Some("Advise the next milestone")
+        );
+        assert!(matches!(
+            parsed.transcript_items.last().unwrap().kind,
+            TranscriptItemKind::Subagent
+        ));
+    }
+
+    #[test]
+    fn parse_response_item_spawn_with_unparseable_output_still_records_subagent() {
+        let mut file = tempfile::NamedTempFile::new().unwrap();
+        writeln!(file, r#"{{"type":"session_meta","payload":{{"id":"codex-spawn-badout","timestamp":"2026-01-01T00:00:00Z","cwd":"/tmp"}}}}"#).unwrap();
+        writeln!(file, r#"{{"type":"event_msg","timestamp":"2026-01-01T00:00:01Z","payload":{{"type":"user_message","message":"delegate"}}}}"#).unwrap();
+        writeln!(file, r#"{{"type":"response_item","timestamp":"2026-01-01T00:00:02Z","payload":{{"type":"function_call","name":"spawn_agent","call_id":"call_spawn_badout","arguments":"{{\"agent_type\":\"product-manager\",\"message\":\"Advise the next milestone\"}}"}}}}"#).unwrap();
+        writeln!(file, r#"{{"type":"response_item","timestamp":"2026-01-01T00:00:03Z","payload":{{"type":"function_call_output","call_id":"call_spawn_badout","output":"{{not json"}}}}"#).unwrap();
+
+        let parsed = CodexParser.parse(file.path()).unwrap();
+
+        // An unexpected output shape must not drop the spawn action entirely.
+        assert!(parsed.tool_calls.is_empty());
+        assert_eq!(parsed.subagents.len(), 1);
+        assert_eq!(parsed.subagents[0].id, "call_spawn_badout");
+        assert_eq!(parsed.subagents[0].agent_id, None);
+        assert_eq!(parsed.subagents[0].title, "product-manager");
+        assert_eq!(
+            parsed.subagents[0].prompt.as_deref(),
+            Some("Advise the next milestone")
+        );
     }
 
     #[test]
