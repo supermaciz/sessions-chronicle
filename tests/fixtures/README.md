@@ -48,6 +48,13 @@ Fixtures added for Codex parsing coverage:
 - `tests/fixtures/codex_sessions/2026/01/18/rollout-2026-01-18T02-01-28-019bce9f-0a40-79e2-8351-8818e8487fb6.jsonl` (valid 3-line session)
 - `tests/fixtures/codex_sessions/2026/01/18/rollout-2026-01-18T02-02-00-empty-session.jsonl` (session_meta only)
 - `tests/fixtures/codex_sessions/2026/01/18/rollout-2026-01-18T02-03-00-malformed.jsonl` (event_msg first line, missing session_meta)
+- `tests/fixtures/codex_sessions/2026/05/19/rollout-2026-05-19T09-00-00-collab-resume.jsonl` (**synthetic** `collab_resume_end` coverage, derived from the upstream `CollabResumeEndEvent` struct — no real `collab_resume_*` event was found in captured rollouts)
+
+Subagent linkage fixtures live under `tests/fixtures/codex_subagent_linkage/`:
+
+- `2026/04/18/` (parent + child pair using `event_msg` `collab_agent_spawn_end`)
+- `2026/05/18/` (parent + child pair using the response-item form: `response_item` `function_call` / `function_call_output` for `spawn_agent` / `wait_agent`, anonymized from a real Codex `0.130.0` rollout)
+- `2026/05/20/` (**synthetic** parent-only rollout where `spawn_agent`'s `function_call_output` omits `agent_id` — a rejected spawn — guarding that the spawn still degrades to an unlinked subagent row instead of vanishing)
 
 ## Vibe Session Format
 

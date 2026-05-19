@@ -1,0 +1,5 @@
+{"type":"session_meta","timestamp":"2026-05-20T00:00:00Z","payload":{"id":"019e3f00-0000-7000-8000-000000000001","timestamp":"2026-05-20T00:00:00Z","cwd":"/tmp/codex-parent","originator":"codex-tui","cli_version":"0.130.0","source":"cli","thread_source":"user"}}
+{"type":"event_msg","timestamp":"2026-05-20T00:00:01Z","payload":{"type":"user_message","message":"Ask the product-manager subagent what to build next"}}
+{"type":"response_item","timestamp":"2026-05-20T00:00:02Z","payload":{"type":"function_call","name":"spawn_agent","arguments":"{\"agent_type\":\"product-manager\",\"message\":\"Advise the next milestone\"}","call_id":"call_spawn_noagent_1"}}
+{"type":"response_item","timestamp":"2026-05-20T00:00:03Z","payload":{"type":"function_call_output","call_id":"call_spawn_noagent_1","output":"{\"error\":\"spawn rejected\"}"}}
+{"type":"event_msg","timestamp":"2026-05-20T00:00:04Z","payload":{"type":"agent_message","message":"The product-manager subagent could not be spawned."}}

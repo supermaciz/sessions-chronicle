@@ -144,7 +144,7 @@ Goal: determine whether model information is available per message, per turn, an
 - **Claude Code**: JSONL format, tree-structured events, project-based organization; current local logs add `turn_duration` and `compact_boundary` system events, confirm subagent transcripts under `<session-id>/subagents/agent-*.jsonl`, and show large materialized tool output under `<session-id>/tool-results/`; model slug is available on assistant events (`message.model`) in recent logs; **token usage is commonly available per assistant message** (`message.usage`, optional and version-dependent), with cache fields reported separately from uncached input
 - **Claude Code subagent/tool naming**: Current local v2.1.87 sessions show subagent launches as `tool_use` with `name == "Agent"` and `input.subagent_type`; older local fixtures and parser assumptions still reference `Task`
 - **Codex**: JSONL rollout envelope (`session_meta`/`event_msg`/`turn_context`/...); model provider can exist at session level, and model slug is captured at turn level (`turn_context.model`); **token usage is emitted as `event_msg` `token_count` events** (running totals + last-call deltas), where cached input is a subset of `input_tokens`
-- **Codex subagents**: Current upstream Codex protocol defines subagent lifecycle data through `collab_*` events. Spawn events include `new_thread_id`, nickname/role metadata, effective `model`, `reasoning_effort`, status, and timing fields. Waiting, interaction, close, and resume events carry receiver thread IDs and `AgentStatus` payloads. A real local Codex `0.130.0` rollout instead persisted `spawn_agent` and `wait_agent` as `response_item` `function_call` / `function_call_output`, with `spawn_agent` output carrying `agent_id` and `nickname`; the linked child rollout still used `session_meta.payload.source.subagent.thread_spawn.parent_thread_id`. Sessions Chronicle currently indexes `collab_*` spawn/waiting/interaction/close data as parent-side subagents, but does not yet use `collab_resume_end` or response-item `spawn_agent` / `wait_agent` outputs for parent-side subagent rows.
+- **Codex subagents**: Current upstream Codex protocol defines subagent lifecycle data through `collab_*` events. Sessions Chronicle indexes `collab_*` spawn/waiting/interaction/close/resume data as parent-side subagents and links child rollouts through structured `session_meta.payload.source.subagent.thread_spawn.parent_thread_id` or `source.sub_agent.thread_spawn.parent_thread_id`. Local Codex `0.130.0` response-item `spawn_agent` / `wait_agent` pairs are also mapped into parent-side `Subagent` rows and terminal summaries rather than generic tool calls.
 - **Codex skills**: Sampled local rollouts show explicit `$skill-name`
   `user_message` events followed by injected `<skill>` payloads in
   `response_item` user messages. The injected payload includes `<name>` and
@@ -185,15 +185,11 @@ Goal: determine whether model information is available per message, per turn, an
 3. **Codex Retry / Duplicate Thread Display**:
    - When multiple Codex parent subagent rows share the same child session, should the UI surface them as separate attempts or collapse them behind one child-session link?
 
-4. **Codex Resume Event Enrichment**:
-   - Should `collab_resume_end` update existing parent-side subagent summaries the same way `collab_agent_interaction_end` and `collab_close_end` do?
+4. **Codex Subagent Metadata Depth**:
    - Should collab timing fields (`started_at_ms`, `completed_at_ms`) be stored for future subagent duration display?
+   - Should spawned-agent `model` and `reasoning_effort` be added to the normalized subagent model?
 
-5. **Codex Response-Item Subagent Calls**:
-   - Should `response_item.function_call_output` for `spawn_agent` create parent-side `Subagent` rows when it carries `agent_id` and `nickname`?
-   - Should `response_item.function_call_output` for `wait_agent` enrich those rows from `status.{agent_id}`?
-
-6. **OpenCode Session Diffs**:
+5. **OpenCode Session Diffs**:
    - Should `session_diff/ses_xxx.json` be ingested for richer "changes made" previews?
    - How should diff metadata be surfaced without overwhelming session list/search?
 

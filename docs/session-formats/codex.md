@@ -343,6 +343,31 @@ Wait output can also carry a per-agent status map:
 }
 ```
 
+After `wait_agent` resolves, the same rollout also persists a `response_item`
+`message` with `role == "user"` whose `input_text` wraps a
+`<subagent_notification>` payload. It duplicates the per-agent status under
+`agent_path` and `status`:
+
+```json
+{
+  "type": "response_item",
+  "payload": {
+    "type": "message",
+    "role": "user",
+    "content": [
+      {
+        "type": "input_text",
+        "text": "<subagent_notification>\n{\"agent_path\":\"019e382d-e986-7b62-9f97-b015c5cc70f5\",\"status\":{\"completed\":\"...\"}}\n</subagent_notification>"
+      }
+    ]
+  }
+}
+```
+
+This marker is informational only: the status it carries is the same as the
+`wait_agent` `function_call_output`. The current parser ignores `response_item`
+`message` items, so it is not double-counted.
+
 The linked child rollout still uses structured session provenance:
 
 ```json
@@ -369,12 +394,17 @@ The linked child rollout still uses structured session provenance:
 
 Parser implication:
 
-- `spawn_agent` `function_call_output` can identify a parent-side subagent via
-  `output.agent_id` and optional `output.nickname`.
-- `wait_agent` `function_call_output` can carry terminal summaries in
-  `output.status.{agent_id}`.
-- Current Sessions Chronicle parser indexes these as generic tool calls, but
-  does not yet map them into parent-side `Subagent` rows.
+- `spawn_agent` `function_call` creates an unlinked parent-side subagent from
+  its arguments. The matching `function_call_output` enriches it via
+  `output.agent_id` and optional `output.nickname`. When the output is missing,
+  unparseable, or omits `agent_id` (a rejected spawn), the parser keeps the
+  unlinked `Subagent` row rather than dropping the spawn from the transcript.
+- `wait_agent` `function_call_output` carries terminal summaries in
+  `output.status.{agent_id}` and enriches the matching parent-side `Subagent` rows.
+- Sessions Chronicle maps response-item `spawn_agent` and `wait_agent` pairs
+  into parent-side `Subagent` rows instead of generic tool calls.
+- The trailing `<subagent_notification>` `response_item` `message` is ignored
+  by the parser and carries no information beyond the `wait_agent` output.
 
 ### Encrypted Reasoning
 
@@ -479,13 +509,12 @@ Current implementation: `src/parsers/codex.rs`
 - Indexes tool lifecycle pairs for `mcp_tool_call_begin|end` and `exec_command_begin|end`
 - Indexes Codex child rollouts as subagent sessions when `session_meta.payload.source.sub_agent.thread_spawn.parent_thread_id` or `source.subagent.thread_spawn.parent_thread_id` is present
 - Indexes `collab_agent_spawn_end` as parent-side `Subagent` rows and transcript items
-- Enriches parent-side subagents from `collab_waiting_end`, `collab_close_end`, and `collab_agent_interaction_end`
-- Does not yet enrich subagents from `collab_resume_end`
+- Enriches parent-side subagents from `collab_waiting_end`, `collab_close_end`, `collab_resume_end`, and `collab_agent_interaction_end`
 - Ignores collab timing fields, spawned-agent `model`, and spawned-agent `reasoning_effort`
-- Indexes `response_item` `function_call` / `function_call_output` pairs as
-  generic tool calls, including `spawn_agent` and `wait_agent`
-- Does not yet map `spawn_agent` / `wait_agent` response-item outputs into
-  parent-side `Subagent` rows
+- Maps response-item `spawn_agent` / `wait_agent` `function_call` pairs into
+  parent-side `Subagent` rows and terminal summaries instead of generic tool calls
+- Leaves response-item `close_agent`, `send_message`, and `followup_task` calls
+  as generic tool calls
 - Does not yet extract Codex skill invocations from `$skill-name` / `<skill>` pairs
 
 **Title extraction:** First `event_msg.payload.type == "user_message"` event (`payload.message`).

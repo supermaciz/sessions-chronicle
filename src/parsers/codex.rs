@@ -29,6 +29,7 @@ enum SubagentEventPriority {
     Interaction = 1,
     Waiting = 2,
     Close = 3,
+    Resume = 4,
 }
 
 #[derive(Debug, Clone)]
@@ -89,6 +90,12 @@ fn parse_status_update(status: &Value) -> StatusUpdate {
     }
 }
 
+#[derive(Debug, Clone)]
+struct PendingSpawn {
+    agent_type: Option<String>,
+    message: Option<String>,
+}
+
 /// Mutable parsing state accumulator for Codex sessions.
 struct ParseState {
     session_id: String,
@@ -113,6 +120,8 @@ struct ParseState {
     // status label, so a later coarse terminal event cannot downgrade a
     // detailed `completed`/`errored` summary.
     subagent_summary_is_coarse: HashMap<String, bool>,
+    pending_spawns: HashMap<String, PendingSpawn>,
+    pending_waits: HashSet<String>,
 
     // Counters
     msg_counter: i64,
@@ -138,6 +147,8 @@ impl ParseState {
             subagent_indexes_by_agent_id: HashMap::new(),
             subagent_priority_by_id: HashMap::new(),
             subagent_summary_is_coarse: HashMap::new(),
+            pending_spawns: HashMap::new(),
+            pending_waits: HashSet::new(),
             msg_counter: 0,
             item_counter: 0,
             pending_reasoning: PendingReasoning::default(),
@@ -225,6 +236,51 @@ impl ParseState {
         self.pending_reasoning.merge(reasoning);
     }
 
+    fn push_subagent_row(
+        &mut self,
+        id: String,
+        agent_id: Option<String>,
+        title: String,
+        prompt: Option<String>,
+    ) {
+        if self.subagent_idx_by_call_id.contains_key(&id) {
+            return;
+        }
+
+        let subagent_idx = self.subagents.len();
+        self.subagents.push(Subagent {
+            id: id.clone(),
+            agent_id: agent_id.clone(),
+            session_id: self.session_id.clone(),
+            title,
+            prompt,
+            result_summary: None,
+            child_session_id: None,
+            parser_ref: Some(id.clone()),
+        });
+        self.subagent_idx_by_call_id
+            .insert(id.clone(), subagent_idx);
+        self.subagent_priority_by_id
+            .insert(id.clone(), SubagentEventPriority::Interaction);
+        if let Some(agent_id) = agent_id {
+            self.subagent_indexes_by_agent_id
+                .entry(agent_id)
+                .or_default()
+                .push(subagent_idx);
+        }
+
+        self.transcript_items.push(TranscriptItem {
+            session_id: self.session_id.clone(),
+            item_index: self.item_counter,
+            kind: TranscriptItemKind::Subagent,
+            message_index: None,
+            tool_call_id: None,
+            subagent_id: Some(id),
+        });
+        self.flush_pending_reasoning_to_item(self.item_counter);
+        self.item_counter += 1;
+    }
+
     fn record_subagent_spawn(&mut self, payload: &Value) {
         let call_id = match payload.get("call_id").and_then(|v| v.as_str()) {
             Some(call_id) if !call_id.is_empty() => call_id,
@@ -233,10 +289,6 @@ impl ParseState {
                 return;
             }
         };
-
-        if self.subagent_idx_by_call_id.contains_key(call_id) {
-            return;
-        }
 
         let agent_id = payload
             .get("new_thread_id")
@@ -255,38 +307,7 @@ impl ParseState {
             .filter(|value| !value.is_empty())
             .map(str::to_string);
 
-        let subagent_idx = self.subagents.len();
-        self.subagents.push(Subagent {
-            id: call_id.to_string(),
-            agent_id: agent_id.clone(),
-            session_id: self.session_id.clone(),
-            title,
-            prompt,
-            result_summary: None,
-            child_session_id: None,
-            parser_ref: Some(call_id.to_string()),
-        });
-        self.subagent_idx_by_call_id
-            .insert(call_id.to_string(), subagent_idx);
-        self.subagent_priority_by_id
-            .insert(call_id.to_string(), SubagentEventPriority::Interaction);
-        if let Some(agent_id) = agent_id {
-            self.subagent_indexes_by_agent_id
-                .entry(agent_id)
-                .or_default()
-                .push(subagent_idx);
-        }
-
-        self.transcript_items.push(TranscriptItem {
-            session_id: self.session_id.clone(),
-            item_index: self.item_counter,
-            kind: TranscriptItemKind::Subagent,
-            message_index: None,
-            tool_call_id: None,
-            subagent_id: Some(call_id.to_string()),
-        });
-        self.flush_pending_reasoning_to_item(self.item_counter);
-        self.item_counter += 1;
+        self.push_subagent_row(call_id.to_string(), agent_id, title, prompt);
     }
 
     fn update_subagent_from_status(
@@ -414,6 +435,129 @@ impl ParseState {
         self.current_turn_model = normalize_model(payload.get("model"));
     }
 
+    fn parse_response_item_json_string(
+        response_item: &Value,
+        field_name: &str,
+        call_id: &str,
+        tool_name: &str,
+    ) -> Option<Value> {
+        let Some(raw) = response_item.get(field_name).and_then(|v| v.as_str()) else {
+            tracing::debug!(
+                "response-item subagent {tool_name} call {call_id} field {field_name} is missing or is not a JSON string"
+            );
+            return None;
+        };
+
+        match serde_json::from_str(raw) {
+            Ok(value) => Some(value),
+            Err(err) => {
+                tracing::debug!(
+                    "failed to parse response-item subagent {tool_name} call {call_id} field {field_name}: {err}"
+                );
+                None
+            }
+        }
+    }
+
+    fn pending_spawn_from_response_item(response_item: &Value, call_id: &str) -> PendingSpawn {
+        let Some(arguments) = Self::parse_response_item_json_string(
+            response_item,
+            "arguments",
+            call_id,
+            "spawn_agent",
+        ) else {
+            return PendingSpawn {
+                agent_type: None,
+                message: None,
+            };
+        };
+
+        PendingSpawn {
+            agent_type: arguments
+                .get("agent_type")
+                .and_then(|v| v.as_str())
+                .filter(|value| !value.is_empty())
+                .map(str::to_string),
+            message: arguments
+                .get("message")
+                .and_then(|v| v.as_str())
+                .filter(|value| !value.is_empty())
+                .map(str::to_string),
+        }
+    }
+
+    fn complete_pending_spawn(
+        &mut self,
+        call_id: &str,
+        pending: PendingSpawn,
+        response_item: &Value,
+    ) {
+        let output =
+            Self::parse_response_item_json_string(response_item, "output", call_id, "spawn_agent");
+
+        let agent_id = output
+            .as_ref()
+            .and_then(|output| output.get("agent_id"))
+            .and_then(|v| v.as_str())
+            .filter(|value| !value.is_empty())
+            .map(str::to_string);
+        if agent_id.is_none() {
+            tracing::debug!(
+                "response-item spawn_agent for call {call_id} has no agent_id; keeping unlinked subagent"
+            );
+        }
+
+        let nickname = output
+            .as_ref()
+            .and_then(|output| output.get("nickname"))
+            .and_then(|v| v.as_str())
+            .filter(|value| !value.is_empty())
+            .map(str::to_string);
+
+        if let Some(&subagent_idx) = self.subagent_idx_by_call_id.get(call_id) {
+            if let Some(agent_id) = agent_id {
+                self.subagents[subagent_idx].agent_id = Some(agent_id.clone());
+                self.subagent_indexes_by_agent_id
+                    .entry(agent_id)
+                    .or_default()
+                    .push(subagent_idx);
+            }
+            if let Some(nickname) = nickname {
+                self.subagents[subagent_idx].title = nickname;
+            }
+            return;
+        }
+
+        // Defensive fallback for malformed or future streams where the output
+        // is observed without the begin-side row having been created.
+        let title = nickname
+            .or(pending.agent_type)
+            .unwrap_or_else(|| "Codex subagent".to_string());
+        self.push_subagent_row(call_id.to_string(), agent_id, title, pending.message);
+    }
+
+    fn complete_pending_wait(&mut self, call_id: &str, response_item: &Value) {
+        let Some(output) =
+            Self::parse_response_item_json_string(response_item, "output", call_id, "wait_agent")
+        else {
+            return;
+        };
+        let Some(statuses) = output.get("status").and_then(|v| v.as_object()) else {
+            return;
+        };
+
+        for (agent_id, status) in statuses {
+            self.update_subagent_from_status(
+                None,
+                Some(agent_id.as_str()),
+                None,
+                None,
+                status,
+                SubagentEventPriority::Waiting,
+            );
+        }
+    }
+
     fn handle_response_item(&mut self, payload: &Value, event_ts: Option<DateTime<Utc>>) {
         let response_item = payload.get("response_item").unwrap_or(payload);
         match response_item.get("type").and_then(|v| v.as_str()) {
@@ -432,6 +576,30 @@ impl ParseState {
                     .and_then(|v| v.as_str())
                     .unwrap_or("unknown")
                     .to_string();
+
+                match tool_name.as_str() {
+                    "spawn_agent" => {
+                        let pending =
+                            Self::pending_spawn_from_response_item(response_item, &call_id);
+                        let title = pending
+                            .agent_type
+                            .clone()
+                            .unwrap_or_else(|| "Codex subagent".to_string());
+                        self.push_subagent_row(
+                            call_id.clone(),
+                            None,
+                            title,
+                            pending.message.clone(),
+                        );
+                        self.pending_spawns.insert(call_id, pending);
+                        return;
+                    }
+                    "wait_agent" => {
+                        self.pending_waits.insert(call_id);
+                        return;
+                    }
+                    _ => {}
+                }
 
                 let input_json = response_item
                     .get("arguments")
@@ -457,6 +625,16 @@ impl ParseState {
                         return;
                     }
                 };
+
+                if let Some(pending) = self.pending_spawns.remove(call_id) {
+                    self.complete_pending_spawn(call_id, pending, response_item);
+                    return;
+                }
+
+                if self.pending_waits.take(call_id).is_some() {
+                    self.complete_pending_wait(call_id, response_item);
+                    return;
+                }
 
                 let output_text = response_item.get("output").and_then(|v| {
                     if let Some(s) = v.as_str() {
@@ -724,6 +902,19 @@ impl ParseState {
                     None,
                     payload.get("status").unwrap_or(&Value::Null),
                     SubagentEventPriority::Close,
+                );
+            }
+
+            Some("collab_resume_end") => {
+                self.update_subagent_from_status(
+                    payload.get("call_id").and_then(|v| v.as_str()),
+                    payload.get("receiver_thread_id").and_then(|v| v.as_str()),
+                    payload
+                        .get("receiver_agent_nickname")
+                        .and_then(|v| v.as_str()),
+                    None,
+                    payload.get("status").unwrap_or(&Value::Null),
+                    SubagentEventPriority::Resume,
                 );
             }
 
@@ -1101,6 +1292,84 @@ mod tests {
             Some("Process exited with code 0")
         );
         assert_eq!(parsed.tool_calls[0].error_text, None);
+    }
+
+    #[test]
+    fn parse_response_item_spawn_without_agent_id_still_records_subagent() {
+        let mut file = tempfile::NamedTempFile::new().unwrap();
+        writeln!(file, r#"{{"type":"session_meta","payload":{{"id":"codex-spawn-noid","timestamp":"2026-01-01T00:00:00Z","cwd":"/tmp"}}}}"#).unwrap();
+        writeln!(file, r#"{{"type":"event_msg","timestamp":"2026-01-01T00:00:01Z","payload":{{"type":"user_message","message":"delegate"}}}}"#).unwrap();
+        writeln!(file, r#"{{"type":"response_item","timestamp":"2026-01-01T00:00:02Z","payload":{{"type":"function_call","name":"spawn_agent","call_id":"call_spawn_noid","arguments":"{{\"agent_type\":\"product-manager\",\"message\":\"Advise the next milestone\"}}"}}}}"#).unwrap();
+        writeln!(file, r#"{{"type":"response_item","timestamp":"2026-01-01T00:00:03Z","payload":{{"type":"function_call_output","call_id":"call_spawn_noid","output":"{{\"error\":\"spawn rejected\"}}"}}}}"#).unwrap();
+
+        let parsed = CodexParser.parse(file.path()).unwrap();
+
+        // spawn_agent must not regress to a generic tool call.
+        assert!(parsed.tool_calls.is_empty());
+
+        // The spawn action still surfaces as a subagent row, just unlinked.
+        assert_eq!(parsed.subagents.len(), 1);
+        assert_eq!(parsed.subagents[0].id, "call_spawn_noid");
+        assert_eq!(parsed.subagents[0].agent_id, None);
+        assert_eq!(parsed.subagents[0].title, "product-manager");
+        assert_eq!(
+            parsed.subagents[0].prompt.as_deref(),
+            Some("Advise the next milestone")
+        );
+        assert!(matches!(
+            parsed.transcript_items.last().unwrap().kind,
+            TranscriptItemKind::Subagent
+        ));
+    }
+
+    #[test]
+    fn parse_response_item_spawn_without_output_still_records_subagent() {
+        let mut file = tempfile::NamedTempFile::new().unwrap();
+        writeln!(file, r#"{{"type":"session_meta","payload":{{"id":"codex-spawn-truncated","timestamp":"2026-01-01T00:00:00Z","cwd":"/tmp"}}}}"#).unwrap();
+        writeln!(file, r#"{{"type":"event_msg","timestamp":"2026-01-01T00:00:01Z","payload":{{"type":"user_message","message":"delegate"}}}}"#).unwrap();
+        writeln!(file, r#"{{"type":"response_item","timestamp":"2026-01-01T00:00:02Z","payload":{{"type":"function_call","name":"spawn_agent","call_id":"call_spawn_truncated","arguments":"{{\"agent_type\":\"product-manager\",\"message\":\"Advise the next milestone\"}}"}}}}"#).unwrap();
+
+        let parsed = CodexParser.parse(file.path()).unwrap();
+
+        assert!(parsed.tool_calls.is_empty());
+        assert_eq!(parsed.subagents.len(), 1);
+        assert_eq!(parsed.subagents[0].id, "call_spawn_truncated");
+        assert_eq!(parsed.subagents[0].agent_id, None);
+        assert_eq!(parsed.subagents[0].title, "product-manager");
+        assert_eq!(
+            parsed.subagents[0].prompt.as_deref(),
+            Some("Advise the next milestone")
+        );
+        assert_eq!(
+            parsed
+                .transcript_items
+                .iter()
+                .filter(|item| item.kind == TranscriptItemKind::Subagent)
+                .count(),
+            1
+        );
+    }
+
+    #[test]
+    fn parse_response_item_spawn_with_unparseable_output_still_records_subagent() {
+        let mut file = tempfile::NamedTempFile::new().unwrap();
+        writeln!(file, r#"{{"type":"session_meta","payload":{{"id":"codex-spawn-badout","timestamp":"2026-01-01T00:00:00Z","cwd":"/tmp"}}}}"#).unwrap();
+        writeln!(file, r#"{{"type":"event_msg","timestamp":"2026-01-01T00:00:01Z","payload":{{"type":"user_message","message":"delegate"}}}}"#).unwrap();
+        writeln!(file, r#"{{"type":"response_item","timestamp":"2026-01-01T00:00:02Z","payload":{{"type":"function_call","name":"spawn_agent","call_id":"call_spawn_badout","arguments":"{{\"agent_type\":\"product-manager\",\"message\":\"Advise the next milestone\"}}"}}}}"#).unwrap();
+        writeln!(file, r#"{{"type":"response_item","timestamp":"2026-01-01T00:00:03Z","payload":{{"type":"function_call_output","call_id":"call_spawn_badout","output":"{{not json"}}}}"#).unwrap();
+
+        let parsed = CodexParser.parse(file.path()).unwrap();
+
+        // An unexpected output shape must not drop the spawn action entirely.
+        assert!(parsed.tool_calls.is_empty());
+        assert_eq!(parsed.subagents.len(), 1);
+        assert_eq!(parsed.subagents[0].id, "call_spawn_badout");
+        assert_eq!(parsed.subagents[0].agent_id, None);
+        assert_eq!(parsed.subagents[0].title, "product-manager");
+        assert_eq!(
+            parsed.subagents[0].prompt.as_deref(),
+            Some("Advise the next milestone")
+        );
     }
 
     #[test]
@@ -1712,6 +1981,88 @@ mod tests {
         assert_eq!(
             parsed.subagents[0].result_summary.as_deref(),
             Some("Shutdown")
+        );
+    }
+
+    #[test]
+    fn parse_resume_end_replaces_earlier_coarse_close_summary() {
+        let mut file = tempfile::NamedTempFile::new().unwrap();
+        writeln!(
+            file,
+            "{}",
+            r#"{"type":"session_meta","payload":{"id":"codex-resume-over-close","timestamp":"2026-04-18T13:17:40Z","cwd":"/tmp/project"}}"#
+        )
+        .unwrap();
+        writeln!(
+            file,
+            "{}",
+            r#"{"type":"event_msg","timestamp":"2026-04-18T13:17:41Z","payload":{"type":"user_message","message":"Delegate this"}}"#
+        )
+        .unwrap();
+        writeln!(
+            file,
+            "{}",
+            r#"{"type":"event_msg","timestamp":"2026-04-18T13:17:42Z","payload":{"type":"collab_agent_spawn_end","call_id":"call_spawn_1","new_thread_id":"child-1","new_agent_nickname":"Kierkegaard","prompt":"Inspect","status":"running"}}"#
+        )
+        .unwrap();
+        writeln!(
+            file,
+            "{}",
+            r#"{"type":"event_msg","timestamp":"2026-04-18T13:17:43Z","payload":{"type":"collab_close_end","call_id":"call_close_1","receiver_thread_id":"child-1","receiver_agent_nickname":"Kierkegaard","status":"shutdown"}}"#
+        )
+        .unwrap();
+        writeln!(
+            file,
+            "{}",
+            r#"{"type":"event_msg","timestamp":"2026-04-18T13:17:44Z","payload":{"type":"collab_resume_end","call_id":"call_resume_1","receiver_thread_id":"child-1","receiver_agent_nickname":"Kierkegaard","status":{"completed":"resumed final answer"}}}"#
+        )
+        .unwrap();
+
+        let parsed = CodexParser.parse(file.path()).unwrap();
+        assert_eq!(
+            parsed.subagents[0].result_summary.as_deref(),
+            Some("resumed final answer")
+        );
+    }
+
+    #[test]
+    fn parse_resume_end_shutdown_does_not_overwrite_detailed_waiting_summary() {
+        let mut file = tempfile::NamedTempFile::new().unwrap();
+        writeln!(
+            file,
+            "{}",
+            r#"{"type":"session_meta","payload":{"id":"codex-resume-no-downgrade","timestamp":"2026-04-18T13:17:40Z","cwd":"/tmp/project"}}"#
+        )
+        .unwrap();
+        writeln!(
+            file,
+            "{}",
+            r#"{"type":"event_msg","timestamp":"2026-04-18T13:17:41Z","payload":{"type":"user_message","message":"Delegate this"}}"#
+        )
+        .unwrap();
+        writeln!(
+            file,
+            "{}",
+            r#"{"type":"event_msg","timestamp":"2026-04-18T13:17:42Z","payload":{"type":"collab_agent_spawn_end","call_id":"call_spawn_1","new_thread_id":"child-1","new_agent_nickname":"Kierkegaard","prompt":"Inspect","status":"running"}}"#
+        )
+        .unwrap();
+        writeln!(
+            file,
+            "{}",
+            r#"{"type":"event_msg","timestamp":"2026-04-18T13:17:43Z","payload":{"type":"collab_waiting_end","call_id":"call_wait_1","agent_statuses":[{"thread_id":"child-1","agent_nickname":"Kierkegaard","status":{"completed":"detailed waiting answer"}}]}}"#
+        )
+        .unwrap();
+        writeln!(
+            file,
+            "{}",
+            r#"{"type":"event_msg","timestamp":"2026-04-18T13:17:44Z","payload":{"type":"collab_resume_end","call_id":"call_resume_1","receiver_thread_id":"child-1","receiver_agent_nickname":"Kierkegaard","status":"shutdown"}}"#
+        )
+        .unwrap();
+
+        let parsed = CodexParser.parse(file.path()).unwrap();
+        assert_eq!(
+            parsed.subagents[0].result_summary.as_deref(),
+            Some("detailed waiting answer")
         );
     }
 
