@@ -53,11 +53,14 @@ Out of scope:
 
 ## Change A — `collab_resume_end`
 
-- Add `SubagentEventPriority::Resume = 4` (highest). Rationale: `collab_resume_end`
-  carries the agent's status *after* resume — chronologically the freshest event,
-  so its terminal status should win over `Close`. Edge case `spawn → resume → close`
-  is unusual; the priority model is already a lifecycle heuristic and this keeps
-  the common `close → resume` case correct.
+- Add `SubagentEventPriority::Resume = 4` (highest). Rationale:
+  `collab_resume_end` carries the agent's status after an explicit resume, so it
+  should be allowed to replace earlier lifecycle summaries from `Close`.
+  This is a product rule more than a timestamp rule: preserve the best detailed
+  summary observed for the agent. The existing coarse-summary guard still
+  prevents a later unit status such as `"shutdown"` from overwriting a detailed
+  `completed` / `errored` summary, even when the later event has higher
+  priority.
 - New match arm in `handle_event_msg`:
   `Some("collab_resume_end")` →
   `update_subagent_from_status(call_id, receiver_thread_id, receiver_agent_nickname, None, status, SubagentEventPriority::Resume)`.
@@ -145,8 +148,14 @@ at index time exactly as for the `collab_*` form (`agent_id` → child session).
     `agent_id` and `child_session_id` equal the child session, `result_summary`
     equals the `wait_agent` `completed` text; `spawn_agent` / `wait_agent` are
     no longer present as generic tool calls.
+  - Response-item transcript test: the parent transcript contains a `Subagent`
+    item for the converted `spawn_agent` call, not a generic tool-call item for
+    `spawn_agent` or `wait_agent`.
   - Resume test: the spawn subagent's `result_summary` equals the
     `collab_resume_end` `completed` text (`"Parser changes look correct."`).
+  - Priority/coarse guard test: a detailed resume/wait summary must not be
+    downgraded by a later coarse status such as `"shutdown"`, while
+    `collab_resume_end` can still replace an earlier coarse close summary.
 - `tests/codex_subagent_linkage.rs` (collab form) must pass unchanged.
 - `cargo fmt --all -- --check`, `cargo clippy --all -- -D warnings`,
   `cargo test --all --no-fail-fast`.
