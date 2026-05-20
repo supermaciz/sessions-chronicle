@@ -12,7 +12,8 @@ use crate::ui::highlight;
 use crate::ui::session_detail::SessionDetailMsg;
 use crate::ui::transcript_item_data::{TranscriptItemData, TranscriptItemKind};
 use crate::ui::transcript_row::{
-    TOOL_ICONS, TranscriptRowBuildKind, format_reasoning_burst_label,
+    TOOL_ICONS, TranscriptRowBuildKind, encrypted_reasoning_pill,
+    encrypted_reasoning_pill_with_label, format_reasoning_burst_label,
     format_tool_burst_accessible_label, format_tool_burst_match_badge_accessible_label,
     model_label_text, populate_tool_burst_children, render_content,
 };
@@ -193,10 +194,7 @@ impl TranscriptItemData {
                 .push((button.clone().upcast(), id));
             widgets.reasoning_box.append(&button);
         } else if message.preview.reasoning_preview.encrypted_only {
-            let label = gtk::Label::new(Some("Thinking (encrypted)"));
-            label.add_css_class("pill");
-            label.add_css_class("reasoning-pill-encrypted");
-            widgets.reasoning_box.append(&label);
+            widgets.reasoning_box.append(&encrypted_reasoning_pill());
         }
 
         let content = if self.expanded.get() {
@@ -635,10 +633,7 @@ fn build_tool_call_page_content(
         row.append(&button);
         Some(button)
     } else if init.reasoning_preview.encrypted_only {
-        let label = gtk::Label::new(Some("Thinking (encrypted)"));
-        label.add_css_class("pill");
-        label.add_css_class("reasoning-pill-encrypted");
-        row.append(&label);
+        row.append(&encrypted_reasoning_pill());
         None
     } else {
         None
@@ -729,10 +724,7 @@ fn build_subagent_page_content(
         root.append(&button);
         Some(button)
     } else if init.reasoning_preview.encrypted_only {
-        let label = gtk::Label::new(Some("Thinking (encrypted)"));
-        label.add_css_class("pill");
-        label.add_css_class("reasoning-pill-encrypted");
-        root.append(&label);
+        root.append(&encrypted_reasoning_pill());
         None
     } else {
         None
@@ -788,15 +780,17 @@ fn rebuild_tool_burst_header(
         burst.visible_reasoning_child_count,
         burst.encrypted_only_child_count,
     ) {
-        let badge = gtk::Label::new(Some(&reasoning_label));
-        badge.add_css_class("pill");
-        badge.add_css_class("tool-call-group-pill");
         if burst.visible_reasoning_child_count > 0 {
+            let badge = gtk::Label::new(Some(&reasoning_label));
+            badge.add_css_class("pill");
+            badge.add_css_class("tool-call-group-pill");
             badge.add_css_class("reasoning-pill");
+            header.append(&badge);
         } else {
-            badge.add_css_class("reasoning-pill-encrypted");
+            let badge = encrypted_reasoning_pill_with_label(&reasoning_label);
+            badge.add_css_class("tool-call-group-pill");
+            header.append(&badge);
         }
-        header.append(&badge);
     }
 
     let total = gtk::Label::new(Some(&format!("{} tool calls", burst.tool_calls.len())));

@@ -48,6 +48,22 @@ pub(crate) fn model_label_text(role: Role, model: Option<&str>) -> Option<String
     Some(text.to_string())
 }
 
+pub(crate) fn encrypted_reasoning_pill() -> gtk::Box {
+    encrypted_reasoning_pill_with_label("Thinking (encrypted)")
+}
+
+pub(crate) fn encrypted_reasoning_pill_with_label(text: &str) -> gtk::Box {
+    let pill = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+    pill.add_css_class("pill");
+    pill.add_css_class("reasoning-pill-encrypted");
+
+    let label = gtk::Label::new(Some(text));
+    label.set_halign(gtk::Align::Center);
+    pill.append(&label);
+
+    pill
+}
+
 // ---------------------------------------------------------------------------
 // Init types
 // ---------------------------------------------------------------------------
@@ -477,10 +493,7 @@ fn build_tool_call_widget(
         }
         row.append(&reasoning_btn);
     } else if init.reasoning_preview.encrypted_only {
-        let encrypted_label = gtk::Label::new(Some("Thinking (encrypted)"));
-        encrypted_label.add_css_class("pill");
-        encrypted_label.add_css_class("reasoning-pill-encrypted");
-        row.append(&encrypted_label);
+        row.append(&encrypted_reasoning_pill());
     }
 
     let inspect_btn = gtk::Button::new();
@@ -652,10 +665,7 @@ fn build_subagent_header_row(
             reasoning_btn.connect_clicked(move |_| on_inspect_reasoning());
             row.append(&reasoning_btn);
         } else if reasoning_preview.encrypted_only {
-            let encrypted_label = gtk::Label::new(Some("Thinking (encrypted)"));
-            encrypted_label.add_css_class("pill");
-            encrypted_label.add_css_class("reasoning-pill-encrypted");
-            row.append(&encrypted_label);
+            row.append(&encrypted_reasoning_pill());
         }
     }
 
@@ -1030,10 +1040,7 @@ impl TranscriptRow {
             }
             header.append(&reasoning_btn);
         } else if preview.reasoning_preview.encrypted_only {
-            let reasoning_label = gtk::Label::new(Some("Thinking (encrypted)"));
-            reasoning_label.add_css_class("pill");
-            reasoning_label.add_css_class("reasoning-pill-encrypted");
-            header.append(&reasoning_label);
+            header.append(&encrypted_reasoning_pill());
         }
 
         root.append(&header);
@@ -1223,15 +1230,17 @@ impl TranscriptRow {
             burst.visible_reasoning_child_count,
             burst.encrypted_only_child_count,
         ) {
-            let badge = gtk::Label::new(Some(&reasoning_label));
-            badge.add_css_class("pill");
-            badge.add_css_class("tool-call-group-pill");
             if burst.visible_reasoning_child_count > 0 {
+                let badge = gtk::Label::new(Some(&reasoning_label));
+                badge.add_css_class("pill");
+                badge.add_css_class("tool-call-group-pill");
                 badge.add_css_class("reasoning-pill");
+                append_to_header(badge.upcast_ref());
             } else {
-                badge.add_css_class("reasoning-pill-encrypted");
+                let badge = encrypted_reasoning_pill_with_label(&reasoning_label);
+                badge.add_css_class("tool-call-group-pill");
+                append_to_header(badge.upcast_ref());
             }
-            append_to_header(badge.upcast_ref());
         }
 
         let total = gtk::Label::new(Some(&format!("{} tool calls", burst.tool_calls.len())));
@@ -1793,11 +1802,18 @@ mod tests {
             .expect("subagent row should insert a spacer before inspect");
         assert!(spacer.hexpands());
 
-        let encrypted = spacer
+        let encrypted_pill = spacer
             .prev_sibling()
+            .and_then(|w| w.downcast::<gtk::Box>().ok())
+            .expect("encrypted-only pill should remain in the left metadata flow");
+        assert!(encrypted_pill.has_css_class("pill"));
+        assert!(encrypted_pill.has_css_class("reasoning-pill-encrypted"));
+
+        let encrypted_label = encrypted_pill
+            .first_child()
             .and_then(|w| w.downcast::<gtk::Label>().ok())
-            .expect("encrypted-only label should remain in the left metadata flow");
-        assert_eq!(encrypted.label().as_str(), "Thinking (encrypted)");
+            .expect("encrypted-only pill should contain the label");
+        assert_eq!(encrypted_label.label().as_str(), "Thinking (encrypted)");
     }
 
     #[gtk::test]
