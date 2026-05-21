@@ -247,6 +247,8 @@ struct PendingPostIndexingBatch {
     token: MeasurementToken,
     remaining_sessions: VecDeque<Session>,
     previously_selected_id: Option<String>,
+    previously_selected_index: Option<usize>,
+    previous_scroll_value: Option<f64>,
     user_selection_changed: bool,
     had_focus_before_reload: bool,
     needs_clear: bool,
@@ -258,10 +260,18 @@ impl PendingPostIndexingBatch {
         sessions: Vec<Session>,
         previously_selected_id: Option<String>,
     ) -> Self {
+        let previously_selected_index = previously_selected_id.as_ref().and_then(|session_id| {
+            sessions
+                .iter()
+                .position(|session| session.id.as_str() == session_id)
+        });
+
         Self {
             token,
             remaining_sessions: sessions.into(),
             previously_selected_id,
+            previously_selected_index,
+            previous_scroll_value: None,
             user_selection_changed: false,
             had_focus_before_reload: false,
             needs_clear: true,
@@ -273,8 +283,17 @@ impl PendingPostIndexingBatch {
         self
     }
 
+    fn with_scroll_value(mut self, scroll_value: Option<f64>) -> Self {
+        self.previous_scroll_value = scroll_value;
+        self
+    }
+
     fn had_focus_before_reload(&self) -> bool {
         self.had_focus_before_reload
+    }
+
+    fn previous_scroll_value(&self) -> Option<f64> {
+        self.previous_scroll_value
     }
 
     fn token_matches(&self, token: &MeasurementToken) -> bool {
@@ -287,6 +306,15 @@ impl PendingPostIndexingBatch {
 
     fn take_next_rows(&mut self, batch_size: usize) -> Vec<Session> {
         let take_count = batch_size.min(self.remaining_sessions.len());
+        self.remaining_sessions.drain(..take_count).collect()
+    }
+
+    fn take_initial_rows(&mut self, batch_size: usize) -> Vec<Session> {
+        let take_count = self
+            .previously_selected_index
+            .map(|index| batch_size.max(index + 1))
+            .unwrap_or(batch_size)
+            .min(self.remaining_sessions.len());
         self.remaining_sessions.drain(..take_count).collect()
     }
 
@@ -737,13 +765,9 @@ impl SessionList {
 
     /// Scroll the ancestor `ScrolledWindow` so that `row` is fully visible.
     fn scroll_row_into_view(row: &gtk::ListBoxRow, list_box: &gtk::ListBox) {
-        let Some(sw) = list_box
-            .ancestor(gtk::ScrolledWindow::static_type())
-            .and_then(|w| w.downcast::<gtk::ScrolledWindow>().ok())
-        else {
+        let Some(adj) = Self::scroll_adjustment(list_box) else {
             return;
         };
-        let adj = sw.vadjustment();
         let src = gtk::graphene::Point::new(0.0, 0.0);
         let Some(dst) = row.compute_point(list_box, &src) else {
             return;
@@ -757,6 +781,32 @@ impl SessionList {
         } else if y + row_height > visible_end {
             adj.set_value(y + row_height - adj.page_size());
         }
+    }
+
+    fn scroll_adjustment(list_box: &gtk::ListBox) -> Option<gtk::Adjustment> {
+        list_box
+            .ancestor(gtk::ScrolledWindow::static_type())
+            .and_then(|w| w.downcast::<gtk::ScrolledWindow>().ok())
+            .map(|sw| sw.vadjustment())
+    }
+
+    fn clamped_scroll_value(adj: &gtk::Adjustment, value: f64) -> f64 {
+        let lower = adj.lower();
+        let max = (adj.upper() - adj.page_size()).max(lower);
+        value.clamp(lower, max)
+    }
+
+    fn restore_scroll_value(list_box: &gtk::ListBox, value: Option<f64>) {
+        let Some(value) = value else {
+            return;
+        };
+        let Some(adj) = Self::scroll_adjustment(list_box) else {
+            return;
+        };
+        // Preserve the user's absolute viewport during the post-indexing
+        // reload to avoid the visible jump-to-top flash. Clamp against the
+        // current adjustment in case the rebuilt list is shorter.
+        adj.set_value(Self::clamped_scroll_value(&adj, value));
     }
 
     fn fetch_sessions(
@@ -866,11 +916,12 @@ impl SessionList {
                 self.ensure_selection();
             }
 
-            if batch.had_focus_before_reload()
-                && let Some(row) = self.sessions.widget().selected_row()
-            {
-                row.grab_focus();
-                Self::scroll_row_into_view(&row, self.sessions.widget());
+            let list_box = self.sessions.widget();
+            if let Some(row) = list_box.selected_row() {
+                if batch.had_focus_before_reload() {
+                    row.grab_focus();
+                }
+                Self::restore_scroll_value(list_box, batch.previous_scroll_value());
             }
         }
 
@@ -895,7 +946,12 @@ impl SessionList {
             return;
         }
 
-        let rows = batch.take_next_rows(POST_INDEXING_RELOAD_BATCH_SIZE);
+        let rows = if batch.needs_clear {
+            batch.take_initial_rows(POST_INDEXING_RELOAD_BATCH_SIZE)
+        } else {
+            batch.take_next_rows(POST_INDEXING_RELOAD_BATCH_SIZE)
+        };
+        let previous_scroll_value = batch.previous_scroll_value();
         let mut deferred_clear_duration: Option<Duration> = None;
 
         let batch_push_started_at = Instant::now();
@@ -910,6 +966,7 @@ impl SessionList {
             }
             drop(guard);
             batch.needs_clear = false;
+            Self::restore_scroll_value(self.sessions.widget(), previous_scroll_value);
         } else {
             let mut guard = self.sessions.guard();
             for session in rows {
@@ -935,15 +992,24 @@ impl SessionList {
             }) && let Some(target_id) = self
                 .pending_post_indexing_batch
                 .as_ref()
+                .filter(|batch| !batch.user_selection_changed())
                 .and_then(|b| b.previously_selected_id())
                 .map(str::to_string)
                 && self.select_session_by_id(&target_id)
-                && let Some(batch) = self.pending_post_indexing_batch.as_ref()
-                && batch.had_focus_before_reload()
                 && let Some(row) = self.sessions.widget().selected_row()
             {
-                row.grab_focus();
-                Self::scroll_row_into_view(&row, self.sessions.widget());
+                if self
+                    .pending_post_indexing_batch
+                    .as_ref()
+                    .is_some_and(PendingPostIndexingBatch::had_focus_before_reload)
+                {
+                    row.grab_focus();
+                }
+                let previous_scroll_value = self
+                    .pending_post_indexing_batch
+                    .as_ref()
+                    .and_then(PendingPostIndexingBatch::previous_scroll_value);
+                Self::restore_scroll_value(self.sessions.widget(), previous_scroll_value);
             }
         }
         let batch_push_duration = batch_push_started_at
@@ -1115,6 +1181,8 @@ impl SessionList {
 
         let list_box = self.sessions.widget().clone();
         let had_focus_before_reload = focus_is_within(&list_box);
+        let previous_scroll_value =
+            Self::scroll_adjustment(&list_box).map(|adjustment| adjustment.value());
 
         let Some(token) = self
             .active_post_indexing_measurement
@@ -1136,7 +1204,8 @@ impl SessionList {
 
         self.pending_post_indexing_batch = Some(
             PendingPostIndexingBatch::new(token.clone(), fetched, previously_selected_id)
-                .with_focus_state(had_focus_before_reload),
+                .with_focus_state(had_focus_before_reload)
+                .with_scroll_value(previous_scroll_value),
         );
 
         let after_setup_at = Instant::now();
@@ -1728,6 +1797,34 @@ mod tests {
     }
 
     #[test]
+    fn pending_post_indexing_initial_batch_includes_previous_selection() {
+        let token = MeasurementToken::new();
+        let sessions = vec![
+            make_test_session("batch-1"),
+            make_test_session("batch-2"),
+            make_test_session("batch-3"),
+            make_test_session("batch-4"),
+        ];
+        let mut batch = PendingPostIndexingBatch::new(token, sessions, Some("batch-3".to_string()));
+
+        let first = batch.take_initial_rows(2);
+
+        assert_eq!(first.len(), 3);
+        assert_eq!(first[0].id, "batch-1");
+        assert_eq!(first[2].id, "batch-3");
+        assert_eq!(batch.remaining_row_count(), 1);
+    }
+
+    #[gtk::test]
+    fn clamped_scroll_value_preserves_valid_value_and_caps_overflow() {
+        let adjustment = gtk::Adjustment::new(25.0, 0.0, 100.0, 1.0, 10.0, 30.0);
+
+        assert_eq!(SessionList::clamped_scroll_value(&adjustment, 25.0), 25.0);
+        assert_eq!(SessionList::clamped_scroll_value(&adjustment, -10.0), 0.0);
+        assert_eq!(SessionList::clamped_scroll_value(&adjustment, 90.0), 70.0);
+    }
+
+    #[test]
     fn pending_post_indexing_batch_invalidates_token_and_records_user_selection_change() {
         let token = MeasurementToken::new();
         let callback_token = token.clone();
@@ -2017,6 +2114,93 @@ mod tests {
         assert_eq!(ids[0], "alpha-claude-new");
         assert_eq!(ids[1], "alpha-claude-old");
         assert_eq!(ids.len(), 72);
+    }
+
+    #[gtk::test]
+    fn reload_after_indexing_keeps_deep_previous_selection_in_first_visible_batch() {
+        let temp_db = TempDatabase::new();
+        temp_db.seed_project_sidebar_fixture();
+        temp_db.seed_many_claude_sessions(130);
+
+        let controller = SessionList::builder().launch(temp_db.path.clone());
+
+        pump_main_context(|| {
+            let parts = controller.state().get();
+            parts.model.sessions.len() == 135
+        });
+
+        controller.emit(SessionListMsg::SetFilters {
+            tools: vec![AiAssistant::ClaudeCode],
+            project_filter: ProjectFilter::Project(1),
+        });
+
+        pump_main_context(|| {
+            let parts = controller.state().get();
+            parts.model.sessions.len() == 132
+        });
+
+        let root = controller.widget().clone().upcast::<gtk::Widget>();
+        let list_box = find_list_box(&root).expect("list box");
+        let target_index = {
+            let parts = controller.state().get();
+            (0..parts.model.sessions.len())
+                .find(|index| {
+                    parts
+                        .model
+                        .sessions
+                        .get(*index)
+                        .map(|row| row.session_id() == "bulk-claude-050")
+                        .unwrap_or(false)
+                })
+                .expect("deep bulk session")
+        };
+        assert!(
+            target_index >= POST_INDEXING_RELOAD_BATCH_SIZE,
+            "fixture target must sit beyond the normal first batch"
+        );
+
+        let target_row = list_box
+            .row_at_index(target_index as i32)
+            .expect("deep selected row");
+        list_box.select_row(Some(&target_row));
+        pump_main_context(|| {
+            list_box.selected_row().map(|row| row.index()) == Some(target_index as i32)
+        });
+
+        controller.emit(SessionListMsg::ReloadAfterIndexing {
+            assistants: vec![AiAssistant::ClaudeCode],
+            project_filter: ProjectFilter::Project(1),
+            context: IndexingReloadContext {
+                indexed: 130,
+                skipped: 0,
+                removed: 0,
+                pending_reindex_feedback: false,
+                errors_present: false,
+            },
+        });
+
+        let expected_initial_batch_len = target_index + 1;
+        pump_main_context(|| {
+            let parts = controller.state().get();
+            parts.model.pending_post_indexing_batch.is_some()
+                && parts.model.sessions.len() == expected_initial_batch_len
+        });
+
+        let selected_session_id = {
+            let parts = controller.state().get();
+            let selected_index = list_box
+                .selected_row()
+                .map(|row| row.index() as usize)
+                .expect("selected row after first batch");
+            parts
+                .model
+                .sessions
+                .get(selected_index)
+                .map(|row| row.session_id().to_string())
+                .expect("selected session")
+        };
+
+        assert_eq!(selected_session_id, "bulk-claude-050");
     }
 
     #[gtk::test]
