@@ -9,9 +9,9 @@ See [SESSION_FORMAT_ANALYSIS.md](../SESSION_FORMAT_ANALYSIS.md) for cross-assist
 
 | Field   | Value |
 |---------|-------|
-| **Path** | `~/.claude/projects/<project-dir>/UUID.jsonl` (main session)<br>`~/.claude/projects/<project-dir>/<session-id>/subagents/agent-<id>.jsonl` (subagent transcript; documented upstream and confirmed locally)<br>`~/.claude/projects/<project-dir>/<session-id>/tool-results/<id>.<ext>` (materialized large tool output or attachment payloads; observed in current local sessions) |
-| **Pattern** | `UUID.jsonl`, `agent-*.jsonl`, `tool-results/*` |
-| **Example** | `a1b2c3d4-e5f6-7890-abcd-ef1234567890.jsonl`<br>`2a19bf71-3687-49ed-8ae9-8bd15e1522f6/subagents/agent-a60d695.jsonl`<br>`82b2d04e-d30e-4370-8e41-f53890baeda1/tool-results/bdw7vxszs.txt` |
+| **Path** | `~/.claude/projects/<project-dir>/UUID.jsonl` (main session)<br>`~/.claude/projects/<project-dir>/<session-id>/subagents/agent-<id>.jsonl` (subagent transcript; documented upstream and confirmed locally)<br>`~/.claude/projects/<project-dir>/<session-id>/subagents/agent-<id>.meta.json` (subagent metadata sidecar; observed locally in v2.1.148)<br>`~/.claude/projects/<project-dir>/<session-id>/tool-results/<id>.<ext>` (materialized large tool output or attachment payloads; observed in current local sessions) |
+| **Pattern** | `UUID.jsonl`, `agent-*.jsonl`, `agent-*.meta.json`, `tool-results/*` |
+| **Example** | `a1b2c3d4-e5f6-7890-abcd-ef1234567890.jsonl`<br>`2a19bf71-3687-49ed-8ae9-8bd15e1522f6/subagents/agent-a60d695.jsonl`<br>`2a19bf71-3687-49ed-8ae9-8bd15e1522f6/subagents/agent-a60d695.meta.json`<br>`82b2d04e-d30e-4370-8e41-f53890baeda1/tool-results/bdw7vxszs.txt` |
 | **Format** | JSONL (one JSON object per line, UTF-8, append-only) |
 
 **Path encoding:**
@@ -37,7 +37,10 @@ See [SESSION_FORMAT_ANALYSIS.md](../SESSION_FORMAT_ANALYSIS.md) for cross-assist
   "type": "progress",              // Streaming/progress events
   "type": "queue-operation",       // Queue orchestration events
   "type": "saved_hook_context",    // Hook context snapshots
-  "type": "pr-link"                // PR link events
+  "type": "pr-link",               // PR link events
+  "type": "attachment",            // Hook output, skill/agent/MCP listings, command permissions (observed v2.1.148)
+  "type": "permission-mode",       // Current permission-mode marker (observed v2.1.148)
+  "type": "last-prompt"            // Last-prompt pointer / leaf marker (observed v2.1.148)
 }
 ```
 
@@ -162,6 +165,65 @@ subagent launches.
 }
 ```
 
+### Attachment Event (observed in v2.1.148 local sessions)
+
+`type: "attachment"` events carry side-band content injected into the
+conversation: hook output, deferred-tool/agent/MCP listing deltas, skill
+listings, and command permissions. The payload lives under `attachment`, whose
+own `type` field selects the variant.
+
+```json
+{
+  "type": "attachment",
+  "attachment": {
+    "type": "hook_success",
+    "hookName": "SessionStart:startup",
+    "hookEvent": "SessionStart",
+    "toolUseID": "873dd14b-c4a0-47af-9ba2-82d049f4d42d",
+    "content": "",
+    "stdout": "..."
+  },
+  "uuid": "UUID",
+  "parentUuid": "UUID",
+  "isSidechain": false,
+  "sessionId": "UUID",
+  "version": "2.1.148",
+  "timestamp": "ISO-8601",
+  "cwd": "/path/to/project",
+  "gitBranch": "main",
+  "entrypoint": "cli",
+  "userType": "external"
+}
+```
+
+Observed `attachment.type` values: `hook_success`, `hook_additional_context`,
+`deferred_tools_delta`, `agent_listing_delta`, `mcp_instructions_delta`,
+`skill_listing`, `command_permissions`. The list is not guaranteed exhaustive.
+
+### Permission Mode Event (observed in v2.1.148 local sessions)
+
+```json
+{
+  "type": "permission-mode",
+  "permissionMode": "default",
+  "sessionId": "UUID"
+}
+```
+
+### Last Prompt Event (observed in v2.1.148 local sessions)
+
+A pointer/leaf marker for the most recent prompt. `lastPrompt` carries the
+prompt text when present and is sometimes absent (leaf-only marker).
+
+```json
+{
+  "type": "last-prompt",
+  "lastPrompt": "/watching-ai-format-evolution pour claude code",
+  "leafUuid": "UUID",
+  "sessionId": "UUID"
+}
+```
+
 ---
 
 ## Special Features
@@ -183,11 +245,16 @@ subagent launches.
   "type": "file-history-snapshot",
   "messageId": "UUID",
   "snapshot": {
+    "messageId": "UUID",
     "trackedFileBackups": {},
     "timestamp": "ISO-8601"
-  }
+  },
+  "isSnapshotUpdate": false
 }
 ```
+
+Recent local sessions (v2.1.148) also include a top-level `isSnapshotUpdate`
+boolean, and the nested `snapshot` object repeats `messageId`.
 
 ### Tool Results
 
@@ -229,6 +296,25 @@ The parser captures that value onto the parent `Subagent.agent_id`, and the
 indexer matches it against nested `agent-<agentId>.jsonl` files to populate
 `child_session_id`.
 
+#### Subagent Metadata Sidecar (observed in v2.1.148)
+
+Recent local sessions write a sibling `agent-<agentId>.meta.json` next to each
+nested subagent transcript:
+
+```json
+{
+  "agentType": "Product Manager",
+  "description": "Recommend next product step",
+  "name": "pm-advisor",
+  "toolUseId": "toolu_0125QgdpDHhnquARkmbV3VNc"
+}
+```
+
+`toolUseId` links the sidecar directly to the parent `tool_use` block, which is
+a cleaner bridge than scraping the `agentId` token from `tool_result` text. The
+parser does not yet consume this sidecar; the `agentId`-token path above remains
+the implemented linkage.
+
 ---
 
 ## Metadata Available in Events
@@ -250,6 +336,8 @@ Rich per-event metadata:
 | `logicalParentUuid` | Additional lineage link observed on compacted system events |
 | `isSidechain` | Subagent/sidechain indicator |
 | `agentId` | Present in subagent transcript events |
+| `attributionSkill` | Skill slug attributed to an `assistant` event (observed v2.1.148) |
+| `sourceToolAssistantUUID` | On some `user` events, links a tool-result event back to the originating `assistant` event (observed v2.1.148) |
 
 **Model metadata:** Recent Claude Code logs include a stable structured field at
 `message.model` on `assistant` events.
@@ -324,6 +412,9 @@ Current implementation: `src/parsers/claude_code.rs`
 - Correlates `tool_result` blocks by `tool_use_id`
 - Does not currently normalize `system/local_command` events into tool calls
 - Does not currently persist/index `message.model` in Sessions Chronicle database schema
+- Dispatches only on `type in {user, assistant}`; other event types — including
+  the newer `attachment`, `permission-mode`, and `last-prompt` events — fall
+  through and are skipped without error (no parser breakage from these additions)
 - Recent real Claude Code sessions (local scan refreshed 2026-04-13, versions
   observed through v2.1.100) show subagent launches as `name == "Agent"` with
   `input.description`, `input.subagent_type`, and `input.prompt`; optional
