@@ -1,5 +1,8 @@
 ---
 const githubUrl = 'https://github.com/supermaciz/sessions-chronicle';
+const pathname = Astro.url.pathname;
+const featuresHref = pathname === '/' ? '#features' : '/#features';
+const isGuidePage = pathname === '/guide' || pathname === '/guide/';
 ---
 <header class="topbar">
   <div class="container topbar__row">
@@ -16,7 +19,14 @@ const githubUrl = 'https://github.com/supermaciz/sessions-chronicle';
     </a>
 
     <nav class="topbar__nav" aria-label="Primary">
-      <a class="topbar__link" href="#features">Features</a>
+      <a class="topbar__link" href={featuresHref}>Features</a>
+      <a
+        class:list={['topbar__link', isGuidePage && 'topbar__link--active']}
+        href="/guide"
+        aria-current={isGuidePage ? 'page' : undefined}
+      >
+        Guide
+      </a>
       <a class="topbar__link" href={githubUrl} rel="noopener">GitHub</a>
     </nav>
   </div>
@@ -79,6 +89,9 @@ const githubUrl = 'https://github.com/supermaciz/sessions-chronicle';
     transition: background-color 120ms ease;
   }
   .topbar__link:hover {
+    background: rgba(0, 0, 6, 0.07);
+  }
+  .topbar__link--active {
     background: rgba(0, 0, 6, 0.07);
   }
   @media (max-width: 640px) {

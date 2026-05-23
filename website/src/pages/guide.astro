@@ -1,0 +1,465 @@
+---
+import { Picture } from 'astro:assets';
+import BaseLayout from '../layouts/BaseLayout.astro';
+import TopBar from '../components/sections/TopBar.astro';
+import Footer from '../components/sections/Footer.astro';
+import firstLaunchIndexing from '../assets/screenshots/first_launch_indexing.png';
+import sessionList from '../assets/screenshots/session_list.png';
+import sessionListSearch from '../assets/screenshots/session_list_search_light.png';
+import sessionDetail from '../assets/screenshots/session_detail.png';
+import sessionDetailToolCalls from '../assets/screenshots/session_detail_tool_calls.png';
+import sessionListPinned from '../assets/screenshots/session_list_pinned_light.png';
+import analytics from '../assets/screenshots/analytics_light.png';
+
+const shot = {
+  formats: ['avif', 'webp'] as const,
+  fallbackFormat: 'png' as const,
+  widths: [720, 1080, 1440],
+  sizes: '(max-width: 960px) 100vw, 860px',
+  loading: 'lazy' as const,
+};
+---
+<BaseLayout
+  title="Sessions Chronicle - User Guide"
+  description="Install Sessions Chronicle, find old AI assistant sessions, inspect tool calls, and resume work from the right context."
+  canonicalPath="/guide"
+>
+  <TopBar />
+
+  <main class="guide">
+    <section class="guide__hero">
+      <div class="container guide__hero-grid">
+        <div class="guide__hero-copy">
+          <p class="guide__eyebrow">USER GUIDE</p>
+          <h1 class="guide__title">Get started with Sessions Chronicle</h1>
+          <p class="guide__lede">
+            Install the app, index your local AI assistant sessions, find the
+            right conversation, inspect tool calls, and resume work from the
+            right context.
+          </p>
+          <div class="guide__actions">
+            <a class="guide__button guide__button--primary" href="#install">
+              Start Here
+            </a>
+            <a class="guide__button" href="https://github.com/supermaciz/sessions-chronicle">
+              View on GitHub
+            </a>
+          </div>
+        </div>
+
+        <aside class="guide__toc" aria-labelledby="toc-title">
+          <p class="guide__toc-title" id="toc-title">On this page</p>
+          <nav aria-label="Guide sections">
+            <a href="#install">Install the app</a>
+            <a href="#first-launch">What happens on first launch</a>
+            <a href="#find">Find a session</a>
+            <a href="#read">Read a session</a>
+            <a href="#inspect">Inspect tool calls and subagents</a>
+            <a href="#resume">Resume a session in your terminal</a>
+            <a href="#troubleshooting">Troubleshooting</a>
+          </nav>
+        </aside>
+      </div>
+    </section>
+
+    <section class="guide__section" id="install">
+      <div class="container guide__content">
+        <h2>Install the app</h2>
+        <p>
+          Install the Flatpak with the command below, then launch Sessions
+          Chronicle from your applications menu or from the command line.
+        </p>
+        <pre><code>flatpak install --user https://sessions-chronicle.maciz.dev/flatpak/dev.maciz.sessionschronicle.flatpakref
+
+flatpak run dev.maciz.sessionschronicle</code></pre>
+        <p>
+          If you prefer a standalone bundle, you can also download the
+          <code>.flatpak</code> file from the project&apos;s Releases page.
+        </p>
+      </div>
+    </section>
+
+    <section class="guide__section" id="first-launch">
+      <div class="container guide__content">
+        <h2>What happens on first launch</h2>
+        <p>
+          On startup, Sessions Chronicle automatically looks for local sessions
+          from Claude Code, OpenCode, Codex, and Mistral Vibe. It then starts
+          indexing them in the background so they become searchable inside the
+          app.
+        </p>
+        <ul>
+          <li>The header spinner shows when indexing is in progress.</li>
+          <li>The sidebar shows per-source status for each AI assistant.</li>
+          <li>The first indexing pass may take a little time if you have many sessions.</li>
+        </ul>
+        <figure class="guide__figure">
+          <Picture
+            src={firstLaunchIndexing}
+            {...shot}
+            alt="Sessions Chronicle indexing local AI assistant sessions on first launch"
+          />
+        </figure>
+      </div>
+    </section>
+
+    <section class="guide__section" id="interface">
+      <div class="container guide__content">
+        <h2>Understand the interface</h2>
+        <p>The main window is organized around three areas:</p>
+        <ul>
+          <li>The left sidebar filters sessions by AI assistant and project.</li>
+          <li>The session list helps you browse indexed conversations.</li>
+          <li>The detail view shows a full transcript and deeper inspection tools.</li>
+        </ul>
+        <p>
+          The goal is simple: move from a large archive of sessions to the exact
+          conversation you need.
+        </p>
+        <figure class="guide__figure">
+          <Picture
+            src={sessionList}
+            {...shot}
+            alt="Sessions Chronicle showing the main interface with filters, session list, and detail area"
+          />
+        </figure>
+      </div>
+    </section>
+
+    <section class="guide__section" id="find">
+      <div class="container guide__content">
+        <h2>Find a session</h2>
+        <p>You can find a session in several ways:</p>
+        <ul>
+          <li>Filter by AI assistant.</li>
+          <li>Filter by project.</li>
+          <li>Search by keyword.</li>
+          <li>Combine filters and search.</li>
+        </ul>
+        <p>
+          Search covers prompts, responses, and visible tool calls in the
+          transcript. If you already know the session ID, use
+          <code>id:</code> in the search box to jump directly to it.
+        </p>
+        <figure class="guide__figure">
+          <Picture
+            src={sessionListSearch}
+            {...shot}
+            alt="Session list search filtering indexed AI assistant sessions"
+          />
+        </figure>
+      </div>
+    </section>
+
+    <section class="guide__section" id="read">
+      <div class="container guide__content">
+        <h2>Read a session</h2>
+        <p>
+          When you open a session, Sessions Chronicle shows the full transcript
+          in a reading-friendly detail view.
+        </p>
+        <p>
+          You can review the project context, messages, code blocks, lists,
+          quotes, and other supported markdown content. The top of the detail
+          view also summarizes key session metadata such as the project and the
+          session ID.
+        </p>
+        <figure class="guide__figure">
+          <Picture
+            src={sessionDetail}
+            {...shot}
+            alt="Detailed transcript view for a single AI assistant session"
+          />
+        </figure>
+      </div>
+    </section>
+
+    <section class="guide__section" id="inspect">
+      <div class="container guide__content">
+        <h2>Inspect tool calls and subagents</h2>
+        <p>
+          Sessions Chronicle makes tool calls easier to inspect. Open a tool
+          call to review its arguments, output, and other useful details.
+        </p>
+        <p>
+          When a session includes subagents, you can inspect those interactions
+          more closely as well. This helps you understand not just what was
+          said, but what actually happened during the session.
+        </p>
+        <figure class="guide__figure">
+          <Picture
+            src={sessionDetailToolCalls}
+            {...shot}
+            alt="Session detail view with tool calls visible and ready for inspection"
+          />
+        </figure>
+      </div>
+    </section>
+
+    <section class="guide__section" id="pin">
+      <div class="container guide__content">
+        <h2>Pin important sessions</h2>
+        <p>
+          You can pin a session to keep it easy to find later. The
+          <code>Pinned</code> filter in the sidebar gives you a dedicated view
+          of the sessions you want close at hand.
+        </p>
+        <ul>
+          <li>Keep a useful debugging session.</li>
+          <li>Save a reference conversation.</li>
+          <li>Mark a session to resume later.</li>
+        </ul>
+        <figure class="guide__figure">
+          <Picture
+            src={sessionListPinned}
+            {...shot}
+            alt="Pinned sessions highlighted in the session list"
+          />
+        </figure>
+      </div>
+    </section>
+
+    <section class="guide__section" id="resume">
+      <div class="container guide__content">
+        <h2>Resume a session in your terminal</h2>
+        <p>
+          When you find a session you want to continue, use the
+          <code>Resume</code> button. Sessions Chronicle opens your configured
+          terminal and resumes the session from the right working context.
+        </p>
+        <p>
+          You can choose which terminal to use in the app&apos;s Preferences.
+        </p>
+      </div>
+    </section>
+
+    <section class="guide__section" id="analytics">
+      <div class="container guide__content">
+        <h2>View analytics</h2>
+        <p>
+          The Analytics view gives you a higher-level view of your activity
+          across AI assistants and projects.
+        </p>
+        <p>
+          You can see which AI assistants you use most, which days are most
+          active, and token-related stats when the source data provides them.
+          Not every source exposes the same metadata, so some sessions may not
+          include full token information.
+        </p>
+        <figure class="guide__figure">
+          <Picture
+            src={analytics}
+            {...shot}
+            alt="Analytics dashboard showing activity patterns and AI assistant usage"
+          />
+        </figure>
+      </div>
+    </section>
+
+    <section class="guide__section" id="troubleshooting">
+      <div class="container guide__content">
+        <h2>Troubleshooting</h2>
+        <p>
+          If no sessions appear, or if a source looks incomplete, start by
+          checking the app&apos;s indexing status.
+        </p>
+        <ul>
+          <li>A source directory may be missing.</li>
+          <li>A source may contain no sessions yet.</li>
+          <li>Indexing errors may have prevented a complete result.</li>
+        </ul>
+        <p>
+          Open <code>Indexing Status</code> to inspect the state of each
+          source. If needed, open <code>Preferences</code>, then use
+          <code>Reset session index</code> to rebuild the index from scratch.
+        </p>
+        <p>Quick checks:</p>
+        <ul>
+          <li><code>No sessions found</code>: make sure the source apps have already created sessions on this machine.</li>
+          <li><code>Source directory not found</code>: make sure the relevant AI assistant is installed and has written local session data.</li>
+          <li><code>Missing results</code>: check <code>Indexing Status</code>, then try a full index reset.</li>
+        </ul>
+      </div>
+    </section>
+
+    <section class="guide__section" id="shortcuts">
+      <div class="container guide__content">
+        <h2>Useful shortcuts</h2>
+        <ul>
+          <li><code>Ctrl+F</code>: search</li>
+          <li><code>Ctrl+D</code>: pin or unpin the active session</li>
+          <li><code>F9</code>: toggle the relevant side pane</li>
+          <li><code>Escape</code>: close search, close the inspector, or go back</li>
+          <li><code>Ctrl+Shift+I</code>: open Indexing Status</li>
+          <li><code>Ctrl+,</code>: open Preferences</li>
+        </ul>
+      </div>
+    </section>
+
+    <section class="guide__section guide__section--summary">
+      <div class="container guide__content">
+        <h2>Summary</h2>
+        <p>
+          Sessions Chronicle turns a scattered history of AI assistant sessions
+          into a local archive you can search, read, inspect, and resume.
+        </p>
+      </div>
+    </section>
+  </main>
+
+  <Footer />
+</BaseLayout>
+
+<style>
+  .guide__hero {
+    padding-block: var(--space-16) var(--space-12);
+    background:
+      radial-gradient(circle at top right, rgba(53, 132, 228, 0.09), transparent 34%),
+      linear-gradient(180deg, #fcfcfc 0%, var(--window-bg-color) 100%);
+  }
+  .guide__hero-grid {
+    display: grid;
+    gap: var(--space-8);
+  }
+  @media (min-width: 960px) {
+    .guide__hero-grid {
+      grid-template-columns: minmax(0, 1fr) 300px;
+      align-items: start;
+    }
+  }
+  .guide__eyebrow {
+    margin-bottom: var(--space-3);
+    color: var(--accent-color);
+    font-family: var(--font-mono);
+    font-size: var(--text-caption);
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+  }
+  .guide__title {
+    margin-bottom: var(--space-4);
+    font-size: clamp(36px, 5vw, var(--text-display));
+    line-height: var(--line-tight);
+    letter-spacing: -0.01em;
+  }
+  .guide__lede {
+    max-width: 42rem;
+    color: color-mix(in srgb, var(--window-fg-color) 78%, transparent);
+    font-size: clamp(16px, 1.5vw, 19px);
+  }
+  .guide__actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-3);
+    margin-top: var(--space-6);
+  }
+  .guide__button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 42px;
+    padding: 0 18px;
+    border: 1px solid var(--border-color);
+    border-radius: 9999px;
+    background: color-mix(in srgb, var(--view-bg-color) 92%, var(--window-bg-color));
+    color: var(--window-fg-color);
+    font-weight: 600;
+    text-decoration: none;
+  }
+  .guide__button--primary {
+    border-color: transparent;
+    background: var(--accent-bg-color);
+    color: var(--accent-fg-color);
+  }
+  .guide__toc {
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-xl);
+    background: rgba(255, 255, 255, 0.8);
+    box-shadow: var(--shadow-card);
+    padding: var(--space-6);
+    backdrop-filter: blur(12px);
+  }
+  .guide__toc-title {
+    margin-bottom: var(--space-4);
+    font-family: var(--font-mono);
+    font-size: var(--text-caption);
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: color-mix(in srgb, var(--window-fg-color) 58%, transparent);
+  }
+  .guide__toc nav {
+    display: grid;
+    gap: var(--space-3);
+  }
+  .guide__toc a {
+    color: var(--window-fg-color);
+    text-decoration: none;
+  }
+  .guide__toc a:hover {
+    color: var(--accent-color);
+  }
+  .guide__section {
+    padding-block: var(--space-8) var(--space-12);
+  }
+  .guide__section--summary {
+    padding-bottom: var(--space-16);
+  }
+  .guide__content {
+    max-width: 860px;
+  }
+  .guide__content h2 {
+    margin-bottom: var(--space-4);
+    font-size: clamp(28px, 3vw, var(--text-h1));
+    letter-spacing: -0.01em;
+  }
+  .guide__content p,
+  .guide__content ul {
+    max-width: 72ch;
+    color: color-mix(in srgb, var(--window-fg-color) 82%, transparent);
+  }
+  .guide__content p + p,
+  .guide__content p + ul,
+  .guide__content ul + p,
+  .guide__content ul + ul,
+  .guide__content figure {
+    margin-top: var(--space-4);
+  }
+  .guide__content ul {
+    padding-left: 1.25rem;
+  }
+  .guide__content li + li {
+    margin-top: 0.4rem;
+  }
+  .guide__content pre {
+    margin-top: var(--space-4);
+    padding: 18px;
+    border-radius: var(--radius-lg);
+    background: var(--toast-bg-color);
+    color: var(--toast-fg-color);
+    font-family: var(--font-mono);
+    overflow-x: auto;
+    box-shadow: var(--shadow-card);
+  }
+  .guide__content code {
+    font-family: var(--font-mono);
+    font-size: 0.95em;
+  }
+  .guide__content :not(pre) > code {
+    padding: 0.1em 0.35em;
+    border-radius: 5px;
+    background: color-mix(in srgb, var(--headerbar-bg-color) 85%, white);
+  }
+  .guide__figure {
+    margin-inline: 0;
+  }
+  .guide__figure :global(picture) {
+    display: block;
+    overflow: hidden;
+    border-radius: var(--radius-xl);
+    box-shadow: var(--shadow-window);
+  }
+  .guide__figure :global(img) {
+    display: block;
+    width: 100%;
+    height: auto;
+  }
+</style>
