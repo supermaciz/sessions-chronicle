@@ -3,6 +3,7 @@ import { Picture } from 'astro:assets';
 import BaseLayout from '../layouts/BaseLayout.astro';
 import TopBar from '../components/sections/TopBar.astro';
 import Footer from '../components/sections/Footer.astro';
+import firstLaunchIndexing from '../assets/screenshots/first_launch_indexing.png';
 import sessionList from '../assets/screenshots/session_list.png';
 import sessionListSearch from '../assets/screenshots/session_list_search_light.png';
 import sessionDetail from '../assets/screenshots/session_detail.png';
@@ -94,9 +95,9 @@ flatpak run dev.maciz.sessionschronicle</code></pre>
         </ul>
         <figure class="guide__figure">
           <Picture
-            src={sessionList}
+            src={firstLaunchIndexing}
             {...shot}
-            alt="Sessions Chronicle showing the main session list after indexing local sessions"
+            alt="Sessions Chronicle indexing local AI assistant sessions on first launch"
           />
         </figure>
       </div>
@@ -115,6 +116,13 @@ flatpak run dev.maciz.sessionschronicle</code></pre>
           The goal is simple: move from a large archive of sessions to the exact
           conversation you need.
         </p>
+        <figure class="guide__figure">
+          <Picture
+            src={sessionList}
+            {...shot}
+            alt="Sessions Chronicle showing the main interface with filters, session list, and detail area"
+          />
+        </figure>
       </div>
     </section>
 
