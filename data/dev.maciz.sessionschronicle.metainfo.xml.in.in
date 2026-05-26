@@ -49,6 +49,16 @@
   </categories>
   <content_rating type="oars-1.1" />
   <releases>
+    <release version="0.4.11" date="2026-05-26">
+      <description>
+        <p>Improves indexing and transcript rendering stability across AI assistant session formats.</p>
+        <ul>
+          <li>Preserve session list scroll position after indexing</li>
+          <li>Update Codex subagent parsing for collab_resume_end and response-item subagents</li>
+          <li>Fix encrypted reasoning pill visibility in light mode</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.4.10" date="2026-05-18">
       <description>
         <p>Improves transcript rendering performance in session detail view.</p>
