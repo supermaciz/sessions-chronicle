@@ -257,29 +257,70 @@ distribution.
 
 ## Recommendation
 
-**Ship Variant F.**
+**Primary: Variant F.** **HIG-safe alternative: Variant A.**
 
-Rationale (revised after Mii Beta review of the earlier A→C path):
+Two design reviews (Mii Beta GTK Designer, UI Designer) converged on F and A
+as the only serious candidates; C, D, E are filed as inspiration for the
+analytics workspace tracked in
+[`2026-03-02-basic-analytics-exploration.md`](2026-03-02-basic-analytics-exploration.md),
+not for #85.
 
-- The A→C path multiplied surfaces — sidebar section + custom-range dialog
-  for A, then a histogram strip on top — yielding **three places to talk
-  about dates** in the same view by the time it lands. That is exactly the
-  pattern of accumulated indecision GNOME design pushes back against.
-- F keeps a single surface (one pill, one popover) and serves both usage
-  modes from it: relative presets (the dominant case) and free range (the
-  long tail). The calendar grid is only loaded when needed, which is also
-  honest about how the feature is actually used.
-- F preserves the per-preset counts that made A attractive, and the native
-  calendar interaction that made B attractive, without paying for either of
-  C/D/E's custom widgets or accessibility debt.
-- Activity-as-dataviz (C/D/E) belongs to the analytics workspace tracked in
-  [`2026-03-02-basic-analytics-exploration.md`](2026-03-02-basic-analytics-exploration.md),
-  not stapled onto the filter.
+### Why F is the primary
 
-Fallback: if header density becomes the blocker, drop back to Variant A
-(sidebar) — accepting the second surface for *Custom range…* — rather than
-adding a viz strip. Variants C, D, E are filed as inspiration for the
-activity dashboard, not for #85.
+- **Single surface** for both usage modes: relative presets (the dominant
+  case) and free range (the long tail). The calendar grid is only loaded
+  when the user picks *Custom range…* — honest about how the feature is
+  actually used.
+- Preserves the **per-preset counts** that made A attractive, and the
+  **native calendar interaction** that made B attractive, without paying
+  for C/D/E's custom widgets or accessibility debt.
+- **Clear-from-pill** removes the most frequent round-trip through the
+  popover.
+- The A→C path the earlier draft recommended multiplied surfaces — sidebar
+  section + custom-range dialog + histogram strip — yielding three places
+  to talk about dates in the same view. F collapses that to one.
+
+### Why A is the HIG-safe alternative
+
+Variant F introduces three behaviours that are not in the confort zone of
+GNOME's native popover model — popover that resizes after open, focus
+chain that must be reprogrammed after `GtkRevealer` reveal, and header-bar
+density pressure at the narrow breakpoint. None of these are blocking, but
+together they push F's real implementation cost into **medium** territory
+(QA visual + a11y, not lines of code). If that cost is unacceptable, or if
+header-bar density is the deal-breaker, fall back to A.
+
+When falling back to A, apply the UI Designer's refinements rather than
+the original A spec:
+
+1. **Custom range opens a popover anchored on the row, not a modal dialog.**
+   Activating the *Custom range…* `AdwActionRow` should `popup()` a
+   `GtkPopover` containing an `AdwCalendar` and *From / To* fields, anchored
+   on the row itself. This keeps the interaction in the sidebar's spatial
+   context — no modal context switch — while staying inside a native
+   pattern (`AdwActionRow` + ancillary popover, used elsewhere in
+   libadwaita-based apps).
+2. **Keep the per-preset counts as trailing badges** on each `AdwActionRow`
+   (already in the A spec), to match the analytics workspace styling.
+3. **No info banner above the session list.** Borrow F's idea: the active
+   row in the sidebar is the state surface. One filter, one place to read
+   it from. This avoids the third "place to talk about dates" the earlier
+   draft introduced.
+4. **`Ctrl+Shift+D`** focuses the Date section's first preset row,
+   mirroring how `Ctrl+F` focuses the search entry.
+
+### Open decisions before implementation
+
+The five open questions above still apply to both F and A. The two most
+load-bearing for the variant choice are:
+
+- **Header density** at narrow breakpoint — if the search entry is already
+  fighting for space, F's pill compounds the problem and A becomes
+  preferable.
+- **Per-preset counts** — whether we want to precompute daily counts at
+  index time. Both F and the refined A rely on these; if precompute is
+  out of scope for #85, both lose a chunk of their value and B becomes
+  the simpler path.
 
 ## Decision
 
