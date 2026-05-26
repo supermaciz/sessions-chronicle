@@ -11,20 +11,21 @@ Sessions Chronicle indexes all your local AI assistant sessions into a searchabl
 so you can find any conversation, inspect tool calls, diagnose source indexing issues,
 and pick up where you left off.
 
+→ Read the [User Guide](https://sessions-chronicle.maciz.dev/guide) to get started.
+
 
 ## Features
 
-- **Find any session instantly** — full-text search across all conversations (SQLite FTS5)
-- **Browse & filter** — sidebar filters by project and assistant, keyword search with highlighted matches
-- **Read conversations comfortably** — rich markdown rendering (code blocks, tables, task lists, blockquotes)
-- **Inspect tool calls** — expand inline tool calls and drill down into subagents in the utility pane; consecutive tool calls are grouped into collapsible bursts to reduce visual noise
-- **Pin favourite sessions** — star any session to pin it; a sidebar filter shows only pinned sessions with a live badge count
-- **Track token usage** — see per-session token breakdowns in the detail view
-- **See indexing health at a glance** — assistant status dots, issue banner, empty-state source diagnostics, and a detailed indexing status dialog
-- **Resume where you left off** — launch sessions directly from the app in your terminal
-- **Navigate with the keyboard** — Up/Down to move selection, Enter to open, Escape closes search or backs out of detail
-- **Supports 4 AI assistants** — Claude Code, OpenCode, Codex, Mistral Vibe
-- **Analytics** — see your most-used assistants, most-active days, and more
+- Full-text search across all conversations (SQLite FTS5)
+- Sidebar filters by project and assistant with keyword search
+- Markdown rendering (code blocks, tables, task lists, blockquotes)
+- Expand inline tool calls and drill down into subagents; consecutive calls are grouped and collapsible
+- Pin favorite sessions
+- Per-session token breakdowns in detail view
+- Assistant status dots, issue banner, empty-state diagnostics, and detailed indexing status dialog
+- Launch sessions directly from the app in your terminal
+- Supports 4 AI assistants — Claude Code, OpenCode, Codex, Mistral Vibe
+- View most-used assistants, most-active days, and more
 
 
 ## Installation
