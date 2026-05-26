@@ -14,10 +14,11 @@ guess keywords for questions like *"what happened last week in this project?"*
 or *"show me Codex sessions from this month"*.
 
 This exploration maps the design space — it does not commit to a single
-approach. Five wireframes were sketched: two aligned with GNOME HIG, three
-more experimental. All wireframes share the same lo-fi style (black/white
-sketch, a single blue accent for the active selection, a single warm-red for
-annotations).
+approach. Five wireframes were sketched initially (two GNOME-HIG, three
+experimental), and a sixth variant (F) was added after a Mii Beta design
+review as a refinement of B. All wireframes share the same lo-fi style
+(black/white sketch, a single blue accent for the active selection, a single
+warm-red for annotations).
 
 ### Key questions this exploration answers
 
@@ -177,18 +178,68 @@ an empty cell scopes to a single day.
 
 ---
 
+## Variant F — Date pill with progressive disclosure (GNOME HIG, refined)
+
+A response to the Mii Beta critique of A→C: B is the right surface, but the
+calendar should not be loaded by default. The popover opens on a **preset
+list** (the 90% path), and the calendar only appears when the user picks
+*Custom range* — revealed inline by a `GtkRevealer`, not in a second surface.
+
+![Variant F — Date pill, progressive disclosure](<../mockups/date-filter/F _ Date pill progressive disclosure.svg>)
+
+### Behaviour
+
+- Header-bar pill, left of the search entry. Label reflects the active range
+  (*"Last 7 days"*, *"Apr 5 – Apr 17"*) or collapses to the calendar icon
+  alone when *Any time* is active — minimal idle cost on the header.
+- Popover opens with a single vertical `ListBox`: *Any time · Today · Last 7
+  days · Last 30 days · This year*, with **session counts per preset** as
+  trailing badges (precomputed at index time, not on popover open).
+- A divider separates the relative presets from a single *Custom range…* row.
+- Selecting *Custom range…* expands the popover in place via `GtkRevealer`,
+  exposing an `AdwCalendar`/`GtkCalendar`, a *From / To* summary, and
+  *Clear* / *Apply* actions. The list stays visible above — focus chain stays
+  inside the same popover.
+- When a range is active, the pill carries an inline ✕ that clears the
+  filter **without reopening** the popover — the most frequent gesture after
+  filtering gets the shortest path.
+- **No info banner above the session list.** The pill itself is the state
+  surface. One filter, one place to read it from, one place to clear it.
+
+### Trade-offs
+
+| Pros | Cons |
+|------|------|
+| Single surface for both the 90% (presets) and 10% (custom range) paths | Adds a new widget to the header bar (same concern as B) |
+| Calendar grid only rendered when needed — popover stays small on first open | `GtkRevealer` repositioning needs care to avoid jumpy animations |
+| Per-preset session counts give quick stats without a viz strip | Counts must be maintained as the index updates — extra background work |
+| Clear-from-pill removes the most frequent round-trip through the popover | Pill is a fourth element competing for header attention next to search |
+| Pure native widgets — no `DrawingArea`, no custom hit-testing, no a11y bespoke story | Slightly more wiring than A (revealer + range model + pill state) |
+
+### What makes F different from B
+
+B mixes three zones in one popover (chip row, full calendar grid, action
+bar). F is a single vertical list that grows on demand. B also keeps a
+banner above the list to communicate state; F dissolves that into the pill.
+B treats presets and free range as siblings; F treats free range as a
+specialisation of the preset list, which matches the actual usage
+distribution.
+
+---
+
 ## Comparison matrix
 
-| Aspect | A · Sidebar | B · Header + Calendar | C · Histogram | D · Timeline | E · Heatmap |
-|--------|-------------|-----------------------|---------------|--------------|-------------|
-| HIG conformance | ✅ High | ✅ High | ⚠️ Custom widget | ⚠️ Replaces scrollbar | ⚠️ Custom widget |
-| Surface always visible | ✅ Yes | ❌ Behind a button | ✅ Yes (strip) | ✅ Yes (rail) | ❌ Behind a button |
-| Free range support | Via custom dialog | ✅ Native | ✅ Native (drag) | ❌ Month-only | ✅ Native (brush) |
-| Day-level precision | ✅ | ✅ | ⚠️ Bucket-dependent | ❌ | ✅ |
-| Doubles as data viz | ❌ | ❌ | ✅ | ✅ | ✅ |
-| Implementation cost | Low | Medium | High | High | Highest |
-| Keyboard story | ✅ Out of the box | ✅ With shortcuts | ⚠️ Needs design | ⚠️ Needs design | ⚠️ Needs design |
-| Composes with existing filters | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Aspect | A · Sidebar | B · Header + Calendar | C · Histogram | D · Timeline | E · Heatmap | F · Pill + disclosure |
+|--------|-------------|-----------------------|---------------|--------------|-------------|------------------------|
+| HIG conformance | ✅ High | ✅ High | ⚠️ Custom widget | ⚠️ Replaces scrollbar | ⚠️ Custom widget | ✅ High |
+| Surface always visible | ✅ Yes | ❌ Behind a button | ✅ Yes (strip) | ✅ Yes (rail) | ❌ Behind a button | ❌ Behind a pill |
+| Free range support | Via custom dialog | ✅ Native | ✅ Native (drag) | ❌ Month-only | ✅ Native (brush) | ✅ Native (inline reveal) |
+| Day-level precision | ✅ | ✅ | ⚠️ Bucket-dependent | ❌ | ✅ | ✅ |
+| Doubles as data viz | ❌ | ❌ | ✅ | ✅ | ✅ | ⚠️ Per-preset counts only |
+| Implementation cost | Low | Medium | High | High | Highest | Low-Medium |
+| Keyboard story | ✅ Out of the box | ✅ With shortcuts | ⚠️ Needs design | ⚠️ Needs design | ⚠️ Needs design | ✅ Out of the box |
+| Composes with existing filters | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Number of surfaces for full feature | 2 (sidebar + dialog) | 1 (popover) | 1 (strip) | 1 (rail) | 1 (popover) | 1 (popover, progressive) |
 
 ## Open questions
 
@@ -206,22 +257,29 @@ an empty cell scopes to a single day.
 
 ## Recommendation
 
-Two-step path that minimises risk while leaving the door open to a creative
-variant later:
+**Ship Variant F.**
 
-1. **Ship Variant A first.** Lowest implementation cost, reuses the
-   sidebar pattern already validated by the project filter, and immediately
-   resolves the issue's stated need. Adds *Custom range…* via a small
-   `AdwDialog` with two date pickers — no popover infrastructure required.
-2. **Layer Variant C (brushable histogram)** as a follow-up once daily
-   counts are precomputed (the same data backs analytics work in
-   [`2026-03-02-basic-analytics-exploration.md`](2026-03-02-basic-analytics-exploration.md)).
-   It elevates the filter into a discovery tool without changing the
-   underlying date-range model.
+Rationale (revised after Mii Beta review of the earlier A→C path):
 
-Variant B is the natural fallback if sidebar density becomes a concern before
-A ships. Variants D and E are filed as inspiration for a future
-"activity dashboard" surface rather than the first cut of #85.
+- The A→C path multiplied surfaces — sidebar section + custom-range dialog
+  for A, then a histogram strip on top — yielding **three places to talk
+  about dates** in the same view by the time it lands. That is exactly the
+  pattern of accumulated indecision GNOME design pushes back against.
+- F keeps a single surface (one pill, one popover) and serves both usage
+  modes from it: relative presets (the dominant case) and free range (the
+  long tail). The calendar grid is only loaded when needed, which is also
+  honest about how the feature is actually used.
+- F preserves the per-preset counts that made A attractive, and the native
+  calendar interaction that made B attractive, without paying for either of
+  C/D/E's custom widgets or accessibility debt.
+- Activity-as-dataviz (C/D/E) belongs to the analytics workspace tracked in
+  [`2026-03-02-basic-analytics-exploration.md`](2026-03-02-basic-analytics-exploration.md),
+  not stapled onto the filter.
+
+Fallback: if header density becomes the blocker, drop back to Variant A
+(sidebar) — accepting the second surface for *Custom range…* — rather than
+adding a viz strip. Variants C, D, E are filed as inspiration for the
+activity dashboard, not for #85.
 
 ## Decision
 

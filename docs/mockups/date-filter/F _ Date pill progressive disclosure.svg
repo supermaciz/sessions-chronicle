@@ -1,0 +1,303 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1180 760" font-family="-apple-system, 'Cantarell', system-ui, sans-serif" font-size="13">
+  <style>
+    .stroke { fill: none; stroke: #1a1a1a; stroke-width: 1.4; }
+    .stroke-thin { fill: none; stroke: #1a1a1a; stroke-width: 1; }
+    .muted { fill: #777; }
+    .accent { fill: #3584e4; }
+    .accent-stroke { fill: none; stroke: #3584e4; stroke-width: 1.6; }
+    .accent-bg { fill: #3584e4; fill-opacity: 0.12; }
+    .red { fill: #c01c28; }
+    .red-stroke { fill: none; stroke: #c01c28; stroke-width: 1.2; stroke-dasharray: 4 3; }
+    .label { font-size: 12px; fill: #1a1a1a; }
+    .badge { font-size: 11px; fill: #555; }
+    .title { font-size: 14px; font-weight: 600; }
+    .note { font-size: 11px; fill: #c01c28; font-style: italic; }
+    .row-text { font-size: 12.5px; }
+    .ws { fill: #fafafa; }
+  </style>
+
+  <!-- ===== Title bar ===== -->
+  <text x="20" y="28" class="title">Variant F — Date pill + progressive disclosure</text>
+  <text x="20" y="46" class="muted" font-size="12">Single surface · presets first, calendar on demand · clear-from-pill</text>
+
+  <!-- ====================================================== -->
+  <!-- STATE 1 — collapsed popover (presets only)              -->
+  <!-- ====================================================== -->
+  <text x="20" y="80" class="title">① Popover open — presets only (the 90% path)</text>
+
+  <!-- App window -->
+  <rect x="20" y="92" width="540" height="620" rx="10" class="ws stroke" />
+
+  <!-- Header bar -->
+  <rect x="20" y="92" width="540" height="42" rx="10" fill="#f0f0f0" class="stroke" />
+  <line x1="20" y1="134" x2="560" y2="134" class="stroke-thin" />
+  <!-- sidebar toggle -->
+  <rect x="32" y="103" width="22" height="20" rx="4" class="stroke" />
+  <line x1="38" y1="109" x2="48" y2="109" class="stroke-thin"/>
+  <line x1="38" y1="113" x2="48" y2="113" class="stroke-thin"/>
+  <line x1="38" y1="117" x2="48" y2="117" class="stroke-thin"/>
+  <!-- title -->
+  <text x="66" y="118" font-weight="600">Sessions</text>
+  <!-- Date pill (active) -->
+  <rect x="148" y="102" width="138" height="22" rx="11" class="accent-bg accent-stroke" />
+  <text x="160" y="118" class="accent" font-size="11">📅</text>
+  <text x="178" y="118" font-size="11.5" fill="#1a4a8c">Last 7 days</text>
+  <text x="270" y="118" class="muted" font-size="11">▾</text>
+  <!-- Search entry -->
+  <rect x="296" y="102" width="220" height="22" rx="6" fill="#fff" class="stroke-thin" />
+  <text x="306" y="118" class="muted" font-size="11">🔍  Search sessions…</text>
+  <!-- Overflow -->
+  <circle cx="534" cy="113" r="1.6" fill="#1a1a1a"/>
+  <circle cx="534" cy="118" r="1.6" fill="#1a1a1a"/>
+  <circle cx="534" cy="123" r="1.6" fill="#1a1a1a"/>
+
+  <!-- Sidebar -->
+  <rect x="20" y="134" width="160" height="578" fill="#f7f7f7" class="stroke-thin" />
+  <text x="32" y="158" class="title" font-size="12">AI ASSISTANTS</text>
+  <text x="32" y="180" class="row-text">All</text>
+  <text x="32" y="200" class="row-text">Claude Code</text>
+  <text x="32" y="220" class="row-text">OpenCode</text>
+  <text x="32" y="240" class="row-text">Codex</text>
+  <text x="32" y="260" class="row-text">Mistral Vibe</text>
+  <text x="32" y="296" class="title" font-size="12">PROJECTS</text>
+  <text x="32" y="318" class="row-text">All</text>
+  <text x="32" y="338" class="row-text">sessions-chronicle</text>
+  <text x="32" y="358" class="row-text">…</text>
+  <text x="32" y="378" class="muted" font-size="10.5">(no Date section)</text>
+
+  <!-- Session list area (dimmed under popover) -->
+  <rect x="180" y="134" width="380" height="578" fill="#fff" class="stroke-thin" />
+  <g opacity="0.35">
+    <rect x="196" y="152" width="348" height="56" rx="6" class="stroke-thin"/>
+    <rect x="196" y="216" width="348" height="56" rx="6" class="stroke-thin"/>
+    <rect x="196" y="280" width="348" height="56" rx="6" class="stroke-thin"/>
+    <rect x="196" y="344" width="348" height="56" rx="6" class="stroke-thin"/>
+  </g>
+
+  <!-- Popover (anchored to pill) -->
+  <path d="M 210 132 L 217 124 L 224 132 Z" fill="#ffffff" class="stroke" />
+  <rect x="148" y="132" width="244" height="248" rx="8" fill="#ffffff" class="stroke" />
+
+  <!-- Popover rows -->
+  <g font-size="12.5">
+    <!-- Any time -->
+    <circle cx="166" cy="154" r="5" class="stroke-thin"/>
+    <text x="180" y="158">Any time</text>
+
+    <!-- Today -->
+    <circle cx="166" cy="180" r="5" class="stroke-thin"/>
+    <text x="180" y="184">Today</text>
+    <text x="356" y="184" text-anchor="end" class="badge">4</text>
+
+    <!-- Last 7 days (active) -->
+    <rect x="152" y="198" width="234" height="24" rx="4" class="accent-bg"/>
+    <circle cx="166" cy="210" r="5" class="accent"/>
+    <text x="180" y="214" fill="#1a4a8c" font-weight="500">Last 7 days</text>
+    <text x="376" y="214" text-anchor="end" class="badge" fill="#1a4a8c">23</text>
+
+    <!-- Last 30 -->
+    <circle cx="166" cy="236" r="5" class="stroke-thin"/>
+    <text x="180" y="240">Last 30 days</text>
+    <text x="376" y="240" text-anchor="end" class="badge">87</text>
+
+    <!-- This year -->
+    <circle cx="166" cy="262" r="5" class="stroke-thin"/>
+    <text x="180" y="266">This year</text>
+    <text x="376" y="266" text-anchor="end" class="badge">412</text>
+
+    <!-- divider -->
+    <line x1="160" y1="286" x2="380" y2="286" class="stroke-thin" stroke="#ddd"/>
+
+    <!-- Custom range -->
+    <circle cx="166" cy="312" r="5" class="stroke-thin"/>
+    <text x="180" y="316">Custom range…</text>
+    <text x="376" y="316" text-anchor="end" class="muted" font-size="11">▸</text>
+  </g>
+
+  <!-- Annotations -->
+  <path d="M 405 213 Q 470 213 470 240" class="red-stroke"/>
+  <text x="475" y="244" class="note">Active preset — accent fill</text>
+  <path d="M 405 240 Q 460 260 460 290" class="red-stroke"/>
+  <text x="465" y="294" class="note">Counts per preset (computed</text>
+  <text x="465" y="308" class="note">at index time, not on open)</text>
+  <path d="M 290 122 Q 330 70 380 70" class="red-stroke"/>
+  <text x="385" y="74" class="note">Pill reflects active range</text>
+  <text x="385" y="88" class="note">(label = "Last 7 days")</text>
+
+  <!-- ====================================================== -->
+  <!-- STATE 2 — Custom range revealed inline                  -->
+  <!-- ====================================================== -->
+  <text x="600" y="80" class="title">② Custom range revealed (the 10% path) — same popover, no second surface</text>
+
+  <!-- App frame mirror -->
+  <rect x="600" y="92" width="560" height="620" rx="10" class="ws stroke" />
+  <rect x="600" y="92" width="560" height="42" rx="10" fill="#f0f0f0" class="stroke" />
+  <line x1="600" y1="134" x2="1160" y2="134" class="stroke-thin" />
+  <rect x="612" y="103" width="22" height="20" rx="4" class="stroke" />
+  <line x1="618" y1="109" x2="628" y2="109" class="stroke-thin"/>
+  <line x1="618" y1="113" x2="628" y2="113" class="stroke-thin"/>
+  <line x1="618" y1="117" x2="628" y2="117" class="stroke-thin"/>
+  <text x="646" y="118" font-weight="600">Sessions</text>
+
+  <!-- Pill now shows range + clear X -->
+  <rect x="728" y="102" width="178" height="22" rx="11" class="accent-bg accent-stroke" />
+  <text x="740" y="118" class="accent" font-size="11">📅</text>
+  <text x="758" y="118" font-size="11.5" fill="#1a4a8c">Apr 5 – Apr 17</text>
+  <line x1="876" y1="108" x2="884" y2="118" class="accent-stroke"/>
+  <line x1="884" y1="108" x2="876" y2="118" class="accent-stroke"/>
+
+  <rect x="916" y="102" width="200" height="22" rx="6" fill="#fff" class="stroke-thin" />
+  <text x="926" y="118" class="muted" font-size="11">🔍  Search sessions…</text>
+  <circle cx="1134" cy="113" r="1.6" fill="#1a1a1a"/>
+  <circle cx="1134" cy="118" r="1.6" fill="#1a1a1a"/>
+  <circle cx="1134" cy="123" r="1.6" fill="#1a1a1a"/>
+
+  <!-- sidebar -->
+  <rect x="600" y="134" width="160" height="578" fill="#f7f7f7" class="stroke-thin" />
+  <text x="612" y="158" class="title" font-size="12">AI ASSISTANTS</text>
+  <text x="612" y="180" class="row-text muted">All</text>
+  <text x="612" y="200" class="row-text muted">Claude Code</text>
+  <text x="612" y="220" class="row-text muted">OpenCode</text>
+  <text x="612" y="240" class="row-text muted">Codex</text>
+  <text x="612" y="296" class="title" font-size="12">PROJECTS</text>
+  <text x="612" y="318" class="row-text muted">All</text>
+  <text x="612" y="338" class="row-text muted">sessions-chronicle</text>
+
+  <!-- list area dimmed -->
+  <rect x="760" y="134" width="400" height="578" fill="#fff" class="stroke-thin" />
+  <g opacity="0.3">
+    <rect x="776" y="152" width="368" height="56" rx="6" class="stroke-thin"/>
+    <rect x="776" y="216" width="368" height="56" rx="6" class="stroke-thin"/>
+    <rect x="776" y="280" width="368" height="56" rx="6" class="stroke-thin"/>
+  </g>
+
+  <!-- expanded popover -->
+  <path d="M 790 132 L 797 124 L 804 132 Z" fill="#ffffff" class="stroke" />
+  <rect x="728" y="132" width="296" height="490" rx="8" fill="#ffffff" class="stroke" />
+
+  <g font-size="12.5">
+    <circle cx="746" cy="154" r="5" class="stroke-thin"/>
+    <text x="760" y="158">Any time</text>
+
+    <circle cx="746" cy="180" r="5" class="stroke-thin"/>
+    <text x="760" y="184">Today</text>
+    <text x="1008" y="184" text-anchor="end" class="badge">4</text>
+
+    <circle cx="746" cy="206" r="5" class="stroke-thin"/>
+    <text x="760" y="210">Last 7 days</text>
+    <text x="1008" y="210" text-anchor="end" class="badge">23</text>
+
+    <circle cx="746" cy="232" r="5" class="stroke-thin"/>
+    <text x="760" y="236">Last 30 days</text>
+    <text x="1008" y="236" text-anchor="end" class="badge">87</text>
+
+    <circle cx="746" cy="258" r="5" class="stroke-thin"/>
+    <text x="760" y="262">This year</text>
+    <text x="1008" y="262" text-anchor="end" class="badge">412</text>
+
+    <line x1="740" y1="282" x2="1012" y2="282" class="stroke-thin" stroke="#ddd"/>
+
+    <!-- Custom range (active) -->
+    <rect x="732" y="294" width="288" height="24" rx="4" class="accent-bg"/>
+    <circle cx="746" cy="306" r="5" class="accent"/>
+    <text x="760" y="310" fill="#1a4a8c" font-weight="500">Custom range</text>
+    <text x="1008" y="310" text-anchor="end" class="muted" font-size="11">▾</text>
+  </g>
+
+  <!-- Calendar (revealed) -->
+  <rect x="746" y="330" width="260" height="220" rx="6" fill="#fbfbfb" class="stroke-thin"/>
+  <!-- nav -->
+  <text x="762" y="350" font-size="11" class="muted">◂</text>
+  <text x="876" y="350" text-anchor="middle" font-size="12" font-weight="600">April 2026</text>
+  <text x="992" y="350" font-size="11" class="muted">▸</text>
+  <!-- weekday header -->
+  <g font-size="10" class="muted" text-anchor="middle">
+    <text x="772" y="370">M</text>
+    <text x="804" y="370">T</text>
+    <text x="836" y="370">W</text>
+    <text x="868" y="370">T</text>
+    <text x="900" y="370">F</text>
+    <text x="932" y="370">S</text>
+    <text x="964" y="370">S</text>
+  </g>
+
+  <!-- grid cells (5 weeks) -->
+  <g font-size="11" text-anchor="middle">
+    <!-- week 1: 30 31 1 2 3 4 5 -->
+    <text x="772" y="392" class="muted">30</text>
+    <text x="804" y="392" class="muted">31</text>
+    <text x="836" y="392">1</text>
+    <text x="868" y="392">2</text>
+    <text x="900" y="392">3</text>
+    <text x="932" y="392">4</text>
+    <!-- start of range: 5 -->
+    <circle cx="964" cy="388" r="11" class="accent"/>
+    <text x="964" y="392" fill="#fff" font-weight="600">5</text>
+
+    <!-- week 2: 6..12 within range -->
+    <rect x="757" y="404" width="222" height="22" class="accent-bg"/>
+    <text x="772" y="420" fill="#1a4a8c">6</text>
+    <text x="804" y="420" fill="#1a4a8c">7</text>
+    <text x="836" y="420" fill="#1a4a8c">8</text>
+    <text x="868" y="420" fill="#1a4a8c">9</text>
+    <text x="900" y="420" fill="#1a4a8c">10</text>
+    <text x="932" y="420" fill="#1a4a8c">11</text>
+    <text x="964" y="420" fill="#1a4a8c">12</text>
+
+    <!-- week 3: 13..17 in, 18..19 out -->
+    <rect x="757" y="432" width="190" height="22" class="accent-bg"/>
+    <text x="772" y="448" fill="#1a4a8c">13</text>
+    <text x="804" y="448" fill="#1a4a8c">14</text>
+    <text x="836" y="448" fill="#1a4a8c">15</text>
+    <text x="868" y="448" fill="#1a4a8c">16</text>
+    <!-- end of range: 17 -->
+    <circle cx="900" cy="444" r="11" class="accent"/>
+    <text x="900" y="448" fill="#fff" font-weight="600">17</text>
+    <text x="932" y="448">18</text>
+    <text x="964" y="448">19</text>
+
+    <!-- week 4 -->
+    <text x="772" y="476">20</text>
+    <text x="804" y="476">21</text>
+    <text x="836" y="476">22</text>
+    <text x="868" y="476">23</text>
+    <text x="900" y="476">24</text>
+    <text x="932" y="476">25</text>
+    <text x="964" y="476">26</text>
+
+    <!-- week 5 -->
+    <text x="772" y="504">27</text>
+    <text x="804" y="504">28</text>
+    <text x="836" y="504">29</text>
+    <text x="868" y="504">30</text>
+    <text x="900" y="504" class="muted">1</text>
+    <text x="932" y="504" class="muted">2</text>
+    <text x="964" y="504" class="muted">3</text>
+  </g>
+
+  <!-- range summary + actions -->
+  <text x="746" y="540" font-size="11.5">From: <tspan font-weight="600">Apr 5</tspan>   To: <tspan font-weight="600">Apr 17</tspan></text>
+  <text x="746" y="556" font-size="10.5" class="muted">23 sessions in range</text>
+
+  <rect x="846" y="572" width="68" height="26" rx="6" class="stroke-thin" fill="#fff"/>
+  <text x="880" y="589" text-anchor="middle" font-size="11.5">Clear</text>
+  <rect x="924" y="572" width="84" height="26" rx="6" class="accent" />
+  <text x="966" y="589" text-anchor="middle" font-size="11.5" fill="#fff" font-weight="600">Apply</text>
+
+  <!-- annotations -->
+  <path d="M 906 113 Q 850 60 800 60" class="red-stroke"/>
+  <text x="600" y="64" class="note">Active range shown in pill, with inline ✕ — clears without reopening</text>
+  <path d="M 1024 310 Q 1070 310 1070 360" class="red-stroke"/>
+  <text x="1040" y="372" class="note">GtkRevealer expands</text>
+  <text x="1040" y="386" class="note">in place — no dialog</text>
+  <path d="M 1010 400 Q 1080 470 1080 540" class="red-stroke"/>
+  <text x="1050" y="556" class="note">Calendar inherits</text>
+  <text x="1050" y="570" class="note">popover focus chain</text>
+
+  <!-- ===== Footer notes ===== -->
+  <line x1="20" y1="730" x2="1160" y2="730" class="stroke-thin" stroke="#ddd"/>
+  <text x="20" y="748" class="muted" font-size="11">
+    Keyboard: Ctrl+Shift+D opens · ↑/↓ navigates presets · Enter applies · Esc closes · Tab moves into calendar after expand.
+    Narrow breakpoint: popover promotes to AdwDialog with the same structure.
+  </text>
+</svg>
