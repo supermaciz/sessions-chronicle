@@ -20,6 +20,8 @@ You want to understand how the app starts and how the main flow is assembled.
 - `src/main.rs`
 - `src/lib.rs`
 - `src/app/`
+    - `src/app/init.rs`
+    - `src/app/handlers/`
 
 ### What to look for
 - binary entrypoint
@@ -60,11 +62,14 @@ You want to understand how state changes drive the UI.
 ### Primary targets
 - `src/ui/`
 - `src/app/`
+    - `src/app/types.rs`
+    - `src/app/handlers/`
 
 ### What to look for
 - state/model structs
 - messages/events
 - update flow
+- feature-specific update handlers
 - widget composition
 - closure captures
 - where selections, filters, or navigation state live
@@ -100,6 +105,9 @@ You want to understand how sessions are persisted, indexed, and queried.
 
 ### Primary targets
 - `src/database/`
+    - `src/database/schema.rs`
+    - `src/database/indexer.rs`
+    - `src/database/analytics.rs`
 - `src/indexing_worker.rs`
 
 ### What to look for
@@ -142,8 +150,13 @@ You want to learn how external assistant session formats become internal Rust mo
 
 ### Primary targets
 - `src/parsers/`
+    - `src/parsers/opencode/json_backend.rs`
+    - `src/parsers/opencode/sqlite_backend.rs`
 - `src/models/`
 - `tests/load_session.rs`
+- `tests/claude_subagent_linkage.rs`
+- `tests/codex_subagent_event_coverage.rs`
+- `tests/codex_subagent_linkage.rs`
 - `tests/fixtures/`
 
 ### What to look for
@@ -152,6 +165,7 @@ You want to learn how external assistant session formats become internal Rust mo
 - normalization into domain structs
 - optional fields
 - transcript item shapes
+- subagent event/linkage shapes
 - how malformed or partial data is handled
 
 ### Rust concepts
@@ -179,6 +193,8 @@ Add one optional field to a parser/model pair and cover it with a fixture-based 
 
 ### Verify
 - `cargo test load_session`
+- `cargo test claude_subagent_linkage`
+- `cargo test codex_subagent_linkage`
 
 ---
 
@@ -233,6 +249,8 @@ You want to learn how higher-level product metrics are derived from stored sessi
 
 ### Primary targets
 - `src/analytics_worker.rs`
+- `src/database/analytics.rs`
+- `src/models/analytics.rs`
 - `tests/analytics_integration.rs`
 - `tests/analytics_queries.rs`
 
@@ -273,17 +291,30 @@ Trace one metric end-to-end: query → aggregation → output shape → test.
 You want to understand how conversations are represented and displayed to the user.
 
 ### Primary targets
-- `src/ui/`
-- `src/models/`
+- `src/ui/session_detail.rs`
+- `src/ui/transcript_display.rs`
+- `src/ui/transcript_row.rs`
+- `src/ui/typed_transcript_row.rs`
+- `src/ui/tool_preview.rs`
+- `src/ui/tool_inspector_pane.rs`
+- `src/ui/tool_renderers/`
+- `src/models/transcript_item.rs`
+- `src/models/message_preview.rs`
+- `src/models/reasoning.rs`
+- `src/models/subagent.rs`
 - `tests/message_preview.rs`
 - `tests/reasoning_attachments.rs`
 - `tests/transcript_items_model.rs`
+- `tests/claude_subagent_linkage.rs`
+- `tests/codex_subagent_event_coverage.rs`
+- `tests/codex_subagent_linkage.rs`
 
 ### What to look for
 - transcript item modeling
 - preview generation
 - markdown/rendering boundaries
 - tool call grouping
+- subagent linkage and display
 - reasoning attachment presentation
 
 ### Rust concepts
@@ -310,6 +341,7 @@ Pick one transcript item variant and explain how it becomes UI-ready text.
 - `cargo test message_preview`
 - `cargo test reasoning_attachments`
 - `cargo test transcript_items_model`
+- `cargo test codex_subagent_event_coverage`
 
 ---
 

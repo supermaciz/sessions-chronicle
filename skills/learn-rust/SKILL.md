@@ -24,7 +24,9 @@ Current product scope includes:
 - browsing/searching AI assistant sessions,
 - SQLite full-text search,
 - transcript/detail reading,
+- markdown rendering,
 - inline tool-call inspection,
+- subagent inspection/linkage,
 - pinned sessions,
 - token usage display,
 - indexing health diagnostics,
@@ -40,12 +42,15 @@ Use this map as the default mental model:
     - crate wiring
 - `src/app/`
     - top-level app flow and composition
+    - `handlers/` splits update logic by feature area
 - `src/ui/`
     - Relm4 widgets and screens
+    - `tool_renderers/` and `modals/` contain focused UI submodules
 - `src/database/`
     - schema, indexing, search, persistence
 - `src/parsers/`
     - assistant-specific transcript/session parsing
+    - OpenCode has JSON and SQLite backends under `src/parsers/opencode/`
 - `src/models/`
     - domain types
 - `src/utils/`
@@ -65,6 +70,9 @@ Prefer test-driven learning through these real integration areas:
 - `tests/load_session.rs`
 - `tests/search_sessions.rs`
 - `tests/opencode_search.rs`
+- `tests/claude_subagent_linkage.rs`
+- `tests/codex_subagent_event_coverage.rs`
+- `tests/codex_subagent_linkage.rs`
 - `tests/pinned_sessions.rs`
 - `tests/project_detection.rs`
 - `tests/project_sidebar_filtering.rs`
@@ -74,8 +82,10 @@ Prefer test-driven learning through these real integration areas:
 - `tests/analytics_integration.rs`
 - `tests/analytics_queries.rs`
 - `tests/cli_print_db_path.rs`
+- `tests/i18n_potfiles.rs`
 
 Use `tests/fixtures/` aggressively when proposing exercises.
+Load `skills/learn-rust/PATHS.md` when the user asks for a path, a guided route, or a broader learning sequence.
 
 ## Interactive Contract
 When the user says:
