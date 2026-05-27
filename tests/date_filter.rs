@@ -267,6 +267,26 @@ fn count_sessions_per_date_preset_query_counts_distinct_sessions() {
 }
 
 #[test]
+fn count_sessions_per_date_preset_sanitizes_invalid_query() {
+    let db = TempDatabase::new("date-filter-counts-invalid-query");
+    seed_date_dataset(&db);
+
+    let counts = count_sessions_per_date_preset(
+        &db.path,
+        &[AiAssistant::ClaudeCode],
+        &ProjectFilter::Project(1),
+        "\"alpha",
+    )
+    .expect("date counts should succeed with sanitized query");
+
+    assert_eq!(counts.any_time, 5);
+    assert_eq!(counts.today, 2);
+    assert_eq!(counts.last_7_days, 3);
+    assert_eq!(counts.last_30_days, 5);
+    assert!(counts.this_year >= counts.last_30_days);
+}
+
+#[test]
 fn custom_date_bounds_include_both_ends() {
     let db = TempDatabase::new("date-filter-inclusive");
     let from = NaiveDate::from_ymd_opt(2025, 1, 10).unwrap();

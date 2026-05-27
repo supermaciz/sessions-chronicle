@@ -646,7 +646,36 @@ fn count_sessions_for_context(
         return count_sessions_without_query(&db, tools, project_filter, date_filter);
     }
 
-    count_sessions_with_query(&db, tools, project_filter, query, date_filter)
+    match count_sessions_with_query(&db, tools, project_filter, query, date_filter) {
+        Ok(count) => Ok(count),
+        Err(err) => {
+            if let Some(sanitized) = sanitize_search_query(query) {
+                tracing::warn!(
+                    "Date preset count query failed, retrying with sanitized query '{}': {}",
+                    sanitized,
+                    err
+                );
+                match count_sessions_with_query(&db, tools, project_filter, &sanitized, date_filter)
+                {
+                    Ok(count) => Ok(count),
+                    Err(retry_err) => {
+                        tracing::warn!(
+                            "Sanitized date preset count query failed '{}': {}",
+                            sanitized,
+                            retry_err
+                        );
+                        Ok(0)
+                    }
+                }
+            } else {
+                tracing::warn!(
+                    "Date preset count query failed and could not be sanitized: {}",
+                    err
+                );
+                Ok(0)
+            }
+        }
+    }
 }
 
 fn count_sessions_without_query(
