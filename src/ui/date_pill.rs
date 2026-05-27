@@ -12,21 +12,21 @@ pub struct DatePill {
     draft_from: Option<NaiveDate>,
     draft_to: Option<NaiveDate>,
     custom_revealed: bool,
-    root: gtk::MenuButton,
+    listbox: gtk::ListBox,
     popover: gtk::Popover,
 }
 
 #[derive(Debug, Clone)]
 pub enum DatePillInput {
-    SetFilter(DateFilter),
+    PopoverOpened,
     CountsReceived(DateCounts),
     OpenViaShortcut,
     PresetSelected(DateFilter),
-    CustomRequested,
-    DraftFromSelected(Option<NaiveDate>),
-    DraftToSelected(Option<NaiveDate>),
-    ClearDraft,
-    ApplyDraft,
+    CustomRangeRowSelected,
+    CustomFromPicked(NaiveDate),
+    CustomToPicked(NaiveDate),
+    CustomApplyClicked,
+    CustomClearClicked,
 }
 
 #[derive(Debug, Clone)]
@@ -52,7 +52,7 @@ pub struct DatePillWidgets {
 }
 
 impl SimpleComponent for DatePill {
-    type Init = DateFilter;
+    type Init = ();
     type Input = DatePillInput;
     type Output = DatePillOutput;
     type Root = gtk::MenuButton;
@@ -63,7 +63,7 @@ impl SimpleComponent for DatePill {
     }
 
     fn init(
-        current_filter: Self::Init,
+        _init: Self::Init,
         root: Self::Root,
         sender: ComponentSender<Self>,
     ) -> ComponentParts<Self> {
@@ -76,7 +76,7 @@ impl SimpleComponent for DatePill {
         button_content.append(&label);
 
         root.set_child(Some(&button_content));
-        root.set_tooltip_text(Some(&tooltip_for_filter(&current_filter)));
+        root.set_tooltip_text(Some(&tooltip_for_filter(&DateFilter::AnyTime)));
         root.add_css_class("flat");
 
         let popover = gtk::Popover::new();
@@ -84,7 +84,7 @@ impl SimpleComponent for DatePill {
 
         let listbox = gtk::ListBox::new();
         listbox.add_css_class("boxed-list");
-        listbox.set_selection_mode(gtk::SelectionMode::None);
+        listbox.set_selection_mode(gtk::SelectionMode::Browse);
 
         let any_time_count = gtk::Label::new(Some("0"));
         let today_count = gtk::Label::new(Some("0"));
@@ -140,10 +140,10 @@ impl SimpleComponent for DatePill {
         content.append(&custom_revealer);
         popover.set_child(Some(&content));
 
-        let output_sender = sender.output_sender().clone();
+        let input_sender = sender.input_sender().clone();
         popover.connect_visible_notify(move |popover| {
             if popover.is_visible() {
-                output_sender.send(DatePillOutput::CountsRequested).ok();
+                input_sender.send(DatePillInput::PopoverOpened).ok();
             }
         });
 
@@ -165,46 +165,46 @@ impl SimpleComponent for DatePill {
                 4 => input_sender
                     .send(DatePillInput::PresetSelected(DateFilter::ThisYear))
                     .ok(),
-                5 => input_sender.send(DatePillInput::CustomRequested).ok(),
+                5 => input_sender
+                    .send(DatePillInput::CustomRangeRowSelected)
+                    .ok(),
                 _ => None,
             };
         });
 
         let input_sender = sender.input_sender().clone();
         from_calendar.connect_day_selected(move |calendar| {
-            input_sender
-                .send(DatePillInput::DraftFromSelected(calendar_to_naive_date(
-                    &calendar.date(),
-                )))
-                .ok();
+            if let Some(date) = calendar_to_naive_date(&calendar.date()) {
+                input_sender
+                    .send(DatePillInput::CustomFromPicked(date))
+                    .ok();
+            }
         });
 
         let input_sender = sender.input_sender().clone();
         to_calendar.connect_day_selected(move |calendar| {
-            input_sender
-                .send(DatePillInput::DraftToSelected(calendar_to_naive_date(
-                    &calendar.date(),
-                )))
-                .ok();
+            if let Some(date) = calendar_to_naive_date(&calendar.date()) {
+                input_sender.send(DatePillInput::CustomToPicked(date)).ok();
+            }
         });
 
         let input_sender = sender.input_sender().clone();
         clear_button.connect_clicked(move |_| {
-            input_sender.send(DatePillInput::ClearDraft).ok();
+            input_sender.send(DatePillInput::CustomClearClicked).ok();
         });
 
         let input_sender = sender.input_sender().clone();
         apply_button.connect_clicked(move |_| {
-            input_sender.send(DatePillInput::ApplyDraft).ok();
+            input_sender.send(DatePillInput::CustomApplyClicked).ok();
         });
 
         let model = Self {
-            current_filter,
+            current_filter: DateFilter::AnyTime,
             counts: DateCounts::default(),
             draft_from: None,
             draft_to: None,
             custom_revealed: false,
-            root: root.clone(),
+            listbox: listbox.clone(),
             popover: popover.clone(),
         };
 
@@ -233,42 +233,45 @@ impl SimpleComponent for DatePill {
 
     fn update(&mut self, message: Self::Input, sender: ComponentSender<Self>) {
         match message {
-            DatePillInput::SetFilter(filter) => {
-                self.current_filter = filter;
-                self.custom_revealed = matches!(self.current_filter, DateFilter::Custom { .. });
+            DatePillInput::PopoverOpened => {
+                self.select_current_row();
+                sender.output(DatePillOutput::CountsRequested).ok();
             }
             DatePillInput::CountsReceived(counts) => {
                 self.counts = counts;
             }
             DatePillInput::OpenViaShortcut => {
-                self.root.grab_focus();
                 self.popover.popup();
+                self.focus_current_row_when_ready();
             }
             DatePillInput::PresetSelected(filter) => {
                 self.current_filter = filter.clone();
                 self.custom_revealed = false;
+                self.select_current_row();
                 sender.output(DatePillOutput::FilterChanged(filter)).ok();
                 self.popover.popdown();
             }
-            DatePillInput::CustomRequested => {
+            DatePillInput::CustomRangeRowSelected => {
                 self.custom_revealed = true;
+                self.select_current_row();
             }
-            DatePillInput::DraftFromSelected(date) => {
+            DatePillInput::CustomFromPicked(date) => {
                 self.custom_revealed = true;
-                self.draft_from = date;
+                self.draft_from = Some(date);
             }
-            DatePillInput::DraftToSelected(date) => {
+            DatePillInput::CustomToPicked(date) => {
                 self.custom_revealed = true;
-                self.draft_to = date;
+                self.draft_to = Some(date);
             }
-            DatePillInput::ClearDraft => {
+            DatePillInput::CustomClearClicked => {
                 self.draft_from = None;
                 self.draft_to = None;
             }
-            DatePillInput::ApplyDraft => {
+            DatePillInput::CustomApplyClicked => {
                 if let Some(filter) = valid_custom_filter(self.draft_from, self.draft_to) {
                     self.current_filter = filter.clone();
                     self.custom_revealed = false;
+                    self.select_current_row();
                     sender.output(DatePillOutput::FilterChanged(filter)).ok();
                     self.popover.popdown();
                 }
@@ -284,6 +287,34 @@ impl SimpleComponent for DatePill {
 }
 
 impl DatePill {
+    fn focus_current_row_when_ready(&self) {
+        let listbox = self.listbox.clone();
+        let row_index = current_row_index(&self.current_filter);
+
+        glib::idle_add_local_once(move || {
+            let Some(row) = listbox.row_at_index(row_index) else {
+                return;
+            };
+
+            listbox.select_row(Some(&row));
+            listbox.grab_focus();
+            row.grab_focus();
+        });
+    }
+
+    fn select_current_row(&self) {
+        let Some(row) = self
+            .listbox
+            .row_at_index(current_row_index(&self.current_filter))
+        else {
+            return;
+        };
+
+        self.listbox.select_row(Some(&row));
+        self.listbox.grab_focus();
+        row.grab_focus();
+    }
+
     fn sync_button(&self, widgets: &DatePillWidgets) {
         let label = self.current_filter.pill_label();
         widgets.label.set_label(&label);
@@ -324,6 +355,17 @@ impl DatePill {
     }
 }
 
+fn current_row_index(filter: &DateFilter) -> i32 {
+    match filter {
+        DateFilter::AnyTime => 0,
+        DateFilter::Today => 1,
+        DateFilter::Last7Days => 2,
+        DateFilter::Last30Days => 3,
+        DateFilter::ThisYear => 4,
+        DateFilter::Custom { .. } => 5,
+    }
+}
+
 fn build_preset_row(title: &str, count_label: &gtk::Label) -> gtk::ListBoxRow {
     count_label.add_css_class("dim-label");
     count_label.set_xalign(1.0);
@@ -341,6 +383,7 @@ fn build_preset_row(title: &str, count_label: &gtk::Label) -> gtk::ListBoxRow {
 
     let row = gtk::ListBoxRow::new();
     row.set_activatable(true);
+    row.set_focusable(true);
     row.set_child(Some(&row_box));
     row
 }
@@ -379,6 +422,42 @@ fn calendar_to_naive_date(date: &glib::DateTime) -> Option<NaiveDate> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use relm4::{Component, ComponentController};
+    use std::time::{Duration, Instant};
+
+    fn pump_main_context(condition: impl Fn() -> bool) {
+        let context = glib::MainContext::default();
+        let deadline = Instant::now() + Duration::from_secs(2);
+
+        while !condition() {
+            assert!(
+                Instant::now() < deadline,
+                "condition not met before timeout"
+            );
+
+            while context.pending() {
+                context.iteration(false);
+            }
+
+            context.iteration(true);
+        }
+    }
+
+    fn find_list_box(widget: &gtk::Widget) -> Option<gtk::ListBox> {
+        if let Ok(list_box) = widget.clone().downcast::<gtk::ListBox>() {
+            return Some(list_box);
+        }
+
+        let mut child = widget.first_child();
+        while let Some(child_widget) = child {
+            if let Some(found) = find_list_box(&child_widget) {
+                return Some(found);
+            }
+            child = child_widget.next_sibling();
+        }
+
+        None
+    }
 
     #[test]
     fn valid_custom_filter_requires_both_dates_in_order() {
@@ -409,5 +488,34 @@ mod tests {
             tooltip_for_filter(&custom),
             format!("Date: {}", custom.pill_label())
         );
+    }
+
+    #[gtk::test]
+    fn preset_list_is_selectable_for_shortcut_navigation() {
+        let controller = DatePill::builder().launch(());
+        let root = controller.widget().clone().upcast::<gtk::Widget>();
+        let list_box = find_list_box(&root).expect("date pill preset list");
+
+        assert_eq!(list_box.selection_mode(), gtk::SelectionMode::Browse);
+    }
+
+    #[gtk::test]
+    fn open_via_shortcut_selects_current_preset_row() {
+        let controller = DatePill::builder().launch(());
+
+        let window = gtk::Window::new();
+        window.set_child(Some(controller.widget()));
+        window.present();
+
+        let root = controller.widget().clone().upcast::<gtk::Widget>();
+        let list_box = find_list_box(&root).expect("date pill preset list");
+
+        controller.emit(DatePillInput::PresetSelected(DateFilter::Last30Days));
+        controller.emit(DatePillInput::OpenViaShortcut);
+
+        pump_main_context(|| list_box.selected_row().map(|row| row.index()) == Some(3));
+
+        let selected_row = list_box.selected_row().expect("selected preset row");
+        assert_eq!(selected_row.index(), 3);
     }
 }

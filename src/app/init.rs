@@ -78,7 +78,7 @@ pub(super) fn init_child_components(
             SessionDetailOutput::OpenChildSession(id) => AppMsg::OpenChildSession(id),
         });
     let date_pill = DatePill::builder()
-        .launch(crate::models::DateFilter::AnyTime)
+        .launch(())
         .forward(sender.input_sender(), |output| match output {
             DatePillOutput::FilterChanged(filter) => AppMsg::DateFilterChanged(filter),
             DatePillOutput::CountsRequested => AppMsg::DateCountsRequested,

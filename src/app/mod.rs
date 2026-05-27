@@ -630,8 +630,6 @@ impl SimpleComponent for App {
             }
             AppMsg::DateFilterChanged(date_filter) => {
                 self.selected_date_filter = date_filter.clone();
-                self.date_pill
-                    .emit(DatePillInput::SetFilter(date_filter.clone()));
                 self.session_list
                     .emit(SessionListMsg::DateFilterChanged(date_filter));
             }
