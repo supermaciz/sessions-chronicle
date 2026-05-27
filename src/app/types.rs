@@ -83,6 +83,7 @@ mod tests {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) struct WorkspaceHeaderVisibility {
     pub(super) search_ui_visible: bool,
+    pub(super) date_filter_visible: bool,
     pub(super) pane_controls_visible: bool,
     pub(super) detail_actions_visible: bool,
     pub(super) indexing_progress_visible: bool,

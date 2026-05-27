@@ -46,6 +46,10 @@ impl SimpleComponent for ShortcutsDialog {
         // Search section
         let search = adw::ShortcutsSection::new(Some(&gettext("Search")));
         search.add(adw::ShortcutsItem::new(&gettext("Search"), "<Control>f"));
+        search.add(adw::ShortcutsItem::new(
+            &gettext("Filter by date"),
+            "<Control><Shift>d",
+        ));
         widgets.add(search);
 
         // View section

@@ -19,12 +19,13 @@ use std::{
 use crate::analytics_worker::AnalyticsWorker;
 use crate::config::{APP_ID, PROFILE};
 use crate::database::{
-    SessionIndexer, count_all_sessions, count_pinned_sessions, count_unassigned_sessions,
-    has_unassigned_sessions, load_projects,
+    SessionIndexer, count_all_sessions, count_pinned_sessions, count_sessions_per_date_preset,
+    count_unassigned_sessions, has_unassigned_sessions, load_projects,
 };
 use crate::indexing_worker::{IndexingWorker, IndexingWorkerInput};
-use crate::models::{ProjectFilter, ProjectInfo, session::AiAssistant};
+use crate::models::{DateFilter, ProjectFilter, ProjectInfo, session::AiAssistant};
 use crate::session_sources::{SessionSources, select_db_filename};
+use crate::ui::date_pill::{DatePill, DatePillInput};
 use crate::ui::modals::{
     indexing_status::{IndexingStatusDialog, IndexingStatusMsg, IndexingStatusOutput},
     preferences::PreferencesDialog,
@@ -77,14 +78,16 @@ struct SidebarProjectData {
 fn load_sidebar_project_data(
     db_path: &Path,
     tools: &[AiAssistant],
+    date_filter: &DateFilter,
 ) -> anyhow::Result<SidebarProjectData> {
-    let projects = load_projects(db_path, tools).context("load projects for sidebar")?;
-    let all_sessions_count =
-        count_all_sessions(db_path, tools).context("count all sessions for sidebar")?;
-    let unassigned_count = count_unassigned_sessions(db_path, tools)
+    let projects =
+        load_projects(db_path, tools, date_filter).context("load projects for sidebar")?;
+    let all_sessions_count = count_all_sessions(db_path, tools, date_filter)
+        .context("count all sessions for sidebar")?;
+    let unassigned_count = count_unassigned_sessions(db_path, tools, date_filter)
         .context("count unassigned sessions for sidebar")?;
-    let pinned_count =
-        count_pinned_sessions(db_path, tools).context("count pinned sessions for sidebar")?;
+    let pinned_count = count_pinned_sessions(db_path, tools, date_filter)
+        .context("count pinned sessions for sidebar")?;
     let show_unassigned =
         has_unassigned_sessions(db_path).context("determine unassigned sidebar visibility")?;
 
@@ -123,6 +126,7 @@ pub(super) struct App {
     session_list: Controller<SessionList>,
     analytics_view: Controller<AnalyticsView>,
     session_detail: Controller<SessionDetail>,
+    date_pill: Controller<DatePill>,
     #[allow(dead_code)] // Controller must stay alive to keep the widget
     sidebar: Controller<Sidebar>,
     preferences_dialog: Controller<PreferencesDialog>,
@@ -142,6 +146,7 @@ pub(super) struct App {
     indexing: bool,
     pending_reindex_feedback: bool,
     active_workspace: Workspace,
+    selected_date_filter: DateFilter,
     banner: adw::Banner,
     banner_has_issues: bool,
 }
@@ -182,6 +187,7 @@ pub(super) enum AppMsg {
     ReturnToParentSession,
     /// Esc key: close search → close inspector → navigate back.
     Escape,
+    OpenDateFilterShortcut,
     ShowPreferences,
     ShowIndexingStatus,
     ReindexRequested,
@@ -196,6 +202,8 @@ pub(super) enum AppMsg {
     AnalyticsRefreshRequested,
     AnalyticsLoaded(crate::models::AnalyticsData),
     AnalyticsLoadFailed(String),
+    DateFilterChanged(DateFilter),
+    DateCountsRequested,
 }
 
 relm4::new_action_group!(pub(super) WindowActionGroup, "win");
@@ -209,6 +217,7 @@ relm4::new_stateless_action!(ToggleInspectorAction, WindowActionGroup, "toggle-i
 // F9 dispatcher — toggles filters in list view, inspector in detail view.
 relm4::new_stateless_action!(ToggleSidePaneAction, WindowActionGroup, "toggle-side-pane");
 relm4::new_stateless_action!(TogglePinAction, WindowActionGroup, "toggle-pin");
+relm4::new_stateless_action!(OpenDateFilterAction, WindowActionGroup, "open-date-filter");
 relm4::new_stateless_action!(ShowSearchAction, WindowActionGroup, "show-search");
 relm4::new_stateless_action!(EscapeAction, WindowActionGroup, "escape");
 
@@ -437,6 +446,7 @@ impl SimpleComponent for App {
             session_list: components.session_list,
             analytics_view: components.analytics_view,
             session_detail: components.session_detail,
+            date_pill: components.date_pill,
             sidebar: components.sidebar,
             preferences_dialog: components.preferences_dialog,
             indexing_worker: components.indexing_worker,
@@ -455,12 +465,19 @@ impl SimpleComponent for App {
             indexing: true,
             pending_reindex_feedback: false,
             active_workspace: Workspace::Sessions,
+            selected_date_filter: DateFilter::AnyTime,
             banner: adw::Banner::new(""),
             banner_has_issues: false,
         };
 
         // view_output!() must stay in the SimpleComponent impl (Relm4 macro requirement)
         let widgets = view_output!();
+
+        widgets.header_bar.pack_start(model.date_pill.widget());
+        model
+            .date_pill
+            .widget()
+            .set_visible(model.is_date_filter_visible());
 
         // Get the actual ToastOverlay from the root window's content
         if let Some(toast_overlay) = root
@@ -516,6 +533,10 @@ impl SimpleComponent for App {
             model.emit_session_list_filters();
         }
 
+        model.session_list.emit(SessionListMsg::DateFilterChanged(
+            model.selected_date_filter.clone(),
+        ));
+
         model.session_list.emit(SessionListMsg::SetIndexing(true));
         model
             .indexing_worker
@@ -547,6 +568,9 @@ impl SimpleComponent for App {
                 self.filter_state.project_filter = project_filter;
                 self.refresh_sidebar_projects();
                 self.emit_session_list_filters();
+                self.session_list.emit(SessionListMsg::DateFilterChanged(
+                    self.selected_date_filter.clone(),
+                ));
             }
             AppMsg::SessionSelected(id) => self.handle_session_selected(id),
             AppMsg::RequestNavigateBack => self.handle_request_navigate_back(),
@@ -601,6 +625,30 @@ impl SimpleComponent for App {
             }
             AppMsg::ReturnToParentSession => self.handle_return_to_parent_session(),
             AppMsg::Escape => self.handle_escape(&sender),
+            AppMsg::OpenDateFilterShortcut => {
+                if self.is_date_filter_visible() {
+                    self.date_pill.emit(DatePillInput::OpenViaShortcut);
+                }
+            }
+            AppMsg::DateFilterChanged(date_filter) => {
+                self.selected_date_filter = date_filter.clone();
+                self.refresh_sidebar_projects();
+                self.session_list
+                    .emit(SessionListMsg::DateFilterChanged(date_filter));
+            }
+            AppMsg::DateCountsRequested => {
+                match count_sessions_per_date_preset(
+                    &self.db_path,
+                    &self.filter_state.tools,
+                    &self.filter_state.project_filter,
+                    &self.search_query,
+                ) {
+                    Ok(counts) => self.date_pill.emit(DatePillInput::CountsReceived(counts)),
+                    Err(err) => {
+                        tracing::warn!("Failed to count sessions for date presets: {err:#}")
+                    }
+                }
+            }
         }
     }
 
@@ -615,6 +663,10 @@ impl SimpleComponent for App {
         {
             widgets.search_bar.set_search_mode(self.search_visible);
         }
+
+        self.date_pill
+            .widget()
+            .set_visible(self.is_date_filter_visible());
     }
 
     fn shutdown(&mut self, widgets: &mut Self::Widgets, _output: relm4::Sender<Self::Output>) {
@@ -678,7 +730,8 @@ impl App {
 
     fn refresh_sidebar_projects(&mut self) -> bool {
         let tools = self.filter_state.tools.clone();
-        let sidebar_data = match load_sidebar_project_data(&self.db_path, &tools) {
+        let date_filter = self.selected_date_filter.clone();
+        let sidebar_data = match load_sidebar_project_data(&self.db_path, &tools, &date_filter) {
             Ok(data) => data,
             Err(err) => {
                 tracing::warn!("Failed to load sidebar project data: {err:#}");
@@ -1138,7 +1191,7 @@ mod tests {
     fn project_sidebar_refresh_data_returns_error_for_directory_path() {
         let db_path = std::env::temp_dir();
 
-        let result = load_sidebar_project_data(&db_path, AiAssistant::ALL);
+        let result = load_sidebar_project_data(&db_path, AiAssistant::ALL, &DateFilter::AnyTime);
 
         assert!(
             result.is_err(),

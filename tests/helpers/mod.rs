@@ -171,6 +171,68 @@ impl TempDatabase {
             )
             .expect("Failed to insert message for alpha claude session");
     }
+
+    #[allow(dead_code)]
+    pub fn insert_project(&self, id: i64, path: &str, name: &str) {
+        self.connection
+            .execute(
+                "INSERT INTO projects (id, path, name) VALUES (?1, ?2, ?3)",
+                rusqlite::params![id, path, name],
+            )
+            .expect("Failed to insert project");
+    }
+
+    #[allow(dead_code)]
+    pub fn insert_session(
+        &self,
+        id: &str,
+        tool: &str,
+        project_path: Option<&str>,
+        project_id: Option<i64>,
+        start_time: i64,
+        last_updated: i64,
+    ) {
+        self.connection
+            .execute(
+                "INSERT INTO sessions (id, tool, project_path, project_id, start_time, message_count, file_path, last_updated)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                rusqlite::params![
+                    id,
+                    tool,
+                    project_path,
+                    project_id,
+                    start_time,
+                    1_i64,
+                    format!("/tmp/{id}.jsonl"),
+                    last_updated,
+                ],
+            )
+            .expect("Failed to insert session");
+    }
+
+    #[allow(dead_code)]
+    pub fn insert_message(
+        &self,
+        session_id: &str,
+        message_index: i64,
+        content: &str,
+        timestamp: i64,
+    ) {
+        self.connection
+            .execute(
+                "INSERT INTO messages (session_id, message_index, role, content, timestamp, model)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                rusqlite::params![
+                    session_id,
+                    message_index,
+                    "user",
+                    content,
+                    timestamp,
+                    Option::<String>::None,
+                ],
+            )
+            .expect("Failed to insert message");
+    }
 }
 
 impl Drop for TempDatabase {
