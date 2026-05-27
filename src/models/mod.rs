@@ -1,4 +1,5 @@
 pub mod analytics;
+pub mod date_filter;
 pub mod indexing_diagnostics;
 pub mod message;
 pub mod message_preview;
@@ -11,6 +12,7 @@ pub mod tool_call;
 pub mod transcript_item;
 
 pub use analytics::{AnalyticsData, AnalyticsOverview};
+pub use date_filter::{DateCounts, DateFilter};
 pub use indexing_diagnostics::{IndexingError, IndexingRunResult, PerSourceResult, SourceStatus};
 pub use message::{Message, Role};
 pub use message_preview::MessagePreview;
