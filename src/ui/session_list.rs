@@ -28,6 +28,7 @@ pub struct SessionList {
     db_path: PathBuf,
     active_tools: Vec<AiAssistant>,
     project_filter: ProjectFilter,
+    date_filter: DateFilter,
     search_query: String,
     all_tools_selected: bool,
     indexing: bool,
@@ -47,6 +48,7 @@ pub enum SessionListMsg {
         project_filter: ProjectFilter,
     },
     SetSearchQuery(String),
+    DateFilterChanged(DateFilter),
     Reload,
     ReloadAfterIndexing {
         assistants: Vec<AiAssistant>,
@@ -532,7 +534,14 @@ impl SimpleComponent for SessionList {
         ];
         let search_query = String::new();
         let project_filter = ProjectFilter::AllSessions;
-        let fetched = Self::fetch_sessions(&db_path, &active_tools, &project_filter, &search_query);
+        let date_filter = DateFilter::AnyTime;
+        let fetched = Self::fetch_sessions(
+            &db_path,
+            &active_tools,
+            &project_filter,
+            &date_filter,
+            &search_query,
+        );
 
         let sessions: FactoryVecDeque<SessionRow> = FactoryVecDeque::builder()
             .launch_default()
@@ -547,6 +556,7 @@ impl SimpleComponent for SessionList {
             db_path,
             active_tools,
             project_filter,
+            date_filter,
             search_query,
             all_tools_selected: true,
             indexing: false,
@@ -626,6 +636,14 @@ impl SimpleComponent for SessionList {
                 }
 
                 self.search_query = query;
+                self.reload_sessions();
+            }
+            SessionListMsg::DateFilterChanged(date_filter) => {
+                if self.date_filter == date_filter {
+                    return;
+                }
+
+                self.date_filter = date_filter;
                 self.reload_sessions();
             }
             SessionListMsg::Reload => {
@@ -815,21 +833,16 @@ impl SessionList {
         db_path: &Path,
         tools: &[AiAssistant],
         project_filter: &ProjectFilter,
+        date_filter: &DateFilter,
         query: &str,
     ) -> Vec<Session> {
         let query = query.trim();
         let sessions = if query.is_empty() {
-            load_sessions_for_filter(db_path, tools, project_filter, &DateFilter::AnyTime)
+            load_sessions_for_filter(db_path, tools, project_filter, date_filter)
         } else if let Some(session_id) = parse_session_id_query(query) {
-            load_session_by_id_for_filter(
-                db_path,
-                tools,
-                project_filter,
-                session_id,
-                &DateFilter::AnyTime,
-            )
+            load_session_by_id_for_filter(db_path, tools, project_filter, session_id, date_filter)
         } else {
-            search_sessions_for_filter(db_path, tools, project_filter, query, &DateFilter::AnyTime)
+            search_sessions_for_filter(db_path, tools, project_filter, query, date_filter)
         };
 
         match sessions {
@@ -1182,6 +1195,7 @@ impl SessionList {
             &self.db_path,
             &self.active_tools,
             &self.project_filter,
+            &self.date_filter,
             &self.search_query,
         );
         let fetch_duration = fetch_started_at.elapsed();
@@ -1230,6 +1244,7 @@ impl SessionList {
             &self.db_path,
             &self.active_tools,
             &self.project_filter,
+            &self.date_filter,
             &self.search_query,
         );
 
@@ -1256,7 +1271,7 @@ impl SessionList {
 mod tests {
     use super::*;
     use crate::database::schema::initialize_database;
-    use crate::models::ProjectFilter;
+    use crate::models::{DateFilter, ProjectFilter};
     use gtk::glib::prelude::ObjectExt;
     use relm4::Component;
     use relm4::ComponentController;
@@ -2733,6 +2748,27 @@ mod tests {
                 .iter()
                 .any(|output| matches!(output, SessionListOutput::SessionSelected(_)))
         );
+    }
+
+    #[gtk::test]
+    fn date_filter_changed_reloads_visible_rows() {
+        let temp_db = TempDatabase::new();
+        temp_db.seed_project_sidebar_fixture();
+
+        let controller = SessionList::builder().launch(temp_db.path.clone());
+
+        controller.emit(SessionListMsg::DateFilterChanged(DateFilter::Custom {
+            from: chrono::NaiveDate::from_ymd_opt(2000, 1, 1).unwrap(),
+            to: chrono::NaiveDate::from_ymd_opt(2000, 1, 1).unwrap(),
+        }));
+
+        pump_main_context(|| {
+            let parts = controller.state().get();
+            parts.model.sessions.is_empty()
+        });
+
+        let parts = controller.state().get();
+        assert!(parts.model.sessions.is_empty());
     }
 
     fn make_test_session(id: &str) -> Session {

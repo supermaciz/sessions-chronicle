@@ -46,6 +46,16 @@ impl App {
         .search_ui_visible
     }
 
+    #[allow(dead_code)] // used by DatePill header placement in Task 4
+    pub(crate) fn is_date_filter_visible(&self) -> bool {
+        workspace_header_visibility(
+            self.active_workspace,
+            self.detail_visible,
+            self.parent_session.is_some(),
+        )
+        .date_filter_visible
+    }
+
     pub(crate) fn is_pane_controls_visible(&self) -> bool {
         workspace_header_visibility(
             self.active_workspace,

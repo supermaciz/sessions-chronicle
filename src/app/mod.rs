@@ -19,11 +19,11 @@ use std::{
 use crate::analytics_worker::AnalyticsWorker;
 use crate::config::{APP_ID, PROFILE};
 use crate::database::{
-    SessionIndexer, count_all_sessions, count_pinned_sessions, count_unassigned_sessions,
-    has_unassigned_sessions, load_projects,
+    SessionIndexer, count_all_sessions, count_pinned_sessions, count_sessions_per_date_preset,
+    count_unassigned_sessions, has_unassigned_sessions, load_projects,
 };
 use crate::indexing_worker::{IndexingWorker, IndexingWorkerInput};
-use crate::models::{ProjectFilter, ProjectInfo, session::AiAssistant};
+use crate::models::{DateFilter, ProjectFilter, ProjectInfo, session::AiAssistant};
 use crate::session_sources::{SessionSources, select_db_filename};
 use crate::ui::modals::{
     indexing_status::{IndexingStatusDialog, IndexingStatusMsg, IndexingStatusOutput},
@@ -142,6 +142,7 @@ pub(super) struct App {
     indexing: bool,
     pending_reindex_feedback: bool,
     active_workspace: Workspace,
+    selected_date_filter: DateFilter,
     banner: adw::Banner,
     banner_has_issues: bool,
 }
@@ -196,6 +197,10 @@ pub(super) enum AppMsg {
     AnalyticsRefreshRequested,
     AnalyticsLoaded(crate::models::AnalyticsData),
     AnalyticsLoadFailed(String),
+    #[allow(dead_code)] // wired by DatePill in Task 4
+    DateFilterChanged(DateFilter),
+    #[allow(dead_code)] // wired by DatePill in Task 4
+    DateCountsRequested,
 }
 
 relm4::new_action_group!(pub(super) WindowActionGroup, "win");
@@ -455,6 +460,7 @@ impl SimpleComponent for App {
             indexing: true,
             pending_reindex_feedback: false,
             active_workspace: Workspace::Sessions,
+            selected_date_filter: DateFilter::AnyTime,
             banner: adw::Banner::new(""),
             banner_has_issues: false,
         };
@@ -516,6 +522,10 @@ impl SimpleComponent for App {
             model.emit_session_list_filters();
         }
 
+        model.session_list.emit(SessionListMsg::DateFilterChanged(
+            model.selected_date_filter.clone(),
+        ));
+
         model.session_list.emit(SessionListMsg::SetIndexing(true));
         model
             .indexing_worker
@@ -547,6 +557,9 @@ impl SimpleComponent for App {
                 self.filter_state.project_filter = project_filter;
                 self.refresh_sidebar_projects();
                 self.emit_session_list_filters();
+                self.session_list.emit(SessionListMsg::DateFilterChanged(
+                    self.selected_date_filter.clone(),
+                ));
             }
             AppMsg::SessionSelected(id) => self.handle_session_selected(id),
             AppMsg::RequestNavigateBack => self.handle_request_navigate_back(),
@@ -601,6 +614,19 @@ impl SimpleComponent for App {
             }
             AppMsg::ReturnToParentSession => self.handle_return_to_parent_session(),
             AppMsg::Escape => self.handle_escape(&sender),
+            AppMsg::DateFilterChanged(date_filter) => {
+                self.selected_date_filter = date_filter.clone();
+                self.session_list
+                    .emit(SessionListMsg::DateFilterChanged(date_filter));
+            }
+            AppMsg::DateCountsRequested => {
+                let _counts = count_sessions_per_date_preset(
+                    &self.db_path,
+                    &self.filter_state.tools,
+                    &self.filter_state.project_filter,
+                    &self.search_query,
+                );
+            }
         }
     }
 

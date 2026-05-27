@@ -78,6 +78,7 @@ pub(super) fn workspace_header_visibility(
     if workspace.is_analytics() {
         WorkspaceHeaderVisibility {
             search_ui_visible: false,
+            date_filter_visible: false,
             pane_controls_visible: false,
             detail_actions_visible: false,
             indexing_progress_visible: true,
@@ -85,6 +86,7 @@ pub(super) fn workspace_header_visibility(
     } else {
         WorkspaceHeaderVisibility {
             search_ui_visible: true,
+            date_filter_visible: !detail_visible,
             pane_controls_visible: true,
             detail_actions_visible: detail_visible || parent_session_present,
             indexing_progress_visible: true,
@@ -297,5 +299,17 @@ mod tests {
         );
 
         assert!(target.is_none());
+    }
+
+    #[test]
+    fn workspace_header_visibility_shows_date_filter_only_on_sessions_list() {
+        let analytics = workspace_header_visibility(Workspace::Analytics, false, false);
+        assert!(!analytics.date_filter_visible);
+
+        let sessions_list = workspace_header_visibility(Workspace::Sessions, false, false);
+        assert!(sessions_list.date_filter_visible);
+
+        let sessions_detail = workspace_header_visibility(Workspace::Sessions, true, false);
+        assert!(!sessions_detail.date_filter_visible);
     }
 }
