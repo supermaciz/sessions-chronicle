@@ -639,12 +639,150 @@ fn count_sessions_for_context(
         return Ok(0);
     }
 
+    let db = open_connection(db_path)?;
+
     let query = query.trim();
     if query.is_empty() {
-        return Ok(load_sessions_for_filter(db_path, tools, project_filter, date_filter)?.len());
+        return count_sessions_without_query(&db, tools, project_filter, date_filter);
     }
 
-    Ok(search_sessions_for_filter(db_path, tools, project_filter, query, date_filter)?.len())
+    count_sessions_with_query(&db, tools, project_filter, query, date_filter)
+}
+
+fn count_sessions_without_query(
+    db: &Connection,
+    tools: &[AiAssistant],
+    project_filter: &ProjectFilter,
+    date_filter: &DateFilter,
+) -> Result<usize> {
+    let (date_clause, date_values) = date_filter_sql_clause(date_filter, "");
+    let project_clause = match project_filter {
+        ProjectFilter::AllSessions => String::new(),
+        ProjectFilter::Pinned => " AND pinned_at IS NOT NULL".to_string(),
+        ProjectFilter::Project(_) => " AND project_id = ?".to_string(),
+        ProjectFilter::Unassigned => " AND project_id IS NULL".to_string(),
+    };
+
+    let (query_sql, tool_strings): (String, Vec<String>) = if tools.len() == AiAssistant::ALL.len()
+    {
+        (
+            format!(
+                "SELECT COUNT(*)
+                 FROM sessions
+                 WHERE is_subagent = 0
+                     {}{}",
+                project_clause, date_clause
+            ),
+            vec![],
+        )
+    } else {
+        let placeholders: Vec<String> = tools.iter().map(|_| "?".to_string()).collect();
+        let tool_strings: Vec<String> = tools.iter().map(|t| t.to_storage()).collect::<Vec<_>>();
+        (
+            format!(
+                "SELECT COUNT(*)
+                 FROM sessions
+                 WHERE tool IN ({})
+                   AND is_subagent = 0
+                     {}{}",
+                placeholders.join(","),
+                project_clause,
+                date_clause
+            ),
+            tool_strings,
+        )
+    };
+
+    let mut stmt = db.prepare(&query_sql)?;
+    let mut params: Vec<&dyn ToSql> = Vec::with_capacity(3 + tool_strings.len());
+    for tool in &tool_strings {
+        params.push(tool as &dyn ToSql);
+    }
+    let project_id = match project_filter {
+        ProjectFilter::Project(id) => Some(*id),
+        _ => None,
+    };
+    if let Some(project_id) = project_id.as_ref() {
+        params.push(project_id as &dyn ToSql);
+    }
+    for value in &date_values {
+        params.push(value as &dyn ToSql);
+    }
+
+    let count: i64 = stmt.query_row(params.as_slice(), |row| row.get(0))?;
+    Ok(count.max(0) as usize)
+}
+
+fn count_sessions_with_query(
+    db: &Connection,
+    tools: &[AiAssistant],
+    project_filter: &ProjectFilter,
+    query: &str,
+    date_filter: &DateFilter,
+) -> Result<usize> {
+    let project_clause = match project_filter {
+        ProjectFilter::AllSessions => String::new(),
+        ProjectFilter::Pinned => " AND s.pinned_at IS NOT NULL".to_string(),
+        ProjectFilter::Project(_) => " AND s.project_id = ?".to_string(),
+        ProjectFilter::Unassigned => " AND s.project_id IS NULL".to_string(),
+    };
+    let (date_clause, date_values) = date_filter_sql_clause(date_filter, "s.");
+
+    let (query_sql, tool_strings): (String, Vec<String>) = if tools.len() == AiAssistant::ALL.len()
+    {
+        (
+            format!(
+                "SELECT COUNT(DISTINCT s.id)
+                 FROM messages_fts
+                 JOIN messages m ON m.id = messages_fts.rowid
+                 JOIN sessions s ON s.id = m.session_id
+                 WHERE messages_fts MATCH ?
+                   AND s.is_subagent = 0
+                     {}{}",
+                project_clause, date_clause
+            ),
+            vec![],
+        )
+    } else {
+        let placeholders: Vec<String> = tools.iter().map(|_| "?".to_string()).collect();
+        let tool_strings: Vec<String> = tools.iter().map(|t| t.to_storage()).collect::<Vec<_>>();
+        (
+            format!(
+                "SELECT COUNT(DISTINCT s.id)
+                 FROM messages_fts
+                 JOIN messages m ON m.id = messages_fts.rowid
+                 JOIN sessions s ON s.id = m.session_id
+                 WHERE messages_fts MATCH ?
+                   AND s.tool IN ({})
+                   AND s.is_subagent = 0
+                     {}{}",
+                placeholders.join(","),
+                project_clause,
+                date_clause
+            ),
+            tool_strings,
+        )
+    };
+
+    let mut stmt = db.prepare(&query_sql)?;
+    let mut params: Vec<&dyn ToSql> = Vec::with_capacity(4 + tool_strings.len());
+    params.push(&query);
+    for tool in &tool_strings {
+        params.push(tool as &dyn ToSql);
+    }
+    let project_id = match project_filter {
+        ProjectFilter::Project(id) => Some(*id),
+        _ => None,
+    };
+    if let Some(project_id) = project_id.as_ref() {
+        params.push(project_id as &dyn ToSql);
+    }
+    for value in &date_values {
+        params.push(value as &dyn ToSql);
+    }
+
+    let count: i64 = stmt.query_row(params.as_slice(), |row| row.get(0))?;
+    Ok(count.max(0) as usize)
 }
 
 pub fn load_projects(db_path: &Path, tools: &[AiAssistant]) -> Result<Vec<ProjectInfo>> {

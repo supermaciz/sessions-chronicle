@@ -234,6 +234,39 @@ fn count_sessions_per_date_preset_uses_same_filter_context() {
 }
 
 #[test]
+fn count_sessions_per_date_preset_query_counts_distinct_sessions() {
+    let db = TempDatabase::new("date-filter-counts-distinct");
+    seed_date_dataset(&db);
+
+    let local_today = Local::now().date_naive();
+    let today_midday_ts = Local
+        .from_local_datetime(
+            &local_today
+                .and_hms_opt(12, 0, 0)
+                .expect("midday local time should exist"),
+        )
+        .earliest()
+        .expect("local conversion for today")
+        .with_timezone(&Utc)
+        .timestamp();
+
+    db.insert_message("today-alpha", 1, "alpha repeated", today_midday_ts);
+
+    let counts = count_sessions_per_date_preset(
+        &db.path,
+        &[AiAssistant::ClaudeCode],
+        &ProjectFilter::Project(1),
+        "alpha",
+    )
+    .expect("date counts should succeed");
+
+    assert_eq!(counts.any_time, 5);
+    assert_eq!(counts.today, 2);
+    assert_eq!(counts.last_7_days, 3);
+    assert_eq!(counts.last_30_days, 5);
+}
+
+#[test]
 fn custom_date_bounds_include_both_ends() {
     let db = TempDatabase::new("date-filter-inclusive");
     let from = NaiveDate::from_ymd_opt(2025, 1, 10).unwrap();
