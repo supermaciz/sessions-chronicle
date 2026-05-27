@@ -28,6 +28,10 @@ doc. This spec covers the implementation contract.
 | Header placement | `pack_start` on the main `adw::HeaderBar`, after `search_toggle` |
 | Visibility | Sessions workspace **and** not in detail view |
 
+The two `GtkCalendar` widgets pick the `from` and `to` endpoints only;
+`DatePill` owns range validity, inclusive-bound semantics, and the Apply
+button state. GTK is not expected to provide native range selection.
+
 Open questions from the exploration that this spec **closes**: date source,
 counts, persistence, preset list, keyboard shortcut, range widget,
 architecture. The remaining open question from the exploration — header
@@ -76,8 +80,7 @@ Resolution rules:
   converted to UTC.
 - Same-day `Custom { from: d, to: d }` is allowed and means "that single day".
 
-Add `chrono` to `Cargo.toml` if not already present (currently used
-transitively — confirm before implementation).
+`chrono` is already a direct dependency in `Cargo.toml`.
 
 ## Component
 
@@ -106,7 +109,6 @@ pub enum DatePillInput {
     CustomToPicked(NaiveDate),
     CustomApplyClicked,
     CustomClearClicked,                   // resets draft inside the popover only
-    ClearFromPill,                        // ✕ on the pill → AnyTime, close popover
     OpenViaShortcut,                      // Ctrl+Shift+D
 }
 
@@ -126,9 +128,9 @@ pub enum DatePillOutput {
   `sensitive` only when both are set and `from ≤ to`.
 - **Apply** → `current = Custom { from, to }`, popover closes, emit
   `FilterChanged`.
-- **`✕` on the pill** (visible only when `is_active`) → `current = AnyTime`,
-  popover stays closed, emit `FilterChanged`. The pill collapses to a
-  calendar icon with no label.
+- **Clear date filter** → selecting *Any time* sets `current = AnyTime`,
+  closes the popover, and emits `FilterChanged`. `CustomClearClicked`
+  only clears the draft range inside the expanded custom pane.
 - **`Ctrl+Shift+D`** → popover opens, ListBox row corresponding to
   `current` gets focus.
 - **Popover open** → emit `CountsRequested`, App computes and sends back
@@ -138,14 +140,14 @@ pub enum DatePillOutput {
 
 ```
 [ 📅 ]                          // AnyTime — icon only
-[ 📅 Last 7 days   ✕ ]          // active preset
-[ 📅 Apr 5 – Apr 17  ✕ ]        // active custom
+[ 📅 Last 7 days ]              // active preset
+[ 📅 Apr 5 – Apr 17 ]           // active custom
 ```
 
 The pill is a `gtk::MenuButton` whose child is a horizontal `gtk::Box`
-containing the icon, an optional label, and an optional `✕` button. The
-`✕` is a separate inner `GtkButton` (not the menu button itself) so its
-click does not toggle the popover.
+containing the icon and an optional label. There is no nested clear button
+inside the `MenuButton`; clearing happens through the *Any time* row in the
+popover. This keeps the pill's event and accessibility semantics simple.
 
 ### Popover content
 
@@ -207,20 +209,26 @@ pub fn load_session_by_id_for_filter(
 Helper in `src/database/mod.rs`:
 
 ```rust
-fn date_filter_clause(date_filter: &DateFilter) -> (String, Vec<DateTime<Utc>>) {
+fn date_filter_clause(date_filter: &DateFilter) -> (String, Vec<i64>) {
     match date_filter.resolve(Utc::now()) {
         None => (String::new(), vec![]),
         Some((start, end)) => (
             " AND last_updated >= ? AND last_updated < ?".to_string(),
-            vec![start, end],
+            vec![start.timestamp(), end.timestamp()],
         ),
     }
 }
 ```
 
-The clause is concatenated after `project_clause`, before the FTS
-sub-query for search. Bindings are pushed in order
-`(tools…, project?, date_start?, date_end?, fts?)`.
+The clause is concatenated after `project_clause`.
+
+For non-search queries, bindings are pushed in SQL placeholder order:
+`(tools…, project?, date_start?, date_end?)`.
+
+For FTS search queries, keep the existing `messages_fts MATCH ?` placeholder
+first unless the SQL is deliberately rewritten. With the current query shape,
+bindings are pushed in this order:
+`(fts_query, tools…, project?, date_start?, date_end?)`.
 
 ### Counts
 
@@ -250,8 +258,13 @@ counts respect the current search context.
 ### Index
 
 `src/database/schema.rs` must ensure
-`CREATE INDEX IF NOT EXISTS idx_sessions_last_updated ON sessions(last_updated)`
-exists. If a similar index already exists for sorting, no change is needed.
+`last_updated` filtering is covered by the existing v12 session-list indexes
+before adding a new one. Current relevant indexes include
+`idx_sessions_top_level_last_updated` (`is_subagent, last_updated DESC`),
+`idx_sessions_project_last_updated` (`is_subagent, project_id, last_updated DESC`),
+and `idx_sessions_tool_last_updated` (`is_subagent, tool, last_updated DESC`).
+Add a dedicated `last_updated` index only if `EXPLAIN QUERY PLAN` shows a
+scan for the chosen list/count query shapes.
 
 ## Wiring
 
@@ -331,9 +344,11 @@ pack_start = model.date_pill.widget() {
 ### Keyboard shortcut
 
 Register an action `win.open-date-filter` with accelerator
-`<Primary><Shift>D`. The action's `enabled` state mirrors
-`is_date_filter_visible()` so the shortcut is inert in Analytics / detail.
-Activating it sends `DatePillInput::OpenViaShortcut`.
+`<Primary><Shift>D`. Activating it sends `DatePillInput::OpenViaShortcut`.
+The callback must guard on `is_date_filter_visible()` so the shortcut is
+inert in Analytics / detail. If the implementation chooses to disable the
+action instead, the action handle must be stored somewhere `App` can update
+when workspace/detail visibility changes.
 
 ## Composition with other filters
 
@@ -360,8 +375,6 @@ No OR, no multi-range. `DateFilter` stays a single-value enum.
 
 - Pill tooltip: `"Filter by date (Ctrl+Shift+D)"` when inactive, `"Date:
   <label>"` when active.
-- `✕` button has its own tooltip `"Clear date filter"` and an
-  `accessible_label`.
 - ListBox is keyboard-navigable (built-in). Enter activates a preset.
 - Focus chain after revealer expansion: the two `GtkCalendar` then the
   action buttons. This is the trickiest part of variant F per the
@@ -403,10 +416,9 @@ Modified:
 - `src/models/mod.rs` — export `DateFilter`, `DateCounts`
 - `src/ui/mod.rs` — export `DatePill`
 - `src/database/mod.rs` — extend three function signatures, add counts function and helper
-- `src/database/schema.rs` — ensure `last_updated` index
+- `src/database/schema.rs` — verify existing `last_updated` index coverage
 - `src/ui/session_list.rs` — accept `date_filter`, forward to DB calls
 - `src/app/mod.rs` — `DatePill` controller, state, view placement, action registration
 - `src/app/types.rs` — `date_filter_visible` field
 - `src/app/helpers.rs` — populate `date_filter_visible`
 - `src/app/handlers/analytics.rs` — add `is_date_filter_visible`
-- `Cargo.toml` — confirm `chrono` is a direct dependency
