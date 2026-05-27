@@ -40,7 +40,7 @@ A new **Date** section in the sidebar, sitting between **AI Assistants** and
 **Projects**, reusing the exact same `ListBox` row pattern (label + badge
 count).
 
-![Variant A — Sidebar preset list](<../mockups/date-filter/A _ Sidebar preset list.png>)
+![Variant A — Sidebar preset list](../mockups/date-filter/a-sidebar-preset-list.png)
 
 ### Behaviour
 
@@ -72,7 +72,7 @@ A pill button (*"📅 Apr 14 – Apr 21 ▾"*) lives in the header bar next to t
 search entry. Clicking it opens an `AdwCalendar`-style popover with a month
 grid, range selection, quick-preset chips, and Clear/Apply actions.
 
-![Variant B — Calendar popover](<../mockups/date-filter/B _ Header bar _ calendar popover.png>)
+![Variant B — Calendar popover](../mockups/date-filter/b-header-bar-calendar-popover.png)
 
 ### Behaviour
 
@@ -100,7 +100,7 @@ A mini activity bar chart sits between the header bar and the session list.
 Each bar is a day/week bucket of session count. Two blue handles delimit the
 selected range and drag to resize it.
 
-![Variant C — Brushable histogram](<../mockups/date-filter/C _ Brushable histogram strip.png>)
+![Variant C — Brushable histogram](../mockups/date-filter/c-brushable-histogram-strip.png)
 
 ### Behaviour
 
@@ -128,7 +128,7 @@ Replaces the right-side scrollbar with a **timeline rail**: a stack of
 years/months, each with a small sparkbar of activity. Tap a month to focus
 that month, shift-tap to extend into a range.
 
-![Variant D — Vertical timeline scrubber](<../mockups/date-filter/D _ Vertical timeline scrubber.png>)
+![Variant D — Vertical timeline scrubber](../mockups/date-filter/d-vertical-timeline-scrubber.png)
 
 ### Behaviour
 
@@ -157,7 +157,7 @@ A GitHub-style contribution-heatmap popover (week columns × 7 day rows)
 opened from a header-bar pill. Brushing across cells defines a range; clicking
 an empty cell scopes to a single day.
 
-![Variant E — Heatmap popover picker](<../mockups/date-filter/E _ Heatmap popover picker.png>)
+![Variant E — Heatmap popover picker](../mockups/date-filter/e-heatmap-popover-picker.png)
 
 ### Behaviour
 
@@ -185,7 +185,7 @@ calendar should not be loaded by default. The popover opens on a **preset
 list** (the 90% path), and the calendar only appears when the user picks
 *Custom range* — revealed inline by a `GtkRevealer`, not in a second surface.
 
-![Variant F — Date pill, progressive disclosure](<../mockups/date-filter/F _ Date pill progressive disclosure.svg>)
+![Variant F — Date pill, progressive disclosure](../mockups/date-filter/f-date-pill-progressive-disclosure.svg)
 
 ### Behaviour
 
