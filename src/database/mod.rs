@@ -708,6 +708,13 @@ fn preset_distinct_case_columns(
 
 fn read_counts_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<DateCounts> {
     // SUM(...) returns NULL when no rows match the WHERE clause.
+    //
+    // Column indices must match the projection order built by
+    // `preset_case_columns` / `preset_distinct_case_columns`:
+    //   0 = any_time (total), 1 = today, 2 = last_7_days,
+    //   3 = last_30_days, 4 = this_year.
+    // If a preset is added or reordered, update both this function
+    // and `DatePresetBounds::ordered()`.
     let read = |idx: usize| -> rusqlite::Result<usize> {
         Ok(row.get::<_, Option<i64>>(idx)?.unwrap_or(0).max(0) as usize)
     };
