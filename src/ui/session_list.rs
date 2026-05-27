@@ -18,7 +18,9 @@ use std::{
 use crate::database::{
     load_session_by_id_for_filter, load_sessions_for_filter, search_sessions_for_filter,
 };
-use crate::models::{AiAssistant, PerSourceResult, ProjectFilter, Session, SourceStatus};
+use crate::models::{
+    AiAssistant, DateFilter, PerSourceResult, ProjectFilter, Session, SourceStatus,
+};
 use crate::ui::session_row::{SessionRow, SessionRowInit, SessionRowOutput};
 
 #[derive(Debug)]
@@ -817,11 +819,17 @@ impl SessionList {
     ) -> Vec<Session> {
         let query = query.trim();
         let sessions = if query.is_empty() {
-            load_sessions_for_filter(db_path, tools, project_filter)
+            load_sessions_for_filter(db_path, tools, project_filter, &DateFilter::AnyTime)
         } else if let Some(session_id) = parse_session_id_query(query) {
-            load_session_by_id_for_filter(db_path, tools, project_filter, session_id)
+            load_session_by_id_for_filter(
+                db_path,
+                tools,
+                project_filter,
+                session_id,
+                &DateFilter::AnyTime,
+            )
         } else {
-            search_sessions_for_filter(db_path, tools, project_filter, query)
+            search_sessions_for_filter(db_path, tools, project_filter, query, &DateFilter::AnyTime)
         };
 
         match sessions {

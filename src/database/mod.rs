@@ -10,8 +10,9 @@ use std::path::Path;
 use std::time::Duration;
 
 use crate::models::{
-    AiAssistant, MessagePreview, ProjectFilter, ProjectInfo, ReasoningAttachment, ReasoningPreview,
-    Role, Session, Subagent, ToolCall, ToolCallStatus, TranscriptItem, TranscriptItemKind,
+    AiAssistant, DateCounts, DateFilter, MessagePreview, ProjectFilter, ProjectInfo,
+    ReasoningAttachment, ReasoningPreview, Role, Session, Subagent, ToolCall, ToolCallStatus,
+    TranscriptItem, TranscriptItemKind,
 };
 
 pub use indexer::{IndexingStats, SessionIndexer};
@@ -146,11 +147,23 @@ fn sanitize_search_query(raw: &str) -> Option<String> {
     }
 }
 
+fn date_filter_sql_clause(date_filter: &DateFilter, session_prefix: &str) -> (String, Vec<i64>) {
+    let Some((start, end)) = date_filter.resolve(Utc::now()) else {
+        return (String::new(), Vec::new());
+    };
+
+    (
+        format!(" AND {session_prefix}start_time >= ? AND {session_prefix}start_time < ?"),
+        vec![start.timestamp(), end.timestamp()],
+    )
+}
+
 pub fn search_sessions_for_filter(
     db_path: &Path,
     tools: &[AiAssistant],
     project_filter: &ProjectFilter,
     query: &str,
+    date_filter: &DateFilter,
 ) -> Result<Vec<Session>> {
     if !db_path.exists() {
         return Ok(Vec::new());
@@ -162,12 +175,12 @@ pub fn search_sessions_for_filter(
 
     let query = query.trim();
     if query.is_empty() {
-        return load_sessions_for_filter(db_path, tools, project_filter);
+        return load_sessions_for_filter(db_path, tools, project_filter, date_filter);
     }
 
     let db = open_connection(db_path)?;
 
-    match search_sessions_with_query(&db, tools, project_filter, query) {
+    match search_sessions_with_query(&db, tools, project_filter, query, date_filter) {
         Ok(sessions) => Ok(sessions),
         Err(err) => {
             let sanitized = sanitize_search_query(query);
@@ -177,7 +190,13 @@ pub fn search_sessions_for_filter(
                     sanitized,
                     err
                 );
-                match search_sessions_with_query(&db, tools, project_filter, &sanitized) {
+                match search_sessions_with_query(
+                    &db,
+                    tools,
+                    project_filter,
+                    &sanitized,
+                    date_filter,
+                ) {
                     Ok(sessions) => Ok(sessions),
                     Err(retry_err) => {
                         tracing::warn!(
@@ -201,6 +220,7 @@ pub fn load_session_by_id_for_filter(
     tools: &[AiAssistant],
     project_filter: &ProjectFilter,
     session_id: &str,
+    date_filter: &DateFilter,
 ) -> Result<Vec<Session>> {
     if !db_path.exists() {
         return Ok(Vec::new());
@@ -216,6 +236,7 @@ pub fn load_session_by_id_for_filter(
     }
 
     let db = open_connection(db_path)?;
+    let (date_clause, date_values) = date_filter_sql_clause(date_filter, "");
 
     let project_clause = match project_filter {
         ProjectFilter::AllSessions => String::new(),
@@ -231,9 +252,9 @@ pub fn load_session_by_id_for_filter(
                  FROM sessions
                  WHERE id = ?
                    AND is_subagent = 0
-                    {}
-                 ORDER BY last_updated DESC",
-                SESSION_SELECT_COLUMNS, project_clause
+                     {}{}
+                  ORDER BY last_updated DESC",
+                SESSION_SELECT_COLUMNS, project_clause, date_clause
             ),
             vec![],
         )
@@ -247,11 +268,12 @@ pub fn load_session_by_id_for_filter(
                  WHERE id = ?
                    AND tool IN ({})
                    AND is_subagent = 0
-                    {}
-                 ORDER BY last_updated DESC",
+                     {}{}
+                  ORDER BY last_updated DESC",
                 SESSION_SELECT_COLUMNS,
                 placeholders.join(","),
-                project_clause
+                project_clause,
+                date_clause
             ),
             tool_strings,
         )
@@ -259,7 +281,7 @@ pub fn load_session_by_id_for_filter(
 
     let mut stmt = db.prepare(&query)?;
 
-    let mut params: Vec<&dyn ToSql> = Vec::with_capacity(2 + tool_strings.len());
+    let mut params: Vec<&dyn ToSql> = Vec::with_capacity(4 + tool_strings.len());
     params.push(&session_id);
     for tool in &tool_strings {
         params.push(tool as &dyn ToSql);
@@ -270,6 +292,9 @@ pub fn load_session_by_id_for_filter(
     };
     if let Some(project_id) = project_id.as_ref() {
         params.push(project_id as &dyn ToSql);
+    }
+    for value in &date_values {
+        params.push(value as &dyn ToSql);
     }
 
     let sessions = stmt
@@ -385,6 +410,7 @@ fn search_sessions_with_query(
     tools: &[AiAssistant],
     project_filter: &ProjectFilter,
     query: &str,
+    date_filter: &DateFilter,
 ) -> Result<Vec<Session>> {
     let project_clause = match project_filter {
         ProjectFilter::AllSessions => String::new(),
@@ -392,6 +418,7 @@ fn search_sessions_with_query(
         ProjectFilter::Project(_) => " AND s.project_id = ?".to_string(),
         ProjectFilter::Unassigned => " AND s.project_id IS NULL".to_string(),
     };
+    let (date_clause, date_values) = date_filter_sql_clause(date_filter, "s.");
 
     let (query_sql, tool_strings): (String, Vec<String>) = if tools.len() == AiAssistant::ALL.len()
     {
@@ -408,9 +435,9 @@ fn search_sessions_with_query(
                  JOIN sessions s ON s.id = m.session_id
                  WHERE messages_fts MATCH ?
                    AND s.is_subagent = 0
-                    {}
-                 ORDER BY rank ASC, s.last_updated DESC",
-                project_clause
+                     {}{}
+                  ORDER BY rank ASC, s.last_updated DESC",
+                project_clause, date_clause
             ),
             vec![],
         )
@@ -431,17 +458,18 @@ fn search_sessions_with_query(
                  WHERE messages_fts MATCH ?
                    AND s.tool IN ({})
                    AND s.is_subagent = 0
-                    {}
-                 ORDER BY rank ASC, s.last_updated DESC",
+                     {}{}
+                  ORDER BY rank ASC, s.last_updated DESC",
                 placeholders.join(","),
-                project_clause
+                project_clause,
+                date_clause
             ),
             tool_strings,
         )
     };
 
     let mut stmt = db.prepare(&query_sql)?;
-    let mut params: Vec<&dyn ToSql> = Vec::with_capacity(2 + tool_strings.len());
+    let mut params: Vec<&dyn ToSql> = Vec::with_capacity(4 + tool_strings.len());
     params.push(&query);
     for tool in &tool_strings {
         params.push(tool as &dyn ToSql);
@@ -452,6 +480,9 @@ fn search_sessions_with_query(
     };
     if let Some(project_id) = project_id.as_ref() {
         params.push(project_id as &dyn ToSql);
+    }
+    for value in &date_values {
+        params.push(value as &dyn ToSql);
     }
 
     let mut rows = stmt
@@ -474,6 +505,7 @@ pub fn load_sessions_for_filter(
     db_path: &Path,
     tools: &[AiAssistant],
     project_filter: &ProjectFilter,
+    date_filter: &DateFilter,
 ) -> Result<Vec<Session>> {
     if !db_path.exists() {
         return Ok(Vec::new());
@@ -484,6 +516,7 @@ pub fn load_sessions_for_filter(
     }
 
     let db = open_connection(db_path)?;
+    let (date_clause, date_values) = date_filter_sql_clause(date_filter, "");
 
     let project_clause = match project_filter {
         ProjectFilter::AllSessions => String::new(),
@@ -498,9 +531,9 @@ pub fn load_sessions_for_filter(
                 "SELECT {}
                  FROM sessions
                  WHERE is_subagent = 0
-                    {}
-                 ORDER BY last_updated DESC",
-                SESSION_SELECT_COLUMNS, project_clause
+                     {}{}
+                  ORDER BY last_updated DESC",
+                SESSION_SELECT_COLUMNS, project_clause, date_clause
             ),
             vec![],
         )
@@ -513,11 +546,12 @@ pub fn load_sessions_for_filter(
                  FROM sessions
                  WHERE tool IN ({})
                    AND is_subagent = 0
-                    {}
-                 ORDER BY last_updated DESC",
+                     {}{}
+                  ORDER BY last_updated DESC",
                 SESSION_SELECT_COLUMNS,
                 placeholders.join(","),
-                project_clause
+                project_clause,
+                date_clause
             ),
             tool_strings,
         )
@@ -525,7 +559,7 @@ pub fn load_sessions_for_filter(
 
     let mut stmt = db.prepare(&query)?;
 
-    let mut params: Vec<&dyn ToSql> = Vec::with_capacity(1 + tool_strings.len());
+    let mut params: Vec<&dyn ToSql> = Vec::with_capacity(3 + tool_strings.len());
     for tool in &tool_strings {
         params.push(tool as &dyn ToSql);
     }
@@ -536,6 +570,9 @@ pub fn load_sessions_for_filter(
     if let Some(project_id) = project_id.as_ref() {
         params.push(project_id as &dyn ToSql);
     }
+    for value in &date_values {
+        params.push(value as &dyn ToSql);
+    }
 
     let sessions = stmt
         .query_map(params.as_slice(), session_from_row)
@@ -544,6 +581,70 @@ pub fn load_sessions_for_filter(
         .context("Failed to load sessions")?;
 
     Ok(sessions)
+}
+
+pub fn count_sessions_per_date_preset(
+    db_path: &Path,
+    tools: &[AiAssistant],
+    project_filter: &ProjectFilter,
+    query: &str,
+) -> Result<DateCounts> {
+    Ok(DateCounts {
+        any_time: count_sessions_for_context(
+            db_path,
+            tools,
+            project_filter,
+            query,
+            &DateFilter::AnyTime,
+        )?,
+        today: count_sessions_for_context(
+            db_path,
+            tools,
+            project_filter,
+            query,
+            &DateFilter::Today,
+        )?,
+        last_7_days: count_sessions_for_context(
+            db_path,
+            tools,
+            project_filter,
+            query,
+            &DateFilter::Last7Days,
+        )?,
+        last_30_days: count_sessions_for_context(
+            db_path,
+            tools,
+            project_filter,
+            query,
+            &DateFilter::Last30Days,
+        )?,
+        this_year: count_sessions_for_context(
+            db_path,
+            tools,
+            project_filter,
+            query,
+            &DateFilter::ThisYear,
+        )?,
+    })
+}
+
+fn count_sessions_for_context(
+    db_path: &Path,
+    tools: &[AiAssistant],
+    project_filter: &ProjectFilter,
+    query: &str,
+    date_filter: &DateFilter,
+) -> Result<usize> {
+    if !db_path.exists() || tools.is_empty() {
+        return Ok(0);
+    }
+
+    let query = query.trim();
+    if query.is_empty() {
+        return Ok(load_sessions_for_filter(db_path, tools, project_filter, date_filter)?.len());
+    }
+
+    Ok(search_sessions_for_filter(db_path, tools, project_filter, query, date_filter)?.len())
 }
 
 pub fn load_projects(db_path: &Path, tools: &[AiAssistant]) -> Result<Vec<ProjectInfo>> {

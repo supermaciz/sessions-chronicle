@@ -4,7 +4,7 @@ use helpers::TempDatabase;
 use sessions_chronicle::database::{
     count_pinned_sessions, load_sessions_for_filter, search_sessions_for_filter, toggle_pin,
 };
-use sessions_chronicle::models::{AiAssistant, ProjectFilter};
+use sessions_chronicle::models::{AiAssistant, DateFilter, ProjectFilter};
 
 fn insert_session(db: &TempDatabase, id: &str, tool: &str, pinned_at: Option<i64>) {
     db.connection
@@ -58,8 +58,13 @@ fn load_sessions_for_filter_uses_pinned_project_filter() {
     insert_session(&db, "b", "claude_code", None);
     insert_session(&db, "c", "opencode", None);
 
-    let pinned =
-        load_sessions_for_filter(&db.path, AiAssistant::ALL, &ProjectFilter::Pinned).unwrap();
+    let pinned = load_sessions_for_filter(
+        &db.path,
+        AiAssistant::ALL,
+        &ProjectFilter::Pinned,
+        &DateFilter::AnyTime,
+    )
+    .unwrap();
 
     assert_eq!(
         pinned
@@ -91,9 +96,14 @@ fn search_sessions_for_filter_uses_pinned_project_filter() {
         )
         .unwrap();
 
-    let sessions =
-        search_sessions_for_filter(&db.path, AiAssistant::ALL, &ProjectFilter::Pinned, "needle")
-            .unwrap();
+    let sessions = search_sessions_for_filter(
+        &db.path,
+        AiAssistant::ALL,
+        &ProjectFilter::Pinned,
+        "needle",
+        &DateFilter::AnyTime,
+    )
+    .unwrap();
 
     let pinned_ids: Vec<String> = sessions.into_iter().map(|session| session.id).collect();
     assert_eq!(pinned_ids, vec!["a"]);
@@ -168,8 +178,13 @@ fn pinned_filter_returns_sessions_across_all_projects() {
         )
         .unwrap();
 
-    let sessions =
-        load_sessions_for_filter(&db.path, AiAssistant::ALL, &ProjectFilter::Pinned).unwrap();
+    let sessions = load_sessions_for_filter(
+        &db.path,
+        AiAssistant::ALL,
+        &ProjectFilter::Pinned,
+        &DateFilter::AnyTime,
+    )
+    .unwrap();
 
     let ids: Vec<&str> = sessions.iter().map(|session| session.id.as_str()).collect();
     assert_eq!(ids, vec!["beta-pin", "alpha-pin"]);

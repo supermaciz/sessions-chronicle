@@ -5,7 +5,7 @@ use sessions_chronicle::database::{
     count_all_sessions, count_unassigned_sessions, has_unassigned_sessions, load_projects,
     load_sessions_for_filter, search_sessions_for_filter,
 };
-use sessions_chronicle::models::{AiAssistant, ProjectFilter};
+use sessions_chronicle::models::{AiAssistant, DateFilter, ProjectFilter};
 
 impl TempDatabase {
     /// Seed the broader multi-project fixture used by count and ordering tests.
@@ -212,6 +212,7 @@ fn load_sessions_for_filter_returns_project_and_tool_intersection() {
         &db.path,
         &[AiAssistant::ClaudeCode],
         &ProjectFilter::Project(1),
+        &DateFilter::AnyTime,
     )
     .expect("load sessions");
 
@@ -229,6 +230,7 @@ fn search_sessions_for_filter_returns_only_unassigned_matches() {
         &[AiAssistant::ClaudeCode],
         &ProjectFilter::Unassigned,
         "lonely",
+        &DateFilter::AnyTime,
     )
     .expect("search sessions");
 

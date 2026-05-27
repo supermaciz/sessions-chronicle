@@ -4,7 +4,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use sessions_chronicle::database::SessionIndexer;
 use sessions_chronicle::database::search_sessions_for_filter;
-use sessions_chronicle::models::{AiAssistant, ProjectFilter};
+use sessions_chronicle::models::{AiAssistant, DateFilter, ProjectFilter};
 
 struct TempDatabase {
     path: PathBuf,
@@ -57,6 +57,7 @@ fn opencode_search_finds_text_part_content() {
         &[AiAssistant::OpenCode],
         &ProjectFilter::AllSessions,
         "I can help you with that task",
+        &DateFilter::AnyTime,
     )
     .expect("Search failed");
 
@@ -97,6 +98,7 @@ fn opencode_search_excludes_tool_output() {
         &[AiAssistant::OpenCode],
         &ProjectFilter::AllSessions,
         "total",
+        &DateFilter::AnyTime,
     )
     .expect("Search failed");
 
@@ -122,6 +124,7 @@ fn opencode_search_respects_tool_filter() {
         &[AiAssistant::ClaudeCode],
         &ProjectFilter::AllSessions,
         "Hello OpenCode",
+        &DateFilter::AnyTime,
     )
     .expect("Search failed");
 
@@ -148,6 +151,7 @@ fn opencode_dual_read_sqlite_only_session_is_searchable() {
         &[AiAssistant::OpenCode],
         &ProjectFilter::AllSessions,
         "This session only exists in SQLite",
+        &DateFilter::AnyTime,
     )
     .expect("Search failed");
 

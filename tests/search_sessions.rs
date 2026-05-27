@@ -6,7 +6,7 @@ use sessions_chronicle::database::schema::initialize_database;
 use sessions_chronicle::database::{
     find_session_match_positions, load_session_by_id_for_filter, search_sessions_for_filter,
 };
-use sessions_chronicle::models::{AiAssistant, ProjectFilter};
+use sessions_chronicle::models::{AiAssistant, DateFilter, ProjectFilter};
 
 struct TempDatabase {
     path: PathBuf,
@@ -209,6 +209,7 @@ fn search_sessions_orders_by_relevance() {
         &[AiAssistant::ClaudeCode, AiAssistant::OpenCode],
         &ProjectFilter::AllSessions,
         "alpha",
+        &DateFilter::AnyTime,
     )
     .expect("Search failed");
     let ids: Vec<&str> = sessions.iter().map(|session| session.id.as_str()).collect();
@@ -227,6 +228,7 @@ fn search_sessions_respects_tool_filter() {
         &[AiAssistant::OpenCode],
         &ProjectFilter::AllSessions,
         "alpha",
+        &DateFilter::AnyTime,
     )
     .expect("Search failed");
 
@@ -245,6 +247,7 @@ fn search_sessions_sanitizes_invalid_query() {
         &[AiAssistant::ClaudeCode],
         &ProjectFilter::AllSessions,
         "\"alpha",
+        &DateFilter::AnyTime,
     )
     .expect("Search failed");
 
@@ -263,6 +266,7 @@ fn load_session_by_id_for_filter_matches_exact_id() {
         &AiAssistant::ALL,
         &ProjectFilter::AllSessions,
         "session-b",
+        &DateFilter::AnyTime,
     )
     .expect("Session ID lookup failed");
     let ids: Vec<&str> = sessions.iter().map(|session| session.id.as_str()).collect();
@@ -280,6 +284,7 @@ fn load_session_by_id_for_filter_requires_exact_id() {
         &AiAssistant::ALL,
         &ProjectFilter::AllSessions,
         "session",
+        &DateFilter::AnyTime,
     )
     .expect("Session ID lookup failed");
 
@@ -296,6 +301,7 @@ fn load_session_by_id_for_filter_respects_tool_filter() {
         &[AiAssistant::OpenCode],
         &ProjectFilter::AllSessions,
         "session-b",
+        &DateFilter::AnyTime,
     )
     .expect("Session ID lookup with matching tool failed");
     let blocked = load_session_by_id_for_filter(
@@ -303,6 +309,7 @@ fn load_session_by_id_for_filter_respects_tool_filter() {
         &[AiAssistant::ClaudeCode],
         &ProjectFilter::AllSessions,
         "session-b",
+        &DateFilter::AnyTime,
     )
     .expect("Session ID lookup with blocked tool failed");
 
@@ -321,6 +328,7 @@ fn load_session_by_id_for_filter_respects_project_filter() {
         &AiAssistant::ALL,
         &ProjectFilter::Project(2),
         "session-b",
+        &DateFilter::AnyTime,
     )
     .expect("Session ID lookup with matching project failed");
     let blocked = load_session_by_id_for_filter(
@@ -328,6 +336,7 @@ fn load_session_by_id_for_filter_respects_project_filter() {
         &AiAssistant::ALL,
         &ProjectFilter::Project(1),
         "session-b",
+        &DateFilter::AnyTime,
     )
     .expect("Session ID lookup with blocked project failed");
 
@@ -352,6 +361,7 @@ fn load_session_by_id_for_filter_respects_pinned_filter() {
         &AiAssistant::ALL,
         &ProjectFilter::Pinned,
         "session-b",
+        &DateFilter::AnyTime,
     )
     .expect("Pinned session ID lookup failed");
     let blocked = load_session_by_id_for_filter(
@@ -359,6 +369,7 @@ fn load_session_by_id_for_filter_respects_pinned_filter() {
         &AiAssistant::ALL,
         &ProjectFilter::Pinned,
         "session-a",
+        &DateFilter::AnyTime,
     )
     .expect("Unpinned session ID lookup failed");
 
@@ -377,6 +388,7 @@ fn load_session_by_id_for_filter_returns_empty_for_unknown_id() {
         &AiAssistant::ALL,
         &ProjectFilter::AllSessions,
         "missing-session",
+        &DateFilter::AnyTime,
     )
     .expect("Unknown session ID lookup failed");
 
