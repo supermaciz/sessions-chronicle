@@ -253,7 +253,7 @@ impl SimpleComponent for DatePill {
             }
             DatePillInput::CustomRangeRowSelected => {
                 self.custom_revealed = true;
-                self.select_current_row();
+                self.select_custom_row();
             }
             DatePillInput::CustomFromPicked(date) => {
                 self.custom_revealed = true;
@@ -303,10 +303,15 @@ impl DatePill {
     }
 
     fn select_current_row(&self) {
-        let Some(row) = self
-            .listbox
-            .row_at_index(current_row_index(&self.current_filter))
-        else {
+        self.select_row(current_row_index(&self.current_filter));
+    }
+
+    fn select_custom_row(&self) {
+        self.select_row(5);
+    }
+
+    fn select_row(&self, row_index: i32) {
+        let Some(row) = self.listbox.row_at_index(row_index) else {
             return;
         };
 
@@ -459,6 +464,22 @@ mod tests {
         None
     }
 
+    fn find_revealer(widget: &gtk::Widget) -> Option<gtk::Revealer> {
+        if let Ok(revealer) = widget.clone().downcast::<gtk::Revealer>() {
+            return Some(revealer);
+        }
+
+        let mut child = widget.first_child();
+        while let Some(child_widget) = child {
+            if let Some(found) = find_revealer(&child_widget) {
+                return Some(found);
+            }
+            child = child_widget.next_sibling();
+        }
+
+        None
+    }
+
     #[test]
     fn valid_custom_filter_requires_both_dates_in_order() {
         let from = NaiveDate::from_ymd_opt(2026, 5, 1).unwrap();
@@ -517,5 +538,29 @@ mod tests {
 
         let selected_row = list_box.selected_row().expect("selected preset row");
         assert_eq!(selected_row.index(), 3);
+    }
+
+    #[gtk::test]
+    fn custom_range_activation_keeps_custom_row_selected() {
+        let controller = DatePill::builder().launch(());
+
+        let window = gtk::Window::new();
+        window.set_child(Some(controller.widget()));
+        window.present();
+
+        let root = controller.widget().clone().upcast::<gtk::Widget>();
+        let list_box = find_list_box(&root).expect("date pill preset list");
+        let revealer = find_revealer(&root).expect("custom range revealer");
+
+        controller.emit(DatePillInput::PresetSelected(DateFilter::Last30Days));
+        controller.emit(DatePillInput::CustomRangeRowSelected);
+
+        pump_main_context(|| {
+            list_box.selected_row().map(|row| row.index()) == Some(5) && revealer.reveals_child()
+        });
+
+        let selected_row = list_box.selected_row().expect("selected custom row");
+        assert_eq!(selected_row.index(), 5);
+        assert!(revealer.reveals_child());
     }
 }
