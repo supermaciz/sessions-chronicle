@@ -12,6 +12,7 @@ pub mod tool_call;
 pub mod transcript_item;
 
 pub use analytics::{AnalyticsData, AnalyticsOverview};
+#[allow(unused_imports)]
 pub use date_filter::{DateCounts, DateFilter};
 pub use indexing_diagnostics::{IndexingError, IndexingRunResult, PerSourceResult, SourceStatus};
 pub use message::{Message, Role};
