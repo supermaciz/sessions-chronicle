@@ -43,7 +43,13 @@ impl DateFilter {
                 NaiveDate::from_ymd_opt(today.year(), 1, 1)?,
                 NaiveDate::from_ymd_opt(today.year() + 1, 1, 1)?,
             ),
-            Self::Custom { from, to } => (*from, to.checked_add_days(Days::new(1))?),
+            Self::Custom { from, to } => {
+                if from > to {
+                    return None;
+                }
+
+                (*from, to.checked_add_days(Days::new(1))?)
+            }
         };
 
         let start = local_midnight(start_date)?;
@@ -103,20 +109,36 @@ mod tests {
     fn today_resolves_to_local_day_window() {
         let now = utc(2026, 5, 27, 12, 34, 56);
         let (start, end) = DateFilter::Today.resolve(now).unwrap();
+        let local_today = now.with_timezone(&chrono::Local).date_naive();
 
         assert!(start <= now);
         assert!(end > now);
-        assert_eq!((end - start).num_hours(), 24);
+        assert_eq!(
+            start.with_timezone(&chrono::Local).date_naive(),
+            local_today
+        );
+        assert_eq!(
+            end.with_timezone(&chrono::Local).date_naive(),
+            local_today.checked_add_days(Days::new(1)).unwrap()
+        );
     }
 
     #[test]
     fn last_7_days_includes_today_and_six_prior_days() {
         let now = utc(2026, 5, 27, 12, 0, 0);
         let (start, end) = DateFilter::Last7Days.resolve(now).unwrap();
+        let local_today = now.with_timezone(&chrono::Local).date_naive();
 
         assert!(start <= now);
         assert!(end > now);
-        assert_eq!((end - start).num_days(), 7);
+        assert_eq!(
+            start.with_timezone(&chrono::Local).date_naive(),
+            local_today.checked_sub_days(Days::new(6)).unwrap()
+        );
+        assert_eq!(
+            end.with_timezone(&chrono::Local).date_naive(),
+            local_today.checked_add_days(Days::new(1)).unwrap()
+        );
         assert_eq!(DateFilter::Last7Days.pill_label(), "Last 7 days");
     }
 
@@ -124,10 +146,18 @@ mod tests {
     fn last_30_days_includes_today_and_twenty_nine_prior_days() {
         let now = utc(2026, 5, 27, 12, 0, 0);
         let (start, end) = DateFilter::Last30Days.resolve(now).unwrap();
+        let local_today = now.with_timezone(&chrono::Local).date_naive();
 
         assert!(start <= now);
         assert!(end > now);
-        assert_eq!((end - start).num_days(), 30);
+        assert_eq!(
+            start.with_timezone(&chrono::Local).date_naive(),
+            local_today.checked_sub_days(Days::new(29)).unwrap()
+        );
+        assert_eq!(
+            end.with_timezone(&chrono::Local).date_naive(),
+            local_today.checked_add_days(Days::new(1)).unwrap()
+        );
         assert_eq!(DateFilter::Last30Days.pill_label(), "Last 30 days");
     }
 
@@ -172,17 +202,29 @@ mod tests {
             to: date,
         };
 
-        assert_eq!(filter.pill_label(), "Apr 5");
+        assert_eq!(filter.pill_label(), format_date(date));
         assert!(filter.is_active());
     }
 
     #[test]
     fn custom_range_label_uses_short_month_day_range() {
+        let from = NaiveDate::from_ymd_opt(2026, 4, 5).unwrap();
+        let to = NaiveDate::from_ymd_opt(2026, 4, 17).unwrap();
+        let filter = DateFilter::Custom { from, to };
+
+        assert_eq!(
+            filter.pill_label(),
+            format!("{} - {}", format_date(from), format_date(to))
+        );
+    }
+
+    #[test]
+    fn custom_range_with_from_after_to_resolves_to_none() {
         let filter = DateFilter::Custom {
-            from: NaiveDate::from_ymd_opt(2026, 4, 5).unwrap(),
-            to: NaiveDate::from_ymd_opt(2026, 4, 17).unwrap(),
+            from: NaiveDate::from_ymd_opt(2026, 4, 17).unwrap(),
+            to: NaiveDate::from_ymd_opt(2026, 4, 5).unwrap(),
         };
 
-        assert_eq!(filter.pill_label(), "Apr 5 - Apr 17");
+        assert_eq!(filter.resolve(utc(2026, 4, 17, 12, 0, 0)), None);
     }
 }
