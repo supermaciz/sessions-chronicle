@@ -1,6 +1,7 @@
 pub mod activity_bar;
 pub mod analytics_heatmap;
 pub mod analytics_view;
+pub mod date_pill;
 pub mod format;
 pub mod highlight;
 pub mod markdown;

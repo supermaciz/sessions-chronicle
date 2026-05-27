@@ -25,6 +25,7 @@ use crate::database::{
 use crate::indexing_worker::{IndexingWorker, IndexingWorkerInput};
 use crate::models::{DateFilter, ProjectFilter, ProjectInfo, session::AiAssistant};
 use crate::session_sources::{SessionSources, select_db_filename};
+use crate::ui::date_pill::{DatePill, DatePillInput};
 use crate::ui::modals::{
     indexing_status::{IndexingStatusDialog, IndexingStatusMsg, IndexingStatusOutput},
     preferences::PreferencesDialog,
@@ -123,6 +124,7 @@ pub(super) struct App {
     session_list: Controller<SessionList>,
     analytics_view: Controller<AnalyticsView>,
     session_detail: Controller<SessionDetail>,
+    date_pill: Controller<DatePill>,
     #[allow(dead_code)] // Controller must stay alive to keep the widget
     sidebar: Controller<Sidebar>,
     preferences_dialog: Controller<PreferencesDialog>,
@@ -183,6 +185,7 @@ pub(super) enum AppMsg {
     ReturnToParentSession,
     /// Esc key: close search → close inspector → navigate back.
     Escape,
+    OpenDateFilterShortcut,
     ShowPreferences,
     ShowIndexingStatus,
     ReindexRequested,
@@ -197,9 +200,7 @@ pub(super) enum AppMsg {
     AnalyticsRefreshRequested,
     AnalyticsLoaded(crate::models::AnalyticsData),
     AnalyticsLoadFailed(String),
-    #[allow(dead_code)] // wired by DatePill in Task 4
     DateFilterChanged(DateFilter),
-    #[allow(dead_code)] // wired by DatePill in Task 4
     DateCountsRequested,
 }
 
@@ -214,6 +215,7 @@ relm4::new_stateless_action!(ToggleInspectorAction, WindowActionGroup, "toggle-i
 // F9 dispatcher — toggles filters in list view, inspector in detail view.
 relm4::new_stateless_action!(ToggleSidePaneAction, WindowActionGroup, "toggle-side-pane");
 relm4::new_stateless_action!(TogglePinAction, WindowActionGroup, "toggle-pin");
+relm4::new_stateless_action!(OpenDateFilterAction, WindowActionGroup, "open-date-filter");
 relm4::new_stateless_action!(ShowSearchAction, WindowActionGroup, "show-search");
 relm4::new_stateless_action!(EscapeAction, WindowActionGroup, "escape");
 
@@ -442,6 +444,7 @@ impl SimpleComponent for App {
             session_list: components.session_list,
             analytics_view: components.analytics_view,
             session_detail: components.session_detail,
+            date_pill: components.date_pill,
             sidebar: components.sidebar,
             preferences_dialog: components.preferences_dialog,
             indexing_worker: components.indexing_worker,
@@ -467,6 +470,12 @@ impl SimpleComponent for App {
 
         // view_output!() must stay in the SimpleComponent impl (Relm4 macro requirement)
         let widgets = view_output!();
+
+        widgets.header_bar.pack_start(model.date_pill.widget());
+        model
+            .date_pill
+            .widget()
+            .set_visible(model.is_date_filter_visible());
 
         // Get the actual ToastOverlay from the root window's content
         if let Some(toast_overlay) = root
@@ -614,18 +623,30 @@ impl SimpleComponent for App {
             }
             AppMsg::ReturnToParentSession => self.handle_return_to_parent_session(),
             AppMsg::Escape => self.handle_escape(&sender),
+            AppMsg::OpenDateFilterShortcut => {
+                if self.is_date_filter_visible() {
+                    self.date_pill.emit(DatePillInput::OpenViaShortcut);
+                }
+            }
             AppMsg::DateFilterChanged(date_filter) => {
                 self.selected_date_filter = date_filter.clone();
+                self.date_pill
+                    .emit(DatePillInput::SetFilter(date_filter.clone()));
                 self.session_list
                     .emit(SessionListMsg::DateFilterChanged(date_filter));
             }
             AppMsg::DateCountsRequested => {
-                let _counts = count_sessions_per_date_preset(
+                match count_sessions_per_date_preset(
                     &self.db_path,
                     &self.filter_state.tools,
                     &self.filter_state.project_filter,
                     &self.search_query,
-                );
+                ) {
+                    Ok(counts) => self.date_pill.emit(DatePillInput::CountsReceived(counts)),
+                    Err(err) => {
+                        tracing::warn!("Failed to count sessions for date presets: {err:#}")
+                    }
+                }
             }
         }
     }
@@ -641,6 +662,10 @@ impl SimpleComponent for App {
         {
             widgets.search_bar.set_search_mode(self.search_visible);
         }
+
+        self.date_pill
+            .widget()
+            .set_visible(self.is_date_filter_visible());
     }
 
     fn shutdown(&mut self, widgets: &mut Self::Widgets, _output: relm4::Sender<Self::Output>) {

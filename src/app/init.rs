@@ -19,6 +19,7 @@ use crate::ui::modals::{
 };
 use crate::ui::{
     analytics_view::{AnalyticsView, AnalyticsViewOutput},
+    date_pill::{DatePill, DatePillOutput},
     session_detail::{SessionDetail, SessionDetailOutput},
     session_list::{SessionList, SessionListMsg, SessionListOutput},
     sidebar::{Sidebar, SidebarOutput},
@@ -27,9 +28,9 @@ use crate::ui::{
 use super::helpers::workspace_allows_search;
 use super::types::Workspace;
 use super::{
-    AboutAction, App, AppMsg, EscapeAction, IndexingStatusAction, PreferencesAction, QuitAction,
-    ShortcutsAction, ShowSearchAction, ToggleFiltersAction, ToggleInspectorAction, TogglePinAction,
-    ToggleSidePaneAction, WindowActionGroup,
+    AboutAction, App, AppMsg, EscapeAction, IndexingStatusAction, OpenDateFilterAction,
+    PreferencesAction, QuitAction, ShortcutsAction, ShowSearchAction, ToggleFiltersAction,
+    ToggleInspectorAction, TogglePinAction, ToggleSidePaneAction, WindowActionGroup,
 };
 
 /// Holds all child controllers and workers created during init.
@@ -37,6 +38,7 @@ pub(super) struct ChildComponents {
     pub(super) session_list: Controller<SessionList>,
     pub(super) analytics_view: Controller<AnalyticsView>,
     pub(super) session_detail: Controller<SessionDetail>,
+    pub(super) date_pill: Controller<DatePill>,
     pub(super) sidebar: Controller<Sidebar>,
     pub(super) preferences_dialog: Controller<PreferencesDialog>,
     pub(super) indexing_worker: WorkerController<IndexingWorker>,
@@ -74,6 +76,12 @@ pub(super) fn init_child_components(
                 AppMsg::InspectorVisibilityChanged(visible)
             }
             SessionDetailOutput::OpenChildSession(id) => AppMsg::OpenChildSession(id),
+        });
+    let date_pill = DatePill::builder()
+        .launch(crate::models::DateFilter::AnyTime)
+        .forward(sender.input_sender(), |output| match output {
+            DatePillOutput::FilterChanged(filter) => AppMsg::DateFilterChanged(filter),
+            DatePillOutput::CountsRequested => AppMsg::DateCountsRequested,
         });
     let sidebar =
         Sidebar::builder()
@@ -125,6 +133,7 @@ pub(super) fn init_child_components(
         session_list,
         analytics_view,
         session_detail,
+        date_pill,
         sidebar,
         preferences_dialog,
         indexing_worker,
@@ -445,6 +454,13 @@ pub(super) fn register_actions(
         })
     };
 
+    let open_date_filter_action = {
+        let sender = sender.clone();
+        RelmAction::<OpenDateFilterAction>::new_stateless(move |_| {
+            sender.input(AppMsg::OpenDateFilterShortcut);
+        })
+    };
+
     let quit_action = {
         let sender = sender.clone();
         RelmAction::<QuitAction>::new_stateless(move |_| {
@@ -468,6 +484,7 @@ pub(super) fn register_actions(
     app.set_accelerators_for_action::<QuitAction>(&["<Control>q"]);
     app.set_accelerators_for_action::<ToggleSidePaneAction>(&["F9"]);
     app.set_accelerators_for_action::<TogglePinAction>(&["<Control>d"]);
+    app.set_accelerators_for_action::<OpenDateFilterAction>(&["<Control><Shift>d"]);
     app.set_accelerators_for_action::<ShowSearchAction>(&["<Control>f"]);
     app.set_accelerators_for_action::<ShortcutsAction>(&["<Control>question"]);
     app.set_accelerators_for_action::<IndexingStatusAction>(&["<Control><Shift>i"]);
@@ -483,6 +500,7 @@ pub(super) fn register_actions(
     actions.add_action(toggle_inspector_action);
     actions.add_action(toggle_side_pane_action);
     actions.add_action(toggle_pin_action);
+    actions.add_action(open_date_filter_action);
     actions.add_action(quit_action);
     actions.add_action(escape_action);
     actions.register_for_widget(main_window);
