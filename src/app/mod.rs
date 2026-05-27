@@ -78,14 +78,16 @@ struct SidebarProjectData {
 fn load_sidebar_project_data(
     db_path: &Path,
     tools: &[AiAssistant],
+    date_filter: &DateFilter,
 ) -> anyhow::Result<SidebarProjectData> {
-    let projects = load_projects(db_path, tools).context("load projects for sidebar")?;
-    let all_sessions_count =
-        count_all_sessions(db_path, tools).context("count all sessions for sidebar")?;
-    let unassigned_count = count_unassigned_sessions(db_path, tools)
+    let projects =
+        load_projects(db_path, tools, date_filter).context("load projects for sidebar")?;
+    let all_sessions_count = count_all_sessions(db_path, tools, date_filter)
+        .context("count all sessions for sidebar")?;
+    let unassigned_count = count_unassigned_sessions(db_path, tools, date_filter)
         .context("count unassigned sessions for sidebar")?;
-    let pinned_count =
-        count_pinned_sessions(db_path, tools).context("count pinned sessions for sidebar")?;
+    let pinned_count = count_pinned_sessions(db_path, tools, date_filter)
+        .context("count pinned sessions for sidebar")?;
     let show_unassigned =
         has_unassigned_sessions(db_path).context("determine unassigned sidebar visibility")?;
 
@@ -630,6 +632,7 @@ impl SimpleComponent for App {
             }
             AppMsg::DateFilterChanged(date_filter) => {
                 self.selected_date_filter = date_filter.clone();
+                self.refresh_sidebar_projects();
                 self.session_list
                     .emit(SessionListMsg::DateFilterChanged(date_filter));
             }
@@ -727,7 +730,8 @@ impl App {
 
     fn refresh_sidebar_projects(&mut self) -> bool {
         let tools = self.filter_state.tools.clone();
-        let sidebar_data = match load_sidebar_project_data(&self.db_path, &tools) {
+        let date_filter = self.selected_date_filter.clone();
+        let sidebar_data = match load_sidebar_project_data(&self.db_path, &tools, &date_filter) {
             Ok(data) => data,
             Err(err) => {
                 tracing::warn!("Failed to load sidebar project data: {err:#}");
@@ -1187,7 +1191,7 @@ mod tests {
     fn project_sidebar_refresh_data_returns_error_for_directory_path() {
         let db_path = std::env::temp_dir();
 
-        let result = load_sidebar_project_data(&db_path, AiAssistant::ALL);
+        let result = load_sidebar_project_data(&db_path, AiAssistant::ALL, &DateFilter::AnyTime);
 
         assert!(
             result.is_err(),

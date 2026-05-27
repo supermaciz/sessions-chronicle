@@ -814,12 +814,18 @@ fn count_sessions_with_query(
     Ok(count.max(0) as usize)
 }
 
-pub fn load_projects(db_path: &Path, tools: &[AiAssistant]) -> Result<Vec<ProjectInfo>> {
+pub fn load_projects(
+    db_path: &Path,
+    tools: &[AiAssistant],
+    date_filter: &DateFilter,
+) -> Result<Vec<ProjectInfo>> {
     if !db_path.exists() {
         return Ok(Vec::new());
     }
 
     let db = open_connection(db_path)?;
+
+    let (date_clause, date_values) = date_filter_sql_clause(date_filter, "s.");
 
     let (query, tool_strings): (String, Vec<String>) = if tools.is_empty() {
         (
@@ -831,15 +837,16 @@ pub fn load_projects(db_path: &Path, tools: &[AiAssistant]) -> Result<Vec<Projec
         )
     } else if tools.len() == AiAssistant::ALL.len() {
         (
-            "SELECT p.id, p.name, p.path, COUNT(s.id) AS session_count, MAX(s.last_updated) AS project_last_updated
-             FROM projects p
-             LEFT JOIN sessions s ON s.project_id = p.id
-                                AND s.is_subagent = 0
-             GROUP BY p.id, p.name, p.path
-             ORDER BY CASE WHEN COUNT(s.id) > 0 THEN 0 ELSE 1 END,
-                      project_last_updated DESC,
-                       p.name COLLATE NOCASE ASC"
-                .to_string(),
+            format!(
+                "SELECT p.id, p.name, p.path, COUNT(s.id) AS session_count, MAX(s.last_updated) AS project_last_updated
+                 FROM projects p
+                 LEFT JOIN sessions s ON s.project_id = p.id
+                                    AND s.is_subagent = 0{date_clause}
+                 GROUP BY p.id, p.name, p.path
+                 ORDER BY CASE WHEN COUNT(s.id) > 0 THEN 0 ELSE 1 END,
+                          project_last_updated DESC,
+                           p.name COLLATE NOCASE ASC"
+            ),
             vec![],
         )
     } else {
@@ -851,7 +858,7 @@ pub fn load_projects(db_path: &Path, tools: &[AiAssistant]) -> Result<Vec<Projec
                  FROM projects p
                  LEFT JOIN sessions s ON s.project_id = p.id
                                     AND s.is_subagent = 0
-                                    AND s.tool IN ({})
+                                    AND s.tool IN ({}){date_clause}
                  GROUP BY p.id, p.name, p.path
                  ORDER BY CASE WHEN COUNT(s.id) > 0 THEN 0 ELSE 1 END,
                           project_last_updated DESC,
@@ -863,8 +870,14 @@ pub fn load_projects(db_path: &Path, tools: &[AiAssistant]) -> Result<Vec<Projec
     };
 
     let mut stmt = db.prepare(&query)?;
-    let tool_refs: Vec<&dyn ToSql> = tool_strings.iter().map(|s| s as &dyn ToSql).collect();
-    let mut rows = stmt.query(tool_refs.as_slice())?;
+    let mut params: Vec<&dyn ToSql> = tool_strings.iter().map(|s| s as &dyn ToSql).collect();
+    // Empty-tools branch returns zero counts unconditionally and has no placeholders.
+    if !tools.is_empty() {
+        for value in &date_values {
+            params.push(value as &dyn ToSql);
+        }
+    }
+    let mut rows = stmt.query(params.as_slice())?;
 
     let mut projects = Vec::new();
     while let Some(row) = rows.next()? {
@@ -880,7 +893,11 @@ pub fn load_projects(db_path: &Path, tools: &[AiAssistant]) -> Result<Vec<Projec
     Ok(projects)
 }
 
-pub fn count_all_sessions(db_path: &Path, tools: &[AiAssistant]) -> Result<usize> {
+pub fn count_all_sessions(
+    db_path: &Path,
+    tools: &[AiAssistant],
+    date_filter: &DateFilter,
+) -> Result<usize> {
     if !db_path.exists() {
         return Ok(0);
     }
@@ -891,9 +908,11 @@ pub fn count_all_sessions(db_path: &Path, tools: &[AiAssistant]) -> Result<usize
 
     let db = open_connection(db_path)?;
 
+    let (date_clause, date_values) = date_filter_sql_clause(date_filter, "");
+
     let (query, tool_strings): (String, Vec<String>) = if tools.len() == AiAssistant::ALL.len() {
         (
-            "SELECT COUNT(*) FROM sessions WHERE is_subagent = 0".to_string(),
+            format!("SELECT COUNT(*) FROM sessions WHERE is_subagent = 0{date_clause}"),
             vec![],
         )
     } else {
@@ -901,7 +920,7 @@ pub fn count_all_sessions(db_path: &Path, tools: &[AiAssistant]) -> Result<usize
         let tool_strings: Vec<String> = tools.iter().map(|t| t.to_storage()).collect::<Vec<_>>();
         (
             format!(
-                "SELECT COUNT(*) FROM sessions WHERE is_subagent = 0 AND tool IN ({})",
+                "SELECT COUNT(*) FROM sessions WHERE is_subagent = 0 AND tool IN ({}){date_clause}",
                 placeholders.join(",")
             ),
             tool_strings,
@@ -909,13 +928,20 @@ pub fn count_all_sessions(db_path: &Path, tools: &[AiAssistant]) -> Result<usize
     };
 
     let mut stmt = db.prepare(&query)?;
-    let tool_refs: Vec<&dyn ToSql> = tool_strings.iter().map(|s| s as &dyn ToSql).collect();
-    let count: i64 = stmt.query_row(tool_refs.as_slice(), |row| row.get(0))?;
+    let mut params: Vec<&dyn ToSql> = tool_strings.iter().map(|s| s as &dyn ToSql).collect();
+    for value in &date_values {
+        params.push(value as &dyn ToSql);
+    }
+    let count: i64 = stmt.query_row(params.as_slice(), |row| row.get(0))?;
 
     Ok(count.max(0) as usize)
 }
 
-pub fn count_pinned_sessions(db_path: &Path, tools: &[AiAssistant]) -> Result<usize> {
+pub fn count_pinned_sessions(
+    db_path: &Path,
+    tools: &[AiAssistant],
+    date_filter: &DateFilter,
+) -> Result<usize> {
     if !db_path.exists() {
         return Ok(0);
     }
@@ -926,12 +952,15 @@ pub fn count_pinned_sessions(db_path: &Path, tools: &[AiAssistant]) -> Result<us
 
     let db = open_connection(db_path)?;
 
+    let (date_clause, date_values) = date_filter_sql_clause(date_filter, "");
+
     let (query, tool_strings): (String, Vec<String>) = if tools.len() == AiAssistant::ALL.len() {
         (
-            "SELECT COUNT(*) FROM sessions
-             WHERE pinned_at IS NOT NULL
-               AND is_subagent = 0"
-                .to_string(),
+            format!(
+                "SELECT COUNT(*) FROM sessions
+                 WHERE pinned_at IS NOT NULL
+                   AND is_subagent = 0{date_clause}"
+            ),
             vec![],
         )
     } else {
@@ -945,7 +974,7 @@ pub fn count_pinned_sessions(db_path: &Path, tools: &[AiAssistant]) -> Result<us
                 "SELECT COUNT(*) FROM sessions
                  WHERE pinned_at IS NOT NULL
                    AND is_subagent = 0
-                   AND tool IN ({})",
+                   AND tool IN ({}){date_clause}",
                 placeholders.join(",")
             ),
             tool_strings,
@@ -953,16 +982,23 @@ pub fn count_pinned_sessions(db_path: &Path, tools: &[AiAssistant]) -> Result<us
     };
 
     let mut stmt = db.prepare(&query)?;
-    let tool_refs: Vec<&dyn ToSql> = tool_strings
+    let mut params: Vec<&dyn ToSql> = tool_strings
         .iter()
         .map(|value| value as &dyn ToSql)
         .collect();
-    let count: i64 = stmt.query_row(tool_refs.as_slice(), |row| row.get(0))?;
+    for value in &date_values {
+        params.push(value as &dyn ToSql);
+    }
+    let count: i64 = stmt.query_row(params.as_slice(), |row| row.get(0))?;
 
     Ok(count.max(0) as usize)
 }
 
-pub fn count_unassigned_sessions(db_path: &Path, tools: &[AiAssistant]) -> Result<usize> {
+pub fn count_unassigned_sessions(
+    db_path: &Path,
+    tools: &[AiAssistant],
+    date_filter: &DateFilter,
+) -> Result<usize> {
     if !db_path.exists() {
         return Ok(0);
     }
@@ -973,12 +1009,15 @@ pub fn count_unassigned_sessions(db_path: &Path, tools: &[AiAssistant]) -> Resul
 
     let db = open_connection(db_path)?;
 
+    let (date_clause, date_values) = date_filter_sql_clause(date_filter, "");
+
     let (query, tool_strings): (String, Vec<String>) = if tools.len() == AiAssistant::ALL.len() {
         (
-            "SELECT COUNT(*) FROM sessions
-             WHERE project_id IS NULL
-               AND is_subagent = 0"
-                .to_string(),
+            format!(
+                "SELECT COUNT(*) FROM sessions
+                 WHERE project_id IS NULL
+                   AND is_subagent = 0{date_clause}"
+            ),
             vec![],
         )
     } else {
@@ -989,7 +1028,7 @@ pub fn count_unassigned_sessions(db_path: &Path, tools: &[AiAssistant]) -> Resul
                 "SELECT COUNT(*) FROM sessions
                  WHERE project_id IS NULL
                    AND is_subagent = 0
-                   AND tool IN ({})",
+                   AND tool IN ({}){date_clause}",
                 placeholders.join(",")
             ),
             tool_strings,
@@ -997,8 +1036,11 @@ pub fn count_unassigned_sessions(db_path: &Path, tools: &[AiAssistant]) -> Resul
     };
 
     let mut stmt = db.prepare(&query)?;
-    let tool_refs: Vec<&dyn ToSql> = tool_strings.iter().map(|s| s as &dyn ToSql).collect();
-    let count: i64 = stmt.query_row(tool_refs.as_slice(), |row| row.get(0))?;
+    let mut params: Vec<&dyn ToSql> = tool_strings.iter().map(|s| s as &dyn ToSql).collect();
+    for value in &date_values {
+        params.push(value as &dyn ToSql);
+    }
+    let count: i64 = stmt.query_row(params.as_slice(), |row| row.get(0))?;
 
     Ok(count.max(0) as usize)
 }

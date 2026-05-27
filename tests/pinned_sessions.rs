@@ -42,11 +42,11 @@ fn count_pinned_sessions_respects_tool_filter() {
     insert_session(&db, "open-unpinned", "opencode", None);
 
     assert_eq!(
-        count_pinned_sessions(&db.path, AiAssistant::ALL).unwrap(),
+        count_pinned_sessions(&db.path, AiAssistant::ALL, &DateFilter::AnyTime).unwrap(),
         2
     );
     assert_eq!(
-        count_pinned_sessions(&db.path, &[AiAssistant::ClaudeCode]).unwrap(),
+        count_pinned_sessions(&db.path, &[AiAssistant::ClaudeCode], &DateFilter::AnyTime).unwrap(),
         1
     );
 }

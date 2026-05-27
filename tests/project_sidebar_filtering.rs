@@ -123,8 +123,8 @@ fn load_projects_orders_by_activity_and_keeps_zero_count_rows() {
         )
         .expect("Failed to insert project aardvark");
 
-    let projects =
-        load_projects(&db.path, &[AiAssistant::ClaudeCode]).expect("Load projects failed");
+    let projects = load_projects(&db.path, &[AiAssistant::ClaudeCode], &DateFilter::AnyTime)
+        .expect("Load projects failed");
     let names: Vec<&str> = projects
         .iter()
         .map(|project| project.name.as_str())
@@ -137,7 +137,8 @@ fn load_projects_orders_by_activity_and_keeps_zero_count_rows() {
     assert_eq!(names, vec!["alpha", "aardvark", "beta", "Delta", "gamma"]);
     assert_eq!(counts, vec![2, 0, 0, 0, 0]);
 
-    let all_projects = load_projects(&db.path, AiAssistant::ALL).expect("Load all projects failed");
+    let all_projects = load_projects(&db.path, AiAssistant::ALL, &DateFilter::AnyTime)
+        .expect("Load all projects failed");
     let all_names: Vec<&str> = all_projects
         .iter()
         .map(|project| project.name.as_str())
@@ -153,7 +154,8 @@ fn load_projects_orders_by_activity_and_keeps_zero_count_rows() {
     );
     assert_eq!(all_counts, vec![1, 2, 0, 0, 0]);
 
-    let empty_projects = load_projects(&db.path, &[]).expect("Load empty tool projects failed");
+    let empty_projects = load_projects(&db.path, &[], &DateFilter::AnyTime)
+        .expect("Load empty tool projects failed");
     let empty_names: Vec<&str> = empty_projects
         .iter()
         .map(|project| project.name.as_str())
@@ -175,27 +177,29 @@ fn project_sidebar_counts_include_unassigned_visibility_flag() {
     let db = TempDatabase::new("project-sidebar");
     db.seed();
 
-    let all_count = count_all_sessions(&db.path, &[AiAssistant::ClaudeCode])
+    let all_count = count_all_sessions(&db.path, &[AiAssistant::ClaudeCode], &DateFilter::AnyTime)
         .expect("Count all sessions failed");
     assert_eq!(all_count, 3);
 
-    let all_tools_count = count_all_sessions(&db.path, AiAssistant::ALL)
+    let all_tools_count = count_all_sessions(&db.path, AiAssistant::ALL, &DateFilter::AnyTime)
         .expect("Count all sessions with all tools failed");
     assert_eq!(all_tools_count, 4);
 
-    let no_tools_count =
-        count_all_sessions(&db.path, &[]).expect("Count all sessions with empty tools failed");
+    let no_tools_count = count_all_sessions(&db.path, &[], &DateFilter::AnyTime)
+        .expect("Count all sessions with empty tools failed");
     assert_eq!(no_tools_count, 0);
 
-    let unassigned_count = count_unassigned_sessions(&db.path, &[AiAssistant::ClaudeCode])
-        .expect("Count unassigned sessions failed");
+    let unassigned_count =
+        count_unassigned_sessions(&db.path, &[AiAssistant::ClaudeCode], &DateFilter::AnyTime)
+            .expect("Count unassigned sessions failed");
     assert_eq!(unassigned_count, 1);
 
-    let all_tools_unassigned = count_unassigned_sessions(&db.path, AiAssistant::ALL)
-        .expect("Count unassigned sessions with all tools failed");
+    let all_tools_unassigned =
+        count_unassigned_sessions(&db.path, AiAssistant::ALL, &DateFilter::AnyTime)
+            .expect("Count unassigned sessions with all tools failed");
     assert_eq!(all_tools_unassigned, 1);
 
-    let no_tools_unassigned = count_unassigned_sessions(&db.path, &[])
+    let no_tools_unassigned = count_unassigned_sessions(&db.path, &[], &DateFilter::AnyTime)
         .expect("Count unassigned sessions with empty tools failed");
     assert_eq!(no_tools_unassigned, 0);
 
