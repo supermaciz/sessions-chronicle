@@ -1,6 +1,6 @@
 mod helpers;
 
-use chrono::{Days, Local, NaiveDate, TimeZone, Utc};
+use chrono::{Days, Duration, Local, NaiveDate, TimeZone, Utc};
 use helpers::TempDatabase;
 use sessions_chronicle::database::{
     count_sessions_per_date_preset, load_session_by_id_for_filter, load_sessions_for_filter,
@@ -9,21 +9,21 @@ use sessions_chronicle::database::{
 use sessions_chronicle::models::{AiAssistant, DateFilter, ProjectFilter};
 
 fn seed_date_dataset(db: &TempDatabase) {
-    let now = Utc::now();
-    let local_today = now.with_timezone(&Local).date_naive();
-    let today_ts = now.timestamp();
-    let two_days_ago_ts = now
-        .checked_sub_days(Days::new(2))
-        .expect("timestamp for 2 days ago")
-        .timestamp();
-    let ten_days_ago_ts = now
-        .checked_sub_days(Days::new(10))
-        .expect("timestamp for 10 days ago")
-        .timestamp();
-    let forty_days_ago_ts = now
-        .checked_sub_days(Days::new(40))
-        .expect("timestamp for 40 days ago")
-        .timestamp();
+    let local_today = Local::now().date_naive();
+    let today_midday = Local
+        .from_local_datetime(
+            &local_today
+                .and_hms_opt(12, 0, 0)
+                .expect("midday local time should exist"),
+        )
+        .earliest()
+        .expect("local conversion for today")
+        .with_timezone(&Utc);
+
+    let today_ts = today_midday.timestamp();
+    let two_days_ago_ts = (today_midday - Duration::days(2)).timestamp();
+    let ten_days_ago_ts = (today_midday - Duration::days(10)).timestamp();
+    let forty_days_ago_ts = (today_midday - Duration::days(40)).timestamp();
 
     db.insert_project(1, "/projects/alpha", "alpha");
     db.insert_project(2, "/projects/beta", "beta");
@@ -89,6 +89,26 @@ fn seed_date_dataset(db: &TempDatabase) {
         custom_ts,
     );
     db.insert_message("custom-edge", 0, "alpha edge", custom_ts);
+
+    db.insert_session(
+        "moved-today",
+        "claude_code",
+        Some("/projects/alpha"),
+        Some(1),
+        ten_days_ago_ts,
+        today_ts,
+    );
+    db.insert_message("moved-today", 0, "alpha moved", today_ts);
+
+    db.insert_session(
+        "started-today-stale",
+        "claude_code",
+        Some("/projects/alpha"),
+        Some(1),
+        today_ts,
+        ten_days_ago_ts,
+    );
+    db.insert_message("started-today-stale", 0, "alpha stale", ten_days_ago_ts);
 }
 
 #[test]
@@ -104,8 +124,22 @@ fn load_sessions_for_filter_applies_date_presets() {
     )
     .expect("today filter query should succeed");
 
-    assert_eq!(today_sessions.len(), 1);
-    assert_eq!(today_sessions[0].id, "today-alpha");
+    assert_eq!(today_sessions.len(), 2);
+    assert!(
+        today_sessions
+            .iter()
+            .any(|session| session.id == "today-alpha")
+    );
+    assert!(
+        today_sessions
+            .iter()
+            .any(|session| session.id == "moved-today")
+    );
+    assert!(
+        today_sessions
+            .iter()
+            .all(|session| session.id != "started-today-stale")
+    );
 
     let last_7_sessions = load_sessions_for_filter(
         &db.path,
@@ -130,9 +164,7 @@ fn custom_date_bounds_are_inclusive_and_compose_with_project_and_query() {
     let db = TempDatabase::new("date-filter-custom");
     seed_date_dataset(&db);
 
-    let now = Utc::now();
-    let custom_day = now
-        .with_timezone(&Local)
+    let custom_day = Local::now()
         .date_naive()
         .checked_sub_days(Days::new(2))
         .expect("custom day should exist");
@@ -194,10 +226,10 @@ fn count_sessions_per_date_preset_uses_same_filter_context() {
     )
     .expect("date counts should succeed");
 
-    assert_eq!(counts.any_time, 3);
-    assert_eq!(counts.today, 1);
-    assert_eq!(counts.last_7_days, 2);
-    assert_eq!(counts.last_30_days, 3);
+    assert_eq!(counts.any_time, 5);
+    assert_eq!(counts.today, 2);
+    assert_eq!(counts.last_7_days, 3);
+    assert_eq!(counts.last_30_days, 5);
     assert!(counts.this_year >= counts.last_30_days);
 }
 

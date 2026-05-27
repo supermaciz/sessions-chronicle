@@ -153,7 +153,7 @@ fn date_filter_sql_clause(date_filter: &DateFilter, session_prefix: &str) -> (St
     };
 
     (
-        format!(" AND {session_prefix}start_time >= ? AND {session_prefix}start_time < ?"),
+        format!(" AND {session_prefix}last_updated >= ? AND {session_prefix}last_updated < ?"),
         vec![start.timestamp(), end.timestamp()],
     )
 }
