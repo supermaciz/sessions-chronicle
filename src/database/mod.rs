@@ -3,7 +3,7 @@ pub mod indexer;
 pub mod schema;
 
 use anyhow::{Context, Result};
-use chrono::{TimeZone, Utc};
+use chrono::{DateTime, TimeZone, Utc};
 use rusqlite::{Connection, OptionalExtension, Row, ToSql};
 use std::collections::HashSet;
 use std::path::Path;
@@ -589,65 +589,21 @@ pub fn count_sessions_per_date_preset(
     project_filter: &ProjectFilter,
     query: &str,
 ) -> Result<DateCounts> {
-    Ok(DateCounts {
-        any_time: count_sessions_for_context(
-            db_path,
-            tools,
-            project_filter,
-            query,
-            &DateFilter::AnyTime,
-        )?,
-        today: count_sessions_for_context(
-            db_path,
-            tools,
-            project_filter,
-            query,
-            &DateFilter::Today,
-        )?,
-        last_7_days: count_sessions_for_context(
-            db_path,
-            tools,
-            project_filter,
-            query,
-            &DateFilter::Last7Days,
-        )?,
-        last_30_days: count_sessions_for_context(
-            db_path,
-            tools,
-            project_filter,
-            query,
-            &DateFilter::Last30Days,
-        )?,
-        this_year: count_sessions_for_context(
-            db_path,
-            tools,
-            project_filter,
-            query,
-            &DateFilter::ThisYear,
-        )?,
-    })
-}
-
-fn count_sessions_for_context(
-    db_path: &Path,
-    tools: &[AiAssistant],
-    project_filter: &ProjectFilter,
-    query: &str,
-    date_filter: &DateFilter,
-) -> Result<usize> {
     if !db_path.exists() || tools.is_empty() {
-        return Ok(0);
+        return Ok(DateCounts::default());
     }
 
     let db = open_connection(db_path)?;
+    let now = Utc::now();
+    let bounds = DatePresetBounds::resolve(now);
 
     let query = query.trim();
     if query.is_empty() {
-        return count_sessions_without_query(&db, tools, project_filter, date_filter);
+        return count_all_presets_without_query(&db, tools, project_filter, &bounds);
     }
 
-    match count_sessions_with_query(&db, tools, project_filter, query, date_filter) {
-        Ok(count) => Ok(count),
+    match count_all_presets_with_query(&db, tools, project_filter, query, &bounds) {
+        Ok(counts) => Ok(counts),
         Err(err) => {
             if let Some(sanitized) = sanitize_search_query(query) {
                 tracing::warn!(
@@ -655,16 +611,16 @@ fn count_sessions_for_context(
                     sanitized,
                     err
                 );
-                match count_sessions_with_query(&db, tools, project_filter, &sanitized, date_filter)
+                match count_all_presets_with_query(&db, tools, project_filter, &sanitized, &bounds)
                 {
-                    Ok(count) => Ok(count),
+                    Ok(counts) => Ok(counts),
                     Err(retry_err) => {
                         tracing::warn!(
                             "Sanitized date preset count query failed '{}': {}",
                             sanitized,
                             retry_err
                         );
-                        Ok(0)
+                        Ok(DateCounts::default())
                     }
                 }
             } else {
@@ -672,35 +628,119 @@ fn count_sessions_for_context(
                     "Date preset count query failed and could not be sanitized: {}",
                     err
                 );
-                Ok(0)
+                Ok(DateCounts::default())
             }
         }
     }
 }
 
-fn count_sessions_without_query(
+struct DatePresetBounds {
+    today: Option<(i64, i64)>,
+    last_7_days: Option<(i64, i64)>,
+    last_30_days: Option<(i64, i64)>,
+    this_year: Option<(i64, i64)>,
+}
+
+impl DatePresetBounds {
+    fn resolve(now: DateTime<Utc>) -> Self {
+        let to_ts = |filter: DateFilter| {
+            filter
+                .resolve(now)
+                .map(|(start, end)| (start.timestamp(), end.timestamp()))
+        };
+        Self {
+            today: to_ts(DateFilter::Today),
+            last_7_days: to_ts(DateFilter::Last7Days),
+            last_30_days: to_ts(DateFilter::Last30Days),
+            this_year: to_ts(DateFilter::ThisYear),
+        }
+    }
+
+    /// Returns the four presets in the order (today, last_7_days, last_30_days, this_year)
+    /// so SQL projection columns and `params` extension stay in lockstep.
+    fn ordered(&self) -> [Option<(i64, i64)>; 4] {
+        [
+            self.today,
+            self.last_7_days,
+            self.last_30_days,
+            self.this_year,
+        ]
+    }
+}
+
+fn preset_case_columns(prefix: &str, bounds: &DatePresetBounds) -> (String, Vec<i64>) {
+    let mut columns: Vec<String> = Vec::with_capacity(4);
+    let mut values: Vec<i64> = Vec::with_capacity(8);
+    for window in bounds.ordered() {
+        if let Some((start, end)) = window {
+            columns.push(format!(
+                "SUM(CASE WHEN {prefix}last_updated >= ? AND {prefix}last_updated < ? THEN 1 ELSE 0 END)"
+            ));
+            values.push(start);
+            values.push(end);
+        } else {
+            columns.push("0".to_string());
+        }
+    }
+    (columns.join(", "), values)
+}
+
+fn preset_distinct_case_columns(
+    prefix: &str,
+    id_expr: &str,
+    bounds: &DatePresetBounds,
+) -> (String, Vec<i64>) {
+    let mut columns: Vec<String> = Vec::with_capacity(4);
+    let mut values: Vec<i64> = Vec::with_capacity(8);
+    for window in bounds.ordered() {
+        if let Some((start, end)) = window {
+            columns.push(format!(
+                "COUNT(DISTINCT CASE WHEN {prefix}last_updated >= ? AND {prefix}last_updated < ? THEN {id_expr} END)"
+            ));
+            values.push(start);
+            values.push(end);
+        } else {
+            columns.push("0".to_string());
+        }
+    }
+    (columns.join(", "), values)
+}
+
+fn read_counts_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<DateCounts> {
+    // SUM(...) returns NULL when no rows match the WHERE clause.
+    let read = |idx: usize| -> rusqlite::Result<usize> {
+        Ok(row.get::<_, Option<i64>>(idx)?.unwrap_or(0).max(0) as usize)
+    };
+    Ok(DateCounts {
+        any_time: read(0)?,
+        today: read(1)?,
+        last_7_days: read(2)?,
+        last_30_days: read(3)?,
+        this_year: read(4)?,
+    })
+}
+
+fn count_all_presets_without_query(
     db: &Connection,
     tools: &[AiAssistant],
     project_filter: &ProjectFilter,
-    date_filter: &DateFilter,
-) -> Result<usize> {
-    let (date_clause, date_values) = date_filter_sql_clause(date_filter, "");
+    bounds: &DatePresetBounds,
+) -> Result<DateCounts> {
     let project_clause = match project_filter {
         ProjectFilter::AllSessions => String::new(),
         ProjectFilter::Pinned => " AND pinned_at IS NOT NULL".to_string(),
         ProjectFilter::Project(_) => " AND project_id = ?".to_string(),
         ProjectFilter::Unassigned => " AND project_id IS NULL".to_string(),
     };
+    let (preset_columns, preset_values) = preset_case_columns("", bounds);
 
     let (query_sql, tool_strings): (String, Vec<String>) = if tools.len() == AiAssistant::ALL.len()
     {
         (
             format!(
-                "SELECT COUNT(*)
+                "SELECT COUNT(*), {preset_columns}
                  FROM sessions
-                 WHERE is_subagent = 0
-                     {}{}",
-                project_clause, date_clause
+                 WHERE is_subagent = 0{project_clause}"
             ),
             vec![],
         )
@@ -709,21 +749,23 @@ fn count_sessions_without_query(
         let tool_strings: Vec<String> = tools.iter().map(|t| t.to_storage()).collect::<Vec<_>>();
         (
             format!(
-                "SELECT COUNT(*)
+                "SELECT COUNT(*), {preset_columns}
                  FROM sessions
                  WHERE tool IN ({})
-                   AND is_subagent = 0
-                     {}{}",
-                placeholders.join(","),
-                project_clause,
-                date_clause
+                   AND is_subagent = 0{project_clause}",
+                placeholders.join(",")
             ),
             tool_strings,
         )
     };
 
     let mut stmt = db.prepare(&query_sql)?;
-    let mut params: Vec<&dyn ToSql> = Vec::with_capacity(3 + tool_strings.len());
+    let mut params: Vec<&dyn ToSql> =
+        Vec::with_capacity(preset_values.len() + tool_strings.len() + 1);
+    // Preset window placeholders appear in the SELECT clause, which comes before WHERE.
+    for value in &preset_values {
+        params.push(value as &dyn ToSql);
+    }
     for tool in &tool_strings {
         params.push(tool as &dyn ToSql);
     }
@@ -734,41 +776,36 @@ fn count_sessions_without_query(
     if let Some(project_id) = project_id.as_ref() {
         params.push(project_id as &dyn ToSql);
     }
-    for value in &date_values {
-        params.push(value as &dyn ToSql);
-    }
 
-    let count: i64 = stmt.query_row(params.as_slice(), |row| row.get(0))?;
-    Ok(count.max(0) as usize)
+    let counts = stmt.query_row(params.as_slice(), read_counts_row)?;
+    Ok(counts)
 }
 
-fn count_sessions_with_query(
+fn count_all_presets_with_query(
     db: &Connection,
     tools: &[AiAssistant],
     project_filter: &ProjectFilter,
     query: &str,
-    date_filter: &DateFilter,
-) -> Result<usize> {
+    bounds: &DatePresetBounds,
+) -> Result<DateCounts> {
     let project_clause = match project_filter {
         ProjectFilter::AllSessions => String::new(),
         ProjectFilter::Pinned => " AND s.pinned_at IS NOT NULL".to_string(),
         ProjectFilter::Project(_) => " AND s.project_id = ?".to_string(),
         ProjectFilter::Unassigned => " AND s.project_id IS NULL".to_string(),
     };
-    let (date_clause, date_values) = date_filter_sql_clause(date_filter, "s.");
+    let (preset_columns, preset_values) = preset_distinct_case_columns("s.", "s.id", bounds);
 
     let (query_sql, tool_strings): (String, Vec<String>) = if tools.len() == AiAssistant::ALL.len()
     {
         (
             format!(
-                "SELECT COUNT(DISTINCT s.id)
+                "SELECT COUNT(DISTINCT s.id), {preset_columns}
                  FROM messages_fts
                  JOIN messages m ON m.id = messages_fts.rowid
                  JOIN sessions s ON s.id = m.session_id
                  WHERE messages_fts MATCH ?
-                   AND s.is_subagent = 0
-                     {}{}",
-                project_clause, date_clause
+                   AND s.is_subagent = 0{project_clause}"
             ),
             vec![],
         )
@@ -777,24 +814,26 @@ fn count_sessions_with_query(
         let tool_strings: Vec<String> = tools.iter().map(|t| t.to_storage()).collect::<Vec<_>>();
         (
             format!(
-                "SELECT COUNT(DISTINCT s.id)
+                "SELECT COUNT(DISTINCT s.id), {preset_columns}
                  FROM messages_fts
                  JOIN messages m ON m.id = messages_fts.rowid
                  JOIN sessions s ON s.id = m.session_id
                  WHERE messages_fts MATCH ?
                    AND s.tool IN ({})
-                   AND s.is_subagent = 0
-                     {}{}",
-                placeholders.join(","),
-                project_clause,
-                date_clause
+                   AND s.is_subagent = 0{project_clause}",
+                placeholders.join(",")
             ),
             tool_strings,
         )
     };
 
     let mut stmt = db.prepare(&query_sql)?;
-    let mut params: Vec<&dyn ToSql> = Vec::with_capacity(4 + tool_strings.len());
+    let mut params: Vec<&dyn ToSql> =
+        Vec::with_capacity(preset_values.len() + tool_strings.len() + 2);
+    // Preset window placeholders appear in the SELECT clause, which comes before WHERE.
+    for value in &preset_values {
+        params.push(value as &dyn ToSql);
+    }
     params.push(&query);
     for tool in &tool_strings {
         params.push(tool as &dyn ToSql);
@@ -806,12 +845,9 @@ fn count_sessions_with_query(
     if let Some(project_id) = project_id.as_ref() {
         params.push(project_id as &dyn ToSql);
     }
-    for value in &date_values {
-        params.push(value as &dyn ToSql);
-    }
 
-    let count: i64 = stmt.query_row(params.as_slice(), |row| row.get(0))?;
-    Ok(count.max(0) as usize)
+    let counts = stmt.query_row(params.as_slice(), read_counts_row)?;
+    Ok(counts)
 }
 
 pub fn load_projects(

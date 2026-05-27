@@ -234,7 +234,7 @@ impl SimpleComponent for DatePill {
     fn update(&mut self, message: Self::Input, sender: ComponentSender<Self>) {
         match message {
             DatePillInput::PopoverOpened => {
-                self.select_current_row();
+                self.focus_current_row_when_ready();
                 sender.output(DatePillOutput::CountsRequested).ok();
             }
             DatePillInput::CountsReceived(counts) => {
