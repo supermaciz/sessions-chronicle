@@ -130,4 +130,4 @@ Independent of the chosen variant:
 
 ## Decision
 
-To be made by the maintainer. Default recommendation: **C + borrowings from B**, split across 3 issues.
+Proposal B
