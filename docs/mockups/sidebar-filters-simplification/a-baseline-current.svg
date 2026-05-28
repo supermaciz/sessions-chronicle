@@ -1,0 +1,104 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 560" font-family="-apple-system, 'Cantarell', system-ui, sans-serif" font-size="13">
+  <style>
+    .stroke { fill: none; stroke: #1a1a1a; stroke-width: 1.4; }
+    .stroke-thin { fill: none; stroke: #c8c8c8; stroke-width: 1; }
+    .stroke-mid { fill: none; stroke: #1a1a1a; stroke-width: 1; }
+    .muted { fill: #777; font-size: 11px; }
+    .accent { fill: #3584e4; }
+    .accent-bg { fill: #3584e4; fill-opacity: 0.18; }
+    .accent-stroke { fill: none; stroke: #3584e4; stroke-width: 1.4; }
+    .green { fill: #2ec27e; }
+    .title { font-size: 14px; font-weight: 600; }
+    .section { font-size: 12px; font-weight: 700; letter-spacing: 0.4px; fill: #1a1a1a; }
+    .row { font-size: 12.5px; }
+    .badge { font-size: 10.5px; fill: #555; }
+    .ws { fill: #fafafa; }
+    .sb { fill: #f4f4f4; }
+    .note { font-size: 11px; fill: #c01c28; font-style: italic; }
+    .red-stroke { fill: none; stroke: #c01c28; stroke-width: 1.1; stroke-dasharray: 4 3; }
+  </style>
+
+  <text x="20" y="26" class="title">A — Baseline (current state)</text>
+  <text x="20" y="44" class="muted">"Filters" title + horizontal separator + AI Assistants / Projects sections</text>
+
+  <!-- Window -->
+  <rect x="20" y="62" width="600" height="478" rx="10" class="ws stroke"/>
+  <!-- Header bar -->
+  <rect x="20" y="62" width="600" height="42" rx="10" fill="#ececec" class="stroke"/>
+  <line x1="20" y1="104" x2="620" y2="104" class="stroke-mid"/>
+  <circle cx="40" cy="83" r="6" class="stroke-thin"/>
+  <text x="36" y="87" font-size="10">🔍</text>
+  <text x="295" y="89" font-weight="600">Sessions</text>
+  <text x="360" y="89" class="muted">Analytics</text>
+
+  <!-- Sidebar -->
+  <rect x="20" y="104" width="220" height="436" class="sb"/>
+  <line x1="240" y1="104" x2="240" y2="540" class="stroke-mid"/>
+
+  <!-- "Filters" title -->
+  <text x="36" y="138" class="title">Filters</text>
+  <!-- The separator under "Filters" — the thing the user wants to remove -->
+  <line x1="36" y1="152" x2="224" y2="152" class="stroke-mid"/>
+  <rect x="32" y="125" width="200" height="32" rx="3" class="red-stroke"/>
+  <text x="240" y="148" class="note">← remove</text>
+
+  <!-- AI Assistants section -->
+  <text x="36" y="180" class="section">AI Assistants</text>
+  <g font-size="12.5">
+    <rect x="36" y="192" width="14" height="14" rx="2" class="accent" fill-opacity="1"/>
+    <text x="58" y="204">Claude Code</text>
+    <circle cx="210" cy="199" r="4" class="green"/>
+
+    <rect x="36" y="216" width="14" height="14" rx="2" class="accent" fill-opacity="1"/>
+    <text x="58" y="228">OpenCode</text>
+    <circle cx="210" cy="223" r="4" class="green"/>
+
+    <rect x="36" y="240" width="14" height="14" rx="2" class="accent" fill-opacity="1"/>
+    <text x="58" y="252">Codex</text>
+    <circle cx="210" cy="247" r="4" class="green"/>
+
+    <rect x="36" y="264" width="14" height="14" rx="2" class="accent" fill-opacity="1"/>
+    <text x="58" y="276">Mistral Vibe</text>
+    <circle cx="210" cy="271" r="4" class="green"/>
+  </g>
+
+  <!-- Projects section -->
+  <text x="36" y="312" class="section">Projects</text>
+  <rect x="32" y="324" width="200" height="28" rx="4" class="accent-bg"/>
+  <text x="40" y="343" class="row" fill="#1a4a8c">All Sessions</text>
+  <text x="208" y="343" class="badge" text-anchor="end">898</text>
+
+  <text x="40" y="370" class="row">📌 Pinned</text>
+  <text x="208" y="370" class="badge" text-anchor="end">0</text>
+
+  <text x="40" y="396" class="row">sessions-chronicle</text>
+  <text x="208" y="396" class="badge" text-anchor="end">720</text>
+
+  <text x="40" y="422" class="row">le_bon_fizzbuzz</text>
+  <text x="208" y="422" class="badge" text-anchor="end">23</text>
+
+  <text x="40" y="448" class="row">taftaf</text>
+  <text x="208" y="448" class="badge" text-anchor="end">21</text>
+
+  <!-- Session list stub -->
+  <rect x="252" y="116" width="356" height="58" rx="6" class="accent-bg accent-stroke"/>
+  <circle cx="270" cy="138" r="9" fill="#fff" class="stroke-thin"/>
+  <text x="288" y="138" font-size="12">$pr-quiz for PR 157…</text>
+  <text x="288" y="156" class="muted">sessions-chronicle · 15 msg · 19 cmd · 15h</text>
+
+  <rect x="252" y="184" width="356" height="58" rx="6" class="stroke-thin"/>
+  <text x="288" y="206" font-size="12">/plugin</text>
+  <text x="288" y="224" class="muted">sessions-chronicle · 21 msg · 8 edits · 17h</text>
+
+  <rect x="252" y="252" width="356" height="58" rx="6" class="stroke-thin"/>
+  <text x="288" y="274" font-size="12">Code review of last commit changes</text>
+  <text x="288" y="292" class="muted">sessions-chronicle · 7 msg · 4 cmd · 17h</text>
+
+  <rect x="252" y="320" width="356" height="58" rx="6" class="stroke-thin"/>
+  <text x="288" y="342" font-size="12">/clear</text>
+  <text x="288" y="360" class="muted">sessions-chronicle · 2 msg · 17h</text>
+
+  <rect x="252" y="388" width="356" height="58" rx="6" class="stroke-thin"/>
+  <text x="288" y="410" font-size="12">Date filter implementation plan</text>
+  <text x="288" y="428" class="muted">sessions-chronicle · 49 msg · 13 cmd · 19h</text>
+</svg>
