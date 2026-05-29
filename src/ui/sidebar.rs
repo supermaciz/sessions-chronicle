@@ -232,6 +232,10 @@ impl Sidebar {
             .build();
         row.add_prefix(&check);
 
+        let icon = gtk::Image::from_icon_name(assistant.icon_name());
+        icon.set_valign(gtk::Align::Center);
+        row.add_prefix(&icon);
+
         let dot = gtk::Box::new(gtk::Orientation::Horizontal, 0);
         dot.set_visible(false);
         dot.set_valign(gtk::Align::Center);
@@ -426,6 +430,24 @@ mod tests {
         }
     }
 
+    fn image_icon_names(widget: &gtk::Widget) -> Vec<String> {
+        let mut names = Vec::new();
+
+        if let Ok(image) = widget.clone().downcast::<gtk::Image>()
+            && let Some(icon_name) = image.icon_name()
+        {
+            names.push(icon_name.to_string());
+        }
+
+        let mut child = widget.first_child();
+        while let Some(child_widget) = child {
+            names.extend(image_icon_names(&child_widget));
+            child = child_widget.next_sibling();
+        }
+
+        names
+    }
+
     fn visible_project_row_titles(list_box: &gtk::ListBox) -> Vec<String> {
         let mut titles = Vec::new();
         let mut child = list_box.first_child();
@@ -439,6 +461,36 @@ mod tests {
             child = widget.next_sibling();
         }
         titles
+    }
+
+    #[gtk::test]
+    fn assistant_sidebar_rows_include_assistant_icons() {
+        let controller = Sidebar::builder().launch(());
+
+        let expected_icons = [
+            AiAssistant::ClaudeCode.icon_name(),
+            AiAssistant::OpenCode.icon_name(),
+            AiAssistant::Codex.icon_name(),
+            AiAssistant::MistralVibe.icon_name(),
+        ];
+
+        let parts = controller.state().get();
+        for (index, expected_icon) in expected_icons.into_iter().enumerate() {
+            let row = parts
+                .widgets
+                .assistants_list
+                .row_at_index(index as i32)
+                .unwrap_or_else(|| panic!("assistant row {index} should exist"));
+            let row_widget = row.upcast::<gtk::Widget>();
+            let icon_names = image_icon_names(&row_widget);
+
+            assert!(
+                icon_names
+                    .iter()
+                    .any(|icon_name| icon_name == expected_icon),
+                "assistant row {index} should include icon {expected_icon}; found {icon_names:?}"
+            );
+        }
     }
 
     #[gtk::test]
