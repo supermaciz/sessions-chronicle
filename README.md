@@ -42,7 +42,48 @@ flatpak install --user https://sessions-chronicle.maciz.dev/flatpak/dev.maciz.se
 flatpak run dev.maciz.sessionschronicle
 ```
 
-If you prefer a standalone bundle, download the latest `.flatpak` file from the [Releases page](https://github.com/supermaciz/sessions-chronicle/releases) and install it with `flatpak install ./sessions-chronicle-<version>.flatpak`.
+The Flatpak remote is the recommended install path: it is signed and updates automatically with `flatpak update`.
+
+
+## Build from source (native)
+
+Contributors and advanced users can build a native Linux binary with Meson instead of Flatpak. This produces a regular GTK / Libadwaita application that links against your system libraries, so you need the development packages for them.
+
+**Build dependencies**
+
+- Rust toolchain (`cargo`) — Rust 2024 edition
+- Meson `>= 0.59` and Ninja
+- GLib / GIO `>= 2.84`
+- GTK 4 `>= 4.18`
+- GtkSourceView 5 `>= 5.0`
+- Libadwaita `>= 1.8`
+
+These minimums are set by the Rust bindings (the `gnome_48` GTK feature requires GTK 4.18 / GLib 2.84, and Libadwaita 1.8 APIs are used), and match the GNOME 49 runtime the Flatpak build targets — not the lower floors declared in `meson.build`.
+
+On Fedora, the system packages are roughly:
+
+```bash
+sudo dnf install cargo meson ninja-build \
+  glib2-devel gtk4-devel gtksourceview5-devel libadwaita-devel
+```
+
+On Debian/Ubuntu, the equivalents are `cargo meson ninja-build libglib2.0-dev libgtk-4-dev libgtksourceview-5-dev libadwaita-1-dev`.
+
+**Configure, compile, and install**
+
+```bash
+meson setup builddir --prefix="$HOME/.local"
+meson compile -C builddir
+meson install -C builddir
+```
+
+Then run the installed build:
+
+```bash
+"$HOME/.local/bin/sessions-chronicle"
+```
+
+For the faster day-to-day development loop (development profile, incremental rebuilds) see [`docs/DEVELOPMENT_WORKFLOW.md`](docs/DEVELOPMENT_WORKFLOW.md).
 
 
 ## Screenshots
