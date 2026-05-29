@@ -324,7 +324,8 @@ impl Sidebar {
         }
 
         let badge = gtk::Label::new(Some(&badge_count.to_string()));
-        badge.add_css_class("project-badge");
+        badge.add_css_class("numeric");
+        badge.add_css_class("dim-label");
         badge.set_valign(gtk::Align::Center);
         badge.set_height_request(29);
         action_row.add_suffix(&badge);
@@ -791,5 +792,40 @@ mod tests {
             visible_project_row_titles(&parts.widgets.projects_list),
             vec!["All Sessions", "Pinned", "alpha", "Unassigned"]
         );
+    }
+
+    #[gtk::test]
+    fn project_sidebar_badges_use_subdued_numeric_style() {
+        let controller = Sidebar::builder().launch(());
+
+        controller.emit(SidebarMsg::ProjectsLoaded {
+            projects: vec![ProjectInfo {
+                id: 1,
+                name: "alpha".to_string(),
+                path: "/tmp/alpha".to_string(),
+                session_count: 2,
+            }],
+            all_sessions_count: 3,
+            unassigned_count: 0,
+            pinned_count: 2,
+            show_unassigned: false,
+            selected_filter: ProjectFilter::AllSessions,
+        });
+
+        pump_main_context(|| {
+            let parts = controller.state().get();
+            parts.model.pinned_count_label.is_some()
+        });
+
+        let parts = controller.state().get();
+        let pinned_count_label = parts
+            .model
+            .pinned_count_label
+            .as_ref()
+            .expect("pinned count label should be stored");
+
+        assert!(pinned_count_label.has_css_class("numeric"));
+        assert!(pinned_count_label.has_css_class("dim-label"));
+        assert!(!pinned_count_label.has_css_class("project-badge"));
     }
 }
