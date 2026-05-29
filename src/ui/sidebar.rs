@@ -230,11 +230,14 @@ impl Sidebar {
             .title(title)
             .activatable_widget(&check)
             .build();
-        row.add_prefix(&check);
 
+        // `add_prefix` prepends, so add the icon before the checkbox to render
+        // the checkbox at the leading edge and the icon tucked next to the title.
         let icon = gtk::Image::from_icon_name(assistant.icon_name());
         icon.set_valign(gtk::Align::Center);
         row.add_prefix(&icon);
+
+        row.add_prefix(&check);
 
         let dot = gtk::Box::new(gtk::Orientation::Horizontal, 0);
         dot.set_visible(false);
