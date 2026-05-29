@@ -1,6 +1,6 @@
 # Self-Hosted Flatpak Repository
 
-Sessions Chronicle can publish its own signed Flatpak repository under the website's GitHub Pages deployment. This gives users a real Flatpak remote, so installs can be updated with `flatpak update` instead of manually downloading each `.flatpak` bundle from GitHub releases.
+Sessions Chronicle can publish its own signed Flatpak repository under the website's GitHub Pages deployment. This gives users a real Flatpak remote, so installs can be updated with `flatpak update`.
 
 The workflow is `.github/workflows/flatpak-repository.yml`. It runs when a non-prerelease GitHub release is published and can also be started manually with `workflow_dispatch`.
 
@@ -22,7 +22,7 @@ The repository currently builds the stable manifest for `x86_64` only:
 build-aux/dev.maciz.sessionschronicle.json
 ```
 
-The Flatpak branch is `master` to match the branch used by the existing release bundles.
+The Flatpak branch is `master`.
 The generated OSTree payload is stored in the Git branch `flatpak-repo-data`, then copied into `website/public/flatpak/` during website builds so Pages always serves one combined site.
 
 Add an `aarch64` job later if there is a native or emulated ARM runner available.
@@ -71,9 +71,9 @@ Publishing a non-prerelease GitHub release triggers:
 
 The website deployment workflow also fetches `flatpak-repo-data` before each Pages deploy. That preserves `/flatpak/` when website-only changes are pushed to `main`.
 
-The existing `release.yml` workflow still uploads a standalone `.flatpak` bundle to the release. Keep it for users who prefer manual downloads or as a fallback if the Flatpak remote is unavailable.
+The `release.yml` workflow only appends the recommended install command to the GitHub release notes. Release artifacts are published through the signed Flatpak repository workflow.
 
-Pre-releases intentionally do not publish this repository. Keep them as standalone release bundles or add a separate Flatpak branch such as `beta` if pre-release updates should become installable later.
+Pre-releases intentionally do not publish this repository. Add a separate Flatpak branch such as `beta` if pre-release updates should become installable later.
 
 ## User Install Commands
 

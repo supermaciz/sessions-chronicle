@@ -252,9 +252,9 @@ The project uses GitHub Actions for continuous integration and releases. Workflo
 | **Coverage** | `cargo llvm-cov` → LCOV report uploaded to Codecov |
 | **Flatpak** | Builds the dev Flatpak bundle |
 
-### Release (`release.yml`) — runs when a GitHub release is published
+### Release Notes (`release.yml`) — runs when a GitHub release is published
 
-Builds the stable Flatpak bundle using the `build-aux/dev.maciz.sessionschronicle.json` manifest, generates a SHA256 checksum, and uploads both to the release.
+Appends the signed Flatpak remote install command to the GitHub release notes. It does not build or upload release artifacts.
 
 ### Flatpak Repository (`flatpak-repository.yml`) — runs when a GitHub release is published or manually
 
@@ -267,7 +267,7 @@ Two Flatpak manifests exist in `build-aux/`:
 | Manifest | Purpose |
 |----------|---------|
 | `dev.maciz.sessionschronicle.Devel.json` | Development builds (used in CI and local dev) |
-| `dev.maciz.sessionschronicle.json` | Stable release builds (used by release workflow) |
+| `dev.maciz.sessionschronicle.json` | Stable release builds (used by `flatpak-repository.yml`) |
 
 ## Summary
 
