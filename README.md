@@ -86,16 +86,11 @@ Then run the installed build:
 For the faster day-to-day development loop (development profile, incremental rebuilds) see [`docs/DEVELOPMENT_WORKFLOW.md`](docs/DEVELOPMENT_WORKFLOW.md).
 
 
-## Screenshots
+## Screenshot
 
-**Browse and search your sessions**  
 <img src="docs/screenshots/session_list.png" alt="Session List" width="800"/>
 
-**Read conversations with full markdown rendering and tool call inspection**  
-<img src="docs/screenshots/session_detail.png" alt="Session Detail" width="800"/>
-
-**Analytics**  
-<img src="docs/screenshots/analytics.png" alt="Analytics Dashboard" width="800"/>
+See the website for more screenshots and project details: https://sessions-chronicle.maciz.dev/
 
 
 ## Inspiration
