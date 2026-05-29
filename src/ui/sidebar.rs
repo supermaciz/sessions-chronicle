@@ -55,44 +55,14 @@ impl SimpleComponent for Sidebar {
     view! {
         gtk::Box {
             set_orientation: gtk::Orientation::Vertical,
-            set_spacing: 12,
+            set_spacing: 32,
             set_margin_all: 12,
             set_width_request: 200,
-
-            gtk::Label {
-                set_label: "Filters",
-                set_halign: gtk::Align::Start,
-                add_css_class: "title-4",
-                set_margin_bottom: 6,
-            },
-
-            gtk::Separator {
-                set_margin_bottom: 12,
-            },
-
-            gtk::Label {
-                set_label: "AI Assistants",
-                set_halign: gtk::Align::Start,
-                add_css_class: "heading",
-                set_margin_bottom: 6,
-            },
 
             #[name = "assistants_list"]
             gtk::ListBox {
                 add_css_class: "assistant-sidebar-list",
                 set_selection_mode: gtk::SelectionMode::None,
-            },
-
-            gtk::Separator {
-                set_margin_top: 6,
-                set_margin_bottom: 6,
-            },
-
-            gtk::Label {
-                set_label: "Projects",
-                set_halign: gtk::Align::Start,
-                add_css_class: "heading",
-                set_margin_bottom: 6,
             },
 
             gtk::ScrolledWindow {
@@ -135,6 +105,12 @@ impl SimpleComponent for Sidebar {
             status_dots: HashMap::new(),
         };
         let widgets = view_output!();
+        widgets
+            .assistants_list
+            .update_property(&[gtk::accessible::Property::Label("AI Assistants")]);
+        widgets
+            .projects_list
+            .update_property(&[gtk::accessible::Property::Label("Projects")]);
         model.projects_list = Some(widgets.projects_list.clone());
 
         for (assistant, title) in [
@@ -254,6 +230,13 @@ impl Sidebar {
             .title(title)
             .activatable_widget(&check)
             .build();
+
+        // `add_prefix` prepends, so add the icon before the checkbox to render
+        // the checkbox at the leading edge and the icon tucked next to the title.
+        let icon = gtk::Image::from_icon_name(assistant.icon_name());
+        icon.set_valign(gtk::Align::Center);
+        row.add_prefix(&icon);
+
         row.add_prefix(&check);
 
         let dot = gtk::Box::new(gtk::Orientation::Horizontal, 0);
@@ -344,7 +327,8 @@ impl Sidebar {
         }
 
         let badge = gtk::Label::new(Some(&badge_count.to_string()));
-        badge.add_css_class("project-badge");
+        badge.add_css_class("numeric");
+        badge.add_css_class("dim-label");
         badge.set_valign(gtk::Align::Center);
         badge.set_height_request(29);
         action_row.add_suffix(&badge);
@@ -450,6 +434,36 @@ mod tests {
         }
     }
 
+    fn image_icon_names(widget: &gtk::Widget) -> Vec<String> {
+        let mut names = Vec::new();
+
+        if let Ok(image) = widget.clone().downcast::<gtk::Image>()
+            && let Some(icon_name) = image.icon_name()
+        {
+            names.push(icon_name.to_string());
+        }
+
+        let mut child = widget.first_child();
+        while let Some(child_widget) = child {
+            names.extend(image_icon_names(&child_widget));
+            child = child_widget.next_sibling();
+        }
+
+        names
+    }
+
+    fn widget_type_sequence(widget: &gtk::Widget) -> Vec<String> {
+        let mut types = vec![widget.type_().name().to_string()];
+
+        let mut child = widget.first_child();
+        while let Some(child_widget) = child {
+            types.extend(widget_type_sequence(&child_widget));
+            child = child_widget.next_sibling();
+        }
+
+        types
+    }
+
     fn visible_project_row_titles(list_box: &gtk::ListBox) -> Vec<String> {
         let mut titles = Vec::new();
         let mut child = list_box.first_child();
@@ -463,6 +477,66 @@ mod tests {
             child = widget.next_sibling();
         }
         titles
+    }
+
+    #[gtk::test]
+    fn assistant_sidebar_rows_include_assistant_icons() {
+        let controller = Sidebar::builder().launch(());
+
+        let expected_icons = [
+            AiAssistant::ClaudeCode.icon_name(),
+            AiAssistant::OpenCode.icon_name(),
+            AiAssistant::Codex.icon_name(),
+            AiAssistant::MistralVibe.icon_name(),
+        ];
+
+        let parts = controller.state().get();
+        for (index, expected_icon) in expected_icons.into_iter().enumerate() {
+            let row = parts
+                .widgets
+                .assistants_list
+                .row_at_index(index as i32)
+                .unwrap_or_else(|| panic!("assistant row {index} should exist"));
+            let row_widget = row.upcast::<gtk::Widget>();
+            let icon_names = image_icon_names(&row_widget);
+
+            assert!(
+                icon_names
+                    .iter()
+                    .any(|icon_name| icon_name == expected_icon),
+                "assistant row {index} should include icon {expected_icon}; found {icon_names:?}"
+            );
+        }
+    }
+
+    #[gtk::test]
+    fn assistant_sidebar_rows_place_checkbox_before_icon() {
+        let controller = Sidebar::builder().launch(());
+
+        let parts = controller.state().get();
+        for index in 0..4 {
+            let row = parts
+                .widgets
+                .assistants_list
+                .row_at_index(index)
+                .unwrap_or_else(|| panic!("assistant row {index} should exist"));
+            let row_widget = row.upcast::<gtk::Widget>();
+            let types = widget_type_sequence(&row_widget);
+
+            let check_pos = types
+                .iter()
+                .position(|name| name == "GtkCheckButton")
+                .unwrap_or_else(|| panic!("assistant row {index} should contain a checkbox"));
+            let icon_pos = types
+                .iter()
+                .position(|name| name == "GtkImage")
+                .unwrap_or_else(|| panic!("assistant row {index} should contain an icon"));
+
+            assert!(
+                check_pos < icon_pos,
+                "assistant row {index} should render the checkbox before the icon; got {types:?}"
+            );
+        }
     }
 
     #[gtk::test]
@@ -637,6 +711,27 @@ mod tests {
     }
 
     #[gtk::test]
+    fn sidebar_simplification_removes_visible_group_headings() {
+        let controller = Sidebar::builder().launch(());
+
+        let parts = controller.state().get();
+        let root = parts
+            .widgets
+            .assistants_list
+            .parent()
+            .expect("assistant list should be inside the sidebar root");
+
+        let mut direct_child_types = Vec::new();
+        let mut child = root.first_child();
+        while let Some(widget) = child {
+            direct_child_types.push(widget.type_().name().to_string());
+            child = widget.next_sibling();
+        }
+
+        assert_eq!(direct_child_types, vec!["GtkListBox", "GtkScrolledWindow"]);
+    }
+
+    #[gtk::test]
     fn project_sidebar_list_uses_dedicated_css_class() {
         let controller = Sidebar::builder().launch(());
 
@@ -742,5 +837,40 @@ mod tests {
             visible_project_row_titles(&parts.widgets.projects_list),
             vec!["All Sessions", "Pinned", "alpha", "Unassigned"]
         );
+    }
+
+    #[gtk::test]
+    fn project_sidebar_badges_use_subdued_numeric_style() {
+        let controller = Sidebar::builder().launch(());
+
+        controller.emit(SidebarMsg::ProjectsLoaded {
+            projects: vec![ProjectInfo {
+                id: 1,
+                name: "alpha".to_string(),
+                path: "/tmp/alpha".to_string(),
+                session_count: 2,
+            }],
+            all_sessions_count: 3,
+            unassigned_count: 0,
+            pinned_count: 2,
+            show_unassigned: false,
+            selected_filter: ProjectFilter::AllSessions,
+        });
+
+        pump_main_context(|| {
+            let parts = controller.state().get();
+            parts.model.pinned_count_label.is_some()
+        });
+
+        let parts = controller.state().get();
+        let pinned_count_label = parts
+            .model
+            .pinned_count_label
+            .as_ref()
+            .expect("pinned count label should be stored");
+
+        assert!(pinned_count_label.has_css_class("numeric"));
+        assert!(pinned_count_label.has_css_class("dim-label"));
+        assert!(!pinned_count_label.has_css_class("project-badge"));
     }
 }

@@ -447,17 +447,6 @@
   background-color: #2a8733;
 }
 
-.project-badge {
-  min-width: 1.8em;
-  min-height: 0;
-  padding: 0 6px;
-  border-radius: 999px;
-  font-size: 0.8em;
-  font-weight: 600;
-  font-variant-numeric: tabular-nums;
-  background-color: alpha(@accent_bg_color, 0.2);
-}
-
 /* Blend project list rows into sidebar background. */
 .project-sidebar-list {
   background-color: transparent;
