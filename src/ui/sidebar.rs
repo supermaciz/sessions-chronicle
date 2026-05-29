@@ -452,6 +452,18 @@ mod tests {
         names
     }
 
+    fn widget_type_sequence(widget: &gtk::Widget) -> Vec<String> {
+        let mut types = vec![widget.type_().name().to_string()];
+
+        let mut child = widget.first_child();
+        while let Some(child_widget) = child {
+            types.extend(widget_type_sequence(&child_widget));
+            child = child_widget.next_sibling();
+        }
+
+        types
+    }
+
     fn visible_project_row_titles(list_box: &gtk::ListBox) -> Vec<String> {
         let mut titles = Vec::new();
         let mut child = list_box.first_child();
@@ -493,6 +505,36 @@ mod tests {
                     .iter()
                     .any(|icon_name| icon_name == expected_icon),
                 "assistant row {index} should include icon {expected_icon}; found {icon_names:?}"
+            );
+        }
+    }
+
+    #[gtk::test]
+    fn assistant_sidebar_rows_place_checkbox_before_icon() {
+        let controller = Sidebar::builder().launch(());
+
+        let parts = controller.state().get();
+        for index in 0..4 {
+            let row = parts
+                .widgets
+                .assistants_list
+                .row_at_index(index)
+                .unwrap_or_else(|| panic!("assistant row {index} should exist"));
+            let row_widget = row.upcast::<gtk::Widget>();
+            let types = widget_type_sequence(&row_widget);
+
+            let check_pos = types
+                .iter()
+                .position(|name| name == "GtkCheckButton")
+                .unwrap_or_else(|| panic!("assistant row {index} should contain a checkbox"));
+            let icon_pos = types
+                .iter()
+                .position(|name| name == "GtkImage")
+                .unwrap_or_else(|| panic!("assistant row {index} should contain an icon"));
+
+            assert!(
+                check_pos < icon_pos,
+                "assistant row {index} should render the checkbox before the icon; got {types:?}"
             );
         }
     }
