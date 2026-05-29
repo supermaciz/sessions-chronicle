@@ -1,6 +1,7 @@
 # Session detail batching tune — issue #132 design
 
-Date: 2026-05-11
+Date: 2026-05-11  
+**Status:** Implemented [#151](https://github.com/supermaciz/sessions-chronicle/pull/151)  
 Related: issue #132, escape hatch issue #134, investigation report `docs/reports/2026-05-10-session-detail-issue-146-post-drop-investigation.md`.
 
 ## Goal

@@ -1,7 +1,7 @@
 # Sidebar B Simplification Design
 
 **Date:** 2026-05-28  
-**Status:** approved design  
+**Status:** Implemented [#158](https://github.com/supermaciz/sessions-chronicle/pull/158)  
 **Source exploration:** `docs/explorations/2026-05-28-sidebar-filters-simplification-exploration.md`  
 **Chosen proposal:** B, scoped to the sidebar only
 

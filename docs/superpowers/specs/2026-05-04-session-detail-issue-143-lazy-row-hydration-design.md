@@ -1,5 +1,7 @@
 # Session Detail Issue 143 Lazy Row Hydration Design
 
+**Status:** Superseded — TypedListView migration [#152](https://github.com/supermaciz/sessions-chronicle/pull/152) replaced this approach
+
 ## Context
 
 GitHub issue #143 follows the #142 investigation into large transcript opens. The #142 reference Codex session measured a baseline median `max_schedule_gap_ms` of `1346 ms`. Replacing transcript rows with minimal labels reduced the median to `21 ms`, while bypassing Markdown rendering and syntax highlighting did not improve the result.

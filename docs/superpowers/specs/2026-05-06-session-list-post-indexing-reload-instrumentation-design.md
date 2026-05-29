@@ -1,7 +1,7 @@
 # SessionList Post-Indexing Reload Instrumentation - Design
 
 **Date:** 2026-05-06  
-**Status:** Proposed  
+**Status:** Investigation complete — fix implemented [#148](https://github.com/supermaciz/sessions-chronicle/pull/148)  
 **Issue:** [#145](https://github.com/supermaciz/sessions-chronicle/issues/145)
 
 ## Context

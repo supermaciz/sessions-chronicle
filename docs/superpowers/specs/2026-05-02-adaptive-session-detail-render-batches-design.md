@@ -1,7 +1,7 @@
 # Adaptive SessionDetail Render Batches - Design
 
 **Date:** 2026-05-02  
-**Status:** Draft
+**Status:** Superseded — replaced by the issue #132 batching tune spec, then by TypedListView migration [#152](https://github.com/supermaciz/sessions-chronicle/pull/152)
 
 ## Context
 

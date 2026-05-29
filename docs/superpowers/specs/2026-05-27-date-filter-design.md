@@ -2,7 +2,7 @@
 
 **Issue:** [#85](https://github.com/supermaciz/sessions-chronicle/issues/85)  
 **Date:** 2026-05-27  
-**Status:** Approved (design)  
+**Status:** Implemented [#157](https://github.com/supermaciz/sessions-chronicle/pull/157)  
 **Exploration:** [`docs/explorations/2026-05-26-date-filter-exploration.md`](../explorations/2026-05-26-date-filter-exploration.md)  
 **Variant:** F — Date pill with progressive disclosure
 

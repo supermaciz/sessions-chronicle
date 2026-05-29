@@ -3,7 +3,7 @@
 **Issue:** [#134](https://github.com/supermaciz/sessions-chronicle/issues/134)
 **Source exploration:** [`docs/explorations/2026-05-14-transcript-virtualization-exploration.md`](../../explorations/2026-05-14-transcript-virtualization-exploration.md)
 **Date:** 2026-05-15
-**Status:** Design ready; implementation sequencing belongs in a separate plan/PR
+**Status:** Implemented [#152](https://github.com/supermaciz/sessions-chronicle/pull/152)
 
 ---
 

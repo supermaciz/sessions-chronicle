@@ -1,6 +1,7 @@
 # Codex Subagent Parser Update — Design
 
-Date: 2026-05-19
+Date: 2026-05-19  
+**Status:** Implemented [#153](https://github.com/supermaciz/sessions-chronicle/pull/153)
 
 ## Problem
 

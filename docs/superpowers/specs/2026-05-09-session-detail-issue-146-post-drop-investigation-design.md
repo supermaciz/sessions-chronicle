@@ -1,5 +1,7 @@
 # SessionDetail Issue 146 Post-Drop Investigation - Design
 
+**Status:** Investigation complete — led to TypedListView migration [#152](https://github.com/supermaciz/sessions-chronicle/pull/152)
+
 ## Context
 
 GitHub issue [#146](https://github.com/supermaciz/sessions-chronicle/issues/146) asks for a decision-grade investigation of the remaining full-app freeze when opening the large Codex reference session `019dc51a-f0cd-79c1-ba79-45fedac889c2`.
