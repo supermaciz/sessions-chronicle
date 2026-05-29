@@ -49,6 +49,15 @@
   </categories>
   <content_rating type="oars-1.1" />
   <releases>
+    <release version="0.5.0" date="2026-05-29">
+      <description>
+        <p>Introduces date filtering and a cleaner sidebar for session browsing.</p>
+        <ul>
+          <li>Add date filter pill to browse sessions by time range</li>
+          <li>Browse and filter sessions with a cleaner, decluttered sidebar</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.4.11" date="2026-05-26">
       <description>
         <p>Improves indexing and transcript rendering stability across AI assistant session formats.</p>
