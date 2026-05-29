@@ -55,44 +55,14 @@ impl SimpleComponent for Sidebar {
     view! {
         gtk::Box {
             set_orientation: gtk::Orientation::Vertical,
-            set_spacing: 12,
+            set_spacing: 32,
             set_margin_all: 12,
             set_width_request: 200,
-
-            gtk::Label {
-                set_label: "Filters",
-                set_halign: gtk::Align::Start,
-                add_css_class: "title-4",
-                set_margin_bottom: 6,
-            },
-
-            gtk::Separator {
-                set_margin_bottom: 12,
-            },
-
-            gtk::Label {
-                set_label: "AI Assistants",
-                set_halign: gtk::Align::Start,
-                add_css_class: "heading",
-                set_margin_bottom: 6,
-            },
 
             #[name = "assistants_list"]
             gtk::ListBox {
                 add_css_class: "assistant-sidebar-list",
                 set_selection_mode: gtk::SelectionMode::None,
-            },
-
-            gtk::Separator {
-                set_margin_top: 6,
-                set_margin_bottom: 6,
-            },
-
-            gtk::Label {
-                set_label: "Projects",
-                set_halign: gtk::Align::Start,
-                add_css_class: "heading",
-                set_margin_bottom: 6,
             },
 
             gtk::ScrolledWindow {
@@ -135,6 +105,12 @@ impl SimpleComponent for Sidebar {
             status_dots: HashMap::new(),
         };
         let widgets = view_output!();
+        widgets
+            .assistants_list
+            .update_property(&[gtk::accessible::Property::Label("AI Assistants")]);
+        widgets
+            .projects_list
+            .update_property(&[gtk::accessible::Property::Label("Projects")]);
         model.projects_list = Some(widgets.projects_list.clone());
 
         for (assistant, title) in [
@@ -634,6 +610,27 @@ mod tests {
             outputs.borrow().is_empty(),
             "project row rebuild should not emit synthetic filters output"
         );
+    }
+
+    #[gtk::test]
+    fn sidebar_simplification_removes_visible_group_headings() {
+        let controller = Sidebar::builder().launch(());
+
+        let parts = controller.state().get();
+        let root = parts
+            .widgets
+            .assistants_list
+            .parent()
+            .expect("assistant list should be inside the sidebar root");
+
+        let mut direct_child_types = Vec::new();
+        let mut child = root.first_child();
+        while let Some(widget) = child {
+            direct_child_types.push(widget.type_().name().to_string());
+            child = widget.next_sibling();
+        }
+
+        assert_eq!(direct_child_types, vec!["GtkListBox", "GtkScrolledWindow"]);
     }
 
     #[gtk::test]
