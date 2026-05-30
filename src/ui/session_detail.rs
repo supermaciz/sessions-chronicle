@@ -798,27 +798,13 @@ impl Component for SessionDetail {
                 request_id,
                 session_id,
             } => {
-                let active_session_matches = self
-                    .session
-                    .as_ref()
-                    .is_some_and(|session| session.id == session_id);
-                if request_id == self.transcript_request_id && active_session_matches {
-                    tracing::debug!(
-                        request_id,
-                        session_id = session_id.as_str(),
-                        configured_delay_ms = DEFERRED_FIRST_PAGE_LOAD_DELAY_MS,
-                        "Session detail deferred first page load started"
-                    );
-                    self.spawn_transcript_page_load(&sender, request_id, session_id);
-                }
+                self.handle_start_deferred_first_page_load(request_id, session_id, &sender);
             }
             SessionDetailMsg::PrepareForNavigationBack => {
                 self.prepare_for_navigation_back(&sender);
             }
             SessionDetailMsg::DeferredClear { request_id } => {
-                if request_id == self.transcript_request_id {
-                    self.clear_for_navigation_back();
-                }
+                self.handle_deferred_clear(request_id);
             }
             SessionDetailMsg::ShowExpandLoadFailure => {
                 self.show_expand_load_failure();
@@ -870,8 +856,19 @@ impl Component for SessionDetail {
         _root: &Self::Root,
     ) {
         match message {
-            SessionDetailCmd::TranscriptLoaded { .. } => {
-                self.apply_transcript_page_result(&sender, message);
+            SessionDetailCmd::TranscriptLoaded {
+                request_id,
+                session_id,
+                load_duration_ms,
+                result,
+            } => {
+                self.apply_transcript_page_result(
+                    &sender,
+                    request_id,
+                    session_id,
+                    load_duration_ms,
+                    result,
+                );
             }
             SessionDetailCmd::SearchPositionsLoaded {
                 request_id,
@@ -879,38 +876,13 @@ impl Component for SessionDetail {
                 load_duration_ms,
                 result,
             } => {
-                let success = result.is_ok();
-                let match_count = result
-                    .as_ref()
-                    .map(|positions| positions.len())
-                    .unwrap_or(0);
-                tracing::info!(
+                self.handle_search_positions_loaded(
+                    &sender,
                     request_id,
-                    session_id = session_id.as_str(),
-                    success,
-                    match_count,
+                    session_id,
                     load_duration_ms,
-                    "Session detail search positions loaded"
+                    result,
                 );
-                let positions = match result {
-                    Ok(positions) => positions,
-                    Err(err) => {
-                        tracing::error!(
-                            request_id,
-                            session_id,
-                            "Failed to load session detail search positions: {}",
-                            err
-                        );
-                        Vec::new()
-                    }
-                };
-                let _ = sender
-                    .input_sender()
-                    .send(SessionDetailMsg::SetMatchPositions {
-                        request_id,
-                        session_id,
-                        positions,
-                    });
             }
             SessionDetailCmd::MessageFullContentReady {
                 item_index,
@@ -918,28 +890,12 @@ impl Component for SessionDetail {
                 message_index,
                 result,
             } => {
-                if !self.typed_message_full_content_target_matches(
+                self.handle_message_full_content_ready(
                     item_index,
-                    &session_id,
+                    session_id,
                     message_index,
-                ) {
-                    tracing::debug!(
-                        item_index,
-                        session_id = session_id.as_str(),
-                        message_index,
-                        "Ignoring stale full message content result"
-                    );
-                    return;
-                }
-
-                match result {
-                    Ok(content) => self.set_typed_message_full_content(item_index, content),
-                    Err(err) => {
-                        tracing::error!(item_index, "Failed to load full message content: {err}");
-                        self.reset_typed_message_expansion(item_index);
-                        self.pending_toast.set(true);
-                    }
-                }
+                    result,
+                );
             }
         }
     }
@@ -1559,6 +1515,33 @@ impl SessionDetail {
             .ok();
     }
 
+    fn handle_start_deferred_first_page_load(
+        &mut self,
+        request_id: u64,
+        session_id: String,
+        sender: &ComponentSender<Self>,
+    ) {
+        let active_session_matches = self
+            .session
+            .as_ref()
+            .is_some_and(|session| session.id == session_id);
+        if request_id == self.transcript_request_id && active_session_matches {
+            tracing::debug!(
+                request_id,
+                session_id = session_id.as_str(),
+                configured_delay_ms = DEFERRED_FIRST_PAGE_LOAD_DELAY_MS,
+                "Session detail deferred first page load started"
+            );
+            self.spawn_transcript_page_load(sender, request_id, session_id);
+        }
+    }
+
+    fn handle_deferred_clear(&mut self, request_id: u64) {
+        if request_id == self.transcript_request_id {
+            self.clear_for_navigation_back();
+        }
+    }
+
     fn current_match_item_indexes(&self) -> BTreeSet<i64> {
         self.match_positions
             .iter()
@@ -1819,22 +1802,83 @@ impl SessionDetail {
         self.loading_jump = false;
     }
 
+    fn handle_search_positions_loaded(
+        &self,
+        sender: &ComponentSender<Self>,
+        request_id: u64,
+        session_id: String,
+        load_duration_ms: u128,
+        result: Result<Vec<MatchPosition>, String>,
+    ) {
+        let success = result.is_ok();
+        let match_count = result
+            .as_ref()
+            .map(|positions| positions.len())
+            .unwrap_or(0);
+        tracing::info!(
+            request_id,
+            session_id = session_id.as_str(),
+            success,
+            match_count,
+            load_duration_ms,
+            "Session detail search positions loaded"
+        );
+        let positions = match result {
+            Ok(positions) => positions,
+            Err(err) => {
+                tracing::error!(
+                    request_id,
+                    session_id,
+                    "Failed to load session detail search positions: {}",
+                    err
+                );
+                Vec::new()
+            }
+        };
+        let _ = sender
+            .input_sender()
+            .send(SessionDetailMsg::SetMatchPositions {
+                request_id,
+                session_id,
+                positions,
+            });
+    }
+
+    fn handle_message_full_content_ready(
+        &mut self,
+        item_index: usize,
+        session_id: String,
+        message_index: usize,
+        result: Result<String, String>,
+    ) {
+        if !self.typed_message_full_content_target_matches(item_index, &session_id, message_index) {
+            tracing::debug!(
+                item_index,
+                session_id = session_id.as_str(),
+                message_index,
+                "Ignoring stale full message content result"
+            );
+            return;
+        }
+
+        match result {
+            Ok(content) => self.set_typed_message_full_content(item_index, content),
+            Err(err) => {
+                tracing::error!(item_index, "Failed to load full message content: {err}");
+                self.reset_typed_message_expansion(item_index);
+                self.pending_toast.set(true);
+            }
+        }
+    }
+
     fn apply_transcript_page_result(
         &mut self,
         sender: &ComponentSender<Self>,
-        message: SessionDetailCmd,
+        request_id: u64,
+        session_id: String,
+        load_duration_ms: u128,
+        result: Result<Vec<crate::database::TranscriptItemRow>, String>,
     ) {
-        let SessionDetailCmd::TranscriptLoaded {
-            request_id,
-            session_id,
-            load_duration_ms,
-            result,
-            ..
-        } = message
-        else {
-            return;
-        };
-
         if request_id != self.transcript_request_id {
             tracing::debug!("Ignoring stale transcript page for session {}", session_id,);
             return;
