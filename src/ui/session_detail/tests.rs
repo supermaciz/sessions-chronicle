@@ -598,7 +598,7 @@ fn update_search_query_populates_match_positions_and_reloads_first_page() {
     )));
     pump_main_context(|| {
         let parts = controller.state().get();
-        parts.model.match_positions.len() == 2
+        parts.model.search.match_positions.len() == 2
             && !parts.model.loading_transcript
             && parts.model.display_targets_by_item_index.contains_key(&10)
     });
@@ -606,13 +606,14 @@ fn update_search_query_populates_match_positions_and_reloads_first_page() {
     let parts = controller.state().get();
     let indexes: Vec<i64> = parts
         .model
+        .search
         .match_positions
         .iter()
         .map(|p| p.item_index)
         .collect();
     assert_eq!(indexes, vec![10, 80]);
-    assert_eq!(parts.model.current_match, 0);
-    assert_eq!(parts.model.search_query.as_deref(), Some("needle"));
+    assert_eq!(parts.model.search.current_match, 0);
+    assert_eq!(parts.model.search.query.as_deref(), Some("needle"));
 }
 
 #[gtk::test]
@@ -635,7 +636,7 @@ fn search_highlight_is_limited_to_navigable_message_matches() {
     )));
     pump_main_context(|| {
         let parts = controller.state().get();
-        parts.model.match_positions.len() == 2 && !parts.model.loading_transcript
+        parts.model.search.match_positions.len() == 2 && !parts.model.loading_transcript
     });
 
     let parts = controller.state().get();
@@ -678,7 +679,7 @@ fn stale_search_result_is_discarded() {
     controller.emit(SessionDetailMsg::UpdateSearchQuery(Some(
         "ordinary".to_string(),
     )));
-    let active_request = controller.state().get().model.search_request_id;
+    let active_request = controller.state().get().model.search.request_id;
     controller.emit(SessionDetailMsg::SetMatchPositions {
         request_id: active_request.wrapping_sub(1),
         session_id: "test-session-123".to_string(),
@@ -687,11 +688,11 @@ fn stale_search_result_is_discarded() {
 
     pump_main_context(|| {
         let parts = controller.state().get();
-        parts.model.search_query.as_deref() == Some("ordinary")
+        parts.model.search.query.as_deref() == Some("ordinary")
     });
 
     let parts = controller.state().get();
-    assert!(parts.model.match_positions.is_empty());
+    assert!(parts.model.search.match_positions.is_empty());
 }
 
 #[gtk::test]
@@ -845,7 +846,7 @@ fn jump_to_loaded_match_scrolls_without_loading() {
         !parts.model.loading_transcript && parts.model.loaded_count == 75
     });
 
-    let active_request = controller.state().get().model.search_request_id;
+    let active_request = controller.state().get().model.search.request_id;
     controller.emit(SessionDetailMsg::SetMatchPositions {
         request_id: active_request,
         session_id: "test-session-123".to_string(),
@@ -856,12 +857,13 @@ fn jump_to_loaded_match_scrolls_without_loading() {
     });
     pump_main_context(|| {
         let parts = controller.state().get();
-        !parts.model.loading_jump && parts.model.display_targets_by_item_index.contains_key(&10)
+        !parts.model.search.loading_jump
+            && parts.model.display_targets_by_item_index.contains_key(&10)
     });
 
     let parts = controller.state().get();
-    assert_eq!(parts.model.current_match, 0);
-    assert!(!parts.model.loading_jump);
+    assert_eq!(parts.model.search.current_match, 0);
+    assert!(!parts.model.search.loading_jump);
     assert!(parts.model.display_targets_by_item_index.contains_key(&10));
 }
 
@@ -880,7 +882,7 @@ fn jump_to_loaded_match_with_typed_view_waits_for_display() {
         parts.model.loaded_count == 75 && !parts.model.loading_transcript
     });
 
-    let active_request = controller.state().get().model.search_request_id;
+    let active_request = controller.state().get().model.search.request_id;
     controller.emit(SessionDetailMsg::SetMatchPositions {
         request_id: active_request,
         session_id: "test-session-123".to_string(),
@@ -889,11 +891,11 @@ fn jump_to_loaded_match_with_typed_view_waits_for_display() {
 
     pump_main_context(|| {
         let parts = controller.state().get();
-        !parts.model.loading_jump
+        !parts.model.search.loading_jump
     });
 
     let parts = controller.state().get();
-    assert!(!parts.model.loading_jump);
+    assert!(!parts.model.search.loading_jump);
     assert!(parts.model.display_targets_by_item_index.contains_key(&70));
 }
 
@@ -909,14 +911,14 @@ fn prev_next_wrap_around_match_positions() {
     });
     pump_main_context(|| {
         let parts = controller.state().get();
-        parts.model.match_positions.len() == 2 && !parts.model.loading_jump
+        parts.model.search.match_positions.len() == 2 && !parts.model.search.loading_jump
     });
 
     controller.emit(SessionDetailMsg::PrevMatch);
-    pump_main_context(|| controller.state().get().model.current_match == 1);
+    pump_main_context(|| controller.state().get().model.search.current_match == 1);
     controller.emit(SessionDetailMsg::NextMatch);
-    pump_main_context(|| controller.state().get().model.current_match == 0);
+    pump_main_context(|| controller.state().get().model.search.current_match == 0);
 
     let parts = controller.state().get();
-    assert_eq!(parts.model.current_match, 0);
+    assert_eq!(parts.model.search.current_match, 0);
 }

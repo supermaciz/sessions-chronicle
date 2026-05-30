@@ -49,17 +49,28 @@ pub struct SessionDetail {
     loaded_count: usize,
     loading_transcript: bool,
     transcript_request_id: u64,
-    search_query: Option<String>,
-    match_positions: Vec<crate::database::MatchPosition>,
     display_targets_by_item_index: BTreeMap<i64, ScrollTarget>,
-    current_match: usize,
-    pending_jump: Option<usize>,
-    loading_jump: bool,
-    search_request_id: u64,
-    scroll_to_item: Cell<Option<ScrollTarget>>,
+    search: SearchState,
     pending_toast: Cell<bool>,
     inspector: Controller<ToolInspectorPane>,
     inspector_open: bool,
+}
+
+/// Transcript search and match-navigation state.
+///
+/// These fields move together: `request_id` is bumped to invalidate in-flight
+/// loads, and `match_positions`/`current_match`/`pending_jump`/`loading_jump`
+/// are reset as a unit whenever the query changes (see
+/// [`SessionDetail::reset_search_matches`] and `invalidate_search_requests`).
+#[derive(Default)]
+struct SearchState {
+    query: Option<String>,
+    match_positions: Vec<MatchPosition>,
+    current_match: usize,
+    pending_jump: Option<usize>,
+    loading_jump: bool,
+    request_id: u64,
+    scroll_to_item: Cell<Option<ScrollTarget>>,
 }
 
 /// Resolved scroll destination for global search navigation.
@@ -606,22 +617,22 @@ impl Component for SessionDetail {
                         add_css_class: "search-nav-bar",
                         set_spacing: 8,
                         #[watch]
-                        set_visible: model.search_query.is_some(),
+                        set_visible: model.search.query.is_some(),
 
                         #[name = "search_jump_spinner"]
                         gtk::Spinner {
                             add_css_class: "search-jump-spinner",
                             #[watch]
-                            set_visible: model.loading_jump,
+                            set_visible: model.search.loading_jump,
                             #[watch]
-                            set_spinning: model.loading_jump,
+                            set_spinning: model.search.loading_jump,
                         },
 
                         #[name = "search_term_label"]
                         gtk::Label {
                             add_css_class: "dim-label",
                             #[watch]
-                            set_label: &model.search_query.as_deref()
+                            set_label: &model.search.query.as_deref()
                                 .map(|q| format!("\"{}\"", q))
                                 .unwrap_or_default(),
                         },
@@ -632,7 +643,7 @@ impl Component for SessionDetail {
                             set_tooltip_text: Some("Previous match"),
                             add_css_class: "flat",
                             #[watch]
-                            set_sensitive: !model.loading_jump && !model.match_positions.is_empty(),
+                            set_sensitive: !model.search.loading_jump && !model.search.match_positions.is_empty(),
                             connect_clicked => SessionDetailMsg::PrevMatch,
                         },
 
@@ -641,8 +652,8 @@ impl Component for SessionDetail {
                             add_css_class: "match-counter",
                             set_halign: gtk::Align::Center,
                             #[watch]
-                            set_label: &if !model.match_positions.is_empty() {
-                                format!("{} / {}", model.current_match + 1, model.match_positions.len())
+                            set_label: &if !model.search.match_positions.is_empty() {
+                                format!("{} / {}", model.search.current_match + 1, model.search.match_positions.len())
                             } else {
                                 "0 results".to_string()
                             },
@@ -653,13 +664,13 @@ impl Component for SessionDetail {
                             add_css_class: "dim-label",
                             add_css_class: "loaded-match-counter",
                             #[watch]
-                            set_visible: model.loading_jump
-                                && model.loaded_match_count() < model.match_positions.len(),
+                            set_visible: model.search.loading_jump
+                                && model.loaded_match_count() < model.search.match_positions.len(),
                             #[watch]
                             set_label: &format!(
                                 "({}/{} loaded)",
                                 model.loaded_match_count(),
-                                model.match_positions.len()
+                                model.search.match_positions.len()
                             ),
                         },
 
@@ -669,7 +680,7 @@ impl Component for SessionDetail {
                             set_tooltip_text: Some("Next match"),
                             add_css_class: "flat",
                             #[watch]
-                            set_sensitive: !model.loading_jump && !model.match_positions.is_empty(),
+                            set_sensitive: !model.search.loading_jump && !model.search.match_positions.is_empty(),
                             connect_clicked => SessionDetailMsg::NextMatch,
                         },
 
@@ -712,14 +723,8 @@ impl Component for SessionDetail {
             loaded_count: 0,
             loading_transcript: false,
             transcript_request_id: 0,
-            search_query: None,
-            match_positions: Vec::new(),
             display_targets_by_item_index: BTreeMap::new(),
-            current_match: 0,
-            pending_jump: None,
-            loading_jump: false,
-            search_request_id: 0,
-            scroll_to_item: Cell::new(None),
+            search: SearchState::default(),
             pending_toast: Cell::new(false),
             inspector,
             inspector_open: false,
@@ -1120,7 +1125,7 @@ impl SessionDetail {
     /// the [`gtk::ListView`] toward it, then resolve and focus the row from an
     /// idle callback, falling back to polling the frame clock until it appears.
     fn apply_scroll_target(&self, widgets: &SessionDetailWidgets) {
-        let Some(target) = self.scroll_to_item.take() else {
+        let Some(target) = self.search.scroll_to_item.take() else {
             return;
         };
 
@@ -1222,7 +1227,7 @@ impl SessionDetail {
     ) {
         self.invalidate_search_requests();
         let normalized = Self::normalize_search_query(search_query);
-        self.search_query = normalized.clone();
+        self.search.query = normalized.clone();
         self.reset_search_matches();
 
         let session_id = session.id.clone();
@@ -1242,7 +1247,7 @@ impl SessionDetail {
         );
 
         if let Some(query) = normalized {
-            let request_id = self.search_request_id;
+            let request_id = self.search.request_id;
             self.spawn_match_positions_load(sender, request_id, session_id.clone(), query);
         }
 
@@ -1253,7 +1258,7 @@ impl SessionDetail {
     fn update_search_query(&mut self, query: Option<String>, sender: &ComponentSender<Self>) {
         let normalized = Self::normalize_search_query(query);
         let active_session_id = self.session.as_ref().map(|session| session.id.as_str());
-        let previous_match_count = self.match_positions.len();
+        let previous_match_count = self.search.match_positions.len();
         let query_len = normalized.as_ref().map(|query| query.len()).unwrap_or(0);
         let will_load_match_positions = self.session.is_some() && normalized.is_some();
         tracing::info!(
@@ -1265,7 +1270,7 @@ impl SessionDetail {
             "Session detail search update started"
         );
 
-        self.search_query = normalized.clone();
+        self.search.query = normalized.clone();
         self.invalidate_search_requests();
         self.reset_search_matches();
 
@@ -1275,7 +1280,7 @@ impl SessionDetail {
         }
 
         if let (Some(session), Some(query)) = (&self.session, normalized) {
-            let request_id = self.search_request_id;
+            let request_id = self.search.request_id;
             self.spawn_match_positions_load(sender, request_id, session.id.clone(), query);
         }
     }
@@ -1291,7 +1296,7 @@ impl SessionDetail {
             .session
             .as_ref()
             .is_some_and(|session| session.id == session_id);
-        if request_id != self.search_request_id || !active_session_matches {
+        if request_id != self.search.request_id || !active_session_matches {
             tracing::debug!(
                 request_id,
                 session_id,
@@ -1311,39 +1316,39 @@ impl SessionDetail {
             "Session detail search positions applied"
         );
 
-        self.match_positions = positions;
+        self.search.match_positions = positions;
         self.clamp_current_match();
-        self.pending_jump = None;
-        self.loading_jump = false;
+        self.search.pending_jump = None;
+        self.search.loading_jump = false;
         if self.messages.is_empty() {
             self.start_transcript_load(sender, &session_id, false, "search");
         } else {
-            self.apply_highlight_query_to_typed_items(self.search_query.clone());
+            self.apply_highlight_query_to_typed_items(self.search.query.clone());
             self.refresh_typed_rows_preserving_scroll();
         }
-        if !self.match_positions.is_empty() {
+        if !self.search.match_positions.is_empty() {
             self.jump_to(0, sender);
         }
     }
 
     fn jump_to_previous_match(&mut self, sender: &ComponentSender<Self>) {
-        if self.match_positions.is_empty() || self.loading_jump {
+        if self.search.match_positions.is_empty() || self.search.loading_jump {
             return;
         }
 
-        let target = match self.current_match {
-            0 => self.match_positions.len() - 1,
+        let target = match self.search.current_match {
+            0 => self.search.match_positions.len() - 1,
             n => n - 1,
         };
         self.jump_to(target, sender);
     }
 
     fn jump_to_next_match(&mut self, sender: &ComponentSender<Self>) {
-        if self.match_positions.is_empty() || self.loading_jump {
+        if self.search.match_positions.is_empty() || self.search.loading_jump {
             return;
         }
 
-        let target = (self.current_match + 1) % self.match_positions.len();
+        let target = (self.search.current_match + 1) % self.search.match_positions.len();
         self.jump_to(target, sender);
     }
 
@@ -1394,7 +1399,7 @@ impl SessionDetail {
     }
 
     fn clear_search(&mut self) {
-        self.search_query = None;
+        self.search.query = None;
         self.invalidate_search_requests();
         self.reset_search_matches();
         if !self.messages.is_empty() {
@@ -1411,7 +1416,7 @@ impl SessionDetail {
         self.clear_messages_safely_with_metrics("component_clear");
         self.loaded_count = 0;
         self.loading_transcript = false;
-        self.search_query = None;
+        self.search.query = None;
         self.reset_search_matches();
         self.inspector.emit(ToolInspectorPaneMsg::Clear);
         self.set_inspector_open(false, sender);
@@ -1551,7 +1556,8 @@ impl SessionDetail {
     }
 
     fn current_match_item_indexes(&self) -> BTreeSet<i64> {
-        self.match_positions
+        self.search
+            .match_positions
             .iter()
             .map(|position| position.item_index)
             .collect()
@@ -1637,7 +1643,7 @@ impl SessionDetail {
     }
 
     fn invalidate_search_requests(&mut self) {
-        self.search_request_id = self.search_request_id.wrapping_add(1);
+        self.search.request_id = self.search.request_id.wrapping_add(1);
     }
 
     /// Returns `true` while transcript content is in flight and the display
@@ -1762,7 +1768,7 @@ impl SessionDetail {
     ) {
         self.loading_transcript = false;
         self.loaded_count = rows.len();
-        let highlight = self.search_query.clone();
+        let highlight = self.search.query.clone();
         let db_path = self.db_path.clone();
         self.clear_messages_safely_with_metrics("first_page_apply");
         let build_started_at = Instant::now();
@@ -1806,8 +1812,8 @@ impl SessionDetail {
         self.clear_messages_safely_with_metrics("transcript_error");
         self.loaded_count = 0;
         self.loading_transcript = false;
-        self.pending_jump = None;
-        self.loading_jump = false;
+        self.search.pending_jump = None;
+        self.search.loading_jump = false;
     }
 
     fn handle_search_positions_loaded(
@@ -1920,14 +1926,15 @@ impl SessionDetail {
     }
 
     fn reset_search_matches(&mut self) {
-        self.match_positions.clear();
-        self.current_match = 0;
-        self.pending_jump = None;
-        self.loading_jump = false;
+        self.search.match_positions.clear();
+        self.search.current_match = 0;
+        self.search.pending_jump = None;
+        self.search.loading_jump = false;
     }
 
     fn loaded_match_count(&self) -> usize {
-        self.match_positions
+        self.search
+            .match_positions
             .iter()
             .filter(|position| {
                 self.display_targets_by_item_index
@@ -1937,31 +1944,31 @@ impl SessionDetail {
     }
 
     fn clamp_current_match(&mut self) {
-        self.current_match = match self.match_positions.len() {
+        self.search.current_match = match self.search.match_positions.len() {
             0 => 0,
-            len if self.current_match >= len => len - 1,
-            _ => self.current_match,
+            len if self.search.current_match >= len => len - 1,
+            _ => self.search.current_match,
         };
     }
 
     fn jump_to(&mut self, target: usize, sender: &ComponentSender<Self>) {
-        if self.match_positions.get(target).is_none() {
+        if self.search.match_positions.get(target).is_none() {
             return;
         }
 
-        self.current_match = target;
-        self.pending_jump = Some(target);
-        self.loading_jump = true;
+        self.search.current_match = target;
+        self.search.pending_jump = Some(target);
+        self.search.loading_jump = true;
         self.continue_pending_jump(sender);
     }
 
     fn continue_pending_jump(&mut self, _sender: &ComponentSender<Self>) {
-        let Some(target) = self.pending_jump else {
+        let Some(target) = self.search.pending_jump else {
             return;
         };
-        let Some(position) = self.match_positions.get(target) else {
-            self.pending_jump = None;
-            self.loading_jump = false;
+        let Some(position) = self.search.match_positions.get(target) else {
+            self.search.pending_jump = None;
+            self.search.loading_jump = false;
             return;
         };
 
@@ -1975,17 +1982,17 @@ impl SessionDetail {
             .copied()
             && (self.messages.len() as usize) > scroll_target.display_index
         {
-            self.pending_jump = None;
-            self.loading_jump = false;
-            self.scroll_to_item.set(Some(scroll_target));
+            self.search.pending_jump = None;
+            self.search.loading_jump = false;
+            self.search.scroll_to_item.set(Some(scroll_target));
         } else if (position.item_index as usize) >= self.loaded_count {
             tracing::warn!(
                 item_index = position.item_index,
                 loaded_count = self.loaded_count,
                 "search match position is outside loaded transcript range"
             );
-            self.pending_jump = None;
-            self.loading_jump = false;
+            self.search.pending_jump = None;
+            self.search.loading_jump = false;
         } else {
             debug_assert!(
                 false,
@@ -1997,8 +2004,8 @@ impl SessionDetail {
                 loaded_count = self.loaded_count,
                 "search match position is loaded but missing from display index"
             );
-            self.pending_jump = None;
-            self.loading_jump = false;
+            self.search.pending_jump = None;
+            self.search.loading_jump = false;
         }
     }
 
@@ -2111,7 +2118,7 @@ impl SessionDetail {
         self.transcript_load_started_at = None;
         self.clear_messages_safely_with_metrics("navigation_back");
         self.loaded_count = 0;
-        self.search_query = None;
+        self.search.query = None;
         self.reset_search_matches();
     }
 
