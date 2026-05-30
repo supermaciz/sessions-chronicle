@@ -946,162 +946,11 @@ impl Component for SessionDetail {
 
     fn post_view(&self, widgets: &mut Self::Widgets) {
         if let Some(session) = &self.session {
-            let project_name = session
-                .project_path
-                .as_deref()
-                .and_then(|path| std::path::Path::new(path).file_name())
-                .and_then(|name| name.to_str())
-                .unwrap_or("Unknown project");
-            widgets.project_label.set_label(project_name);
-
-            let path = session
-                .project_path
-                .as_deref()
-                .unwrap_or(&session.file_path);
-            widgets.path_label.set_label(path);
-
-            widgets
-                .tool_icon
-                .set_icon_name(Some(session.tool.icon_name()));
-            widgets.tool_label.set_label(session.tool.display_name());
-
-            widgets.session_id_label.set_label(&session.id);
-
-            // Populate chip row
-            widgets
-                .duration_chip
-                .set_label(&crate::ui::format::format_session_duration(
-                    session.start_time,
-                    session.last_updated,
-                ));
-            widgets
-                .message_count_chip
-                .set_label(&crate::ui::format::format_count(
-                    session.message_count,
-                    "message",
-                    "messages",
-                ));
-            widgets
-                .ending_status_chip
-                .set_label(crate::ui::format::format_ending_label(
-                    &session.ending_status,
-                ));
-            widgets.ending_status_chip.set_css_classes(&[
-                "pill",
-                crate::ui::format::ending_css_class(&session.ending_status),
-            ]);
-            widgets
-                .ending_status_chip
-                .update_property(&[gtk::accessible::Property::Label(
-                    crate::ui::format::format_ending_accessible_label(&session.ending_status),
-                )]);
-
-            // First prompt section visibility
-            let has_first_prompt = session
-                .first_prompt
-                .as_ref()
-                .map(|p| !p.trim().is_empty())
-                .unwrap_or(false);
-            widgets.first_prompt_section.set_visible(has_first_prompt);
-            widgets.first_prompt_separator.set_visible(has_first_prompt);
-            if has_first_prompt {
-                widgets
-                    .first_prompt_label
-                    .set_label(session.first_prompt.as_ref().unwrap());
-            }
-
-            // Activity section
-            let has_activity =
-                session.edit_count > 0 || session.command_count > 0 || session.read_count > 0;
-            widgets.activity_section.set_visible(true);
-            widgets.activity_bar.set_visible(has_activity);
-            widgets.legend_row.set_visible(has_activity);
-            widgets.conversation_only_label.set_visible(!has_activity);
-
-            if has_activity {
-                widgets.activity_bar.set_counts(
-                    session.edit_count,
-                    session.command_count,
-                    session.read_count,
-                );
-
-                widgets
-                    .edit_count_label
-                    .set_label(&crate::ui::format::format_count(
-                        session.edit_count,
-                        "edit",
-                        "edits",
-                    ));
-                widgets
-                    .command_count_label
-                    .set_label(&crate::ui::format::format_count(
-                        session.command_count,
-                        "command",
-                        "commands",
-                    ));
-                widgets
-                    .read_count_label
-                    .set_label(&crate::ui::format::format_count(
-                        session.read_count,
-                        "read",
-                        "reads",
-                    ));
-
-                widgets.edit_legend.set_visible(session.edit_count > 0);
-                widgets
-                    .command_legend
-                    .set_visible(session.command_count > 0);
-                widgets.read_legend.set_visible(session.read_count > 0);
-            } else {
-                widgets.activity_bar.set_counts(0, 0, 0);
-            }
-
-            // Tokens section
-            let has_tokens = session.token_usage.is_some();
-            widgets.tokens_section.set_visible(has_tokens);
-            widgets.tokens_separator.set_visible(has_tokens);
-
-            if let Some(usage) = &session.token_usage {
-                widgets
-                    .input_value_label
-                    .set_label(&crate::ui::format::format_token_count(usage.input_tokens));
-                widgets
-                    .output_value_label
-                    .set_label(&crate::ui::format::format_token_count(usage.output_tokens));
-
-                let has_cache =
-                    usage.cache_read_tokens.is_some() || usage.cache_write_tokens.is_some();
-                widgets.cache_pair.set_visible(has_cache);
-                if has_cache && let Some(cache_text) = crate::ui::format::format_token_cache(usage)
-                {
-                    widgets.cache_value_label.set_label(&cache_text);
-                }
-
-                let has_reasoning = usage.reasoning_tokens.is_some();
-                widgets.reasoning_pair.set_visible(has_reasoning);
-                if let Some(reasoning) = usage.reasoning_tokens {
-                    widgets
-                        .reasoning_value_label
-                        .set_label(&crate::ui::format::format_token_count(reasoning));
-                }
-
-                widgets
-                    .tokens_section
-                    .set_tooltip_text(Some(crate::ui::format::token_semantics_help_tooltip()));
-
-                widgets
-                    .input_pair
-                    .update_property(&[gtk::accessible::Property::Label(&format!(
-                        "Input tokens: {}",
-                        crate::ui::format::format_token_count(usage.input_tokens)
-                    ))]);
-                widgets
-                    .output_pair
-                    .update_property(&[gtk::accessible::Property::Label(&format!(
-                        "Output tokens: {}",
-                        crate::ui::format::format_token_count(usage.output_tokens)
-                    ))]);
-            }
+            Self::update_session_header(widgets, session);
+            Self::update_chip_row(widgets, session);
+            Self::update_first_prompt(widgets, session);
+            Self::update_activity_section(widgets, session);
+            Self::update_tokens_section(widgets, session);
 
             widgets
                 .content_stack
@@ -1253,6 +1102,167 @@ impl SessionDetail {
             let trimmed = query.trim().to_string();
             (!trimmed.is_empty()).then_some(trimmed)
         })
+    }
+
+    fn update_session_header(widgets: &SessionDetailWidgets, session: &Session) {
+        let project_name = session
+            .project_path
+            .as_deref()
+            .and_then(|path| std::path::Path::new(path).file_name())
+            .and_then(|name| name.to_str())
+            .unwrap_or("Unknown project");
+        widgets.project_label.set_label(project_name);
+
+        let path = session
+            .project_path
+            .as_deref()
+            .unwrap_or(&session.file_path);
+        widgets.path_label.set_label(path);
+
+        widgets
+            .tool_icon
+            .set_icon_name(Some(session.tool.icon_name()));
+        widgets.tool_label.set_label(session.tool.display_name());
+
+        widgets.session_id_label.set_label(&session.id);
+    }
+
+    fn update_chip_row(widgets: &SessionDetailWidgets, session: &Session) {
+        widgets
+            .duration_chip
+            .set_label(&crate::ui::format::format_session_duration(
+                session.start_time,
+                session.last_updated,
+            ));
+        widgets
+            .message_count_chip
+            .set_label(&crate::ui::format::format_count(
+                session.message_count,
+                "message",
+                "messages",
+            ));
+        widgets
+            .ending_status_chip
+            .set_label(crate::ui::format::format_ending_label(
+                &session.ending_status,
+            ));
+        widgets.ending_status_chip.set_css_classes(&[
+            "pill",
+            crate::ui::format::ending_css_class(&session.ending_status),
+        ]);
+        widgets
+            .ending_status_chip
+            .update_property(&[gtk::accessible::Property::Label(
+                crate::ui::format::format_ending_accessible_label(&session.ending_status),
+            )]);
+    }
+
+    fn update_first_prompt(widgets: &SessionDetailWidgets, session: &Session) {
+        let has_first_prompt = session
+            .first_prompt
+            .as_ref()
+            .map(|p| !p.trim().is_empty())
+            .unwrap_or(false);
+        widgets.first_prompt_section.set_visible(has_first_prompt);
+        widgets.first_prompt_separator.set_visible(has_first_prompt);
+        if has_first_prompt {
+            widgets
+                .first_prompt_label
+                .set_label(session.first_prompt.as_ref().unwrap());
+        }
+    }
+
+    fn update_activity_section(widgets: &SessionDetailWidgets, session: &Session) {
+        let has_activity =
+            session.edit_count > 0 || session.command_count > 0 || session.read_count > 0;
+        widgets.activity_section.set_visible(true);
+        widgets.activity_bar.set_visible(has_activity);
+        widgets.legend_row.set_visible(has_activity);
+        widgets.conversation_only_label.set_visible(!has_activity);
+
+        if has_activity {
+            widgets.activity_bar.set_counts(
+                session.edit_count,
+                session.command_count,
+                session.read_count,
+            );
+
+            widgets
+                .edit_count_label
+                .set_label(&crate::ui::format::format_count(
+                    session.edit_count,
+                    "edit",
+                    "edits",
+                ));
+            widgets
+                .command_count_label
+                .set_label(&crate::ui::format::format_count(
+                    session.command_count,
+                    "command",
+                    "commands",
+                ));
+            widgets
+                .read_count_label
+                .set_label(&crate::ui::format::format_count(
+                    session.read_count,
+                    "read",
+                    "reads",
+                ));
+
+            widgets.edit_legend.set_visible(session.edit_count > 0);
+            widgets
+                .command_legend
+                .set_visible(session.command_count > 0);
+            widgets.read_legend.set_visible(session.read_count > 0);
+        } else {
+            widgets.activity_bar.set_counts(0, 0, 0);
+        }
+    }
+
+    fn update_tokens_section(widgets: &SessionDetailWidgets, session: &Session) {
+        let has_tokens = session.token_usage.is_some();
+        widgets.tokens_section.set_visible(has_tokens);
+        widgets.tokens_separator.set_visible(has_tokens);
+
+        if let Some(usage) = &session.token_usage {
+            widgets
+                .input_value_label
+                .set_label(&crate::ui::format::format_token_count(usage.input_tokens));
+            widgets
+                .output_value_label
+                .set_label(&crate::ui::format::format_token_count(usage.output_tokens));
+
+            let has_cache = usage.cache_read_tokens.is_some() || usage.cache_write_tokens.is_some();
+            widgets.cache_pair.set_visible(has_cache);
+            if has_cache && let Some(cache_text) = crate::ui::format::format_token_cache(usage) {
+                widgets.cache_value_label.set_label(&cache_text);
+            }
+
+            let has_reasoning = usage.reasoning_tokens.is_some();
+            widgets.reasoning_pair.set_visible(has_reasoning);
+            if let Some(reasoning) = usage.reasoning_tokens {
+                widgets
+                    .reasoning_value_label
+                    .set_label(&crate::ui::format::format_token_count(reasoning));
+            }
+
+            widgets
+                .tokens_section
+                .set_tooltip_text(Some(crate::ui::format::token_semantics_help_tooltip()));
+
+            widgets
+                .input_pair
+                .update_property(&[gtk::accessible::Property::Label(&format!(
+                    "Input tokens: {}",
+                    crate::ui::format::format_token_count(usage.input_tokens)
+                ))]);
+            widgets
+                .output_pair
+                .update_property(&[gtk::accessible::Property::Label(&format!(
+                    "Output tokens: {}",
+                    crate::ui::format::format_token_count(usage.output_tokens)
+                ))]);
+        }
     }
 
     fn set_session(
