@@ -306,7 +306,7 @@ fn session_detail_defers_initial_transcript_load_after_session_change() {
 
     pump_main_context(|| {
         let parts = controller.state().get();
-        parts.model.session.is_some() && parts.model.loading_transcript
+        parts.model.session.is_some() && parts.model.transcript.loading
     });
 
     let context = gtk::glib::MainContext::default();
@@ -317,7 +317,7 @@ fn session_detail_defers_initial_transcript_load_after_session_change() {
     }
 
     let parts = controller.state().get();
-    assert_eq!(parts.model.loaded_count, 0);
+    assert_eq!(parts.model.transcript.loaded_count, 0);
     assert_eq!(parts.model.messages.len(), 0);
 }
 
@@ -337,7 +337,8 @@ fn session_open_timestamp_tracks_active_session_lifecycle() {
             .state()
             .get()
             .model
-            .transcript_load_started_at
+            .transcript
+            .load_started_at
             .is_some()
     });
     assert!(
@@ -345,7 +346,8 @@ fn session_open_timestamp_tracks_active_session_lifecycle() {
             .state()
             .get()
             .model
-            .transcript_load_started_at
+            .transcript
+            .load_started_at
             .is_some()
     );
 
@@ -356,7 +358,8 @@ fn session_open_timestamp_tracks_active_session_lifecycle() {
             .state()
             .get()
             .model
-            .transcript_load_started_at
+            .transcript
+            .load_started_at
             .is_none()
     );
 }
@@ -374,7 +377,7 @@ fn clear_message_clears_rows_and_targets() {
 
     pump_main_context(|| {
         let parts = controller.state().get();
-        !parts.model.loading_transcript && parts.model.messages.len() as usize == 75
+        !parts.model.transcript.loading && parts.model.messages.len() as usize == 75
     });
 
     controller.emit(SessionDetailMsg::Clear);
@@ -385,7 +388,13 @@ fn clear_message_clears_rows_and_targets() {
 
     let parts = controller.state().get();
     assert_eq!(parts.model.messages.len(), 0);
-    assert!(parts.model.display_targets_by_item_index.is_empty());
+    assert!(
+        parts
+            .model
+            .transcript
+            .display_targets_by_item_index
+            .is_empty()
+    );
 }
 
 #[test]
@@ -590,7 +599,7 @@ fn update_search_query_populates_match_positions_and_reloads_first_page() {
     });
     pump_main_context(|| {
         let parts = controller.state().get();
-        !parts.model.loading_transcript && parts.model.loaded_count == 85
+        !parts.model.transcript.loading && parts.model.transcript.loaded_count == 85
     });
 
     controller.emit(SessionDetailMsg::UpdateSearchQuery(Some(
@@ -599,8 +608,12 @@ fn update_search_query_populates_match_positions_and_reloads_first_page() {
     pump_main_context(|| {
         let parts = controller.state().get();
         parts.model.search.match_positions.len() == 2
-            && !parts.model.loading_transcript
-            && parts.model.display_targets_by_item_index.contains_key(&10)
+            && !parts.model.transcript.loading
+            && parts
+                .model
+                .transcript
+                .display_targets_by_item_index
+                .contains_key(&10)
     });
 
     let parts = controller.state().get();
@@ -628,7 +641,7 @@ fn search_highlight_is_limited_to_navigable_message_matches() {
     });
     pump_main_context(|| {
         let parts = controller.state().get();
-        !parts.model.loading_transcript && parts.model.loaded_count == 12
+        !parts.model.transcript.loading && parts.model.transcript.loaded_count == 12
     });
 
     controller.emit(SessionDetailMsg::UpdateSearchQuery(Some(
@@ -636,7 +649,7 @@ fn search_highlight_is_limited_to_navigable_message_matches() {
     )));
     pump_main_context(|| {
         let parts = controller.state().get();
-        parts.model.search.match_positions.len() == 2 && !parts.model.loading_transcript
+        parts.model.search.match_positions.len() == 2 && !parts.model.transcript.loading
     });
 
     let parts = controller.state().get();
@@ -843,7 +856,7 @@ fn jump_to_loaded_match_scrolls_without_loading() {
     });
     pump_main_context(|| {
         let parts = controller.state().get();
-        !parts.model.loading_transcript && parts.model.loaded_count == 75
+        !parts.model.transcript.loading && parts.model.transcript.loaded_count == 75
     });
 
     let active_request = controller.state().get().model.search.request_id;
@@ -858,13 +871,23 @@ fn jump_to_loaded_match_scrolls_without_loading() {
     pump_main_context(|| {
         let parts = controller.state().get();
         !parts.model.search.loading_jump
-            && parts.model.display_targets_by_item_index.contains_key(&10)
+            && parts
+                .model
+                .transcript
+                .display_targets_by_item_index
+                .contains_key(&10)
     });
 
     let parts = controller.state().get();
     assert_eq!(parts.model.search.current_match, 0);
     assert!(!parts.model.search.loading_jump);
-    assert!(parts.model.display_targets_by_item_index.contains_key(&10));
+    assert!(
+        parts
+            .model
+            .transcript
+            .display_targets_by_item_index
+            .contains_key(&10)
+    );
 }
 
 #[gtk::test]
@@ -879,7 +902,7 @@ fn jump_to_loaded_match_with_typed_view_waits_for_display() {
     });
     pump_main_context(|| {
         let parts = controller.state().get();
-        parts.model.loaded_count == 75 && !parts.model.loading_transcript
+        parts.model.transcript.loaded_count == 75 && !parts.model.transcript.loading
     });
 
     let active_request = controller.state().get().model.search.request_id;
@@ -896,7 +919,13 @@ fn jump_to_loaded_match_with_typed_view_waits_for_display() {
 
     let parts = controller.state().get();
     assert!(!parts.model.search.loading_jump);
-    assert!(parts.model.display_targets_by_item_index.contains_key(&70));
+    assert!(
+        parts
+            .model
+            .transcript
+            .display_targets_by_item_index
+            .contains_key(&70)
+    );
 }
 
 #[gtk::test]

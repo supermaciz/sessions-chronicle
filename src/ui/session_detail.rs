@@ -42,18 +42,29 @@ const DEFERRED_CLEAR_DELAY_MS: u64 = 250;
 pub struct SessionDetail {
     db_path: Arc<PathBuf>,
     session: Option<Session>,
-    transcript_load_started_at: Option<Instant>,
     messages: TypedListView<TranscriptItemData, gtk::NoSelection>,
     transcript_render_widget: gtk::Widget,
     preview_len: usize,
-    loaded_count: usize,
-    loading_transcript: bool,
-    transcript_request_id: u64,
-    display_targets_by_item_index: BTreeMap<i64, ScrollTarget>,
+    transcript: TranscriptState,
     search: SearchState,
     pending_toast: Cell<bool>,
     inspector: Controller<ToolInspectorPane>,
     inspector_open: bool,
+}
+
+/// Transcript loading and paging state.
+///
+/// `request_id` is bumped to invalidate in-flight page loads; `loading` and
+/// `loaded_count` track paging progress, and `display_targets_by_item_index`
+/// maps transcript item indexes to their resolved [`ScrollTarget`] as pages
+/// render (consumed by search-jump navigation).
+#[derive(Default)]
+struct TranscriptState {
+    load_started_at: Option<Instant>,
+    loaded_count: usize,
+    loading: bool,
+    request_id: u64,
+    display_targets_by_item_index: BTreeMap<i64, ScrollTarget>,
 }
 
 /// Transcript search and match-navigation state.
@@ -716,14 +727,10 @@ impl Component for SessionDetail {
         let model = Self {
             db_path,
             session: None,
-            transcript_load_started_at: None,
             messages,
             transcript_render_widget,
             preview_len: PREVIEW_LEN,
-            loaded_count: 0,
-            loading_transcript: false,
-            transcript_request_id: 0,
-            display_targets_by_item_index: BTreeMap::new(),
+            transcript: TranscriptState::default(),
             search: SearchState::default(),
             pending_toast: Cell::new(false),
             inspector,
@@ -1238,7 +1245,7 @@ impl SessionDetail {
         self.session = Some(session);
         self.start_transcript_load(sender, &session_id, true, "open");
         tracing::info!(
-            request_id = self.transcript_request_id,
+            request_id = self.transcript.request_id,
             session_id = session_id.as_str(),
             message_count,
             has_search_query,
@@ -1312,7 +1319,7 @@ impl SessionDetail {
             session_id = session_id.as_str(),
             match_count,
             will_schedule_initial_jump,
-            loaded_count = self.loaded_count,
+            loaded_count = self.transcript.loaded_count,
             "Session detail search positions applied"
         );
 
@@ -1412,10 +1419,10 @@ impl SessionDetail {
         self.invalidate_transcript_requests();
         self.invalidate_search_requests();
         self.session = None;
-        self.transcript_load_started_at = None;
+        self.transcript.load_started_at = None;
         self.clear_messages_safely_with_metrics("component_clear");
-        self.loaded_count = 0;
-        self.loading_transcript = false;
+        self.transcript.loaded_count = 0;
+        self.transcript.loading = false;
         self.search.query = None;
         self.reset_search_matches();
         self.inspector.emit(ToolInspectorPaneMsg::Clear);
@@ -1538,7 +1545,7 @@ impl SessionDetail {
             .session
             .as_ref()
             .is_some_and(|session| session.id == session_id);
-        if request_id == self.transcript_request_id && active_session_matches {
+        if request_id == self.transcript.request_id && active_session_matches {
             tracing::debug!(
                 request_id,
                 session_id = session_id.as_str(),
@@ -1550,7 +1557,7 @@ impl SessionDetail {
     }
 
     fn handle_deferred_clear(&mut self, request_id: u64) {
-        if request_id == self.transcript_request_id {
+        if request_id == self.transcript.request_id {
             self.clear_for_navigation_back();
         }
     }
@@ -1594,7 +1601,9 @@ impl SessionDetail {
     }
 
     fn extend_display_targets(&mut self, targets: BTreeMap<i64, ScrollTarget>) {
-        self.display_targets_by_item_index.extend(targets);
+        self.transcript
+            .display_targets_by_item_index
+            .extend(targets);
     }
 
     fn build_display_items(
@@ -1639,7 +1648,7 @@ impl SessionDetail {
     }
 
     fn invalidate_transcript_requests(&mut self) {
-        self.transcript_request_id = self.transcript_request_id.wrapping_add(1);
+        self.transcript.request_id = self.transcript.request_id.wrapping_add(1);
     }
 
     fn invalidate_search_requests(&mut self) {
@@ -1654,7 +1663,7 @@ impl SessionDetail {
     /// because `display_targets_by_item_index` is only populated as pages
     /// finish rendering.
     fn is_transcript_loading(&self) -> bool {
-        self.loading_transcript
+        self.transcript.loading
     }
 
     fn spawn_match_positions_load(
@@ -1711,12 +1720,12 @@ impl SessionDetail {
         clear_reason: &'static str,
     ) {
         self.invalidate_transcript_requests();
-        self.loading_transcript = true;
-        self.loaded_count = 0;
+        self.transcript.loading = true;
+        self.transcript.loaded_count = 0;
         self.clear_messages_safely_with_metrics(clear_reason);
-        self.transcript_load_started_at = Some(Instant::now());
+        self.transcript.load_started_at = Some(Instant::now());
 
-        let request_id = self.transcript_request_id;
+        let request_id = self.transcript.request_id;
         let session_id = session_id.to_string();
 
         if defer {
@@ -1766,8 +1775,8 @@ impl SessionDetail {
         session_id: &str,
         rows: Vec<crate::database::TranscriptItemRow>,
     ) {
-        self.loading_transcript = false;
-        self.loaded_count = rows.len();
+        self.transcript.loading = false;
+        self.transcript.loaded_count = rows.len();
         let highlight = self.search.query.clone();
         let db_path = self.db_path.clone();
         self.clear_messages_safely_with_metrics("first_page_apply");
@@ -1810,8 +1819,8 @@ impl SessionDetail {
             err
         );
         self.clear_messages_safely_with_metrics("transcript_error");
-        self.loaded_count = 0;
-        self.loading_transcript = false;
+        self.transcript.loaded_count = 0;
+        self.transcript.loading = false;
         self.search.pending_jump = None;
         self.search.loading_jump = false;
     }
@@ -1893,7 +1902,7 @@ impl SessionDetail {
         load_duration_ms: u128,
         result: Result<Vec<crate::database::TranscriptItemRow>, String>,
     ) {
-        if request_id != self.transcript_request_id {
+        if request_id != self.transcript.request_id {
             tracing::debug!("Ignoring stale transcript page for session {}", session_id,);
             return;
         }
@@ -1937,7 +1946,8 @@ impl SessionDetail {
             .match_positions
             .iter()
             .filter(|position| {
-                self.display_targets_by_item_index
+                self.transcript
+                    .display_targets_by_item_index
                     .contains_key(&position.item_index)
             })
             .count()
@@ -1977,6 +1987,7 @@ impl SessionDetail {
         }
 
         if let Some(scroll_target) = self
+            .transcript
             .display_targets_by_item_index
             .get(&position.item_index)
             .copied()
@@ -1985,10 +1996,10 @@ impl SessionDetail {
             self.search.pending_jump = None;
             self.search.loading_jump = false;
             self.search.scroll_to_item.set(Some(scroll_target));
-        } else if (position.item_index as usize) >= self.loaded_count {
+        } else if (position.item_index as usize) >= self.transcript.loaded_count {
             tracing::warn!(
                 item_index = position.item_index,
-                loaded_count = self.loaded_count,
+                loaded_count = self.transcript.loaded_count,
                 "search match position is outside loaded transcript range"
             );
             self.search.pending_jump = None;
@@ -1997,11 +2008,11 @@ impl SessionDetail {
             debug_assert!(
                 false,
                 "match item_index {} is within loaded range ({}) but absent from display_targets_by_item_index",
-                position.item_index, self.loaded_count
+                position.item_index, self.transcript.loaded_count
             );
             tracing::warn!(
                 item_index = position.item_index,
-                loaded_count = self.loaded_count,
+                loaded_count = self.transcript.loaded_count,
                 "search match position is loaded but missing from display index"
             );
             self.search.pending_jump = None;
@@ -2103,9 +2114,9 @@ impl SessionDetail {
 
     fn prepare_for_navigation_back(&mut self, sender: &ComponentSender<Self>) {
         self.invalidate_transcript_requests();
-        self.loading_transcript = false;
+        self.transcript.loading = false;
 
-        let request_id = self.transcript_request_id;
+        let request_id = self.transcript.request_id;
         let input_sender = sender.input_sender().clone();
         glib::timeout_add_local_once(Duration::from_millis(DEFERRED_CLEAR_DELAY_MS), move || {
             let _ = input_sender.send(SessionDetailMsg::DeferredClear { request_id });
@@ -2115,9 +2126,9 @@ impl SessionDetail {
     fn clear_for_navigation_back(&mut self) {
         self.invalidate_search_requests();
         self.session = None;
-        self.transcript_load_started_at = None;
+        self.transcript.load_started_at = None;
         self.clear_messages_safely_with_metrics("navigation_back");
-        self.loaded_count = 0;
+        self.transcript.loaded_count = 0;
         self.search.query = None;
         self.reset_search_matches();
     }
@@ -2126,7 +2137,7 @@ impl SessionDetail {
     fn clear_messages_safely(&mut self) {
         self.release_focus_from_transcript_if_needed();
         self.messages.clear();
-        self.display_targets_by_item_index.clear();
+        self.transcript.display_targets_by_item_index.clear();
     }
 
     fn clear_messages_safely_with_metrics(&mut self, reason: &'static str) -> ClearMessagesMetrics {
