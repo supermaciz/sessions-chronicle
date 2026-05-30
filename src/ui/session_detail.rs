@@ -967,114 +967,7 @@ impl Component for SessionDetail {
                 .add_toast(adw::Toast::new("Could not load full message."));
         }
 
-        if let Some(target) = self.scroll_to_item.take() {
-            let list_view = self.messages.view.clone();
-            list_view.scroll_to(
-                target.display_index as u32,
-                gtk::ListScrollFlags::NONE,
-                None,
-            );
-            let scroll_child = widgets.scroll_child.clone();
-            glib::idle_add_local_once(move || {
-                let Some(row_widget) =
-                    Self::observed_row_widget_for_display_index(&list_view, target.display_index)
-                else {
-                    let list_view_for_tick = list_view.clone();
-                    let scroll_child_for_tick = scroll_child.clone();
-                    let tick_count = std::cell::Cell::new(0u32);
-                    list_view.add_tick_callback(move |_, _| {
-                        let ticks = tick_count.get() + 1;
-                        tick_count.set(ticks);
-                        if ticks > 60 {
-                            return glib::ControlFlow::Break;
-                        }
-                        let Some(row_widget) = Self::observed_row_widget_for_display_index(
-                            &list_view_for_tick,
-                            target.display_index,
-                        ) else {
-                            return glib::ControlFlow::Continue;
-                        };
-                        if let Some(child_index) = target.child_index
-                            && let Some((header_button, revealer)) =
-                                Self::tool_burst_header_and_revealer(&row_widget)
-                        {
-                            if !revealer.reveals_child() {
-                                header_button.emit_clicked();
-                            }
-                            let revealer_for_tick = revealer.clone();
-                            let scroll_for_burst = scroll_child_for_tick.clone();
-                            let burst_tick_count = std::cell::Cell::new(0u32);
-                            revealer.add_tick_callback(move |_, _| {
-                                let ticks = burst_tick_count.get() + 1;
-                                burst_tick_count.set(ticks);
-                                if ticks > 60 {
-                                    return glib::ControlFlow::Break;
-                                }
-                                let Some(child_box) = revealer_for_tick
-                                    .child()
-                                    .and_then(|w| w.downcast::<gtk::Box>().ok())
-                                else {
-                                    return glib::ControlFlow::Break;
-                                };
-                                let Some(child_widget) = child_box
-                                    .observe_children()
-                                    .item(child_index as u32)
-                                    .and_then(|obj| obj.downcast::<gtk::Widget>().ok())
-                                else {
-                                    return glib::ControlFlow::Continue;
-                                };
-                                Self::scroll_widget_into_view(&child_widget, &scroll_for_burst);
-                                glib::ControlFlow::Break
-                            });
-                        } else {
-                            Self::scroll_widget_into_view(&row_widget, &scroll_child_for_tick);
-                        }
-                        glib::ControlFlow::Break
-                    });
-                    return;
-                };
-
-                if let Some(child_index) = target.child_index
-                    && let Some((header_button, revealer)) =
-                        Self::tool_burst_header_and_revealer(&row_widget)
-                {
-                    if !revealer.reveals_child() {
-                        header_button.emit_clicked();
-                    }
-                    let scroll_child_for_tick = scroll_child.clone();
-                    let revealer_for_tick = revealer.clone();
-                    let tick_count = std::cell::Cell::new(0u32);
-                    revealer.add_tick_callback(move |_, _| {
-                        let ticks = tick_count.get() + 1;
-                        tick_count.set(ticks);
-                        if ticks > 60 {
-                            return glib::ControlFlow::Break;
-                        }
-
-                        let Some(child_box) = revealer_for_tick
-                            .child()
-                            .and_then(|w| w.downcast::<gtk::Box>().ok())
-                        else {
-                            return glib::ControlFlow::Break;
-                        };
-
-                        let Some(child_widget) = child_box
-                            .observe_children()
-                            .item(child_index as u32)
-                            .and_then(|obj| obj.downcast::<gtk::Widget>().ok())
-                        else {
-                            return glib::ControlFlow::Continue;
-                        };
-
-                        Self::scroll_widget_into_view(&child_widget, &scroll_child_for_tick);
-                        glib::ControlFlow::Break
-                    });
-                    return;
-                }
-
-                Self::scroll_widget_into_view(&row_widget, &scroll_child);
-            });
-        }
+        self.apply_scroll_target(widgets);
     }
 }
 
@@ -1263,6 +1156,106 @@ impl SessionDetail {
                     crate::ui::format::format_token_count(usage.output_tokens)
                 ))]);
         }
+    }
+
+    /// Scrolls to the pending [`ScrollTarget`], if any.
+    ///
+    /// The target row may not be realized yet when this runs, so we first nudge
+    /// the [`gtk::ListView`] toward it, then resolve and focus the row from an
+    /// idle callback, falling back to polling the frame clock until it appears.
+    fn apply_scroll_target(&self, widgets: &SessionDetailWidgets) {
+        let Some(target) = self.scroll_to_item.take() else {
+            return;
+        };
+
+        let list_view = self.messages.view.clone();
+        list_view.scroll_to(
+            target.display_index as u32,
+            gtk::ListScrollFlags::NONE,
+            None,
+        );
+
+        let scroll_child = widgets.scroll_child.clone();
+        glib::idle_add_local_once(move || {
+            if let Some(row_widget) =
+                Self::observed_row_widget_for_display_index(&list_view, target.display_index)
+            {
+                Self::focus_scroll_target(&row_widget, target, &scroll_child);
+                return;
+            }
+
+            // Row not realized yet; poll the frame clock until it appears.
+            let tick_count = std::cell::Cell::new(0u32);
+            list_view.add_tick_callback(move |list_view, _| {
+                let ticks = tick_count.get() + 1;
+                tick_count.set(ticks);
+                if ticks > 60 {
+                    return glib::ControlFlow::Break;
+                }
+                let Some(row_widget) =
+                    Self::observed_row_widget_for_display_index(list_view, target.display_index)
+                else {
+                    return glib::ControlFlow::Continue;
+                };
+                Self::focus_scroll_target(&row_widget, target, &scroll_child);
+                glib::ControlFlow::Break
+            });
+        });
+    }
+
+    /// Brings a resolved transcript row into view. When the target addresses a
+    /// child entry inside a collapsed tool-burst row, the burst is expanded
+    /// first and the child is scrolled to once the revealer settles.
+    fn focus_scroll_target(
+        row_widget: &gtk::Widget,
+        target: ScrollTarget,
+        scroll_child: &gtk::Box,
+    ) {
+        if let Some(child_index) = target.child_index
+            && let Some((header_button, revealer)) =
+                Self::tool_burst_header_and_revealer(row_widget)
+        {
+            if !revealer.reveals_child() {
+                header_button.emit_clicked();
+            }
+            Self::scroll_to_burst_child_when_revealed(&revealer, child_index, scroll_child);
+        } else {
+            Self::scroll_widget_into_view(row_widget, scroll_child);
+        }
+    }
+
+    /// Scrolls to the `child_index`-th child of a tool-burst revealer once it
+    /// has materialized its content, polling the frame clock until then.
+    fn scroll_to_burst_child_when_revealed(
+        revealer: &gtk::Revealer,
+        child_index: usize,
+        scroll_child: &gtk::Box,
+    ) {
+        let scroll_child = scroll_child.clone();
+        let tick_count = std::cell::Cell::new(0u32);
+        revealer.add_tick_callback(move |revealer, _| {
+            let ticks = tick_count.get() + 1;
+            tick_count.set(ticks);
+            if ticks > 60 {
+                return glib::ControlFlow::Break;
+            }
+
+            let Some(child_box) = revealer.child().and_then(|w| w.downcast::<gtk::Box>().ok())
+            else {
+                return glib::ControlFlow::Break;
+            };
+
+            let Some(child_widget) = child_box
+                .observe_children()
+                .item(child_index as u32)
+                .and_then(|obj| obj.downcast::<gtk::Widget>().ok())
+            else {
+                return glib::ControlFlow::Continue;
+            };
+
+            Self::scroll_widget_into_view(&child_widget, &scroll_child);
+            glib::ControlFlow::Break
+        });
     }
 
     fn set_session(
