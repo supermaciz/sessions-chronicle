@@ -1417,61 +1417,69 @@ impl SessionDetail {
         self.set_inspector_open(false, sender);
     }
 
-    fn inspect_tool_call(&mut self, id: String, sender: &ComponentSender<Self>) {
+    /// Shared body for the inspector selection handlers: resolve the active
+    /// session, emit the pane message built from its id, and open the inspector.
+    /// No-op when no session is active.
+    ///
+    /// `kind`/`target` are recorded for tracing only; `build_message` receives
+    /// the resolved `session_id` so each caller can assemble its own variant.
+    fn select_in_inspector(
+        &mut self,
+        kind: &'static str,
+        target: &str,
+        build_message: impl FnOnce(String) -> ToolInspectorPaneMsg,
+        sender: &ComponentSender<Self>,
+    ) {
         let Some(session_id) = self.session.as_ref().map(|s| s.id.clone()) else {
             return;
         };
 
         tracing::info!(
             session_id = session_id.as_str(),
-            tool_call_id = id.as_str(),
+            kind,
+            target,
             previous_open = self.inspector_open,
             new_open = true,
-            "Session detail inspector tool call selected"
+            "Session detail inspector selection"
         );
-        self.inspector.emit(ToolInspectorPaneMsg::SelectToolCall {
-            session_id,
-            tool_call_id: id,
-        });
+        self.inspector.emit(build_message(session_id));
         self.set_inspector_open(true, sender);
+    }
+
+    fn inspect_tool_call(&mut self, id: String, sender: &ComponentSender<Self>) {
+        self.select_in_inspector(
+            "tool_call",
+            &id,
+            |session_id| ToolInspectorPaneMsg::SelectToolCall {
+                session_id,
+                tool_call_id: id.clone(),
+            },
+            sender,
+        );
     }
 
     fn inspect_subagent(&mut self, id: String, sender: &ComponentSender<Self>) {
-        let Some(session_id) = self.session.as_ref().map(|s| s.id.clone()) else {
-            return;
-        };
-
-        tracing::info!(
-            session_id = session_id.as_str(),
-            subagent_id = id.as_str(),
-            previous_open = self.inspector_open,
-            new_open = true,
-            "Session detail inspector subagent selected"
+        self.select_in_inspector(
+            "subagent",
+            &id,
+            |session_id| ToolInspectorPaneMsg::SelectSubagent {
+                session_id,
+                subagent_id: id.clone(),
+            },
+            sender,
         );
-        self.inspector.emit(ToolInspectorPaneMsg::SelectSubagent {
-            session_id,
-            subagent_id: id,
-        });
-        self.set_inspector_open(true, sender);
     }
 
     fn inspect_reasoning(&mut self, transcript_item_index: i64, sender: &ComponentSender<Self>) {
-        let Some(session_id) = self.session.as_ref().map(|s| s.id.clone()) else {
-            return;
-        };
-
-        tracing::info!(
-            session_id = session_id.as_str(),
-            transcript_item_index,
-            previous_open = self.inspector_open,
-            new_open = true,
-            "Session detail inspector reasoning selected"
+        self.select_in_inspector(
+            "reasoning",
+            &transcript_item_index.to_string(),
+            |session_id| ToolInspectorPaneMsg::SelectReasoning {
+                session_id,
+                transcript_item_index,
+            },
+            sender,
         );
-        self.inspector.emit(ToolInspectorPaneMsg::SelectReasoning {
-            session_id,
-            transcript_item_index,
-        });
-        self.set_inspector_open(true, sender);
     }
 
     fn toggle_inspector(&mut self, sender: &ComponentSender<Self>) {
