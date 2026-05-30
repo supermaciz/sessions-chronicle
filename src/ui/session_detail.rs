@@ -776,123 +776,23 @@ impl Component for SessionDetail {
                 session,
                 search_query,
             } => {
-                self.invalidate_search_requests();
-                let normalized = search_query.and_then(|query| {
-                    let trimmed = query.trim().to_string();
-                    (!trimmed.is_empty()).then_some(trimmed)
-                });
-                self.search_query = normalized.clone();
-                self.reset_search_matches();
-                let session = *session;
-                let session_id = session.id.clone();
-                let message_count = session.message_count;
-                let has_search_query = normalized.is_some();
-                let query_len = normalized.as_ref().map(|query| query.len()).unwrap_or(0);
-                self.session = Some(session);
-                self.start_transcript_load(&sender, &session_id, true, "open");
-                tracing::info!(
-                    request_id = self.transcript_request_id,
-                    session_id = session_id.as_str(),
-                    message_count,
-                    has_search_query,
-                    query_len,
-                    "Session detail open started"
-                );
-                if let Some(query) = normalized {
-                    let request_id = self.search_request_id;
-                    self.spawn_match_positions_load(&sender, request_id, session_id.clone(), query);
-                }
-                self.inspector.emit(ToolInspectorPaneMsg::Clear);
-                self.set_inspector_open(false, &sender);
+                self.set_session(*session, search_query, &sender);
             }
             SessionDetailMsg::UpdateSearchQuery(query) => {
-                let normalized = query.and_then(|query| {
-                    let trimmed = query.trim().to_string();
-                    (!trimmed.is_empty()).then_some(trimmed)
-                });
-                let active_session_id = self.session.as_ref().map(|session| session.id.as_str());
-                let previous_match_count = self.match_positions.len();
-                let query_len = normalized.as_ref().map(|query| query.len()).unwrap_or(0);
-                let will_load_match_positions = self.session.is_some() && normalized.is_some();
-                tracing::info!(
-                    session_id = active_session_id,
-                    has_query = normalized.is_some(),
-                    query_len,
-                    previous_match_count,
-                    will_load_match_positions,
-                    "Session detail search update started"
-                );
-                self.search_query = normalized.clone();
-                self.invalidate_search_requests();
-                self.reset_search_matches();
-
-                if !self.messages.is_empty() {
-                    self.apply_highlight_query_to_typed_items(normalized.clone());
-                    self.refresh_typed_rows_preserving_scroll();
-                }
-
-                if let (Some(session), Some(query)) = (&self.session, normalized) {
-                    let request_id = self.search_request_id;
-                    self.spawn_match_positions_load(&sender, request_id, session.id.clone(), query);
-                }
+                self.update_search_query(query, &sender);
             }
             SessionDetailMsg::SetMatchPositions {
                 request_id,
                 session_id,
                 positions,
             } => {
-                let active_session_matches = self
-                    .session
-                    .as_ref()
-                    .is_some_and(|session| session.id == session_id);
-                if request_id != self.search_request_id || !active_session_matches {
-                    tracing::debug!(
-                        request_id,
-                        session_id,
-                        "Ignoring stale session detail search results"
-                    );
-                    return;
-                }
-
-                let match_count = positions.len();
-                let will_schedule_initial_jump = match_count > 0;
-                tracing::info!(
-                    request_id,
-                    session_id = session_id.as_str(),
-                    match_count,
-                    will_schedule_initial_jump,
-                    loaded_count = self.loaded_count,
-                    "Session detail search positions applied"
-                );
-
-                self.match_positions = positions;
-                self.clamp_current_match();
-                self.pending_jump = None;
-                self.loading_jump = false;
-                if self.messages.is_empty() {
-                    self.start_transcript_load(&sender, &session_id, false, "search");
-                } else {
-                    self.apply_highlight_query_to_typed_items(self.search_query.clone());
-                    self.refresh_typed_rows_preserving_scroll();
-                }
-                if !self.match_positions.is_empty() {
-                    self.jump_to(0, &sender);
-                }
+                self.set_match_positions(request_id, session_id, positions, &sender);
             }
             SessionDetailMsg::PrevMatch => {
-                if !self.match_positions.is_empty() && !self.loading_jump {
-                    let target = match self.current_match {
-                        0 => self.match_positions.len() - 1,
-                        n => n - 1,
-                    };
-                    self.jump_to(target, &sender);
-                }
+                self.jump_to_previous_match(&sender);
             }
             SessionDetailMsg::NextMatch => {
-                if !self.match_positions.is_empty() && !self.loading_jump {
-                    let target = (self.current_match + 1) % self.match_positions.len();
-                    self.jump_to(target, &sender);
-                }
+                self.jump_to_next_match(&sender);
             }
             SessionDetailMsg::StartDeferredFirstPageLoad {
                 request_id,
@@ -921,53 +821,10 @@ impl Component for SessionDetail {
                 }
             }
             SessionDetailMsg::ShowExpandLoadFailure => {
-                tracing::warn!("Could not load full message content");
-                self.pending_toast.set(true);
+                self.show_expand_load_failure();
             }
             SessionDetailMsg::ToggleMessageExpand { item_index } => {
-                let idx = item_index as u32;
-                let mut load_request = None;
-                let (toggled, clone_opt) = if let Some(item) = self.messages.get(idx) {
-                    let ref_data = item.borrow();
-                    let expanded = ref_data.expanded.get();
-                    let will_expand = !expanded;
-                    ref_data.expanded.set(will_expand);
-                    if will_expand
-                        && ref_data.full_content.is_none()
-                        && let crate::ui::transcript_item_data::TranscriptItemKind::Message(message) =
-                            &ref_data.kind
-                    {
-                        load_request = Some((
-                            message.db_path.clone(),
-                            message.preview.session_id.clone(),
-                            message.preview.message_index,
-                        ));
-                    }
-                    let clone = ref_data.clone();
-                    (true, Some(clone))
-                } else {
-                    (false, None)
-                };
-                if let Some(clone) = clone_opt {
-                    self.messages.remove(idx);
-                    self.messages.insert(idx, clone);
-                    if let Some((db_path, session_id, message_index)) = load_request {
-                        sender.spawn_oneshot_command(move || {
-                            SessionDetailCmd::MessageFullContentReady {
-                                item_index,
-                                session_id: session_id.clone(),
-                                message_index,
-                                result: load_message_full_content(
-                                    &db_path,
-                                    &session_id,
-                                    message_index,
-                                )
-                                .map_err(|err| format!("{err:#}")),
-                            }
-                        });
-                    }
-                }
-                tracing::debug!(item_index, toggled, "Typed message expand requested");
+                self.toggle_message_expand(item_index, &sender);
             }
             SessionDetailMsg::RowBuilt {
                 item_index: _,
@@ -977,109 +834,31 @@ impl Component for SessionDetail {
                 tracing::trace!("Transcript row built (no-op in typed path)");
             }
             SessionDetailMsg::ClearSearch => {
-                self.search_query = None;
-                self.invalidate_search_requests();
-                self.reset_search_matches();
-                if !self.messages.is_empty() {
-                    self.apply_highlight_query_to_typed_items(None);
-                    self.refresh_typed_rows_preserving_scroll();
-                }
+                self.clear_search();
             }
             SessionDetailMsg::Clear => {
-                self.invalidate_transcript_requests();
-                self.invalidate_search_requests();
-                self.session = None;
-                self.transcript_load_started_at = None;
-                self.clear_messages_safely_with_metrics("component_clear");
-                self.loaded_count = 0;
-                self.loading_transcript = false;
-                self.search_query = None;
-                self.reset_search_matches();
-                self.inspector.emit(ToolInspectorPaneMsg::Clear);
-                self.set_inspector_open(false, &sender);
+                self.clear_session(&sender);
             }
             SessionDetailMsg::InspectToolCall(id) => {
-                if let Some(session_id) = self.session.as_ref().map(|s| s.id.clone()) {
-                    tracing::info!(
-                        session_id = session_id.as_str(),
-                        tool_call_id = id.as_str(),
-                        previous_open = self.inspector_open,
-                        new_open = true,
-                        "Session detail inspector tool call selected"
-                    );
-                    self.inspector.emit(ToolInspectorPaneMsg::SelectToolCall {
-                        session_id,
-                        tool_call_id: id,
-                    });
-                    self.set_inspector_open(true, &sender);
-                }
+                self.inspect_tool_call(id, &sender);
             }
             SessionDetailMsg::InspectSubagent(id) => {
-                if let Some(session_id) = self.session.as_ref().map(|s| s.id.clone()) {
-                    tracing::info!(
-                        session_id = session_id.as_str(),
-                        subagent_id = id.as_str(),
-                        previous_open = self.inspector_open,
-                        new_open = true,
-                        "Session detail inspector subagent selected"
-                    );
-                    self.inspector.emit(ToolInspectorPaneMsg::SelectSubagent {
-                        session_id,
-                        subagent_id: id,
-                    });
-                    self.set_inspector_open(true, &sender);
-                }
+                self.inspect_subagent(id, &sender);
             }
             SessionDetailMsg::InspectReasoning(transcript_item_index) => {
-                if let Some(session_id) = self.session.as_ref().map(|s| s.id.clone()) {
-                    tracing::info!(
-                        session_id = session_id.as_str(),
-                        transcript_item_index,
-                        previous_open = self.inspector_open,
-                        new_open = true,
-                        "Session detail inspector reasoning selected"
-                    );
-                    self.inspector.emit(ToolInspectorPaneMsg::SelectReasoning {
-                        session_id,
-                        transcript_item_index,
-                    });
-                    self.set_inspector_open(true, &sender);
-                }
+                self.inspect_reasoning(transcript_item_index, &sender);
             }
             SessionDetailMsg::ToggleInspector => {
-                let new_open = !self.inspector_open;
-                tracing::info!(
-                    previous_open = self.inspector_open,
-                    new_open,
-                    "Session detail inspector toggled"
-                );
-                self.set_inspector_open(new_open, &sender);
+                self.toggle_inspector(&sender);
             }
             SessionDetailMsg::CloseInspector => {
-                tracing::info!(
-                    previous_open = self.inspector_open,
-                    new_open = false,
-                    "Session detail inspector close requested"
-                );
-                self.set_inspector_open(false, &sender);
+                self.close_inspector(&sender);
             }
             SessionDetailMsg::InspectorWidgetVisibilityChanged(visible) => {
-                if self.inspector_open != visible {
-                    tracing::info!(
-                        previous_open = self.inspector_open,
-                        new_open = visible,
-                        "Session detail inspector widget visibility changed"
-                    );
-                    self.inspector_open = visible;
-                    sender
-                        .output(SessionDetailOutput::InspectorVisibilityChanged(visible))
-                        .ok();
-                }
+                self.sync_inspector_widget_visibility(visible, &sender);
             }
             SessionDetailMsg::OpenChildSession(child_session_id) => {
-                sender
-                    .output(SessionDetailOutput::OpenChildSession(child_session_id))
-                    .ok();
+                self.open_child_session(child_session_id, &sender);
             }
         }
     }
@@ -1469,6 +1248,314 @@ fn highlight_query_for_navigable_row(
 }
 
 impl SessionDetail {
+    fn normalize_search_query(query: Option<String>) -> Option<String> {
+        query.and_then(|query| {
+            let trimmed = query.trim().to_string();
+            (!trimmed.is_empty()).then_some(trimmed)
+        })
+    }
+
+    fn set_session(
+        &mut self,
+        session: Session,
+        search_query: Option<String>,
+        sender: &ComponentSender<Self>,
+    ) {
+        self.invalidate_search_requests();
+        let normalized = Self::normalize_search_query(search_query);
+        self.search_query = normalized.clone();
+        self.reset_search_matches();
+
+        let session_id = session.id.clone();
+        let message_count = session.message_count;
+        let has_search_query = normalized.is_some();
+        let query_len = normalized.as_ref().map(|query| query.len()).unwrap_or(0);
+
+        self.session = Some(session);
+        self.start_transcript_load(sender, &session_id, true, "open");
+        tracing::info!(
+            request_id = self.transcript_request_id,
+            session_id = session_id.as_str(),
+            message_count,
+            has_search_query,
+            query_len,
+            "Session detail open started"
+        );
+
+        if let Some(query) = normalized {
+            let request_id = self.search_request_id;
+            self.spawn_match_positions_load(sender, request_id, session_id.clone(), query);
+        }
+
+        self.inspector.emit(ToolInspectorPaneMsg::Clear);
+        self.set_inspector_open(false, sender);
+    }
+
+    fn update_search_query(&mut self, query: Option<String>, sender: &ComponentSender<Self>) {
+        let normalized = Self::normalize_search_query(query);
+        let active_session_id = self.session.as_ref().map(|session| session.id.as_str());
+        let previous_match_count = self.match_positions.len();
+        let query_len = normalized.as_ref().map(|query| query.len()).unwrap_or(0);
+        let will_load_match_positions = self.session.is_some() && normalized.is_some();
+        tracing::info!(
+            session_id = active_session_id,
+            has_query = normalized.is_some(),
+            query_len,
+            previous_match_count,
+            will_load_match_positions,
+            "Session detail search update started"
+        );
+
+        self.search_query = normalized.clone();
+        self.invalidate_search_requests();
+        self.reset_search_matches();
+
+        if !self.messages.is_empty() {
+            self.apply_highlight_query_to_typed_items(normalized.clone());
+            self.refresh_typed_rows_preserving_scroll();
+        }
+
+        if let (Some(session), Some(query)) = (&self.session, normalized) {
+            let request_id = self.search_request_id;
+            self.spawn_match_positions_load(sender, request_id, session.id.clone(), query);
+        }
+    }
+
+    fn set_match_positions(
+        &mut self,
+        request_id: u64,
+        session_id: String,
+        positions: Vec<MatchPosition>,
+        sender: &ComponentSender<Self>,
+    ) {
+        let active_session_matches = self
+            .session
+            .as_ref()
+            .is_some_and(|session| session.id == session_id);
+        if request_id != self.search_request_id || !active_session_matches {
+            tracing::debug!(
+                request_id,
+                session_id,
+                "Ignoring stale session detail search results"
+            );
+            return;
+        }
+
+        let match_count = positions.len();
+        let will_schedule_initial_jump = match_count > 0;
+        tracing::info!(
+            request_id,
+            session_id = session_id.as_str(),
+            match_count,
+            will_schedule_initial_jump,
+            loaded_count = self.loaded_count,
+            "Session detail search positions applied"
+        );
+
+        self.match_positions = positions;
+        self.clamp_current_match();
+        self.pending_jump = None;
+        self.loading_jump = false;
+        if self.messages.is_empty() {
+            self.start_transcript_load(sender, &session_id, false, "search");
+        } else {
+            self.apply_highlight_query_to_typed_items(self.search_query.clone());
+            self.refresh_typed_rows_preserving_scroll();
+        }
+        if !self.match_positions.is_empty() {
+            self.jump_to(0, sender);
+        }
+    }
+
+    fn jump_to_previous_match(&mut self, sender: &ComponentSender<Self>) {
+        if self.match_positions.is_empty() || self.loading_jump {
+            return;
+        }
+
+        let target = match self.current_match {
+            0 => self.match_positions.len() - 1,
+            n => n - 1,
+        };
+        self.jump_to(target, sender);
+    }
+
+    fn jump_to_next_match(&mut self, sender: &ComponentSender<Self>) {
+        if self.match_positions.is_empty() || self.loading_jump {
+            return;
+        }
+
+        let target = (self.current_match + 1) % self.match_positions.len();
+        self.jump_to(target, sender);
+    }
+
+    fn show_expand_load_failure(&self) {
+        tracing::warn!("Could not load full message content");
+        self.pending_toast.set(true);
+    }
+
+    fn toggle_message_expand(&mut self, item_index: usize, sender: &ComponentSender<Self>) {
+        let idx = item_index as u32;
+        let Some(item) = self.messages.get(idx) else {
+            tracing::debug!(item_index, "Typed message expand ignored: item not found");
+            return;
+        };
+
+        let mut load_request = None;
+        let (clone, will_expand) = {
+            let ref_data = item.borrow();
+            let will_expand = !ref_data.expanded.get();
+            ref_data.expanded.set(will_expand);
+            if will_expand
+                && ref_data.full_content.is_none()
+                && let crate::ui::transcript_item_data::TranscriptItemKind::Message(message) =
+                    &ref_data.kind
+            {
+                load_request = Some((
+                    message.db_path.clone(),
+                    message.preview.session_id.clone(),
+                    message.preview.message_index,
+                ));
+            }
+            (ref_data.clone(), will_expand)
+        };
+
+        self.messages.remove(idx);
+        self.messages.insert(idx, clone);
+        if let Some((db_path, session_id, message_index)) = load_request {
+            sender.spawn_oneshot_command(move || SessionDetailCmd::MessageFullContentReady {
+                item_index,
+                session_id: session_id.clone(),
+                message_index,
+                result: load_message_full_content(&db_path, &session_id, message_index)
+                    .map_err(|err| format!("{err:#}")),
+            });
+        }
+
+        tracing::debug!(item_index, will_expand, "Typed message expand requested");
+    }
+
+    fn clear_search(&mut self) {
+        self.search_query = None;
+        self.invalidate_search_requests();
+        self.reset_search_matches();
+        if !self.messages.is_empty() {
+            self.apply_highlight_query_to_typed_items(None);
+            self.refresh_typed_rows_preserving_scroll();
+        }
+    }
+
+    fn clear_session(&mut self, sender: &ComponentSender<Self>) {
+        self.invalidate_transcript_requests();
+        self.invalidate_search_requests();
+        self.session = None;
+        self.transcript_load_started_at = None;
+        self.clear_messages_safely_with_metrics("component_clear");
+        self.loaded_count = 0;
+        self.loading_transcript = false;
+        self.search_query = None;
+        self.reset_search_matches();
+        self.inspector.emit(ToolInspectorPaneMsg::Clear);
+        self.set_inspector_open(false, sender);
+    }
+
+    fn inspect_tool_call(&mut self, id: String, sender: &ComponentSender<Self>) {
+        let Some(session_id) = self.session.as_ref().map(|s| s.id.clone()) else {
+            return;
+        };
+
+        tracing::info!(
+            session_id = session_id.as_str(),
+            tool_call_id = id.as_str(),
+            previous_open = self.inspector_open,
+            new_open = true,
+            "Session detail inspector tool call selected"
+        );
+        self.inspector.emit(ToolInspectorPaneMsg::SelectToolCall {
+            session_id,
+            tool_call_id: id,
+        });
+        self.set_inspector_open(true, sender);
+    }
+
+    fn inspect_subagent(&mut self, id: String, sender: &ComponentSender<Self>) {
+        let Some(session_id) = self.session.as_ref().map(|s| s.id.clone()) else {
+            return;
+        };
+
+        tracing::info!(
+            session_id = session_id.as_str(),
+            subagent_id = id.as_str(),
+            previous_open = self.inspector_open,
+            new_open = true,
+            "Session detail inspector subagent selected"
+        );
+        self.inspector.emit(ToolInspectorPaneMsg::SelectSubagent {
+            session_id,
+            subagent_id: id,
+        });
+        self.set_inspector_open(true, sender);
+    }
+
+    fn inspect_reasoning(&mut self, transcript_item_index: i64, sender: &ComponentSender<Self>) {
+        let Some(session_id) = self.session.as_ref().map(|s| s.id.clone()) else {
+            return;
+        };
+
+        tracing::info!(
+            session_id = session_id.as_str(),
+            transcript_item_index,
+            previous_open = self.inspector_open,
+            new_open = true,
+            "Session detail inspector reasoning selected"
+        );
+        self.inspector.emit(ToolInspectorPaneMsg::SelectReasoning {
+            session_id,
+            transcript_item_index,
+        });
+        self.set_inspector_open(true, sender);
+    }
+
+    fn toggle_inspector(&mut self, sender: &ComponentSender<Self>) {
+        let new_open = !self.inspector_open;
+        tracing::info!(
+            previous_open = self.inspector_open,
+            new_open,
+            "Session detail inspector toggled"
+        );
+        self.set_inspector_open(new_open, sender);
+    }
+
+    fn close_inspector(&mut self, sender: &ComponentSender<Self>) {
+        tracing::info!(
+            previous_open = self.inspector_open,
+            new_open = false,
+            "Session detail inspector close requested"
+        );
+        self.set_inspector_open(false, sender);
+    }
+
+    fn sync_inspector_widget_visibility(&mut self, visible: bool, sender: &ComponentSender<Self>) {
+        if self.inspector_open == visible {
+            return;
+        }
+
+        tracing::info!(
+            previous_open = self.inspector_open,
+            new_open = visible,
+            "Session detail inspector widget visibility changed"
+        );
+        self.inspector_open = visible;
+        sender
+            .output(SessionDetailOutput::InspectorVisibilityChanged(visible))
+            .ok();
+    }
+
+    fn open_child_session(&self, child_session_id: String, sender: &ComponentSender<Self>) {
+        sender
+            .output(SessionDetailOutput::OpenChildSession(child_session_id))
+            .ok();
+    }
+
     fn current_match_item_indexes(&self) -> BTreeSet<i64> {
         self.match_positions
             .iter()
