@@ -312,11 +312,11 @@ impl Component for SessionDetail {
                         set_show_sidebar: model.inspector_open,
 
                     #[wrap(Some)]
-                    set_content = &gtk::ScrolledWindow {
+                    set_content = &gtk::Box {
+                        set_orientation: gtk::Orientation::Vertical,
                         set_vexpand: true,
-                        set_hscrollbar_policy: gtk::PolicyType::Never,
 
-                        #[name = "scroll_child"]
+                        #[name = "summary_box"]
                         gtk::Box {
                             set_orientation: gtk::Orientation::Vertical,
                             set_spacing: 12,
@@ -611,10 +611,20 @@ impl Component for SessionDetail {
 
                             #[name = "transcript_separator"]
                             gtk::Separator {},
+                        },
+
+                        #[name = "transcript_scroller"]
+                        gtk::ScrolledWindow {
+                            set_vexpand: true,
+                            set_hscrollbar_policy: gtk::PolicyType::Never,
 
                             #[local_ref]
                             messages_box -> gtk::ListView {
                                 add_css_class: "transcript-list",
+                                set_margin_start: 16,
+                                set_margin_end: 16,
+                                set_margin_top: 12,
+                                set_margin_bottom: 16,
                             },
                         },
                     },
@@ -935,7 +945,7 @@ impl Component for SessionDetail {
                 .add_toast(adw::Toast::new("Could not load full message."));
         }
 
-        self.apply_scroll_target(widgets);
+        self.apply_scroll_target();
     }
 }
 
@@ -1131,7 +1141,7 @@ impl SessionDetail {
     /// The target row may not be realized yet when this runs, so we first nudge
     /// the [`gtk::ListView`] toward it, then resolve and focus the row from an
     /// idle callback, falling back to polling the frame clock until it appears.
-    fn apply_scroll_target(&self, widgets: &SessionDetailWidgets) {
+    fn apply_scroll_target(&self) {
         let Some(target) = self.search.scroll_to_item.take() else {
             return;
         };
@@ -1143,7 +1153,7 @@ impl SessionDetail {
             None,
         );
 
-        let scroll_child = widgets.scroll_child.clone();
+        let scroll_child = list_view.clone().upcast::<gtk::Widget>();
         glib::idle_add_local_once(move || {
             if let Some(row_widget) =
                 Self::observed_row_widget_for_display_index(&list_view, target.display_index)
@@ -1177,7 +1187,7 @@ impl SessionDetail {
     fn focus_scroll_target(
         row_widget: &gtk::Widget,
         target: ScrollTarget,
-        scroll_child: &gtk::Box,
+        scroll_child: &gtk::Widget,
     ) {
         if let Some(child_index) = target.child_index
             && let Some((header_button, revealer)) =
@@ -1197,7 +1207,7 @@ impl SessionDetail {
     fn scroll_to_burst_child_when_revealed(
         revealer: &gtk::Revealer,
         child_index: usize,
-        scroll_child: &gtk::Box,
+        scroll_child: &gtk::Widget,
     ) {
         let scroll_child = scroll_child.clone();
         let tick_count = std::cell::Cell::new(0u32);
@@ -2269,7 +2279,7 @@ impl SessionDetail {
         }
     }
 
-    fn scroll_widget_into_view(widget: &gtk::Widget, scroll_child: &gtk::Box) {
+    fn scroll_widget_into_view(widget: &gtk::Widget, scroll_child: &gtk::Widget) {
         let Some(point) = widget.compute_point(scroll_child, &gtk::graphene::Point::zero()) else {
             return;
         };

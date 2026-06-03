@@ -558,6 +558,18 @@ fn session_detail_activity_bar_does_not_lock_a_minimum_width_request() {
     assert_eq!(parts.widgets.activity_bar.width_request(), -1);
 }
 
+#[gtk::test]
+fn session_detail_transcript_list_is_direct_scrolled_window_child() {
+    let temp_db = tempfile::NamedTempFile::new().expect("temp db");
+    let controller = SessionDetail::builder().launch(temp_db.path().to_path_buf());
+
+    let parts = controller.state().get();
+    assert_eq!(
+        parts.widgets.transcript_scroller.child(),
+        Some(parts.model.messages.view.clone().upcast())
+    );
+}
+
 fn build_error_session_for_css_test() -> Session {
     let mut session = build_test_session(None, None, 0, 0, 0);
     session.ending_status = crate::models::SessionEndingStatus::Error;
