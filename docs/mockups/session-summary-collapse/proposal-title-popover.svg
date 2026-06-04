@@ -1,0 +1,124 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="720" height="980" viewBox="0 0 720 980" font-family="Cantarell, sans-serif">
+  <defs>
+    
+  </defs>
+
+  <rect class="bg" x="0" y="0" width="720" height="980" fill="#fafafb"></rect>
+
+  
+  <text class="lbl" x="24" y="28" fill="#3584e4" font-size="12" font-weight="600">State A — Title clicked: full summary drops as a popover (transient, no occlusion of the flow)</text>
+
+  <g transform="translate(24,40)">
+    <rect class="win" x="0" y="0" width="672" height="452" rx="10" fill="#ffffff" stroke="#d8d8da" stroke-width="1"></rect>
+
+    
+    <g transform="translate(0,44)">
+      <rect class="row" x="16" y="14" width="560" height="40" rx="8" fill="#ffffff" stroke="#ececee" stroke-width="1"></rect>
+      <text class="small" x="28" y="32" font-size="11">User</text>
+      <text class="small dim" x="28" y="47" font-size="11" fill="#8a8a8e">collapse the SessionDetail summary_box…</text>
+      <rect class="card" x="16" y="66" width="640" height="60" rx="8" fill="#ffffff" stroke="#e3e3e5" stroke-width="1"></rect>
+      <text class="small" x="28" y="84" font-size="11">Assistant</text>
+      <text class="small dim" x="28" y="100" font-size="11" fill="#8a8a8e">The header carries identity; the detail is one click</text>
+      <text class="small dim" x="28" y="116" font-size="11" fill="#8a8a8e">away in a popover that floats and dismisses.</text>
+      <rect class="card" x="16" y="138" width="640" height="38" rx="8" fill="#fbfaf8" stroke="#e3e3e5" stroke-width="1"></rect>
+      <rect x="24" y="148" width="18" height="18" rx="4" fill="#eee"></rect>
+      <text class="small" x="50" y="161" font-size="11">tool call · Read session_detail.rs</text>
+    </g>
+
+    
+    <rect class="head" x="0" y="0" width="672" height="44" rx="10" fill="#f6f5f4" stroke="#d8d8da" stroke-width="1"></rect>
+    <rect class="head" x="0" y="20" width="672" height="24" fill="#f6f5f4" stroke="#d8d8da" stroke-width="1"></rect>
+    <path d="M22 22 l-8 0 M14 22 l4 -4 M14 22 l4 4" stroke="#5e5e62" stroke-width="1.6" fill="none" stroke-linecap="round"></path>
+    
+    <rect class="titlebtn" x="226" y="8" width="220" height="28" rx="8" fill="#eeeeef" stroke="#dcdcde" stroke-width="1"></rect>
+    <circle cx="244" cy="22" r="4" fill="#2e7d32"></circle>
+    <text class="lbl text" x="256" y="20" font-size="12" font-weight="600" fill="#1f1f1f">sessions-chronicle</text>
+    <text class="small dim" x="256" y="33" font-size="11" fill="#8a8a8e">Claude Code · 128 msg · 42 min</text>
+    <path d="M430 20 l5 5 l5 -5" stroke="#5e5e62" stroke-width="1.6" fill="none" stroke-linecap="round" stroke-linejoin="round"></path>
+
+    
+    <path d="M330 44 l8 -8 l8 8 z" fill="#ffffff" stroke="#c4c4c6" stroke-width="1"></path>
+    <rect class="pop" x="176" y="44" width="320" height="372" rx="12" fill="#ffffff" stroke="#c4c4c6" stroke-width="1"></rect>
+    <g transform="translate(176,44)">
+      <text class="title4 text" x="20" y="32" font-size="14" font-weight="700" fill="#1f1f1f">sessions-chronicle</text>
+      <text class="mono" x="20" y="50" fill="#8a8a8e" font-family="monospace" font-size="10">~/Projets/sessions-chronicle</text>
+      <text class="mono" x="20" y="66" fill="#8a8a8e" font-family="monospace" font-size="10">Session 019e08db-0672-742f</text>
+
+      <rect class="pill" x="20" y="78" width="98" height="22" rx="11" fill="#f0f0f1" stroke="#e0e0e2" stroke-width="1"></rect>
+      <circle cx="34" cy="89" r="5" fill="#3584e4"></circle>
+      <text class="small" x="44" y="93" font-size="11">Claude Code</text>
+      <rect x="124" y="78" width="86" height="22" rx="11" fill="#e8f5e9" stroke="#c8e6c9"></rect>
+      <text class="small" x="134" y="93" fill="#2e7d32" font-size="11">Completed</text>
+      <rect class="pill" x="220" y="78" width="80" height="22" rx="11" fill="#f0f0f1" stroke="#e0e0e2" stroke-width="1"></rect>
+      <text class="small" x="230" y="93" font-size="11">128 msg</text>
+
+      <line class="sep" x1="20" y1="116" x2="300" y2="116" stroke="#e3e3e5" stroke-width="1"></line>
+      <text class="heading" x="20" y="132" font-size="9" font-weight="700" letter-spacing="1" fill="#8a8a8e">FIRST PROMPT</text>
+      <text class="small text" x="20" y="148" font-size="11" fill="#1f1f1f">Collapse or hide the summary_box while</text>
+      <text class="small text" x="20" y="163" font-size="11" fill="#1f1f1f">keeping the ability to bring it back…</text>
+
+      <line class="sep" x1="20" y1="178" x2="300" y2="178" stroke="#e3e3e5" stroke-width="1"></line>
+      <text class="heading" x="20" y="194" font-size="9" font-weight="700" letter-spacing="1" fill="#8a8a8e">ACTIVITY</text>
+      <rect x="20" y="202" width="280" height="9" rx="4" fill="#f0f0f1"></rect>
+      <rect x="20" y="202" width="130" height="9" rx="4" fill="#3584e4"></rect>
+      <rect x="150" y="202" width="84" height="9" fill="#f39c12"></rect>
+      <rect x="234" y="202" width="66" height="9" rx="4" fill="#27ae60"></rect>
+      <text class="small dim" x="20" y="227" font-size="11" fill="#8a8a8e">24 edits · 16 commands · 12 reads</text>
+
+      <line class="sep" x1="20" y1="241" x2="300" y2="241" stroke="#e3e3e5" stroke-width="1"></line>
+      <text class="heading" x="20" y="257" font-size="9" font-weight="700" letter-spacing="1" fill="#8a8a8e">TOKENS</text>
+      <text class="small text" x="20" y="277" font-size="11" fill="#1f1f1f">Input 12.4k</text>
+      <text class="small text" x="170" y="277" font-size="11" fill="#1f1f1f">Output 8.1k</text>
+      <text class="small text" x="20" y="297" font-size="11" fill="#1f1f1f">Cache 102k</text>
+      <text class="small text" x="170" y="297" font-size="11" fill="#1f1f1f">Reasoning 3.2k</text>
+
+      <line class="sep" x1="20" y1="318" x2="300" y2="318" stroke="#e3e3e5" stroke-width="1"></line>
+      <text class="small accent" x="20" y="344" fill="#3584e4" font-size="11">Esc / click-away to dismiss</text>
+    </g>
+  </g>
+
+  
+  <text class="lbl" x="24" y="552" fill="#3584e4" font-size="12" font-weight="600">State B — Closed: the header is the reduced state (dot + project + meta), transcript full-page</text>
+
+  <g transform="translate(24,564)">
+    <rect class="win" x="0" y="0" width="672" height="388" rx="10" fill="#ffffff" stroke="#d8d8da" stroke-width="1"></rect>
+
+    
+    <rect class="head" x="0" y="0" width="672" height="44" rx="10" fill="#f6f5f4" stroke="#d8d8da" stroke-width="1"></rect>
+    <rect class="head" x="0" y="20" width="672" height="24" fill="#f6f5f4" stroke="#d8d8da" stroke-width="1"></rect>
+    <path d="M22 22 l-8 0 M14 22 l4 -4 M14 22 l4 4" stroke="#5e5e62" stroke-width="1.6" fill="none" stroke-linecap="round"></path>
+    <circle cx="244" cy="22" r="4" fill="#2e7d32"></circle>
+    <text class="lbl text" x="256" y="20" font-size="12" font-weight="600" fill="#1f1f1f">sessions-chronicle</text>
+    <text class="small dim" x="256" y="33" font-size="11" fill="#8a8a8e">Claude Code · 128 msg · 42 min</text>
+    <path d="M430 20 l5 5 l5 -5" stroke="#9a9a9e" stroke-width="1.6" fill="none" stroke-linecap="round" stroke-linejoin="round"></path>
+
+    
+    <g transform="translate(0,44)">
+      <rect class="row" x="16" y="14" width="560" height="40" rx="8" fill="#ffffff" stroke="#ececee" stroke-width="1"></rect>
+      <text class="small" x="28" y="32" font-size="11">User</text>
+      <text class="small dim" x="28" y="47" font-size="11" fill="#8a8a8e">collapse the SessionDetail summary_box…</text>
+
+      <rect class="card" x="16" y="66" width="640" height="60" rx="8" fill="#ffffff" stroke="#e3e3e5" stroke-width="1"></rect>
+      <text class="small" x="28" y="84" font-size="11">Assistant</text>
+      <text class="small dim" x="28" y="100" font-size="11" fill="#8a8a8e">No banner, no bar, no Revealer — the reduced state is</text>
+      <text class="small dim" x="28" y="116" font-size="11" fill="#8a8a8e">just the header bar the window already owns.</text>
+
+      <rect class="card" x="16" y="138" width="640" height="40" rx="8" fill="#fbfaf8" stroke="#e3e3e5" stroke-width="1"></rect>
+      <rect x="24" y="148" width="20" height="20" rx="5" fill="#eee"></rect>
+      <text class="small" x="52" y="162" font-size="11">tool call · Edit session_detail.rs</text>
+
+      <rect class="row" x="16" y="190" width="500" height="40" rx="8" fill="#ffffff" stroke="#ececee" stroke-width="1"></rect>
+      <text class="small" x="28" y="208" font-size="11">User</text>
+      <text class="small dim" x="28" y="223" font-size="11" fill="#8a8a8e">zero scroll machinery — ship it.</text>
+
+      <rect class="card" x="16" y="242" width="640" height="44" rx="8" fill="#ffffff" stroke="#e3e3e5" stroke-width="1"></rect>
+      <text class="small dim" x="28" y="268" font-size="11" fill="#8a8a8e">… the conversation owns every pixel; the summary is disclosure …</text>
+
+      <rect class="row" x="16" y="298" width="420" height="34" rx="8" fill="#ffffff" stroke="#ececee" stroke-width="1"></rect>
+      <text class="small dim" x="28" y="319" font-size="11" fill="#8a8a8e">Click the title or press F9 to bring it back.</text>
+    </g>
+  </g>
+
+  
+  <text class="small dim" x="24" y="974" font-size="11" fill="#8a8a8e">Reduced state = header (status dot · project · assistant · meta), 0 px vertical tax. Full summary = GtkPopover from the AdwWindowTitle MenuButton. No scroll logic, no reflow, no occlusion. Re-show: click title · F9.</text>
+</svg>

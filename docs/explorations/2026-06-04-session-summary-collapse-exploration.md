@@ -45,6 +45,8 @@ The user explicitly left **two dimensions open** for each proposal:
 1. **Scroll behavior** — whether / how the summary reacts to scroll.
 2. **What persists in the reduced state** — from a rich bar down to nothing.
 
+A third, structural axis emerged across the five proposals: **does the summary stay near the transcript and acquire a collapse *mechanism* (A, B, C), or is it *relocated* to a surface that already exists, removing the mechanism entirely (D, E)?**
+
 ---
 
 ## Proposal A — The Collapsible Crest
@@ -86,33 +88,70 @@ Lift the summary **out of the vertical flow** and place it as an `add_overlay` o
 
 ---
 
+## Proposal D — Fold the summary into the existing inspector (surface consolidation)
+*Author: systems reasoning — relocate, don't add a mechanism*
+
+![Proposal D — Inspector fold](../mockups/session-summary-collapse/proposal-inspector-fold.svg)
+
+A, B and C all keep the summary near the transcript and invent a mechanism to make it yield (`Revealer` height animation, or overlay cartridge), all driven by `vadjustment` + hysteresis. D questions the premise: the view **already owns a contextual side surface** — the inspector (`adw::OverlaySplitView`, position `End`, toggled by `inspector_toggle` + `F9`) — and the summary is conceptually *the same class of object* (session metadata, not conversation). So **move the `summary_box` content into the inspector panel** (top section, or behind a small `AdwViewSwitcher` *Summary | Inspector*). The vertical flow then holds only the transcript. **No scroll behavior at all**: the summary lives perpendicular to the scroll axis, so the entire `vadjustment`/hysteresis/reflow machine A/B/C share is *deleted by construction*. Re-show reuses affordances that **already exist** (inspector toggle + `F9`); optional default-open on first view preserves "summary greets you." In the panel the summary finally reads vertically, at full fidelity.
+
+**Strength**: kills the scroll machine entirely and consolidates two competing metadata surfaces into one, reusing native widgets and the toggle A/B must *introduce*. **Cost**: summary & inspector share one panel (a switcher arbitrates); below 860 sp the open panel overlays; rests on accepting summary ≈ inspector as one family.
+
+→ full detail: [`_section-inspector-fold.md`](../mockups/session-summary-collapse/_section-inspector-fold.md)
+
+---
+
+## Proposal E — The Title Popover (header-anchored disclosure)
+*Author: minimalist / HIG purist — the header is the home of identity*
+
+![Proposal E — Title popover](../mockups/session-summary-collapse/proposal-title-popover.svg)
+
+Treat the summary not as a block of content to park, but as **identity** — which in GNOME belongs in the header title. Give the detail page an `adw::HeaderBar` with an `AdwWindowTitle` (`title = project`, `subtitle = Claude Code · 128 msg · 42 min`), a **colored ending-status dot** beside the title, and a dropdown chevron; the title becomes a `GtkMenuButton`. Clicking it drops a `GtkPopover` holding the **full** summary; click-away / `Esc` dismisses. The vertical flow holds only the transcript, full height, permanently. The "reduced state" is **literally the header bar the window already has** — zero vertical tax, no `Revealer`, no overlay, **no scroll logic, no reflow, and no occlusion** (a popover floats and auto-dismisses; it never sits on content). Re-show: click the title (native title-menu gesture) or `F9`.
+
+**Strength**: the cleanest mechanics of the five (no surface state to sync at all) and the best permanent-info-to-tax ratio — project + assistant + meta + status, all free in the header. **Cost**: the rich detail must fit a height-bounded popover (internal scroll if it overflows); the summary becomes "consult," not "ambient"; introduces a header on the detail page (as A/B also must — here it's load-bearing).
+
+→ full detail: [`_section-title-popover.md`](../mockups/session-summary-collapse/_section-title-popover.md)
+
+---
+
 ## Comparison table
 
-| Criterion | A — Crest | B — Recap | C — Overlay cartridge |
-|---|---|---|---|
-| Summary position | in flow | in flow | **out of flow (overlay)** |
-| Permanent space tax | ~46 px (crest) | ~40 px (bar) | **0 px (floating tab)** |
-| Truly full-page transcript | no | no | **yes** |
-| ListView reflow | brief (height anim) | brief (height anim) | **none (by construction)** |
-| Collapse on scroll | auto, one-directional | auto + pinning | auto on first scroll |
-| Persistent info | project + assistant + msg + status | project + meta + status | status only |
-| Occlusion risk | no | no | **yes (expanded covers top)** |
-| Strict #160 compliance | yes | yes | yes |
-| Size of change | medium (re-parent/duplicate) | **low (encapsulation)** | medium (overlay + search collision) |
-| HIG compliance | good | **most canonical** | accepted deviation (invocable overlay) |
-| Header toggle required | yes | yes (local `AdwToolbarView`) | yes |
+| Criterion | A — Crest | B — Recap | C — Overlay cartridge | D — Inspector fold | E — Title popover |
+|---|---|---|---|---|---|
+| Summary position | in flow | in flow | out of flow (overlay) | **out of flow (side panel)** | **out of flow (header)** |
+| Permanent space tax | ~46 px (crest) | ~40 px (bar) | 0 px (floating tab) | **0 px in flow** | **0 px (header reused)** |
+| Truly full-page transcript | no | no | yes | **yes** (width narrows when open) | **yes** |
+| ListView reflow | brief (height anim) | brief (height anim) | none | **none** | **none** |
+| Collapse on scroll | auto, one-directional | auto + pinning | auto on first scroll | **n/a — no scroll coupling** | **n/a — no scroll coupling** |
+| Persistent info | project + assistant + msg + status | project + meta + status | status only | **none in flow (full in panel); opt. header subtitle** | **project + assistant + meta + status (header)** |
+| Occlusion risk | no | no | yes (expanded covers top) | **only < 860 sp (panel overlays)** | **no (popover dismisses)** |
+| Strict #160 compliance | yes | yes | yes | **yes** | **yes** |
+| Size of change | medium (re-parent/duplicate) | low (encapsulation) | medium (overlay + search collision) | **low–medium (re-host into existing panel)** | **medium (introduce header + popover)** |
+| HIG compliance | good | most canonical | accepted deviation | **good (reuses native split + inspector)** | **canonical (title menu)** |
+| Header toggle required | yes | yes (local `AdwToolbarView`) | yes | **no — reuses existing inspector toggle** | **n/a — the title IS the control** |
 
 ## Recommendation
 
-All three share the same technical foundation (`vadjustment` + hysteresis + header `ToggleButton` + `F9` + reduced-motion) and respect #160. The real choice is **philosophical**:
+The first three proposals (A, B, C) share the same technical foundation (`vadjustment` + hysteresis + header `ToggleButton` + `F9` + reduced-motion) and respect #160. Among them, the choice is **philosophical**:
 
 - **B** is the **safest starting point**: near-rewrite-free encapsulation, the most HIG-conformant pattern, and it directly addresses the "auto-collapse on scroll" idea while keeping an orientation bar. Pick this to fix the regression **fast and cleanly**.
 - **A** is B "with conviction": it decides what deserves permanent orientation (ending status + identity) and embraces a one-directional collapse for smoothness. Good for a more opinionated design without changing the structure.
-- **C** is the **bet**: the only one that makes the transcript full-page and removes reflow by construction, at the cost of occasional occlusion and a discreet tab. Favor it if "give all the space back to the conversation" is the absolute priority and you accept testing discoverability.
+- **C** is the **bet**: the only one of the three that makes the transcript full-page and removes reflow by construction, at the cost of occasional occlusion and a discreet tab.
 
-**Rec**: prototype **B** as the base (low risk, reversible), borrowing from **A** the choice of persistent content (ending status = highest-value info). Keep **C** as an evolution if the occasional occlusion proves acceptable in real use.
+**Rec (within A/B/C)**: prototype **B** as the base (low risk, reversible), borrowing from **A** the choice of persistent content (ending status = highest-value info). Keep **C** as an evolution if the occasional occlusion proves acceptable in real use.
+
+### Update — proposals D & E (relocate instead of collapse)
+
+D and E open a **different axis**: instead of building a collapse mechanism near the transcript, they *relocate* the summary to a surface that already exists, which **eliminates the entire scroll machine** (no `vadjustment` subscription, no hysteresis, no pin flag, no reflow, no "what happens at the top" edge case). This is the single hardest part of A/B/C — and D/E sidestep it.
+
+- **D** is the **most economical structurally**: it reuses the inspector panel and its toggle (`F9`) verbatim, consolidating two metadata surfaces into one. Choose it if you accept that "summary" and "inspector" are the same family — then it's the least new code *and* the least new UI.
+- **E** is the **purest minimalism**: the header bar becomes the reduced state (status dot + project + meta, all free) and the full summary is transient disclosure from the title. Choose it if "the conversation is the page; everything else is disclosure" is the guiding principle and a height-bounded popover for the detail is acceptable.
+
+**Overall**: if the priority is a *fast, reversible regression fix*, ship **B**. If the priority is *removing the scroll-collapse complexity altogether*, **D** is the lowest-effort relocation (reuses existing toggle + panel) and **E** the most elegant (zero vertical tax, canonical title menu). A reasonable path: ship **B** now as the safe fix, and evaluate **D** as the cleaner long-term home once we confirm users treat summary and inspector as one surface.
 
 ## Open questions
 
-- Should the reduced state keep an orientation anchor (project/assistant — A, B) or bet on the header bar alone (C)?
-- Should auto-collapse re-expand when scrolling all the way back to the top? All three proposals avoid it by default (anti-loop); to be confirmed from a UX standpoint.
+- Should the reduced state keep an orientation anchor (project/assistant — A, B, E) or bet on the header bar alone (C, and D's optional subtitle)?
+- Should auto-collapse re-expand when scrolling all the way back to the top? A/B/C avoid it by default (anti-loop); D/E make the question moot (no scroll coupling). To be confirmed from a UX standpoint.
+- Are "session summary" and "session inspector" the same family of information (the premise of D)? If yes, consolidation is a simplification; if product wants them distinct, D is ruled out.
+- Can the full summary (activity bar + tokens grid + 3-line prompt) live comfortably in a height-bounded `GtkPopover` (E), or does it need the vertical room of a side panel (D)?
