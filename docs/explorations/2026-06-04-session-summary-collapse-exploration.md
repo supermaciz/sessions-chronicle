@@ -37,6 +37,7 @@ Everything is **data-backed** (indexed fields, no AI-generated content). The pro
 - GTK4 + libadwaita + Relm4 0.10, Rust 2024.
 - Infrastructure already in place and reusable: `gtk::Overlay` (`detail_overlay`), `adw::ToastOverlay`, `adw::OverlaySplitView` (inspector, position `End`, collapses at 860 sp), floating search bar as `add_overlay` (top-center).
 - The detail page is an `adw::NavigationPage` whose root is a `gtk::Box` **without an internal `AdwToolbarView`/`HeaderBar`** (`src/app/init.rs:165`) → a header `ToggleButton` implies either introducing a local `AdwToolbarView` or wiring to the app-level header bar.
+- **The header bar is global and shared** (see `session_detail.png`): its **center title slot is permanently the `AdwViewSwitcher` — `Sessions | Analytics`**; its start cluster holds back/pin/search (with a large empty gap after search); its end cluster holds the hamburger, the **inspector toggle** (validates D's reuse), **Resume** and the window close button. → Any header-anchored affordance (A/B/E) must live in a free slot (the start gap or the end cluster) and **must not** claim the center title — that's the switcher.
 
 ## Design dimensions (left free per proposal)
 
@@ -101,14 +102,16 @@ A, B and C all keep the summary near the transcript and invent a mechanism to ma
 
 ---
 
-## Proposal E — The Title Popover (header-anchored disclosure)
-*Author: minimalist / HIG purist — the header is the home of identity*
+## Proposal E — The Summary Button (header-anchored disclosure)
+*Author: minimalist / HIG purist — the header already exists; add one button*
 
-![Proposal E — Title popover](../mockups/session-summary-collapse/proposal-title-popover.svg)
+![Proposal E — Summary button + popover](../mockups/session-summary-collapse/proposal-title-popover.svg)
 
-Treat the summary not as a block of content to park, but as **identity** — which in GNOME belongs in the header title. Give the detail page an `adw::HeaderBar` with an `AdwWindowTitle` (`title = project`, `subtitle = Claude Code · 128 msg · 42 min`), a **colored ending-status dot** beside the title, and a dropdown chevron; the title becomes a `GtkMenuButton`. Clicking it drops a `GtkPopover` holding the **full** summary; click-away / `Esc` dismisses. The vertical flow holds only the transcript, full height, permanently. The "reduced state" is **literally the header bar the window already has** — zero vertical tax, no `Revealer`, no overlay, **no scroll logic, no reflow, and no occlusion** (a popover floats and auto-dismisses; it never sits on content). Re-show: click the title (native title-menu gesture) or `F9`.
+> **Revised after reviewing the real header** (`session_detail.png`). The detail page shares the **global** `adw::HeaderBar`, whose **center is permanently the `AdwViewSwitcher` (Sessions | Analytics)** and whose end side already holds the hamburger, inspector toggle, **Resume** and close. An earlier draft put an `AdwWindowTitle` menu in that center slot — it collides with the switcher. Corrected below.
 
-**Strength**: the cleanest mechanics of the five (no surface state to sync at all) and the best permanent-info-to-tax ratio — project + assistant + meta + status, all free in the header. **Cost**: the rich detail must fit a height-bounded popover (internal scroll if it overflows); the summary becomes "consult," not "ambient"; introduces a header on the detail page (as A/B also must — here it's load-bearing).
+Don't park the summary as content; expose it as a **header affordance**. The header is global and already speaks in buttons (search, hamburger, inspector toggle), so add **one more**: a flat `GtkMenuButton` in the header's *start* cluster (where the screenshot shows a large empty gap, between `🔍` and the switcher) reading `● sessions-chronicle ▾` — a status-colored dot + project name + chevron. Clicking it drops a `GtkPopover` holding the **full** summary; click-away / `Esc` dismisses. The vertical flow holds only the transcript, full height, permanently. The "reduced state" is **a single header button** — zero vertical tax, no `Revealer`, no overlay, **no scroll logic, no reflow, no occlusion, and no new header** (it adds a start widget to the header that already exists). The center switcher is untouched. Re-show: click the button or `F9`.
+
+**Strength**: the cleanest mechanics of the five (no surface state to sync at all), reusing the header-button vocabulary already on screen, with the most glanceable fact — the ending-status dot — permanent and free. **Cost**: with the center owned by the switcher, the permanent anchor is realistically only **dot + project** (assistant/msg/duration move into the popover, not always-on); the full detail must fit a height-bounded popover (internal scroll if it overflows); the summary becomes "consult," not "ambient."
 
 → full detail: [`_section-title-popover.md`](../mockups/session-summary-collapse/_section-title-popover.md)
 
@@ -116,19 +119,19 @@ Treat the summary not as a block of content to park, but as **identity** — whi
 
 ## Comparison table
 
-| Criterion | A — Crest | B — Recap | C — Overlay cartridge | D — Inspector fold | E — Title popover |
+| Criterion | A — Crest | B — Recap | C — Overlay cartridge | D — Inspector fold | E — Summary button |
 |---|---|---|---|---|---|
 | Summary position | in flow | in flow | out of flow (overlay) | **out of flow (side panel)** | **out of flow (header)** |
 | Permanent space tax | ~46 px (crest) | ~40 px (bar) | 0 px (floating tab) | **0 px in flow** | **0 px (header reused)** |
 | Truly full-page transcript | no | no | yes | **yes** (width narrows when open) | **yes** |
 | ListView reflow | brief (height anim) | brief (height anim) | none | **none** | **none** |
 | Collapse on scroll | auto, one-directional | auto + pinning | auto on first scroll | **n/a — no scroll coupling** | **n/a — no scroll coupling** |
-| Persistent info | project + assistant + msg + status | project + meta + status | status only | **none in flow (full in panel); opt. header subtitle** | **project + assistant + meta + status (header)** |
+| Persistent info | project + assistant + msg + status | project + meta + status | status only | **none in flow (full in panel); opt. header subtitle** | **status dot + project (header button)** |
 | Occlusion risk | no | no | yes (expanded covers top) | **only < 860 sp (panel overlays)** | **no (popover dismisses)** |
 | Strict #160 compliance | yes | yes | yes | **yes** | **yes** |
-| Size of change | medium (re-parent/duplicate) | low (encapsulation) | medium (overlay + search collision) | **low–medium (re-host into existing panel)** | **medium (introduce header + popover)** |
-| HIG compliance | good | most canonical | accepted deviation | **good (reuses native split + inspector)** | **canonical (title menu)** |
-| Header toggle required | yes | yes (local `AdwToolbarView`) | yes | **no — reuses existing inspector toggle** | **n/a — the title IS the control** |
+| Size of change | medium (re-parent/duplicate) | low (encapsulation) | medium (overlay + search collision) | **low–medium (re-host into existing panel)** | **low–medium (header start button + popover; no new header)** |
+| HIG compliance | good | most canonical | accepted deviation | **good (reuses native split + inspector)** | **good (header menu button)** |
+| Header toggle required | yes | yes (local `AdwToolbarView`) | yes | **no — reuses existing inspector toggle** | **adds 1 start button to the existing global header** |
 
 ## Recommendation
 
@@ -145,9 +148,9 @@ The first three proposals (A, B, C) share the same technical foundation (`vadjus
 D and E open a **different axis**: instead of building a collapse mechanism near the transcript, they *relocate* the summary to a surface that already exists, which **eliminates the entire scroll machine** (no `vadjustment` subscription, no hysteresis, no pin flag, no reflow, no "what happens at the top" edge case). This is the single hardest part of A/B/C — and D/E sidestep it.
 
 - **D** is the **most economical structurally**: it reuses the inspector panel and its toggle (`F9`) verbatim, consolidating two metadata surfaces into one. Choose it if you accept that "summary" and "inspector" are the same family — then it's the least new code *and* the least new UI.
-- **E** is the **purest minimalism**: the header bar becomes the reduced state (status dot + project + meta, all free) and the full summary is transient disclosure from the title. Choose it if "the conversation is the page; everything else is disclosure" is the guiding principle and a height-bounded popover for the detail is acceptable.
+- **E** is the **purest minimalism**: a single flat menu-button in the existing header's start area (status dot + project) is the reduced state, and the full summary is transient disclosure from its popover. It touches neither the scroll flow nor the center `Sessions | Analytics` switcher. Choose it if "the conversation is the page; everything else is disclosure" is the guiding principle and a height-bounded popover for the detail is acceptable — accepting that assistant/msg/duration are then one click away rather than always-on.
 
-**Overall**: if the priority is a *fast, reversible regression fix*, ship **B**. If the priority is *removing the scroll-collapse complexity altogether*, **D** is the lowest-effort relocation (reuses existing toggle + panel) and **E** the most elegant (zero vertical tax, canonical title menu). A reasonable path: ship **B** now as the safe fix, and evaluate **D** as the cleaner long-term home once we confirm users treat summary and inspector as one surface.
+**Overall**: if the priority is a *fast, reversible regression fix*, ship **B**. If the priority is *removing the scroll-collapse complexity altogether*, **D** is the lowest-effort relocation (reuses the existing inspector toggle + panel) and **E** the lightest touch (one header button, zero vertical tax, no new header). A reasonable path: ship **B** now as the safe fix, and evaluate **D** as the cleaner long-term home once we confirm users treat summary and inspector as one surface.
 
 ## Open questions
 
