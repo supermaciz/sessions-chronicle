@@ -1,0 +1,135 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="720" height="560" viewBox="0 0 720 560" font-family="Cantarell, 'Segoe UI', sans-serif">
+  <defs>
+    <linearGradient id="scrim" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#000000" stop-opacity="0.28"/>
+      <stop offset="1" stop-color="#000000" stop-opacity="0"/>
+    </linearGradient>
+    <filter id="cardShadow" x="-20%" y="-20%" width="140%" height="160%">
+      <feDropShadow dx="0" dy="3" stdDeviation="6" flood-color="#000000" flood-opacity="0.22"/>
+    </filter>
+  </defs>
+
+  <!-- page bg -->
+  <rect width="720" height="560" fill="#fafafb"/>
+
+  <!-- title -->
+  <text x="24" y="34" font-size="17" font-weight="700" fill="#1a1a1a">Proposal C — The Retractable Cartridge (overlay "Peek")</text>
+  <text x="24" y="55" font-size="12.5" fill="#5e5c64">The summary leaves the vertical flow: it floats in the existing Overlay. The transcript stays full-page at all times.</text>
+
+  <!-- ===================== PANEL 1 : PEEK OUVERT ===================== -->
+  <g transform="translate(24,78)">
+    <text x="0" y="0" font-size="12.5" font-weight="700" fill="#3584e4">① On open / on recall — the cartridge drops over the top</text>
+
+    <!-- window frame -->
+    <rect x="0" y="12" width="316" height="452" rx="10" fill="#ffffff" stroke="#d6d4d2"/>
+    <!-- headerbar -->
+    <rect x="0" y="12" width="316" height="38" rx="10" fill="#f2f1f0"/>
+    <rect x="0" y="34" width="316" height="16" fill="#f2f1f0"/>
+    <path d="M8 31 l5 5 l5 -5" stroke="#5e5c64" stroke-width="1.6" fill="none" stroke-linecap="round"/>
+    <text x="26" y="36" font-size="11.5" fill="#3d3846">my-project</text>
+    <!-- header toggle (active) -->
+    <rect x="270" y="20" width="36" height="22" rx="6" fill="#3584e4"/>
+    <rect x="278" y="27" width="12" height="2" rx="1" fill="#ffffff"/>
+    <rect x="278" y="31" width="12" height="2" rx="1" fill="#ffffff"/>
+    <rect x="278" y="35" width="9" height="2" rx="1" fill="#ffffff"/>
+
+    <!-- transcript underneath (full height) -->
+    <g fill="#ededed">
+      <rect x="16" y="206" width="180" height="11" rx="3"/>
+      <rect x="16" y="224" width="240" height="11" rx="3"/>
+      <rect x="16" y="242" width="150" height="11" rx="3"/>
+      <rect x="16" y="276" width="210" height="11" rx="3"/>
+      <rect x="16" y="294" width="170" height="11" rx="3"/>
+      <rect x="16" y="328" width="232" height="11" rx="3"/>
+      <rect x="16" y="346" width="120" height="11" rx="3"/>
+      <rect x="16" y="380" width="190" height="11" rx="3"/>
+      <rect x="16" y="398" width="160" height="11" rx="3"/>
+      <rect x="16" y="432" width="210" height="11" rx="3"/>
+    </g>
+    <!-- scrim fading into transcript -->
+    <rect x="1" y="50" width="314" height="120" fill="url(#scrim)"/>
+
+    <!-- floating summary card (overlay) -->
+    <g filter="url(#cardShadow)">
+      <rect x="12" y="56" width="292" height="150" rx="12" fill="#ffffff" stroke="#d6d4d2"/>
+    </g>
+    <!-- card: project + assistant -->
+    <text x="26" y="78" font-size="13.5" font-weight="700" fill="#1a1a1a">my-project</text>
+    <!-- chips row -->
+    <g font-size="9.5">
+      <rect x="26" y="86" width="62" height="17" rx="8.5" fill="#eef1f5" stroke="#d6d4d2"/>
+      <circle cx="36" cy="94.5" r="3" fill="#3584e4"/>
+      <text x="43" y="98" fill="#3d3846">Claude Code</text>
+      <rect x="94" y="86" width="40" height="17" rx="8.5" fill="#eef1f5" stroke="#d6d4d2"/>
+      <text x="100" y="98" fill="#3d3846">42 min</text>
+      <rect x="140" y="86" width="50" height="17" rx="8.5" fill="#eef1f5" stroke="#d6d4d2"/>
+      <text x="146" y="98" fill="#3d3846">128 msg</text>
+      <rect x="196" y="86" width="46" height="17" rx="8.5" fill="#d8f0d8" stroke="#bcdfbc"/>
+      <text x="202" y="98" fill="#26734d">Clean</text>
+    </g>
+    <!-- first prompt -->
+    <text x="26" y="120" font-size="8.5" font-weight="700" fill="#3584e4" letter-spacing="0.5">FIRST PROMPT</text>
+    <text x="26" y="133" font-size="10" fill="#5e5c64">Refactor the session detail view so the summary…</text>
+    <!-- mini activity + tokens -->
+    <text x="26" y="153" font-size="8.5" font-weight="700" fill="#3584e4" letter-spacing="0.5">ACTIVITY</text>
+    <rect x="26" y="158" width="160" height="7" rx="3.5" fill="#e0dddb"/>
+    <rect x="26" y="158" width="86" height="7" rx="3.5" fill="#3584e4"/>
+    <rect x="112" y="158" width="40" height="7" fill="#e66100"/>
+    <rect x="152" y="158" width="34" height="7" rx="3.5" fill="#2ec27e"/>
+    <text x="196" y="165" font-size="8.5" fill="#5e5c64">12 edits · 7 cmd</text>
+    <text x="26" y="184" font-size="8.5" font-weight="700" fill="#3584e4" letter-spacing="0.5">TOKENS</text>
+    <text x="26" y="197" font-size="9.5" fill="#3d3846">In 84k · Out 21k · Cache 1.2M</text>
+    <!-- grab tab on the card bottom edge -->
+    <rect x="138" y="200" width="40" height="5" rx="2.5" fill="#c0bfbc"/>
+
+    <text x="0" y="486" font-size="10" fill="#5e5c64">The transcript is not pushed: it stays put, momentarily covered. No ListView reflow.</text>
+  </g>
+
+  <!-- ===================== PANEL 2 : ESCAMOTÉ ===================== -->
+  <g transform="translate(380,78)">
+    <text x="0" y="0" font-size="12.5" font-weight="700" fill="#3584e4">② After the 1st scroll — tucked into a tab</text>
+
+    <!-- window frame -->
+    <rect x="0" y="12" width="316" height="452" rx="10" fill="#ffffff" stroke="#d6d4d2"/>
+    <!-- headerbar -->
+    <rect x="0" y="12" width="316" height="38" rx="10" fill="#f2f1f0"/>
+    <rect x="0" y="34" width="316" height="16" fill="#f2f1f0"/>
+    <path d="M8 31 l5 5 l5 -5" stroke="#5e5c64" stroke-width="1.6" fill="none" stroke-linecap="round"/>
+    <text x="26" y="36" font-size="11.5" fill="#3d3846">my-project</text>
+    <!-- header toggle (inactive) -->
+    <rect x="270" y="20" width="36" height="22" rx="6" fill="#e8e6e4" stroke="#d6d4d2"/>
+    <rect x="278" y="27" width="12" height="2" rx="1" fill="#77767b"/>
+    <rect x="278" y="31" width="12" height="2" rx="1" fill="#77767b"/>
+    <rect x="278" y="35" width="9" height="2" rx="1" fill="#77767b"/>
+
+    <!-- full-height transcript -->
+    <g fill="#e7e7e7">
+      <rect x="16" y="72" width="200" height="12" rx="3"/>
+      <rect x="16" y="92" width="250" height="12" rx="3"/>
+      <rect x="16" y="112" width="160" height="12" rx="3"/>
+      <rect x="16" y="146" width="220" height="12" rx="3"/>
+      <rect x="16" y="166" width="180" height="12" rx="3"/>
+      <rect x="16" y="186" width="240" height="12" rx="3"/>
+      <rect x="16" y="220" width="200" height="12" rx="3"/>
+      <rect x="16" y="240" width="150" height="12" rx="3"/>
+      <rect x="16" y="274" width="230" height="12" rx="3"/>
+      <rect x="16" y="294" width="170" height="12" rx="3"/>
+      <rect x="16" y="328" width="210" height="12" rx="3"/>
+      <rect x="16" y="348" width="190" height="12" rx="3"/>
+      <rect x="16" y="382" width="240" height="12" rx="3"/>
+      <rect x="16" y="402" width="160" height="12" rx="3"/>
+      <rect x="16" y="436" width="200" height="12" rx="3"/>
+    </g>
+
+    <!-- peek tab at the top edge (centered) -->
+    <g filter="url(#cardShadow)">
+      <path d="M118 50 h80 a8 8 0 0 1 8 8 v8 a8 8 0 0 1 -8 8 h-80 a8 8 0 0 1 -8 -8 v-8 a8 8 0 0 1 8 -8 z" fill="#ffffff" stroke="#d6d4d2"/>
+    </g>
+    <circle cx="130" cy="66" r="3.5" fill="#3584e4"/>
+    <rect x="138" y="63.5" width="40" height="5" rx="2.5" fill="#26734d"/>
+    <path d="M186 63 l5 5 l5 -5" stroke="#5e5c64" stroke-width="1.6" fill="none" stroke-linecap="round"/>
+
+    <!-- hover-peek hint arrow -->
+    <text x="0" y="486" font-size="10" fill="#5e5c64">Recall: click/hover the tab, header button, or F9. The ending status stays visible (colored dot).</text>
+  </g>
+</svg>

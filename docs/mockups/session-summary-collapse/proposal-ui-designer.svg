@@ -1,0 +1,147 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="720" height="980" viewBox="0 0 720 980" font-family="Cantarell, sans-serif">
+  <defs>
+    <style>
+      .bg { fill: #fafafb; }
+      .win { fill: #ffffff; stroke: #d8d8da; stroke-width: 1; }
+      .head { fill: #f6f5f4; stroke: #d8d8da; stroke-width: 1; }
+      .accent { fill: #3584e4; }
+      .accentsoft { fill: #e3eefc; }
+      .text { fill: #1f1f1f; }
+      .dim { fill: #8a8a8e; }
+      .sep { stroke: #e3e3e5; stroke-width: 1; }
+      .pill { fill: #f0f0f1; stroke: #e0e0e2; stroke-width: 1; }
+      .card { fill: #ffffff; stroke: #e3e3e5; stroke-width: 1; }
+      .row { fill: #ffffff; stroke: #ececee; stroke-width: 1; }
+      .title2 { font-size: 17px; font-weight: 700; }
+      .heading { font-size: 10px; font-weight: 700; letter-spacing: 1px; fill: #8a8a8e; }
+      .body { font-size: 12px; }
+      .small { font-size: 11px; }
+      .mono { font-family: monospace; font-size: 11px; }
+      .lbl { font-size: 12px; font-weight: 600; }
+    </style>
+  </defs>
+
+  <rect class="bg" x="0" y="0" width="720" height="980"/>
+
+  <!-- ====================== STATE 1: EXPANDED ====================== -->
+  <text class="lbl" x="24" y="28" fill="#3584e4">State A — Summary expanded (top of transcript, scroll = 0)</text>
+
+  <g transform="translate(24,40)">
+    <rect class="win" x="0" y="0" width="672" height="420" rx="10"/>
+
+    <!-- app navigation header (existing, app level) -->
+    <rect class="head" x="0" y="0" width="672" height="44" rx="10"/>
+    <rect class="head" x="0" y="20" width="672" height="24"/>
+    <path d="M22 22 l-8 0 M14 22 l4 -4 M14 22 l4 4" stroke="#5e5e62" stroke-width="1.6" fill="none" stroke-linecap="round"/>
+    <text class="body" x="36" y="26" fill="#1f1f1f">Session</text>
+    <!-- summary toggle button in header (pinned affordance) -->
+    <rect class="accentsoft" x="560" y="9" width="30" height="26" rx="6"/>
+    <path d="M569 18 h12 M569 22 h12 M569 26 h7" stroke="#3584e4" stroke-width="1.6" stroke-linecap="round"/>
+    <rect class="pill" x="596" y="9" width="30" height="26" rx="6"/>
+    <circle cx="606" cy="22" r="2" fill="#5e5e62"/><circle cx="611" cy="22" r="2" fill="#5e5e62"/><circle cx="616" cy="22" r="2" fill="#5e5e62"/>
+
+    <!-- Revealer: summary box fully shown -->
+    <g transform="translate(0,44)">
+      <rect x="0" y="0" width="672" height="300" fill="#ffffff"/>
+      <text class="title2 text" x="16" y="26">sessions-chronicle</text>
+      <text class="small dim" x="16" y="44">~/Projets/sessions-chronicle</text>
+      <text class="small dim" x="16" y="62">Session ID:  <tspan class="mono" fill="#1f1f1f">019e08db-0672-742f</tspan></text>
+
+      <!-- chip row -->
+      <rect class="pill" x="16" y="74" width="120" height="26" rx="13"/>
+      <circle cx="32" cy="87" r="6" fill="#3584e4"/>
+      <text class="small" x="44" y="91">Claude Code</text>
+      <rect class="pill" x="144" y="74" width="68" height="26" rx="13"/>
+      <text class="small" x="156" y="91">42 min</text>
+      <rect class="pill" x="220" y="74" width="96" height="26" rx="13"/>
+      <text class="small" x="232" y="91">128 messages</text>
+      <rect x="324" y="74" width="92" height="26" rx="13" fill="#e8f5e9" stroke="#c8e6c9"/>
+      <text class="small" x="336" y="91" fill="#2e7d32">Completed</text>
+
+      <line class="sep" x1="16" y1="116" x2="656" y2="116"/>
+      <text class="heading" x="16" y="134">FIRST PROMPT</text>
+      <text class="body text" x="16" y="152">Collapse or hide the SessionDetail summary_box while</text>
+      <text class="body text" x="16" y="168">keeping the ability to bring it back at any time…</text>
+
+      <line class="sep" x1="16" y1="182" x2="656" y2="182"/>
+      <text class="heading" x="16" y="200">ACTIVITY</text>
+      <rect x="16" y="208" width="400" height="10" rx="5" fill="#f0f0f1"/>
+      <rect x="16" y="208" width="180" height="10" rx="5" fill="#3584e4"/>
+      <rect x="196" y="208" width="120" height="10" fill="#f39c12"/>
+      <rect x="316" y="208" width="100" height="10" rx="5" fill="#27ae60"/>
+      <text class="small dim" x="16" y="234">● 24 edits   ● 16 commands   ● 12 reads</text>
+
+      <line class="sep" x1="16" y1="248" x2="656" y2="248"/>
+      <text class="heading" x="16" y="266">TOKENS</text>
+      <text class="body text" x="16" y="286">Input 12.4k</text>
+      <text class="body text" x="176" y="286">Output 8.1k</text>
+      <text class="body text" x="336" y="286">Cache 102k</text>
+      <text class="body text" x="496" y="286">Reasoning 3.2k</text>
+    </g>
+
+    <!-- transcript begins (scroller, sibling) -->
+    <line class="sep" x1="0" y1="368" x2="672" y2="368"/>
+    <g transform="translate(0,376)">
+      <rect class="row" x="16" y="0" width="500" height="32" rx="8"/>
+      <text class="small" x="28" y="20">User: collapse the summary_box…</text>
+    </g>
+  </g>
+
+  <!-- ====================== STATE 2: COLLAPSED ====================== -->
+  <text class="lbl" x="24" y="520" fill="#3584e4">State B — Summary collapsed on scroll (persistent recap bar)</text>
+
+  <g transform="translate(24,532)">
+    <rect class="win" x="0" y="0" width="672" height="416" rx="10"/>
+
+    <!-- app header -->
+    <rect class="head" x="0" y="0" width="672" height="44" rx="10"/>
+    <rect class="head" x="0" y="20" width="672" height="24"/>
+    <path d="M22 22 l-8 0 M14 22 l4 -4 M14 22 l4 4" stroke="#5e5e62" stroke-width="1.6" fill="none" stroke-linecap="round"/>
+    <text class="body" x="36" y="26" fill="#1f1f1f">Session</text>
+    <!-- toggle button: inactive state -->
+    <rect class="pill" x="560" y="9" width="30" height="26" rx="6"/>
+    <path d="M569 18 h12 M569 22 h12 M569 26 h7" stroke="#5e5e62" stroke-width="1.6" stroke-linecap="round"/>
+    <rect class="pill" x="596" y="9" width="30" height="26" rx="6"/>
+    <circle cx="606" cy="22" r="2" fill="#5e5e62"/><circle cx="611" cy="22" r="2" fill="#5e5e62"/><circle cx="616" cy="22" r="2" fill="#5e5e62"/>
+
+    <!-- collapsed summary strip (revealer collapsed to single recap row) -->
+    <g transform="translate(0,44)">
+      <rect x="0" y="0" width="672" height="40" fill="#f7f9fc"/>
+      <line class="sep" x1="0" y1="40" x2="672" y2="40"/>
+      <circle cx="26" cy="20" r="6" fill="#3584e4"/>
+      <text class="lbl text" x="40" y="24">sessions-chronicle</text>
+      <text class="small dim" x="184" y="24">· 128 msg · 42 min ·</text>
+      <rect x="300" y="9" width="78" height="22" rx="11" fill="#e8f5e9" stroke="#c8e6c9"/>
+      <text class="small" x="311" y="24" fill="#2e7d32">Completed</text>
+      <!-- expand affordance at strip end -->
+      <text class="small accent" x="560" y="24" fill="#3584e4">Details</text>
+      <path d="M620 16 l5 5 l5 -5" stroke="#3584e4" stroke-width="1.6" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+    </g>
+
+    <!-- transcript fills the freed space -->
+    <g transform="translate(0,92)">
+      <rect class="row" x="16" y="0" width="560" height="40" rx="8"/>
+      <text class="small" x="28" y="18">User</text>
+      <text class="small dim" x="28" y="33">collapse the SessionDetail summary_box…</text>
+
+      <rect class="card" x="16" y="52" width="640" height="64" rx="8"/>
+      <text class="small" x="28" y="70">Assistant</text>
+      <text class="small dim" x="28" y="88">I inspect the current hierarchy then propose</text>
+      <text class="small dim" x="28" y="104">a Revealer driven by the scroller's adjustment.</text>
+
+      <rect class="card" x="16" y="128" width="640" height="40" rx="8" fill="#fbfaf8"/>
+      <rect x="24" y="138" width="20" height="20" rx="5" fill="#eee"/>
+      <text class="small" x="52" y="152">tool call · Read session_detail.rs</text>
+
+      <rect class="row" x="16" y="180" width="500" height="40" rx="8"/>
+      <text class="small" x="28" y="198">User</text>
+      <text class="small dim" x="28" y="213">perfect, keep the libadwaita pattern…</text>
+
+      <rect class="card" x="16" y="232" width="640" height="44" rx="8"/>
+      <text class="small dim" x="28" y="258">… the transcript reclaims all the freed height …</text>
+    </g>
+  </g>
+
+  <!-- legend -->
+  <text class="small dim" x="24" y="972">Collapsed = 40 px recap bar (project · meta · status · "Details ▾"). Header toggle + bar click + shortcut re-expand. Auto-collapse on scroll down, re-expand at top.</text>
+</svg>

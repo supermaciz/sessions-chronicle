@@ -1,0 +1,207 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="720" height="980" viewBox="0 0 720 980" font-family="Cantarell, 'Adwaita Sans', sans-serif">
+  <defs>
+    <style>
+      .win { fill: #fafafa; }
+      .hdr { fill: #ffffff; }
+      .hdrline { stroke: #d8d8d8; stroke-width: 1; }
+      .title2 { font-size: 18px; font-weight: 700; fill: #1a1a1a; }
+      .dim { font-size: 11px; fill: #8a8a8a; }
+      .heading { font-size: 10px; font-weight: 700; letter-spacing: 1px; fill: #9a9a9a; }
+      .body { font-size: 12px; fill: #2a2a2a; }
+      .mono { font-size: 11px; fill: #4a4a4a; font-family: monospace; }
+      .pill { fill: #ececec; }
+      .pilltxt { font-size: 11px; fill: #3a3a3a; }
+      .accent { fill: #3584e4; }
+      .accenttxt { font-size: 11px; fill: #ffffff; font-weight: 600; }
+      .sep { stroke: #e4e4e4; stroke-width: 1; }
+      .label { font-size: 12px; fill: #1a1a1a; }
+      .annot { font-size: 11px; fill: #3584e4; font-style: italic; }
+      .annotbox { fill: none; stroke: #3584e4; stroke-width: 1; stroke-dasharray: 4 3; }
+      .chevron { stroke: #5e5e5e; stroke-width: 1.6; fill: none; stroke-linecap: round; }
+      .msg { fill: #f0f0f0; }
+      .msgu { fill: #e8f0fc; }
+      .barfill1 { fill: #3584e4; } .barfill2 { fill: #33d17a; } .barfill3 { fill: #f6d32d; }
+    </style>
+  </defs>
+
+  <rect width="720" height="980" fill="#eeeeee"/>
+
+  <!-- ================= TITLE ================= -->
+  <text x="24" y="34" class="title2">Proposal A — The Collapsible Crest</text>
+  <text x="24" y="54" class="dim">summary_box becomes AdwExpanderRow-like: persistent crest + revealed body. Auto-collapse on scroll down.</text>
+
+  <!-- ============================================================ -->
+  <!-- STATE 1 : EXPANDED                                            -->
+  <!-- ============================================================ -->
+  <text x="24" y="90" class="heading">EXPANDED STATE (on load)</text>
+  <g transform="translate(24,100)">
+    <rect class="win" width="320" height="560" rx="10" stroke="#d0d0d0"/>
+
+    <!-- HeaderBar -->
+    <rect class="hdr" width="320" height="40" rx="10"/>
+    <rect class="hdr" width="320" height="20" y="20"/>
+    <line class="hdrline" x1="0" y1="40" x2="320" y2="40"/>
+    <text x="14" y="25" class="body" font-weight="600">my-project</text>
+    <!-- summary toggle button (active) -->
+    <rect class="accent" x="236" y="9" width="22" height="22" rx="6"/>
+    <path d="M242 17 h10 M242 20.5 h10 M242 24 h10" stroke="#fff" stroke-width="1.4"/>
+    <!-- inspector toggle -->
+    <rect x="266" y="9" width="22" height="22" rx="6" fill="#ececec"/>
+    <rect x="294" y="9" width="14" height="22" rx="4" fill="#ececec"/>
+
+    <!-- ===== CREST (always visible) ===== -->
+    <rect x="0" y="41" width="320" height="46" fill="#f4f6f9"/>
+    <text x="16" y="62" class="title2" font-size="15">my-project</text>
+    <!-- chevron-down: collapses -->
+    <path class="chevron" d="M292 56 l6 6 l6 -6"/>
+    <!-- crest chips: assistant, msgs, status -->
+    <rect class="pill" x="16" y="70" width="58" height="14" rx="7"/>
+    <text x="22" y="80" class="pilltxt" font-size="9">Claude Code</text>
+    <rect class="pill" x="80" y="70" width="40" height="14" rx="7"/>
+    <text x="86" y="80" class="pilltxt" font-size="9">128 msg</text>
+    <rect x="126" y="70" width="44" height="14" rx="7" fill="#d8f5e3"/>
+    <text x="132" y="80" class="pilltxt" font-size="9" fill="#1a7d44">Clean</text>
+    <line class="sep" x1="0" y1="87" x2="320" y2="87"/>
+
+    <!-- ===== REVEALED BODY ===== -->
+    <text x="16" y="106" class="dim">/home/user/dev/my-project</text>
+    <text x="16" y="124" class="dim">Session ID:</text>
+    <text x="74" y="124" class="mono">019e08db-0672-742f</text>
+
+    <line class="sep" x1="16" y1="136" x2="304" y2="136"/>
+    <text x="16" y="153" class="heading">FIRST PROMPT</text>
+    <text x="16" y="170" class="body">Refactor the session detail view so</text>
+    <text x="16" y="185" class="body">the transcript is directly scrollable…</text>
+
+    <line class="sep" x1="16" y1="198" x2="304" y2="198"/>
+    <text x="16" y="215" class="heading">ACTIVITY</text>
+    <rect class="barfill1" x="16" y="223" width="140" height="10" rx="3"/>
+    <rect class="barfill2" x="158" y="223" width="80" height="10" rx="3"/>
+    <rect class="barfill3" x="240" y="223" width="40" height="10" rx="3"/>
+    <text x="16" y="250" class="dim">42 edits · 18 cmds · 11 reads</text>
+
+    <line class="sep" x1="16" y1="262" x2="304" y2="262"/>
+    <text x="16" y="279" class="heading">TOKENS</text>
+    <text x="16" y="300" class="label" font-weight="700">1.2M</text>
+    <text x="16" y="314" class="dim">Input</text>
+    <text x="90" y="300" class="label" font-weight="700">88K</text>
+    <text x="90" y="314" class="dim">Output</text>
+    <text x="170" y="300" class="label" font-weight="700">4.1M</text>
+    <text x="170" y="314" class="dim">Cache</text>
+    <text x="250" y="300" class="label" font-weight="700">12K</text>
+    <text x="250" y="314" class="dim">Reason</text>
+
+    <line class="sep" x1="0" y1="332" x2="320" y2="332"/>
+
+    <!-- transcript begins -->
+    <rect class="msgu" x="14" y="344" width="292" height="40" rx="8"/>
+    <text x="24" y="360" class="dim">You</text>
+    <text x="24" y="376" class="body" font-size="11">Refactor the session detail view…</text>
+    <rect class="msg" x="14" y="392" width="292" height="56" rx="8"/>
+    <text x="24" y="408" class="dim">Claude</text>
+    <text x="24" y="424" class="body" font-size="11">I'll restructure session_detail.rs…</text>
+    <rect class="msg" x="14" y="456" width="292" height="56" rx="8"/>
+    <text x="24" y="472" class="dim">Claude</text>
+    <text x="24" y="488" class="body" font-size="11">Editing src/ui/session_detail.rs…</text>
+    <rect class="msg" x="14" y="520" width="292" height="28" rx="8"/>
+  </g>
+  <text x="356" y="118" class="annot">Crest (46px): name + 3 key chips</text>
+  <text x="356" y="134" class="annot">+ chevron. Always there.</text>
+  <text x="356" y="158" class="annot">Revealed body: path, ID, prompt,</text>
+  <text x="356" y="174" class="annot">activity, tokens — all the detail.</text>
+  <text x="356" y="198" class="annot">Active toggle button in the</text>
+  <text x="356" y="214" class="annot">shared HeaderBar (like the</text>
+  <text x="356" y="230" class="annot">existing inspector_toggle).</text>
+
+  <!-- ============================================================ -->
+  <!-- STATE 2 : COLLAPSED                                           -->
+  <!-- ============================================================ -->
+  <text x="384" y="290" class="heading">REDUCED STATE (collapsed manually or auto on scroll)</text>
+  <g transform="translate(384,300)">
+    <rect class="win" width="312" height="360" rx="10" stroke="#d0d0d0"/>
+
+    <!-- HeaderBar -->
+    <rect class="hdr" width="312" height="40" rx="10"/>
+    <rect class="hdr" width="312" height="20" y="20"/>
+    <line class="hdrline" x1="0" y1="40" x2="312" y2="40"/>
+    <text x="14" y="25" class="body" font-weight="600">my-project</text>
+    <!-- summary toggle (inactive) -->
+    <rect x="228" y="9" width="22" height="22" rx="6" fill="#ececec"/>
+    <path d="M234 17 h10 M234 20.5 h10 M234 24 h10" stroke="#7a7a7a" stroke-width="1.4"/>
+    <rect x="258" y="9" width="22" height="22" rx="6" fill="#ececec"/>
+    <rect x="286" y="9" width="14" height="22" rx="4" fill="#ececec"/>
+
+    <!-- ===== CREST ONLY ===== -->
+    <rect x="0" y="41" width="312" height="46" fill="#f4f6f9"/>
+    <text x="16" y="62" class="title2" font-size="15">my-project</text>
+    <!-- chevron-right (collapsed) -->
+    <path class="chevron" d="M286 53 l6 6 l-6 6"/>
+    <rect class="pill" x="16" y="70" width="58" height="14" rx="7"/>
+    <text x="22" y="80" class="pilltxt" font-size="9">Claude Code</text>
+    <rect class="pill" x="80" y="70" width="40" height="14" rx="7"/>
+    <text x="86" y="80" class="pilltxt" font-size="9">128 msg</text>
+    <rect x="126" y="70" width="44" height="14" rx="7" fill="#d8f5e3"/>
+    <text x="132" y="80" class="pilltxt" font-size="9" fill="#1a7d44">Clean</text>
+    <line class="sep" x1="0" y1="87" x2="312" y2="87"/>
+
+    <!-- transcript gets the space back -->
+    <rect class="msgu" x="14" y="99" width="284" height="40" rx="8"/>
+    <text x="24" y="115" class="dim">You</text>
+    <text x="24" y="131" class="body" font-size="11">Refactor the session detail view…</text>
+    <rect class="msg" x="14" y="147" width="284" height="56" rx="8"/>
+    <text x="24" y="163" class="dim">Claude</text>
+    <text x="24" y="179" class="body" font-size="11">I'll restructure session_detail.rs…</text>
+    <rect class="msg" x="14" y="211" width="284" height="56" rx="8"/>
+    <text x="24" y="227" class="dim">Claude</text>
+    <text x="24" y="243" class="body" font-size="11">Editing src/ui/session_detail.rs…</text>
+    <rect class="msg" x="14" y="275" width="284" height="56" rx="8"/>
+    <text x="24" y="291" class="dim">Claude</text>
+    <text x="24" y="307" class="body" font-size="11">Running cargo clippy…</text>
+    <rect class="msg" x="14" y="315" width="284" height="32" rx="8"/>
+  </g>
+  <text x="384" y="690" class="annot">The crest stays: you ALWAYS know where you are (project, assistant, status),</text>
+  <text x="384" y="706" class="annot">even collapsed. The transcript reclaims ~290px. The chevron points right.</text>
+
+  <!-- ============================================================ -->
+  <!-- SCROLL BEHAVIOR DIAGRAM                                       -->
+  <!-- ============================================================ -->
+  <text x="24" y="710" class="heading">SCROLL BEHAVIOR (auto-collapse, hysteresis)</text>
+  <g transform="translate(24,724)">
+    <rect width="320" height="220" rx="10" fill="#ffffff" stroke="#d0d0d0"/>
+
+    <!-- timeline -->
+    <circle cx="30" cy="36" r="5" class="accent"/>
+    <text x="44" y="40" class="body" font-size="11">Open → EXPANDED</text>
+
+    <line x1="30" y1="42" x2="30" y2="76" class="sep"/>
+    <circle cx="30" cy="82" r="5" class="accent"/>
+    <text x="44" y="86" class="body" font-size="11">Scroll down &gt; 48px → auto-COLLAPSE</text>
+    <text x="44" y="102" class="dim">(GtkRevealer slide-up, 200ms)</text>
+
+    <line x1="30" y1="88" x2="30" y2="128" class="sep"/>
+    <circle cx="30" cy="134" r="5" class="accent"/>
+    <text x="44" y="138" class="body" font-size="11">Stays collapsed while reading</text>
+    <text x="44" y="154" class="dim">No auto re-expand on scroll up</text>
+    <text x="44" y="167" class="dim">→ zero yo-yo, zero reflow loop</text>
+
+    <line x1="30" y1="140" x2="30" y2="186" class="sep"/>
+    <circle cx="30" cy="192" r="5" fill="#33d17a"/>
+    <text x="44" y="196" class="body" font-size="11">Re-expand = explicit</text>
+    <text x="44" y="210" class="dim">(crest click / chevron / toggle / F-key)</text>
+  </g>
+
+  <!-- legend on mechanics -->
+  <g transform="translate(360,724)">
+    <rect width="336" height="220" rx="10" fill="#ffffff" stroke="#d0d0d0"/>
+    <text x="16" y="28" class="heading">MECHANICS</text>
+    <text x="16" y="50" class="body" font-size="11">• summary_box stays a sibling of the scroller</text>
+    <text x="16" y="68" class="body" font-size="11">• Body wrapped in a GtkRevealer</text>
+    <text x="16" y="86" class="body" font-size="11">• 1 signal vadjustment::value-changed</text>
+    <text x="16" y="104" class="body" font-size="11">• Hysteresis: down threshold ≠ up</text>
+    <text x="16" y="122" class="body" font-size="11">• No floating surface created</text>
+    <text x="16" y="140" class="body" font-size="11">• Crest = same widgets, just re-parented</text>
+    <text x="16" y="166" class="dim" font-size="11">Collapse DESTROYS nothing: reveal_child=false.</text>
+    <text x="16" y="182" class="dim" font-size="11">No tree rebuild → no re-render cost,</text>
+    <text x="16" y="198" class="dim" font-size="11">just an animated height.</text>
+  </g>
+</svg>
