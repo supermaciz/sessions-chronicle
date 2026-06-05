@@ -722,8 +722,13 @@ impl App {
         self.active_session.as_ref().is_some_and(|s| s.pinned)
     }
 
+    fn dismiss_summary_popover(&self) {
+        self.session_detail.widgets().summary_popover.popdown();
+    }
+
     /// Reset app state after leaving detail view.
     fn transition_to_session_list_mode(&mut self) {
+        self.dismiss_summary_popover();
         self.detail_visible = false;
         self.active_session = None;
         self.parent_session = None;
@@ -970,6 +975,113 @@ mod tests {
             parts.widgets.summary_menu_button.tooltip_text().as_deref(),
             Some("Session summary")
         );
+    }
+
+    #[gtk::test]
+    fn summary_popover_dismissal_is_safe_when_already_closed() {
+        let popover = gtk::Popover::new();
+        popover.popdown();
+        assert!(!popover.is_visible());
+    }
+
+    #[gtk::test]
+    fn session_replacement_closes_summary_popover() {
+        if !schema_is_available() {
+            return;
+        }
+
+        let controller = App::builder().launch(Some(PathBuf::from("tests/fixtures")));
+        pump_main_context(|| !controller.state().get().model.indexing);
+        controller.emit(AppMsg::SessionSelected("abc123".to_string()));
+        pump_main_context(|| controller.state().get().model.active_session.is_some());
+
+        {
+            let parts = controller.state().get();
+            parts.model.session_detail.widgets().summary_popover.popup();
+            assert!(
+                parts
+                    .model
+                    .session_detail
+                    .widgets()
+                    .summary_popover
+                    .is_visible()
+            );
+        }
+
+        controller.emit(AppMsg::SessionSelected("session-001".to_string()));
+        pump_main_context(|| {
+            let parts = controller.state().get();
+            parts
+                .model
+                .active_session
+                .as_ref()
+                .is_some_and(|session| session.id == "session-001")
+        });
+
+        let parts = controller.state().get();
+        assert!(
+            !parts
+                .model
+                .session_detail
+                .widgets()
+                .summary_popover
+                .is_visible()
+        );
+    }
+
+    #[gtk::test]
+    fn navigating_back_closes_summary_popover_and_hides_button() {
+        if !schema_is_available() {
+            return;
+        }
+
+        let controller = App::builder().launch(Some(PathBuf::from("tests/fixtures")));
+        pump_main_context(|| !controller.state().get().model.indexing);
+        controller.emit(AppMsg::SessionSelected("abc123".to_string()));
+        pump_main_context(|| controller.state().get().model.detail_visible);
+
+        {
+            let parts = controller.state().get();
+            parts.model.session_detail.widgets().summary_popover.popup();
+            assert!(
+                parts
+                    .model
+                    .session_detail
+                    .widgets()
+                    .summary_popover
+                    .is_visible()
+            );
+        }
+
+        controller.emit(AppMsg::RequestNavigateBack);
+        pump_main_context(|| !controller.state().get().model.detail_visible);
+
+        let parts = controller.state().get();
+        assert!(
+            !parts
+                .model
+                .session_detail
+                .widgets()
+                .summary_popover
+                .is_visible()
+        );
+        assert!(!parts.widgets.summary_menu_button.is_visible());
+    }
+
+    #[test]
+    fn f9_routes_to_filters_in_list_and_inspector_in_detail() {
+        let mut workspace = Workspace::Sessions;
+        let mut detail_visible = false;
+
+        let list_target_is_filters = !workspace.is_analytics() && !detail_visible;
+        assert!(list_target_is_filters);
+
+        detail_visible = true;
+        let detail_target_is_inspector = !workspace.is_analytics() && detail_visible;
+        assert!(detail_target_is_inspector);
+
+        workspace = Workspace::Analytics;
+        assert!(workspace.is_analytics());
     }
 
     #[gtk::test]

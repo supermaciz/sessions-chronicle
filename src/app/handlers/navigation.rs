@@ -84,6 +84,7 @@ impl App {
 
     pub(crate) fn handle_request_navigate_back(&mut self) {
         if self.detail_visible {
+            self.dismiss_summary_popover();
             self.session_detail.widget().set_visible(false);
             self.session_detail
                 .emit(SessionDetailMsg::PrepareForNavigationBack);
@@ -102,6 +103,7 @@ impl App {
             detail_pop_sync_decision(self.suppress_next_detail_pop_sync, self.detail_visible);
         self.suppress_next_detail_pop_sync = suppress_next;
         if should_sync {
+            self.dismiss_summary_popover();
             self.session_detail.widget().set_visible(false);
             self.session_detail
                 .emit(SessionDetailMsg::PrepareForNavigationBack);
