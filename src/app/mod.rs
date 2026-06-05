@@ -999,10 +999,33 @@ mod tests {
     }
 
     #[gtk::test]
-    fn summary_popover_dismissal_is_safe_when_already_closed() {
-        let popover = gtk::Popover::new();
-        popover.popdown();
-        assert!(!popover.is_visible());
+    fn dismiss_summary_popover_is_safe_when_already_closed() {
+        if !schema_is_available() {
+            return;
+        }
+
+        let controller = App::builder().launch(Some(PathBuf::from("tests/fixtures")));
+        pump_main_context(|| !controller.state().get().model.indexing);
+
+        let parts = controller.state().get();
+        // Popover starts closed; the real dismissal path must stay a harmless no-op.
+        assert!(
+            !parts
+                .model
+                .session_detail
+                .widgets()
+                .summary_popover
+                .is_visible()
+        );
+        parts.model.dismiss_summary_popover();
+        assert!(
+            !parts
+                .model
+                .session_detail
+                .widgets()
+                .summary_popover
+                .is_visible()
+        );
     }
 
     #[gtk::test]
@@ -1087,22 +1110,6 @@ mod tests {
                 .is_visible()
         );
         assert!(!parts.widgets.summary_menu_button.is_visible());
-    }
-
-    #[test]
-    fn f9_routes_to_filters_in_list_and_inspector_in_detail() {
-        let mut workspace = Workspace::Sessions;
-        let mut detail_visible = false;
-
-        let list_target_is_filters = !workspace.is_analytics() && !detail_visible;
-        assert!(list_target_is_filters);
-
-        detail_visible = true;
-        let detail_target_is_inspector = !workspace.is_analytics() && detail_visible;
-        assert!(detail_target_is_inspector);
-
-        workspace = Workspace::Analytics;
-        assert!(workspace.is_analytics());
     }
 
     #[gtk::test]
@@ -1409,18 +1416,6 @@ mod tests {
 
         let detail = workspace_header_visibility(Workspace::Sessions, true, false, true);
         assert!(detail.summary_button_visible);
-    }
-
-    #[test]
-    fn active_session_ref_project_name_feeds_summary_button_label() {
-        let active = ActiveSessionRef {
-            id: "session-1".to_string(),
-            tool: AiAssistant::ClaudeCode,
-            project_name: "sessions-chronicle".to_string(),
-            pinned: false,
-        };
-
-        assert_eq!(active.project_name, "sessions-chronicle");
     }
 
     #[test]
