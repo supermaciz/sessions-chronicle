@@ -475,7 +475,7 @@ fn close_inspector_resets_inspector_open() {
 }
 
 #[gtk::test]
-fn session_detail_header_hides_optional_sections_when_data_is_missing() {
+fn session_summary_hides_optional_sections_when_data_is_missing() {
     let temp_db = tempfile::NamedTempFile::new().expect("temp db");
     let controller = SessionDetail::builder().launch(temp_db.path().to_path_buf());
 
@@ -487,13 +487,19 @@ fn session_detail_header_hides_optional_sections_when_data_is_missing() {
     while gtk::glib::MainContext::default().iteration(false) {}
 
     let parts = controller.state().get();
-    assert!(!parts.widgets.first_prompt_section.is_visible());
-    assert!(!parts.widgets.tokens_section.is_visible());
-    assert!(parts.widgets.activity_section.is_visible());
+    assert!(!parts.widgets.summary.first_prompt_section.is_visible());
+    assert!(!parts.widgets.summary.tokens_section.is_visible());
+    assert!(
+        parts
+            .widgets
+            .summary
+            .activity_bar
+            .has_css_class("activity-bar")
+    );
 }
 
 #[gtk::test]
-fn session_detail_header_populates_identity_prompt_and_tokens() {
+fn session_summary_populates_identity_prompt_and_tokens() {
     let temp_db = tempfile::NamedTempFile::new().expect("temp db");
     let controller = SessionDetail::builder().launch(temp_db.path().to_path_buf());
 
@@ -517,16 +523,41 @@ fn session_detail_header_populates_identity_prompt_and_tokens() {
     while gtk::glib::MainContext::default().iteration(false) {}
 
     let parts = controller.state().get();
-    assert_eq!(parts.widgets.project_label.label(), "project");
-    assert_eq!(parts.widgets.duration_chip.label(), "2h 14m");
-    assert_eq!(parts.widgets.message_count_chip.label(), "42 messages");
-    assert_eq!(parts.widgets.ending_status_chip.label(), "Ended cleanly");
-    assert!(parts.widgets.first_prompt_section.is_visible());
-    assert!(parts.widgets.tokens_section.is_visible());
+    assert_eq!(parts.widgets.summary.project_label.label(), "project");
+    assert_eq!(parts.widgets.summary.duration_chip.label(), "2h 14m");
+    assert_eq!(
+        parts.widgets.summary.message_count_chip.label(),
+        "42 messages"
+    );
+    assert_eq!(
+        parts.widgets.summary.ending_status_chip.label(),
+        "Ended cleanly"
+    );
+    assert_eq!(
+        parts.widgets.summary.first_prompt_label.label(),
+        "Ship the summary header"
+    );
+    assert!(
+        parts
+            .widgets
+            .summary
+            .input_value_label
+            .label()
+            .starts_with('1')
+    );
+    assert!(
+        parts
+            .widgets
+            .summary
+            .input_value_label
+            .label()
+            .ends_with("200")
+    );
+    assert_eq!(parts.widgets.summary.output_value_label.label(), "300");
 }
 
 #[gtk::test]
-fn session_detail_header_uses_conversation_only_when_activity_counts_are_zero() {
+fn session_summary_uses_conversation_only_when_activity_counts_are_zero() {
     let temp_db = tempfile::NamedTempFile::new().expect("temp db");
     let controller = SessionDetail::builder().launch(temp_db.path().to_path_buf());
 
@@ -538,12 +569,15 @@ fn session_detail_header_uses_conversation_only_when_activity_counts_are_zero() 
     while gtk::glib::MainContext::default().iteration(false) {}
 
     let parts = controller.state().get();
-    assert!(parts.widgets.conversation_only_label.is_visible());
-    assert!(!parts.widgets.activity_bar.is_visible());
+    assert_eq!(
+        parts.widgets.summary.conversation_only_label.label(),
+        "Conversation only"
+    );
+    assert!(!parts.widgets.summary.activity_bar.is_visible());
 }
 
 #[gtk::test]
-fn session_detail_activity_bar_does_not_lock_a_minimum_width_request() {
+fn session_summary_activity_bar_does_not_lock_a_minimum_width_request() {
     let temp_db = tempfile::NamedTempFile::new().expect("temp db");
     let controller = SessionDetail::builder().launch(temp_db.path().to_path_buf());
 
@@ -555,7 +589,7 @@ fn session_detail_activity_bar_does_not_lock_a_minimum_width_request() {
     while gtk::glib::MainContext::default().iteration(false) {}
 
     let parts = controller.state().get();
-    assert_eq!(parts.widgets.activity_bar.width_request(), -1);
+    assert_eq!(parts.widgets.summary.activity_bar.width_request(), -1);
 }
 
 #[gtk::test]
@@ -577,7 +611,7 @@ fn build_error_session_for_css_test() -> Session {
 }
 
 #[gtk::test]
-fn session_detail_header_applies_status_and_activity_css_classes() {
+fn session_summary_applies_status_and_activity_css_classes() {
     let temp_db = tempfile::NamedTempFile::new().expect("temp db");
     let controller = SessionDetail::builder().launch(temp_db.path().to_path_buf());
 
@@ -589,14 +623,27 @@ fn session_detail_header_applies_status_and_activity_css_classes() {
     while gtk::glib::MainContext::default().iteration(false) {}
 
     let parts = controller.state().get();
-    assert!(parts.widgets.ending_status_chip.has_css_class("pill"));
     assert!(
         parts
             .widgets
+            .summary
+            .ending_status_chip
+            .has_css_class("pill")
+    );
+    assert!(
+        parts
+            .widgets
+            .summary
             .ending_status_chip
             .has_css_class("ending-failed")
     );
-    assert!(parts.widgets.activity_bar.has_css_class("activity-bar"));
+    assert!(
+        parts
+            .widgets
+            .summary
+            .activity_bar
+            .has_css_class("activity-bar")
+    );
 }
 
 #[gtk::test]
