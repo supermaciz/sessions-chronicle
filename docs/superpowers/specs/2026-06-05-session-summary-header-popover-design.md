@@ -50,7 +50,7 @@ Visibility is driven by app state:
 - Visible when `detail_visible && are_detail_actions_visible() && active_session.is_some()`.
 - Hidden in the session list, in the Analytics workspace, during states without an active session, and whenever detail actions are intentionally hidden.
 
-`ActiveSessionRef` needs no new field: the button uses only `project_name` (which already exists and stops being dead code) and the existing `pinned` state. The ending status does not surface in the header — it stays in the popover's ending-status chip, which `SessionDetail` populates from the full `Session`. The button does not need duration, message count, tokens, path, first prompt, or ending status; those remain in `SessionDetail`.
+`ActiveSessionRef` needs no new field: the button uses only `project_name`, which already exists and stops being dead code. The existing `pinned`, `id`, and `tool` fields continue to support the current pin and resume behavior but are unrelated to the summary button. The ending status does not surface in the header — it stays in the popover's ending-status chip, which `SessionDetail` populates from the full `Session`. The button does not need duration, message count, tokens, path, first prompt, or ending status; those remain in `SessionDetail`.
 
 The button content is a compact horizontal box:
 
@@ -66,9 +66,11 @@ On narrow windows, the project name may ellipsize aggressively. The durable affo
 
 ### SessionDetail Summary Content
 
-`src/ui/session_detail.rs` removes `summary_box` from the content column above `transcript_scroller`. The summary subtree is re-hosted in the popover content associated with the header button.
+`src/ui/session_detail.rs` removes `summary_box` from the content column above `transcript_scroller`. The summary subtree is extracted into a declarative `SessionSummary` `WidgetTemplate`, which `SessionDetail` creates and hosts inside its own `gtk::Popover`.
 
-The existing named summary widgets should remain in use where practical:
+The `SessionSummary` template root is a bounded `gtk::ScrolledWindow`; the existing vertical summary box becomes its child. The scroller disables horizontal scrolling, allows vertical scrolling when needed, propagates the child's natural height up to an explicit maximum content height, and sets reasonable minimum/maximum content widths. This lets compact summaries use their natural height while preventing long summaries or paths from growing the popover to the full window height or an excessive width. The summary box retains its existing margins, wrapping, and selectable path/session-ID labels.
+
+The template preserves the existing named summary widgets where practical:
 
 - `project_label`
 - `path_label`
@@ -78,7 +80,7 @@ The existing named summary widgets should remain in use where practical:
 - `activity_section`
 - `tokens_section`
 
-The existing update helpers continue to populate those widgets:
+`SessionSummary` exposes one module-private `update(&Session)` method. `SessionDetail::post_view` calls it when a session is active, and it delegates to the existing focused update helpers moved onto `SessionSummary`:
 
 - `update_session_header`
 - `update_chip_row`
@@ -86,14 +88,26 @@ The existing update helpers continue to populate those widgets:
 - `update_activity_section`
 - `update_tokens_section`
 
-### Widget Ownership (must be resolved before coding)
+### Widget Ownership
 
-This is the highest-risk part of the design and is not optional to settle. The summary widgets (`ending_status_chip`, `tokens_section`, and the rest) are built declaratively in `SessionDetail`'s `view!` macro, and the update helpers write into `widgets.<name>`. The `MenuButton` must live in `App`'s global `adw::HeaderBar`. But `App` only sees `SessionDetail` as a `Controller<SessionDetail>`, exposing `.widget()` (the root) plus message passing — not an arbitrary inner widget such as a popover. The two plausible structures are not equivalent in cost:
+The `MenuButton` must live in `App`'s global `adw::HeaderBar`, while the summary content belongs to `SessionDetail`. Relm4's `ComponentController` exposes both `.widget()` and `.widgets()`, so `App` can clone a deliberately public widget handle from `SessionDetail` without introducing a setup message or runtime reparenting.
 
-- **Option 1 — SessionDetail owns the `Popover`, App's `MenuButton` adopts it.** Requires `App` to retrieve the popover from the controller, which Relm4 does not offer natively (only `.widget()` and messages). Needs a custom accessor on the component, which couples the controller's public surface to one inner widget.
-- **Option 2 — App owns the `MenuButton` and an empty `Popover`; SessionDetail receives the popover's content container through a setup message** (for example `SessionDetailMsg::AttachSummaryHost(gtk::Box)`) and builds or reparents the summary into it. This matches the existing App→SessionDetail message pattern (`SessionDetailMsg::CloseInspector`). Its cost is that the summary subtree is no longer purely declarative in `SessionDetail`'s `view!`, or must be reparented at runtime — the fragile part.
+**Decision: SessionDetail owns the `Popover`; App's `MenuButton` adopts it.**
 
-**Decision: Option 2.** It aligns with the message-passing boundary already used between `App` and `SessionDetail` and keeps `App` in control of header placement and visibility. The implementation must prove this wiring with a focused spike before building the full summary content, so the reparenting/ownership cost is discovered early rather than mid-implementation. The boundary remains: `App` controls header placement and visibility, while `SessionDetail` controls rich summary rendering.
+`SessionDetail` uses `additional_fields!` to retain the template and expose only the popover:
+
+```rust
+additional_fields! {
+    pub summary_popover: gtk::Popover,
+    summary: SessionSummary,
+}
+```
+
+During `SessionDetail::init`, it creates the template and sets it as the popover child. In `App::init`, after `view_output!()` has created `summary_menu_button`, `App` retrieves a cloned popover handle through `model.session_detail.widgets().summary_popover` and assigns it to the button with `set_popover`.
+
+This keeps the summary declarative and owned by `SessionDetail`; `App` knows only the popover handle required for header placement. No `AttachSummaryHost` message, custom controller accessor, duplicated summary content, or runtime reparenting is needed. GTK object handles are reference-counted, so cloning the handle does not duplicate the popover or its content.
+
+The boundary remains: `App` controls header placement, button visibility, and closing the popover during app-level navigation or session replacement; `SessionDetail` controls rich summary construction and rendering.
 
 ## Data Flow
 
@@ -108,7 +122,9 @@ No new field is added. `ActiveSessionRef` drives only the header button label (`
 
 The full `Session` still flows to `SessionDetailMsg::SetSession`, and `SessionDetail` uses it to populate the summary popover and transcript. There is no extra load and no duplication of full summary formatting beyond the compact header button.
 
-The popover open/closed state belongs to `gtk::MenuButton` / `gtk::Popover`. No model flag is added unless tests or Relm4 wiring prove one necessary.
+The popover open/closed state belongs to `gtk::MenuButton` / `gtk::Popover`; no mirrored model flag is added. The popover keeps its default modal/autohide behavior so clicking outside it or pressing `Esc` dismisses it before the app-level escape action runs.
+
+`App` centralizes dismissal in a small helper that calls `popdown()` on the exposed `summary_popover`. Call it before every successful `SessionDetailMsg::SetSession`, before `SessionDetailMsg::Clear`, and when transitioning back to session-list mode. This covers direct selection, child-session navigation, return-to-parent navigation, load failures that clear the active session, and navigation back without duplicating popover state in the model.
 
 ## Behavior
 
@@ -122,7 +138,7 @@ The summary becomes consult-on-demand information:
 - When switching sessions, the popover is closed before the new session data is displayed.
 - When returning to the list, the popover is closed and the button disappears.
 
-The popover is height-bounded. If the full summary exceeds available height, the popover content scrolls internally. Transcript scrolling and transcript layout are unaffected.
+The popover content is height-bounded by the `SessionSummary` root scroller. If the full summary exceeds that bound, it scrolls internally. Transcript scrolling and transcript layout are unaffected.
 
 The popover hosts heavier content than a popover usually carries (a tokens grid, an activity bar, and selectable text such as the path and session ID). A popover that dismisses on click-away is an awkward surface for selecting and copying text. This is accepted for the first implementation, but it is the design's known pressure point: if real use shows users want to copy the path or session ID, the correct pivot is to move the summary into an `adw::Dialog` rather than to grow the popover. The header button and its visibility logic stay the same across that pivot.
 
@@ -143,13 +159,17 @@ The popover hosts heavier content than a popover usually carries (a tokens grid,
 - Add an app/header state test: the summary button is visible only in detail mode with an active session.
 - Add a test verifying that the header button label uses the active session project name.
 - Keep or adapt `SessionDetail` tests proving that prompt, chips, activity, and tokens are populated in the summary widgets.
+- Add a structural test proving that `summary_menu_button.popover()` is the same popover exposed by `SessionDetail`.
+- Add a structural test proving that the popover child is the `SessionSummary` root and that the summary is no longer parented in the detail content column.
+- Add a test for the centralized dismissal helper, including an open popover followed by session replacement or transition to list mode.
 - Add a regression test or helper-level test confirming that `F9` still routes to filters in list mode and inspector in detail mode.
-
-The cross-component popover wiring (the `Widget Ownership` decision) is the hardest part to cover automatically and is not well suited to headless testing. The spike that validates Option 2 stands in for an automated test of that wiring; cover what is testable around it (visibility state, project-name propagation, summary-widget population) rather than asserting the parenting itself.
 
 ## Implementation Notes
 
 - Reuse existing ending-status formatting helpers (`ending_css_class` and accessible labels) for the popover's ending-status chip; the header button no longer carries ending status.
 - Avoid broad header styling changes; the summary icon is a standard symbolic and should not need custom CSS.
-- Prefer the smallest viable Relm4 boundary. Do not duplicate the full summary in `App`.
+- Implement the summary subtree as a `WidgetTemplate`; do not build it imperatively or duplicate it in `App`.
+- Expose only `summary_popover` across the component boundary. Keep the `SessionSummary` template and its individual widgets private to `SessionDetail`.
+- Keep popover dismissal imperative and centralized in `App`; do not add a mirrored open/closed model flag.
+- Keep the popover's default autohide behavior; do not intercept `Esc` inside the summary.
 - Keep the design reversible: the transcript/scroller structure should become simpler, not more coupled to header state.
