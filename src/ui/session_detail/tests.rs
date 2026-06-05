@@ -475,90 +475,6 @@ fn close_inspector_resets_inspector_open() {
 }
 
 #[gtk::test]
-fn session_detail_header_hides_optional_sections_when_data_is_missing() {
-    let temp_db = tempfile::NamedTempFile::new().expect("temp db");
-    let controller = SessionDetail::builder().launch(temp_db.path().to_path_buf());
-
-    controller.emit(SessionDetailMsg::SetSession {
-        session: Box::new(build_test_session(None, None, 0, 0, 0)),
-        search_query: None,
-    });
-
-    while gtk::glib::MainContext::default().iteration(false) {}
-
-    let parts = controller.state().get();
-    assert!(!parts.widgets.first_prompt_section.is_visible());
-    assert!(!parts.widgets.tokens_section.is_visible());
-    assert!(parts.widgets.activity_section.is_visible());
-}
-
-#[gtk::test]
-fn session_detail_header_populates_identity_prompt_and_tokens() {
-    let temp_db = tempfile::NamedTempFile::new().expect("temp db");
-    let controller = SessionDetail::builder().launch(temp_db.path().to_path_buf());
-
-    controller.emit(SessionDetailMsg::SetSession {
-        session: Box::new(build_test_session(
-            Some("Ship the summary header"),
-            Some(crate::models::TokenUsage {
-                input_tokens: 1200,
-                output_tokens: 300,
-                cache_read_tokens: Some(400),
-                cache_write_tokens: None,
-                reasoning_tokens: Some(50),
-            }),
-            4,
-            2,
-            1,
-        )),
-        search_query: None,
-    });
-
-    while gtk::glib::MainContext::default().iteration(false) {}
-
-    let parts = controller.state().get();
-    assert_eq!(parts.widgets.project_label.label(), "project");
-    assert_eq!(parts.widgets.duration_chip.label(), "2h 14m");
-    assert_eq!(parts.widgets.message_count_chip.label(), "42 messages");
-    assert_eq!(parts.widgets.ending_status_chip.label(), "Ended cleanly");
-    assert!(parts.widgets.first_prompt_section.is_visible());
-    assert!(parts.widgets.tokens_section.is_visible());
-}
-
-#[gtk::test]
-fn session_detail_header_uses_conversation_only_when_activity_counts_are_zero() {
-    let temp_db = tempfile::NamedTempFile::new().expect("temp db");
-    let controller = SessionDetail::builder().launch(temp_db.path().to_path_buf());
-
-    controller.emit(SessionDetailMsg::SetSession {
-        session: Box::new(build_test_session(Some("Only chat"), None, 0, 0, 0)),
-        search_query: None,
-    });
-
-    while gtk::glib::MainContext::default().iteration(false) {}
-
-    let parts = controller.state().get();
-    assert!(parts.widgets.conversation_only_label.is_visible());
-    assert!(!parts.widgets.activity_bar.is_visible());
-}
-
-#[gtk::test]
-fn session_detail_activity_bar_does_not_lock_a_minimum_width_request() {
-    let temp_db = tempfile::NamedTempFile::new().expect("temp db");
-    let controller = SessionDetail::builder().launch(temp_db.path().to_path_buf());
-
-    controller.emit(SessionDetailMsg::SetSession {
-        session: Box::new(build_test_session(Some("Ship it"), None, 4, 2, 1)),
-        search_query: None,
-    });
-
-    while gtk::glib::MainContext::default().iteration(false) {}
-
-    let parts = controller.state().get();
-    assert_eq!(parts.widgets.activity_bar.width_request(), -1);
-}
-
-#[gtk::test]
 fn session_detail_transcript_list_is_direct_scrolled_window_child() {
     let temp_db = tempfile::NamedTempFile::new().expect("temp db");
     let controller = SessionDetail::builder().launch(temp_db.path().to_path_buf());
@@ -570,33 +486,46 @@ fn session_detail_transcript_list_is_direct_scrolled_window_child() {
     );
 }
 
-fn build_error_session_for_css_test() -> Session {
-    let mut session = build_test_session(None, None, 0, 0, 0);
-    session.ending_status = crate::models::SessionEndingStatus::Error;
-    session
-}
-
 #[gtk::test]
-fn session_detail_header_applies_status_and_activity_css_classes() {
+fn session_detail_summary_popover_hosts_summary_root() {
     let temp_db = tempfile::NamedTempFile::new().expect("temp db");
     let controller = SessionDetail::builder().launch(temp_db.path().to_path_buf());
 
-    controller.emit(SessionDetailMsg::SetSession {
-        session: Box::new(build_error_session_for_css_test()),
-        search_query: None,
-    });
-
-    while gtk::glib::MainContext::default().iteration(false) {}
-
     let parts = controller.state().get();
-    assert!(parts.widgets.ending_status_chip.has_css_class("pill"));
+    assert_eq!(
+        parts.widgets.summary_popover.child(),
+        Some(parts.widgets.summary.widget().clone().upcast())
+    );
     assert!(
         parts
             .widgets
-            .ending_status_chip
-            .has_css_class("ending-failed")
+            .summary
+            .widget()
+            .clone()
+            .downcast::<gtk::ScrolledWindow>()
+            .is_ok(),
+        "summary template root should be a bounded ScrolledWindow"
     );
-    assert!(parts.widgets.activity_bar.has_css_class("activity-bar"));
+}
+
+#[gtk::test]
+fn session_detail_content_column_contains_only_transcript_scroller() {
+    let temp_db = tempfile::NamedTempFile::new().expect("temp db");
+    let controller = SessionDetail::builder().launch(temp_db.path().to_path_buf());
+
+    let parts = controller.state().get();
+    let content = parts
+        .widgets
+        .transcript_scroller
+        .parent()
+        .and_then(|widget| widget.downcast::<gtk::Box>().ok())
+        .expect("transcript scroller should be inside the detail content box");
+
+    assert_eq!(content.observe_children().n_items(), 1);
+    assert_eq!(
+        content.first_child(),
+        Some(parts.widgets.transcript_scroller.clone().upcast())
+    );
 }
 
 #[gtk::test]

@@ -296,6 +296,42 @@ impl SimpleComponent for App {
                             set_visible: model.is_search_ui_visible(),
                         },
 
+                        #[name = "summary_menu_button"]
+                        pack_start = &gtk::MenuButton {
+                            set_tooltip_text: Some("Session summary"),
+                            add_css_class: "flat",
+                            #[watch]
+                            set_visible: model.is_summary_button_visible(),
+
+                            #[wrap(Some)]
+                            set_child = &gtk::Box {
+                                set_orientation: gtk::Orientation::Horizontal,
+                                set_spacing: 6,
+
+                                gtk::Image {
+                                    set_icon_name: Some("document-properties-symbolic"),
+                                    set_pixel_size: 16,
+                                },
+
+                                #[name = "summary_project_label"]
+                                gtk::Label {
+                                    set_ellipsize: gtk::pango::EllipsizeMode::End,
+                                    set_max_width_chars: 24,
+                                    #[watch]
+                                    set_label: model
+                                        .active_session
+                                        .as_ref()
+                                        .map(|session| session.project_name.as_str())
+                                        .unwrap_or("Unknown project"),
+                                },
+
+                                gtk::Image {
+                                    set_icon_name: Some("pan-down-symbolic"),
+                                    set_pixel_size: 16,
+                                },
+                            },
+                        },
+
                         #[name = "parent_session_button"]
                         pack_end = &gtk::Button {
                             set_label: "Back to Parent",
@@ -472,6 +508,18 @@ impl SimpleComponent for App {
 
         // view_output!() must stay in the SimpleComponent impl (Relm4 macro requirement)
         let widgets = view_output!();
+
+        // The summary popover is owned by SessionDetail but displayed from this
+        // header button, so set_popover reparents it onto the MenuButton. Because
+        // it no longer lives under the SessionDetail widget tree, hiding the detail
+        // view does not close it: every transition that changes active_session or
+        // leaves detail mode must call dismiss_summary_popover() explicitly.
+        widgets
+            .summary_menu_button
+            .set_popover(Some(&model.session_detail.widgets().summary_popover));
+        widgets
+            .summary_menu_button
+            .update_property(&[gtk::accessible::Property::Label("Session summary")]);
 
         widgets.header_bar.pack_start(model.date_pill.widget());
         model
@@ -679,8 +727,13 @@ impl App {
         self.active_session.as_ref().is_some_and(|s| s.pinned)
     }
 
+    fn dismiss_summary_popover(&self) {
+        self.session_detail.widgets().summary_popover.popdown();
+    }
+
     /// Reset app state after leaving detail view.
     fn transition_to_session_list_mode(&mut self) {
+        self.dismiss_summary_popover();
         self.detail_visible = false;
         self.active_session = None;
         self.parent_session = None;
@@ -832,6 +885,12 @@ mod tests {
     use std::path::PathBuf;
     use std::time::Duration;
 
+    fn schema_is_available() -> bool {
+        gio::SettingsSchemaSource::default()
+            .and_then(|source| source.lookup(crate::config::APP_ID, true))
+            .is_some()
+    }
+
     fn find_indexing_spinner(widget: &gtk::Widget) -> Option<gtk::Spinner> {
         if let Ok(spinner) = widget.clone().downcast::<gtk::Spinner>()
             && spinner.tooltip_text().as_deref() == Some("Indexing sessions...")
@@ -865,11 +924,202 @@ mod tests {
     }
 
     #[gtk::test]
+    fn summary_menu_button_uses_session_detail_popover() {
+        if !schema_is_available() {
+            return;
+        }
+
+        let controller = App::builder().launch(Some(PathBuf::from("tests/fixtures")));
+        pump_main_context(|| !controller.state().get().model.indexing);
+        let parts = controller.state().get();
+
+        assert_eq!(
+            parts.widgets.summary_menu_button.popover(),
+            Some(parts.model.session_detail.widgets().summary_popover.clone())
+        );
+    }
+
+    #[gtk::test]
+    fn summary_menu_button_owns_summary_popover_parent() {
+        if !schema_is_available() {
+            return;
+        }
+
+        let controller = App::builder().launch(Some(PathBuf::from("tests/fixtures")));
+        pump_main_context(|| !controller.state().get().model.indexing);
+        let parts = controller.state().get();
+
+        assert_eq!(
+            parts
+                .model
+                .session_detail
+                .widgets()
+                .summary_popover
+                .parent(),
+            Some(parts.widgets.summary_menu_button.clone().upcast())
+        );
+    }
+
+    #[gtk::test]
+    fn summary_menu_button_hidden_until_active_detail_session() {
+        if !schema_is_available() {
+            return;
+        }
+
+        let controller = App::builder().launch(Some(PathBuf::from("tests/fixtures")));
+        pump_main_context(|| !controller.state().get().model.indexing);
+
+        {
+            let parts = controller.state().get();
+            assert!(!parts.widgets.summary_menu_button.is_visible());
+        }
+
+        controller.emit(AppMsg::SessionSelected("abc123".to_string()));
+        pump_main_context(|| {
+            let parts = controller.state().get();
+            parts.model.detail_visible && parts.model.active_session.is_some()
+        });
+
+        let parts = controller.state().get();
+        assert!(parts.widgets.summary_menu_button.is_visible());
+    }
+
+    #[gtk::test]
+    fn summary_menu_button_label_uses_active_session_project_name() {
+        if !schema_is_available() {
+            return;
+        }
+
+        let controller = App::builder().launch(Some(PathBuf::from("tests/fixtures")));
+        pump_main_context(|| !controller.state().get().model.indexing);
+        controller.emit(AppMsg::SessionSelected("abc123".to_string()));
+        pump_main_context(|| controller.state().get().model.active_session.is_some());
+
+        let parts = controller.state().get();
+        assert_eq!(parts.widgets.summary_project_label.label(), "project");
+        assert_eq!(
+            parts.widgets.summary_menu_button.tooltip_text().as_deref(),
+            Some("Session summary")
+        );
+    }
+
+    #[gtk::test]
+    fn dismiss_summary_popover_is_safe_when_already_closed() {
+        if !schema_is_available() {
+            return;
+        }
+
+        let controller = App::builder().launch(Some(PathBuf::from("tests/fixtures")));
+        pump_main_context(|| !controller.state().get().model.indexing);
+
+        let parts = controller.state().get();
+        // Popover starts closed; the real dismissal path must stay a harmless no-op.
+        assert!(
+            !parts
+                .model
+                .session_detail
+                .widgets()
+                .summary_popover
+                .is_visible()
+        );
+        parts.model.dismiss_summary_popover();
+        assert!(
+            !parts
+                .model
+                .session_detail
+                .widgets()
+                .summary_popover
+                .is_visible()
+        );
+    }
+
+    #[gtk::test]
+    fn session_replacement_closes_summary_popover() {
+        if !schema_is_available() {
+            return;
+        }
+
+        let controller = App::builder().launch(Some(PathBuf::from("tests/fixtures")));
+        pump_main_context(|| !controller.state().get().model.indexing);
+        controller.emit(AppMsg::SessionSelected("abc123".to_string()));
+        pump_main_context(|| controller.state().get().model.active_session.is_some());
+
+        {
+            let parts = controller.state().get();
+            parts.model.session_detail.widgets().summary_popover.popup();
+            assert!(
+                parts
+                    .model
+                    .session_detail
+                    .widgets()
+                    .summary_popover
+                    .is_visible()
+            );
+        }
+
+        controller.emit(AppMsg::SessionSelected("session-001".to_string()));
+        pump_main_context(|| {
+            let parts = controller.state().get();
+            parts
+                .model
+                .active_session
+                .as_ref()
+                .is_some_and(|session| session.id == "session-001")
+        });
+
+        let parts = controller.state().get();
+        assert!(
+            !parts
+                .model
+                .session_detail
+                .widgets()
+                .summary_popover
+                .is_visible()
+        );
+    }
+
+    #[gtk::test]
+    fn navigating_back_closes_summary_popover_and_hides_button() {
+        if !schema_is_available() {
+            return;
+        }
+
+        let controller = App::builder().launch(Some(PathBuf::from("tests/fixtures")));
+        pump_main_context(|| !controller.state().get().model.indexing);
+        controller.emit(AppMsg::SessionSelected("abc123".to_string()));
+        pump_main_context(|| controller.state().get().model.detail_visible);
+
+        {
+            let parts = controller.state().get();
+            parts.model.session_detail.widgets().summary_popover.popup();
+            assert!(
+                parts
+                    .model
+                    .session_detail
+                    .widgets()
+                    .summary_popover
+                    .is_visible()
+            );
+        }
+
+        controller.emit(AppMsg::RequestNavigateBack);
+        pump_main_context(|| !controller.state().get().model.detail_visible);
+
+        let parts = controller.state().get();
+        assert!(
+            !parts
+                .model
+                .session_detail
+                .widgets()
+                .summary_popover
+                .is_visible()
+        );
+        assert!(!parts.widgets.summary_menu_button.is_visible());
+    }
+
+    #[gtk::test]
     fn startup_shows_indexing_spinner_during_incremental_indexing() {
-        let schema_available = gio::SettingsSchemaSource::default()
-            .and_then(|source| source.lookup(crate::config::APP_ID, true))
-            .is_some();
-        if !schema_available {
+        if !schema_is_available() {
             return;
         }
 
@@ -912,10 +1162,7 @@ mod tests {
 
     #[gtk::test]
     fn indexing_status_dialog_is_created_lazily() {
-        let schema_available = gio::SettingsSchemaSource::default()
-            .and_then(|source| source.lookup(crate::config::APP_ID, true))
-            .is_some();
-        if !schema_available {
+        if !schema_is_available() {
             return;
         }
 
@@ -940,10 +1187,7 @@ mod tests {
 
     #[gtk::test]
     fn indexing_completed_stores_error_details_for_dialog() {
-        let schema_available = gio::SettingsSchemaSource::default()
-            .and_then(|source| source.lookup(crate::config::APP_ID, true))
-            .is_some();
-        if !schema_available {
+        if !schema_is_available() {
             return;
         }
 
@@ -1150,17 +1394,33 @@ mod tests {
 
     #[test]
     fn analytics_workspace_hides_session_specific_header_controls() {
-        let analytics = workspace_header_visibility(Workspace::Analytics, true, true);
+        let analytics = workspace_header_visibility(Workspace::Analytics, true, true, true);
         assert!(!analytics.search_ui_visible);
         assert!(!analytics.pane_controls_visible);
         assert!(!analytics.detail_actions_visible);
         assert!(analytics.indexing_progress_visible);
 
-        let sessions = workspace_header_visibility(Workspace::Sessions, true, true);
+        let sessions = workspace_header_visibility(Workspace::Sessions, true, true, true);
         assert!(sessions.search_ui_visible);
         assert!(sessions.pane_controls_visible);
         assert!(sessions.detail_actions_visible);
         assert!(sessions.indexing_progress_visible);
+    }
+
+    #[test]
+    fn summary_button_visibility_requires_sessions_detail_and_active_session() {
+        let analytics = workspace_header_visibility(Workspace::Analytics, true, true, true);
+        assert!(!analytics.summary_button_visible);
+
+        let list = workspace_header_visibility(Workspace::Sessions, false, false, true);
+        assert!(!list.summary_button_visible);
+
+        let no_active_session =
+            workspace_header_visibility(Workspace::Sessions, true, false, false);
+        assert!(!no_active_session.summary_button_visible);
+
+        let detail = workspace_header_visibility(Workspace::Sessions, true, false, true);
+        assert!(detail.summary_button_visible);
     }
 
     #[test]

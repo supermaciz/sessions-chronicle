@@ -23,6 +23,7 @@ impl App {
     }
 
     fn set_active_session_and_detail(&mut self, session: Session, search_query: Option<String>) {
+        self.dismiss_summary_popover();
         let project_name = Self::project_name_from_session(&session);
 
         self.active_session = Some(ActiveSessionRef {
@@ -50,11 +51,13 @@ impl App {
             }
             Ok(None) => {
                 tracing::warn!("Session not found: {}", id);
+                self.dismiss_summary_popover();
                 self.active_session = None;
                 self.session_detail.emit(SessionDetailMsg::Clear);
             }
             Err(err) => {
                 tracing::error!("Failed to load session: {}", err);
+                self.dismiss_summary_popover();
                 self.active_session = None;
                 self.session_detail.emit(SessionDetailMsg::Clear);
             }
@@ -97,6 +100,7 @@ impl App {
                 Ok(Some(session)) => {
                     let mut parent = parent;
                     parent.pinned = session.pinned_at.is_some();
+                    self.dismiss_summary_popover();
                     self.active_session = Some(parent);
                     self.session_detail.emit(SessionDetailMsg::SetSession {
                         session: Box::new(session),

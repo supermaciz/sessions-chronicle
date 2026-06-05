@@ -74,6 +74,7 @@ pub(super) fn workspace_header_visibility(
     workspace: Workspace,
     detail_visible: bool,
     parent_session_present: bool,
+    active_session_present: bool,
 ) -> WorkspaceHeaderVisibility {
     if workspace.is_analytics() {
         WorkspaceHeaderVisibility {
@@ -81,6 +82,7 @@ pub(super) fn workspace_header_visibility(
             date_filter_visible: false,
             pane_controls_visible: false,
             detail_actions_visible: false,
+            summary_button_visible: false,
             indexing_progress_visible: true,
         }
     } else {
@@ -89,6 +91,7 @@ pub(super) fn workspace_header_visibility(
             date_filter_visible: !detail_visible,
             pane_controls_visible: true,
             detail_actions_visible: detail_visible || parent_session_present,
+            summary_button_visible: detail_visible && active_session_present,
             indexing_progress_visible: true,
         }
     }
@@ -303,13 +306,29 @@ mod tests {
 
     #[test]
     fn workspace_header_visibility_shows_date_filter_only_on_sessions_list() {
-        let analytics = workspace_header_visibility(Workspace::Analytics, false, false);
+        let analytics = workspace_header_visibility(Workspace::Analytics, false, false, false);
         assert!(!analytics.date_filter_visible);
 
-        let sessions_list = workspace_header_visibility(Workspace::Sessions, false, false);
+        let sessions_list = workspace_header_visibility(Workspace::Sessions, false, false, false);
         assert!(sessions_list.date_filter_visible);
 
-        let sessions_detail = workspace_header_visibility(Workspace::Sessions, true, false);
+        let sessions_detail = workspace_header_visibility(Workspace::Sessions, true, false, false);
         assert!(!sessions_detail.date_filter_visible);
+    }
+
+    #[test]
+    fn workspace_header_visibility_shows_summary_button_only_for_active_session_detail() {
+        let analytics = workspace_header_visibility(Workspace::Analytics, true, false, true);
+        assert!(!analytics.summary_button_visible);
+
+        let sessions_list = workspace_header_visibility(Workspace::Sessions, false, false, true);
+        assert!(!sessions_list.summary_button_visible);
+
+        let no_active_session =
+            workspace_header_visibility(Workspace::Sessions, true, false, false);
+        assert!(!no_active_session.summary_button_visible);
+
+        let sessions_detail = workspace_header_visibility(Workspace::Sessions, true, false, true);
+        assert!(sessions_detail.summary_button_visible);
     }
 }
