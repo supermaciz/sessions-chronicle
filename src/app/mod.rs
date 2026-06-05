@@ -935,6 +935,27 @@ mod tests {
     }
 
     #[gtk::test]
+    fn summary_menu_button_owns_summary_popover_parent() {
+        if !schema_is_available() {
+            return;
+        }
+
+        let controller = App::builder().launch(Some(PathBuf::from("tests/fixtures")));
+        pump_main_context(|| !controller.state().get().model.indexing);
+        let parts = controller.state().get();
+
+        assert_eq!(
+            parts
+                .model
+                .session_detail
+                .widgets()
+                .summary_popover
+                .parent(),
+            Some(parts.widgets.summary_menu_button.clone().upcast())
+        );
+    }
+
+    #[gtk::test]
     fn summary_menu_button_hidden_until_active_detail_session() {
         if !schema_is_available() {
             return;

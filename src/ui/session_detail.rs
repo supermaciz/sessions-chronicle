@@ -771,7 +771,6 @@ impl Component for SessionDetail {
         let summary_popover = gtk::Popover::new();
         summary_popover.set_child(Some(summary.widget()));
         let widgets = view_output!();
-        widgets.summary_popover.set_parent(&widgets.detail_overlay);
 
         widgets
             .content_stack
