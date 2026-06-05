@@ -496,6 +496,10 @@ fn session_detail_summary_popover_hosts_summary_root() {
         parts.widgets.summary_popover.child(),
         Some(parts.widgets.summary.widget().clone().upcast())
     );
+    assert_eq!(
+        parts.widgets.summary_popover.width_request(),
+        SUMMARY_POPOVER_WIDTH
+    );
     assert!(
         parts
             .widgets

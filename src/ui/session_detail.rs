@@ -36,6 +36,7 @@ use session_summary::SessionSummary;
 const PREVIEW_LEN: usize = 2000;
 const DEFERRED_FIRST_PAGE_LOAD_DELAY_MS: u64 = 250;
 const DEFERRED_CLEAR_DELAY_MS: u64 = 250;
+const SUMMARY_POPOVER_WIDTH: i32 = 720;
 
 /// Detail view for a single indexed session.
 ///
@@ -461,6 +462,9 @@ impl Component for SessionDetail {
         let messages_box = model.messages.view.clone();
         let summary = SessionSummary::init(());
         let summary_popover = gtk::Popover::new();
+        // The popover measures the summary more aggressively than the inner
+        // scrolled window, so the width has to be constrained here.
+        summary_popover.set_size_request(SUMMARY_POPOVER_WIDTH, -1);
         summary_popover.set_child(Some(summary.widget()));
         let widgets = view_output!();
 
