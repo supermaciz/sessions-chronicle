@@ -305,9 +305,6 @@ impl WidgetTemplate for SessionSummary {
                         },
                     },
                 },
-
-                #[name = "transcript_separator"]
-                gtk::Separator {},
             },
         }
     }
