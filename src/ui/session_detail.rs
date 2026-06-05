@@ -113,8 +113,8 @@ impl WidgetTemplate for SessionSummary {
             set_hscrollbar_policy: gtk::PolicyType::Never,
             set_vscrollbar_policy: gtk::PolicyType::Automatic,
             set_propagate_natural_height: true,
-            set_min_content_width: 360,
-            set_max_content_width: 560,
+            set_min_content_width: 400,
+            set_max_content_width: 720,
             set_max_content_height: 520,
 
             #[wrap(Some)]
