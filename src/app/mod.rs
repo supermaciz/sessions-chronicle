@@ -509,6 +509,11 @@ impl SimpleComponent for App {
         // view_output!() must stay in the SimpleComponent impl (Relm4 macro requirement)
         let widgets = view_output!();
 
+        // The summary popover is owned by SessionDetail but displayed from this
+        // header button, so set_popover reparents it onto the MenuButton. Because
+        // it no longer lives under the SessionDetail widget tree, hiding the detail
+        // view does not close it: every transition that changes active_session or
+        // leaves detail mode must call dismiss_summary_popover() explicitly.
         widgets
             .summary_menu_button
             .set_popover(Some(&model.session_detail.widgets().summary_popover));
