@@ -604,6 +604,48 @@ fn session_detail_transcript_list_is_direct_scrolled_window_child() {
     );
 }
 
+#[gtk::test]
+fn session_detail_summary_popover_hosts_summary_root() {
+    let temp_db = tempfile::NamedTempFile::new().expect("temp db");
+    let controller = SessionDetail::builder().launch(temp_db.path().to_path_buf());
+
+    let parts = controller.state().get();
+    assert_eq!(
+        parts.widgets.summary_popover.child(),
+        Some(parts.widgets.summary.widget().clone().upcast())
+    );
+    assert!(
+        parts
+            .widgets
+            .summary
+            .widget()
+            .clone()
+            .downcast::<gtk::ScrolledWindow>()
+            .is_ok(),
+        "summary template root should be a bounded ScrolledWindow"
+    );
+}
+
+#[gtk::test]
+fn session_detail_content_column_contains_only_transcript_scroller() {
+    let temp_db = tempfile::NamedTempFile::new().expect("temp db");
+    let controller = SessionDetail::builder().launch(temp_db.path().to_path_buf());
+
+    let parts = controller.state().get();
+    let content = parts
+        .widgets
+        .transcript_scroller
+        .parent()
+        .and_then(|widget| widget.downcast::<gtk::Box>().ok())
+        .expect("transcript scroller should be inside the detail content box");
+
+    assert_eq!(content.observe_children().n_items(), 1);
+    assert_eq!(
+        content.first_child(),
+        Some(parts.widgets.transcript_scroller.clone().upcast())
+    );
+}
+
 fn build_error_session_for_css_test() -> Session {
     let mut session = build_test_session(None, None, 0, 0, 0);
     session.ending_status = crate::models::SessionEndingStatus::Error;
