@@ -296,6 +296,42 @@ impl SimpleComponent for App {
                             set_visible: model.is_search_ui_visible(),
                         },
 
+                        #[name = "summary_menu_button"]
+                        pack_start = &gtk::MenuButton {
+                            set_tooltip_text: Some("Session summary"),
+                            add_css_class: "flat",
+                            #[watch]
+                            set_visible: model.is_summary_button_visible(),
+
+                            #[wrap(Some)]
+                            set_child = &gtk::Box {
+                                set_orientation: gtk::Orientation::Horizontal,
+                                set_spacing: 6,
+
+                                gtk::Image {
+                                    set_icon_name: Some("document-properties-symbolic"),
+                                    set_pixel_size: 16,
+                                },
+
+                                #[name = "summary_project_label"]
+                                gtk::Label {
+                                    set_ellipsize: gtk::pango::EllipsizeMode::End,
+                                    set_max_width_chars: 24,
+                                    #[watch]
+                                    set_label: model
+                                        .active_session
+                                        .as_ref()
+                                        .map(|session| session.project_name.as_str())
+                                        .unwrap_or("Unknown project"),
+                                },
+
+                                gtk::Image {
+                                    set_icon_name: Some("pan-down-symbolic"),
+                                    set_pixel_size: 16,
+                                },
+                            },
+                        },
+
                         #[name = "parent_session_button"]
                         pack_end = &gtk::Button {
                             set_label: "Back to Parent",
@@ -472,6 +508,13 @@ impl SimpleComponent for App {
 
         // view_output!() must stay in the SimpleComponent impl (Relm4 macro requirement)
         let widgets = view_output!();
+
+        widgets
+            .summary_menu_button
+            .set_popover(Some(&model.session_detail.widgets().summary_popover));
+        widgets
+            .summary_menu_button
+            .update_property(&[gtk::accessible::Property::Label("Session summary")]);
 
         widgets.header_bar.pack_start(model.date_pill.widget());
         model
@@ -832,6 +875,12 @@ mod tests {
     use std::path::PathBuf;
     use std::time::Duration;
 
+    fn schema_is_available() -> bool {
+        gio::SettingsSchemaSource::default()
+            .and_then(|source| source.lookup(crate::config::APP_ID, true))
+            .is_some()
+    }
+
     fn find_indexing_spinner(widget: &gtk::Widget) -> Option<gtk::Spinner> {
         if let Ok(spinner) = widget.clone().downcast::<gtk::Spinner>()
             && spinner.tooltip_text().as_deref() == Some("Indexing sessions...")
@@ -865,11 +914,67 @@ mod tests {
     }
 
     #[gtk::test]
+    fn summary_menu_button_uses_session_detail_popover() {
+        if !schema_is_available() {
+            return;
+        }
+
+        let controller = App::builder().launch(Some(PathBuf::from("tests/fixtures")));
+        pump_main_context(|| !controller.state().get().model.indexing);
+        let parts = controller.state().get();
+
+        assert_eq!(
+            parts.widgets.summary_menu_button.popover(),
+            Some(parts.model.session_detail.widgets().summary_popover.clone())
+        );
+    }
+
+    #[gtk::test]
+    fn summary_menu_button_hidden_until_active_detail_session() {
+        if !schema_is_available() {
+            return;
+        }
+
+        let controller = App::builder().launch(Some(PathBuf::from("tests/fixtures")));
+        pump_main_context(|| !controller.state().get().model.indexing);
+
+        {
+            let parts = controller.state().get();
+            assert!(!parts.widgets.summary_menu_button.is_visible());
+        }
+
+        controller.emit(AppMsg::SessionSelected("abc123".to_string()));
+        pump_main_context(|| {
+            let parts = controller.state().get();
+            parts.model.detail_visible && parts.model.active_session.is_some()
+        });
+
+        let parts = controller.state().get();
+        assert!(parts.widgets.summary_menu_button.is_visible());
+    }
+
+    #[gtk::test]
+    fn summary_menu_button_label_uses_active_session_project_name() {
+        if !schema_is_available() {
+            return;
+        }
+
+        let controller = App::builder().launch(Some(PathBuf::from("tests/fixtures")));
+        pump_main_context(|| !controller.state().get().model.indexing);
+        controller.emit(AppMsg::SessionSelected("abc123".to_string()));
+        pump_main_context(|| controller.state().get().model.active_session.is_some());
+
+        let parts = controller.state().get();
+        assert_eq!(parts.widgets.summary_project_label.label(), "project");
+        assert_eq!(
+            parts.widgets.summary_menu_button.tooltip_text().as_deref(),
+            Some("Session summary")
+        );
+    }
+
+    #[gtk::test]
     fn startup_shows_indexing_spinner_during_incremental_indexing() {
-        let schema_available = gio::SettingsSchemaSource::default()
-            .and_then(|source| source.lookup(crate::config::APP_ID, true))
-            .is_some();
-        if !schema_available {
+        if !schema_is_available() {
             return;
         }
 
@@ -912,10 +1017,7 @@ mod tests {
 
     #[gtk::test]
     fn indexing_status_dialog_is_created_lazily() {
-        let schema_available = gio::SettingsSchemaSource::default()
-            .and_then(|source| source.lookup(crate::config::APP_ID, true))
-            .is_some();
-        if !schema_available {
+        if !schema_is_available() {
             return;
         }
 
@@ -940,10 +1042,7 @@ mod tests {
 
     #[gtk::test]
     fn indexing_completed_stores_error_details_for_dialog() {
-        let schema_available = gio::SettingsSchemaSource::default()
-            .and_then(|source| source.lookup(crate::config::APP_ID, true))
-            .is_some();
-        if !schema_available {
+        if !schema_is_available() {
             return;
         }
 
