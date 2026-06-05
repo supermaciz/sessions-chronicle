@@ -1,7 +1,7 @@
 # Session Summary — Collapsing / hiding the `summary_box` — Exploration
 
 **Date**: 2026-06-04  
-**Status**: Exploration — decision pending  
+**Status**: Decided — proposal E selected  
 **Regression context**: commit `f8a1d1a` — *fix: make session transcript directly scrollable* (#160)  
 **View**: `SessionDetail` (`src/ui/session_detail.rs`)  
 
@@ -109,7 +109,7 @@ A, B and C all keep the summary near the transcript and invent a mechanism to ma
 
 > **Revised after reviewing the real header** (`session_detail.png`). The detail page shares the **global** `adw::HeaderBar`, whose **center is permanently the `AdwViewSwitcher` (Sessions | Analytics)** and whose end side already holds the hamburger, inspector toggle, **Resume** and close. An earlier draft put an `AdwWindowTitle` menu in that center slot — it collides with the switcher. Corrected below.
 
-Don't park the summary as content; expose it as a **header affordance**. The header is global and already speaks in buttons (search, hamburger, inspector toggle), so add **one more**: a flat `GtkMenuButton` in the header's *start* cluster (where the screenshot shows a large empty gap, between `🔍` and the switcher) reading `● sessions-chronicle ▾` — a status-colored dot + project name + chevron. Clicking it drops a `GtkPopover` holding the **full** summary; click-away / `Esc` dismisses. The vertical flow holds only the transcript, full height, permanently. The "reduced state" is **a single header button** — zero vertical tax, no `Revealer`, no overlay, **no scroll logic, no reflow, no occlusion, and no new header** (it adds a start widget to the header that already exists). The center switcher is untouched. Re-show: click the button or `F9`.
+Don't park the summary as content; expose it as a **header affordance**. The header is global and already speaks in buttons (search, hamburger, inspector toggle), so add **one more**: a flat `GtkMenuButton` in the header's *start* cluster (where the screenshot shows a large empty gap, between `🔍` and the switcher) reading `● sessions-chronicle ▾` — a status-colored dot + project name + chevron. Clicking it drops a `GtkPopover` holding the **full** summary; click-away / `Esc` dismisses. The vertical flow holds only the transcript, full height, permanently. The "reduced state" is **a single header button** — zero vertical tax, no `Revealer`, no overlay, **no scroll logic, no reflow, no occlusion, and no new header** (it adds a start widget to the header that already exists). The center switcher is untouched. Re-show: click the button; `F9` remains dedicated to filters/inspector.
 
 **Strength**: the cleanest mechanics of the five (no surface state to sync at all), reusing the header-button vocabulary already on screen, with the most glanceable fact — the ending-status dot — permanent and free. **Cost**: with the center owned by the switcher, the permanent anchor is realistically only **dot + project** (assistant/msg/duration move into the popover, not always-on); the full detail must fit a height-bounded popover (internal scroll if it overflows); the summary becomes "consult," not "ambient."
 
@@ -150,11 +150,11 @@ D and E open a **different axis**: instead of building a collapse mechanism near
 - **D** is the **most economical structurally**: it reuses the inspector panel and its toggle (`F9`) verbatim, consolidating two metadata surfaces into one. Choose it if you accept that "summary" and "inspector" are the same family — then it's the least new code *and* the least new UI.
 - **E** is the **purest minimalism**: a single flat menu-button in the existing header's start area (status dot + project) is the reduced state, and the full summary is transient disclosure from its popover. It touches neither the scroll flow nor the center `Sessions | Analytics` switcher. Choose it if "the conversation is the page; everything else is disclosure" is the guiding principle and a height-bounded popover for the detail is acceptable — accepting that assistant/msg/duration are then one click away rather than always-on.
 
-**Overall**: if the priority is a *fast, reversible regression fix*, ship **B**. If the priority is *removing the scroll-collapse complexity altogether*, **D** is the lowest-effort relocation (reuses the existing inspector toggle + panel) and **E** the lightest touch (one header button, zero vertical tax, no new header). A reasonable path: ship **B** now as the safe fix, and evaluate **D** as the cleaner long-term home once we confirm users treat summary and inspector as one surface.
+**Decision**: ship **E**. The selected design treats the conversation as the page and moves the full summary into a header-anchored `GtkPopover`, opened only from the new summary button. `F9` remains unchanged: filters in list view, inspector in detail view. The implementation spec is `docs/superpowers/specs/2026-06-05-session-summary-header-popover-design.md`.
 
-## Open questions
+## Resolved questions
 
-- Should the reduced state keep an orientation anchor (project/assistant — A, B, E) or bet on the header bar alone (C, and D's optional subtitle)?
-- Should auto-collapse re-expand when scrolling all the way back to the top? A/B/C avoid it by default (anti-loop); D/E make the question moot (no scroll coupling). To be confirmed from a UX standpoint.
-- Are "session summary" and "session inspector" the same family of information (the premise of D)? If yes, consolidation is a simplification; if product wants them distinct, D is ruled out.
-- Can the full summary (activity bar + tokens grid + 3-line prompt) live comfortably in a height-bounded `GtkPopover` (E), or does it need the vertical room of a side panel (D)?
+- The reduced state keeps a minimal orientation anchor: status dot + project name in the header button.
+- Auto-collapse and re-expand are out of scope because E has no scroll coupling.
+- Summary and inspector stay distinct; the summary is not folded into the inspector.
+- The full summary will live in a height-bounded `GtkPopover` with internal scrolling when needed.
