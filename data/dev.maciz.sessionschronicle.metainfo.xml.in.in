@@ -49,6 +49,14 @@
   </categories>
   <content_rating type="oars-1.1" />
   <releases>
+    <release version="0.6.0" date="2026-06-06">
+      <description>
+        <p>Moves session summary to a header popover for better space utilization.</p>
+        <ul>
+          <li>Session summary now appears in a convenient header popover</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.5.0" date="2026-05-29">
       <description>
         <p>Introduces date filtering and a cleaner sidebar for session browsing.</p>
