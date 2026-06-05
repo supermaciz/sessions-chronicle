@@ -42,6 +42,7 @@ impl App {
             self.active_workspace,
             self.detail_visible,
             self.parent_session.is_some(),
+            self.active_session.is_some(),
         )
         .search_ui_visible
     }
@@ -51,6 +52,7 @@ impl App {
             self.active_workspace,
             self.detail_visible,
             self.parent_session.is_some(),
+            self.active_session.is_some(),
         )
         .date_filter_visible
     }
@@ -60,6 +62,7 @@ impl App {
             self.active_workspace,
             self.detail_visible,
             self.parent_session.is_some(),
+            self.active_session.is_some(),
         )
         .pane_controls_visible
     }
@@ -77,7 +80,18 @@ impl App {
             self.active_workspace,
             self.detail_visible,
             self.parent_session.is_some(),
+            self.active_session.is_some(),
         )
         .detail_actions_visible
+    }
+
+    pub(crate) fn is_summary_button_visible(&self) -> bool {
+        workspace_header_visibility(
+            self.active_workspace,
+            self.detail_visible,
+            self.parent_session.is_some(),
+            self.active_session.is_some(),
+        )
+        .summary_button_visible
     }
 }

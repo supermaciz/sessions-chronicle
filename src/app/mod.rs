@@ -1150,17 +1150,45 @@ mod tests {
 
     #[test]
     fn analytics_workspace_hides_session_specific_header_controls() {
-        let analytics = workspace_header_visibility(Workspace::Analytics, true, true);
+        let analytics = workspace_header_visibility(Workspace::Analytics, true, true, true);
         assert!(!analytics.search_ui_visible);
         assert!(!analytics.pane_controls_visible);
         assert!(!analytics.detail_actions_visible);
         assert!(analytics.indexing_progress_visible);
 
-        let sessions = workspace_header_visibility(Workspace::Sessions, true, true);
+        let sessions = workspace_header_visibility(Workspace::Sessions, true, true, true);
         assert!(sessions.search_ui_visible);
         assert!(sessions.pane_controls_visible);
         assert!(sessions.detail_actions_visible);
         assert!(sessions.indexing_progress_visible);
+    }
+
+    #[test]
+    fn summary_button_visibility_requires_sessions_detail_and_active_session() {
+        let analytics = workspace_header_visibility(Workspace::Analytics, true, true, true);
+        assert!(!analytics.summary_button_visible);
+
+        let list = workspace_header_visibility(Workspace::Sessions, false, false, true);
+        assert!(!list.summary_button_visible);
+
+        let no_active_session =
+            workspace_header_visibility(Workspace::Sessions, true, false, false);
+        assert!(!no_active_session.summary_button_visible);
+
+        let detail = workspace_header_visibility(Workspace::Sessions, true, false, true);
+        assert!(detail.summary_button_visible);
+    }
+
+    #[test]
+    fn active_session_ref_project_name_feeds_summary_button_label() {
+        let active = ActiveSessionRef {
+            id: "session-1".to_string(),
+            tool: AiAssistant::ClaudeCode,
+            project_name: "sessions-chronicle".to_string(),
+            pinned: false,
+        };
+
+        assert_eq!(active.project_name, "sessions-chronicle");
     }
 
     #[test]

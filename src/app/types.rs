@@ -7,7 +7,6 @@ use crate::{
 pub(super) struct ActiveSessionRef {
     pub(super) id: String,
     pub(super) tool: AiAssistant,
-    #[allow(dead_code)]
     pub(super) project_name: String,
     pub(super) pinned: bool,
 }
@@ -86,6 +85,7 @@ pub(super) struct WorkspaceHeaderVisibility {
     pub(super) date_filter_visible: bool,
     pub(super) pane_controls_visible: bool,
     pub(super) detail_actions_visible: bool,
+    pub(super) summary_button_visible: bool,
     pub(super) indexing_progress_visible: bool,
 }
 
