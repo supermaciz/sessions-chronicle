@@ -15,6 +15,7 @@ fn main() {
             "smart-toy",
             "earth",
             "build",
+            "speaker-notes",
         ],
     );
 }

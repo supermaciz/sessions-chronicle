@@ -22,6 +22,7 @@ use crate::database::{
     SessionIndexer, count_all_sessions, count_pinned_sessions, count_sessions_per_date_preset,
     count_unassigned_sessions, has_unassigned_sessions, load_projects,
 };
+use crate::icon_names;
 use crate::indexing_worker::{IndexingWorker, IndexingWorkerInput};
 use crate::models::{DateFilter, ProjectFilter, ProjectInfo, session::AiAssistant};
 use crate::session_sources::{SessionSources, select_db_filename};
@@ -309,7 +310,7 @@ impl SimpleComponent for App {
                                 set_spacing: 6,
 
                                 gtk::Image {
-                                    set_icon_name: Some("document-properties-symbolic"),
+                                    set_icon_name: Some(icon_names::SPEAKER_NOTES),
                                     set_pixel_size: 16,
                                 },
 
