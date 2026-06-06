@@ -34,6 +34,7 @@ CREATE TABLE session (
   parent_id TEXT,                   -- set for child/subagent sessions
   slug TEXT NOT NULL,
   directory TEXT NOT NULL,
+  path TEXT,
   title TEXT NOT NULL,
   version TEXT NOT NULL,
   share_url TEXT,
@@ -83,8 +84,8 @@ CREATE TABLE project (
 );
 
 -- Companion tables in the same DB: todo, permission, session_share,
---   workspace, project, event, event_sequence, account, account_state,
---   control_account
+--   session_entry, workspace, project, event, event_sequence, account,
+--   account_state, control_account
 -- (__drizzle_migrations tracks applied schema migrations)
 ```
 
@@ -197,6 +198,11 @@ State fields:
 | `running` | `input`, optional `title`/`metadata`, `time.start` |
 | `completed` | `input`, `output`, `title`, `metadata`, `time.start/end`, optional `attachments` |
 | `error` | `input`, `error`, optional `metadata`, `time.start/end` |
+
+Official upstream tool states are `pending`, `running`, `completed`, and
+`error`. Sessions Chronicle's current OpenCode parser maps `completed`,
+`running`, and `error` explicitly; `pending` currently falls through to an
+unknown status in the local model.
 
 ### Task Tool — Subagent Delegation
 
@@ -547,6 +553,8 @@ Current indexing strategy is **SQLite-first dual-read with JSON fallback**:
   that `tool == "task"` is mapped to subagent records (title from
   `state.input.description`, prompt from `state.input.prompt`, `child_session_id`
   from `state.metadata.sessionId`, result from `state.output`)
+- Official upstream also emits `state.status == "pending"`; the current local
+  parser does not map that status explicitly and falls back to `Unknown`
 - Extracts `part.type == subtask` into subagent records; when a session also
   contains any `tool == "task"` part, `subtask` records are skipped to avoid
   duplication (legacy sessions without `tool == "task"` continue to use `subtask`)
