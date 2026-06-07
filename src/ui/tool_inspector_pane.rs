@@ -106,12 +106,16 @@ struct OverviewStackViews {
     content_stack: gtk::Stack,
     error_label: gtk::Label,
     tool_detail: ToolDetailViews,
+    tool_scroll: gtk::ScrolledWindow,
     subagent_detail: SubagentDetailViews,
+    subagent_scroll: gtk::ScrolledWindow,
     reasoning_detail: ReasoningDetailViews,
+    reasoning_scroll: gtk::ScrolledWindow,
 }
 
 struct DrillDownViews {
     page: adw::NavigationPage,
+    scroll: gtk::ScrolledWindow,
     name_label: gtk::Label,
     status_label: gtk::Label,
     metadata_label: gtk::Label,
@@ -149,6 +153,7 @@ pub struct ToolInspectorPane {
     tool_metadata_label: gtk::Label,
     tool_error_views: TextSectionViews,
     tool_renderer_views: RendererStackViews,
+    tool_scroll: gtk::ScrolledWindow,
 
     // Subagent detail widgets (inside "subagent" stack page)
     subagent_title_label: gtk::Label,
@@ -156,16 +161,19 @@ pub struct ToolInspectorPane {
     subagent_result_views: MarkdownSectionViews,
     subagent_tools_list: gtk::ListBox,
     open_session_button: gtk::Button,
+    subagent_scroll: gtk::ScrolledWindow,
 
     // Reasoning detail widgets (inside "reasoning" stack page)
     reasoning_title_label: gtk::Label,
     reasoning_metadata_label: gtk::Label,
     reasoning_visible_views: MarkdownSectionViews,
     reasoning_summary_views: MarkdownSectionViews,
+    reasoning_scroll: gtk::ScrolledWindow,
 
     // Drill-down NavigationPage and its content widgets.
     // The page is pushed/popped based on drilled_tool state.
     drill_page: adw::NavigationPage,
+    drill_scroll: gtk::ScrolledWindow,
     drill_name_label: gtk::Label,
     drill_status_label: gtk::Label,
     drill_metadata_label: gtk::Label,
@@ -389,7 +397,14 @@ impl ToolInspectorPane {
 
     fn begin_selection_load(&mut self) -> u64 {
         self.clear_loaded_content();
+        self.reset_overview_scroll_positions();
         begin_loading_request(&mut self.active_request_id, &mut self.load_state)
+    }
+
+    fn reset_overview_scroll_positions(&self) {
+        reset_scroll_position(&self.tool_scroll);
+        reset_scroll_position(&self.subagent_scroll);
+        reset_scroll_position(&self.reasoning_scroll);
     }
 
     fn select_tool_call(
@@ -501,6 +516,8 @@ impl ToolInspectorPane {
     }
 
     fn handle_drill_down_tool(&mut self, sender: &ComponentSender<Self>, tool_call_id: String) {
+        reset_scroll_position(&self.drill_scroll);
+
         if let Some(tc) = self
             .subagent_tools
             .iter()
@@ -912,26 +929,26 @@ fn build_overview_stack(sender: &ComponentSender<ToolInspectorPane>) -> Overview
     content_stack.add_named(&error_box, Some("error"));
 
     let tool_detail = build_tool_detail_views();
-    content_stack.add_named(&build_tool_detail_page(&tool_detail), Some("tool"));
+    let tool_scroll = build_tool_detail_page(&tool_detail);
+    content_stack.add_named(&tool_scroll, Some("tool"));
 
     let subagent_detail = build_subagent_detail_views(sender);
-    content_stack.add_named(
-        &build_subagent_detail_page(&subagent_detail),
-        Some("subagent"),
-    );
+    let subagent_scroll = build_subagent_detail_page(&subagent_detail);
+    content_stack.add_named(&subagent_scroll, Some("subagent"));
 
     let reasoning_detail = build_reasoning_detail_views();
-    content_stack.add_named(
-        &build_reasoning_detail_page(&reasoning_detail),
-        Some("reasoning"),
-    );
+    let reasoning_scroll = build_reasoning_detail_page(&reasoning_detail);
+    content_stack.add_named(&reasoning_scroll, Some("reasoning"));
 
     OverviewStackViews {
         content_stack,
         error_label,
         tool_detail,
+        tool_scroll,
         subagent_detail,
+        subagent_scroll,
         reasoning_detail,
+        reasoning_scroll,
     }
 }
 
@@ -1125,6 +1142,7 @@ fn build_drilldown_views() -> DrillDownViews {
 
     DrillDownViews {
         page,
+        scroll: drill_scroll,
         name_label,
         status_label,
         metadata_label,
@@ -1160,16 +1178,20 @@ fn build_tool_inspector_model(
         tool_metadata_label: overview_views.tool_detail.metadata_label,
         tool_error_views: overview_views.tool_detail.error_views,
         tool_renderer_views: overview_views.tool_detail.renderer_views,
+        tool_scroll: overview_views.tool_scroll,
         subagent_title_label: overview_views.subagent_detail.title_label,
         subagent_prompt_views: overview_views.subagent_detail.prompt_views,
         subagent_result_views: overview_views.subagent_detail.result_views,
         subagent_tools_list: overview_views.subagent_detail.tools_list,
         open_session_button: overview_views.subagent_detail.open_session_button,
+        subagent_scroll: overview_views.subagent_scroll,
         reasoning_title_label: overview_views.reasoning_detail.title_label,
         reasoning_metadata_label: overview_views.reasoning_detail.metadata_label,
         reasoning_visible_views: overview_views.reasoning_detail.visible_views,
         reasoning_summary_views: overview_views.reasoning_detail.summary_views,
+        reasoning_scroll: overview_views.reasoning_scroll,
         drill_page: drill_views.page,
+        drill_scroll: drill_views.scroll,
         drill_name_label: drill_views.name_label,
         drill_status_label: drill_views.status_label,
         drill_metadata_label: drill_views.metadata_label,
@@ -1185,6 +1207,11 @@ fn wrap_in_scrolled_window(child: &impl IsA<gtk::Widget>) -> gtk::ScrolledWindow
     scrolled.set_hscrollbar_policy(gtk::PolicyType::Never);
     scrolled.set_child(Some(child));
     scrolled
+}
+
+fn reset_scroll_position(scrolled: &gtk::ScrolledWindow) {
+    let adjustment = scrolled.vadjustment();
+    adjustment.set_value(adjustment.lower());
 }
 
 fn make_title_label() -> gtk::Label {
@@ -2115,6 +2142,17 @@ mod tests {
             "permission denied while opening the file"
         );
         assert!(views.label.is_selectable());
+    }
+
+    #[gtk::test]
+    fn reset_scroll_position_returns_to_adjustment_start() {
+        let adjustment = gtk::Adjustment::new(50.0, 10.0, 100.0, 1.0, 10.0, 10.0);
+        let scrolled = gtk::ScrolledWindow::new();
+        scrolled.set_vadjustment(Some(&adjustment));
+
+        reset_scroll_position(&scrolled);
+
+        assert_eq!(adjustment.value(), adjustment.lower());
     }
 
     #[gtk::test]
