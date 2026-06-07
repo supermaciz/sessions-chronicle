@@ -49,6 +49,16 @@
   </categories>
   <content_rating type="oars-1.1" />
   <releases>
+    <release version="0.6.1" date="2026-06-07">
+      <description>
+        <p>Polishes the inspector sidebar and session summary UI.</p>
+        <ul>
+          <li>Fix inspector sidebar pinning so navigation no longer opens an empty pane</li>
+          <li>Add speaker-notes icon to the session summary button</li>
+          <li>Update to relm4 0.11 targeting GNOME 50</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.6.0" date="2026-06-06">
       <description>
         <p>Moves session summary to a header popover for better space utilization.</p>
