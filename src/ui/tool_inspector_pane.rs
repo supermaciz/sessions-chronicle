@@ -1,4 +1,3 @@
-use std::cell::Cell;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Instant;
@@ -7,11 +6,9 @@ use adw::prelude::*;
 use chrono::TimeZone;
 use relm4::{Component, ComponentParts, ComponentSender, RelmWidgetExt, adw, gtk};
 
-use crate::database::{
-    load_reasoning_attachment, load_subagent, load_tool_call, load_tool_calls_for_subagent,
-};
+use crate::database::{load_reasoning_attachment, load_subagent, load_tool_call};
 use crate::models::{ReasoningAttachment, Subagent, ToolCall, ToolCallStatus};
-use crate::ui::format::{format_duration_ms, status_icon_name};
+use crate::ui::format::format_duration_ms;
 use crate::ui::markdown;
 use crate::ui::tool_renderers::diff::DiffRenderer;
 use crate::ui::tool_renderers::file::FileRenderer;
@@ -91,7 +88,6 @@ struct SubagentDetailViews {
     title_label: gtk::Label,
     prompt_views: MarkdownSectionViews,
     result_views: MarkdownSectionViews,
-    tools_list: gtk::ListBox,
     open_session_button: gtk::Button,
 }
 
@@ -113,16 +109,6 @@ struct OverviewStackViews {
     reasoning_scroll: gtk::ScrolledWindow,
 }
 
-struct DrillDownViews {
-    page: adw::NavigationPage,
-    scroll: gtk::ScrolledWindow,
-    name_label: gtk::Label,
-    status_label: gtk::Label,
-    metadata_label: gtk::Label,
-    error_views: TextSectionViews,
-    renderer_views: RendererStackViews,
-}
-
 // ── Component ─────────────────────────────────────────────────────────────────
 
 pub struct ToolInspectorPane {
@@ -133,15 +119,6 @@ pub struct ToolInspectorPane {
     tool_call: Option<ToolCall>,
     subagent: Option<Subagent>,
     reasoning: Option<ReasoningAttachment>,
-    subagent_tools: Vec<ToolCall>,
-    drilled_tool: Option<ToolCall>,
-    pending_drill_tool_id: Option<String>,
-
-    // Sender for attaching to dynamically-created inner-tool row callbacks.
-    sender: ComponentSender<ToolInspectorPane>,
-
-    // Navigation view (managed imperatively; stored for push/pop in post_view).
-    nav_view: adw::NavigationView,
 
     // Overview content switcher: "empty" / "tool" / "subagent"
     content_stack: gtk::Stack,
@@ -159,7 +136,6 @@ pub struct ToolInspectorPane {
     subagent_title_label: gtk::Label,
     subagent_prompt_views: MarkdownSectionViews,
     subagent_result_views: MarkdownSectionViews,
-    subagent_tools_list: gtk::ListBox,
     open_session_button: gtk::Button,
     subagent_scroll: gtk::ScrolledWindow,
 
@@ -169,19 +145,6 @@ pub struct ToolInspectorPane {
     reasoning_visible_views: MarkdownSectionViews,
     reasoning_summary_views: MarkdownSectionViews,
     reasoning_scroll: gtk::ScrolledWindow,
-
-    // Drill-down NavigationPage and its content widgets.
-    // The page is pushed/popped based on drilled_tool state.
-    drill_page: adw::NavigationPage,
-    drill_scroll: gtk::ScrolledWindow,
-    drill_name_label: gtk::Label,
-    drill_status_label: gtk::Label,
-    drill_metadata_label: gtk::Label,
-    drill_error_views: TextSectionViews,
-    drill_renderer_views: RendererStackViews,
-
-    // Interior-mutable flag: is drill_page currently pushed onto nav_view?
-    drill_page_pushed: Cell<bool>,
 }
 
 #[derive(Debug)]
@@ -199,10 +162,6 @@ pub enum ToolInspectorPaneMsg {
         transcript_item_index: i64,
     },
     Clear,
-    /// Drill into an inner tool call from the subagent overview.
-    DrillDownTool(String),
-    /// Sync model when the native NavigationView back button pops the drill page.
-    PopDrillDown,
     /// Open the child session linked from the current subagent.
     OpenChildSession,
 }
@@ -227,18 +186,11 @@ pub enum ToolInspectorPaneCmd {
         subagent_id: String,
         load_duration_ms: u128,
         subagent_result: Result<Option<Subagent>, String>,
-        tools_result: Result<Vec<ToolCall>, String>,
     },
     Reasoning {
         request_id: u64,
         load_duration_ms: u128,
         result: Result<Option<ReasoningAttachment>, String>,
-    },
-    DrillTool {
-        session_id: String,
-        tool_call_id: String,
-        load_duration_ms: u128,
-        result: Result<Option<ToolCall>, String>,
     },
 }
 
@@ -266,22 +218,9 @@ impl Component for ToolInspectorPane {
         root: Self::Root,
         sender: ComponentSender<Self>,
     ) -> ComponentParts<Self> {
-        let nav_view = build_navigation_view(&sender);
         let overview_views = build_overview_stack(&sender);
-        let drill_views = build_drilldown_views();
-        attach_navigation_pages(
-            &root,
-            &nav_view,
-            &overview_views.content_stack,
-            &drill_views.page,
-        );
-        let model = build_tool_inspector_model(
-            db_path,
-            sender.clone(),
-            nav_view,
-            overview_views,
-            drill_views,
-        );
+        root.append(&overview_views.content_stack);
+        let model = build_tool_inspector_model(db_path, overview_views);
 
         let widgets = view_output!();
         ComponentParts { model, widgets }
@@ -305,17 +244,6 @@ impl Component for ToolInspectorPane {
             } => self.select_reasoning(&sender, session_id, transcript_item_index),
 
             ToolInspectorPaneMsg::Clear => self.clear_selection(),
-
-            ToolInspectorPaneMsg::DrillDownTool(tool_call_id) => {
-                self.handle_drill_down_tool(&sender, tool_call_id)
-            }
-
-            ToolInspectorPaneMsg::PopDrillDown => {
-                // Native back button already popped the page; sync model state.
-                self.drilled_tool = None;
-                self.pending_drill_tool_id = None;
-                self.drill_page_pushed.set(false);
-            }
 
             ToolInspectorPaneMsg::OpenChildSession => self.emit_open_child_session(&sender),
         }
@@ -347,26 +275,18 @@ impl Component for ToolInspectorPane {
                 subagent_id,
                 load_duration_ms,
                 subagent_result,
-                tools_result,
             } => self.apply_subagent_cmd(
                 request_id,
                 &session_id,
                 &subagent_id,
                 load_duration_ms,
                 subagent_result,
-                tools_result,
             ),
             ToolInspectorPaneCmd::Reasoning {
                 request_id,
                 load_duration_ms,
                 result,
             } => self.apply_reasoning_cmd(request_id, load_duration_ms, result),
-            ToolInspectorPaneCmd::DrillTool {
-                session_id,
-                tool_call_id,
-                load_duration_ms,
-                result,
-            } => self.apply_drill_tool_cmd(&session_id, &tool_call_id, load_duration_ms, result),
         }
     }
 
@@ -377,7 +297,6 @@ impl Component for ToolInspectorPane {
         self.render_tool_call_section();
         self.render_subagent_section();
         self.render_reasoning_section();
-        self.sync_drilldown_page();
         tracing::debug!(
             duration_ms = started_at.elapsed().as_millis(),
             "Updated tool inspector pane view"
@@ -390,9 +309,6 @@ impl ToolInspectorPane {
         self.tool_call = None;
         self.subagent = None;
         self.reasoning = None;
-        self.subagent_tools.clear();
-        self.drilled_tool = None;
-        self.pending_drill_tool_id = None;
     }
 
     fn begin_selection_load(&mut self) -> u64 {
@@ -462,9 +378,6 @@ impl ToolInspectorPane {
             let started_at = Instant::now();
             let subagent_result = load_subagent(db_path.as_path(), &session_id, &subagent_id)
                 .map_err(|err| err.to_string());
-            let tools_result =
-                load_tool_calls_for_subagent(db_path.as_path(), &session_id, &subagent_id)
-                    .map_err(|err| err.to_string());
             let load_duration_ms = started_at.elapsed().as_millis();
             ToolInspectorPaneCmd::Subagent {
                 request_id,
@@ -472,7 +385,6 @@ impl ToolInspectorPane {
                 subagent_id: subagent_id.clone(),
                 load_duration_ms,
                 subagent_result,
-                tools_result,
             }
         });
     }
@@ -513,46 +425,6 @@ impl ToolInspectorPane {
         self.selection = InspectorSelection::None;
         clear_active_request(&mut self.active_request_id, &mut self.load_state);
         self.clear_loaded_content();
-    }
-
-    fn handle_drill_down_tool(&mut self, sender: &ComponentSender<Self>, tool_call_id: String) {
-        reset_scroll_position(&self.drill_scroll);
-
-        if let Some(tc) = self
-            .subagent_tools
-            .iter()
-            .find(|tool| tool.id == tool_call_id)
-            .cloned()
-        {
-            self.drilled_tool = Some(tc);
-            self.pending_drill_tool_id = None;
-            return;
-        }
-
-        let InspectorSelection::Subagent { session_id, .. } = &self.selection else {
-            return;
-        };
-
-        self.pending_drill_tool_id = Some(tool_call_id.clone());
-        let selection_session_id = session_id.clone();
-        tracing::info!(
-            session_id = selection_session_id.as_str(),
-            tool_call_id = tool_call_id.as_str(),
-            "Inspector drill-down tool selection started"
-        );
-        let db_path = self.db_path.clone();
-        sender.spawn_oneshot_command(move || {
-            let started_at = Instant::now();
-            let result = load_tool_call(db_path.as_path(), &selection_session_id, &tool_call_id)
-                .map_err(|err| err.to_string());
-            let load_duration_ms = started_at.elapsed().as_millis();
-            ToolInspectorPaneCmd::DrillTool {
-                session_id: selection_session_id.clone(),
-                tool_call_id: tool_call_id.clone(),
-                load_duration_ms,
-                result,
-            }
-        });
     }
 
     fn emit_open_child_session(&self, sender: &ComponentSender<Self>) {
@@ -626,17 +498,8 @@ impl ToolInspectorPane {
         subagent_id: &str,
         load_duration_ms: u128,
         subagent_result: Result<Option<Subagent>, String>,
-        tools_result: Result<Vec<ToolCall>, String>,
     ) {
-        let request_result = subagent_request_result(&subagent_result, &tools_result);
-        if apply_load_result(
-            self.active_request_id,
-            &mut self.load_state,
-            request_id,
-            request_result,
-        )
-        .is_none()
-        {
+        if !self.accept_request_result(request_id, &subagent_result) {
             return;
         }
 
@@ -645,14 +508,12 @@ impl ToolInspectorPane {
             .as_ref()
             .map(|subagent| subagent.is_some())
             .unwrap_or(false);
-        let subagent_tools_count = tools_result.as_ref().map(|tools| tools.len()).unwrap_or(0);
         tracing::info!(
             request_id,
             session_id,
             subagent_id,
             success,
             found,
-            subagent_tools_count,
             load_duration_ms,
             "Inspector subagent load completed"
         );
@@ -671,14 +532,6 @@ impl ToolInspectorPane {
             Err(err) => {
                 tracing::error!("Failed to load subagent {}: {}", subagent_id, err);
                 self.subagent = None;
-            }
-        }
-
-        match tools_result {
-            Ok(tools) => self.subagent_tools = tools,
-            Err(err) => {
-                tracing::error!("Failed to load subagent tools for {}: {}", subagent_id, err);
-                self.subagent_tools.clear();
             }
         }
     }
@@ -713,47 +566,6 @@ impl ToolInspectorPane {
             Err(err) => {
                 tracing::error!("Failed to load reasoning attachment: {}", err);
                 self.reasoning = None;
-            }
-        }
-    }
-
-    fn apply_drill_tool_cmd(
-        &mut self,
-        session_id: &str,
-        tool_call_id: &str,
-        load_duration_ms: u128,
-        result: Result<Option<ToolCall>, String>,
-    ) {
-        if !matches!(
-            self.selection,
-            InspectorSelection::Subagent {
-                session_id: ref active_session,
-                ..
-            } if active_session == session_id
-        ) {
-            return;
-        }
-
-        if self.pending_drill_tool_id.as_deref() != Some(tool_call_id) {
-            return;
-        }
-
-        let success = result.is_ok();
-        let found = result.as_ref().map(|tool| tool.is_some()).unwrap_or(false);
-        tracing::info!(
-            session_id,
-            tool_call_id,
-            success,
-            found,
-            load_duration_ms,
-            "Inspector drill-down tool load completed"
-        );
-
-        self.pending_drill_tool_id = None;
-        match result {
-            Ok(tool_call) => self.drilled_tool = tool_call,
-            Err(err) => {
-                tracing::error!("Failed to load drill tool {}: {}", tool_call_id, err);
             }
         }
     }
@@ -799,27 +611,9 @@ impl ToolInspectorPane {
                 &self.subagent_result_views,
                 subagent.result_summary.as_deref(),
             );
-            self.rebuild_subagent_tool_rows();
             self.open_session_button
                 .set_visible(subagent.child_session_id.is_some());
         }
-    }
-
-    fn rebuild_subagent_tool_rows(&self) {
-        let started_at = Instant::now();
-        while let Some(child) = self.subagent_tools_list.first_child() {
-            self.subagent_tools_list.remove(&child);
-        }
-
-        for tool in &self.subagent_tools {
-            self.subagent_tools_list
-                .append(&build_subagent_tool_row(tool, &self.sender));
-        }
-        tracing::debug!(
-            subagent_tools_count = self.subagent_tools.len(),
-            duration_ms = started_at.elapsed().as_millis(),
-            "Rebuilt inspector subagent tool rows"
-        );
     }
 
     fn render_reasoning_section(&self) {
@@ -841,81 +635,9 @@ impl ToolInspectorPane {
             );
         }
     }
-
-    fn sync_drilldown_page(&self) {
-        if let Some(tool_call) = self.drilled_tool.as_ref() {
-            self.drill_page.set_title(&tool_call.tool_name);
-            apply_tool_detail_views(
-                &self.drill_name_label,
-                &self.drill_status_label,
-                &self.drill_metadata_label,
-                &self.drill_error_views,
-                &self.drill_renderer_views,
-                tool_call,
-            );
-
-            if !self.drill_page_pushed.get() {
-                self.nav_view.push(&self.drill_page);
-                self.drill_page_pushed.set(true);
-            }
-        } else if self.drill_page_pushed.get() {
-            self.nav_view.pop();
-            self.drill_page_pushed.set(false);
-        }
-    }
 }
 
 // ── Widget helpers ────────────────────────────────────────────────────────────
-
-fn build_navigation_view(sender: &ComponentSender<ToolInspectorPane>) -> adw::NavigationView {
-    let nav_view = adw::NavigationView::new();
-    nav_view.set_vexpand(true);
-    nav_view.set_hexpand(true);
-    // `pop_on_escape` is left at its default (true) so that the drill-down
-    // page can be dismissed natively via the Escape key.
-    //
-    // GTK4 event routing: the inner AdwNavigationView uses a widget-scoped
-    // GtkShortcutController (GTK_SHORTCUT_SCOPE_MANAGED).  The app-level
-    // `EscapeAction` accelerator is registered on the GtkApplication and
-    // therefore also has global scope.  When both could fire on the same
-    // Escape keypress, GTK resolves the conflict in favour of the more
-    // specific, widget-level handler — the inner nav pops and the event is
-    // consumed before the window action fires.
-    //
-    // The app-level Esc handler (`AppMsg::Escape`) therefore only runs when
-    // the drill-down page is NOT currently pushed, giving the correct
-    // priority chain: drill-down pop → close inspector pane → navigate back.
-
-    let popped_sender = sender.input_sender().clone();
-    nav_view.connect_popped(move |_, page| {
-        if page.tag().as_deref() == Some("drill-down") {
-            popped_sender.send(ToolInspectorPaneMsg::PopDrillDown).ok();
-        }
-    });
-
-    nav_view
-}
-
-fn attach_navigation_pages(
-    root: &gtk::Box,
-    nav_view: &adw::NavigationView,
-    content_stack: &gtk::Stack,
-    drill_page: &adw::NavigationPage,
-) {
-    let overview_page = adw::NavigationPage::builder()
-        .title("Inspector")
-        .tag("overview")
-        .child(content_stack)
-        .build();
-    nav_view.add(&overview_page);
-
-    // Register the page so it always has a stable parent; push/pop manage
-    // visibility.  Without add(), repeated push-after-pop cycles can hit a
-    // GTK parentage assertion when the page is still being unparented by a
-    // running pop animation.
-    nav_view.add(drill_page);
-    root.append(nav_view);
-}
 
 fn build_overview_stack(sender: &ComponentSender<ToolInspectorPane>) -> OverviewStackViews {
     let content_stack = gtk::Stack::new();
@@ -1045,10 +767,6 @@ fn build_subagent_detail_views(sender: &ComponentSender<ToolInspectorPane>) -> S
     let prompt_views = make_markdown_section("Prompt");
     let result_views = make_markdown_section("Result");
 
-    let tools_list = gtk::ListBox::new();
-    tools_list.add_css_class("boxed-list");
-    tools_list.set_selection_mode(gtk::SelectionMode::None);
-
     let open_session_button = gtk::Button::with_label("Open Full Session");
     open_session_button.add_css_class("suggested-action");
     {
@@ -1061,24 +779,17 @@ fn build_subagent_detail_views(sender: &ComponentSender<ToolInspectorPane>) -> S
         title_label,
         prompt_views,
         result_views,
-        tools_list,
         open_session_button,
     }
 }
 
 fn build_subagent_detail_page(views: &SubagentDetailViews) -> gtk::ScrolledWindow {
-    let inner_tools_header = gtk::Label::new(Some("Inner Tools"));
-    inner_tools_header.add_css_class("heading");
-    inner_tools_header.set_halign(gtk::Align::Start);
-
     let outer = gtk::Box::new(gtk::Orientation::Vertical, 12);
     outer.set_margin_all(16);
     outer.append(&views.title_label);
     outer.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
     outer.append(&views.prompt_views.section);
     outer.append(&views.result_views.section);
-    outer.append(&inner_tools_header);
-    outer.append(&views.tools_list);
     outer.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
     outer.append(&views.open_session_button);
 
@@ -1105,58 +816,9 @@ fn build_reasoning_detail_page(views: &ReasoningDetailViews) -> gtk::ScrolledWin
     wrap_in_scrolled_window(&outer)
 }
 
-fn build_drilldown_views() -> DrillDownViews {
-    let name_label = make_title_label();
-    name_label.add_css_class("monospace");
-
-    let status_label = make_caption_label();
-    let metadata_label = make_metadata_label();
-    let error_views = make_text_section("Error");
-    error_views.section.add_css_class("inspector-error-section");
-    error_views.label.add_css_class("inspector-error-text");
-    let renderer_views = make_renderer_stack_views();
-
-    let outer = gtk::Box::new(gtk::Orientation::Vertical, 12);
-    outer.set_margin_all(16);
-    outer.append(&name_label);
-    outer.append(&status_label);
-    outer.append(&metadata_label);
-    outer.append(&error_views.section);
-    outer.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
-    outer.append(&renderer_views.stack);
-
-    let drill_scroll = wrap_in_scrolled_window(&outer);
-
-    // ToolbarView gives us a header bar with an automatic back button
-    // when the page is nested inside an AdwNavigationView.
-    let drill_header = adw::HeaderBar::new();
-    let drill_toolbar = adw::ToolbarView::new();
-    drill_toolbar.add_top_bar(&drill_header);
-    drill_toolbar.set_content(Some(&drill_scroll));
-
-    let page = adw::NavigationPage::builder()
-        .title("Tool Details")
-        .tag("drill-down")
-        .child(&drill_toolbar)
-        .build();
-
-    DrillDownViews {
-        page,
-        scroll: drill_scroll,
-        name_label,
-        status_label,
-        metadata_label,
-        error_views,
-        renderer_views,
-    }
-}
-
 fn build_tool_inspector_model(
     db_path: Arc<PathBuf>,
-    sender: ComponentSender<ToolInspectorPane>,
-    nav_view: adw::NavigationView,
     overview_views: OverviewStackViews,
-    drill_views: DrillDownViews,
 ) -> ToolInspectorPane {
     ToolInspectorPane {
         db_path,
@@ -1166,11 +828,6 @@ fn build_tool_inspector_model(
         tool_call: None,
         subagent: None,
         reasoning: None,
-        subagent_tools: Vec::new(),
-        drilled_tool: None,
-        pending_drill_tool_id: None,
-        sender,
-        nav_view,
         content_stack: overview_views.content_stack,
         error_label: overview_views.error_label,
         tool_name_label: overview_views.tool_detail.name_label,
@@ -1182,7 +839,6 @@ fn build_tool_inspector_model(
         subagent_title_label: overview_views.subagent_detail.title_label,
         subagent_prompt_views: overview_views.subagent_detail.prompt_views,
         subagent_result_views: overview_views.subagent_detail.result_views,
-        subagent_tools_list: overview_views.subagent_detail.tools_list,
         open_session_button: overview_views.subagent_detail.open_session_button,
         subagent_scroll: overview_views.subagent_scroll,
         reasoning_title_label: overview_views.reasoning_detail.title_label,
@@ -1190,14 +846,6 @@ fn build_tool_inspector_model(
         reasoning_visible_views: overview_views.reasoning_detail.visible_views,
         reasoning_summary_views: overview_views.reasoning_detail.summary_views,
         reasoning_scroll: overview_views.reasoning_scroll,
-        drill_page: drill_views.page,
-        drill_scroll: drill_views.scroll,
-        drill_name_label: drill_views.name_label,
-        drill_status_label: drill_views.status_label,
-        drill_metadata_label: drill_views.metadata_label,
-        drill_error_views: drill_views.error_views,
-        drill_renderer_views: drill_views.renderer_views,
-        drill_page_pushed: Cell::new(false),
     }
 }
 
@@ -1413,39 +1061,6 @@ fn apply_tool_detail_views(
     let error_text = tool_error_message(tool_call);
     apply_optional_text_section(error_views, error_text);
     apply_renderer_stack(renderer_views, tool_call);
-}
-
-fn build_subagent_tool_row(
-    tool: &ToolCall,
-    sender: &ComponentSender<ToolInspectorPane>,
-) -> adw::ActionRow {
-    let row = adw::ActionRow::builder()
-        .title(tool.title.as_deref().unwrap_or(&tool.tool_name))
-        .subtitle(&tool.tool_name)
-        .activatable(true)
-        .build();
-
-    let status_icon = gtk::Image::from_icon_name(status_icon_name(tool.status));
-    status_icon.set_pixel_size(16);
-    row.add_prefix(&status_icon);
-
-    if let Some(ms) = tool.duration_ms {
-        let dur_label = gtk::Label::new(Some(&format_duration_ms(ms)));
-        dur_label.add_css_class("dim-label");
-        dur_label.add_css_class("caption");
-        row.add_suffix(&dur_label);
-    }
-
-    let next_icon = gtk::Image::from_icon_name("go-next-symbolic");
-    row.add_suffix(&next_icon);
-
-    let sender = sender.clone();
-    let id = tool.id.clone();
-    row.connect_activated(move |_| {
-        sender.input(ToolInspectorPaneMsg::DrillDownTool(id.clone()));
-    });
-
-    row
 }
 
 fn apply_renderer_stack(views: &RendererStackViews, tool_call: &ToolCall) {
@@ -1855,24 +1470,6 @@ fn clear_active_request(active_request_id: &mut u64, load_state: &mut LoadState)
     *load_state = LoadState::Idle;
 }
 
-fn subagent_request_result(
-    subagent_result: &Result<Option<Subagent>, String>,
-    tools_result: &Result<Vec<ToolCall>, String>,
-) -> Result<(), String> {
-    if let Err(err) = subagent_result {
-        return Err(err.clone());
-    }
-
-    if let Err(err) = tools_result {
-        tracing::warn!(
-            "Subagent loaded but tools list failed; continuing with empty tools: {}",
-            err
-        );
-    }
-
-    Ok(())
-}
-
 fn apply_load_result(
     active_request_id: u64,
     load_state: &mut LoadState,
@@ -2033,14 +1630,6 @@ mod tests {
         let debug = format!("{cmd:?}");
         assert!(debug.contains("load_duration_ms"));
         assert!(debug.contains("9"));
-    }
-
-    #[test]
-    fn subagent_tools_failure_does_not_force_global_load_error() {
-        let state_result =
-            subagent_request_result(&Ok(None), &Err("tools fetch failed".to_string()));
-
-        assert_eq!(state_result, Ok(()));
     }
 
     #[test]
