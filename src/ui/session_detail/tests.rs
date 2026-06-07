@@ -475,6 +475,43 @@ fn close_inspector_resets_inspector_open() {
 }
 
 #[gtk::test]
+fn uncollapsing_split_does_not_open_inspector() {
+    let temp_db = tempfile::NamedTempFile::new().expect("temp db");
+    let controller = SessionDetail::builder().launch(temp_db.path().to_path_buf());
+
+    controller.emit(SessionDetailMsg::SetSession {
+        session: Box::new(build_test_session(None, None, 0, 0, 0)),
+        search_query: None,
+    });
+    pump_main_context(|| {
+        let parts = controller.state().get();
+        parts.model.session.is_some()
+    });
+
+    // The responsive breakpoint collapses the inspector split when the detail
+    // area is narrow and uncollapses it once there is room (e.g. as the page
+    // slides in during navigation). AdwOverlaySplitView shows the sidebar
+    // automatically on uncollapse unless it is pinned, which would otherwise
+    // flip `inspector_open` to true with no selection — opening an empty pane.
+    {
+        let parts = controller.state().get();
+        parts.widgets.inspector_split.set_collapsed(true);
+        parts.widgets.inspector_split.set_collapsed(false);
+    }
+    // Give any spurious show-sidebar notify a chance to propagate into the model.
+    pump_main_context(|| {
+        let parts = controller.state().get();
+        parts.model.inspector_open
+    });
+
+    let parts = controller.state().get();
+    assert!(
+        !parts.model.inspector_open,
+        "uncollapsing the split must not open the inspector"
+    );
+}
+
+#[gtk::test]
 fn session_detail_transcript_list_is_direct_scrolled_window_child() {
     let temp_db = tempfile::NamedTempFile::new().expect("temp db");
     let controller = SessionDetail::builder().launch(temp_db.path().to_path_buf());

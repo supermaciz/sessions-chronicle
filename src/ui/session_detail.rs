@@ -317,6 +317,14 @@ impl Component for SessionDetail {
                         set_sidebar_width_fraction: 0.32,
                         set_enable_show_gesture: true,
                         set_enable_hide_gesture: true,
+                        // Pin the sidebar so `model.inspector_open` stays the
+                        // single source of truth for its visibility. Without
+                        // this, AdwOverlaySplitView auto-shows the sidebar
+                        // whenever the breakpoint uncollapses the split (e.g.
+                        // as the detail page slides in during navigation),
+                        // firing a spurious show-sidebar notify that opens an
+                        // empty inspector pane.
+                        set_pin_sidebar: true,
                         #[watch]
                         set_show_sidebar: model.inspector_open,
 
