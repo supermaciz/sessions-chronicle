@@ -50,6 +50,15 @@ fn pump_main_context(condition: impl Fn() -> bool) {
     }
 }
 
+fn drain_main_context() {
+    let context = gtk::glib::MainContext::default();
+    for _ in 0..20 {
+        if !context.iteration(false) {
+            break;
+        }
+    }
+}
+
 fn seed_message_transcript(db_path: &std::path::Path, session_id: &str, count: usize) {
     let conn = Connection::open(db_path).expect("open temp db");
     crate::database::schema::initialize_database(&conn).expect("initialize db");
@@ -499,10 +508,7 @@ fn uncollapsing_split_does_not_open_inspector() {
         parts.widgets.inspector_split.set_collapsed(false);
     }
     // Give any spurious show-sidebar notify a chance to propagate into the model.
-    pump_main_context(|| {
-        let parts = controller.state().get();
-        parts.model.inspector_open
-    });
+    drain_main_context();
 
     let parts = controller.state().get();
     assert!(
