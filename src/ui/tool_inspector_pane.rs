@@ -120,12 +120,6 @@ pub struct ToolInspectorPane {
     subagent: Option<Subagent>,
     reasoning: Option<ReasoningAttachment>,
 
-    // Sender retained for spawning load commands from imperative callbacks.
-    sender: ComponentSender<ToolInspectorPane>,
-
-    // Navigation view hosting the overview page (built imperatively in init()).
-    nav_view: adw::NavigationView,
-
     // Overview content switcher: "empty" / "tool" / "subagent"
     content_stack: gtk::Stack,
     error_label: gtk::Label,
@@ -224,10 +218,9 @@ impl Component for ToolInspectorPane {
         root: Self::Root,
         sender: ComponentSender<Self>,
     ) -> ComponentParts<Self> {
-        let nav_view = build_navigation_view();
         let overview_views = build_overview_stack(&sender);
-        attach_navigation_pages(&root, &nav_view, &overview_views.content_stack);
-        let model = build_tool_inspector_model(db_path, sender.clone(), nav_view, overview_views);
+        root.append(&overview_views.content_stack);
+        let model = build_tool_inspector_model(db_path, overview_views);
 
         let widgets = view_output!();
         ComponentParts { model, widgets }
@@ -646,27 +639,6 @@ impl ToolInspectorPane {
 
 // ── Widget helpers ────────────────────────────────────────────────────────────
 
-fn build_navigation_view() -> adw::NavigationView {
-    let nav_view = adw::NavigationView::new();
-    nav_view.set_vexpand(true);
-    nav_view.set_hexpand(true);
-    nav_view
-}
-
-fn attach_navigation_pages(
-    root: &gtk::Box,
-    nav_view: &adw::NavigationView,
-    content_stack: &gtk::Stack,
-) {
-    let overview_page = adw::NavigationPage::builder()
-        .title("Inspector")
-        .tag("overview")
-        .child(content_stack)
-        .build();
-    nav_view.add(&overview_page);
-    root.append(nav_view);
-}
-
 fn build_overview_stack(sender: &ComponentSender<ToolInspectorPane>) -> OverviewStackViews {
     let content_stack = gtk::Stack::new();
     content_stack.set_transition_type(gtk::StackTransitionType::None);
@@ -846,8 +818,6 @@ fn build_reasoning_detail_page(views: &ReasoningDetailViews) -> gtk::ScrolledWin
 
 fn build_tool_inspector_model(
     db_path: Arc<PathBuf>,
-    sender: ComponentSender<ToolInspectorPane>,
-    nav_view: adw::NavigationView,
     overview_views: OverviewStackViews,
 ) -> ToolInspectorPane {
     ToolInspectorPane {
@@ -858,8 +828,6 @@ fn build_tool_inspector_model(
         tool_call: None,
         subagent: None,
         reasoning: None,
-        sender,
-        nav_view,
         content_stack: overview_views.content_stack,
         error_label: overview_views.error_label,
         tool_name_label: overview_views.tool_detail.name_label,
