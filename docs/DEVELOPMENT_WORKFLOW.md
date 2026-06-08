@@ -53,7 +53,9 @@ Meson is the faster day-to-day loop because it reuses the local build tree inste
 This indexes sessions from all supported AI assistants:
 - Claude Code: `~/.claude/projects/`
 - OpenCode: `~/.local/share/opencode/storage/`
-- Codex: `~/.codex/sessions/`
+- Codex active sessions: `~/.codex/sessions/`
+- Codex archived sessions: `~/.codex/archived_sessions/` (not yet indexed;
+  archived rollouts can be `*.jsonl.zst`)
 - Mistral Vibe: `~/.vibe/logs/session/`
 
 ## Using Test Fixtures

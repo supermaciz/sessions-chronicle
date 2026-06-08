@@ -9,10 +9,11 @@ See [SESSION_FORMAT_ANALYSIS.md](../SESSION_FORMAT_ANALYSIS.md) for cross-assist
 
 | Field   | Value |
 |---------|-------|
-| **Path** | `~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl` |
-| **Pattern** | `rollout-*.jsonl` |
+| **Active path** | `~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl` |
+| **Archived path** | `~/.codex/archived_sessions/rollout-*.jsonl[.zst]` |
+| **Patterns** | `rollout-*.jsonl`, `rollout-*.jsonl.zst` |
 | **Example** | `rollout-2026-01-18T02-01-28-019bce9f-0a40-79e2-8351-8818e8487fb6.jsonl` |
-| **Format** | JSONL (one JSON object per line, UTF-8, append-only) |
+| **Format** | Line-oriented JSON; active rollouts are append-only JSONL, while cold archived rollouts can be Zstandard-compressed JSONL |
 
 **Date sharding:**
 
@@ -21,6 +22,14 @@ See [SESSION_FORMAT_ANALYSIS.md](../SESSION_FORMAT_ANALYSIS.md) for cross-assist
                   └─────────┘          └─────────────────────────────────────────────────────────┘
                   Date sharding        Timestamp + thread id in filename
 ```
+
+Archived sessions use a flat directory rather than date sharding. Current
+upstream Codex can compress cold archived rollouts from `rollout-*.jsonl` to
+`rollout-*.jsonl.zst` and transparently read either representation.
+
+Sessions Chronicle currently discovers only active `~/.codex/sessions/`
+`rollout-*.jsonl` files. It does not yet index `archived_sessions/` or
+compressed `*.jsonl.zst` rollouts.
 
 ---
 
@@ -79,8 +88,14 @@ Representative shapes:
 ```
 
 Additional `session_meta` fields now present in upstream types include
-`forked_from_id`, `agent_nickname`, `agent_role`, `agent_path`,
-`base_instructions`, `dynamic_tools`, and `memory_mode`.
+`forked_from_id`, direct `parent_thread_id`, `thread_source`, `agent_nickname`,
+`agent_role`, `agent_path`, `base_instructions`, `dynamic_tools`,
+`memory_mode`, and `multi_agent_version`.
+
+For spawned child sessions, current rollouts can carry the parent identifier in
+both `session_meta.payload.parent_thread_id` and the structured
+`source.subagent.thread_spawn.parent_thread_id`. Sessions Chronicle currently
+uses the structured `source` value for child-session linkage.
 
 ### User / Assistant Events (`event_msg`)
 
@@ -287,8 +302,8 @@ Notes:
 - `model` and `reasoning_effort` describe the effective spawned agent settings.
   They are currently not stored by Sessions Chronicle's subagent model.
 - `collab_resume_end` has the same status-bearing shape as close/interaction
-  events, but the current parser does not yet use it for subagent summary
-  enrichment.
+  events. The current parser uses it for subagent summary enrichment, with
+  priority over earlier waiting and close updates.
 - `wait_agent` can emit `collab_waiting_end` with empty `agent_statuses` and
   empty `statuses`; treat this as no per-agent status update.
 
@@ -508,6 +523,8 @@ Current implementation: `src/parsers/codex.rs`
 - Indexes `event_msg.payload.type == user_message|agent_message`
 - Indexes tool lifecycle pairs for `mcp_tool_call_begin|end` and `exec_command_begin|end`
 - Indexes Codex child rollouts as subagent sessions when `session_meta.payload.source.sub_agent.thread_spawn.parent_thread_id` or `source.subagent.thread_spawn.parent_thread_id` is present
+- Does not yet use direct `session_meta.payload.parent_thread_id` as a child-session linkage fallback
+- Discovers active `rollout-*.jsonl` files only; archived and compressed rollouts are not yet indexed
 - Indexes `collab_agent_spawn_end` as parent-side `Subagent` rows and transcript items
 - Enriches parent-side subagents from `collab_waiting_end`, `collab_close_end`, `collab_resume_end`, and `collab_agent_interaction_end`
 - Ignores collab timing fields, spawned-agent `model`, and spawned-agent `reasoning_effort`
@@ -549,7 +566,9 @@ fn extract_content_codex_event_msg(event: &Value) -> Option<(Role, String)> {
   `collab_*` lifecycle events into parent `Subagent` rows plus child-session
   linkage when the child rollout is present.
 
-**Streaming:** Use `BufReader` line-by-line iteration — do not load entire JSONL into memory.
+**Streaming:** Use `BufReader` line-by-line iteration for plain JSONL and a
+streaming Zstandard decoder for `*.jsonl.zst` — do not load entire rollout logs
+into memory.
 
 ---
 
@@ -558,5 +577,6 @@ fn extract_content_codex_event_msg(event: &Value) -> Option<(Role, String)> {
 - [Codex protocol `RolloutItem`, `SessionMeta`, `EventMsg`](https://github.com/openai/codex/blob/main/codex-rs/protocol/src/protocol.rs)
 - [Codex turn-context persistence](https://github.com/openai/codex/blob/main/codex-rs/core/src/codex.rs)
 - [Codex rollout recorder](https://github.com/openai/codex/blob/main/codex-rs/rollout/src/recorder.rs)
+- [Codex rollout compression and compressed-file discovery](https://github.com/openai/codex/blob/main/codex-rs/rollout/src/compression.rs)
 - [Codex app-server thread/item event model](https://github.com/openai/codex/blob/main/codex-rs/app-server/README.md)
 - [OpenAI Prompt Caching guide (`cached_tokens` is part of prompt/input usage)](https://developers.openai.com/api/docs/guides/prompt-caching)

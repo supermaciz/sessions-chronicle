@@ -78,7 +78,8 @@ All mockups are SVG files in the `mockups/` subfolder (open in browser or image 
 ~/.claude/projects/                           ← Claude Code (v1)
 ~/.local/share/opencode/opencode.db           ← OpenCode ≥ 2026-02-14 (SQLite)
 ~/.local/share/opencode/storage/session/      ← OpenCode legacy (JSON, pre-migration)
-~/.codex/sessions/                            ← Codex (v2)
+~/.codex/sessions/                            ← Codex active rollouts
+~/.codex/archived_sessions/                   ← Codex archived rollouts (not yet indexed; can be .jsonl.zst)
 ~/.vibe/logs/session/                         ← Mistral Vibe (v2)
 ```
 

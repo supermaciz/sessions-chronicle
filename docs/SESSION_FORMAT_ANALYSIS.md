@@ -34,7 +34,7 @@ Cross-tool comparison of Claude Code, Codex, OpenCode, and Mistral Vibe session 
 | Tool | Path | Organization |
 |------|------|--------------|
 | **Claude Code** | `~/.claude/` | Project-specific directories<br>Main session: `~/.claude/projects/-Users-alexm-Repository-<project>/UUID.jsonl`<br>Subagent transcripts appear under `<session-id>/subagents/agent-*.jsonl`, each with an `agent-*.meta.json` metadata sidecar (observed v2.1.148)<br>Large materialized tool outputs can also appear under `<session-id>/tool-results/` |
-| **Codex** | `~/.codex/sessions/` | Date-sharded directories<br>`YYYY/MM/DD/rollout-*.jsonl` |
+| **Codex** | `~/.codex/sessions/`<br>`~/.codex/archived_sessions/` | Active sessions: date-sharded `YYYY/MM/DD/rollout-*.jsonl`<br>Archived sessions: flat `rollout-*.jsonl` or cold `rollout-*.jsonl.zst` |
 | **OpenCode** | `~/.local/share/opencode/` | **New (≥ 2026-02-14)**: SQLite WAL-mode DB, usually `opencode.db` and channel-specific `opencode-<channel>.db` for non-default channels; tables: `session`, `message`, `part`, `project`, `todo`, `permission`, `session_share`.<br>**Legacy (pre-migration)**: Multi-directory JSON under `storage/`: `session/<project>/ses_xxx.json`, `message/ses_xxx/`, `part/msg_xxx/`, `session_diff/ses_xxx.json`. Files are retained post-migration (no auto-cleanup). |
 | **Mistral Vibe** | `~/.vibe/logs/session/` | One directory per session:<br>`session_YYYYMMDD_HHMMSS_<shortid>/`<br>Contains `meta.json` + `messages.jsonl`.<br>Default can be overridden via `VIBE_HOME` or `session_logging.save_dir` in `config.toml`. |
 
@@ -46,6 +46,7 @@ Cross-tool comparison of Claude Code, Codex, OpenCode, and Mistral Vibe session 
 - One JSON object per line
 - UTF-8 encoded
 - Append-only chronological events
+- Codex can Zstandard-compress cold archived JSONL rollouts as `*.jsonl.zst`
 
 **OpenCode** uses **SQLite (new)** or **separate JSON files (legacy)**:
 - **New (≥ 2026-02-14)**: SQLite WAL-mode database, usually `opencode.db` and `opencode-<channel>.db` for non-default channels. Message and part content are stored as JSON blobs in the `data` column.
@@ -144,8 +145,8 @@ Goal: determine whether model information is available per message, per turn, an
 - **Claude Code**: JSONL format, tree-structured events, project-based organization; current local logs add `turn_duration` and `compact_boundary` system events, confirm subagent transcripts under `<session-id>/subagents/agent-*.jsonl`, and show large materialized tool output under `<session-id>/tool-results/`; model slug is available on assistant events (`message.model`) in recent logs; **token usage is commonly available per assistant message** (`message.usage`, optional and version-dependent), with cache fields reported separately from uncached input
 - **Claude Code new event types/fields (v2.1.148)**: Local sampling adds `attachment` events (hook output, deferred-tool/agent/MCP listing deltas, skill listings, command permissions), `permission-mode` events, and `last-prompt` events, plus an `agent-*.meta.json` subagent metadata sidecar (`agentType`, `description`, `name`, `toolUseId`). The parser dispatches only on `type in {user, assistant}`, so these are skipped without error — docs/fixtures updated, no parser change justified yet
 - **Claude Code subagent/tool naming**: Current local v2.1.87 sessions show subagent launches as `tool_use` with `name == "Agent"` and `input.subagent_type`; older local fixtures and parser assumptions still reference `Task`
-- **Codex**: JSONL rollout envelope (`session_meta`/`event_msg`/`turn_context`/...); model provider can exist at session level, and model slug is captured at turn level (`turn_context.model`); **token usage is emitted as `event_msg` `token_count` events** (running totals + last-call deltas), where cached input is a subset of `input_tokens`
-- **Codex subagents**: Current upstream Codex protocol defines subagent lifecycle data through `collab_*` events. Sessions Chronicle indexes `collab_*` spawn/waiting/interaction/close/resume data as parent-side subagents and links child rollouts through structured `session_meta.payload.source.subagent.thread_spawn.parent_thread_id` or `source.sub_agent.thread_spawn.parent_thread_id`. Local Codex `0.130.0` response-item `spawn_agent` / `wait_agent` pairs are also mapped into parent-side `Subagent` rows and terminal summaries rather than generic tool calls.
+- **Codex**: JSONL rollout envelope (`session_meta`/`event_msg`/`turn_context`/...); active rollouts are date-sharded under `sessions/`, while archived rollouts are flat under `archived_sessions/` and can be Zstandard-compressed as `*.jsonl.zst`; model provider can exist at session level, and model slug is captured at turn level (`turn_context.model`); **token usage is emitted as `event_msg` `token_count` events** (running totals + last-call deltas), where cached input is a subset of `input_tokens`. Sessions Chronicle currently indexes only active plain `rollout-*.jsonl` files.
+- **Codex subagents**: Current upstream Codex protocol defines subagent lifecycle data through `collab_*` events. Sessions Chronicle indexes `collab_*` spawn/waiting/interaction/close/resume data as parent-side subagents and links child rollouts through structured `session_meta.payload.source.subagent.thread_spawn.parent_thread_id` or `source.sub_agent.thread_spawn.parent_thread_id`. Current upstream `session_meta` also carries a direct `parent_thread_id`, which Sessions Chronicle does not yet use as a linkage fallback. Local Codex `0.130.0` response-item `spawn_agent` / `wait_agent` pairs are also mapped into parent-side `Subagent` rows and terminal summaries rather than generic tool calls.
 - **Codex skills**: Sampled local rollouts show explicit `$skill-name`
   `user_message` events followed by injected `<skill>` payloads in
   `response_item` user messages. The injected payload includes `<name>` and
@@ -243,8 +244,6 @@ Each tool can persist token usage metrics, but **the granularity and presence ar
 2. **Subagent graph model**:
    - Extend the unified parent-child relation beyond the current OpenCode + Codex + Claude linkage primitives
    - Revisit whether the UI should expose Codex duplicate-thread / retry history explicitly when multiple parent subagent rows point at the same child session
-   - Decide whether `collab_resume_end` should participate in Codex subagent summary enrichment
-   - Decide whether response-item `spawn_agent` / `wait_agent` outputs should participate in Codex parent-side subagent extraction
 
 3. **UI surfacing experiment**:
    - Add optional expandable "Tool Activity" and "Subtasks/Subagents" sections in session details
