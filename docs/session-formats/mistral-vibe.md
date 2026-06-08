@@ -45,6 +45,7 @@ Session-level metadata:
 | Field | Description |
 |-------|-------------|
 | `session_id` | UUID |
+| `parent_session_id` | Optional id of a parent session (sub-session linkage); see [Threading](#threading) |
 | `start_time` | ISO-8601 string |
 | `end_time` | ISO-8601 string |
 | `environment.working_directory` | Working directory |
@@ -52,12 +53,17 @@ Session-level metadata:
 | `git_branch` | Optional git branch name |
 | `username` | Username of the session owner |
 | `title` | First ~50 chars of the first user message |
+| `title_source` | How the title was set: `auto` or `manual` |
 | `total_messages` | Count of all non-system messages |
 | `stats` | Token usage, tool call counters, other session metrics |
 | `tools_available` | Set of tools available to the agent for the session |
 | `config` | Optional config snapshot: `active_model`, `providers`, `models` arrays |
 | `agent_profile` | Optional selected profile/override metadata |
 | `system_prompt` | System message object (`{"role": "system", "content": "..."}`) — moved here from `messages.jsonl` |
+| `loops` | Optional; agent loop metadata (added conditionally) |
+| `experiments` | Optional; experiment flags (added conditionally) |
+
+Upstream type: `SessionMetadata` in `vibe/core/types.py`.
 
 **Model metadata** is session-level via `meta.json.config` snapshot when present
 (`config.active_model`, plus `config.providers`/`config.models`).
@@ -68,11 +74,26 @@ Requires session logging metadata output — minimal/older logs may omit full co
 `meta.json.stats` is optional and can be `null` in minimal/older logs or when configured without stats.
 When present, it provides **session-level token totals** plus **last-turn metrics**.
 
-Common fields observed:
+Upstream type: `AgentStats` in `vibe/core/types.py`.
+
+Token totals:
 
 - `session_prompt_tokens`, `session_completion_tokens`
-- `session_total_llm_tokens`, `session_cost`
-- `context_tokens`, `last_turn_prompt_tokens`, `last_turn_completion_tokens`, `last_turn_total_tokens`
+- `session_total_llm_tokens` (computed)
+- `context_tokens`, `last_turn_prompt_tokens`, `last_turn_completion_tokens`, `last_turn_total_tokens` (computed)
+
+Tool-call counters (per session):
+
+- `tool_calls_agreed`, `tool_calls_rejected`, `tool_calls_failed`, `tool_calls_succeeded`
+
+Performance metrics:
+
+- `steps`, `tokens_per_second`, `last_turn_duration`
+
+Pricing:
+
+- `input_price_per_million`, `output_price_per_million`
+- `session_cost` (computed)
 
 Example (abridged):
 
@@ -93,6 +114,7 @@ Current observed limitation:
 - No separate cache-token counters were observed in `meta.json.stats`.
 - No separate reasoning-token counter was observed in `meta.json.stats`; current logs expose aggregate prompt/completion totals only.
 - Reasoning content itself is available per-message via `reasoning_content` on assistant messages (see above), but is not reflected as a separate token counter in `stats`.
+- Cost is exposed as aggregate `session_cost` plus per-million unit pricing (`input_price_per_million`, `output_price_per_million`); there is no per-turn cost breakdown.
 
 ---
 
@@ -116,8 +138,14 @@ Messages do not include a normalized model identifier field.
 | Field | Present on | Notes |
 |-------|-----------|-------|
 | `message_id` | `user`, `assistant` | Auto-generated UUID per message; absent on `tool` role |
+| `images` | `user`, `assistant` | Attached image content, when present |
+| `injected` | any | Marks a message injected by the runtime (e.g. compaction summaries) rather than typed by the user |
 | `reasoning_content` | `assistant` | Thinking/reasoning block content (reasoning-capable models) |
 | `reasoning_signature` | `assistant` | Signature for reasoning blocks |
+| `reasoning_state` | `assistant` | State of the reasoning block (accumulates alongside `reasoning_content`) |
+| `reasoning_message_id` | `assistant` | Auto-generated UUID for the reasoning block when reasoning is present |
+
+Upstream type: `LLMMessage` in `vibe/core/types.py`.
 
 ### Assistant Message with Tool Calls
 
@@ -152,13 +180,25 @@ Messages do not include a normalized model identifier field.
 Tool call correlation: `tool_calls[*].id` → `tool_call_id`.
 Arguments are stored as JSON-encoded strings (`tool_calls[*].function.arguments`).
 
+> **Note (Vibe ≥ 2.14.0):** the changelog reports a new tool-call format for the
+> `read` tool and the file `edit` tool, and `write_file` is now create-only. This
+> affects the JSON shape inside `tool_calls[*].function.arguments`. The Sessions
+> Chronicle parser stores arguments as an opaque string, so indexing is
+> unaffected; the concrete argument schema has not yet been captured from a real
+> session.
+
 ---
 
 ## Threading
 
 Linear message list in `messages.jsonl`.
 Tool calls are embedded in assistant messages and resolved by subsequent `tool` role messages.
-No dedicated subagent session model observed in current format.
+
+`meta.json` now carries an optional `parent_session_id` field, which links a
+session to a parent session (sub-session linkage). The exact on-disk shape from a
+captured real session has not yet been confirmed, and the Sessions Chronicle
+parser does not currently read it (the model field is set to `None`). No inline
+subagent transcript model has been observed within a single `messages.jsonl`.
 
 ---
 
@@ -291,7 +331,9 @@ do not load entire JSONL into memory.
 
 - [Mistral Vibe Repository](https://github.com/mistralai/mistral-vibe)
 - [Mistral Vibe session logger (`meta.json` + `messages.jsonl` + config dump)](https://github.com/mistralai/mistral-vibe/blob/main/vibe/core/session/session_logger.py)
-- [Mistral Vibe message/session models (`SessionMetadata`, `LLMMessage`)](https://github.com/mistralai/mistral-vibe/blob/main/vibe/core/types.py)
+- [Mistral Vibe session loader (filename constants `METADATA_FILENAME` = `meta.json`, `MESSAGES_FILENAME` = `messages.jsonl`)](https://github.com/mistralai/mistral-vibe/blob/main/vibe/core/session/session_loader.py)
+- [Mistral Vibe message/session models (`SessionMetadata`, `LLMMessage`, `AgentStats`)](https://github.com/mistralai/mistral-vibe/blob/main/vibe/core/types.py)
+- [Mistral Vibe CHANGELOG (verified through 2.14.0, 2026-06-04)](https://github.com/mistralai/mistral-vibe/blob/main/CHANGELOG.md)
 - [Mistral Vibe Configuration Docs](https://docs.mistral.ai/mistral-vibe/introduction/configuration)
 - [Mistral Vibe system prompt skill section (`<available_skills>`)](https://github.com/mistralai/mistral-vibe/blob/main/vibe/core/system_prompt.py)
 - [Mistral Vibe CLI skill slash-command handler](https://github.com/mistralai/mistral-vibe/blob/main/vibe/cli/textual_ui/app.py)
