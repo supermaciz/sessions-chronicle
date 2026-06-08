@@ -53,6 +53,13 @@ impl MistralVibeParser {
         let session_model =
             normalize_model(metadata.get("config").and_then(|c| c.get("active_model")));
 
+        let parent_session_id = metadata
+            .get("parent_session_id")
+            .and_then(|v| v.as_str())
+            .map(str::to_string)
+            .filter(|value| !value.trim().is_empty());
+        let is_subagent = parent_session_id.is_some();
+
         let token_usage = metadata.get("stats").and_then(|stats| {
             let prompt = stats.get("session_prompt_tokens")?.as_i64()?;
             let completion = stats.get("session_completion_tokens")?.as_i64()?;
@@ -260,8 +267,8 @@ impl MistralVibeParser {
                 last_updated: end_time,
                 pinned_at: None,
                 first_prompt,
-                parent_session_id: None,
-                is_subagent: false,
+                parent_session_id,
+                is_subagent,
                 token_usage: None,
                 edit_count: 0,
                 read_count: 0,
@@ -437,6 +444,35 @@ mod tests {
         );
 
         assert_eq!(session.start_time, expected);
+    }
+
+    #[test]
+    fn parse_reads_parent_session_id_from_metadata() {
+        let temp_dir = TempDir::new().unwrap();
+        let root = temp_dir.path();
+        let meta = json!({
+            "session_id": "child-session",
+            "parent_session_id": "parent-session",
+            "start_time": "2026-02-03T19:14:51Z",
+            "end_time": "2026-02-03T19:16:05Z",
+            "environment": { "working_directory": "/tmp/project" }
+        });
+        fs::write(root.join("meta.json"), serde_json::to_vec(&meta).unwrap()).unwrap();
+        write_messages(
+            &root.join("messages.jsonl"),
+            &[
+                r#"{"role":"user","content":"Hi"}"#,
+                r#"{"role":"assistant","content":"Hello"}"#,
+            ],
+        );
+
+        let parsed = MistralVibeParser.parse(root).unwrap();
+
+        assert_eq!(
+            parsed.session.parent_session_id.as_deref(),
+            Some("parent-session")
+        );
+        assert!(parsed.session.is_subagent);
     }
 
     #[test]

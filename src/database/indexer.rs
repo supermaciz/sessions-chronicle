@@ -293,22 +293,24 @@ impl SessionIndexer {
         let parser = CodexParser;
         let mut stats = IndexingStats::default();
 
-        for entry in walkdir::WalkDir::new(sessions_dir)
-            .max_depth(5)
-            .into_iter()
-            .filter_map(|e| e.ok())
-        {
-            let path = entry.path();
-            if !Self::is_codex_session_file(path) {
-                continue;
-            }
+        for root in Self::codex_index_roots(sessions_dir) {
+            for entry in walkdir::WalkDir::new(&root)
+                .max_depth(5)
+                .into_iter()
+                .filter_map(|e| e.ok())
+            {
+                let path = entry.path();
+                if !Self::is_codex_session_file(path) {
+                    continue;
+                }
 
-            if incremental && !self.should_reindex(path)? {
-                stats.skipped += 1;
-                continue;
-            }
+                if incremental && !self.should_reindex(path)? {
+                    stats.skipped += 1;
+                    continue;
+                }
 
-            self.process_codex_session_file(path, &parser, &mut stats, errors_detail);
+                self.process_codex_session_file(path, &parser, &mut stats, errors_detail);
+            }
         }
 
         self.prune_orphan_fingerprints()?;
@@ -496,7 +498,23 @@ impl SessionIndexer {
             && path
                 .file_name()
                 .and_then(|name| name.to_str())
-                .is_some_and(|name| name.starts_with("rollout-") && name.ends_with(".jsonl"))
+                .is_some_and(|name| {
+                    name.starts_with("rollout-")
+                        && (name.ends_with(".jsonl") || name.ends_with(".jsonl.zst"))
+                })
+    }
+
+    fn codex_index_roots(sessions_dir: &Path) -> Vec<PathBuf> {
+        let mut roots = vec![sessions_dir.to_path_buf()];
+        if sessions_dir.file_name().and_then(|name| name.to_str()) == Some("sessions")
+            && let Some(codex_home) = sessions_dir.parent()
+        {
+            let archived = codex_home.join("archived_sessions");
+            if archived.exists() {
+                roots.push(archived);
+            }
+        }
+        roots
     }
 
     fn prune_sidechain_session(
@@ -1749,6 +1767,53 @@ mod tests {
             .unwrap();
         assert_eq!(second.indexed, 0);
         assert!(second.skipped > 0);
+    }
+
+    #[test]
+    fn codex_indexing_includes_archived_rollouts_next_to_sessions_dir() {
+        let temp_db = NamedTempFile::new().unwrap();
+        let mut indexer = SessionIndexer::new(temp_db.path()).unwrap();
+        let temp_dir = tempfile::tempdir().unwrap();
+        let codex_home = temp_dir.path();
+        let sessions_dir = codex_home.join("sessions");
+        let archived_dir = codex_home.join("archived_sessions");
+        std::fs::create_dir_all(sessions_dir.join("2026/01/01")).unwrap();
+        std::fs::create_dir_all(&archived_dir).unwrap();
+        std::fs::write(
+            archived_dir.join("rollout-2026-01-01T00-00-00-archived.jsonl"),
+            concat!(
+                "{\"type\":\"session_meta\",\"payload\":{\"id\":\"archived-rollout\",\"timestamp\":\"2026-01-01T00:00:00Z\",\"cwd\":\"/tmp\"}}\n",
+                "{\"type\":\"event_msg\",\"timestamp\":\"2026-01-01T00:00:01Z\",\"payload\":{\"type\":\"user_message\",\"message\":\"Hi archived\"}}\n",
+                "{\"type\":\"event_msg\",\"timestamp\":\"2026-01-01T00:00:02Z\",\"payload\":{\"type\":\"agent_message\",\"message\":\"Done\"}}\n"
+            ),
+        )
+        .unwrap();
+
+        let stats = indexer
+            .index_codex_sessions_incremental(&sessions_dir)
+            .unwrap();
+
+        assert_eq!(stats.indexed, 1);
+        let exists: bool = indexer
+            .db
+            .query_row(
+                "SELECT COUNT(*) > 0 FROM sessions WHERE id = 'archived-rollout'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!(exists);
+    }
+
+    #[test]
+    fn codex_session_file_matcher_accepts_compressed_rollouts() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let path = temp_dir
+            .path()
+            .join("rollout-2026-01-01T00-00-00-session.jsonl.zst");
+        std::fs::write(&path, []).unwrap();
+
+        assert!(SessionIndexer::is_codex_session_file(&path));
     }
 
     #[test]
