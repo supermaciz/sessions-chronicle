@@ -349,7 +349,7 @@ impl SessionIndexer {
                 continue;
             };
 
-            self.index_vibe_session_dir(
+            self.index_vibe_session_tree(
                 &path,
                 &fingerprint_target,
                 incremental,
@@ -357,22 +357,58 @@ impl SessionIndexer {
                 &mut stats,
                 errors_detail,
             )?;
-
-            // Spawned agents are stored as sibling sessions under `<session>/agents/`.
-            for (child_path, child_fingerprint) in Self::vibe_agent_child_dirs(&path) {
-                self.index_vibe_session_dir(
-                    &child_path,
-                    &child_fingerprint,
-                    incremental,
-                    &parser,
-                    &mut stats,
-                    errors_detail,
-                )?;
-            }
         }
 
         self.prune_orphan_fingerprints()?;
         Ok(stats)
+    }
+
+    /// Index a Vibe session dir and, recursively, the agent children it
+    /// spawned under `<session>/agents/` (and their own children, for nested
+    /// `task` calls). Returns whether this session dir itself was (re)parsed,
+    /// so a parent can refresh its subagent links when a child appears or
+    /// changes.
+    fn index_vibe_session_tree(
+        &mut self,
+        path: &Path,
+        fingerprint_target: &Path,
+        incremental: bool,
+        parser: &MistralVibeParser,
+        stats: &mut IndexingStats,
+        errors_detail: &mut VecDeque<IndexingError>,
+    ) -> Result<bool> {
+        let mut reparsed = self.index_vibe_session_dir(
+            path,
+            fingerprint_target,
+            incremental,
+            parser,
+            stats,
+            errors_detail,
+        )?;
+
+        let mut child_changed = false;
+        for (child_path, child_fingerprint) in Self::vibe_agent_child_dirs(path) {
+            child_changed |= self.index_vibe_session_tree(
+                &child_path,
+                &child_fingerprint,
+                incremental,
+                parser,
+                stats,
+                errors_detail,
+            )?;
+        }
+
+        // A child directory only contributes to the parent's subagent links
+        // (e.g. `child_session_id`) at parse time. If a child appeared or
+        // changed but the parent was skipped by its `messages.jsonl`
+        // fingerprint, those links would stay stale; force a reparse.
+        if incremental && child_changed && !reparsed {
+            stats.skipped = stats.skipped.saturating_sub(1);
+            self.process_vibe_session_dir(path, fingerprint_target, parser, stats, errors_detail)?;
+            reparsed = true;
+        }
+
+        Ok(reparsed)
     }
 
     fn index_vibe_session_dir(
@@ -383,13 +419,14 @@ impl SessionIndexer {
         parser: &MistralVibeParser,
         stats: &mut IndexingStats,
         errors_detail: &mut VecDeque<IndexingError>,
-    ) -> Result<()> {
+    ) -> Result<bool> {
         if incremental && !self.should_reindex(fingerprint_target)? {
             stats.skipped += 1;
-            return Ok(());
+            return Ok(false);
         }
 
-        self.process_vibe_session_dir(path, fingerprint_target, parser, stats, errors_detail)
+        self.process_vibe_session_dir(path, fingerprint_target, parser, stats, errors_detail)?;
+        Ok(true)
     }
 
     /// Enumerate the child agent session dirs under `<session_dir>/agents/`,
@@ -1991,6 +2028,170 @@ mod tests {
             )
             .unwrap();
         assert_eq!(linked_child, "child-session");
+    }
+
+    fn write_vibe_session_dir(
+        dir: &Path,
+        session_id: &str,
+        agent_name: Option<&str>,
+        messages: &[String],
+    ) {
+        std::fs::create_dir_all(dir).unwrap();
+        let mut meta = serde_json::json!({
+            "session_id": session_id,
+            "parent_session_id": null,
+            "start_time": "2026-01-01T00:00:00Z",
+            "end_time": "2026-01-01T00:01:00Z",
+            "environment": { "working_directory": "/tmp" }
+        });
+        if let Some(name) = agent_name {
+            meta["agent_profile"] = serde_json::json!({ "name": name });
+        }
+        std::fs::write(dir.join("meta.json"), meta.to_string()).unwrap();
+        std::fs::write(dir.join("messages.jsonl"), messages.join("\n")).unwrap();
+    }
+
+    fn vibe_task_messages(agent: &str, call_id: &str) -> Vec<String> {
+        let task_args = serde_json::json!({ "agent": agent, "task": "Review" }).to_string();
+        vec![
+            serde_json::json!({ "role": "user", "content": "Ask the agent" }).to_string(),
+            serde_json::json!({
+                "role": "assistant",
+                "tool_calls": [{
+                    "id": call_id,
+                    "type": "function",
+                    "function": { "name": "task", "arguments": task_args }
+                }]
+            })
+            .to_string(),
+            serde_json::json!({
+                "role": "tool",
+                "tool_call_id": call_id,
+                "content": "Punchline"
+            })
+            .to_string(),
+        ]
+    }
+
+    fn vibe_plain_messages() -> Vec<String> {
+        vec![
+            serde_json::json!({ "role": "user", "content": "Do the bit" }).to_string(),
+            serde_json::json!({ "role": "assistant", "content": "Here is my bit" }).to_string(),
+        ]
+    }
+
+    #[test]
+    fn vibe_indexing_descends_into_nested_grandchildren() {
+        let temp_db = NamedTempFile::new().unwrap();
+        let mut indexer = SessionIndexer::new(temp_db.path()).unwrap();
+        let temp_dir = tempfile::tempdir().unwrap();
+        let sessions_dir = temp_dir.path();
+
+        let parent_dir = sessions_dir.join("session_parent");
+        let child_dir = parent_dir.join("agents").join("comique_20260101_000100");
+        let grandchild_dir = child_dir.join("agents").join("clown_20260101_000200");
+
+        write_vibe_session_dir(
+            &parent_dir,
+            "parent-session",
+            None,
+            &vibe_task_messages("comique", "call_1"),
+        );
+        write_vibe_session_dir(
+            &child_dir,
+            "child-session",
+            Some("comique"),
+            &vibe_task_messages("clown", "call_2"),
+        );
+        write_vibe_session_dir(
+            &grandchild_dir,
+            "grandchild-session",
+            Some("clown"),
+            &vibe_plain_messages(),
+        );
+
+        let stats = indexer
+            .index_vibe_sessions_incremental(sessions_dir)
+            .unwrap();
+        assert_eq!(stats.indexed, 3);
+
+        let gc_is_subagent: i64 = indexer
+            .db
+            .query_row(
+                "SELECT is_subagent FROM sessions WHERE id = 'grandchild-session'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(gc_is_subagent, 1);
+
+        let linked: String = indexer
+            .db
+            .query_row(
+                "SELECT child_session_id FROM subagents WHERE session_id = 'child-session'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(linked, "grandchild-session");
+    }
+
+    #[test]
+    fn vibe_incremental_relinks_parent_when_child_appears_later() {
+        let temp_db = NamedTempFile::new().unwrap();
+        let mut indexer = SessionIndexer::new(temp_db.path()).unwrap();
+        let temp_dir = tempfile::tempdir().unwrap();
+        let sessions_dir = temp_dir.path();
+        let parent_dir = sessions_dir.join("session_parent");
+
+        // First pass: the parent already logged the `task` call, but the child
+        // directory has not appeared yet, so the link cannot resolve.
+        write_vibe_session_dir(
+            &parent_dir,
+            "parent-session",
+            None,
+            &vibe_task_messages("comique", "call_1"),
+        );
+        let first = indexer
+            .index_vibe_sessions_incremental(sessions_dir)
+            .unwrap();
+        assert_eq!(first.indexed, 1);
+
+        let unlinked: i64 = indexer
+            .db
+            .query_row(
+                "SELECT COUNT(*) FROM subagents \
+                 WHERE session_id = 'parent-session' AND child_session_id IS NULL",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(unlinked, 1);
+
+        // Child directory appears later; the parent's messages.jsonl is unchanged,
+        // so the fingerprint check alone would skip the parent and leave the link
+        // dangling. The child change must trigger a parent reparse.
+        let child_dir = parent_dir.join("agents").join("comique_20260101_000100");
+        write_vibe_session_dir(
+            &child_dir,
+            "child-session",
+            Some("comique"),
+            &vibe_plain_messages(),
+        );
+
+        indexer
+            .index_vibe_sessions_incremental(sessions_dir)
+            .unwrap();
+
+        let linked: String = indexer
+            .db
+            .query_row(
+                "SELECT child_session_id FROM subagents WHERE session_id = 'parent-session'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(linked, "child-session");
     }
 
     #[test]
