@@ -33,8 +33,18 @@ The default path can be overridden via:
 ```
 session_YYYYMMDD_HHMMSS_<shortid>/
 ├── meta.json        # Session-level metadata, timestamps, config snapshot
-└── messages.jsonl   # OpenAI-style chat transcript (one message per line)
+├── messages.jsonl   # OpenAI-style chat transcript (one message per line)
+└── agents/          # Present only when the session spawned sub-agents
+    └── <agent>_YYYYMMDD_HHMMSS_<shortid>/
+        ├── meta.json
+        └── messages.jsonl
 ```
+
+Each spawned sub-agent (via the `task` tool) is logged as its **own**
+self-contained session directory under the parent's `agents/` folder, named
+with the agent profile as prefix (for example `comique_20260609_121044_57ffdbcd/`).
+The parent/child relationship is encoded by this directory layout, **not** by a
+metadata field. See [Threading](#threading).
 
 ---
 
@@ -45,7 +55,7 @@ Session-level metadata:
 | Field | Description |
 |-------|-------------|
 | `session_id` | UUID |
-| `parent_session_id` | Optional id of a parent session (sub-session linkage); see [Threading](#threading) |
+| `parent_session_id` | Present but **always `null`** in observed sessions (including sub-agent children); parent linkage is directory-based instead — see [Threading](#threading) |
 | `start_time` | ISO-8601 string |
 | `end_time` | ISO-8601 string |
 | `environment.working_directory` | Working directory |
@@ -58,7 +68,7 @@ Session-level metadata:
 | `stats` | Token usage, tool call counters, other session metrics |
 | `tools_available` | Set of tools available to the agent for the session |
 | `config` | Optional config snapshot: `active_model`, `providers`, `models` arrays |
-| `agent_profile` | Optional selected profile/override metadata |
+| `agent_profile` | Optional selected profile/override metadata. On sub-agent child sessions, `agent_profile.name` holds the agent name (e.g. `"comique"`) used to pair the child with the parent's `task` call — see [Threading](#threading) |
 | `system_prompt` | System message object (`{"role": "system", "content": "..."}`) — moved here from `messages.jsonl` |
 | `loops` | Optional; agent loop metadata (added conditionally) |
 | `experiments` | Optional; experiment flags (added conditionally) |
@@ -194,11 +204,41 @@ Arguments are stored as JSON-encoded strings (`tool_calls[*].function.arguments`
 Linear message list in `messages.jsonl`.
 Tool calls are embedded in assistant messages and resolved by subsequent `tool` role messages.
 
-`meta.json` now carries an optional `parent_session_id` field, which links a
-session to a parent session (sub-session linkage). The exact on-disk shape from a
-captured real session has not yet been confirmed, and the Sessions Chronicle
-parser does not currently read it (the model field is set to `None`). No inline
-subagent transcript model has been observed within a single `messages.jsonl`.
+### Sub-agents
+
+A session delegates work to a sub-agent through the **`task` tool call**, whose
+JSON arguments carry the agent name and the delegated prompt:
+
+```json
+{
+  "role": "assistant",
+  "tool_calls": [
+    {
+      "id": "YuV7lzFC6",
+      "type": "function",
+      "function": {
+        "name": "task",
+        "arguments": "{\"task\": \"Review the README\", \"agent\": \"comique\"}"
+      }
+    }
+  ]
+}
+```
+
+The sub-agent's final response comes back as the matching `tool` result
+(`tool_call_id == "YuV7lzFC6"`), while its **full transcript** is logged as a
+separate child session directory under `<parent>/agents/<agent>_*/`.
+
+Linkage is entirely **directory- and name-based**; `meta.json.parent_session_id`
+is `null` on both sides and carries no linkage:
+
+- The child knows its parent because it lives under `<parent>/agents/`.
+- A parent `task` call is paired to a child by matching the call's `agent`
+  argument against the child's `agent_profile.name`, in chronological order when
+  the same agent is invoked more than once.
+
+No inline sub-agent transcript model exists within a single `messages.jsonl`;
+the child transcript is always a distinct session file.
 
 ---
 
@@ -321,6 +361,19 @@ fn extract_vibe_content(event: &Value) -> Option<String> {
 - Arguments are stored as JSON-encoded strings (`tool_calls[*].function.arguments`)
 - Current parser behavior: indexes assistant `tool_calls[]` entries and correlates
   `role == "tool"` outputs by `tool_call_id`; uncorrelated outputs are skipped
+
+**Sub-agent handling:**
+
+- A child session is detected when its directory's parent is named `agents/`;
+  `parent_session_id` is then derived from the grandparent `meta.json` and the
+  session is marked `is_subagent`.
+- The indexer descends into `<session>/agents/` so each child is indexed as its
+  own (hidden) session.
+- A `task` tool call is surfaced as a navigable **subagent** transcript item
+  (not a plain tool call). Its `child_session_id` is resolved at parse time by
+  pairing the call's `agent` argument with a child under `agents/`
+  (by `agent_profile.name`, chronological for repeats); the `tool` result is
+  captured as the subagent's `result_summary`.
 
 **Streaming:** Use `BufReader` line-by-line iteration on `messages.jsonl` —
 do not load entire JSONL into memory.
