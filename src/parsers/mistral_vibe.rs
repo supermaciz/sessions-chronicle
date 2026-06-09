@@ -53,9 +53,10 @@ impl MistralVibeParser {
         let session_model =
             normalize_model(metadata.get("config").and_then(|c| c.get("active_model")));
 
-        // Mistral Vibe encodes the parent/child relationship through the
-        // directory layout (`<parent>/agents/<agent>_*`), not a metadata field
-        // (`parent_session_id` is always null in real sessions).
+        // Mistral Vibe encodes task-spawned subagents through the directory
+        // layout (`<parent>/agents/<agent>_*`). The generic metadata
+        // `parent_session_id` field is used by other session-lineage flows and
+        // is not proof that a session is a subagent.
         let parent_session_id = Self::parent_session_id_from_dir(session_dir);
         let is_subagent = parent_session_id.is_some();
 
@@ -447,6 +448,9 @@ impl MistralVibeParser {
         let Some(value) = arguments.and_then(|raw| serde_json::from_str::<Value>(raw).ok()) else {
             return (None, None);
         };
+        if !value.is_object() {
+            return (None, None);
+        }
         let pick = |key: &str| {
             value
                 .get(key)
@@ -454,7 +458,10 @@ impl MistralVibeParser {
                 .filter(|text| !text.trim().is_empty())
                 .map(str::to_string)
         };
-        (pick("agent"), pick("task"))
+        (
+            pick("agent").or_else(|| Some("explore".to_string())),
+            pick("task"),
+        )
     }
 
     fn read_json(path: &Path) -> Result<Value> {
@@ -666,6 +673,37 @@ mod tests {
         assert_eq!(
             subagent_item.subagent_id.as_deref(),
             Some(subagent.id.as_str())
+        );
+    }
+
+    #[test]
+    fn parse_links_task_without_agent_argument_to_default_explore_child() {
+        let temp_dir = TempDir::new().unwrap();
+        let parent_dir = temp_dir.path().join("session_parent");
+        let child_dir = parent_dir.join("agents").join("explore_20260203_191500");
+
+        write_session_meta(&parent_dir, "parent-session", None);
+        write_session_meta(&child_dir, "child-session", Some("explore"));
+        write_messages(
+            &child_dir.join("messages.jsonl"),
+            &[r#"{"role":"user","content":"Inspect the project"}"#],
+        );
+        write_messages(
+            &parent_dir.join("messages.jsonl"),
+            &[
+                r#"{"role":"user","content":"Explore the project"}"#,
+                r#"{"role":"assistant","tool_calls":[{"id":"call_1","function":{"name":"task","arguments":"{\"task\":\"Inspect the project\"}"},"type":"function"}]}"#,
+                r#"{"role":"tool","tool_call_id":"call_1","content":"response: Done\nturns_used: 1\ncompleted: true"}"#,
+            ],
+        );
+
+        let parsed = MistralVibeParser.parse(&parent_dir).unwrap();
+
+        assert_eq!(parsed.subagents.len(), 1);
+        assert_eq!(parsed.subagents[0].agent_id.as_deref(), Some("explore"));
+        assert_eq!(
+            parsed.subagents[0].child_session_id.as_deref(),
+            Some("child-session")
         );
     }
 

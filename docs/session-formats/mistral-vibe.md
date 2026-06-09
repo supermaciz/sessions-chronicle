@@ -55,7 +55,7 @@ Session-level metadata:
 | Field | Description |
 |-------|-------------|
 | `session_id` | UUID |
-| `parent_session_id` | Present but **always `null`** in observed sessions (including sub-agent children); parent linkage is directory-based instead — see [Threading](#threading) |
+| `parent_session_id` | Optional generic session-lineage field used by Vibe for flows such as forks/resets. Sub-agent children created by the `task` tool do **not** set it; their parent linkage is directory-based instead — see [Threading](#threading) |
 | `start_time` | ISO-8601 string |
 | `end_time` | ISO-8601 string |
 | `environment.working_directory` | Working directory |
@@ -225,20 +225,36 @@ JSON arguments carry the agent name and the delegated prompt:
 }
 ```
 
+The `agent` argument is optional in upstream `TaskArgs`; when omitted, Vibe uses
+the built-in `explore` subagent.
+
 The sub-agent's final response comes back as the matching `tool` result
 (`tool_call_id == "YuV7lzFC6"`), while its **full transcript** is logged as a
 separate child session directory under `<parent>/agents/<agent>_*/`.
+The persisted tool-result content is Vibe's plain-text rendering of `TaskResult`
+(`response`, `turns_used`, and `completed`); Sessions Chronicle stores that full
+content as the subagent result summary.
 
-Linkage is entirely **directory- and name-based**; `meta.json.parent_session_id`
-is `null` on both sides and carries no linkage:
+For sub-agents created by `task`, linkage is **directory- and name-based**;
+`meta.json.parent_session_id` is not set on the child and carries no sub-agent
+linkage:
 
 - The child knows its parent because it lives under `<parent>/agents/`.
 - A parent `task` call is paired to a child by matching the call's `agent`
-  argument against the child's `agent_profile.name`, in chronological order when
-  the same agent is invoked more than once.
+  argument against the child's `agent_profile.name`.
+
+Vibe does not persist the parent tool-call id in the child metadata. Sessions
+Chronicle therefore pairs repeated calls to the same agent profile with child
+directories in chronological order. This is deterministic for sequential calls,
+but remains a best-effort heuristic when same-profile `task` calls execute in
+parallel.
 
 No inline sub-agent transcript model exists within a single `messages.jsonl`;
 the child transcript is always a distinct session file.
+
+The generic `parent_session_id` field has a separate meaning in upstream Vibe:
+it can identify lineage for forked or reset sessions. Sessions Chronicle does
+not treat that field alone as proof that a session is a sub-agent.
 
 ---
 
@@ -332,8 +348,9 @@ It does **not** contain the full assistant/tool transcript.
 Current implementation: `src/parsers/mistral_vibe.rs`
 
 - Indexes `role == user|assistant` text
-- Skips `role == tool` records
-- Skips assistant records that only contain `tool_calls` with empty text
+- Uses `role == tool` records to complete matching tool calls or subagent results,
+  but does not render them as standalone messages
+- Indexes assistant `tool_calls` even when assistant text is empty
 
 **Title extraction:** First `messages.jsonl` entry where `role == "user"` and `content` is non-empty.
 
@@ -372,8 +389,12 @@ fn extract_vibe_content(event: &Value) -> Option<String> {
 - A `task` tool call is surfaced as a navigable **subagent** transcript item
   (not a plain tool call). Its `child_session_id` is resolved at parse time by
   pairing the call's `agent` argument with a child under `agents/`
-  (by `agent_profile.name`, chronological for repeats); the `tool` result is
-  captured as the subagent's `result_summary`.
+  (by `agent_profile.name`, chronological best-effort pairing for repeats); the
+  `tool` result is captured as the subagent's `result_summary`.
+- A missing `task.agent` argument is normalized to upstream's default
+  subagent, `explore`.
+- Generic `meta.json.parent_session_id` lineage is not interpreted as subagent
+  linkage.
 
 **Streaming:** Use `BufReader` line-by-line iteration on `messages.jsonl` —
 do not load entire JSONL into memory.
@@ -384,9 +405,10 @@ do not load entire JSONL into memory.
 
 - [Mistral Vibe Repository](https://github.com/mistralai/mistral-vibe)
 - [Mistral Vibe session logger (`meta.json` + `messages.jsonl` + config dump)](https://github.com/mistralai/mistral-vibe/blob/main/vibe/core/session/session_logger.py)
+- [Mistral Vibe `task` tool (subagent trace location and agent-prefixed directory naming)](https://github.com/mistralai/mistral-vibe/blob/main/vibe/core/tools/builtins/task.py)
 - [Mistral Vibe session loader (filename constants `METADATA_FILENAME` = `meta.json`, `MESSAGES_FILENAME` = `messages.jsonl`)](https://github.com/mistralai/mistral-vibe/blob/main/vibe/core/session/session_loader.py)
 - [Mistral Vibe message/session models (`SessionMetadata`, `LLMMessage`, `AgentStats`)](https://github.com/mistralai/mistral-vibe/blob/main/vibe/core/types.py)
-- [Mistral Vibe CHANGELOG (verified through 2.14.0, 2026-06-04)](https://github.com/mistralai/mistral-vibe/blob/main/CHANGELOG.md)
+- [Mistral Vibe CHANGELOG (verified through 2.14.1, 2026-06-08)](https://github.com/mistralai/mistral-vibe/blob/main/CHANGELOG.md)
 - [Mistral Vibe Configuration Docs](https://docs.mistral.ai/mistral-vibe/introduction/configuration)
 - [Mistral Vibe system prompt skill section (`<available_skills>`)](https://github.com/mistralai/mistral-vibe/blob/main/vibe/core/system_prompt.py)
 - [Mistral Vibe CLI skill slash-command handler](https://github.com/mistralai/mistral-vibe/blob/main/vibe/cli/textual_ui/app.py)
