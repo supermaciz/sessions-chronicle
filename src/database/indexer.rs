@@ -347,22 +347,66 @@ impl SessionIndexer {
             else {
                 continue;
             };
-            if incremental && !self.should_reindex(&fingerprint_target)? {
-                stats.skipped += 1;
-                continue;
-            }
 
-            self.process_vibe_session_dir(
+            self.index_vibe_session_dir(
                 &path,
                 &fingerprint_target,
+                incremental,
                 &parser,
                 &mut stats,
                 errors_detail,
             )?;
+
+            // Spawned agents are stored as sibling sessions under `<session>/agents/`.
+            for (child_path, child_fingerprint) in Self::vibe_agent_child_dirs(&path) {
+                self.index_vibe_session_dir(
+                    &child_path,
+                    &child_fingerprint,
+                    incremental,
+                    &parser,
+                    &mut stats,
+                    errors_detail,
+                )?;
+            }
         }
 
         self.prune_orphan_fingerprints()?;
         Ok(stats)
+    }
+
+    fn index_vibe_session_dir(
+        &mut self,
+        path: &Path,
+        fingerprint_target: &Path,
+        incremental: bool,
+        parser: &MistralVibeParser,
+        stats: &mut IndexingStats,
+        errors_detail: &mut VecDeque<IndexingError>,
+    ) -> Result<()> {
+        if incremental && !self.should_reindex(fingerprint_target)? {
+            stats.skipped += 1;
+            return Ok(());
+        }
+
+        self.process_vibe_session_dir(path, fingerprint_target, parser, stats, errors_detail)
+    }
+
+    /// Enumerate the child agent session dirs under `<session_dir>/agents/`,
+    /// returning `(session_dir, messages.jsonl)` pairs for each valid one.
+    fn vibe_agent_child_dirs(session_dir: &Path) -> Vec<(PathBuf, PathBuf)> {
+        let Ok(entries) = std::fs::read_dir(session_dir.join("agents")) else {
+            return Vec::new();
+        };
+
+        let mut children = Vec::new();
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let fingerprint_target = path.join("messages.jsonl");
+            if path.is_dir() && path.join("meta.json").exists() && fingerprint_target.exists() {
+                children.push((path, fingerprint_target));
+            }
+        }
+        children
     }
 
     fn process_vibe_session_dir(
@@ -1814,6 +1858,99 @@ mod tests {
         std::fs::write(&path, []).unwrap();
 
         assert!(SessionIndexer::is_codex_session_file(&path));
+    }
+
+    #[test]
+    fn vibe_indexing_indexes_agent_children_and_links_parent() {
+        let temp_db = NamedTempFile::new().unwrap();
+        let mut indexer = SessionIndexer::new(temp_db.path()).unwrap();
+        let temp_dir = tempfile::tempdir().unwrap();
+        let sessions_dir = temp_dir.path();
+        let parent_dir = sessions_dir.join("session_parent");
+        let child_dir = parent_dir.join("agents").join("comique_20260101_000100");
+        std::fs::create_dir_all(&child_dir).unwrap();
+
+        std::fs::write(
+            parent_dir.join("meta.json"),
+            serde_json::json!({
+                "session_id": "parent-session",
+                "parent_session_id": null,
+                "start_time": "2026-01-01T00:00:00Z",
+                "end_time": "2026-01-01T00:01:00Z",
+                "environment": { "working_directory": "/tmp" }
+            })
+            .to_string(),
+        )
+        .unwrap();
+        let task_args = serde_json::json!({ "agent": "comique", "task": "Review" }).to_string();
+        let parent_messages = [
+            serde_json::json!({ "role": "user", "content": "Ask the comedian" }).to_string(),
+            serde_json::json!({
+                "role": "assistant",
+                "tool_calls": [{
+                    "id": "call_1",
+                    "type": "function",
+                    "function": { "name": "task", "arguments": task_args }
+                }]
+            })
+            .to_string(),
+            serde_json::json!({
+                "role": "tool",
+                "tool_call_id": "call_1",
+                "content": "Punchline"
+            })
+            .to_string(),
+        ];
+        std::fs::write(
+            parent_dir.join("messages.jsonl"),
+            parent_messages.join("\n"),
+        )
+        .unwrap();
+
+        std::fs::write(
+            child_dir.join("meta.json"),
+            serde_json::json!({
+                "session_id": "child-session",
+                "parent_session_id": null,
+                "start_time": "2026-01-01T00:01:00Z",
+                "end_time": "2026-01-01T00:01:30Z",
+                "environment": { "working_directory": "/tmp" },
+                "agent_profile": { "name": "comique" }
+            })
+            .to_string(),
+        )
+        .unwrap();
+        let child_messages = [
+            serde_json::json!({ "role": "user", "content": "Do the bit" }).to_string(),
+            serde_json::json!({ "role": "assistant", "content": "Here is my bit" }).to_string(),
+        ];
+        std::fs::write(child_dir.join("messages.jsonl"), child_messages.join("\n")).unwrap();
+
+        let stats = indexer
+            .index_vibe_sessions_incremental(sessions_dir)
+            .unwrap();
+
+        assert_eq!(stats.indexed, 2);
+
+        let child_is_subagent: i64 = indexer
+            .db
+            .query_row(
+                "SELECT is_subagent FROM sessions WHERE id = 'child-session'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(child_is_subagent, 1);
+
+        let linked_child: String = indexer
+            .db
+            .query_row(
+                "SELECT child_session_id FROM subagents WHERE session_id = 'parent-session'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(linked_child, "child-session");
     }
 
     #[test]

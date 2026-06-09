@@ -1,14 +1,14 @@
 use anyhow::{Context, Result};
 use chrono::{DateTime, Duration, NaiveDateTime, TimeZone, Utc};
 use serde_json::Value;
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::path::Path;
 
 use crate::models::{
-    AiAssistant, Message, ReasoningAttachment, Role, Session, TokenUsage, ToolCall, ToolCallStatus,
-    TranscriptItem, TranscriptItemKind,
+    AiAssistant, Message, ReasoningAttachment, Role, Session, Subagent, TokenUsage, ToolCall,
+    ToolCallStatus, TranscriptItem, TranscriptItemKind,
 };
 use crate::parsers::ParsedSession;
 use crate::parsers::model::normalize_model;
@@ -53,12 +53,16 @@ impl MistralVibeParser {
         let session_model =
             normalize_model(metadata.get("config").and_then(|c| c.get("active_model")));
 
-        let parent_session_id = metadata
-            .get("parent_session_id")
-            .and_then(|v| v.as_str())
-            .map(str::to_string)
-            .filter(|value| !value.trim().is_empty());
+        // Mistral Vibe encodes the parent/child relationship through the
+        // directory layout (`<parent>/agents/<agent>_*`), not a metadata field
+        // (`parent_session_id` is always null in real sessions).
+        let parent_session_id = Self::parent_session_id_from_dir(session_dir);
         let is_subagent = parent_session_id.is_some();
+
+        // Map each spawned agent's profile name to the child session ids it
+        // produced (chronological), so `task` tool calls can be paired with the
+        // session they spawned.
+        let mut children_by_agent = Self::discover_subagent_children(session_dir);
 
         let token_usage = metadata.get("stats").and_then(|stats| {
             let prompt = stats.get("session_prompt_tokens")?.as_i64()?;
@@ -78,12 +82,16 @@ impl MistralVibeParser {
 
         let mut messages: Vec<Message> = Vec::new();
         let mut tool_calls: Vec<ToolCall> = Vec::new();
+        let mut subagents: Vec<Subagent> = Vec::new();
         let mut transcript_items: Vec<TranscriptItem> = Vec::new();
         let mut reasoning_attachments: Vec<ReasoningAttachment> = Vec::new();
         let mut pending_reasoning: Option<ReasoningAttachment> = None;
         let mut has_user_message = false;
         // Maps the raw tool_call id from the JSON → index in tool_calls vec for result correlation
         let mut pending_calls: HashMap<String, usize> = HashMap::new();
+        // Maps the raw tool_call id of a `task` call → index in subagents vec,
+        // so the spawned agent's response can be captured as its result.
+        let mut pending_subagent_calls: HashMap<String, usize> = HashMap::new();
 
         for line in reader.lines() {
             let line = line.context("Failed to read line")?;
@@ -97,16 +105,19 @@ impl MistralVibeParser {
             match role {
                 Some("system") => continue,
                 Some("tool") => {
-                    // Correlate tool result with the pending ToolCall by tool_call_id
-                    if let Some(raw_id) = event.get("tool_call_id").and_then(|v| v.as_str())
-                        && let Some(&tc_idx) = pending_calls.get(raw_id)
-                    {
+                    // Correlate tool result with the pending ToolCall (or
+                    // subagent `task` call) by tool_call_id.
+                    if let Some(raw_id) = event.get("tool_call_id").and_then(|v| v.as_str()) {
                         let output = event
                             .get("content")
                             .and_then(|v| v.as_str())
                             .map(str::to_string);
-                        tool_calls[tc_idx].output_text = output;
-                        tool_calls[tc_idx].status = ToolCallStatus::Completed;
+                        if let Some(&tc_idx) = pending_calls.get(raw_id) {
+                            tool_calls[tc_idx].output_text = output;
+                            tool_calls[tc_idx].status = ToolCallStatus::Completed;
+                        } else if let Some(&sa_idx) = pending_subagent_calls.get(raw_id) {
+                            subagents[sa_idx].result_summary = output;
+                        }
                     }
                 }
                 Some("user") => {
@@ -205,6 +216,47 @@ impl MistralVibeParser {
                                 .and_then(|v| v.as_str())
                                 .map(str::to_string);
 
+                            // The `task` tool spawns a child agent session; surface
+                            // it as a navigable subagent rather than a plain call.
+                            if tool_name == "task" {
+                                let (agent_name, task_prompt) =
+                                    Self::extract_task_arguments(input_json.as_deref());
+                                let child_session_id = agent_name
+                                    .as_deref()
+                                    .and_then(|name| children_by_agent.get_mut(name))
+                                    .and_then(|queue| queue.pop_front());
+                                let subagent_id = format!("{}-{}", session_id, raw_id);
+                                let item_idx = transcript_items.len() as i64;
+                                let sa_idx = subagents.len();
+
+                                pending_subagent_calls.insert(raw_id, sa_idx);
+                                subagents.push(Subagent {
+                                    id: subagent_id.clone(),
+                                    agent_id: agent_name.clone(),
+                                    session_id: session_id.clone(),
+                                    title: agent_name
+                                        .clone()
+                                        .unwrap_or_else(|| "Subagent".to_string()),
+                                    prompt: task_prompt,
+                                    result_summary: None,
+                                    child_session_id,
+                                    parser_ref: Some(subagent_id.clone()),
+                                });
+                                transcript_items.push(TranscriptItem {
+                                    session_id: session_id.clone(),
+                                    item_index: item_idx,
+                                    kind: TranscriptItemKind::Subagent,
+                                    message_index: None,
+                                    tool_call_id: None,
+                                    subagent_id: Some(subagent_id),
+                                });
+                                if let Some(mut attachment) = pending_reasoning.take() {
+                                    attachment.transcript_item_index = item_idx;
+                                    reasoning_attachments.push(attachment);
+                                }
+                                continue;
+                            }
+
                             let tc_idx = tool_calls.len();
                             let item_idx = transcript_items.len() as i64;
                             let tc_id = format!("{}-{}", session_id, raw_id);
@@ -277,7 +329,7 @@ impl MistralVibeParser {
             },
             messages,
             tool_calls,
-            subagents: Vec::new(),
+            subagents,
             transcript_items,
             reasoning_attachments,
             token_usage,
@@ -319,6 +371,90 @@ impl MistralVibeParser {
             timestamp,
             model,
         });
+    }
+
+    /// Derive the parent session id when `session_dir` is a child agent
+    /// transcript, i.e. it lives under `<parent>/agents/<agent>_*`.
+    fn parent_session_id_from_dir(session_dir: &Path) -> Option<String> {
+        let parent = session_dir.parent()?;
+        if parent.file_name().and_then(|name| name.to_str()) != Some("agents") {
+            return None;
+        }
+        let meta = Self::read_json(&parent.parent()?.join("meta.json")).ok()?;
+        meta.get("session_id")
+            .and_then(|v| v.as_str())
+            .map(str::to_string)
+            .filter(|value| !value.trim().is_empty())
+    }
+
+    /// Collect the child sessions spawned by this session, keyed by agent
+    /// profile name and ordered chronologically within each name so repeated
+    /// `task` calls to the same agent pair with the right child.
+    fn discover_subagent_children(session_dir: &Path) -> HashMap<String, VecDeque<String>> {
+        let Ok(entries) = std::fs::read_dir(session_dir.join("agents")) else {
+            return HashMap::new();
+        };
+
+        // (agent_name, start_time, dir_name, session_id)
+        let mut children: Vec<(String, DateTime<Utc>, String, String)> = Vec::new();
+        for entry in entries.flatten() {
+            let dir = entry.path();
+            if !dir.is_dir() {
+                continue;
+            }
+            let Ok(meta) = Self::read_json(&dir.join("meta.json")) else {
+                continue;
+            };
+            let Some(child_id) = meta
+                .get("session_id")
+                .and_then(|v| v.as_str())
+                .filter(|value| !value.trim().is_empty())
+            else {
+                continue;
+            };
+            let dir_name = dir
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or_default()
+                .to_string();
+            let agent_name = meta
+                .get("agent_profile")
+                .and_then(|profile| profile.get("name"))
+                .and_then(|v| v.as_str())
+                .filter(|value| !value.trim().is_empty())
+                .map(str::to_string)
+                .or_else(|| dir_name.split('_').next().map(str::to_string))
+                .unwrap_or_default();
+            let start_time = meta
+                .get("start_time")
+                .and_then(|v| v.as_str())
+                .and_then(|value| Self::parse_timestamp(value).ok())
+                .unwrap_or_else(|| DateTime::<Utc>::from_timestamp(0, 0).unwrap());
+            children.push((agent_name, start_time, dir_name, child_id.to_string()));
+        }
+
+        children.sort_by(|a, b| a.1.cmp(&b.1).then_with(|| a.2.cmp(&b.2)));
+
+        let mut by_agent: HashMap<String, VecDeque<String>> = HashMap::new();
+        for (agent_name, _, _, child_id) in children {
+            by_agent.entry(agent_name).or_default().push_back(child_id);
+        }
+        by_agent
+    }
+
+    /// Extract `(agent, task)` from a `task` tool call's JSON arguments string.
+    fn extract_task_arguments(arguments: Option<&str>) -> (Option<String>, Option<String>) {
+        let Some(value) = arguments.and_then(|raw| serde_json::from_str::<Value>(raw).ok()) else {
+            return (None, None);
+        };
+        let pick = |key: &str| {
+            value
+                .get(key)
+                .and_then(|v| v.as_str())
+                .filter(|text| !text.trim().is_empty())
+                .map(str::to_string)
+        };
+        (pick("agent"), pick("task"))
     }
 
     fn read_json(path: &Path) -> Result<Value> {
@@ -446,33 +582,91 @@ mod tests {
         assert_eq!(session.start_time, expected);
     }
 
-    #[test]
-    fn parse_reads_parent_session_id_from_metadata() {
-        let temp_dir = TempDir::new().unwrap();
-        let root = temp_dir.path();
-        let meta = json!({
-            "session_id": "child-session",
-            "parent_session_id": "parent-session",
+    fn write_session_meta(dir: &Path, session_id: &str, agent_name: Option<&str>) {
+        let mut meta = json!({
+            "session_id": session_id,
+            "parent_session_id": null,
             "start_time": "2026-02-03T19:14:51Z",
             "end_time": "2026-02-03T19:16:05Z",
             "environment": { "working_directory": "/tmp/project" }
         });
-        fs::write(root.join("meta.json"), serde_json::to_vec(&meta).unwrap()).unwrap();
+        if let Some(name) = agent_name {
+            meta["agent_profile"] = json!({ "name": name });
+        }
+        fs::create_dir_all(dir).unwrap();
+        fs::write(dir.join("meta.json"), serde_json::to_vec(&meta).unwrap()).unwrap();
+    }
+
+    #[test]
+    fn parse_marks_child_in_agents_dir_as_subagent_with_parent_id() {
+        let temp_dir = TempDir::new().unwrap();
+        let parent_dir = temp_dir.path().join("session_parent");
+        let child_dir = parent_dir.join("agents").join("comique_20260203_191500");
+
+        write_session_meta(&parent_dir, "parent-session", None);
+        write_session_meta(&child_dir, "child-session", Some("comique"));
         write_messages(
-            &root.join("messages.jsonl"),
+            &child_dir.join("messages.jsonl"),
             &[
-                r#"{"role":"user","content":"Hi"}"#,
-                r#"{"role":"assistant","content":"Hello"}"#,
+                r#"{"role":"user","content":"Do the bit"}"#,
+                r#"{"role":"assistant","content":"Here is my bit"}"#,
             ],
         );
 
-        let parsed = MistralVibeParser.parse(root).unwrap();
+        let parsed = MistralVibeParser.parse(&child_dir).unwrap();
 
+        assert!(parsed.session.is_subagent);
         assert_eq!(
             parsed.session.parent_session_id.as_deref(),
             Some("parent-session")
         );
-        assert!(parsed.session.is_subagent);
+    }
+
+    #[test]
+    fn parse_links_task_tool_call_to_spawned_child_session() {
+        let temp_dir = TempDir::new().unwrap();
+        let parent_dir = temp_dir.path().join("session_parent");
+        let child_dir = parent_dir.join("agents").join("comique_20260203_191500");
+
+        write_session_meta(&parent_dir, "parent-session", None);
+        write_session_meta(&child_dir, "child-session", Some("comique"));
+        write_messages(
+            &child_dir.join("messages.jsonl"),
+            &[r#"{"role":"user","content":"Do the bit"}"#],
+        );
+        write_messages(
+            &parent_dir.join("messages.jsonl"),
+            &[
+                r#"{"role":"user","content":"Ask the comedian"}"#,
+                r#"{"role":"assistant","tool_calls":[{"id":"call_1","function":{"name":"task","arguments":"{\"agent\":\"comique\",\"task\":\"Review the README\"}"},"type":"function"}]}"#,
+                r#"{"role":"tool","tool_call_id":"call_1","content":"Here is the punchline"}"#,
+            ],
+        );
+
+        let parsed = MistralVibeParser.parse(&parent_dir).unwrap();
+
+        assert!(!parsed.session.is_subagent);
+        assert_eq!(parsed.subagents.len(), 1);
+        let subagent = &parsed.subagents[0];
+        assert_eq!(subagent.agent_id.as_deref(), Some("comique"));
+        assert_eq!(subagent.prompt.as_deref(), Some("Review the README"));
+        assert_eq!(subagent.child_session_id.as_deref(), Some("child-session"));
+        assert_eq!(
+            subagent.result_summary.as_deref(),
+            Some("Here is the punchline")
+        );
+
+        // The task call surfaces as a navigable Subagent transcript item, not a tool call.
+        assert!(parsed.tool_calls.is_empty());
+        let subagent_item = parsed
+            .transcript_items
+            .iter()
+            .find(|item| matches!(item.kind, TranscriptItemKind::Subagent))
+            .expect("subagent transcript item");
+        assert_eq!(
+            subagent_item.subagent_id.as_deref(),
+            Some(subagent.id.as_str())
+        );
     }
 
     #[test]

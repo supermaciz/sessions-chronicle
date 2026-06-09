@@ -3,7 +3,7 @@ use chrono::{DateTime, Utc};
 use serde_json::Value;
 use std::collections::{HashMap, HashSet};
 use std::fs::File;
-use std::io::{BufRead, BufReader, Read};
+use std::io::{BufRead, BufReader};
 use std::path::Path;
 
 use crate::models::{
@@ -1013,7 +1013,7 @@ fn open_rollout_reader(file_path: &Path) -> Result<Box<dyn BufRead>> {
     {
         let decoder = zstd::stream::read::Decoder::new(file)
             .context("Failed to open compressed session file")?;
-        return Ok(Box::new(BufReader::new(Box::new(decoder) as Box<dyn Read>)));
+        return Ok(Box::new(BufReader::new(decoder)));
     }
 
     Ok(Box::new(BufReader::new(file)))
