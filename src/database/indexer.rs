@@ -286,14 +286,15 @@ impl SessionIndexer {
         incremental: bool,
         errors_detail: &mut VecDeque<IndexingError>,
     ) -> Result<IndexingStats> {
-        if !sessions_dir.exists() {
+        let roots = Self::codex_index_roots(sessions_dir);
+        if roots.is_empty() {
             return Ok(IndexingStats::default());
         }
 
         let parser = CodexParser;
         let mut stats = IndexingStats::default();
 
-        for root in Self::codex_index_roots(sessions_dir) {
+        for root in roots {
             for entry in walkdir::WalkDir::new(&root)
                 .max_depth(5)
                 .into_iter()
@@ -549,7 +550,10 @@ impl SessionIndexer {
     }
 
     fn codex_index_roots(sessions_dir: &Path) -> Vec<PathBuf> {
-        let mut roots = vec![sessions_dir.to_path_buf()];
+        let mut roots = Vec::new();
+        if sessions_dir.exists() {
+            roots.push(sessions_dir.to_path_buf());
+        }
         if sessions_dir.file_name().and_then(|name| name.to_str()) == Some("sessions")
             && let Some(codex_home) = sessions_dir.parent()
         {
@@ -1842,6 +1846,42 @@ mod tests {
             .db
             .query_row(
                 "SELECT COUNT(*) > 0 FROM sessions WHERE id = 'archived-rollout'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!(exists);
+    }
+
+    #[test]
+    fn codex_indexing_includes_archived_rollouts_when_sessions_dir_absent() {
+        let temp_db = NamedTempFile::new().unwrap();
+        let mut indexer = SessionIndexer::new(temp_db.path()).unwrap();
+        let temp_dir = tempfile::tempdir().unwrap();
+        let codex_home = temp_dir.path();
+        // Active sessions dir does not exist; only archives remain.
+        let sessions_dir = codex_home.join("sessions");
+        let archived_dir = codex_home.join("archived_sessions");
+        std::fs::create_dir_all(&archived_dir).unwrap();
+        std::fs::write(
+            archived_dir.join("rollout-2026-01-01T00-00-00-archived.jsonl"),
+            concat!(
+                "{\"type\":\"session_meta\",\"payload\":{\"id\":\"archive-only-rollout\",\"timestamp\":\"2026-01-01T00:00:00Z\",\"cwd\":\"/tmp\"}}\n",
+                "{\"type\":\"event_msg\",\"timestamp\":\"2026-01-01T00:00:01Z\",\"payload\":{\"type\":\"user_message\",\"message\":\"Hi archived\"}}\n",
+                "{\"type\":\"event_msg\",\"timestamp\":\"2026-01-01T00:00:02Z\",\"payload\":{\"type\":\"agent_message\",\"message\":\"Done\"}}\n"
+            ),
+        )
+        .unwrap();
+
+        let stats = indexer
+            .index_codex_sessions_incremental(&sessions_dir)
+            .unwrap();
+
+        assert_eq!(stats.indexed, 1);
+        let exists: bool = indexer
+            .db
+            .query_row(
+                "SELECT COUNT(*) > 0 FROM sessions WHERE id = 'archive-only-rollout'",
                 [],
                 |row| row.get(0),
             )
