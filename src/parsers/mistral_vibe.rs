@@ -19,6 +19,12 @@ pub enum ParseError {
     NoUserMessages,
 }
 
+/// Profile Mistral Vibe spawns when a `task` call omits the `agent` argument.
+/// The child session lands in `agents/explore_*` with `agent_profile.name`
+/// set to this value, so linkage must assume the same default. Coupled to
+/// Vibe's upstream default; update if that profile is ever renamed.
+const VIBE_DEFAULT_AGENT_PROFILE: &str = "explore";
+
 pub struct MistralVibeParser;
 
 impl MistralVibeParser {
@@ -459,7 +465,7 @@ impl MistralVibeParser {
                 .map(str::to_string)
         };
         (
-            pick("agent").or_else(|| Some("explore".to_string())),
+            pick("agent").or_else(|| Some(VIBE_DEFAULT_AGENT_PROFILE.to_string())),
             pick("task"),
         )
     }
