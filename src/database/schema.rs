@@ -46,7 +46,8 @@ fn table_exists(conn: &Connection, name: &str) -> Result<bool> {
 ///        file_fingerprints to force reindexing from JSONL
 ///   14 – clear file_fingerprints to re-index after Mistral Vibe subagent
 ///        support: parents must be re-parsed to emit subagent rows linking the
-///        child sessions now indexed from `<session>/agents/`
+///        child sessions now indexed from `<session>/agents/`; add an index on
+///        sessions.file_path for efficient Vibe subtree pruning
 pub fn initialize_database(conn: &Connection) -> Result<()> {
     let version: i64 = conn.query_row("PRAGMA user_version", [], |row| row.get(0))?;
 
@@ -159,13 +160,6 @@ fn apply_v1_migration(conn: &Connection) -> Result<()> {
         "CREATE INDEX IF NOT EXISTS idx_parent_session ON sessions(parent_session_id)",
         [],
     )?;
-    // Serves prefix-range lookups of sessions beneath a directory (e.g. pruning
-    // deleted Mistral Vibe subagent subtrees) without scanning the table.
-    conn.execute(
-        "CREATE INDEX IF NOT EXISTS idx_sessions_file_path ON sessions(file_path)",
-        [],
-    )?;
-
     // FTS5 messages table (unchanged from v0; IF NOT EXISTS is safe)
     conn.execute(
         "CREATE VIRTUAL TABLE IF NOT EXISTS messages USING fts5(
@@ -598,8 +592,14 @@ fn apply_v13_migration(conn: &Connection) -> Result<()> {
 /// session. This is required for Mistral Vibe subagent support: previously
 /// unchanged parent sessions are skipped by the incremental indexer, so without
 /// a fingerprint clear they would never emit the subagent rows that link the
-/// child sessions now discovered under `<session>/agents/`.
+/// child sessions now discovered under `<session>/agents/`. Adds an index on
+/// `sessions.file_path` to serve prefix-range lookups used when pruning deleted
+/// Mistral Vibe subagent subtrees.
 fn apply_v14_migration(conn: &Connection) -> Result<()> {
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_sessions_file_path ON sessions(file_path)",
+        [],
+    )?;
     conn.execute("DELETE FROM file_fingerprints", [])?;
     conn.execute_batch("PRAGMA user_version = 14")?;
     Ok(())
@@ -927,11 +927,15 @@ mod tests {
     }
 
     #[test]
-    fn v13_to_v14_migration_clears_fingerprints() {
+    fn v13_to_v14_migration_clears_fingerprints_and_indexes_file_path() {
         let conn = Connection::open_in_memory().unwrap();
         initialize_database(&conn).unwrap();
 
-        conn.execute_batch("PRAGMA user_version = 13").unwrap();
+        conn.execute_batch(
+            "DROP INDEX idx_sessions_file_path;
+             PRAGMA user_version = 13;",
+        )
+        .unwrap();
         conn.execute(
             "INSERT INTO file_fingerprints (file_path, mtime_ns, size)
              VALUES ('/tmp/old.jsonl', 10, 20)",
@@ -952,6 +956,11 @@ mod tests {
             })
             .unwrap();
         assert_eq!(fingerprint_count, 0);
+        assert!(index_exists(&conn, "idx_sessions_file_path"));
+        assert_eq!(
+            index_columns(&conn, "idx_sessions_file_path"),
+            vec!["file_path"]
+        );
     }
 
     #[test]
