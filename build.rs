@@ -16,6 +16,9 @@ fn main() {
             "earth",
             "build",
             "speaker-notes",
+            "clipboard-task-list-regular",
+            "chat-bubbles-question-regular",
+            "document-one-page-sparkle-regular",
         ],
     );
 }

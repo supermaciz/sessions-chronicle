@@ -61,6 +61,9 @@ pub enum ToolCategory {
     Search,
     Agent,
     Web,
+    Plan,
+    Skill,
+    UserInput,
     Other,
 }
 
@@ -77,6 +80,9 @@ impl ToolCategory {
             Self::Search => icons.search,
             Self::Agent => icons.agent,
             Self::Web => icons.web,
+            Self::Plan => icons.plan,
+            Self::Skill => icons.skill,
+            Self::UserInput => icons.user_input,
             Self::Other => icons.other,
         }
     }
@@ -115,6 +121,17 @@ pub fn classify_tool_name(name: &str) -> ToolCategory {
             ToolCategory::Web
         }
 
+        // Plan (task lists / planning)
+        "TodoWrite" | "todowrite" | "todoread" | "todo" | "update_plan" => ToolCategory::Plan,
+
+        // Skill (reusable capability invocation)
+        "Skill" | "skill" => ToolCategory::Skill,
+
+        // User input (prompts directed at the user)
+        "AskUserQuestion" | "ask_user_question" | "question" | "request_user_input" => {
+            ToolCategory::UserInput
+        }
+
         // Everything else
         _ => ToolCategory::Other,
     }
@@ -129,6 +146,9 @@ pub struct ToolCategoryIcons {
     pub search: &'static str,
     pub agent: &'static str,
     pub web: &'static str,
+    pub plan: &'static str,
+    pub skill: &'static str,
+    pub user_input: &'static str,
     pub other: &'static str,
 }
 
@@ -200,6 +220,38 @@ mod tests {
         // Mistral Vibe snake_case variants
         assert_eq!(classify_tool_name("web_search"), ToolCategory::Web);
         assert_eq!(classify_tool_name("web_fetch"), ToolCategory::Web);
+    }
+
+    #[test]
+    fn classify_plan_tools() {
+        assert_eq!(classify_tool_name("TodoWrite"), ToolCategory::Plan);
+        assert_eq!(classify_tool_name("todowrite"), ToolCategory::Plan);
+        assert_eq!(classify_tool_name("todoread"), ToolCategory::Plan);
+        assert_eq!(classify_tool_name("todo"), ToolCategory::Plan);
+        assert_eq!(classify_tool_name("update_plan"), ToolCategory::Plan);
+    }
+
+    #[test]
+    fn classify_skill_tools() {
+        assert_eq!(classify_tool_name("Skill"), ToolCategory::Skill);
+        assert_eq!(classify_tool_name("skill"), ToolCategory::Skill);
+    }
+
+    #[test]
+    fn classify_user_input_tools() {
+        assert_eq!(
+            classify_tool_name("AskUserQuestion"),
+            ToolCategory::UserInput
+        );
+        assert_eq!(
+            classify_tool_name("ask_user_question"),
+            ToolCategory::UserInput
+        );
+        assert_eq!(classify_tool_name("question"), ToolCategory::UserInput);
+        assert_eq!(
+            classify_tool_name("request_user_input"),
+            ToolCategory::UserInput
+        );
     }
 
     #[test]

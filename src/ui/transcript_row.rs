@@ -30,6 +30,9 @@ pub(crate) const TOOL_ICONS: ToolCategoryIcons = ToolCategoryIcons {
     search: icon_names::SEARCH,
     agent: icon_names::SMART_TOY,
     web: icon_names::EARTH,
+    plan: icon_names::CLIPBOARD_TASK_LIST_REGULAR,
+    skill: icon_names::DOCUMENT_ONE_PAGE_SPARKLE_REGULAR,
+    user_input: icon_names::CHAT_BUBBLES_QUESTION_REGULAR,
     other: icon_names::BUILD,
 };
 const SLOW_ROW_WIDGET_BUILD: Duration = Duration::from_millis(10);

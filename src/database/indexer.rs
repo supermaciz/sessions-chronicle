@@ -1114,6 +1114,9 @@ impl SessionIndexer {
                 }
                 crate::models::ToolCategory::Agent
                 | crate::models::ToolCategory::Web
+                | crate::models::ToolCategory::Plan
+                | crate::models::ToolCategory::Skill
+                | crate::models::ToolCategory::UserInput
                 | crate::models::ToolCategory::Other => {}
             }
         }
