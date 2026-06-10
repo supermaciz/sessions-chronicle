@@ -53,6 +53,15 @@ pub(crate) fn opencode_source_available(storage_root: &Path, db_paths: &[PathBuf
     storage_root.exists() || db_paths.iter().any(|path| path.exists())
 }
 
+/// Escape the SQL `LIKE` metacharacters in `value` so it can be used as a
+/// literal prefix with `ESCAPE '\'`.
+fn escape_like_pattern(value: &str) -> String {
+    value
+        .replace('\\', "\\\\")
+        .replace('%', "\\%")
+        .replace('_', "\\_")
+}
+
 fn opencode_display_path(storage_root: &Path, db_paths: &[PathBuf]) -> String {
     if storage_root.exists() {
         storage_root.display().to_string()
@@ -386,7 +395,10 @@ impl SessionIndexer {
             errors_detail,
         )?;
 
-        let mut child_changed = false;
+        // Drop children whose directories were deleted since the last run, so
+        // their session rows do not linger and the parent's subagent links do
+        // not dangle. A removed direct child counts as a change for the parent.
+        let mut child_changed = self.prune_deleted_vibe_children(path, stats)?;
         for (child_path, child_fingerprint) in Self::vibe_agent_child_dirs(path) {
             child_changed |= self.index_vibe_session_tree(
                 &child_path,
@@ -399,9 +411,10 @@ impl SessionIndexer {
         }
 
         // A child directory only contributes to the parent's subagent links
-        // (e.g. `child_session_id`) at parse time. If a child appeared or
-        // changed but the parent was skipped by its `messages.jsonl`
-        // fingerprint, those links would stay stale; force a reparse.
+        // (e.g. `child_session_id`) at parse time. If a child appeared,
+        // changed, or was removed but the parent was skipped by its
+        // `messages.jsonl` fingerprint, those links would stay stale; force a
+        // reparse.
         if incremental && child_changed && !reparsed {
             stats.skipped = stats.skipped.saturating_sub(1);
             self.process_vibe_session_dir(path, fingerprint_target, parser, stats, errors_detail)?;
@@ -445,6 +458,47 @@ impl SessionIndexer {
             }
         }
         children
+    }
+
+    /// Remove indexed Vibe child sessions under `<session_dir>/agents/` whose
+    /// directories no longer exist on disk, along with any deeper descendants
+    /// they spawned. Returns `true` if a direct child was removed, so the
+    /// parent can be reparsed to drop the now-dangling subagent link.
+    fn prune_deleted_vibe_children(
+        &mut self,
+        session_dir: &Path,
+        stats: &mut IndexingStats,
+    ) -> Result<bool> {
+        let agents_dir = session_dir.join("agents");
+        let Some(agents_str) = agents_dir.to_str() else {
+            return Ok(false);
+        };
+
+        let pattern = format!("{}/%", escape_like_pattern(agents_str));
+        let known: Vec<String> = {
+            let mut stmt = self
+                .db
+                .prepare("SELECT file_path FROM sessions WHERE file_path LIKE ?1 ESCAPE '\\'")?;
+            stmt.query_map([pattern], |row| row.get(0))?
+                .collect::<std::result::Result<Vec<_>, _>>()?
+        };
+
+        let mut removed_direct_child = false;
+        for file_path in known {
+            let child = PathBuf::from(&file_path);
+            if child.exists() {
+                continue;
+            }
+            stats.removed += self.remove_session_for_file(&child)?;
+            // Direct children sit at `<session_dir>/agents/<child>`; deeper
+            // descendants are pruned here too but only a direct child forces the
+            // immediate parent to refresh its links.
+            if child.parent() == Some(agents_dir.as_path()) {
+                removed_direct_child = true;
+            }
+        }
+
+        Ok(removed_direct_child)
     }
 
     fn process_vibe_session_dir(
@@ -2192,6 +2246,76 @@ mod tests {
             )
             .unwrap();
         assert_eq!(linked, "child-session");
+    }
+
+    #[test]
+    fn vibe_incremental_removes_deleted_child_and_relinks_parent() {
+        let temp_db = NamedTempFile::new().unwrap();
+        let mut indexer = SessionIndexer::new(temp_db.path()).unwrap();
+        let temp_dir = tempfile::tempdir().unwrap();
+        let sessions_dir = temp_dir.path();
+        let parent_dir = sessions_dir.join("session_parent");
+        let child_dir = parent_dir.join("agents").join("comique_20260101_000100");
+
+        // First pass: parent links its spawned child.
+        write_vibe_session_dir(
+            &parent_dir,
+            "parent-session",
+            None,
+            &vibe_task_messages("comique", "call_1"),
+        );
+        write_vibe_session_dir(
+            &child_dir,
+            "child-session",
+            Some("comique"),
+            &vibe_plain_messages(),
+        );
+        let first = indexer
+            .index_vibe_sessions_incremental(sessions_dir)
+            .unwrap();
+        assert_eq!(first.indexed, 2);
+
+        let linked: String = indexer
+            .db
+            .query_row(
+                "SELECT child_session_id FROM subagents WHERE session_id = 'parent-session'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(linked, "child-session");
+
+        // The child directory is deleted; the parent's messages.jsonl is
+        // unchanged, so only the removal can trigger the relink.
+        std::fs::remove_dir_all(&child_dir).unwrap();
+
+        let second = indexer
+            .index_vibe_sessions_incremental(sessions_dir)
+            .unwrap();
+        assert!(second.removed >= 1);
+
+        // The child session row is gone.
+        let child_rows: i64 = indexer
+            .db
+            .query_row(
+                "SELECT COUNT(*) FROM sessions WHERE id = 'child-session'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(child_rows, 0);
+
+        // The parent was reparsed and no longer links to a now-missing child.
+        let dangling: i64 = indexer
+            .db
+            .query_row(
+                "SELECT COUNT(*) FROM subagents \
+                 WHERE session_id = 'parent-session' AND child_session_id = 'child-session'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(dangling, 0);
     }
 
     #[test]
