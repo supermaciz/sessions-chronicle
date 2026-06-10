@@ -409,6 +409,13 @@ impl MistralVibeParser {
             if !dir.is_dir() {
                 continue;
             }
+            // Only link children the indexer can actually index. A child with a
+            // `meta.json` but no `messages.jsonl` yet (e.g. a subagent still
+            // starting up) is skipped by `vibe_agent_child_dirs`, so emitting a
+            // link here would dangle until the child becomes indexable.
+            if !dir.join("messages.jsonl").exists() {
+                continue;
+            }
             let Ok(meta) = Self::read_json(&dir.join("meta.json")) else {
                 continue;
             };
@@ -680,6 +687,32 @@ mod tests {
             subagent_item.subagent_id.as_deref(),
             Some(subagent.id.as_str())
         );
+    }
+
+    #[test]
+    fn parse_skips_child_link_when_child_messages_missing() {
+        let temp_dir = TempDir::new().unwrap();
+        let parent_dir = temp_dir.path().join("session_parent");
+        let child_dir = parent_dir.join("agents").join("comique_20260203_191500");
+
+        write_session_meta(&parent_dir, "parent-session", None);
+        // Child directory exists with meta.json but no messages.jsonl yet, so the
+        // indexer cannot index it. The parent must not emit a navigable link to a
+        // session row that does not exist.
+        write_session_meta(&child_dir, "child-session", Some("comique"));
+        write_messages(
+            &parent_dir.join("messages.jsonl"),
+            &[
+                r#"{"role":"user","content":"Ask the comedian"}"#,
+                r#"{"role":"assistant","tool_calls":[{"id":"call_1","function":{"name":"task","arguments":"{\"agent\":\"comique\",\"task\":\"Review the README\"}"},"type":"function"}]}"#,
+            ],
+        );
+
+        let parsed = MistralVibeParser.parse(&parent_dir).unwrap();
+
+        assert_eq!(parsed.subagents.len(), 1);
+        assert_eq!(parsed.subagents[0].agent_id.as_deref(), Some("comique"));
+        assert_eq!(parsed.subagents[0].child_session_id, None);
     }
 
     #[test]

@@ -2287,6 +2287,80 @@ mod tests {
     }
 
     #[test]
+    fn vibe_incremental_defers_child_link_until_child_messages_appear() {
+        let temp_db = NamedTempFile::new().unwrap();
+        let mut indexer = SessionIndexer::new(temp_db.path()).unwrap();
+        let temp_dir = tempfile::tempdir().unwrap();
+        let sessions_dir = temp_dir.path();
+        let parent_dir = sessions_dir.join("session_parent");
+        let child_dir = parent_dir.join("agents").join("comique_20260101_000100");
+
+        // First pass: the parent logged its `task` call and the child directory
+        // already exists with a `meta.json`, but the child has not written its
+        // `messages.jsonl` yet (still starting up). The indexer cannot index the
+        // child, so the parent must not emit a dangling link to it.
+        write_vibe_session_dir(
+            &parent_dir,
+            "parent-session",
+            None,
+            &vibe_task_messages("comique", "call_1"),
+        );
+        std::fs::create_dir_all(&child_dir).unwrap();
+        std::fs::write(
+            child_dir.join("meta.json"),
+            serde_json::json!({
+                "session_id": "child-session",
+                "parent_session_id": null,
+                "start_time": "2026-01-01T00:01:00Z",
+                "end_time": null,
+                "agent_profile": { "name": "comique" },
+                "environment": { "working_directory": "/tmp" }
+            })
+            .to_string(),
+        )
+        .unwrap();
+
+        let first = indexer
+            .index_vibe_sessions_incremental(sessions_dir)
+            .unwrap();
+        assert_eq!(first.indexed, 1);
+
+        let unlinked: i64 = indexer
+            .db
+            .query_row(
+                "SELECT COUNT(*) FROM subagents \
+                 WHERE session_id = 'parent-session' AND child_session_id IS NULL",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(unlinked, 1);
+
+        // The child finishes writing its messages; the parent's messages.jsonl is
+        // unchanged, so the newly indexable child must trigger a parent reparse
+        // that finally resolves the link.
+        std::fs::write(
+            child_dir.join("messages.jsonl"),
+            vibe_plain_messages().join("\n"),
+        )
+        .unwrap();
+
+        indexer
+            .index_vibe_sessions_incremental(sessions_dir)
+            .unwrap();
+
+        let linked: String = indexer
+            .db
+            .query_row(
+                "SELECT child_session_id FROM subagents WHERE session_id = 'parent-session'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(linked, "child-session");
+    }
+
+    #[test]
     fn vibe_incremental_removes_deleted_child_and_relinks_parent() {
         let temp_db = NamedTempFile::new().unwrap();
         let mut indexer = SessionIndexer::new(temp_db.path()).unwrap();
