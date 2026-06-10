@@ -1454,7 +1454,7 @@ impl SessionIndexer {
             build_per_source_result(
                 AiAssistant::Codex,
                 sources.codex_dir.display().to_string(),
-                sources.codex_dir.exists(),
+                !Self::codex_index_roots(&sources.codex_dir).is_empty(),
                 codex,
             ),
             build_per_source_result(
@@ -3009,6 +3009,47 @@ mod tests {
             &[sqlite_path.clone()]
         ));
         assert!(!opencode_source_available(&storage_root, &[]));
+    }
+
+    #[test]
+    fn indexing_diagnostics_codex_available_with_archived_only() {
+        use crate::models::indexing_diagnostics::SourceStatus;
+
+        let temp = tempfile::tempdir().unwrap();
+        let codex_home = temp.path().join("codex");
+        // Active sessions dir is absent; only the adjacent archive remains.
+        let sessions_dir = codex_home.join("sessions");
+        let archived_dir = codex_home.join("archived_sessions");
+        std::fs::create_dir_all(&archived_dir).unwrap();
+        std::fs::write(
+            archived_dir.join("rollout-2026-01-01T00-00-00-archived.jsonl"),
+            concat!(
+                "{\"type\":\"session_meta\",\"payload\":{\"id\":\"archive-only-availability\",\"timestamp\":\"2026-01-01T00:00:00Z\",\"cwd\":\"/tmp\"}}\n",
+                "{\"type\":\"event_msg\",\"timestamp\":\"2026-01-01T00:00:01Z\",\"payload\":{\"type\":\"user_message\",\"message\":\"Hi archived\"}}\n",
+                "{\"type\":\"event_msg\",\"timestamp\":\"2026-01-01T00:00:02Z\",\"payload\":{\"type\":\"agent_message\",\"message\":\"Done\"}}\n"
+            ),
+        )
+        .unwrap();
+
+        let sources = SessionSources {
+            codex_dir: sessions_dir.clone(),
+            ..SessionSources::resolve(Some(temp.path()))
+        };
+
+        let temp_db = tempfile::NamedTempFile::new().unwrap();
+        let mut indexer = SessionIndexer::new(temp_db.path()).unwrap();
+        let result = indexer.index_all_incremental(&sources).unwrap();
+
+        let codex = result
+            .per_source
+            .iter()
+            .find(|source| source.assistant == AiAssistant::Codex)
+            .unwrap();
+
+        // Archived rollouts are indexed, so the status must reflect availability
+        // rather than reporting NotFound from the absent `sessions/` dir.
+        assert_eq!(codex.indexed, 1);
+        assert_ne!(codex.status, SourceStatus::NotFound);
     }
 
     #[test]
