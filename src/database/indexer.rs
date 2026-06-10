@@ -460,10 +460,18 @@ impl SessionIndexer {
         children
     }
 
-    /// Remove indexed Vibe child sessions under `<session_dir>/agents/` whose
-    /// directories no longer exist on disk, along with any deeper descendants
-    /// they spawned. Returns `true` if a direct child was removed, so the
-    /// parent can be reparsed to drop the now-dangling subagent link.
+    /// Remove indexed Vibe child sessions whose **direct** child directory under
+    /// `<session_dir>/agents/` no longer exists on disk, cascading the removal to
+    /// every session beneath that deleted child. Returns `true` if a direct child
+    /// was removed, so the immediate parent can be reparsed to drop the
+    /// now-dangling subagent link.
+    ///
+    /// Each parent prunes only its own direct children: an ancestor must not
+    /// remove a grandchild on the intermediate parent's behalf, or that
+    /// intermediate would never observe the change and would keep a dangling
+    /// link. Cascading to the deleted child's subtree still cleans up the case
+    /// where an entire intermediate directory was removed (no surviving
+    /// directory recurses into it).
     fn prune_deleted_vibe_children(
         &mut self,
         session_dir: &Path,
@@ -486,19 +494,43 @@ impl SessionIndexer {
         let mut removed_direct_child = false;
         for file_path in known {
             let child = PathBuf::from(&file_path);
+            // Only act on direct children; deeper descendants are removed as part
+            // of the subtree of whichever direct child is gone.
+            if child.parent() != Some(agents_dir.as_path()) {
+                continue;
+            }
             if child.exists() {
                 continue;
             }
-            stats.removed += self.remove_session_for_file(&child)?;
-            // Direct children sit at `<session_dir>/agents/<child>`; deeper
-            // descendants are pruned here too but only a direct child forces the
-            // immediate parent to refresh its links.
-            if child.parent() == Some(agents_dir.as_path()) {
-                removed_direct_child = true;
-            }
+            stats.removed += self.remove_vibe_session_subtree(&child)?;
+            removed_direct_child = true;
         }
 
         Ok(removed_direct_child)
+    }
+
+    /// Remove a Vibe session directory and every session indexed beneath it,
+    /// returning the number of session rows removed. Used when a child directory
+    /// is deleted so its spawned descendants do not linger as orphans.
+    fn remove_vibe_session_subtree(&mut self, dir: &Path) -> Result<usize> {
+        let mut removed = self.remove_session_for_file(dir)?;
+
+        let Some(dir_str) = dir.to_str() else {
+            return Ok(removed);
+        };
+        let pattern = format!("{}/%", escape_like_pattern(dir_str));
+        let descendants: Vec<String> = {
+            let mut stmt = self
+                .db
+                .prepare("SELECT file_path FROM sessions WHERE file_path LIKE ?1 ESCAPE '\\'")?;
+            stmt.query_map([pattern], |row| row.get(0))?
+                .collect::<std::result::Result<Vec<_>, _>>()?
+        };
+        for file_path in descendants {
+            removed += self.remove_session_for_file(Path::new(&file_path))?;
+        }
+
+        Ok(removed)
     }
 
     fn process_vibe_session_dir(
@@ -2358,6 +2390,137 @@ mod tests {
             )
             .unwrap();
         assert_eq!(linked, "child-session");
+    }
+
+    #[test]
+    fn vibe_incremental_relinks_intermediate_when_grandchild_deleted() {
+        let temp_db = NamedTempFile::new().unwrap();
+        let mut indexer = SessionIndexer::new(temp_db.path()).unwrap();
+        let temp_dir = tempfile::tempdir().unwrap();
+        let sessions_dir = temp_dir.path();
+        let parent_dir = sessions_dir.join("session_parent");
+        let child_dir = parent_dir.join("agents").join("comique_20260101_000100");
+        let grandchild_dir = child_dir.join("agents").join("clown_20260101_000200");
+
+        // A spawns B (comique), B spawns C (clown).
+        write_vibe_session_dir(
+            &parent_dir,
+            "parent-session",
+            None,
+            &vibe_task_messages("comique", "call_1"),
+        );
+        write_vibe_session_dir(
+            &child_dir,
+            "child-session",
+            Some("comique"),
+            &vibe_task_messages("clown", "call_2"),
+        );
+        write_vibe_session_dir(
+            &grandchild_dir,
+            "grandchild-session",
+            Some("clown"),
+            &vibe_plain_messages(),
+        );
+        let first = indexer
+            .index_vibe_sessions_incremental(sessions_dir)
+            .unwrap();
+        assert_eq!(first.indexed, 3);
+
+        // Delete ONLY the grandchild. The intermediate child's messages.jsonl is
+        // unchanged, so the grandchild removal must still force the intermediate
+        // to reparse and drop its now-dangling link.
+        std::fs::remove_dir_all(&grandchild_dir).unwrap();
+        let second = indexer
+            .index_vibe_sessions_incremental(sessions_dir)
+            .unwrap();
+        assert!(second.removed >= 1);
+
+        let grandchild_rows: i64 = indexer
+            .db
+            .query_row(
+                "SELECT COUNT(*) FROM sessions WHERE id = 'grandchild-session'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(grandchild_rows, 0);
+
+        let dangling: i64 = indexer
+            .db
+            .query_row(
+                "SELECT COUNT(*) FROM subagents \
+                 WHERE session_id = 'child-session' AND child_session_id = 'grandchild-session'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            dangling, 0,
+            "intermediate still links to deleted grandchild"
+        );
+    }
+
+    #[test]
+    fn vibe_incremental_removes_whole_subtree_when_intermediate_deleted() {
+        let temp_db = NamedTempFile::new().unwrap();
+        let mut indexer = SessionIndexer::new(temp_db.path()).unwrap();
+        let temp_dir = tempfile::tempdir().unwrap();
+        let sessions_dir = temp_dir.path();
+        let parent_dir = sessions_dir.join("session_parent");
+        let child_dir = parent_dir.join("agents").join("comique_20260101_000100");
+        let grandchild_dir = child_dir.join("agents").join("clown_20260101_000200");
+
+        write_vibe_session_dir(
+            &parent_dir,
+            "parent-session",
+            None,
+            &vibe_task_messages("comique", "call_1"),
+        );
+        write_vibe_session_dir(
+            &child_dir,
+            "child-session",
+            Some("comique"),
+            &vibe_task_messages("clown", "call_2"),
+        );
+        write_vibe_session_dir(
+            &grandchild_dir,
+            "grandchild-session",
+            Some("clown"),
+            &vibe_plain_messages(),
+        );
+        indexer
+            .index_vibe_sessions_incremental(sessions_dir)
+            .unwrap();
+
+        // Delete the whole intermediate subtree (B and its grandchild C). The
+        // grandchild must not survive as an orphan even though no surviving
+        // directory recurses into it.
+        std::fs::remove_dir_all(&child_dir).unwrap();
+        indexer
+            .index_vibe_sessions_incremental(sessions_dir)
+            .unwrap();
+
+        let surviving: i64 = indexer
+            .db
+            .query_row(
+                "SELECT COUNT(*) FROM sessions \
+                 WHERE id IN ('child-session', 'grandchild-session')",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(surviving, 0, "deleted subtree left orphan session rows");
+
+        let dangling: i64 = indexer
+            .db
+            .query_row(
+                "SELECT COUNT(*) FROM subagents \
+                 WHERE session_id = 'parent-session' AND child_session_id = 'child-session'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(dangling, 0, "parent still links to deleted child");
     }
 
     #[test]
