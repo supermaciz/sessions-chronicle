@@ -91,22 +91,29 @@ impl ToolCategory {
 pub fn classify_tool_name(name: &str) -> ToolCategory {
     match name {
         // Edits (file-modifying operations)
-        "Edit" | "Write" | "NotebookEdit" | "MultiEdit" => ToolCategory::Edit,
+        "Edit" | "Write" | "NotebookEdit" | "MultiEdit" | "edit" | "write" | "write_file"
+        | "apply_patch" | "search_replace" => ToolCategory::Edit,
 
         // Commands (shell execution)
-        "Bash" | "bash" | "exec_command" => ToolCategory::Command,
+        "Bash" | "bash" | "exec_command" | "shell" | "shell_command" | "write_stdin" => {
+            ToolCategory::Command
+        }
 
         // Reads (file content)
-        "Read" | "read" | "read_file" | "list_directory" | "list_files" => ToolCategory::Read,
+        "Read" | "read" | "read_file" | "list_directory" | "list_files" | "list" => {
+            ToolCategory::Read
+        }
 
         // Search (codebase exploration)
-        "Glob" | "Grep" | "grep" => ToolCategory::Search,
+        "Glob" | "Grep" | "grep" | "glob" | "codesearch" => ToolCategory::Search,
 
         // Agent (subagent spawning)
         "Agent" | "Task" | "TaskCreate" | "TaskUpdate" => ToolCategory::Agent,
 
         // Web (network operations)
-        "WebSearch" | "WebFetch" | "websearch" | "webfetch" => ToolCategory::Web,
+        "WebSearch" | "WebFetch" | "websearch" | "webfetch" | "web_search" | "web_fetch" => {
+            ToolCategory::Web
+        }
 
         // Everything else
         _ => ToolCategory::Other,
@@ -140,6 +147,12 @@ mod tests {
         assert_eq!(classify_tool_name("Write"), ToolCategory::Edit);
         assert_eq!(classify_tool_name("NotebookEdit"), ToolCategory::Edit);
         assert_eq!(classify_tool_name("MultiEdit"), ToolCategory::Edit);
+        // OpenCode / Codex / Mistral Vibe edit variants
+        assert_eq!(classify_tool_name("edit"), ToolCategory::Edit);
+        assert_eq!(classify_tool_name("write"), ToolCategory::Edit);
+        assert_eq!(classify_tool_name("write_file"), ToolCategory::Edit);
+        assert_eq!(classify_tool_name("apply_patch"), ToolCategory::Edit);
+        assert_eq!(classify_tool_name("search_replace"), ToolCategory::Edit);
     }
 
     #[test]
@@ -147,6 +160,10 @@ mod tests {
         assert_eq!(classify_tool_name("Bash"), ToolCategory::Command);
         assert_eq!(classify_tool_name("bash"), ToolCategory::Command);
         assert_eq!(classify_tool_name("exec_command"), ToolCategory::Command);
+        // Codex shell variants
+        assert_eq!(classify_tool_name("shell"), ToolCategory::Command);
+        assert_eq!(classify_tool_name("shell_command"), ToolCategory::Command);
+        assert_eq!(classify_tool_name("write_stdin"), ToolCategory::Command);
     }
 
     #[test]
@@ -155,6 +172,7 @@ mod tests {
         assert_eq!(classify_tool_name("read"), ToolCategory::Read);
         assert_eq!(classify_tool_name("read_file"), ToolCategory::Read);
         assert_eq!(classify_tool_name("list_directory"), ToolCategory::Read);
+        assert_eq!(classify_tool_name("list"), ToolCategory::Read);
     }
 
     #[test]
@@ -162,6 +180,9 @@ mod tests {
         assert_eq!(classify_tool_name("Glob"), ToolCategory::Search);
         assert_eq!(classify_tool_name("Grep"), ToolCategory::Search);
         assert_eq!(classify_tool_name("grep"), ToolCategory::Search);
+        // OpenCode search variants
+        assert_eq!(classify_tool_name("glob"), ToolCategory::Search);
+        assert_eq!(classify_tool_name("codesearch"), ToolCategory::Search);
     }
 
     #[test]
@@ -176,6 +197,9 @@ mod tests {
     fn classify_web_tools() {
         assert_eq!(classify_tool_name("WebSearch"), ToolCategory::Web);
         assert_eq!(classify_tool_name("WebFetch"), ToolCategory::Web);
+        // Mistral Vibe snake_case variants
+        assert_eq!(classify_tool_name("web_search"), ToolCategory::Web);
+        assert_eq!(classify_tool_name("web_fetch"), ToolCategory::Web);
     }
 
     #[test]
