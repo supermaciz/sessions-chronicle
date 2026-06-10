@@ -159,6 +159,12 @@ fn apply_v1_migration(conn: &Connection) -> Result<()> {
         "CREATE INDEX IF NOT EXISTS idx_parent_session ON sessions(parent_session_id)",
         [],
     )?;
+    // Serves prefix-range lookups of sessions beneath a directory (e.g. pruning
+    // deleted Mistral Vibe subagent subtrees) without scanning the table.
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_sessions_file_path ON sessions(file_path)",
+        [],
+    )?;
 
     // FTS5 messages table (unchanged from v0; IF NOT EXISTS is safe)
     conn.execute(

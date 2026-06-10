@@ -53,15 +53,6 @@ pub(crate) fn opencode_source_available(storage_root: &Path, db_paths: &[PathBuf
     storage_root.exists() || db_paths.iter().any(|path| path.exists())
 }
 
-/// Escape the SQL `LIKE` metacharacters in `value` so it can be used as a
-/// literal prefix with `ESCAPE '\'`.
-fn escape_like_pattern(value: &str) -> String {
-    value
-        .replace('\\', "\\\\")
-        .replace('%', "\\%")
-        .replace('_', "\\_")
-}
-
 fn opencode_display_path(storage_root: &Path, db_paths: &[PathBuf]) -> String {
     if storage_root.exists() {
         storage_root.display().to_string()
@@ -482,14 +473,7 @@ impl SessionIndexer {
             return Ok(false);
         };
 
-        let pattern = format!("{}/%", escape_like_pattern(agents_str));
-        let known: Vec<String> = {
-            let mut stmt = self
-                .db
-                .prepare("SELECT file_path FROM sessions WHERE file_path LIKE ?1 ESCAPE '\\'")?;
-            stmt.query_map([pattern], |row| row.get(0))?
-                .collect::<std::result::Result<Vec<_>, _>>()?
-        };
+        let known = self.indexed_paths_under(agents_str)?;
 
         let mut removed_direct_child = false;
         for file_path in known {
@@ -518,19 +502,30 @@ impl SessionIndexer {
         let Some(dir_str) = dir.to_str() else {
             return Ok(removed);
         };
-        let pattern = format!("{}/%", escape_like_pattern(dir_str));
-        let descendants: Vec<String> = {
-            let mut stmt = self
-                .db
-                .prepare("SELECT file_path FROM sessions WHERE file_path LIKE ?1 ESCAPE '\\'")?;
-            stmt.query_map([pattern], |row| row.get(0))?
-                .collect::<std::result::Result<Vec<_>, _>>()?
-        };
-        for file_path in descendants {
+        for file_path in self.indexed_paths_under(dir_str)? {
             removed += self.remove_session_for_file(Path::new(&file_path))?;
         }
 
         Ok(removed)
+    }
+
+    /// Return the indexed `file_path`s strictly beneath `dir`, i.e. those
+    /// starting with `<dir>/`. Uses a half-open prefix range so the
+    /// `idx_sessions_file_path` index serves it without scanning the table, and
+    /// so the common leaf case (no descendants) returns immediately.
+    fn indexed_paths_under(&self, dir: &str) -> Result<Vec<String>> {
+        // `/` is byte 0x2F, so the next possible byte 0x30 (`0`) bounds every
+        // path beginning with `<dir>/` from above. Comparison uses the column's
+        // default BINARY collation, so the match is exact and case-sensitive.
+        let lower = format!("{dir}/");
+        let upper = format!("{dir}0");
+        let mut stmt = self
+            .db
+            .prepare("SELECT file_path FROM sessions WHERE file_path >= ?1 AND file_path < ?2")?;
+        let rows = stmt
+            .query_map([lower, upper], |row| row.get(0))?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        Ok(rows)
     }
 
     fn process_vibe_session_dir(
@@ -2461,6 +2456,62 @@ mod tests {
     }
 
     #[test]
+    fn vibe_incremental_prunes_child_when_whole_agents_dir_removed() {
+        let temp_db = NamedTempFile::new().unwrap();
+        let mut indexer = SessionIndexer::new(temp_db.path()).unwrap();
+        let temp_dir = tempfile::tempdir().unwrap();
+        let sessions_dir = temp_dir.path();
+        let parent_dir = sessions_dir.join("session_parent");
+        let agents_dir = parent_dir.join("agents");
+        let child_dir = agents_dir.join("comique_20260101_000100");
+
+        write_vibe_session_dir(
+            &parent_dir,
+            "parent-session",
+            None,
+            &vibe_task_messages("comique", "call_1"),
+        );
+        write_vibe_session_dir(
+            &child_dir,
+            "child-session",
+            Some("comique"),
+            &vibe_plain_messages(),
+        );
+        indexer
+            .index_vibe_sessions_incremental(sessions_dir)
+            .unwrap();
+
+        // Remove the entire agents/ directory (not just one child). The parent's
+        // messages.jsonl is unchanged, so the prune must still drop the orphaned
+        // child row and relink the parent.
+        std::fs::remove_dir_all(&agents_dir).unwrap();
+        indexer
+            .index_vibe_sessions_incremental(sessions_dir)
+            .unwrap();
+
+        let child_rows: i64 = indexer
+            .db
+            .query_row(
+                "SELECT COUNT(*) FROM sessions WHERE id = 'child-session'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(child_rows, 0, "orphaned child row survived agents/ removal");
+
+        let dangling: i64 = indexer
+            .db
+            .query_row(
+                "SELECT COUNT(*) FROM subagents \
+                 WHERE session_id = 'parent-session' AND child_session_id = 'child-session'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(dangling, 0, "parent still links to pruned child");
+    }
+
+    #[test]
     fn vibe_incremental_removes_whole_subtree_when_intermediate_deleted() {
         let temp_db = NamedTempFile::new().unwrap();
         let mut indexer = SessionIndexer::new(temp_db.path()).unwrap();
@@ -2521,6 +2572,75 @@ mod tests {
             )
             .unwrap();
         assert_eq!(dangling, 0, "parent still links to deleted child");
+    }
+
+    #[test]
+    fn vibe_incremental_subtree_removal_preserves_case_distinct_sibling() {
+        let temp_db = NamedTempFile::new().unwrap();
+        let mut indexer = SessionIndexer::new(temp_db.path()).unwrap();
+        let temp_dir = tempfile::tempdir().unwrap();
+        let sessions_dir = temp_dir.path();
+        let parent_dir = sessions_dir.join("session_parent");
+        let removed_child = parent_dir.join("agents").join("Agent");
+        let removed_grandchild = removed_child.join("agents").join("removed_grandchild");
+        let surviving_child = parent_dir.join("agents").join("agent");
+        let surviving_grandchild = surviving_child.join("agents").join("surviving_grandchild");
+
+        write_vibe_session_dir(&parent_dir, "parent-session", None, &vibe_plain_messages());
+        write_vibe_session_dir(
+            &removed_child,
+            "removed-child-session",
+            Some("Agent"),
+            &vibe_plain_messages(),
+        );
+        write_vibe_session_dir(
+            &removed_grandchild,
+            "removed-grandchild-session",
+            Some("removed_grandchild"),
+            &vibe_plain_messages(),
+        );
+        write_vibe_session_dir(
+            &surviving_child,
+            "surviving-child-session",
+            Some("agent"),
+            &vibe_plain_messages(),
+        );
+        write_vibe_session_dir(
+            &surviving_grandchild,
+            "surviving-grandchild-session",
+            Some("surviving_grandchild"),
+            &vibe_plain_messages(),
+        );
+        indexer
+            .index_vibe_sessions_incremental(sessions_dir)
+            .unwrap();
+
+        std::fs::remove_dir_all(&removed_child).unwrap();
+        indexer
+            .index_vibe_sessions_incremental(sessions_dir)
+            .unwrap();
+
+        let removed: i64 = indexer
+            .db
+            .query_row(
+                "SELECT COUNT(*) FROM sessions \
+                 WHERE id IN ('removed-child-session', 'removed-grandchild-session')",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(removed, 0);
+
+        let surviving: i64 = indexer
+            .db
+            .query_row(
+                "SELECT COUNT(*) FROM sessions \
+                 WHERE id IN ('surviving-child-session', 'surviving-grandchild-session')",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(surviving, 2, "case-distinct sibling subtree was removed");
     }
 
     #[test]
