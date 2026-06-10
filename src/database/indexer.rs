@@ -286,29 +286,32 @@ impl SessionIndexer {
         incremental: bool,
         errors_detail: &mut VecDeque<IndexingError>,
     ) -> Result<IndexingStats> {
-        if !sessions_dir.exists() {
+        let roots = Self::codex_index_roots(sessions_dir);
+        if roots.is_empty() {
             return Ok(IndexingStats::default());
         }
 
         let parser = CodexParser;
         let mut stats = IndexingStats::default();
 
-        for entry in walkdir::WalkDir::new(sessions_dir)
-            .max_depth(5)
-            .into_iter()
-            .filter_map(|e| e.ok())
-        {
-            let path = entry.path();
-            if !Self::is_codex_session_file(path) {
-                continue;
-            }
+        for root in roots {
+            for entry in walkdir::WalkDir::new(&root)
+                .max_depth(5)
+                .into_iter()
+                .filter_map(|e| e.ok())
+            {
+                let path = entry.path();
+                if !Self::is_codex_session_file(path) {
+                    continue;
+                }
 
-            if incremental && !self.should_reindex(path)? {
-                stats.skipped += 1;
-                continue;
-            }
+                if incremental && !self.should_reindex(path)? {
+                    stats.skipped += 1;
+                    continue;
+                }
 
-            self.process_codex_session_file(path, &parser, &mut stats, errors_detail);
+                self.process_codex_session_file(path, &parser, &mut stats, errors_detail);
+            }
         }
 
         self.prune_orphan_fingerprints()?;
@@ -345,14 +348,11 @@ impl SessionIndexer {
             else {
                 continue;
             };
-            if incremental && !self.should_reindex(&fingerprint_target)? {
-                stats.skipped += 1;
-                continue;
-            }
 
-            self.process_vibe_session_dir(
+            self.index_vibe_session_tree(
                 &path,
                 &fingerprint_target,
+                incremental,
                 &parser,
                 &mut stats,
                 errors_detail,
@@ -361,6 +361,171 @@ impl SessionIndexer {
 
         self.prune_orphan_fingerprints()?;
         Ok(stats)
+    }
+
+    /// Index a Vibe session dir and, recursively, the agent children it
+    /// spawned under `<session>/agents/` (and their own children, for nested
+    /// `task` calls). Returns whether this session dir itself was (re)parsed,
+    /// so a parent can refresh its subagent links when a child appears or
+    /// changes.
+    fn index_vibe_session_tree(
+        &mut self,
+        path: &Path,
+        fingerprint_target: &Path,
+        incremental: bool,
+        parser: &MistralVibeParser,
+        stats: &mut IndexingStats,
+        errors_detail: &mut VecDeque<IndexingError>,
+    ) -> Result<bool> {
+        let mut reparsed = self.index_vibe_session_dir(
+            path,
+            fingerprint_target,
+            incremental,
+            parser,
+            stats,
+            errors_detail,
+        )?;
+
+        // Drop children whose directories were deleted since the last run, so
+        // their session rows do not linger and the parent's subagent links do
+        // not dangle. A removed direct child counts as a change for the parent.
+        let mut child_changed = self.prune_deleted_vibe_children(path, stats)?;
+        for (child_path, child_fingerprint) in Self::vibe_agent_child_dirs(path) {
+            child_changed |= self.index_vibe_session_tree(
+                &child_path,
+                &child_fingerprint,
+                incremental,
+                parser,
+                stats,
+                errors_detail,
+            )?;
+        }
+
+        // A child directory only contributes to the parent's subagent links
+        // (e.g. `child_session_id`) at parse time. If a child appeared,
+        // changed, or was removed but the parent was skipped by its
+        // `messages.jsonl` fingerprint, those links would stay stale; force a
+        // reparse.
+        if incremental && child_changed && !reparsed {
+            stats.skipped = stats.skipped.saturating_sub(1);
+            self.process_vibe_session_dir(path, fingerprint_target, parser, stats, errors_detail)?;
+            reparsed = true;
+        }
+
+        Ok(reparsed)
+    }
+
+    fn index_vibe_session_dir(
+        &mut self,
+        path: &Path,
+        fingerprint_target: &Path,
+        incremental: bool,
+        parser: &MistralVibeParser,
+        stats: &mut IndexingStats,
+        errors_detail: &mut VecDeque<IndexingError>,
+    ) -> Result<bool> {
+        if incremental && !self.should_reindex(fingerprint_target)? {
+            stats.skipped += 1;
+            return Ok(false);
+        }
+
+        self.process_vibe_session_dir(path, fingerprint_target, parser, stats, errors_detail)?;
+        Ok(true)
+    }
+
+    /// Enumerate the child agent session dirs under `<session_dir>/agents/`,
+    /// returning `(session_dir, messages.jsonl)` pairs for each valid one.
+    fn vibe_agent_child_dirs(session_dir: &Path) -> Vec<(PathBuf, PathBuf)> {
+        let Ok(entries) = std::fs::read_dir(session_dir.join("agents")) else {
+            return Vec::new();
+        };
+
+        let mut children = Vec::new();
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let fingerprint_target = path.join("messages.jsonl");
+            if path.is_dir() && path.join("meta.json").exists() && fingerprint_target.exists() {
+                children.push((path, fingerprint_target));
+            }
+        }
+        children
+    }
+
+    /// Remove indexed Vibe child sessions whose **direct** child directory under
+    /// `<session_dir>/agents/` no longer exists on disk, cascading the removal to
+    /// every session beneath that deleted child. Returns `true` if a direct child
+    /// was removed, so the immediate parent can be reparsed to drop the
+    /// now-dangling subagent link.
+    ///
+    /// Each parent prunes only its own direct children: an ancestor must not
+    /// remove a grandchild on the intermediate parent's behalf, or that
+    /// intermediate would never observe the change and would keep a dangling
+    /// link. Cascading to the deleted child's subtree still cleans up the case
+    /// where an entire intermediate directory was removed (no surviving
+    /// directory recurses into it).
+    fn prune_deleted_vibe_children(
+        &mut self,
+        session_dir: &Path,
+        stats: &mut IndexingStats,
+    ) -> Result<bool> {
+        let agents_dir = session_dir.join("agents");
+        let Some(agents_str) = agents_dir.to_str() else {
+            return Ok(false);
+        };
+
+        let known = self.indexed_paths_under(agents_str)?;
+
+        let mut removed_direct_child = false;
+        for file_path in known {
+            let child = PathBuf::from(&file_path);
+            // Only act on direct children; deeper descendants are removed as part
+            // of the subtree of whichever direct child is gone.
+            if child.parent() != Some(agents_dir.as_path()) {
+                continue;
+            }
+            if child.exists() {
+                continue;
+            }
+            stats.removed += self.remove_vibe_session_subtree(&child)?;
+            removed_direct_child = true;
+        }
+
+        Ok(removed_direct_child)
+    }
+
+    /// Remove a Vibe session directory and every session indexed beneath it,
+    /// returning the number of session rows removed. Used when a child directory
+    /// is deleted so its spawned descendants do not linger as orphans.
+    fn remove_vibe_session_subtree(&mut self, dir: &Path) -> Result<usize> {
+        let mut removed = self.remove_session_for_file(dir)?;
+
+        let Some(dir_str) = dir.to_str() else {
+            return Ok(removed);
+        };
+        for file_path in self.indexed_paths_under(dir_str)? {
+            removed += self.remove_session_for_file(Path::new(&file_path))?;
+        }
+
+        Ok(removed)
+    }
+
+    /// Return the indexed `file_path`s strictly beneath `dir`, i.e. those
+    /// starting with `<dir>/`. Uses a half-open prefix range so the
+    /// `idx_sessions_file_path` index serves it without scanning the table, and
+    /// so the common leaf case (no descendants) returns immediately.
+    fn indexed_paths_under(&self, dir: &str) -> Result<Vec<String>> {
+        // `/` is byte 0x2F, so the next possible byte 0x30 (`0`) bounds every
+        // path beginning with `<dir>/` from above. Comparison uses the column's
+        // default BINARY collation, so the match is exact and case-sensitive.
+        let lower = format!("{dir}/");
+        let upper = format!("{dir}0");
+        let mut stmt = self
+            .db
+            .prepare("SELECT file_path FROM sessions WHERE file_path >= ?1 AND file_path < ?2")?;
+        let rows = stmt
+            .query_map([lower, upper], |row| row.get(0))?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        Ok(rows)
     }
 
     fn process_vibe_session_dir(
@@ -496,7 +661,29 @@ impl SessionIndexer {
             && path
                 .file_name()
                 .and_then(|name| name.to_str())
-                .is_some_and(|name| name.starts_with("rollout-") && name.ends_with(".jsonl"))
+                .is_some_and(|name| {
+                    name.starts_with("rollout-")
+                        && (name.ends_with(".jsonl") || name.ends_with(".jsonl.zst"))
+                })
+    }
+
+    fn codex_index_roots(sessions_dir: &Path) -> Vec<PathBuf> {
+        let mut roots = Vec::new();
+        if sessions_dir.exists() {
+            roots.push(sessions_dir.to_path_buf());
+        }
+        if sessions_dir
+            .file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| matches!(name, "sessions" | "codex_sessions"))
+            && let Some(codex_home) = sessions_dir.parent()
+        {
+            let archived = codex_home.join("archived_sessions");
+            if archived.exists() {
+                roots.push(archived);
+            }
+        }
+        roots
     }
 
     fn prune_sidechain_session(
@@ -1351,7 +1538,7 @@ impl SessionIndexer {
             build_per_source_result(
                 AiAssistant::Codex,
                 sources.codex_dir.display().to_string(),
-                sources.codex_dir.exists(),
+                !Self::codex_index_roots(&sources.codex_dir).is_empty(),
                 codex,
             ),
             build_per_source_result(
@@ -1749,6 +1936,781 @@ mod tests {
             .unwrap();
         assert_eq!(second.indexed, 0);
         assert!(second.skipped > 0);
+    }
+
+    #[test]
+    fn codex_indexing_includes_archived_rollouts_next_to_sessions_dir() {
+        let temp_db = NamedTempFile::new().unwrap();
+        let mut indexer = SessionIndexer::new(temp_db.path()).unwrap();
+        let temp_dir = tempfile::tempdir().unwrap();
+        let codex_home = temp_dir.path();
+        let sessions_dir = codex_home.join("sessions");
+        let archived_dir = codex_home.join("archived_sessions");
+        std::fs::create_dir_all(sessions_dir.join("2026/01/01")).unwrap();
+        std::fs::create_dir_all(&archived_dir).unwrap();
+        std::fs::write(
+            archived_dir.join("rollout-2026-01-01T00-00-00-archived.jsonl"),
+            concat!(
+                "{\"type\":\"session_meta\",\"payload\":{\"id\":\"archived-rollout\",\"timestamp\":\"2026-01-01T00:00:00Z\",\"cwd\":\"/tmp\"}}\n",
+                "{\"type\":\"event_msg\",\"timestamp\":\"2026-01-01T00:00:01Z\",\"payload\":{\"type\":\"user_message\",\"message\":\"Hi archived\"}}\n",
+                "{\"type\":\"event_msg\",\"timestamp\":\"2026-01-01T00:00:02Z\",\"payload\":{\"type\":\"agent_message\",\"message\":\"Done\"}}\n"
+            ),
+        )
+        .unwrap();
+
+        let stats = indexer
+            .index_codex_sessions_incremental(&sessions_dir)
+            .unwrap();
+
+        assert_eq!(stats.indexed, 1);
+        let exists: bool = indexer
+            .db
+            .query_row(
+                "SELECT COUNT(*) > 0 FROM sessions WHERE id = 'archived-rollout'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!(exists);
+    }
+
+    #[test]
+    fn codex_indexing_includes_archived_rollouts_next_to_override_dir() {
+        let temp_db = NamedTempFile::new().unwrap();
+        let mut indexer = SessionIndexer::new(temp_db.path()).unwrap();
+        let temp_dir = tempfile::tempdir().unwrap();
+        let sessions_dir = temp_dir.path().join("codex_sessions");
+        let archived_dir = temp_dir.path().join("archived_sessions");
+        std::fs::create_dir_all(&sessions_dir).unwrap();
+        std::fs::create_dir_all(&archived_dir).unwrap();
+        std::fs::write(
+            archived_dir.join("rollout-2026-01-01T00-00-00-archived.jsonl"),
+            concat!(
+                "{\"type\":\"session_meta\",\"payload\":{\"id\":\"override-archived-rollout\",\"timestamp\":\"2026-01-01T00:00:00Z\",\"cwd\":\"/tmp\"}}\n",
+                "{\"type\":\"event_msg\",\"timestamp\":\"2026-01-01T00:00:01Z\",\"payload\":{\"type\":\"user_message\",\"message\":\"Hi archived\"}}\n",
+                "{\"type\":\"event_msg\",\"timestamp\":\"2026-01-01T00:00:02Z\",\"payload\":{\"type\":\"agent_message\",\"message\":\"Done\"}}\n"
+            ),
+        )
+        .unwrap();
+
+        let stats = indexer
+            .index_codex_sessions_incremental(&sessions_dir)
+            .unwrap();
+
+        assert_eq!(stats.indexed, 1);
+        let exists: bool = indexer
+            .db
+            .query_row(
+                "SELECT COUNT(*) > 0 FROM sessions WHERE id = 'override-archived-rollout'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!(exists);
+    }
+
+    #[test]
+    fn codex_indexing_includes_archived_rollouts_when_sessions_dir_absent() {
+        let temp_db = NamedTempFile::new().unwrap();
+        let mut indexer = SessionIndexer::new(temp_db.path()).unwrap();
+        let temp_dir = tempfile::tempdir().unwrap();
+        let codex_home = temp_dir.path();
+        // Active sessions dir does not exist; only archives remain.
+        let sessions_dir = codex_home.join("sessions");
+        let archived_dir = codex_home.join("archived_sessions");
+        std::fs::create_dir_all(&archived_dir).unwrap();
+        std::fs::write(
+            archived_dir.join("rollout-2026-01-01T00-00-00-archived.jsonl"),
+            concat!(
+                "{\"type\":\"session_meta\",\"payload\":{\"id\":\"archive-only-rollout\",\"timestamp\":\"2026-01-01T00:00:00Z\",\"cwd\":\"/tmp\"}}\n",
+                "{\"type\":\"event_msg\",\"timestamp\":\"2026-01-01T00:00:01Z\",\"payload\":{\"type\":\"user_message\",\"message\":\"Hi archived\"}}\n",
+                "{\"type\":\"event_msg\",\"timestamp\":\"2026-01-01T00:00:02Z\",\"payload\":{\"type\":\"agent_message\",\"message\":\"Done\"}}\n"
+            ),
+        )
+        .unwrap();
+
+        let stats = indexer
+            .index_codex_sessions_incremental(&sessions_dir)
+            .unwrap();
+
+        assert_eq!(stats.indexed, 1);
+        let exists: bool = indexer
+            .db
+            .query_row(
+                "SELECT COUNT(*) > 0 FROM sessions WHERE id = 'archive-only-rollout'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!(exists);
+    }
+
+    #[test]
+    fn codex_session_file_matcher_accepts_compressed_rollouts() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let path = temp_dir
+            .path()
+            .join("rollout-2026-01-01T00-00-00-session.jsonl.zst");
+        std::fs::write(&path, []).unwrap();
+
+        assert!(SessionIndexer::is_codex_session_file(&path));
+    }
+
+    #[test]
+    fn vibe_indexing_indexes_agent_children_and_links_parent() {
+        let temp_db = NamedTempFile::new().unwrap();
+        let mut indexer = SessionIndexer::new(temp_db.path()).unwrap();
+        let temp_dir = tempfile::tempdir().unwrap();
+        let sessions_dir = temp_dir.path();
+        let parent_dir = sessions_dir.join("session_parent");
+        let child_dir = parent_dir.join("agents").join("comique_20260101_000100");
+        std::fs::create_dir_all(&child_dir).unwrap();
+
+        std::fs::write(
+            parent_dir.join("meta.json"),
+            serde_json::json!({
+                "session_id": "parent-session",
+                "parent_session_id": null,
+                "start_time": "2026-01-01T00:00:00Z",
+                "end_time": "2026-01-01T00:01:00Z",
+                "environment": { "working_directory": "/tmp" }
+            })
+            .to_string(),
+        )
+        .unwrap();
+        let task_args = serde_json::json!({ "agent": "comique", "task": "Review" }).to_string();
+        let parent_messages = [
+            serde_json::json!({ "role": "user", "content": "Ask the comedian" }).to_string(),
+            serde_json::json!({
+                "role": "assistant",
+                "tool_calls": [{
+                    "id": "call_1",
+                    "type": "function",
+                    "function": { "name": "task", "arguments": task_args }
+                }]
+            })
+            .to_string(),
+            serde_json::json!({
+                "role": "tool",
+                "tool_call_id": "call_1",
+                "content": "Punchline"
+            })
+            .to_string(),
+        ];
+        std::fs::write(
+            parent_dir.join("messages.jsonl"),
+            parent_messages.join("\n"),
+        )
+        .unwrap();
+
+        std::fs::write(
+            child_dir.join("meta.json"),
+            serde_json::json!({
+                "session_id": "child-session",
+                "parent_session_id": null,
+                "start_time": "2026-01-01T00:01:00Z",
+                "end_time": "2026-01-01T00:01:30Z",
+                "environment": { "working_directory": "/tmp" },
+                "agent_profile": { "name": "comique" }
+            })
+            .to_string(),
+        )
+        .unwrap();
+        let child_messages = [
+            serde_json::json!({ "role": "user", "content": "Do the bit" }).to_string(),
+            serde_json::json!({ "role": "assistant", "content": "Here is my bit" }).to_string(),
+        ];
+        std::fs::write(child_dir.join("messages.jsonl"), child_messages.join("\n")).unwrap();
+
+        let stats = indexer
+            .index_vibe_sessions_incremental(sessions_dir)
+            .unwrap();
+
+        assert_eq!(stats.indexed, 2);
+
+        let child_is_subagent: i64 = indexer
+            .db
+            .query_row(
+                "SELECT is_subagent FROM sessions WHERE id = 'child-session'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(child_is_subagent, 1);
+
+        let linked_child: String = indexer
+            .db
+            .query_row(
+                "SELECT child_session_id FROM subagents WHERE session_id = 'parent-session'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(linked_child, "child-session");
+    }
+
+    fn write_vibe_session_dir(
+        dir: &Path,
+        session_id: &str,
+        agent_name: Option<&str>,
+        messages: &[String],
+    ) {
+        std::fs::create_dir_all(dir).unwrap();
+        let mut meta = serde_json::json!({
+            "session_id": session_id,
+            "parent_session_id": null,
+            "start_time": "2026-01-01T00:00:00Z",
+            "end_time": "2026-01-01T00:01:00Z",
+            "environment": { "working_directory": "/tmp" }
+        });
+        if let Some(name) = agent_name {
+            meta["agent_profile"] = serde_json::json!({ "name": name });
+        }
+        std::fs::write(dir.join("meta.json"), meta.to_string()).unwrap();
+        std::fs::write(dir.join("messages.jsonl"), messages.join("\n")).unwrap();
+    }
+
+    fn vibe_task_messages(agent: &str, call_id: &str) -> Vec<String> {
+        let task_args = serde_json::json!({ "agent": agent, "task": "Review" }).to_string();
+        vec![
+            serde_json::json!({ "role": "user", "content": "Ask the agent" }).to_string(),
+            serde_json::json!({
+                "role": "assistant",
+                "tool_calls": [{
+                    "id": call_id,
+                    "type": "function",
+                    "function": { "name": "task", "arguments": task_args }
+                }]
+            })
+            .to_string(),
+            serde_json::json!({
+                "role": "tool",
+                "tool_call_id": call_id,
+                "content": "Punchline"
+            })
+            .to_string(),
+        ]
+    }
+
+    fn vibe_plain_messages() -> Vec<String> {
+        vec![
+            serde_json::json!({ "role": "user", "content": "Do the bit" }).to_string(),
+            serde_json::json!({ "role": "assistant", "content": "Here is my bit" }).to_string(),
+        ]
+    }
+
+    #[test]
+    fn vibe_indexing_descends_into_nested_grandchildren() {
+        let temp_db = NamedTempFile::new().unwrap();
+        let mut indexer = SessionIndexer::new(temp_db.path()).unwrap();
+        let temp_dir = tempfile::tempdir().unwrap();
+        let sessions_dir = temp_dir.path();
+
+        let parent_dir = sessions_dir.join("session_parent");
+        let child_dir = parent_dir.join("agents").join("comique_20260101_000100");
+        let grandchild_dir = child_dir.join("agents").join("clown_20260101_000200");
+
+        write_vibe_session_dir(
+            &parent_dir,
+            "parent-session",
+            None,
+            &vibe_task_messages("comique", "call_1"),
+        );
+        write_vibe_session_dir(
+            &child_dir,
+            "child-session",
+            Some("comique"),
+            &vibe_task_messages("clown", "call_2"),
+        );
+        write_vibe_session_dir(
+            &grandchild_dir,
+            "grandchild-session",
+            Some("clown"),
+            &vibe_plain_messages(),
+        );
+
+        let stats = indexer
+            .index_vibe_sessions_incremental(sessions_dir)
+            .unwrap();
+        assert_eq!(stats.indexed, 3);
+
+        let gc_is_subagent: i64 = indexer
+            .db
+            .query_row(
+                "SELECT is_subagent FROM sessions WHERE id = 'grandchild-session'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(gc_is_subagent, 1);
+
+        let linked: String = indexer
+            .db
+            .query_row(
+                "SELECT child_session_id FROM subagents WHERE session_id = 'child-session'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(linked, "grandchild-session");
+    }
+
+    #[test]
+    fn vibe_incremental_relinks_parent_when_child_appears_later() {
+        let temp_db = NamedTempFile::new().unwrap();
+        let mut indexer = SessionIndexer::new(temp_db.path()).unwrap();
+        let temp_dir = tempfile::tempdir().unwrap();
+        let sessions_dir = temp_dir.path();
+        let parent_dir = sessions_dir.join("session_parent");
+
+        // First pass: the parent already logged the `task` call, but the child
+        // directory has not appeared yet, so the link cannot resolve.
+        write_vibe_session_dir(
+            &parent_dir,
+            "parent-session",
+            None,
+            &vibe_task_messages("comique", "call_1"),
+        );
+        let first = indexer
+            .index_vibe_sessions_incremental(sessions_dir)
+            .unwrap();
+        assert_eq!(first.indexed, 1);
+
+        let unlinked: i64 = indexer
+            .db
+            .query_row(
+                "SELECT COUNT(*) FROM subagents \
+                 WHERE session_id = 'parent-session' AND child_session_id IS NULL",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(unlinked, 1);
+
+        // Child directory appears later; the parent's messages.jsonl is unchanged,
+        // so the fingerprint check alone would skip the parent and leave the link
+        // dangling. The child change must trigger a parent reparse.
+        let child_dir = parent_dir.join("agents").join("comique_20260101_000100");
+        write_vibe_session_dir(
+            &child_dir,
+            "child-session",
+            Some("comique"),
+            &vibe_plain_messages(),
+        );
+
+        indexer
+            .index_vibe_sessions_incremental(sessions_dir)
+            .unwrap();
+
+        let linked: String = indexer
+            .db
+            .query_row(
+                "SELECT child_session_id FROM subagents WHERE session_id = 'parent-session'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(linked, "child-session");
+    }
+
+    #[test]
+    fn vibe_incremental_defers_child_link_until_child_messages_appear() {
+        let temp_db = NamedTempFile::new().unwrap();
+        let mut indexer = SessionIndexer::new(temp_db.path()).unwrap();
+        let temp_dir = tempfile::tempdir().unwrap();
+        let sessions_dir = temp_dir.path();
+        let parent_dir = sessions_dir.join("session_parent");
+        let child_dir = parent_dir.join("agents").join("comique_20260101_000100");
+
+        // First pass: the parent logged its `task` call and the child directory
+        // already exists with a `meta.json`, but the child has not written its
+        // `messages.jsonl` yet (still starting up). The indexer cannot index the
+        // child, so the parent must not emit a dangling link to it.
+        write_vibe_session_dir(
+            &parent_dir,
+            "parent-session",
+            None,
+            &vibe_task_messages("comique", "call_1"),
+        );
+        std::fs::create_dir_all(&child_dir).unwrap();
+        std::fs::write(
+            child_dir.join("meta.json"),
+            serde_json::json!({
+                "session_id": "child-session",
+                "parent_session_id": null,
+                "start_time": "2026-01-01T00:01:00Z",
+                "end_time": null,
+                "agent_profile": { "name": "comique" },
+                "environment": { "working_directory": "/tmp" }
+            })
+            .to_string(),
+        )
+        .unwrap();
+
+        let first = indexer
+            .index_vibe_sessions_incremental(sessions_dir)
+            .unwrap();
+        assert_eq!(first.indexed, 1);
+
+        let unlinked: i64 = indexer
+            .db
+            .query_row(
+                "SELECT COUNT(*) FROM subagents \
+                 WHERE session_id = 'parent-session' AND child_session_id IS NULL",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(unlinked, 1);
+
+        // The child finishes writing its messages; the parent's messages.jsonl is
+        // unchanged, so the newly indexable child must trigger a parent reparse
+        // that finally resolves the link.
+        std::fs::write(
+            child_dir.join("messages.jsonl"),
+            vibe_plain_messages().join("\n"),
+        )
+        .unwrap();
+
+        indexer
+            .index_vibe_sessions_incremental(sessions_dir)
+            .unwrap();
+
+        let linked: String = indexer
+            .db
+            .query_row(
+                "SELECT child_session_id FROM subagents WHERE session_id = 'parent-session'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(linked, "child-session");
+    }
+
+    #[test]
+    fn vibe_incremental_relinks_intermediate_when_grandchild_deleted() {
+        let temp_db = NamedTempFile::new().unwrap();
+        let mut indexer = SessionIndexer::new(temp_db.path()).unwrap();
+        let temp_dir = tempfile::tempdir().unwrap();
+        let sessions_dir = temp_dir.path();
+        let parent_dir = sessions_dir.join("session_parent");
+        let child_dir = parent_dir.join("agents").join("comique_20260101_000100");
+        let grandchild_dir = child_dir.join("agents").join("clown_20260101_000200");
+
+        // A spawns B (comique), B spawns C (clown).
+        write_vibe_session_dir(
+            &parent_dir,
+            "parent-session",
+            None,
+            &vibe_task_messages("comique", "call_1"),
+        );
+        write_vibe_session_dir(
+            &child_dir,
+            "child-session",
+            Some("comique"),
+            &vibe_task_messages("clown", "call_2"),
+        );
+        write_vibe_session_dir(
+            &grandchild_dir,
+            "grandchild-session",
+            Some("clown"),
+            &vibe_plain_messages(),
+        );
+        let first = indexer
+            .index_vibe_sessions_incremental(sessions_dir)
+            .unwrap();
+        assert_eq!(first.indexed, 3);
+
+        // Delete ONLY the grandchild. The intermediate child's messages.jsonl is
+        // unchanged, so the grandchild removal must still force the intermediate
+        // to reparse and drop its now-dangling link.
+        std::fs::remove_dir_all(&grandchild_dir).unwrap();
+        let second = indexer
+            .index_vibe_sessions_incremental(sessions_dir)
+            .unwrap();
+        assert!(second.removed >= 1);
+
+        let grandchild_rows: i64 = indexer
+            .db
+            .query_row(
+                "SELECT COUNT(*) FROM sessions WHERE id = 'grandchild-session'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(grandchild_rows, 0);
+
+        let dangling: i64 = indexer
+            .db
+            .query_row(
+                "SELECT COUNT(*) FROM subagents \
+                 WHERE session_id = 'child-session' AND child_session_id = 'grandchild-session'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            dangling, 0,
+            "intermediate still links to deleted grandchild"
+        );
+    }
+
+    #[test]
+    fn vibe_incremental_prunes_child_when_whole_agents_dir_removed() {
+        let temp_db = NamedTempFile::new().unwrap();
+        let mut indexer = SessionIndexer::new(temp_db.path()).unwrap();
+        let temp_dir = tempfile::tempdir().unwrap();
+        let sessions_dir = temp_dir.path();
+        let parent_dir = sessions_dir.join("session_parent");
+        let agents_dir = parent_dir.join("agents");
+        let child_dir = agents_dir.join("comique_20260101_000100");
+
+        write_vibe_session_dir(
+            &parent_dir,
+            "parent-session",
+            None,
+            &vibe_task_messages("comique", "call_1"),
+        );
+        write_vibe_session_dir(
+            &child_dir,
+            "child-session",
+            Some("comique"),
+            &vibe_plain_messages(),
+        );
+        indexer
+            .index_vibe_sessions_incremental(sessions_dir)
+            .unwrap();
+
+        // Remove the entire agents/ directory (not just one child). The parent's
+        // messages.jsonl is unchanged, so the prune must still drop the orphaned
+        // child row and relink the parent.
+        std::fs::remove_dir_all(&agents_dir).unwrap();
+        indexer
+            .index_vibe_sessions_incremental(sessions_dir)
+            .unwrap();
+
+        let child_rows: i64 = indexer
+            .db
+            .query_row(
+                "SELECT COUNT(*) FROM sessions WHERE id = 'child-session'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(child_rows, 0, "orphaned child row survived agents/ removal");
+
+        let dangling: i64 = indexer
+            .db
+            .query_row(
+                "SELECT COUNT(*) FROM subagents \
+                 WHERE session_id = 'parent-session' AND child_session_id = 'child-session'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(dangling, 0, "parent still links to pruned child");
+    }
+
+    #[test]
+    fn vibe_incremental_removes_whole_subtree_when_intermediate_deleted() {
+        let temp_db = NamedTempFile::new().unwrap();
+        let mut indexer = SessionIndexer::new(temp_db.path()).unwrap();
+        let temp_dir = tempfile::tempdir().unwrap();
+        let sessions_dir = temp_dir.path();
+        let parent_dir = sessions_dir.join("session_parent");
+        let child_dir = parent_dir.join("agents").join("comique_20260101_000100");
+        let grandchild_dir = child_dir.join("agents").join("clown_20260101_000200");
+
+        write_vibe_session_dir(
+            &parent_dir,
+            "parent-session",
+            None,
+            &vibe_task_messages("comique", "call_1"),
+        );
+        write_vibe_session_dir(
+            &child_dir,
+            "child-session",
+            Some("comique"),
+            &vibe_task_messages("clown", "call_2"),
+        );
+        write_vibe_session_dir(
+            &grandchild_dir,
+            "grandchild-session",
+            Some("clown"),
+            &vibe_plain_messages(),
+        );
+        indexer
+            .index_vibe_sessions_incremental(sessions_dir)
+            .unwrap();
+
+        // Delete the whole intermediate subtree (B and its grandchild C). The
+        // grandchild must not survive as an orphan even though no surviving
+        // directory recurses into it.
+        std::fs::remove_dir_all(&child_dir).unwrap();
+        indexer
+            .index_vibe_sessions_incremental(sessions_dir)
+            .unwrap();
+
+        let surviving: i64 = indexer
+            .db
+            .query_row(
+                "SELECT COUNT(*) FROM sessions \
+                 WHERE id IN ('child-session', 'grandchild-session')",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(surviving, 0, "deleted subtree left orphan session rows");
+
+        let dangling: i64 = indexer
+            .db
+            .query_row(
+                "SELECT COUNT(*) FROM subagents \
+                 WHERE session_id = 'parent-session' AND child_session_id = 'child-session'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(dangling, 0, "parent still links to deleted child");
+    }
+
+    #[test]
+    fn vibe_incremental_subtree_removal_preserves_case_distinct_sibling() {
+        let temp_db = NamedTempFile::new().unwrap();
+        let mut indexer = SessionIndexer::new(temp_db.path()).unwrap();
+        let temp_dir = tempfile::tempdir().unwrap();
+        let sessions_dir = temp_dir.path();
+        let parent_dir = sessions_dir.join("session_parent");
+        let removed_child = parent_dir.join("agents").join("Agent");
+        let removed_grandchild = removed_child.join("agents").join("removed_grandchild");
+        let surviving_child = parent_dir.join("agents").join("agent");
+        let surviving_grandchild = surviving_child.join("agents").join("surviving_grandchild");
+
+        write_vibe_session_dir(&parent_dir, "parent-session", None, &vibe_plain_messages());
+        write_vibe_session_dir(
+            &removed_child,
+            "removed-child-session",
+            Some("Agent"),
+            &vibe_plain_messages(),
+        );
+        write_vibe_session_dir(
+            &removed_grandchild,
+            "removed-grandchild-session",
+            Some("removed_grandchild"),
+            &vibe_plain_messages(),
+        );
+        write_vibe_session_dir(
+            &surviving_child,
+            "surviving-child-session",
+            Some("agent"),
+            &vibe_plain_messages(),
+        );
+        write_vibe_session_dir(
+            &surviving_grandchild,
+            "surviving-grandchild-session",
+            Some("surviving_grandchild"),
+            &vibe_plain_messages(),
+        );
+        indexer
+            .index_vibe_sessions_incremental(sessions_dir)
+            .unwrap();
+
+        std::fs::remove_dir_all(&removed_child).unwrap();
+        indexer
+            .index_vibe_sessions_incremental(sessions_dir)
+            .unwrap();
+
+        let removed: i64 = indexer
+            .db
+            .query_row(
+                "SELECT COUNT(*) FROM sessions \
+                 WHERE id IN ('removed-child-session', 'removed-grandchild-session')",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(removed, 0);
+
+        let surviving: i64 = indexer
+            .db
+            .query_row(
+                "SELECT COUNT(*) FROM sessions \
+                 WHERE id IN ('surviving-child-session', 'surviving-grandchild-session')",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(surviving, 2, "case-distinct sibling subtree was removed");
+    }
+
+    #[test]
+    fn vibe_incremental_removes_deleted_child_and_relinks_parent() {
+        let temp_db = NamedTempFile::new().unwrap();
+        let mut indexer = SessionIndexer::new(temp_db.path()).unwrap();
+        let temp_dir = tempfile::tempdir().unwrap();
+        let sessions_dir = temp_dir.path();
+        let parent_dir = sessions_dir.join("session_parent");
+        let child_dir = parent_dir.join("agents").join("comique_20260101_000100");
+
+        // First pass: parent links its spawned child.
+        write_vibe_session_dir(
+            &parent_dir,
+            "parent-session",
+            None,
+            &vibe_task_messages("comique", "call_1"),
+        );
+        write_vibe_session_dir(
+            &child_dir,
+            "child-session",
+            Some("comique"),
+            &vibe_plain_messages(),
+        );
+        let first = indexer
+            .index_vibe_sessions_incremental(sessions_dir)
+            .unwrap();
+        assert_eq!(first.indexed, 2);
+
+        let linked: String = indexer
+            .db
+            .query_row(
+                "SELECT child_session_id FROM subagents WHERE session_id = 'parent-session'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(linked, "child-session");
+
+        // The child directory is deleted; the parent's messages.jsonl is
+        // unchanged, so only the removal can trigger the relink.
+        std::fs::remove_dir_all(&child_dir).unwrap();
+
+        let second = indexer
+            .index_vibe_sessions_incremental(sessions_dir)
+            .unwrap();
+        assert!(second.removed >= 1);
+
+        // The child session row is gone.
+        let child_rows: i64 = indexer
+            .db
+            .query_row(
+                "SELECT COUNT(*) FROM sessions WHERE id = 'child-session'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(child_rows, 0);
+
+        // The parent was reparsed and no longer links to a now-missing child.
+        let dangling: i64 = indexer
+            .db
+            .query_row(
+                "SELECT COUNT(*) FROM subagents \
+                 WHERE session_id = 'parent-session' AND child_session_id = 'child-session'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(dangling, 0);
     }
 
     #[test]
@@ -2566,6 +3528,47 @@ mod tests {
             &[sqlite_path.clone()]
         ));
         assert!(!opencode_source_available(&storage_root, &[]));
+    }
+
+    #[test]
+    fn indexing_diagnostics_codex_available_with_archived_only() {
+        use crate::models::indexing_diagnostics::SourceStatus;
+
+        let temp = tempfile::tempdir().unwrap();
+        let codex_home = temp.path().join("codex");
+        // Active sessions dir is absent; only the adjacent archive remains.
+        let sessions_dir = codex_home.join("sessions");
+        let archived_dir = codex_home.join("archived_sessions");
+        std::fs::create_dir_all(&archived_dir).unwrap();
+        std::fs::write(
+            archived_dir.join("rollout-2026-01-01T00-00-00-archived.jsonl"),
+            concat!(
+                "{\"type\":\"session_meta\",\"payload\":{\"id\":\"archive-only-availability\",\"timestamp\":\"2026-01-01T00:00:00Z\",\"cwd\":\"/tmp\"}}\n",
+                "{\"type\":\"event_msg\",\"timestamp\":\"2026-01-01T00:00:01Z\",\"payload\":{\"type\":\"user_message\",\"message\":\"Hi archived\"}}\n",
+                "{\"type\":\"event_msg\",\"timestamp\":\"2026-01-01T00:00:02Z\",\"payload\":{\"type\":\"agent_message\",\"message\":\"Done\"}}\n"
+            ),
+        )
+        .unwrap();
+
+        let sources = SessionSources {
+            codex_dir: sessions_dir.clone(),
+            ..SessionSources::resolve(Some(temp.path()))
+        };
+
+        let temp_db = tempfile::NamedTempFile::new().unwrap();
+        let mut indexer = SessionIndexer::new(temp_db.path()).unwrap();
+        let result = indexer.index_all_incremental(&sources).unwrap();
+
+        let codex = result
+            .per_source
+            .iter()
+            .find(|source| source.assistant == AiAssistant::Codex)
+            .unwrap();
+
+        // Archived rollouts are indexed, so the status must reflect availability
+        // rather than reporting NotFound from the absent `sessions/` dir.
+        assert_eq!(codex.indexed, 1);
+        assert_ne!(codex.status, SourceStatus::NotFound);
     }
 
     #[test]

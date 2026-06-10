@@ -23,6 +23,7 @@ Cross-tool comparison of Claude Code, Codex, OpenCode, and Mistral Vibe session 
 - ✅ Mistral Vibe parser implemented
 - ✅ OpenCode parent-child detection implemented (`parentID` sessions are indexed as subagents)
 - ✅ Codex collab/thread-spawn linkage implemented (child sessions + parent-side subagent rows)
+- ✅ Mistral Vibe `task`/`agents/` subagent linkage implemented (child sessions + parent-side subagent rows)
 - ✅ Tool-call wire formats documented for Claude, OpenCode, Mistral Vibe, and Codex rollouts
 - ✅ LLM model metadata availability mapped (per message vs per turn vs per session)
 - ✅ Current parser behavior: tool-call/tool-result content is indexed (Phase 6 delivered)
@@ -36,7 +37,7 @@ Cross-tool comparison of Claude Code, Codex, OpenCode, and Mistral Vibe session 
 | **Claude Code** | `~/.claude/` | Project-specific directories<br>Main session: `~/.claude/projects/-Users-alexm-Repository-<project>/UUID.jsonl`<br>Subagent transcripts appear under `<session-id>/subagents/agent-*.jsonl`, each with an `agent-*.meta.json` metadata sidecar (observed v2.1.148)<br>Large materialized tool outputs can also appear under `<session-id>/tool-results/` |
 | **Codex** | `~/.codex/sessions/`<br>`~/.codex/archived_sessions/` | Active sessions: date-sharded `YYYY/MM/DD/rollout-*.jsonl`<br>Archived sessions: flat `rollout-*.jsonl` or cold `rollout-*.jsonl.zst` |
 | **OpenCode** | `~/.local/share/opencode/` | **New (≥ 2026-02-14)**: SQLite WAL-mode DB, usually `opencode.db` and channel-specific `opencode-<channel>.db` for non-default channels; tables: `session`, `message`, `part`, `project`, `todo`, `permission`, `session_share`.<br>**Legacy (pre-migration)**: Multi-directory JSON under `storage/`: `session/<project>/ses_xxx.json`, `message/ses_xxx/`, `part/msg_xxx/`, `session_diff/ses_xxx.json`. Files are retained post-migration (no auto-cleanup). |
-| **Mistral Vibe** | `~/.vibe/logs/session/` | One directory per session:<br>`session_YYYYMMDD_HHMMSS_<shortid>/`<br>Contains `meta.json` + `messages.jsonl`.<br>Default can be overridden via `VIBE_HOME` or `session_logging.save_dir` in `config.toml`. |
+| **Mistral Vibe** | `~/.vibe/logs/session/` | One directory per session:<br>`session_YYYYMMDD_HHMMSS_<shortid>/`<br>Contains `meta.json` + `messages.jsonl`.<br>Subagent traces created by `task` are child session directories under `<parent>/agents/<agent>_YYYYMMDD_HHMMSS_<shortid>/`.<br>Default can be overridden via `VIBE_HOME` or `session_logging.save_dir` in `config.toml`. |
 
 ---
 
@@ -88,7 +89,7 @@ Cross-tool comparison of Claude Code, Codex, OpenCode, and Mistral Vibe session 
 - **Claude Code**: Tree structure via `uuid`/`parentUuid` + `isSidechain` flag; some newer compaction events also include `logicalParentUuid`
 - **Codex**: Thread-based rollouts (`session_meta.payload.id` thread id); source provenance now comes from structured `session_meta.payload.source` (`cli`, `vscode`, `exec`, custom, or structured `subAgent` variants), with additional child-thread linkage visible in collab events (`collab_agent_spawn_*`, `collab_agent_interaction_*`, `collab_waiting_*`, `collab_close_*`, `collab_resume_*`) or local response-item tool calls such as `spawn_agent`
 - **OpenCode**: Parent-child sessions via `parentID` (subagent sessions)
-- **Mistral Vibe**: Linear message list in `messages.jsonl`; tool calls are embedded in assistant messages and resolved by subsequent `tool` role messages
+- **Mistral Vibe**: Linear message list within each `messages.jsonl`; tool calls are embedded in assistant messages and resolved by subsequent `tool` role messages. A `task` tool call creates a separate child transcript under `<parent>/agents/`; the child does not persist the parent tool-call id, so repeated same-profile calls require chronological best-effort pairing
 
 **Metadata Storage:**
 - **Claude Code**: Rich per-event metadata (`cwd`, `gitBranch`, `version`, `sessionId`, `entrypoint`, `slug`) plus assistant-level model slug at `message.model`; user turns can also include `promptId`, and subagent transcripts include `agentId`; recent logs (v2.1.148) add `attributionSkill` on `assistant` events and `sourceToolAssistantUUID` on some tool-result `user` events
@@ -163,7 +164,9 @@ Goal: determine whether model information is available per message, per turn, an
   when present, not message-level; **token usage is available when
   `meta.json.stats` is present** (session totals + last-turn metrics); assistant
   messages from reasoning-capable models can include `reasoning_content` and
-  `reasoning_signature` fields (currently not indexed by the parser)
+  `reasoning_signature` fields. Subagents launched through `task` are persisted
+  as separate child sessions under `<parent>/agents/`; Sessions Chronicle
+  indexes them and surfaces the parent `task` call as a subagent row
 - **Mistral Vibe skills**: Two patterns were observed locally. Exact
   `/<skill-name>` invocation is expanded client-side into a `role == "user"`
   message containing the full `SKILL.md` body. Free-form or slash-with-args
@@ -300,11 +303,12 @@ Each tool can persist token usage metrics, but **the granularity and presence ar
 - [Mistral Vibe Repository](https://github.com/mistralai/mistral-vibe)
 - [Mistral Vibe Configuration Docs](https://docs.mistral.ai/mistral-vibe/introduction/configuration)
 - [Mistral Vibe session logger](https://github.com/mistralai/mistral-vibe/blob/main/vibe/core/session/session_logger.py)
+- [Mistral Vibe `task` tool](https://github.com/mistralai/mistral-vibe/blob/main/vibe/core/tools/builtins/task.py)
 - [Mistral Vibe message/session models](https://github.com/mistralai/mistral-vibe/blob/main/vibe/core/types.py)
 - [Mistral Vibe system prompt skill section](https://github.com/mistralai/mistral-vibe/blob/main/vibe/core/system_prompt.py)
 - [Mistral Vibe CLI skill slash-command handler](https://github.com/mistralai/mistral-vibe/blob/main/vibe/cli/textual_ui/app.py)
 
 ---
 
-**Last Updated**: 2026-05-22
-**Status**: Claude Code docs refreshed from real-session sampling (v2.1.148 logs): new `attachment`, `permission-mode`, and `last-prompt` event types, new `attributionSkill` / `sourceToolAssistantUUID` fields, `isSnapshotUpdate` on file-history snapshots, and the `agent-*.meta.json` subagent metadata sidecar; parser skips the new event types without error, so no parser change is justified yet. Earlier refresh (2026-03-31) covered v2.1.87-era subagent naming (`Agent`), `turn_duration`/`compact_boundary` system events, and `tool-results/` side files. Mistral Vibe docs updated for v2.7.0: new `meta.json` fields (`username`, `title`, `total_messages`, `system_prompt`), new optional `LLMMessage` fields (`message_id`, `reasoning_content`, `reasoning_signature`), system message placement corrected. Mistral Vibe docs refreshed again from upstream source through v2.14.0 (2026-06-08 watch pass): new `SessionMetadata` fields (`parent_session_id`, `title_source`, `loops`, `experiments`), new `LLMMessage` fields (`images`, `injected`, `reasoning_state`, `reasoning_message_id`), expanded `AgentStats` (tool-call counters, performance metrics, per-million pricing), and the new `read`/`edit` tool-call format noted; filenames `meta.json`/`messages.jsonl` confirmed unchanged, parser reads `meta.json` leniently so no parser change is justified yet.
+**Last Updated**: 2026-06-09
+**Status**: Claude Code docs refreshed from real-session sampling (v2.1.148 logs): new `attachment`, `permission-mode`, and `last-prompt` event types, new `attributionSkill` / `sourceToolAssistantUUID` fields, `isSnapshotUpdate` on file-history snapshots, and the `agent-*.meta.json` subagent metadata sidecar; parser skips the new event types without error, so no parser change is justified yet. Earlier refresh (2026-03-31) covered v2.1.87-era subagent naming (`Agent`), `turn_duration`/`compact_boundary` system events, and `tool-results/` side files. Mistral Vibe docs updated for v2.7.0: new `meta.json` fields (`username`, `title`, `total_messages`, `system_prompt`), new optional `LLMMessage` fields (`message_id`, `reasoning_content`, `reasoning_signature`), system message placement corrected. Mistral Vibe docs refreshed again from upstream source through v2.14.1 (2026-06-09 watch pass): new `SessionMetadata` fields (`parent_session_id`, `title_source`, `loops`, `experiments`), new `LLMMessage` fields (`images`, `injected`, `reasoning_state`, `reasoning_message_id`), expanded `AgentStats` (tool-call counters, performance metrics, per-million pricing), the new `read`/`edit` tool-call format, and directory-based `task` subagent traces under `<parent>/agents/`. The parser's subagent behavior matches upstream; same-profile parallel call-to-child pairing remains best-effort because child metadata contains no parent tool-call id.

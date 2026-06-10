@@ -476,6 +476,7 @@ impl OpenCodeParser {
                 }
 
                 let status = match state.and_then(|s| s.get("status")).and_then(|v| v.as_str()) {
+                    Some("pending") => ToolCallStatus::Pending,
                     Some("completed") => ToolCallStatus::Completed,
                     Some("failed") | Some("error") => ToolCallStatus::Error,
                     Some("running") => ToolCallStatus::Running,
@@ -1329,6 +1330,82 @@ mod tests {
             Some("File contents here\nLine 2\nLine 3")
         );
         assert_eq!(parsed.tool_calls[0].status, ToolCallStatus::Completed);
+    }
+
+    #[test]
+    fn tool_part_with_pending_status_stays_pending() {
+        let temp_dir = TempDir::new().unwrap();
+        let root = temp_dir.path();
+
+        let session_path = write_session_file(
+            root,
+            "project-a",
+            "session-pending.json",
+            json!({
+                "id": "session-pending",
+                "directory": "/projects/alpha",
+                "time": { "created": 1_704_067_200_000i64, "updated": 1_704_067_260_000i64 }
+            }),
+        );
+
+        write_message_file(
+            root,
+            "session-pending",
+            "msg-user.json",
+            json!({
+                "id": "msg-user",
+                "sessionID": "session-pending",
+                "role": "user",
+                "time": { "created": 1_704_067_200_000i64 }
+            }),
+        );
+
+        write_message_file(
+            root,
+            "session-pending",
+            "msg-tool.json",
+            json!({
+                "id": "msg-tool",
+                "sessionID": "session-pending",
+                "role": "assistant",
+                "time": { "created": 1_704_067_260_000i64 }
+            }),
+        );
+
+        write_part_file(
+            root,
+            "msg-user",
+            "part-user.json",
+            json!({
+                "id": "part-user",
+                "order": 1,
+                "type": "text",
+                "text": "Read file"
+            }),
+        );
+
+        write_part_file(
+            root,
+            "msg-tool",
+            "part-tool.json",
+            json!({
+                "id": "part-tool",
+                "order": 1,
+                "type": "tool",
+                "tool": "read",
+                "state": {
+                    "status": "pending",
+                    "input": { "path": "/tmp/test.txt" },
+                    "raw": ""
+                }
+            }),
+        );
+
+        let parser = OpenCodeParser::new(root);
+        let parsed = parser.parse(&session_path).unwrap();
+
+        assert_eq!(parsed.tool_calls.len(), 1);
+        assert_eq!(parsed.tool_calls[0].status, ToolCallStatus::Pending);
     }
 
     #[test]

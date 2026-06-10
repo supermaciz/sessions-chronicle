@@ -1004,10 +1004,24 @@ fn extract_parent_thread_id(source: Option<&Value>) -> Option<String> {
         })
 }
 
+fn open_rollout_reader(file_path: &Path) -> Result<Box<dyn BufRead>> {
+    let file = File::open(file_path).context("Failed to open session file")?;
+    if file_path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| name.ends_with(".jsonl.zst"))
+    {
+        let decoder = zstd::stream::read::Decoder::new(file)
+            .context("Failed to open compressed session file")?;
+        return Ok(Box::new(BufReader::new(decoder)));
+    }
+
+    Ok(Box::new(BufReader::new(file)))
+}
+
 impl CodexParser {
     pub fn parse(&self, file_path: &Path) -> Result<ParsedSession> {
-        let file = File::open(file_path).context("Failed to open session file")?;
-        let reader = BufReader::new(file);
+        let reader = open_rollout_reader(file_path)?;
 
         let mut lines = reader.lines();
 
@@ -1058,7 +1072,12 @@ impl CodexParser {
             .get("cwd")
             .and_then(|v| v.as_str())
             .map(str::to_string);
-        let parent_session_id = extract_parent_thread_id(payload.get("source"));
+        let parent_session_id = extract_parent_thread_id(payload.get("source")).or_else(|| {
+            payload
+                .get("parent_thread_id")
+                .and_then(|value| value.as_str())
+                .map(str::to_string)
+        });
         let is_subagent = parent_session_id.is_some();
 
         let mut state = ParseState::new(session_id.clone(), start_time);
@@ -1547,6 +1566,41 @@ mod tests {
             parsed.session.parent_session_id.as_deref(),
             Some("019da0bb-541a-74e2-ae0a-6693c5e4fe04")
         );
+    }
+
+    #[test]
+    fn parse_child_session_uses_direct_parent_thread_id_fallback() {
+        let mut file = tempfile::NamedTempFile::new().unwrap();
+        writeln!(file, r#"{{"type":"session_meta","payload":{{"id":"child-direct-parent","parent_thread_id":"019da0bb-541a-74e2-ae0a-6693c5e4fe04","timestamp":"2026-01-01T00:00:00Z","cwd":"/tmp","source":{{"cli":{{}}}}}}}}"#).unwrap();
+        writeln!(file, r#"{{"type":"event_msg","timestamp":"2026-01-01T00:00:01Z","payload":{{"type":"user_message","message":"Hi"}}}}"#).unwrap();
+        writeln!(file, r#"{{"type":"event_msg","timestamp":"2026-01-01T00:00:02Z","payload":{{"type":"agent_message","message":"Done"}}}}"#).unwrap();
+
+        let parsed = CodexParser.parse(file.path()).unwrap();
+
+        assert!(parsed.session.is_subagent);
+        assert_eq!(
+            parsed.session.parent_session_id.as_deref(),
+            Some("019da0bb-541a-74e2-ae0a-6693c5e4fe04")
+        );
+    }
+
+    #[test]
+    fn parse_reads_compressed_jsonl_zst_rollout() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let path = temp_dir
+            .path()
+            .join("rollout-2026-01-01T00-00-00-compressed.jsonl.zst");
+        let file = std::fs::File::create(&path).unwrap();
+        let mut encoder = zstd::stream::write::Encoder::new(file, 0).unwrap();
+        writeln!(encoder, r#"{{"type":"session_meta","payload":{{"id":"compressed-rollout","timestamp":"2026-01-01T00:00:00Z","cwd":"/tmp"}}}}"#).unwrap();
+        writeln!(encoder, r#"{{"type":"event_msg","timestamp":"2026-01-01T00:00:01Z","payload":{{"type":"user_message","message":"Hi compressed"}}}}"#).unwrap();
+        writeln!(encoder, r#"{{"type":"event_msg","timestamp":"2026-01-01T00:00:02Z","payload":{{"type":"agent_message","message":"Done"}}}}"#).unwrap();
+        encoder.finish().unwrap();
+
+        let parsed = CodexParser.parse(&path).unwrap();
+
+        assert_eq!(parsed.session.id, "compressed-rollout");
+        assert_eq!(parsed.messages[0].content, "Hi compressed");
     }
 
     #[test]
