@@ -645,7 +645,10 @@ impl SessionIndexer {
         if sessions_dir.exists() {
             roots.push(sessions_dir.to_path_buf());
         }
-        if sessions_dir.file_name().and_then(|name| name.to_str()) == Some("sessions")
+        if sessions_dir
+            .file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| matches!(name, "sessions" | "codex_sessions"))
             && let Some(codex_home) = sessions_dir.parent()
         {
             let archived = codex_home.join("archived_sessions");
@@ -1937,6 +1940,41 @@ mod tests {
             .db
             .query_row(
                 "SELECT COUNT(*) > 0 FROM sessions WHERE id = 'archived-rollout'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!(exists);
+    }
+
+    #[test]
+    fn codex_indexing_includes_archived_rollouts_next_to_override_dir() {
+        let temp_db = NamedTempFile::new().unwrap();
+        let mut indexer = SessionIndexer::new(temp_db.path()).unwrap();
+        let temp_dir = tempfile::tempdir().unwrap();
+        let sessions_dir = temp_dir.path().join("codex_sessions");
+        let archived_dir = temp_dir.path().join("archived_sessions");
+        std::fs::create_dir_all(&sessions_dir).unwrap();
+        std::fs::create_dir_all(&archived_dir).unwrap();
+        std::fs::write(
+            archived_dir.join("rollout-2026-01-01T00-00-00-archived.jsonl"),
+            concat!(
+                "{\"type\":\"session_meta\",\"payload\":{\"id\":\"override-archived-rollout\",\"timestamp\":\"2026-01-01T00:00:00Z\",\"cwd\":\"/tmp\"}}\n",
+                "{\"type\":\"event_msg\",\"timestamp\":\"2026-01-01T00:00:01Z\",\"payload\":{\"type\":\"user_message\",\"message\":\"Hi archived\"}}\n",
+                "{\"type\":\"event_msg\",\"timestamp\":\"2026-01-01T00:00:02Z\",\"payload\":{\"type\":\"agent_message\",\"message\":\"Done\"}}\n"
+            ),
+        )
+        .unwrap();
+
+        let stats = indexer
+            .index_codex_sessions_incremental(&sessions_dir)
+            .unwrap();
+
+        assert_eq!(stats.indexed, 1);
+        let exists: bool = indexer
+            .db
+            .query_row(
+                "SELECT COUNT(*) > 0 FROM sessions WHERE id = 'override-archived-rollout'",
                 [],
                 |row| row.get(0),
             )
