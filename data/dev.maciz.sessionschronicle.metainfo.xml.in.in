@@ -49,6 +49,18 @@
   </categories>
   <content_rating type="oars-1.1" />
   <releases>
+    <release version="0.7.0" date="2026-06-14">
+      <description>
+        <p>Improves session indexing for Mistral Vibe and Codex, adds richer tool category icons, and polishes the inspector sidebar.</p>
+        <ul>
+          <li>Index Mistral Vibe subagent sessions and link them to parent task tool calls</li>
+          <li>Support archived Codex rollout sessions and refreshed Mistral Vibe session formats</li>
+          <li>Show richer tool category icons for planning, skill, and user-input tools</li>
+          <li>Reset inspector scroll position when switching between tool calls and subagents</li>
+          <li>Remove the unused Inner Tools section from the inspector sidebar</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.6.1" date="2026-06-07">
       <description>
         <p>Polishes the inspector sidebar and session summary UI.</p>
