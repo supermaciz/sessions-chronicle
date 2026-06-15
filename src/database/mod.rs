@@ -158,6 +158,63 @@ fn date_filter_sql_clause(date_filter: &DateFilter, session_prefix: &str) -> (St
     )
 }
 
+/// Build the SQL fragment restricting rows to the selected AI assistants, plus
+/// the storage strings to bind for its `IN (...)` placeholders. Returns an empty
+/// clause (and no values) when every assistant is selected, so the query needs
+/// no `tool` filter at all. `prefix` qualifies the column (for example `"s."`).
+fn tool_filter_sql_clause(tools: &[AiAssistant], prefix: &str) -> (String, Vec<String>) {
+    if tools.len() == AiAssistant::ALL.len() {
+        return (String::new(), Vec::new());
+    }
+
+    let placeholders = vec!["?"; tools.len()].join(",");
+    let tool_strings = tools.iter().map(|tool| tool.to_storage()).collect();
+    (
+        format!(" AND {prefix}tool IN ({placeholders})"),
+        tool_strings,
+    )
+}
+
+/// Build the SQL fragment for a project/pin filter. `prefix` qualifies the
+/// columns (for example `"s."`). The `Project` variant adds a `?` placeholder
+/// whose value comes from [`project_filter_id`].
+fn project_filter_sql_clause(project_filter: &ProjectFilter, prefix: &str) -> String {
+    match project_filter {
+        ProjectFilter::AllSessions => String::new(),
+        ProjectFilter::Pinned => format!(" AND {prefix}pinned_at IS NOT NULL"),
+        ProjectFilter::Project(_) => format!(" AND {prefix}project_id = ?"),
+        ProjectFilter::Unassigned => format!(" AND {prefix}project_id IS NULL"),
+    }
+}
+
+/// The bound value for a [`ProjectFilter::Project`] placeholder, if any.
+fn project_filter_id(project_filter: &ProjectFilter) -> Option<i64> {
+    match project_filter {
+        ProjectFilter::Project(id) => Some(*id),
+        _ => None,
+    }
+}
+
+/// Append the shared filter parameters — AI assistant tool values, an optional
+/// project id, then date bounds — onto `params` in placeholder order. Callers
+/// push any leading placeholders (such as a session id or FTS query) first.
+fn append_filter_params<'a>(
+    params: &mut Vec<&'a dyn ToSql>,
+    tool_strings: &'a [String],
+    project_id: &'a Option<i64>,
+    date_values: &'a [i64],
+) {
+    for tool in tool_strings {
+        params.push(tool as &dyn ToSql);
+    }
+    if let Some(project_id) = project_id.as_ref() {
+        params.push(project_id as &dyn ToSql);
+    }
+    for value in date_values {
+        params.push(value as &dyn ToSql);
+    }
+}
+
 pub fn search_sessions_for_filter(
     db_path: &Path,
     tools: &[AiAssistant],
@@ -236,66 +293,24 @@ pub fn load_session_by_id_for_filter(
     }
 
     let db = open_connection(db_path)?;
+    let (tool_clause, tool_strings) = tool_filter_sql_clause(tools, "");
+    let project_clause = project_filter_sql_clause(project_filter, "");
     let (date_clause, date_values) = date_filter_sql_clause(date_filter, "");
 
-    let project_clause = match project_filter {
-        ProjectFilter::AllSessions => String::new(),
-        ProjectFilter::Pinned => " AND pinned_at IS NOT NULL".to_string(),
-        ProjectFilter::Project(_) => " AND project_id = ?".to_string(),
-        ProjectFilter::Unassigned => " AND project_id IS NULL".to_string(),
-    };
-
-    let (query, tool_strings): (String, Vec<String>) = if tools.len() == AiAssistant::ALL.len() {
-        (
-            format!(
-                "SELECT {}
+    let query = format!(
+        "SELECT {SESSION_SELECT_COLUMNS}
                  FROM sessions
                  WHERE id = ?
-                   AND is_subagent = 0
-                     {}{}
-                  ORDER BY last_updated DESC",
-                SESSION_SELECT_COLUMNS, project_clause, date_clause
-            ),
-            vec![],
-        )
-    } else {
-        let placeholders: Vec<String> = tools.iter().map(|_| "?".to_string()).collect();
-        let tool_strings: Vec<String> = tools.iter().map(|t| t.to_storage()).collect::<Vec<_>>();
-        (
-            format!(
-                "SELECT {}
-                 FROM sessions
-                 WHERE id = ?
-                   AND tool IN ({})
-                   AND is_subagent = 0
-                     {}{}
-                  ORDER BY last_updated DESC",
-                SESSION_SELECT_COLUMNS,
-                placeholders.join(","),
-                project_clause,
-                date_clause
-            ),
-            tool_strings,
-        )
-    };
+                   AND is_subagent = 0{tool_clause}{project_clause}{date_clause}
+                  ORDER BY last_updated DESC"
+    );
 
     let mut stmt = db.prepare(&query)?;
 
     let mut params: Vec<&dyn ToSql> = Vec::with_capacity(4 + tool_strings.len());
     params.push(&session_id);
-    for tool in &tool_strings {
-        params.push(tool as &dyn ToSql);
-    }
-    let project_id = match project_filter {
-        ProjectFilter::Project(id) => Some(*id),
-        _ => None,
-    };
-    if let Some(project_id) = project_id.as_ref() {
-        params.push(project_id as &dyn ToSql);
-    }
-    for value in &date_values {
-        params.push(value as &dyn ToSql);
-    }
+    let project_id = project_filter_id(project_filter);
+    append_filter_params(&mut params, &tool_strings, &project_id, &date_values);
 
     let sessions = stmt
         .query_map(params.as_slice(), session_from_row)
@@ -412,19 +427,12 @@ fn search_sessions_with_query(
     query: &str,
     date_filter: &DateFilter,
 ) -> Result<Vec<Session>> {
-    let project_clause = match project_filter {
-        ProjectFilter::AllSessions => String::new(),
-        ProjectFilter::Pinned => " AND s.pinned_at IS NOT NULL".to_string(),
-        ProjectFilter::Project(_) => " AND s.project_id = ?".to_string(),
-        ProjectFilter::Unassigned => " AND s.project_id IS NULL".to_string(),
-    };
+    let (tool_clause, tool_strings) = tool_filter_sql_clause(tools, "s.");
+    let project_clause = project_filter_sql_clause(project_filter, "s.");
     let (date_clause, date_values) = date_filter_sql_clause(date_filter, "s.");
 
-    let (query_sql, tool_strings): (String, Vec<String>) = if tools.len() == AiAssistant::ALL.len()
-    {
-        (
-            format!(
-                "SELECT s.id, s.tool, s.project_path, s.project_id, s.start_time, s.message_count, s.file_path,
+    let query_sql = format!(
+        "SELECT s.id, s.tool, s.project_path, s.project_id, s.start_time, s.message_count, s.file_path,
                         s.last_updated, s.pinned_at, s.first_prompt, s.parent_session_id, s.is_subagent,
                         s.input_tokens, s.output_tokens, s.cache_read_tokens,
                         s.cache_write_tokens, s.reasoning_tokens,
@@ -434,56 +442,15 @@ fn search_sessions_with_query(
                  JOIN messages m ON m.id = messages_fts.rowid
                  JOIN sessions s ON s.id = m.session_id
                  WHERE messages_fts MATCH ?
-                   AND s.is_subagent = 0
-                     {}{}
-                  ORDER BY rank ASC, s.last_updated DESC",
-                project_clause, date_clause
-            ),
-            vec![],
-        )
-    } else {
-        let placeholders: Vec<String> = tools.iter().map(|_| "?".to_string()).collect();
-        let tool_strings: Vec<String> = tools.iter().map(|t| t.to_storage()).collect::<Vec<_>>();
-        (
-            format!(
-                "SELECT s.id, s.tool, s.project_path, s.project_id, s.start_time, s.message_count, s.file_path,
-                        s.last_updated, s.pinned_at, s.first_prompt, s.parent_session_id, s.is_subagent,
-                        s.input_tokens, s.output_tokens, s.cache_read_tokens,
-                        s.cache_write_tokens, s.reasoning_tokens,
-                        s.edit_count, s.read_count, s.command_count, s.ending_status,
-                        bm25(messages_fts) AS rank
-                 FROM messages_fts
-                 JOIN messages m ON m.id = messages_fts.rowid
-                 JOIN sessions s ON s.id = m.session_id
-                 WHERE messages_fts MATCH ?
-                   AND s.tool IN ({})
-                   AND s.is_subagent = 0
-                     {}{}
-                  ORDER BY rank ASC, s.last_updated DESC",
-                placeholders.join(","),
-                project_clause,
-                date_clause
-            ),
-            tool_strings,
-        )
-    };
+                   AND s.is_subagent = 0{tool_clause}{project_clause}{date_clause}
+                  ORDER BY rank ASC, s.last_updated DESC"
+    );
 
     let mut stmt = db.prepare(&query_sql)?;
     let mut params: Vec<&dyn ToSql> = Vec::with_capacity(4 + tool_strings.len());
     params.push(&query);
-    for tool in &tool_strings {
-        params.push(tool as &dyn ToSql);
-    }
-    let project_id = match project_filter {
-        ProjectFilter::Project(id) => Some(*id),
-        _ => None,
-    };
-    if let Some(project_id) = project_id.as_ref() {
-        params.push(project_id as &dyn ToSql);
-    }
-    for value in &date_values {
-        params.push(value as &dyn ToSql);
-    }
+    let project_id = project_filter_id(project_filter);
+    append_filter_params(&mut params, &tool_strings, &project_id, &date_values);
 
     let mut rows = stmt
         .query(params.as_slice())
@@ -516,63 +483,22 @@ pub fn load_sessions_for_filter(
     }
 
     let db = open_connection(db_path)?;
+    let (tool_clause, tool_strings) = tool_filter_sql_clause(tools, "");
+    let project_clause = project_filter_sql_clause(project_filter, "");
     let (date_clause, date_values) = date_filter_sql_clause(date_filter, "");
 
-    let project_clause = match project_filter {
-        ProjectFilter::AllSessions => String::new(),
-        ProjectFilter::Pinned => " AND pinned_at IS NOT NULL".to_string(),
-        ProjectFilter::Project(_) => " AND project_id = ?".to_string(),
-        ProjectFilter::Unassigned => " AND project_id IS NULL".to_string(),
-    };
-
-    let (query, tool_strings): (String, Vec<String>) = if tools.len() == AiAssistant::ALL.len() {
-        (
-            format!(
-                "SELECT {}
+    let query = format!(
+        "SELECT {SESSION_SELECT_COLUMNS}
                  FROM sessions
-                 WHERE is_subagent = 0
-                     {}{}
-                  ORDER BY last_updated DESC",
-                SESSION_SELECT_COLUMNS, project_clause, date_clause
-            ),
-            vec![],
-        )
-    } else {
-        let placeholders: Vec<String> = tools.iter().map(|_| "?".to_string()).collect();
-        let tool_strings: Vec<String> = tools.iter().map(|t| t.to_storage()).collect::<Vec<_>>();
-        (
-            format!(
-                "SELECT {}
-                 FROM sessions
-                 WHERE tool IN ({})
-                   AND is_subagent = 0
-                     {}{}
-                  ORDER BY last_updated DESC",
-                SESSION_SELECT_COLUMNS,
-                placeholders.join(","),
-                project_clause,
-                date_clause
-            ),
-            tool_strings,
-        )
-    };
+                 WHERE is_subagent = 0{tool_clause}{project_clause}{date_clause}
+                  ORDER BY last_updated DESC"
+    );
 
     let mut stmt = db.prepare(&query)?;
 
     let mut params: Vec<&dyn ToSql> = Vec::with_capacity(3 + tool_strings.len());
-    for tool in &tool_strings {
-        params.push(tool as &dyn ToSql);
-    }
-    let project_id = match project_filter {
-        ProjectFilter::Project(id) => Some(*id),
-        _ => None,
-    };
-    if let Some(project_id) = project_id.as_ref() {
-        params.push(project_id as &dyn ToSql);
-    }
-    for value in &date_values {
-        params.push(value as &dyn ToSql);
-    }
+    let project_id = project_filter_id(project_filter);
+    append_filter_params(&mut params, &tool_strings, &project_id, &date_values);
 
     let sessions = stmt
         .query_map(params.as_slice(), session_from_row)
@@ -733,38 +659,15 @@ fn count_all_presets_without_query(
     project_filter: &ProjectFilter,
     bounds: &DatePresetBounds,
 ) -> Result<DateCounts> {
-    let project_clause = match project_filter {
-        ProjectFilter::AllSessions => String::new(),
-        ProjectFilter::Pinned => " AND pinned_at IS NOT NULL".to_string(),
-        ProjectFilter::Project(_) => " AND project_id = ?".to_string(),
-        ProjectFilter::Unassigned => " AND project_id IS NULL".to_string(),
-    };
+    let (tool_clause, tool_strings) = tool_filter_sql_clause(tools, "");
+    let project_clause = project_filter_sql_clause(project_filter, "");
     let (preset_columns, preset_values) = preset_case_columns("", bounds);
 
-    let (query_sql, tool_strings): (String, Vec<String>) = if tools.len() == AiAssistant::ALL.len()
-    {
-        (
-            format!(
-                "SELECT COUNT(*), {preset_columns}
+    let query_sql = format!(
+        "SELECT COUNT(*), {preset_columns}
                  FROM sessions
-                 WHERE is_subagent = 0{project_clause}"
-            ),
-            vec![],
-        )
-    } else {
-        let placeholders: Vec<String> = tools.iter().map(|_| "?".to_string()).collect();
-        let tool_strings: Vec<String> = tools.iter().map(|t| t.to_storage()).collect::<Vec<_>>();
-        (
-            format!(
-                "SELECT COUNT(*), {preset_columns}
-                 FROM sessions
-                 WHERE tool IN ({})
-                   AND is_subagent = 0{project_clause}",
-                placeholders.join(",")
-            ),
-            tool_strings,
-        )
-    };
+                 WHERE is_subagent = 0{tool_clause}{project_clause}"
+    );
 
     let mut stmt = db.prepare(&query_sql)?;
     let mut params: Vec<&dyn ToSql> =
@@ -773,16 +676,8 @@ fn count_all_presets_without_query(
     for value in &preset_values {
         params.push(value as &dyn ToSql);
     }
-    for tool in &tool_strings {
-        params.push(tool as &dyn ToSql);
-    }
-    let project_id = match project_filter {
-        ProjectFilter::Project(id) => Some(*id),
-        _ => None,
-    };
-    if let Some(project_id) = project_id.as_ref() {
-        params.push(project_id as &dyn ToSql);
-    }
+    let project_id = project_filter_id(project_filter);
+    append_filter_params(&mut params, &tool_strings, &project_id, &[]);
 
     let counts = stmt.query_row(params.as_slice(), read_counts_row)?;
     Ok(counts)
@@ -795,44 +690,18 @@ fn count_all_presets_with_query(
     query: &str,
     bounds: &DatePresetBounds,
 ) -> Result<DateCounts> {
-    let project_clause = match project_filter {
-        ProjectFilter::AllSessions => String::new(),
-        ProjectFilter::Pinned => " AND s.pinned_at IS NOT NULL".to_string(),
-        ProjectFilter::Project(_) => " AND s.project_id = ?".to_string(),
-        ProjectFilter::Unassigned => " AND s.project_id IS NULL".to_string(),
-    };
+    let (tool_clause, tool_strings) = tool_filter_sql_clause(tools, "s.");
+    let project_clause = project_filter_sql_clause(project_filter, "s.");
     let (preset_columns, preset_values) = preset_distinct_case_columns("s.", "s.id", bounds);
 
-    let (query_sql, tool_strings): (String, Vec<String>) = if tools.len() == AiAssistant::ALL.len()
-    {
-        (
-            format!(
-                "SELECT COUNT(DISTINCT s.id), {preset_columns}
+    let query_sql = format!(
+        "SELECT COUNT(DISTINCT s.id), {preset_columns}
                  FROM messages_fts
                  JOIN messages m ON m.id = messages_fts.rowid
                  JOIN sessions s ON s.id = m.session_id
                  WHERE messages_fts MATCH ?
-                   AND s.is_subagent = 0{project_clause}"
-            ),
-            vec![],
-        )
-    } else {
-        let placeholders: Vec<String> = tools.iter().map(|_| "?".to_string()).collect();
-        let tool_strings: Vec<String> = tools.iter().map(|t| t.to_storage()).collect::<Vec<_>>();
-        (
-            format!(
-                "SELECT COUNT(DISTINCT s.id), {preset_columns}
-                 FROM messages_fts
-                 JOIN messages m ON m.id = messages_fts.rowid
-                 JOIN sessions s ON s.id = m.session_id
-                 WHERE messages_fts MATCH ?
-                   AND s.tool IN ({})
-                   AND s.is_subagent = 0{project_clause}",
-                placeholders.join(",")
-            ),
-            tool_strings,
-        )
-    };
+                   AND s.is_subagent = 0{tool_clause}{project_clause}"
+    );
 
     let mut stmt = db.prepare(&query_sql)?;
     let mut params: Vec<&dyn ToSql> =
@@ -842,16 +711,8 @@ fn count_all_presets_with_query(
         params.push(value as &dyn ToSql);
     }
     params.push(&query);
-    for tool in &tool_strings {
-        params.push(tool as &dyn ToSql);
-    }
-    let project_id = match project_filter {
-        ProjectFilter::Project(id) => Some(*id),
-        _ => None,
-    };
-    if let Some(project_id) = project_id.as_ref() {
-        params.push(project_id as &dyn ToSql);
-    }
+    let project_id = project_filter_id(project_filter);
+    append_filter_params(&mut params, &tool_strings, &project_id, &[]);
 
     let counts = stmt.query_row(params.as_slice(), read_counts_row)?;
     Ok(counts)
@@ -878,35 +739,18 @@ pub fn load_projects(
                 .to_string(),
             vec![],
         )
-    } else if tools.len() == AiAssistant::ALL.len() {
+    } else {
+        let (tool_clause, tool_strings) = tool_filter_sql_clause(tools, "s.");
         (
             format!(
                 "SELECT p.id, p.name, p.path, COUNT(s.id) AS session_count, MAX(s.last_updated) AS project_last_updated
                  FROM projects p
                  LEFT JOIN sessions s ON s.project_id = p.id
-                                    AND s.is_subagent = 0{date_clause}
+                                    AND s.is_subagent = 0{tool_clause}{date_clause}
                  GROUP BY p.id, p.name, p.path
                  ORDER BY CASE WHEN COUNT(s.id) > 0 THEN 0 ELSE 1 END,
                           project_last_updated DESC,
                            p.name COLLATE NOCASE ASC"
-            ),
-            vec![],
-        )
-    } else {
-        let placeholders: Vec<String> = tools.iter().map(|_| "?".to_string()).collect();
-        let tool_strings: Vec<String> = tools.iter().map(|t| t.to_storage()).collect::<Vec<_>>();
-        (
-            format!(
-                "SELECT p.id, p.name, p.path, COUNT(s.id) AS session_count, MAX(s.last_updated) AS project_last_updated
-                 FROM projects p
-                 LEFT JOIN sessions s ON s.project_id = p.id
-                                    AND s.is_subagent = 0
-                                    AND s.tool IN ({}){date_clause}
-                 GROUP BY p.id, p.name, p.path
-                 ORDER BY CASE WHEN COUNT(s.id) > 0 THEN 0 ELSE 1 END,
-                          project_last_updated DESC,
-                           p.name COLLATE NOCASE ASC",
-                placeholders.join(",")
             ),
             tool_strings,
         )
@@ -951,30 +795,15 @@ pub fn count_all_sessions(
 
     let db = open_connection(db_path)?;
 
+    let (tool_clause, tool_strings) = tool_filter_sql_clause(tools, "");
     let (date_clause, date_values) = date_filter_sql_clause(date_filter, "");
 
-    let (query, tool_strings): (String, Vec<String>) = if tools.len() == AiAssistant::ALL.len() {
-        (
-            format!("SELECT COUNT(*) FROM sessions WHERE is_subagent = 0{date_clause}"),
-            vec![],
-        )
-    } else {
-        let placeholders: Vec<String> = tools.iter().map(|_| "?".to_string()).collect();
-        let tool_strings: Vec<String> = tools.iter().map(|t| t.to_storage()).collect::<Vec<_>>();
-        (
-            format!(
-                "SELECT COUNT(*) FROM sessions WHERE is_subagent = 0 AND tool IN ({}){date_clause}",
-                placeholders.join(",")
-            ),
-            tool_strings,
-        )
-    };
+    let query =
+        format!("SELECT COUNT(*) FROM sessions WHERE is_subagent = 0{tool_clause}{date_clause}");
 
     let mut stmt = db.prepare(&query)?;
-    let mut params: Vec<&dyn ToSql> = tool_strings.iter().map(|s| s as &dyn ToSql).collect();
-    for value in &date_values {
-        params.push(value as &dyn ToSql);
-    }
+    let mut params: Vec<&dyn ToSql> = Vec::with_capacity(tool_strings.len() + date_values.len());
+    append_filter_params(&mut params, &tool_strings, &None, &date_values);
     let count: i64 = stmt.query_row(params.as_slice(), |row| row.get(0))?;
 
     Ok(count.max(0) as usize)
@@ -995,43 +824,18 @@ pub fn count_pinned_sessions(
 
     let db = open_connection(db_path)?;
 
+    let (tool_clause, tool_strings) = tool_filter_sql_clause(tools, "");
     let (date_clause, date_values) = date_filter_sql_clause(date_filter, "");
 
-    let (query, tool_strings): (String, Vec<String>) = if tools.len() == AiAssistant::ALL.len() {
-        (
-            format!(
-                "SELECT COUNT(*) FROM sessions
+    let query = format!(
+        "SELECT COUNT(*) FROM sessions
                  WHERE pinned_at IS NOT NULL
-                   AND is_subagent = 0{date_clause}"
-            ),
-            vec![],
-        )
-    } else {
-        let placeholders: Vec<String> = tools.iter().map(|_| "?".to_string()).collect();
-        let tool_strings = tools
-            .iter()
-            .map(|tool| tool.to_storage())
-            .collect::<Vec<_>>();
-        (
-            format!(
-                "SELECT COUNT(*) FROM sessions
-                 WHERE pinned_at IS NOT NULL
-                   AND is_subagent = 0
-                   AND tool IN ({}){date_clause}",
-                placeholders.join(",")
-            ),
-            tool_strings,
-        )
-    };
+                   AND is_subagent = 0{tool_clause}{date_clause}"
+    );
 
     let mut stmt = db.prepare(&query)?;
-    let mut params: Vec<&dyn ToSql> = tool_strings
-        .iter()
-        .map(|value| value as &dyn ToSql)
-        .collect();
-    for value in &date_values {
-        params.push(value as &dyn ToSql);
-    }
+    let mut params: Vec<&dyn ToSql> = Vec::with_capacity(tool_strings.len() + date_values.len());
+    append_filter_params(&mut params, &tool_strings, &None, &date_values);
     let count: i64 = stmt.query_row(params.as_slice(), |row| row.get(0))?;
 
     Ok(count.max(0) as usize)
@@ -1052,37 +856,18 @@ pub fn count_unassigned_sessions(
 
     let db = open_connection(db_path)?;
 
+    let (tool_clause, tool_strings) = tool_filter_sql_clause(tools, "");
     let (date_clause, date_values) = date_filter_sql_clause(date_filter, "");
 
-    let (query, tool_strings): (String, Vec<String>) = if tools.len() == AiAssistant::ALL.len() {
-        (
-            format!(
-                "SELECT COUNT(*) FROM sessions
+    let query = format!(
+        "SELECT COUNT(*) FROM sessions
                  WHERE project_id IS NULL
-                   AND is_subagent = 0{date_clause}"
-            ),
-            vec![],
-        )
-    } else {
-        let placeholders: Vec<String> = tools.iter().map(|_| "?".to_string()).collect();
-        let tool_strings: Vec<String> = tools.iter().map(|t| t.to_storage()).collect::<Vec<_>>();
-        (
-            format!(
-                "SELECT COUNT(*) FROM sessions
-                 WHERE project_id IS NULL
-                   AND is_subagent = 0
-                   AND tool IN ({}){date_clause}",
-                placeholders.join(",")
-            ),
-            tool_strings,
-        )
-    };
+                   AND is_subagent = 0{tool_clause}{date_clause}"
+    );
 
     let mut stmt = db.prepare(&query)?;
-    let mut params: Vec<&dyn ToSql> = tool_strings.iter().map(|s| s as &dyn ToSql).collect();
-    for value in &date_values {
-        params.push(value as &dyn ToSql);
-    }
+    let mut params: Vec<&dyn ToSql> = Vec::with_capacity(tool_strings.len() + date_values.len());
+    append_filter_params(&mut params, &tool_strings, &None, &date_values);
     let count: i64 = stmt.query_row(params.as_slice(), |row| row.get(0))?;
 
     Ok(count.max(0) as usize)
