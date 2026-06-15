@@ -14,26 +14,14 @@ use relm4::factory::{DynamicIndex, FactoryComponent, FactorySender};
 use relm4::gtk;
 
 use crate::database::load_message_full_content;
-use crate::icon_names;
-use crate::models::{
-    MessagePreview, ReasoningPreview, Role, ToolCallStatus, ToolCategoryIcons, tool_name_icon,
-};
-use crate::ui::format::{format_duration_ms, tool_status_css_class, tool_status_label};
+use crate::models::{MessagePreview, ReasoningPreview, Role, ToolCallStatus, tool_name_icon};
+use crate::ui::format::format_duration_ms;
 use crate::ui::highlight;
 use crate::ui::markdown;
 use crate::ui::session_detail::SessionDetailMsg;
-
-pub(crate) const TOOL_ICONS: ToolCategoryIcons = ToolCategoryIcons {
-    read: icon_names::TEXT_SNIPPET,
-    edit: icon_names::EDIT_DOCUMENT,
-    command: icon_names::TERMINAL,
-    search: icon_names::SEARCH,
-    agent: icon_names::SMART_TOY,
-    web: icon_names::EARTH,
-    plan: icon_names::CLIPBOARD_TASK_LIST_REGULAR,
-    skill: icon_names::DOCUMENT_ONE_PAGE_SPARKLE_REGULAR,
-    user_input: icon_names::CHAT_BUBBLES_QUESTION_REGULAR,
-    other: icon_names::BUILD,
+use crate::ui::tool_call_row::{
+    TOOL_ICONS, ToolCallRowHeaderInit, build_tool_call_row_header, encrypted_reasoning_pill,
+    encrypted_reasoning_pill_with_label,
 };
 const SLOW_ROW_WIDGET_BUILD: Duration = Duration::from_millis(10);
 const SLOW_CONTENT_RENDER: Duration = Duration::from_millis(10);
@@ -49,22 +37,6 @@ pub(crate) fn model_label_text(role: Role, model: Option<&str>) -> Option<String
         return None;
     }
     Some(text.to_string())
-}
-
-pub(crate) fn encrypted_reasoning_pill() -> gtk::Box {
-    encrypted_reasoning_pill_with_label("Thinking (encrypted)")
-}
-
-pub(crate) fn encrypted_reasoning_pill_with_label(text: &str) -> gtk::Box {
-    let pill = gtk::Box::new(gtk::Orientation::Horizontal, 0);
-    pill.add_css_class("pill");
-    pill.add_css_class("reasoning-pill-encrypted");
-
-    let label = gtk::Label::new(Some(text));
-    label.set_halign(gtk::Align::Center);
-    pill.append(&label);
-
-    pill
 }
 
 // ---------------------------------------------------------------------------
@@ -445,47 +417,16 @@ fn build_tool_call_widget(
     root.set_margin_top(2);
     root.set_margin_bottom(2);
 
-    let row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-    row.set_margin_start(8);
-    row.set_margin_end(4);
-    row.set_margin_top(4);
-    row.set_margin_bottom(4);
+    let header = build_tool_call_row_header(ToolCallRowHeaderInit {
+        tool_name: &init.tool_name,
+        status: init.status,
+        duration_ms: init.duration_ms,
+        highlight_query: init.highlight_query.as_deref(),
+        reasoning_preview: init.reasoning_preview,
+    });
+    let row = header.row;
 
-    let icon = gtk::Image::new();
-    icon.set_icon_name(Some(tool_name_icon(&init.tool_name, &TOOL_ICONS)));
-    icon.set_pixel_size(16);
-    row.append(&icon);
-
-    let name_label = gtk::Label::new(None);
-    name_label.add_css_class("monospace");
-    name_label.set_halign(gtk::Align::Start);
-    name_label.set_hexpand(false);
-    name_label.set_ellipsize(gtk::pango::EllipsizeMode::End);
-    if let Some(query) = init.highlight_query.as_deref() {
-        let (markup, _) = highlight::highlight_text(&init.tool_name, query);
-        name_label.set_markup(&markup);
-    } else {
-        name_label.set_label(&init.tool_name);
-    }
-    row.append(&name_label);
-
-    let status_label = gtk::Label::new(Some(tool_status_label(init.status)));
-    status_label.add_css_class("caption");
-    status_label.add_css_class(tool_status_css_class(init.status));
-    row.append(&status_label);
-
-    if let Some(ms) = init.duration_ms {
-        let dur_label = gtk::Label::new(Some(&format_duration_ms(ms)));
-        dur_label.add_css_class("caption");
-        dur_label.add_css_class("dim-label");
-        row.append(&dur_label);
-    }
-
-    if init.reasoning_preview.has_visible_reasoning {
-        let reasoning_btn = gtk::Button::with_label("Thinking");
-        reasoning_btn.add_css_class("flat");
-        reasoning_btn.add_css_class("pill");
-        reasoning_btn.add_css_class("reasoning-pill");
+    if let Some(reasoning_btn) = header.reasoning_button {
         {
             let session_id = init.session_id.clone();
             let transcript_item_index = init.transcript_item_index;
@@ -494,9 +435,6 @@ fn build_tool_call_widget(
                 on_inspect_reasoning(session_id.clone(), transcript_item_index);
             });
         }
-        row.append(&reasoning_btn);
-    } else if init.reasoning_preview.encrypted_only {
-        row.append(&encrypted_reasoning_pill());
     }
 
     let inspect_btn = gtk::Button::new();
@@ -1564,6 +1502,7 @@ pub fn transcript_item_init_from_display_item(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::icon_names;
 
     fn row_box_children(row: &gtk::Box) -> Vec<gtk::Widget> {
         let mut children = Vec::new();

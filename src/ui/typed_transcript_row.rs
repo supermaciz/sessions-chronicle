@@ -7,15 +7,18 @@ use relm4::binding::Binding;
 use relm4::{adw, gtk, typed_view::list::RelmListItem};
 
 use crate::models::{Role, tool_name_icon};
-use crate::ui::format::{format_duration_ms, tool_status_css_class, tool_status_label};
+use crate::ui::format::format_duration_ms;
 use crate::ui::highlight;
 use crate::ui::session_detail::SessionDetailMsg;
+use crate::ui::tool_call_row::{
+    TOOL_ICONS, ToolCallRowHeaderInit, build_tool_call_row_header, encrypted_reasoning_pill,
+    encrypted_reasoning_pill_with_label,
+};
 use crate::ui::transcript_item_data::{TranscriptItemData, TranscriptItemKind};
 use crate::ui::transcript_row::{
-    TOOL_ICONS, TranscriptRowBuildKind, encrypted_reasoning_pill,
-    encrypted_reasoning_pill_with_label, format_reasoning_burst_label,
-    format_tool_burst_accessible_label, format_tool_burst_match_badge_accessible_label,
-    model_label_text, populate_tool_burst_children, render_content,
+    TranscriptRowBuildKind, format_reasoning_burst_label, format_tool_burst_accessible_label,
+    format_tool_burst_match_badge_accessible_label, model_label_text, populate_tool_burst_children,
+    render_content,
 };
 
 const TOOL_BURST_ARROW_COLLAPSED: &str = "pan-end-symbolic";
@@ -588,56 +591,15 @@ fn build_tool_call_page_content(
     root.set_margin_top(2);
     root.set_margin_bottom(2);
 
-    let row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-    row.set_margin_start(8);
-    row.set_margin_end(4);
-    row.set_margin_top(4);
-    row.set_margin_bottom(4);
-
-    let icon = gtk::Image::new();
-    icon.set_icon_name(Some(tool_name_icon(&init.tool_name, &TOOL_ICONS)));
-    icon.set_pixel_size(16);
-    row.append(&icon);
-
-    let name_label = gtk::Label::new(None);
-    name_label.add_css_class("monospace");
-    name_label.set_halign(gtk::Align::Start);
-    name_label.set_hexpand(false);
-    name_label.set_xalign(0.0);
-    name_label.set_ellipsize(gtk::pango::EllipsizeMode::End);
-    if let Some(query) = highlight_query {
-        let (markup, _) = highlight::highlight_text(&init.tool_name, query);
-        name_label.set_markup(&markup);
-    } else {
-        name_label.set_label(&init.tool_name);
-    }
-    row.append(&name_label);
-
-    let status_label = gtk::Label::new(Some(tool_status_label(init.status)));
-    status_label.add_css_class("caption");
-    status_label.add_css_class(tool_status_css_class(init.status));
-    row.append(&status_label);
-
-    if let Some(ms) = init.duration_ms {
-        let duration = gtk::Label::new(Some(&format_duration_ms(ms)));
-        duration.add_css_class("caption");
-        duration.add_css_class("dim-label");
-        row.append(&duration);
-    }
-
-    let reasoning_button = if init.reasoning_preview.has_visible_reasoning {
-        let button = gtk::Button::with_label("Thinking");
-        button.add_css_class("flat");
-        button.add_css_class("pill");
-        button.add_css_class("reasoning-pill");
-        row.append(&button);
-        Some(button)
-    } else if init.reasoning_preview.encrypted_only {
-        row.append(&encrypted_reasoning_pill());
-        None
-    } else {
-        None
-    };
+    let header = build_tool_call_row_header(ToolCallRowHeaderInit {
+        tool_name: &init.tool_name,
+        status: init.status,
+        duration_ms: init.duration_ms,
+        highlight_query,
+        reasoning_preview: init.reasoning_preview,
+    });
+    let row = header.row;
+    let reasoning_button = header.reasoning_button;
 
     let inspect = gtk::Button::new();
     inspect.set_icon_name("view-reveal-symbolic");

@@ -10,6 +10,7 @@ pub mod session_detail;
 pub mod session_list;
 pub mod session_row;
 pub mod sidebar;
+pub mod tool_call_row;
 pub mod tool_inspector_pane;
 pub mod tool_preview;
 pub mod tool_renderers;
