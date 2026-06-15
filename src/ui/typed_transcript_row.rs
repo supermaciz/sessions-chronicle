@@ -11,8 +11,8 @@ use crate::ui::format::format_duration_ms;
 use crate::ui::highlight;
 use crate::ui::session_detail::SessionDetailMsg;
 use crate::ui::tool_call_row::{
-    TOOL_ICONS, ToolCallRowHeaderInit, build_tool_call_row_header, encrypted_reasoning_pill,
-    encrypted_reasoning_pill_with_label,
+    TOOL_ICONS, ToolCallRowHeaderInit, append_reasoning_pill, build_tool_call_row_header,
+    encrypted_reasoning_pill, encrypted_reasoning_pill_with_label,
 };
 use crate::ui::transcript_item_data::{TranscriptItemData, TranscriptItemKind};
 use crate::ui::transcript_row::{
@@ -678,19 +678,7 @@ fn build_subagent_page_content(
     title.set_ellipsize(gtk::pango::EllipsizeMode::End);
     root.append(&title);
 
-    let reasoning_button = if init.reasoning_preview.has_visible_reasoning {
-        let button = gtk::Button::with_label("Thinking");
-        button.add_css_class("flat");
-        button.add_css_class("pill");
-        button.add_css_class("reasoning-pill");
-        root.append(&button);
-        Some(button)
-    } else if init.reasoning_preview.encrypted_only {
-        root.append(&encrypted_reasoning_pill());
-        None
-    } else {
-        None
-    };
+    let reasoning_button = append_reasoning_pill(&root, &init.reasoning_preview);
 
     let inspect = gtk::Button::new();
     inspect.set_icon_name("view-reveal-symbolic");

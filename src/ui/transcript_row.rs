@@ -20,8 +20,8 @@ use crate::ui::highlight;
 use crate::ui::markdown;
 use crate::ui::session_detail::SessionDetailMsg;
 use crate::ui::tool_call_row::{
-    TOOL_ICONS, ToolCallRowHeaderInit, build_tool_call_row_header, encrypted_reasoning_pill,
-    encrypted_reasoning_pill_with_label,
+    TOOL_ICONS, ToolCallRowHeaderInit, append_reasoning_pill, build_tool_call_row_header,
+    encrypted_reasoning_pill, encrypted_reasoning_pill_with_label,
 };
 const SLOW_ROW_WIDGET_BUILD: Duration = Duration::from_millis(10);
 const SLOW_CONTENT_RENDER: Duration = Duration::from_millis(10);
@@ -597,17 +597,10 @@ fn build_subagent_header_row(
     title_label.set_ellipsize(gtk::pango::EllipsizeMode::End);
     row.append(&title_label);
 
-    if let Some(reasoning_preview) = reasoning_preview {
-        if reasoning_preview.has_visible_reasoning {
-            let reasoning_btn = gtk::Button::with_label("Thinking");
-            reasoning_btn.add_css_class("flat");
-            reasoning_btn.add_css_class("pill");
-            reasoning_btn.add_css_class("reasoning-pill");
-            reasoning_btn.connect_clicked(move |_| on_inspect_reasoning());
-            row.append(&reasoning_btn);
-        } else if reasoning_preview.encrypted_only {
-            row.append(&encrypted_reasoning_pill());
-        }
+    if let Some(reasoning_preview) = reasoning_preview
+        && let Some(reasoning_btn) = append_reasoning_pill(&row, &reasoning_preview)
+    {
+        reasoning_btn.connect_clicked(move |_| on_inspect_reasoning());
     }
 
     let inspect_btn = gtk::Button::new();

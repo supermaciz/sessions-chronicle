@@ -72,23 +72,35 @@ pub(crate) fn build_tool_call_row_header(
         row.append(&duration);
     }
 
-    let reasoning_button = if init.reasoning_preview.has_visible_reasoning {
-        let button = gtk::Button::with_label("Thinking");
-        button.add_css_class("flat");
-        button.add_css_class("pill");
-        button.add_css_class("reasoning-pill");
-        row.append(&button);
-        Some(button)
-    } else if init.reasoning_preview.encrypted_only {
-        row.append(&encrypted_reasoning_pill());
-        None
-    } else {
-        None
-    };
+    let reasoning_button = append_reasoning_pill(&row, &init.reasoning_preview);
 
     ToolCallRowHeaderWidgets {
         row,
         reasoning_button,
+    }
+}
+
+/// Appends a reasoning pill to `container` based on the preview state.
+///
+/// Returns the clickable "Thinking" button when visible reasoning is present so
+/// the caller can wire its handler. Encrypted-only reasoning renders a
+/// non-interactive pill and yields `None`, as does the absence of reasoning.
+pub(crate) fn append_reasoning_pill(
+    container: &gtk::Box,
+    preview: &ReasoningPreview,
+) -> Option<gtk::Button> {
+    if preview.has_visible_reasoning {
+        let button = gtk::Button::with_label("Thinking");
+        button.add_css_class("flat");
+        button.add_css_class("pill");
+        button.add_css_class("reasoning-pill");
+        container.append(&button);
+        Some(button)
+    } else if preview.encrypted_only {
+        container.append(&encrypted_reasoning_pill());
+        None
+    } else {
+        None
     }
 }
 
