@@ -230,7 +230,7 @@ fn transcript_item_init_from_row_with_index(
                 .clone()
                 .unwrap_or_else(|| "unknown".to_string()),
             status: row.tool_status.unwrap_or(ToolCallStatus::Unknown),
-            preview: crate::ui::tool_preview::extract_preview(
+            preview: crate::ui::session_detail::transcript::tool_preview::extract_preview(
                 row.tool_name.as_deref().unwrap_or("unknown"),
                 row.tool_input_json.as_deref().unwrap_or(""),
                 row.tool_output_text.as_deref(),
@@ -279,13 +279,13 @@ fn transcript_item_init_from_row_with_index(
 
 pub fn transcript_item_init_from_display_item(
     display_index: usize,
-    item: &crate::ui::transcript_display::DisplayTranscriptItem,
+    item: &crate::ui::session_detail::transcript::display::DisplayTranscriptItem,
     session_id: &str,
     highlight_query: Option<String>,
     db_path: Arc<PathBuf>,
 ) -> TranscriptItemInit {
     match item {
-        crate::ui::transcript_display::DisplayTranscriptItem::Single(row) => {
+        crate::ui::session_detail::transcript::display::DisplayTranscriptItem::Single(row) => {
             transcript_item_init_from_row_with_index(
                 row,
                 display_index,
@@ -294,7 +294,7 @@ pub fn transcript_item_init_from_display_item(
                 db_path,
             )
         }
-        crate::ui::transcript_display::DisplayTranscriptItem::ToolBurst(burst) => {
+        crate::ui::session_detail::transcript::display::DisplayTranscriptItem::ToolBurst(burst) => {
             let tool_calls = burst
                 .rows
                 .iter()
@@ -449,14 +449,15 @@ mod tests {
 
     #[test]
     fn transcript_item_init_from_display_item_keeps_raw_child_transcript_indices() {
-        let burst = crate::ui::transcript_display::DisplayTranscriptItem::ToolBurst(
-            crate::ui::transcript_display::DisplayToolBurst {
-                rows: vec![
-                    tool_row(11, "Read", "{}", None, None),
-                    tool_row(12, "Edit", "{}", None, None),
-                ],
-            },
-        );
+        let burst =
+            crate::ui::session_detail::transcript::display::DisplayTranscriptItem::ToolBurst(
+                crate::ui::session_detail::transcript::display::DisplayToolBurst {
+                    rows: vec![
+                        tool_row(11, "Read", "{}", None, None),
+                        tool_row(12, "Edit", "{}", None, None),
+                    ],
+                },
+            );
 
         let init = transcript_item_init_from_display_item(
             5,

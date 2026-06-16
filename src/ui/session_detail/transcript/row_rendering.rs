@@ -9,8 +9,10 @@ use crate::models::Role;
 use crate::ui::highlight;
 use crate::ui::markdown;
 use crate::ui::session_detail::SessionDetailMsg;
-use crate::ui::tool_call_row::{ToolCallRowHeaderInit, build_tool_call_row_header};
-use crate::ui::transcript_item_init::{ToolBurstItemInit, ToolCallItemInit};
+use crate::ui::session_detail::transcript::item_init::{ToolBurstItemInit, ToolCallItemInit};
+use crate::ui::session_detail::transcript::tool_call_row::{
+    ToolCallRowHeaderInit, build_tool_call_row_header,
+};
 
 /// Return the model display text for a transcript header.
 /// Only assistant messages with a non-empty model value produce output.
@@ -250,7 +252,9 @@ fn populate_tool_burst_children_impl(
 mod tests {
     use super::*;
     use crate::models::{ReasoningPreview, ToolCallStatus};
-    use crate::ui::transcript_item_init::{ToolCallItemInit, build_tool_burst_init};
+    use crate::ui::session_detail::transcript::item_init::{
+        ToolCallItemInit, build_tool_burst_init,
+    };
 
     fn row_box_children(row: &gtk::Box) -> Vec<gtk::Widget> {
         let mut children = Vec::new();
