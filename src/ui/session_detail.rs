@@ -24,7 +24,7 @@ use crate::ui::tool_inspector_pane::{
 };
 use crate::ui::transcript_display::{DisplayTranscriptItem, group_transcript_rows};
 use crate::ui::transcript_item_data::TranscriptItemData;
-use crate::ui::transcript_row::{
+use crate::ui::transcript_item_init::{
     TranscriptItemInit, TranscriptRowBuildKind, transcript_item_init_from_display_item,
 };
 use crate::ui::typed_transcript_row::TRANSCRIPT_ROW_WIDGET_NAME_PREFIX;

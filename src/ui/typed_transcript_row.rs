@@ -15,8 +15,9 @@ use crate::ui::tool_call_row::{
     encrypted_reasoning_pill, encrypted_reasoning_pill_with_label,
 };
 use crate::ui::transcript_item_data::{TranscriptItemData, TranscriptItemKind};
-use crate::ui::transcript_row::{
-    TranscriptRowBuildKind, format_reasoning_burst_label, format_tool_burst_accessible_label,
+use crate::ui::transcript_item_init::TranscriptRowBuildKind;
+use crate::ui::transcript_row_rendering::{
+    format_reasoning_burst_label, format_tool_burst_accessible_label,
     format_tool_burst_match_badge_accessible_label, model_label_text, populate_tool_burst_children,
     render_content,
 };
@@ -583,7 +584,7 @@ struct ToolCallPageContentRefs {
 }
 
 fn build_tool_call_page_content(
-    init: &crate::ui::transcript_row::ToolCallItemInit,
+    init: &crate::ui::transcript_item_init::ToolCallItemInit,
     highlight_query: Option<&str>,
 ) -> ToolCallPageContentRefs {
     let root = gtk::Box::new(gtk::Orientation::Vertical, 0);
@@ -639,9 +640,9 @@ fn build_tool_call_page_content(
 }
 
 fn burst_with_highlight_query(
-    burst: &crate::ui::transcript_row::ToolBurstItemInit,
+    burst: &crate::ui::transcript_item_init::ToolBurstItemInit,
     highlight_query: Option<&str>,
-) -> crate::ui::transcript_row::ToolBurstItemInit {
+) -> crate::ui::transcript_item_init::ToolBurstItemInit {
     let mut burst = burst.clone();
     let highlight_query = highlight_query.map(str::to_string);
     for tool_call in &mut burst.tool_calls {
@@ -657,7 +658,7 @@ struct SubagentPageContentRefs {
 }
 
 fn build_subagent_page_content(
-    init: &crate::ui::transcript_row::SubagentItemInit,
+    init: &crate::ui::transcript_item_init::SubagentItemInit,
 ) -> SubagentPageContentRefs {
     let root = gtk::Box::new(gtk::Orientation::Horizontal, 8);
     root.add_css_class("subagent-row");
@@ -699,7 +700,7 @@ fn build_subagent_page_content(
 
 fn rebuild_tool_burst_header(
     header: &adw::WrapBox,
-    burst: &crate::ui::transcript_row::ToolBurstItemInit,
+    burst: &crate::ui::transcript_item_init::ToolBurstItemInit,
 ) {
     header.remove_all();
 
@@ -788,7 +789,7 @@ fn set_tool_burst_expanded_state(button: &gtk::Button, arrow_icon: &gtk::Image, 
 fn build_tool_burst_children_if_needed(
     children: &gtk::Box,
     children_built_for: &Rc<Cell<Option<usize>>>,
-    burst: &crate::ui::transcript_row::ToolBurstItemInit,
+    burst: &crate::ui::transcript_item_init::ToolBurstItemInit,
     sender: &relm4::Sender<SessionDetailMsg>,
     item_index: usize,
 ) {
@@ -828,7 +829,7 @@ mod tests {
     use crate::models::{MessagePreview, ReasoningPreview, Role, ToolCallStatus};
     use crate::ui::session_detail::SessionDetailMsg;
     use crate::ui::transcript_item_data::{TranscriptItemData, TranscriptItemKind};
-    use crate::ui::transcript_row::{
+    use crate::ui::transcript_item_init::{
         MessageItemInit, SubagentItemInit, ToolBurstItemInit, ToolCallItemInit, TranscriptItemInit,
         TranscriptRowBuildKind,
     };
@@ -876,7 +877,7 @@ mod tests {
             tool_call_id: "call-1".to_string(),
             tool_name: "Read".to_string(),
             status: ToolCallStatus::Completed,
-            preview: Some("src/ui/transcript_row.rs:1-20".to_string()),
+            preview: Some("src/ui/transcript_item_init.rs:1-20".to_string()),
             summary: None,
             duration_ms: Some(15),
             highlight_query: Some("read".to_string()),
