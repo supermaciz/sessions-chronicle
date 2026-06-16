@@ -5,6 +5,7 @@ pub enum DateFilter {
     #[default]
     AnyTime,
     Today,
+    Yesterday,
     Last7Days,
     Last30Days,
     ThisYear,
@@ -18,6 +19,7 @@ pub enum DateFilter {
 pub struct DateCounts {
     pub any_time: usize,
     pub today: usize,
+    pub yesterday: usize,
     pub last_7_days: usize,
     pub last_30_days: usize,
     pub this_year: usize,
@@ -31,6 +33,7 @@ impl DateFilter {
         let (start_date, end_date) = match self {
             Self::AnyTime => return None,
             Self::Today => (today, today.checked_add_days(Days::new(1))?),
+            Self::Yesterday => (today.checked_sub_days(Days::new(1))?, today),
             Self::Last7Days => (
                 today.checked_sub_days(Days::new(6))?,
                 today.checked_add_days(Days::new(1))?,
@@ -62,6 +65,7 @@ impl DateFilter {
         match self {
             Self::AnyTime => String::new(),
             Self::Today => "Today".to_string(),
+            Self::Yesterday => "Yesterday".to_string(),
             Self::Last7Days => "Last 7 days".to_string(),
             Self::Last30Days => "Last 30 days".to_string(),
             Self::ThisYear => "This year".to_string(),
@@ -121,6 +125,23 @@ mod tests {
             end.with_timezone(&chrono::Local).date_naive(),
             local_today.checked_add_days(Days::new(1)).unwrap()
         );
+    }
+
+    #[test]
+    fn yesterday_resolves_to_previous_local_day_window() {
+        let now = utc(2026, 5, 27, 12, 34, 56);
+        let (start, end) = DateFilter::Yesterday.resolve(now).unwrap();
+        let local_today = now.with_timezone(&chrono::Local).date_naive();
+        let local_yesterday = local_today.checked_sub_days(Days::new(1)).unwrap();
+
+        assert!(start < now);
+        assert!(end <= now);
+        assert_eq!(
+            start.with_timezone(&chrono::Local).date_naive(),
+            local_yesterday
+        );
+        assert_eq!(end.with_timezone(&chrono::Local).date_naive(), local_today);
+        assert_eq!(DateFilter::Yesterday.pill_label(), "Yesterday");
     }
 
     #[test]

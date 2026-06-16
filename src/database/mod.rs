@@ -562,6 +562,7 @@ pub fn count_sessions_per_date_preset(
 
 struct DatePresetBounds {
     today: Option<(i64, i64)>,
+    yesterday: Option<(i64, i64)>,
     last_7_days: Option<(i64, i64)>,
     last_30_days: Option<(i64, i64)>,
     this_year: Option<(i64, i64)>,
@@ -576,17 +577,19 @@ impl DatePresetBounds {
         };
         Self {
             today: to_ts(DateFilter::Today),
+            yesterday: to_ts(DateFilter::Yesterday),
             last_7_days: to_ts(DateFilter::Last7Days),
             last_30_days: to_ts(DateFilter::Last30Days),
             this_year: to_ts(DateFilter::ThisYear),
         }
     }
 
-    /// Returns the four presets in the order (today, last_7_days, last_30_days, this_year)
+    /// Returns the five presets in the order (today, yesterday, last_7_days, last_30_days, this_year)
     /// so SQL projection columns and `params` extension stay in lockstep.
-    fn ordered(&self) -> [Option<(i64, i64)>; 4] {
+    fn ordered(&self) -> [Option<(i64, i64)>; 5] {
         [
             self.today,
+            self.yesterday,
             self.last_7_days,
             self.last_30_days,
             self.this_year,
@@ -595,8 +598,8 @@ impl DatePresetBounds {
 }
 
 fn preset_case_columns(prefix: &str, bounds: &DatePresetBounds) -> (String, Vec<i64>) {
-    let mut columns: Vec<String> = Vec::with_capacity(4);
-    let mut values: Vec<i64> = Vec::with_capacity(8);
+    let mut columns: Vec<String> = Vec::with_capacity(5);
+    let mut values: Vec<i64> = Vec::with_capacity(10);
     for window in bounds.ordered() {
         if let Some((start, end)) = window {
             columns.push(format!(
@@ -616,8 +619,8 @@ fn preset_distinct_case_columns(
     id_expr: &str,
     bounds: &DatePresetBounds,
 ) -> (String, Vec<i64>) {
-    let mut columns: Vec<String> = Vec::with_capacity(4);
-    let mut values: Vec<i64> = Vec::with_capacity(8);
+    let mut columns: Vec<String> = Vec::with_capacity(5);
+    let mut values: Vec<i64> = Vec::with_capacity(10);
     for window in bounds.ordered() {
         if let Some((start, end)) = window {
             columns.push(format!(
@@ -637,8 +640,8 @@ fn read_counts_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<DateCounts> {
     //
     // Column indices must match the projection order built by
     // `preset_case_columns` / `preset_distinct_case_columns`:
-    //   0 = any_time (total), 1 = today, 2 = last_7_days,
-    //   3 = last_30_days, 4 = this_year.
+    //   0 = any_time (total), 1 = today, 2 = yesterday, 3 = last_7_days,
+    //   4 = last_30_days, 5 = this_year.
     // If a preset is added or reordered, update both this function
     // and `DatePresetBounds::ordered()`.
     let read = |idx: usize| -> rusqlite::Result<usize> {
@@ -647,9 +650,10 @@ fn read_counts_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<DateCounts> {
     Ok(DateCounts {
         any_time: read(0)?,
         today: read(1)?,
-        last_7_days: read(2)?,
-        last_30_days: read(3)?,
-        this_year: read(4)?,
+        yesterday: read(2)?,
+        last_7_days: read(3)?,
+        last_30_days: read(4)?,
+        this_year: read(5)?,
     })
 }
 

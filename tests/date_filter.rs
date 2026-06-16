@@ -322,3 +322,128 @@ fn custom_date_bounds_include_both_ends() {
     assert!(ids.contains(&"from-bound"));
     assert!(ids.contains(&"to-bound"));
 }
+
+#[test]
+fn load_sessions_for_filter_applies_yesterday_preset() {
+    let db = TempDatabase::new("date-filter-yesterday");
+
+    let local_today = Local::now().date_naive();
+    let today_midday = Local
+        .from_local_datetime(
+            &local_today
+                .and_hms_opt(12, 0, 0)
+                .expect("midday local time should exist"),
+        )
+        .earliest()
+        .expect("local conversion for today")
+        .with_timezone(&Utc);
+
+    let today_ts = today_midday.timestamp();
+    let yesterday_ts = (today_midday - Duration::days(1)).timestamp();
+
+    db.insert_session(
+        "today-session",
+        "claude_code",
+        None,
+        None,
+        today_ts,
+        today_ts,
+    );
+    db.insert_message("today-session", 0, "today needle", today_ts);
+
+    db.insert_session(
+        "yesterday-session",
+        "claude_code",
+        None,
+        None,
+        yesterday_ts,
+        yesterday_ts,
+    );
+    db.insert_message("yesterday-session", 0, "yesterday needle", yesterday_ts);
+
+    let yesterday_sessions = load_sessions_for_filter(
+        &db.path,
+        &[AiAssistant::ClaudeCode],
+        &ProjectFilter::AllSessions,
+        &DateFilter::Yesterday,
+    )
+    .expect("yesterday filter query should succeed");
+
+    assert_eq!(yesterday_sessions.len(), 1);
+    assert_eq!(yesterday_sessions[0].id, "yesterday-session");
+
+    let today_sessions = load_sessions_for_filter(
+        &db.path,
+        &[AiAssistant::ClaudeCode],
+        &ProjectFilter::AllSessions,
+        &DateFilter::Today,
+    )
+    .expect("today filter query should succeed");
+
+    assert_eq!(today_sessions.len(), 1);
+    assert_eq!(today_sessions[0].id, "today-session");
+}
+
+#[test]
+fn count_sessions_per_date_preset_counts_yesterday_separately() {
+    let db = TempDatabase::new("date-filter-yesterday-counts");
+
+    let local_today = Local::now().date_naive();
+    let today_midday = Local
+        .from_local_datetime(
+            &local_today
+                .and_hms_opt(12, 0, 0)
+                .expect("midday local time should exist"),
+        )
+        .earliest()
+        .expect("local conversion for today")
+        .with_timezone(&Utc);
+
+    let today_ts = today_midday.timestamp();
+    let yesterday_ts = (today_midday - Duration::days(1)).timestamp();
+    let two_days_ago_ts = (today_midday - Duration::days(2)).timestamp();
+
+    db.insert_session(
+        "today-session",
+        "claude_code",
+        None,
+        None,
+        today_ts,
+        today_ts,
+    );
+    db.insert_message("today-session", 0, "needle", today_ts);
+
+    db.insert_session(
+        "yesterday-session",
+        "claude_code",
+        None,
+        None,
+        yesterday_ts,
+        yesterday_ts,
+    );
+    db.insert_message("yesterday-session", 0, "needle", yesterday_ts);
+
+    db.insert_session(
+        "two-days-ago-session",
+        "claude_code",
+        None,
+        None,
+        two_days_ago_ts,
+        two_days_ago_ts,
+    );
+    db.insert_message("two-days-ago-session", 0, "needle", two_days_ago_ts);
+
+    let counts = count_sessions_per_date_preset(
+        &db.path,
+        &[AiAssistant::ClaudeCode],
+        &ProjectFilter::AllSessions,
+        "",
+    )
+    .expect("date counts should succeed");
+
+    assert_eq!(counts.any_time, 3);
+    assert_eq!(counts.today, 1);
+    assert_eq!(counts.yesterday, 1);
+    assert_eq!(counts.last_7_days, 3);
+    assert!(counts.this_year >= counts.last_7_days);
+}

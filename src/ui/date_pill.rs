@@ -46,6 +46,7 @@ pub struct DatePillWidgets {
     apply_button: gtk::Button,
     any_time_count: gtk::Label,
     today_count: gtk::Label,
+    yesterday_count: gtk::Label,
     last_7_days_count: gtk::Label,
     last_30_days_count: gtk::Label,
     this_year_count: gtk::Label,
@@ -88,12 +89,14 @@ impl SimpleComponent for DatePill {
 
         let any_time_count = gtk::Label::new(Some("0"));
         let today_count = gtk::Label::new(Some("0"));
+        let yesterday_count = gtk::Label::new(Some("0"));
         let last_7_days_count = gtk::Label::new(Some("0"));
         let last_30_days_count = gtk::Label::new(Some("0"));
         let this_year_count = gtk::Label::new(Some("0"));
 
         listbox.append(&build_preset_row("Any time", &any_time_count));
         listbox.append(&build_preset_row("Today", &today_count));
+        listbox.append(&build_preset_row("Yesterday", &yesterday_count));
         listbox.append(&build_preset_row("Last 7 days", &last_7_days_count));
         listbox.append(&build_preset_row("Last 30 days", &last_30_days_count));
         listbox.append(&build_preset_row("This year", &this_year_count));
@@ -157,15 +160,18 @@ impl SimpleComponent for DatePill {
                     .send(DatePillInput::PresetSelected(DateFilter::Today))
                     .ok(),
                 2 => input_sender
-                    .send(DatePillInput::PresetSelected(DateFilter::Last7Days))
+                    .send(DatePillInput::PresetSelected(DateFilter::Yesterday))
                     .ok(),
                 3 => input_sender
-                    .send(DatePillInput::PresetSelected(DateFilter::Last30Days))
+                    .send(DatePillInput::PresetSelected(DateFilter::Last7Days))
                     .ok(),
                 4 => input_sender
-                    .send(DatePillInput::PresetSelected(DateFilter::ThisYear))
+                    .send(DatePillInput::PresetSelected(DateFilter::Last30Days))
                     .ok(),
                 5 => input_sender
+                    .send(DatePillInput::PresetSelected(DateFilter::ThisYear))
+                    .ok(),
+                6 => input_sender
                     .send(DatePillInput::CustomRangeRowSelected)
                     .ok(),
                 _ => None,
@@ -219,6 +225,7 @@ impl SimpleComponent for DatePill {
             apply_button,
             any_time_count,
             today_count,
+            yesterday_count,
             last_7_days_count,
             last_30_days_count,
             this_year_count,
@@ -307,7 +314,7 @@ impl DatePill {
     }
 
     fn select_custom_row(&self) {
-        self.select_row(5);
+        self.select_row(6);
     }
 
     fn select_row(&self, row_index: i32) {
@@ -337,6 +344,9 @@ impl DatePill {
             .today_count
             .set_label(&self.counts.today.to_string());
         widgets
+            .yesterday_count
+            .set_label(&self.counts.yesterday.to_string());
+        widgets
             .last_7_days_count
             .set_label(&self.counts.last_7_days.to_string());
         widgets
@@ -364,10 +374,11 @@ fn current_row_index(filter: &DateFilter) -> i32 {
     match filter {
         DateFilter::AnyTime => 0,
         DateFilter::Today => 1,
-        DateFilter::Last7Days => 2,
-        DateFilter::Last30Days => 3,
-        DateFilter::ThisYear => 4,
-        DateFilter::Custom { .. } => 5,
+        DateFilter::Yesterday => 2,
+        DateFilter::Last7Days => 3,
+        DateFilter::Last30Days => 4,
+        DateFilter::ThisYear => 5,
+        DateFilter::Custom { .. } => 6,
     }
 }
 
@@ -534,10 +545,10 @@ mod tests {
         controller.emit(DatePillInput::PresetSelected(DateFilter::Last30Days));
         controller.emit(DatePillInput::OpenViaShortcut);
 
-        pump_main_context(|| list_box.selected_row().map(|row| row.index()) == Some(3));
+        pump_main_context(|| list_box.selected_row().map(|row| row.index()) == Some(4));
 
         let selected_row = list_box.selected_row().expect("selected preset row");
-        assert_eq!(selected_row.index(), 3);
+        assert_eq!(selected_row.index(), 4);
     }
 
     #[gtk::test]
@@ -556,11 +567,11 @@ mod tests {
         controller.emit(DatePillInput::CustomRangeRowSelected);
 
         pump_main_context(|| {
-            list_box.selected_row().map(|row| row.index()) == Some(5) && revealer.reveals_child()
+            list_box.selected_row().map(|row| row.index()) == Some(6) && revealer.reveals_child()
         });
 
         let selected_row = list_box.selected_row().expect("selected custom row");
-        assert_eq!(selected_row.index(), 5);
+        assert_eq!(selected_row.index(), 6);
         assert!(revealer.reveals_child());
     }
 }
