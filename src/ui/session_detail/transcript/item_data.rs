@@ -4,7 +4,7 @@ use relm4::Sender;
 use relm4::binding::{Binding, BoolBinding};
 
 use crate::ui::session_detail::SessionDetailMsg;
-use crate::ui::transcript_row::{
+use crate::ui::session_detail::transcript::item_init::{
     MessageItemInit, SubagentItemInit, ToolBurstItemInit, ToolCallItemInit, TranscriptItemInit,
     count_tool_call_matches,
 };
@@ -137,7 +137,7 @@ mod tests {
     use super::{TranscriptItemData, TranscriptItemKind};
     use crate::models::{MessagePreview, ReasoningPreview, Role};
     use crate::ui::session_detail::SessionDetailMsg;
-    use crate::ui::transcript_row::{MessageItemInit, TranscriptItemInit};
+    use crate::ui::session_detail::transcript::item_init::{MessageItemInit, TranscriptItemInit};
 
     #[test]
     fn from_init_preserves_message_identity_and_highlight() {
@@ -181,7 +181,9 @@ mod tests {
     #[test]
     fn apply_highlight_query_recomputes_tool_burst_match_counts() {
         use crate::models::ToolCallStatus;
-        use crate::ui::transcript_row::{ToolCallItemInit, build_tool_burst_init};
+        use crate::ui::session_detail::transcript::item_init::{
+            ToolCallItemInit, build_tool_burst_init,
+        };
 
         let tool_call = ToolCallItemInit {
             item_index: 1,

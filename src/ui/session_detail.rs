@@ -19,17 +19,20 @@ use crate::database::{
     load_message_full_content,
 };
 use crate::models::Session;
+use crate::ui::session_detail::transcript::display::{
+    DisplayTranscriptItem, group_transcript_rows,
+};
+use crate::ui::session_detail::transcript::item_data::TranscriptItemData;
+use crate::ui::session_detail::transcript::item_init::{
+    TranscriptItemInit, TranscriptRowBuildKind, transcript_item_init_from_display_item,
+};
+use crate::ui::session_detail::transcript::typed_row::TRANSCRIPT_ROW_WIDGET_NAME_PREFIX;
 use crate::ui::tool_inspector_pane::{
     ToolInspectorPane, ToolInspectorPaneMsg, ToolInspectorPaneOutput,
 };
-use crate::ui::transcript_display::{DisplayTranscriptItem, group_transcript_rows};
-use crate::ui::transcript_item_data::TranscriptItemData;
-use crate::ui::transcript_row::{
-    TranscriptItemInit, TranscriptRowBuildKind, transcript_item_init_from_display_item,
-};
-use crate::ui::typed_transcript_row::TRANSCRIPT_ROW_WIDGET_NAME_PREFIX;
 
 mod session_summary;
+mod transcript;
 
 use session_summary::SessionSummary;
 
@@ -949,8 +952,9 @@ impl SessionDetail {
             ref_data.expanded.set(will_expand);
             if will_expand
                 && ref_data.full_content.is_none()
-                && let crate::ui::transcript_item_data::TranscriptItemKind::Message(message) =
-                    &ref_data.kind
+                && let crate::ui::session_detail::transcript::item_data::TranscriptItemKind::Message(
+                    message,
+                ) = &ref_data.kind
             {
                 load_request = Some((
                     message.db_path.clone(),
@@ -1654,7 +1658,8 @@ impl SessionDetail {
             return false;
         }
 
-        let crate::ui::transcript_item_data::TranscriptItemKind::Message(message) = &item.kind
+        let crate::ui::session_detail::transcript::item_data::TranscriptItemKind::Message(message) =
+            &item.kind
         else {
             return false;
         };
@@ -1668,7 +1673,7 @@ impl SessionDetail {
             let mut data = item.borrow_mut();
             let is_message = matches!(
                 data.kind,
-                crate::ui::transcript_item_data::TranscriptItemKind::Message(_)
+                crate::ui::session_detail::transcript::item_data::TranscriptItemKind::Message(_)
             );
             let item_query = match data.transcript_item_index {
                 Some(transcript_item_index) => highlight_query_for_navigable_row(
