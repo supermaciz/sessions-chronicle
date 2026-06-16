@@ -8,9 +8,11 @@ use sessions_chronicle::database::{
 };
 use sessions_chronicle::models::{AiAssistant, DateFilter, ProjectFilter};
 
-fn seed_date_dataset(db: &TempDatabase) {
+/// Local "today at 12:00" converted to UTC, used as a stable anchor for
+/// building date-window fixtures across timezones.
+fn local_today_midday_utc() -> chrono::DateTime<Utc> {
     let local_today = Local::now().date_naive();
-    let today_midday = Local
+    Local
         .from_local_datetime(
             &local_today
                 .and_hms_opt(12, 0, 0)
@@ -18,7 +20,11 @@ fn seed_date_dataset(db: &TempDatabase) {
         )
         .earliest()
         .expect("local conversion for today")
-        .with_timezone(&Utc);
+        .with_timezone(&Utc)
+}
+
+fn seed_date_dataset(db: &TempDatabase) {
+    let today_midday = local_today_midday_utc();
 
     let today_ts = today_midday.timestamp();
     let two_days_ago_ts = (today_midday - Duration::days(2)).timestamp();
@@ -66,7 +72,9 @@ fn seed_date_dataset(db: &TempDatabase) {
     db.insert_message("older-alpha", 0, "alpha needle", ten_days_ago_ts);
     db.insert_message("old-unassigned", 0, "legacy needle", forty_days_ago_ts);
 
-    let custom_day = local_today
+    let custom_day = today_midday
+        .with_timezone(&Local)
+        .date_naive()
         .checked_sub_days(Days::new(2))
         .expect("custom day should exist");
     let custom_ts = Local
@@ -327,16 +335,7 @@ fn custom_date_bounds_include_both_ends() {
 fn load_sessions_for_filter_applies_yesterday_preset() {
     let db = TempDatabase::new("date-filter-yesterday");
 
-    let local_today = Local::now().date_naive();
-    let today_midday = Local
-        .from_local_datetime(
-            &local_today
-                .and_hms_opt(12, 0, 0)
-                .expect("midday local time should exist"),
-        )
-        .earliest()
-        .expect("local conversion for today")
-        .with_timezone(&Utc);
+    let today_midday = local_today_midday_utc();
 
     let today_ts = today_midday.timestamp();
     let yesterday_ts = (today_midday - Duration::days(1)).timestamp();
@@ -388,16 +387,7 @@ fn load_sessions_for_filter_applies_yesterday_preset() {
 fn count_sessions_per_date_preset_counts_yesterday_separately() {
     let db = TempDatabase::new("date-filter-yesterday-counts");
 
-    let local_today = Local::now().date_naive();
-    let today_midday = Local
-        .from_local_datetime(
-            &local_today
-                .and_hms_opt(12, 0, 0)
-                .expect("midday local time should exist"),
-        )
-        .earliest()
-        .expect("local conversion for today")
-        .with_timezone(&Utc);
+    let today_midday = local_today_midday_utc();
 
     let today_ts = today_midday.timestamp();
     let yesterday_ts = (today_midday - Duration::days(1)).timestamp();
