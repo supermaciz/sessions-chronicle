@@ -1,30 +1,22 @@
+//! Shared transcript row data and rendering helpers.
+//!
+//! The active `SessionDetail` transcript view is implemented by
+//! `typed_transcript_row`; this module keeps the input structs, grouping
+//! conversions, and helper renderers used by that typed ListView path.
+
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::{
-    cell::Cell,
-    collections::BTreeMap,
-    rc::Rc,
-    time::{Duration, Instant},
-};
+use std::{collections::BTreeMap, rc::Rc, time::Duration, time::Instant};
 
-use anyhow::Result;
 use chrono::{TimeZone, Utc};
 use gtk::prelude::*;
-use relm4::factory::{DynamicIndex, FactoryComponent, FactorySender};
 use relm4::gtk;
 
-use crate::database::load_message_full_content;
-use crate::models::{MessagePreview, ReasoningPreview, Role, ToolCallStatus, tool_name_icon};
-use crate::ui::format::format_duration_ms;
+use crate::models::{MessagePreview, ReasoningPreview, Role, ToolCallStatus};
 use crate::ui::highlight;
 use crate::ui::markdown;
 use crate::ui::session_detail::SessionDetailMsg;
-use crate::ui::tool_call_row::{
-    TOOL_ICONS, ToolCallRowHeaderInit, append_reasoning_pill, build_tool_call_row_header,
-    encrypted_reasoning_pill, encrypted_reasoning_pill_with_label,
-};
-const SLOW_ROW_WIDGET_BUILD: Duration = Duration::from_millis(10);
-const SLOW_CONTENT_RENDER: Duration = Duration::from_millis(10);
+use crate::ui::tool_call_row::{ToolCallRowHeaderInit, build_tool_call_row_header};
 
 /// Return the model display text for a transcript header.
 /// Only assistant messages with a non-empty model value produce output.
@@ -38,10 +30,6 @@ pub(crate) fn model_label_text(role: Role, model: Option<&str>) -> Option<String
     }
     Some(text.to_string())
 }
-
-// ---------------------------------------------------------------------------
-// Init types
-// ---------------------------------------------------------------------------
 
 #[derive(Clone)]
 pub struct MessageItemInit {
@@ -136,53 +124,6 @@ impl TranscriptItemInit {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Messages and outputs
-// ---------------------------------------------------------------------------
-
-#[derive(Debug)]
-pub enum TranscriptRowMsg {
-    ToggleExpand,
-    InspectClicked,
-}
-
-#[derive(Debug)]
-pub enum TranscriptRowCmd {
-    FullContentLoaded(Result<String>),
-}
-
-#[derive(Debug)]
-pub enum TranscriptRowOutput {
-    ExpandLoadFailed {
-        #[allow(dead_code)]
-        item_index: usize,
-    },
-    InspectToolCall(String),
-    InspectSubagent(String),
-    InspectReasoning {
-        #[allow(dead_code)]
-        session_id: String,
-        transcript_item_index: i64,
-    },
-    RowBuilt {
-        item_index: usize,
-        kind: TranscriptRowBuildKind,
-        build_duration_ms: u128,
-    },
-}
-
-// ---------------------------------------------------------------------------
-// Kind enum
-// ---------------------------------------------------------------------------
-
-#[derive(Debug, PartialEq, Eq, Clone, Copy)]
-enum TranscriptRowKind {
-    Message,
-    ToolCall,
-    ToolBurst,
-    Subagent,
-}
-
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum TranscriptRowBuildKind {
     Message,
@@ -190,71 +131,6 @@ pub enum TranscriptRowBuildKind {
     ToolBurst,
     Subagent,
 }
-
-impl From<TranscriptRowKind> for TranscriptRowBuildKind {
-    fn from(kind: TranscriptRowKind) -> Self {
-        match kind {
-            TranscriptRowKind::Message => Self::Message,
-            TranscriptRowKind::ToolCall => Self::ToolCall,
-            TranscriptRowKind::ToolBurst => Self::ToolBurst,
-            TranscriptRowKind::Subagent => Self::Subagent,
-        }
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Model
-// ---------------------------------------------------------------------------
-
-#[derive(Debug)]
-pub struct TranscriptRow {
-    item_index: usize,
-    transcript_item_index: Option<i64>,
-    session_id: Option<String>,
-    reasoning_preview: Option<ReasoningPreview>,
-    kind: TranscriptRowKind,
-
-    // --- Message state ---
-    preview: Option<MessagePreview>,
-    highlight_query: Option<String>,
-    db_path: Option<Arc<PathBuf>>,
-    expanded: bool,
-    full_content: Option<String>,
-    loading_full_content: bool,
-
-    // --- ToolCall state ---
-    tool_call_id: Option<String>,
-    tool_name: Option<String>,
-    tool_status: Option<ToolCallStatus>,
-    tool_preview: Option<String>,
-    tool_summary: Option<String>,
-    tool_duration_ms: Option<i64>,
-    tool_highlight_query: Option<String>,
-
-    // --- ToolBurst state ---
-    tool_burst: Option<ToolBurstItemInit>,
-
-    // --- Subagent state ---
-    subagent_id: Option<String>,
-    subagent_title: Option<String>,
-}
-
-// ---------------------------------------------------------------------------
-// Widgets
-// ---------------------------------------------------------------------------
-
-pub struct TranscriptRowWidgets {
-    // Message widgets
-    content_container: gtk::Box,
-    expand_button: gtk::Button,
-    // ToolCall widgets (needed for inspect button sensitivity)
-    // Subagent widgets
-    // (Nothing dynamic for tool/subagent in Phase 3)
-}
-
-// ---------------------------------------------------------------------------
-// FactoryComponent implementation
-// ---------------------------------------------------------------------------
 
 pub(crate) fn render_content(
     container: &gtk::Box,
@@ -396,13 +272,8 @@ pub(crate) fn format_tool_burst_match_badge_accessible_label(match_count: usize)
     format!("{match_count} search matches inside this group")
 }
 
-fn should_build_tool_burst_children_on_mount(default_expanded: bool) -> bool {
-    default_expanded
-}
-
 struct ToolCallWidgetRefs {
     root: gtk::Box,
-    match_count: usize,
 }
 
 fn build_tool_call_widget(
@@ -472,10 +343,7 @@ fn build_tool_call_widget(
         root.append(&preview_label);
     }
 
-    ToolCallWidgetRefs {
-        root,
-        match_count: count_tool_call_matches(init),
-    }
+    ToolCallWidgetRefs { root }
 }
 
 pub(crate) fn populate_tool_burst_children(
@@ -497,36 +365,6 @@ pub(crate) fn populate_tool_burst_children(
             let sender = sender.clone();
             move |_session_id, transcript_item_index| {
                 sender.emit(SessionDetailMsg::InspectReasoning(transcript_item_index));
-            }
-        }),
-        item_index,
-    );
-}
-
-fn populate_tool_burst_children_legacy(
-    children: &gtk::Box,
-    burst: &ToolBurstItemInit,
-    sender: &FactorySender<TranscriptRow>,
-    item_index: usize,
-) {
-    populate_tool_burst_children_impl(
-        children,
-        burst,
-        Rc::new({
-            let sender = sender.clone();
-            move |id| {
-                sender.output(TranscriptRowOutput::InspectToolCall(id)).ok();
-            }
-        }),
-        Rc::new({
-            let sender = sender.clone();
-            move |session_id, transcript_item_index| {
-                sender
-                    .output(TranscriptRowOutput::InspectReasoning {
-                        session_id,
-                        transcript_item_index,
-                    })
-                    .ok();
             }
         }),
         item_index,
@@ -574,769 +412,6 @@ fn populate_tool_burst_children_impl(
     );
 }
 
-fn build_subagent_header_row(
-    title: Option<&str>,
-    reasoning_preview: Option<ReasoningPreview>,
-    on_inspect: impl Fn() + 'static,
-    on_inspect_reasoning: impl Fn() + 'static,
-) -> gtk::Box {
-    let row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-    row.set_margin_start(8);
-    row.set_margin_end(4);
-    row.set_margin_top(4);
-    row.set_margin_bottom(4);
-
-    let icon = gtk::Image::new();
-    icon.set_icon_name(Some(TOOL_ICONS.agent));
-    icon.set_pixel_size(16);
-    row.append(&icon);
-
-    let title_label = gtk::Label::new(title);
-    title_label.set_halign(gtk::Align::Start);
-    title_label.set_hexpand(false);
-    title_label.set_ellipsize(gtk::pango::EllipsizeMode::End);
-    row.append(&title_label);
-
-    if let Some(reasoning_preview) = reasoning_preview
-        && let Some(reasoning_btn) = append_reasoning_pill(&row, &reasoning_preview)
-    {
-        reasoning_btn.connect_clicked(move |_| on_inspect_reasoning());
-    }
-
-    let inspect_btn = gtk::Button::new();
-    inspect_btn.set_icon_name("view-reveal-symbolic");
-    inspect_btn.set_tooltip_text(Some("Inspect subagent"));
-    inspect_btn.add_css_class("flat");
-    inspect_btn.connect_clicked(move |_| on_inspect());
-
-    let spacer = gtk::Box::new(gtk::Orientation::Horizontal, 0);
-    spacer.set_hexpand(true);
-    row.append(&spacer);
-    row.append(&inspect_btn);
-
-    row
-}
-
-impl FactoryComponent for TranscriptRow {
-    type Init = TranscriptItemInit;
-    type Input = TranscriptRowMsg;
-    type Output = TranscriptRowOutput;
-    type CommandOutput = TranscriptRowCmd;
-    type Root = gtk::Box;
-    type Widgets = TranscriptRowWidgets;
-    type ParentWidget = gtk::Box;
-    type Index = DynamicIndex;
-
-    fn init_root(&self) -> Self::Root {
-        gtk::Box::new(gtk::Orientation::Vertical, 0)
-    }
-
-    fn init_model(init: Self::Init, _index: &DynamicIndex, _sender: FactorySender<Self>) -> Self {
-        match init {
-            TranscriptItemInit::Message(m) => Self {
-                item_index: m.item_index,
-                transcript_item_index: Some(m.transcript_item_index),
-                session_id: Some(m.preview.session_id.clone()),
-                reasoning_preview: Some(m.preview.reasoning_preview),
-                kind: TranscriptRowKind::Message,
-                preview: Some(m.preview),
-                highlight_query: m.highlight_query,
-                db_path: Some(m.db_path),
-                expanded: false,
-                full_content: None,
-                loading_full_content: false,
-                tool_call_id: None,
-                tool_name: None,
-                tool_status: None,
-                tool_preview: None,
-                tool_summary: None,
-                tool_duration_ms: None,
-                tool_highlight_query: None,
-                tool_burst: None,
-                subagent_id: None,
-                subagent_title: None,
-            },
-            TranscriptItemInit::ToolCall(tc) => Self {
-                item_index: tc.item_index,
-                transcript_item_index: Some(tc.transcript_item_index),
-                session_id: Some(tc.session_id.clone()),
-                reasoning_preview: Some(tc.reasoning_preview),
-                kind: TranscriptRowKind::ToolCall,
-                preview: None,
-                highlight_query: None,
-                db_path: None,
-                expanded: false,
-                full_content: None,
-                loading_full_content: false,
-                tool_call_id: Some(tc.tool_call_id),
-                tool_name: Some(tc.tool_name),
-                tool_status: Some(tc.status),
-                tool_preview: tc.preview,
-                tool_summary: tc.summary,
-                tool_duration_ms: tc.duration_ms,
-                tool_highlight_query: tc.highlight_query,
-                tool_burst: None,
-                subagent_id: None,
-                subagent_title: None,
-            },
-            TranscriptItemInit::ToolBurst(tb) => Self {
-                item_index: tb.item_index,
-                transcript_item_index: None,
-                session_id: None,
-                reasoning_preview: None,
-                kind: TranscriptRowKind::ToolBurst,
-                preview: None,
-                highlight_query: None,
-                db_path: None,
-                expanded: false,
-                full_content: None,
-                loading_full_content: false,
-                tool_call_id: None,
-                tool_name: None,
-                tool_status: None,
-                tool_preview: None,
-                tool_summary: None,
-                tool_duration_ms: None,
-                tool_highlight_query: None,
-                tool_burst: Some(tb),
-                subagent_id: None,
-                subagent_title: None,
-            },
-            TranscriptItemInit::Subagent(sa) => Self {
-                item_index: sa.item_index,
-                transcript_item_index: Some(sa.transcript_item_index),
-                session_id: Some(sa.session_id),
-                reasoning_preview: Some(sa.reasoning_preview),
-                kind: TranscriptRowKind::Subagent,
-                preview: None,
-                highlight_query: None,
-                db_path: None,
-                expanded: false,
-                full_content: None,
-                loading_full_content: false,
-                tool_call_id: None,
-                tool_name: None,
-                tool_status: None,
-                tool_preview: None,
-                tool_summary: None,
-                tool_duration_ms: None,
-                tool_highlight_query: None,
-                tool_burst: None,
-                subagent_id: Some(sa.subagent_id),
-                subagent_title: Some(sa.title),
-            },
-        }
-    }
-
-    fn init_widgets(
-        &mut self,
-        _index: &DynamicIndex,
-        root: Self::Root,
-        _returned_widget: &gtk::Widget,
-        sender: FactorySender<Self>,
-    ) -> Self::Widgets {
-        let started_at = Instant::now();
-        let widgets = match self.kind {
-            TranscriptRowKind::Message => self.build_message_widgets(&root, sender.clone()),
-            TranscriptRowKind::ToolCall => self.build_tool_call_widgets(&root, sender.clone()),
-            TranscriptRowKind::ToolBurst => self.build_tool_burst_widgets(&root, sender.clone()),
-            TranscriptRowKind::Subagent => self.build_subagent_widgets(&root, sender.clone()),
-        };
-        let duration = started_at.elapsed();
-
-        tracing::debug!(
-            item_index = self.item_index,
-            transcript_item_index = ?self.transcript_item_index,
-            kind = ?self.kind,
-            build_duration_ms = duration.as_millis(),
-            "Built transcript row widgets"
-        );
-        let first_frame_started_at = Instant::now();
-        let item_index = self.item_index;
-        let transcript_item_index = self.transcript_item_index;
-        let kind = self.kind;
-        root.add_tick_callback(move |widget, _clock| {
-            tracing::debug!(
-                item_index,
-                transcript_item_index = ?transcript_item_index,
-                kind = ?kind,
-                first_frame_delay_ms = first_frame_started_at.elapsed().as_millis(),
-                allocated_width = widget.width(),
-                allocated_height = widget.height(),
-                "Transcript row reached first frame"
-            );
-            gtk::glib::ControlFlow::Break
-        });
-        if duration >= SLOW_ROW_WIDGET_BUILD {
-            tracing::info!(
-                item_index = self.item_index,
-                transcript_item_index = ?self.transcript_item_index,
-                kind = ?self.kind,
-                build_duration_ms = duration.as_millis(),
-                "Slow transcript row widget build"
-            );
-        }
-        sender
-            .output(TranscriptRowOutput::RowBuilt {
-                item_index: self.item_index,
-                kind: self.kind.into(),
-                build_duration_ms: duration.as_millis(),
-            })
-            .ok();
-
-        widgets
-    }
-
-    fn update_with_view(
-        &mut self,
-        widgets: &mut Self::Widgets,
-        message: Self::Input,
-        sender: FactorySender<Self>,
-    ) {
-        match message {
-            TranscriptRowMsg::ToggleExpand => {
-                if self.kind != TranscriptRowKind::Message {
-                    return;
-                }
-                let Some(ref preview) = self.preview else {
-                    return;
-                };
-
-                if self.expanded {
-                    // Collapse: show preview
-                    self.expanded = false;
-                    render_content(
-                        &widgets.content_container,
-                        &preview.content_preview,
-                        preview.role,
-                        self.highlight_query.as_deref(),
-                    );
-                    self.update_expand_button(widgets, preview);
-                } else if let Some(ref full) = self.full_content {
-                    // Expand with cached content
-                    self.expanded = true;
-                    render_content(
-                        &widgets.content_container,
-                        full,
-                        preview.role,
-                        self.highlight_query.as_deref(),
-                    );
-                    self.update_expand_button(widgets, preview);
-                } else {
-                    // Fetch full content from DB
-                    self.loading_full_content = true;
-                    self.update_expand_button(widgets, preview);
-                    let db_path = self.db_path.clone().expect("message row has db_path");
-                    let session_id = preview.session_id.clone();
-                    let message_index = preview.message_index;
-                    sender.spawn_oneshot_command(move || {
-                        TranscriptRowCmd::FullContentLoaded(load_message_full_content(
-                            &db_path,
-                            &session_id,
-                            message_index,
-                        ))
-                    });
-                }
-            }
-            TranscriptRowMsg::InspectClicked => match self.kind {
-                TranscriptRowKind::ToolCall => {
-                    if let Some(ref id) = self.tool_call_id {
-                        sender
-                            .output(TranscriptRowOutput::InspectToolCall(id.clone()))
-                            .ok();
-                    }
-                }
-                TranscriptRowKind::ToolBurst => {}
-                TranscriptRowKind::Subagent => {
-                    if let Some(ref id) = self.subagent_id {
-                        sender
-                            .output(TranscriptRowOutput::InspectSubagent(id.clone()))
-                            .ok();
-                    }
-                }
-                TranscriptRowKind::Message => {}
-            },
-        }
-    }
-
-    fn update_cmd_with_view(
-        &mut self,
-        widgets: &mut Self::Widgets,
-        message: Self::CommandOutput,
-        sender: FactorySender<Self>,
-    ) {
-        match message {
-            TranscriptRowCmd::FullContentLoaded(Ok(content)) => {
-                let Some(ref preview) = self.preview else {
-                    return;
-                };
-                self.full_content = Some(content.clone());
-                self.expanded = true;
-                self.loading_full_content = false;
-                render_content(
-                    &widgets.content_container,
-                    &content,
-                    preview.role,
-                    self.highlight_query.as_deref(),
-                );
-                self.update_expand_button(widgets, preview);
-            }
-            TranscriptRowCmd::FullContentLoaded(Err(err)) => {
-                let Some(ref preview) = self.preview else {
-                    return;
-                };
-                tracing::error!(
-                    "Failed to load full content for item {}: {}",
-                    self.item_index,
-                    err
-                );
-                self.expanded = false;
-                self.loading_full_content = false;
-                self.update_expand_button(widgets, preview);
-                sender
-                    .output(TranscriptRowOutput::ExpandLoadFailed {
-                        item_index: self.item_index,
-                    })
-                    .ok();
-            }
-        }
-    }
-}
-
-impl TranscriptRow {
-    /// Build the widget tree for a message transcript item.
-    fn build_message_widgets(
-        &mut self,
-        root: &gtk::Box,
-        sender: FactorySender<Self>,
-    ) -> TranscriptRowWidgets {
-        let preview = self.preview.as_ref().expect("message kind has preview");
-
-        root.add_css_class("message-row");
-        root.add_css_class(preview.role.css_class());
-        root.set_spacing(4);
-
-        // Header: role label [· model] · timestamp
-        let header = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-        let role_label = gtk::Label::new(Some(preview.role.label()));
-        role_label.add_css_class("caption");
-        role_label.add_css_class("heading");
-        role_label.add_css_class(preview.role.css_class());
-        role_label.set_halign(gtk::Align::Start);
-        header.append(&role_label);
-
-        if let Some(model_text) = model_label_text(preview.role, preview.model.as_deref()) {
-            let sep1 = gtk::Label::new(Some("·"));
-            sep1.add_css_class("caption");
-            sep1.add_css_class("dim-label");
-            header.append(&sep1);
-
-            let model_label = gtk::Label::new(Some(&model_text));
-            model_label.add_css_class("caption");
-            model_label.add_css_class("dim-label");
-            model_label.add_css_class("monospace");
-            model_label.set_halign(gtk::Align::Start);
-            header.append(&model_label);
-        }
-
-        let sep_ts = gtk::Label::new(Some("·"));
-        sep_ts.add_css_class("caption");
-        sep_ts.add_css_class("dim-label");
-        header.append(&sep_ts);
-
-        let ts_label = gtk::Label::new(Some(&preview.timestamp.format("%H:%M:%S").to_string()));
-        ts_label.add_css_class("caption");
-        ts_label.add_css_class("dim-label");
-        ts_label.set_halign(gtk::Align::Start);
-        header.append(&ts_label);
-
-        if preview.reasoning_preview.has_visible_reasoning {
-            let reasoning_btn = gtk::Button::with_label("Thinking");
-            reasoning_btn.add_css_class("flat");
-            reasoning_btn.add_css_class("pill");
-            reasoning_btn.add_css_class("reasoning-pill");
-            {
-                let sender = sender.clone();
-                let session_id = self.session_id.clone();
-                let transcript_item_index = self.transcript_item_index;
-                reasoning_btn.connect_clicked(move |_| {
-                    if let (Some(session_id), Some(transcript_item_index)) =
-                        (session_id.clone(), transcript_item_index)
-                    {
-                        sender
-                            .output(TranscriptRowOutput::InspectReasoning {
-                                session_id,
-                                transcript_item_index,
-                            })
-                            .ok();
-                    }
-                });
-            }
-            header.append(&reasoning_btn);
-        } else if preview.reasoning_preview.encrypted_only {
-            header.append(&encrypted_reasoning_pill());
-        }
-
-        root.append(&header);
-
-        // Content container
-        let content_container = gtk::Box::new(gtk::Orientation::Vertical, 4);
-        root.append(&content_container);
-
-        // Expand toggle button
-        let expand_button = gtk::Button::new();
-        expand_button.add_css_class("flat");
-        expand_button.add_css_class("caption");
-        expand_button.add_css_class("expand-toggle");
-        expand_button.set_halign(gtk::Align::Start);
-        expand_button.set_margin_top(4);
-        expand_button.set_label("Show full message");
-        expand_button.set_visible(preview.is_truncated() && preview.role != Role::ToolResult);
-        {
-            let s = sender.clone();
-            expand_button.connect_clicked(move |_| {
-                s.input(TranscriptRowMsg::ToggleExpand);
-            });
-        }
-        root.append(&expand_button);
-
-        // Render initial content
-        let render_started_at = Instant::now();
-        let match_count = render_content(
-            &content_container,
-            &preview.content_preview,
-            preview.role,
-            self.highlight_query.as_deref(),
-        );
-        let render_duration = render_started_at.elapsed();
-        tracing::debug!(
-            item_index = self.item_index,
-            transcript_item_index = ?self.transcript_item_index,
-            role = ?preview.role,
-            content_len = preview.content_preview.len(),
-            match_count,
-            render_duration_ms = render_duration.as_millis(),
-            "Rendered transcript message content"
-        );
-        if render_duration >= SLOW_CONTENT_RENDER {
-            tracing::info!(
-                item_index = self.item_index,
-                transcript_item_index = ?self.transcript_item_index,
-                role = ?preview.role,
-                content_len = preview.content_preview.len(),
-                match_count,
-                render_duration_ms = render_duration.as_millis(),
-                "Slow transcript message content render"
-            );
-        }
-        TranscriptRowWidgets {
-            content_container,
-            expand_button,
-        }
-    }
-
-    /// Build the widget tree for a tool call transcript item.
-    fn build_tool_call_widgets(
-        &mut self,
-        root: &gtk::Box,
-        sender: FactorySender<Self>,
-    ) -> TranscriptRowWidgets {
-        let init = ToolCallItemInit {
-            item_index: self.item_index,
-            transcript_item_index: self.transcript_item_index.unwrap_or_default(),
-            session_id: self.session_id.clone().unwrap_or_default(),
-            tool_call_id: self.tool_call_id.clone().unwrap_or_default(),
-            tool_name: self
-                .tool_name
-                .clone()
-                .unwrap_or_else(|| "unknown".to_string()),
-            status: self.tool_status.unwrap_or(ToolCallStatus::Unknown),
-            preview: self.tool_preview.clone(),
-            summary: self.tool_summary.clone(),
-            duration_ms: self.tool_duration_ms,
-            highlight_query: self.tool_highlight_query.clone(),
-            reasoning_preview: self.reasoning_preview.unwrap_or_default(),
-        };
-
-        let build_started_at = Instant::now();
-        let refs = build_tool_call_widget(
-            &init,
-            {
-                let sender = sender.clone();
-                move |id| {
-                    sender.output(TranscriptRowOutput::InspectToolCall(id)).ok();
-                }
-            },
-            {
-                let sender = sender.clone();
-                move |session_id, transcript_item_index| {
-                    sender
-                        .output(TranscriptRowOutput::InspectReasoning {
-                            session_id,
-                            transcript_item_index,
-                        })
-                        .ok();
-                }
-            },
-        );
-        let build_duration = build_started_at.elapsed();
-        tracing::debug!(
-            item_index = self.item_index,
-            transcript_item_index = ?self.transcript_item_index,
-            tool_name = init.tool_name.as_str(),
-            preview_len = init.displayed_preview().map(str::len).unwrap_or_default(),
-            match_count = refs.match_count,
-            build_duration_ms = build_duration.as_millis(),
-            "Built transcript tool call widget"
-        );
-        root.append(&refs.root);
-
-        TranscriptRowWidgets {
-            content_container: gtk::Box::new(gtk::Orientation::Vertical, 0),
-            expand_button: gtk::Button::new(),
-        }
-    }
-
-    fn build_tool_burst_widgets(
-        &mut self,
-        root: &gtk::Box,
-        sender: FactorySender<Self>,
-    ) -> TranscriptRowWidgets {
-        let Some(burst) = self.tool_burst.as_ref() else {
-            return TranscriptRowWidgets {
-                content_container: gtk::Box::new(gtk::Orientation::Vertical, 0),
-                expand_button: gtk::Button::new(),
-            };
-        };
-
-        root.add_css_class("tool-call-group");
-
-        let header_button = gtk::Button::new();
-        header_button.add_css_class("flat");
-        header_button.add_css_class("tool-call-group-header-button");
-        header_button.set_hexpand(true);
-
-        let header_row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-        header_row.set_hexpand(true);
-
-        let arrow_icon = gtk::Image::from_icon_name("pan-end-symbolic");
-        arrow_icon.set_valign(gtk::Align::Start);
-        arrow_icon.add_css_class("tool-call-group-arrow");
-        header_row.append(&arrow_icon);
-
-        let header = gtk::FlowBox::new();
-        header.set_selection_mode(gtk::SelectionMode::None);
-        header.set_row_spacing(4);
-        header.set_column_spacing(8);
-        header.set_min_children_per_line(1);
-        header.set_max_children_per_line(u32::MAX);
-        header.set_hexpand(true);
-        header.add_css_class("tool-call-group-header");
-
-        let append_to_header = |child: &gtk::Widget| {
-            header.insert(child, -1);
-        };
-
-        for (name, count) in &burst.category_counts {
-            let pill_box = gtk::Box::new(gtk::Orientation::Horizontal, 4);
-            pill_box.add_css_class("pill");
-            pill_box.add_css_class("tool-call-group-pill");
-
-            let pill_icon = gtk::Image::new();
-            pill_icon.set_icon_name(Some(tool_name_icon(name, &TOOL_ICONS)));
-            pill_icon.set_pixel_size(12);
-            pill_box.append(&pill_icon);
-
-            let pill_label = gtk::Label::new(Some(&format!("{count} {name}")));
-            pill_box.append(&pill_label);
-
-            append_to_header(pill_box.upcast_ref());
-        }
-
-        if let Some(total_ms) = burst.total_duration_ms {
-            let duration = gtk::Label::new(Some(&format_duration_ms(total_ms)));
-            duration.add_css_class("caption");
-            duration.add_css_class("dim-label");
-            append_to_header(duration.upcast_ref());
-        }
-
-        if let Some(reasoning_label) = format_reasoning_burst_label(
-            burst.visible_reasoning_child_count,
-            burst.encrypted_only_child_count,
-        ) {
-            if burst.visible_reasoning_child_count > 0 {
-                let badge = gtk::Label::new(Some(&reasoning_label));
-                badge.add_css_class("pill");
-                badge.add_css_class("tool-call-group-pill");
-                badge.add_css_class("reasoning-pill");
-                append_to_header(badge.upcast_ref());
-            } else {
-                let badge = encrypted_reasoning_pill_with_label(&reasoning_label);
-                badge.add_css_class("tool-call-group-pill");
-                append_to_header(badge.upcast_ref());
-            }
-        }
-
-        let total = gtk::Label::new(Some(&format!("{} tool calls", burst.tool_calls.len())));
-        total.add_css_class("caption");
-        total.add_css_class("dim-label");
-        append_to_header(total.upcast_ref());
-
-        if burst.error_count > 0 {
-            let error_label = gtk::Label::new(Some(&format!(
-                "{} {}",
-                burst.error_count,
-                if burst.error_count == 1 {
-                    "error"
-                } else {
-                    "errors"
-                }
-            )));
-            error_label.add_css_class("caption");
-            error_label.add_css_class("status-error");
-            append_to_header(error_label.upcast_ref());
-        }
-
-        let burst_match_count: usize = burst.child_match_counts.iter().sum();
-        if burst_match_count > 0 {
-            let badge = gtk::Label::new(Some(&format!("{} matches", burst_match_count)));
-            badge.add_css_class("pill");
-            badge.add_css_class("accent");
-            badge.add_css_class("tool-call-group-pill");
-            let badge_a11y = format_tool_burst_match_badge_accessible_label(burst_match_count);
-            badge.update_property(&[gtk::accessible::Property::Label(&badge_a11y)]);
-            append_to_header(badge.upcast_ref());
-        }
-
-        header_row.append(&header);
-        header_button.set_child(Some(&header_row));
-
-        let header_a11y = format_tool_burst_accessible_label(
-            &burst.category_counts,
-            burst.tool_calls.len(),
-            burst.error_count,
-        );
-        header_button.update_property(&[gtk::accessible::Property::Label(&header_a11y)]);
-
-        let children = gtk::Box::new(gtk::Orientation::Vertical, 0);
-        let children_built = Rc::new(Cell::new(false));
-        if should_build_tool_burst_children_on_mount(burst.default_expanded) {
-            populate_tool_burst_children_legacy(&children, burst, &sender, self.item_index);
-            children_built.set(true);
-        }
-
-        let revealer = gtk::Revealer::new();
-        revealer.set_transition_type(gtk::RevealerTransitionType::SlideDown);
-        revealer.set_reveal_child(burst.default_expanded);
-        revealer.set_child(Some(&children));
-
-        if burst.default_expanded {
-            arrow_icon.set_icon_name(Some("pan-down-symbolic"));
-        }
-
-        {
-            let revealer = revealer.clone();
-            let arrow_icon = arrow_icon.clone();
-            let children = children.clone();
-            let children_built = children_built.clone();
-            let burst = burst.clone();
-            let sender = sender.clone();
-            let item_index = self.item_index;
-            header_button.connect_clicked(move |btn| {
-                let expanded = !revealer.reveals_child();
-                if expanded && !children_built.get() {
-                    populate_tool_burst_children_legacy(&children, &burst, &sender, item_index);
-                    children_built.set(true);
-                }
-                revealer.set_reveal_child(expanded);
-                arrow_icon.set_icon_name(Some(if expanded {
-                    "pan-down-symbolic"
-                } else {
-                    "pan-end-symbolic"
-                }));
-                btn.update_state(&[gtk::accessible::State::Expanded(Some(expanded))]);
-            });
-        }
-        header_button.update_state(&[gtk::accessible::State::Expanded(Some(
-            burst.default_expanded,
-        ))]);
-
-        root.append(&header_button);
-        root.append(&revealer);
-
-        TranscriptRowWidgets {
-            content_container: gtk::Box::new(gtk::Orientation::Vertical, 0),
-            expand_button: gtk::Button::new(),
-        }
-    }
-
-    /// Build the widget tree for a subagent transcript item.
-    fn build_subagent_widgets(
-        &mut self,
-        root: &gtk::Box,
-        sender: FactorySender<Self>,
-    ) -> TranscriptRowWidgets {
-        root.add_css_class("subagent-row");
-        root.set_margin_top(2);
-        root.set_margin_bottom(2);
-
-        let on_inspect = {
-            let sender = sender.clone();
-            move || sender.input(TranscriptRowMsg::InspectClicked)
-        };
-        let on_inspect_reasoning = {
-            let sender = sender.clone();
-            let session_id = self.session_id.clone();
-            let transcript_item_index = self.transcript_item_index;
-            move || {
-                if let (Some(session_id), Some(transcript_item_index)) =
-                    (session_id.clone(), transcript_item_index)
-                {
-                    sender
-                        .output(TranscriptRowOutput::InspectReasoning {
-                            session_id,
-                            transcript_item_index,
-                        })
-                        .ok();
-                }
-            }
-        };
-
-        let row = build_subagent_header_row(
-            self.subagent_title.as_deref(),
-            self.reasoning_preview,
-            on_inspect,
-            on_inspect_reasoning,
-        );
-        root.append(&row);
-
-        // Return dummy widgets struct
-        TranscriptRowWidgets {
-            content_container: gtk::Box::new(gtk::Orientation::Vertical, 0),
-            expand_button: gtk::Button::new(),
-        }
-    }
-
-    /// Update expand button label/sensitivity after state changes.
-    fn update_expand_button(&self, widgets: &mut TranscriptRowWidgets, preview: &MessagePreview) {
-        let label = if self.loading_full_content {
-            "Loading..."
-        } else if self.expanded {
-            "Collapse"
-        } else {
-            "Show full message"
-        };
-        widgets.expand_button.set_label(label);
-        widgets
-            .expand_button
-            .set_sensitive(!self.loading_full_content);
-        widgets
-            .expand_button
-            .set_visible(preview.is_truncated() && preview.role != Role::ToolResult);
-    }
-}
-
-/// Build a `TranscriptItemInit` from a `TranscriptItemRow` returned by the DB query.
 #[cfg(test)]
 fn transcript_item_init_from_row(
     row: &crate::database::TranscriptItemRow,
@@ -1495,7 +570,7 @@ pub fn transcript_item_init_from_display_item(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::icon_names;
+    use crate::ui::session_detail::SessionDetailMsg;
 
     fn row_box_children(row: &gtk::Box) -> Vec<gtk::Widget> {
         let mut children = Vec::new();
@@ -1519,7 +594,7 @@ mod tests {
         crate::database::TranscriptItemRow {
             item_index,
             kind: crate::models::TranscriptItemKind::ToolCall,
-            reasoning_preview: crate::models::ReasoningPreview::default(),
+            reasoning_preview: ReasoningPreview::default(),
             message_index: None,
             role: None,
             content_preview: None,
@@ -1576,7 +651,6 @@ mod tests {
 
     #[test]
     fn tool_call_match_count_uses_only_displayed_preview() {
-        // When preview is present, summary is not rendered and must not be counted.
         let with_preview = ToolCallItemInit {
             item_index: 7,
             transcript_item_index: 7,
@@ -1590,10 +664,8 @@ mod tests {
             highlight_query: Some("read".to_string()),
             reasoning_preview: ReasoningPreview::default(),
         };
-        // Only "Read" in tool_name matches; preview has no "read", summary is hidden.
         assert_eq!(count_tool_call_matches(&with_preview), 1);
 
-        // When preview is absent, summary acts as fallback and is counted.
         let with_summary_fallback = ToolCallItemInit {
             item_index: 8,
             transcript_item_index: 8,
@@ -1607,148 +679,7 @@ mod tests {
             highlight_query: Some("read".to_string()),
             reasoning_preview: ReasoningPreview::default(),
         };
-        // "Read" in tool_name + "read" in summary fallback = 2.
         assert_eq!(count_tool_call_matches(&with_summary_fallback), 2);
-    }
-
-    #[gtk::test]
-    fn tool_call_reasoning_pill_stays_left_of_trailing_actions() {
-        let refs = build_tool_call_widget(
-            &ToolCallItemInit {
-                item_index: 1,
-                transcript_item_index: 1,
-                session_id: "session-1".to_string(),
-                tool_call_id: "call-1".to_string(),
-                tool_name: "Read".to_string(),
-                status: ToolCallStatus::Completed,
-                preview: Some("src/ui/transcript_row.rs:1-20".to_string()),
-                summary: None,
-                duration_ms: Some(12),
-                highlight_query: None,
-                reasoning_preview: ReasoningPreview {
-                    has_reasoning: true,
-                    has_visible_reasoning: true,
-                    encrypted_only: false,
-                },
-            },
-            |_| {},
-            |_, _| {},
-        );
-
-        let header = refs
-            .root
-            .first_child()
-            .and_then(|w| w.downcast::<gtk::Box>().ok())
-            .expect("tool-call header row");
-        let children = row_box_children(&header);
-
-        let inspect = children
-            .last()
-            .cloned()
-            .and_then(|w| w.downcast::<gtk::Button>().ok())
-            .expect("inspect button should stay last");
-        assert_eq!(inspect.icon_name().as_deref(), Some("view-reveal-symbolic"));
-
-        let spacer = inspect
-            .prev_sibling()
-            .and_then(|w| w.downcast::<gtk::Box>().ok())
-            .expect("tool-call row should insert a spacer before inspect");
-        assert!(spacer.hexpands());
-
-        let reasoning = spacer
-            .prev_sibling()
-            .and_then(|w| w.downcast::<gtk::Button>().ok())
-            .expect("reasoning button should remain in the left metadata flow");
-        assert_eq!(reasoning.label().as_deref(), Some("Thinking"));
-    }
-
-    #[gtk::test]
-    fn subagent_header_uses_agent_icon() {
-        let row = build_subagent_header_row(Some("Explore"), None, || {}, || {});
-
-        let icon = row
-            .first_child()
-            .and_then(|w| w.downcast::<gtk::Image>().ok())
-            .expect("subagent row should start with an icon");
-
-        assert_eq!(icon.icon_name().as_deref(), Some(icon_names::SMART_TOY));
-    }
-
-    #[gtk::test]
-    fn subagent_reasoning_pill_stays_left_of_trailing_actions() {
-        let row = build_subagent_header_row(
-            Some("Explore"),
-            Some(ReasoningPreview {
-                has_reasoning: true,
-                has_visible_reasoning: true,
-                encrypted_only: false,
-            }),
-            || {},
-            || {},
-        );
-
-        let children = row_box_children(&row);
-
-        let inspect = children
-            .last()
-            .cloned()
-            .and_then(|w| w.downcast::<gtk::Button>().ok())
-            .expect("inspect button should stay last");
-        assert_eq!(inspect.icon_name().as_deref(), Some("view-reveal-symbolic"));
-
-        let spacer = inspect
-            .prev_sibling()
-            .and_then(|w| w.downcast::<gtk::Box>().ok())
-            .expect("subagent row should insert a spacer before inspect");
-        assert!(spacer.hexpands());
-
-        let reasoning = spacer
-            .prev_sibling()
-            .and_then(|w| w.downcast::<gtk::Button>().ok())
-            .expect("reasoning button should remain in the left metadata flow");
-        assert_eq!(reasoning.label().as_deref(), Some("Thinking"));
-    }
-
-    #[gtk::test]
-    fn subagent_encrypted_reasoning_label_stays_left_of_trailing_actions() {
-        let row = build_subagent_header_row(
-            Some("Explore"),
-            Some(ReasoningPreview {
-                has_reasoning: true,
-                has_visible_reasoning: false,
-                encrypted_only: true,
-            }),
-            || {},
-            || {},
-        );
-
-        let children = row_box_children(&row);
-
-        let inspect = children
-            .last()
-            .cloned()
-            .and_then(|w| w.downcast::<gtk::Button>().ok())
-            .expect("inspect button should stay last");
-        assert_eq!(inspect.icon_name().as_deref(), Some("view-reveal-symbolic"));
-
-        let spacer = inspect
-            .prev_sibling()
-            .and_then(|w| w.downcast::<gtk::Box>().ok())
-            .expect("subagent row should insert a spacer before inspect");
-        assert!(spacer.hexpands());
-
-        let encrypted_pill = spacer
-            .prev_sibling()
-            .and_then(|w| w.downcast::<gtk::Box>().ok())
-            .expect("encrypted-only pill should remain in the left metadata flow");
-        assert!(encrypted_pill.has_css_class("pill"));
-        assert!(encrypted_pill.has_css_class("reasoning-pill-encrypted"));
-
-        let encrypted_label = encrypted_pill
-            .first_child()
-            .and_then(|w| w.downcast::<gtk::Label>().ok())
-            .expect("encrypted-only pill should contain the label");
-        assert_eq!(encrypted_label.label().as_str(), "Thinking (encrypted)");
     }
 
     #[gtk::test]
@@ -1771,7 +702,7 @@ mod tests {
             false,
         );
         let children = gtk::Box::new(gtk::Orientation::Vertical, 0);
-        let (sender, receiver) = relm4::channel::<crate::ui::session_detail::SessionDetailMsg>();
+        let (sender, receiver) = relm4::channel::<SessionDetailMsg>();
 
         populate_tool_burst_children(&children, &burst, &sender, 10);
 
@@ -1795,7 +726,7 @@ mod tests {
             gtk::glib::MainContext::default()
                 .block_on(receiver.recv())
                 .expect("inspect message"),
-            crate::ui::session_detail::SessionDetailMsg::InspectToolCall(id) if id == "call-1"
+            SessionDetailMsg::InspectToolCall(id) if id == "call-1"
         ));
     }
 
@@ -1839,12 +770,6 @@ mod tests {
             burst.category_counts,
             vec![("Edit".to_string(), 1), ("Read".to_string(), 1)]
         );
-    }
-
-    #[test]
-    fn tool_burst_children_are_built_only_when_initially_expanded() {
-        assert!(!should_build_tool_burst_children_on_mount(false));
-        assert!(should_build_tool_burst_children_on_mount(true));
     }
 
     #[test]
@@ -1914,7 +839,7 @@ mod tests {
         let row = crate::database::TranscriptItemRow {
             item_index: 1,
             kind: crate::models::TranscriptItemKind::ToolCall,
-            reasoning_preview: crate::models::ReasoningPreview::default(),
+            reasoning_preview: ReasoningPreview::default(),
             message_index: None,
             role: None,
             content_preview: None,
