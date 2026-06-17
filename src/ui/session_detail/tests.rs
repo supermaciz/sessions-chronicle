@@ -766,6 +766,15 @@ fn row_widget_matches_display_index_uses_bound_row_identity() {
     assert!(!SessionDetail::row_widget_matches_display_index(&row, 8));
 }
 
+#[gtk::test]
+fn clamped_scroll_value_preserves_valid_value_and_caps_overflow() {
+    let adjustment = gtk::Adjustment::new(25.0, 0.0, 100.0, 1.0, 10.0, 30.0);
+
+    assert_eq!(SessionDetail::clamped_scroll_value(&adjustment, 25.0), 25.0);
+    assert_eq!(SessionDetail::clamped_scroll_value(&adjustment, -10.0), 0.0);
+    assert_eq!(SessionDetail::clamped_scroll_value(&adjustment, 90.0), 70.0);
+}
+
 #[test]
 fn message_full_content_target_rejects_stale_session_or_message() {
     let (sender, _receiver) = relm4::channel::<SessionDetailMsg>();

@@ -965,8 +965,7 @@ impl SessionDetail {
             (ref_data.clone(), will_expand)
         };
 
-        self.messages.remove(idx);
-        self.messages.insert(idx, clone);
+        self.replace_typed_row_preserving_scroll(idx, clone);
         if let Some((db_path, session_id, message_index)) = load_request {
             sender.spawn_oneshot_command(move || SessionDetailCmd::MessageFullContentReady {
                 item_index,
@@ -1603,8 +1602,7 @@ impl SessionDetail {
 
         let mut clone = item.borrow().clone();
         clone.full_content = Some(content);
-        self.messages.remove(idx);
-        self.messages.insert(idx, clone);
+        self.replace_typed_row_preserving_scroll(idx, clone);
     }
 
     fn reset_typed_message_expansion(&mut self, item_index: usize) {
@@ -1618,8 +1616,7 @@ impl SessionDetail {
             Self::reset_message_expansion_after_full_content_failure(&item);
             item.clone()
         };
-        self.messages.remove(idx);
-        self.messages.insert(idx, clone);
+        self.replace_typed_row_preserving_scroll(idx, clone);
     }
 
     fn reset_message_expansion_after_full_content_failure(item: &TranscriptItemData) {
@@ -1816,12 +1813,7 @@ impl SessionDetail {
     /// GTK re-bind (propagating in-place `highlight_query` mutations), then
     /// restore scroll position via idle callback.
     fn refresh_typed_rows_preserving_scroll(&mut self) {
-        let saved_vadj = self
-            .messages
-            .view
-            .ancestor(gtk::ScrolledWindow::static_type())
-            .and_then(|w| w.downcast::<gtk::ScrolledWindow>().ok())
-            .map(|sw| sw.vadjustment().value());
+        let saved_vadj = self.transcript_scroll_value();
 
         let items: Vec<TranscriptItemData> = self
             .messages
@@ -1832,6 +1824,25 @@ impl SessionDetail {
         self.messages.clear();
         self.messages.extend_from_iter(items);
 
+        self.restore_transcript_scroll_value_later(saved_vadj);
+    }
+
+    fn replace_typed_row_preserving_scroll(&mut self, index: u32, item: TranscriptItemData) {
+        let saved_vadj = self.transcript_scroll_value();
+        self.messages.remove(index);
+        self.messages.insert(index, item);
+        self.restore_transcript_scroll_value_later(saved_vadj);
+    }
+
+    fn transcript_scroll_value(&self) -> Option<f64> {
+        self.messages
+            .view
+            .ancestor(gtk::ScrolledWindow::static_type())
+            .and_then(|w| w.downcast::<gtk::ScrolledWindow>().ok())
+            .map(|sw| sw.vadjustment().value())
+    }
+
+    fn restore_transcript_scroll_value_later(&self, saved_vadj: Option<f64>) {
         if let Some(saved_value) = saved_vadj {
             let view = self.messages.view.clone();
             glib::idle_add_local_once(move || {
@@ -1839,10 +1850,17 @@ impl SessionDetail {
                     .ancestor(gtk::ScrolledWindow::static_type())
                     .and_then(|w| w.downcast::<gtk::ScrolledWindow>().ok())
                 {
-                    sw.vadjustment().set_value(saved_value);
+                    let adjustment = sw.vadjustment();
+                    adjustment.set_value(Self::clamped_scroll_value(&adjustment, saved_value));
                 }
             });
         }
+    }
+
+    fn clamped_scroll_value(adj: &gtk::Adjustment, value: f64) -> f64 {
+        let lower = adj.lower();
+        let max = (adj.upper() - adj.page_size()).max(lower);
+        value.clamp(lower, max)
     }
 
     fn scroll_widget_into_view(widget: &gtk::Widget, scroll_child: &gtk::Widget) {
