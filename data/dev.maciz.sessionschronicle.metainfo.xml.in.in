@@ -49,6 +49,15 @@
   </categories>
   <content_rating type="oars-1.1" />
   <releases>
+    <release version="0.7.1" date="2026-06-18">
+      <description>
+        <p>A patch release with a date filter addition and transcript interaction fix.</p>
+        <ul>
+          <li>Add Yesterday option to the date filter pill</li>
+          <li>Fix scroll position and message expansion on first click in transcript rows</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.7.0" date="2026-06-14">
       <description>
         <p>Improves session indexing for Mistral Vibe and Codex, adds richer tool category icons, and polishes the inspector sidebar.</p>
