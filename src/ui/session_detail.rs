@@ -22,7 +22,7 @@ use crate::models::Session;
 use crate::ui::session_detail::transcript::display::{
     DisplayTranscriptItem, group_transcript_rows,
 };
-use crate::ui::session_detail::transcript::item_data::TranscriptItemData;
+use crate::ui::session_detail::transcript::item_data::{TranscriptItemData, TranscriptItemKind};
 use crate::ui::session_detail::transcript::item_init::{
     TranscriptItemInit, TranscriptRowBuildKind, transcript_item_init_from_display_item,
 };
@@ -962,10 +962,7 @@ impl SessionDetail {
             let ref_data = item.borrow();
             if ref_data.full_content.borrow().is_some() {
                 None
-            } else if let crate::ui::session_detail::transcript::item_data::TranscriptItemKind::Message(
-                message,
-            ) = &ref_data.kind
-            {
+            } else if let TranscriptItemKind::Message(message) = &ref_data.kind {
                 Some((
                     message.db_path.clone(),
                     message.preview.session_id.clone(),
@@ -1669,9 +1666,7 @@ impl SessionDetail {
             return false;
         }
 
-        let crate::ui::session_detail::transcript::item_data::TranscriptItemKind::Message(message) =
-            &item.kind
-        else {
+        let TranscriptItemKind::Message(message) = &item.kind else {
             return false;
         };
 
@@ -1682,10 +1677,7 @@ impl SessionDetail {
         let matched_item_indexes = self.current_match_item_indexes();
         for item in self.messages.iter() {
             let mut data = item.borrow_mut();
-            let is_message = matches!(
-                data.kind,
-                crate::ui::session_detail::transcript::item_data::TranscriptItemKind::Message(_)
-            );
+            let is_message = matches!(data.kind, TranscriptItemKind::Message(_));
             let item_query = match data.transcript_item_index {
                 Some(transcript_item_index) => highlight_query_for_navigable_row(
                     is_message,

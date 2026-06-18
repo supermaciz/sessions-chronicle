@@ -507,7 +507,7 @@ fn build_message_page() -> MessagePageWidgets {
     // The button sits at the bottom of the message row, so it is often only
     // partially visible. Grabbing focus on click made GtkListView scroll the row
     // into view mid-press, moving the button out from under the pointer so the
-    // release landed elsewhere and no `clicked` fired — the user had to click
+    // release landed elsewhere and no `clicked` fired - the user had to click
     // twice. Keep keyboard focus (Tab) but do not grab it on click.
     expand_button.set_focus_on_click(false);
     root.append(&expand_button);
