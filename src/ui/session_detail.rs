@@ -160,7 +160,10 @@ pub enum SessionDetailMsg {
     /// Indicates that a transcript row failed to expand to its full content and
     /// should trigger the shared toast notification path.
     ShowExpandLoadFailure,
-    ToggleMessageExpand {
+    /// Request the lazy load of a message's full content after the row expanded
+    /// it in place. The toggle itself is handled by the row widget; this only
+    /// triggers the (off-thread) database read.
+    RequestMessageFullContent {
         item_index: usize,
     },
     RowBuilt {
@@ -560,8 +563,8 @@ impl Component for SessionDetail {
             SessionDetailMsg::ShowExpandLoadFailure => {
                 self.show_expand_load_failure();
             }
-            SessionDetailMsg::ToggleMessageExpand { item_index } => {
-                self.toggle_message_expand(item_index, &sender);
+            SessionDetailMsg::RequestMessageFullContent { item_index } => {
+                self.request_message_full_content(item_index, &sender);
             }
             SessionDetailMsg::RowBuilt {
                 item_index: _,
@@ -938,34 +941,41 @@ impl SessionDetail {
         self.pending_toast.set(true);
     }
 
-    fn toggle_message_expand(&mut self, item_index: usize, sender: &ComponentSender<Self>) {
+    /// Kick off the off-thread load of a message's full content.
+    ///
+    /// The row widget already toggled its expansion state and re-rendered in
+    /// place (showing the preview meanwhile); here we only resolve the load
+    /// target from the stored item and spawn the database read. The result is
+    /// applied back in place via [`Self::set_typed_message_full_content`], so the
+    /// surrounding scroll position is never disturbed.
+    fn request_message_full_content(&self, item_index: usize, sender: &ComponentSender<Self>) {
         let idx = item_index as u32;
         let Some(item) = self.messages.get(idx) else {
-            tracing::debug!(item_index, "Typed message expand ignored: item not found");
+            tracing::debug!(
+                item_index,
+                "Full message content load ignored: item not found"
+            );
             return;
         };
 
-        let mut load_request = None;
-        let (clone, will_expand) = {
+        let load_request = {
             let ref_data = item.borrow();
-            let will_expand = !ref_data.expanded.get();
-            ref_data.expanded.set(will_expand);
-            if will_expand
-                && ref_data.full_content.is_none()
-                && let crate::ui::session_detail::transcript::item_data::TranscriptItemKind::Message(
-                    message,
-                ) = &ref_data.kind
+            if ref_data.full_content.borrow().is_some() {
+                None
+            } else if let crate::ui::session_detail::transcript::item_data::TranscriptItemKind::Message(
+                message,
+            ) = &ref_data.kind
             {
-                load_request = Some((
+                Some((
                     message.db_path.clone(),
                     message.preview.session_id.clone(),
                     message.preview.message_index,
-                ));
+                ))
+            } else {
+                None
             }
-            (ref_data.clone(), will_expand)
         };
 
-        self.replace_typed_row_preserving_scroll(idx, clone);
         if let Some((db_path, session_id, message_index)) = load_request {
             sender.spawn_oneshot_command(move || SessionDetailCmd::MessageFullContentReady {
                 item_index,
@@ -974,9 +984,8 @@ impl SessionDetail {
                 result: load_message_full_content(&db_path, &session_id, message_index)
                     .map_err(|err| format!("{err:#}")),
             });
+            tracing::debug!(item_index, "Full message content load requested");
         }
-
-        tracing::debug!(item_index, will_expand, "Typed message expand requested");
     }
 
     fn clear_search(&mut self) {
@@ -1600,9 +1609,13 @@ impl SessionDetail {
             return;
         };
 
-        let mut clone = item.borrow().clone();
-        clone.full_content = Some(content);
-        self.replace_typed_row_preserving_scroll(idx, clone);
+        // Store the loaded body and pulse the revision so the bound row re-renders
+        // in place. Both the stored item and the realized widget share the same
+        // `full_content`/`content_revision`, so no list-model churn is needed and
+        // the scroll position is preserved (#170).
+        let item = item.borrow();
+        *item.full_content.borrow_mut() = Some(content);
+        Self::bump_content_revision(&item);
     }
 
     fn reset_typed_message_expansion(&mut self, item_index: usize) {
@@ -1611,12 +1624,13 @@ impl SessionDetail {
             return;
         };
 
-        let clone = {
-            let item = item.borrow();
-            Self::reset_message_expansion_after_full_content_failure(&item);
-            item.clone()
-        };
-        self.replace_typed_row_preserving_scroll(idx, clone);
+        let item = item.borrow();
+        Self::reset_message_expansion_after_full_content_failure(&item);
+        Self::bump_content_revision(&item);
+    }
+
+    fn bump_content_revision(item: &TranscriptItemData) {
+        item.content_revision.set(!item.content_revision.get());
     }
 
     fn reset_message_expansion_after_full_content_failure(item: &TranscriptItemData) {
@@ -1824,13 +1838,6 @@ impl SessionDetail {
         self.messages.clear();
         self.messages.extend_from_iter(items);
 
-        self.restore_transcript_scroll_value_later(saved_vadj);
-    }
-
-    fn replace_typed_row_preserving_scroll(&mut self, index: u32, item: TranscriptItemData) {
-        let saved_vadj = self.transcript_scroll_value();
-        self.messages.remove(index);
-        self.messages.insert(index, item);
         self.restore_transcript_scroll_value_later(saved_vadj);
     }
 
