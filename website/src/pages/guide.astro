@@ -52,11 +52,15 @@ const shot = {
           <nav aria-label="Guide sections">
             <a href="#install">Install the app</a>
             <a href="#first-launch">What happens on first launch</a>
+            <a href="#interface">Understand the interface</a>
             <a href="#find">Find a session</a>
             <a href="#read">Read a session</a>
             <a href="#inspect">Inspect tool calls and subagents</a>
+            <a href="#pin">Pin important sessions</a>
             <a href="#resume">Resume a session in your terminal</a>
+            <a href="#analytics">View analytics</a>
             <a href="#troubleshooting">Troubleshooting</a>
+            <a href="#shortcuts">Useful shortcuts</a>
           </nav>
         </aside>
       </div>
@@ -167,9 +171,14 @@ flatpak run dev.maciz.sessionschronicle</code></pre>
         </p>
         <p>
           You can review the project context, messages, code blocks, lists,
-          quotes, and other supported markdown content. The top of the detail
-          view also summarizes key session metadata such as the project and the
-          session ID.
+          quotes, and other supported markdown content.
+        </p>
+        <p>
+          Session metadata now lives behind the header&apos;s
+          <code>Session summary</code> button. Open it to see the project,
+          path, session ID, AI assistant, duration, message count, ending
+          status, first prompt, activity breakdown, and token totals without
+          taking space away from the transcript.
         </p>
         <figure class="guide__figure">
           <Picture
@@ -187,6 +196,9 @@ flatpak run dev.maciz.sessionschronicle</code></pre>
         <p>
           Sessions Chronicle makes tool calls easier to inspect. Open a tool
           call to review its arguments, output, and other useful details.
+        </p>
+        <p>
+          Consecutive tool calls are grouped so busy sessions stay readable.
         </p>
         <p>
           When a session includes subagents, you can inspect those interactions
@@ -294,6 +306,7 @@ flatpak run dev.maciz.sessionschronicle</code></pre>
         <h2>Useful shortcuts</h2>
         <ul>
           <li><code>Ctrl+F</code>: search</li>
+          <li><code>Ctrl+Shift+D</code>: open the date filter</li>
           <li><code>Ctrl+D</code>: pin or unpin the active session</li>
           <li><code>F9</code>: toggle the relevant side pane</li>
           <li><code>Escape</code>: close search, close the inspector, or go back</li>
