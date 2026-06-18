@@ -1,4 +1,6 @@
+use std::cell::RefCell;
 use std::fmt;
+use std::rc::Rc;
 
 use relm4::Sender;
 use relm4::binding::{Binding, BoolBinding};
@@ -15,7 +17,16 @@ pub struct TranscriptItemData {
     pub transcript_item_index: Option<i64>,
     pub kind: TranscriptItemKind,
     pub expanded: BoolBinding,
-    pub full_content: Option<String>,
+    /// Full message body, loaded lazily on first expansion. Shared via `Rc` so
+    /// the realized row widget and the stored model item observe the same value:
+    /// expansion mutates this in place rather than replacing the list item, which
+    /// would reset the surrounding scroll position (see [`content_revision`]).
+    pub full_content: Rc<RefCell<Option<String>>>,
+    /// Pulse binding bumped whenever the message body must re-render in place
+    /// (expand/collapse toggle, full-content arrival, load-failure rollback).
+    /// The bound row connects to its `value` notify and re-renders without any
+    /// list-model churn.
+    pub content_revision: BoolBinding,
     pub highlight_query: Option<String>,
     pub sender: Sender<SessionDetailMsg>,
 }
@@ -45,7 +56,7 @@ impl fmt::Debug for TranscriptItemData {
             .field("item_index", &self.item_index)
             .field("kind", &self.kind)
             .field("expanded", &self.expanded.get())
-            .field("has_full_content", &self.full_content.is_some())
+            .field("has_full_content", &self.full_content.borrow().is_some())
             .field("highlight_query", &self.highlight_query)
             .finish_non_exhaustive()
     }
@@ -97,7 +108,8 @@ impl TranscriptItemData {
             transcript_item_index,
             kind,
             expanded,
-            full_content: None,
+            full_content: Rc::new(RefCell::new(None)),
+            content_revision: BoolBinding::new(false),
             highlight_query,
             sender,
         }

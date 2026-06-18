@@ -11,7 +11,7 @@ use crate::ui::format::format_duration_ms;
 use crate::ui::highlight;
 use crate::ui::session_detail::SessionDetailMsg;
 use crate::ui::session_detail::transcript::item_data::{TranscriptItemData, TranscriptItemKind};
-use crate::ui::session_detail::transcript::item_init::TranscriptRowBuildKind;
+use crate::ui::session_detail::transcript::item_init::{MessageItemInit, TranscriptRowBuildKind};
 use crate::ui::session_detail::transcript::row_rendering::{
     format_reasoning_burst_label, format_tool_burst_accessible_label,
     format_tool_burst_match_badge_accessible_label, model_label_text, populate_tool_burst_children,
@@ -201,34 +201,57 @@ impl TranscriptItemData {
             widgets.reasoning_box.append(&encrypted_reasoning_pill());
         }
 
-        let content = if self.expanded.get() {
-            self.full_content
-                .as_deref()
-                .unwrap_or(&message.preview.content_preview)
-        } else {
-            &message.preview.content_preview
-        };
-
-        render_content(
+        render_message_body(
             &widgets.content,
-            content,
-            message.preview.role,
+            &widgets.expand_button,
+            message,
+            self.expanded.get(),
+            &self.full_content.borrow(),
             self.highlight_query.as_deref(),
         );
 
         let can_expand = message.preview.is_truncated() && message.preview.role != Role::ToolResult;
-        widgets.expand_button.set_visible(can_expand);
-        widgets.expand_button.set_label(if self.expanded.get() {
-            "Collapse"
-        } else {
-            "Show full message"
-        });
-
         if can_expand {
+            // Expand/collapse and lazy full-content loading mutate this row in
+            // place rather than replacing the list item: replacing it makes
+            // GtkListView reset the surrounding scroll back to the top (#170).
+            // Re-render whenever `content_revision` is bumped (toggle, content
+            // arrival, load-failure rollback).
+            let revision_handler = {
+                let content = widgets.content.clone();
+                let expand_button = widgets.expand_button.clone();
+                let message = message.clone();
+                let expanded = self.expanded.clone();
+                let full_content = self.full_content.clone();
+                let highlight_query = self.highlight_query.clone();
+                self.content_revision
+                    .connect_notify_local(Some("value"), move |_, _| {
+                        render_message_body(
+                            &content,
+                            &expand_button,
+                            &message,
+                            expanded.get(),
+                            &full_content.borrow(),
+                            highlight_query.as_deref(),
+                        );
+                    })
+            };
+            widgets
+                .connected_handlers
+                .push((self.content_revision.clone().upcast(), revision_handler));
+
             let sender = self.sender.clone();
             let item_index = self.item_index;
+            let expanded = self.expanded.clone();
+            let full_content = self.full_content.clone();
+            let content_revision = self.content_revision.clone();
             let id = widgets.expand_button.connect_clicked(move |_| {
-                sender.emit(SessionDetailMsg::ToggleMessageExpand { item_index });
+                let now_expanded = !expanded.get();
+                expanded.set(now_expanded);
+                if now_expanded && full_content.borrow().is_none() {
+                    sender.emit(SessionDetailMsg::RequestMessageFullContent { item_index });
+                }
+                content_revision.set(!content_revision.get());
             });
             widgets
                 .connected_handlers
@@ -481,6 +504,12 @@ fn build_message_page() -> MessagePageWidgets {
     expand_button.set_halign(gtk::Align::Start);
     expand_button.set_margin_top(4);
     expand_button.set_visible(false);
+    // The button sits at the bottom of the message row, so it is often only
+    // partially visible. Grabbing focus on click made GtkListView scroll the row
+    // into view mid-press, moving the button out from under the pointer so the
+    // release landed elsewhere and no `clicked` fired - the user had to click
+    // twice. Keep keyboard focus (Tab) but do not grab it on click.
+    expand_button.set_focus_on_click(false);
     root.append(&expand_button);
 
     MessagePageWidgets {
@@ -495,6 +524,35 @@ fn build_message_page() -> MessagePageWidgets {
         expand_button,
         connected_handlers: Vec::new(),
     }
+}
+
+/// Render the message body and expand-toggle label for the current expansion
+/// state. Called both on initial bind and on every in-place re-render, so it must
+/// be idempotent (`render_content` clears the container first).
+fn render_message_body(
+    content: &gtk::Box,
+    expand_button: &gtk::Button,
+    message: &MessageItemInit,
+    expanded: bool,
+    full_content: &Option<String>,
+    highlight_query: Option<&str>,
+) {
+    let body = if expanded {
+        full_content
+            .as_deref()
+            .unwrap_or(&message.preview.content_preview)
+    } else {
+        &message.preview.content_preview
+    };
+    render_content(content, body, message.preview.role, highlight_query);
+
+    let can_expand = message.preview.is_truncated() && message.preview.role != Role::ToolResult;
+    expand_button.set_visible(can_expand);
+    expand_button.set_label(if expanded {
+        "Collapse"
+    } else {
+        "Show full message"
+    });
 }
 
 fn set_role_css_class(widget: &impl IsA<gtk::Widget>, role: Role) {
@@ -1128,7 +1186,7 @@ mod tests {
     }
 
     #[gtk::test]
-    fn message_expand_button_emits_parent_toggle_message() {
+    fn message_expand_button_toggles_in_place_and_requests_full_content() {
         let (sender, receiver) = relm4::channel::<SessionDetailMsg>();
         let mut message = TranscriptItemData::from_init(
             TranscriptItemInit::Message(truncated_message_init()),
@@ -1155,12 +1213,24 @@ mod tests {
 
         expand_button.emit_clicked();
 
+        // The row toggles and re-renders in place (no list-model replacement),
+        // so the expansion state and button label update synchronously...
+        assert!(message.expanded.get());
+        assert_eq!(expand_button.label().as_deref(), Some("Collapse"));
+
+        // ...and the only message emitted is the off-thread full-content request,
+        // because the body has not been loaded yet.
         assert!(matches!(
             gtk::glib::MainContext::default()
                 .block_on(receiver.recv())
-                .expect("message expand toggle"),
-            SessionDetailMsg::ToggleMessageExpand { item_index: 1 }
+                .expect("full content request"),
+            SessionDetailMsg::RequestMessageFullContent { item_index: 1 }
         ));
+
+        // Collapsing again toggles back in place and emits nothing further.
+        expand_button.emit_clicked();
+        assert!(!message.expanded.get());
+        assert_eq!(expand_button.label().as_deref(), Some("Show full message"));
     }
 
     #[gtk::test]
@@ -1172,7 +1242,7 @@ mod tests {
         init.preview.content_len = 42;
         let mut message = TranscriptItemData::from_init(TranscriptItemInit::Message(init), sender);
         message.expanded.set(true);
-        message.full_content = Some("loaded full message body".to_string());
+        *message.full_content.borrow_mut() = Some("loaded full message body".to_string());
 
         let list_item: gtk::ListItem = gtk::glib::Object::builder().build();
         let (_, mut widgets) = TranscriptItemData::setup(&list_item);
