@@ -73,6 +73,10 @@
 }
 
 /* Markdown rendering styles */
+.markdown-prose {
+  margin: 0 0 6px 0;
+}
+
 .code-block-widget {
   background-color: alpha(@card_shade_color, 0.15);
   border-radius: 6px;
