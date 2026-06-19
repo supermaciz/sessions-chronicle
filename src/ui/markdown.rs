@@ -1026,6 +1026,17 @@ mod tests {
         assert!(widget.is::<gtk::Widget>());
     }
 
+    #[gtk::test]
+    fn prose_only_markdown_returns_box_without_textview() {
+        let (widget, _) = render_markdown("First paragraph\n\nSecond paragraph", None);
+
+        assert!(widget.is::<gtk::Box>(), "prose root should be a GtkBox");
+        assert!(
+            find_widgets_of_type::<gtk::TextView>(&widget).is_empty(),
+            "prose rendering must not contain GtkTextView widgets"
+        );
+    }
+
     /// Downcast the rendered widget to a single TextView (for non-table content).
     fn as_textview(widget: &gtk::Widget) -> gtk::TextView {
         widget
@@ -1128,6 +1139,27 @@ mod tests {
         }
 
         false
+    }
+
+    fn direct_box_children(widget: &gtk::Widget) -> Vec<gtk::Widget> {
+        let mut children = Vec::new();
+        let mut child = widget.first_child();
+        while let Some(next) = child {
+            child = next.next_sibling();
+            children.push(next);
+        }
+        children
+    }
+
+    fn label_markup(label: &gtk::Label) -> String {
+        label
+            .property::<Option<String>>("label")
+            .unwrap_or_else(|| label.text().to_string())
+    }
+
+    fn rendered_label_texts(content: &str) -> Vec<String> {
+        let (widget, _) = render_markdown(content, None);
+        collect_label_text_from_widget_tree(&widget)
     }
 
     fn has_tag_at(content: &str, tag_name: &str, char_offset: i32) -> bool {
