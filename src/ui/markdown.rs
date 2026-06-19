@@ -1186,15 +1186,6 @@ mod tests {
         }
     }
 
-    /// Find the first TextView in the rendered widget tree (for non-prose content
-    /// like headings, lists, and blockquotes that still use GtkTextView internally).
-    fn as_textview(widget: &gtk::Widget) -> gtk::TextView {
-        find_widgets_of_type::<gtk::TextView>(widget)
-            .into_iter()
-            .next()
-            .expect("expected a GtkTextView in the rendered widget tree")
-    }
-
     /// Collect all label texts from a widget tree (recursive).
     fn collect_label_text_from_widget_tree(widget: &gtk::Widget) -> Vec<String> {
         let mut texts = Vec::new();
@@ -1312,73 +1303,45 @@ mod tests {
         collect_label_text_from_widget_tree(&widget)
     }
 
-    fn has_tag_at(content: &str, tag_name: &str, char_offset: i32) -> bool {
-        let (widget, _) = render_markdown(content, None);
-        let view = as_textview(&widget);
-        let buffer = view.buffer();
-        let iter = buffer.iter_at_offset(char_offset);
-        iter.tags()
-            .iter()
-            .any(|tag: &gtk::TextTag| tag.name().as_deref() == Some(tag_name))
-    }
-
-    /// Helper: extract plain text from a rendered widget tree (textview or prose labels).
-    fn textview_text(content: &str) -> String {
-        let (widget, _) = render_markdown(content, None);
-        // Try to find a TextView first (for headings, lists, blockquotes, etc.)
-        let views = find_widgets_of_type::<gtk::TextView>(&widget);
-        if let Some(view) = views.into_iter().next() {
-            let buf = view.buffer();
-            return buf
-                .text(&buf.start_iter(), &buf.end_iter(), false)
-                .to_string();
-        }
-        // Fall back to collecting label text (prose paragraphs)
-        find_widgets_of_type::<gtk::Label>(&widget)
-            .into_iter()
-            .map(|l| l.text().to_string())
-            .collect::<Vec<_>>()
-            .join("\n")
-    }
-
     // ── Existing regression tests ────────────────────────────────────
 
     // ── Plain text & paragraphs ──────────────────────────────────────
 
     #[gtk::test]
-    fn textview_plain_paragraph() {
-        let text = textview_text("Hello world");
-        assert!(text.contains("Hello world"), "got: {text}");
+    fn label_plain_paragraph() {
+        let texts = rendered_label_texts("Hello world");
+        assert!(
+            texts.iter().any(|t| t.contains("Hello world")),
+            "got: {texts:?}"
+        );
     }
 
     // ── Inline formatting ────────────────────────────────────────────
-    // NOTE: Inline styles inside prose paragraphs (bold, italic, strikethrough,
-    // inline code) are rendered as plain GtkLabel text in Task 3. Full Pango
-    // markup styling for inline runs will be added in a later task. These tests
-    // verify that the text content is present in the rendered output.
+    // Inline styles in prose paragraphs are rendered as Pango markup via
+    // GtkLabel. Tests verify that the markup contains the expected spans.
 
     #[gtk::test]
-    fn textview_bold_tagged() {
-        let text = textview_text("Hello **bold** world");
-        assert!(text.contains("bold"), "got: {text}");
+    fn label_bold_markup() {
+        let markup = first_prose_label_markup("Hello **bold** world");
+        assert!(markup.contains("<b>bold</b>"), "got: {markup}");
     }
 
     #[gtk::test]
-    fn textview_italic_tagged() {
-        let text = textview_text("Hello *italic* world");
-        assert!(text.contains("italic"), "got: {text}");
+    fn label_italic_markup() {
+        let markup = first_prose_label_markup("Hello *italic* world");
+        assert!(markup.contains("<i>italic</i>"), "got: {markup}");
     }
 
     #[gtk::test]
-    fn textview_strikethrough_tagged() {
-        let text = textview_text("Hello ~~removed~~ world");
-        assert!(text.contains("removed"), "got: {text}");
+    fn label_strikethrough_markup() {
+        let markup = first_prose_label_markup("Hello ~~removed~~ world");
+        assert!(markup.contains("<s>removed</s>"), "got: {markup}");
     }
 
     #[gtk::test]
-    fn textview_code_inline_tagged() {
-        let text = textview_text("Use `code` here");
-        assert!(text.contains("code"), "got: {text}");
+    fn label_code_inline_markup() {
+        let markup = first_prose_label_markup("Use `code` here");
+        assert!(markup.contains("<tt>code</tt>"), "got: {markup}");
     }
 
     fn first_prose_label_markup(content: &str) -> String {
@@ -1427,7 +1390,7 @@ mod tests {
     // label markup tests above (label_markup_heading_uses_bold_scaled_span).
 
     #[gtk::test]
-    fn textview_heading_1_renders_as_prose_label() {
+    fn label_heading_1_markup() {
         let (widget, _) = render_markdown("# Title", None);
         let labels: Vec<gtk::Label> = find_widgets_of_type::<gtk::Label>(&widget)
             .into_iter()
@@ -1439,7 +1402,7 @@ mod tests {
     }
 
     #[gtk::test]
-    fn textview_heading_2_renders_as_prose_label() {
+    fn label_heading_2_markup() {
         let (widget, _) = render_markdown("## Subtitle", None);
         let labels: Vec<gtk::Label> = find_widgets_of_type::<gtk::Label>(&widget)
             .into_iter()
@@ -1456,7 +1419,7 @@ mod tests {
     // ── Lists ────────────────────────────────────────────────────────
 
     #[gtk::test]
-    fn unordered_list_items_render_as_marker_content_rows() {
+    fn list_unordered_contains_markers() {
         let (widget, _) = render_markdown("- First\n- Second", None);
         let rows = find_widgets_with_css_class(&widget, "markdown-list-item");
         let markers: Vec<String> = find_widgets_of_type::<gtk::Label>(&widget)
@@ -1476,22 +1439,25 @@ mod tests {
     }
 
     #[gtk::test]
-    fn ordered_and_task_lists_render_expected_markers() {
-        let (ordered, _) = render_markdown("1. Alpha\n2. Beta", None);
-        let ordered_markers: Vec<String> = find_widgets_of_type::<gtk::Label>(&ordered)
+    fn list_ordered_contains_numbers() {
+        let (widget, _) = render_markdown("1. Alpha\n2. Beta", None);
+        let markers: Vec<String> = find_widgets_of_type::<gtk::Label>(&widget)
             .into_iter()
             .filter(|label| label.has_css_class("markdown-list-marker"))
             .map(|label| label.text().to_string())
             .collect();
-        assert_eq!(ordered_markers, vec!["1.", "2."]);
+        assert_eq!(markers, vec!["1.", "2."]);
+    }
 
-        let (tasks, _) = render_markdown("- [x] Done\n- [ ] Todo", None);
-        let task_markers: Vec<String> = find_widgets_of_type::<gtk::Label>(&tasks)
+    #[gtk::test]
+    fn list_task_contains_checkboxes() {
+        let (widget, _) = render_markdown("- [x] Done\n- [ ] Todo", None);
+        let markers: Vec<String> = find_widgets_of_type::<gtk::Label>(&widget)
             .into_iter()
             .filter(|label| label.has_css_class("markdown-list-marker"))
             .map(|label| label.text().to_string())
             .collect();
-        assert_eq!(task_markers, vec!["☑", "☐"]);
+        assert_eq!(markers, vec!["☑", "☐"]);
     }
 
     // ── Search highlighting ──────────────────────────────────────────
@@ -1535,7 +1501,7 @@ mod tests {
     // ── Tables ───────────────────────────────────────────────────────
 
     #[gtk::test]
-    fn textview_table_renders_as_separate_widget() {
+    fn table_renders_as_separate_widget() {
         let md = "| A | B |\n|---|---|\n| 1 | 2 |";
         let (widget, _) = render_markdown(md, None);
         let tables = find_table_widgets(&widget);
@@ -1546,7 +1512,7 @@ mod tests {
     }
 
     #[gtk::test]
-    fn textview_table_contains_labels() {
+    fn table_contains_labels() {
         let md = "| A | B |\n|---|---|\n| 1 | 2 |";
         let (widget, _) = render_markdown(md, None);
         let labels = table_label_texts(&widget);
@@ -1557,7 +1523,7 @@ mod tests {
     }
 
     #[gtk::test]
-    fn textview_table_scroller_does_not_expand_vertically() {
+    fn table_scroller_does_not_expand_vertically() {
         let md = "| A | B |\n|---|---|\n| 1 | 2 |\n\nBelow";
         let (widget, _) = render_markdown(md, None);
         let table = find_table_widgets(&widget)
@@ -1573,7 +1539,7 @@ mod tests {
     }
 
     #[gtk::test]
-    fn textview_table_cells_do_not_wrap() {
+    fn table_cells_do_not_wrap() {
         let md = "| A | B |\n|---|---|\n| 1 | 2 |";
         let (widget, _) = render_markdown(md, None);
         let labels: Vec<gtk::Label> = find_widgets_of_type::<gtk::Label>(&widget)
@@ -1590,19 +1556,13 @@ mod tests {
     }
 
     #[gtk::test]
-    fn textview_table_search_count_includes_widget_cells() {
+    fn table_search_count_includes_widget_cells() {
         let md = "| Name |\n|------|\n| Rust |";
         let (_, count) = render_markdown(md, Some("Rust"));
         assert_eq!(count, 1, "expected search to include widget cell content");
     }
 
     // ── Horizontal rule ──────────────────────────────────────────────
-
-    #[gtk::test]
-    fn textview_horizontal_rule() {
-        let text = textview_text("Above\n\n---\n\nBelow");
-        assert!(text.contains("────"), "got: {text}");
-    }
 
     #[gtk::test]
     fn horizontal_rule_renders_as_label_segment() {
@@ -1618,15 +1578,6 @@ mod tests {
     }
 
     // ── Images ───────────────────────────────────────────────────────
-
-    #[gtk::test]
-    fn textview_image_renders_alt_text() {
-        // Image alt text in a prose paragraph renders via GtkLabel.
-        let (widget, _) = render_markdown("![screenshot](https://example.com/img.png)", None);
-        let labels = find_widgets_of_type::<gtk::Label>(&widget);
-        let all_text: String = labels.iter().map(|l| l.text().to_string()).collect();
-        assert!(all_text.contains("[image: screenshot]"), "got: {all_text}");
-    }
 
     #[gtk::test]
     fn image_renders_alt_text_inside_prose_label() {
@@ -1653,37 +1604,23 @@ mod tests {
         );
     }
 
-    // ── Blockquotes ──────────────────────────────────────────────────
-
-    #[gtk::test]
-    fn textview_blockquote_tagged() {
-        // Blockquote paragraphs are now rendered as prose labels inside a
-        // grouped `.markdown-blockquote` container rather than a TextBuffer
-        // with a "blockquote" tag.
-        let (widget, _) = render_markdown("> Quoted text", None);
-        let quotes = find_widgets_with_css_class(&widget, "markdown-blockquote");
-        assert_eq!(quotes.len(), 1, "expected one blockquote group container");
-        let label_texts = collect_label_text_from_widget_tree(&quotes[0]);
-        assert!(
-            label_texts.contains(&"Quoted text".to_string()),
-            "got: {label_texts:?}"
-        );
-    }
-
     // ── Nested inline formatting ─────────────────────────────────────
     // NOTE: Nested inline styles in prose paragraphs are rendered as Pango
     // markup via GtkLabel since Task 4. Tests verify markup content.
 
     #[gtk::test]
-    fn textview_nested_bold_italic() {
-        let text = textview_text("Hello ***both*** world");
-        assert!(text.contains("both"), "got: {text}");
+    fn nested_bold_italic_markup() {
+        let markup = first_prose_label_markup("Hello ***both*** world");
+        assert!(
+            markup.contains("<b><i>both</i></b>") || markup.contains("<i><b>both</b></i>"),
+            "got: {markup}"
+        );
     }
 
     // ── Link inside table cell ────────────────────────────────────────
 
     #[gtk::test]
-    fn textview_table_link_visible_inside_widget_cell() {
+    fn table_link_visible_inside_widget_cell() {
         let md = "| Name |\n|------|\n| [Rust](https://rust-lang.org) |";
         let (widget, _) = render_markdown(md, None);
         let label_texts = table_label_texts(&widget);
@@ -1697,7 +1634,7 @@ mod tests {
     }
 
     #[gtk::test]
-    fn textview_table_image_visible_inside_widget_cell() {
+    fn table_image_visible_inside_widget_cell() {
         let md = "| Screenshot |\n|------------|\n| ![Session List](docs/screenshots/session_list.png) |";
         let (widget, _) = render_markdown(md, None);
         let label_texts = table_label_texts(&widget);
@@ -1713,7 +1650,7 @@ mod tests {
     // ── Blockquote table styling ──────────────────────────────────────
 
     #[gtk::test]
-    fn textview_table_inside_blockquote_widget_has_blockquote_class() {
+    fn table_inside_blockquote_group() {
         let md = "> | A | B |\n> |---|---|\n> | 1 | 2 |";
         let (widget, _) = render_markdown(md, None);
         let quotes = find_widgets_with_css_class(&widget, "markdown-blockquote");
@@ -1773,7 +1710,7 @@ mod tests {
     // ── Table column structure ────────────────────────────────────────
 
     #[gtk::test]
-    fn textview_table_two_columns_has_correct_labels() {
+    fn table_two_columns_has_correct_labels() {
         let md = "| A | B |\n|---|---|\n| 1 | 2 |";
         let (widget, _) = render_markdown(md, None);
         let label_texts = table_label_texts(&widget);
@@ -1826,7 +1763,7 @@ mod tests {
     }
 
     #[gtk::test]
-    fn textview_table_grid_positions_correct() {
+    fn table_grid_positions_correct() {
         let md = "| A | B |\n|---|---|\n| 1 | 2 |";
         let (widget, _) = render_markdown(md, None);
         let tables = find_table_widgets(&widget);
@@ -1855,7 +1792,7 @@ mod tests {
     // ── Nested lists ──────────────────────────────────────────────────
 
     #[gtk::test]
-    fn textview_nested_unordered_list() {
+    fn nested_unordered_list() {
         let md = "- Parent item\n  - Child item 1\n  - Child item 2\n- Second parent";
         let (widget, _) = render_markdown(md, None);
         let content: Vec<String> = find_widgets_of_type::<gtk::Label>(&widget)
@@ -1882,7 +1819,7 @@ mod tests {
     }
 
     #[gtk::test]
-    fn textview_loose_list_items_kept_together() {
+    fn loose_list_items_kept_together() {
         // Loose lists have blank lines between items; pulldown-cmark wraps
         // each item in Paragraph events. All items must still appear.
         let md = "- First item\n\n- Second item\n\n- Third item";
