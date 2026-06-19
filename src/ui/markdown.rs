@@ -212,6 +212,8 @@ struct MarkdownBufferWriter {
     buffer: gtk::TextBuffer,
     /// Stack of active inline tag names (e.g. "bold", "italic").
     tag_stack: Vec<&'static str>,
+    /// Stack of active inline styles for the current prose block.
+    style_stack: Vec<InlineStyle>,
     /// True when inside a code block — text goes verbatim, no inline tags.
     in_code_block: Option<Option<String>>,
     /// Code block accumulator.
@@ -261,6 +263,7 @@ impl MarkdownBufferWriter {
             tag_table,
             buffer,
             tag_stack: Vec::new(),
+            style_stack: Vec::new(),
             in_code_block: None,
             code_buf: String::new(),
             list_stack: Vec::new(),
@@ -315,6 +318,37 @@ impl MarkdownBufferWriter {
     fn pop_tag(&mut self, tag: &str) {
         if let Some(pos) = self.tag_stack.iter().rposition(|t| *t == tag) {
             self.tag_stack.remove(pos);
+        }
+    }
+
+    /// Remove the last matching style from the inline style stack (LIFO).
+    fn pop_style(&mut self, predicate: impl Fn(&InlineStyle) -> bool) {
+        if let Some(pos) = self.style_stack.iter().rposition(predicate) {
+            self.style_stack.remove(pos);
+        }
+    }
+
+    /// Push a text run with current style stack into the current prose block.
+    fn push_run(&mut self, text: &str) {
+        if text.is_empty() {
+            return;
+        }
+        if let Some(ref mut block) = self.current_block {
+            block.runs.push(InlineRun {
+                text: text.to_string(),
+                styles: self.style_stack.clone(),
+            });
+        }
+    }
+
+    /// Finalize the current prose block into a label segment, if any.
+    fn finish_prose_block(&mut self) {
+        if let Some(block) = self.current_block.take()
+            && !block.runs.is_empty()
+        {
+            let label = make_prose_label(&runs_to_markup(&block.runs));
+            self.segments
+                .push(MarkdownSegment::Prose(label.upcast::<gtk::Widget>()));
         }
     }
 
@@ -373,9 +407,18 @@ impl MarkdownBufferWriter {
 
     fn handle_start_tag(&mut self, tag: Tag<'_>) {
         match tag {
-            Tag::Emphasis => self.tag_stack.push("italic"),
-            Tag::Strong => self.tag_stack.push("bold"),
-            Tag::Strikethrough => self.tag_stack.push("strikethrough"),
+            Tag::Emphasis => {
+                self.tag_stack.push("italic");
+                self.style_stack.push(InlineStyle::Italic);
+            }
+            Tag::Strong => {
+                self.tag_stack.push("bold");
+                self.style_stack.push(InlineStyle::Bold);
+            }
+            Tag::Strikethrough => {
+                self.tag_stack.push("strikethrough");
+                self.style_stack.push(InlineStyle::Strikethrough);
+            }
             Tag::Link { dest_url, .. } => {
                 self.link_url = Some(dest_url.to_string());
             }
@@ -396,6 +439,8 @@ impl MarkdownBufferWriter {
                 self.block_separator();
                 let heading_tag = Self::heading_tag_name(level);
                 self.tag_stack.push(heading_tag);
+                self.style_stack.push(InlineStyle::Heading(level));
+                self.current_block = Some(ProseBlock::default());
             }
             Tag::CodeBlock(kind) => self.start_code_block(kind),
             Tag::List(start) => {
@@ -440,9 +485,18 @@ impl MarkdownBufferWriter {
 
     fn handle_end_tag(&mut self, tag_end: TagEnd) {
         match tag_end {
-            TagEnd::Emphasis => self.pop_tag("italic"),
-            TagEnd::Strong => self.pop_tag("bold"),
-            TagEnd::Strikethrough => self.pop_tag("strikethrough"),
+            TagEnd::Emphasis => {
+                self.pop_tag("italic");
+                self.pop_style(|style| matches!(style, InlineStyle::Italic));
+            }
+            TagEnd::Strong => {
+                self.pop_tag("bold");
+                self.pop_style(|style| matches!(style, InlineStyle::Bold));
+            }
+            TagEnd::Strikethrough => {
+                self.pop_tag("strikethrough");
+                self.pop_style(|style| matches!(style, InlineStyle::Strikethrough));
+            }
             TagEnd::Link => {
                 if let Some(url) = self.link_url.take() {
                     let suffix = format!(" ({})", url);
@@ -456,13 +510,7 @@ impl MarkdownBufferWriter {
             TagEnd::Paragraph
                 if self.list_stack.is_empty() && !self.in_table && self.blockquote_depth == 0 =>
             {
-                if let Some(block) = self.current_block.take()
-                    && !block.runs.is_empty()
-                {
-                    let label = make_prose_label(&runs_to_markup(&block.runs));
-                    self.segments
-                        .push(MarkdownSegment::Prose(label.upcast::<gtk::Widget>()));
-                }
+                self.finish_prose_block();
             }
             TagEnd::Paragraph if self.list_stack.is_empty() && !self.in_table => {
                 self.insert_with_tags("\n", &[]);
@@ -470,6 +518,10 @@ impl MarkdownBufferWriter {
             }
             TagEnd::Paragraph => {}
             TagEnd::Heading(level) => {
+                self.finish_prose_block();
+                self.pop_style(
+                    |style| matches!(style, InlineStyle::Heading(existing) if *existing == level),
+                );
                 self.insert_with_tags("\n", &[]);
                 self.has_content = true;
                 self.pop_tag(Self::heading_tag_name(level));
@@ -676,11 +728,8 @@ impl MarkdownBufferWriter {
     fn write_inline_with_active_tags(&mut self, text: &str) {
         if self.in_table {
             self.inline_buf.push_str(text);
-        } else if let Some(ref mut block) = self.current_block {
-            block.runs.push(InlineRun {
-                text: text.to_owned(),
-                styles: Vec::new(),
-            });
+        } else if self.current_block.is_some() {
+            self.push_run(text);
         } else {
             let tags = self.active_tags();
             self.insert_with_tags(text, &tags);
@@ -692,11 +741,8 @@ impl MarkdownBufferWriter {
             self.code_buf.push_str(text);
         } else if self.in_table {
             self.inline_buf.push_str(text);
-        } else if let Some(ref mut block) = self.current_block {
-            block.runs.push(InlineRun {
-                text: text.to_owned(),
-                styles: Vec::new(),
-            });
+        } else if self.current_block.is_some() {
+            self.push_run(text);
         } else {
             self.emit_text(text);
         }
@@ -705,11 +751,10 @@ impl MarkdownBufferWriter {
     fn push_inline_code(&mut self, code: &str) {
         if self.in_table {
             self.inline_buf.push_str(code);
-        } else if let Some(ref mut block) = self.current_block {
-            block.runs.push(InlineRun {
-                text: code.to_owned(),
-                styles: Vec::new(),
-            });
+        } else if self.current_block.is_some() {
+            self.style_stack.push(InlineStyle::Code);
+            self.push_run(code);
+            self.pop_style(|style| matches!(style, InlineStyle::Code));
         } else {
             self.flush_pending_marker();
             let mut tags = self.active_tags();
@@ -726,11 +771,8 @@ impl MarkdownBufferWriter {
             self.code_buf.push('\n');
         } else if self.in_table {
             self.inline_buf.push('\n');
-        } else if let Some(ref mut block) = self.current_block {
-            block.runs.push(InlineRun {
-                text: "\n".to_owned(),
-                styles: Vec::new(),
-            });
+        } else if self.current_block.is_some() {
+            self.push_run("\n");
         } else {
             self.write_inline_with_active_tags("\n");
         }
@@ -1343,16 +1385,76 @@ mod tests {
         assert!(text.contains("code"), "got: {text}");
     }
 
-    // ── Headings ─────────────────────────────────────────────────────
-
-    #[gtk::test]
-    fn textview_heading_1_tagged() {
-        assert!(has_tag_at("# Title", "heading-1", 0));
+    fn first_prose_label_markup(content: &str) -> String {
+        let (widget, _) = render_markdown(content, None);
+        let labels: Vec<gtk::Label> = find_widgets_of_type::<gtk::Label>(&widget)
+            .into_iter()
+            .filter(|label| label.has_css_class("markdown-prose"))
+            .collect();
+        let label = labels.first().expect("expected prose label");
+        label_markup(label)
     }
 
     #[gtk::test]
-    fn textview_heading_2_tagged() {
-        assert!(has_tag_at("## Subtitle", "heading-2", 0));
+    fn label_markup_bold_italic_strikethrough_and_inline_code() {
+        let markup = first_prose_label_markup("Hello **bold** *italic* ~~gone~~ `code`");
+
+        assert!(markup.contains("<b>bold</b>"), "got: {markup}");
+        assert!(markup.contains("<i>italic</i>"), "got: {markup}");
+        assert!(markup.contains("<s>gone</s>"), "got: {markup}");
+        assert!(markup.contains("<tt>code</tt>"), "got: {markup}");
+    }
+
+    #[gtk::test]
+    fn label_markup_heading_uses_bold_scaled_span() {
+        let markup = first_prose_label_markup("# Title");
+
+        assert!(
+            markup.contains("<span weight=\"bold\" size=\"x-large\">Title</span>"),
+            "got: {markup}"
+        );
+    }
+
+    #[gtk::test]
+    fn label_markup_nested_bold_italic() {
+        let markup = first_prose_label_markup("Hello ***both*** world");
+
+        assert!(
+            markup.contains("<b><i>both</i></b>") || markup.contains("<i><b>both</b></i>"),
+            "got: {markup}"
+        );
+    }
+
+    // ── Headings ─────────────────────────────────────────────────────
+    // NOTE: Headings are now rendered as prose labels with Pango markup since
+    // Task 4. The old `has_tag_at`-based TextBuffer tests are replaced by
+    // label markup tests above (label_markup_heading_uses_bold_scaled_span).
+
+    #[gtk::test]
+    fn textview_heading_1_renders_as_prose_label() {
+        let (widget, _) = render_markdown("# Title", None);
+        let labels: Vec<gtk::Label> = find_widgets_of_type::<gtk::Label>(&widget)
+            .into_iter()
+            .filter(|l| l.has_css_class("markdown-prose"))
+            .collect();
+        assert!(!labels.is_empty(), "heading should render as a prose label");
+        let markup = label_markup(labels.first().unwrap());
+        assert!(markup.contains("Title"), "got: {markup}");
+    }
+
+    #[gtk::test]
+    fn textview_heading_2_renders_as_prose_label() {
+        let (widget, _) = render_markdown("## Subtitle", None);
+        let labels: Vec<gtk::Label> = find_widgets_of_type::<gtk::Label>(&widget)
+            .into_iter()
+            .filter(|l| l.has_css_class("markdown-prose"))
+            .collect();
+        assert!(!labels.is_empty(), "heading should render as a prose label");
+        let markup = label_markup(labels.first().unwrap());
+        assert!(
+            markup.contains("<span weight=\"bold\" size=\"large\">Subtitle</span>"),
+            "got: {markup}"
+        );
     }
 
     // ── Lists ────────────────────────────────────────────────────────
@@ -1494,8 +1596,8 @@ mod tests {
     }
 
     // ── Nested inline formatting ─────────────────────────────────────
-    // NOTE: Nested inline styles in prose paragraphs are not yet styled via
-    // Pango markup in Task 3. Text content is verified instead.
+    // NOTE: Nested inline styles in prose paragraphs are rendered as Pango
+    // markup via GtkLabel since Task 4. Tests verify markup content.
 
     #[gtk::test]
     fn textview_nested_bold_italic() {
