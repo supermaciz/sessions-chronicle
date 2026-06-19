@@ -854,10 +854,7 @@ fn make_textview(buffer: &gtk::TextBuffer) -> gtk::TextView {
 ///
 /// If `highlight_query` is provided, matches are highlighted with a
 /// background color. Returns the widget and the total number of matches.
-pub fn render_markdown_to_textview(
-    content: &str,
-    highlight_query: Option<&str>,
-) -> (gtk::Widget, usize) {
+pub fn render_markdown(content: &str, highlight_query: Option<&str>) -> (gtk::Widget, usize) {
     let tag_table = create_tag_table();
     let query = highlight_query.unwrap_or("");
 
@@ -1021,6 +1018,14 @@ mod tests {
         assert_eq!(highlight.priority(), table.size() - 1);
     }
 
+    #[gtk::test]
+    fn render_markdown_public_entry_point_returns_widget_and_count() {
+        let (widget, count) = render_markdown("Hello world", Some("world"));
+
+        assert_eq!(count, 1);
+        assert!(widget.is::<gtk::Widget>());
+    }
+
     /// Downcast the rendered widget to a single TextView (for non-table content).
     fn as_textview(widget: &gtk::Widget) -> gtk::TextView {
         widget
@@ -1126,7 +1131,7 @@ mod tests {
     }
 
     fn has_tag_at(content: &str, tag_name: &str, char_offset: i32) -> bool {
-        let (widget, _) = render_markdown_to_textview(content, None);
+        let (widget, _) = render_markdown(content, None);
         let view = as_textview(&widget);
         let buffer = view.buffer();
         let iter = buffer.iter_at_offset(char_offset);
@@ -1137,7 +1142,7 @@ mod tests {
 
     /// Helper: extract plain text from a rendered textview.
     fn textview_text(content: &str) -> String {
-        let (widget, _) = render_markdown_to_textview(content, None);
+        let (widget, _) = render_markdown(content, None);
         let view = as_textview(&widget);
         let buf = view.buffer();
         buf.text(&buf.start_iter(), &buf.end_iter(), false)
@@ -1216,7 +1221,7 @@ mod tests {
 
     #[gtk::test]
     fn textview_search_highlight_applied() {
-        let (widget, count) = render_markdown_to_textview("Hello world", Some("world"));
+        let (widget, count) = render_markdown("Hello world", Some("world"));
         assert_eq!(count, 1);
         let view = as_textview(&widget);
         let buf = view.buffer();
@@ -1231,7 +1236,7 @@ mod tests {
 
     #[gtk::test]
     fn textview_search_no_match_returns_zero() {
-        let (_, count) = render_markdown_to_textview("Hello world", Some("missing"));
+        let (_, count) = render_markdown("Hello world", Some("missing"));
         assert_eq!(count, 0);
     }
 
@@ -1240,7 +1245,7 @@ mod tests {
     #[gtk::test]
     fn textview_table_renders_as_separate_widget() {
         let md = "| A | B |\n|---|---|\n| 1 | 2 |";
-        let (widget, _) = render_markdown_to_textview(md, None);
+        let (widget, _) = render_markdown(md, None);
         let tables = find_table_widgets(&widget);
         assert!(
             !tables.is_empty(),
@@ -1251,7 +1256,7 @@ mod tests {
     #[gtk::test]
     fn textview_table_contains_labels() {
         let md = "| A | B |\n|---|---|\n| 1 | 2 |";
-        let (widget, _) = render_markdown_to_textview(md, None);
+        let (widget, _) = render_markdown(md, None);
         let labels = table_label_texts(&widget);
         assert!(
             !labels.is_empty(),
@@ -1262,7 +1267,7 @@ mod tests {
     #[gtk::test]
     fn textview_table_scroller_does_not_expand_vertically() {
         let md = "| A | B |\n|---|---|\n| 1 | 2 |\n\nBelow";
-        let (widget, _) = render_markdown_to_textview(md, None);
+        let (widget, _) = render_markdown(md, None);
         let table = find_table_widgets(&widget)
             .into_iter()
             .next()
@@ -1278,7 +1283,7 @@ mod tests {
     #[gtk::test]
     fn textview_table_cells_do_not_wrap() {
         let md = "| A | B |\n|---|---|\n| 1 | 2 |";
-        let (widget, _) = render_markdown_to_textview(md, None);
+        let (widget, _) = render_markdown(md, None);
         let labels: Vec<gtk::Label> = find_widgets_of_type::<gtk::Label>(&widget)
             .into_iter()
             .filter(|l| l.has_css_class("markdown-table-cell"))
@@ -1295,7 +1300,7 @@ mod tests {
     #[gtk::test]
     fn textview_table_search_count_includes_widget_cells() {
         let md = "| Name |\n|------|\n| Rust |";
-        let (_, count) = render_markdown_to_textview(md, Some("Rust"));
+        let (_, count) = render_markdown(md, Some("Rust"));
         assert_eq!(count, 1, "expected search to include widget cell content");
     }
 
@@ -1336,7 +1341,7 @@ mod tests {
     #[gtk::test]
     fn textview_table_link_visible_inside_widget_cell() {
         let md = "| Name |\n|------|\n| [Rust](https://rust-lang.org) |";
-        let (widget, _) = render_markdown_to_textview(md, None);
+        let (widget, _) = render_markdown(md, None);
         let label_texts = table_label_texts(&widget);
 
         assert!(
@@ -1350,7 +1355,7 @@ mod tests {
     #[gtk::test]
     fn textview_table_image_visible_inside_widget_cell() {
         let md = "| Screenshot |\n|------------|\n| ![Session List](docs/screenshots/session_list.png) |";
-        let (widget, _) = render_markdown_to_textview(md, None);
+        let (widget, _) = render_markdown(md, None);
         let label_texts = table_label_texts(&widget);
 
         assert!(
@@ -1366,7 +1371,7 @@ mod tests {
     #[gtk::test]
     fn textview_table_inside_blockquote_widget_has_blockquote_class() {
         let md = "> | A | B |\n> |---|---|\n> | 1 | 2 |";
-        let (widget, _) = render_markdown_to_textview(md, None);
+        let (widget, _) = render_markdown(md, None);
 
         assert!(
             find_table_widgets(&widget)
@@ -1381,7 +1386,7 @@ mod tests {
     #[gtk::test]
     fn textview_table_two_columns_has_correct_labels() {
         let md = "| A | B |\n|---|---|\n| 1 | 2 |";
-        let (widget, _) = render_markdown_to_textview(md, None);
+        let (widget, _) = render_markdown(md, None);
         let label_texts = table_label_texts(&widget);
 
         assert!(
@@ -1434,7 +1439,7 @@ mod tests {
     #[gtk::test]
     fn textview_table_grid_positions_correct() {
         let md = "| A | B |\n|---|---|\n| 1 | 2 |";
-        let (widget, _) = render_markdown_to_textview(md, None);
+        let (widget, _) = render_markdown(md, None);
         let tables = find_table_widgets(&widget);
         assert_eq!(tables.len(), 1);
         let mut positions = Vec::new();
@@ -1486,7 +1491,7 @@ mod tests {
     #[gtk::test]
     fn code_block_language_label_uses_first_info_token() {
         let md = "```rust linenos title=demo\nfn main() {}\n```";
-        let (widget, _) = render_markdown_to_textview(md, None);
+        let (widget, _) = render_markdown(md, None);
 
         let labels = collect_label_text_from_widget_tree(&widget);
         assert!(
@@ -1498,7 +1503,7 @@ mod tests {
     #[gtk::test]
     fn code_block_without_language_has_no_language_label() {
         let md = "```\nplain text\n```";
-        let (widget, _) = render_markdown_to_textview(md, None);
+        let (widget, _) = render_markdown(md, None);
 
         let labels = collect_label_text_from_widget_tree(&widget);
         assert!(
@@ -1510,7 +1515,7 @@ mod tests {
     #[gtk::test]
     fn code_block_with_blank_lines_renders_as_widget_segment() {
         let md = "```rust\nfn one() {}\n\nfn two() {}\n```";
-        let (widget, _) = render_markdown_to_textview(md, None);
+        let (widget, _) = render_markdown(md, None);
 
         let code_blocks = find_widgets_with_css_class(&widget, "code-block-widget");
         assert_eq!(
@@ -1523,14 +1528,14 @@ mod tests {
     #[gtk::test]
     fn code_block_search_highlight_contributes_to_total_count() {
         let md = "```rust\nlet rust = 1;\n// rust\n```";
-        let (_, count) = render_markdown_to_textview(md, Some("rust"));
+        let (_, count) = render_markdown(md, Some("rust"));
         assert_eq!(count, 2, "expected only code text matches to be counted");
     }
 
     #[gtk::test]
     fn code_block_search_highlight_tag_applied_inside_source_buffer() {
         let md = "```\nhello world\n```";
-        let (widget, _) = render_markdown_to_textview(md, Some("world"));
+        let (widget, _) = render_markdown(md, Some("world"));
         let buffer = first_source_buffer(&widget);
         let iter = buffer.iter_at_offset(6);
         assert!(
@@ -1548,7 +1553,7 @@ mod tests {
     #[gtk::test]
     fn search_highlight_keeps_highest_priority_after_code_block_syntax_tags() {
         let md = "```rust\nfn main() { let value = 1; }\n```";
-        let (widget, _) = render_markdown_to_textview(md, Some("main"));
+        let (widget, _) = render_markdown(md, Some("main"));
 
         let buffer = first_source_buffer(&widget);
         assert!(buffer.is_highlight_syntax());
@@ -1580,7 +1585,7 @@ mod tests {
     #[gtk::test]
     fn code_block_known_language_uses_source_buffer_with_syntax_highlighting() {
         let md = "```rust\nfn main() {}\n```";
-        let (widget, _) = render_markdown_to_textview(md, None);
+        let (widget, _) = render_markdown(md, None);
 
         let buffer = first_source_buffer(&widget);
         assert!(buffer.is_highlight_syntax());
@@ -1592,7 +1597,7 @@ mod tests {
     #[gtk::test]
     fn code_block_alias_language_resolves_before_lookup() {
         let md = "```js\nconsole.log('ok');\n```";
-        let (widget, _) = render_markdown_to_textview(md, None);
+        let (widget, _) = render_markdown(md, None);
 
         assert_eq!(normalize_language_alias("js"), "js");
 
@@ -1605,7 +1610,7 @@ mod tests {
     #[gtk::test]
     fn code_block_full_javascript_fence_resolves_to_js_language() {
         let md = "```javascript\nconsole.log('ok');\n```";
-        let (widget, _) = render_markdown_to_textview(md, None);
+        let (widget, _) = render_markdown(md, None);
 
         let buffer = first_source_buffer(&widget);
         let language = buffer.language().expect("expected resolved language");
@@ -1633,7 +1638,7 @@ mod tests {
     #[gtk::test]
     fn code_block_unknown_language_disables_syntax_highlighting() {
         let md = "```totally-unknown\nvalue\n```";
-        let (widget, _) = render_markdown_to_textview(md, None);
+        let (widget, _) = render_markdown(md, None);
 
         let buffer = first_source_buffer(&widget);
         assert!(buffer.language().is_none());
@@ -1643,7 +1648,7 @@ mod tests {
     #[gtk::test]
     fn code_block_without_language_disables_syntax_highlighting() {
         let md = "```\nvalue\n```";
-        let (widget, _) = render_markdown_to_textview(md, None);
+        let (widget, _) = render_markdown(md, None);
 
         let buffer = first_source_buffer(&widget);
         assert!(buffer.language().is_none());
@@ -1653,7 +1658,7 @@ mod tests {
     #[gtk::test]
     fn code_block_inside_blockquote_widget_has_blockquote_class() {
         let md = "> ```rust\n> fn main() {}\n> ```";
-        let (widget, _) = render_markdown_to_textview(md, None);
+        let (widget, _) = render_markdown(md, None);
         let code_blocks = find_widgets_with_css_class(&widget, "code-block-widget");
         assert!(
             code_blocks
@@ -1666,7 +1671,7 @@ mod tests {
     #[gtk::test]
     fn code_block_widget_uses_read_only_textview_and_horizontal_scroller() {
         let md = "```\nvery long line very long line very long line\n```";
-        let (widget, _) = render_markdown_to_textview(md, None);
+        let (widget, _) = render_markdown(md, None);
         let scrollers = find_widgets_of_type::<gtk::ScrolledWindow>(&widget);
         let views = find_widgets_of_type::<gtk::TextView>(&widget);
 
@@ -1686,7 +1691,7 @@ mod tests {
     #[gtk::test]
     fn code_block_widget_assigns_all_expected_css_classes() {
         let md = "```rust\nfn main() {}\n```";
-        let (widget, _) = render_markdown_to_textview(md, None);
+        let (widget, _) = render_markdown(md, None);
 
         assert!(
             !find_widgets_with_css_class(&widget, "code-block-widget").is_empty(),

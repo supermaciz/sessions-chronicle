@@ -55,7 +55,7 @@ impl GenericRenderer {
                 Some(plain_text_to_textview(&text).upcast())
             }
             Some(OutputRenderPlan::Markdown(text)) => {
-                let (widget, _) = markdown::render_markdown_to_textview(&text, None);
+                let (widget, _) = markdown::render_markdown(&text, None);
                 Some(widget)
             }
             None => None,
