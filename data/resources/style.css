@@ -77,6 +77,18 @@
   margin: 0 0 6px 0;
 }
 
+.markdown-list-item {
+  margin-bottom: 3px;
+}
+
+.markdown-list-marker {
+  opacity: 0.75;
+}
+
+.markdown-list-content {
+  margin: 0;
+}
+
 .code-block-widget {
   background-color: alpha(@card_shade_color, 0.15);
   border-radius: 6px;

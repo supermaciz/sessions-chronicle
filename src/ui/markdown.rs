@@ -206,6 +206,20 @@ struct ProseBlock {
     runs: Vec<InlineRun>,
 }
 
+#[derive(Clone, Debug)]
+struct ListFrame {
+    ordered: bool,
+    next_index: usize,
+    depth: usize,
+}
+
+#[derive(Clone, Debug)]
+struct ListItemBlock {
+    marker: String,
+    runs: Vec<InlineRun>,
+    depth: usize,
+}
+
 /// Walks pulldown-cmark events and writes formatted text into a `TextBuffer`.
 struct MarkdownBufferWriter {
     tag_table: gtk::TextTagTable,
@@ -218,10 +232,10 @@ struct MarkdownBufferWriter {
     in_code_block: Option<Option<String>>,
     /// Code block accumulator.
     code_buf: String,
-    /// List nesting stack: (ordered, item_index, is_task_list).
-    list_stack: Vec<(bool, usize, bool)>,
-    /// Current task-list checked state.
-    current_task_checked: Option<bool>,
+    /// List nesting stack.
+    list_stack: Vec<ListFrame>,
+    /// Current list item being accumulated.
+    current_list_item: Option<ListItemBlock>,
     /// Blockquote nesting depth.
     blockquote_depth: usize,
     /// Table state: headers collected, then rows.
@@ -238,9 +252,6 @@ struct MarkdownBufferWriter {
     in_image: bool,
     /// Whether any block has been written (for inter-block spacing).
     has_content: bool,
-    /// Deferred item marker: true when we entered a list item but haven't
-    /// yet decided whether it's a regular or task-list item.
-    pending_item_marker: bool,
     /// Search query used for markdown highlight; table widgets will use this
     /// in a follow-up task.
     highlight_query: Option<String>,
@@ -269,7 +280,7 @@ impl MarkdownBufferWriter {
             in_code_block: None,
             code_buf: String::new(),
             list_stack: Vec::new(),
-            current_task_checked: None,
+            current_list_item: None,
             blockquote_depth: 0,
             in_table: false,
             in_table_head: false,
@@ -280,7 +291,6 @@ impl MarkdownBufferWriter {
             link_url: None,
             in_image: false,
             has_content: false,
-            pending_item_marker: false,
             highlight_query: highlight_query.map(str::to_owned),
             current_block: None,
             segments: Vec::new(),
@@ -331,16 +341,20 @@ impl MarkdownBufferWriter {
         }
     }
 
-    /// Push a text run with current style stack into the current prose block.
+    /// Push a text run with current style stack into the current prose block
+    /// or the current list item block (whichever is active).
     fn push_run(&mut self, text: &str) {
         if text.is_empty() {
             return;
         }
-        if let Some(ref mut block) = self.current_block {
-            block.runs.push(InlineRun {
-                text: text.to_string(),
-                styles: self.style_stack.clone(),
-            });
+        let run = InlineRun {
+            text: text.to_string(),
+            styles: self.style_stack.clone(),
+        };
+        if let Some(ref mut item) = self.current_list_item {
+            item.runs.push(run);
+        } else if let Some(ref mut block) = self.current_block {
+            block.runs.push(run);
         }
     }
 
@@ -449,19 +463,40 @@ impl MarkdownBufferWriter {
             }
             Tag::CodeBlock(kind) => self.start_code_block(kind),
             Tag::List(start) => {
-                if self.list_stack.is_empty() {
-                    self.block_separator();
-                } else {
-                    self.insert_with_tags("\n", &[]);
+                // If a list opens while we're inside a list item, the current
+                // item's inline content is complete — emit it as a widget now
+                // before descending into the nested list.
+                if let Some(item) = self.current_list_item.take() {
+                    let (widget, count) = make_list_item_widget(
+                        &item.marker,
+                        &item.runs,
+                        item.depth,
+                        self.highlight_query.as_deref(),
+                    );
+                    self.prose_match_count += count;
+                    self.segments.push(MarkdownSegment::Prose(widget));
                 }
-                self.list_stack.push((start.is_some(), 0, false));
+                self.list_stack.push(ListFrame {
+                    ordered: start.is_some(),
+                    next_index: start.unwrap_or(1) as usize,
+                    depth: self.list_stack.len(),
+                });
             }
             Tag::Item => {
                 if let Some(frame) = self.list_stack.last_mut() {
-                    frame.1 += 1;
-                    if !frame.2 {
-                        self.pending_item_marker = true;
-                    }
+                    let marker = if frame.ordered {
+                        let marker = format!("{}.", frame.next_index);
+                        frame.next_index += 1;
+                        marker
+                    } else {
+                        "-".to_string()
+                    };
+                    let depth = frame.depth;
+                    self.current_list_item = Some(ListItemBlock {
+                        marker,
+                        runs: Vec::new(),
+                        depth,
+                    });
                 }
             }
             Tag::Table(_) => {
@@ -534,13 +569,18 @@ impl MarkdownBufferWriter {
             TagEnd::CodeBlock => self.finish_code_block(),
             TagEnd::List(_) => {
                 self.list_stack.pop();
-                if self.list_stack.is_empty() {
-                    self.has_content = true;
-                }
             }
             TagEnd::Item => {
-                self.flush_pending_marker();
-                self.insert_with_tags("\n", &[]);
+                if let Some(item) = self.current_list_item.take() {
+                    let (widget, count) = make_list_item_widget(
+                        &item.marker,
+                        &item.runs,
+                        item.depth,
+                        self.highlight_query.as_deref(),
+                    );
+                    self.prose_match_count += count;
+                    self.segments.push(MarkdownSegment::Prose(widget));
+                }
             }
             TagEnd::Table => {
                 self.in_table = false;
@@ -685,55 +725,21 @@ impl MarkdownBufferWriter {
     }
 
     fn handle_task_list_marker(&mut self, checked: bool) {
-        self.pending_item_marker = false;
-        if let Some(frame) = self.list_stack.last_mut() {
-            frame.2 = true;
-        }
-        self.current_task_checked = Some(checked);
-
-        let (symbol, style_tag) = if checked {
-            ("\u{2611} ", "task-checked")
-        } else {
-            ("\u{2610} ", "task-unchecked")
-        };
-        let mut tags = self.active_tags();
-        tags.push("list-item");
-        tags.push(style_tag);
-        self.insert_with_tags(symbol, &tags);
-    }
-
-    /// If a list-item marker was deferred, emit it now.
-    fn flush_pending_marker(&mut self) {
-        if self.pending_item_marker {
-            self.pending_item_marker = false;
-            if let Some(frame) = self.list_stack.last() {
-                let marker = if frame.0 {
-                    format!("{}. ", frame.1)
-                } else {
-                    "- ".to_string()
-                };
-                let mut tags = self.active_tags();
-                tags.push("list-item");
-                self.insert_with_tags(&marker, &tags);
-            }
+        if let Some(item) = self.current_list_item.as_mut() {
+            item.marker = if checked { "☑" } else { "☐" }.to_string();
         }
     }
 
-    /// Emit inline text with current formatting context.
+    /// Emit inline text with current formatting context (TextBuffer path).
     fn emit_text(&mut self, text: &str) {
-        self.flush_pending_marker();
-        let mut tags = self.active_tags();
-        // If inside a list, add list-item tag for indentation
-        if !self.list_stack.is_empty() {
-            tags.push("list-item");
-        }
+        let tags = self.active_tags();
         self.insert_with_tags(text, &tags);
     }
 
     fn write_inline_with_active_tags(&mut self, text: &str) {
         if self.in_table {
             self.inline_buf.push_str(text);
-        } else if self.current_block.is_some() {
+        } else if self.current_list_item.is_some() || self.current_block.is_some() {
             self.push_run(text);
         } else {
             let tags = self.active_tags();
@@ -746,7 +752,7 @@ impl MarkdownBufferWriter {
             self.code_buf.push_str(text);
         } else if self.in_table {
             self.inline_buf.push_str(text);
-        } else if self.current_block.is_some() {
+        } else if self.current_list_item.is_some() || self.current_block.is_some() {
             self.push_run(text);
         } else {
             self.emit_text(text);
@@ -756,17 +762,13 @@ impl MarkdownBufferWriter {
     fn push_inline_code(&mut self, code: &str) {
         if self.in_table {
             self.inline_buf.push_str(code);
-        } else if self.current_block.is_some() {
+        } else if self.current_list_item.is_some() || self.current_block.is_some() {
             self.style_stack.push(InlineStyle::Code);
             self.push_run(code);
             self.pop_style(|style| matches!(style, InlineStyle::Code));
         } else {
-            self.flush_pending_marker();
             let mut tags = self.active_tags();
             tags.push("code-inline");
-            if !self.list_stack.is_empty() {
-                tags.push("list-item");
-            }
             self.insert_with_tags(code, &tags);
         }
     }
@@ -776,7 +778,7 @@ impl MarkdownBufferWriter {
             self.code_buf.push('\n');
         } else if self.in_table {
             self.inline_buf.push('\n');
-        } else if self.current_block.is_some() {
+        } else if self.current_list_item.is_some() || self.current_block.is_some() {
             self.push_run("\n");
         } else {
             self.write_inline_with_active_tags("\n");
@@ -1068,6 +1070,37 @@ fn make_prose_label(markup: &str) -> gtk::Label {
     label.set_vexpand(false);
     label.add_css_class("markdown-prose");
     label
+}
+
+/// Build a horizontal row widget for a single list item.
+///
+/// The row contains a marker label (bullet or number) and a content label
+/// rendered from inline runs. The `depth` controls the left indent level.
+fn make_list_item_widget(
+    marker: &str,
+    runs: &[InlineRun],
+    depth: usize,
+    query: Option<&str>,
+) -> (gtk::Widget, usize) {
+    let row = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+    row.add_css_class("markdown-list-item");
+    row.set_valign(gtk::Align::Start);
+    row.set_margin_start((depth as i32) * 18);
+
+    let marker_label = gtk::Label::new(Some(marker));
+    marker_label.add_css_class("markdown-list-marker");
+    marker_label.set_halign(gtk::Align::End);
+    marker_label.set_valign(gtk::Align::Start);
+    marker_label.set_width_chars(3);
+    row.append(&marker_label);
+
+    let (highlighted, count) = highlighted_runs(runs, query);
+    let content = make_prose_label(&runs_to_markup(&highlighted));
+    content.remove_css_class("markdown-prose");
+    content.add_css_class("markdown-list-content");
+    row.append(&content);
+
+    (row.upcast(), count)
 }
 
 /// Render markdown content into a widget (`Box` containing prose labels,
@@ -1523,25 +1556,42 @@ mod tests {
     // ── Lists ────────────────────────────────────────────────────────
 
     #[gtk::test]
-    fn textview_unordered_list_contains_marker() {
-        let text = textview_text("- First\n- Second");
-        assert!(text.contains("- First"), "got: {text}");
-        assert!(text.contains("- Second"), "got: {text}");
+    fn unordered_list_items_render_as_marker_content_rows() {
+        let (widget, _) = render_markdown("- First\n- Second", None);
+        let rows = find_widgets_with_css_class(&widget, "markdown-list-item");
+        let markers: Vec<String> = find_widgets_of_type::<gtk::Label>(&widget)
+            .into_iter()
+            .filter(|label| label.has_css_class("markdown-list-marker"))
+            .map(|label| label.text().to_string())
+            .collect();
+        let content: Vec<String> = find_widgets_of_type::<gtk::Label>(&widget)
+            .into_iter()
+            .filter(|label| label.has_css_class("markdown-list-content"))
+            .map(|label| label.text().to_string())
+            .collect();
+
+        assert_eq!(rows.len(), 2);
+        assert_eq!(markers, vec!["-", "-"]);
+        assert_eq!(content, vec!["First", "Second"]);
     }
 
     #[gtk::test]
-    fn textview_ordered_list_contains_numbers() {
-        let text = textview_text("1. Alpha\n2. Beta");
-        assert!(text.contains("1."), "got: {text}");
-        assert!(text.contains("2."), "got: {text}");
-    }
+    fn ordered_and_task_lists_render_expected_markers() {
+        let (ordered, _) = render_markdown("1. Alpha\n2. Beta", None);
+        let ordered_markers: Vec<String> = find_widgets_of_type::<gtk::Label>(&ordered)
+            .into_iter()
+            .filter(|label| label.has_css_class("markdown-list-marker"))
+            .map(|label| label.text().to_string())
+            .collect();
+        assert_eq!(ordered_markers, vec!["1.", "2."]);
 
-    #[gtk::test]
-    fn textview_task_list_contains_checkboxes() {
-        let text = textview_text("- [x] Done\n- [ ] Todo");
-        // U+2611 (checked) and U+2610 (unchecked)
-        assert!(text.contains('\u{2611}'), "got: {text}");
-        assert!(text.contains('\u{2610}'), "got: {text}");
+        let (tasks, _) = render_markdown("- [x] Done\n- [ ] Todo", None);
+        let task_markers: Vec<String> = find_widgets_of_type::<gtk::Label>(&tasks)
+            .into_iter()
+            .filter(|label| label.has_css_class("markdown-list-marker"))
+            .map(|label| label.text().to_string())
+            .collect();
+        assert_eq!(task_markers, vec!["☑", "☐"]);
     }
 
     // ── Search highlighting ──────────────────────────────────────────
@@ -1814,11 +1864,28 @@ mod tests {
     #[gtk::test]
     fn textview_nested_unordered_list() {
         let md = "- Parent item\n  - Child item 1\n  - Child item 2\n- Second parent";
-        let text = textview_text(md);
-        assert!(text.contains("Parent item"), "got: {text}");
-        assert!(text.contains("Child item 1"), "got: {text}");
-        assert!(text.contains("Child item 2"), "got: {text}");
-        assert!(text.contains("Second parent"), "got: {text}");
+        let (widget, _) = render_markdown(md, None);
+        let content: Vec<String> = find_widgets_of_type::<gtk::Label>(&widget)
+            .into_iter()
+            .filter(|label| label.has_css_class("markdown-list-content"))
+            .map(|label| label.text().to_string())
+            .collect();
+        assert!(
+            content.contains(&"Parent item".to_string()),
+            "got: {content:?}"
+        );
+        assert!(
+            content.contains(&"Child item 1".to_string()),
+            "got: {content:?}"
+        );
+        assert!(
+            content.contains(&"Child item 2".to_string()),
+            "got: {content:?}"
+        );
+        assert!(
+            content.contains(&"Second parent".to_string()),
+            "got: {content:?}"
+        );
     }
 
     #[gtk::test]
@@ -1826,10 +1893,24 @@ mod tests {
         // Loose lists have blank lines between items; pulldown-cmark wraps
         // each item in Paragraph events. All items must still appear.
         let md = "- First item\n\n- Second item\n\n- Third item";
-        let text = textview_text(md);
-        assert!(text.contains("First item"), "got: {text}");
-        assert!(text.contains("Second item"), "got: {text}");
-        assert!(text.contains("Third item"), "got: {text}");
+        let (widget, _) = render_markdown(md, None);
+        let content: Vec<String> = find_widgets_of_type::<gtk::Label>(&widget)
+            .into_iter()
+            .filter(|label| label.has_css_class("markdown-list-content"))
+            .map(|label| label.text().to_string())
+            .collect();
+        assert!(
+            content.contains(&"First item".to_string()),
+            "got: {content:?}"
+        );
+        assert!(
+            content.contains(&"Second item".to_string()),
+            "got: {content:?}"
+        );
+        assert!(
+            content.contains(&"Third item".to_string()),
+            "got: {content:?}"
+        );
     }
 
     // ── Code block widget ────────────────────────────────────────────
