@@ -39,7 +39,8 @@ class instead of racing it.
 - **Pango markup has no block-level layout attributes.** `<span>` covers `weight`, `style`,
   `strikethrough`, `size`/`font_scale`, `foreground`/`background`, `font_family`/`face` — but
   there is **no** attribute for left margin, indentation, or per-line indent. List/blockquote
-  indentation therefore cannot live in markup; it must be a widget property (`margin-start`).
+  indentation therefore cannot live in markup; it must come from widget structure — list items
+  are marker/content rows and blockquotes are grouped containers (border/padding via CSS).
 - **`GtkLabel` is height-for-width.** Wrapping labels measure height from the given width
   synchronously. The docs warn about "performance problems if it contains more than a small
   number of paragraphs" — so prose is split into **small label/widget segments**, keeping each
