@@ -419,10 +419,10 @@ impl MarkdownBufferWriter {
             Event::End(tag_end) => self.handle_end_tag(tag_end),
             Event::TaskListMarker(checked) => self.handle_task_list_marker(checked),
             Event::Rule => {
-                self.block_separator();
-                self.insert_with_tags("────────────────────────", &["horizontal-rule"]);
-                self.insert_with_tags("\n", &[]);
-                self.has_content = true;
+                self.finish_prose_block();
+                let label = make_prose_label("────────────────────────");
+                label.add_css_class("markdown-hr");
+                self.append_segment(label.upcast());
             }
             Event::Text(text) => self.push_text_content(&text),
             Event::Code(code) => self.push_inline_code(&code),
@@ -455,7 +455,7 @@ impl MarkdownBufferWriter {
             }
             Tag::Image { .. } => {
                 self.in_image = true;
-                self.write_inline_with_active_tags("[image: ");
+                self.push_text_content("[image: ");
             }
             Tag::Paragraph if self.list_stack.is_empty() && !self.in_table => {
                 self.current_block = Some(ProseBlock::default());
@@ -550,13 +550,14 @@ impl MarkdownBufferWriter {
             }
             TagEnd::Link => {
                 if let Some(url) = self.link_url.take() {
-                    let suffix = format!(" ({})", url);
-                    self.write_inline_with_active_tags(&suffix);
+                    self.style_stack.push(InlineStyle::Dim);
+                    self.push_text_content(&format!(" ({url})"));
+                    self.pop_style(|style| matches!(style, InlineStyle::Dim));
                 }
             }
             TagEnd::Image => {
                 self.in_image = false;
-                self.write_inline_with_active_tags("]");
+                self.push_text_content("]");
             }
             TagEnd::Paragraph if self.list_stack.is_empty() && !self.in_table => {
                 self.finish_prose_block();
@@ -1705,6 +1706,19 @@ mod tests {
         assert!(text.contains("────"), "got: {text}");
     }
 
+    #[gtk::test]
+    fn horizontal_rule_renders_as_label_segment() {
+        let (widget, _) = render_markdown("Above\n\n---\n\nBelow", None);
+        let hrs = find_widgets_with_css_class(&widget, "markdown-hr");
+        let labels = collect_label_text_from_widget_tree(&widget);
+
+        assert_eq!(hrs.len(), 1);
+        assert!(
+            labels.iter().any(|text| text.contains("────")),
+            "got: {labels:?}"
+        );
+    }
+
     // ── Images ───────────────────────────────────────────────────────
 
     #[gtk::test]
@@ -1714,6 +1728,31 @@ mod tests {
         let labels = find_widgets_of_type::<gtk::Label>(&widget);
         let all_text: String = labels.iter().map(|l| l.text().to_string()).collect();
         assert!(all_text.contains("[image: screenshot]"), "got: {all_text}");
+    }
+
+    #[gtk::test]
+    fn image_renders_alt_text_inside_prose_label() {
+        let labels = rendered_label_texts("![screenshot](https://example.com/img.png)");
+
+        assert!(
+            labels
+                .iter()
+                .any(|text| text.contains("[image: screenshot]")),
+            "got: {labels:?}"
+        );
+    }
+
+    // ── Links ─────────────────────────────────────────────────────────
+
+    #[gtk::test]
+    fn link_appends_dimmed_url_suffix() {
+        let markup = first_prose_label_markup("[Rust](https://rust-lang.org)");
+
+        assert!(markup.contains("Rust"), "got: {markup}");
+        assert!(
+            markup.contains("<span alpha=\"65%\"> (https://rust-lang.org)</span>"),
+            "got: {markup}"
+        );
     }
 
     // ── Blockquotes ──────────────────────────────────────────────────
