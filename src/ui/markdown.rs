@@ -248,6 +248,8 @@ struct MarkdownBufferWriter {
     current_block: Option<ProseBlock>,
     /// Completed segments (prose labels, table widgets, code blocks) in order.
     segments: Vec<MarkdownSegment>,
+    /// Search match count found inside prose label widgets.
+    prose_match_count: usize,
     /// Search match count found inside table widgets.
     table_match_count: usize,
     /// Search match count found inside code block buffers.
@@ -282,6 +284,7 @@ impl MarkdownBufferWriter {
             highlight_query: highlight_query.map(str::to_owned),
             current_block: None,
             segments: Vec::new(),
+            prose_match_count: 0,
             table_match_count: 0,
             code_block_match_count: 0,
             source_buffers: Vec::new(),
@@ -346,7 +349,9 @@ impl MarkdownBufferWriter {
         if let Some(block) = self.current_block.take()
             && !block.runs.is_empty()
         {
-            let label = make_prose_label(&runs_to_markup(&block.runs));
+            let (runs, count) = highlighted_runs(&block.runs, self.highlight_query.as_deref());
+            self.prose_match_count += count;
+            let label = make_prose_label(&runs_to_markup(&runs));
             self.segments
                 .push(MarkdownSegment::Prose(label.upcast::<gtk::Widget>()));
         }
@@ -903,7 +908,7 @@ impl MarkdownBufferWriter {
 
         (
             self.segments,
-            self.table_match_count + self.code_block_match_count,
+            self.prose_match_count + self.table_match_count + self.code_block_match_count,
             self.source_buffers,
         )
     }
@@ -956,6 +961,65 @@ fn span_close(style: &InlineStyle) -> &'static str {
         | InlineStyle::TaskUnchecked
         | InlineStyle::SearchHighlight => "</span>",
     }
+}
+
+fn highlighted_runs(runs: &[InlineRun], query: Option<&str>) -> (Vec<InlineRun>, usize) {
+    let Some(query) = query.filter(|query| !query.is_empty()) else {
+        return (runs.to_vec(), 0);
+    };
+
+    let mut plain = String::new();
+    for run in runs {
+        plain.push_str(&run.text);
+    }
+
+    let matches = crate::utils::text_match::find_case_insensitive_matches(&plain, query);
+    if matches.is_empty() {
+        return (runs.to_vec(), 0);
+    }
+
+    let mut output = Vec::new();
+    let mut plain_offset = 0usize;
+    for run in runs {
+        let run_start = plain_offset;
+        let run_end = run_start + run.text.len();
+        let mut cursor = run_start;
+
+        for (match_start, match_end) in matches.iter().copied() {
+            if match_end <= run_start || match_start >= run_end {
+                continue;
+            }
+
+            let clipped_start = match_start.max(run_start);
+            let clipped_end = match_end.min(run_end);
+
+            if cursor < clipped_start {
+                output.push(InlineRun {
+                    text: plain[cursor..clipped_start].to_string(),
+                    styles: run.styles.clone(),
+                });
+            }
+
+            let mut styles = run.styles.clone();
+            styles.push(InlineStyle::SearchHighlight);
+            output.push(InlineRun {
+                text: plain[clipped_start..clipped_end].to_string(),
+                styles,
+            });
+            cursor = clipped_end;
+        }
+
+        if cursor < run_end {
+            output.push(InlineRun {
+                text: plain[cursor..run_end].to_string(),
+                styles: run.styles.clone(),
+            });
+        }
+
+        plain_offset = run_end;
+    }
+
+    (output, matches.len())
 }
 
 fn runs_to_markup(runs: &[InlineRun]) -> String {
@@ -1016,7 +1080,7 @@ pub fn render_markdown(content: &str, highlight_query: Option<&str>) -> (gtk::Wi
 
     let mut writer = MarkdownBufferWriter::new(tag_table.clone(), highlight_query);
     writer.process(content);
-    let (segments, table_match_count, source_buffers) = writer.finalize();
+    let (segments, total_matches, source_buffers) = writer.finalize();
 
     // Wire up theme-change listener that updates tag colours. Since all
     // buffers share the same tag_table, one handler covers everything.
@@ -1042,7 +1106,6 @@ pub fn render_markdown(content: &str, highlight_query: Option<&str>) -> (gtk::Wi
     let container = gtk::Box::new(gtk::Orientation::Vertical, 0);
     container.set_vexpand(false);
     container.set_valign(gtk::Align::Start);
-    let total_matches = table_match_count;
 
     for segment in segments {
         match segment {
@@ -1483,24 +1546,38 @@ mod tests {
 
     // ── Search highlighting ──────────────────────────────────────────
 
-    // NOTE: Search highlighting inside prose paragraphs (GtkLabel) is not yet
-    // implemented in Task 3. The count returned for prose-only content is 0
-    // until prose search is added in a later task. This test checks the
-    // structure (prose label exists with the expected text) rather than
-    // highlight tags.
     #[gtk::test]
-    fn textview_search_highlight_applied() {
-        let (widget, _count) = render_markdown("Hello world", Some("world"));
-        // Prose paragraphs render as GtkLabel segments; verify text is present.
-        let labels = find_widgets_of_type::<gtk::Label>(&widget);
+    fn label_search_highlight_applied_and_counted() {
+        let (widget, count) = render_markdown("Hello world\n\nworld again", Some("world"));
+        let labels: Vec<gtk::Label> = find_widgets_of_type::<gtk::Label>(&widget)
+            .into_iter()
+            .filter(|label| label.has_css_class("markdown-prose"))
+            .collect();
+        let markup: Vec<String> = labels.iter().map(label_markup).collect();
+
+        assert_eq!(count, 2);
         assert!(
-            labels.iter().any(|l| l.text().contains("Hello world")),
-            "expected prose label with 'Hello world'"
+            markup.iter().any(|text| text
+                .contains("<span background=\"#fce94f\" foreground=\"#1e1e1e\">world</span>")),
+            "got: {markup:?}"
         );
     }
 
     #[gtk::test]
-    fn textview_search_no_match_returns_zero() {
+    fn label_search_highlight_splits_inside_styled_run() {
+        let (widget, count) = render_markdown("**hello world**", Some("world"));
+        let markup = find_widgets_of_type::<gtk::Label>(&widget)
+            .into_iter()
+            .find(|label| label.has_css_class("markdown-prose"))
+            .map(|label| label_markup(&label))
+            .expect("expected prose label");
+
+        assert_eq!(count, 1);
+        assert!(markup.contains("<b>hello </b><b><span background=\"#fce94f\" foreground=\"#1e1e1e\">world</span></b>"), "got: {markup}");
+    }
+
+    #[gtk::test]
+    fn label_search_no_match_returns_zero() {
         let (_, count) = render_markdown("Hello world", Some("missing"));
         assert_eq!(count, 0);
     }
