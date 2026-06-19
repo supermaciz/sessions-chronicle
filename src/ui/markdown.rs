@@ -267,6 +267,8 @@ struct MarkdownBufferWriter {
     code_block_match_count: usize,
     /// Source buffers used by code block widgets, tracked for theme updates.
     source_buffers: Vec<glib::WeakRef<sourceview5::Buffer>>,
+    /// Stack of open blockquote group boxes; the innermost is the active container.
+    blockquote_stack: Vec<gtk::Box>,
 }
 
 impl MarkdownBufferWriter {
@@ -298,6 +300,7 @@ impl MarkdownBufferWriter {
             table_match_count: 0,
             code_block_match_count: 0,
             source_buffers: Vec::new(),
+            blockquote_stack: Vec::new(),
         }
     }
 
@@ -341,6 +344,16 @@ impl MarkdownBufferWriter {
         }
     }
 
+    /// Route a finished widget to the innermost open blockquote group, or to
+    /// the top-level segment list when no blockquote is open.
+    fn append_segment(&mut self, widget: gtk::Widget) {
+        if let Some(blockquote) = self.blockquote_stack.last() {
+            blockquote.append(&widget);
+        } else {
+            self.segments.push(MarkdownSegment::Prose(widget));
+        }
+    }
+
     /// Push a text run with current style stack into the current prose block
     /// or the current list item block (whichever is active).
     fn push_run(&mut self, text: &str) {
@@ -366,8 +379,7 @@ impl MarkdownBufferWriter {
             let (runs, count) = highlighted_runs(&block.runs, self.highlight_query.as_deref());
             self.prose_match_count += count;
             let label = make_prose_label(&runs_to_markup(&runs));
-            self.segments
-                .push(MarkdownSegment::Prose(label.upcast::<gtk::Widget>()));
+            self.append_segment(label.upcast::<gtk::Widget>());
         }
     }
 
@@ -445,13 +457,8 @@ impl MarkdownBufferWriter {
                 self.in_image = true;
                 self.write_inline_with_active_tags("[image: ");
             }
-            Tag::Paragraph
-                if self.list_stack.is_empty() && !self.in_table && self.blockquote_depth == 0 =>
-            {
-                self.current_block = Some(ProseBlock::default());
-            }
             Tag::Paragraph if self.list_stack.is_empty() && !self.in_table => {
-                self.block_separator();
+                self.current_block = Some(ProseBlock::default());
             }
             Tag::Paragraph => {}
             Tag::Heading { level, .. } => {
@@ -474,7 +481,7 @@ impl MarkdownBufferWriter {
                         self.highlight_query.as_deref(),
                     );
                     self.prose_match_count += count;
-                    self.segments.push(MarkdownSegment::Prose(widget));
+                    self.append_segment(widget);
                 }
                 self.list_stack.push(ListFrame {
                     ordered: start.is_some(),
@@ -518,6 +525,10 @@ impl MarkdownBufferWriter {
             }
             Tag::BlockQuote(_) => {
                 self.blockquote_depth += 1;
+                let group = gtk::Box::new(gtk::Orientation::Vertical, 0);
+                group.add_css_class("markdown-blockquote");
+                group.set_valign(gtk::Align::Start);
+                self.blockquote_stack.push(group);
             }
             _ => {}
         }
@@ -547,14 +558,8 @@ impl MarkdownBufferWriter {
                 self.in_image = false;
                 self.write_inline_with_active_tags("]");
             }
-            TagEnd::Paragraph
-                if self.list_stack.is_empty() && !self.in_table && self.blockquote_depth == 0 =>
-            {
-                self.finish_prose_block();
-            }
             TagEnd::Paragraph if self.list_stack.is_empty() && !self.in_table => {
-                self.insert_with_tags("\n", &[]);
-                self.has_content = true;
+                self.finish_prose_block();
             }
             TagEnd::Paragraph => {}
             TagEnd::Heading(level) => {
@@ -579,7 +584,7 @@ impl MarkdownBufferWriter {
                         self.highlight_query.as_deref(),
                     );
                     self.prose_match_count += count;
-                    self.segments.push(MarkdownSegment::Prose(widget));
+                    self.append_segment(widget);
                 }
             }
             TagEnd::Table => {
@@ -601,6 +606,14 @@ impl MarkdownBufferWriter {
             }
             TagEnd::BlockQuote(_) => {
                 self.blockquote_depth = self.blockquote_depth.saturating_sub(1);
+                if let Some(group) = self.blockquote_stack.pop() {
+                    let widget = group.upcast::<gtk::Widget>();
+                    if let Some(parent_quote) = self.blockquote_stack.last() {
+                        parent_quote.append(&widget);
+                    } else {
+                        self.segments.push(MarkdownSegment::Prose(widget));
+                    }
+                }
             }
             _ => {}
         }
@@ -643,8 +656,7 @@ impl MarkdownBufferWriter {
                     gtk::TextBuffer::new(Some(&self.tag_table)),
                 );
                 let view = make_textview(&old_buffer);
-                self.segments
-                    .push(MarkdownSegment::Prose(view.upcast::<gtk::Widget>()));
+                self.append_segment(view.upcast::<gtk::Widget>());
             }
             self.has_content = false;
         }
@@ -705,10 +717,6 @@ impl MarkdownBufferWriter {
         let outer = gtk::Box::new(gtk::Orientation::Vertical, 0);
         outer.add_css_class("code-block-widget");
 
-        if self.blockquote_depth > 0 {
-            outer.add_css_class("markdown-blockquote");
-        }
-
         if let Some(ref lang) = language {
             let lang_label = gtk::Label::new(Some(lang));
             lang_label.set_halign(gtk::Align::Start);
@@ -718,8 +726,7 @@ impl MarkdownBufferWriter {
 
         outer.append(&scroller);
 
-        self.segments
-            .push(MarkdownSegment::CodeBlock(outer.upcast::<gtk::Widget>()));
+        self.append_segment(outer.upcast::<gtk::Widget>());
         // Buffer was flushed; keep has_content false.
         self.code_buf.clear();
     }
@@ -871,13 +878,8 @@ impl MarkdownBufferWriter {
             .child(&grid)
             .build();
 
-        if self.blockquote_depth > 0 {
-            table_widget.add_css_class("markdown-blockquote");
-        }
-
         self.table_match_count += table_match_count;
-        self.segments
-            .push(MarkdownSegment::Table(table_widget.upcast::<gtk::Widget>()));
+        self.append_segment(table_widget.upcast::<gtk::Widget>());
     }
 
     /// Strip leading newlines from a text buffer.
@@ -904,8 +906,7 @@ impl MarkdownBufferWriter {
     ) {
         if self.buffer.char_count() > 0 {
             let view = make_textview(&self.buffer);
-            self.segments
-                .push(MarkdownSegment::Prose(view.upcast::<gtk::Widget>()));
+            self.append_segment(view.upcast::<gtk::Widget>());
         }
 
         (
@@ -1719,7 +1720,17 @@ mod tests {
 
     #[gtk::test]
     fn textview_blockquote_tagged() {
-        assert!(has_tag_at("> Quoted text", "blockquote", 0));
+        // Blockquote paragraphs are now rendered as prose labels inside a
+        // grouped `.markdown-blockquote` container rather than a TextBuffer
+        // with a "blockquote" tag.
+        let (widget, _) = render_markdown("> Quoted text", None);
+        let quotes = find_widgets_with_css_class(&widget, "markdown-blockquote");
+        assert_eq!(quotes.len(), 1, "expected one blockquote group container");
+        let label_texts = collect_label_text_from_widget_tree(&quotes[0]);
+        assert!(
+            label_texts.contains(&"Quoted text".to_string()),
+            "got: {label_texts:?}"
+        );
     }
 
     // ── Nested inline formatting ─────────────────────────────────────
@@ -1768,12 +1779,57 @@ mod tests {
     fn textview_table_inside_blockquote_widget_has_blockquote_class() {
         let md = "> | A | B |\n> |---|---|\n> | 1 | 2 |";
         let (widget, _) = render_markdown(md, None);
+        let quotes = find_widgets_with_css_class(&widget, "markdown-blockquote");
 
+        assert_eq!(
+            quotes.len(),
+            1,
+            "expected exactly one grouped .markdown-blockquote container, got: {}",
+            quotes.len()
+        );
         assert!(
-            find_table_widgets(&widget)
-                .iter()
-                .any(|w| widget_tree_has_css_class(w, "markdown-blockquote")),
-            "expected blockquote table widget tree to include a widget with the blockquote css class"
+            !find_widgets_of_type::<gtk::Grid>(&quotes[0]).is_empty(),
+            "blockquote group container should contain a table grid"
+        );
+    }
+
+    // ── Blockquote group container ────────────────────────────────────
+
+    #[gtk::test]
+    fn blockquote_renders_group_container_once() {
+        let (widget, _) = render_markdown("> First paragraph\n>\n> Second paragraph", None);
+        let quotes = find_widgets_with_css_class(&widget, "markdown-blockquote");
+
+        assert_eq!(
+            quotes.len(),
+            1,
+            "blockquote CSS applies to the group, not each paragraph"
+        );
+        let label_texts = collect_label_text_from_widget_tree(&quotes[0]);
+        assert!(
+            label_texts.contains(&"First paragraph".to_string()),
+            "got: {label_texts:?}"
+        );
+        assert!(
+            label_texts.contains(&"Second paragraph".to_string()),
+            "got: {label_texts:?}"
+        );
+    }
+
+    #[gtk::test]
+    fn blockquote_can_group_table_and_code_widgets() {
+        let md = "> Before\n>\n> | A |\n> |---|\n> | 1 |\n>\n> ```rust\n> fn main() {}\n> ```";
+        let (widget, _) = render_markdown(md, None);
+        let quotes = find_widgets_with_css_class(&widget, "markdown-blockquote");
+
+        assert_eq!(quotes.len(), 1);
+        assert!(
+            !find_widgets_of_type::<gtk::Grid>(&quotes[0]).is_empty(),
+            "blockquote should contain table grid"
+        );
+        assert!(
+            !find_widgets_of_type::<sourceview5::View>(&quotes[0]).is_empty(),
+            "blockquote should contain code view"
         );
     }
 
@@ -2086,12 +2142,17 @@ mod tests {
     fn code_block_inside_blockquote_widget_has_blockquote_class() {
         let md = "> ```rust\n> fn main() {}\n> ```";
         let (widget, _) = render_markdown(md, None);
-        let code_blocks = find_widgets_with_css_class(&widget, "code-block-widget");
+        let quotes = find_widgets_with_css_class(&widget, "markdown-blockquote");
+
+        assert_eq!(
+            quotes.len(),
+            1,
+            "expected exactly one grouped .markdown-blockquote container, got: {}",
+            quotes.len()
+        );
         assert!(
-            code_blocks
-                .iter()
-                .any(|w| w.has_css_class("markdown-blockquote")),
-            "expected code block inside blockquote to carry markdown-blockquote class"
+            !find_widgets_of_type::<sourceview5::View>(&quotes[0]).is_empty(),
+            "blockquote group container should contain a code view"
         );
     }
 
