@@ -64,14 +64,6 @@
   background-color: @card_bg_color;
 }
 
-/* Transparent background for markdown TextViews so the parent message-row
-   background shows through consistently in light and dark mode. */
-.markdown-textview,
-.markdown-textview text {
-  background-color: transparent;
-  background: transparent;
-}
-
 /* Markdown rendering styles */
 .markdown-prose {
   margin: 0 0 6px 0;

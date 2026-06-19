@@ -4,11 +4,6 @@ use relm4::gtk;
 use relm4::gtk::glib;
 use relm4::gtk::prelude::*;
 use sourceview5::prelude::*;
-// Theme-dependent color palette (dark / light variants).
-const DARK_DIM_FG: &str = "#aaaaaa";
-const LIGHT_DIM_FG: &str = "#666666";
-const DARK_CHECK_FG: &str = "#57e389";
-const LIGHT_CHECK_FG: &str = "#2ec27e";
 const LANGUAGE_ALIASES: &[(&str, &str)] = &[
     // GtkSourceView 5 exposes JavaScript as `js`, not `javascript`.
     ("js", "js"),
@@ -57,24 +52,6 @@ fn apply_source_style_scheme(buffer: &sourceview5::Buffer, dark: bool) {
     buffer.set_style_scheme(scheme.as_ref());
 }
 
-fn apply_theme_palette_to_tags(table: &gtk::TextTagTable, dark: bool) {
-    let dim_fg = if dark { DARK_DIM_FG } else { LIGHT_DIM_FG };
-    let check_fg = if dark { DARK_CHECK_FG } else { LIGHT_CHECK_FG };
-
-    if let Some(tag) = table.lookup("blockquote") {
-        tag.set_foreground(Some(dim_fg));
-    }
-    if let Some(tag) = table.lookup("task-checked") {
-        tag.set_foreground(Some(check_fg));
-    }
-    if let Some(tag) = table.lookup("task-unchecked") {
-        tag.set_foreground(Some(dim_fg));
-    }
-    if let Some(tag) = table.lookup("horizontal-rule") {
-        tag.set_foreground(Some(dim_fg));
-    }
-}
-
 fn normalize_language_alias(language: &str) -> String {
     let lowercase = language.to_ascii_lowercase();
     LANGUAGE_ALIASES
@@ -82,97 +59,6 @@ fn normalize_language_alias(language: &str) -> String {
         .find_map(|(alias, canonical)| (*alias == lowercase).then_some(*canonical))
         .unwrap_or(lowercase.as_str())
         .to_string()
-}
-
-/// Create a `TextTagTable` with all markdown formatting tags.
-///
-/// Theme-dependent colors are updated both at creation time and when Adwaita
-/// dark mode changes while the app is running.
-fn create_tag_table() -> gtk::TextTagTable {
-    let table = gtk::TextTagTable::new();
-
-    // -- Inline formatting --
-    let bold = gtk::TextTag::new(Some("bold"));
-    bold.set_weight(700); // pango::Weight::Bold
-    table.add(&bold);
-
-    let italic = gtk::TextTag::new(Some("italic"));
-    italic.set_style(gtk::pango::Style::Italic);
-    table.add(&italic);
-
-    let strikethrough = gtk::TextTag::new(Some("strikethrough"));
-    strikethrough.set_strikethrough(true);
-    table.add(&strikethrough);
-
-    let code_inline = gtk::TextTag::new(Some("code-inline"));
-    code_inline.set_family(Some("monospace"));
-    table.add(&code_inline);
-
-    // -- Headings --
-    for (name, scale, above, below) in [
-        ("heading-1", 1.6, 8, 4),
-        ("heading-2", 1.4, 6, 3),
-        ("heading-3", 1.2, 4, 2),
-        ("heading-4", 1.1, 0, 0),
-    ] {
-        let tag = gtk::TextTag::new(Some(name));
-        tag.set_scale(scale);
-        tag.set_weight(700);
-        if above > 0 {
-            tag.set_pixels_above_lines(above);
-        }
-        if below > 0 {
-            tag.set_pixels_below_lines(below);
-        }
-        table.add(&tag);
-    }
-
-    // -- Block-level --
-    let blockquote = gtk::TextTag::new(Some("blockquote"));
-    blockquote.set_left_margin(16);
-    table.add(&blockquote);
-
-    let list_item = gtk::TextTag::new(Some("list-item"));
-    list_item.set_left_margin(24);
-    list_item.set_indent(-16);
-    table.add(&list_item);
-
-    // -- Task list checkboxes --
-    let task_checked = gtk::TextTag::new(Some("task-checked"));
-    table.add(&task_checked);
-
-    let task_unchecked = gtk::TextTag::new(Some("task-unchecked"));
-    table.add(&task_unchecked);
-
-    // -- Horizontal rule --
-    let hr = gtk::TextTag::new(Some("horizontal-rule"));
-    hr.set_justification(gtk::Justification::Center);
-    table.add(&hr);
-
-    // -- Search highlight --
-    let highlight = gtk::TextTag::new(Some("search-highlight"));
-    highlight.set_background(Some("#fce94f"));
-    highlight.set_foreground(Some("#1e1e1e"));
-    table.add(&highlight);
-    highlight.set_priority(table.size() - 1);
-
-    // `GtkSourceBuffer` shares this tag table with plain markdown buffers and
-    // adds its own syntax tags lazily when a language is attached. Newly added
-    // tags get the highest priority by default, which would otherwise relegate
-    // `search-highlight` below syntax tags and let code-block syntax colours
-    // override search matches. Re-promote `search-highlight` on every insert.
-    table.connect_tag_added(|table, added| {
-        if added.name().as_deref() == Some("search-highlight") {
-            return;
-        }
-        if let Some(highlight) = table.lookup("search-highlight") {
-            highlight.set_priority(table.size() - 1);
-        }
-    });
-
-    apply_theme_palette_to_tags(&table, is_dark_mode());
-
-    table
 }
 
 /// A rendered segment: prose widgets, a table widget, or a code block widget.
@@ -222,7 +108,6 @@ struct ListItemBlock {
 
 /// Walks pulldown-cmark events and writes formatted text into a `TextBuffer`.
 struct MarkdownBufferWriter {
-    tag_table: gtk::TextTagTable,
     buffer: gtk::TextBuffer,
     /// Stack of active inline tag names (e.g. "bold", "italic").
     tag_stack: Vec<&'static str>,
@@ -272,10 +157,9 @@ struct MarkdownBufferWriter {
 }
 
 impl MarkdownBufferWriter {
-    fn new(tag_table: gtk::TextTagTable, highlight_query: Option<&str>) -> Self {
-        let buffer = gtk::TextBuffer::new(Some(&tag_table));
+    fn new(highlight_query: Option<&str>) -> Self {
+        let buffer = gtk::TextBuffer::new(None);
         Self {
-            tag_table,
             buffer,
             tag_stack: Vec::new(),
             style_stack: Vec::new(),
@@ -652,10 +536,7 @@ impl MarkdownBufferWriter {
             }
             // Only push if content remains after stripping.
             if self.buffer.char_count() > 0 {
-                let old_buffer = std::mem::replace(
-                    &mut self.buffer,
-                    gtk::TextBuffer::new(Some(&self.tag_table)),
-                );
+                let old_buffer = std::mem::replace(&mut self.buffer, gtk::TextBuffer::new(None));
                 let view = make_textview(&old_buffer);
                 self.append_segment(view.upcast::<gtk::Widget>());
             }
@@ -667,7 +548,7 @@ impl MarkdownBufferWriter {
         self.flush_buffer_before_widget();
 
         let code = self.code_buf.trim_end_matches('\n').to_string();
-        let code_buffer = sourceview5::Buffer::new(Some(&self.tag_table));
+        let code_buffer = sourceview5::Buffer::new(None);
         code_buffer.set_text(&code);
 
         let language = self.in_code_block.take().flatten();
@@ -1111,22 +992,14 @@ fn make_list_item_widget(
 /// If `highlight_query` is provided, matches are highlighted with a
 /// background color. Returns the widget and the total number of matches.
 pub fn render_markdown(content: &str, highlight_query: Option<&str>) -> (gtk::Widget, usize) {
-    let tag_table = create_tag_table();
-
-    let mut writer = MarkdownBufferWriter::new(tag_table.clone(), highlight_query);
+    let mut writer = MarkdownBufferWriter::new(highlight_query);
     writer.process(content);
     let (segments, total_matches, source_buffers) = writer.finalize();
 
-    // Wire up theme-change listener that updates tag colours. Since all
-    // buffers share the same tag_table, one handler covers everything.
+    // Wire up theme-change listener that updates source buffer style schemes.
     let style_manager = adw::StyleManager::default();
-    let tt_weak = tag_table.downgrade();
     let source_buffers = std::cell::RefCell::new(source_buffers);
     let theme_handler = style_manager.connect_dark_notify(move |manager| {
-        if let Some(tt) = tt_weak.upgrade() {
-            apply_theme_palette_to_tags(&tt, manager.is_dark());
-        }
-
         source_buffers.borrow_mut().retain(|weak_buffer| {
             if let Some(buffer) = weak_buffer.upgrade() {
                 apply_source_style_scheme(&buffer, manager.is_dark());
@@ -1164,6 +1037,25 @@ fn apply_search_highlight(buffer: &impl IsA<gtk::TextBuffer>, query: &str) -> us
 
     if query.is_empty() {
         return 0;
+    }
+
+    if buffer.tag_table().lookup("search-highlight").is_none() {
+        let highlight = gtk::TextTag::new(Some("search-highlight"));
+        highlight.set_background(Some("#fce94f"));
+        highlight.set_foreground(Some("#1e1e1e"));
+        buffer.tag_table().add(&highlight);
+        highlight.set_priority(buffer.tag_table().size() - 1);
+
+        // Re-promote search-highlight whenever GtkSourceView adds its own
+        // syntax tags to the buffer's tag table.
+        buffer.tag_table().connect_tag_added(|table, added| {
+            if added.name().as_deref() == Some("search-highlight") {
+                return;
+            }
+            if let Some(hl) = table.lookup("search-highlight") {
+                hl.set_priority(table.size() - 1);
+            }
+        });
     }
 
     let start = buffer.start_iter();
@@ -1234,7 +1126,13 @@ mod tests {
 
     #[gtk::test]
     fn search_highlight_tag_has_highest_priority() {
-        let table = create_tag_table();
+        // After removing create_tag_table, source buffers have their own tag
+        // tables. Verify that apply_search_highlight creates and top-promotes
+        // the search-highlight tag in the buffer's own tag table.
+        let buffer = sourceview5::Buffer::new(None);
+        buffer.set_text("hello world");
+        apply_search_highlight(&buffer, "world");
+        let table = buffer.tag_table();
         let highlight = table
             .lookup("search-highlight")
             .expect("search-highlight tag exists");
@@ -2238,30 +2136,18 @@ mod tests {
         );
     }
 
-    // ── Theme palette ───────────────────────────────────────────────
+    // ── Theme palette / prose path removal ──────────────────────────
 
     #[gtk::test]
-    fn markdown_tag_table_no_longer_defines_code_block_or_code_lang_tags() {
-        let table = create_tag_table();
-        assert!(table.lookup("code-block").is_none());
-        assert!(table.lookup("code-lang").is_none());
+    fn rendered_prose_does_not_create_markdown_textview() {
+        let (widget, _) = render_markdown("Plain **markdown**", None);
+        assert!(find_widgets_of_type::<gtk::TextView>(&widget).is_empty());
     }
 
     #[gtk::test]
-    fn theme_palette_update_still_updates_remaining_theme_dependent_tags() {
-        let table = create_tag_table();
-        apply_theme_palette_to_tags(&table, false);
-        let light = table
-            .lookup("task-unchecked")
-            .expect("task-unchecked tag exists")
-            .foreground_rgba();
-
-        apply_theme_palette_to_tags(&table, true);
-        let dark = table
-            .lookup("task-unchecked")
-            .expect("task-unchecked tag exists")
-            .foreground_rgba();
-
-        assert_ne!(light, dark);
+    fn code_block_still_uses_source_buffer() {
+        let (widget, _) = render_markdown("```rust\nfn main() {}\n```", None);
+        let buffer = first_source_buffer(&widget);
+        assert!(buffer.language().is_some());
     }
 }
