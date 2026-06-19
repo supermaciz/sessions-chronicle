@@ -2150,4 +2150,46 @@ mod tests {
         let buffer = first_source_buffer(&widget);
         assert!(buffer.language().is_some());
     }
+
+    // ── Measurement regression tests ───────────────────────────────
+
+    #[gtk::test]
+    fn wrapping_label_measurement_changes_synchronously_with_width() {
+        let label = make_prose_label(
+            "This is a long markdown paragraph that should wrap differently when measured at narrow and wide widths.",
+        );
+
+        let (_min_narrow, natural_narrow, _min_base, _natural_base) =
+            label.measure(gtk::Orientation::Vertical, 120);
+        let (_min_wide, natural_wide, _min_base, _natural_base) =
+            label.measure(gtk::Orientation::Vertical, 480);
+
+        assert!(
+            natural_narrow > natural_wide,
+            "narrow label should need more height: narrow={natural_narrow}, wide={natural_wide}"
+        );
+    }
+
+    #[gtk::test]
+    fn rendered_prose_height_changes_immediately_after_content_swap() {
+        let host = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        let (short, _) = render_markdown("Short paragraph.", None);
+        host.append(&short);
+
+        let (_min_short, natural_short, _min_base, _natural_base) =
+            host.measure(gtk::Orientation::Vertical, 260);
+
+        host.remove(&short);
+        let long_text = "Long paragraph. ".repeat(80);
+        let (long, _) = render_markdown(&long_text, None);
+        host.append(&long);
+
+        let (_min_long, natural_long, _min_base, _natural_base) =
+            host.measure(gtk::Orientation::Vertical, 260);
+
+        assert!(
+            natural_long > natural_short,
+            "height should update synchronously after swap: short={natural_short}, long={natural_long}"
+        );
+    }
 }
