@@ -19,6 +19,10 @@ const LANGUAGE_ALIASES: &[(&str, &str)] = &[
     ("c++", "cpp"),
 ];
 
+/// Left indent (px) applied to block widgets nested inside a list item so they
+/// sit under the item's text rather than under its marker.
+const LIST_BLOCK_INDENT: i32 = 24;
+
 /// Escape characters that are special in Pango markup.
 ///
 /// Used for User and ToolResult messages which still render via `gtk::Label`
@@ -121,6 +125,10 @@ struct MarkdownBufferWriter {
     list_stack: Vec<ListFrame>,
     /// Current list item being accumulated.
     current_list_item: Option<ListItemBlock>,
+    /// Container box for the current list item once it has to hold block-level
+    /// children (code block, table, rule). Created lazily; its presence means
+    /// the item's marker + text row has already been emitted into it.
+    current_list_item_group: Option<gtk::Box>,
     /// Blockquote nesting depth.
     blockquote_depth: usize,
     /// Table state: headers collected, then rows.
@@ -167,6 +175,7 @@ impl MarkdownBufferWriter {
             code_buf: String::new(),
             list_stack: Vec::new(),
             current_list_item: None,
+            current_list_item_group: None,
             blockquote_depth: 0,
             in_table: false,
             in_table_head: false,
@@ -228,14 +237,63 @@ impl MarkdownBufferWriter {
         }
     }
 
-    /// Route a finished widget to the innermost open blockquote group, or to
-    /// the top-level segment list when no blockquote is open.
+    /// Route a finished widget to the innermost open container: the current
+    /// list item's group (so blocks nest under the item's text), else the
+    /// innermost open blockquote group, else the top-level segment list.
     fn append_segment(&mut self, widget: gtk::Widget) {
+        if self.current_list_item.is_some() {
+            let group = self.ensure_list_item_group();
+            widget.set_margin_start(LIST_BLOCK_INDENT);
+            group.append(&widget);
+        } else {
+            self.append_to_outer(widget);
+        }
+    }
+
+    /// Route a widget to the innermost open blockquote group, or to the
+    /// top-level segment list when no blockquote is open. Used for widgets
+    /// that are not nested inside a list item.
+    fn append_to_outer(&mut self, widget: gtk::Widget) {
         if let Some(blockquote) = self.blockquote_stack.last() {
             blockquote.append(&widget);
         } else {
             self.segments.push(MarkdownSegment::Prose(widget));
         }
+    }
+
+    /// Return the current list item's group container, creating it on first
+    /// use. Creating it emits the item's marker + text row (built from the
+    /// runs buffered so far) as the group's first child and parents the group
+    /// into the surrounding container.
+    fn ensure_list_item_group(&mut self) -> gtk::Box {
+        if let Some(group) = &self.current_list_item_group {
+            return group.clone();
+        }
+
+        let (marker, runs, depth) = {
+            let item = self
+                .current_list_item
+                .as_mut()
+                .expect("ensure_list_item_group called outside a list item");
+            (
+                item.marker.clone(),
+                std::mem::take(&mut item.runs),
+                item.depth,
+            )
+        };
+
+        let query = self.highlight_query.clone();
+        let (row, count) = make_list_item_widget(&marker, &runs, depth, query.as_deref());
+        self.prose_match_count += count;
+
+        let group = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        group.add_css_class("markdown-list-item-group");
+        group.set_valign(gtk::Align::Start);
+        group.append(&row);
+
+        self.append_to_outer(group.clone().upcast());
+        self.current_list_item_group = Some(group.clone());
+        group
     }
 
     /// Push a text run with current style stack into the current prose block
@@ -377,6 +435,7 @@ impl MarkdownBufferWriter {
                         runs: Vec::new(),
                         depth,
                     });
+                    self.current_list_item_group = None;
                 }
             }
             Tag::Table(_) => {
@@ -409,6 +468,24 @@ impl MarkdownBufferWriter {
 
     /// Emit the in-progress list item as a widget segment, if any.
     fn flush_current_list_item(&mut self) {
+        // When the item already opened a group (it held block-level content),
+        // its marker + text row was emitted on group creation. Any runs left
+        // here are text that followed a nested block — render them as an
+        // indented continuation label inside the same group.
+        if let Some(group) = self.current_list_item_group.take() {
+            if let Some(item) = self.current_list_item.take()
+                && !item.runs.is_empty()
+            {
+                let query = self.highlight_query.clone();
+                let (runs, count) = highlighted_runs(&item.runs, query.as_deref());
+                self.prose_match_count += count;
+                let label = make_prose_label(&runs_to_markup(&runs));
+                label.set_margin_start(LIST_BLOCK_INDENT);
+                group.append(&label);
+            }
+            return;
+        }
+
         if let Some(item) = self.current_list_item.take() {
             let (widget, count) = make_list_item_widget(
                 &item.marker,
@@ -417,7 +494,7 @@ impl MarkdownBufferWriter {
                 self.highlight_query.as_deref(),
             );
             self.prose_match_count += count;
-            self.append_segment(widget);
+            self.append_to_outer(widget);
         }
     }
 
@@ -1850,6 +1927,91 @@ mod tests {
         assert!(
             content.contains(&"Third item".to_string()),
             "got: {content:?}"
+        );
+    }
+
+    // ── Block-level content inside list items (issue #174) ──────────
+
+    /// Pre-order traversal recording where list-item text and nested block
+    /// widgets appear, so tests can assert their relative order.
+    fn list_item_render_order(widget: &gtk::Widget, out: &mut Vec<String>) {
+        if let Ok(label) = widget.clone().downcast::<gtk::Label>()
+            && label.has_css_class("markdown-list-content")
+        {
+            out.push(format!("content:{}", label.text()));
+        }
+        if widget.clone().downcast::<sourceview5::View>().is_ok() {
+            out.push("code".to_string());
+        }
+        if widget.has_css_class("markdown-hr") {
+            out.push("hr".to_string());
+        }
+        let mut child = widget.first_child();
+        while let Some(c) = child {
+            list_item_render_order(&c, out);
+            child = c.next_sibling();
+        }
+    }
+
+    #[gtk::test]
+    fn code_block_in_list_item_renders_after_item_text() {
+        let md =
+            "- Install the dependencies before anything else:\n\n  ```bash\n  cargo build\n  ```";
+        let (widget, _) = render_markdown(md, None);
+
+        let mut order = Vec::new();
+        list_item_render_order(&widget, &mut order);
+
+        assert_eq!(
+            order,
+            vec![
+                "content:Install the dependencies before anything else:".to_string(),
+                "code".to_string(),
+            ],
+            "the item's text must render above its code block, got: {order:?}"
+        );
+    }
+
+    #[gtk::test]
+    fn code_block_in_list_item_does_not_duplicate_marker() {
+        let md =
+            "- Install the dependencies before anything else:\n\n  ```bash\n  cargo build\n  ```";
+        let (widget, _) = render_markdown(md, None);
+
+        let markers: Vec<String> = find_widgets_of_type::<gtk::Label>(&widget)
+            .into_iter()
+            .filter(|label| label.has_css_class("markdown-list-marker"))
+            .map(|label| label.text().to_string())
+            .collect();
+
+        assert_eq!(markers, vec!["-"], "expected a single bullet marker");
+    }
+
+    #[gtk::test]
+    fn code_block_in_list_item_nested_under_item_group() {
+        let md = "- Run the build:\n\n  ```bash\n  cargo build\n  ```";
+        let (widget, _) = render_markdown(md, None);
+
+        let groups = find_widgets_with_css_class(&widget, "markdown-list-item-group");
+        assert_eq!(groups.len(), 1, "expected one list-item group container");
+        assert!(
+            !find_widgets_of_type::<sourceview5::View>(&groups[0]).is_empty(),
+            "the code view should be nested inside the list-item group"
+        );
+    }
+
+    #[gtk::test]
+    fn horizontal_rule_in_list_item_renders_after_item_text() {
+        let md = "- Section heading text\n\n  ---";
+        let (widget, _) = render_markdown(md, None);
+
+        let mut order = Vec::new();
+        list_item_render_order(&widget, &mut order);
+
+        assert_eq!(
+            order,
+            vec!["content:Section heading text".to_string(), "hr".to_string()],
+            "the item's text must render above its horizontal rule, got: {order:?}"
         );
     }
 
