@@ -64,15 +64,31 @@
   background-color: @card_bg_color;
 }
 
-/* Transparent background for markdown TextViews so the parent message-row
-   background shows through consistently in light and dark mode. */
-.markdown-textview,
-.markdown-textview text {
-  background-color: transparent;
-  background: transparent;
+/* Markdown rendering styles */
+.markdown-prose {
+  margin: 0 0 6px 0;
 }
 
-/* Markdown rendering styles */
+.markdown-list-item {
+  margin-bottom: 3px;
+}
+
+.markdown-list-marker {
+  opacity: 0.75;
+}
+
+.markdown-task-checked {
+  color: #2ec27e;
+}
+
+.markdown-task-unchecked {
+  opacity: 0.5;
+}
+
+.markdown-list-content {
+  margin: 0;
+}
+
 .code-block-widget {
   background-color: alpha(@card_shade_color, 0.15);
   border-radius: 6px;
@@ -100,6 +116,7 @@
 .markdown-blockquote {
   border-left: 3px solid @accent_color;
   padding-left: 12px;
+  margin: 4px 0 8px 0;
   opacity: 0.85;
 }
 

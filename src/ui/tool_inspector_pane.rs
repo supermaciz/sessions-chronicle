@@ -1012,7 +1012,7 @@ fn apply_optional_markdown_section(views: &MarkdownSectionViews, text: Option<&s
             let wrapper = gtk::Box::new(gtk::Orientation::Vertical, 0);
             wrapper.add_css_class("inspector-markdown-block");
             wrapper.set_valign(gtk::Align::Start);
-            let (markdown_view, _) = markdown::render_markdown_to_textview(value, None);
+            let (markdown_view, _) = markdown::render_markdown(value, None);
             markdown_view.set_valign(gtk::Align::Start);
             markdown_view.set_vexpand(false);
             wrapper.append(&markdown_view);
@@ -1190,7 +1190,7 @@ fn build_output_render_plan_widget(
         crate::ui::tool_renderers::generic::OutputRenderPlan::Markdown(text) => {
             let wrapper = gtk::Box::new(gtk::Orientation::Vertical, 0);
             wrapper.add_css_class("inspector-markdown-block");
-            let (markdown_view, _) = markdown::render_markdown_to_textview(text, None);
+            let (markdown_view, _) = markdown::render_markdown(text, None);
             wrapper.append(&markdown_view);
             wrapper.upcast()
         }

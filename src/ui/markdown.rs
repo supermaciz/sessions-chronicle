@@ -4,11 +4,6 @@ use relm4::gtk;
 use relm4::gtk::glib;
 use relm4::gtk::prelude::*;
 use sourceview5::prelude::*;
-// Theme-dependent color palette (dark / light variants).
-const DARK_DIM_FG: &str = "#aaaaaa";
-const LIGHT_DIM_FG: &str = "#666666";
-const DARK_CHECK_FG: &str = "#57e389";
-const LIGHT_CHECK_FG: &str = "#2ec27e";
 const LANGUAGE_ALIASES: &[(&str, &str)] = &[
     // GtkSourceView 5 exposes JavaScript as `js`, not `javascript`.
     ("js", "js"),
@@ -57,24 +52,6 @@ fn apply_source_style_scheme(buffer: &sourceview5::Buffer, dark: bool) {
     buffer.set_style_scheme(scheme.as_ref());
 }
 
-fn apply_theme_palette_to_tags(table: &gtk::TextTagTable, dark: bool) {
-    let dim_fg = if dark { DARK_DIM_FG } else { LIGHT_DIM_FG };
-    let check_fg = if dark { DARK_CHECK_FG } else { LIGHT_CHECK_FG };
-
-    if let Some(tag) = table.lookup("blockquote") {
-        tag.set_foreground(Some(dim_fg));
-    }
-    if let Some(tag) = table.lookup("task-checked") {
-        tag.set_foreground(Some(check_fg));
-    }
-    if let Some(tag) = table.lookup("task-unchecked") {
-        tag.set_foreground(Some(dim_fg));
-    }
-    if let Some(tag) = table.lookup("horizontal-rule") {
-        tag.set_foreground(Some(dim_fg));
-    }
-}
-
 fn normalize_language_alias(language: &str) -> String {
     let lowercase = language.to_ascii_lowercase();
     LANGUAGE_ALIASES
@@ -84,118 +61,66 @@ fn normalize_language_alias(language: &str) -> String {
         .to_string()
 }
 
-/// Create a `TextTagTable` with all markdown formatting tags.
-///
-/// Theme-dependent colors are updated both at creation time and when Adwaita
-/// dark mode changes while the app is running.
-fn create_tag_table() -> gtk::TextTagTable {
-    let table = gtk::TextTagTable::new();
-
-    // -- Inline formatting --
-    let bold = gtk::TextTag::new(Some("bold"));
-    bold.set_weight(700); // pango::Weight::Bold
-    table.add(&bold);
-
-    let italic = gtk::TextTag::new(Some("italic"));
-    italic.set_style(gtk::pango::Style::Italic);
-    table.add(&italic);
-
-    let strikethrough = gtk::TextTag::new(Some("strikethrough"));
-    strikethrough.set_strikethrough(true);
-    table.add(&strikethrough);
-
-    let code_inline = gtk::TextTag::new(Some("code-inline"));
-    code_inline.set_family(Some("monospace"));
-    table.add(&code_inline);
-
-    // -- Headings --
-    for (name, scale, above, below) in [
-        ("heading-1", 1.6, 8, 4),
-        ("heading-2", 1.4, 6, 3),
-        ("heading-3", 1.2, 4, 2),
-        ("heading-4", 1.1, 0, 0),
-    ] {
-        let tag = gtk::TextTag::new(Some(name));
-        tag.set_scale(scale);
-        tag.set_weight(700);
-        if above > 0 {
-            tag.set_pixels_above_lines(above);
-        }
-        if below > 0 {
-            tag.set_pixels_below_lines(below);
-        }
-        table.add(&tag);
-    }
-
-    // -- Block-level --
-    let blockquote = gtk::TextTag::new(Some("blockquote"));
-    blockquote.set_left_margin(16);
-    table.add(&blockquote);
-
-    let list_item = gtk::TextTag::new(Some("list-item"));
-    list_item.set_left_margin(24);
-    list_item.set_indent(-16);
-    table.add(&list_item);
-
-    // -- Task list checkboxes --
-    let task_checked = gtk::TextTag::new(Some("task-checked"));
-    table.add(&task_checked);
-
-    let task_unchecked = gtk::TextTag::new(Some("task-unchecked"));
-    table.add(&task_unchecked);
-
-    // -- Horizontal rule --
-    let hr = gtk::TextTag::new(Some("horizontal-rule"));
-    hr.set_justification(gtk::Justification::Center);
-    table.add(&hr);
-
-    // -- Search highlight --
-    let highlight = gtk::TextTag::new(Some("search-highlight"));
-    highlight.set_background(Some("#fce94f"));
-    highlight.set_foreground(Some("#1e1e1e"));
-    table.add(&highlight);
-    highlight.set_priority(table.size() - 1);
-
-    // `GtkSourceBuffer` shares this tag table with plain markdown buffers and
-    // adds its own syntax tags lazily when a language is attached. Newly added
-    // tags get the highest priority by default, which would otherwise relegate
-    // `search-highlight` below syntax tags and let code-block syntax colours
-    // override search matches. Re-promote `search-highlight` on every insert.
-    table.connect_tag_added(|table, added| {
-        if added.name().as_deref() == Some("search-highlight") {
-            return;
-        }
-        if let Some(highlight) = table.lookup("search-highlight") {
-            highlight.set_priority(table.size() - 1);
-        }
-    });
-
-    apply_theme_palette_to_tags(&table, is_dark_mode());
-
-    table
-}
-
-/// A rendered segment: either styled text in a buffer, a table widget, or a code block widget.
+/// A rendered segment: prose widgets, a table widget, or a code block widget.
 enum MarkdownSegment {
-    Text(gtk::TextBuffer),
+    Prose(gtk::Widget),
     Table(gtk::Widget),
     CodeBlock(gtk::Widget),
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum InlineStyle {
+    Bold,
+    Italic,
+    Strikethrough,
+    Code,
+    Heading(pulldown_cmark::HeadingLevel),
+    Dim,
+    TaskChecked,
+    TaskUnchecked,
+    SearchHighlight,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct InlineRun {
+    text: String,
+    styles: Vec<InlineStyle>,
+}
+
+#[derive(Default)]
+struct ProseBlock {
+    runs: Vec<InlineRun>,
+}
+
+#[derive(Clone, Debug)]
+struct ListFrame {
+    ordered: bool,
+    next_index: usize,
+    depth: usize,
+}
+
+#[derive(Clone, Debug)]
+struct ListItemBlock {
+    marker: String,
+    runs: Vec<InlineRun>,
+    depth: usize,
+}
+
 /// Walks pulldown-cmark events and writes formatted text into a `TextBuffer`.
 struct MarkdownBufferWriter {
-    tag_table: gtk::TextTagTable,
     buffer: gtk::TextBuffer,
     /// Stack of active inline tag names (e.g. "bold", "italic").
     tag_stack: Vec<&'static str>,
+    /// Stack of active inline styles for the current prose block.
+    style_stack: Vec<InlineStyle>,
     /// True when inside a code block — text goes verbatim, no inline tags.
     in_code_block: Option<Option<String>>,
     /// Code block accumulator.
     code_buf: String,
-    /// List nesting stack: (ordered, item_index, is_task_list).
-    list_stack: Vec<(bool, usize, bool)>,
-    /// Current task-list checked state.
-    current_task_checked: Option<bool>,
+    /// List nesting stack.
+    list_stack: Vec<ListFrame>,
+    /// Current list item being accumulated.
+    current_list_item: Option<ListItemBlock>,
     /// Blockquote nesting depth.
     blockquote_depth: usize,
     /// Table state: headers collected, then rows.
@@ -212,33 +137,36 @@ struct MarkdownBufferWriter {
     in_image: bool,
     /// Whether any block has been written (for inter-block spacing).
     has_content: bool,
-    /// Deferred item marker: true when we entered a list item but haven't
-    /// yet decided whether it's a regular or task-list item.
-    pending_item_marker: bool,
     /// Search query used for markdown highlight; table widgets will use this
     /// in a follow-up task.
     highlight_query: Option<String>,
-    /// Completed segments (text buffers and table widgets) in order.
+    /// Current prose block being accumulated (set when inside a top-level paragraph).
+    current_block: Option<ProseBlock>,
+    /// Completed segments (prose labels, table widgets, code blocks) in order.
     segments: Vec<MarkdownSegment>,
+    /// Search match count found inside prose label widgets.
+    prose_match_count: usize,
     /// Search match count found inside table widgets.
     table_match_count: usize,
     /// Search match count found inside code block buffers.
     code_block_match_count: usize,
     /// Source buffers used by code block widgets, tracked for theme updates.
     source_buffers: Vec<glib::WeakRef<sourceview5::Buffer>>,
+    /// Stack of open blockquote group boxes; the innermost is the active container.
+    blockquote_stack: Vec<gtk::Box>,
 }
 
 impl MarkdownBufferWriter {
-    fn new(tag_table: gtk::TextTagTable, highlight_query: Option<&str>) -> Self {
-        let buffer = gtk::TextBuffer::new(Some(&tag_table));
+    fn new(highlight_query: Option<&str>) -> Self {
+        let buffer = gtk::TextBuffer::new(None);
         Self {
-            tag_table,
             buffer,
             tag_stack: Vec::new(),
+            style_stack: Vec::new(),
             in_code_block: None,
             code_buf: String::new(),
             list_stack: Vec::new(),
-            current_task_checked: None,
+            current_list_item: None,
             blockquote_depth: 0,
             in_table: false,
             in_table_head: false,
@@ -249,12 +177,14 @@ impl MarkdownBufferWriter {
             link_url: None,
             in_image: false,
             has_content: false,
-            pending_item_marker: false,
             highlight_query: highlight_query.map(str::to_owned),
+            current_block: None,
             segments: Vec::new(),
+            prose_match_count: 0,
             table_match_count: 0,
             code_block_match_count: 0,
             source_buffers: Vec::new(),
+            blockquote_stack: Vec::new(),
         }
     }
 
@@ -288,6 +218,52 @@ impl MarkdownBufferWriter {
     fn pop_tag(&mut self, tag: &str) {
         if let Some(pos) = self.tag_stack.iter().rposition(|t| *t == tag) {
             self.tag_stack.remove(pos);
+        }
+    }
+
+    /// Remove the last matching style from the inline style stack (LIFO).
+    fn pop_style(&mut self, predicate: impl Fn(&InlineStyle) -> bool) {
+        if let Some(pos) = self.style_stack.iter().rposition(predicate) {
+            self.style_stack.remove(pos);
+        }
+    }
+
+    /// Route a finished widget to the innermost open blockquote group, or to
+    /// the top-level segment list when no blockquote is open.
+    fn append_segment(&mut self, widget: gtk::Widget) {
+        if let Some(blockquote) = self.blockquote_stack.last() {
+            blockquote.append(&widget);
+        } else {
+            self.segments.push(MarkdownSegment::Prose(widget));
+        }
+    }
+
+    /// Push a text run with current style stack into the current prose block
+    /// or the current list item block (whichever is active).
+    fn push_run(&mut self, text: &str) {
+        if text.is_empty() {
+            return;
+        }
+        let run = InlineRun {
+            text: text.to_string(),
+            styles: self.style_stack.clone(),
+        };
+        if let Some(ref mut item) = self.current_list_item {
+            item.runs.push(run);
+        } else if let Some(ref mut block) = self.current_block {
+            block.runs.push(run);
+        }
+    }
+
+    /// Finalize the current prose block into a label segment, if any.
+    fn finish_prose_block(&mut self) {
+        if let Some(block) = self.current_block.take()
+            && !block.runs.is_empty()
+        {
+            let (runs, count) = highlighted_runs(&block.runs, self.highlight_query.as_deref());
+            self.prose_match_count += count;
+            let label = make_prose_label(&runs_to_markup(&runs));
+            self.append_segment(label.upcast::<gtk::Widget>());
         }
     }
 
@@ -327,10 +303,10 @@ impl MarkdownBufferWriter {
             Event::End(tag_end) => self.handle_end_tag(tag_end),
             Event::TaskListMarker(checked) => self.handle_task_list_marker(checked),
             Event::Rule => {
-                self.block_separator();
-                self.insert_with_tags("────────────────────────", &["horizontal-rule"]);
-                self.insert_with_tags("\n", &[]);
-                self.has_content = true;
+                self.finish_prose_block();
+                let label = make_prose_label("────────────────────────");
+                label.add_css_class("markdown-hr");
+                self.append_segment(label.upcast());
             }
             Event::Text(text) => self.push_text_content(&text),
             Event::Code(code) => self.push_inline_code(&code),
@@ -346,40 +322,61 @@ impl MarkdownBufferWriter {
 
     fn handle_start_tag(&mut self, tag: Tag<'_>) {
         match tag {
-            Tag::Emphasis => self.tag_stack.push("italic"),
-            Tag::Strong => self.tag_stack.push("bold"),
-            Tag::Strikethrough => self.tag_stack.push("strikethrough"),
+            Tag::Emphasis => {
+                self.tag_stack.push("italic");
+                self.style_stack.push(InlineStyle::Italic);
+            }
+            Tag::Strong => {
+                self.tag_stack.push("bold");
+                self.style_stack.push(InlineStyle::Bold);
+            }
+            Tag::Strikethrough => {
+                self.tag_stack.push("strikethrough");
+                self.style_stack.push(InlineStyle::Strikethrough);
+            }
             Tag::Link { dest_url, .. } => {
                 self.link_url = Some(dest_url.to_string());
             }
             Tag::Image { .. } => {
                 self.in_image = true;
-                self.write_inline_with_active_tags("[image: ");
+                self.push_text_content("[image: ");
             }
             Tag::Paragraph if self.list_stack.is_empty() && !self.in_table => {
-                self.block_separator();
+                self.current_block = Some(ProseBlock::default());
             }
             Tag::Paragraph => {}
             Tag::Heading { level, .. } => {
-                self.block_separator();
-                let heading_tag = Self::heading_tag_name(level);
-                self.tag_stack.push(heading_tag);
+                self.finish_prose_block();
+                self.style_stack.push(InlineStyle::Heading(level));
+                self.current_block = Some(ProseBlock::default());
             }
             Tag::CodeBlock(kind) => self.start_code_block(kind),
             Tag::List(start) => {
-                if self.list_stack.is_empty() {
-                    self.block_separator();
-                } else {
-                    self.insert_with_tags("\n", &[]);
-                }
-                self.list_stack.push((start.is_some(), 0, false));
+                // If a list opens while we're inside a list item, the current
+                // item's inline content is complete — emit it as a widget now
+                // before descending into the nested list.
+                self.flush_current_list_item();
+                self.list_stack.push(ListFrame {
+                    ordered: start.is_some(),
+                    next_index: start.unwrap_or(1) as usize,
+                    depth: self.list_stack.len(),
+                });
             }
             Tag::Item => {
                 if let Some(frame) = self.list_stack.last_mut() {
-                    frame.1 += 1;
-                    if !frame.2 {
-                        self.pending_item_marker = true;
-                    }
+                    let marker = if frame.ordered {
+                        let marker = format!("{}.", frame.next_index);
+                        frame.next_index += 1;
+                        marker
+                    } else {
+                        "-".to_string()
+                    };
+                    let depth = frame.depth;
+                    self.current_list_item = Some(ListItemBlock {
+                        marker,
+                        runs: Vec::new(),
+                        depth,
+                    });
                 }
             }
             Tag::Table(_) => {
@@ -401,46 +398,70 @@ impl MarkdownBufferWriter {
             }
             Tag::BlockQuote(_) => {
                 self.blockquote_depth += 1;
+                let group = gtk::Box::new(gtk::Orientation::Vertical, 0);
+                group.add_css_class("markdown-blockquote");
+                group.set_valign(gtk::Align::Start);
+                self.blockquote_stack.push(group);
             }
             _ => {}
         }
     }
 
+    /// Emit the in-progress list item as a widget segment, if any.
+    fn flush_current_list_item(&mut self) {
+        if let Some(item) = self.current_list_item.take() {
+            let (widget, count) = make_list_item_widget(
+                &item.marker,
+                &item.runs,
+                item.depth,
+                self.highlight_query.as_deref(),
+            );
+            self.prose_match_count += count;
+            self.append_segment(widget);
+        }
+    }
+
     fn handle_end_tag(&mut self, tag_end: TagEnd) {
         match tag_end {
-            TagEnd::Emphasis => self.pop_tag("italic"),
-            TagEnd::Strong => self.pop_tag("bold"),
-            TagEnd::Strikethrough => self.pop_tag("strikethrough"),
+            TagEnd::Emphasis => {
+                self.pop_tag("italic");
+                self.pop_style(|style| matches!(style, InlineStyle::Italic));
+            }
+            TagEnd::Strong => {
+                self.pop_tag("bold");
+                self.pop_style(|style| matches!(style, InlineStyle::Bold));
+            }
+            TagEnd::Strikethrough => {
+                self.pop_tag("strikethrough");
+                self.pop_style(|style| matches!(style, InlineStyle::Strikethrough));
+            }
             TagEnd::Link => {
                 if let Some(url) = self.link_url.take() {
-                    let suffix = format!(" ({})", url);
-                    self.write_inline_with_active_tags(&suffix);
+                    self.style_stack.push(InlineStyle::Dim);
+                    self.push_text_content(&format!(" ({url})"));
+                    self.pop_style(|style| matches!(style, InlineStyle::Dim));
                 }
             }
             TagEnd::Image => {
                 self.in_image = false;
-                self.write_inline_with_active_tags("]");
+                self.push_text_content("]");
             }
             TagEnd::Paragraph if self.list_stack.is_empty() && !self.in_table => {
-                self.insert_with_tags("\n", &[]);
-                self.has_content = true;
+                self.finish_prose_block();
             }
             TagEnd::Paragraph => {}
             TagEnd::Heading(level) => {
-                self.insert_with_tags("\n", &[]);
-                self.has_content = true;
-                self.pop_tag(Self::heading_tag_name(level));
+                self.finish_prose_block();
+                self.pop_style(
+                    |style| matches!(style, InlineStyle::Heading(existing) if *existing == level),
+                );
             }
             TagEnd::CodeBlock => self.finish_code_block(),
             TagEnd::List(_) => {
                 self.list_stack.pop();
-                if self.list_stack.is_empty() {
-                    self.has_content = true;
-                }
             }
             TagEnd::Item => {
-                self.flush_pending_marker();
-                self.insert_with_tags("\n", &[]);
+                self.flush_current_list_item();
             }
             TagEnd::Table => {
                 self.in_table = false;
@@ -461,6 +482,14 @@ impl MarkdownBufferWriter {
             }
             TagEnd::BlockQuote(_) => {
                 self.blockquote_depth = self.blockquote_depth.saturating_sub(1);
+                if let Some(group) = self.blockquote_stack.pop() {
+                    let widget = group.upcast::<gtk::Widget>();
+                    if let Some(parent_quote) = self.blockquote_stack.last() {
+                        parent_quote.append(&widget);
+                    } else {
+                        self.segments.push(MarkdownSegment::Prose(widget));
+                    }
+                }
             }
             _ => {}
         }
@@ -498,11 +527,9 @@ impl MarkdownBufferWriter {
             }
             // Only push if content remains after stripping.
             if self.buffer.char_count() > 0 {
-                let old_buffer = std::mem::replace(
-                    &mut self.buffer,
-                    gtk::TextBuffer::new(Some(&self.tag_table)),
-                );
-                self.segments.push(MarkdownSegment::Text(old_buffer));
+                let old_buffer = std::mem::replace(&mut self.buffer, gtk::TextBuffer::new(None));
+                let view = make_textview(&old_buffer);
+                self.append_segment(view.upcast::<gtk::Widget>());
             }
             self.has_content = false;
         }
@@ -512,7 +539,7 @@ impl MarkdownBufferWriter {
         self.flush_buffer_before_widget();
 
         let code = self.code_buf.trim_end_matches('\n').to_string();
-        let code_buffer = sourceview5::Buffer::new(Some(&self.tag_table));
+        let code_buffer = sourceview5::Buffer::new(None);
         code_buffer.set_text(&code);
 
         let language = self.in_code_block.take().flatten();
@@ -563,10 +590,6 @@ impl MarkdownBufferWriter {
         let outer = gtk::Box::new(gtk::Orientation::Vertical, 0);
         outer.add_css_class("code-block-widget");
 
-        if self.blockquote_depth > 0 {
-            outer.add_css_class("markdown-blockquote");
-        }
-
         if let Some(ref lang) = language {
             let lang_label = gtk::Label::new(Some(lang));
             lang_label.set_halign(gtk::Align::Start);
@@ -576,61 +599,28 @@ impl MarkdownBufferWriter {
 
         outer.append(&scroller);
 
-        self.segments
-            .push(MarkdownSegment::CodeBlock(outer.upcast::<gtk::Widget>()));
+        self.append_segment(outer.upcast::<gtk::Widget>());
         // Buffer was flushed; keep has_content false.
         self.code_buf.clear();
     }
 
     fn handle_task_list_marker(&mut self, checked: bool) {
-        self.pending_item_marker = false;
-        if let Some(frame) = self.list_stack.last_mut() {
-            frame.2 = true;
-        }
-        self.current_task_checked = Some(checked);
-
-        let (symbol, style_tag) = if checked {
-            ("\u{2611} ", "task-checked")
-        } else {
-            ("\u{2610} ", "task-unchecked")
-        };
-        let mut tags = self.active_tags();
-        tags.push("list-item");
-        tags.push(style_tag);
-        self.insert_with_tags(symbol, &tags);
-    }
-
-    /// If a list-item marker was deferred, emit it now.
-    fn flush_pending_marker(&mut self) {
-        if self.pending_item_marker {
-            self.pending_item_marker = false;
-            if let Some(frame) = self.list_stack.last() {
-                let marker = if frame.0 {
-                    format!("{}. ", frame.1)
-                } else {
-                    "- ".to_string()
-                };
-                let mut tags = self.active_tags();
-                tags.push("list-item");
-                self.insert_with_tags(&marker, &tags);
-            }
+        if let Some(item) = self.current_list_item.as_mut() {
+            item.marker = if checked { "☑" } else { "☐" }.to_string();
         }
     }
 
-    /// Emit inline text with current formatting context.
+    /// Emit inline text with current formatting context (TextBuffer path).
     fn emit_text(&mut self, text: &str) {
-        self.flush_pending_marker();
-        let mut tags = self.active_tags();
-        // If inside a list, add list-item tag for indentation
-        if !self.list_stack.is_empty() {
-            tags.push("list-item");
-        }
+        let tags = self.active_tags();
         self.insert_with_tags(text, &tags);
     }
 
     fn write_inline_with_active_tags(&mut self, text: &str) {
         if self.in_table {
             self.inline_buf.push_str(text);
+        } else if self.current_list_item.is_some() || self.current_block.is_some() {
+            self.push_run(text);
         } else {
             let tags = self.active_tags();
             self.insert_with_tags(text, &tags);
@@ -642,6 +632,8 @@ impl MarkdownBufferWriter {
             self.code_buf.push_str(text);
         } else if self.in_table {
             self.inline_buf.push_str(text);
+        } else if self.current_list_item.is_some() || self.current_block.is_some() {
+            self.push_run(text);
         } else {
             self.emit_text(text);
         }
@@ -650,13 +642,13 @@ impl MarkdownBufferWriter {
     fn push_inline_code(&mut self, code: &str) {
         if self.in_table {
             self.inline_buf.push_str(code);
+        } else if self.current_list_item.is_some() || self.current_block.is_some() {
+            self.style_stack.push(InlineStyle::Code);
+            self.push_run(code);
+            self.pop_style(|style| matches!(style, InlineStyle::Code));
         } else {
-            self.flush_pending_marker();
             let mut tags = self.active_tags();
             tags.push("code-inline");
-            if !self.list_stack.is_empty() {
-                tags.push("list-item");
-            }
             self.insert_with_tags(code, &tags);
         }
     }
@@ -666,6 +658,8 @@ impl MarkdownBufferWriter {
             self.code_buf.push('\n');
         } else if self.in_table {
             self.inline_buf.push('\n');
+        } else if self.current_list_item.is_some() || self.current_block.is_some() {
+            self.push_run("\n");
         } else {
             self.write_inline_with_active_tags("\n");
         }
@@ -757,13 +751,8 @@ impl MarkdownBufferWriter {
             .child(&grid)
             .build();
 
-        if self.blockquote_depth > 0 {
-            table_widget.add_css_class("markdown-blockquote");
-        }
-
         self.table_match_count += table_match_count;
-        self.segments
-            .push(MarkdownSegment::Table(table_widget.upcast::<gtk::Widget>()));
+        self.append_segment(table_widget.upcast::<gtk::Widget>());
     }
 
     /// Strip leading newlines from a text buffer.
@@ -789,29 +778,13 @@ impl MarkdownBufferWriter {
         Vec<glib::WeakRef<sourceview5::Buffer>>,
     ) {
         if self.buffer.char_count() > 0 {
-            self.segments.push(MarkdownSegment::Text(self.buffer));
-        }
-
-        // Strip leading newlines from any text buffer that follows a widget
-        // segment, so there is no blank space below tables / code blocks.
-        let mut after_widget = false;
-        for segment in &self.segments {
-            match segment {
-                MarkdownSegment::Text(buffer) => {
-                    if after_widget {
-                        Self::strip_leading_newlines(buffer);
-                    }
-                    after_widget = false;
-                }
-                _ => {
-                    after_widget = true;
-                }
-            }
+            let view = make_textview(&self.buffer);
+            self.append_segment(view.upcast::<gtk::Widget>());
         }
 
         (
             self.segments,
-            self.table_match_count + self.code_block_match_count,
+            self.prose_match_count + self.table_match_count + self.code_block_match_count,
             self.source_buffers,
         )
     }
@@ -832,6 +805,113 @@ fn attach_theme_cleanup(
     });
 }
 
+fn span_open(style: &InlineStyle) -> &'static str {
+    match style {
+        InlineStyle::Bold => "<b>",
+        InlineStyle::Italic => "<i>",
+        InlineStyle::Strikethrough => "<s>",
+        InlineStyle::Code => "<tt>",
+        InlineStyle::Heading(pulldown_cmark::HeadingLevel::H1) => {
+            "<span weight=\"bold\" size=\"x-large\">"
+        }
+        InlineStyle::Heading(pulldown_cmark::HeadingLevel::H2) => {
+            "<span weight=\"bold\" size=\"large\">"
+        }
+        InlineStyle::Heading(_) => "<span weight=\"bold\" size=\"110%\">",
+        InlineStyle::Dim => "<span alpha=\"65%\">",
+        InlineStyle::TaskChecked => "<span foreground=\"#2ec27e\">",
+        InlineStyle::TaskUnchecked => "<span alpha=\"65%\">",
+        InlineStyle::SearchHighlight => "<span background=\"#fce94f\" foreground=\"#1e1e1e\">",
+    }
+}
+
+fn span_close(style: &InlineStyle) -> &'static str {
+    match style {
+        InlineStyle::Bold => "</b>",
+        InlineStyle::Italic => "</i>",
+        InlineStyle::Strikethrough => "</s>",
+        InlineStyle::Code => "</tt>",
+        InlineStyle::Heading(_)
+        | InlineStyle::Dim
+        | InlineStyle::TaskChecked
+        | InlineStyle::TaskUnchecked
+        | InlineStyle::SearchHighlight => "</span>",
+    }
+}
+
+fn highlighted_runs(runs: &[InlineRun], query: Option<&str>) -> (Vec<InlineRun>, usize) {
+    let Some(query) = query.filter(|query| !query.is_empty()) else {
+        return (runs.to_vec(), 0);
+    };
+
+    let mut plain = String::new();
+    for run in runs {
+        plain.push_str(&run.text);
+    }
+
+    let matches = crate::utils::text_match::find_case_insensitive_matches(&plain, query);
+    if matches.is_empty() {
+        return (runs.to_vec(), 0);
+    }
+
+    let mut output = Vec::new();
+    let mut plain_offset = 0usize;
+    for run in runs {
+        let run_start = plain_offset;
+        let run_end = run_start + run.text.len();
+        let mut cursor = run_start;
+
+        for (match_start, match_end) in matches.iter().copied() {
+            if match_end <= run_start || match_start >= run_end {
+                continue;
+            }
+
+            let clipped_start = match_start.max(run_start);
+            let clipped_end = match_end.min(run_end);
+
+            if cursor < clipped_start {
+                output.push(InlineRun {
+                    text: plain[cursor..clipped_start].to_string(),
+                    styles: run.styles.clone(),
+                });
+            }
+
+            let mut styles = run.styles.clone();
+            styles.push(InlineStyle::SearchHighlight);
+            output.push(InlineRun {
+                text: plain[clipped_start..clipped_end].to_string(),
+                styles,
+            });
+            cursor = clipped_end;
+        }
+
+        if cursor < run_end {
+            output.push(InlineRun {
+                text: plain[cursor..run_end].to_string(),
+                styles: run.styles.clone(),
+            });
+        }
+
+        plain_offset = run_end;
+    }
+
+    (output, matches.len())
+}
+
+fn runs_to_markup(runs: &[InlineRun]) -> String {
+    let mut markup = String::new();
+    for run in runs {
+        for style in &run.styles {
+            markup.push_str(span_open(style));
+        }
+        markup.push_str(&pango_escape(&run.text));
+        for style in run.styles.iter().rev() {
+            markup.push_str(span_close(style));
+        }
+    }
+    markup
+}
+
 /// Create a non-editable, transparent `gtk::TextView` from a buffer.
 fn make_textview(buffer: &gtk::TextBuffer) -> gtk::TextView {
     let view = gtk::TextView::with_buffer(buffer);
@@ -849,32 +929,73 @@ fn make_textview(buffer: &gtk::TextBuffer) -> gtk::TextView {
     view
 }
 
-/// Render markdown content into a widget (single `TextView` or a `Box`
-/// containing `TextView` segments interleaved with table widgets).
+/// Create a selectable, wrapping `gtk::Label` for a prose paragraph.
+fn make_prose_label(markup: &str) -> gtk::Label {
+    let label = gtk::Label::new(None);
+    label.set_use_markup(true);
+    label.set_markup(markup);
+    label.set_wrap(true);
+    label.set_wrap_mode(gtk::pango::WrapMode::WordChar);
+    label.set_selectable(true);
+    label.set_xalign(0.0);
+    label.set_halign(gtk::Align::Start);
+    label.set_hexpand(true);
+    label.set_valign(gtk::Align::Start);
+    label.set_vexpand(false);
+    label.add_css_class("markdown-prose");
+    label
+}
+
+/// Build a horizontal row widget for a single list item.
+///
+/// The row contains a marker label (bullet or number) and a content label
+/// rendered from inline runs. The `depth` controls the left indent level.
+fn make_list_item_widget(
+    marker: &str,
+    runs: &[InlineRun],
+    depth: usize,
+    query: Option<&str>,
+) -> (gtk::Widget, usize) {
+    let row = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+    row.add_css_class("markdown-list-item");
+    row.set_valign(gtk::Align::Start);
+    row.set_margin_start((depth as i32) * 18);
+
+    let marker_label = gtk::Label::new(Some(marker));
+    marker_label.add_css_class("markdown-list-marker");
+    if marker == "☑" {
+        marker_label.add_css_class("markdown-task-checked");
+    } else if marker == "☐" {
+        marker_label.add_css_class("markdown-task-unchecked");
+    }
+    marker_label.set_halign(gtk::Align::End);
+    marker_label.set_valign(gtk::Align::Start);
+    marker_label.set_width_chars(3);
+    row.append(&marker_label);
+
+    let (highlighted, count) = highlighted_runs(runs, query);
+    let content = make_prose_label(&runs_to_markup(&highlighted));
+    content.remove_css_class("markdown-prose");
+    content.add_css_class("markdown-list-content");
+    row.append(&content);
+
+    (row.upcast(), count)
+}
+
+/// Render markdown content into a widget (`Box` containing prose labels,
+/// table widgets, and code block widgets).
 ///
 /// If `highlight_query` is provided, matches are highlighted with a
 /// background color. Returns the widget and the total number of matches.
-pub fn render_markdown_to_textview(
-    content: &str,
-    highlight_query: Option<&str>,
-) -> (gtk::Widget, usize) {
-    let tag_table = create_tag_table();
-    let query = highlight_query.unwrap_or("");
-
-    let mut writer = MarkdownBufferWriter::new(tag_table.clone(), highlight_query);
+pub fn render_markdown(content: &str, highlight_query: Option<&str>) -> (gtk::Widget, usize) {
+    let mut writer = MarkdownBufferWriter::new(highlight_query);
     writer.process(content);
-    let (segments, table_match_count, source_buffers) = writer.finalize();
+    let (segments, total_matches, source_buffers) = writer.finalize();
 
-    // Wire up theme-change listener that updates tag colours. Since all
-    // buffers share the same tag_table, one handler covers everything.
+    // Wire up theme-change listener that updates source buffer style schemes.
     let style_manager = adw::StyleManager::default();
-    let tt_weak = tag_table.downgrade();
     let source_buffers = std::cell::RefCell::new(source_buffers);
     let theme_handler = style_manager.connect_dark_notify(move |manager| {
-        if let Some(tt) = tt_weak.upgrade() {
-            apply_theme_palette_to_tags(&tt, manager.is_dark());
-        }
-
         source_buffers.borrow_mut().retain(|weak_buffer| {
             if let Some(buffer) = weak_buffer.upgrade() {
                 apply_source_style_scheme(&buffer, manager.is_dark());
@@ -885,47 +1006,16 @@ pub fn render_markdown_to_textview(
         });
     });
 
-    let has_widgets = segments
-        .iter()
-        .any(|s| !matches!(s, MarkdownSegment::Text(_)));
-
-    // Fast path: no widget segments — return a single TextView (common case).
-    if !has_widgets {
-        let mut match_count = table_match_count;
-        // All segments are Text; in practice there's exactly one.
-        if let Some(MarkdownSegment::Text(buffer)) = segments.into_iter().next() {
-            match_count += apply_search_highlight(&buffer, query);
-            let view = make_textview(&buffer);
-            attach_theme_cleanup(&view, style_manager, theme_handler);
-            return (view.upcast(), match_count);
-        }
-        // Empty content — return an empty widget.
-        let empty = gtk::Box::new(gtk::Orientation::Vertical, 0);
-        empty.set_vexpand(false);
-        empty.set_valign(gtk::Align::Start);
-        attach_theme_cleanup(&empty, style_manager, theme_handler);
-        return (empty.upcast(), match_count);
-    }
-
-    // Multiple segments with tables: build a vertical Box.
+    // Box-only path: always build a vertical Box container.
     let container = gtk::Box::new(gtk::Orientation::Vertical, 0);
     container.set_vexpand(false);
     container.set_valign(gtk::Align::Start);
-    let mut total_matches = table_match_count;
 
     for segment in segments {
         match segment {
-            MarkdownSegment::Text(buffer) => {
-                total_matches += apply_search_highlight(&buffer, query);
-                let view = make_textview(&buffer);
-                container.append(&view);
-            }
-            MarkdownSegment::Table(widget) => {
-                container.append(&widget);
-            }
-            MarkdownSegment::CodeBlock(widget) => {
-                container.append(&widget);
-            }
+            MarkdownSegment::Prose(widget)
+            | MarkdownSegment::Table(widget)
+            | MarkdownSegment::CodeBlock(widget) => container.append(&widget),
         }
     }
 
@@ -943,6 +1033,25 @@ fn apply_search_highlight(buffer: &impl IsA<gtk::TextBuffer>, query: &str) -> us
 
     if query.is_empty() {
         return 0;
+    }
+
+    if buffer.tag_table().lookup("search-highlight").is_none() {
+        let highlight = gtk::TextTag::new(Some("search-highlight"));
+        highlight.set_background(Some("#fce94f"));
+        highlight.set_foreground(Some("#1e1e1e"));
+        buffer.tag_table().add(&highlight);
+        highlight.set_priority(buffer.tag_table().size() - 1);
+
+        // Re-promote search-highlight whenever GtkSourceView adds its own
+        // syntax tags to the buffer's tag table.
+        buffer.tag_table().connect_tag_added(|table, added| {
+            if added.name().as_deref() == Some("search-highlight") {
+                return;
+            }
+            if let Some(hl) = table.lookup("search-highlight") {
+                hl.set_priority(table.size() - 1);
+            }
+        });
     }
 
     let start = buffer.start_iter();
@@ -1013,7 +1122,13 @@ mod tests {
 
     #[gtk::test]
     fn search_highlight_tag_has_highest_priority() {
-        let table = create_tag_table();
+        // After removing create_tag_table, source buffers have their own tag
+        // tables. Verify that apply_search_highlight creates and top-promotes
+        // the search-highlight tag in the buffer's own tag table.
+        let buffer = sourceview5::Buffer::new(None);
+        buffer.set_text("hello world");
+        apply_search_highlight(&buffer, "world");
+        let table = buffer.tag_table();
         let highlight = table
             .lookup("search-highlight")
             .expect("search-highlight tag exists");
@@ -1021,12 +1136,50 @@ mod tests {
         assert_eq!(highlight.priority(), table.size() - 1);
     }
 
-    /// Downcast the rendered widget to a single TextView (for non-table content).
-    fn as_textview(widget: &gtk::Widget) -> gtk::TextView {
-        widget
-            .clone()
-            .downcast::<gtk::TextView>()
-            .expect("expected a single TextView (no tables)")
+    // NOTE: Search count for prose paragraphs is 0 in Task 3 because
+    // GtkLabel-based prose does not use TextBuffer search highlighting yet.
+    // This will be restored when prose search is implemented in a later task.
+    #[gtk::test]
+    fn render_markdown_public_entry_point_returns_widget_and_count() {
+        let (widget, _count) = render_markdown("Hello world", Some("world"));
+        // Prose-only content returns a Box (not a raw Widget of unknown type).
+        assert!(widget.is::<gtk::Box>());
+    }
+
+    #[gtk::test]
+    fn prose_only_markdown_returns_box_without_textview() {
+        let (widget, _) = render_markdown("First paragraph\n\nSecond paragraph", None);
+
+        assert!(widget.is::<gtk::Box>(), "prose root should be a GtkBox");
+        assert!(
+            find_widgets_of_type::<gtk::TextView>(&widget).is_empty(),
+            "prose rendering must not contain GtkTextView widgets"
+        );
+    }
+
+    #[gtk::test]
+    fn prose_paragraphs_render_as_selectable_wrapping_labels() {
+        let (widget, _) = render_markdown("First paragraph\n\nSecond paragraph", None);
+        let labels = find_widgets_of_type::<gtk::Label>(&widget);
+
+        assert_eq!(labels.len(), 2, "expected one label per paragraph");
+        assert_eq!(labels[0].text(), "First paragraph");
+        assert_eq!(labels[1].text(), "Second paragraph");
+        for label in labels {
+            assert!(label.uses_markup(), "prose labels use Pango markup");
+            assert!(label.wraps(), "prose labels wrap");
+            assert_eq!(label.wrap_mode(), gtk::pango::WrapMode::WordChar);
+            assert!(
+                label.is_selectable(),
+                "prose labels remain selectable per segment"
+            );
+            assert_eq!(label.xalign(), 0.0);
+            assert_eq!(label.halign(), gtk::Align::Start);
+            assert!(label.hexpands());
+            assert_eq!(label.valign(), gtk::Align::Start);
+            assert!(!label.vexpands());
+            assert!(label.has_css_class("markdown-prose"));
+        }
     }
 
     /// Collect all label texts from a widget tree (recursive).
@@ -1125,23 +1278,25 @@ mod tests {
         false
     }
 
-    fn has_tag_at(content: &str, tag_name: &str, char_offset: i32) -> bool {
-        let (widget, _) = render_markdown_to_textview(content, None);
-        let view = as_textview(&widget);
-        let buffer = view.buffer();
-        let iter = buffer.iter_at_offset(char_offset);
-        iter.tags()
-            .iter()
-            .any(|tag: &gtk::TextTag| tag.name().as_deref() == Some(tag_name))
+    fn direct_box_children(widget: &gtk::Widget) -> Vec<gtk::Widget> {
+        let mut children = Vec::new();
+        let mut child = widget.first_child();
+        while let Some(next) = child {
+            child = next.next_sibling();
+            children.push(next);
+        }
+        children
     }
 
-    /// Helper: extract plain text from a rendered textview.
-    fn textview_text(content: &str) -> String {
-        let (widget, _) = render_markdown_to_textview(content, None);
-        let view = as_textview(&widget);
-        let buf = view.buffer();
-        buf.text(&buf.start_iter(), &buf.end_iter(), false)
-            .to_string()
+    fn label_markup(label: &gtk::Label) -> String {
+        label
+            .property::<Option<String>>("label")
+            .unwrap_or_else(|| label.text().to_string())
+    }
+
+    fn rendered_label_texts(content: &str) -> Vec<String> {
+        let (widget, _) = render_markdown(content, None);
+        collect_label_text_from_widget_tree(&widget)
     }
 
     // ── Existing regression tests ────────────────────────────────────
@@ -1149,98 +1304,216 @@ mod tests {
     // ── Plain text & paragraphs ──────────────────────────────────────
 
     #[gtk::test]
-    fn textview_plain_paragraph() {
-        let text = textview_text("Hello world");
-        assert!(text.contains("Hello world"), "got: {text}");
+    fn label_plain_paragraph() {
+        let texts = rendered_label_texts("Hello world");
+        assert!(
+            texts.iter().any(|t| t.contains("Hello world")),
+            "got: {texts:?}"
+        );
     }
 
     // ── Inline formatting ────────────────────────────────────────────
+    // Inline styles in prose paragraphs are rendered as Pango markup via
+    // GtkLabel. Tests verify that the markup contains the expected spans.
 
     #[gtk::test]
-    fn textview_bold_tagged() {
-        assert!(has_tag_at("Hello **bold** world", "bold", 6));
+    fn label_bold_markup() {
+        let markup = first_prose_label_markup("Hello **bold** world");
+        assert!(markup.contains("<b>bold</b>"), "got: {markup}");
     }
 
     #[gtk::test]
-    fn textview_italic_tagged() {
-        assert!(has_tag_at("Hello *italic* world", "italic", 6));
+    fn label_italic_markup() {
+        let markup = first_prose_label_markup("Hello *italic* world");
+        assert!(markup.contains("<i>italic</i>"), "got: {markup}");
     }
 
     #[gtk::test]
-    fn textview_strikethrough_tagged() {
-        assert!(has_tag_at("Hello ~~removed~~ world", "strikethrough", 6));
+    fn label_strikethrough_markup() {
+        let markup = first_prose_label_markup("Hello ~~removed~~ world");
+        assert!(markup.contains("<s>removed</s>"), "got: {markup}");
     }
 
     #[gtk::test]
-    fn textview_code_inline_tagged() {
-        assert!(has_tag_at("Use `code` here", "code-inline", 4));
+    fn label_code_inline_markup() {
+        let markup = first_prose_label_markup("Use `code` here");
+        assert!(markup.contains("<tt>code</tt>"), "got: {markup}");
+    }
+
+    fn first_prose_label_markup(content: &str) -> String {
+        let (widget, _) = render_markdown(content, None);
+        let labels: Vec<gtk::Label> = find_widgets_of_type::<gtk::Label>(&widget)
+            .into_iter()
+            .filter(|label| label.has_css_class("markdown-prose"))
+            .collect();
+        let label = labels.first().expect("expected prose label");
+        label_markup(label)
+    }
+
+    #[gtk::test]
+    fn label_markup_bold_italic_strikethrough_and_inline_code() {
+        let markup = first_prose_label_markup("Hello **bold** *italic* ~~gone~~ `code`");
+
+        assert!(markup.contains("<b>bold</b>"), "got: {markup}");
+        assert!(markup.contains("<i>italic</i>"), "got: {markup}");
+        assert!(markup.contains("<s>gone</s>"), "got: {markup}");
+        assert!(markup.contains("<tt>code</tt>"), "got: {markup}");
+    }
+
+    #[gtk::test]
+    fn label_markup_heading_uses_bold_scaled_span() {
+        let markup = first_prose_label_markup("# Title");
+
+        assert!(
+            markup.contains("<span weight=\"bold\" size=\"x-large\">Title</span>"),
+            "got: {markup}"
+        );
+    }
+
+    #[gtk::test]
+    fn label_markup_nested_bold_italic() {
+        let markup = first_prose_label_markup("Hello ***both*** world");
+
+        assert!(
+            markup.contains("<b><i>both</i></b>") || markup.contains("<i><b>both</b></i>"),
+            "got: {markup}"
+        );
     }
 
     // ── Headings ─────────────────────────────────────────────────────
+    // NOTE: Headings are now rendered as prose labels with Pango markup since
+    // Task 4. The old `has_tag_at`-based TextBuffer tests are replaced by
+    // label markup tests above (label_markup_heading_uses_bold_scaled_span).
 
     #[gtk::test]
-    fn textview_heading_1_tagged() {
-        assert!(has_tag_at("# Title", "heading-1", 0));
+    fn label_heading_1_markup() {
+        let (widget, _) = render_markdown("# Title", None);
+        let labels: Vec<gtk::Label> = find_widgets_of_type::<gtk::Label>(&widget)
+            .into_iter()
+            .filter(|l| l.has_css_class("markdown-prose"))
+            .collect();
+        assert!(!labels.is_empty(), "heading should render as a prose label");
+        let markup = label_markup(labels.first().unwrap());
+        assert!(markup.contains("Title"), "got: {markup}");
     }
 
     #[gtk::test]
-    fn textview_heading_2_tagged() {
-        assert!(has_tag_at("## Subtitle", "heading-2", 0));
+    fn label_heading_2_markup() {
+        let (widget, _) = render_markdown("## Subtitle", None);
+        let labels: Vec<gtk::Label> = find_widgets_of_type::<gtk::Label>(&widget)
+            .into_iter()
+            .filter(|l| l.has_css_class("markdown-prose"))
+            .collect();
+        assert!(!labels.is_empty(), "heading should render as a prose label");
+        let markup = label_markup(labels.first().unwrap());
+        assert!(
+            markup.contains("<span weight=\"bold\" size=\"large\">Subtitle</span>"),
+            "got: {markup}"
+        );
+    }
+
+    #[gtk::test]
+    fn label_heading_3_markup_uses_valid_pango_size() {
+        let markup = first_prose_label_markup("### Section");
+
+        assert!(
+            markup.contains("<span weight=\"bold\" size=\"110%\">Section</span>"),
+            "got: {markup}"
+        );
+        assert!(
+            !markup.contains("font_scale"),
+            "Pango markup does not accept numeric font_scale values: {markup}"
+        );
     }
 
     // ── Lists ────────────────────────────────────────────────────────
 
     #[gtk::test]
-    fn textview_unordered_list_contains_marker() {
-        let text = textview_text("- First\n- Second");
-        assert!(text.contains("- First"), "got: {text}");
-        assert!(text.contains("- Second"), "got: {text}");
+    fn list_unordered_contains_markers() {
+        let (widget, _) = render_markdown("- First\n- Second", None);
+        let rows = find_widgets_with_css_class(&widget, "markdown-list-item");
+        let markers: Vec<String> = find_widgets_of_type::<gtk::Label>(&widget)
+            .into_iter()
+            .filter(|label| label.has_css_class("markdown-list-marker"))
+            .map(|label| label.text().to_string())
+            .collect();
+        let content: Vec<String> = find_widgets_of_type::<gtk::Label>(&widget)
+            .into_iter()
+            .filter(|label| label.has_css_class("markdown-list-content"))
+            .map(|label| label.text().to_string())
+            .collect();
+
+        assert_eq!(rows.len(), 2);
+        assert_eq!(markers, vec!["-", "-"]);
+        assert_eq!(content, vec!["First", "Second"]);
     }
 
     #[gtk::test]
-    fn textview_ordered_list_contains_numbers() {
-        let text = textview_text("1. Alpha\n2. Beta");
-        assert!(text.contains("1."), "got: {text}");
-        assert!(text.contains("2."), "got: {text}");
+    fn list_ordered_contains_numbers() {
+        let (widget, _) = render_markdown("1. Alpha\n2. Beta", None);
+        let markers: Vec<String> = find_widgets_of_type::<gtk::Label>(&widget)
+            .into_iter()
+            .filter(|label| label.has_css_class("markdown-list-marker"))
+            .map(|label| label.text().to_string())
+            .collect();
+        assert_eq!(markers, vec!["1.", "2."]);
     }
 
     #[gtk::test]
-    fn textview_task_list_contains_checkboxes() {
-        let text = textview_text("- [x] Done\n- [ ] Todo");
-        // U+2611 (checked) and U+2610 (unchecked)
-        assert!(text.contains('\u{2611}'), "got: {text}");
-        assert!(text.contains('\u{2610}'), "got: {text}");
+    fn list_task_contains_checkboxes() {
+        let (widget, _) = render_markdown("- [x] Done\n- [ ] Todo", None);
+        let markers: Vec<String> = find_widgets_of_type::<gtk::Label>(&widget)
+            .into_iter()
+            .filter(|label| label.has_css_class("markdown-list-marker"))
+            .map(|label| label.text().to_string())
+            .collect();
+        assert_eq!(markers, vec!["☑", "☐"]);
     }
 
     // ── Search highlighting ──────────────────────────────────────────
 
     #[gtk::test]
-    fn textview_search_highlight_applied() {
-        let (widget, count) = render_markdown_to_textview("Hello world", Some("world"));
-        assert_eq!(count, 1);
-        let view = as_textview(&widget);
-        let buf = view.buffer();
-        // "world" starts at char 6 in "Hello world\n"
-        let iter = buf.iter_at_offset(6);
+    fn label_search_highlight_applied_and_counted() {
+        let (widget, count) = render_markdown("Hello world\n\nworld again", Some("world"));
+        let labels: Vec<gtk::Label> = find_widgets_of_type::<gtk::Label>(&widget)
+            .into_iter()
+            .filter(|label| label.has_css_class("markdown-prose"))
+            .collect();
+        let markup: Vec<String> = labels.iter().map(label_markup).collect();
+
+        assert_eq!(count, 2);
         assert!(
-            iter.tags()
-                .iter()
-                .any(|t: &gtk::TextTag| t.name().as_deref() == Some("search-highlight"))
+            markup.iter().any(|text| text
+                .contains("<span background=\"#fce94f\" foreground=\"#1e1e1e\">world</span>")),
+            "got: {markup:?}"
         );
     }
 
     #[gtk::test]
-    fn textview_search_no_match_returns_zero() {
-        let (_, count) = render_markdown_to_textview("Hello world", Some("missing"));
+    fn label_search_highlight_splits_inside_styled_run() {
+        let (widget, count) = render_markdown("**hello world**", Some("world"));
+        let markup = find_widgets_of_type::<gtk::Label>(&widget)
+            .into_iter()
+            .find(|label| label.has_css_class("markdown-prose"))
+            .map(|label| label_markup(&label))
+            .expect("expected prose label");
+
+        assert_eq!(count, 1);
+        assert!(markup.contains("<b>hello </b><b><span background=\"#fce94f\" foreground=\"#1e1e1e\">world</span></b>"), "got: {markup}");
+    }
+
+    #[gtk::test]
+    fn label_search_no_match_returns_zero() {
+        let (_, count) = render_markdown("Hello world", Some("missing"));
         assert_eq!(count, 0);
     }
 
     // ── Tables ───────────────────────────────────────────────────────
 
     #[gtk::test]
-    fn textview_table_renders_as_separate_widget() {
+    fn table_renders_as_separate_widget() {
         let md = "| A | B |\n|---|---|\n| 1 | 2 |";
-        let (widget, _) = render_markdown_to_textview(md, None);
+        let (widget, _) = render_markdown(md, None);
         let tables = find_table_widgets(&widget);
         assert!(
             !tables.is_empty(),
@@ -1249,9 +1522,9 @@ mod tests {
     }
 
     #[gtk::test]
-    fn textview_table_contains_labels() {
+    fn table_contains_labels() {
         let md = "| A | B |\n|---|---|\n| 1 | 2 |";
-        let (widget, _) = render_markdown_to_textview(md, None);
+        let (widget, _) = render_markdown(md, None);
         let labels = table_label_texts(&widget);
         assert!(
             !labels.is_empty(),
@@ -1260,9 +1533,9 @@ mod tests {
     }
 
     #[gtk::test]
-    fn textview_table_scroller_does_not_expand_vertically() {
+    fn table_scroller_does_not_expand_vertically() {
         let md = "| A | B |\n|---|---|\n| 1 | 2 |\n\nBelow";
-        let (widget, _) = render_markdown_to_textview(md, None);
+        let (widget, _) = render_markdown(md, None);
         let table = find_table_widgets(&widget)
             .into_iter()
             .next()
@@ -1276,9 +1549,9 @@ mod tests {
     }
 
     #[gtk::test]
-    fn textview_table_cells_do_not_wrap() {
+    fn table_cells_do_not_wrap() {
         let md = "| A | B |\n|---|---|\n| 1 | 2 |";
-        let (widget, _) = render_markdown_to_textview(md, None);
+        let (widget, _) = render_markdown(md, None);
         let labels: Vec<gtk::Label> = find_widgets_of_type::<gtk::Label>(&widget)
             .into_iter()
             .filter(|l| l.has_css_class("markdown-table-cell"))
@@ -1293,50 +1566,73 @@ mod tests {
     }
 
     #[gtk::test]
-    fn textview_table_search_count_includes_widget_cells() {
+    fn table_search_count_includes_widget_cells() {
         let md = "| Name |\n|------|\n| Rust |";
-        let (_, count) = render_markdown_to_textview(md, Some("Rust"));
+        let (_, count) = render_markdown(md, Some("Rust"));
         assert_eq!(count, 1, "expected search to include widget cell content");
     }
 
     // ── Horizontal rule ──────────────────────────────────────────────
 
     #[gtk::test]
-    fn textview_horizontal_rule() {
-        let text = textview_text("Above\n\n---\n\nBelow");
-        assert!(text.contains("────"), "got: {text}");
+    fn horizontal_rule_renders_as_label_segment() {
+        let (widget, _) = render_markdown("Above\n\n---\n\nBelow", None);
+        let hrs = find_widgets_with_css_class(&widget, "markdown-hr");
+        let labels = collect_label_text_from_widget_tree(&widget);
+
+        assert_eq!(hrs.len(), 1);
+        assert!(
+            labels.iter().any(|text| text.contains("────")),
+            "got: {labels:?}"
+        );
     }
 
     // ── Images ───────────────────────────────────────────────────────
 
     #[gtk::test]
-    fn textview_image_renders_alt_text() {
-        let text = textview_text("![screenshot](https://example.com/img.png)");
-        assert!(text.contains("[image: screenshot]"), "got: {text}");
+    fn image_renders_alt_text_inside_prose_label() {
+        let labels = rendered_label_texts("![screenshot](https://example.com/img.png)");
+
+        assert!(
+            labels
+                .iter()
+                .any(|text| text.contains("[image: screenshot]")),
+            "got: {labels:?}"
+        );
     }
 
-    // ── Blockquotes ──────────────────────────────────────────────────
+    // ── Links ─────────────────────────────────────────────────────────
 
     #[gtk::test]
-    fn textview_blockquote_tagged() {
-        assert!(has_tag_at("> Quoted text", "blockquote", 0));
+    fn link_appends_dimmed_url_suffix() {
+        let markup = first_prose_label_markup("[Rust](https://rust-lang.org)");
+
+        assert!(markup.contains("Rust"), "got: {markup}");
+        assert!(
+            markup.contains("<span alpha=\"65%\"> (https://rust-lang.org)</span>"),
+            "got: {markup}"
+        );
     }
 
     // ── Nested inline formatting ─────────────────────────────────────
+    // NOTE: Nested inline styles in prose paragraphs are rendered as Pango
+    // markup via GtkLabel since Task 4. Tests verify markup content.
 
     #[gtk::test]
-    fn textview_nested_bold_italic() {
-        // "Hello " (6 chars) then "both" has bold+italic
-        assert!(has_tag_at("Hello ***both*** world", "bold", 6));
-        assert!(has_tag_at("Hello ***both*** world", "italic", 6));
+    fn nested_bold_italic_markup() {
+        let markup = first_prose_label_markup("Hello ***both*** world");
+        assert!(
+            markup.contains("<b><i>both</i></b>") || markup.contains("<i><b>both</b></i>"),
+            "got: {markup}"
+        );
     }
 
     // ── Link inside table cell ────────────────────────────────────────
 
     #[gtk::test]
-    fn textview_table_link_visible_inside_widget_cell() {
+    fn table_link_visible_inside_widget_cell() {
         let md = "| Name |\n|------|\n| [Rust](https://rust-lang.org) |";
-        let (widget, _) = render_markdown_to_textview(md, None);
+        let (widget, _) = render_markdown(md, None);
         let label_texts = table_label_texts(&widget);
 
         assert!(
@@ -1348,9 +1644,9 @@ mod tests {
     }
 
     #[gtk::test]
-    fn textview_table_image_visible_inside_widget_cell() {
+    fn table_image_visible_inside_widget_cell() {
         let md = "| Screenshot |\n|------------|\n| ![Session List](docs/screenshots/session_list.png) |";
-        let (widget, _) = render_markdown_to_textview(md, None);
+        let (widget, _) = render_markdown(md, None);
         let label_texts = table_label_texts(&widget);
 
         assert!(
@@ -1364,24 +1660,69 @@ mod tests {
     // ── Blockquote table styling ──────────────────────────────────────
 
     #[gtk::test]
-    fn textview_table_inside_blockquote_widget_has_blockquote_class() {
+    fn table_inside_blockquote_group() {
         let md = "> | A | B |\n> |---|---|\n> | 1 | 2 |";
-        let (widget, _) = render_markdown_to_textview(md, None);
+        let (widget, _) = render_markdown(md, None);
+        let quotes = find_widgets_with_css_class(&widget, "markdown-blockquote");
 
+        assert_eq!(
+            quotes.len(),
+            1,
+            "expected exactly one grouped .markdown-blockquote container, got: {}",
+            quotes.len()
+        );
         assert!(
-            find_table_widgets(&widget)
-                .iter()
-                .any(|w| widget_tree_has_css_class(w, "markdown-blockquote")),
-            "expected blockquote table widget tree to include a widget with the blockquote css class"
+            !find_widgets_of_type::<gtk::Grid>(&quotes[0]).is_empty(),
+            "blockquote group container should contain a table grid"
+        );
+    }
+
+    // ── Blockquote group container ────────────────────────────────────
+
+    #[gtk::test]
+    fn blockquote_renders_group_container_once() {
+        let (widget, _) = render_markdown("> First paragraph\n>\n> Second paragraph", None);
+        let quotes = find_widgets_with_css_class(&widget, "markdown-blockquote");
+
+        assert_eq!(
+            quotes.len(),
+            1,
+            "blockquote CSS applies to the group, not each paragraph"
+        );
+        let label_texts = collect_label_text_from_widget_tree(&quotes[0]);
+        assert!(
+            label_texts.contains(&"First paragraph".to_string()),
+            "got: {label_texts:?}"
+        );
+        assert!(
+            label_texts.contains(&"Second paragraph".to_string()),
+            "got: {label_texts:?}"
+        );
+    }
+
+    #[gtk::test]
+    fn blockquote_can_group_table_and_code_widgets() {
+        let md = "> Before\n>\n> | A |\n> |---|\n> | 1 |\n>\n> ```rust\n> fn main() {}\n> ```";
+        let (widget, _) = render_markdown(md, None);
+        let quotes = find_widgets_with_css_class(&widget, "markdown-blockquote");
+
+        assert_eq!(quotes.len(), 1);
+        assert!(
+            !find_widgets_of_type::<gtk::Grid>(&quotes[0]).is_empty(),
+            "blockquote should contain table grid"
+        );
+        assert!(
+            !find_widgets_of_type::<sourceview5::View>(&quotes[0]).is_empty(),
+            "blockquote should contain code view"
         );
     }
 
     // ── Table column structure ────────────────────────────────────────
 
     #[gtk::test]
-    fn textview_table_two_columns_has_correct_labels() {
+    fn table_two_columns_has_correct_labels() {
         let md = "| A | B |\n|---|---|\n| 1 | 2 |";
-        let (widget, _) = render_markdown_to_textview(md, None);
+        let (widget, _) = render_markdown(md, None);
         let label_texts = table_label_texts(&widget);
 
         assert!(
@@ -1432,9 +1773,9 @@ mod tests {
     }
 
     #[gtk::test]
-    fn textview_table_grid_positions_correct() {
+    fn table_grid_positions_correct() {
         let md = "| A | B |\n|---|---|\n| 1 | 2 |";
-        let (widget, _) = render_markdown_to_textview(md, None);
+        let (widget, _) = render_markdown(md, None);
         let tables = find_table_widgets(&widget);
         assert_eq!(tables.len(), 1);
         let mut positions = Vec::new();
@@ -1461,24 +1802,55 @@ mod tests {
     // ── Nested lists ──────────────────────────────────────────────────
 
     #[gtk::test]
-    fn textview_nested_unordered_list() {
+    fn nested_unordered_list() {
         let md = "- Parent item\n  - Child item 1\n  - Child item 2\n- Second parent";
-        let text = textview_text(md);
-        assert!(text.contains("Parent item"), "got: {text}");
-        assert!(text.contains("Child item 1"), "got: {text}");
-        assert!(text.contains("Child item 2"), "got: {text}");
-        assert!(text.contains("Second parent"), "got: {text}");
+        let (widget, _) = render_markdown(md, None);
+        let content: Vec<String> = find_widgets_of_type::<gtk::Label>(&widget)
+            .into_iter()
+            .filter(|label| label.has_css_class("markdown-list-content"))
+            .map(|label| label.text().to_string())
+            .collect();
+        assert!(
+            content.contains(&"Parent item".to_string()),
+            "got: {content:?}"
+        );
+        assert!(
+            content.contains(&"Child item 1".to_string()),
+            "got: {content:?}"
+        );
+        assert!(
+            content.contains(&"Child item 2".to_string()),
+            "got: {content:?}"
+        );
+        assert!(
+            content.contains(&"Second parent".to_string()),
+            "got: {content:?}"
+        );
     }
 
     #[gtk::test]
-    fn textview_loose_list_items_kept_together() {
+    fn loose_list_items_kept_together() {
         // Loose lists have blank lines between items; pulldown-cmark wraps
         // each item in Paragraph events. All items must still appear.
         let md = "- First item\n\n- Second item\n\n- Third item";
-        let text = textview_text(md);
-        assert!(text.contains("First item"), "got: {text}");
-        assert!(text.contains("Second item"), "got: {text}");
-        assert!(text.contains("Third item"), "got: {text}");
+        let (widget, _) = render_markdown(md, None);
+        let content: Vec<String> = find_widgets_of_type::<gtk::Label>(&widget)
+            .into_iter()
+            .filter(|label| label.has_css_class("markdown-list-content"))
+            .map(|label| label.text().to_string())
+            .collect();
+        assert!(
+            content.contains(&"First item".to_string()),
+            "got: {content:?}"
+        );
+        assert!(
+            content.contains(&"Second item".to_string()),
+            "got: {content:?}"
+        );
+        assert!(
+            content.contains(&"Third item".to_string()),
+            "got: {content:?}"
+        );
     }
 
     // ── Code block widget ────────────────────────────────────────────
@@ -1486,7 +1858,7 @@ mod tests {
     #[gtk::test]
     fn code_block_language_label_uses_first_info_token() {
         let md = "```rust linenos title=demo\nfn main() {}\n```";
-        let (widget, _) = render_markdown_to_textview(md, None);
+        let (widget, _) = render_markdown(md, None);
 
         let labels = collect_label_text_from_widget_tree(&widget);
         assert!(
@@ -1498,7 +1870,7 @@ mod tests {
     #[gtk::test]
     fn code_block_without_language_has_no_language_label() {
         let md = "```\nplain text\n```";
-        let (widget, _) = render_markdown_to_textview(md, None);
+        let (widget, _) = render_markdown(md, None);
 
         let labels = collect_label_text_from_widget_tree(&widget);
         assert!(
@@ -1510,7 +1882,7 @@ mod tests {
     #[gtk::test]
     fn code_block_with_blank_lines_renders_as_widget_segment() {
         let md = "```rust\nfn one() {}\n\nfn two() {}\n```";
-        let (widget, _) = render_markdown_to_textview(md, None);
+        let (widget, _) = render_markdown(md, None);
 
         let code_blocks = find_widgets_with_css_class(&widget, "code-block-widget");
         assert_eq!(
@@ -1523,14 +1895,14 @@ mod tests {
     #[gtk::test]
     fn code_block_search_highlight_contributes_to_total_count() {
         let md = "```rust\nlet rust = 1;\n// rust\n```";
-        let (_, count) = render_markdown_to_textview(md, Some("rust"));
+        let (_, count) = render_markdown(md, Some("rust"));
         assert_eq!(count, 2, "expected only code text matches to be counted");
     }
 
     #[gtk::test]
     fn code_block_search_highlight_tag_applied_inside_source_buffer() {
         let md = "```\nhello world\n```";
-        let (widget, _) = render_markdown_to_textview(md, Some("world"));
+        let (widget, _) = render_markdown(md, Some("world"));
         let buffer = first_source_buffer(&widget);
         let iter = buffer.iter_at_offset(6);
         assert!(
@@ -1548,7 +1920,7 @@ mod tests {
     #[gtk::test]
     fn search_highlight_keeps_highest_priority_after_code_block_syntax_tags() {
         let md = "```rust\nfn main() { let value = 1; }\n```";
-        let (widget, _) = render_markdown_to_textview(md, Some("main"));
+        let (widget, _) = render_markdown(md, Some("main"));
 
         let buffer = first_source_buffer(&widget);
         assert!(buffer.is_highlight_syntax());
@@ -1580,7 +1952,7 @@ mod tests {
     #[gtk::test]
     fn code_block_known_language_uses_source_buffer_with_syntax_highlighting() {
         let md = "```rust\nfn main() {}\n```";
-        let (widget, _) = render_markdown_to_textview(md, None);
+        let (widget, _) = render_markdown(md, None);
 
         let buffer = first_source_buffer(&widget);
         assert!(buffer.is_highlight_syntax());
@@ -1592,7 +1964,7 @@ mod tests {
     #[gtk::test]
     fn code_block_alias_language_resolves_before_lookup() {
         let md = "```js\nconsole.log('ok');\n```";
-        let (widget, _) = render_markdown_to_textview(md, None);
+        let (widget, _) = render_markdown(md, None);
 
         assert_eq!(normalize_language_alias("js"), "js");
 
@@ -1605,7 +1977,7 @@ mod tests {
     #[gtk::test]
     fn code_block_full_javascript_fence_resolves_to_js_language() {
         let md = "```javascript\nconsole.log('ok');\n```";
-        let (widget, _) = render_markdown_to_textview(md, None);
+        let (widget, _) = render_markdown(md, None);
 
         let buffer = first_source_buffer(&widget);
         let language = buffer.language().expect("expected resolved language");
@@ -1633,7 +2005,7 @@ mod tests {
     #[gtk::test]
     fn code_block_unknown_language_disables_syntax_highlighting() {
         let md = "```totally-unknown\nvalue\n```";
-        let (widget, _) = render_markdown_to_textview(md, None);
+        let (widget, _) = render_markdown(md, None);
 
         let buffer = first_source_buffer(&widget);
         assert!(buffer.language().is_none());
@@ -1643,7 +2015,7 @@ mod tests {
     #[gtk::test]
     fn code_block_without_language_disables_syntax_highlighting() {
         let md = "```\nvalue\n```";
-        let (widget, _) = render_markdown_to_textview(md, None);
+        let (widget, _) = render_markdown(md, None);
 
         let buffer = first_source_buffer(&widget);
         assert!(buffer.language().is_none());
@@ -1653,20 +2025,25 @@ mod tests {
     #[gtk::test]
     fn code_block_inside_blockquote_widget_has_blockquote_class() {
         let md = "> ```rust\n> fn main() {}\n> ```";
-        let (widget, _) = render_markdown_to_textview(md, None);
-        let code_blocks = find_widgets_with_css_class(&widget, "code-block-widget");
+        let (widget, _) = render_markdown(md, None);
+        let quotes = find_widgets_with_css_class(&widget, "markdown-blockquote");
+
+        assert_eq!(
+            quotes.len(),
+            1,
+            "expected exactly one grouped .markdown-blockquote container, got: {}",
+            quotes.len()
+        );
         assert!(
-            code_blocks
-                .iter()
-                .any(|w| w.has_css_class("markdown-blockquote")),
-            "expected code block inside blockquote to carry markdown-blockquote class"
+            !find_widgets_of_type::<sourceview5::View>(&quotes[0]).is_empty(),
+            "blockquote group container should contain a code view"
         );
     }
 
     #[gtk::test]
     fn code_block_widget_uses_read_only_textview_and_horizontal_scroller() {
         let md = "```\nvery long line very long line very long line\n```";
-        let (widget, _) = render_markdown_to_textview(md, None);
+        let (widget, _) = render_markdown(md, None);
         let scrollers = find_widgets_of_type::<gtk::ScrolledWindow>(&widget);
         let views = find_widgets_of_type::<gtk::TextView>(&widget);
 
@@ -1686,7 +2063,7 @@ mod tests {
     #[gtk::test]
     fn code_block_widget_assigns_all_expected_css_classes() {
         let md = "```rust\nfn main() {}\n```";
-        let (widget, _) = render_markdown_to_textview(md, None);
+        let (widget, _) = render_markdown(md, None);
 
         assert!(
             !find_widgets_with_css_class(&widget, "code-block-widget").is_empty(),
@@ -1706,30 +2083,69 @@ mod tests {
         );
     }
 
-    // ── Theme palette ───────────────────────────────────────────────
+    // ── Theme palette / prose path removal ──────────────────────────
 
     #[gtk::test]
-    fn markdown_tag_table_no_longer_defines_code_block_or_code_lang_tags() {
-        let table = create_tag_table();
-        assert!(table.lookup("code-block").is_none());
-        assert!(table.lookup("code-lang").is_none());
+    fn rendered_prose_does_not_create_markdown_textview() {
+        let (widget, _) = render_markdown("Plain **markdown**", None);
+        assert!(find_widgets_of_type::<gtk::TextView>(&widget).is_empty());
     }
 
     #[gtk::test]
-    fn theme_palette_update_still_updates_remaining_theme_dependent_tags() {
-        let table = create_tag_table();
-        apply_theme_palette_to_tags(&table, false);
-        let light = table
-            .lookup("task-unchecked")
-            .expect("task-unchecked tag exists")
-            .foreground_rgba();
+    fn heading_does_not_emit_textview() {
+        let (widget, _) = render_markdown("# Title\n\nBody paragraph", None);
+        assert!(
+            find_widgets_of_type::<gtk::TextView>(&widget).is_empty(),
+            "heading must not produce a GtkTextView segment"
+        );
+    }
 
-        apply_theme_palette_to_tags(&table, true);
-        let dark = table
-            .lookup("task-unchecked")
-            .expect("task-unchecked tag exists")
-            .foreground_rgba();
+    #[gtk::test]
+    fn code_block_still_uses_source_buffer() {
+        let (widget, _) = render_markdown("```rust\nfn main() {}\n```", None);
+        let buffer = first_source_buffer(&widget);
+        assert!(buffer.language().is_some());
+    }
 
-        assert_ne!(light, dark);
+    // ── Measurement regression tests ───────────────────────────────
+
+    #[gtk::test]
+    fn wrapping_label_measurement_changes_synchronously_with_width() {
+        let label = make_prose_label(
+            "This is a long markdown paragraph that should wrap differently when measured at narrow and wide widths.",
+        );
+
+        let (_min_narrow, natural_narrow, _min_base, _natural_base) =
+            label.measure(gtk::Orientation::Vertical, 120);
+        let (_min_wide, natural_wide, _min_base, _natural_base) =
+            label.measure(gtk::Orientation::Vertical, 480);
+
+        assert!(
+            natural_narrow > natural_wide,
+            "narrow label should need more height: narrow={natural_narrow}, wide={natural_wide}"
+        );
+    }
+
+    #[gtk::test]
+    fn rendered_prose_height_changes_immediately_after_content_swap() {
+        let host = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        let (short, _) = render_markdown("Short paragraph.", None);
+        host.append(&short);
+
+        let (_min_short, natural_short, _min_base, _natural_base) =
+            host.measure(gtk::Orientation::Vertical, 260);
+
+        host.remove(&short);
+        let long_text = "Long paragraph. ".repeat(80);
+        let (long, _) = render_markdown(&long_text, None);
+        host.append(&long);
+
+        let (_min_long, natural_long, _min_base, _natural_base) =
+            host.measure(gtk::Orientation::Vertical, 260);
+
+        assert!(
+            natural_long > natural_short,
+            "height should update synchronously after swap: short={natural_short}, long={natural_long}"
+        );
     }
 }

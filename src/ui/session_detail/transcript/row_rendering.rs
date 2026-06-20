@@ -40,7 +40,7 @@ pub(crate) fn render_content(
     let mut match_count = 0usize;
 
     if role == Role::Assistant {
-        let (widget, count) = markdown::render_markdown_to_textview(content, highlight_query);
+        let (widget, count) = markdown::render_markdown(content, highlight_query);
         match_count = count;
         container.append(&widget);
     } else if let Some(query) = highlight_query {
