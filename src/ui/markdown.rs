@@ -821,7 +821,7 @@ fn span_open(style: &InlineStyle) -> &'static str {
         InlineStyle::Heading(pulldown_cmark::HeadingLevel::H2) => {
             "<span weight=\"bold\" size=\"large\">"
         }
-        InlineStyle::Heading(_) => "<span weight=\"bold\" font_scale=\"1.1\">",
+        InlineStyle::Heading(_) => "<span weight=\"bold\" size=\"110%\">",
         InlineStyle::Dim => "<span alpha=\"65%\">",
         InlineStyle::TaskChecked => "<span foreground=\"#2ec27e\">",
         InlineStyle::TaskUnchecked => "<span alpha=\"65%\">",
@@ -1413,6 +1413,20 @@ mod tests {
         assert!(
             markup.contains("<span weight=\"bold\" size=\"large\">Subtitle</span>"),
             "got: {markup}"
+        );
+    }
+
+    #[gtk::test]
+    fn label_heading_3_markup_uses_valid_pango_size() {
+        let markup = first_prose_label_markup("### Section");
+
+        assert!(
+            markup.contains("<span weight=\"bold\" size=\"110%\">Section</span>"),
+            "got: {markup}"
+        );
+        assert!(
+            !markup.contains("font_scale"),
+            "Pango markup does not accept numeric font_scale values: {markup}"
         );
     }
 
