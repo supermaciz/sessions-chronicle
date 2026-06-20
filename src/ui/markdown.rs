@@ -355,16 +355,7 @@ impl MarkdownBufferWriter {
                 // If a list opens while we're inside a list item, the current
                 // item's inline content is complete — emit it as a widget now
                 // before descending into the nested list.
-                if let Some(item) = self.current_list_item.take() {
-                    let (widget, count) = make_list_item_widget(
-                        &item.marker,
-                        &item.runs,
-                        item.depth,
-                        self.highlight_query.as_deref(),
-                    );
-                    self.prose_match_count += count;
-                    self.append_segment(widget);
-                }
+                self.flush_current_list_item();
                 self.list_stack.push(ListFrame {
                     ordered: start.is_some(),
                     next_index: start.unwrap_or(1) as usize,
@@ -416,6 +407,20 @@ impl MarkdownBufferWriter {
         }
     }
 
+    /// Emit the in-progress list item as a widget segment, if any.
+    fn flush_current_list_item(&mut self) {
+        if let Some(item) = self.current_list_item.take() {
+            let (widget, count) = make_list_item_widget(
+                &item.marker,
+                &item.runs,
+                item.depth,
+                self.highlight_query.as_deref(),
+            );
+            self.prose_match_count += count;
+            self.append_segment(widget);
+        }
+    }
+
     fn handle_end_tag(&mut self, tag_end: TagEnd) {
         match tag_end {
             TagEnd::Emphasis => {
@@ -456,16 +461,7 @@ impl MarkdownBufferWriter {
                 self.list_stack.pop();
             }
             TagEnd::Item => {
-                if let Some(item) = self.current_list_item.take() {
-                    let (widget, count) = make_list_item_widget(
-                        &item.marker,
-                        &item.runs,
-                        item.depth,
-                        self.highlight_query.as_deref(),
-                    );
-                    self.prose_match_count += count;
-                    self.append_segment(widget);
-                }
+                self.flush_current_list_item();
             }
             TagEnd::Table => {
                 self.in_table = false;
