@@ -346,9 +346,7 @@ impl MarkdownBufferWriter {
             }
             Tag::Paragraph => {}
             Tag::Heading { level, .. } => {
-                self.block_separator();
-                let heading_tag = Self::heading_tag_name(level);
-                self.tag_stack.push(heading_tag);
+                self.finish_prose_block();
                 self.style_stack.push(InlineStyle::Heading(level));
                 self.current_block = Some(ProseBlock::default());
             }
@@ -452,9 +450,6 @@ impl MarkdownBufferWriter {
                 self.pop_style(
                     |style| matches!(style, InlineStyle::Heading(existing) if *existing == level),
                 );
-                self.insert_with_tags("\n", &[]);
-                self.has_content = true;
-                self.pop_tag(Self::heading_tag_name(level));
             }
             TagEnd::CodeBlock => self.finish_code_block(),
             TagEnd::List(_) => {
@@ -972,6 +967,11 @@ fn make_list_item_widget(
 
     let marker_label = gtk::Label::new(Some(marker));
     marker_label.add_css_class("markdown-list-marker");
+    if marker == "☑" {
+        marker_label.add_css_class("markdown-task-checked");
+    } else if marker == "☐" {
+        marker_label.add_css_class("markdown-task-unchecked");
+    }
     marker_label.set_halign(gtk::Align::End);
     marker_label.set_valign(gtk::Align::Start);
     marker_label.set_width_chars(3);
@@ -2079,6 +2079,15 @@ mod tests {
     fn rendered_prose_does_not_create_markdown_textview() {
         let (widget, _) = render_markdown("Plain **markdown**", None);
         assert!(find_widgets_of_type::<gtk::TextView>(&widget).is_empty());
+    }
+
+    #[gtk::test]
+    fn heading_does_not_emit_textview() {
+        let (widget, _) = render_markdown("# Title\n\nBody paragraph", None);
+        assert!(
+            find_widgets_of_type::<gtk::TextView>(&widget).is_empty(),
+            "heading must not produce a GtkTextView segment"
+        );
     }
 
     #[gtk::test]

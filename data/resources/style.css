@@ -77,6 +77,11 @@
   opacity: 0.75;
 }
 
+.markdown-task-checked {
+  color: #2ec27e;
+}
+
+
 .markdown-list-content {
   margin: 0;
 }
