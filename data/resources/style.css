@@ -81,6 +81,9 @@
   color: #2ec27e;
 }
 
+.markdown-task-unchecked {
+  opacity: 0.5;
+}
 
 .markdown-list-content {
   margin: 0;
