@@ -1,7 +1,7 @@
 # Sessions Chronicle - Project Status
 
-Last updated: 2026-05-03
-Branch snapshot: `main` (`v0.4.8`)
+Last updated: 2026-06-21
+Branch snapshot: `main` (`v0.7.1`)
 
 ## Current Product State
 
@@ -23,6 +23,12 @@ Sessions Chronicle is a GNOME desktop app that indexes local AI coding assistant
 - Consecutive tool calls in session detail grouped into collapsible bursts (`DisplayToolBurst`), reducing visual clutter and preserving page-boundary correctness
 - Explicit `id:` search filter in session list for direct session ID lookup
 - Responsiveness instrumentation for session detail rendering with row-build breakdown metrics
+- Session detail transcript rendered with a typed `gtk::ListView` for recycled, fluid scrolling; prose rendered with composable `GtkLabel` segments instead of `GtkTextView`
+- Date filter pill in the session list (Today / Yesterday / custom range) alongside assistant and project filters
+- Streamlined sidebar split into two unlabeled filter blocks (assistants + pins, projects)
+- Session summary moved into a header-bar popover (`speaker-notes` button) instead of an inline header block
+- Subagent support for Mistral Vibe (child sessions indexed from `<session>/agents/`) and refreshed Codex subagent parsing (`collab_resume_end` + response-item subagents)
+- Expanded tool call classification: Plan, Skill, and UserInput categories plus snake_case and assistant-specific tool name variants
 
 ## Terminology
 
@@ -31,6 +37,24 @@ Sessions Chronicle is a GNOME desktop app that indexes local AI coding assistant
 - `tool` may still appear as a literal historical storage or schema name, such as the `sessions.tool` column.
 
 ## Recently Landed Work
+
+### Since `v0.4.8` (`v0.5.0` → `v0.7.1`)
+
+- Prose rendering rewrite: replaced `GtkTextView` markdown prose with composable `GtkLabel` segments, with correct rendering of block content after list item text (#173, #174)
+- Session detail transcript migrated to a typed `gtk::ListView` for recycled rows and fluid scrolling; transcript made directly scrollable and batching tuned (#152, #151)
+- Session detail module restructured for readability and reorganized into a `ui/session_detail/` directory with per-row modules (#161, #169)
+- Date filter pill for session browsing with Today/Yesterday/custom range options (#157, plus Yesterday follow-up)
+- Sidebar simplified into two unlabeled filter blocks (#158)
+- Session summary moved into a header-bar popover with width constraints and a `speaker-notes` icon (#164)
+- Mistral Vibe subagent support and refreshed session formats; child sessions indexed from `<session>/agents/` (#166)
+- Codex subagent parser update for `collab_resume_end` and response-item subagents (#153)
+- Tool call classification expanded with Plan, Skill, and UserInput categories and snake_case / assistant-specific name variants
+- Tool inspector fixes: pinned sidebar so navigation doesn't open an empty pane, reset scroll on selection change, and removal of the always-empty Inner Tools section (#165)
+- FTS5 storage reworked: `messages` is now a b-tree source table backed by an external-content `messages_fts` index (schema v13)
+- Performance: batch post-indexing session list inserts and preserve list scroll position after indexing (#148)
+- DRY refactors: shared SQL filter helpers, shared tool call row header, shared reasoning pill builder, and a `local_today_midday_utc` test helper
+
+### Earlier (through `v0.4.8`)
 
 - Self-hosted Flatpak repository workflow: signed repository published via GitHub Pages at `https://sessions-chronicle.maciz.dev/flatpak/`; stable App ID `dev.maciz.sessionschronicle` (#123)
 - Astro landing page at `https://sessions-chronicle.maciz.dev` with screenshots and feature overview (#125)
@@ -86,10 +110,13 @@ sessions-chronicle/
 |  |- project_resolver.rs        # git-root and worktree-aware project detection
 |  |- session_sources.rs         # source path resolution + --sessions-dir behavior
 |  |- database/                  # schema, search, indexing, analytics queries
-|  |- parsers/                   # per-assistant parsers
+|  |- parsers/                   # per-assistant parsers (claude_code/, codex, opencode/, mistral_vibe)
 |  |- models/                    # sessions/messages/tool calls/subagents/token usage
 |  |- ui/                        # list/detail/sidebar/inspector/analytics components
+|  |  |- session_detail/         # typed-ListView transcript + per-row modules
 |  |  |- tool_renderers/         # per-tool-call type renderers
+|  |  |- date_pill.rs            # session-list date filter pill
+|  |  |- activity_bar.rs         # session activity indicators
 |  |  `- modals/                 # dialogs (about, preferences, shortcuts)
 |  `- utils/terminal.rs          # terminal detection/spawn for resume
 |- data/resources/               # UI templates and CSS
@@ -99,7 +126,16 @@ sessions-chronicle/
 
 ## Database Snapshot
 
-Current migration level is `PRAGMA user_version = 8`.
+Current migration level is `PRAGMA user_version = 14`.
+
+Migrations since v8:
+
+- v9 — `reasoning_attachments` side table; clears `file_fingerprints` to re-index
+- v10 — clears `file_fingerprints` to rebuild transcripts after parser changes
+- v11 — `subagents.agent_id` (nullable); clears `file_fingerprints`
+- v12 — session-list ordering indexes for faster startup/filter reloads
+- v13 — replaces the FTS5-virtual `messages` table with a b-tree source table backed by an external-content `messages_fts` index; clears `file_fingerprints`
+- v14 — clears `file_fingerprints` to re-index after Mistral Vibe subagent support; adds an index on `sessions.file_path` for efficient Vibe subtree pruning
 
 ### Core Tables
 
@@ -112,14 +148,16 @@ Current migration level is `PRAGMA user_version = 8`.
   - `pinned_at` nullable timestamp for favorite pinning (added in v8)
 - `projects`
   - canonical project records (`id`, `path`, `name`); path is the git root, name is the directory basename
-- `messages` (FTS5 virtual table)
-  - searchable message content and unindexed metadata (`session_id`, `message_index`, `role`, `timestamp`, `model`)
+- `messages` + `messages_fts`
+  - `messages` is a b-tree source table with message content and metadata (`session_id`, `message_index`, `role`, `timestamp`, `model`); `messages_fts` is an external-content FTS5 index over it (changed in v13)
 - `transcript_items`
   - ordered mixed transcript timeline (messages, tool calls, subagents)
 - `tool_calls`
   - normalized tool call records plus payload/result metadata
 - `subagents`
-  - subagent metadata and optional child session linkage
+  - subagent metadata and optional child session linkage; `agent_id` nullable (added in v11)
+- `reasoning_attachments`
+  - per-message reasoning payloads kept out of the FTS path (added in v9)
 - `file_fingerprints`
   - incremental indexing state (`file_path`, `mtime_ns`, `size`)
 
@@ -132,7 +170,15 @@ Current migration level is `PRAGMA user_version = 8`.
 
 ## Development Workflow
 
-Primary local loop:
+Primary local loop (Meson, faster inner loop):
+
+```bash
+meson setup builddir -Dprofile=development --prefix="$HOME/.local"
+meson compile -C builddir && meson install -C builddir
+"$HOME/.local/bin/sessions-chronicle" --sessions-dir tests/fixtures
+```
+
+Flatpak loop (closest to the packaged runtime; use to verify packaging):
 
 ```bash
 flatpak-builder --user flatpak_app build-aux/dev.maciz.sessionschronicle.Devel.json --force-clean
@@ -149,7 +195,7 @@ cargo test --all --no-fail-fast
 
 ## Known Gaps / Active Exploration
 
-- Markdown rendering still has practical GTK constraints (for example, link interactivity remains limited)
+- Markdown prose now renders via composable `GtkLabel` segments; links are shown with a dimmed URL suffix rather than clickable hyperlinks
 - Indexing diagnostics now include per-source details and recent errors via the Indexing Status dialog; richer remediation actions remain follow-up work
 - Ongoing UX refinements continue under newer plans in `docs/explorations/`
 

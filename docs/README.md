@@ -95,7 +95,7 @@ All mockups are SVG files in the `mockups/` subfolder (open in browser or image 
 
 ---
 
-**Last Updated**: 2026-03-25
+**Last Updated**: 2026-06-21
 
-**Current Status**: Analytics workspace, project filtering, token usage display, incremental indexing, and indexing diagnostics are implemented.  
-**Next Milestone**: Ongoing UX/documentation polish and follow-up refinements tracked in newer files under `docs/explorations/`, including deeper indexing diagnostics.
+**Current Status**: `v0.7.1`. Analytics workspace, project filtering, token usage display, incremental indexing, and indexing diagnostics are implemented. Recent work: typed-ListView transcript with `GtkLabel` prose rendering, date filter pill, header-bar session summary popover, Mistral Vibe subagents, and an external-content FTS5 search index (schema `user_version = 14`).  
+**Next Milestone**: Ongoing UX/documentation polish and follow-up refinements tracked in newer files under `docs/explorations/`.

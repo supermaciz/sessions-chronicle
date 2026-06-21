@@ -52,11 +52,13 @@ Meson is the faster day-to-day loop because it reuses the local build tree inste
 
 This indexes sessions from all supported AI assistants:
 - Claude Code: `~/.claude/projects/`
-- OpenCode: `~/.local/share/opencode/storage/`
+- OpenCode: `~/.local/share/opencode/storage/` — reads `opencode.db`
+  (or `opencode-*.db`) when present, falling back to legacy JSON storage
 - Codex active sessions: `~/.codex/sessions/`
 - Codex archived sessions: `~/.codex/archived_sessions/` (not yet indexed;
   archived rollouts can be `*.jsonl.zst`)
-- Mistral Vibe: `~/.vibe/logs/session/`
+- Mistral Vibe: `~/.vibe/logs/session/` (or `$VIBE_HOME/logs/session/` when
+  `VIBE_HOME` is set); subagent child sessions live under `<session>/agents/`
 
 ## Using Test Fixtures
 
@@ -283,4 +285,4 @@ Two Flatpak manifests exist in `build-aux/`:
 
 ---
 
-**Last Updated**: 2026-03-25
+**Last Updated**: 2026-06-21

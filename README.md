@@ -18,6 +18,7 @@ and pick up where you left off.
 
 - Full-text search across all conversations (SQLite FTS5)
 - Sidebar filters by project and assistant with keyword search
+- Filter the session list by date (Today, Yesterday, or a custom range)
 - Markdown rendering (code blocks, tables, task lists, blockquotes)
 - Expand inline tool calls and drill down into subagents; consecutive calls are grouped and collapsible
 - Pin favorite sessions
