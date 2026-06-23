@@ -1,0 +1,103 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="720" height="640" font-family="Cantarell, sans-serif" viewBox="0 0 720 640">
+  <rect width="720" height="640" fill="#fafafb"/>
+
+  <!-- Title -->
+  <text x="32" y="40" font-size="22" font-weight="bold" fill="#1a1a1a">One knob, not two: a per-message "Select raw text" toggle</text>
+  <text x="32" y="62" font-size="13" fill="#5e5c64">Kill the scope axis. The disable axis isn't a setting &#8212; it's a selection escape hatch, scoped to the row you're fighting.</text>
+
+  <!-- ===================== PANEL 1 ===================== -->
+  <text x="32" y="100" font-size="15" font-weight="bold" fill="#3d3846">&#9312;  What the markdown tree actually does to selection</text>
+
+  <!-- rendered (fragmented) -->
+  <rect x="32" y="116" width="320" height="226" rx="10" fill="#ffffff" stroke="#d6d4d2"/>
+  <text x="48" y="138" font-size="12" font-weight="bold" fill="#3d3846">render_markdown() &#8594; widget tree</text>
+
+  <!-- island: paragraph label -->
+  <rect x="48" y="150" width="288" height="34" rx="5" fill="#ffffff" stroke="#3584e4" stroke-dasharray="3 3"/>
+  <rect x="54" y="158" width="120" height="9" rx="2" fill="#3584e4" opacity="0.35"/>
+  <text x="54" y="180" font-size="10" fill="#5e5c64">GtkLabel &#183; selection island A</text>
+
+  <!-- island: code block -->
+  <rect x="48" y="190" width="288" height="48" rx="5" fill="#f6f5f4" stroke="#3584e4" stroke-dasharray="3 3"/>
+  <rect x="54" y="200" width="200" height="8" rx="2" fill="#1a1a1a" opacity="0.5"/>
+  <rect x="54" y="214" width="150" height="8" rx="2" fill="#1a1a1a" opacity="0.5"/>
+  <text x="54" y="233" font-size="10" fill="#5e5c64">GtkSourceView in ScrolledWindow &#183; island B</text>
+
+  <!-- island: list item label -->
+  <rect x="48" y="244" width="288" height="34" rx="5" fill="#ffffff" stroke="#3584e4" stroke-dasharray="3 3"/>
+  <rect x="54" y="252" width="160" height="9" rx="2" fill="#3584e4" opacity="0.35"/>
+  <text x="54" y="274" font-size="10" fill="#5e5c64">GtkLabel (list item) &#183; island C</text>
+
+  <!-- island: table -->
+  <rect x="48" y="284" width="288" height="42" rx="5" fill="#ffffff" stroke="#3584e4" stroke-dasharray="3 3"/>
+  <rect x="54" y="292" width="276" height="1" fill="#d6d4d2"/>
+  <rect x="54" y="304" width="276" height="1" fill="#d6d4d2"/>
+  <text x="54" y="320" font-size="10" fill="#5e5c64">GtkGrid in ScrolledWindow &#183; island D</text>
+
+  <text x="48" y="338" font-size="10" fill="#c01c28">Drag-select stops at each border. No whole-message copy.</text>
+
+  <!-- arrow -->
+  <path d="M362 228 L398 228" stroke="#5e5c64" stroke-width="2" marker-end="url(#a)"/>
+  <text x="364" y="220" font-size="10" fill="#5e5c64">toggle</text>
+
+  <!-- raw (one island) -->
+  <rect x="408" y="116" width="280" height="226" rx="10" fill="#ffffff" stroke="#d6d4d2"/>
+  <text x="424" y="138" font-size="12" font-weight="bold" fill="#3d3846">raw branch &#8594; one GtkLabel</text>
+
+  <rect x="424" y="150" width="248" height="176" rx="5" fill="#ffffff" stroke="#33d17a" stroke-width="2"/>
+  <rect x="430" y="160" width="220" height="9" rx="2" fill="#33d17a" opacity="0.40"/>
+  <rect x="430" y="174" width="236" height="9" rx="2" fill="#33d17a" opacity="0.40"/>
+  <rect x="430" y="188" width="180" height="9" rx="2" fill="#33d17a" opacity="0.40"/>
+  <rect x="430" y="206" width="236" height="9" rx="2" fill="#33d17a" opacity="0.40"/>
+  <rect x="430" y="220" width="210" height="9" rx="2" fill="#33d17a" opacity="0.40"/>
+  <rect x="430" y="238" width="236" height="9" rx="2" fill="#33d17a" opacity="0.40"/>
+  <rect x="430" y="252" width="160" height="9" rx="2" fill="#33d17a" opacity="0.40"/>
+  <text x="430" y="282" font-size="10" fill="#5e5c64">set_selectable(true), monospace, set_text(raw)</text>
+  <text x="430" y="312" font-size="10" fill="#26a269">One continuous selection. Ctrl+A, drag, copy &#8212; all of it.</text>
+
+  <defs>
+    <marker id="a" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+      <path d="M0 0 L6 3 L0 6 z" fill="#5e5c64"/>
+    </marker>
+  </defs>
+
+  <!-- ===================== PANEL 2 ===================== -->
+  <text x="32" y="382" font-size="15" font-weight="bold" fill="#3d3846">&#9313;  Where the control lives &#8212; on the row, not in Preferences</text>
+
+  <!-- message row mock -->
+  <rect x="32" y="396" width="656" height="210" rx="10" fill="#ffffff" stroke="#d6d4d2"/>
+
+  <!-- role header line -->
+  <circle cx="56" cy="424" r="10" fill="#3584e4" opacity="0.18"/>
+  <text x="56" y="428" font-size="11" font-weight="bold" fill="#3584e4" text-anchor="middle">A</text>
+  <text x="76" y="421" font-size="12" font-weight="bold" fill="#1a1a1a">Assistant</text>
+  <text x="146" y="421" font-size="11" fill="#5e5c64">claude-opus-4</text>
+
+  <!-- hover action: per-row toggle button -->
+  <rect x="520" y="410" width="156" height="26" rx="13" fill="#f6f5f4" stroke="#d6d4d2"/>
+  <rect x="526" y="416" width="14" height="14" rx="3" fill="#3584e4" opacity="0.20"/>
+  <text x="528" y="427" font-size="11" fill="#3584e4">&#10003;</text>
+  <text x="548" y="427" font-size="11" fill="#3d3846">Select raw text</text>
+
+  <text x="490" y="452" font-size="10" fill="#5e5c64">GtkToggleButton, flat, revealed on row hover/focus &#8212; near the eye, near the content</text>
+
+  <!-- rendered content preview -->
+  <rect x="56" y="462" width="300" height="120" rx="6" fill="#fbfafa" stroke="#ededeb"/>
+  <text x="68" y="482" font-size="10" font-weight="bold" fill="#5e5c64">DEFAULT &#183; rendered (4 islands)</text>
+  <rect x="68" y="492" width="160" height="8" rx="2" fill="#3584e4" opacity="0.30"/>
+  <rect x="68" y="508" width="276" height="26" rx="4" fill="#f6f5f4"/>
+  <rect x="74" y="516" width="180" height="6" rx="2" fill="#1a1a1a" opacity="0.45"/>
+  <rect x="68" y="544" width="200" height="8" rx="2" fill="#3584e4" opacity="0.30"/>
+  <rect x="68" y="560" width="150" height="8" rx="2" fill="#3584e4" opacity="0.30"/>
+
+  <rect x="372" y="462" width="300" height="120" rx="6" fill="#fbfafa" stroke="#ededeb"/>
+  <text x="384" y="482" font-size="10" font-weight="bold" fill="#26a269">TOGGLED &#183; raw (1 island, selected)</text>
+  <rect x="384" y="492" width="276" height="80" rx="4" fill="#eafaf0" stroke="#33d17a"/>
+  <rect x="392" y="502" width="250" height="6" rx="2" fill="#33d17a" opacity="0.5"/>
+  <rect x="392" y="514" width="260" height="6" rx="2" fill="#33d17a" opacity="0.5"/>
+  <rect x="392" y="526" width="220" height="6" rx="2" fill="#33d17a" opacity="0.5"/>
+  <rect x="392" y="538" width="255" height="6" rx="2" fill="#33d17a" opacity="0.5"/>
+  <rect x="392" y="550" width="190" height="6" rx="2" fill="#33d17a" opacity="0.5"/>
+
+  <text x="32" y="628" font-size="11" fill="#5e5c64">Mechanically: the toggle flips one row's render_content() branch and re-runs it on that container only. No ListView rebuild, no GSettings, no parse cost on the other 800 rows.</text>
+</svg>

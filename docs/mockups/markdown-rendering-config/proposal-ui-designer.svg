@@ -1,0 +1,89 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="720" height="760" viewBox="0 0 720 760" font-family="Cantarell, sans-serif">
+  <rect width="720" height="760" fill="#fafafb"/>
+
+  <!-- Title -->
+  <text x="36" y="44" font-size="22" font-weight="bold" fill="#1a1a1a">Markdown rendering — Preferences-only configuration</text>
+  <text x="36" y="68" font-size="13" fill="#5e5c64">Two settings in the existing General page. No header-bar controls. The "Off" state is a single selectable label for clean whole-message copy.</text>
+
+  <!-- ============ PANEL 1: Preferences ============ -->
+  <text x="36" y="108" font-size="15" font-weight="bold" fill="#3d3846">① Preferences › General › Transcript</text>
+
+  <!-- Preferences group card -->
+  <rect x="36" y="124" width="648" height="172" rx="12" fill="#ffffff" stroke="#d6d4d2" stroke-width="1"/>
+
+  <!-- Group title -->
+  <text x="52" y="150" font-size="12" font-weight="bold" fill="#5e5c64" letter-spacing="0.5">TRANSCRIPT</text>
+
+  <!-- Row A: SwitchRow - Render markdown -->
+  <rect x="52" y="162" width="616" height="56" rx="8" fill="#ffffff"/>
+  <text x="68" y="187" font-size="14" fill="#1a1a1a">Render Markdown</text>
+  <text x="68" y="205" font-size="12" fill="#5e5c64">Off shows raw text you can select and copy as one block</text>
+  <!-- switch ON -->
+  <rect x="600" y="178" width="52" height="28" rx="14" fill="#3584e4"/>
+  <circle cx="638" cy="192" r="11" fill="#ffffff"/>
+
+  <!-- divider -->
+  <rect x="52" y="220" width="616" height="1" fill="#ededed"/>
+
+  <!-- Row B: ComboRow - Apply to -->
+  <rect x="52" y="222" width="616" height="60" rx="8" fill="#ffffff"/>
+  <text x="68" y="248" font-size="14" fill="#1a1a1a">Apply To</text>
+  <text x="68" y="266" font-size="12" fill="#5e5c64">Which roles get rich formatting</text>
+  <!-- combo value -->
+  <text x="588" y="257" font-size="13" fill="#5e5c64" text-anchor="end">Assistant only</text>
+  <path d="M 604 250 l 5 5 l 5 -5" stroke="#5e5c64" stroke-width="1.6" fill="none" stroke-linecap="round"/>
+
+  <text x="36" y="318" font-size="11.5" fill="#5e5c64">Combo values: "Assistant only" (default) · "Everyone". Row B is insensitive (dimmed) while Render Markdown is Off.</text>
+
+  <!-- ============ PANEL 2: before/after ============ -->
+  <text x="36" y="362" font-size="15" font-weight="bold" fill="#3d3846">② Effect on a transcript message</text>
+
+  <!-- BEFORE: markdown ON, fragmented selection -->
+  <text x="36" y="392" font-size="12.5" font-weight="bold" fill="#5e5c64">Render Markdown = On (current behaviour)</text>
+  <rect x="36" y="402" width="312" height="232" rx="12" fill="#ffffff" stroke="#d6d4d2" stroke-width="1"/>
+
+  <!-- paragraph 1 (GtkLabel) with partial selection highlight -->
+  <rect x="52" y="418" width="220" height="16" fill="#cfe3fb"/>
+  <text x="56" y="431" font-size="12.5" fill="#1a1a1a">Here is the deployment plan</text>
+  <text x="276" y="431" font-size="12.5" fill="#1a1a1a">.</text>
+  <!-- selection stops at block boundary -->
+
+  <!-- list items (separate GtkLabels) -->
+  <text x="60" y="458" font-size="12.5" fill="#1a1a1a">•  build the image</text>
+  <text x="60" y="478" font-size="12.5" fill="#1a1a1a">•  push to registry</text>
+
+  <!-- code block (GtkSourceView) -->
+  <rect x="52" y="492" width="280" height="48" rx="6" fill="#f6f5f4" stroke="#e1dfdd" stroke-width="1"/>
+  <text x="64" y="513" font-size="11.5" font-family="monospace" fill="#3d3846">$ flatpak-builder build \</text>
+  <text x="64" y="530" font-size="11.5" font-family="monospace" fill="#3d3846">    --force-clean</text>
+
+  <!-- callout -->
+  <rect x="52" y="552" width="280" height="68" rx="8" fill="#fdf3e7" stroke="#e8c89a" stroke-width="1"/>
+  <text x="64" y="573" font-size="11.5" font-weight="bold" fill="#a05a00">Selection island problem</text>
+  <text x="64" y="591" font-size="11" fill="#7a4a00">Each block is its own widget. A drag</text>
+  <text x="64" y="607" font-size="11" fill="#7a4a00">selects one paragraph — never the whole message.</text>
+
+  <!-- AFTER: markdown OFF, single label fully selected -->
+  <text x="372" y="392" font-size="12.5" font-weight="bold" fill="#5e5c64">Render Markdown = Off (raw / selectable)</text>
+  <rect x="372" y="402" width="312" height="232" rx="12" fill="#ffffff" stroke="#d6d4d2" stroke-width="1"/>
+
+  <!-- one continuous selection across whole message -->
+  <rect x="388" y="416" width="248" height="124" rx="3" fill="#cfe3fb"/>
+  <text x="392" y="431" font-size="12.5" fill="#1a1a1a">Here is the deployment plan.</text>
+  <text x="392" y="451" font-size="12.5" fill="#1a1a1a">- build the image</text>
+  <text x="392" y="471" font-size="12.5" fill="#1a1a1a">- push to registry</text>
+  <text x="392" y="491" font-size="11.5" font-family="monospace" fill="#3d3846">```</text>
+  <text x="392" y="508" font-size="11.5" font-family="monospace" fill="#3d3846">$ flatpak-builder build \</text>
+  <text x="392" y="525" font-size="11.5" font-family="monospace" fill="#3d3846">    --force-clean</text>
+
+  <rect x="388" y="552" width="280" height="68" rx="8" fill="#eaf4ec" stroke="#a3d3ad" stroke-width="1"/>
+  <text x="400" y="573" font-size="11.5" font-weight="bold" fill="#1c6b2e">One GtkLabel</text>
+  <text x="400" y="591" font-size="11" fill="#2a6b38">A single drag selects the entire message,</text>
+  <text x="400" y="607" font-size="11" fill="#2a6b38">markdown source intact, ready to copy.</text>
+
+  <!-- ============ PANEL 3: integration note ============ -->
+  <text x="36" y="672" font-size="15" font-weight="bold" fill="#3d3846">③ Integration point</text>
+  <rect x="36" y="684" width="648" height="56" rx="10" fill="#ffffff" stroke="#d6d4d2" stroke-width="1"/>
+  <text x="52" y="708" font-size="12" font-family="monospace" fill="#3d3846">render_content(container, content, role, highlight_query)  →  row_rendering.rs:30</text>
+  <text x="52" y="728" font-size="11.5" fill="#5e5c64">Gate render_markdown() on two GSettings keys read once per render; both keys re-render open rows reactively.</text>
+</svg>
