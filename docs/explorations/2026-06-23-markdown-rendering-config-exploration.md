@@ -1,9 +1,9 @@
 # Markdown rendering — configuration (scope + enable/disable) — Exploration
 
 **Date**: 2026-06-23  
-**Status**: Open — three proposals, awaiting decision  
+**Status**: **Decided — Mii Beta (per-row "Select raw text" toggle); scope axis dropped.** See [Decision](#decision).  
 **View**: `SessionDetail` transcript (`src/ui/session_detail/transcript/`)  
-**Renderer**: `src/ui/markdown.rs`  
+**Renderer**: `src/ui/markdown.rs`
 
 ---
 
@@ -38,6 +38,36 @@ All three converge on the same code seam: the role branch in `render_content` (`
 
 ---
 
+## Decision
+
+> **Adopted: Mii Beta.** Ship a **per-row "Select raw text" toggle** in the assistant row header. **The scope axis is dropped** — assistant-only stays the rule. No GSettings keys are added; the toggle is an ephemeral `raw: bool` on the row model.
+
+**Rationale.** The selection failure is a rendering side effect, not a standing preference, so it gets fixed where it bites — on the row you're trying to copy — at the moment you want to copy it. Naming the affordance after intent ("Select raw text") rather than mechanism ("disable markdown") matches the user's actual goal. The change reuses the existing plain-label `else` branch, re-renders a single container (no `ListView` rebuild, no parse cost on other rows), and adds zero persistent state. The case against rendering markdown on user messages — they are *captured* text, so rendering either does nothing or actively misrepresents what was typed — was accepted, which collapses the brief to a single axis (enable/disable, per row).
+
+**Chosen UI treatment: Variant A (GNOME HIG).** A flat `GtkToggleButton` revealed on row hover/focus, in the assistant row header next to the model label; tooltip "Select raw text". Lowest footprint, highest HIG conformance. (The segmented "Rendered / Raw" and the creative "tear-off sheet" treatments were explored as B and C — see the wireframe canvas — and kept as alternatives, not shipped.)
+
+**Escalation path.** Revisit a transcript-wide mode (the Creative proposal) only if real use shows people *live* in raw mode (e.g. harvesting a long session); revisit a global preference (UI Designer) only if a standing "always plain" opinion turns out to be common. If either lands, add a single `prefer-raw-text` bool that seeds each new row's initial `raw` field — and nothing more.
+
+**Mechanical change to `render_content`.** Line 42 (`if role == Role::Assistant`) becomes, in effect:
+
+```
+if role == Role::Assistant && !raw { render_markdown(...) }
+else { single selectable GtkLabel, monospace when raw }
+```
+
+The raw branch is the existing `else` plain-label path (`row_rendering.rs:57-65`), minus the highlight markup; `render_content` gains one `raw: bool` parameter and callers pass the row's state.
+
+**GSettings:** none.
+
+### Resolved open questions
+
+- **Drop the scope axis, or ship it as a dimmed `ComboRow`?** → **Dropped.** Assistant-only is the rule.
+- **Is the disable trigger per-row, global preference, or transcript-wide mode?** → **Per-row.**
+- **Reactive re-render of open transcripts?** → **N/A** — no global setting to react to; the toggle re-runs one container.
+- **Does the header `</>` slot collide with the planned session-summary header button (`2026-06-04`)?** → **N/A** — the affordance lives on the row header, not the global/shared session header bar, so there is no contention. (If narrow widths crowd the model label, fall back to a right-click "Select raw text" context-menu item; keyboard path stays the focus toggle.)
+
+---
+
 ## Proposal — UI Designer
 *Author: GNOME / libadwaita HIG-conformant, minimal change*
 
@@ -45,19 +75,19 @@ All three converge on the same code seam: the role branch in `render_content` (`
 
 HIG-conformant, minimal-change: both controls live in the existing Preferences `General` page in a new `Transcript` group — no header-bar toggle, no per-session affordance. A `SwitchRow` **"Render Markdown"** (default On) and a `ComboRow` **"Apply To"** (*Assistant only* / *Everyone*, default assistant-only, dimmed while markdown is Off). A header toggle is rejected: the session page uses the *global shared* header bar, rendering mode is a stable preference not a per-message decision, and "Off" produces a single selectable `GtkLabel` that is both the fix for the selection-island problem and the more accessible node. Integration is a one-line gate change at `render_content` reusing the existing plain-label branch; a GSettings `changed` subscription re-renders open rows reactively. Complexity: Small.
 
-→ full detail: [`_section-ui-designer.md`](../mockups/markdown-rendering-config/_section-ui-designer.md)  
+→ full detail: [`_section-ui-designer.md`](../mockups/markdown-rendering-config/_section-ui-designer.md)
 GSettings: `render-markdown` (`b`, default `true`), `markdown-scope` (`s`, default `"assistant"`; accepts `"assistant"`/`"all"`).
 
 ---
 
-## Proposal — Mii Beta
+## Proposal — Mii Beta ✅ *(adopted)*
 *Author: mechanical reasoning — render cost, surfaces, what the toggle actually flips*
 
 ![Proposal — Mii Beta](../mockups/markdown-rendering-config/proposal-mii-beta.svg)
 
 Verdict: **one knob, not two. Kill the scope axis outright** — user messages are captured text (prompts, pasted code, stack traces), so rendering markdown over them either does nothing (a wasted parse + label) or actively lies about what the user typed (`*glob*` → emphasis). Assistant-only isn't a limitation, it's correct. The "disable" axis is real but mis-shaped: whole-message selection fails because `render_markdown()` builds a tree of separate selection islands. Fix it as a **per-row flat "Select raw text" toggle in the assistant row header**, not a global setting — it flips one row's `render_content()` branch and re-runs that container only (no `ListView` rebuild, no parse cost on other rows, reuses the existing plain-label branch). Named after intent ("select & copy this"), not mechanism. State is an ephemeral `raw: bool` on the row model.
 
-→ full detail: [`_section-mii-beta.md`](../mockups/markdown-rendering-config/_section-mii-beta.md)  
+→ full detail: [`_section-mii-beta.md`](../mockups/markdown-rendering-config/_section-mii-beta.md)
 GSettings: **none** (transient per-row state, not a preference; would only add a single `prefer-raw-text` bool later if usage proved people live in raw mode).
 
 ---
@@ -69,14 +99,14 @@ GSettings: **none** (transient per-row state, not a preference; would only add a
 
 Reframe "disable" as a **mode**, the way editors do (Obsidian *Reading/Source*, GitHub *Preview/Edit*). A single flat `</>` `GtkToggleButton` in the header's free start-gap flips the **whole transcript** between *Reading mode* (today's rendered tree) and *Source mode* (every message becomes one plain monospace selectable block of its verbatim markdown). Selection becomes a first-class mode, not a degradation — one drag grabs an entire message and copy yields canonical markdown. This also **subsumes the scope axis**: in Source mode everything is uniformly raw, so "render markdown for user messages too?" only matters in Reading mode, where it drops to a quiet sub-setting. Mode is remembered per-window. Cost: two render paths to maintain, a visible re-render on flip, and contention for the same header slot the session-summary button wants.
 
-→ full detail: [`_section-creative.md`](../mockups/markdown-rendering-config/_section-creative.md)  
+→ full detail: [`_section-creative.md`](../mockups/markdown-rendering-config/_section-creative.md)
 GSettings: `transcript-view-mode` (`s`, default `"reading"`), `markdown-scope` (`s`, default `"assistant"`).
 
 ---
 
 ## Comparison
 
-| Criterion | UI Designer | Mii Beta | Creative |
+| Criterion | UI Designer | Mii Beta ✅ | Creative |
 |---|---|---|---|
 | Where the control lives | Preferences (2 rows) | per-row header toggle | header `</>` mode toggle + Prefs sub-setting |
 | Scope axis | kept (`ComboRow`) | **deleted** (assistant-only is correct) | demoted to a Reading-mode sub-setting |
@@ -114,9 +144,4 @@ These aren't mutually exclusive. A pragmatic path:
 
 **Suggested first cut**: Mii Beta's per-row toggle, scope axis dropped (assistant-only stays the rule). Revisit a global preference (UI Designer) or a transcript-wide mode (Creative) only if real use shows the per-row affordance is insufficient.
 
-## Open questions
-
-- Drop the scope axis, or ship it as a dimmed `ComboRow`?
-- Is the disable trigger per-row, global preference, or transcript-wide mode?
-- If a setting is added, do we re-render already-open transcripts reactively (GSettings `changed`) or only new ones?
-- Does the header `</>` slot collide with the planned session-summary header button (exploration `2026-06-04`)?
+> **Outcome:** this suggested first cut was adopted — see [Decision](#decision).
