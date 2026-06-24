@@ -15,17 +15,17 @@
   <screenshots>
     <screenshot type="default">
       <image
-            >https://raw.githubusercontent.com/supermaciz/sessions-chronicle/main/docs/screenshots/session_list.png</image>
+            >https://raw.githubusercontent.com/supermaciz/sessions-chronicle/main/website/src/assets/screenshots/session_list.png</image>
       <caption>Session list view</caption>
     </screenshot>
     <screenshot>
       <image
-            >https://raw.githubusercontent.com/supermaciz/sessions-chronicle/main/docs/screenshots/session_detail.png</image>
+            >https://raw.githubusercontent.com/supermaciz/sessions-chronicle/main/website/src/assets/screenshots/session_detail.png</image>
       <caption>Session detail view</caption>
     </screenshot>
     <screenshot>
       <image
-            >https://raw.githubusercontent.com/supermaciz/sessions-chronicle/main/docs/screenshots/analytics.png</image>
+            >https://raw.githubusercontent.com/supermaciz/sessions-chronicle/main/website/src/assets/screenshots/analytics_light.png</image>
       <caption>Analytics dashboard with usage statistics</caption>
     </screenshot>
   </screenshots>

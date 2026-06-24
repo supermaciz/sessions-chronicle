@@ -33,7 +33,7 @@ All proposals share these implementation facts:
 - **Accessibility:** WCAG-AA contrast, semantic landmarks, alt text on
   every screenshot, `prefers-reduced-motion` respected.
 - **Asset hygiene:** Screenshots cropped from real builds, not mockups.
-  Reuse `docs/screenshots/*.png` as the source of truth.
+  Reuse `website/src/assets/screenshots/*.png` as the source of truth.
 
 What differs between proposals: **aesthetic direction, layout grammar,
 typography, and the metaphor used to frame the product.**

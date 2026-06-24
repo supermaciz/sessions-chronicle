@@ -89,7 +89,7 @@ website/
 └── README.md                          # build/deploy notes
 ```
 
-**Rationale for `website/` vs separate repo:** keeps site versioned alongside code (a v1.0 release can be announced on the site in the same PR), shares `docs/screenshots/` without duplication, matches issue #124.
+**Rationale for `website/` vs separate repo:** keeps site versioned alongside code (a v1.0 release can be announced on the site in the same PR), shares `website/src/assets/screenshots/` without duplication, matches issue #124.
 
 ## Astro Config
 
@@ -325,20 +325,14 @@ No social networks, no newsletter.
 
 | File | Theme | Uses |
 | --- | --- | --- |
-| `docs/screenshots/session_list.png` | light | Hero back layer; Plate 3 (Pin) if a pinned row is visible |
-| `docs/screenshots/session_detail.png` | light | Hero mid layer; Plate 2 (Tool calls, recropped) |
+| `website/src/assets/screenshots/session_list.png` | light | Hero back layer; Plate 3 (Pin) if a pinned row is visible |
+| `website/src/assets/screenshots/session_detail.png` | light | Hero mid layer; Plate 2 (Tool calls, recropped) |
+| `website/src/assets/screenshots/analytics_light.png` | light | Hero front layer + Plate 5 |
 
-### Existing (not usable in v1)
-
-| File | Theme | Reason |
-| --- | --- | --- |
-| `docs/screenshots/analytics.png` | **dark** | v1 is light-only |
-
-### To capture (2–3 new screenshots, light theme)
+### To capture (1–2 new screenshots, light theme)
 
 | File | Purpose |
 | --- | --- |
-| `analytics_light.png` | Hero front layer + Plate 5 |
 | `session_list_search_light.png` | Plate 1 (search field focused, results filtered on a query like "refactor") |
 | `session_list_pinned_light.png` (conditional) | Plate 3, only if the existing `session_list.png` has no visible pinned row |
 
@@ -353,7 +347,7 @@ No social networks, no newsletter.
 
 ## Image Pipeline
 
-- Source PNGs placed in `website/src/assets/screenshots/` (imported from `docs/screenshots/` at build time — copy, not symlink, so Astro's import graph resolves).
+- Source PNGs live in `website/src/assets/screenshots/` and are imported directly by Astro.
 - Use Astro's built-in `<Picture>` component for screenshot assets that need AVIF + WebP + PNG output, and `<Image>` only where a single optimized source is sufficient.
 - Output formats for screenshot plates and hero layers: AVIF (preferred) + WebP (fallback) + PNG (final fallback) via Astro's `<Picture>`.
 - Responsive widths: `widths={[400, 800, 1200]}` with `sizes="(max-width: 768px) 100vw, 50vw"`.

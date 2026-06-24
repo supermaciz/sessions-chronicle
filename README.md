@@ -89,7 +89,7 @@ For the faster day-to-day development loop (development profile, incremental reb
 
 ## Screenshot
 
-<img src="docs/screenshots/session_list.png" alt="Session List" width="800"/>
+<img src="website/src/assets/screenshots/session_list.png" alt="Session List" width="800"/>
 
 See the website for more screenshots and project details: https://sessions-chronicle.maciz.dev/
 

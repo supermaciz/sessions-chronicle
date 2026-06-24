@@ -1722,7 +1722,7 @@ mod tests {
 
     #[gtk::test]
     fn table_image_visible_inside_widget_cell() {
-        let md = "| Screenshot |\n|------------|\n| ![Session List](docs/screenshots/session_list.png) |";
+        let md = "| Screenshot |\n|------------|\n| ![Session List](website/src/assets/screenshots/session_list.png) |";
         let (widget, _) = render_markdown(md, None);
         let label_texts = table_label_texts(&widget);
 

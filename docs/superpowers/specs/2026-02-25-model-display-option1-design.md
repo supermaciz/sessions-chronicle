@@ -252,7 +252,7 @@ Manual checks:
 
 **Step 3: Capture screenshot evidence (if preparing PR)**
 
-Save updated UI screenshot under `docs/screenshots/` if this work will be submitted as a PR.
+Save updated UI screenshot under `website/src/assets/screenshots/` if this work will be submitted as a PR.
 
 **Step 4: Final commit (optional squash policy dependent)**
 
