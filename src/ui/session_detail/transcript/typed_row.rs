@@ -595,7 +595,9 @@ fn update_raw_toggle_state(
     let assistant = role == Role::Assistant;
     raw_toggle.set_visible(assistant);
     raw_toggle.set_active(raw);
-    raw_toggle.set_sensitive(assistant && !raw_pending_full_content);
+    if assistant {
+        raw_toggle.set_sensitive(!raw_pending_full_content);
+    }
     raw_toggle.set_tooltip_text(Some(if raw_pending_full_content {
         "Loading full message..."
     } else if raw {
@@ -627,7 +629,11 @@ fn handle_raw_toggle_clicked(
 ) {
     if raw.get() {
         raw.set(false);
+        let was_waiting = raw_pending_full_content.get();
         raw_pending_full_content.set(false);
+        if was_waiting && full_content.borrow().is_none() {
+            expanded.set(false);
+        }
         content_revision.set(!content_revision.get());
         return;
     }

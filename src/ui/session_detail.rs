@@ -1626,7 +1626,7 @@ impl SessionDetail {
         Self::bump_content_revision(&item);
     }
 
-    fn apply_message_full_content_success(item: &TranscriptItemData, content: String) {
+    pub(crate) fn apply_message_full_content_success(item: &TranscriptItemData, content: String) {
         *item.full_content.borrow_mut() = Some(content);
         item.raw_pending_full_content.set(false);
     }
