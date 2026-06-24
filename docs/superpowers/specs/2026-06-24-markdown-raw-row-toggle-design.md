@@ -48,16 +48,20 @@ Add two ephemeral per-row bindings to `TranscriptItemData`:
 
 Both initialize to `false` in `TranscriptItemData::from_init`. The state is not persisted and is not stored in the database. It resets naturally when the transcript is rebuilt or the app restarts.
 
-This mirrors the existing row-local state model used by `expanded` and `content_revision`, and avoids storing UI-only state in global `SessionDetail` fields.
+This mirrors the existing row-local state model used by `expanded` and `content_revision`, and avoids storing UI-only state in global `SessionDetail` fields. `raw` is coupled to `expanded` (see Data Flow): turning raw on also sets `expanded`, so raw always reflects the complete message.
 
 ## Data Flow
 
+**Invariant: raw implies expanded.** Raw mode only ever shows a *complete* message — there is no "raw collapsed" state. Turning raw on therefore also sets `expanded = true`, which reuses the existing expand path to fetch full content when the message is truncated. This is intentional: a raw label built from a truncated preview would look copy-ready while being incomplete, so that state is forbidden by construction rather than guarded against. The coupling is one-directional — `raw = true ⇒ expanded = true`, but `expanded = true` does **not** imply raw.
+
 When the toggle is clicked on an assistant message:
 
-- If turning raw off, set `raw = false`, clear `raw_pending_full_content`, and pulse `content_revision`.
-- If turning raw on and the message is not truncated, set `raw = true` and pulse `content_revision`.
-- If turning raw on and full content is already loaded, set `raw = true` and pulse `content_revision`.
-- If turning raw on and the message is truncated with no loaded full content, set `raw = true`, set `raw_pending_full_content = true`, emit `SessionDetailMsg::RequestMessageFullContent { item_index }`, and keep the rendered preview visible while pending.
+- If turning raw off, set `raw = false`, clear `raw_pending_full_content`, and pulse `content_revision`. **`expanded` is left unchanged** (it stays `true`): the full content is already loaded and on screen, so re-collapsing it under the user would hide content they are reading. Raw off simply re-renders the same complete content as markdown.
+- If turning raw on and the message is not truncated, set `raw = true`, set `expanded = true`, and pulse `content_revision`.
+- If turning raw on and full content is already loaded, set `raw = true`, set `expanded = true`, and pulse `content_revision`.
+- If turning raw on and the message is truncated with no loaded full content, set `raw = true`, set `expanded = true`, set `raw_pending_full_content = true`, emit `SessionDetailMsg::RequestMessageFullContent { item_index }`, and keep the rendered preview visible while pending.
+
+The fetch itself is the existing expand-triggered load path; no second loader is introduced. `raw_pending_full_content` is retained only to distinguish "flip this row to raw when content arrives" from an ordinary (non-raw) expand that happens to be loading.
 
 When full content arrives, `SessionDetail::set_typed_message_full_content` stores it as today, clears `raw_pending_full_content`, and pulses `content_revision`. The next render sees `raw = true` and displays the complete raw text.
 
@@ -104,6 +108,10 @@ Out of scope:
 - Markdown rendering for user messages.
 - Transcript-wide raw/source mode.
 - Parser, database, or search-index schema changes.
+
+## Alternatives Considered
+
+**A direct "Copy message" button instead of a selection toggle.** A one-click action that loads full content and writes the raw markdown to the clipboard would serve the "copy the whole answer" case with no render-path change, no second render state, and no pending visual treatment beyond awaiting content. It was rejected: the goal is explicitly to let the user *choose the selection*, including copying only part of an answer. A copy-all button cannot do partial copy, whereas a selectable raw label covers both whole- and partial-message copy. The selection toggle is therefore the more general affordance for the stated intent. (A copy action could still be added later as a complement, but it is out of scope here.)
 
 ## Accessibility And Keyboard Behavior
 
