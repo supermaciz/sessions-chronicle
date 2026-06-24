@@ -47,6 +47,7 @@ pub struct MessagePageWidgets {
     ts_sep: gtk::Label,
     ts_label: gtk::Label,
     reasoning_box: gtk::Box,
+    raw_toggle: gtk::ToggleButton,
     content: gtk::Box,
     expand_button: gtk::Button,
     connected_handlers: Vec<(gtk::glib::Object, gtk::glib::SignalHandlerId)>,
@@ -204,42 +205,53 @@ impl TranscriptItemData {
         render_message_body(
             &widgets.content,
             &widgets.expand_button,
+            &widgets.raw_toggle,
             message,
             self.expanded.get(),
+            self.raw.get(),
+            self.raw_pending_full_content.get(),
             &self.full_content.borrow(),
             self.highlight_query.as_deref(),
         );
 
         let can_expand = message.preview.is_truncated() && message.preview.role != Role::ToolResult;
-        if can_expand {
-            // Expand/collapse and lazy full-content loading mutate this row in
-            // place rather than replacing the list item: replacing it makes
-            // GtkListView reset the surrounding scroll back to the top (#170).
-            // Re-render whenever `content_revision` is bumped (toggle, content
-            // arrival, load-failure rollback).
-            let revision_handler = {
-                let content = widgets.content.clone();
-                let expand_button = widgets.expand_button.clone();
-                let message = message.clone();
-                let expanded = self.expanded.clone();
-                let full_content = self.full_content.clone();
-                let highlight_query = self.highlight_query.clone();
-                self.content_revision
-                    .connect_notify_local(Some("value"), move |_, _| {
-                        render_message_body(
-                            &content,
-                            &expand_button,
-                            &message,
-                            expanded.get(),
-                            &full_content.borrow(),
-                            highlight_query.as_deref(),
-                        );
-                    })
-            };
-            widgets
-                .connected_handlers
-                .push((self.content_revision.clone().upcast(), revision_handler));
 
+        // Expand/collapse and lazy full-content loading mutate this row in
+        // place rather than replacing the list item: replacing it makes
+        // GtkListView reset the surrounding scroll back to the top (#170).
+        // Re-render whenever `content_revision` is bumped (toggle, content
+        // arrival, load-failure rollback). Register for all message rows so
+        // raw mode works even on non-truncated messages.
+        let revision_handler = {
+            let content = widgets.content.clone();
+            let expand_button = widgets.expand_button.clone();
+            let raw_toggle = widgets.raw_toggle.clone();
+            let message = message.clone();
+            let expanded = self.expanded.clone();
+            let raw = self.raw.clone();
+            let raw_pending_full_content = self.raw_pending_full_content.clone();
+            let full_content = self.full_content.clone();
+            let highlight_query = self.highlight_query.clone();
+            self.content_revision
+                .connect_notify_local(Some("value"), move |_, _| {
+                    render_message_body(
+                        &content,
+                        &expand_button,
+                        &raw_toggle,
+                        &message,
+                        expanded.get(),
+                        raw.get(),
+                        raw_pending_full_content.get(),
+                        &full_content.borrow(),
+                        highlight_query.as_deref(),
+                    );
+                })
+        };
+        widgets
+            .connected_handlers
+            .push((self.content_revision.clone().upcast(), revision_handler));
+
+        if can_expand {
             let sender = self.sender.clone();
             let item_index = self.item_index;
             let expanded = self.expanded.clone();
@@ -256,6 +268,32 @@ impl TranscriptItemData {
             widgets
                 .connected_handlers
                 .push((widgets.expand_button.clone().upcast(), id));
+        }
+
+        if message.preview.role == Role::Assistant {
+            let sender = self.sender.clone();
+            let item_index = self.item_index;
+            let raw = self.raw.clone();
+            let raw_pending_full_content = self.raw_pending_full_content.clone();
+            let expanded = self.expanded.clone();
+            let full_content = self.full_content.clone();
+            let content_revision = self.content_revision.clone();
+            let message = message.clone();
+            let id = widgets.raw_toggle.connect_clicked(move |_| {
+                handle_raw_toggle_clicked(
+                    &raw,
+                    &raw_pending_full_content,
+                    &expanded,
+                    &full_content,
+                    &content_revision,
+                    &sender,
+                    item_index,
+                    &message,
+                );
+            });
+            widgets
+                .connected_handlers
+                .push((widgets.raw_toggle.clone().upcast(), id));
         }
     }
 
@@ -404,6 +442,13 @@ impl TranscriptItemData {
         clear_box_children(&widgets.content);
         widgets.expand_button.set_visible(false);
         widgets.expand_button.set_label("Show full message");
+        widgets.raw_toggle.set_active(false);
+        widgets.raw_toggle.set_sensitive(true);
+        widgets.raw_toggle.set_visible(false);
+        widgets.raw_toggle.set_tooltip_text(Some("Select raw text"));
+        widgets
+            .raw_toggle
+            .update_property(&[gtk::accessible::Property::Label("Select raw text")]);
     }
 
     pub(crate) fn unbind_tool_call_page(&self, widgets: &mut ToolCallPageWidgets) {
@@ -492,6 +537,20 @@ fn build_message_page() -> MessagePageWidgets {
 
     let reasoning_box = gtk::Box::new(gtk::Orientation::Horizontal, 4);
     header.append(&reasoning_box);
+
+    let header_spacer = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+    header_spacer.set_hexpand(true);
+    header.append(&header_spacer);
+
+    let raw_toggle = gtk::ToggleButton::new();
+    raw_toggle.set_icon_name("code-symbolic");
+    raw_toggle.add_css_class("flat");
+    raw_toggle.add_css_class("raw-toggle");
+    raw_toggle.set_tooltip_text(Some("Select raw text"));
+    raw_toggle.update_property(&[gtk::accessible::Property::Label("Select raw text")]);
+    raw_toggle.set_visible(false);
+    header.append(&raw_toggle);
+
     root.append(&header);
 
     let content = gtk::Box::new(gtk::Orientation::Vertical, 4);
@@ -520,31 +579,105 @@ fn build_message_page() -> MessagePageWidgets {
         ts_sep,
         ts_label,
         reasoning_box,
+        raw_toggle,
         content,
         expand_button,
         connected_handlers: Vec::new(),
     }
 }
 
+fn update_raw_toggle_state(
+    raw_toggle: &gtk::ToggleButton,
+    role: Role,
+    raw: bool,
+    raw_pending_full_content: bool,
+) {
+    let assistant = role == Role::Assistant;
+    raw_toggle.set_visible(assistant);
+    raw_toggle.set_active(raw);
+    raw_toggle.set_sensitive(assistant && !raw_pending_full_content);
+    raw_toggle.set_tooltip_text(Some(if raw_pending_full_content {
+        "Loading full message..."
+    } else if raw {
+        "Show rendered markdown"
+    } else {
+        "Select raw text"
+    }));
+    raw_toggle.update_property(&[gtk::accessible::Property::Label(
+        if raw_pending_full_content {
+            "Loading full message"
+        } else if raw {
+            "Show rendered markdown"
+        } else {
+            "Select raw text"
+        },
+    )]);
+}
+
+#[allow(clippy::too_many_arguments)]
+fn handle_raw_toggle_clicked(
+    raw: &relm4::binding::BoolBinding,
+    raw_pending_full_content: &relm4::binding::BoolBinding,
+    expanded: &relm4::binding::BoolBinding,
+    full_content: &std::rc::Rc<std::cell::RefCell<Option<String>>>,
+    content_revision: &relm4::binding::BoolBinding,
+    sender: &relm4::Sender<SessionDetailMsg>,
+    item_index: usize,
+    message: &MessageItemInit,
+) {
+    if raw.get() {
+        raw.set(false);
+        raw_pending_full_content.set(false);
+        content_revision.set(!content_revision.get());
+        return;
+    }
+
+    raw.set(true);
+    expanded.set(true);
+    if message.preview.is_truncated() && full_content.borrow().is_none() {
+        raw_pending_full_content.set(true);
+        sender.emit(SessionDetailMsg::RequestMessageFullContent { item_index });
+    }
+    content_revision.set(!content_revision.get());
+}
+
 /// Render the message body and expand-toggle label for the current expansion
 /// state. Called both on initial bind and on every in-place re-render, so it must
 /// be idempotent (`render_content` clears the container first).
+#[allow(clippy::too_many_arguments)]
 fn render_message_body(
     content: &gtk::Box,
     expand_button: &gtk::Button,
+    raw_toggle: &gtk::ToggleButton,
     message: &MessageItemInit,
     expanded: bool,
+    raw: bool,
+    raw_pending_full_content: bool,
     full_content: &Option<String>,
     highlight_query: Option<&str>,
 ) {
-    let body = if expanded {
+    let waiting_for_raw_full_content = raw && raw_pending_full_content;
+    let body = if expanded && !waiting_for_raw_full_content {
         full_content
             .as_deref()
             .unwrap_or(&message.preview.content_preview)
     } else {
         &message.preview.content_preview
     };
-    render_content(content, body, message.preview.role, highlight_query, false);
+    render_content(
+        content,
+        body,
+        message.preview.role,
+        highlight_query,
+        raw && !waiting_for_raw_full_content,
+    );
+
+    update_raw_toggle_state(
+        raw_toggle,
+        message.preview.role,
+        raw,
+        raw_pending_full_content,
+    );
 
     let can_expand = message.preview.is_truncated() && message.preview.role != Role::ToolResult;
     expand_button.set_visible(can_expand);
@@ -1009,8 +1142,11 @@ mod tests {
             .expect("message header")
             .downcast::<gtk::Box>()
             .expect("message header box");
-        let reasoning_box = header
-            .last_child()
+        // reasoning_box is 3rd from the end: raw_toggle (last), header_spacer, reasoning_box
+        let raw_toggle = header.last_child().expect("raw toggle");
+        let header_spacer = raw_toggle.prev_sibling().expect("header spacer");
+        let reasoning_box = header_spacer
+            .prev_sibling()
             .expect("message reasoning box")
             .downcast::<gtk::Box>()
             .expect("message reasoning box");
@@ -1027,6 +1163,29 @@ mod tests {
             .expect("message expand button")
             .downcast::<gtk::Button>()
             .expect("message expand button")
+    }
+
+    fn message_raw_toggle(root: &gtk::Box) -> gtk::ToggleButton {
+        let header = root
+            .first_child()
+            .expect("message header")
+            .downcast::<gtk::Box>()
+            .expect("message header box");
+        collect_box_children(&header)
+            .last()
+            .expect("raw toggle")
+            .clone()
+            .downcast::<gtk::ToggleButton>()
+            .expect("message raw toggle")
+    }
+
+    fn first_content_label(widgets: &super::MessagePageWidgets) -> gtk::Label {
+        widgets
+            .content
+            .first_child()
+            .expect("message content child")
+            .downcast::<gtk::Label>()
+            .expect("message content label")
     }
 
     fn message_content_text(widgets: &super::MessagePageWidgets) -> String {
@@ -1231,6 +1390,125 @@ mod tests {
         expand_button.emit_clicked();
         assert!(!message.expanded.get());
         assert_eq!(expand_button.label().as_deref(), Some("Show full message"));
+    }
+
+    #[gtk::test]
+    fn assistant_raw_toggle_is_available_only_for_assistant_messages() {
+        let (sender, receiver) = relm4::channel::<SessionDetailMsg>();
+        let mut assistant = TranscriptItemData::from_init(
+            TranscriptItemInit::Message(message_init()),
+            sender.clone(),
+        );
+        let mut user_init = message_init();
+        user_init.preview.role = Role::User;
+        let mut user =
+            TranscriptItemData::from_init(TranscriptItemInit::Message(user_init), sender);
+
+        let list_item: gtk::ListItem = gtk::glib::Object::builder().build();
+        let (_, mut assistant_widgets) = TranscriptItemData::setup(&list_item);
+        let mut root = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        assistant.bind(&mut assistant_widgets, &mut root);
+        let _ = gtk::glib::MainContext::default().block_on(receiver.recv());
+        let assistant_toggle = message_raw_toggle(&assistant_widgets.message.root);
+        assert!(assistant_toggle.is_sensitive());
+        assert_eq!(
+            assistant_toggle.tooltip_text().as_deref(),
+            Some("Select raw text")
+        );
+
+        let (_, mut user_widgets) = TranscriptItemData::setup(&list_item);
+        let mut root = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        user.bind(&mut user_widgets, &mut root);
+        let _ = gtk::glib::MainContext::default().block_on(receiver.recv());
+        assert!(!message_raw_toggle(&user_widgets.message.root).is_visible());
+    }
+
+    #[gtk::test]
+    fn assistant_raw_toggle_renders_loaded_message_as_raw_label() {
+        let (sender, receiver) = relm4::channel::<SessionDetailMsg>();
+        let mut message =
+            TranscriptItemData::from_init(TranscriptItemInit::Message(message_init()), sender);
+
+        let list_item: gtk::ListItem = gtk::glib::Object::builder().build();
+        let (_, mut widgets) = TranscriptItemData::setup(&list_item);
+        let mut root = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        message.bind(&mut widgets, &mut root);
+        let _ = gtk::glib::MainContext::default().block_on(receiver.recv());
+
+        let raw_toggle = message_raw_toggle(&widgets.message.root);
+        raw_toggle.emit_clicked();
+
+        assert!(message.raw.get());
+        assert!(message.expanded.get());
+        assert!(!message.raw_pending_full_content.get());
+        assert!(raw_toggle.is_active());
+        assert_eq!(
+            raw_toggle.tooltip_text().as_deref(),
+            Some("Show rendered markdown")
+        );
+        let label = first_content_label(&widgets.message);
+        assert_eq!(label.label().as_str(), "hello");
+        assert!(label.has_css_class("raw-message-label"));
+
+        raw_toggle.emit_clicked();
+
+        assert!(!message.raw.get());
+        assert!(
+            message.expanded.get(),
+            "raw off must leave expanded unchanged"
+        );
+        assert_eq!(
+            raw_toggle.tooltip_text().as_deref(),
+            Some("Select raw text")
+        );
+    }
+
+    #[gtk::test]
+    fn assistant_raw_toggle_on_truncated_unloaded_message_enters_pending_and_requests_content() {
+        let (sender, receiver) = relm4::channel::<SessionDetailMsg>();
+        let mut message = TranscriptItemData::from_init(
+            TranscriptItemInit::Message(truncated_message_init()),
+            sender,
+        );
+
+        let list_item: gtk::ListItem = gtk::glib::Object::builder().build();
+        let (_, mut widgets) = TranscriptItemData::setup(&list_item);
+        let mut root = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        message.bind(&mut widgets, &mut root);
+        assert!(matches!(
+            gtk::glib::MainContext::default()
+                .block_on(receiver.recv())
+                .expect("row built"),
+            SessionDetailMsg::RowBuilt { .. }
+        ));
+
+        let raw_toggle = message_raw_toggle(&widgets.message.root);
+        raw_toggle.emit_clicked();
+
+        assert!(message.raw.get());
+        assert!(message.expanded.get());
+        assert!(message.raw_pending_full_content.get());
+        assert!(raw_toggle.is_active());
+        assert!(!raw_toggle.is_sensitive());
+        assert_eq!(
+            raw_toggle.tooltip_text().as_deref(),
+            Some("Loading full message...")
+        );
+        assert!(
+            !widgets
+                .message
+                .content
+                .first_child()
+                .expect("pending rendered preview")
+                .has_css_class("raw-message-label"),
+            "pending state keeps the rendered preview visible until full content arrives"
+        );
+        assert!(matches!(
+            gtk::glib::MainContext::default()
+                .block_on(receiver.recv())
+                .expect("full content request"),
+            SessionDetailMsg::RequestMessageFullContent { item_index: 1 }
+        ));
     }
 
     #[gtk::test]
