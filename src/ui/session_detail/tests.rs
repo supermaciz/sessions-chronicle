@@ -816,12 +816,44 @@ fn message_full_content_target_rejects_stale_session_or_message() {
 }
 
 #[test]
-fn message_full_content_failure_resets_expansion() {
+fn message_full_content_success_clears_raw_pending_state() {
     let (sender, _receiver) = relm4::channel::<SessionDetailMsg>();
     let prepared = SessionDetail::build_display_items(
         vec![transcript_message_row(
             0,
-            crate::models::Role::User,
+            crate::models::Role::Assistant,
+            "preview",
+        )],
+        "session-1",
+        None,
+        &BTreeSet::new(),
+        Arc::new(PathBuf::from("/tmp/test.db")),
+        0,
+    );
+    let item = TranscriptItemData::from_init(
+        prepared.items.into_iter().next().expect("message item"),
+        sender,
+    );
+    item.raw.set(true);
+    item.raw_pending_full_content.set(true);
+
+    SessionDetail::apply_message_full_content_success(&item, "full body".to_string());
+
+    assert!(item.raw.get(), "success keeps requested raw mode enabled");
+    assert!(
+        !item.raw_pending_full_content.get(),
+        "success clears raw pending state"
+    );
+    assert_eq!(item.full_content.borrow().as_deref(), Some("full body"));
+}
+
+#[test]
+fn message_full_content_failure_resets_expansion_and_raw_state() {
+    let (sender, _receiver) = relm4::channel::<SessionDetailMsg>();
+    let prepared = SessionDetail::build_display_items(
+        vec![transcript_message_row(
+            0,
+            crate::models::Role::Assistant,
             "preview",
         )],
         "session-1",
@@ -835,10 +867,14 @@ fn message_full_content_failure_resets_expansion() {
         sender,
     );
     item.expanded.set(true);
+    item.raw.set(true);
+    item.raw_pending_full_content.set(true);
 
     SessionDetail::reset_message_expansion_after_full_content_failure(&item);
 
     assert!(!item.expanded.get());
+    assert!(!item.raw.get());
+    assert!(!item.raw_pending_full_content.get());
 }
 
 #[gtk::test]
