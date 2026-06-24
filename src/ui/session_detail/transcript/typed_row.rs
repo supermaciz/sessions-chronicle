@@ -544,7 +544,7 @@ fn render_message_body(
     } else {
         &message.preview.content_preview
     };
-    render_content(content, body, message.preview.role, highlight_query);
+    render_content(content, body, message.preview.role, highlight_query, false);
 
     let can_expand = message.preview.is_truncated() && message.preview.role != Role::ToolResult;
     expand_button.set_visible(can_expand);
