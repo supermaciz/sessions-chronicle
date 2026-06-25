@@ -6,6 +6,7 @@ use gtk::prelude::*;
 use relm4::binding::Binding;
 use relm4::{adw, gtk, typed_view::list::RelmListItem};
 
+use crate::icon_names;
 use crate::models::{Role, tool_name_icon};
 use crate::ui::format::format_duration_ms;
 use crate::ui::highlight;
@@ -445,6 +446,7 @@ impl TranscriptItemData {
         widgets.raw_toggle.set_active(false);
         widgets.raw_toggle.set_sensitive(true);
         widgets.raw_toggle.set_visible(false);
+        widgets.raw_toggle.set_icon_name(icon_names::CODE);
         widgets.raw_toggle.set_tooltip_text(Some("Select raw text"));
         widgets
             .raw_toggle
@@ -543,7 +545,7 @@ fn build_message_page() -> MessagePageWidgets {
     header.append(&header_spacer);
 
     let raw_toggle = gtk::ToggleButton::new();
-    raw_toggle.set_icon_name("code-symbolic");
+    raw_toggle.set_icon_name(icon_names::CODE);
     raw_toggle.add_css_class("flat");
     raw_toggle.add_css_class("raw-toggle");
     raw_toggle.set_tooltip_text(Some("Select raw text"));
@@ -598,6 +600,11 @@ fn update_raw_toggle_state(
     if assistant {
         raw_toggle.set_sensitive(!raw_pending_full_content);
     }
+    raw_toggle.set_icon_name(if raw {
+        icon_names::MARKDOWN
+    } else {
+        icon_names::CODE
+    });
     raw_toggle.set_tooltip_text(Some(if raw_pending_full_content {
         "Loading full message..."
     } else if raw {
