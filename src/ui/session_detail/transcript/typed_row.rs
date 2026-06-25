@@ -663,7 +663,10 @@ fn render_message_body(
     highlight_query: Option<&str>,
 ) {
     let waiting_for_raw_full_content = raw && raw_pending_full_content;
-    let body = if expanded && !waiting_for_raw_full_content {
+    // Raw mode must always show the complete message, so keep full content even
+    // if the user collapses the row while raw is active.
+    let show_full_content = (expanded || raw) && !waiting_for_raw_full_content;
+    let body = if show_full_content {
         full_content
             .as_deref()
             .unwrap_or(&message.preview.content_preview)
