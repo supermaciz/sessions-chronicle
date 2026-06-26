@@ -276,7 +276,6 @@ impl TranscriptItemData {
             let item_index = self.item_index;
             let raw = self.raw.clone();
             let raw_pending_full_content = self.raw_pending_full_content.clone();
-            let expanded = self.expanded.clone();
             let full_content = self.full_content.clone();
             let content_revision = self.content_revision.clone();
             let message = message.clone();
@@ -284,7 +283,6 @@ impl TranscriptItemData {
                 handle_raw_toggle_clicked(
                     &raw,
                     &raw_pending_full_content,
-                    &expanded,
                     &full_content,
                     &content_revision,
                     &sender,
@@ -630,26 +628,24 @@ fn update_raw_toggle_state(
 fn handle_raw_toggle_clicked(
     raw: &relm4::binding::BoolBinding,
     raw_pending_full_content: &relm4::binding::BoolBinding,
-    expanded: &relm4::binding::BoolBinding,
     full_content: &std::rc::Rc<std::cell::RefCell<Option<String>>>,
     content_revision: &relm4::binding::BoolBinding,
     sender: &relm4::Sender<SessionDetailMsg>,
     item_index: usize,
     message: &MessageItemInit,
 ) {
+    // Raw is an additive overlay: it forces full-content source rendering at
+    // render time via `show_full_content = expanded || raw`, so it never writes
+    // to `expanded`. Leaving that axis untouched means toggling raw always
+    // returns the row to its pre-raw expand/collapse state, with no rollback.
     if raw.get() {
         raw.set(false);
-        let was_waiting = raw_pending_full_content.get();
         raw_pending_full_content.set(false);
-        if was_waiting && full_content.borrow().is_none() {
-            expanded.set(false);
-        }
         content_revision.set(!content_revision.get());
         return;
     }
 
     raw.set(true);
-    expanded.set(true);
     if message.preview.is_truncated() && full_content.borrow().is_none() {
         raw_pending_full_content.set(true);
         sender.emit(SessionDetailMsg::RequestMessageFullContent { item_index });
@@ -698,9 +694,12 @@ fn render_message_body(
         raw_pending_full_content,
     );
 
-    let can_expand =
+    // Distinct from the click handler's `can_expand` (row is expandable in
+    // principle): this is whether the button is shown *now*. Raw mode forces
+    // full content, so the collapse action would be a no-op - hide it.
+    let show_expand_button =
         message.preview.is_truncated() && message.preview.role != Role::ToolResult && !raw;
-    expand_button.set_visible(can_expand);
+    expand_button.set_visible(show_expand_button);
     expand_button.set_label(if expanded {
         "Collapse"
     } else {
@@ -1459,7 +1458,10 @@ mod tests {
         raw_toggle.emit_clicked();
 
         assert!(message.raw.get());
-        assert!(message.expanded.get());
+        assert!(
+            !message.expanded.get(),
+            "raw is additive and must not force expansion"
+        );
         assert!(!message.raw_pending_full_content.get());
         assert!(raw_toggle.is_active());
         assert_eq!(
@@ -1474,7 +1476,7 @@ mod tests {
 
         assert!(!message.raw.get());
         assert!(
-            message.expanded.get(),
+            !message.expanded.get(),
             "raw off must leave expanded unchanged"
         );
         assert_eq!(
@@ -1509,7 +1511,10 @@ mod tests {
         raw_toggle.emit_clicked();
 
         assert!(message.raw.get());
-        assert!(message.expanded.get());
+        assert!(
+            !message.expanded.get(),
+            "raw is additive and must not force expansion"
+        );
         assert!(message.raw_pending_full_content.get());
         assert!(raw_toggle.is_active());
         assert!(!raw_toggle.is_sensitive());
