@@ -698,7 +698,8 @@ fn render_message_body(
         raw_pending_full_content,
     );
 
-    let can_expand = message.preview.is_truncated() && message.preview.role != Role::ToolResult;
+    let can_expand =
+        message.preview.is_truncated() && message.preview.role != Role::ToolResult && !raw;
     expand_button.set_visible(can_expand);
     expand_button.set_label(if expanded {
         "Collapse"
@@ -1502,6 +1503,9 @@ mod tests {
         ));
 
         let raw_toggle = message_raw_toggle(&widgets.message.root);
+        let expand_button = message_expand_button(&widgets.message.root);
+        assert!(expand_button.is_visible());
+
         raw_toggle.emit_clicked();
 
         assert!(message.raw.get());
@@ -1509,6 +1513,10 @@ mod tests {
         assert!(message.raw_pending_full_content.get());
         assert!(raw_toggle.is_active());
         assert!(!raw_toggle.is_sensitive());
+        assert!(
+            !expand_button.is_visible(),
+            "raw mode hides collapse because raw always shows full content"
+        );
         assert_eq!(
             raw_toggle.tooltip_text().as_deref(),
             Some("Loading full message...")
@@ -1528,6 +1536,13 @@ mod tests {
                 .expect("full content request"),
             SessionDetailMsg::RequestMessageFullContent { item_index: 1 }
         ));
+
+        raw_toggle.emit_clicked();
+
+        assert!(!message.raw.get());
+        assert!(!message.expanded.get());
+        assert!(!message.raw_pending_full_content.get());
+        assert!(expand_button.is_visible());
     }
 
     #[gtk::test]
