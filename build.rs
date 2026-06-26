@@ -20,7 +20,6 @@ fn main() {
             "chat-bubbles-question-regular",
             "document-one-page-sparkle-regular",
             "code",
-            "markdown",
         ],
     );
 }

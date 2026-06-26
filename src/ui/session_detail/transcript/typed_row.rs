@@ -551,6 +551,11 @@ fn build_message_page() -> MessagePageWidgets {
     raw_toggle.set_tooltip_text(Some("Select raw text"));
     raw_toggle.update_property(&[gtk::accessible::Property::Label("Select raw text")]);
     raw_toggle.set_visible(false);
+    // Same scroll-steals-the-click bug as `expand_button` below: grabbing focus
+    // on click lets GtkListView scroll the row mid-press, moving the button out
+    // from under the pointer so the release lands elsewhere and the user has to
+    // click twice. Keep keyboard focus (Tab) but do not grab it on click.
+    raw_toggle.set_focus_on_click(false);
     header.append(&raw_toggle);
 
     root.append(&header);
@@ -600,11 +605,9 @@ fn update_raw_toggle_state(
     if assistant {
         raw_toggle.set_sensitive(!raw_pending_full_content);
     }
-    raw_toggle.set_icon_name(if raw {
-        icon_names::MARKDOWN
-    } else {
-        icon_names::CODE
-    });
+    // The icon is a stable identity ("source/raw"); the toggle's `:checked`
+    // state carries whether raw mode is engaged. Swapping the glyph would
+    // contradict that highlight. Only the tooltip/a11y label describe the action.
     raw_toggle.set_tooltip_text(Some(if raw_pending_full_content {
         "Loading full message..."
     } else if raw {
