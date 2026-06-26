@@ -17,6 +17,11 @@ pub struct TranscriptItemData {
     pub transcript_item_index: Option<i64>,
     pub kind: TranscriptItemKind,
     pub expanded: BoolBinding,
+    /// Row-local raw text mode for assistant messages. This is UI-only state and
+    /// intentionally resets when transcript rows are rebuilt.
+    pub raw: BoolBinding,
+    /// True while raw mode is waiting for lazily loaded full message content.
+    pub raw_pending_full_content: BoolBinding,
     /// Full message body, loaded lazily on first expansion. Shared via `Rc` so
     /// the realized row widget and the stored model item observe the same value:
     /// expansion mutates this in place rather than replacing the list item, which
@@ -56,6 +61,11 @@ impl fmt::Debug for TranscriptItemData {
             .field("item_index", &self.item_index)
             .field("kind", &self.kind)
             .field("expanded", &self.expanded.get())
+            .field("raw", &self.raw.get())
+            .field(
+                "raw_pending_full_content",
+                &self.raw_pending_full_content.get(),
+            )
             .field("has_full_content", &self.full_content.borrow().is_some())
             .field("highlight_query", &self.highlight_query)
             .finish_non_exhaustive()
@@ -108,6 +118,8 @@ impl TranscriptItemData {
             transcript_item_index,
             kind,
             expanded,
+            raw: BoolBinding::new(false),
+            raw_pending_full_content: BoolBinding::new(false),
             full_content: Rc::new(RefCell::new(None)),
             content_revision: BoolBinding::new(false),
             highlight_query,
@@ -177,6 +189,11 @@ mod tests {
         assert_eq!(data.item_index, 7);
         assert_eq!(data.transcript_item_index, Some(42));
         assert_eq!(data.highlight_query.as_deref(), Some("hello"));
+        assert!(!data.raw.get(), "raw mode must start disabled");
+        assert!(
+            !data.raw_pending_full_content.get(),
+            "raw pending state must start disabled"
+        );
         match &data.kind {
             TranscriptItemKind::Message(message) => {
                 assert_eq!(message.transcript_item_index, 42);

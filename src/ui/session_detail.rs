@@ -1611,7 +1611,7 @@ impl SessionDetail {
         // `full_content`/`content_revision`, so no list-model churn is needed and
         // the scroll position is preserved (#170).
         let item = item.borrow();
-        *item.full_content.borrow_mut() = Some(content);
+        Self::apply_message_full_content_success(&item, content);
         Self::bump_content_revision(&item);
     }
 
@@ -1626,12 +1626,19 @@ impl SessionDetail {
         Self::bump_content_revision(&item);
     }
 
+    pub(crate) fn apply_message_full_content_success(item: &TranscriptItemData, content: String) {
+        *item.full_content.borrow_mut() = Some(content);
+        item.raw_pending_full_content.set(false);
+    }
+
     fn bump_content_revision(item: &TranscriptItemData) {
         item.content_revision.set(!item.content_revision.get());
     }
 
     fn reset_message_expansion_after_full_content_failure(item: &TranscriptItemData) {
         item.expanded.set(false);
+        item.raw.set(false);
+        item.raw_pending_full_content.set(false);
     }
 
     fn typed_message_full_content_target_matches(

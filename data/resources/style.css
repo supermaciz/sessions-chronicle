@@ -172,6 +172,28 @@
   opacity: 0.7;
 }
 
+/* Assistant raw text selection toggle */
+.message-row .raw-message-label {
+  font-family: monospace;
+}
+
+.message-row .raw-toggle {
+  padding: 2px 6px;
+  min-height: 0;
+  opacity: 0;
+}
+
+.message-row:hover .raw-toggle,
+.message-row:focus-within .raw-toggle,
+.message-row .raw-toggle:checked,
+.message-row .raw-toggle:disabled {
+  opacity: 1;
+}
+
+.message-row .raw-toggle:disabled {
+  opacity: 0.7;
+}
+
 /* Inline transcript rows for tool calls and subagents */
 .tool-call-row {
   padding: 2px 8px;

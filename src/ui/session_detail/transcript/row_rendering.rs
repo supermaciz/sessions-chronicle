@@ -32,6 +32,7 @@ pub(crate) fn render_content(
     content: &str,
     role: Role,
     highlight_query: Option<&str>,
+    raw: bool,
 ) -> usize {
     while let Some(child) = container.first_child() {
         container.remove(&child);
@@ -39,32 +40,42 @@ pub(crate) fn render_content(
 
     let mut match_count = 0usize;
 
-    if role == Role::Assistant {
+    if role == Role::Assistant && !raw {
         let (widget, count) = markdown::render_markdown(content, highlight_query);
         match_count = count;
         container.append(&widget);
+    } else if role == Role::Assistant && raw {
+        let label = plain_content_label(content);
+        label.add_css_class("monospace");
+        label.add_css_class("raw-message-label");
+        container.append(&label);
     } else if let Some(query) = highlight_query {
         let (markup, count) = highlight::highlight_text(content, query);
         match_count = count;
         let label = gtk::Label::new(None);
         label.set_markup(&markup);
-        label.set_wrap(true);
-        label.set_wrap_mode(gtk::pango::WrapMode::WordChar);
-        label.set_halign(gtk::Align::Start);
-        label.set_xalign(0.0);
-        label.set_selectable(true);
+        configure_plain_content_label(&label);
         container.append(&label);
     } else {
-        let label = gtk::Label::new(Some(content));
-        label.set_wrap(true);
-        label.set_wrap_mode(gtk::pango::WrapMode::WordChar);
-        label.set_halign(gtk::Align::Start);
-        label.set_xalign(0.0);
-        label.set_selectable(true);
+        let label = plain_content_label(content);
         container.append(&label);
     }
 
     match_count
+}
+
+fn plain_content_label(content: &str) -> gtk::Label {
+    let label = gtk::Label::new(Some(content));
+    configure_plain_content_label(&label);
+    label
+}
+
+fn configure_plain_content_label(label: &gtk::Label) {
+    label.set_wrap(true);
+    label.set_wrap_mode(gtk::pango::WrapMode::WordChar);
+    label.set_halign(gtk::Align::Start);
+    label.set_xalign(0.0);
+    label.set_selectable(true);
 }
 
 pub(crate) fn format_reasoning_burst_label(
@@ -266,6 +277,86 @@ mod tests {
         }
 
         children
+    }
+
+    fn only_child_label(container: &gtk::Box) -> gtk::Label {
+        container
+            .first_child()
+            .expect("content child")
+            .downcast::<gtk::Label>()
+            .expect("content child is label")
+    }
+
+    #[gtk::test]
+    fn render_content_renders_assistant_markdown_by_default() {
+        let container = gtk::Box::new(gtk::Orientation::Vertical, 0);
+
+        let count = render_content(
+            &container,
+            "**hello**",
+            Role::Assistant,
+            Some("hello"),
+            false,
+        );
+
+        assert_eq!(count, 1);
+        let child = container.first_child().expect("markdown child");
+        assert!(
+            !child.is::<gtk::Label>(),
+            "assistant markdown should render as the markdown widget tree, not one plain label"
+        );
+    }
+
+    #[gtk::test]
+    fn render_content_renders_assistant_raw_as_one_selectable_monospace_label() {
+        let container = gtk::Box::new(gtk::Orientation::Vertical, 0);
+
+        let count = render_content(
+            &container,
+            "# Title\n\n```rust\nfn main() {}\n```",
+            Role::Assistant,
+            Some("Title"),
+            true,
+        );
+
+        assert_eq!(
+            count, 0,
+            "raw assistant content intentionally ignores highlights"
+        );
+        assert!(
+            container
+                .first_child()
+                .expect("raw label")
+                .next_sibling()
+                .is_none(),
+            "raw mode must produce exactly one widget"
+        );
+        let label = only_child_label(&container);
+        assert_eq!(
+            label.label().as_str(),
+            "# Title\n\n```rust\nfn main() {}\n```"
+        );
+        assert!(label.is_selectable());
+        assert!(label.wraps());
+        assert_eq!(label.wrap_mode(), gtk::pango::WrapMode::WordChar);
+        assert!(label.has_css_class("monospace"));
+        assert!(label.has_css_class("raw-message-label"));
+        assert!(
+            !label.uses_markup(),
+            "raw text must not be interpreted as Pango markup"
+        );
+    }
+
+    #[gtk::test]
+    fn render_content_keeps_user_highlight_plain_label_behavior() {
+        let container = gtk::Box::new(gtk::Orientation::Vertical, 0);
+
+        let count = render_content(&container, "hello user", Role::User, Some("hello"), false);
+
+        assert_eq!(count, 1);
+        let label = only_child_label(&container);
+        assert!(label.uses_markup());
+        assert!(label.is_selectable());
     }
 
     #[test]

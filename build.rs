@@ -19,6 +19,7 @@ fn main() {
             "clipboard-task-list-regular",
             "chat-bubbles-question-regular",
             "document-one-page-sparkle-regular",
+            "code",
         ],
     );
 }
