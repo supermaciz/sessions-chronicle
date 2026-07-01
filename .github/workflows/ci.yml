@@ -12,7 +12,7 @@ jobs:
     container:
       image: fedora:latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - name: Install dependencies
         run: dnf install -y gcc pkg-config gtk4-devel libadwaita-devel glib2-devel gtksourceview5-devel rust cargo git xorg-x11-server-Xvfb
       - name: Run cargo test
@@ -24,7 +24,7 @@ jobs:
     container:
       image: fedora:latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - name: Install dependencies
         run: dnf install -y gcc pkg-config gtk4-devel libadwaita-devel glib2-devel gtksourceview5-devel rust cargo clippy
       - name: Run cargo clippy
@@ -36,7 +36,7 @@ jobs:
     container:
       image: fedora:latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - name: Install dependencies
         run: dnf install -y cargo rustfmt
       - name: Run cargo fmt
@@ -48,7 +48,7 @@ jobs:
     container:
       image: fedora:latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - name: Install system dependencies
         run: dnf install -y gcc pkg-config gtk4-devel libadwaita-devel glib2-devel gtksourceview5-devel curl git gnupg2 xorg-x11-server-Xvfb
       - name: Setup Rust
@@ -95,7 +95,7 @@ jobs:
       image: ghcr.io/flathub-infra/flatpak-github-actions:gnome-49
       options: --privileged
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: flatpak/flatpak-github-actions/flatpak-builder@v6
         with:
           bundle: sessions-chronicle.flatpak
