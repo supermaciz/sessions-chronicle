@@ -29,8 +29,9 @@ measurement instead of delegating to `GtkScrolledWindow`.
 ## Architecture
 
 A single custom widget, `MarkdownTable`, implemented as a `glib` subclass of
-`GtkWidget` with a custom layout (custom `LayoutManager`, or `measure` /
-`size_allocate` implemented directly on the widget). It owns two kinds of children:
+`GtkWidget` with a custom layout (custom `LayoutManager`, or GTK's
+`measure(orientation, for_size)` / `size_allocate(width, height, baseline)`
+hooks implemented directly on the widget). It owns two kinds of children:
 
 ```
 MarkdownTable (GtkWidget subclass)
@@ -50,20 +51,23 @@ the fallback is documented so the spike is not blocked on this detail.
 
 - Each column has a **fixed minimum width** (constant, e.g.
   `COLUMN_MIN_WIDTH = 120px`, tunable during the spike).
-- `measure(width)`:
+- `measure(orientation, for_size)`:
   - total required width = `Σ column_width + column_spacing`.
   - each cell wraps to its column width, so its height-for-width is computed at
-    the **actual allocated column width**, not at an unconstrained natural width.
+    the **effective table column width** chosen by this layout rule, not at an
+    unconstrained natural width. For option 3, that effective width is the fixed
+    column minimum.
   - each row's height = max of its cells' heights.
   - the widget's reported height is the sum of row heights (plus header separator
     and row spacing) — independent of the widget's allocated width beyond the
     expected wrap.
-- `size_allocate(width)`:
+- `size_allocate(width, height, baseline)`:
   - if `width >= total_width` → no scrollbar; columns keep their minimum width.
     Any surplus width is left unused on the right (proportional distribution is
     deferred to option 2).
   - if `width < total_width` → scrollbar visible; columns are drawn translated by
-    `-hadjustment.value` and **clipped** to the allocated width.
+    `-hadjustment.value` and **clipped** to the allocated width (for example via
+    GTK 4 widget overflow clipping).
 
 ## Horizontal scrolling
 
@@ -89,9 +93,9 @@ wrapped vs 353 px non-wrapped at 360 px width) into a new test that:
 1. builds the `MarkdownTable` widget with the same 15-row prose-heavy fixture;
 2. **fails if** the widget's natural height at a transcript-like width (360 px)
    explodes the way the old wrapped variant did;
-3. asserts the reported height is approximately the sum of the real wrapped row
-   heights and stays **stable** when re-measured at a different width (height is
-   invariant to width beyond the expected wrap);
+3. asserts the reported height is approximately the sum of the row heights
+   produced by the fixed effective column width, and stays **stable** when
+   re-measured at different transcript-like widths;
 4. confirms no residual blank space below the table.
 
 Command:
