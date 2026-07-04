@@ -436,4 +436,56 @@ mod tests {
         assert_eq!(table.adjustment().page_size(), 240.0);
         assert!(table.scrollbar().is_visible());
     }
+
+    #[gtk::test]
+    fn table_widget_wrapped_cells_keep_stable_height() {
+        let headers = vec![
+            "Step".to_string(),
+            "Description".to_string(),
+            "Result".to_string(),
+        ];
+        let rows = (0..15)
+            .map(|index| {
+                vec![
+                    format!("{index}"),
+                    "A prose-heavy cell that reproduces the old wrapped GtkGrid inside GtkScrolledWindow failure mode by requiring several wrapped lines at a fixed column width.".to_string(),
+                    "The custom widget should report only the sum of fixed-column row heights and should not reserve a large blank area below the table.".to_string(),
+                ]
+            })
+            .collect::<Vec<_>>();
+        let table = MarkdownTable::new(&headers, &rows, "");
+
+        let (_min_360, natural_360, _min_base_360, _natural_base_360) =
+            table.measure(gtk::Orientation::Vertical, 360);
+        let (_min_420, natural_420, _min_base_420, _natural_base_420) =
+            table.measure(gtk::Orientation::Vertical, 420);
+        let (_min_720, natural_720, _min_base_720, _natural_base_720) =
+            table.measure(gtk::Orientation::Vertical, 720);
+
+        let labels = table.imp().labels.borrow();
+        // GTK clamps the queried width to the widget's own reported minimum
+        // (the fixed-column total width) before invoking our vertical
+        // measure callback, so the expected layout must use that clamped
+        // width rather than the raw 360 requested above.
+        let clamped_width = total_table_width(headers.len()).max(360);
+        let expected = calculate_layout(&labels, headers.len(), rows.len() + 1, clamped_width)
+            .allocated_height;
+
+        assert_eq!(
+            natural_360, expected,
+            "reported height should match fixed-column row sum: measured_360={natural_360}, measured_420={natural_420}, measured_720={natural_720}, expected={expected}, column_width={COLUMN_MIN_WIDTH}"
+        );
+        assert_eq!(
+            natural_360, natural_420,
+            "height should stay stable at transcript-like widths: measured_360={natural_360}, measured_420={natural_420}, measured_720={natural_720}, expected={expected}, column_width={COLUMN_MIN_WIDTH}"
+        );
+        assert!(
+            natural_720 <= natural_360,
+            "wide measurement should not introduce blank space: measured_360={natural_360}, measured_420={natural_420}, measured_720={natural_720}, expected={expected}, column_width={COLUMN_MIN_WIDTH}"
+        );
+        assert!(
+            natural_360 < 4000,
+            "height exploded like the old wrapped scroller: measured_360={natural_360}, measured_420={natural_420}, measured_720={natural_720}, expected={expected}, column_width={COLUMN_MIN_WIDTH}"
+        );
+    }
 }
