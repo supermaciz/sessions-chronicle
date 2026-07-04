@@ -239,6 +239,11 @@ mod imp {
 
                 y += row_height;
                 if row == 0 && row_count > 1 {
+                    // The header/data separator space is reserved in the height
+                    // math but not painted in this spike. Drawing it (a themed
+                    // gtk::Separator child, like the current grid renderer) is
+                    // deferred to the render_table wiring follow-up, where the
+                    // result can be validated against UI screenshots.
                     y += HEADER_SEPARATOR_HEIGHT;
                 }
                 if row + 1 < row_count {

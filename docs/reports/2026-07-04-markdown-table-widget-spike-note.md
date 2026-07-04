@@ -25,7 +25,13 @@ The first-pass implementation passed its tests but the tests were misleading, an
 
 2. **No re-allocation on scroll.** The cell `x_offset` is derived from the adjustment value only inside `size_allocate`, but nothing connected `value-changed`, so dragging the scrollbar moved the thumb while the cells stayed put. Fixed by connecting `adjustment::value-changed` to `queue_allocate()` in `constructed`, per the GtkScrollable contract.
 
-**Lesson:** the original height/scroll tests passed only because they called the `measure`/`size_allocate` vfuncs directly, which bypasses GTK's real layout — the min-width clamping and the parent-driven scroll loop. Unit tests that drive vfuncs in isolation validate layout math but not live widget behavior, which is exactly where both bugs lived. The suite now includes an underallocation test, a shrinkable-minimum test, and a scroll-reposition test (asserting via `compute_bounds` that a cell shifts left when the scroll value increases).
+A third rendering defect of the same family was found and fixed: children were not clipped to the viewport (`GtkWidget` overflow defaults to visible), so scrolled-away columns painted over surrounding transcript content. Fixed by setting `overflow = Hidden` in the constructor, with a regression test.
+
+**Lesson:** the original height/scroll tests passed only because they called the `measure`/`size_allocate` vfuncs directly, which bypasses GTK's real layout — the min-width clamping, the parent-driven scroll loop, and the paint/clip stage. Unit tests that drive vfuncs in isolation validate layout math but not live widget behavior, which is exactly where all three bugs lived. The suite now includes an underallocation test, a shrinkable-minimum test, a scroll-reposition test (asserting via `compute_bounds` that a cell shifts left when the scroll value increases), and a clip test.
+
+## Known deferral: header separator
+
+The header/data separator space is reserved in the height math (`HEADER_SEPARATOR_HEIGHT`) but not painted in this spike — reserving the space is the correct spike-level behavior (it proves the height accounts for the separator), but no `gtk::Separator` is drawn, unlike the current grid renderer. Drawing it (a themed separator child, or a line in a custom `snapshot()`) is deferred to the `render_table` wiring follow-up, where the choice can be validated against UI screenshots. This is tracked as a P3 review note on PR #181.
 
 ## Decision
 
