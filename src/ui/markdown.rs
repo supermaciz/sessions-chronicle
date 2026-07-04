@@ -742,37 +742,6 @@ impl MarkdownBufferWriter {
         }
     }
 
-    fn create_table_label(text: &str, query: &str, is_header: bool) -> (gtk::Label, usize) {
-        let label = gtk::Label::new(None);
-        label.set_xalign(0.0);
-        label.set_halign(gtk::Align::Start);
-        // Do NOT wrap. Wrapping makes the label's natural height depend on
-        // its allocated width, which breaks GtkScrolledWindow's
-        // height-for-width measurement and produces tall blocks of empty
-        // space below tables (issue #149). With non-wrapping labels, the
-        // grid's height is constant regardless of width, so the SW's height
-        // is correct, and tables that don't fit the message area get the
-        // horizontal scrollbar (which is the SW's purpose).
-        label.set_wrap(false);
-        label.set_single_line_mode(false);
-        label.add_css_class("markdown-table-cell");
-        if is_header {
-            label.add_css_class("markdown-table-header");
-        }
-
-        let match_count = if query.is_empty() {
-            label.set_text(text);
-            0
-        } else {
-            let (markup, count) = crate::ui::highlight::highlight_text(text, query);
-            label.set_use_markup(true);
-            label.set_markup(&markup);
-            count
-        };
-
-        (label, match_count)
-    }
-
     /// Flush the current buffer as a text segment and store the table widget.
     fn render_table(&mut self) {
         if self.table_headers.is_empty() {
@@ -796,7 +765,8 @@ impl MarkdownBufferWriter {
         let mut table_match_count = 0usize;
 
         for (col, header) in self.table_headers.iter().enumerate() {
-            let (label, match_count) = Self::create_table_label(header, query, true);
+            let (label, match_count) =
+                crate::ui::markdown_table::create_table_label(header, query, true, false);
             table_match_count += match_count;
             grid.attach(&label, col as i32, 0, 1, 1);
         }
@@ -807,7 +777,8 @@ impl MarkdownBufferWriter {
 
         for (row_idx, row) in self.table_rows.iter().enumerate() {
             for (col_idx, cell) in row.iter().enumerate() {
-                let (label, match_count) = Self::create_table_label(cell, query, false);
+                let (label, match_count) =
+                    crate::ui::markdown_table::create_table_label(cell, query, false, false);
                 table_match_count += match_count;
                 grid.attach(&label, col_idx as i32, row_idx as i32 + 2, 1, 1);
             }

@@ -5,6 +5,7 @@ pub mod date_pill;
 pub mod format;
 pub mod highlight;
 pub mod markdown;
+pub mod markdown_table;
 pub mod modals;
 pub mod session_detail;
 pub mod session_list;
