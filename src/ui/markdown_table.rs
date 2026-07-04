@@ -268,6 +268,11 @@ impl MarkdownTable {
     pub(crate) fn new(headers: &[String], rows: &[Vec<String>], query: &str) -> Self {
         let table: Self = glib::Object::new();
         table.add_css_class("markdown-table");
+        // Clip children to the viewport: size_allocate places scrolled-away
+        // columns at negative x (or beyond the allocated width), and GtkWidget
+        // does not clip its children by default, so without this they would
+        // paint over surrounding transcript content instead of being hidden.
+        table.set_overflow(gtk::Overflow::Hidden);
         table.set_halign(gtk::Align::Start);
         table.set_valign(gtk::Align::Start);
         table.set_hexpand(true);
@@ -553,6 +558,21 @@ mod tests {
         assert!(
             minimum < natural,
             "reporting the full width as the minimum would defeat the internal scroller: minimum={minimum}, natural={natural}"
+        );
+    }
+
+    #[gtk::test]
+    fn markdown_table_clips_scrolled_cells_to_viewport() {
+        let table = MarkdownTable::new(
+            &["A".to_string(), "B".to_string(), "C".to_string()],
+            &[vec!["1".to_string(), "2".to_string(), "3".to_string()]],
+            "",
+        );
+
+        assert_eq!(
+            table.overflow(),
+            gtk::Overflow::Hidden,
+            "scrolled-away columns must be clipped to the viewport, not painted over surrounding transcript content"
         );
     }
 
