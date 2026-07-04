@@ -133,6 +133,7 @@ mod imp {
         pub labels: RefCell<Vec<gtk::Label>>,
         pub column_count: Cell<usize>,
         pub row_count: Cell<usize>,
+        pub match_count: Cell<usize>,
         pub adjustment: gtk::Adjustment,
         pub scrollbar: gtk::Scrollbar,
     }
@@ -152,6 +153,7 @@ mod imp {
                 labels: RefCell::new(Vec::new()),
                 column_count: Cell::new(0),
                 row_count: Cell::new(0),
+                match_count: Cell::new(0),
                 adjustment,
                 scrollbar,
             }
@@ -312,8 +314,13 @@ impl MarkdownTable {
         imp.row_count.set(rows.len() + 1);
 
         let mut labels = Vec::new();
+        // Aggregate the per-cell search-hit counts so the count survives when
+        // this widget replaces the grid renderer; render_markdown adds it to
+        // the reported total (see markdown::render_table).
+        let mut match_count = 0usize;
         for header in headers {
-            let (label, _match_count) = create_table_label(header, query, true, true);
+            let (label, cell_matches) = create_table_label(header, query, true, true);
+            match_count += cell_matches;
             label.set_parent(&table);
             labels.push(label);
         }
@@ -321,14 +328,23 @@ impl MarkdownTable {
         for row in rows {
             for col in 0..headers.len() {
                 let text = row.get(col).map(String::as_str).unwrap_or("");
-                let (label, _match_count) = create_table_label(text, query, false, true);
+                let (label, cell_matches) = create_table_label(text, query, false, true);
+                match_count += cell_matches;
                 label.set_parent(&table);
                 labels.push(label);
             }
         }
 
         *imp.labels.borrow_mut() = labels;
+        imp.match_count.set(match_count);
         table
+    }
+
+    /// Total number of search-query matches across all cells, so a caller
+    /// wiring this widget into `render_table` can add it to the reported
+    /// search-result count instead of losing table hits from navigation.
+    pub(crate) fn match_count(&self) -> usize {
+        self.imp().match_count.get()
     }
 
     pub(crate) fn adjustment(&self) -> gtk::Adjustment {
@@ -596,6 +612,32 @@ mod tests {
             minimum < natural,
             "reporting the full width as the minimum would defeat the internal scroller: minimum={minimum}, natural={natural}"
         );
+    }
+
+    #[gtk::test]
+    fn markdown_table_aggregates_search_match_count_across_cells() {
+        let table = MarkdownTable::new(
+            &["Rust".to_string(), "Notes".to_string()],
+            &[
+                vec!["Rust is great".to_string(), "no hit here".to_string()],
+                vec!["more Rust".to_string(), "Rust again".to_string()],
+            ],
+            "Rust",
+        );
+
+        // "Rust" appears in the header cell and three body cells (once each).
+        assert_eq!(
+            table.match_count(),
+            4,
+            "table widget must expose the aggregate match count so wiring it in keeps table hits in the search total"
+        );
+    }
+
+    #[gtk::test]
+    fn markdown_table_reports_zero_matches_without_query() {
+        let table = MarkdownTable::new(&["Rust".to_string()], &[vec!["Rust".to_string()]], "");
+
+        assert_eq!(table.match_count(), 0);
     }
 
     #[gtk::test]
