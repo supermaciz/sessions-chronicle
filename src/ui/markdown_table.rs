@@ -38,6 +38,75 @@ pub(crate) fn create_table_label(
     (label, match_count)
 }
 
+pub(crate) const COLUMN_SPACING: i32 = 12;
+pub(crate) const ROW_SPACING: i32 = 4;
+pub(crate) const HEADER_SEPARATOR_HEIGHT: i32 = 1;
+pub(crate) const SCROLLBAR_HEIGHT: i32 = 15;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct TableLayout {
+    pub total_width: i32,
+    pub content_height: i32,
+    pub scrollbar_visible: bool,
+    pub allocated_height: i32,
+    pub row_heights: Vec<i32>,
+}
+
+pub(crate) fn total_table_width(column_count: usize) -> i32 {
+    if column_count == 0 {
+        return 0;
+    }
+
+    (column_count as i32 * COLUMN_MIN_WIDTH) + ((column_count as i32 - 1) * COLUMN_SPACING)
+}
+
+fn calculate_layout(
+    labels: &[gtk::Label],
+    column_count: usize,
+    row_count: usize,
+    allocated_width: i32,
+) -> TableLayout {
+    let mut row_heights = Vec::with_capacity(row_count);
+
+    for row in 0..row_count {
+        let mut row_height = 0;
+        for col in 0..column_count {
+            let index = row * column_count + col;
+            if let Some(label) = labels.get(index) {
+                let (_minimum, natural, _minimum_baseline, _natural_baseline) =
+                    label.measure(gtk::Orientation::Vertical, COLUMN_MIN_WIDTH);
+                row_height = row_height.max(natural);
+            }
+        }
+        row_heights.push(row_height);
+    }
+
+    let rows_height: i32 = row_heights.iter().sum();
+    let row_spacing = row_count.saturating_sub(1) as i32 * ROW_SPACING;
+    let separator_height = if row_count > 1 {
+        HEADER_SEPARATOR_HEIGHT
+    } else {
+        0
+    };
+    let content_height = rows_height + row_spacing + separator_height;
+    let total_width = total_table_width(column_count);
+    let scrollbar_visible = allocated_width > 0 && allocated_width < total_width;
+    let allocated_height = content_height
+        + if scrollbar_visible {
+            SCROLLBAR_HEIGHT
+        } else {
+            0
+        };
+
+    TableLayout {
+        total_width,
+        content_height,
+        scrollbar_visible,
+        allocated_height,
+        row_heights,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -63,5 +132,36 @@ mod tests {
         assert_eq!(label.wrap_mode(), gtk::pango::WrapMode::WordChar);
         assert!(label.has_css_class("markdown-table-cell"));
         assert!(!label.has_css_class("markdown-table-header"));
+    }
+
+    #[test]
+    fn total_table_width_uses_fixed_column_width_and_spacing() {
+        assert_eq!(total_table_width(0), 0);
+        assert_eq!(total_table_width(1), COLUMN_MIN_WIDTH);
+        assert_eq!(
+            total_table_width(3),
+            COLUMN_MIN_WIDTH * 3 + COLUMN_SPACING * 2
+        );
+    }
+
+    #[gtk::test]
+    fn layout_marks_scrollbar_visible_only_on_overflow() {
+        let labels = vec![
+            create_table_label("A", "", true, true).0,
+            create_table_label("B", "", true, true).0,
+            create_table_label("one", "", false, true).0,
+            create_table_label("two", "", false, true).0,
+        ];
+
+        let total = total_table_width(2);
+        let fitting = calculate_layout(&labels, 2, 2, total);
+        let overflowing = calculate_layout(&labels, 2, 2, total - 1);
+
+        assert!(!fitting.scrollbar_visible);
+        assert!(overflowing.scrollbar_visible);
+        assert_eq!(
+            overflowing.allocated_height,
+            overflowing.content_height + SCROLLBAR_HEIGHT
+        );
     }
 }
