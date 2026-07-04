@@ -44,7 +44,21 @@ pub(crate) fn create_table_label(
 pub(crate) const COLUMN_SPACING: i32 = 12;
 pub(crate) const ROW_SPACING: i32 = 4;
 pub(crate) const HEADER_SEPARATOR_HEIGHT: i32 = 1;
+/// Fallback used only when the scrollbar has no themed natural height yet
+/// (e.g. before it is styled). The real reservation measures the scrollbar.
 pub(crate) const SCROLLBAR_HEIGHT: i32 = 15;
+
+/// The vertical space to reserve for the horizontal scrollbar, taken from the
+/// scrollbar's own natural height so themes, CSS overrides, and accessibility
+/// settings that change its thickness are honored instead of a fixed constant.
+fn measured_scrollbar_height(scrollbar: &gtk::Scrollbar) -> i32 {
+    let natural = scrollbar.measure(gtk::Orientation::Vertical, -1).1;
+    if natural > 0 {
+        natural
+    } else {
+        SCROLLBAR_HEIGHT
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct TableLayout {
@@ -68,6 +82,7 @@ fn calculate_layout(
     column_count: usize,
     row_count: usize,
     allocated_width: i32,
+    scrollbar_height: i32,
 ) -> TableLayout {
     let mut row_heights = Vec::with_capacity(row_count);
 
@@ -96,7 +111,7 @@ fn calculate_layout(
     let scrollbar_visible = allocated_width > 0 && allocated_width < total_width;
     let allocated_height = content_height
         + if scrollbar_visible {
-            SCROLLBAR_HEIGHT
+            scrollbar_height
         } else {
             0
         };
@@ -196,7 +211,14 @@ mod imp {
                     (minimum, total_width, -1, -1)
                 }
                 gtk::Orientation::Vertical => {
-                    let layout = calculate_layout(&labels, column_count, row_count, for_size);
+                    let scrollbar_height = measured_scrollbar_height(&self.scrollbar);
+                    let layout = calculate_layout(
+                        &labels,
+                        column_count,
+                        row_count,
+                        for_size,
+                        scrollbar_height,
+                    );
                     (layout.allocated_height, layout.allocated_height, -1, -1)
                 }
                 _ => (0, 0, -1, -1),
@@ -207,7 +229,9 @@ mod imp {
             let column_count = self.column_count.get();
             let row_count = self.row_count.get();
             let labels = self.labels.borrow();
-            let layout = calculate_layout(&labels, column_count, row_count, width);
+            let scrollbar_height = measured_scrollbar_height(&self.scrollbar);
+            let layout =
+                calculate_layout(&labels, column_count, row_count, width, scrollbar_height);
 
             self.adjustment.set_lower(0.0);
             self.adjustment.set_upper(layout.total_width as f64);
@@ -257,7 +281,7 @@ mod imp {
                     layout.content_height as f32,
                 ));
                 self.scrollbar
-                    .allocate(width.max(0), SCROLLBAR_HEIGHT, baseline, Some(transform));
+                    .allocate(width.max(0), scrollbar_height, baseline, Some(transform));
             }
         }
     }
@@ -363,8 +387,8 @@ mod tests {
         ];
 
         let total = total_table_width(2);
-        let fitting = calculate_layout(&labels, 2, 2, total);
-        let overflowing = calculate_layout(&labels, 2, 2, total - 1);
+        let fitting = calculate_layout(&labels, 2, 2, total, SCROLLBAR_HEIGHT);
+        let overflowing = calculate_layout(&labels, 2, 2, total - 1, SCROLLBAR_HEIGHT);
 
         assert!(!fitting.scrollbar_visible);
         assert!(overflowing.scrollbar_visible);
@@ -462,10 +486,11 @@ mod tests {
             height_wide, height_wider,
             "content height must be width-independent above the table width: height_wide={height_wide}, height_wider={height_wider}, height_narrow={height_narrow}"
         );
+        let scrollbar_height = measured_scrollbar_height(&table.scrollbar());
         assert_eq!(
             height_narrow,
-            height_wide + SCROLLBAR_HEIGHT,
-            "underallocation must reserve exactly the scrollbar height: height_wide={height_wide}, height_wider={height_wider}, height_narrow={height_narrow}"
+            height_wide + scrollbar_height,
+            "underallocation must reserve exactly the measured scrollbar height: height_wide={height_wide}, height_wider={height_wider}, height_narrow={height_narrow}, scrollbar_height={scrollbar_height}"
         );
     }
 
@@ -517,9 +542,16 @@ mod tests {
         let (_min_narrow, natural_narrow, _min_base_narrow, _natural_base_narrow) =
             table.measure(gtk::Orientation::Vertical, full_width - 24);
 
+        let scrollbar_height = measured_scrollbar_height(&table.scrollbar());
         let labels = table.imp().labels.borrow();
-        let content_height =
-            calculate_layout(&labels, headers.len(), rows.len() + 1, full_width).allocated_height;
+        let content_height = calculate_layout(
+            &labels,
+            headers.len(),
+            rows.len() + 1,
+            full_width,
+            scrollbar_height,
+        )
+        .allocated_height;
 
         assert_eq!(
             natural_420, content_height,
@@ -531,8 +563,8 @@ mod tests {
         );
         assert_eq!(
             natural_narrow,
-            content_height + SCROLLBAR_HEIGHT,
-            "an underallocation should reserve only the scrollbar, not a large blank area: content={content_height}, measured_420={natural_420}, measured_720={natural_720}, measured_narrow={natural_narrow}, column_width={COLUMN_MIN_WIDTH}"
+            content_height + scrollbar_height,
+            "an underallocation should reserve only the scrollbar, not a large blank area: content={content_height}, measured_420={natural_420}, measured_720={natural_720}, measured_narrow={natural_narrow}, scrollbar_height={scrollbar_height}, column_width={COLUMN_MIN_WIDTH}"
         );
         assert!(
             content_height < 4000,
