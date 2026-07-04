@@ -158,7 +158,76 @@ mod imp {
         }
     }
 
-    impl WidgetImpl for MarkdownTable {}
+    impl WidgetImpl for MarkdownTable {
+        fn measure(&self, orientation: gtk::Orientation, for_size: i32) -> (i32, i32, i32, i32) {
+            let column_count = self.column_count.get();
+            let row_count = self.row_count.get();
+            let labels = self.labels.borrow();
+            let total_width = total_table_width(column_count);
+
+            match orientation {
+                gtk::Orientation::Horizontal => (total_width, total_width, -1, -1),
+                gtk::Orientation::Vertical => {
+                    let layout = calculate_layout(&labels, column_count, row_count, for_size);
+                    (layout.allocated_height, layout.allocated_height, -1, -1)
+                }
+                _ => (0, 0, -1, -1),
+            }
+        }
+
+        fn size_allocate(&self, width: i32, _height: i32, baseline: i32) {
+            let column_count = self.column_count.get();
+            let row_count = self.row_count.get();
+            let labels = self.labels.borrow();
+            let layout = calculate_layout(&labels, column_count, row_count, width);
+
+            self.adjustment.set_lower(0.0);
+            self.adjustment.set_upper(layout.total_width as f64);
+            self.adjustment.set_page_size(width.max(0) as f64);
+            self.adjustment.set_step_increment(24.0);
+            self.adjustment
+                .set_page_increment(width.max(0) as f64 * 0.9);
+            self.scrollbar.set_visible(layout.scrollbar_visible);
+
+            let max_value = (layout.total_width - width).max(0) as f64;
+            if self.adjustment.value() > max_value {
+                self.adjustment.set_value(max_value);
+            }
+
+            let x_offset = -(self.adjustment.value().round() as i32);
+            let mut y = 0;
+            for row in 0..row_count {
+                let row_height = layout.row_heights.get(row).copied().unwrap_or(0);
+                let mut x = x_offset;
+                for col in 0..column_count {
+                    let index = row * column_count + col;
+                    if let Some(label) = labels.get(index) {
+                        let transform = gtk::gsk::Transform::new()
+                            .translate(&gtk::graphene::Point::new(x as f32, y as f32));
+                        label.allocate(COLUMN_MIN_WIDTH, row_height, baseline, Some(transform));
+                    }
+                    x += COLUMN_MIN_WIDTH + COLUMN_SPACING;
+                }
+
+                y += row_height;
+                if row == 0 && row_count > 1 {
+                    y += HEADER_SEPARATOR_HEIGHT;
+                }
+                if row + 1 < row_count {
+                    y += ROW_SPACING;
+                }
+            }
+
+            if layout.scrollbar_visible {
+                let transform = gtk::gsk::Transform::new().translate(&gtk::graphene::Point::new(
+                    0.0,
+                    layout.content_height as f32,
+                ));
+                self.scrollbar
+                    .allocate(width.max(0), SCROLLBAR_HEIGHT, baseline, Some(transform));
+            }
+        }
+    }
 }
 
 glib::wrapper! {
@@ -307,5 +376,64 @@ mod tests {
             gtk::Orientation::Horizontal
         );
         assert_eq!(table.scrollbar().adjustment(), table.adjustment());
+    }
+
+    fn prose_heavy_markdown_table() -> MarkdownTable {
+        let headers = vec![
+            "Name".to_string(),
+            "Summary".to_string(),
+            "Notes".to_string(),
+        ];
+        let rows = (0..15)
+            .map(|index| {
+                vec![
+                    format!("Row {index}"),
+                    "This cell contains prose-heavy markdown table content that should wrap inside a fixed-width column instead of forcing the table to request a huge natural width.".to_string(),
+                    "Additional notes with enough words to exercise height-for-width measurement across multiple transcript-like widths.".to_string(),
+                ]
+            })
+            .collect::<Vec<_>>();
+
+        MarkdownTable::new(&headers, &rows, "")
+    }
+
+    #[gtk::test]
+    fn markdown_table_reports_stable_wrapped_height_at_transcript_widths() {
+        let table = prose_heavy_markdown_table();
+
+        let (_min_360, natural_360, _min_base_360, _natural_base_360) =
+            table.measure(gtk::Orientation::Vertical, 360);
+        let (_min_480, natural_480, _min_base_480, _natural_base_480) =
+            table.measure(gtk::Orientation::Vertical, 480);
+
+        assert!(
+            natural_360 > 0,
+            "expected positive height for markdown table: height_360={natural_360}, height_480={natural_480}"
+        );
+        assert!(
+            natural_360 < 4000,
+            "wrapped table height exploded: height_360={natural_360}, height_480={natural_480}"
+        );
+        assert_eq!(
+            natural_360, natural_480,
+            "fixed effective column width should keep height stable: height_360={natural_360}, height_480={natural_480}"
+        );
+    }
+
+    #[gtk::test]
+    fn markdown_table_updates_horizontal_adjustment_on_allocate() {
+        let table = MarkdownTable::new(
+            &["A".to_string(), "B".to_string(), "C".to_string()],
+            &[vec!["1".to_string(), "2".to_string(), "3".to_string()]],
+            "",
+        );
+        let (_minimum, natural_height, _minimum_baseline, _natural_baseline) =
+            table.measure(gtk::Orientation::Vertical, 240);
+
+        table.size_allocate(&gtk::Allocation::new(0, 0, 240, natural_height), -1);
+
+        assert_eq!(table.adjustment().upper(), total_table_width(3) as f64);
+        assert_eq!(table.adjustment().page_size(), 240.0);
+        assert!(table.scrollbar().is_visible());
     }
 }
