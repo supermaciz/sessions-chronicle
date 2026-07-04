@@ -148,6 +148,17 @@ mod imp {
             self.parent_constructed();
             let obj = self.obj();
             self.scrollbar.set_parent(&*obj);
+
+            // The cell offset is derived from the adjustment value during
+            // size_allocate, so scrolling must queue a fresh allocation;
+            // otherwise dragging the scrollbar moves the thumb while the cells
+            // stay put until an unrelated resize occurs.
+            let weak = obj.downgrade();
+            self.adjustment.connect_value_changed(move |_| {
+                if let Some(obj) = weak.upgrade() {
+                    obj.queue_allocate();
+                }
+            });
         }
 
         fn dispose(&self) {
@@ -159,6 +170,13 @@ mod imp {
     }
 
     impl WidgetImpl for MarkdownTable {
+        fn request_mode(&self) -> gtk::SizeRequestMode {
+            // The reported height depends on the allocated width (a narrow
+            // allocation reserves room for the internal scrollbar), so GTK
+            // must re-measure the height for the width it will allocate.
+            gtk::SizeRequestMode::HeightForWidth
+        }
+
         fn measure(&self, orientation: gtk::Orientation, for_size: i32) -> (i32, i32, i32, i32) {
             let column_count = self.column_count.get();
             let row_count = self.row_count.get();
@@ -166,7 +184,17 @@ mod imp {
             let total_width = total_table_width(column_count);
 
             match orientation {
-                gtk::Orientation::Horizontal => (total_width, total_width, -1, -1),
+                gtk::Orientation::Horizontal => {
+                    // Report a single column as the minimum so the widget can
+                    // be underallocated inside a narrow transcript bubble: the
+                    // parent may shrink us down to one column and we scroll the
+                    // rest internally. Reporting `total_width` as the minimum
+                    // would force every ancestor to honor the full table width
+                    // (GTK also clamps the orthogonal measurement to the
+                    // minimum), so the internal scrollbar would never engage.
+                    let minimum = COLUMN_MIN_WIDTH.min(total_width);
+                    (minimum, total_width, -1, -1)
+                }
                 gtk::Orientation::Vertical => {
                     let layout = calculate_layout(&labels, column_count, row_count, for_size);
                     (layout.allocated_height, layout.allocated_height, -1, -1)
@@ -400,23 +428,34 @@ mod tests {
     #[gtk::test]
     fn markdown_table_reports_stable_wrapped_height_at_transcript_widths() {
         let table = prose_heavy_markdown_table();
+        let full_width = total_table_width(3);
 
-        let (_min_360, natural_360, _min_base_360, _natural_base_360) =
-            table.measure(gtk::Orientation::Vertical, 360);
-        let (_min_480, natural_480, _min_base_480, _natural_base_480) =
-            table.measure(gtk::Orientation::Vertical, 480);
+        // At or above the fixed table width there is no internal scrollbar, and
+        // because the columns never re-wrap the content height is independent
+        // of the allocated width.
+        let (_min_wide, height_wide, _mb_wide, _nb_wide) =
+            table.measure(gtk::Orientation::Vertical, full_width);
+        let (_min_wider, height_wider, _mb_wider, _nb_wider) =
+            table.measure(gtk::Orientation::Vertical, full_width + 336);
+
+        // Below the fixed table width the widget turns into an internal
+        // scroller and reserves exactly the scrollbar height on top of the same
+        // content height.
+        let (_min_narrow, height_narrow, _mb_narrow, _nb_narrow) =
+            table.measure(gtk::Orientation::Vertical, full_width - 24);
 
         assert!(
-            natural_360 > 0,
-            "expected positive height for markdown table: height_360={natural_360}, height_480={natural_480}"
-        );
-        assert!(
-            natural_360 < 4000,
-            "wrapped table height exploded: height_360={natural_360}, height_480={natural_480}"
+            height_wide > 0 && height_wide < 4000,
+            "expected a sane content height: height_wide={height_wide}, height_wider={height_wider}, height_narrow={height_narrow}"
         );
         assert_eq!(
-            natural_360, natural_480,
-            "fixed effective column width should keep height stable: height_360={natural_360}, height_480={natural_480}"
+            height_wide, height_wider,
+            "content height must be width-independent above the table width: height_wide={height_wide}, height_wider={height_wider}, height_narrow={height_narrow}"
+        );
+        assert_eq!(
+            height_narrow,
+            height_wide + SCROLLBAR_HEIGHT,
+            "underallocation must reserve exactly the scrollbar height: height_wide={height_wide}, height_wider={height_wider}, height_narrow={height_narrow}"
         );
     }
 
@@ -455,37 +494,109 @@ mod tests {
             .collect::<Vec<_>>();
         let table = MarkdownTable::new(&headers, &rows, "");
 
-        let (_min_360, natural_360, _min_base_360, _natural_base_360) =
-            table.measure(gtk::Orientation::Vertical, 360);
+        let full_width = total_table_width(headers.len());
+
+        // Two allocations at or above the fixed table width: no scrollbar, so
+        // both report the plain content height regardless of extra slack.
         let (_min_420, natural_420, _min_base_420, _natural_base_420) =
-            table.measure(gtk::Orientation::Vertical, 420);
+            table.measure(gtk::Orientation::Vertical, full_width + 36);
         let (_min_720, natural_720, _min_base_720, _natural_base_720) =
-            table.measure(gtk::Orientation::Vertical, 720);
+            table.measure(gtk::Orientation::Vertical, full_width + 336);
+        // One underallocation below the fixed table width: internal scroller,
+        // so it reserves the scrollbar height on top of the content height.
+        let (_min_narrow, natural_narrow, _min_base_narrow, _natural_base_narrow) =
+            table.measure(gtk::Orientation::Vertical, full_width - 24);
 
         let labels = table.imp().labels.borrow();
-        // GTK clamps the queried width to the widget's own reported minimum
-        // (the fixed-column total width) before invoking our vertical
-        // measure callback, so the expected layout must use that clamped
-        // width rather than the raw 360 requested above.
-        let clamped_width = total_table_width(headers.len()).max(360);
-        let expected = calculate_layout(&labels, headers.len(), rows.len() + 1, clamped_width)
-            .allocated_height;
+        let content_height =
+            calculate_layout(&labels, headers.len(), rows.len() + 1, full_width).allocated_height;
 
         assert_eq!(
-            natural_360, expected,
-            "reported height should match fixed-column row sum: measured_360={natural_360}, measured_420={natural_420}, measured_720={natural_720}, expected={expected}, column_width={COLUMN_MIN_WIDTH}"
+            natural_420, content_height,
+            "reported height should match the fixed-column row sum: content={content_height}, measured_420={natural_420}, measured_720={natural_720}, measured_narrow={natural_narrow}, column_width={COLUMN_MIN_WIDTH}"
         );
         assert_eq!(
-            natural_360, natural_420,
-            "height should stay stable at transcript-like widths: measured_360={natural_360}, measured_420={natural_420}, measured_720={natural_720}, expected={expected}, column_width={COLUMN_MIN_WIDTH}"
+            natural_420, natural_720,
+            "content height should stay stable across wide transcript widths: content={content_height}, measured_420={natural_420}, measured_720={natural_720}, measured_narrow={natural_narrow}, column_width={COLUMN_MIN_WIDTH}"
+        );
+        assert_eq!(
+            natural_narrow,
+            content_height + SCROLLBAR_HEIGHT,
+            "an underallocation should reserve only the scrollbar, not a large blank area: content={content_height}, measured_420={natural_420}, measured_720={natural_720}, measured_narrow={natural_narrow}, column_width={COLUMN_MIN_WIDTH}"
         );
         assert!(
-            natural_720 <= natural_360,
-            "wide measurement should not introduce blank space: measured_360={natural_360}, measured_420={natural_420}, measured_720={natural_720}, expected={expected}, column_width={COLUMN_MIN_WIDTH}"
+            content_height < 4000,
+            "height exploded like the old wrapped scroller: content={content_height}, measured_420={natural_420}, measured_720={natural_720}, measured_narrow={natural_narrow}, column_width={COLUMN_MIN_WIDTH}"
+        );
+    }
+
+    #[gtk::test]
+    fn markdown_table_reports_shrinkable_minimum_width() {
+        let table = MarkdownTable::new(
+            &["A".to_string(), "B".to_string(), "C".to_string()],
+            &[vec!["1".to_string(), "2".to_string(), "3".to_string()]],
+            "",
+        );
+
+        let (minimum, natural, _min_baseline, _natural_baseline) =
+            table.measure(gtk::Orientation::Horizontal, -1);
+
+        assert_eq!(
+            minimum, COLUMN_MIN_WIDTH,
+            "widget must be shrinkable to one column so a narrow bubble can scroll it: minimum={minimum}, natural={natural}"
+        );
+        assert_eq!(
+            natural,
+            total_table_width(3),
+            "natural width must stay the full fixed-column table width: minimum={minimum}, natural={natural}"
         );
         assert!(
-            natural_360 < 4000,
-            "height exploded like the old wrapped scroller: measured_360={natural_360}, measured_420={natural_420}, measured_720={natural_720}, expected={expected}, column_width={COLUMN_MIN_WIDTH}"
+            minimum < natural,
+            "reporting the full width as the minimum would defeat the internal scroller: minimum={minimum}, natural={natural}"
+        );
+    }
+
+    #[gtk::test]
+    fn markdown_table_repositions_cells_when_scroll_value_changes() {
+        let table = MarkdownTable::new(
+            &["A".to_string(), "B".to_string(), "C".to_string()],
+            &[vec!["1".to_string(), "2".to_string(), "3".to_string()]],
+            "",
+        );
+        let narrow = COLUMN_MIN_WIDTH;
+        let (_minimum, natural_height, _minimum_baseline, _natural_baseline) =
+            table.measure(gtk::Orientation::Vertical, narrow);
+        table.size_allocate(&gtk::Allocation::new(0, 0, narrow, natural_height), -1);
+
+        let first_label = {
+            let mut child = table.first_child();
+            let mut found = None;
+            while let Some(widget) = child {
+                if widget.is::<gtk::Label>() {
+                    found = Some(widget.clone());
+                    break;
+                }
+                child = widget.next_sibling();
+            }
+            found.expect("table should have label children")
+        };
+        let before = first_label
+            .compute_bounds(&table)
+            .expect("label bounds")
+            .x();
+
+        // Scrolling changes the adjustment value; the value-changed handler
+        // must queue a fresh allocation so the cells shift left.
+        table.adjustment().set_value(48.0);
+        table.size_allocate(&gtk::Allocation::new(0, 0, narrow, natural_height), -1);
+        let after = first_label
+            .compute_bounds(&table)
+            .expect("label bounds")
+            .x();
+
+        assert!(
+            after < before,
+            "cells should shift left when the scroll value increases: before_x={before}, after_x={after}"
         );
     }
 }
