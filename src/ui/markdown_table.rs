@@ -1,5 +1,8 @@
+use gtk::glib;
 use gtk::prelude::*;
+use gtk::subclass::prelude::*;
 use relm4::gtk;
+use std::cell::{Cell, RefCell};
 
 pub(crate) const COLUMN_MIN_WIDTH: i32 = 120;
 
@@ -107,6 +110,105 @@ fn calculate_layout(
     }
 }
 
+mod imp {
+    use super::*;
+
+    #[derive(Default)]
+    pub(crate) struct MarkdownTable {
+        pub labels: RefCell<Vec<gtk::Label>>,
+        pub column_count: Cell<usize>,
+        pub row_count: Cell<usize>,
+        pub adjustment: gtk::Adjustment,
+        pub scrollbar: gtk::Scrollbar,
+    }
+
+    #[glib::object_subclass]
+    impl ObjectSubclass for MarkdownTable {
+        const NAME: &'static str = "ScMarkdownTable";
+        type Type = super::MarkdownTable;
+        type ParentType = gtk::Widget;
+
+        fn new() -> Self {
+            let adjustment = gtk::Adjustment::new(0.0, 0.0, 0.0, 1.0, 24.0, 0.0);
+            let scrollbar = gtk::Scrollbar::new(gtk::Orientation::Horizontal, Some(&adjustment));
+            scrollbar.set_visible(false);
+
+            Self {
+                labels: RefCell::new(Vec::new()),
+                column_count: Cell::new(0),
+                row_count: Cell::new(0),
+                adjustment,
+                scrollbar,
+            }
+        }
+    }
+
+    impl ObjectImpl for MarkdownTable {
+        fn constructed(&self) {
+            self.parent_constructed();
+            let obj = self.obj();
+            self.scrollbar.set_parent(&*obj);
+        }
+
+        fn dispose(&self) {
+            for label in self.labels.borrow_mut().drain(..) {
+                label.unparent();
+            }
+            self.scrollbar.unparent();
+        }
+    }
+
+    impl WidgetImpl for MarkdownTable {}
+}
+
+glib::wrapper! {
+    pub(crate) struct MarkdownTable(ObjectSubclass<imp::MarkdownTable>)
+        @extends gtk::Widget,
+        @implements gtk::Accessible, gtk::Buildable, gtk::ConstraintTarget;
+}
+
+impl MarkdownTable {
+    pub(crate) fn new(headers: &[String], rows: &[Vec<String>], query: &str) -> Self {
+        let table: Self = glib::Object::new();
+        table.add_css_class("markdown-table");
+        table.set_halign(gtk::Align::Start);
+        table.set_valign(gtk::Align::Start);
+        table.set_hexpand(true);
+        table.set_vexpand(false);
+
+        let imp = table.imp();
+        imp.column_count.set(headers.len());
+        imp.row_count.set(rows.len() + 1);
+
+        let mut labels = Vec::new();
+        for header in headers {
+            let (label, _match_count) = create_table_label(header, query, true, true);
+            label.set_parent(&table);
+            labels.push(label);
+        }
+
+        for row in rows {
+            for col in 0..headers.len() {
+                let text = row.get(col).map(String::as_str).unwrap_or("");
+                let (label, _match_count) = create_table_label(text, query, false, true);
+                label.set_parent(&table);
+                labels.push(label);
+            }
+        }
+
+        *imp.labels.borrow_mut() = labels;
+        table
+    }
+
+    pub(crate) fn adjustment(&self) -> gtk::Adjustment {
+        self.imp().adjustment.clone()
+    }
+
+    pub(crate) fn scrollbar(&self) -> gtk::Scrollbar {
+        self.imp().scrollbar.clone()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -163,5 +265,47 @@ mod tests {
             overflowing.allocated_height,
             overflowing.content_height + SCROLLBAR_HEIGHT
         );
+    }
+
+    #[gtk::test]
+    fn markdown_table_constructs_wrapping_label_children() {
+        let table = MarkdownTable::new(
+            &["Column A".to_string(), "Column B".to_string()],
+            &[vec![
+                "Long prose cell".to_string(),
+                "Second cell".to_string(),
+            ]],
+            "prose",
+        );
+
+        assert!(table.has_css_class("markdown-table"));
+
+        let mut labels = Vec::new();
+        let mut child = table.first_child();
+        while let Some(widget) = child {
+            if let Ok(label) = widget.clone().downcast::<gtk::Label>() {
+                labels.push(label);
+            }
+            child = widget.next_sibling();
+        }
+
+        assert_eq!(labels.len(), 4);
+        assert!(labels.iter().all(|label| label.wraps()));
+        assert!(labels[0].has_css_class("markdown-table-header"));
+    }
+
+    #[gtk::test]
+    fn markdown_table_exposes_scrollbar_bound_to_adjustment() {
+        let table = MarkdownTable::new(
+            &["A".to_string(), "B".to_string(), "C".to_string()],
+            &[vec!["1".to_string(), "2".to_string(), "3".to_string()]],
+            "",
+        );
+
+        assert_eq!(
+            table.scrollbar().orientation(),
+            gtk::Orientation::Horizontal
+        );
+        assert_eq!(table.scrollbar().adjustment(), table.adjustment());
     }
 }
