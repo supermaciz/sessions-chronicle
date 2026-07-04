@@ -3,19 +3,30 @@
 **Date:** 2026-07-04
 **Spec:** `docs/superpowers/specs/2026-07-02-markdown-table-widget-spike-design.md`
 **Issue:** #176 follow-up
+**PR:** #181
 
 ## Result
 
-The spike uses manual placement in a `gtk::Widget` subclass. `MarkdownTable` owns wrapping `gtk::Label` cell children and a horizontal `gtk::Scrollbar`, implements `WidgetImpl::measure` and `WidgetImpl::size_allocate` directly, and measures row heights at the fixed effective column width of 120 px.
+The spike uses manual placement in a `gtk::Widget` subclass. `MarkdownTable` owns wrapping `gtk::Label` cell children and a horizontal `gtk::Scrollbar`, implements `WidgetImpl::measure` and `WidgetImpl::size_allocate` directly, and measures row heights at the fixed effective column width of 120 px. It behaves as a self-contained internal horizontal scroller: it reports a shrinkable minimum width (one column) with the full fixed-column table width as its natural width, declares `SizeRequestMode::HeightForWidth`, shows its scrollbar only on overflow, and repositions its cells when the scroll adjustment changes.
+
+The spike deliberately does **not** switch the production `render_table` path to `MarkdownTable`; that wiring is a separate follow-up so it can be reviewed with UI screenshots and fixture-driven manual verification.
 
 ## Measurement
 
-`cargo test table_widget_wrapped_cells_keep_stable_height -- --nocapture` passes. The test asserts that the 15-row prose-heavy fixture reports the exact fixed-column row-sum height, stays stable at transcript-like widths, and remains below an explosion threshold.
+`cargo test markdown_table::tests -- --nocapture` passes. The height tests assert the honest invariant: the *content* height is width-independent (fixed columns never re-wrap), and an underallocation below the table width adds exactly `SCROLLBAR_HEIGHT` on top of that content height.
 
-While implementing, actual measured heights in this environment came in around 3,200-3,300 px for the 15-row, 3-column prose-heavy fixture (versus an initial 1,200 px sanity bound assumed in the design). This reflects the local font metrics wrapping the fixture's long prose text into more lines per cell than assumed, not a bug in the widget: the height is exactly the sum of the fixed-column row heights, and it stays perfectly stable across 360/420/720 px query widths, which is the actual exit criterion. The explosion-sanity bound was raised to 4,000 px accordingly.
+Actual measured heights in this environment came in around 3,200-3,300 px of content for the 15-row, 3-column prose-heavy fixture, versus an initial 1,200 px sanity bound assumed in the design. This reflects the local font metrics wrapping the fixture's long prose text into more lines per cell than assumed, not a bug in the widget: the height is exactly the sum of the fixed-column row heights. The explosion-sanity bound was raised to 4,000 px accordingly.
 
-GTK also clamps any `measure(Vertical, for_size)` request below the widget's own reported horizontal minimum (the fixed total column width) up to that minimum before invoking our callback, confirmed by a `Gtk-WARNING` during test runs. Tests that independently recompute an "expected" layout for comparison account for this clamping.
+## Review findings and correction
+
+The first-pass implementation passed its tests but the tests were misleading, and PR review (Codex bot, two P2 findings) caught two real defects. Both are fixed:
+
+1. **Non-shrinkable minimum width.** `measure(Horizontal)` originally reported `total_width` as *both* minimum and natural. In GTK4 the minimum is a hard constraint: ancestors must honor it, and GTK clamps the orthogonal (vertical) measurement to it as well. The consequence was that the `allocated_width < total_width` overflow branch never ran in a real transcript, so the internal scrollbar never engaged (the widget behaved like the old full-width `GtkGrid`), and the reserved height omitted `SCROLLBAR_HEIGHT` under a forced underallocation. The symptom was visible during the spike as a `Gtk-WARNING: ... needs at least 384`. Fixed by reporting `COLUMN_MIN_WIDTH` as the minimum and adding `SizeRequestMode::HeightForWidth` so GTK re-measures the height for the width it actually allocates.
+
+2. **No re-allocation on scroll.** The cell `x_offset` is derived from the adjustment value only inside `size_allocate`, but nothing connected `value-changed`, so dragging the scrollbar moved the thumb while the cells stayed put. Fixed by connecting `adjustment::value-changed` to `queue_allocate()` in `constructed`, per the GtkScrollable contract.
+
+**Lesson:** the original height/scroll tests passed only because they called the `measure`/`size_allocate` vfuncs directly, which bypasses GTK's real layout — the min-width clamping and the parent-driven scroll loop. Unit tests that drive vfuncs in isolation validate layout math but not live widget behavior, which is exactly where both bugs lived. The suite now includes an underallocation test, a shrinkable-minimum test, and a scroll-reposition test (asserting via `compute_bounds` that a cell shifts left when the scroll value increases).
 
 ## Decision
 
-The measurements justify wiring `MarkdownTable` into `render_table` as a follow-up. Keep that follow-up separate from this spike so production rendering changes can be reviewed with UI screenshots and fixture-driven manual verification.
+With the two review findings fixed and covered, the widget now genuinely demonstrates the design's central claim — stable wrapped-cell height plus a conditional internal horizontal scrollbar. This justifies wiring `MarkdownTable` into `render_table` as a follow-up, kept separate from this spike so the production rendering change can be reviewed with UI screenshots and fixture-driven manual verification.
