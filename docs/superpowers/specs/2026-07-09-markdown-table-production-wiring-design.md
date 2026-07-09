@@ -68,15 +68,29 @@ Implementation shape:
 - Add `separator: gtk::Separator` to the `MarkdownTable` subclass state.
 - Parent it in `ObjectImpl::constructed` alongside the scrollbar.
 - Unparent it in `ObjectImpl::dispose`.
-- Keep `HEADER_SEPARATOR_HEIGHT` in layout math as the reserved height.
 - In `size_allocate`, place the separator immediately after row 0 when
   `row_count > 1`.
 - Set the separator visible only when there is at least one body row.
 
-The separator should span `layout.total_width` and use the same horizontal
-translation as the cells so it stays aligned with the table content while
-horizontal scrolling. It should remain clipped by the table widget's existing
-`gtk::Overflow::Hidden` viewport behavior.
+**Reserve the separator's measured natural height, not a hardcoded constant.**
+`HEADER_SEPARATOR_HEIGHT = 1` is a spike-era placeholder. A real themed
+`gtk::Separator` has a theme-, CSS-, and accessibility-dependent natural height
+(often more than one pixel once min-height and margins apply), so reserving a
+flat `1` px risks the painted separator overflowing into `ROW_SPACING` or the
+first data row. This must follow the existing scrollbar precedent: just as
+`measured_scrollbar_height` reads the scrollbar's own natural height, add a
+`measured_separator_height` helper that measures the separator vertically and
+feed that into `calculate_layout` instead of the constant. Keep
+`HEADER_SEPARATOR_HEIGHT` only as the pre-styled fallback (mirroring
+`SCROLLBAR_HEIGHT`), not as the authoritative reserved height.
+
+The separator should span the allocated `width` (the viewport), not
+`layout.total_width`, and should stay pinned at `x = 0` rather than sharing the
+cells' horizontal scroll translation. It is a header/data divider for the
+visible viewport, so it should remain a fixed rule under the header while the
+cells scroll beneath it, rather than sliding sideways with the content. It stays
+clipped by the table widget's existing `gtk::Overflow::Hidden` viewport
+behavior.
 
 If the `gtk::Separator` child causes unstable measurement or theming problems in
 the real app, fall back to drawing a one-pixel line in `WidgetImpl::snapshot`.
@@ -126,7 +140,14 @@ app verification shows unusable scroll ergonomics.
 
 ## Testing
 
-Update `src/ui/markdown.rs` tests that currently encode the old renderer:
+Update `src/ui/markdown.rs` tests that currently encode the old renderer. The
+old path threads `gtk::Grid`, `gtk::GridLayoutChild`, and `gtk::ScrolledWindow`
+through both tests and their shared helpers, so the churn is larger than a
+handful of assertion flips. Every one of the following must be addressed or the
+suite will fail to compile or panic (e.g. `GridLayoutChild` downcasts that
+`unwrap()`):
+
+Direct test bodies:
 
 - `table_renders_as_separate_widget` should expect `MarkdownTable` instead of a
   `GtkScrolledWindow`.
@@ -135,15 +156,41 @@ Update `src/ui/markdown.rs` tests that currently encode the old renderer:
 - `table_cells_do_not_wrap` should invert to require wrapped table cell labels.
 - `table_search_count_includes_widget_cells` should remain, and should continue
   to pass through `MarkdownTable::match_count()`.
-- helper functions that discover table widgets should find `MarkdownTable`
-  instances rather than direct child `GtkScrolledWindow`s.
+- `table_grid_positions_correct` cannot simply invert: `MarkdownTable` has no
+  `gtk::Grid` and no `GridLayoutChild`, so cell placement is done by hand in
+  `size_allocate` via `gsk::Transform`. Rewrite it as a bounds/translation
+  assertion (following `markdown_table_repositions_cells_when_scroll_value_changes`
+  in `markdown_table.rs`) or delete it in favor of the widget-level layout tests.
+- `table_two_columns_has_correct_labels` should keep asserting label text but
+  read it through the new widget rather than the grid.
+- `table_inside_blockquote_group` and `blockquote_can_group_table_and_code_widgets`
+  currently assert `find_widgets_of_type::<gtk::Grid>` inside the quote; retarget
+  them to `MarkdownTable`.
+
+Shared helpers (update once, fixes many callers):
+
+- `find_table_widgets` currently downcasts to `gtk::ScrolledWindow`; it must
+  find `MarkdownTable` instances instead.
+- `collect_grid_positions` is built entirely on `gtk::Grid` +
+  `GridLayoutChild::column()/row()`; it has no analog on `MarkdownTable` and
+  should be removed with `table_grid_positions_correct`, or replaced with a
+  transform-based position collector.
+- `table_label_texts` should keep working as long as it walks label children,
+  but verify it is not scoped to a `ScrolledWindow`/`Grid` subtree.
+
+Grep for `gtk::Grid`, `GridLayoutChild`, and `ScrolledWindow` in
+`src/ui/markdown.rs` tests before implementing to confirm the full inventory;
+none of these references should survive the wiring.
 
 Add or keep `src/ui/markdown_table.rs` tests for:
 
 - separator child existence and visibility when body rows exist;
 - no visible separator for a header-only table;
-- stable height accounting that includes `HEADER_SEPARATOR_HEIGHT` once;
-- horizontal scroll repositioning still affecting cells and separator alignment.
+- stable height accounting that includes the measured separator height once
+  (assert against `measured_separator_height`, not the `HEADER_SEPARATOR_HEIGHT`
+  fallback constant, so a themed separator height cannot silently drift);
+- horizontal scroll repositioning still affecting cells, while the separator
+  stays pinned at `x = 0` and spans the allocated width rather than scrolling.
 
 Run the existing focused widget tests and full CI-parity checks:
 
@@ -178,4 +225,8 @@ bugs appeared only in live layout, not in direct vfunc tests.
 
 Proceed with the minimal production wiring: replace the old grid/scroller table
 path in `render_table` with `MarkdownTable`, add a themed `gtk::Separator` child
-inside `MarkdownTable`, and update tests to encode the new wrapped-cell contract.
+inside `MarkdownTable` whose reserved height is measured (not the placeholder
+`HEADER_SEPARATOR_HEIGHT` constant) and which stays pinned to the viewport
+instead of scrolling with the cells, and update tests — including the
+`gtk::Grid`/`GridLayoutChild`/`ScrolledWindow`-based helpers — to encode the new
+wrapped-cell contract.
