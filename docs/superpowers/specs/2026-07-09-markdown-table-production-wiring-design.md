@@ -180,7 +180,9 @@ Shared helpers (update once, fixes many callers):
 
 Grep for `gtk::Grid`, `GridLayoutChild`, and `ScrolledWindow` in
 `src/ui/markdown.rs` tests before implementing to confirm the full inventory;
-none of these references should survive the wiring.
+none of the table-renderer references should survive the wiring. `ScrolledWindow`
+references for unrelated widgets, such as code blocks, should remain covered by
+their existing tests.
 
 Add or keep `src/ui/markdown_table.rs` tests for:
 
