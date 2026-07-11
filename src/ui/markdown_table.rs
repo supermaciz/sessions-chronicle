@@ -4,7 +4,7 @@ use gtk::subclass::prelude::*;
 use relm4::gtk;
 use std::cell::{Cell, RefCell};
 
-pub(crate) const COLUMN_MIN_WIDTH: i32 = 120;
+pub(crate) const COLUMN_MIN_WIDTH: i32 = 160;
 
 pub(crate) fn create_table_label(
     text: &str,
@@ -20,8 +20,6 @@ pub(crate) fn create_table_label(
     label.set_single_line_mode(false);
     if wraps {
         label.set_wrap_mode(gtk::pango::WrapMode::WordChar);
-        label.set_width_chars(1);
-        label.set_max_width_chars(1);
     }
     label.add_css_class("markdown-table-cell");
     if is_header {
@@ -409,12 +407,15 @@ mod tests {
         assert!(label.uses_markup());
         assert!(label.wraps());
         assert_eq!(label.wrap_mode(), gtk::pango::WrapMode::WordChar);
+        assert_eq!(label.width_chars(), -1);
+        assert_eq!(label.max_width_chars(), -1);
         assert!(label.has_css_class("markdown-table-cell"));
         assert!(!label.has_css_class("markdown-table-header"));
     }
 
     #[test]
     fn total_table_width_uses_fixed_column_width_and_spacing() {
+        assert_eq!(COLUMN_MIN_WIDTH, 160);
         assert_eq!(total_table_width(0), 0);
         assert_eq!(total_table_width(1), COLUMN_MIN_WIDTH);
         assert_eq!(
@@ -483,6 +484,25 @@ mod tests {
         assert_eq!(labels.len(), 4);
         assert!(labels.iter().all(|label| label.wraps()));
         assert!(labels[0].has_css_class("markdown-table-header"));
+    }
+
+    #[gtk::test]
+    fn markdown_table_does_not_wrap_ordinary_text_character_by_character() {
+        let table = MarkdownTable::new(
+            &["Nom".to_string()],
+            &[vec!["Projet Alpha".to_string()]],
+            "",
+        );
+        let full_width = total_table_width(1);
+        let (_, natural_height, _, _) = table.measure(gtk::Orientation::Vertical, full_width);
+        table.size_allocate(&gtk::Allocation::new(0, 0, full_width, natural_height), -1);
+
+        let body_label = table.imp().labels.borrow()[1].clone();
+        assert_eq!(
+            body_label.layout().line_count(),
+            1,
+            "ordinary text should fit on one line at the fixed column width"
+        );
     }
 
     #[gtk::test]
