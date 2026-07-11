@@ -60,6 +60,16 @@ fn measured_scrollbar_height(scrollbar: &gtk::Scrollbar) -> i32 {
     }
 }
 
+/// The vertical space reserved for the themed header/data separator.
+fn measured_separator_height(separator: &gtk::Separator) -> i32 {
+    let natural = separator.measure(gtk::Orientation::Vertical, -1).1;
+    if natural > 0 {
+        natural
+    } else {
+        HEADER_SEPARATOR_HEIGHT
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct TableLayout {
     pub total_width: i32,
@@ -83,6 +93,7 @@ fn calculate_layout(
     row_count: usize,
     allocated_width: i32,
     scrollbar_height: i32,
+    separator_height: i32,
 ) -> TableLayout {
     let mut row_heights = Vec::with_capacity(row_count);
 
@@ -101,12 +112,8 @@ fn calculate_layout(
 
     let rows_height: i32 = row_heights.iter().sum();
     let row_spacing = row_count.saturating_sub(1) as i32 * ROW_SPACING;
-    let separator_height = if row_count > 1 {
-        HEADER_SEPARATOR_HEIGHT
-    } else {
-        0
-    };
-    let content_height = rows_height + row_spacing + separator_height;
+    let reserved_separator_height = if row_count > 1 { separator_height } else { 0 };
+    let content_height = rows_height + row_spacing + reserved_separator_height;
     let total_width = total_table_width(column_count);
     let scrollbar_visible = allocated_width > 0 && allocated_width < total_width;
     let allocated_height = content_height
@@ -135,6 +142,7 @@ mod imp {
         pub row_count: Cell<usize>,
         pub match_count: Cell<usize>,
         pub adjustment: gtk::Adjustment,
+        pub separator: gtk::Separator,
         pub scrollbar: gtk::Scrollbar,
     }
 
@@ -146,6 +154,8 @@ mod imp {
 
         fn new() -> Self {
             let adjustment = gtk::Adjustment::new(0.0, 0.0, 0.0, 1.0, 24.0, 0.0);
+            let separator = gtk::Separator::new(gtk::Orientation::Horizontal);
+            separator.set_visible(false);
             let scrollbar = gtk::Scrollbar::new(gtk::Orientation::Horizontal, Some(&adjustment));
             scrollbar.set_visible(false);
 
@@ -155,6 +165,7 @@ mod imp {
                 row_count: Cell::new(0),
                 match_count: Cell::new(0),
                 adjustment,
+                separator,
                 scrollbar,
             }
         }
@@ -164,6 +175,7 @@ mod imp {
         fn constructed(&self) {
             self.parent_constructed();
             let obj = self.obj();
+            self.separator.set_parent(&*obj);
             self.scrollbar.set_parent(&*obj);
 
             // The cell offset is derived from the adjustment value during
@@ -182,6 +194,7 @@ mod imp {
             for label in self.labels.borrow_mut().drain(..) {
                 label.unparent();
             }
+            self.separator.unparent();
             self.scrollbar.unparent();
         }
     }
@@ -214,12 +227,14 @@ mod imp {
                 }
                 gtk::Orientation::Vertical => {
                     let scrollbar_height = measured_scrollbar_height(&self.scrollbar);
+                    let separator_height = measured_separator_height(&self.separator);
                     let layout = calculate_layout(
                         &labels,
                         column_count,
                         row_count,
                         for_size,
                         scrollbar_height,
+                        separator_height,
                     );
                     (layout.allocated_height, layout.allocated_height, -1, -1)
                 }
@@ -232,8 +247,15 @@ mod imp {
             let row_count = self.row_count.get();
             let labels = self.labels.borrow();
             let scrollbar_height = measured_scrollbar_height(&self.scrollbar);
-            let layout =
-                calculate_layout(&labels, column_count, row_count, width, scrollbar_height);
+            let separator_height = measured_separator_height(&self.separator);
+            let layout = calculate_layout(
+                &labels,
+                column_count,
+                row_count,
+                width,
+                scrollbar_height,
+                separator_height,
+            );
 
             self.adjustment.set_lower(0.0);
             self.adjustment.set_upper(layout.total_width as f64);
@@ -242,6 +264,7 @@ mod imp {
             self.adjustment
                 .set_page_increment(width.max(0) as f64 * 0.9);
             self.scrollbar.set_visible(layout.scrollbar_visible);
+            self.separator.set_visible(row_count > 1);
 
             let max_value = (layout.total_width - width).max(0) as f64;
             if self.adjustment.value() > max_value {
@@ -265,12 +288,15 @@ mod imp {
 
                 y += row_height;
                 if row == 0 && row_count > 1 {
-                    // The header/data separator space is reserved in the height
-                    // math but not painted in this spike. Drawing it (a themed
-                    // gtk::Separator child, like the current grid renderer) is
-                    // deferred to the render_table wiring follow-up, where the
-                    // result can be validated against UI screenshots.
-                    y += HEADER_SEPARATOR_HEIGHT;
+                    let transform = gtk::gsk::Transform::new()
+                        .translate(&gtk::graphene::Point::new(0.0, y as f32));
+                    self.separator.allocate(
+                        width.max(0),
+                        separator_height,
+                        baseline,
+                        Some(transform),
+                    );
+                    y += separator_height;
                 }
                 if row + 1 < row_count {
                     y += ROW_SPACING;
@@ -354,6 +380,10 @@ impl MarkdownTable {
     pub(crate) fn scrollbar(&self) -> gtk::Scrollbar {
         self.imp().scrollbar.clone()
     }
+
+    pub(crate) fn separator(&self) -> gtk::Separator {
+        self.imp().separator.clone()
+    }
 }
 
 #[cfg(test)]
@@ -403,8 +433,22 @@ mod tests {
         ];
 
         let total = total_table_width(2);
-        let fitting = calculate_layout(&labels, 2, 2, total, SCROLLBAR_HEIGHT);
-        let overflowing = calculate_layout(&labels, 2, 2, total - 1, SCROLLBAR_HEIGHT);
+        let fitting = calculate_layout(
+            &labels,
+            2,
+            2,
+            total,
+            SCROLLBAR_HEIGHT,
+            HEADER_SEPARATOR_HEIGHT,
+        );
+        let overflowing = calculate_layout(
+            &labels,
+            2,
+            2,
+            total - 1,
+            SCROLLBAR_HEIGHT,
+            HEADER_SEPARATOR_HEIGHT,
+        );
 
         assert!(!fitting.scrollbar_visible);
         assert!(overflowing.scrollbar_visible);
@@ -454,6 +498,68 @@ mod tests {
             gtk::Orientation::Horizontal
         );
         assert_eq!(table.scrollbar().adjustment(), table.adjustment());
+    }
+
+    #[gtk::test]
+    fn markdown_table_shows_separator_only_with_body_rows() {
+        let with_body = MarkdownTable::new(
+            &["A".to_string(), "B".to_string()],
+            &[vec!["1".to_string(), "2".to_string()]],
+            "",
+        );
+        let header_only = MarkdownTable::new(&["A".to_string()], &[], "");
+
+        let (_, body_height, _, _) =
+            with_body.measure(gtk::Orientation::Vertical, total_table_width(2));
+        with_body.size_allocate(
+            &gtk::Allocation::new(0, 0, total_table_width(2), body_height),
+            -1,
+        );
+        let (_, header_height, _, _) =
+            header_only.measure(gtk::Orientation::Vertical, total_table_width(1));
+        header_only.size_allocate(
+            &gtk::Allocation::new(0, 0, total_table_width(1), header_height),
+            -1,
+        );
+
+        assert_eq!(
+            with_body.separator().orientation(),
+            gtk::Orientation::Horizontal
+        );
+        assert!(with_body.separator().is_visible());
+        assert!(!header_only.separator().is_visible());
+    }
+
+    #[gtk::test]
+    fn layout_reserves_measured_separator_height_once() {
+        let table = MarkdownTable::new(
+            &["A".to_string(), "B".to_string()],
+            &[vec!["1".to_string(), "2".to_string()]],
+            "",
+        );
+        let labels = table.imp().labels.borrow();
+        let scrollbar_height = measured_scrollbar_height(&table.scrollbar());
+        let separator_height = measured_separator_height(&table.separator());
+        let with_separator = calculate_layout(
+            &labels,
+            2,
+            2,
+            total_table_width(2),
+            scrollbar_height,
+            separator_height,
+        );
+        let without_separator =
+            calculate_layout(&labels, 2, 2, total_table_width(2), scrollbar_height, 0);
+
+        assert!(separator_height > 0);
+        assert_eq!(
+            with_separator.content_height,
+            without_separator.content_height + separator_height
+        );
+        assert_eq!(
+            with_separator.allocated_height,
+            without_separator.allocated_height + separator_height
+        );
     }
 
     fn prose_heavy_markdown_table() -> MarkdownTable {
@@ -566,6 +672,7 @@ mod tests {
             rows.len() + 1,
             full_width,
             scrollbar_height,
+            measured_separator_height(&table.separator()),
         )
         .allocated_height;
 
@@ -656,7 +763,7 @@ mod tests {
     }
 
     #[gtk::test]
-    fn markdown_table_repositions_cells_when_scroll_value_changes() {
+    fn markdown_table_scrolls_cells_but_keeps_separator_pinned() {
         let table = MarkdownTable::new(
             &["A".to_string(), "B".to_string(), "C".to_string()],
             &[vec!["1".to_string(), "2".to_string(), "3".to_string()]],
@@ -683,6 +790,10 @@ mod tests {
             .compute_bounds(&table)
             .expect("label bounds")
             .x();
+        let separator_before = table
+            .separator()
+            .compute_bounds(&table)
+            .expect("separator bounds before scrolling");
 
         // Scrolling changes the adjustment value; the value-changed handler
         // must queue a fresh allocation so the cells shift left.
@@ -692,10 +803,18 @@ mod tests {
             .compute_bounds(&table)
             .expect("label bounds")
             .x();
+        let separator_after = table
+            .separator()
+            .compute_bounds(&table)
+            .expect("separator bounds after scrolling");
 
         assert!(
             after < before,
             "cells should shift left when the scroll value increases: before_x={before}, after_x={after}"
         );
+        assert_eq!(separator_before.x(), 0.0);
+        assert_eq!(separator_after.x(), 0.0);
+        assert_eq!(separator_before.width(), narrow as f32);
+        assert_eq!(separator_after.width(), narrow as f32);
     }
 }
