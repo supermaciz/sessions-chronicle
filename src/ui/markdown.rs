@@ -1,3 +1,4 @@
+use crate::ui::markdown_table::MarkdownTable;
 use pulldown_cmark::{CodeBlockKind, Event, Options, Parser, Tag, TagEnd};
 use relm4::adw;
 use relm4::gtk;
@@ -742,7 +743,7 @@ impl MarkdownBufferWriter {
         }
     }
 
-    /// Flush the current buffer as a text segment and store the table widget.
+    /// Flush the current buffer and append the custom table widget.
     fn render_table(&mut self) {
         if self.table_headers.is_empty() {
             return;
@@ -750,57 +751,11 @@ impl MarkdownBufferWriter {
 
         self.flush_buffer_before_widget();
 
-        // Build the table grid.
-        let grid = gtk::Grid::new();
-        // Do NOT hexpand the grid. With non-wrapping cells, hexpand=true
-        // would propagate the grid's full natural width up through the
-        // ScrolledWindow into the message bubble, pushing layout off the
-        // window. The SW handles horizontal scrolling for content wider
-        // than its allocation.
-        grid.set_halign(gtk::Align::Start);
-        grid.add_css_class("markdown-table");
-        grid.set_row_spacing(4);
-        grid.set_column_spacing(12);
         let query = self.highlight_query.as_deref().unwrap_or("");
-        let mut table_match_count = 0usize;
+        let table = MarkdownTable::new(&self.table_headers, &self.table_rows, query);
 
-        for (col, header) in self.table_headers.iter().enumerate() {
-            let (label, match_count) =
-                crate::ui::markdown_table::create_table_label(header, query, true, false);
-            table_match_count += match_count;
-            grid.attach(&label, col as i32, 0, 1, 1);
-        }
-
-        let separator = gtk::Separator::new(gtk::Orientation::Horizontal);
-        separator.set_hexpand(true);
-        grid.attach(&separator, 0, 1, self.table_headers.len() as i32, 1);
-
-        for (row_idx, row) in self.table_rows.iter().enumerate() {
-            for (col_idx, cell) in row.iter().enumerate() {
-                let (label, match_count) =
-                    crate::ui::markdown_table::create_table_label(cell, query, false, false);
-                table_match_count += match_count;
-                grid.attach(&label, col_idx as i32, row_idx as i32 + 2, 1, 1);
-            }
-        }
-
-        // Wrap in ScrolledWindow for horizontal scrolling of wide tables.
-        // The cells use non-wrapping labels (see `create_table_label`), so the
-        // grid's height is independent of its allocated width — that avoids
-        // GTK4's buggy height-for-width measurement on `ScrolledWindow` that
-        // would otherwise produce excess blank space below tables.
-        let table_widget = gtk::ScrolledWindow::builder()
-            .hexpand(true)
-            .vexpand(false)
-            .valign(gtk::Align::Start)
-            .hscrollbar_policy(gtk::PolicyType::Automatic)
-            .vscrollbar_policy(gtk::PolicyType::Never)
-            .propagate_natural_height(true)
-            .child(&grid)
-            .build();
-
-        self.table_match_count += table_match_count;
-        self.append_segment(table_widget.upcast::<gtk::Widget>());
+        self.table_match_count += table.match_count();
+        self.append_segment(table.upcast::<gtk::Widget>());
     }
 
     /// Strip leading newlines from a text buffer.
@@ -1273,26 +1228,18 @@ mod tests {
             .expect("expected GtkSourceBuffer")
     }
 
-    /// Collect all table widgets (ScrolledWindows containing Grids) from
-    /// the rendered output. For the Box-based layout, these are direct
-    /// children that are ScrolledWindows.
-    fn find_table_widgets(widget: &gtk::Widget) -> Vec<gtk::Widget> {
-        let mut tables = Vec::new();
-        let mut child = widget.first_child();
-        while let Some(c) = child {
-            if c.clone().downcast::<gtk::ScrolledWindow>().is_ok() {
-                tables.push(c.clone());
-            }
-            child = c.next_sibling();
-        }
-        tables
+    /// Collect all custom table widgets recursively from the rendered output.
+    fn find_table_widgets(widget: &gtk::Widget) -> Vec<MarkdownTable> {
+        find_widgets_of_type::<MarkdownTable>(widget)
     }
 
     /// Collect label texts from all table widgets in the rendered output.
     fn table_label_texts(widget: &gtk::Widget) -> Vec<String> {
         find_table_widgets(widget)
             .iter()
-            .flat_map(collect_label_text_from_widget_tree)
+            .flat_map(|table| {
+                collect_label_text_from_widget_tree(table.upcast_ref::<gtk::Widget>())
+            })
             .collect()
     }
 
@@ -1563,10 +1510,7 @@ mod tests {
         let md = "| A | B |\n|---|---|\n| 1 | 2 |";
         let (widget, _) = render_markdown(md, None);
         let tables = find_table_widgets(&widget);
-        assert!(
-            !tables.is_empty(),
-            "expected table to produce a ScrolledWindow in the output"
-        );
+        assert_eq!(tables.len(), 1, "expected one MarkdownTable in the output");
     }
 
     #[gtk::test]
@@ -1581,23 +1525,24 @@ mod tests {
     }
 
     #[gtk::test]
-    fn table_scroller_does_not_expand_vertically() {
+    fn table_widget_does_not_expand_vertically() {
         let md = "| A | B |\n|---|---|\n| 1 | 2 |\n\nBelow";
         let (widget, _) = render_markdown(md, None);
         let table = find_table_widgets(&widget)
             .into_iter()
             .next()
-            .expect("expected rendered table scroller");
-        let table = table
-            .downcast::<gtk::ScrolledWindow>()
-            .expect("expected GtkScrolledWindow");
+            .expect("expected rendered MarkdownTable");
 
         assert_eq!(table.valign(), gtk::Align::Start);
-        assert!(!table.vexpands(), "table scroller should not vexpand");
+        assert!(
+            table.hexpands(),
+            "table widget should fill its viewport width"
+        );
+        assert!(!table.vexpands(), "table widget should not vexpand");
     }
 
     #[gtk::test]
-    fn table_cells_do_not_wrap() {
+    fn table_cells_wrap() {
         let md = "| A | B |\n|---|---|\n| 1 | 2 |";
         let (widget, _) = render_markdown(md, None);
         let labels: Vec<gtk::Label> = find_widgets_of_type::<gtk::Label>(&widget)
@@ -1606,10 +1551,8 @@ mod tests {
             .collect();
         assert!(!labels.is_empty(), "expected table cell labels");
         for label in labels {
-            assert!(
-                !label.wraps(),
-                "table cell labels must not wrap (issue #149)"
-            );
+            assert!(label.wraps(), "table cell labels must wrap");
+            assert_eq!(label.wrap_mode(), gtk::pango::WrapMode::WordChar);
         }
     }
 
@@ -1720,8 +1663,8 @@ mod tests {
             quotes.len()
         );
         assert!(
-            !find_widgets_of_type::<gtk::Grid>(&quotes[0]).is_empty(),
-            "blockquote group container should contain a table grid"
+            !find_widgets_of_type::<MarkdownTable>(&quotes[0]).is_empty(),
+            "blockquote group container should contain a MarkdownTable"
         );
     }
 
@@ -1756,8 +1699,8 @@ mod tests {
 
         assert_eq!(quotes.len(), 1);
         assert!(
-            !find_widgets_of_type::<gtk::Grid>(&quotes[0]).is_empty(),
-            "blockquote should contain table grid"
+            !find_widgets_of_type::<MarkdownTable>(&quotes[0]).is_empty(),
+            "blockquote should contain MarkdownTable"
         );
         assert!(
             !find_widgets_of_type::<sourceview5::View>(&quotes[0]).is_empty(),
@@ -1794,56 +1737,6 @@ mod tests {
             non_empty.len(),
             4,
             "expected 4 labels (2 headers + 2 data cells), got: {non_empty:?}"
-        );
-    }
-
-    fn collect_grid_positions(widget: &gtk::Widget, out: &mut Vec<(String, i32, i32)>) {
-        if let Some(grid) = widget.parent().and_then(|p| p.downcast::<gtk::Grid>().ok()) {
-            if let Ok(label) = widget.clone().downcast::<gtk::Label>() {
-                let layout_child = grid
-                    .layout_manager()
-                    .unwrap()
-                    .layout_child(widget)
-                    .downcast::<gtk::GridLayoutChild>()
-                    .unwrap();
-                out.push((
-                    label.text().to_string(),
-                    layout_child.column(),
-                    layout_child.row(),
-                ));
-            }
-        }
-        let mut child = widget.first_child();
-        while let Some(c) = child {
-            collect_grid_positions(&c, out);
-            child = c.next_sibling();
-        }
-    }
-
-    #[gtk::test]
-    fn table_grid_positions_correct() {
-        let md = "| A | B |\n|---|---|\n| 1 | 2 |";
-        let (widget, _) = render_markdown(md, None);
-        let tables = find_table_widgets(&widget);
-        assert_eq!(tables.len(), 1);
-        let mut positions = Vec::new();
-        collect_grid_positions(&tables[0], &mut positions);
-        // Should have: A at (0,0), B at (1,0), 1 at (0,2), 2 at (1,2)
-        assert!(
-            positions.contains(&("A".to_string(), 0, 0)),
-            "expected A at (0,0), got: {positions:?}"
-        );
-        assert!(
-            positions.contains(&("B".to_string(), 1, 0)),
-            "expected B at (1,0), got: {positions:?}"
-        );
-        assert!(
-            positions.contains(&("1".to_string(), 0, 2)),
-            "expected 1 at (0,2), got: {positions:?}"
-        );
-        assert!(
-            positions.contains(&("2".to_string(), 1, 2)),
-            "expected 2 at (1,2), got: {positions:?}"
         );
     }
 
