@@ -336,6 +336,12 @@ impl MarkdownTable {
         let imp = table.imp();
         imp.column_count.set(headers.len());
         imp.row_count.set(rows.len() + 1);
+        // Decide the separator's visibility up front so the very first
+        // `measure` sees a visible widget. GTK4's `gtk_widget_measure` returns
+        // 0 for a non-visible child, so measuring it while hidden would yield
+        // the `HEADER_SEPARATOR_HEIGHT` fallback and under-reserve its themed
+        // height on the first layout pass. `size_allocate` keeps this in sync.
+        imp.separator.set_visible(!rows.is_empty());
 
         let mut labels = Vec::new();
         // Aggregate the per-cell search-hit counts so the count survives when
