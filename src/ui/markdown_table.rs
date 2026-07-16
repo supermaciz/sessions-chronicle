@@ -1,7 +1,6 @@
-use gtk::glib;
 use gtk::prelude::*;
 use gtk::subclass::prelude::*;
-use relm4::gtk;
+use relm4::gtk::{self, gdk, glib};
 use std::cell::{Cell, RefCell};
 
 pub(crate) const COLUMN_MIN_WIDTH: i32 = 160;
@@ -85,6 +84,102 @@ pub(crate) fn total_table_width(column_count: usize) -> i32 {
     (column_count as i32 * COLUMN_MIN_WIDTH) + ((column_count as i32 - 1) * COLUMN_SPACING)
 }
 
+/// Mirrors GTK's current `MAGIC_SCROLL_FACTOR` for surface-pixel scrolling.
+/// This is application behavior, not a stable public GTK constant.
+const SURFACE_SCROLL_FACTOR: f64 = 2.5;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ScrollAxis {
+    Horizontal,
+    Vertical,
+}
+
+#[derive(Debug, Default)]
+struct ScrollGesture {
+    active: bool,
+    axis: Option<ScrollAxis>,
+    remaps_vertical_delta: bool,
+}
+
+impl ScrollGesture {
+    fn begin(&mut self) {
+        self.active = true;
+        self.axis = None;
+        self.remaps_vertical_delta = false;
+    }
+
+    fn end(&mut self) {
+        self.active = false;
+        self.axis = None;
+        self.remaps_vertical_delta = false;
+    }
+
+    fn classify(&mut self, dx: f64, dy: f64, shift: bool) -> Option<ScrollAxis> {
+        if dx == 0.0 && dy == 0.0 {
+            return None;
+        }
+        if self.active && self.axis.is_some() {
+            return self.axis;
+        }
+
+        let axis = if shift || dx.abs() > dy.abs() {
+            ScrollAxis::Horizontal
+        } else {
+            ScrollAxis::Vertical
+        };
+        if self.active {
+            self.axis = Some(axis);
+            self.remaps_vertical_delta = shift;
+        }
+        Some(axis)
+    }
+
+    fn horizontal_delta(&self, dx: f64, dy: f64, shift: bool) -> f64 {
+        let remaps_vertical_delta = if self.active && self.axis.is_some() {
+            self.remaps_vertical_delta
+        } else {
+            shift
+        };
+        if remaps_vertical_delta { dy } else { dx }
+    }
+}
+
+/// Apply a scroll delta to the table's horizontal adjustment.
+/// Returns `true` when the event must not bubble to the transcript scroller.
+fn apply_horizontal_scroll(
+    adjustment: &gtk::Adjustment,
+    dx: f64,
+    dy: f64,
+    shift: bool,
+    unit: gdk::ScrollUnit,
+    gesture: &mut ScrollGesture,
+) -> bool {
+    let lower = adjustment.lower();
+    let max_value = adjustment.upper() - adjustment.page_size();
+    if max_value <= lower {
+        return false;
+    }
+
+    if gesture.classify(dx, dy, shift) != Some(ScrollAxis::Horizontal) {
+        return false;
+    }
+    let delta = gesture.horizontal_delta(dx, dy, shift);
+    if delta == 0.0 {
+        // A locked gesture keeps consuming events until `scroll-end`, otherwise
+        // this frame's other axis would bubble to the transcript scroller.
+        return gesture.active;
+    }
+
+    let normalized = match unit {
+        gdk::ScrollUnit::Wheel => delta * adjustment.page_size().powf(2.0 / 3.0),
+        gdk::ScrollUnit::Surface => delta * SURFACE_SCROLL_FACTOR,
+        _ => delta,
+    };
+    let value = (adjustment.value() + normalized).clamp(lower, max_value);
+    adjustment.set_value(value);
+    true
+}
+
 fn calculate_layout(
     labels: &[gtk::Label],
     column_count: usize,
@@ -140,6 +235,7 @@ mod imp {
         pub row_count: Cell<usize>,
         pub match_count: Cell<usize>,
         pub adjustment: gtk::Adjustment,
+        scroll_gesture: RefCell<ScrollGesture>,
         pub separator: gtk::Separator,
         pub scrollbar: gtk::Scrollbar,
     }
@@ -163,6 +259,7 @@ mod imp {
                 row_count: Cell::new(0),
                 match_count: Cell::new(0),
                 adjustment,
+                scroll_gesture: RefCell::new(ScrollGesture::default()),
                 separator,
                 scrollbar,
             }
@@ -175,6 +272,47 @@ mod imp {
             let obj = self.obj();
             self.separator.set_parent(&*obj);
             self.scrollbar.set_parent(&*obj);
+
+            let controller =
+                gtk::EventControllerScroll::new(gtk::EventControllerScrollFlags::BOTH_AXES);
+
+            let weak = obj.downgrade();
+            controller.connect_scroll_begin(move |_| {
+                if let Some(obj) = weak.upgrade() {
+                    obj.imp().scroll_gesture.borrow_mut().begin();
+                }
+            });
+
+            let weak = obj.downgrade();
+            controller.connect_scroll(move |ctrl, dx, dy| {
+                let Some(obj) = weak.upgrade() else {
+                    return glib::Propagation::Proceed;
+                };
+                let shift = ctrl
+                    .current_event_state()
+                    .contains(gdk::ModifierType::SHIFT_MASK);
+                if apply_horizontal_scroll(
+                    &obj.imp().adjustment,
+                    dx,
+                    dy,
+                    shift,
+                    ctrl.unit(),
+                    &mut obj.imp().scroll_gesture.borrow_mut(),
+                ) {
+                    glib::Propagation::Stop
+                } else {
+                    glib::Propagation::Proceed
+                }
+            });
+
+            let weak = obj.downgrade();
+            controller.connect_scroll_end(move |_| {
+                if let Some(obj) = weak.upgrade() {
+                    obj.imp().scroll_gesture.borrow_mut().end();
+                }
+            });
+
+            obj.add_controller(controller);
 
             // The cell offset is derived from the adjustment value during
             // size_allocate, so scrolling must queue a fresh allocation;
@@ -393,6 +531,417 @@ impl MarkdownTable {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn scroll_adjustment(value: f64, upper: f64, page_size: f64) -> gtk::Adjustment {
+        gtk::Adjustment::new(value, 0.0, upper, 1.0, page_size * 0.9, page_size)
+    }
+
+    fn assert_approx_eq(actual: f64, expected: f64) {
+        assert!(
+            (actual - expected).abs() < 1e-9,
+            "expected {expected}, got {actual}"
+        );
+    }
+
+    #[gtk::test]
+    fn dominant_horizontal_surface_delta_moves_right() {
+        let adjustment = scroll_adjustment(100.0, 1000.0, 100.0);
+        let mut gesture = ScrollGesture::default();
+
+        let consumed = apply_horizontal_scroll(
+            &adjustment,
+            4.0,
+            1.0,
+            false,
+            gdk::ScrollUnit::Surface,
+            &mut gesture,
+        );
+
+        assert!(consumed);
+        assert_approx_eq(adjustment.value(), 110.0);
+    }
+
+    #[gtk::test]
+    fn negative_horizontal_delta_clamps_at_lower_bound() {
+        let adjustment = scroll_adjustment(5.0, 1000.0, 100.0);
+        let mut gesture = ScrollGesture::default();
+
+        let consumed = apply_horizontal_scroll(
+            &adjustment,
+            -4.0,
+            0.0,
+            false,
+            gdk::ScrollUnit::Surface,
+            &mut gesture,
+        );
+
+        assert!(consumed);
+        assert_eq!(adjustment.value(), adjustment.lower());
+    }
+
+    #[gtk::test]
+    fn shift_remaps_vertical_delta_to_horizontal() {
+        let adjustment = scroll_adjustment(100.0, 1000.0, 100.0);
+        let mut gesture = ScrollGesture::default();
+
+        let consumed = apply_horizontal_scroll(
+            &adjustment,
+            0.0,
+            4.0,
+            true,
+            gdk::ScrollUnit::Surface,
+            &mut gesture,
+        );
+
+        assert!(consumed);
+        assert_approx_eq(adjustment.value(), 110.0);
+    }
+
+    #[gtk::test]
+    fn shift_with_only_horizontal_delta_propagates() {
+        let adjustment = scroll_adjustment(100.0, 1000.0, 100.0);
+        let mut gesture = ScrollGesture::default();
+
+        let consumed = apply_horizontal_scroll(
+            &adjustment,
+            4.0,
+            0.0,
+            true,
+            gdk::ScrollUnit::Surface,
+            &mut gesture,
+        );
+
+        assert!(!consumed);
+        assert_eq!(adjustment.value(), 100.0);
+    }
+
+    #[gtk::test]
+    fn plain_vertical_delta_propagates_without_moving_table() {
+        let adjustment = scroll_adjustment(100.0, 1000.0, 100.0);
+        let mut gesture = ScrollGesture::default();
+
+        let consumed = apply_horizontal_scroll(
+            &adjustment,
+            0.0,
+            4.0,
+            false,
+            gdk::ScrollUnit::Surface,
+            &mut gesture,
+        );
+
+        assert!(!consumed);
+        assert_eq!(adjustment.value(), 100.0);
+    }
+
+    #[gtk::test]
+    fn dominant_vertical_delta_with_diagonal_noise_propagates() {
+        let adjustment = scroll_adjustment(100.0, 1000.0, 100.0);
+        let mut gesture = ScrollGesture::default();
+
+        let consumed = apply_horizontal_scroll(
+            &adjustment,
+            1.0,
+            4.0,
+            false,
+            gdk::ScrollUnit::Surface,
+            &mut gesture,
+        );
+
+        assert!(!consumed);
+        assert_eq!(adjustment.value(), 100.0);
+    }
+
+    #[gtk::test]
+    fn equal_axis_deltas_favor_vertical_propagation() {
+        let adjustment = scroll_adjustment(100.0, 1000.0, 100.0);
+        let mut gesture = ScrollGesture::default();
+
+        let consumed = apply_horizontal_scroll(
+            &adjustment,
+            4.0,
+            4.0,
+            false,
+            gdk::ScrollUnit::Surface,
+            &mut gesture,
+        );
+
+        assert!(!consumed);
+        assert_eq!(adjustment.value(), 100.0);
+    }
+
+    #[gtk::test]
+    fn horizontal_delta_propagates_when_table_does_not_overflow() {
+        let adjustment = scroll_adjustment(0.0, 100.0, 100.0);
+        let mut gesture = ScrollGesture::default();
+
+        let consumed = apply_horizontal_scroll(
+            &adjustment,
+            4.0,
+            0.0,
+            false,
+            gdk::ScrollUnit::Surface,
+            &mut gesture,
+        );
+
+        assert!(!consumed);
+        assert_eq!(adjustment.value(), 0.0);
+    }
+
+    #[gtk::test]
+    fn overflowing_table_clamps_delta_past_right_edge() {
+        let adjustment = scroll_adjustment(895.0, 1000.0, 100.0);
+        let mut gesture = ScrollGesture::default();
+
+        let consumed = apply_horizontal_scroll(
+            &adjustment,
+            4.0,
+            0.0,
+            false,
+            gdk::ScrollUnit::Surface,
+            &mut gesture,
+        );
+
+        assert!(consumed);
+        assert_eq!(adjustment.value(), 900.0);
+    }
+
+    #[gtk::test]
+    fn overflowing_table_consumes_horizontal_delta_when_already_at_edge() {
+        let adjustment = scroll_adjustment(900.0, 1000.0, 100.0);
+        let mut gesture = ScrollGesture::default();
+
+        let consumed = apply_horizontal_scroll(
+            &adjustment,
+            4.0,
+            0.0,
+            false,
+            gdk::ScrollUnit::Surface,
+            &mut gesture,
+        );
+
+        assert!(consumed);
+        assert_eq!(adjustment.value(), 900.0);
+    }
+
+    #[gtk::test]
+    fn wheel_delta_scales_with_page_size() {
+        let adjustment = scroll_adjustment(100.0, 1000.0, 125.0);
+        let mut gesture = ScrollGesture::default();
+
+        let consumed = apply_horizontal_scroll(
+            &adjustment,
+            1.0,
+            0.0,
+            false,
+            gdk::ScrollUnit::Wheel,
+            &mut gesture,
+        );
+
+        assert!(consumed);
+        assert_approx_eq(adjustment.value(), 100.0 + 125.0_f64.powf(2.0 / 3.0));
+    }
+
+    #[gtk::test]
+    fn surface_delta_uses_gtk_scroll_factor() {
+        let adjustment = scroll_adjustment(100.0, 1000.0, 100.0);
+        let mut gesture = ScrollGesture::default();
+
+        let consumed = apply_horizontal_scroll(
+            &adjustment,
+            4.0,
+            0.0,
+            false,
+            gdk::ScrollUnit::Surface,
+            &mut gesture,
+        );
+
+        assert!(consumed);
+        assert_approx_eq(adjustment.value(), 100.0 + 4.0 * SURFACE_SCROLL_FACTOR);
+    }
+
+    #[gtk::test]
+    fn continuous_vertical_gesture_stays_unconsumed_until_end() {
+        let adjustment = scroll_adjustment(100.0, 1000.0, 100.0);
+        let mut gesture = ScrollGesture::default();
+        gesture.begin();
+
+        assert!(!apply_horizontal_scroll(
+            &adjustment,
+            1.0,
+            8.0,
+            false,
+            gdk::ScrollUnit::Surface,
+            &mut gesture,
+        ));
+        assert!(!apply_horizontal_scroll(
+            &adjustment,
+            9.0,
+            2.0,
+            false,
+            gdk::ScrollUnit::Surface,
+            &mut gesture,
+        ));
+        assert_eq!(adjustment.value(), 100.0);
+
+        gesture.end();
+        assert!(apply_horizontal_scroll(
+            &adjustment,
+            9.0,
+            2.0,
+            false,
+            gdk::ScrollUnit::Surface,
+            &mut gesture,
+        ));
+    }
+
+    #[gtk::test]
+    fn continuous_horizontal_gesture_stays_consumed_until_end() {
+        let adjustment = scroll_adjustment(100.0, 1000.0, 100.0);
+        let mut gesture = ScrollGesture::default();
+        gesture.begin();
+
+        assert!(apply_horizontal_scroll(
+            &adjustment,
+            8.0,
+            1.0,
+            false,
+            gdk::ScrollUnit::Surface,
+            &mut gesture,
+        ));
+        assert!(apply_horizontal_scroll(
+            &adjustment,
+            1.0,
+            6.0,
+            false,
+            gdk::ScrollUnit::Surface,
+            &mut gesture,
+        ));
+        assert_approx_eq(adjustment.value(), 100.0 + (8.0 + 1.0) * 2.5);
+
+        gesture.end();
+        assert!(!apply_horizontal_scroll(
+            &adjustment,
+            1.0,
+            6.0,
+            false,
+            gdk::ScrollUnit::Surface,
+            &mut gesture,
+        ));
+    }
+
+    #[gtk::test]
+    fn continuous_horizontal_gesture_keeps_delta_source_when_shift_changes() {
+        let adjustment = scroll_adjustment(100.0, 1000.0, 100.0);
+        let mut gesture = ScrollGesture::default();
+        gesture.begin();
+
+        assert!(apply_horizontal_scroll(
+            &adjustment,
+            8.0,
+            1.0,
+            false,
+            gdk::ScrollUnit::Surface,
+            &mut gesture,
+        ));
+        assert!(apply_horizontal_scroll(
+            &adjustment,
+            3.0,
+            9.0,
+            true,
+            gdk::ScrollUnit::Surface,
+            &mut gesture,
+        ));
+        assert_approx_eq(adjustment.value(), 100.0 + (8.0 + 3.0) * 2.5);
+    }
+
+    #[gtk::test]
+    fn continuous_shift_gesture_keeps_delta_source_when_shift_is_released() {
+        let adjustment = scroll_adjustment(100.0, 1000.0, 100.0);
+        let mut gesture = ScrollGesture::default();
+        gesture.begin();
+
+        assert!(apply_horizontal_scroll(
+            &adjustment,
+            1.0,
+            8.0,
+            true,
+            gdk::ScrollUnit::Surface,
+            &mut gesture,
+        ));
+        assert!(apply_horizontal_scroll(
+            &adjustment,
+            9.0,
+            3.0,
+            false,
+            gdk::ScrollUnit::Surface,
+            &mut gesture,
+        ));
+        assert_approx_eq(adjustment.value(), 100.0 + (8.0 + 3.0) * 2.5);
+    }
+
+    #[gtk::test]
+    fn locked_horizontal_gesture_consumes_frames_without_horizontal_delta() {
+        let adjustment = scroll_adjustment(100.0, 1000.0, 100.0);
+        let mut gesture = ScrollGesture::default();
+        gesture.begin();
+
+        assert!(apply_horizontal_scroll(
+            &adjustment,
+            8.0,
+            1.0,
+            false,
+            gdk::ScrollUnit::Surface,
+            &mut gesture,
+        ));
+        assert!(apply_horizontal_scroll(
+            &adjustment,
+            0.0,
+            6.0,
+            false,
+            gdk::ScrollUnit::Surface,
+            &mut gesture,
+        ));
+        assert_approx_eq(adjustment.value(), 100.0 + 8.0 * 2.5);
+    }
+
+    #[gtk::test]
+    fn wheel_without_horizontal_delta_stays_unconsumed() {
+        let adjustment = scroll_adjustment(100.0, 1000.0, 100.0);
+        let mut gesture = ScrollGesture::default();
+
+        assert!(!apply_horizontal_scroll(
+            &adjustment,
+            0.0,
+            6.0,
+            false,
+            gdk::ScrollUnit::Wheel,
+            &mut gesture,
+        ));
+        assert_eq!(adjustment.value(), 100.0);
+    }
+
+    #[gtk::test]
+    fn markdown_table_attaches_both_axes_scroll_controller() {
+        let table = MarkdownTable::new(
+            &["A".to_string(), "B".to_string()],
+            &[vec!["1".to_string(), "2".to_string()]],
+            "",
+        );
+        let controllers = table.observe_controllers();
+        let scroll_controller = (0..controllers.n_items())
+            .filter_map(|index| controllers.item(index))
+            .find_map(|controller| controller.downcast::<gtk::EventControllerScroll>().ok())
+            .expect("MarkdownTable should own an EventControllerScroll");
+
+        assert_eq!(
+            scroll_controller.flags(),
+            gtk::EventControllerScrollFlags::BOTH_AXES
+        );
+        assert_eq!(
+            scroll_controller.propagation_phase(),
+            gtk::PropagationPhase::Bubble
+        );
+    }
 
     #[gtk::test]
     fn shared_table_label_can_be_non_wrapping_for_existing_renderer() {
