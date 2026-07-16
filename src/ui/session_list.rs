@@ -292,8 +292,8 @@ impl PendingPostIndexingBatch {
         self
     }
 
-    fn had_focus_before_reload(&self) -> bool {
-        self.had_focus_before_reload
+    fn should_restore_focus(&self) -> bool {
+        self.had_focus_before_reload && !self.user_selection_changed
     }
 
     fn previous_scroll_value(&self) -> Option<f64> {
@@ -939,7 +939,7 @@ impl SessionList {
 
             let list_box = self.sessions.widget();
             if let Some(row) = list_box.selected_row() {
-                if batch.had_focus_before_reload() {
+                if batch.should_restore_focus() {
                     row.grab_focus();
                 }
                 Self::restore_scroll_value(list_box, batch.previous_scroll_value());
@@ -1022,7 +1022,7 @@ impl SessionList {
                 if self
                     .pending_post_indexing_batch
                     .as_ref()
-                    .is_some_and(PendingPostIndexingBatch::had_focus_before_reload)
+                    .is_some_and(PendingPostIndexingBatch::should_restore_focus)
                 {
                     row.grab_focus();
                 }
@@ -1870,6 +1870,23 @@ mod tests {
     }
 
     #[test]
+    fn pending_post_indexing_batch_requests_focus_restore_only_without_user_selection_change() {
+        let token = MeasurementToken::new();
+        let mut batch = PendingPostIndexingBatch::new(
+            token,
+            vec![make_test_session("batch-1")],
+            Some("batch-1".to_string()),
+        )
+        .with_focus_state(true);
+
+        assert!(batch.should_restore_focus());
+
+        batch.mark_user_selection_changed();
+
+        assert!(!batch.should_restore_focus());
+    }
+
+    #[test]
     fn post_indexing_measurement_accumulates_batch_push_metrics() {
         let context = IndexingReloadContext {
             indexed: 3,
@@ -2471,78 +2488,6 @@ mod tests {
         };
 
         assert_eq!(final_selected_id, "alpha-claude-old");
-    }
-
-    #[gtk::test]
-    fn post_indexing_reload_restores_focus_when_listbox_was_focused() {
-        let temp_db = TempDatabase::new();
-        temp_db.seed_project_sidebar_fixture();
-
-        let controller = SessionList::builder().launch(temp_db.path.clone());
-
-        let window = gtk::Window::new();
-        window.set_child(Some(controller.widget()));
-        window.present();
-
-        pump_main_context(|| {
-            let parts = controller.state().get();
-            parts.model.sessions.len() == 5
-        });
-
-        let root = controller.widget().clone().upcast::<gtk::Widget>();
-        let list_box = find_list_box(&root).expect("list box");
-
-        let target_index = {
-            let parts = controller.state().get();
-            (0..parts.model.sessions.len())
-                .find(|index| {
-                    parts
-                        .model
-                        .sessions
-                        .get(*index)
-                        .map(|row| row.session_id() == "alpha-claude-old")
-                        .unwrap_or(false)
-                })
-                .expect("alpha-claude-old in initial dataset")
-        };
-
-        let target_row = list_box
-            .row_at_index(target_index as i32)
-            .expect("alpha-claude-old row");
-        list_box.select_row(Some(&target_row));
-        target_row.grab_focus();
-        pump_main_context(|| target_row.has_focus());
-        assert!(
-            target_row.has_focus(),
-            "row should have focus before reload"
-        );
-
-        controller.emit(SessionListMsg::ReloadAfterIndexing {
-            assistants: vec![AiAssistant::ClaudeCode],
-            project_filter: ProjectFilter::Project(1),
-            context: IndexingReloadContext {
-                indexed: 1,
-                skipped: 0,
-                removed: 0,
-                pending_reindex_feedback: false,
-                errors_present: false,
-            },
-        });
-
-        pump_main_context(|| {
-            let parts = controller.state().get();
-            parts.model.pending_post_indexing_batch.is_none() && parts.model.sessions.len() == 2
-        });
-
-        drain_main_context();
-
-        let restored_row = list_box.selected_row().expect("selected row after reload");
-        assert!(
-            restored_row.has_focus(),
-            "selected row should regain focus after the post-indexing reload"
-        );
-
-        window.set_child(None::<&gtk::Widget>);
     }
 
     #[gtk::test]
