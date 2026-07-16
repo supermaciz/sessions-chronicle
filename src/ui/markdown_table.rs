@@ -152,7 +152,9 @@ fn apply_horizontal_scroll(
     }
     let delta = if shift { dy } else { dx };
     if delta == 0.0 {
-        return false;
+        // A locked gesture keeps consuming events until `scroll-end`, otherwise
+        // this frame's other axis would bubble to the transcript scroller.
+        return gesture.active;
     }
 
     let normalized = match unit {
@@ -794,6 +796,47 @@ mod tests {
             gdk::ScrollUnit::Surface,
             &mut gesture,
         ));
+    }
+
+    #[gtk::test]
+    fn locked_horizontal_gesture_consumes_frames_without_horizontal_delta() {
+        let adjustment = scroll_adjustment(100.0, 1000.0, 100.0);
+        let mut gesture = ScrollGesture::default();
+        gesture.begin();
+
+        assert!(apply_horizontal_scroll(
+            &adjustment,
+            8.0,
+            1.0,
+            false,
+            gdk::ScrollUnit::Surface,
+            &mut gesture,
+        ));
+        assert!(apply_horizontal_scroll(
+            &adjustment,
+            0.0,
+            6.0,
+            false,
+            gdk::ScrollUnit::Surface,
+            &mut gesture,
+        ));
+        assert_approx_eq(adjustment.value(), 100.0 + 8.0 * 2.5);
+    }
+
+    #[gtk::test]
+    fn wheel_without_horizontal_delta_stays_unconsumed() {
+        let adjustment = scroll_adjustment(100.0, 1000.0, 100.0);
+        let mut gesture = ScrollGesture::default();
+
+        assert!(!apply_horizontal_scroll(
+            &adjustment,
+            0.0,
+            6.0,
+            false,
+            gdk::ScrollUnit::Wheel,
+            &mut gesture,
+        ));
+        assert_eq!(adjustment.value(), 100.0);
     }
 
     #[gtk::test]
