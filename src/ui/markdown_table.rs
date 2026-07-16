@@ -95,7 +95,7 @@ enum ScrollAxis {
 }
 
 #[derive(Debug, Default)]
-struct ScrollGesture {
+pub(crate) struct ScrollGesture {
     active: bool,
     axis: Option<ScrollAxis>,
 }
@@ -220,6 +220,7 @@ mod imp {
         pub row_count: Cell<usize>,
         pub match_count: Cell<usize>,
         pub adjustment: gtk::Adjustment,
+        pub scroll_gesture: RefCell<ScrollGesture>,
         pub separator: gtk::Separator,
         pub scrollbar: gtk::Scrollbar,
     }
@@ -243,6 +244,7 @@ mod imp {
                 row_count: Cell::new(0),
                 match_count: Cell::new(0),
                 adjustment,
+                scroll_gesture: RefCell::new(ScrollGesture::default()),
                 separator,
                 scrollbar,
             }
@@ -255,6 +257,47 @@ mod imp {
             let obj = self.obj();
             self.separator.set_parent(&*obj);
             self.scrollbar.set_parent(&*obj);
+
+            let controller =
+                gtk::EventControllerScroll::new(gtk::EventControllerScrollFlags::BOTH_AXES);
+
+            let weak = obj.downgrade();
+            controller.connect_scroll_begin(move |_| {
+                if let Some(obj) = weak.upgrade() {
+                    obj.imp().scroll_gesture.borrow_mut().begin();
+                }
+            });
+
+            let weak = obj.downgrade();
+            controller.connect_scroll(move |ctrl, dx, dy| {
+                let Some(obj) = weak.upgrade() else {
+                    return glib::Propagation::Proceed;
+                };
+                let shift = ctrl
+                    .current_event_state()
+                    .contains(gdk::ModifierType::SHIFT_MASK);
+                if apply_horizontal_scroll(
+                    &obj.imp().adjustment,
+                    dx,
+                    dy,
+                    shift,
+                    ctrl.unit(),
+                    &mut obj.imp().scroll_gesture.borrow_mut(),
+                ) {
+                    glib::Propagation::Stop
+                } else {
+                    glib::Propagation::Proceed
+                }
+            });
+
+            let weak = obj.downgrade();
+            controller.connect_scroll_end(move |_| {
+                if let Some(obj) = weak.upgrade() {
+                    obj.imp().scroll_gesture.borrow_mut().end();
+                }
+            });
+
+            obj.add_controller(controller);
 
             // The cell offset is derived from the adjustment value during
             // size_allocate, so scrolling must queue a fresh allocation;
@@ -751,6 +794,29 @@ mod tests {
             gdk::ScrollUnit::Surface,
             &mut gesture,
         ));
+    }
+
+    #[gtk::test]
+    fn markdown_table_attaches_both_axes_scroll_controller() {
+        let table = MarkdownTable::new(
+            &["A".to_string(), "B".to_string()],
+            &[vec!["1".to_string(), "2".to_string()]],
+            "",
+        );
+        let controllers = table.observe_controllers();
+        let scroll_controller = (0..controllers.n_items())
+            .filter_map(|index| controllers.item(index))
+            .find_map(|controller| controller.downcast::<gtk::EventControllerScroll>().ok())
+            .expect("MarkdownTable should own an EventControllerScroll");
+
+        assert_eq!(
+            scroll_controller.flags(),
+            gtk::EventControllerScrollFlags::BOTH_AXES
+        );
+        assert_eq!(
+            scroll_controller.propagation_phase(),
+            gtk::PropagationPhase::Bubble
+        );
     }
 
     #[gtk::test]
