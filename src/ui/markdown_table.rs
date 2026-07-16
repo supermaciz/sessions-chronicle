@@ -1,7 +1,6 @@
-use gtk::glib;
 use gtk::prelude::*;
 use gtk::subclass::prelude::*;
-use relm4::gtk;
+use relm4::gtk::{self, gdk, glib};
 use std::cell::{Cell, RefCell};
 
 pub(crate) const COLUMN_MIN_WIDTH: i32 = 160;
@@ -83,6 +82,50 @@ pub(crate) fn total_table_width(column_count: usize) -> i32 {
     }
 
     (column_count as i32 * COLUMN_MIN_WIDTH) + ((column_count as i32 - 1) * COLUMN_SPACING)
+}
+
+/// Mirrors GTK's current `MAGIC_SCROLL_FACTOR` for surface-pixel scrolling.
+/// This is application behavior, not a stable public GTK constant.
+const SURFACE_SCROLL_FACTOR: f64 = 2.5;
+
+#[derive(Debug, Default)]
+struct ScrollGesture;
+
+/// Apply a scroll delta to the table's horizontal adjustment.
+/// Returns `true` when the event must not bubble to the transcript scroller.
+fn apply_horizontal_scroll(
+    adjustment: &gtk::Adjustment,
+    dx: f64,
+    dy: f64,
+    shift: bool,
+    unit: gdk::ScrollUnit,
+    _gesture: &mut ScrollGesture,
+) -> bool {
+    let lower = adjustment.lower();
+    let max_value = adjustment.upper() - adjustment.page_size();
+    if max_value <= lower {
+        return false;
+    }
+
+    let delta = if shift {
+        dy
+    } else if dx.abs() > dy.abs() {
+        dx
+    } else {
+        return false;
+    };
+    if delta == 0.0 {
+        return false;
+    }
+
+    let normalized = match unit {
+        gdk::ScrollUnit::Wheel => delta * adjustment.page_size().powf(2.0 / 3.0),
+        gdk::ScrollUnit::Surface => delta * SURFACE_SCROLL_FACTOR,
+        _ => delta,
+    };
+    let value = (adjustment.value() + normalized).clamp(lower, max_value);
+    adjustment.set_value(value);
+    true
 }
 
 fn calculate_layout(
@@ -393,6 +436,215 @@ impl MarkdownTable {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn scroll_adjustment(value: f64, upper: f64, page_size: f64) -> gtk::Adjustment {
+        gtk::Adjustment::new(value, 0.0, upper, 1.0, page_size * 0.9, page_size)
+    }
+
+    fn assert_approx_eq(actual: f64, expected: f64) {
+        assert!(
+            (actual - expected).abs() < 1e-9,
+            "expected {expected}, got {actual}"
+        );
+    }
+
+    #[gtk::test]
+    fn dominant_horizontal_surface_delta_moves_right() {
+        let adjustment = scroll_adjustment(100.0, 1000.0, 100.0);
+        let mut gesture = ScrollGesture::default();
+
+        let consumed = apply_horizontal_scroll(
+            &adjustment,
+            4.0,
+            1.0,
+            false,
+            gdk::ScrollUnit::Surface,
+            &mut gesture,
+        );
+
+        assert!(consumed);
+        assert_approx_eq(adjustment.value(), 110.0);
+    }
+
+    #[gtk::test]
+    fn negative_horizontal_delta_clamps_at_lower_bound() {
+        let adjustment = scroll_adjustment(5.0, 1000.0, 100.0);
+        let mut gesture = ScrollGesture::default();
+
+        let consumed = apply_horizontal_scroll(
+            &adjustment,
+            -4.0,
+            0.0,
+            false,
+            gdk::ScrollUnit::Surface,
+            &mut gesture,
+        );
+
+        assert!(consumed);
+        assert_eq!(adjustment.value(), adjustment.lower());
+    }
+
+    #[gtk::test]
+    fn shift_remaps_vertical_delta_to_horizontal() {
+        let adjustment = scroll_adjustment(100.0, 1000.0, 100.0);
+        let mut gesture = ScrollGesture::default();
+
+        let consumed = apply_horizontal_scroll(
+            &adjustment,
+            0.0,
+            4.0,
+            true,
+            gdk::ScrollUnit::Surface,
+            &mut gesture,
+        );
+
+        assert!(consumed);
+        assert_approx_eq(adjustment.value(), 110.0);
+    }
+
+    #[gtk::test]
+    fn plain_vertical_delta_propagates_without_moving_table() {
+        let adjustment = scroll_adjustment(100.0, 1000.0, 100.0);
+        let mut gesture = ScrollGesture::default();
+
+        let consumed = apply_horizontal_scroll(
+            &adjustment,
+            0.0,
+            4.0,
+            false,
+            gdk::ScrollUnit::Surface,
+            &mut gesture,
+        );
+
+        assert!(!consumed);
+        assert_eq!(adjustment.value(), 100.0);
+    }
+
+    #[gtk::test]
+    fn dominant_vertical_delta_with_diagonal_noise_propagates() {
+        let adjustment = scroll_adjustment(100.0, 1000.0, 100.0);
+        let mut gesture = ScrollGesture::default();
+
+        let consumed = apply_horizontal_scroll(
+            &adjustment,
+            1.0,
+            4.0,
+            false,
+            gdk::ScrollUnit::Surface,
+            &mut gesture,
+        );
+
+        assert!(!consumed);
+        assert_eq!(adjustment.value(), 100.0);
+    }
+
+    #[gtk::test]
+    fn equal_axis_deltas_favor_vertical_propagation() {
+        let adjustment = scroll_adjustment(100.0, 1000.0, 100.0);
+        let mut gesture = ScrollGesture::default();
+
+        let consumed = apply_horizontal_scroll(
+            &adjustment,
+            4.0,
+            4.0,
+            false,
+            gdk::ScrollUnit::Surface,
+            &mut gesture,
+        );
+
+        assert!(!consumed);
+        assert_eq!(adjustment.value(), 100.0);
+    }
+
+    #[gtk::test]
+    fn horizontal_delta_propagates_when_table_does_not_overflow() {
+        let adjustment = scroll_adjustment(0.0, 100.0, 100.0);
+        let mut gesture = ScrollGesture::default();
+
+        let consumed = apply_horizontal_scroll(
+            &adjustment,
+            4.0,
+            0.0,
+            false,
+            gdk::ScrollUnit::Surface,
+            &mut gesture,
+        );
+
+        assert!(!consumed);
+        assert_eq!(adjustment.value(), 0.0);
+    }
+
+    #[gtk::test]
+    fn overflowing_table_clamps_delta_past_right_edge() {
+        let adjustment = scroll_adjustment(895.0, 1000.0, 100.0);
+        let mut gesture = ScrollGesture::default();
+
+        let consumed = apply_horizontal_scroll(
+            &adjustment,
+            4.0,
+            0.0,
+            false,
+            gdk::ScrollUnit::Surface,
+            &mut gesture,
+        );
+
+        assert!(consumed);
+        assert_eq!(adjustment.value(), 900.0);
+    }
+
+    #[gtk::test]
+    fn overflowing_table_consumes_horizontal_delta_when_already_at_edge() {
+        let adjustment = scroll_adjustment(900.0, 1000.0, 100.0);
+        let mut gesture = ScrollGesture::default();
+
+        let consumed = apply_horizontal_scroll(
+            &adjustment,
+            4.0,
+            0.0,
+            false,
+            gdk::ScrollUnit::Surface,
+            &mut gesture,
+        );
+
+        assert!(consumed);
+        assert_eq!(adjustment.value(), 900.0);
+    }
+
+    #[gtk::test]
+    fn wheel_delta_scales_with_page_size() {
+        let adjustment = scroll_adjustment(100.0, 1000.0, 125.0);
+        let mut gesture = ScrollGesture::default();
+
+        let consumed = apply_horizontal_scroll(
+            &adjustment,
+            1.0,
+            0.0,
+            false,
+            gdk::ScrollUnit::Wheel,
+            &mut gesture,
+        );
+
+        assert!(consumed);
+        assert_approx_eq(adjustment.value(), 100.0 + 125.0_f64.powf(2.0 / 3.0));
+    }
+
+    #[gtk::test]
+    fn surface_delta_uses_gtk_scroll_factor() {
+        let adjustment = scroll_adjustment(100.0, 1000.0, 100.0);
+        let mut gesture = ScrollGesture::default();
+
+        let consumed = apply_horizontal_scroll(
+            &adjustment,
+            4.0,
+            0.0,
+            false,
+            gdk::ScrollUnit::Surface,
+            &mut gesture,
+        );
+
+        assert!(consumed);
+        assert_approx_eq(adjustment.value(), 100.0 + 4.0 * SURFACE_SCROLL_FACTOR);
+    }
 
     #[gtk::test]
     fn shared_table_label_can_be_non_wrapping_for_existing_renderer() {
