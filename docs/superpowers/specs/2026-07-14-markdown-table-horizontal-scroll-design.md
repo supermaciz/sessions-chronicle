@@ -210,3 +210,60 @@ keeps the custom widget's adjustment, clamp, and queue-allocate machinery.
 Wrapping the table in a `GtkScrolledWindow` was rejected because the custom
 widget exists precisely to avoid that scroller's height-for-width blank-space
 problems.
+
+## Amendments (2026-07-16)
+
+**Normative.** The design above is left as approved on 2026-07-14. Where an
+amendment conflicts with it, the amendment is the current behavior. Later
+amendments go below this one under their own date.
+
+### A locked gesture reporting no horizontal delta stays consumed
+
+The **Continuous gesture lock** rule keeps a horizontal sequence horizontal
+"even if later emissions are slightly more vertical". The **No horizontal delta**
+rule returns `false` unconditionally. A frame in the middle of a locked
+horizontal pan reporting `dx == 0.0` with a non-zero `dy` satisfies both: the
+lock says consume, the zero-delta rule says propagate.
+
+The first implementation followed the zero-delta rule literally, so that frame
+bubbled to the transcript scroller and moved the page vertically mid-pan.
+Resolved in favor of the lock: the guard returns the gesture's active state, so a
+locked gesture consumes until `scroll-end`, while a discrete wheel event with
+`dx == 0.0` still propagates (it is classified `Vertical` and returns one branch
+earlier). This matches the **Otherwise** rule's own rationale for consuming at
+the edge — a locked gesture must not jerk the page even when the adjustment does
+not move.
+
+Read the **No horizontal delta** rule as applying to unlocked classification
+only.
+
+## Implementation Notes
+
+Background, not rules. Nothing here changes the behavior specified above.
+
+### The gesture lock has no equivalent on GTK's scroll path
+
+Worth knowing for anyone tempted to delete `ScrollGesture` as
+not-invented-by-GTK: `GtkScrolledWindow` does no axis locking in
+`scroll_controller_scroll`. It applies both axes independently every frame,
+because it owns both adjustments and never has to decide whether to propagate.
+
+GTK does have the concept, but only for touch. `GtkGesturePan` is defined as
+drags "locked to happen along one axis", and rejects off-axis sequences with
+`GTK_EVENT_SEQUENCE_DENIED`. `GtkScrolledWindow` attaches it in
+`gtk_scrolled_window_check_attach_pan_gesture()` only when scrolling is
+restricted to a single axis — our exact situation — so that nested scrollers win
+perpendicular drags.
+
+The lock lives in the `GtkGesture` claimed/denied machinery, which
+`GtkEventControllerScroll` does not have. `ScrollGesture` reimplements
+`GtkGesturePan`'s semantics on the one path where GTK does not offer them; the
+active-state return above is the analogue of a claimed sequence.
+
+The same model is standard on the web, under the name *scroll latching*: WebKit
+and Chromium pick the target scroller at gesture begin and do not re-decide
+mid-gesture, rubber-banding at the extent instead of chaining to the parent.
+
+- <https://gitlab.gnome.org/GNOME/gtk/-/raw/main/gtk/gtkgesturepan.c>
+- <https://gitlab.gnome.org/GNOME/gtk/-/raw/main/gtk/gtkscrolledwindow.c>
+- <https://trac.webkit.org/wiki/Scrolling>
