@@ -237,6 +237,18 @@ not move.
 Read the **No horizontal delta** rule as applying to unlocked classification
 only.
 
+### A locked gesture keeps its initial delta source
+
+The modifier state used for the first non-zero emission is part of the gesture
+lock. A horizontal gesture started without `Shift` keeps using `dx` through
+`scroll-end`; a gesture started with `Shift` keeps using `dy`. Pressing or
+releasing `Shift` mid-sequence must not switch the delta source, which would make
+the table jump according to incidental movement on the other axis.
+
+Outside a continuous gesture, each event still uses its current modifier state.
+In particular, `Shift` with only a non-zero `dx` swaps that movement away from
+the table's horizontal axis and propagates, matching `GtkScrolledWindow`.
+
 ## Implementation Notes
 
 Background, not rules. Nothing here changes the behavior specified above.

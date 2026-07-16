@@ -95,20 +95,23 @@ enum ScrollAxis {
 }
 
 #[derive(Debug, Default)]
-pub(crate) struct ScrollGesture {
+struct ScrollGesture {
     active: bool,
     axis: Option<ScrollAxis>,
+    remaps_vertical_delta: bool,
 }
 
 impl ScrollGesture {
     fn begin(&mut self) {
         self.active = true;
         self.axis = None;
+        self.remaps_vertical_delta = false;
     }
 
     fn end(&mut self) {
         self.active = false;
         self.axis = None;
+        self.remaps_vertical_delta = false;
     }
 
     fn classify(&mut self, dx: f64, dy: f64, shift: bool) -> Option<ScrollAxis> {
@@ -126,8 +129,18 @@ impl ScrollGesture {
         };
         if self.active {
             self.axis = Some(axis);
+            self.remaps_vertical_delta = shift;
         }
         Some(axis)
+    }
+
+    fn horizontal_delta(&self, dx: f64, dy: f64, shift: bool) -> f64 {
+        let remaps_vertical_delta = if self.active && self.axis.is_some() {
+            self.remaps_vertical_delta
+        } else {
+            shift
+        };
+        if remaps_vertical_delta { dy } else { dx }
     }
 }
 
@@ -150,7 +163,7 @@ fn apply_horizontal_scroll(
     if gesture.classify(dx, dy, shift) != Some(ScrollAxis::Horizontal) {
         return false;
     }
-    let delta = if shift { dy } else { dx };
+    let delta = gesture.horizontal_delta(dx, dy, shift);
     if delta == 0.0 {
         // A locked gesture keeps consuming events until `scroll-end`, otherwise
         // this frame's other axis would bubble to the transcript scroller.
@@ -222,7 +235,7 @@ mod imp {
         pub row_count: Cell<usize>,
         pub match_count: Cell<usize>,
         pub adjustment: gtk::Adjustment,
-        pub scroll_gesture: RefCell<ScrollGesture>,
+        scroll_gesture: RefCell<ScrollGesture>,
         pub separator: gtk::Separator,
         pub scrollbar: gtk::Scrollbar,
     }
@@ -585,6 +598,24 @@ mod tests {
     }
 
     #[gtk::test]
+    fn shift_with_only_horizontal_delta_propagates() {
+        let adjustment = scroll_adjustment(100.0, 1000.0, 100.0);
+        let mut gesture = ScrollGesture::default();
+
+        let consumed = apply_horizontal_scroll(
+            &adjustment,
+            4.0,
+            0.0,
+            true,
+            gdk::ScrollUnit::Surface,
+            &mut gesture,
+        );
+
+        assert!(!consumed);
+        assert_eq!(adjustment.value(), 100.0);
+    }
+
+    #[gtk::test]
     fn plain_vertical_delta_propagates_without_moving_table() {
         let adjustment = scroll_adjustment(100.0, 1000.0, 100.0);
         let mut gesture = ScrollGesture::default();
@@ -796,6 +827,56 @@ mod tests {
             gdk::ScrollUnit::Surface,
             &mut gesture,
         ));
+    }
+
+    #[gtk::test]
+    fn continuous_horizontal_gesture_keeps_delta_source_when_shift_changes() {
+        let adjustment = scroll_adjustment(100.0, 1000.0, 100.0);
+        let mut gesture = ScrollGesture::default();
+        gesture.begin();
+
+        assert!(apply_horizontal_scroll(
+            &adjustment,
+            8.0,
+            1.0,
+            false,
+            gdk::ScrollUnit::Surface,
+            &mut gesture,
+        ));
+        assert!(apply_horizontal_scroll(
+            &adjustment,
+            3.0,
+            9.0,
+            true,
+            gdk::ScrollUnit::Surface,
+            &mut gesture,
+        ));
+        assert_approx_eq(adjustment.value(), 100.0 + (8.0 + 3.0) * 2.5);
+    }
+
+    #[gtk::test]
+    fn continuous_shift_gesture_keeps_delta_source_when_shift_is_released() {
+        let adjustment = scroll_adjustment(100.0, 1000.0, 100.0);
+        let mut gesture = ScrollGesture::default();
+        gesture.begin();
+
+        assert!(apply_horizontal_scroll(
+            &adjustment,
+            1.0,
+            8.0,
+            true,
+            gdk::ScrollUnit::Surface,
+            &mut gesture,
+        ));
+        assert!(apply_horizontal_scroll(
+            &adjustment,
+            9.0,
+            3.0,
+            false,
+            gdk::ScrollUnit::Surface,
+            &mut gesture,
+        ));
+        assert_approx_eq(adjustment.value(), 100.0 + (8.0 + 3.0) * 2.5);
     }
 
     #[gtk::test]
