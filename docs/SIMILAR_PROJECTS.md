@@ -1,6 +1,6 @@
 # Similar Projects
 
-Last reviewed: 2026-06-21
+Last reviewed: 2026-07-17
 
 A shortlist of projects in the same product space as Sessions Chronicle:
 tools that index, browse, search, analyze, resume, or operationalize local AI
@@ -20,7 +20,9 @@ repository or marketplace activity on GitHub, GitHub Releases, a product site,
 or a public marketplace listing during May or June 2026.
 
 Stats below are a snapshot from GitHub, project websites, or marketplace pages
-on 2026-06-21. They are directional, not permanent product truth.
+on 2026-06-21, except the "Visualization-first projects" section, which was
+added and snapshotted on 2026-07-17. They are directional, not permanent
+product truth.
 
 ## Closest matches
 
@@ -161,10 +163,156 @@ desktop reading experience.
 - **Product implication:** Reinforces that session continuity and operational
   control are high-demand adjacent jobs.
 
+## Visualization-first projects
+
+These projects do not compete on browsing, search, or resume. They compete on
+**comprehension**: making a session legible at a glance through an original
+visual form rather than a transcript list. They are tracked separately because
+they are the clearest source of design ideas for Sessions Chronicle, and because
+this is the one cluster where the field is still thin.
+
+### [Mindwalk](https://github.com/cosmtrek/mindwalk)
+
+Replays coding-agent sessions as light moving across a 3D map of the codebase.
+The repository is drawn as a night map; files are colored by the deepest state
+they reached during the session (moss green for seen, moon white for read, warm
+amber for edited, dark for unvisited), and the playback histogram follows the
+same cool/warm spectrum so observation stays cool while mutations glow. Internally
+split into a Trace layer that normalizes Claude Code and Codex events through
+per-assistant adapters, and a Citymap layer that lays out the repository
+deterministically. Go server serving a React/Three.js frontend, MIT.
+
+- **Why it's similar:** Same input (local session logs, multi-assistant,
+  normalized through adapters) and the same goal of understanding what an AI
+  assistant actually did across a project.
+- **How it differs from Sessions Chronicle:** Spatial replay of a single session
+  rather than a durable, searchable archive across sessions. No browsing,
+  search, or resume story.
+- **Maintenance signal:** 767 stars, v0.2.0 released on 2026-07-15, pushed on
+  2026-07-16.
+- **Product implication:** The strongest proof that visual comprehension is a
+  category of its own, and the benchmark to measure any Sessions Chronicle
+  visualization against. Its Trace/Citymap split also validates separating
+  normalization from rendering.
+
+### [Agent Flow](https://github.com/patoles/agent-flow)
+
+Real-time node graph of agent orchestration: tool calls, branching, and subagent
+coordination on an interactive pan/zoom canvas, with companion timeline and
+transcript panels and tabs for tracking several sessions at once. Detects Claude
+Code and Codex sessions concurrently and shows them side by side. Architecture is
+notable: Claude Code HTTP hooks feed an event relay server that streams to the
+browser over SSE. Ships as a Next.js web app plus a VS Code extension.
+
+- **Why it's similar:** Targets the same "what did the agent do, and why" question
+  over the same local Claude Code and Codex sessions.
+- **How it differs from Sessions Chronicle:** Live-first and hook-driven rather
+  than reading sessions at rest from disk; graph topology rather than history.
+- **Maintenance signal:** 1,247 stars, v0.9.1 released on 2026-07-06, pushed on
+  2026-07-11.
+- **Product implication:** Subagent structure is clearly worth showing as a
+  shape, not a list. The hook/SSE approach is also the reference design if
+  Sessions Chronicle ever wants live sessions.
+
+### [Agents Trail](https://github.com/camtrik/agent-trail)
+
+Local dashboard for Claude Code, Codex, OpenCode, OpenClaw, and Qoder. Combines
+an aggregate overview (tokens, cost, live activity), turn-by-turn session replay
+with expandable tool calls, hierarchical subagent trees, and a token/cost
+inspector that breaks input, output, cache, and reasoning tokens down per turn
+and aggregates by session and model. Local SQLite, no data leaves the machine.
+
+- **Why it's similar:** Nearly identical premise to Sessions Chronicle — local
+  SQLite index, multi-assistant coverage, privacy-first — with replay and cost
+  analysis layered on top.
+- **How it differs from Sessions Chronicle:** Web dashboard rather than native
+  GNOME/GTK, and analytics-oriented rather than reading-oriented.
+- **Maintenance signal:** 9 stars, v0.1.7 released on 2026-06-24, pushed on
+  2026-06-24. Early-stage; low adoption signal so far.
+- **Product implication:** Its assistant coverage overlaps ours almost exactly.
+  Worth watching as a shape, not yet as a competitive threat.
+
+### [ClaudeScope](https://github.com/Liuziyu77/ClaudeScope)
+
+Claude Code-only, parses `~/.claude/projects/<cwd-slug>/<sessionId>.jsonl` into
+four views. The interesting one is a **Gantt-style timeline** that lays every
+event on parallel lanes — user prompts, assistant text, thinking blocks, tool
+calls — against a real-time x-axis, which makes wait periods and reasoning
+clusters immediately visible. Also stacked-area token charts (input, cache_read,
+cache_creation, output) for spotting runaway context growth, a session summary
+line, and an event inspector. Python/Pandas/Plotly/Gradio, MIT, with the data
+layer deliberately separated from visualization.
+
+- **Why it's similar:** Same parsing target and the same intent to make a session
+  legible rather than merely readable.
+- **How it differs from Sessions Chronicle:** Single-assistant, notebook-grade
+  Gradio app for analyzing one session at a time; no archive, search, or resume.
+- **Maintenance signal:** 15 stars, no releases, pushed on 2026-04-24. Weak
+  activity signal; listed for design relevance rather than momentum.
+- **Product implication:** The most directly transposable idea in this section.
+  A parallel-lane timeline is cheap to render in GTK (`DrawingArea`) and would
+  reuse the existing parser output as-is.
+
+### [claude-replay](https://github.com/es617/claude-replay)
+
+Converts sessions from Claude Code, Cursor, Codex, Gemini, and OpenCode into
+self-contained, embeddable HTML replays.
+
+- **Why it's similar:** Multi-assistant session rendering aimed at
+  comprehension, from the same local log formats.
+- **How it differs from Sessions Chronicle:** Optimized for sharing a session
+  outward, not for exploring your own history.
+- **Maintenance signal:** 755 stars, v0.8.1 released on 2026-06-02, pushed on
+  2026-06-02.
+- **Product implication:** Real demand for exporting a session as an artifact
+  someone else can read. Adjacent to, and compatible with, an archive product.
+
+### [AI Agent Session Center](https://github.com/coding-by-feng/ai-agent-session-center)
+
+Turns live sessions from Claude Code, Gemini CLI, and Codex into animated 3D
+robots in a "cyberdrome" — six procedural robot models, eight animation states,
+per-project rooms, spatial navigation, plus live terminals, prompt history, and
+tool logs.
+
+- **Why it's similar:** Shares the premise that session state deserves a visual
+  form instead of a table.
+- **How it differs from Sessions Chronicle:** Playful live-monitoring toy rather
+  than a work-memory archive; the metaphor carries little analytical payload.
+- **Maintenance signal:** 77 stars, v2.10.34 released on 2026-06-20, pushed on
+  2026-06-20.
+- **Product implication:** Useful as a boundary marker. It shows where visual
+  originality stops paying for itself and becomes decoration.
+
 ## Adjacent projects
 
 These are worth tracking, but they are not as directly comparable to Sessions
 Chronicle's current scope.
+
+### [ai-observer](https://github.com/tobilg/ai-observer)
+
+Self-hosted single-binary OpenTelemetry-compatible observability backend for
+local AI coding tools, covering Claude Code, Gemini CLI, Codex CLI, GitHub
+Copilot, and OpenCode. Tracks tokens, costs, API latency, error rates, and
+session activity in one dashboard.
+
+- **Why it's adjacent:** Unifies the same fragmented multi-assistant local
+  activity into a single view.
+- **Why it is not a direct match:** Metrics/telemetry backend, not a transcript
+  reading surface. Sits in the same cluster as claude-tap.
+- **Maintenance signal:** 256 stars, v0.5.0 released on 2026-06-18, pushed on
+  2026-06-18.
+
+### [agents-observe](https://github.com/simple10/agents-observe)
+
+Real-time observability dashboard for Claude Code and Codex with filtering,
+search, multi-agent session visualization, full replay, and token usage stats.
+
+- **Why it's adjacent:** Overlaps on search, replay, and multi-agent session
+  comprehension.
+- **Why it is not a direct match:** Live observability dashboard rather than a
+  durable native history browser.
+- **Maintenance signal:** 625 stars, v0.9.11 released on 2026-06-04, pushed on
+  2026-06-29.
 
 ### [CC Switch](https://github.com/farion1231/cc-switch)
 
@@ -363,11 +511,27 @@ category by itself. Competitors now cluster into four shapes:
 - **Native platform viewers:** Agent Sessions on macOS and Sessions Chronicle
   on GNOME/Linux.
 - **Operational control planes:** CC Switch, Nimbalyst, CCManager, CodMate.
-- **Trace/observability viewers:** claude-tap and similar proxy/logging tools.
+- **Trace/observability viewers:** claude-tap, ai-observer, agents-observe, and
+  similar proxy/logging tools.
 - **Context feeders:** claude-historian-mcp, SpecStory, and other tools that
   turn history into assistant-readable context.
+- **Visualization-first tools:** Mindwalk, Agent Flow, ClaudeScope, Agents
+  Trail, claude-replay.
 
 Sessions Chronicle remains meaningfully differentiated only if it leans into
 what those clusters do not fully cover: a native Linux/GNOME, local-first,
 human-readable work memory for understanding what AI assistants did across
 projects.
+
+The July 2026 review added the visualization-first cluster, and it is the one
+that changes the read. Every other cluster is crowded and converging on the same
+feature checklist, so "browse, search, resume" is now table stakes rather than a
+position. Visual comprehension is thinly populated by comparison: Mindwalk is
+the only entrant with both an original form and real traction, Agent Flow owns
+the live/orchestration angle, and the rest are early or single-assistant. That
+gap is adjacent to work Sessions Chronicle has already done — the SQLite index
+and the multi-assistant parsers are exactly the substrate these tools each had
+to rebuild, and none of them pair a visualization with a durable searchable
+archive. Two ideas transpose cheaply: ClaudeScope's parallel-lane timeline, and
+a 2D treemap of touched files colored by interaction depth, which captures most
+of Mindwalk's insight without the 3D engine.
