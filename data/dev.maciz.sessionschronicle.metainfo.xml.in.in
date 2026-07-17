@@ -49,6 +49,15 @@
   </categories>
   <content_rating type="oars-1.1" />
   <releases>
+    <release version="0.8.0" date="2026-07-17">
+      <description>
+        <p>Introduces a new Markdown renderer and raw text toggle for transcripts.</p>
+        <ul>
+          <li>New Markdown renderer with GtkLabel-based layout and horizontally scrollable tables</li>
+          <li>Add per-row raw text toggle for assistant messages</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.7.1" date="2026-06-18">
       <description>
         <p>A patch release with a date filter addition and transcript interaction fix.</p>
