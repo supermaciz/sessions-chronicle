@@ -1,7 +1,7 @@
 # Markdown Table Column Readability Design
 
 **Date:** 2026-07-11  
-**Status:** Approved, pending implementation plan
+**Status:** Implemented [#183](https://github.com/supermaciz/sessions-chronicle/pull/183)
 
 ## Goal
 

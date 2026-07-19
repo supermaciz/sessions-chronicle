@@ -1,7 +1,7 @@
 # Markdown Table Horizontal Scroll Design
 
 **Date:** 2026-07-14  
-**Status:** Approved, pending implementation plan
+**Status:** Implemented [#184](https://github.com/supermaciz/sessions-chronicle/pull/184)
 
 ## Goal
 

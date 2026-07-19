@@ -4,7 +4,7 @@
 **Issue:** [#182](https://github.com/supermaciz/sessions-chronicle/issues/182)  
 **Predecessor spike:** [#181](https://github.com/supermaciz/sessions-chronicle/pull/181)  
 **Spike note:** `docs/reports/2026-07-04-markdown-table-widget-spike-note.md`  
-**Status:** Design approved, pending implementation plan
+**Status:** Implemented [#183](https://github.com/supermaciz/sessions-chronicle/pull/183)
 
 ## Goal
 

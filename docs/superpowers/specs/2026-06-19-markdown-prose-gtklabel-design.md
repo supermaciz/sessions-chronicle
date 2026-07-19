@@ -1,7 +1,7 @@
 # Design: GtkLabel Prose Rendering for Markdown Messages
 
 **Date:** 2026-06-19  
-**Status:** Proposed  
+**Status:** Implemented [#173](https://github.com/supermaciz/sessions-chronicle/pull/173)  
 **Issue:** [#168](https://github.com/supermaciz/sessions-chronicle/issues/168) — SessionDetail: intermittent clipped content until click or scroll  
 **Problem:** Assistant markdown prose is rendered through `GtkTextView`, which is not a
 synchronous height-for-width widget. When a virtualized `GtkListView` row (recycled) or

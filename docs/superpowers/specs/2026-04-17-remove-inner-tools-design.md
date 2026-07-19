@@ -1,7 +1,7 @@
 # Remove Inner Tools From Subagent Inspector
 
 **Date:** 2026-04-17  
-**Status:** Draft
+**Status:** Implemented [#165](https://github.com/supermaciz/sessions-chronicle/pull/165)
 
 ## Problem
 

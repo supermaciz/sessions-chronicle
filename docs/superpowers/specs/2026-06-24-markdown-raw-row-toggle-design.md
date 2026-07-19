@@ -1,7 +1,7 @@
 # Markdown Raw Row Toggle Design
 
 **Date**: 2026-06-24  
-**Status**: Approved for implementation planning  
+**Status**: Implemented [#175](https://github.com/supermaciz/sessions-chronicle/pull/175)  
 **Related exploration**: `docs/explorations/2026-06-23-markdown-rendering-config-exploration.md`  
 **Primary code area**: `src/ui/session_detail/transcript/`
 

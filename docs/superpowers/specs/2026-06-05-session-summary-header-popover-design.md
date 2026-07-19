@@ -1,7 +1,7 @@
 # Session Summary Header Popover Design
 
 **Date**: 2026-06-05  
-**Status**: Approved design, implementation plan pending  
+**Status**: Implemented [#164](https://github.com/supermaciz/sessions-chronicle/pull/164)  
 **Source exploration**: `docs/explorations/2026-06-04-session-summary-collapse-exploration.md`  
 **Selected proposal**: E, "The Summary Button"  
 

@@ -3,7 +3,7 @@
 **Date:** 2026-07-02  
 **Issue:** [#176](https://github.com/supermaciz/sessions-chronicle/issues/176) (investigation closed)  
 **Predecessor report:** `docs/reports/2026-06-29-markdown-table-wrapping-issue-176-report.md`  
-**Status:** Design approved, pending implementation plan  
+**Status:** Implemented [#181](https://github.com/supermaciz/sessions-chronicle/pull/181)  
 
 ## Goal
 
