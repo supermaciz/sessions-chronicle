@@ -1,0 +1,85 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 980 440" font-family="-apple-system, 'Cantarell', system-ui, sans-serif" font-size="13">
+  <style>
+    .stroke { fill: none; stroke: #1a1a1a; stroke-width: 1.4; }
+    .stroke-thin { fill: none; stroke: #1a1a1a; stroke-width: 1; }
+    .muted { fill: #777; }
+    .accent { fill: #3584e4; }
+    .accent-stroke { fill: none; stroke: #3584e4; stroke-width: 1.6; }
+    .accent-bg { fill: #3584e4; fill-opacity: 0.12; }
+    .red { fill: #c01c28; }
+    .label { font-size: 12px; fill: #1a1a1a; }
+    .title { font-size: 14px; font-weight: 600; fill: #1a1a1a; }
+    .note { font-size: 11px; fill: #c01c28; font-style: italic; }
+    .ws { fill: #ffffff; }
+  </style>
+
+  <!-- ===== Title bar ===== -->
+  <text x="20" y="28" class="title">Proposal A — Closed-state indicator</text>
+  <text x="20" y="46" class="muted" font-size="12">The pill must be readable without opening it &#8212; a mute chevron is an invisible indicator</text>
+
+  <!-- ===== State 1: default ===== -->
+  <rect x="20" y="64" width="940" height="52" rx="10" fill="#f0f0f0" />
+  <rect x="20" y="64" width="940" height="52" rx="10" class="stroke" />
+  <circle cx="44" cy="90" r="12" class="stroke-thin" />
+  <text x="44" y="95" class="label" text-anchor="middle">&lt;</text>
+  <text x="490" y="95" class="title" text-anchor="middle">Sessions Chronicle</text>
+
+  <!-- date pill, default: icon only -->
+  <rect x="872" y="76" width="36" height="28" rx="14" class="ws stroke-thin" />
+  <rect x="884" y="84" width="12" height="12" rx="2" class="stroke-thin" />
+  <line x1="884" y1="88" x2="896" y2="88" class="stroke-thin" />
+
+  <!-- sort pill, default: icon only -->
+  <rect x="916" y="76" width="36" height="28" rx="14" class="ws stroke-thin" />
+  <line x1="926" y1="84" x2="942" y2="84" class="stroke" />
+  <line x1="926" y1="90" x2="938" y2="90" class="stroke" />
+  <line x1="926" y1="96" x2="934" y2="96" class="stroke" />
+
+  <text x="40" y="140" class="label">&#9312; <tspan font-weight="600">Default</tspan> (Last activity, descending) &#8594; icon only, no label &#8212; the header stays calm</text>
+  <text x="40" y="160" class="note">tooltip: &#8220;Sort by last activity, descending (Ctrl+Shift+O)&#8221;</text>
+
+  <!-- ===== State 2: non-default ===== -->
+  <rect x="20" y="184" width="940" height="52" rx="10" fill="#f0f0f0" />
+  <rect x="20" y="184" width="940" height="52" rx="10" class="stroke" />
+  <circle cx="44" cy="210" r="12" class="stroke-thin" />
+  <text x="44" y="215" class="label" text-anchor="middle">&lt;</text>
+  <text x="490" y="215" class="title" text-anchor="middle">Sessions Chronicle</text>
+
+  <rect x="872" y="196" width="36" height="28" rx="14" class="ws stroke-thin" />
+  <rect x="884" y="204" width="12" height="12" rx="2" class="stroke-thin" />
+  <line x1="884" y1="208" x2="896" y2="208" class="stroke-thin" />
+
+  <!-- sort pill, non-default: icon + label + accent -->
+  <rect x="772" y="196" width="92" height="28" rx="14" class="accent-bg accent-stroke" />
+  <line x1="784" y1="204" x2="800" y2="204" class="accent-stroke" />
+  <line x1="784" y1="210" x2="796" y2="210" class="accent-stroke" />
+  <line x1="784" y1="216" x2="792" y2="216" class="accent-stroke" />
+  <text x="806" y="215" class="accent" font-size="12">Created &#8593;</text>
+
+  <text x="40" y="260" class="label">&#9313; <tspan font-weight="600">Anything else</tspan> &#8594; icon + label + <tspan class="accent">accent</tspan> class on the pill (&#8220;Created &#8593;&#8221;, &#8220;Messages &#8595;&#8221;)</text>
+  <text x="40" y="280" class="note">explicitly chosen sorts persist via GSettings keys sort-key / sort-descending</text>
+
+  <!-- ===== State 3: search active ===== -->
+  <rect x="20" y="304" width="940" height="52" rx="10" fill="#f0f0f0" />
+  <rect x="20" y="304" width="940" height="52" rx="10" class="stroke" />
+  <circle cx="44" cy="330" r="12" class="stroke-thin" />
+  <text x="44" y="335" class="label" text-anchor="middle">&lt;</text>
+
+  <!-- search entry visible in header -->
+  <rect x="300" y="314" width="380" height="32" rx="8" class="ws stroke-thin" />
+  <circle cx="322" cy="330" r="6" class="stroke-thin" />
+  <line x1="326" y1="334" x2="331" y2="339" class="stroke-thin" />
+  <text x="342" y="335" class="label">parser pipeline</text>
+
+  <!-- sort pill, relevance: auto-switched -->
+  <rect x="828" y="316" width="112" height="28" rx="14" class="accent-bg accent-stroke" />
+  <circle cx="844" cy="330" r="5" class="accent-stroke" />
+  <line x1="848" y1="334" x2="852" y2="338" class="accent-stroke" />
+  <text x="862" y="335" class="accent" font-size="12">Relevance</text>
+
+  <text x="40" y="380" class="label">&#9314; <tspan font-weight="600">Query typed</tspan> &#8594; auto-switch to Relevance (implicit default of search mode) &#8212; never persisted</text>
+  <text x="40" y="400" class="note">explicit pick is respected; clearing the query falls back to Last activity only if Relevance was never chosen explicitly</text>
+
+  <!-- ===== Narrow fallback ===== -->
+  <text x="40" y="430" class="note">Narrow widths (&lt; ~500 px): any visible sort label falls back to icon-only + accent class, tooltip keeps the full description</text>
+</svg>

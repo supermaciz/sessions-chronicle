@@ -1,0 +1,86 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 980 700" font-family="-apple-system, 'Cantarell', system-ui, sans-serif" font-size="13">
+  <style>
+    .stroke { fill: none; stroke: #1a1a1a; stroke-width: 1.4; }
+    .stroke-thin { fill: none; stroke: #1a1a1a; stroke-width: 1; }
+    .muted { fill: #777; }
+    .accent { fill: #3584e4; }
+    .accent-stroke { fill: none; stroke: #3584e4; stroke-width: 1.6; }
+    .accent-bg { fill: #3584e4; fill-opacity: 0.12; }
+    .bar { fill: #3584e4; fill-opacity: 0.55; }
+    .red { fill: #c01c28; }
+    .label { font-size: 12px; fill: #1a1a1a; }
+    .badge { font-size: 11px; fill: #555; }
+    .title { font-size: 14px; font-weight: 600; fill: #1a1a1a; }
+    .note { font-size: 11px; fill: #c01c28; font-style: italic; }
+    .row-text { font-size: 12.5px; fill: #1a1a1a; }
+    .ws { fill: #ffffff; }
+  </style>
+
+  <!-- ===== Title bar ===== -->
+  <text x="20" y="28" class="title">Proposal B — Sort lenses &#183; Volume lens</text>
+  <text x="20" y="46" class="muted" font-size="12">Sorted by message count &#183; bar length proportional to messages &#8212; large sessions pop without reading a single number</text>
+
+  <!-- ===== App window ===== -->
+  <rect x="20" y="70" width="940" height="540" rx="10" class="ws stroke" />
+
+  <!-- Header bar -->
+  <rect x="20" y="70" width="940" height="48" fill="#f0f0f0" />
+  <line x1="20" y1="118" x2="960" y2="118" class="stroke-thin" />
+  <circle cx="44" cy="94" r="12" class="stroke-thin" />
+  <text x="44" y="99" class="label" text-anchor="middle">&lt;</text>
+  <text x="490" y="99" class="title" text-anchor="middle">Sessions Chronicle</text>
+
+  <!-- Search bar -->
+  <rect x="36" y="128" width="908" height="32" rx="8" class="ws stroke-thin" />
+  <circle cx="56" cy="144" r="6" class="stroke-thin" />
+  <line x1="60" y1="148" x2="65" y2="153" class="stroke-thin" />
+  <text x="76" y="149" class="muted" font-size="12">Search sessions&#8230;</text>
+
+  <!-- ===== Lens switcher strip ===== -->
+  <rect x="36" y="170" width="330" height="30" rx="8" class="ws stroke" />
+  <text x="91" y="189" class="label" text-anchor="middle">Activity</text>
+  <text x="201" y="189" class="label" text-anchor="middle">Chronology</text>
+  <rect x="256" y="170" width="110" height="30" rx="8" class="accent-bg accent-stroke" />
+  <text x="311" y="189" class="accent" font-size="12" font-weight="600" text-anchor="middle">Volume</text>
+
+  <!-- ===== Rows with proportional meter bars (scale: 214 msg = 660 px) ===== -->
+  <!-- Row 1: 214 messages -->
+  <rect x="36" y="212" width="908" height="60" rx="6" class="ws stroke-thin" />
+  <text x="52" y="234" class="row-text">Refactor parser pipeline</text>
+  <text x="928" y="234" class="accent" font-size="12" font-weight="600" text-anchor="end">214 messages</text>
+  <rect x="52" y="244" width="660" height="12" rx="6" class="bar" />
+  <text x="52" y="266" class="badge">OpenCode &#183; Jul 21 &#183; 2h ago</text>
+
+  <!-- Row 2: 96 messages -->
+  <rect x="36" y="280" width="908" height="60" rx="6" class="ws stroke-thin" />
+  <text x="52" y="302" class="row-text">Fix flaky indexing test</text>
+  <text x="928" y="302" class="accent" font-size="12" font-weight="600" text-anchor="end">96 messages</text>
+  <rect x="52" y="312" width="296" height="12" rx="6" class="bar" />
+  <text x="52" y="334" class="badge">Claude Code &#183; Jul 17 &#183; 4d ago</text>
+
+  <!-- Row 3: 61 messages -->
+  <rect x="36" y="348" width="908" height="60" rx="6" class="ws stroke-thin" />
+  <text x="52" y="370" class="row-text">First working session list</text>
+  <text x="928" y="370" class="accent" font-size="12" font-weight="600" text-anchor="end">61 messages</text>
+  <rect x="52" y="380" width="188" height="12" rx="6" class="bar" />
+  <text x="52" y="402" class="badge">OpenCode &#183; Jun 15 &#183; 5w ago</text>
+
+  <!-- Row 4: 38 messages -->
+  <rect x="36" y="416" width="908" height="60" rx="6" class="ws stroke-thin" />
+  <text x="52" y="438" class="row-text">Add date filter pill</text>
+  <text x="928" y="438" class="accent" font-size="12" font-weight="600" text-anchor="end">38 messages</text>
+  <rect x="52" y="448" width="117" height="12" rx="6" class="bar" />
+  <text x="52" y="470" class="badge">Codex &#183; Jul 02 &#183; 2w ago</text>
+
+  <!-- Row 5: 17 messages -->
+  <rect x="36" y="484" width="908" height="60" rx="6" class="ws stroke-thin" />
+  <text x="52" y="506" class="row-text">Fix CSS nit in sidebar</text>
+  <text x="928" y="506" class="accent" font-size="12" font-weight="600" text-anchor="end">17 messages</text>
+  <rect x="52" y="516" width="52" height="12" rx="6" class="bar" />
+  <text x="52" y="538" class="badge">Mistral Vibe &#183; Jun 28 &#183; 3w ago</text>
+
+  <!-- ===== Annotations ===== -->
+  <text x="20" y="640" class="note">&#9312; Same control, different ink: switching lens re-encodes the rows, not just their order</text>
+  <text x="20" y="660" class="note">&#9313; Bar length &#8733; message count &#8212; outliers and heavy sessions are visible at a glance (&#8220;spot large sessions&#8221; JTBD)</text>
+  <text x="20" y="680" class="note">&#9314; A fourth lens, Relevance, appears only while a query is active: rank order + match-count badge per row</text>
+</svg>
