@@ -1,0 +1,109 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 980 720" font-family="-apple-system, 'Cantarell', system-ui, sans-serif" font-size="13">
+  <style>
+    .stroke { fill: none; stroke: #1a1a1a; stroke-width: 1.4; }
+    .stroke-thin { fill: none; stroke: #1a1a1a; stroke-width: 1; }
+    .muted { fill: #777; }
+    .accent { fill: #3584e4; }
+    .accent-stroke { fill: none; stroke: #3584e4; stroke-width: 1.6; }
+    .accent-bg { fill: #3584e4; fill-opacity: 0.12; }
+    .red { fill: #c01c28; }
+    .red-stroke { fill: none; stroke: #c01c28; stroke-width: 1.2; stroke-dasharray: 4 3; }
+    .label { font-size: 12px; fill: #1a1a1a; }
+    .badge { font-size: 11px; fill: #555; }
+    .title { font-size: 14px; font-weight: 600; fill: #1a1a1a; }
+    .note { font-size: 11px; fill: #c01c28; font-style: italic; }
+    .row-text { font-size: 12.5px; fill: #1a1a1a; }
+    .ws { fill: #ffffff; }
+  </style>
+
+  <!-- ===== Title bar ===== -->
+  <text x="20" y="28" class="title">Proposal D — View-options menu (Nautilus pattern)</text>
+  <text x="20" y="46" class="muted" font-size="12">Icon-only menu button &#183; sort is presentation, not a filter &#183; precedent: Files, Photos, Web</text>
+
+  <!-- ===== App window ===== -->
+  <rect x="20" y="70" width="940" height="560" rx="10" class="ws stroke" />
+
+  <!-- Header bar -->
+  <rect x="20" y="70" width="940" height="48" fill="#f0f0f0" />
+  <line x1="20" y1="118" x2="960" y2="118" class="stroke-thin" />
+  <circle cx="44" cy="94" r="12" class="stroke-thin" />
+  <text x="44" y="99" class="label" text-anchor="middle">&lt;</text>
+  <text x="490" y="99" class="title" text-anchor="middle">Sessions Chronicle</text>
+
+  <!-- Date pill (existing filter, keeps its label + accent — it hides data) -->
+  <rect x="720" y="80" width="128" height="28" rx="14" class="accent-bg accent-stroke" />
+  <rect x="734" y="88" width="12" height="12" rx="2" class="accent-stroke" />
+  <line x1="734" y1="92" x2="746" y2="92" class="accent-stroke" />
+  <text x="754" y="99" class="accent" font-size="12">Last 30 days</text>
+
+  <!-- View-options menu button (icon-only, quiet, no accent) -->
+  <rect x="860" y="80" width="30" height="28" rx="8" class="ws stroke-thin" />
+  <line x1="868" y1="90" x2="882" y2="90" class="stroke-thin" />
+  <line x1="868" y1="95" x2="879" y2="95" class="stroke-thin" />
+  <line x1="868" y1="100" x2="876" y2="100" class="stroke-thin" />
+
+  <!-- Primary hamburger (app-global, unchanged) -->
+  <rect x="900" y="80" width="30" height="28" rx="8" class="ws stroke-thin" />
+  <line x1="908" y1="90" x2="922" y2="90" class="stroke-thin" />
+  <line x1="908" y1="95" x2="922" y2="95" class="stroke-thin" />
+  <line x1="908" y1="100" x2="922" y2="100" class="stroke-thin" />
+
+  <text x="828" y="72" class="note" font-size="10" text-anchor="middle">filter: labelled</text>
+  <text x="875" y="126" class="note" font-size="10" text-anchor="middle">view</text>
+  <text x="915" y="126" class="note" font-size="10" text-anchor="middle">app menu</text>
+
+  <!-- ===== View-options popover (anchored to the view button, Nautilus-style) ===== -->
+  <rect x="742" y="132" width="204" height="248" rx="8" class="ws stroke" />
+
+  <text x="760" y="156" class="badge" font-weight="600">Sort by</text>
+
+  <!-- Sort criteria with checkmark on active -->
+  <rect x="750" y="164" width="188" height="26" rx="4" class="accent-bg" />
+  <polyline points="760,178 765,184 776,170" class="accent-stroke" />
+  <text x="786" y="182" class="accent" font-size="12" font-weight="600">Last activity</text>
+
+  <text x="786" y="210" class="label">Created</text>
+  <text x="786" y="236" class="label">Messages</text>
+
+  <!-- Relevance: query-bound row -->
+  <rect x="750" y="248" width="188" height="24" rx="4" class="red-stroke" />
+  <text x="786" y="264" class="muted" font-size="12" font-style="italic">Relevance</text>
+  <text x="874" y="264" class="note" font-size="10">search only</text>
+
+  <line x1="760" y1="286" x2="928" y2="286" class="stroke-thin" />
+
+  <!-- Direction toggles (same as A, inside the menu) -->
+  <text x="760" y="306" class="badge" font-weight="600">Order</text>
+  <rect x="760" y="316" width="84" height="28" rx="6" class="accent-bg accent-stroke" />
+  <text x="802" y="334" class="accent" font-size="12" text-anchor="middle">Descending</text>
+  <rect x="844" y="316" width="84" height="28" rx="6" class="ws stroke-thin" />
+  <text x="886" y="334" class="label" text-anchor="middle">Ascending</text>
+
+  <text x="760" y="366" class="note" font-size="10">room to grow: a future &#8220;group by month&#8221; toggle joins here</text>
+
+  <!-- ===== Session list (Last activity, descending — calm default) ===== -->
+  <rect x="36" y="134" width="684" height="48" rx="6" class="ws stroke-thin" />
+  <text x="52" y="154" class="row-text">Refactor parser pipeline</text>
+  <text x="52" y="172" class="badge">OpenCode &#183; 128 messages &#183; 2d ago</text>
+
+  <rect x="36" y="190" width="684" height="48" rx="6" class="ws stroke-thin" />
+  <text x="52" y="210" class="row-text">Fix flaky indexing test</text>
+  <text x="52" y="228" class="badge">Claude Code &#183; 96 messages &#183; 5d ago</text>
+
+  <rect x="36" y="246" width="684" height="48" rx="6" class="ws stroke-thin" />
+  <text x="52" y="266" class="row-text">Explore sort options</text>
+  <text x="52" y="284" class="badge">Codex &#183; 74 messages &#183; 1w ago</text>
+
+  <rect x="36" y="302" width="684" height="48" rx="6" class="ws stroke-thin" />
+  <text x="52" y="322" class="row-text">Bump dependencies</text>
+  <text x="52" y="340" class="badge">OpenCode &#183; 41 messages &#183; 1w ago</text>
+
+  <rect x="36" y="358" width="684" height="48" rx="6" class="ws stroke-thin" />
+  <text x="52" y="378" class="row-text">Fix CSS nit in sidebar</text>
+  <text x="52" y="396" class="badge">Mistral Vibe &#183; 23 messages &#183; 2w ago</text>
+
+  <!-- ===== Annotations ===== -->
+  <text x="20" y="660" class="note">&#9312; The DatePill keeps its label + accent because a filter hides data; sort hides nothing, so it moves to a quiet view-options button</text>
+  <text x="20" y="680" class="note">&#9313; Icon-only at every width by construction &#8212; A&#8217;s narrow-width crowding and its bespoke fallback rule never have to exist</text>
+  <text x="20" y="700" class="note">&#9314; No closed-state indicator (accepted Nautilus behaviour): the active sort carries a checkmark inside the menu, not on the header</text>
+</svg>

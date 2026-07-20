@@ -1,0 +1,104 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 980 720" font-family="-apple-system, 'Cantarell', system-ui, sans-serif" font-size="13">
+  <style>
+    .stroke { fill: none; stroke: #1a1a1a; stroke-width: 1.4; }
+    .stroke-thin { fill: none; stroke: #1a1a1a; stroke-width: 1; }
+    .muted { fill: #777; }
+    .accent { fill: #3584e4; }
+    .accent-stroke { fill: none; stroke: #3584e4; stroke-width: 1.6; }
+    .accent-bg { fill: #3584e4; fill-opacity: 0.12; }
+    .red { fill: #c01c28; }
+    .red-stroke { fill: none; stroke: #c01c28; stroke-width: 1.2; stroke-dasharray: 4 3; }
+    .label { font-size: 12px; fill: #1a1a1a; }
+    .badge { font-size: 11px; fill: #555; }
+    .title { font-size: 14px; font-weight: 600; fill: #1a1a1a; }
+    .note { font-size: 11px; fill: #c01c28; font-style: italic; }
+    .row-text { font-size: 12.5px; fill: #1a1a1a; }
+    .ws { fill: #ffffff; }
+    .strike { stroke: #c01c28; stroke-width: 1.2; }
+  </style>
+
+  <!-- ===== Title bar ===== -->
+  <text x="20" y="28" class="title">Proposal C — Named reading orders (no direction toggle)</text>
+  <text x="20" y="46" class="muted" font-size="12">A flat list of fixed (key, order) intents &#183; direction is baked into the name &#183; strictly smaller than A</text>
+
+  <!-- ===== App window ===== -->
+  <rect x="20" y="70" width="940" height="560" rx="10" class="ws stroke" />
+
+  <!-- Header bar -->
+  <rect x="20" y="70" width="940" height="48" fill="#f0f0f0" />
+  <line x1="20" y1="118" x2="960" y2="118" class="stroke-thin" />
+  <circle cx="44" cy="94" r="12" class="stroke-thin" />
+  <text x="44" y="99" class="label" text-anchor="middle">&lt;</text>
+  <text x="490" y="99" class="title" text-anchor="middle">Sessions Chronicle</text>
+
+  <!-- Date pill (existing, active) -->
+  <rect x="676" y="80" width="128" height="28" rx="14" class="accent-bg accent-stroke" />
+  <rect x="690" y="88" width="12" height="12" rx="2" class="accent-stroke" />
+  <line x1="690" y1="92" x2="702" y2="92" class="accent-stroke" />
+  <text x="710" y="99" class="accent" font-size="12">Last 30 days</text>
+
+  <!-- Sort pill (active: the intent name IS the label) -->
+  <rect x="814" y="80" width="136" height="28" rx="14" class="accent-bg accent-stroke" />
+  <line x1="828" y1="88" x2="844" y2="88" class="accent-stroke" />
+  <line x1="828" y1="94" x2="840" y2="94" class="accent-stroke" />
+  <line x1="828" y1="100" x2="836" y2="100" class="accent-stroke" />
+  <text x="852" y="99" class="accent" font-size="12">Oldest first</text>
+
+  <!-- ===== Sort popover (anchored to the pill) — flat named list, no toggle ===== -->
+  <rect x="762" y="124" width="198" height="212" rx="8" class="ws stroke" />
+  <text x="780" y="148" class="badge" font-weight="600">Sort by</text>
+
+  <!-- Named reading orders -->
+  <text x="780" y="174" class="label">Recent activity</text>
+  <text x="928" y="174" class="badge" font-style="italic">default</text>
+
+  <rect x="770" y="182" width="182" height="24" rx="4" class="accent-bg" />
+  <text x="780" y="199" class="accent" font-size="12" font-weight="600">Oldest first</text>
+  <polyline points="928,193 933,199 944,185" class="accent-stroke" />
+
+  <text x="780" y="226" class="label">Newest first</text>
+  <text x="780" y="252" class="label">Most messages</text>
+
+  <!-- Relevance: query-bound row -->
+  <rect x="770" y="264" width="182" height="24" rx="4" class="red-stroke" />
+  <text x="780" y="280" class="muted" font-size="12" font-style="italic">Relevance</text>
+  <text x="866" y="280" class="note" font-size="10">search only</text>
+
+  <line x1="780" y1="300" x2="942" y2="300" class="stroke-thin" />
+  <text x="780" y="322" class="badge" font-style="italic">No Descending / Ascending toggle &#8212; deleted</text>
+
+  <!-- Ghost of A's deleted toggle pair, struck through -->
+  <rect x="762" y="352" width="198" height="52" rx="8" class="ws red-stroke" />
+  <text x="772" y="372" class="badge" font-weight="600">Order (removed from A)</text>
+  <rect x="772" y="380" width="84" height="18" rx="4" class="ws stroke-thin" opacity="0.5" />
+  <text x="814" y="393" class="muted" font-size="11" text-anchor="middle">Descending</text>
+  <rect x="860" y="380" width="84" height="18" rx="4" class="ws stroke-thin" opacity="0.5" />
+  <text x="902" y="393" class="muted" font-size="11" text-anchor="middle">Ascending</text>
+  <line x1="772" y1="389" x2="944" y2="389" class="strike" />
+
+  <!-- ===== Session list (Oldest first) ===== -->
+  <rect x="36" y="134" width="700" height="48" rx="6" class="ws stroke-thin" />
+  <text x="52" y="154" class="row-text">Scaffold parser crate</text>
+  <text x="52" y="172" class="badge">Claude Code &#183; 18 messages &#183; Jun 03</text>
+
+  <rect x="36" y="190" width="700" height="48" rx="6" class="ws stroke-thin" />
+  <text x="52" y="210" class="row-text">Wire up SQLite indexing</text>
+  <text x="52" y="228" class="badge">OpenCode &#183; 42 messages &#183; Jun 12</text>
+
+  <rect x="36" y="246" width="700" height="48" rx="6" class="ws stroke-thin" />
+  <text x="52" y="266" class="row-text">Add date filter pill</text>
+  <text x="52" y="284" class="badge">Codex &#183; 37 messages &#183; Jul 02</text>
+
+  <rect x="36" y="302" width="700" height="48" rx="6" class="ws stroke-thin" />
+  <text x="52" y="322" class="row-text">Explore sort options</text>
+  <text x="52" y="340" class="badge">OpenCode &#183; 74 messages &#183; Jul 18</text>
+
+  <rect x="36" y="358" width="700" height="48" rx="6" class="ws stroke-thin" />
+  <text x="52" y="378" class="row-text">Refactor parser pipeline</text>
+  <text x="52" y="396" class="badge">OpenCode &#183; 128 messages &#183; Jul 21</text>
+
+  <!-- ===== Annotations ===== -->
+  <text x="20" y="660" class="note">&#9312; Three keys &#215; two directions is a six-cell matrix; only ~4 cells map to a real job &#8212; the popover ships the jobs, not the grid</text>
+  <text x="20" y="680" class="note">&#9313; &#8220;Oldest first&#8221; cannot be misread the way A&#8217;s &#8220;Created &#8595;&#8221; can &#8212; the intent name is both the choice and the closed-state label</text>
+  <text x="20" y="700" class="note">&#9314; Persistence is one `sort-order` enum GSetting instead of `sort-key` + `sort-descending`; Relevance still never persisted</text>
+</svg>

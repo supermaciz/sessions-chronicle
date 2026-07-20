@@ -1,0 +1,116 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 980 700" font-family="-apple-system, 'Cantarell', system-ui, sans-serif" font-size="13">
+  <style>
+    .stroke { fill: none; stroke: #1a1a1a; stroke-width: 1.4; }
+    .stroke-thin { fill: none; stroke: #1a1a1a; stroke-width: 1; }
+    .muted { fill: #777; }
+    .accent { fill: #3584e4; }
+    .accent-stroke { fill: none; stroke: #3584e4; stroke-width: 1.6; }
+    .accent-bg { fill: #3584e4; fill-opacity: 0.12; }
+    .red { fill: #c01c28; }
+    .red-stroke { fill: none; stroke: #c01c28; stroke-width: 1.2; stroke-dasharray: 4 3; }
+    .label { font-size: 12px; fill: #1a1a1a; }
+    .badge { font-size: 11px; fill: #555; }
+    .title { font-size: 14px; font-weight: 600; fill: #1a1a1a; }
+    .note { font-size: 11px; fill: #c01c28; font-style: italic; }
+    .row-text { font-size: 12.5px; fill: #1a1a1a; }
+    .ws { fill: #ffffff; }
+    .caption { font-size: 12px; font-weight: 600; fill: #1a1a1a; }
+  </style>
+
+  <!-- ===== Title bar ===== -->
+  <text x="20" y="28" class="title">Proposal E — Intent-inferred default (the sort you don&#8217;t set)</text>
+  <text x="20" y="46" class="muted" font-size="12">The active filter picks the default order &#183; zero interaction &#183; explicit picks always win</text>
+
+  <!-- ===================== LEFT: no filter ===================== -->
+  <text x="34" y="80" class="caption">No filter &#8212; the firehose</text>
+  <rect x="20" y="90" width="450" height="330" rx="10" class="ws stroke" />
+
+  <!-- header -->
+  <rect x="20" y="90" width="450" height="40" fill="#f0f0f0" />
+  <line x1="20" y1="130" x2="470" y2="130" class="stroke-thin" />
+  <text x="245" y="115" class="title" text-anchor="middle" font-size="12">Sessions Chronicle</text>
+
+  <!-- sort control, inferred = Recent activity -->
+  <rect x="352" y="98" width="106" height="24" rx="12" class="ws stroke-thin" />
+  <line x1="362" y1="105" x2="374" y2="105" class="stroke-thin" />
+  <line x1="362" y1="110" x2="371" y2="110" class="stroke-thin" />
+  <line x1="362" y1="115" x2="368" y2="115" class="stroke-thin" />
+  <text x="382" y="115" class="label" font-size="11">Recent</text>
+
+  <!-- rows: recent activity desc -->
+  <rect x="34" y="144" width="422" height="40" rx="6" class="ws stroke-thin" />
+  <text x="48" y="162" class="row-text">Refactor parser pipeline</text>
+  <text x="48" y="177" class="badge">OpenCode &#183; 128 msg &#183; 2d ago</text>
+
+  <rect x="34" y="192" width="422" height="40" rx="6" class="ws stroke-thin" />
+  <text x="48" y="210" class="row-text">Fix flaky indexing test</text>
+  <text x="48" y="225" class="badge">Claude Code &#183; 96 msg &#183; 5d ago</text>
+
+  <rect x="34" y="240" width="422" height="40" rx="6" class="ws stroke-thin" />
+  <text x="48" y="258" class="row-text">Bump dependencies</text>
+  <text x="48" y="273" class="badge">OpenCode &#183; 41 msg &#183; 1w ago</text>
+
+  <rect x="34" y="288" width="422" height="40" rx="6" class="ws stroke-thin" />
+  <text x="48" y="306" class="row-text">Fix CSS nit in sidebar</text>
+  <text x="48" y="321" class="badge">Mistral Vibe &#183; 23 msg &#183; 2w ago</text>
+
+  <text x="34" y="356" class="badge" font-style="italic">Default order: Recent activity, descending &#8212; today&#8217;s calm list, untouched</text>
+  <text x="34" y="376" class="badge" font-style="italic">order: last_updated DESC</text>
+
+  <!-- ===================== ARROW ===================== -->
+  <text x="490" y="238" class="accent" font-size="20" text-anchor="middle">&#8594;</text>
+  <text x="490" y="258" class="note" font-size="10" text-anchor="middle">select a</text>
+  <text x="490" y="272" class="note" font-size="10" text-anchor="middle">project</text>
+
+  <!-- ===================== RIGHT: project filter active ===================== -->
+  <text x="524" y="80" class="caption">Project filter active &#8212; auto-flips to Oldest first</text>
+  <rect x="510" y="90" width="450" height="330" rx="10" class="ws stroke" />
+
+  <!-- header -->
+  <rect x="510" y="90" width="450" height="40" fill="#f0f0f0" />
+  <line x1="510" y1="130" x2="960" y2="130" class="stroke-thin" />
+  <text x="735" y="115" class="title" text-anchor="middle" font-size="12">Sessions Chronicle</text>
+
+  <!-- project filter pill (active) -->
+  <rect x="524" y="98" width="150" height="24" rx="12" class="accent-bg accent-stroke" />
+  <circle cx="538" cy="110" r="5" class="accent-stroke" />
+  <text x="550" y="115" class="accent" font-size="11">sessions-chronicle</text>
+
+  <!-- sort control, inferred = Oldest first (accent, but not user-set) -->
+  <rect x="838" y="98" width="112" height="24" rx="12" class="accent-bg accent-stroke" />
+  <line x1="848" y1="105" x2="860" y2="105" class="accent-stroke" />
+  <line x1="848" y1="110" x2="857" y2="110" class="accent-stroke" />
+  <line x1="848" y1="115" x2="854" y2="115" class="accent-stroke" />
+  <text x="868" y="115" class="accent" font-size="11">Oldest first</text>
+
+  <!-- inline inferred-hint banner (non-accent, dismissible) -->
+  <rect x="524" y="140" width="426" height="26" rx="6" class="ws stroke-thin" />
+  <circle cx="540" cy="153" r="6" class="stroke-thin" />
+  <text x="540" y="157" class="muted" font-size="9" text-anchor="middle">i</text>
+  <text x="556" y="157" class="label" font-size="11">Sorted oldest first to read this project as a journal.</text>
+  <text x="878" y="157" class="accent" font-size="11" font-weight="600">Change</text>
+
+  <!-- rows: oldest first (start_time ASC) -->
+  <rect x="524" y="176" width="426" height="40" rx="6" class="ws stroke-thin" />
+  <text x="538" y="194" class="row-text">Scaffold parser crate</text>
+  <text x="538" y="209" class="badge">Claude Code &#183; 18 msg &#183; Jun 03</text>
+
+  <rect x="524" y="224" width="426" height="40" rx="6" class="ws stroke-thin" />
+  <text x="538" y="242" class="row-text">Wire up SQLite indexing</text>
+  <text x="538" y="257" class="badge">OpenCode &#183; 42 msg &#183; Jun 12</text>
+
+  <rect x="524" y="272" width="426" height="40" rx="6" class="ws stroke-thin" />
+  <text x="538" y="290" class="row-text">Add date filter pill</text>
+  <text x="538" y="305" class="badge">Codex &#183; 37 msg &#183; Jul 02</text>
+
+  <rect x="524" y="320" width="426" height="40" rx="6" class="ws stroke-thin" />
+  <text x="538" y="338" class="row-text">Refactor parser pipeline</text>
+  <text x="538" y="353" class="badge">OpenCode &#183; 128 msg &#183; Jul 21</text>
+
+  <text x="524" y="386" class="badge" font-style="italic">Inferred order: Oldest first &#8212; order: start_time ASC (same as B&#8217;s chronology lens, no new surface)</text>
+
+  <!-- ===== Annotations ===== -->
+  <text x="20" y="640" class="note">&#9312; A, C, D argue about the control&#8217;s shape; E asks whether the user must pick at all &#8212; the filter already expresses the intent</text>
+  <text x="20" y="660" class="note">&#9313; Reuses the relevance implicit/explicit handshake: one flag generalized to filters &#8212; an explicit pick is never overridden</text>
+  <text x="20" y="680" class="note">&#9314; A default that shifts with context needs a legible, non-accent cue (the inline hint) so the flip never reads as the list &#8220;jumping&#8221;</text>
+</svg>
