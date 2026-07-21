@@ -2,7 +2,7 @@
 
 **Issue:** [#188](https://github.com/supermaciz/sessions-chronicle/issues/188) — Sort options for the session list  
 **Date:** 2026-07-21  
-**Status:** Open  
+**Status:** Decided — Proposal C (named reading orders), on A's pill surface, without the `accent` class  
 **Source:** Issue #188 already contains a fully developed GNOME HIG proposal; this exploration restates it (Proposal A) and pits it against a creative alternative (Proposal B). Proposals C, D, and E were added later to interrogate assumptions A and B share: C questions the direction toggle, D questions the pill surface itself, and E questions whether the user needs to pick a sort at all.
 
 ## Context
@@ -37,7 +37,7 @@ The concrete jobs-to-be-done are **reconstructing a project's chronology** (olde
 
 ## Proposal A — Header-bar sort pill (GNOME HIG)
 
-A single sort control in the header bar: a second `GtkMenuButton` pill packed after the existing `DatePill` (`src/app/mod.rs:525`), built on the same mechanics as `src/ui/date_pill.rs`.
+A single sort control in the header bar: a second `GtkMenuButton` pill packed with `pack_start` immediately after the existing `DatePill` (`src/app/mod.rs:525`) — header-bar left, next to the date filter — built on the same mechanics as `src/ui/date_pill.rs`.
 
 ![Proposal A — sort pill popover](../mockups/sort-options/a-sort-pill-popover.svg)
 
@@ -198,7 +198,36 @@ The summary above contrasts A and B, the two ends of the spectrum. C, D, and E a
 
 C and D can combine (a view-options menu whose popover holds C's named orders). E composes with any of them. All five share A's data layer, so the sequencing question is about **surface**, not schema: Proposal A's entire data layer (`SortKey`, `sort_sql_clause()`, v13 indexes, GSettings keys, relevance semantics) is the common prerequisite; every other proposal only changes the control surface, the row rendering, or the default policy on top of it.
 
+## Decision
+
+**Proposal C — named reading orders — is retained**, rendered on Proposal A's header-bar pill, with one amendment borrowed from D: **the pill carries its label but never the `accent` CSS class.**
+
+### Rationale
+
+**C over A.** C is the only proposal that *removes* a control rather than adding one, while answering the same jobs. The key×direction matrix is 3 × 2 = six cells, and two of them (`message_count ASC`, `last_updated ASC`) exist only because a matrix generates them — no stated job asks for smallest-first or least-recently-touched-first. A widget is not built to populate a symmetry. The payoff lands on A's own weak spot: "Created ↓" is genuinely ambiguous (more recent, or arrow pointing into the past?), "Oldest first" cannot be misread. One `sort-order` enum GSetting instead of two keys, zero row-factory cost.
+
+**C over D, but D's diagnosis is adopted.** D is right that sorting hides nothing and must therefore not fire the `accent` state that elsewhere means "data is missing" — that would conflate the two axes the Context section works to separate. But D draws the wrong conclusion from it and discards the *label* along with the accent. C is precisely what makes that label cheap and unambiguous; giving up closed-state readability at the moment it becomes easy pays D's cost without its benefit. So: **labelled pill, no accent class.** The text "Oldest first" informs; it must not alarm. This resolves the axis conflation, keeps closed-state readability, and avoids a second header component (`sort_menu.rs`). A's narrow-width fallback rule still has to be written, but it becomes trivial — C's names are short and the tooltip carries the full description.
+
+**E deferred, not rejected.** E is the most elegant proposal here — the highest-value job served at zero interaction — but it is a product bet, not a technical given. "Open a project ⇒ Oldest first" assumes consulting a project always means reading it as a journal, which is unverifiable before the manual control ships. Ship C, observe whether users systematically switch to Oldest first in project context, and *then* promote it to an inferred default. The `relevance_is_implicit` flag will already be there to generalize.
+
+**B out of scope for v1.** Month headers and a timeline spine inside a virtualized list are a separate project. C is a clean foundation for it — one lens per named order.
+
+### Placement
+
+The pill is packed with **`pack_start`, immediately after the `DatePill`** — header-bar **left**, matching how the date filter is already packed (`src/app/mod.rs:525`). It sits with the control it is a sibling of, not across the header from it. `pack_end` stays reserved for the primary menu and the detail-view actions. Mockups A and C reflect this placement.
+
+### Sequencing
+
+1. **Shared data layer** — `SortOrder` enum (key and direction fixed together), `sort_sql_clause()` built from the enum and never from strings, v13 indexes, Relevance semantics. The common prerequisite of every proposal.
+2. **`src/ui/sort_pill.rs`** — modelled on `date_pill.rs`; label without accent, icon-only fallback at narrow widths, `<Ctrl>Shift O`.
+3. **E when real usage justifies it**; **B** only if per-row encoding becomes a priority.
+
+The `HashSet` trap noted in the References (`src/database/mod.rs:459` keeps the *first* row seen) deserves a test at step 1 — changing `ORDER BY` silently changes which row survives.
+
 ## Open questions for the issue discussion
+
+*Questions 5 and 6 are settled by the Decision above; 1–4 and 7 remain open for the follow-up work.*
+
 
 1. Ship A first and treat B as a follow-up, or is the lens model compelling enough to design for now?
 2. If B: does the lens strip replace the pill, or does the pill remain for narrow widths / keyboard flow?
