@@ -224,18 +224,12 @@ The pill is packed with **`pack_start`, immediately after the `DatePill`** — h
 
 The `HashSet` trap noted in the References (`src/database/mod.rs:459` keeps the *first* row seen) deserves a test at step 1 — changing `ORDER BY` silently changes which row survives.
 
-## Open questions for the issue discussion
+## Follow-up questions
 
-*Questions 5 and 6 are settled by the Decision above; 1–4 and 7 remain open for the follow-up work.*
-
-
-1. Ship A first and treat B as a follow-up, or is the lens model compelling enough to design for now?
-2. If B: does the lens strip replace the pill, or does the pill remain for narrow widths / keyboard flow?
-3. Does the Volume lens bar belong in the session row factory, or is it a sign the analytics view should own "size" questions (as the issue already suggests for tokens)?
-4. Verification for B needs fixture sessions with visibly different message counts and date spans — are the current `tests/fixtures/` sufficient?
-5. **(C)** Is the six-cell key×direction matrix worth exposing in full, or do we ship curated named orders and add ascending variants only when a real job demands one?
-6. **(D)** Is sort a filter-family control (labelled pill, per A) or a presentation control (icon-only view-options menu, per the Nautilus precedent)? This decides whether a closed-state indicator is even desirable.
-7. **(E)** Should selecting a project auto-flip the list to Oldest-first, or is a default that changes with context too surprising to be worth the saved interaction?
+1. If B is revisited after v1, does the lens strip replace the pill, or does the pill remain for narrow widths and keyboard flow?
+2. Does the Volume lens bar belong in the session row factory, or is it a sign the analytics view should own "size" questions (as the issue already suggests for tokens)?
+3. Verification for B needs fixture sessions with visibly different message counts and date spans — are the current `tests/fixtures/` sufficient?
+4. What usage evidence — for example, repeated switches to Oldest first after selecting a project — would justify reconsidering E as an inferred default?
 
 ## References
 

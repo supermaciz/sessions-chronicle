@@ -41,12 +41,12 @@
   <line x1="82" y1="92" x2="94" y2="92" class="accent-stroke" />
   <text x="102" y="99" class="accent" font-size="12">Last 30 days</text>
 
-  <!-- Sort pill — packed immediately after the DatePill, also pack_start -->
-  <rect x="204" y="80" width="136" height="28" rx="14" class="accent-bg accent-stroke" />
-  <line x1="218" y1="88" x2="234" y2="88" class="accent-stroke" />
-  <line x1="218" y1="94" x2="230" y2="94" class="accent-stroke" />
-  <line x1="218" y1="100" x2="226" y2="100" class="accent-stroke" />
-  <text x="242" y="99" class="accent" font-size="12">Oldest first</text>
+  <!-- Sort pill — labelled but neutral: sorting does not hide data -->
+  <rect x="204" y="80" width="136" height="28" rx="14" class="ws stroke-thin" />
+  <line x1="218" y1="88" x2="234" y2="88" class="stroke" />
+  <line x1="218" y1="94" x2="230" y2="94" class="stroke" />
+  <line x1="218" y1="100" x2="226" y2="100" class="stroke" />
+  <text x="242" y="99" class="label" font-size="12">Oldest first</text>
 
   <!-- ===== Session list (Oldest first) ===== -->
   <rect x="36" y="134" width="700" height="48" rx="6" class="ws stroke-thin" />
