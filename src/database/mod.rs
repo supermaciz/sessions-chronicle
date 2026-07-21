@@ -11,8 +11,8 @@ use std::time::Duration;
 
 use crate::models::{
     AiAssistant, DateCounts, DateFilter, MessagePreview, ProjectFilter, ProjectInfo,
-    ReasoningAttachment, ReasoningPreview, Role, Session, Subagent, ToolCall, ToolCallStatus,
-    TranscriptItem, TranscriptItemKind,
+    ReasoningAttachment, ReasoningPreview, Role, Session, SortOrder, Subagent, ToolCall,
+    ToolCallStatus, TranscriptItem, TranscriptItemKind,
 };
 
 pub use indexer::{IndexingStats, SessionIndexer};
@@ -195,6 +195,28 @@ fn project_filter_id(project_filter: &ProjectFilter) -> Option<i64> {
     }
 }
 
+/// SQL `ORDER BY` clause for an ordinary (non-FTS) session query, using
+/// unqualified column names.
+fn sort_sql_clause(sort: SortOrder) -> &'static str {
+    match sort {
+        SortOrder::RecentActivity => "ORDER BY last_updated DESC, id DESC",
+        SortOrder::OldestFirst => "ORDER BY start_time ASC, id ASC",
+        SortOrder::NewestFirst => "ORDER BY start_time DESC, id DESC",
+        SortOrder::MostMessages => "ORDER BY message_count DESC, id DESC",
+    }
+}
+
+/// SQL `ORDER BY` clause for an FTS-joined session query, where columns must
+/// be qualified with `s.` because `id` is otherwise ambiguous.
+fn search_sort_sql_clause(sort: SortOrder) -> &'static str {
+    match sort {
+        SortOrder::RecentActivity => "ORDER BY s.last_updated DESC, s.id DESC",
+        SortOrder::OldestFirst => "ORDER BY s.start_time ASC, s.id ASC",
+        SortOrder::NewestFirst => "ORDER BY s.start_time DESC, s.id DESC",
+        SortOrder::MostMessages => "ORDER BY s.message_count DESC, s.id DESC",
+    }
+}
+
 /// Append the shared filter parameters — AI assistant tool values, an optional
 /// project id, then date bounds — onto `params` in placeholder order. Callers
 /// push any leading placeholders (such as a session id or FTS query) first.
@@ -221,6 +243,7 @@ pub fn search_sessions_for_filter(
     project_filter: &ProjectFilter,
     query: &str,
     date_filter: &DateFilter,
+    sort: Option<SortOrder>,
 ) -> Result<Vec<Session>> {
     if !db_path.exists() {
         return Ok(Vec::new());
@@ -232,12 +255,18 @@ pub fn search_sessions_for_filter(
 
     let query = query.trim();
     if query.is_empty() {
-        return load_sessions_for_filter(db_path, tools, project_filter, date_filter);
+        return load_sessions_for_filter(
+            db_path,
+            tools,
+            project_filter,
+            date_filter,
+            sort.unwrap_or_default(),
+        );
     }
 
     let db = open_connection(db_path)?;
 
-    match search_sessions_with_query(&db, tools, project_filter, query, date_filter) {
+    match search_sessions_with_query(&db, tools, project_filter, query, date_filter, sort) {
         Ok(sessions) => Ok(sessions),
         Err(err) => {
             let sanitized = sanitize_search_query(query);
@@ -253,6 +282,7 @@ pub fn search_sessions_for_filter(
                     project_filter,
                     &sanitized,
                     date_filter,
+                    sort,
                 ) {
                     Ok(sessions) => Ok(sessions),
                     Err(retry_err) => {
@@ -426,10 +456,14 @@ fn search_sessions_with_query(
     project_filter: &ProjectFilter,
     query: &str,
     date_filter: &DateFilter,
+    sort: Option<SortOrder>,
 ) -> Result<Vec<Session>> {
     let (tool_clause, tool_strings) = tool_filter_sql_clause(tools, "s.");
     let project_clause = project_filter_sql_clause(project_filter, "s.");
     let (date_clause, date_values) = date_filter_sql_clause(date_filter, "s.");
+    let sort_clause = sort
+        .map(search_sort_sql_clause)
+        .unwrap_or("ORDER BY rank ASC, s.last_updated DESC, s.id DESC");
 
     let query_sql = format!(
         "SELECT s.id, s.tool, s.project_path, s.project_id, s.start_time, s.message_count, s.file_path,
@@ -443,7 +477,7 @@ fn search_sessions_with_query(
                  JOIN sessions s ON s.id = m.session_id
                  WHERE messages_fts MATCH ?
                    AND s.is_subagent = 0{tool_clause}{project_clause}{date_clause}
-                  ORDER BY rank ASC, s.last_updated DESC"
+                  {sort_clause}"
     );
 
     let mut stmt = db.prepare(&query_sql)?;
@@ -473,6 +507,7 @@ pub fn load_sessions_for_filter(
     tools: &[AiAssistant],
     project_filter: &ProjectFilter,
     date_filter: &DateFilter,
+    sort: SortOrder,
 ) -> Result<Vec<Session>> {
     if !db_path.exists() {
         return Ok(Vec::new());
@@ -486,12 +521,13 @@ pub fn load_sessions_for_filter(
     let (tool_clause, tool_strings) = tool_filter_sql_clause(tools, "");
     let project_clause = project_filter_sql_clause(project_filter, "");
     let (date_clause, date_values) = date_filter_sql_clause(date_filter, "");
+    let sort_clause = sort_sql_clause(sort);
 
     let query = format!(
         "SELECT {SESSION_SELECT_COLUMNS}
                  FROM sessions
                  WHERE is_subagent = 0{tool_clause}{project_clause}{date_clause}
-                  ORDER BY last_updated DESC"
+                 {sort_clause}"
     );
 
     let mut stmt = db.prepare(&query)?;
@@ -1368,4 +1404,49 @@ pub fn load_reasoning_attachment(
     )
     .optional()
     .context("Failed to query reasoning attachment")
+}
+
+#[cfg(test)]
+mod sorting_tests {
+    use super::*;
+
+    #[test]
+    fn named_orders_map_to_stable_sql() {
+        assert_eq!(
+            sort_sql_clause(SortOrder::RecentActivity),
+            "ORDER BY last_updated DESC, id DESC"
+        );
+        assert_eq!(
+            sort_sql_clause(SortOrder::OldestFirst),
+            "ORDER BY start_time ASC, id ASC"
+        );
+        assert_eq!(
+            sort_sql_clause(SortOrder::NewestFirst),
+            "ORDER BY start_time DESC, id DESC"
+        );
+        assert_eq!(
+            sort_sql_clause(SortOrder::MostMessages),
+            "ORDER BY message_count DESC, id DESC"
+        );
+    }
+
+    #[test]
+    fn search_orders_use_qualified_session_columns() {
+        assert_eq!(
+            search_sort_sql_clause(SortOrder::RecentActivity),
+            "ORDER BY s.last_updated DESC, s.id DESC"
+        );
+        assert_eq!(
+            search_sort_sql_clause(SortOrder::OldestFirst),
+            "ORDER BY s.start_time ASC, s.id ASC"
+        );
+        assert_eq!(
+            search_sort_sql_clause(SortOrder::NewestFirst),
+            "ORDER BY s.start_time DESC, s.id DESC"
+        );
+        assert_eq!(
+            search_sort_sql_clause(SortOrder::MostMessages),
+            "ORDER BY s.message_count DESC, s.id DESC"
+        );
+    }
 }

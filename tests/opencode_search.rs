@@ -58,6 +58,7 @@ fn opencode_search_finds_text_part_content() {
         &ProjectFilter::AllSessions,
         "I can help you with that task",
         &DateFilter::AnyTime,
+        None,
     )
     .expect("Search failed");
 
@@ -99,6 +100,7 @@ fn opencode_search_excludes_tool_output() {
         &ProjectFilter::AllSessions,
         "total",
         &DateFilter::AnyTime,
+        None,
     )
     .expect("Search failed");
 
@@ -125,6 +127,7 @@ fn opencode_search_respects_tool_filter() {
         &ProjectFilter::AllSessions,
         "Hello OpenCode",
         &DateFilter::AnyTime,
+        None,
     )
     .expect("Search failed");
 
@@ -152,6 +155,7 @@ fn opencode_dual_read_sqlite_only_session_is_searchable() {
         &ProjectFilter::AllSessions,
         "This session only exists in SQLite",
         &DateFilter::AnyTime,
+        None,
     )
     .expect("Search failed");
 

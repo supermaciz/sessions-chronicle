@@ -4,7 +4,7 @@ use helpers::TempDatabase;
 use sessions_chronicle::database::{
     count_pinned_sessions, load_sessions_for_filter, search_sessions_for_filter, toggle_pin,
 };
-use sessions_chronicle::models::{AiAssistant, DateFilter, ProjectFilter};
+use sessions_chronicle::models::{AiAssistant, DateFilter, ProjectFilter, SortOrder};
 
 fn insert_session(db: &TempDatabase, id: &str, tool: &str, pinned_at: Option<i64>) {
     db.connection
@@ -63,6 +63,7 @@ fn load_sessions_for_filter_uses_pinned_project_filter() {
         AiAssistant::ALL,
         &ProjectFilter::Pinned,
         &DateFilter::AnyTime,
+        SortOrder::RecentActivity,
     )
     .unwrap();
 
@@ -102,6 +103,7 @@ fn search_sessions_for_filter_uses_pinned_project_filter() {
         &ProjectFilter::Pinned,
         "needle",
         &DateFilter::AnyTime,
+        None,
     )
     .unwrap();
 
@@ -183,6 +185,7 @@ fn pinned_filter_returns_sessions_across_all_projects() {
         AiAssistant::ALL,
         &ProjectFilter::Pinned,
         &DateFilter::AnyTime,
+        SortOrder::RecentActivity,
     )
     .unwrap();
 
