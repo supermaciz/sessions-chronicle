@@ -12,6 +12,7 @@ use gtk::{gdk, glib};
 
 use crate::analytics_worker::{AnalyticsWorker, AnalyticsWorkerOutput};
 use crate::indexing_worker::{IndexingWorker, IndexingWorkerOutput};
+use crate::models::SortOrder;
 use crate::ui::modals::{
     about::AboutDialog,
     preferences::{PreferencesDialog, PreferencesOutput},
@@ -23,6 +24,7 @@ use crate::ui::{
     session_detail::{SessionDetail, SessionDetailOutput},
     session_list::{SessionList, SessionListMsg, SessionListOutput},
     sidebar::{Sidebar, SidebarOutput},
+    sort_pill::{SortPill, SortPillOutput},
 };
 
 use super::helpers::workspace_allows_search;
@@ -39,6 +41,7 @@ pub(super) struct ChildComponents {
     pub(super) analytics_view: Controller<AnalyticsView>,
     pub(super) session_detail: Controller<SessionDetail>,
     pub(super) date_pill: Controller<DatePill>,
+    pub(super) sort_pill: Controller<SortPill>,
     pub(super) sidebar: Controller<Sidebar>,
     pub(super) preferences_dialog: Controller<PreferencesDialog>,
     pub(super) indexing_worker: WorkerController<IndexingWorker>,
@@ -53,6 +56,7 @@ pub(super) struct NavigationSetup {
 
 pub(super) fn init_child_components(
     db_path: &Path,
+    sort_order: SortOrder,
     sender: &ComponentSender<App>,
 ) -> ChildComponents {
     let session_list = SessionList::builder()
@@ -83,6 +87,14 @@ pub(super) fn init_child_components(
             DatePillOutput::FilterChanged(filter) => AppMsg::DateFilterChanged(filter),
             DatePillOutput::CountsRequested => AppMsg::DateCountsRequested,
         });
+    let sort_pill = SortPill::builder().launch(sort_order).forward(
+        sender.input_sender(),
+        |output| match output {
+            SortPillOutput::OrderPicked(order) => AppMsg::SortOrderPicked(order),
+            SortPillOutput::RelevancePicked => AppMsg::RelevancePicked,
+        },
+    );
+    session_list.emit(SessionListMsg::SetSortOrder(Some(sort_order)));
     let sidebar =
         Sidebar::builder()
             .launch(())
@@ -134,6 +146,7 @@ pub(super) fn init_child_components(
         analytics_view,
         session_detail,
         date_pill,
+        sort_pill,
         sidebar,
         preferences_dialog,
         indexing_worker,

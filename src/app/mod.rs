@@ -24,7 +24,9 @@ use crate::database::{
 };
 use crate::icon_names;
 use crate::indexing_worker::{IndexingWorker, IndexingWorkerInput};
-use crate::models::{DateFilter, ProjectFilter, ProjectInfo, session::AiAssistant};
+use crate::models::{
+    DateFilter, ProjectFilter, ProjectInfo, SessionQuery, SortOrder, session::AiAssistant,
+};
 use crate::session_sources::{SessionSources, select_db_filename};
 use crate::ui::date_pill::{DatePill, DatePillInput};
 use crate::ui::modals::{
@@ -32,6 +34,7 @@ use crate::ui::modals::{
     preferences::PreferencesDialog,
 };
 use crate::ui::session_detail::SessionDetailMsg;
+use crate::ui::sort_pill::{SortPill, SortPillInput};
 use crate::ui::{
     analytics_view::AnalyticsView,
     session_detail::SessionDetail,
@@ -128,6 +131,9 @@ pub(super) struct App {
     analytics_view: Controller<AnalyticsView>,
     session_detail: Controller<SessionDetail>,
     date_pill: Controller<DatePill>,
+    sort_order: SortOrder,
+    search_sort_override: Option<SortOrder>,
+    sort_pill: Controller<SortPill>,
     #[allow(dead_code)] // Controller must stay alive to keep the widget
     sidebar: Controller<Sidebar>,
     preferences_dialog: Controller<PreferencesDialog>,
@@ -205,6 +211,9 @@ pub(super) enum AppMsg {
     AnalyticsLoadFailed(String),
     DateFilterChanged(DateFilter),
     DateCountsRequested,
+    OpenSortShortcut,
+    SortOrderPicked(SortOrder),
+    RelevancePicked,
 }
 
 relm4::new_action_group!(pub(super) WindowActionGroup, "win");
@@ -458,7 +467,9 @@ impl SimpleComponent for App {
         }
 
         // Build child components, navigation, and workspace stack
-        let components = init::init_child_components(&db_path, &sender);
+        let settings = gio::Settings::new(APP_ID);
+        let sort_order = SortOrder::from_setting_str(settings.string("sort-order").as_str());
+        let components = init::init_child_components(&db_path, sort_order, &sender);
         let nav_setup = init::build_navigation(
             components.session_list.widget(),
             components.session_detail.widget(),
@@ -484,6 +495,9 @@ impl SimpleComponent for App {
             analytics_view: components.analytics_view,
             session_detail: components.session_detail,
             date_pill: components.date_pill,
+            sort_order,
+            search_sort_override: None,
+            sort_pill: components.sort_pill,
             sidebar: components.sidebar,
             preferences_dialog: components.preferences_dialog,
             indexing_worker: components.indexing_worker,
@@ -527,6 +541,13 @@ impl SimpleComponent for App {
             .date_pill
             .widget()
             .set_visible(model.is_date_filter_visible());
+
+        widgets.header_bar.pack_start(model.sort_pill.widget());
+        model
+            .sort_pill
+            .widget()
+            .set_visible(model.is_date_filter_visible());
+        model.sync_sort_pill();
 
         // Get the actual ToastOverlay from the root window's content
         if let Some(toast_overlay) = root
@@ -679,6 +700,30 @@ impl SimpleComponent for App {
                     self.date_pill.emit(DatePillInput::OpenViaShortcut);
                 }
             }
+            AppMsg::OpenSortShortcut => {
+                if self.is_date_filter_visible() {
+                    self.sort_pill.emit(SortPillInput::OpenViaShortcut);
+                }
+            }
+            AppMsg::SortOrderPicked(order) => {
+                self.sort_order = order;
+                self.search_sort_override = if SessionQuery::classify(&self.search_query).is_fts() {
+                    Some(order)
+                } else {
+                    None
+                };
+                self.persist_sort_order();
+                self.sync_sort_pill();
+                self.session_list
+                    .emit(SessionListMsg::SetSortOrder(self.effective_sort()));
+            }
+            AppMsg::RelevancePicked => {
+                if SessionQuery::classify(&self.search_query).is_fts() {
+                    self.search_sort_override = None;
+                    self.sync_sort_pill();
+                    self.session_list.emit(SessionListMsg::SetSortOrder(None));
+                }
+            }
             AppMsg::DateFilterChanged(date_filter) => {
                 self.selected_date_filter = date_filter.clone();
                 self.refresh_sidebar_projects();
@@ -773,6 +818,30 @@ impl App {
         }
 
         self.toast_overlay.add_toast(toast);
+    }
+
+    fn effective_sort(&self) -> Option<SortOrder> {
+        helpers::effective_sort(
+            &self.search_query,
+            self.sort_order,
+            self.search_sort_override,
+        )
+    }
+
+    fn sync_sort_pill(&self) {
+        self.sort_pill.emit(SortPillInput::SyncState {
+            sort_order: self.sort_order,
+            fts_search_active: SessionQuery::classify(&self.search_query).is_fts(),
+            override_active: self.search_sort_override.is_some(),
+        });
+    }
+
+    fn persist_sort_order(&self) {
+        if let Err(err) =
+            gio::Settings::new(APP_ID).set_string("sort-order", self.sort_order.as_setting_str())
+        {
+            tracing::warn!("Failed to persist session sort order: {err}");
+        }
     }
 
     fn emit_session_list_filters(&self) {
@@ -1227,13 +1296,14 @@ mod tests {
     fn search_query_update_messages_include_detail_update() {
         let query = "needle".to_string();
 
-        let (list_msg, detail_msg) = search_query_update_messages(query);
+        let (list_msg, detail_msg) = search_query_update_messages(query, None);
 
         match list_msg {
-            SessionListMsg::SetSearchQuery(list_query) => {
-                assert_eq!(list_query, "needle");
+            SessionListMsg::SetSearchState { query, sort } => {
+                assert_eq!(query, "needle");
+                assert_eq!(sort, None);
             }
-            _ => panic!("expected SessionListMsg::SetSearchQuery"),
+            _ => panic!("expected SessionListMsg::SetSearchState"),
         }
 
         match detail_msg {

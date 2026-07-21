@@ -6,8 +6,8 @@ use crate::ui::session_detail::SessionDetailMsg;
 use crate::ui::session_list::SessionListMsg;
 
 use super::super::helpers::{
-    detail_pop_sync_decision, resolve_escape_action, resolve_search_mode_change,
-    search_query_update_messages, workspace_allows_search,
+    detail_pop_sync_decision, override_after_query_change, resolve_escape_action,
+    resolve_search_mode_change, search_query_update_messages, workspace_allows_search,
 };
 use super::super::types::EscapeResolution;
 use super::super::{App, AppMsg};
@@ -23,8 +23,11 @@ impl App {
         if self.search_visible != resolved_enabled {
             self.search_visible = resolved_enabled;
             if !resolved_enabled {
+                self.search_sort_override = None;
                 self.search_query.clear();
-                let (list_msg, detail_msg) = search_query_update_messages(String::new());
+                self.sync_sort_pill();
+                let (list_msg, detail_msg) =
+                    search_query_update_messages(String::new(), Some(self.sort_order));
                 self.session_list.emit(list_msg);
                 self.session_detail.emit(detail_msg);
                 if !self.detail_visible {
@@ -76,8 +79,11 @@ impl App {
     }
 
     pub(crate) fn handle_search_query_changed(&mut self, query: String) {
+        self.search_sort_override =
+            override_after_query_change(&self.search_query, &query, self.search_sort_override);
         self.search_query = query.clone();
-        let (list_msg, detail_msg) = search_query_update_messages(query);
+        self.sync_sort_pill();
+        let (list_msg, detail_msg) = search_query_update_messages(query, self.effective_sort());
         self.session_list.emit(list_msg);
         self.session_detail.emit(detail_msg);
     }
@@ -121,8 +127,11 @@ impl App {
             EscapeResolution::CloseSearch => {
                 self.search_visible = false;
                 self.sync_search_bar.set(true);
+                self.search_sort_override = None;
                 self.search_query.clear();
-                let (list_msg, detail_msg) = search_query_update_messages(String::new());
+                self.sync_sort_pill();
+                let (list_msg, detail_msg) =
+                    search_query_update_messages(String::new(), Some(self.sort_order));
                 self.session_list.emit(list_msg);
                 self.session_detail.emit(detail_msg);
                 if !self.detail_visible {

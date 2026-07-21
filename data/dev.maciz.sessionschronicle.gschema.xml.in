@@ -18,5 +18,10 @@
       <summary>Terminal emulator for resuming sessions</summary>
       <description>The terminal emulator to use when resuming sessions. Accepted values: auto, ptyxis, ghostty, foot, alacritty, kitty.</description>
     </key>
+    <key name="sort-order" type="s">
+      <default>"recent-activity"</default>
+      <summary>Session list sort order</summary>
+      <description>Named reading order for the session list. Accepted values: recent-activity, oldest-first, newest-first, most-messages.</description>
+    </key>
   </schema>
 </schemalist>
