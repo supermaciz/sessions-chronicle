@@ -19,7 +19,8 @@ use crate::database::{
     load_session_by_id_for_filter, load_sessions_for_filter, search_sessions_for_filter,
 };
 use crate::models::{
-    AiAssistant, DateFilter, PerSourceResult, ProjectFilter, Session, SortOrder, SourceStatus,
+    AiAssistant, DateFilter, PerSourceResult, ProjectFilter, Session, SessionQuery, SortOrder,
+    SourceStatus,
 };
 use crate::ui::session_row::{SessionRow, SessionRowInit, SessionRowOutput};
 
@@ -30,6 +31,7 @@ pub struct SessionList {
     project_filter: ProjectFilter,
     date_filter: DateFilter,
     search_query: String,
+    sort: Option<SortOrder>,
     all_tools_selected: bool,
     indexing: bool,
     sessions: FactoryVecDeque<SessionRow>,
@@ -47,7 +49,11 @@ pub enum SessionListMsg {
         tools: Vec<AiAssistant>,
         project_filter: ProjectFilter,
     },
-    SetSearchQuery(String),
+    SetSearchState {
+        query: String,
+        sort: Option<SortOrder>,
+    },
+    SetSortOrder(Option<SortOrder>),
     DateFilterChanged(DateFilter),
     Reload,
     ReloadAfterIndexing {
@@ -361,10 +367,6 @@ struct EmptyStateViewModel {
     show_source_results: bool,
 }
 
-fn parse_session_id_query(query: &str) -> Option<&str> {
-    query.trim().strip_prefix("id:").map(str::trim)
-}
-
 fn focus_is_within(widget: &impl IsA<gtk::Widget>) -> bool {
     let widget_ref = widget.upcast_ref::<gtk::Widget>();
     let Some(root) = widget_ref.root() else {
@@ -393,7 +395,10 @@ fn compute_empty_state(
         };
     }
 
-    let session_id_lookup = parse_session_id_query(search_query).is_some();
+    let session_id_lookup = matches!(
+        SessionQuery::classify(search_query),
+        SessionQuery::DirectId(_)
+    );
     let has_search = !search_query.trim().is_empty();
     let pinned_selected = *project_filter == ProjectFilter::Pinned;
 
@@ -535,12 +540,14 @@ impl SimpleComponent for SessionList {
         let search_query = String::new();
         let project_filter = ProjectFilter::AllSessions;
         let date_filter = DateFilter::AnyTime;
+        let sort = Some(SortOrder::default());
         let fetched = Self::fetch_sessions(
             &db_path,
             &active_tools,
             &project_filter,
             &date_filter,
             &search_query,
+            sort,
         );
 
         let sessions: FactoryVecDeque<SessionRow> = FactoryVecDeque::builder()
@@ -558,6 +565,7 @@ impl SimpleComponent for SessionList {
             project_filter,
             date_filter,
             search_query,
+            sort,
             all_tools_selected: true,
             indexing: false,
             sessions,
@@ -630,13 +638,25 @@ impl SimpleComponent for SessionList {
                 self.all_tools_selected = tools.len() == AiAssistant::ALL.len();
                 self.reload_sessions();
             }
-            SessionListMsg::SetSearchQuery(query) => {
-                if !Self::search_query_changed(&self.search_query, &query) {
+            SessionListMsg::SetSearchState { query, sort } => {
+                if self.search_query == query && self.sort == sort {
                     return;
                 }
-
                 self.search_query = query;
+                self.sort = sort;
                 self.reload_sessions();
+            }
+            SessionListMsg::SetSortOrder(sort) => {
+                if self.sort == sort {
+                    return;
+                }
+                self.sort = sort;
+                if !matches!(
+                    SessionQuery::classify(&self.search_query),
+                    SessionQuery::DirectId(_)
+                ) {
+                    self.reload_sessions();
+                }
             }
             SessionListMsg::DateFilterChanged(date_filter) => {
                 if self.date_filter == date_filter {
@@ -779,10 +799,6 @@ impl SessionList {
         current_tools != next_tools || current_project_filter != next_project_filter
     }
 
-    fn search_query_changed(current_query: &str, next_query: &str) -> bool {
-        current_query != next_query
-    }
-
     /// Scroll the ancestor `ScrolledWindow` so that `row` is fully visible.
     fn scroll_row_into_view(row: &gtk::ListBoxRow, list_box: &gtk::ListBox) {
         let Some(adj) = Self::scroll_adjustment(list_box) else {
@@ -835,20 +851,26 @@ impl SessionList {
         project_filter: &ProjectFilter,
         date_filter: &DateFilter,
         query: &str,
+        sort: Option<SortOrder>,
     ) -> Vec<Session> {
-        let query = query.trim();
-        let sessions = if query.is_empty() {
-            load_sessions_for_filter(
+        let sessions = match SessionQuery::classify(query) {
+            SessionQuery::None => load_sessions_for_filter(
                 db_path,
                 tools,
                 project_filter,
                 date_filter,
-                SortOrder::default(),
-            )
-        } else if let Some(session_id) = parse_session_id_query(query) {
-            load_session_by_id_for_filter(db_path, tools, project_filter, session_id, date_filter)
-        } else {
-            search_sessions_for_filter(db_path, tools, project_filter, query, date_filter, None)
+                sort.unwrap_or_default(),
+            ),
+            SessionQuery::DirectId(session_id) => load_session_by_id_for_filter(
+                db_path,
+                tools,
+                project_filter,
+                session_id,
+                date_filter,
+            ),
+            SessionQuery::Fts(query) => {
+                search_sessions_for_filter(db_path, tools, project_filter, query, date_filter, sort)
+            }
         };
 
         match sessions {
@@ -1203,6 +1225,7 @@ impl SessionList {
             &self.project_filter,
             &self.date_filter,
             &self.search_query,
+            self.sort,
         );
         let fetch_duration = fetch_started_at.elapsed();
         let row_count = fetched.len();
@@ -1252,6 +1275,7 @@ impl SessionList {
             &self.project_filter,
             &self.date_filter,
             &self.search_query,
+            self.sort,
         );
 
         let mut guard = self.sessions.guard();
@@ -1707,18 +1731,35 @@ mod tests {
     }
 
     #[test]
-    fn unchanged_search_query_does_not_need_reload() {
-        assert!(!SessionList::search_query_changed("needle", "needle"));
-        assert!(SessionList::search_query_changed("needle", "other"));
-    }
+    fn fetch_sessions_applies_named_sort_only_where_ordering_exists() {
+        let db = TempDatabase::new();
+        db.seed_project_sidebar_fixture();
 
-    #[test]
-    fn parse_session_id_query_recognizes_lowercase_prefix_and_trims_suffix() {
-        assert_eq!(parse_session_id_query("id:abc"), Some("abc"));
-        assert_eq!(parse_session_id_query(" id: abc "), Some("abc"));
-        assert_eq!(parse_session_id_query("id:   "), Some(""));
-        assert_eq!(parse_session_id_query("ID:abc"), None);
-        assert_eq!(parse_session_id_query("abc"), None);
+        let oldest = SessionList::fetch_sessions(
+            &db.path,
+            &AiAssistant::ALL,
+            &ProjectFilter::AllSessions,
+            &DateFilter::AnyTime,
+            "",
+            Some(SortOrder::OldestFirst),
+        );
+        assert_eq!(
+            oldest.first().map(|s| s.id.as_str()),
+            Some("alpha-claude-old")
+        );
+
+        let direct = SessionList::fetch_sessions(
+            &db.path,
+            &AiAssistant::ALL,
+            &ProjectFilter::AllSessions,
+            &DateFilter::AnyTime,
+            "id:alpha-claude-new",
+            None,
+        );
+        assert_eq!(
+            direct.iter().map(|s| s.id.as_str()).collect::<Vec<_>>(),
+            vec!["alpha-claude-new"]
+        );
     }
 
     #[test]
@@ -2339,9 +2380,10 @@ mod tests {
             parts.model.sessions.len() == POST_INDEXING_RELOAD_BATCH_SIZE
         });
 
-        controller.emit(SessionListMsg::SetSearchQuery(
-            "id:alpha-claude-new".to_string(),
-        ));
+        controller.emit(SessionListMsg::SetSearchState {
+            query: "id:alpha-claude-new".to_string(),
+            sort: Some(SortOrder::RecentActivity),
+        });
 
         pump_main_context(|| {
             let parts = controller.state().get();
@@ -2538,9 +2580,10 @@ mod tests {
 
         let controller = SessionList::builder().launch(temp_db.path.clone());
 
-        controller.emit(SessionListMsg::SetSearchQuery(
-            " id: alpha-claude-old ".to_string(),
-        ));
+        controller.emit(SessionListMsg::SetSearchState {
+            query: " id: alpha-claude-old ".to_string(),
+            sort: Some(SortOrder::RecentActivity),
+        });
 
         pump_main_context(|| {
             let parts = controller.state().get();
@@ -2569,9 +2612,10 @@ mod tests {
             tools: vec![AiAssistant::OpenCode],
             project_filter: ProjectFilter::AllSessions,
         });
-        controller.emit(SessionListMsg::SetSearchQuery(
-            "id:alpha-claude-old".to_string(),
-        ));
+        controller.emit(SessionListMsg::SetSearchState {
+            query: "id:alpha-claude-old".to_string(),
+            sort: Some(SortOrder::RecentActivity),
+        });
 
         pump_main_context(|| {
             let parts = controller.state().get();
@@ -2617,7 +2661,10 @@ mod tests {
             )
             .expect("Failed to reorder selected session");
 
-        controller.emit(SessionListMsg::SetSearchQuery("".to_string()));
+        controller.emit(SessionListMsg::SetSearchState {
+            query: "".to_string(),
+            sort: Some(SortOrder::RecentActivity),
+        });
         pump_main_context(|| list_box.selected_row().is_some());
 
         let selected_session_id = {
