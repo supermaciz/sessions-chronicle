@@ -24,15 +24,16 @@ use crate::ui::{
     session_detail::{SessionDetail, SessionDetailOutput},
     session_list::{SessionList, SessionListMsg, SessionListOutput},
     sidebar::{Sidebar, SidebarOutput},
-    sort_pill::{SortPill, SortPillOutput},
+    sort_pill::{SortPill, SortPillInput, SortPillOutput},
 };
 
 use super::helpers::workspace_allows_search;
 use super::types::Workspace;
 use super::{
     AboutAction, App, AppMsg, EscapeAction, IndexingStatusAction, OpenDateFilterAction,
-    PreferencesAction, QuitAction, ShortcutsAction, ShowSearchAction, ToggleFiltersAction,
-    ToggleInspectorAction, TogglePinAction, ToggleSidePaneAction, WindowActionGroup,
+    OpenSortAction, PreferencesAction, QuitAction, ShortcutsAction, ShowSearchAction,
+    ToggleFiltersAction, ToggleInspectorAction, TogglePinAction, ToggleSidePaneAction,
+    WindowActionGroup,
 };
 
 /// Holds all child controllers and workers created during init.
@@ -368,6 +369,7 @@ pub(super) fn setup_breakpoints(
     overlay_split: &adw::OverlaySplitView,
     workspace_switcher: &adw::ViewSwitcher,
     workspace_switcher_bar: &adw::ViewSwitcherBar,
+    sort_pill: &Controller<SortPill>,
 ) {
     // Add responsive collapse breakpoint
     let breakpoint = adw::Breakpoint::new(adw::BreakpointCondition::new_length(
@@ -379,6 +381,22 @@ pub(super) fn setup_breakpoints(
     breakpoint.add_setter(workspace_switcher, "visible", Some(&false.into()));
     breakpoint.add_setter(workspace_switcher_bar, "reveal", Some(&true.into()));
     root.add_breakpoint(breakpoint);
+
+    // Add independent breakpoint to collapse the sort pill label to icon-only
+    let sort_breakpoint = adw::Breakpoint::new(adw::BreakpointCondition::new_length(
+        adw::BreakpointConditionLengthType::MaxWidth,
+        760.0,
+        adw::LengthUnit::Sp,
+    ));
+    let sort_sender = sort_pill.sender().clone();
+    sort_breakpoint.connect_apply(move |_| {
+        sort_sender.send(SortPillInput::SetNarrow(true)).ok();
+    });
+    let sort_sender = sort_pill.sender().clone();
+    sort_breakpoint.connect_unapply(move |_| {
+        sort_sender.send(SortPillInput::SetNarrow(false)).ok();
+    });
+    root.add_breakpoint(sort_breakpoint);
 }
 
 pub(super) fn register_actions(
@@ -474,6 +492,13 @@ pub(super) fn register_actions(
         })
     };
 
+    let open_sort_action = {
+        let sender = sender.clone();
+        RelmAction::<OpenSortAction>::new_stateless(move |_| {
+            sender.input(AppMsg::OpenSortShortcut);
+        })
+    };
+
     let quit_action = {
         let sender = sender.clone();
         RelmAction::<QuitAction>::new_stateless(move |_| {
@@ -498,6 +523,7 @@ pub(super) fn register_actions(
     app.set_accelerators_for_action::<ToggleSidePaneAction>(&["F9"]);
     app.set_accelerators_for_action::<TogglePinAction>(&["<Control>d"]);
     app.set_accelerators_for_action::<OpenDateFilterAction>(&["<Control><Shift>d"]);
+    app.set_accelerators_for_action::<OpenSortAction>(&["<Control><Shift>o"]);
     app.set_accelerators_for_action::<ShowSearchAction>(&["<Control>f"]);
     app.set_accelerators_for_action::<ShortcutsAction>(&["<Control>question"]);
     app.set_accelerators_for_action::<IndexingStatusAction>(&["<Control><Shift>i"]);
@@ -514,6 +540,7 @@ pub(super) fn register_actions(
     actions.add_action(toggle_side_pane_action);
     actions.add_action(toggle_pin_action);
     actions.add_action(open_date_filter_action);
+    actions.add_action(open_sort_action);
     actions.add_action(quit_action);
     actions.add_action(escape_action);
     actions.register_for_widget(main_window);

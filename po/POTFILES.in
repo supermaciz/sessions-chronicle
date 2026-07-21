@@ -4,3 +4,4 @@ data/dev.maciz.sessionschronicle.metainfo.xml.in.in
 src/app.rs
 src/main.rs
 src/ui/modals/shortcuts.rs
+src/ui/sort_pill.rs

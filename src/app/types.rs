@@ -83,6 +83,7 @@ mod tests {
 pub(super) struct WorkspaceHeaderVisibility {
     pub(super) search_ui_visible: bool,
     pub(super) date_filter_visible: bool,
+    pub(super) sort_pill_visible: bool,
     pub(super) pane_controls_visible: bool,
     pub(super) detail_actions_visible: bool,
     pub(super) summary_button_visible: bool,

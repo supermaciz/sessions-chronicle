@@ -111,6 +111,7 @@ pub(super) fn workspace_header_visibility(
         WorkspaceHeaderVisibility {
             search_ui_visible: false,
             date_filter_visible: false,
+            sort_pill_visible: false,
             pane_controls_visible: false,
             detail_actions_visible: false,
             summary_button_visible: false,
@@ -120,6 +121,7 @@ pub(super) fn workspace_header_visibility(
         WorkspaceHeaderVisibility {
             search_ui_visible: true,
             date_filter_visible: !detail_visible,
+            sort_pill_visible: !detail_visible,
             pane_controls_visible: true,
             detail_actions_visible: detail_visible || parent_session_present,
             summary_button_visible: detail_visible && active_session_present,
@@ -373,12 +375,15 @@ mod tests {
     fn workspace_header_visibility_shows_date_filter_only_on_sessions_list() {
         let analytics = workspace_header_visibility(Workspace::Analytics, false, false, false);
         assert!(!analytics.date_filter_visible);
+        assert!(!analytics.sort_pill_visible);
 
         let sessions_list = workspace_header_visibility(Workspace::Sessions, false, false, false);
         assert!(sessions_list.date_filter_visible);
+        assert!(sessions_list.sort_pill_visible);
 
         let sessions_detail = workspace_header_visibility(Workspace::Sessions, true, false, false);
         assert!(!sessions_detail.date_filter_visible);
+        assert!(!sessions_detail.sort_pill_visible);
     }
 
     #[test]

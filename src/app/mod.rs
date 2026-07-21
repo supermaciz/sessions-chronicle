@@ -228,6 +228,7 @@ relm4::new_stateless_action!(ToggleInspectorAction, WindowActionGroup, "toggle-i
 relm4::new_stateless_action!(ToggleSidePaneAction, WindowActionGroup, "toggle-side-pane");
 relm4::new_stateless_action!(TogglePinAction, WindowActionGroup, "toggle-pin");
 relm4::new_stateless_action!(OpenDateFilterAction, WindowActionGroup, "open-date-filter");
+relm4::new_stateless_action!(OpenSortAction, WindowActionGroup, "open-sort");
 relm4::new_stateless_action!(ShowSearchAction, WindowActionGroup, "show-search");
 relm4::new_stateless_action!(EscapeAction, WindowActionGroup, "escape");
 
@@ -546,7 +547,7 @@ impl SimpleComponent for App {
         model
             .sort_pill
             .widget()
-            .set_visible(model.is_date_filter_visible());
+            .set_visible(model.is_sort_pill_visible());
         model.sync_sort_pill();
 
         // Get the actual ToastOverlay from the root window's content
@@ -584,6 +585,7 @@ impl SimpleComponent for App {
             &widgets.overlay_split,
             &widgets.workspace_switcher,
             &widgets.workspace_switcher_bar,
+            &model.sort_pill,
         );
 
         init::register_actions(
@@ -701,7 +703,7 @@ impl SimpleComponent for App {
                 }
             }
             AppMsg::OpenSortShortcut => {
-                if self.is_date_filter_visible() {
+                if self.is_sort_pill_visible() {
                     self.sort_pill.emit(SortPillInput::OpenViaShortcut);
                 }
             }
@@ -761,6 +763,10 @@ impl SimpleComponent for App {
         self.date_pill
             .widget()
             .set_visible(self.is_date_filter_visible());
+
+        self.sort_pill
+            .widget()
+            .set_visible(self.is_sort_pill_visible());
     }
 
     fn shutdown(&mut self, widgets: &mut Self::Widgets, _output: relm4::Sender<Self::Output>) {
