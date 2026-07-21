@@ -1,5 +1,6 @@
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum SortOrder {
+    #[default]
     RecentActivity,
     OldestFirst,
     NewestFirst,
@@ -33,12 +34,6 @@ impl SortOrder {
             "most-messages" => Self::MostMessages,
             _ => Self::default(),
         }
-    }
-}
-
-impl Default for SortOrder {
-    fn default() -> Self {
-        Self::RecentActivity
     }
 }
 
