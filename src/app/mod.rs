@@ -24,7 +24,9 @@ use crate::database::{
 };
 use crate::icon_names;
 use crate::indexing_worker::{IndexingWorker, IndexingWorkerInput};
-use crate::models::{DateFilter, ProjectFilter, ProjectInfo, session::AiAssistant};
+use crate::models::{
+    DateFilter, ProjectFilter, ProjectInfo, SessionQuery, SortOrder, session::AiAssistant,
+};
 use crate::session_sources::{SessionSources, select_db_filename};
 use crate::ui::date_pill::{DatePill, DatePillInput};
 use crate::ui::modals::{
@@ -32,6 +34,7 @@ use crate::ui::modals::{
     preferences::PreferencesDialog,
 };
 use crate::ui::session_detail::SessionDetailMsg;
+use crate::ui::sort_pill::{SortPill, SortPillInput};
 use crate::ui::{
     analytics_view::AnalyticsView,
     session_detail::SessionDetail,
@@ -128,6 +131,9 @@ pub(super) struct App {
     analytics_view: Controller<AnalyticsView>,
     session_detail: Controller<SessionDetail>,
     date_pill: Controller<DatePill>,
+    sort_order: SortOrder,
+    search_sort_override: Option<SortOrder>,
+    sort_pill: Controller<SortPill>,
     #[allow(dead_code)] // Controller must stay alive to keep the widget
     sidebar: Controller<Sidebar>,
     preferences_dialog: Controller<PreferencesDialog>,
@@ -205,6 +211,9 @@ pub(super) enum AppMsg {
     AnalyticsLoadFailed(String),
     DateFilterChanged(DateFilter),
     DateCountsRequested,
+    OpenSortShortcut,
+    SortOrderPicked(SortOrder),
+    RelevancePicked,
 }
 
 relm4::new_action_group!(pub(super) WindowActionGroup, "win");
@@ -219,6 +228,7 @@ relm4::new_stateless_action!(ToggleInspectorAction, WindowActionGroup, "toggle-i
 relm4::new_stateless_action!(ToggleSidePaneAction, WindowActionGroup, "toggle-side-pane");
 relm4::new_stateless_action!(TogglePinAction, WindowActionGroup, "toggle-pin");
 relm4::new_stateless_action!(OpenDateFilterAction, WindowActionGroup, "open-date-filter");
+relm4::new_stateless_action!(OpenSortAction, WindowActionGroup, "open-sort");
 relm4::new_stateless_action!(ShowSearchAction, WindowActionGroup, "show-search");
 relm4::new_stateless_action!(EscapeAction, WindowActionGroup, "escape");
 
@@ -458,7 +468,9 @@ impl SimpleComponent for App {
         }
 
         // Build child components, navigation, and workspace stack
-        let components = init::init_child_components(&db_path, &sender);
+        let settings = gio::Settings::new(APP_ID);
+        let sort_order = SortOrder::from_setting_str(settings.string("sort-order").as_str());
+        let components = init::init_child_components(&db_path, sort_order, &sender);
         let nav_setup = init::build_navigation(
             components.session_list.widget(),
             components.session_detail.widget(),
@@ -484,6 +496,9 @@ impl SimpleComponent for App {
             analytics_view: components.analytics_view,
             session_detail: components.session_detail,
             date_pill: components.date_pill,
+            sort_order,
+            search_sort_override: None,
+            sort_pill: components.sort_pill,
             sidebar: components.sidebar,
             preferences_dialog: components.preferences_dialog,
             indexing_worker: components.indexing_worker,
@@ -527,6 +542,13 @@ impl SimpleComponent for App {
             .date_pill
             .widget()
             .set_visible(model.is_date_filter_visible());
+
+        widgets.header_bar.pack_start(model.sort_pill.widget());
+        model
+            .sort_pill
+            .widget()
+            .set_visible(model.is_sort_pill_visible());
+        model.sync_sort_pill();
 
         // Get the actual ToastOverlay from the root window's content
         if let Some(toast_overlay) = root
@@ -679,6 +701,30 @@ impl SimpleComponent for App {
                     self.date_pill.emit(DatePillInput::OpenViaShortcut);
                 }
             }
+            AppMsg::OpenSortShortcut => {
+                if self.is_sort_pill_visible() {
+                    self.sort_pill.emit(SortPillInput::OpenViaShortcut);
+                }
+            }
+            AppMsg::SortOrderPicked(order) => {
+                self.sort_order = order;
+                self.search_sort_override = if SessionQuery::classify(&self.search_query).is_fts() {
+                    Some(order)
+                } else {
+                    None
+                };
+                self.persist_sort_order();
+                self.sync_sort_pill();
+                self.session_list
+                    .emit(SessionListMsg::SetSortOrder(self.effective_sort()));
+            }
+            AppMsg::RelevancePicked => {
+                if SessionQuery::classify(&self.search_query).is_fts() {
+                    self.search_sort_override = None;
+                    self.sync_sort_pill();
+                    self.session_list.emit(SessionListMsg::SetSortOrder(None));
+                }
+            }
             AppMsg::DateFilterChanged(date_filter) => {
                 self.selected_date_filter = date_filter.clone();
                 self.refresh_sidebar_projects();
@@ -716,6 +762,10 @@ impl SimpleComponent for App {
         self.date_pill
             .widget()
             .set_visible(self.is_date_filter_visible());
+
+        self.sort_pill
+            .widget()
+            .set_visible(self.is_sort_pill_visible());
     }
 
     fn shutdown(&mut self, widgets: &mut Self::Widgets, _output: relm4::Sender<Self::Output>) {
@@ -773,6 +823,30 @@ impl App {
         }
 
         self.toast_overlay.add_toast(toast);
+    }
+
+    fn effective_sort(&self) -> Option<SortOrder> {
+        helpers::effective_sort(
+            &self.search_query,
+            self.sort_order,
+            self.search_sort_override,
+        )
+    }
+
+    fn sync_sort_pill(&self) {
+        self.sort_pill.emit(SortPillInput::SyncState {
+            sort_order: self.sort_order,
+            fts_search_active: SessionQuery::classify(&self.search_query).is_fts(),
+            override_active: self.search_sort_override.is_some(),
+        });
+    }
+
+    fn persist_sort_order(&self) {
+        if let Err(err) =
+            gio::Settings::new(APP_ID).set_string("sort-order", self.sort_order.as_setting_str())
+        {
+            tracing::warn!("Failed to persist session sort order: {err}");
+        }
     }
 
     fn emit_session_list_filters(&self) {
@@ -1223,17 +1297,92 @@ mod tests {
         assert_eq!(parts.model.last_errors_detail, expected_errors);
     }
 
+    #[gtk::test]
+    fn escape_with_active_override_restores_persisted_sort_and_clears_search() {
+        if !schema_is_available() {
+            return;
+        }
+
+        let controller = App::builder().launch(Some(PathBuf::from("tests/fixtures")));
+        pump_main_context(|| !controller.state().get().model.indexing);
+
+        controller.emit(AppMsg::SearchModeChanged(true));
+        pump_main_context(|| controller.state().get().model.search_visible);
+
+        controller.emit(AppMsg::SearchQueryChanged("hello".to_string()));
+        pump_main_context(|| controller.state().get().model.search_query == "hello");
+
+        controller.emit(AppMsg::SortOrderPicked(SortOrder::OldestFirst));
+        pump_main_context(|| {
+            controller.state().get().model.search_sort_override == Some(SortOrder::OldestFirst)
+        });
+
+        {
+            let parts = controller.state().get();
+            assert_eq!(parts.model.sort_order, SortOrder::OldestFirst);
+            assert_eq!(
+                parts.model.search_sort_override,
+                Some(SortOrder::OldestFirst)
+            );
+            assert_eq!(parts.model.search_query, "hello");
+        }
+
+        controller.emit(AppMsg::Escape);
+        pump_main_context(|| controller.state().get().model.search_query.is_empty());
+
+        let parts = controller.state().get();
+        assert!(!parts.model.search_visible);
+        assert!(parts.model.search_query.is_empty());
+        assert_eq!(parts.model.search_sort_override, None);
+        // The persisted sort order (set via the earlier SortOrderPicked while
+        // FTS was active) is preserved and becomes the effective order again
+        // now that the override-only search state has been cleared.
+        assert_eq!(parts.model.sort_order, SortOrder::OldestFirst);
+        assert_eq!(parts.model.effective_sort(), Some(SortOrder::OldestFirst));
+    }
+
+    #[gtk::test]
+    fn search_mode_toggle_with_active_override_restores_persisted_sort_and_clears_search() {
+        if !schema_is_available() {
+            return;
+        }
+
+        let controller = App::builder().launch(Some(PathBuf::from("tests/fixtures")));
+        pump_main_context(|| !controller.state().get().model.indexing);
+
+        controller.emit(AppMsg::SearchModeChanged(true));
+        pump_main_context(|| controller.state().get().model.search_visible);
+
+        controller.emit(AppMsg::SearchQueryChanged("hello".to_string()));
+        pump_main_context(|| controller.state().get().model.search_query == "hello");
+
+        controller.emit(AppMsg::SortOrderPicked(SortOrder::NewestFirst));
+        pump_main_context(|| {
+            controller.state().get().model.search_sort_override == Some(SortOrder::NewestFirst)
+        });
+
+        controller.emit(AppMsg::SearchModeChanged(false));
+        pump_main_context(|| !controller.state().get().model.search_visible);
+
+        let parts = controller.state().get();
+        assert!(parts.model.search_query.is_empty());
+        assert_eq!(parts.model.search_sort_override, None);
+        assert_eq!(parts.model.sort_order, SortOrder::NewestFirst);
+        assert_eq!(parts.model.effective_sort(), Some(SortOrder::NewestFirst));
+    }
+
     #[test]
     fn search_query_update_messages_include_detail_update() {
         let query = "needle".to_string();
 
-        let (list_msg, detail_msg) = search_query_update_messages(query);
+        let (list_msg, detail_msg) = search_query_update_messages(query, None);
 
         match list_msg {
-            SessionListMsg::SetSearchQuery(list_query) => {
-                assert_eq!(list_query, "needle");
+            SessionListMsg::SetSearchState { query, sort } => {
+                assert_eq!(query, "needle");
+                assert_eq!(sort, None);
             }
-            _ => panic!("expected SessionListMsg::SetSearchQuery"),
+            _ => panic!("expected SessionListMsg::SetSearchState"),
         }
 
         match detail_msg {

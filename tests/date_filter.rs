@@ -6,7 +6,7 @@ use sessions_chronicle::database::{
     count_sessions_per_date_preset, load_session_by_id_for_filter, load_sessions_for_filter,
     search_sessions_for_filter,
 };
-use sessions_chronicle::models::{AiAssistant, DateFilter, ProjectFilter};
+use sessions_chronicle::models::{AiAssistant, DateFilter, ProjectFilter, SortOrder};
 
 /// Local "today at 12:00" converted to UTC, used as a stable anchor for
 /// building date-window fixtures across timezones.
@@ -129,6 +129,7 @@ fn load_sessions_for_filter_applies_date_presets() {
         &[AiAssistant::ClaudeCode],
         &ProjectFilter::AllSessions,
         &DateFilter::Today,
+        SortOrder::RecentActivity,
     )
     .expect("today filter query should succeed");
 
@@ -154,6 +155,7 @@ fn load_sessions_for_filter_applies_date_presets() {
         &[AiAssistant::ClaudeCode],
         &ProjectFilter::AllSessions,
         &DateFilter::Last7Days,
+        SortOrder::RecentActivity,
     )
     .expect("last-7-days filter query should succeed");
 
@@ -187,6 +189,7 @@ fn custom_date_bounds_are_inclusive_and_compose_with_project_and_query() {
         &ProjectFilter::Project(1),
         "alpha",
         &custom,
+        None,
     )
     .expect("composed date/project/query search should succeed");
 
@@ -323,6 +326,7 @@ fn custom_date_bounds_include_both_ends() {
         &[AiAssistant::ClaudeCode],
         &ProjectFilter::AllSessions,
         &DateFilter::Custom { from, to },
+        SortOrder::RecentActivity,
     )
     .expect("custom range query should succeed");
 
@@ -365,6 +369,7 @@ fn load_sessions_for_filter_applies_yesterday_preset() {
         &[AiAssistant::ClaudeCode],
         &ProjectFilter::AllSessions,
         &DateFilter::Yesterday,
+        SortOrder::RecentActivity,
     )
     .expect("yesterday filter query should succeed");
 
@@ -376,6 +381,7 @@ fn load_sessions_for_filter_applies_yesterday_preset() {
         &[AiAssistant::ClaudeCode],
         &ProjectFilter::AllSessions,
         &DateFilter::Today,
+        SortOrder::RecentActivity,
     )
     .expect("today filter query should succeed");
 

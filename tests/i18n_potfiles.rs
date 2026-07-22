@@ -1,11 +1,10 @@
 #[test]
-fn potfiles_includes_shortcuts_rust_file() {
+fn potfiles_includes_rust_files_with_gettext_strings() {
     let potfiles = include_str!("../po/POTFILES.in");
-
-    assert!(
-        potfiles
-            .lines()
-            .any(|line| line.trim() == "src/ui/modals/shortcuts.rs"),
-        "po/POTFILES.in must include src/ui/modals/shortcuts.rs for gettext extraction"
-    );
+    for path in ["src/ui/modals/shortcuts.rs", "src/ui/sort_pill.rs"] {
+        assert!(
+            potfiles.lines().any(|line| line.trim() == path),
+            "po/POTFILES.in must include {path} for gettext extraction"
+        );
+    }
 }

@@ -2,7 +2,7 @@
 
 **Issue:** [#188](https://github.com/supermaciz/sessions-chronicle/issues/188) — Sort options for the session list  
 **Date:** 2026-07-21  
-**Status:** Approved  
+**Status:** Approved — implemented in [#190](https://github.com/supermaciz/sessions-chronicle/pull/190), see section 9 for amendments  
 **Decision source:** `docs/explorations/2026-07-21-session-list-sorting-exploration.md` — Proposal C (named reading orders), rendered on Proposal A's header-bar pill, labelled but never carrying the `accent` CSS class.
 
 ## Summary
@@ -188,3 +188,52 @@ All new user-visible strings use the existing `gettext-rs` setup. This feature d
 ## 8. Scope boundaries
 
 Proposal E (filter-inferred defaults) remains deferred until usage evidence shows that users systematically choose a particular order in a filter context. Proposal B (lenses, including chronology grouping and volume encoding) remains a separate project for which these named orders are the foundation.
+
+## 9. Amendments during implementation
+
+Recorded 2026-07-22, from [#190](https://github.com/supermaciz/sessions-chronicle/pull/190). Sections 1–5 and 8 shipped as designed. What follows is where the implementation departed from this spec, and why. Each entry supersedes the section it names.
+
+### 9.1 The 760sp narrow breakpoint was dropped (supersedes §6 "Narrow widths")
+
+**Spec:** an `adw::Breakpoint` at `max-width: 760sp` on the `adw::ApplicationWindow`, with `connect_apply` / `connect_unapply` sending `SortPillInput::SetNarrow(bool)` to hide the label.
+
+**Shipped:** no breakpoint. The label follows a single rule — visible whenever a non-default order is active, hidden otherwise — at every window width. This is exactly what `DatePill` already does with `self.current_filter.is_active()`, so the two pills sitting side by side in the header now behave identically.
+
+**Why:** the spec treated the new breakpoint as independent of the pre-existing 400sp collapse breakpoint. It is not. libadwaita applies only the **last matching** breakpoint, not the union of all matching ones, so registration order becomes load-bearing as soon as a window has two — and here one condition strictly contains the other. `max-width: 400sp` and `max-width: 760sp` scale together with the text-scaling factor, so any width matching the 400sp condition necessarily also matches the 760sp one. The two are never simultaneously active in the sense of both applying; the later-registered one simply wins and the other's setters never run.
+
+Registering the new breakpoint after the existing one therefore disabled sidebar collapse and the view-switcher bar outright. Because the 400sp condition is only reachable at all above roughly 1.8x text scaling (400sp must exceed the 710 px minimum window width), the regression was invisible at default settings and appeared only in the accessibility path — precisely where the 400sp breakpoint was still doing its only useful work.
+
+Two fixes were attempted before the current one: ordering the breakpoints wide-first and making the 400sp one re-send `SetNarrow` (correct but fragile — the ordering rule is invisible to the next person adding a breakpoint), then deleting the 400sp breakpoint outright (which re-created the regression it was meant to avoid). Aligning on `DatePill` removes the second breakpoint entirely, so no ordering rule is load-bearing and `setup_breakpoints` is byte-identical to its state before this feature.
+
+**Consequences:**
+
+- `SortPillInput::SetNarrow(bool)` does not exist; the interface in §6 is otherwise as specified.
+- §7's GTK test "hidden again when `SetNarrow(true)`" became `label_is_shown_only_for_non_default_orders`, which also covers Relevance-during-FTS as a non-default state.
+- §7's manual step 4 (narrowing below 760sp, repeated under text scaling and long translations) no longer applies and was not performed.
+
+The underlying question the spec was right to raise — a 400sp condition against a 710 px minimum window width is nearly unreachable — is untouched here and left as a follow-up. It predates this feature.
+
+### 9.2 Row selection carries no explicit check icon (resolves §6's open question)
+
+§6 left this conditional: *"if the checkmark shown above is rendered literally rather than being illustrative, each row owns an explicit check icon"*. The checkmark was read as illustrative. Rows are label-only and the effective order is conveyed solely by `gtk::SelectionMode::Browse`, matching `DatePill`'s preset rows.
+
+This is worth revisiting for both pills at once: a `GtkListBox` in Browse mode announces "list item" to assistive technology, where a menu model with radio items would announce a checked radio button. Deliberately out of scope here — changing it for `SortPill` alone would make the two pills inconsistent again.
+
+### 9.3 `SessionQuery` replaces `parse_session_id_query` (extends §5)
+
+§5 described three search contexts and required they be *"derived once and shared by the app state and session-loading path so the pill cannot disagree with the query actually executed"*, but named no type. The implementation gives that requirement a home: `src/models/session_query.rs` exposes `SessionQuery::{None, DirectId, Fts}` with a single `classify()` entry point. `session_list.rs`'s ad hoc `parse_session_id_query` is deleted, and `App` and the loading path now classify through the same function.
+
+Two related mechanisms follow from the same requirement:
+
+- `SessionListMsg::SetSearchQuery(String)` became `SetSearchState { query, sort }`, so a query change and its resolved order reach the list in one message and cannot be observed apart.
+- `App::clear_search_state` encodes "clearing FTS restores the persisted order" once, replacing three copies of that logic.
+
+### 9.4 The query-plan check became an automated test (upgrades §7)
+
+§7 listed `EXPLAIN QUERY PLAN` per order as **manual** step 3. It ships instead as `unfiltered_named_orders_do_not_build_temporary_sort_tables` in `schema.rs`, asserting no `USE TEMP B-TREE FOR ORDER BY` for any of the four unfiltered orders. The filtered-view trade-off documented in §3 is unchanged and remains untested by design.
+
+### 9.5 Minor notes
+
+- The v15 migration is applied to freshly created databases as well, so a new database briefly creates `idx_sessions_top_level_last_updated` (`schema.rs`) before the migration drops it. Harmless, consistent with how earlier migrations in this file behave, but it means the base schema statement is now dead weight.
+- The tooltip uses `gettext("Sort by: {}")` with placeholder substitution rather than `format!`, so translators receive the sentence frame rather than a fragment. §6's reference pattern, `tooltip_for_filter`, interpolates with `format!` and is the weaker of the two.
+- §6's `pack_start` placement next to the `DatePill` shipped as specified. Note that GNOME convention would put sort controls in `pack_end`; the spec's choice was kept deliberately, not by oversight.

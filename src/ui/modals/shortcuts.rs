@@ -50,6 +50,10 @@ impl SimpleComponent for ShortcutsDialog {
             &gettext("Filter by date"),
             "<Control><Shift>d",
         ));
+        search.add(adw::ShortcutsItem::new(
+            &gettext("Sort sessions"),
+            "<Control><Shift>o",
+        ));
         widgets.add(search);
 
         // View section

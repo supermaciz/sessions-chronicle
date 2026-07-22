@@ -16,6 +16,6 @@ pub mod utils;
 // Re-export commonly used types
 pub use models::{
     AiAssistant, AnalyticsData, AnalyticsOverview, DateCounts, DateFilter, Message, ProjectFilter,
-    ProjectInfo, Role, Session,
+    ProjectInfo, Role, Session, SortOrder,
 };
 pub use session_sources::SessionSources;

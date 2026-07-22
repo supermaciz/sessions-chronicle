@@ -2,7 +2,7 @@ use anyhow::Result;
 use rusqlite::Connection;
 
 #[cfg(test)]
-const CURRENT_DB_VERSION: i64 = 14;
+const CURRENT_DB_VERSION: i64 = 15;
 
 fn column_exists(conn: &Connection, table_name: &str, column_name: &str) -> Result<bool> {
     Ok(conn.query_row(
@@ -48,6 +48,9 @@ fn table_exists(conn: &Connection, name: &str) -> Result<bool> {
 ///        support: parents must be re-parsed to emit subagent rows linking the
 ///        child sessions now indexed from `<session>/agents/`; add an index on
 ///        sessions.file_path for efficient Vibe subtree pruning
+///   15 – replace the top-level activity index with three deterministic sort
+///        indexes (last_updated, start_time, message_count) to enable
+///        deterministic session-list reading without temporary sort tables
 pub fn initialize_database(conn: &Connection) -> Result<()> {
     let version: i64 = conn.query_row("PRAGMA user_version", [], |row| row.get(0))?;
 
@@ -92,6 +95,9 @@ pub fn initialize_database(conn: &Connection) -> Result<()> {
     }
     if version < 14 {
         apply_v14_migration(conn)?;
+    }
+    if version < 15 {
+        apply_v15_migration(conn)?;
     }
 
     Ok(())
@@ -605,6 +611,24 @@ fn apply_v14_migration(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
+/// Migrate from v14 to v15.
+///
+/// Replace the top-level activity index and add indexes for deterministic
+/// session-list reading orders. Filter-specific activity indexes remain intact.
+fn apply_v15_migration(conn: &Connection) -> Result<()> {
+    conn.execute_batch(
+        "DROP INDEX IF EXISTS idx_sessions_top_level_last_updated;
+         CREATE INDEX IF NOT EXISTS idx_sessions_top_level_last_updated_id
+             ON sessions(is_subagent, last_updated DESC, id DESC);
+         CREATE INDEX IF NOT EXISTS idx_sessions_top_level_start_time_id
+             ON sessions(is_subagent, start_time DESC, id DESC);
+         CREATE INDEX IF NOT EXISTS idx_sessions_top_level_message_count_id
+             ON sessions(is_subagent, message_count DESC, id DESC);
+         PRAGMA user_version = 15;",
+    )?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -724,26 +748,27 @@ mod tests {
         let conn = Connection::open_in_memory().unwrap();
         initialize_database(&conn).unwrap();
 
-        assert!(index_exists(&conn, "idx_sessions_top_level_last_updated"));
+        assert!(!index_exists(&conn, "idx_sessions_top_level_last_updated"));
+        for (name, columns) in [
+            (
+                "idx_sessions_top_level_last_updated_id",
+                vec!["is_subagent", "last_updated", "id"],
+            ),
+            (
+                "idx_sessions_top_level_start_time_id",
+                vec!["is_subagent", "start_time", "id"],
+            ),
+            (
+                "idx_sessions_top_level_message_count_id",
+                vec!["is_subagent", "message_count", "id"],
+            ),
+        ] {
+            assert!(index_exists(&conn, name));
+            assert_eq!(index_columns(&conn, name), columns);
+        }
         assert!(index_exists(&conn, "idx_sessions_project_last_updated"));
         assert!(index_exists(&conn, "idx_sessions_tool_last_updated"));
         assert!(index_exists(&conn, "idx_sessions_pinned_last_updated"));
-        assert_eq!(
-            index_columns(&conn, "idx_sessions_top_level_last_updated"),
-            vec!["is_subagent", "last_updated"]
-        );
-        assert_eq!(
-            index_columns(&conn, "idx_sessions_project_last_updated"),
-            vec!["is_subagent", "project_id", "last_updated"]
-        );
-        assert_eq!(
-            index_columns(&conn, "idx_sessions_tool_last_updated"),
-            vec!["is_subagent", "tool", "last_updated"]
-        );
-        assert_eq!(
-            index_columns(&conn, "idx_sessions_pinned_last_updated"),
-            vec!["is_subagent", "pinned_at", "last_updated"]
-        );
     }
 
     #[test]
@@ -751,7 +776,9 @@ mod tests {
         let conn = Connection::open_in_memory().unwrap();
         initialize_database(&conn).unwrap();
         conn.execute_batch(
-            "DROP INDEX idx_sessions_top_level_last_updated;
+            "DROP INDEX idx_sessions_top_level_last_updated_id;
+             DROP INDEX idx_sessions_top_level_start_time_id;
+             DROP INDEX idx_sessions_top_level_message_count_id;
              DROP INDEX idx_sessions_project_last_updated;
              DROP INDEX idx_sessions_tool_last_updated;
              DROP INDEX idx_sessions_pinned_last_updated;
@@ -1631,5 +1658,67 @@ mod tests {
             })
             .unwrap();
         assert_eq!(fingerprint_count, 0);
+    }
+
+    #[test]
+    fn v14_to_v15_replaces_top_level_sort_indexes() {
+        let conn = Connection::open_in_memory().unwrap();
+        initialize_database(&conn).unwrap();
+        conn.execute_batch(
+            "DROP INDEX idx_sessions_top_level_last_updated_id;
+             DROP INDEX idx_sessions_top_level_start_time_id;
+             DROP INDEX idx_sessions_top_level_message_count_id;
+             CREATE INDEX idx_sessions_top_level_last_updated
+                 ON sessions(is_subagent, last_updated DESC);
+             PRAGMA user_version = 14;",
+        )
+        .unwrap();
+
+        initialize_database(&conn).unwrap();
+
+        let version: i64 = conn
+            .query_row("PRAGMA user_version", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(version, 15);
+        assert!(!index_exists(&conn, "idx_sessions_top_level_last_updated"));
+        assert!(index_exists(
+            &conn,
+            "idx_sessions_top_level_last_updated_id"
+        ));
+        assert!(index_exists(&conn, "idx_sessions_top_level_start_time_id"));
+        assert!(index_exists(
+            &conn,
+            "idx_sessions_top_level_message_count_id"
+        ));
+    }
+
+    #[test]
+    fn unfiltered_named_orders_do_not_build_temporary_sort_tables() {
+        let conn = Connection::open_in_memory().unwrap();
+        initialize_database(&conn).unwrap();
+
+        for order_by in [
+            "last_updated DESC, id DESC",
+            "start_time ASC, id ASC",
+            "start_time DESC, id DESC",
+            "message_count DESC, id DESC",
+        ] {
+            let sql = format!(
+                "EXPLAIN QUERY PLAN SELECT id FROM sessions
+                 WHERE is_subagent = 0 ORDER BY {order_by}"
+            );
+            let mut stmt = conn.prepare(&sql).unwrap();
+            let details = stmt
+                .query_map([], |row| row.get::<_, String>(3))
+                .unwrap()
+                .collect::<Result<Vec<_>, _>>()
+                .unwrap();
+            assert!(
+                details
+                    .iter()
+                    .all(|detail| !detail.contains("USE TEMP B-TREE FOR ORDER BY")),
+                "{order_by} used a temporary sort: {details:?}"
+            );
+        }
     }
 }

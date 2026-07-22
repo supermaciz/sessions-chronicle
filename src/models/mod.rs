@@ -6,6 +6,8 @@ pub mod message_preview;
 pub mod project_filter;
 pub mod reasoning;
 pub mod session;
+pub mod session_query;
+pub mod sort_order;
 pub mod subagent;
 pub mod token_usage;
 pub mod tool_call;
@@ -19,6 +21,8 @@ pub use message_preview::MessagePreview;
 pub use project_filter::{ProjectFilter, ProjectInfo};
 pub use reasoning::{ReasoningAttachment, ReasoningPreview};
 pub use session::{AiAssistant, Session, SessionEndingStatus};
+pub use session_query::SessionQuery;
+pub use sort_order::SortOrder;
 pub use subagent::Subagent;
 pub use token_usage::TokenUsage;
 pub use tool_call::{

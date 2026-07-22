@@ -1,4 +1,6 @@
-use crate::models::{PerSourceResult, ProjectFilter, ProjectInfo, SourceStatus};
+use crate::models::{
+    PerSourceResult, ProjectFilter, ProjectInfo, SessionQuery, SortOrder, SourceStatus,
+};
 use crate::ui::{session_detail::SessionDetailMsg, session_list::SessionListMsg};
 
 use super::types::{
@@ -14,13 +16,42 @@ pub(super) fn active_search_query(query: &str) -> Option<String> {
     }
 }
 
-pub(super) fn search_query_update_messages(query: String) -> (SessionListMsg, SessionDetailMsg) {
+pub(super) fn search_query_update_messages(
+    query: String,
+    sort: Option<SortOrder>,
+) -> (SessionListMsg, SessionDetailMsg) {
     let detail_query = active_search_query(&query);
 
     (
-        SessionListMsg::SetSearchQuery(query),
+        SessionListMsg::SetSearchState { query, sort },
         SessionDetailMsg::UpdateSearchQuery(detail_query),
     )
+}
+
+pub(super) fn effective_sort(
+    query: &str,
+    sort_order: SortOrder,
+    search_sort_override: Option<SortOrder>,
+) -> Option<SortOrder> {
+    if SessionQuery::classify(query).is_fts() {
+        search_sort_override
+    } else {
+        Some(sort_order)
+    }
+}
+
+pub(super) fn override_after_query_change(
+    previous_query: &str,
+    next_query: &str,
+    current: Option<SortOrder>,
+) -> Option<SortOrder> {
+    let previous_fts = SessionQuery::classify(previous_query).is_fts();
+    let next_fts = SessionQuery::classify(next_query).is_fts();
+    if previous_fts && next_fts {
+        current
+    } else {
+        None
+    }
 }
 
 pub(super) fn workspace_allows_search(workspace: Workspace) -> bool {
@@ -80,6 +111,7 @@ pub(super) fn workspace_header_visibility(
         WorkspaceHeaderVisibility {
             search_ui_visible: false,
             date_filter_visible: false,
+            sort_pill_visible: false,
             pane_controls_visible: false,
             detail_actions_visible: false,
             summary_button_visible: false,
@@ -89,6 +121,7 @@ pub(super) fn workspace_header_visibility(
         WorkspaceHeaderVisibility {
             search_ui_visible: true,
             date_filter_visible: !detail_visible,
+            sort_pill_visible: !detail_visible,
             pane_controls_visible: true,
             detail_actions_visible: detail_visible || parent_session_present,
             summary_button_visible: detail_visible && active_session_present,
@@ -305,15 +338,52 @@ mod tests {
     }
 
     #[test]
+    fn effective_sort_is_relevance_only_for_fts_without_override() {
+        let saved = SortOrder::MostMessages;
+        assert_eq!(effective_sort("", saved, None), Some(saved));
+        assert_eq!(effective_sort("id:abc", saved, None), Some(saved));
+        assert_eq!(effective_sort("needle", saved, None), None);
+        assert_eq!(
+            effective_sort("needle", saved, Some(SortOrder::OldestFirst)),
+            Some(SortOrder::OldestFirst)
+        );
+    }
+
+    #[test]
+    fn query_transitions_reset_override_at_fts_boundaries_only() {
+        let selected = Some(SortOrder::MostMessages);
+        assert_eq!(override_after_query_change("", "needle", selected), None);
+        assert_eq!(
+            override_after_query_change("needle", "needles", selected),
+            selected
+        );
+        assert_eq!(override_after_query_change("needle", "", selected), None);
+        assert_eq!(
+            override_after_query_change("needle", "id:abc", selected),
+            None
+        );
+    }
+
+    #[test]
+    fn explicit_relevance_then_clear_returns_to_saved_order() {
+        let saved = SortOrder::MostMessages;
+        assert_eq!(effective_sort("needle", saved, None), None);
+        assert_eq!(effective_sort("", saved, None), Some(saved));
+    }
+
+    #[test]
     fn workspace_header_visibility_shows_date_filter_only_on_sessions_list() {
         let analytics = workspace_header_visibility(Workspace::Analytics, false, false, false);
         assert!(!analytics.date_filter_visible);
+        assert!(!analytics.sort_pill_visible);
 
         let sessions_list = workspace_header_visibility(Workspace::Sessions, false, false, false);
         assert!(sessions_list.date_filter_visible);
+        assert!(sessions_list.sort_pill_visible);
 
         let sessions_detail = workspace_header_visibility(Workspace::Sessions, true, false, false);
         assert!(!sessions_detail.date_filter_visible);
+        assert!(!sessions_detail.sort_pill_visible);
     }
 
     #[test]

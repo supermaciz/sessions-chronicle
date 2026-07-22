@@ -11,5 +11,6 @@ pub mod session_detail;
 pub mod session_list;
 pub mod session_row;
 pub mod sidebar;
+pub mod sort_pill;
 pub mod tool_inspector_pane;
 pub mod tool_renderers;

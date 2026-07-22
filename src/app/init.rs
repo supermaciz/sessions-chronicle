@@ -12,6 +12,7 @@ use gtk::{gdk, glib};
 
 use crate::analytics_worker::{AnalyticsWorker, AnalyticsWorkerOutput};
 use crate::indexing_worker::{IndexingWorker, IndexingWorkerOutput};
+use crate::models::SortOrder;
 use crate::ui::modals::{
     about::AboutDialog,
     preferences::{PreferencesDialog, PreferencesOutput},
@@ -23,14 +24,16 @@ use crate::ui::{
     session_detail::{SessionDetail, SessionDetailOutput},
     session_list::{SessionList, SessionListMsg, SessionListOutput},
     sidebar::{Sidebar, SidebarOutput},
+    sort_pill::{SortPill, SortPillOutput},
 };
 
 use super::helpers::workspace_allows_search;
 use super::types::Workspace;
 use super::{
     AboutAction, App, AppMsg, EscapeAction, IndexingStatusAction, OpenDateFilterAction,
-    PreferencesAction, QuitAction, ShortcutsAction, ShowSearchAction, ToggleFiltersAction,
-    ToggleInspectorAction, TogglePinAction, ToggleSidePaneAction, WindowActionGroup,
+    OpenSortAction, PreferencesAction, QuitAction, ShortcutsAction, ShowSearchAction,
+    ToggleFiltersAction, ToggleInspectorAction, TogglePinAction, ToggleSidePaneAction,
+    WindowActionGroup,
 };
 
 /// Holds all child controllers and workers created during init.
@@ -39,6 +42,7 @@ pub(super) struct ChildComponents {
     pub(super) analytics_view: Controller<AnalyticsView>,
     pub(super) session_detail: Controller<SessionDetail>,
     pub(super) date_pill: Controller<DatePill>,
+    pub(super) sort_pill: Controller<SortPill>,
     pub(super) sidebar: Controller<Sidebar>,
     pub(super) preferences_dialog: Controller<PreferencesDialog>,
     pub(super) indexing_worker: WorkerController<IndexingWorker>,
@@ -53,10 +57,11 @@ pub(super) struct NavigationSetup {
 
 pub(super) fn init_child_components(
     db_path: &Path,
+    sort_order: SortOrder,
     sender: &ComponentSender<App>,
 ) -> ChildComponents {
     let session_list = SessionList::builder()
-        .launch(db_path.to_path_buf())
+        .launch((db_path.to_path_buf(), sort_order))
         .forward(sender.input_sender(), |msg| match msg {
             SessionListOutput::SessionSelected(id) => AppMsg::SessionSelected(id),
             SessionListOutput::TogglePinRequested(id) => AppMsg::TogglePinRequested(id),
@@ -83,6 +88,13 @@ pub(super) fn init_child_components(
             DatePillOutput::FilterChanged(filter) => AppMsg::DateFilterChanged(filter),
             DatePillOutput::CountsRequested => AppMsg::DateCountsRequested,
         });
+    let sort_pill = SortPill::builder().launch(sort_order).forward(
+        sender.input_sender(),
+        |output| match output {
+            SortPillOutput::OrderPicked(order) => AppMsg::SortOrderPicked(order),
+            SortPillOutput::RelevancePicked => AppMsg::RelevancePicked,
+        },
+    );
     let sidebar =
         Sidebar::builder()
             .launch(())
@@ -134,6 +146,7 @@ pub(super) fn init_child_components(
         analytics_view,
         session_detail,
         date_pill,
+        sort_pill,
         sidebar,
         preferences_dialog,
         indexing_worker,
@@ -461,6 +474,13 @@ pub(super) fn register_actions(
         })
     };
 
+    let open_sort_action = {
+        let sender = sender.clone();
+        RelmAction::<OpenSortAction>::new_stateless(move |_| {
+            sender.input(AppMsg::OpenSortShortcut);
+        })
+    };
+
     let quit_action = {
         let sender = sender.clone();
         RelmAction::<QuitAction>::new_stateless(move |_| {
@@ -485,6 +505,7 @@ pub(super) fn register_actions(
     app.set_accelerators_for_action::<ToggleSidePaneAction>(&["F9"]);
     app.set_accelerators_for_action::<TogglePinAction>(&["<Control>d"]);
     app.set_accelerators_for_action::<OpenDateFilterAction>(&["<Control><Shift>d"]);
+    app.set_accelerators_for_action::<OpenSortAction>(&["<Control><Shift>o"]);
     app.set_accelerators_for_action::<ShowSearchAction>(&["<Control>f"]);
     app.set_accelerators_for_action::<ShortcutsAction>(&["<Control>question"]);
     app.set_accelerators_for_action::<IndexingStatusAction>(&["<Control><Shift>i"]);
@@ -501,6 +522,7 @@ pub(super) fn register_actions(
     actions.add_action(toggle_side_pane_action);
     actions.add_action(toggle_pin_action);
     actions.add_action(open_date_filter_action);
+    actions.add_action(open_sort_action);
     actions.add_action(quit_action);
     actions.add_action(escape_action);
     actions.register_for_widget(main_window);

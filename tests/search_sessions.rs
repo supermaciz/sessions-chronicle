@@ -4,9 +4,10 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use sessions_chronicle::database::schema::initialize_database;
 use sessions_chronicle::database::{
-    find_session_match_positions, load_session_by_id_for_filter, search_sessions_for_filter,
+    find_session_match_positions, load_session_by_id_for_filter, load_sessions_for_filter,
+    search_sessions_for_filter,
 };
-use sessions_chronicle::models::{AiAssistant, DateFilter, ProjectFilter};
+use sessions_chronicle::models::{AiAssistant, DateFilter, ProjectFilter, SortOrder};
 
 struct TempDatabase {
     path: PathBuf,
@@ -148,6 +149,14 @@ impl TempDatabase {
                 ],
             )
             .expect("Failed to insert message C1");
+
+        self.connection
+            .execute(
+                "INSERT INTO messages (session_id, message_index, role, content, timestamp, model)
+                 VALUES ('session-a', 1, 'assistant', 'alpha follow-up', 11, NULL)",
+                [],
+            )
+            .expect("Failed to insert message A2");
     }
 }
 
@@ -210,6 +219,7 @@ fn search_sessions_orders_by_relevance() {
         &ProjectFilter::AllSessions,
         "alpha",
         &DateFilter::AnyTime,
+        None,
     )
     .expect("Search failed");
     let ids: Vec<&str> = sessions.iter().map(|session| session.id.as_str()).collect();
@@ -229,6 +239,7 @@ fn search_sessions_respects_tool_filter() {
         &ProjectFilter::AllSessions,
         "alpha",
         &DateFilter::AnyTime,
+        None,
     )
     .expect("Search failed");
 
@@ -248,6 +259,7 @@ fn search_sessions_sanitizes_invalid_query() {
         &ProjectFilter::AllSessions,
         "\"alpha",
         &DateFilter::AnyTime,
+        None,
     )
     .expect("Search failed");
 
@@ -494,4 +506,125 @@ fn find_session_match_positions_empty_query() {
 
     assert!(blank.is_empty());
     assert!(empty.is_empty());
+}
+
+#[test]
+fn load_sessions_follows_each_named_order() {
+    let db = TempDatabase::new();
+    db.seed();
+
+    for (sort, expected) in [
+        (
+            SortOrder::RecentActivity,
+            vec!["session-c", "session-b", "session-a"],
+        ),
+        (
+            SortOrder::OldestFirst,
+            vec!["session-a", "session-b", "session-c"],
+        ),
+        (
+            SortOrder::NewestFirst,
+            vec!["session-c", "session-b", "session-a"],
+        ),
+        (
+            SortOrder::MostMessages,
+            vec!["session-a", "session-b", "session-c"],
+        ),
+    ] {
+        let sessions = load_sessions_for_filter(
+            &db.path,
+            &AiAssistant::ALL,
+            &ProjectFilter::AllSessions,
+            &DateFilter::AnyTime,
+            sort,
+        )
+        .expect("load sessions");
+        assert_eq!(
+            sessions
+                .iter()
+                .map(|session| session.id.as_str())
+                .collect::<Vec<_>>(),
+            expected
+        );
+    }
+}
+
+#[test]
+fn search_deduplicates_sessions_and_follows_named_orders() {
+    let db = TempDatabase::new();
+    db.seed();
+
+    for (sort, expected) in [
+        (SortOrder::RecentActivity, vec!["session-b", "session-a"]),
+        (SortOrder::OldestFirst, vec!["session-a", "session-b"]),
+        (SortOrder::NewestFirst, vec!["session-b", "session-a"]),
+        (SortOrder::MostMessages, vec!["session-a", "session-b"]),
+    ] {
+        let sessions = search_sessions_for_filter(
+            &db.path,
+            &[AiAssistant::ClaudeCode, AiAssistant::OpenCode],
+            &ProjectFilter::AllSessions,
+            "alpha",
+            &DateFilter::AnyTime,
+            Some(sort),
+        )
+        .expect("search sessions");
+        assert_eq!(
+            sessions
+                .iter()
+                .map(|session| session.id.as_str())
+                .collect::<Vec<_>>(),
+            expected
+        );
+    }
+}
+
+#[test]
+fn search_named_orders_use_id_as_the_final_tie_breaker() {
+    let db = TempDatabase::new();
+    for id in ["tie-a", "tie-b"] {
+        db.connection
+            .execute(
+                "INSERT INTO sessions
+             (id, tool, start_time, message_count, file_path, last_updated)
+             VALUES (?1, 'claude_code', 10, 4, ?2, 20)",
+                rusqlite::params![id, format!("/tmp/{id}.jsonl")],
+            )
+            .unwrap();
+        db.connection
+            .execute(
+                "INSERT INTO messages (session_id, message_index, role, content, timestamp)
+             VALUES (?1, 0, 'user', 'tie', 10)",
+                [id],
+            )
+            .unwrap();
+    }
+
+    let descending = search_sessions_for_filter(
+        &db.path,
+        &AiAssistant::ALL,
+        &ProjectFilter::AllSessions,
+        "tie",
+        &DateFilter::AnyTime,
+        Some(SortOrder::MostMessages),
+    )
+    .unwrap();
+    assert_eq!(
+        descending.iter().map(|s| s.id.as_str()).collect::<Vec<_>>(),
+        vec!["tie-b", "tie-a"]
+    );
+
+    let ascending = search_sessions_for_filter(
+        &db.path,
+        &AiAssistant::ALL,
+        &ProjectFilter::AllSessions,
+        "tie",
+        &DateFilter::AnyTime,
+        Some(SortOrder::OldestFirst),
+    )
+    .unwrap();
+    assert_eq!(
+        ascending.iter().map(|s| s.id.as_str()).collect::<Vec<_>>(),
+        vec!["tie-a", "tie-b"]
+    );
 }
