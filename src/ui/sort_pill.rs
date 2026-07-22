@@ -19,7 +19,6 @@ pub struct SortPill {
     sort_order: SortOrder,
     fts_search_active: bool,
     override_active: bool,
-    narrow: bool,
     listbox: gtk::ListBox,
     popover: gtk::Popover,
     row_activation_fts_flag: Rc<Cell<bool>>,
@@ -35,7 +34,6 @@ pub enum SortPillInput {
         override_active: bool,
     },
     OpenViaShortcut,
-    SetNarrow(bool),
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -113,7 +111,6 @@ impl SimpleComponent for SortPill {
             sort_order: init,
             fts_search_active: false,
             override_active: false,
-            narrow: false,
             listbox: listbox.clone(),
             popover: popover.clone(),
             row_activation_fts_flag: fts_search_active,
@@ -162,9 +159,6 @@ impl SimpleComponent for SortPill {
             SortPillInput::OpenViaShortcut => {
                 self.popover.popup();
                 self.focus_effective_row_when_ready();
-            }
-            SortPillInput::SetNarrow(narrow) => {
-                self.narrow = narrow;
             }
         }
     }
@@ -244,14 +238,9 @@ impl SortPill {
             self.override_active,
         );
         widgets.label.set_label(&effective);
-        widgets.label.set_visible(
-            !self.narrow
-                && should_show_label(
-                    self.sort_order,
-                    self.fts_search_active,
-                    self.override_active,
-                ),
-        );
+        widgets
+            .label
+            .set_visible(should_show_label(self.sort_order, self.fts_search_active));
         widgets.root.set_tooltip_text(Some(&tooltip_text(
             self.sort_order,
             self.fts_search_active,
@@ -285,11 +274,10 @@ fn build_row(label: &str) -> gtk::ListBoxRow {
     row
 }
 
-fn should_show_label(
-    sort_order: SortOrder,
-    fts_search_active: bool,
-    _override_active: bool,
-) -> bool {
+/// Mirrors `DatePill`, which shows its label whenever the filter is active and
+/// hides it otherwise, at every window width. The pill therefore stays
+/// icon-only in the default state and never depends on a window breakpoint.
+fn should_show_label(sort_order: SortOrder, fts_search_active: bool) -> bool {
     fts_search_active || sort_order != SortOrder::RecentActivity
 }
 
@@ -338,9 +326,9 @@ mod tests {
             tooltip_text(SortOrder::RecentActivity, true, false),
             "Sort by: Relevance"
         );
-        assert!(!should_show_label(SortOrder::RecentActivity, false, false));
-        assert!(should_show_label(SortOrder::RecentActivity, true, true));
-        assert!(should_show_label(SortOrder::MostMessages, false, false));
+        assert!(!should_show_label(SortOrder::RecentActivity, false));
+        assert!(should_show_label(SortOrder::RecentActivity, true));
+        assert!(should_show_label(SortOrder::MostMessages, false));
     }
 
     fn pump_main_context(condition: impl Fn() -> bool) {
@@ -422,8 +410,10 @@ mod tests {
         pump_main_context(|| list.selected_row().map(|row| row.index()) == Some(4));
     }
 
+    /// The label tracks only whether a non-default order is active, like
+    /// `DatePill`. Window width never enters into it.
     #[gtk::test]
-    fn label_hides_for_default_and_narrow_states() {
+    fn label_is_shown_only_for_non_default_orders() {
         let controller = SortPill::builder().launch(SortOrder::RecentActivity);
         let label = controller.widgets().label.clone();
         assert!(!label.is_visible());
@@ -434,9 +424,21 @@ mod tests {
             override_active: false,
         });
         pump_main_context(|| label.is_visible());
-        controller.emit(SortPillInput::SetNarrow(true));
+
+        controller.emit(SortPillInput::SyncState {
+            sort_order: SortOrder::RecentActivity,
+            fts_search_active: false,
+            override_active: false,
+        });
         pump_main_context(|| !label.is_visible());
-        controller.emit(SortPillInput::SetNarrow(false));
+
+        // Relevance during FTS is also a non-default state, so the label
+        // returns even though the persisted order is the default one.
+        controller.emit(SortPillInput::SyncState {
+            sort_order: SortOrder::RecentActivity,
+            fts_search_active: true,
+            override_active: false,
+        });
         pump_main_context(|| label.is_visible());
         assert!(!controller.widget().has_css_class("accent"));
     }

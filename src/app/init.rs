@@ -24,7 +24,7 @@ use crate::ui::{
     session_detail::{SessionDetail, SessionDetailOutput},
     session_list::{SessionList, SessionListMsg, SessionListOutput},
     sidebar::{Sidebar, SidebarOutput},
-    sort_pill::{SortPill, SortPillInput, SortPillOutput},
+    sort_pill::{SortPill, SortPillOutput},
 };
 
 use super::helpers::workspace_allows_search;
@@ -363,22 +363,22 @@ pub(super) fn setup_workspace_stack(
     });
 }
 
-pub(super) fn setup_breakpoints(root: &adw::ApplicationWindow, sort_pill: &Controller<SortPill>) {
-    // Collapse the sort pill label to icon-only at narrow widths.
-    let sort_breakpoint = adw::Breakpoint::new(adw::BreakpointCondition::new_length(
+pub(super) fn setup_breakpoints(
+    root: &adw::ApplicationWindow,
+    overlay_split: &adw::OverlaySplitView,
+    workspace_switcher: &adw::ViewSwitcher,
+    workspace_switcher_bar: &adw::ViewSwitcherBar,
+) {
+    // Add responsive collapse breakpoint
+    let breakpoint = adw::Breakpoint::new(adw::BreakpointCondition::new_length(
         adw::BreakpointConditionLengthType::MaxWidth,
-        760.0,
+        400.0,
         adw::LengthUnit::Sp,
     ));
-    let sort_sender = sort_pill.sender().clone();
-    sort_breakpoint.connect_apply(move |_| {
-        sort_sender.send(SortPillInput::SetNarrow(true)).ok();
-    });
-    let sort_sender = sort_pill.sender().clone();
-    sort_breakpoint.connect_unapply(move |_| {
-        sort_sender.send(SortPillInput::SetNarrow(false)).ok();
-    });
-    root.add_breakpoint(sort_breakpoint);
+    breakpoint.add_setter(overlay_split, "collapsed", Some(&true.into()));
+    breakpoint.add_setter(workspace_switcher, "visible", Some(&false.into()));
+    breakpoint.add_setter(workspace_switcher_bar, "reveal", Some(&true.into()));
+    root.add_breakpoint(breakpoint);
 }
 
 pub(super) fn register_actions(
