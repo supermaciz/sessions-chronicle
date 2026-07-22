@@ -320,6 +320,8 @@ fn tooltip_text(sort_order: SortOrder, fts_search_active: bool, override_active:
 mod tests {
     use super::*;
     use relm4::{Component, ComponentController};
+    use std::cell::RefCell;
+    use std::rc::Rc;
     use std::time::{Duration, Instant};
 
     #[test]
@@ -437,5 +439,88 @@ mod tests {
         controller.emit(SortPillInput::SetNarrow(false));
         pump_main_context(|| label.is_visible());
         assert!(!controller.widget().has_css_class("accent"));
+    }
+
+    fn activate_row(list: &gtk::ListBox, index: i32) {
+        let row = list
+            .row_at_index(index)
+            .unwrap_or_else(|| panic!("row at index {index} should exist"));
+        list.emit_by_name::<()>("row-activated", &[&row]);
+    }
+
+    #[gtk::test]
+    fn row_activation_maps_indices_to_named_orders_without_fts() {
+        let outputs: Rc<RefCell<Vec<SortPillOutput>>> = Rc::new(RefCell::new(Vec::new()));
+        let outputs_ref = outputs.clone();
+        let controller = SortPill::builder()
+            .launch(SortOrder::RecentActivity)
+            .connect_receiver(move |_, output| {
+                outputs_ref.borrow_mut().push(output);
+            });
+        let list = find_list_box(&controller.widget().clone().upcast()).unwrap();
+        assert_eq!(row_count(&list), 4);
+
+        for index in 0..4 {
+            activate_row(&list, index);
+        }
+        pump_main_context(|| outputs.borrow().len() == 4);
+
+        let outputs = outputs.borrow();
+        let expected = [
+            SortOrder::RecentActivity,
+            SortOrder::OldestFirst,
+            SortOrder::NewestFirst,
+            SortOrder::MostMessages,
+        ];
+        for (output, expected_order) in outputs.iter().zip(expected) {
+            match output {
+                SortPillOutput::OrderPicked(order) => assert_eq!(*order, expected_order),
+                SortPillOutput::RelevancePicked => {
+                    panic!("unexpected RelevancePicked in non-FTS state")
+                }
+            }
+        }
+    }
+
+    #[gtk::test]
+    fn row_activation_maps_indices_to_named_orders_with_fts() {
+        let outputs: Rc<RefCell<Vec<SortPillOutput>>> = Rc::new(RefCell::new(Vec::new()));
+        let outputs_ref = outputs.clone();
+        let controller = SortPill::builder()
+            .launch(SortOrder::RecentActivity)
+            .connect_receiver(move |_, output| {
+                outputs_ref.borrow_mut().push(output);
+            });
+        let list = find_list_box(&controller.widget().clone().upcast()).unwrap();
+
+        controller.emit(SortPillInput::SyncState {
+            sort_order: SortOrder::RecentActivity,
+            fts_search_active: true,
+            override_active: false,
+        });
+        pump_main_context(|| row_count(&list) == 5);
+
+        for index in 0..5 {
+            activate_row(&list, index);
+        }
+        pump_main_context(|| outputs.borrow().len() == 5);
+
+        let outputs = outputs.borrow();
+        assert!(matches!(outputs[0], SortPillOutput::RelevancePicked));
+
+        let expected = [
+            SortOrder::RecentActivity,
+            SortOrder::OldestFirst,
+            SortOrder::NewestFirst,
+            SortOrder::MostMessages,
+        ];
+        for (output, expected_order) in outputs[1..].iter().zip(expected) {
+            match output {
+                SortPillOutput::OrderPicked(order) => assert_eq!(*order, expected_order),
+                SortPillOutput::RelevancePicked => {
+                    panic!("unexpected RelevancePicked at index > 0 in FTS state")
+                }
+            }
+        }
     }
 }
