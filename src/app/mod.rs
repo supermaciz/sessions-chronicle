@@ -580,13 +580,7 @@ impl SimpleComponent for App {
             &sender,
         );
 
-        init::setup_breakpoints(
-            &root,
-            &widgets.overlay_split,
-            &widgets.workspace_switcher,
-            &widgets.workspace_switcher_bar,
-            &model.sort_pill,
-        );
+        init::setup_breakpoints(&root, &model.sort_pill);
 
         init::register_actions(
             &root,
