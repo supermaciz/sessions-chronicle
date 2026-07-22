@@ -61,7 +61,7 @@ pub(super) fn init_child_components(
     sender: &ComponentSender<App>,
 ) -> ChildComponents {
     let session_list = SessionList::builder()
-        .launch(db_path.to_path_buf())
+        .launch((db_path.to_path_buf(), sort_order))
         .forward(sender.input_sender(), |msg| match msg {
             SessionListOutput::SessionSelected(id) => AppMsg::SessionSelected(id),
             SessionListOutput::TogglePinRequested(id) => AppMsg::TogglePinRequested(id),
@@ -95,7 +95,6 @@ pub(super) fn init_child_components(
             SortPillOutput::RelevancePicked => AppMsg::RelevancePicked,
         },
     );
-    session_list.emit(SessionListMsg::SetSortOrder(Some(sort_order)));
     let sidebar =
         Sidebar::builder()
             .launch(())

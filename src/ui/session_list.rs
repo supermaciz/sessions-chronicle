@@ -487,7 +487,7 @@ fn build_source_results_list(results: &[PerSourceResult]) -> gtk::ListBox {
 
 #[relm4::component(pub)]
 impl SimpleComponent for SessionList {
-    type Init = PathBuf;
+    type Init = (PathBuf, SortOrder);
     type Input = SessionListMsg;
     type Output = SessionListOutput;
     type Widgets = SessionListWidgets;
@@ -527,7 +527,7 @@ impl SimpleComponent for SessionList {
     }
 
     fn init(
-        db_path: Self::Init,
+        (db_path, sort_order): Self::Init,
         root: Self::Root,
         sender: ComponentSender<Self>,
     ) -> ComponentParts<Self> {
@@ -540,7 +540,7 @@ impl SimpleComponent for SessionList {
         let search_query = String::new();
         let project_filter = ProjectFilter::AllSessions;
         let date_filter = DateFilter::AnyTime;
-        let sort = Some(SortOrder::default());
+        let sort = Some(sort_order);
         let fetched = Self::fetch_sessions(
             &db_path,
             &active_tools,
@@ -1561,7 +1561,8 @@ mod tests {
     #[gtk::test]
     fn session_list_activates_on_single_click() {
         let temp_db = tempfile::NamedTempFile::new().expect("temp db");
-        let controller = SessionList::builder().launch(temp_db.path().to_path_buf());
+        let controller =
+            SessionList::builder().launch((temp_db.path().to_path_buf(), SortOrder::default()));
         let root = controller.widget().clone().upcast::<gtk::Widget>();
         let list_box = find_list_box(&root).expect("list box");
 
@@ -1575,7 +1576,7 @@ mod tests {
         let outputs_ref = outputs.clone();
 
         let controller = SessionList::builder()
-            .launch(temp_db.path().to_path_buf())
+            .launch((temp_db.path().to_path_buf(), SortOrder::default()))
             .connect_receiver(move |_, output| {
                 outputs_ref.borrow_mut().push(output);
             });
@@ -1626,7 +1627,8 @@ mod tests {
     #[gtk::test]
     fn session_list_uses_single_selection_mode() {
         let temp_db = tempfile::NamedTempFile::new().expect("temp db");
-        let controller = SessionList::builder().launch(temp_db.path().to_path_buf());
+        let controller =
+            SessionList::builder().launch((temp_db.path().to_path_buf(), SortOrder::default()));
         let root = controller.widget().clone().upcast::<gtk::Widget>();
         let list_box = find_list_box(&root).expect("list box");
 
@@ -1636,7 +1638,8 @@ mod tests {
     #[gtk::test]
     fn session_list_selects_first_row_on_init() {
         let temp_db = tempfile::NamedTempFile::new().expect("temp db");
-        let controller = SessionList::builder().launch(temp_db.path().to_path_buf());
+        let controller =
+            SessionList::builder().launch((temp_db.path().to_path_buf(), SortOrder::default()));
 
         // Add a row
         {
@@ -1683,7 +1686,8 @@ mod tests {
         let temp_db = TempDatabase::new();
         temp_db.seed_project_sidebar_fixture();
 
-        let controller = SessionList::builder().launch(temp_db.path.clone());
+        let controller =
+            SessionList::builder().launch((temp_db.path.clone(), SortOrder::default()));
 
         controller.emit(SessionListMsg::SetFilters {
             tools: vec![AiAssistant::ClaudeCode],
@@ -1965,7 +1969,8 @@ mod tests {
     #[gtk::test]
     fn cancel_post_indexing_batch_invalidates_pending_batch_and_measurement() {
         let temp_db = tempfile::NamedTempFile::new().expect("temp db");
-        let controller = SessionList::builder().launch(temp_db.path().to_path_buf());
+        let controller =
+            SessionList::builder().launch((temp_db.path().to_path_buf(), SortOrder::default()));
         let context = IndexingReloadContext {
             indexed: 1,
             skipped: 0,
@@ -2005,7 +2010,8 @@ mod tests {
     #[gtk::test]
     fn start_post_indexing_measurement_cancels_previous_pending_batch() {
         let temp_db = tempfile::NamedTempFile::new().expect("temp db");
-        let controller = SessionList::builder().launch(temp_db.path().to_path_buf());
+        let controller =
+            SessionList::builder().launch((temp_db.path().to_path_buf(), SortOrder::default()));
         let first_context = IndexingReloadContext {
             indexed: 1,
             skipped: 0,
@@ -2060,7 +2066,8 @@ mod tests {
         let temp_db = TempDatabase::new();
         temp_db.seed_project_sidebar_fixture();
 
-        let controller = SessionList::builder().launch(temp_db.path.clone());
+        let controller =
+            SessionList::builder().launch((temp_db.path.clone(), SortOrder::default()));
 
         pump_main_context(|| {
             let parts = controller.state().get();
@@ -2109,7 +2116,8 @@ mod tests {
         let temp_db = TempDatabase::new();
         temp_db.seed_project_sidebar_fixture();
 
-        let controller = SessionList::builder().launch(temp_db.path.clone());
+        let controller =
+            SessionList::builder().launch((temp_db.path.clone(), SortOrder::default()));
 
         pump_main_context(|| {
             let parts = controller.state().get();
@@ -2150,7 +2158,8 @@ mod tests {
         temp_db.seed_project_sidebar_fixture();
         temp_db.seed_many_claude_sessions(70);
 
-        let controller = SessionList::builder().launch(temp_db.path.clone());
+        let controller =
+            SessionList::builder().launch((temp_db.path.clone(), SortOrder::default()));
 
         pump_main_context(|| {
             let parts = controller.state().get();
@@ -2209,7 +2218,8 @@ mod tests {
         temp_db.seed_project_sidebar_fixture();
         temp_db.seed_many_claude_sessions(130);
 
-        let controller = SessionList::builder().launch(temp_db.path.clone());
+        let controller =
+            SessionList::builder().launch((temp_db.path.clone(), SortOrder::default()));
 
         pump_main_context(|| {
             let parts = controller.state().get();
@@ -2296,7 +2306,8 @@ mod tests {
         temp_db.seed_project_sidebar_fixture();
         temp_db.seed_many_claude_sessions(130);
 
-        let controller = SessionList::builder().launch(temp_db.path.clone());
+        let controller =
+            SessionList::builder().launch((temp_db.path.clone(), SortOrder::default()));
 
         pump_main_context(|| {
             let parts = controller.state().get();
@@ -2356,7 +2367,8 @@ mod tests {
         temp_db.seed_project_sidebar_fixture();
         temp_db.seed_many_claude_sessions(130);
 
-        let controller = SessionList::builder().launch(temp_db.path.clone());
+        let controller =
+            SessionList::builder().launch((temp_db.path.clone(), SortOrder::default()));
 
         pump_main_context(|| {
             let parts = controller.state().get();
@@ -2409,7 +2421,8 @@ mod tests {
         temp_db.seed_project_sidebar_fixture();
         temp_db.seed_many_claude_sessions(130);
 
-        let controller = SessionList::builder().launch(temp_db.path.clone());
+        let controller =
+            SessionList::builder().launch((temp_db.path.clone(), SortOrder::default()));
 
         pump_main_context(|| {
             let parts = controller.state().get();
@@ -2470,7 +2483,8 @@ mod tests {
         let temp_db = TempDatabase::new();
         temp_db.seed_project_sidebar_fixture();
 
-        let controller = SessionList::builder().launch(temp_db.path.clone());
+        let controller =
+            SessionList::builder().launch((temp_db.path.clone(), SortOrder::default()));
 
         pump_main_context(|| {
             let parts = controller.state().get();
@@ -2550,7 +2564,8 @@ mod tests {
             )
             .expect("Failed to pin fixture sessions");
 
-        let controller = SessionList::builder().launch(temp_db.path.clone());
+        let controller =
+            SessionList::builder().launch((temp_db.path.clone(), SortOrder::default()));
 
         controller.emit(SessionListMsg::SetFilters {
             tools: vec![AiAssistant::ClaudeCode],
@@ -2578,7 +2593,8 @@ mod tests {
         let temp_db = TempDatabase::new();
         temp_db.seed_project_sidebar_fixture();
 
-        let controller = SessionList::builder().launch(temp_db.path.clone());
+        let controller =
+            SessionList::builder().launch((temp_db.path.clone(), SortOrder::default()));
 
         controller.emit(SessionListMsg::SetSearchState {
             query: " id: alpha-claude-old ".to_string(),
@@ -2606,7 +2622,8 @@ mod tests {
         let temp_db = TempDatabase::new();
         temp_db.seed_project_sidebar_fixture();
 
-        let controller = SessionList::builder().launch(temp_db.path.clone());
+        let controller =
+            SessionList::builder().launch((temp_db.path.clone(), SortOrder::default()));
 
         controller.emit(SessionListMsg::SetFilters {
             tools: vec![AiAssistant::OpenCode],
@@ -2635,7 +2652,8 @@ mod tests {
         let temp_db = TempDatabase::new();
         temp_db.seed_project_sidebar_fixture();
 
-        let controller = SessionList::builder().launch(temp_db.path.clone());
+        let controller =
+            SessionList::builder().launch((temp_db.path.clone(), SortOrder::default()));
 
         controller.emit(SessionListMsg::SetFilters {
             tools: vec![AiAssistant::ClaudeCode],
@@ -2691,7 +2709,7 @@ mod tests {
         let outputs_ref = outputs.clone();
 
         let controller = SessionList::builder()
-            .launch(temp_db.path().to_path_buf())
+            .launch((temp_db.path().to_path_buf(), SortOrder::default()))
             .connect_receiver(move |_, output| {
                 outputs_ref.borrow_mut().push(output);
             });
@@ -2753,7 +2771,8 @@ mod tests {
         let temp_db = TempDatabase::new();
         temp_db.seed_project_sidebar_fixture();
 
-        let controller = SessionList::builder().launch(temp_db.path.clone());
+        let controller =
+            SessionList::builder().launch((temp_db.path.clone(), SortOrder::default()));
 
         controller.emit(SessionListMsg::DateFilterChanged(DateFilter::Custom {
             from: chrono::NaiveDate::from_ymd_opt(2000, 1, 1).unwrap(),
@@ -2794,7 +2813,8 @@ mod tests {
     #[gtk::test]
     fn move_selection_down_advances_index() {
         let temp_db = tempfile::NamedTempFile::new().expect("temp db");
-        let controller = SessionList::builder().launch(temp_db.path().to_path_buf());
+        let controller =
+            SessionList::builder().launch((temp_db.path().to_path_buf(), SortOrder::default()));
 
         {
             let mut parts = controller.state().get_mut();
@@ -2823,7 +2843,8 @@ mod tests {
     #[gtk::test]
     fn move_selection_clamps_at_boundaries() {
         let temp_db = tempfile::NamedTempFile::new().expect("temp db");
-        let controller = SessionList::builder().launch(temp_db.path().to_path_buf());
+        let controller =
+            SessionList::builder().launch((temp_db.path().to_path_buf(), SortOrder::default()));
 
         {
             let mut parts = controller.state().get_mut();
@@ -2848,7 +2869,8 @@ mod tests {
     #[gtk::test]
     fn move_selection_on_empty_list_is_noop() {
         let temp_db = tempfile::NamedTempFile::new().expect("temp db");
-        let controller = SessionList::builder().launch(temp_db.path().to_path_buf());
+        let controller =
+            SessionList::builder().launch((temp_db.path().to_path_buf(), SortOrder::default()));
 
         let root = controller.widget().clone().upcast::<gtk::Widget>();
         let list_box = find_list_box(&root).expect("list box");
@@ -2927,7 +2949,8 @@ mod tests {
         use crate::models::{AiAssistant, PerSourceResult, SourceStatus};
 
         let temp_db = tempfile::NamedTempFile::new().expect("temp db");
-        let controller = SessionList::builder().launch(temp_db.path().to_path_buf());
+        let controller =
+            SessionList::builder().launch((temp_db.path().to_path_buf(), SortOrder::default()));
 
         controller.emit(SessionListMsg::SetSourceResults(vec![PerSourceResult {
             assistant: AiAssistant::ClaudeCode,
@@ -2955,7 +2978,7 @@ mod tests {
         let outputs_ref = outputs.clone();
 
         let controller = SessionList::builder()
-            .launch(temp_db.path().to_path_buf())
+            .launch((temp_db.path().to_path_buf(), SortOrder::default()))
             .connect_receiver(move |_, output| {
                 outputs_ref.borrow_mut().push(output);
             });
@@ -2991,7 +3014,7 @@ mod tests {
         let outputs_ref = outputs.clone();
 
         let controller = SessionList::builder()
-            .launch(temp_db.path().to_path_buf())
+            .launch((temp_db.path().to_path_buf(), SortOrder::default()))
             .connect_receiver(move |_, output| {
                 outputs_ref.borrow_mut().push(output);
             });
