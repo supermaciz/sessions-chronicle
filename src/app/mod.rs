@@ -1298,6 +1298,80 @@ mod tests {
         assert_eq!(parts.model.last_errors_detail, expected_errors);
     }
 
+    #[gtk::test]
+    fn escape_with_active_override_restores_persisted_sort_and_clears_search() {
+        if !schema_is_available() {
+            return;
+        }
+
+        let controller = App::builder().launch(Some(PathBuf::from("tests/fixtures")));
+        pump_main_context(|| !controller.state().get().model.indexing);
+
+        controller.emit(AppMsg::SearchModeChanged(true));
+        pump_main_context(|| controller.state().get().model.search_visible);
+
+        controller.emit(AppMsg::SearchQueryChanged("hello".to_string()));
+        pump_main_context(|| controller.state().get().model.search_query == "hello");
+
+        controller.emit(AppMsg::SortOrderPicked(SortOrder::OldestFirst));
+        pump_main_context(|| {
+            controller.state().get().model.search_sort_override == Some(SortOrder::OldestFirst)
+        });
+
+        {
+            let parts = controller.state().get();
+            assert_eq!(parts.model.sort_order, SortOrder::OldestFirst);
+            assert_eq!(
+                parts.model.search_sort_override,
+                Some(SortOrder::OldestFirst)
+            );
+            assert_eq!(parts.model.search_query, "hello");
+        }
+
+        controller.emit(AppMsg::Escape);
+        pump_main_context(|| controller.state().get().model.search_query.is_empty());
+
+        let parts = controller.state().get();
+        assert!(!parts.model.search_visible);
+        assert!(parts.model.search_query.is_empty());
+        assert_eq!(parts.model.search_sort_override, None);
+        // The persisted sort order (set via the earlier SortOrderPicked while
+        // FTS was active) is preserved and becomes the effective order again
+        // now that the override-only search state has been cleared.
+        assert_eq!(parts.model.sort_order, SortOrder::OldestFirst);
+        assert_eq!(parts.model.effective_sort(), Some(SortOrder::OldestFirst));
+    }
+
+    #[gtk::test]
+    fn search_mode_toggle_with_active_override_restores_persisted_sort_and_clears_search() {
+        if !schema_is_available() {
+            return;
+        }
+
+        let controller = App::builder().launch(Some(PathBuf::from("tests/fixtures")));
+        pump_main_context(|| !controller.state().get().model.indexing);
+
+        controller.emit(AppMsg::SearchModeChanged(true));
+        pump_main_context(|| controller.state().get().model.search_visible);
+
+        controller.emit(AppMsg::SearchQueryChanged("hello".to_string()));
+        pump_main_context(|| controller.state().get().model.search_query == "hello");
+
+        controller.emit(AppMsg::SortOrderPicked(SortOrder::NewestFirst));
+        pump_main_context(|| {
+            controller.state().get().model.search_sort_override == Some(SortOrder::NewestFirst)
+        });
+
+        controller.emit(AppMsg::SearchModeChanged(false));
+        pump_main_context(|| !controller.state().get().model.search_visible);
+
+        let parts = controller.state().get();
+        assert!(parts.model.search_query.is_empty());
+        assert_eq!(parts.model.search_sort_override, None);
+        assert_eq!(parts.model.sort_order, SortOrder::NewestFirst);
+        assert_eq!(parts.model.effective_sort(), Some(SortOrder::NewestFirst));
+    }
+
     #[test]
     fn search_query_update_messages_include_detail_update() {
         let query = "needle".to_string();
