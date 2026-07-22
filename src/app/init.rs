@@ -371,18 +371,16 @@ pub(super) fn setup_breakpoints(
     workspace_switcher_bar: &adw::ViewSwitcherBar,
     sort_pill: &Controller<SortPill>,
 ) {
-    // Add responsive collapse breakpoint
-    let breakpoint = adw::Breakpoint::new(adw::BreakpointCondition::new_length(
-        adw::BreakpointConditionLengthType::MaxWidth,
-        400.0,
-        adw::LengthUnit::Sp,
-    ));
-    breakpoint.add_setter(overlay_split, "collapsed", Some(&true.into()));
-    breakpoint.add_setter(workspace_switcher, "visible", Some(&false.into()));
-    breakpoint.add_setter(workspace_switcher_bar, "reveal", Some(&true.into()));
-    root.add_breakpoint(breakpoint);
+    // libadwaita picks the LAST breakpoint that matches the current size
+    // ("If multiple breakpoints can be used for the current size, the last
+    // one is always picked"). Both breakpoint widths are expressed in `sp`,
+    // which scales with the text-scaling factor, so at large scale factors
+    // the narrower (400sp) breakpoint's condition can become wider than the
+    // 760sp one and both can match simultaneously. Registering the WIDER
+    // breakpoint first and the narrower one second ensures the narrower
+    // breakpoint's setters win whenever both match.
 
-    // Add independent breakpoint to collapse the sort pill label to icon-only
+    // Add independent breakpoint to collapse the sort pill label to icon-only.
     let sort_breakpoint = adw::Breakpoint::new(adw::BreakpointCondition::new_length(
         adw::BreakpointConditionLengthType::MaxWidth,
         760.0,
@@ -397,6 +395,29 @@ pub(super) fn setup_breakpoints(
         sort_sender.send(SortPillInput::SetNarrow(false)).ok();
     });
     root.add_breakpoint(sort_breakpoint);
+
+    // Add responsive collapse breakpoint. Below 400sp the sort pill label
+    // must also be hidden (400 < 760), but once this breakpoint is the
+    // current one, the 760sp breakpoint's apply/unapply handlers above no
+    // longer fire (only the last-matching breakpoint is active), so this
+    // breakpoint re-sends SetNarrow itself.
+    let breakpoint = adw::Breakpoint::new(adw::BreakpointCondition::new_length(
+        adw::BreakpointConditionLengthType::MaxWidth,
+        400.0,
+        adw::LengthUnit::Sp,
+    ));
+    breakpoint.add_setter(overlay_split, "collapsed", Some(&true.into()));
+    breakpoint.add_setter(workspace_switcher, "visible", Some(&false.into()));
+    breakpoint.add_setter(workspace_switcher_bar, "reveal", Some(&true.into()));
+    let sort_sender = sort_pill.sender().clone();
+    breakpoint.connect_apply(move |_| {
+        sort_sender.send(SortPillInput::SetNarrow(true)).ok();
+    });
+    let sort_sender = sort_pill.sender().clone();
+    breakpoint.connect_unapply(move |_| {
+        sort_sender.send(SortPillInput::SetNarrow(false)).ok();
+    });
+    root.add_breakpoint(breakpoint);
 }
 
 pub(super) fn register_actions(
