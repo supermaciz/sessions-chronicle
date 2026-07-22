@@ -261,12 +261,11 @@ impl SortPill {
 }
 
 fn localized_order_label(order: SortOrder) -> String {
-    match order.label_msgid() {
-        "Recent activity" => gettext("Recent activity"),
-        "Oldest first" => gettext("Oldest first"),
-        "Newest first" => gettext("Newest first"),
-        "Most messages" => gettext("Most messages"),
-        _ => unreachable!("SortOrder returned an unknown label message ID"),
+    match order {
+        SortOrder::RecentActivity => gettext("Recent activity"),
+        SortOrder::OldestFirst => gettext("Oldest first"),
+        SortOrder::NewestFirst => gettext("Newest first"),
+        SortOrder::MostMessages => gettext("Most messages"),
     }
 }
 
