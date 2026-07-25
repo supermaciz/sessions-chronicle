@@ -13,6 +13,12 @@ enum YearDisplay {
     WithYear,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RangeEndpoint {
+    Start,
+    End,
+}
+
 pub struct DatePill {
     current_filter: DateFilter,
     counts: DateCounts,
@@ -510,6 +516,24 @@ fn tooltip_for_filter(filter: &DateFilter, today: NaiveDate) -> String {
     }
 }
 
+fn apply_pick(
+    from: Option<NaiveDate>,
+    to: Option<NaiveDate>,
+    endpoint: RangeEndpoint,
+    day: NaiveDate,
+) -> (Option<NaiveDate>, Option<NaiveDate>) {
+    match endpoint {
+        RangeEndpoint::Start => {
+            let to = Some(to.map_or(day, |to| to.max(day)));
+            (Some(day), to)
+        }
+        RangeEndpoint::End => {
+            let from = Some(from.map_or(day, |from| from.min(day)));
+            (from, Some(day))
+        }
+    }
+}
+
 fn valid_custom_filter(from: Option<NaiveDate>, to: Option<NaiveDate>) -> Option<DateFilter> {
     match (from, to) {
         (Some(from), Some(to)) if from <= to => Some(DateFilter::Custom { from, to }),
@@ -518,12 +542,9 @@ fn valid_custom_filter(from: Option<NaiveDate>, to: Option<NaiveDate>) -> Option
 }
 
 fn custom_info_text(from: Option<NaiveDate>, to: Option<NaiveDate>, today: NaiveDate) -> String {
-    match (from, to) {
-        (Some(from), Some(to)) if from <= to => {
-            filter_label(&DateFilter::Custom { from, to }, today)
-        }
-        (Some(_), Some(_)) => gettext("Start date must be on or before end date"),
-        _ => gettext("Choose a start and end date to apply a custom range"),
+    match valid_custom_filter(from, to) {
+        Some(filter) => filter_label(&filter, today),
+        None => gettext("Choose a start and end date to apply a custom range"),
     }
 }
 
@@ -673,13 +694,74 @@ mod tests {
     }
 
     #[test]
-    fn valid_custom_filter_requires_both_dates_in_order() {
+    fn apply_pick_mirrors_and_monotonically_clamps_endpoints() {
+        let early = NaiveDate::from_ymd_opt(2026, 5, 1).unwrap();
+        let middle = NaiveDate::from_ymd_opt(2026, 5, 7).unwrap();
+        let late = NaiveDate::from_ymd_opt(2026, 5, 14).unwrap();
+        let cases = [
+            (
+                None,
+                None,
+                RangeEndpoint::Start,
+                middle,
+                (Some(middle), Some(middle)),
+            ),
+            (
+                None,
+                None,
+                RangeEndpoint::End,
+                middle,
+                (Some(middle), Some(middle)),
+            ),
+            (
+                Some(early),
+                Some(middle),
+                RangeEndpoint::Start,
+                late,
+                (Some(late), Some(late)),
+            ),
+            (
+                Some(middle),
+                Some(late),
+                RangeEndpoint::End,
+                early,
+                (Some(early), Some(early)),
+            ),
+            (
+                Some(early),
+                Some(late),
+                RangeEndpoint::Start,
+                middle,
+                (Some(middle), Some(late)),
+            ),
+            (
+                Some(early),
+                Some(late),
+                RangeEndpoint::End,
+                middle,
+                (Some(early), Some(middle)),
+            ),
+            (
+                Some(middle),
+                Some(middle),
+                RangeEndpoint::Start,
+                middle,
+                (Some(middle), Some(middle)),
+            ),
+        ];
+
+        for (from, to, endpoint, picked, expected) in cases {
+            assert_eq!(apply_pick(from, to, endpoint, picked), expected);
+        }
+    }
+
+    #[test]
+    fn valid_custom_filter_still_requires_both_dates() {
         let from = NaiveDate::from_ymd_opt(2026, 5, 1).unwrap();
         let to = NaiveDate::from_ymd_opt(2026, 5, 7).unwrap();
 
         assert_eq!(valid_custom_filter(None, Some(to)), None);
         assert_eq!(valid_custom_filter(Some(from), None), None);
-        assert_eq!(valid_custom_filter(Some(to), Some(from)), None);
         assert_eq!(
             valid_custom_filter(Some(from), Some(to)),
             Some(DateFilter::Custom { from, to })
