@@ -1,7 +1,7 @@
 # Custom Range Picker in the Date Pill Popover: Design Exploration
 
 **Date:** 2026-07-25  
-**Status:** Open — awaiting decision  
+**Status:** Decided — Proposal B's mechanic (one `GtkCalendar` + an `AdwToggleGroup` endpoint switch), no range shading, no auto-advance. The container is the one open variable: inline by default, with A's `GtkStack` page swap as the fallback if the 659 px expanded height is squeezed at 768 px.  
 **Scope:** Replace the two `GtkCalendar` widgets used to pick a custom date range inside the `DatePill` popover (`src/ui/date_pill.rs`). The preset list itself is not up for debate — it shipped, it works, and it is the 90% path.  
 **Source:** Proposals A and B were designed independently by two reviewers (Mii Beta GTK Designer, UI Designer), each producing its own mockup and measurements; the prose for those two sections was written up from their mockups and annotations. Proposals C and D were added to cover the two axes A and B share: C questions whether a calendar grid is the right instrument at all, D questions whether a free-form range earns any pixels.
 
@@ -357,16 +357,37 @@ A originally reported 284 px and B reported 317 px for the same widget. That gap
 
 ## Decision
 
-*Not yet taken — this section is for the project owner.*
+**Taken 2026-07-25. Proposal B's mechanic ships.** The two reviewers converged on it independently, which is the strongest signal available here, and it is also the smallest diff.
 
-The recommendation put forward by this exploration:
+### What is settled
 
-1. **Ship the mechanic both reviewers converged on** — one `GtkCalendar` plus an `AdwToggleGroup` endpoint switch, with B's monotonic clamp, empty-endpoint mirroring, active-endpoint accessible label, and polite live region. It is the smallest diff, it fixes the "which grid is the start?" defect, it makes `from > to` unreachable rather than merely rejected, and it inherits its entire accessibility story.
-2. **No range shading in v1.** Both reviewers land here independently. The range lives in the toggle labels and the echo line, which can state it truthfully.
-3. **No auto-advance.** `day-selected` fires on arrow navigation, so auto-advance would flip endpoints mid-keyboard-navigation without a custom key controller. Not worth it to save one pointer click.
-4. **Verify the height before committing to inline.** Build B, run it at 768 px, and if the 659 px popover is squeezed, adopt **A's `GtkStack` page swap** — same mechanic, different container, and A's mockup already specifies it. Budget for A's explicit `Escape` handler if you go that way.
-5. **Take D's additive half regardless of which picker wins.** *Last 90 days*, *Last 6 months*, and one row per year with sessions are cheap, orthogonal to the picker, and cover most of what a free-form range gets used for.
-6. **Fix `pill_label()` independently.** Include the year when a custom range spans one (`src/models/date_filter.rs:91`). This is a live ambiguity today and none of the proposals depends on it.
-7. **Amend the frozen spec.** `docs/superpowers/specs/2026-05-27-date-filter-design.md:25` still reads *"Custom range picker — two `GtkCalendar` side by side"*. Whatever is chosen supersedes it.
+1. **One `GtkCalendar` plus an `AdwToggleGroup` endpoint switch.** The second grid goes away. The toggle names the real mechanic — which endpoint the next day click writes to — and carries both dates, so both endpoints stay readable while only one grid renders. Content width drops 622 → 317 px, in *both* popover states.
+2. **B's correctness extras are part of the deal, not optional polish.** The monotonic clamp (setting the start after the end pushes the end, and vice versa), which makes `from > to` unreachable and lets the *"Start date must be on or before end date"* branch of `custom_info_text` be deleted; empty-endpoint mirroring, so one click already yields a valid single-day range and *Apply* is live immediately; the calendar's accessible label following the active endpoint (`Start date` / `End date`), which is what fixes the unlabelled-grid defect; and the range summary as an `accessible-live: polite` region.
+3. **No range shading in v1.** Both reviewers land here independently, and for reasons that compound: `mark_day()` takes a day *number*, so naive shading lies the moment the user pages months, and even the corrected version renders one flat style in which start, end, and interior days are indistinguishable. The range lives in the toggle labels and the echo line, where text can state it truthfully. If a later pass wants shading, the acceptance test is: draft 3–9 June, page to July, confirm no marks; page back, confirm marks return.
+4. **No auto-advance From → To.** This is a feasibility call, not a preference. `GtkCalendar`'s only per-day signal is `day-selected` and it fires on *every* arrow keypress, so auto-advance would flip the active endpoint mid-navigation for keyboard users. Making it safe needs a custom key controller layered over the grid, which is real work to save pointer users one click. Revisit only if the extra click turns out to grate.
 
-**C is not recommended for this iteration**, and the reason is not that the idea is weak — it is the only proposal that makes an empty range impossible to pick by accident, and it has the best width story. It is not recommended because it is the only proposal that *creates* an accessibility obligation instead of inheriting one, and because a `GtkDrawingArea` range brush is a feature-sized piece of work, not a widget swap. Worth revisiting as its own issue if the density strip ever earns a place elsewhere in the app — at which point the custom range gets it for free.
+### The one open variable: the container
+
+**Default to B's inline reveal**, keeping the existing `GtkRevealer` and the predecessor exploration's "single surface" decision. Then measure: build it, run at 768 px, and check whether the **659 px** expanded popover is squeezed once the header bar and shell chrome are subtracted.
+
+If it is, swap the container for **A's `GtkStack` page swap** — same mechanic, ~404 px tall because page 2 does not stack on top of the 272 px preset list, and A's mockup already specifies it. Budget two things if you go that way: an explicit `GtkShortcutController` so the first `Escape` returns to page 1 instead of closing the popover and dropping the draft, and a CSS pass on `AdwToggle::child` so the two-line toggle content does not tower over a stock segmented control.
+
+This is deliberately left to measurement rather than argued. A's geometry is safer, B's dismissal semantics are simpler, and the deciding number is one `flatpak-builder --run` away.
+
+### Adopted alongside, independent of the picker
+
+5. **D's additive half.** *Last 90 days*, *Last 6 months*, and one row per year that has sessions — generated from the index, with counts, replacing *This year* since `2026` says the same thing less ambiguously. Cheap, orthogonal, and covers most of what a free-form range gets used for. Cap or scroll the year group once an archive passes ~5 years.
+6. **Fix `pill_label()`.** Include the year when a custom range spans one (`src/models/date_filter.rs:91`). Today `Dec 28 - Jan 4` is ambiguous, and a cross-year range renders identically to a same-year one. A live defect, independent of everything above.
+7. **Amend the frozen spec.** `docs/superpowers/specs/2026-05-27-date-filter-design.md:25` reads *"Custom range picker — two `GtkCalendar` side by side"*. This exploration supersedes that row.
+
+### Rejected, and why
+
+**C (activity brush) is not rejected on merit.** It has the best width story of the four, it is the only proposal in which an empty range is impossible to pick by accident, and it is the only one that answers *"where did I actually work?"* rather than *"where is 17 May?"* — which is closer to the question someone browsing a session archive is really asking. It is rejected for this iteration because it is the only proposal that **creates** an accessibility obligation instead of inheriting one: a `GtkDrawingArea` gets nothing for free, so it would need `AccessibleRole::Slider` per edge with value announcements *and* a text fallback, meaning two affordances shipped in parallel. That is a feature, not a widget swap. Worth its own issue if a density strip ever earns a place elsewhere in the app — at which point the custom range gets it for free.
+
+**D's subtractive half is rejected.** Deleting free-form ranges outright has the strongest cost argument in the document and the weakest capability argument, and removing a shipped capability reads as a regression even when the replacement covers more ground. Its additive half is adopted above.
+
+### Verification before the PR
+
+Run with `--sessions-dir tests/fixtures`, then: reveal the custom section and confirm the popover width does not change; pick a start after the current end and confirm the end is pushed rather than an error appearing; pick one day and confirm *Apply* becomes sensitive immediately; traverse the whole section with `Tab` and arrows only; run at 200% text scale and in high contrast; resize to the narrow breakpoint and confirm the popover still fits; and measure the expanded height at 768 px, which is the input to the container decision. Unit-testable without a display: the clamp and `valid_custom_filter`. `#[gtk::test]`: the toggle group has two toggles, and `CustomEndpointChanged` moves the calendar to that endpoint's date without re-emitting `CustomDayPicked`.
+
+Next step: a design spec under `docs/superpowers/specs/`, then an implementation plan.
