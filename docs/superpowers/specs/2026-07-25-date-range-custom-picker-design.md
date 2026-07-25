@@ -74,7 +74,7 @@ GtkMenuButton (root, .flat)
             ├─ AdwToggleGroup — 2 × AdwToggle
             │     child = GtkBox v : GtkLabel .caption .dim-label + GtkLabel (date)
             ├─ GtkCalendar
-            ├─ GtkLabel (summary) — xalign 0, wrap, accessible-live: polite
+            ├─ GtkLabel (summary) — xalign 0, wrap, AccessibleRole::Status
             └─ GtkBox h, halign End, spacing 6 — Clear, Apply .suggested-action
 ```
 
@@ -200,13 +200,25 @@ Page 2 tab order: back button → toggle group → calendar → *Clear* → *App
 
 - The calendar's accessible label follows the active endpoint — *"Start date"* / *"End date"* — via `update_property(Property::Label, …)`, translated. This is what fixes the unlabelled-grid defect.
 - Each `AdwToggle` gets an **explicit** accessible label recomposing its two visual lines: *"Start date, 28 December 2025"*. Without it a screen reader announces two disconnected labels.
-- The summary label is an `accessible-live: polite` region, so every pick is announced as a resolved range rather than a bare date.
+- The summary label is given `AccessibleRole::Status`, GTK 4's equivalent of `aria-live="polite"`, so every pick is announced as a resolved range rather than a bare date. There is no live-region *property* in `gtk::AccessibleProperty`; the role is the mechanism.
 - The back button is icon-only and therefore requires an accessible label.
 - The active toggle is identified by libadwaita's own toggle styling, not a custom colour, so it survives high contrast.
 
 ## Date display
 
-Two problems are fixed together in `src/models/date_filter.rs`.
+### Where the formatting lives
+
+`src/models/` is entirely GTK-free today — no file in it imports `gtk`, `glib`, or `relm4`. `DateFilter::pill_label()` sits in `src/models/date_filter.rs` but is consumed only by `src/ui/date_pill.rs`; every other reference is one of its own tests. It is display code already on the wrong side of that boundary, and localizing it in place would require importing both `glib` and `gettext` into the model layer.
+
+`pill_label` therefore **moves** to `src/ui/date_pill.rs` as a free function:
+
+```rust
+fn filter_label(filter: &DateFilter, today: NaiveDate) -> String
+```
+
+`DateFilter` keeps `resolve()` and `is_active()` — pure domain, no toolkit dependency. Its tests that assert on label text move with the function. `src/models/date_filter.rs` is consequently **not** added to `po/POTFILES.in`; only `src/ui/date_pill.rs` is.
+
+### The two defects being fixed
 
 `format_date` currently calls `date.format("%b %-d")` through `chrono`, which is compiled without `unstable-locales`. That emits **English month abbreviations regardless of locale**, in an application that otherwise binds gettext in `src/main.rs:77`. It also omits the year, so a range spanning a year boundary renders as `Dec 28 - Jan 4` — ambiguous about which December, and identical for 2024→2025 and 2025→2026.
 
@@ -228,11 +240,11 @@ Two translatable format strings, one without a year and one with. Selection rule
 
 ### Translatability, and an inconsistency to close while we are here
 
-Neither `src/models/date_filter.rs` nor `src/ui/date_pill.rs` is listed in `po/POTFILES.in`, and `date_pill.rs` contains **no** `gettext` calls at all — every preset label, button label, and tooltip is hardcoded English. The sibling `src/ui/sort_pill.rs`, written more recently, wraps all of its strings and is listed. The two pills in the same header bar follow different rules.
+`src/ui/date_pill.rs` is not listed in `po/POTFILES.in` and contains **no** `gettext` calls at all — every preset label, button label, and tooltip is hardcoded English. The sibling `src/ui/sort_pill.rs`, written more recently, wraps all of its strings and is listed. The two pills in the same header bar follow different rules.
 
 This spec therefore requires:
 
-- both files added to `po/POTFILES.in`;
+- `src/ui/date_pill.rs` added to `po/POTFILES.in`;
 - every string it introduces wrapped in `gettext` — the back button's accessible label, the *"Custom range"* heading, the *"Start date"* / *"End date"* endpoint labels, and the two date format strings;
 - the **existing** strings in `date_pill.rs` wrapped as well.
 
