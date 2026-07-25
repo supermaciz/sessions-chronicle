@@ -74,7 +74,7 @@ GtkMenuButton (root, .flat)
             ├─ AdwToggleGroup — 2 × AdwToggle
             │     child = GtkBox v : GtkLabel .caption .dim-label + GtkLabel (date)
             ├─ GtkCalendar
-            ├─ GtkLabel (summary) — xalign 0, wrap, AccessibleRole::Status
+            ├─ GtkLabel (summary) — xalign 0, wrap
             └─ GtkBox h, halign End, spacing 6 — Clear, Apply .suggested-action
 ```
 
@@ -171,7 +171,9 @@ On popover close, only `page` resets to `Presets`. The drafts need no cleanup be
 
 ### Signal guard
 
-Seeding and endpoint switching both set the calendar's date programmatically, which re-emits `day-selected` and would write the value straight back into the endpoint just left. Store the handler id at connect time and wrap programmatic writes in `block_signal` / `unblock_signal`. A stored `SignalHandlerId` is preferred over a shared `Cell<bool>`: it scopes the suppression to exactly one signal on one widget.
+Seeding and endpoint switching both call `GtkCalendar::set_date()` programmatically, which re-emits `day-selected` when the selected day changes and would write the value straight back into the endpoint just left. Store the handler id at connect time and wrap programmatic writes in `block_signal(&handler_id)` / `unblock_signal(&handler_id)`. A stored `SignalHandlerId` is preferred over a shared `Cell<bool>`: it scopes the suppression to exactly one signal on one widget.
+
+`set_date()` is the GTK 4.20 API used here. Its predecessor, `select_day()`, is deprecated since GTK 4.20.
 
 ## Interaction
 
@@ -184,13 +186,25 @@ Seeding and endpoint switching both set the calendar's date programmatically, wh
 | *Clear* | empty both endpoints, stay on page 2, *Apply* goes insensitive |
 | *Apply* | emit `FilterChanged`, close the popover, reset `page` to `Presets` |
 
-**No auto-advance from *From* to *To*.** `GtkCalendar`'s only per-day signal is `day-selected` and it fires on every arrow keypress, so auto-advance would flip the active endpoint mid-navigation for keyboard users. Making it safe needs a custom key controller over the grid, which is not worth saving pointer users one click.
+### Why there is no auto-advance
+
+GTK does make auto-advance technically safe: arrow keys only move the focused day, while a pointer click or `Space` commits it and emits `day-selected`. The endpoint could therefore switch from *Start* to *End* after that signal without a custom key controller.
+
+| Auto-advance | Consequence |
+|---|---|
+| **For** | The common empty-range path becomes: pick the start, pick the end. No explicit endpoint-switch click is needed. The same sequence works with pointer input and with arrows followed by `Space`. |
+| **For** | Mirroring the first pick into both endpoints leaves a valid single-day range while immediately preparing the second pick to extend it. |
+| **Against** | Selecting a day silently changes the meaning of the next calendar action. The active endpoint is visible, but the mode switch is still indirect. |
+| **Against** | Editing an existing range is not always sequential. A user correcting only the start would be moved to the end after every committed correction and would have to switch back to continue adjusting the start. |
+| **Against** | Pointer users can already select the target endpoint directly; saving one click on first entry makes subsequent corrections less predictable. |
+
+**Decision: no auto-advance.** The active endpoint changes only through the toggle group. This gives every calendar pick the same meaning until the user explicitly changes it, for both first-time entry and correction of an existing range. The cost is one extra endpoint-switch action in the common two-date path.
 
 ## Keyboard
 
 `Ctrl+Shift+D` opens the popover on page 1 with the active preset row focused, exactly as today (`focus_current_row_when_ready`).
 
-Page 2 tab order: back button → toggle group → calendar → *Clear* → *Apply*. `←→` switches endpoint inside `AdwToggleGroup` (native). `PgUp` / `PgDn` change month.
+Page 2 tab order: back button → toggle group → calendar → *Clear* → *Apply*. `←→` switches endpoint inside `AdwToggleGroup` (native). In `GtkCalendar`, arrow keys move the focused day and `Space` commits it; `Ctrl+←` / `Ctrl+→` change month, while `Ctrl+↑` / `Ctrl+↓` change year. These are GTK's native bindings; `PgUp` / `PgDn` are not handled by `GtkCalendar`.
 
 **Escape must have two successive meanings** — return to page 1, then close the popover. This requires a `GtkShortcutController` on the page-2 root with `propagation_phase = Capture` and a handler returning `Propagation::Stop`, so it runs before `GtkPopover`'s autohide. Without the capture phase the popover closes on the first Escape and the draft is lost silently. This is the one part of the design that can fail quietly, so it gets its own test.
 
@@ -198,9 +212,9 @@ Page 2 tab order: back button → toggle group → calendar → *Clear* → *App
 
 ## Accessibility
 
-- The calendar's accessible label follows the active endpoint — *"Start date"* / *"End date"* — via `update_property(Property::Label, …)`, translated. This is what fixes the unlabelled-grid defect.
-- Each `AdwToggle` gets an **explicit** accessible label recomposing its two visual lines: *"Start date, 28 December 2025"*. Without it a screen reader announces two disconnected labels.
-- The summary label is given `AccessibleRole::Status`, GTK 4's equivalent of `aria-live="polite"`, so every pick is announced as a resolved range rather than a bare date. There is no live-region *property* in `gtk::AccessibleProperty`; the role is the mechanism.
+- The calendar's accessible label follows the active endpoint — *"Start date"* / *"End date"* — translated, using the gtk-rs typed API `calendar.update_property(&[gtk::accessible::Property::Label(&label)])`. This is what fixes the unlabelled-grid defect.
+- Each `AdwToggle` sets its `label` property to the accessible text recomposing its two visual lines — *"Start date, 28 December 2025"* — while its `child` remains the custom two-line visual content. `AdwToggle` is not itself a `GtkAccessible`; libadwaita forwards its `label` to the internal radio button's accessible label even when a custom child is displayed.
+- After a user pick changes the resolved summary, the summary label calls `announce(&summary, AccessibleAnnouncementPriority::Medium)`. `AccessibleRole::Status` is not used: GTK documents that role as unused, so it cannot serve as a reliable equivalent of `aria-live="polite"`. Seeding, page entry, and other programmatic synchronization do not announce.
 - The back button is icon-only and therefore requires an accessible label.
 - The active toggle is identified by libadwaita's own toggle styling, not a custom colour, so it survives high contrast.
 
@@ -238,6 +252,14 @@ Two translatable format strings, one without a year and one with. Selection rule
 - otherwise → the with-year format for **both** endpoints, never mixed;
 - `from == to` → a single date, preserving today's behaviour.
 
+`glib::DateTime::format()` is fallible and returns `Result<GString, BoolError>`. A translator can accidentally introduce an unsupported `strftime` sequence, so display formatting has a fixed fallback chain:
+
+1. try the translated format string;
+2. if it fails, retry with the untranslated msgid format;
+3. if that also fails, render the `NaiveDate` as ISO `YYYY-MM-DD`.
+
+Construct the display-only `glib::DateTime` in UTC rather than local time. Only its calendar fields and locale-aware formatting are used; UTC avoids making display formatting depend on whether local midnight exists on a historical timezone transition.
+
 ### Translatability, and an inconsistency to close while we are here
 
 `src/ui/date_pill.rs` is not listed in `po/POTFILES.in` and contains **no** `gettext` calls at all — every preset label, button label, and tooltip is hardcoded English. The sibling `src/ui/sort_pill.rs`, written more recently, wraps all of its strings and is listed. The two pills in the same header bar follow different rules.
@@ -271,6 +293,8 @@ Under `#[gtk::test]`:
 - `CustomEndpointChanged` moves the calendar to that endpoint's date **without** re-emitting `CustomDayPicked` — this is the signal-guard test;
 - *Apply* is sensitive after a single pick;
 - Escape on page 2 returns to page 1 without closing the popover.
+- the calendar and both endpoint toggles expose the composed accessible labels specified above;
+- user picks request a medium-priority summary announcement, while seeding does not.
 
 The two existing tests that walk the tree for a `GtkRevealer` (`find_revealer`, `custom_range_activation_keeps_custom_row_selected`) become `GtkStack` lookups.
 
@@ -281,7 +305,8 @@ Run with `--sessions-dir tests/fixtures`, then confirm:
 - the popover width does not change between page 1 and page 2;
 - picking a start after the current end pushes the end rather than showing an error;
 - one pick makes *Apply* sensitive immediately;
-- the whole picker is reachable with `Tab` and arrows only;
+- the whole picker is reachable with `Tab`, arrows, and `Space` only;
+- `Ctrl+←` / `Ctrl+→` change calendar month without changing the active endpoint;
 - Escape returns to page 1, a second Escape closes;
 - 200% text scale and high contrast;
 - the narrow breakpoint;
