@@ -1,0 +1,322 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1180 900" font-family="-apple-system, 'Cantarell', system-ui, sans-serif" font-size="13">
+  <style>
+    .stroke { fill: none; stroke: #1a1a1a; stroke-width: 1.4; }
+    .stroke-thin { fill: none; stroke: #1a1a1a; stroke-width: 1; }
+    .muted { fill: #777; }
+    .accent { fill: #3584e4; }
+    .accent-stroke { fill: none; stroke: #3584e4; stroke-width: 1.6; }
+    .accent-bg { fill: #3584e4; fill-opacity: 0.12; }
+    .red { fill: #c01c28; }
+    .red-stroke { fill: none; stroke: #c01c28; stroke-width: 1.2; stroke-dasharray: 4 3; }
+    .red-solid { fill: none; stroke: #c01c28; stroke-width: 1.4; }
+    .label { font-size: 12px; fill: #1a1a1a; }
+    .badge { font-size: 11px; fill: #555; }
+    .title { font-size: 14px; font-weight: 600; fill: #1a1a1a; }
+    .note { font-size: 11px; fill: #c01c28; font-style: italic; }
+    .row-text { font-size: 12.5px; fill: #1a1a1a; }
+    .ws { fill: #ffffff; }
+    .bar-out { fill: #c8c8c8; }
+    .bar-in { fill: #3584e4; }
+  </style>
+
+  <text x="20" y="28" class="title">Proposal C — Activity brush: drag a range over your own session density</text>
+  <text x="20" y="46" class="muted" font-size="12">The custom range is picked on the data, not on an abstract grid &#183; popover width unchanged from the preset list (260&#8239;px)</text>
+
+  <!-- ============================================================ -->
+  <!-- (1) TODAY: two GtkCalendar side by side, drawn to scale       -->
+  <!-- ============================================================ -->
+  <text x="20" y="84" class="title" font-size="13">&#9312; Today &#8212; two GtkCalendar, drawn to scale</text>
+
+  <path d="M 90 100 L 97 92 L 104 100 Z" fill="#ffffff" class="stroke"/>
+  <rect x="40" y="100" width="560" height="530" rx="8" fill="#ffffff" class="stroke"/>
+
+  <!-- preset list, only ~260px of content needed -->
+  <rect x="64" y="124" width="512" height="182" rx="8" class="stroke-thin"/>
+  <g font-size="12">
+    <text x="78" y="146">Any time</text><text x="562" y="146" text-anchor="end" class="badge">1204</text>
+    <text x="78" y="172">Today</text><text x="562" y="172" text-anchor="end" class="badge">4</text>
+    <text x="78" y="198">Yesterday</text><text x="562" y="198" text-anchor="end" class="badge">11</text>
+    <text x="78" y="224">Last 7 days</text><text x="562" y="224" text-anchor="end" class="badge">23</text>
+    <text x="78" y="250">Last 30 days</text><text x="562" y="250" text-anchor="end" class="badge">87</text>
+    <text x="78" y="276">This year</text><text x="562" y="276" text-anchor="end" class="badge">412</text>
+    <rect x="66" y="286" width="508" height="18" class="accent-bg"/>
+    <text x="78" y="300" fill="#1a4a8c" font-weight="500">Custom range&#8230;</text>
+  </g>
+
+  <rect x="64" y="320" width="254" height="212" rx="6" fill="#fbfbfb" class="stroke-thin"/>
+  <text x="78" y="342" font-size="11" class="muted">&#9666;</text>
+  <text x="191.0" y="342" text-anchor="middle" font-size="11.5" font-weight="600">May 2026</text>
+  <text x="300" y="342" font-size="11" class="muted">&#9656;</text>
+  <text x="86" y="364" font-size="9.5" class="muted" text-anchor="middle">M</text>
+  <text x="121" y="364" font-size="9.5" class="muted" text-anchor="middle">T</text>
+  <text x="156" y="364" font-size="9.5" class="muted" text-anchor="middle">W</text>
+  <text x="191" y="364" font-size="9.5" class="muted" text-anchor="middle">T</text>
+  <text x="226" y="364" font-size="9.5" class="muted" text-anchor="middle">F</text>
+  <text x="261" y="364" font-size="9.5" class="muted" text-anchor="middle">S</text>
+  <text x="296" y="364" font-size="9.5" class="muted" text-anchor="middle">S</text>
+  <text x="86" y="386" font-size="10.5" class="muted" text-anchor="middle">1</text>
+  <text x="121" y="386" font-size="10.5" class="muted" text-anchor="middle">2</text>
+  <text x="156" y="386" font-size="10.5" class="muted" text-anchor="middle">3</text>
+  <text x="191" y="386" font-size="10.5" class="muted" text-anchor="middle">4</text>
+  <text x="226" y="386" font-size="10.5" class="muted" text-anchor="middle">5</text>
+  <text x="261" y="386" font-size="10.5" class="muted" text-anchor="middle">6</text>
+  <text x="296" y="386" font-size="10.5" class="muted" text-anchor="middle">7</text>
+  <text x="86" y="415" font-size="10.5" class="muted" text-anchor="middle">8</text>
+  <text x="121" y="415" font-size="10.5" class="muted" text-anchor="middle">9</text>
+  <text x="156" y="415" font-size="10.5" class="muted" text-anchor="middle">10</text>
+  <text x="191" y="415" font-size="10.5" class="muted" text-anchor="middle">11</text>
+  <text x="226" y="415" font-size="10.5" class="muted" text-anchor="middle">12</text>
+  <text x="261" y="415" font-size="10.5" class="muted" text-anchor="middle">13</text>
+  <text x="296" y="415" font-size="10.5" class="muted" text-anchor="middle">14</text>
+  <text x="86" y="444" font-size="10.5" class="muted" text-anchor="middle">15</text>
+  <text x="121" y="444" font-size="10.5" class="muted" text-anchor="middle">16</text>
+  <text x="156" y="444" font-size="10.5" class="muted" text-anchor="middle">17</text>
+  <text x="191" y="444" font-size="10.5" class="muted" text-anchor="middle">18</text>
+  <text x="226" y="444" font-size="10.5" class="muted" text-anchor="middle">19</text>
+  <text x="261" y="444" font-size="10.5" class="muted" text-anchor="middle">20</text>
+  <text x="296" y="444" font-size="10.5" class="muted" text-anchor="middle">21</text>
+  <text x="86" y="473" font-size="10.5" class="muted" text-anchor="middle">22</text>
+  <text x="121" y="473" font-size="10.5" class="muted" text-anchor="middle">23</text>
+  <text x="156" y="473" font-size="10.5" class="muted" text-anchor="middle">24</text>
+  <text x="191" y="473" font-size="10.5" class="muted" text-anchor="middle">25</text>
+  <text x="226" y="473" font-size="10.5" class="muted" text-anchor="middle">26</text>
+  <text x="261" y="473" font-size="10.5" class="muted" text-anchor="middle">27</text>
+  <text x="296" y="473" font-size="10.5" class="muted" text-anchor="middle">28</text>
+  <text x="86" y="502" font-size="10.5" class="muted" text-anchor="middle">29</text>
+  <text x="121" y="502" font-size="10.5" class="muted" text-anchor="middle">30</text>
+  <text x="156" y="502" font-size="10.5" class="muted" text-anchor="middle">31</text>
+  <text x="191" y="502" font-size="10.5" class="muted" text-anchor="middle">32</text>
+  <text x="226" y="502" font-size="10.5" class="muted" text-anchor="middle">33</text>
+  <text x="261" y="502" font-size="10.5" class="muted" text-anchor="middle">34</text>
+  <text x="296" y="502" font-size="10.5" class="muted" text-anchor="middle">35</text>
+  <rect x="322" y="320" width="254" height="212" rx="6" fill="#fbfbfb" class="stroke-thin"/>
+  <text x="336" y="342" font-size="11" class="muted">&#9666;</text>
+  <text x="449.0" y="342" text-anchor="middle" font-size="11.5" font-weight="600">June 2026</text>
+  <text x="558" y="342" font-size="11" class="muted">&#9656;</text>
+  <text x="344" y="364" font-size="9.5" class="muted" text-anchor="middle">M</text>
+  <text x="379" y="364" font-size="9.5" class="muted" text-anchor="middle">T</text>
+  <text x="414" y="364" font-size="9.5" class="muted" text-anchor="middle">W</text>
+  <text x="449" y="364" font-size="9.5" class="muted" text-anchor="middle">T</text>
+  <text x="484" y="364" font-size="9.5" class="muted" text-anchor="middle">F</text>
+  <text x="519" y="364" font-size="9.5" class="muted" text-anchor="middle">S</text>
+  <text x="554" y="364" font-size="9.5" class="muted" text-anchor="middle">S</text>
+  <text x="344" y="386" font-size="10.5" class="muted" text-anchor="middle">1</text>
+  <text x="379" y="386" font-size="10.5" class="muted" text-anchor="middle">2</text>
+  <text x="414" y="386" font-size="10.5" class="muted" text-anchor="middle">3</text>
+  <text x="449" y="386" font-size="10.5" class="muted" text-anchor="middle">4</text>
+  <text x="484" y="386" font-size="10.5" class="muted" text-anchor="middle">5</text>
+  <text x="519" y="386" font-size="10.5" class="muted" text-anchor="middle">6</text>
+  <text x="554" y="386" font-size="10.5" class="muted" text-anchor="middle">7</text>
+  <text x="344" y="415" font-size="10.5" class="muted" text-anchor="middle">8</text>
+  <text x="379" y="415" font-size="10.5" class="muted" text-anchor="middle">9</text>
+  <text x="414" y="415" font-size="10.5" class="muted" text-anchor="middle">10</text>
+  <text x="449" y="415" font-size="10.5" class="muted" text-anchor="middle">11</text>
+  <text x="484" y="415" font-size="10.5" class="muted" text-anchor="middle">12</text>
+  <text x="519" y="415" font-size="10.5" class="muted" text-anchor="middle">13</text>
+  <text x="554" y="415" font-size="10.5" class="muted" text-anchor="middle">14</text>
+  <text x="344" y="444" font-size="10.5" class="muted" text-anchor="middle">15</text>
+  <text x="379" y="444" font-size="10.5" class="muted" text-anchor="middle">16</text>
+  <text x="414" y="444" font-size="10.5" class="muted" text-anchor="middle">17</text>
+  <text x="449" y="444" font-size="10.5" class="muted" text-anchor="middle">18</text>
+  <text x="484" y="444" font-size="10.5" class="muted" text-anchor="middle">19</text>
+  <text x="519" y="444" font-size="10.5" class="muted" text-anchor="middle">20</text>
+  <text x="554" y="444" font-size="10.5" class="muted" text-anchor="middle">21</text>
+  <text x="344" y="473" font-size="10.5" class="muted" text-anchor="middle">22</text>
+  <text x="379" y="473" font-size="10.5" class="muted" text-anchor="middle">23</text>
+  <text x="414" y="473" font-size="10.5" class="muted" text-anchor="middle">24</text>
+  <text x="449" y="473" font-size="10.5" class="muted" text-anchor="middle">25</text>
+  <text x="484" y="473" font-size="10.5" class="muted" text-anchor="middle">26</text>
+  <text x="519" y="473" font-size="10.5" class="muted" text-anchor="middle">27</text>
+  <text x="554" y="473" font-size="10.5" class="muted" text-anchor="middle">28</text>
+  <text x="344" y="502" font-size="10.5" class="muted" text-anchor="middle">29</text>
+  <text x="379" y="502" font-size="10.5" class="muted" text-anchor="middle">30</text>
+  <text x="414" y="502" font-size="10.5" class="muted" text-anchor="middle">31</text>
+  <text x="449" y="502" font-size="10.5" class="muted" text-anchor="middle">32</text>
+  <text x="484" y="502" font-size="10.5" class="muted" text-anchor="middle">33</text>
+  <text x="519" y="502" font-size="10.5" class="muted" text-anchor="middle">34</text>
+  <text x="554" y="502" font-size="10.5" class="muted" text-anchor="middle">35</text>
+
+  <text x="64" y="558" font-size="11" class="muted">Choose a start and end date to apply a custom range</text>
+  <rect x="428" y="574" width="66" height="26" rx="6" class="stroke-thin" fill="#fff"/>
+  <text x="461" y="591" text-anchor="middle" font-size="11.5">Clear</text>
+  <rect x="502" y="574" width="72" height="26" rx="6" fill="#e8e8e8" class="stroke-thin"/>
+  <text x="538" y="591" text-anchor="middle" font-size="11.5" class="muted">Apply</text>
+
+  <!-- width annotation -->
+  <line x1="40" y1="648" x2="600" y2="648" class="red-solid"/>
+  <line x1="40" y1="642" x2="40" y2="654" class="red-solid"/>
+  <line x1="600" y1="642" x2="600" y2="654" class="red-solid"/>
+  <text x="320" y="668" text-anchor="middle" class="note">560&#8239;px as drawn &#183; 622&#8239;px measured &#8212; set by the 10% path, paid on every open</text>
+  <path d="M 300 306 Q 250 300 236 322" class="red-stroke"/>
+  <text x="64" y="690" class="note">Two grids, 84 tappable day cells, zero indication of which days actually hold sessions.</text>
+  <text x="64" y="706" class="note">GtkCalendar cannot highlight a span, so the selected range is invisible &#8212; only the info label states it.</text>
+
+  <!-- ============================================================ -->
+  <!-- (2) PROPOSAL: 260px popover with brush strip                  -->
+  <!-- ============================================================ -->
+  <text x="640" y="84" class="title" font-size="13">&#9313; Proposal &#8212; same popover, one 236&#215;56 strip</text>
+
+  <path d="M 690 100 L 697 92 L 704 100 Z" fill="#ffffff" class="stroke"/>
+  <rect x="640" y="100" width="260" height="530" rx="8" fill="#ffffff" class="stroke"/>
+
+  <rect x="654" y="124" width="232" height="182" rx="8" class="stroke-thin"/>
+  <g font-size="12">
+    <text x="666" y="146">Any time</text><text x="874" y="146" text-anchor="end" class="badge">1204</text>
+    <text x="666" y="172">Today</text><text x="874" y="172" text-anchor="end" class="badge">4</text>
+    <text x="666" y="198">Yesterday</text><text x="874" y="198" text-anchor="end" class="badge">11</text>
+    <text x="666" y="224">Last 7 days</text><text x="874" y="224" text-anchor="end" class="badge">23</text>
+    <text x="666" y="250">Last 30 days</text><text x="874" y="250" text-anchor="end" class="badge">87</text>
+    <text x="666" y="276">This year</text><text x="874" y="276" text-anchor="end" class="badge">412</text>
+    <rect x="656" y="286" width="228" height="18" class="accent-bg"/>
+    <text x="666" y="300" fill="#1a4a8c" font-weight="500">Custom range</text>
+    <text x="874" y="300" text-anchor="end" class="muted" font-size="11">&#9662;</text>
+  </g>
+
+  <!-- brush strip -->
+  <rect x="654" y="320" width="232" height="176" rx="8" class="stroke-thin" fill="#fbfbfb"/>
+  <text x="666" y="342" font-size="11" class="muted">Sessions per week</text>
+  <line x1="666" y1="468" x2="882" y2="468" stroke="#ccc" stroke-width="1"/>
+  <rect x="799" y="404" width="51" height="64" class="accent-bg"/>
+    <rect x="675.5" y="464.5" width="3.4" height="3.5" class="bar-out" />
+    <rect x="680.2" y="459.3" width="3.4" height="8.7" class="bar-out" />
+    <rect x="685.0" y="462.8" width="3.4" height="5.2" class="bar-out" />
+    <rect x="699.2" y="466.0" width="3.4" height="2.0" class="bar-out" />
+    <rect x="704.0" y="455.8" width="3.4" height="12.2" class="bar-out" />
+    <rect x="708.8" y="448.9" width="3.4" height="19.1" class="bar-out" />
+    <rect x="713.5" y="452.4" width="3.4" height="15.7" class="bar-out" />
+    <rect x="718.2" y="461.0" width="3.4" height="7.0" class="bar-out" />
+    <rect x="732.5" y="462.8" width="3.4" height="5.2" class="bar-out" />
+    <rect x="737.2" y="454.1" width="3.4" height="13.9" class="bar-out" />
+    <rect x="742.0" y="443.6" width="3.4" height="24.4" class="bar-out" />
+    <rect x="746.8" y="438.4" width="3.4" height="29.6" class="bar-out" />
+    <rect x="751.5" y="447.1" width="3.4" height="20.9" class="bar-out" />
+    <rect x="756.2" y="457.6" width="3.4" height="10.4" class="bar-out" />
+    <rect x="761.0" y="464.5" width="3.4" height="3.5" class="bar-out" />
+    <rect x="775.2" y="461.0" width="3.4" height="7.0" class="bar-out" />
+    <rect x="780.0" y="452.4" width="3.4" height="15.7" class="bar-out" />
+    <rect x="784.8" y="445.4" width="3.4" height="22.6" class="bar-out" />
+    <rect x="789.5" y="450.6" width="3.4" height="17.4" class="bar-out" />
+    <rect x="794.2" y="441.9" width="3.4" height="26.1" class="bar-out" />
+    <rect x="799.0" y="435.0" width="3.4" height="33.0" class="bar-in" />
+    <rect x="803.8" y="429.7" width="3.4" height="38.3" class="bar-in" />
+    <rect x="808.5" y="440.2" width="3.4" height="27.8" class="bar-in" />
+    <rect x="813.2" y="454.1" width="3.4" height="13.9" class="bar-in" />
+    <rect x="818.0" y="462.8" width="3.4" height="5.2" class="bar-in" />
+    <rect x="827.5" y="466.0" width="3.4" height="2.0" class="bar-in" />
+    <rect x="832.2" y="457.6" width="3.4" height="10.4" class="bar-in" />
+    <rect x="837.0" y="447.1" width="3.4" height="20.9" class="bar-in" />
+    <rect x="841.8" y="436.7" width="3.4" height="31.3" class="bar-in" />
+    <rect x="846.5" y="431.5" width="3.4" height="36.5" class="bar-in" />
+    <rect x="851.2" y="438.4" width="3.4" height="29.6" class="bar-out" />
+    <rect x="856.0" y="448.9" width="3.4" height="19.1" class="bar-out" />
+    <rect x="860.8" y="455.8" width="3.4" height="12.2" class="bar-out" />
+    <rect x="865.5" y="461.0" width="3.4" height="7.0" class="bar-out" />
+    <rect x="870.2" y="452.4" width="3.4" height="15.7" class="bar-out" />
+    <rect x="875.0" y="443.6" width="3.4" height="24.4" class="bar-out" />
+    <rect x="879.8" y="433.2" width="3.4" height="34.8" class="bar-out" />
+    <rect x="884.5" y="428.0" width="3.4" height="40.0" class="bar-out" />
+    <rect x="889.2" y="445.4" width="3.4" height="22.6" class="bar-out" />
+  <!-- brush handles -->
+  <line x1="799" y1="400" x2="799" y2="472" class="accent-stroke"/>
+  <rect x="795.5" y="432" width="7" height="14" rx="3" fill="#ffffff" class="accent-stroke"/>
+  <line x1="850" y1="400" x2="850" y2="472" class="accent-stroke"/>
+  <rect x="846.5" y="432" width="7" height="14" rx="3" fill="#ffffff" class="accent-stroke"/>
+  <!-- axis ticks -->
+  <g font-size="9" class="muted" text-anchor="middle">
+    <text x="676" y="482">Aug</text>
+    <text x="740" y="482">Nov</text>
+    <text x="806" y="482">Mar</text>
+    <text x="872" y="482">Jul</text>
+  </g>
+  <text x="666" y="506" font-size="11.5"><tspan font-weight="600">2 Mar &#8211; 17 May 2026</tspan></text>
+  <text x="666" y="522" font-size="10.5" class="muted">126 sessions in range</text>
+
+  <rect x="742" y="538" width="66" height="26" rx="6" class="stroke-thin" fill="#fff"/>
+  <text x="775" y="555" text-anchor="middle" font-size="11.5">Clear</text>
+  <rect x="816" y="538" width="70" height="26" rx="6" class="accent"/>
+  <text x="851" y="555" text-anchor="middle" font-size="11.5" fill="#fff" font-weight="600">Apply</text>
+
+  <line x1="640" y1="648" x2="900" y2="648" class="red-solid"/>
+  <line x1="640" y1="642" x2="640" y2="654" class="red-solid"/>
+  <line x1="900" y1="642" x2="900" y2="654" class="red-solid"/>
+  <text x="770" y="668" text-anchor="middle" class="note">260&#8239;px &#8212; the preset list dictates the width, in every state</text>
+
+  <path d="M 890 478 Q 940 478 946 424" class="red-stroke"/>
+  <text x="952" y="388" class="note">Empty weeks are visibly empty:</text>
+  <text x="952" y="402" class="note">you cannot brush a range with</text>
+  <text x="952" y="416" class="note">no sessions in it by accident.</text>
+
+  <path d="M 890 522 Q 936 522 942 546" class="red-stroke"/>
+  <text x="948" y="560" class="note">Count updates live while</text>
+  <text x="948" y="574" class="note">dragging &#8212; same DateCounts</text>
+  <text x="948" y="588" class="note">query, bucketed.</text>
+
+  <!-- ============================================================ -->
+  <!-- (3) STRIP ANATOMY                                             -->
+  <!-- ============================================================ -->
+  <line x1="20" y1="726" x2="1160" y2="726" class="stroke-thin" stroke="#ddd"/>
+  <text x="20" y="750" class="title" font-size="13">&#9314; Strip anatomy (zoomed) &#8212; GtkDrawingArea + GtkGestureDrag, 48 weekly buckets</text>
+
+  <rect x="240" y="768" width="707" height="88" rx="4" fill="#fbfbfb" class="stroke-thin"/>
+  <rect x="652.3" y="768" width="157.6" height="88" class="accent-bg"/>
+    <rect x="269.4" y="849.0" width="10.4" height="7.0" class="bar-out" />
+    <rect x="284.2" y="838.6" width="10.4" height="17.4" class="bar-out" />
+    <rect x="298.9" y="845.6" width="10.4" height="10.4" class="bar-out" />
+    <rect x="343.1" y="852.0" width="10.4" height="4.0" class="bar-out" />
+    <rect x="357.8" y="831.7" width="10.4" height="24.3" class="bar-out" />
+    <rect x="372.5" y="817.7" width="10.4" height="38.3" class="bar-out" />
+    <rect x="387.2" y="824.7" width="10.4" height="31.3" class="bar-out" />
+    <rect x="402.0" y="842.1" width="10.4" height="13.9" class="bar-out" />
+    <rect x="446.1" y="845.6" width="10.4" height="10.4" class="bar-out" />
+    <rect x="460.9" y="828.2" width="10.4" height="27.8" class="bar-out" />
+    <rect x="475.6" y="807.3" width="10.4" height="48.7" class="bar-out" />
+    <rect x="490.3" y="796.9" width="10.4" height="59.1" class="bar-out" />
+    <rect x="505.1" y="814.3" width="10.4" height="41.7" class="bar-out" />
+    <rect x="519.8" y="835.1" width="10.4" height="20.9" class="bar-out" />
+    <rect x="534.5" y="849.0" width="10.4" height="7.0" class="bar-out" />
+    <rect x="578.7" y="842.1" width="10.4" height="13.9" class="bar-out" />
+    <rect x="593.4" y="824.7" width="10.4" height="31.3" class="bar-out" />
+    <rect x="608.1" y="810.8" width="10.4" height="45.2" class="bar-out" />
+    <rect x="622.9" y="821.2" width="10.4" height="34.8" class="bar-out" />
+    <rect x="637.6" y="803.8" width="10.4" height="52.2" class="bar-out" />
+    <rect x="652.3" y="789.9" width="10.4" height="66.1" class="bar-in" />
+    <rect x="667.0" y="779.5" width="10.4" height="76.5" class="bar-in" />
+    <rect x="681.8" y="800.3" width="10.4" height="55.7" class="bar-in" />
+    <rect x="696.5" y="828.2" width="10.4" height="27.8" class="bar-in" />
+    <rect x="711.2" y="845.6" width="10.4" height="10.4" class="bar-in" />
+    <rect x="740.7" y="852.0" width="10.4" height="4.0" class="bar-in" />
+    <rect x="755.4" y="835.1" width="10.4" height="20.9" class="bar-in" />
+    <rect x="770.1" y="814.3" width="10.4" height="41.7" class="bar-in" />
+    <rect x="784.8" y="793.4" width="10.4" height="62.6" class="bar-in" />
+    <rect x="799.6" y="783.0" width="10.4" height="73.0" class="bar-in" />
+    <rect x="814.3" y="796.9" width="10.4" height="59.1" class="bar-out" />
+    <rect x="829.0" y="817.7" width="10.4" height="38.3" class="bar-out" />
+    <rect x="843.7" y="831.7" width="10.4" height="24.3" class="bar-out" />
+    <rect x="858.5" y="842.1" width="10.4" height="13.9" class="bar-out" />
+    <rect x="873.2" y="824.7" width="10.4" height="31.3" class="bar-out" />
+    <rect x="887.9" y="807.3" width="10.4" height="48.7" class="bar-out" />
+    <rect x="902.6" y="786.4" width="10.4" height="69.6" class="bar-out" />
+    <rect x="917.4" y="776.0" width="10.4" height="80.0" class="bar-out" />
+    <rect x="932.1" y="810.8" width="10.4" height="45.2" class="bar-out" />
+  <line x1="652.3" y1="768" x2="652.3" y2="856" class="accent-stroke"/>
+  <rect x="647.3" y="806" width="10" height="20" rx="4" fill="#ffffff" class="accent-stroke"/>
+  <line x1="809.9" y1="768" x2="809.9" y2="856" class="accent-stroke"/>
+  <rect x="804.9" y="806" width="10" height="20" rx="4" class="accent"/>
+
+  <text x="652.3" y="872" text-anchor="middle" font-size="10.5" class="accent">start handle</text>
+  <text x="809.9" y="872" text-anchor="middle" font-size="10.5" class="accent">end handle</text>
+  <text x="240" y="872" font-size="10.5" class="muted">oldest indexed session</text>
+  <text x="947" y="872" text-anchor="end" font-size="10.5" class="muted">today</text>
+
+  <text x="20" y="790" class="label" font-weight="600">Mouse</text>
+  <text x="20" y="806" font-size="10.5" class="muted">Drag anywhere &#8594; new range.</text>
+  <text x="20" y="820" font-size="10.5" class="muted">Drag a handle &#8594; adjust one end.</text>
+  <text x="20" y="834" font-size="10.5" class="muted">Click a single bucket &#8594; that week.</text>
+  <text x="20" y="848" font-size="10.5" class="muted">Scroll &#8594; nothing (no hidden state).</text>
+
+  <text x="968" y="790" class="label" font-weight="600">Keyboard</text>
+  <text x="968" y="806" font-size="10.5" class="muted">Tab enters the strip.</text>
+  <text x="968" y="820" font-size="10.5" class="muted">&#8592;/&#8594; move the focused edge.</text>
+  <text x="968" y="834" font-size="10.5" class="muted">Tab switches edge.</text>
+  <text x="968" y="848" font-size="10.5" class="red">a11y: needs a text fallback (see cons).</text>
+</svg>

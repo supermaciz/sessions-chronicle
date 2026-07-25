@@ -1,0 +1,320 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1160 812" font-family="-apple-system, 'Cantarell', system-ui, sans-serif" font-size="13">
+  <style>
+    .stroke { fill: none; stroke: #1a1a1a; stroke-width: 1.4; }
+    .stroke-thin { fill: none; stroke: #1a1a1a; stroke-width: 1; }
+    .muted { fill: #777; }
+    .accent { fill: #3584e4; }
+    .accent-stroke { fill: none; stroke: #3584e4; stroke-width: 1.6; }
+    .accent-bg { fill: #3584e4; fill-opacity: 0.12; }
+    .red { fill: #c01c28; }
+    .red-stroke { fill: none; stroke: #c01c28; stroke-width: 1.2; stroke-dasharray: 4 3; }
+    .dim { fill: none; stroke: #c01c28; stroke-width: 1.2; }
+    .label { font-size: 12px; fill: #1a1a1a; }
+    .badge { font-size: 11px; fill: #555; }
+    .title { font-size: 14px; font-weight: 600; fill: #1a1a1a; }
+    .note { font-size: 11px; fill: #c01c28; font-style: italic; }
+    .row-text { font-size: 12.5px; fill: #1a1a1a; }
+    .day { font-size: 11px; fill: #1a1a1a; }
+    .day-off { font-size: 11px; fill: #777; }
+    .day-on { font-size: 11px; fill: #3584e4; }
+    .ws { fill: #ffffff; }
+  </style>
+
+  <!-- ===== Sheet header ===== -->
+  <text x="20" y="28" class="title">Custom range picker &#8212; one GtkCalendar + AdwToggleGroup endpoint switch</text>
+  <text x="20" y="46" class="muted" font-size="12">The 10% path stops dictating the geometry of the 90% path: popover content 622 px &#8594; 317 px, identical in both states</text>
+  <text x="20" y="63" class="badge">Widths are 1:1 measured pixels (GtkWidget::measure, libadwaita 1.9.2, Cantarell 11) &#183; heights drawn at 0.75 to fit the sheet</text>
+
+  <!-- ================= BEFORE: today ================= -->
+  <text x="20" y="94" class="title" font-size="13">Today &#8212; two GtkCalendar side by side</text>
+
+  <!-- width dimensions -->
+  <line x1="20" y1="116" x2="642" y2="116" class="dim" />
+  <line x1="20" y1="111" x2="20" y2="121" class="dim" />
+  <line x1="642" y1="111" x2="642" y2="121" class="dim" />
+  <text x="331" y="107" class="note" text-anchor="middle">622 px content width &#8212; in BOTH popover states</text>
+  <line x1="20" y1="133" x2="174" y2="133" class="dim" />
+  <line x1="20" y1="128" x2="20" y2="138" class="dim" />
+  <line x1="174" y1="128" x2="174" y2="138" class="dim" />
+  <text x="183" y="137" class="note">presets alone need 154 px</text>
+
+  <!-- popover -->
+  <rect x="20" y="146" width="622" height="460" rx="10" class="ws stroke" />
+  <polygon points="350,146 378,146 364,134" class="ws stroke" />
+  <text x="386" y="142" class="badge">anchored on the header-bar date pill</text>
+
+  <!-- preset boxed-list (7 rows, 272 px real height) -->
+  <rect x="32" y="155" width="598" height="204" rx="8" class="ws stroke-thin" />
+  <text x="44" y="174" class="row-text">Any time</text>
+  <text x="618" y="174" class="badge" text-anchor="end">1284</text>
+  <line x1="32" y1="184" x2="630" y2="184" class="stroke-thin" stroke-opacity="0.35" />
+  <text x="44" y="203" class="row-text">Today</text>
+  <text x="618" y="203" class="badge" text-anchor="end">12</text>
+  <line x1="32" y1="213" x2="630" y2="213" class="stroke-thin" stroke-opacity="0.35" />
+  <text x="44" y="232" class="row-text">Yesterday</text>
+  <text x="618" y="232" class="badge" text-anchor="end">8</text>
+  <line x1="32" y1="242" x2="630" y2="242" class="stroke-thin" stroke-opacity="0.35" />
+  <text x="44" y="261" class="row-text">Last 7 days</text>
+  <text x="618" y="261" class="badge" text-anchor="end">64</text>
+  <line x1="32" y1="272" x2="630" y2="272" class="stroke-thin" stroke-opacity="0.35" />
+  <text x="44" y="290" class="row-text">Last 30 days</text>
+  <text x="618" y="290" class="badge" text-anchor="end">210</text>
+  <line x1="32" y1="301" x2="630" y2="301" class="stroke-thin" stroke-opacity="0.35" />
+  <text x="44" y="319" class="row-text">This year</text>
+  <text x="618" y="319" class="badge" text-anchor="end">900</text>
+  <line x1="32" y1="330" x2="630" y2="330" class="stroke-thin" stroke-opacity="0.35" />
+  <rect x="33" y="331" width="596" height="27" class="accent-bg" />
+  <text x="44" y="348" class="accent" font-size="12" font-weight="600">Custom range&#8230;</text>
+
+  <!-- revealer: two calendars, 293 x 229 each + 12 px spacing -->
+  <rect x="32" y="368" width="293" height="172" rx="6" class="ws stroke-thin" />
+  <text x="178" y="386" class="label" text-anchor="middle" font-weight="600">June 2026</text>
+  <text x="48" y="386" class="muted" font-size="12">&#8249;</text>
+  <text x="305" y="386" class="muted" font-size="12">&#8250;</text>
+  <line x1="32" y1="394" x2="325" y2="394" class="stroke-thin" stroke-opacity="0.4" />
+  <text x="63" y="410" class="badge" font-size="10" text-anchor="middle">M</text>
+  <text x="102" y="410" class="badge" font-size="10" text-anchor="middle">T</text>
+  <text x="140" y="410" class="badge" font-size="10" text-anchor="middle">W</text>
+  <text x="179" y="410" class="badge" font-size="10" text-anchor="middle">T</text>
+  <text x="217" y="410" class="badge" font-size="10" text-anchor="middle">F</text>
+  <text x="255" y="410" class="badge" font-size="10" text-anchor="middle">S</text>
+  <text x="294" y="410" class="badge" font-size="10" text-anchor="middle">S</text>
+  <circle cx="140" cy="426" r="10" class="accent-bg" />
+  <circle cx="140" cy="426" r="11" class="accent-stroke" />
+  <text x="63" y="430" class="day" text-anchor="middle">1</text>
+  <text x="102" y="430" class="day" text-anchor="middle">2</text>
+  <text x="140" y="430" class="day-on" text-anchor="middle">3</text>
+  <text x="179" y="430" class="day" text-anchor="middle">4</text>
+  <text x="217" y="430" class="day" text-anchor="middle">5</text>
+  <text x="255" y="430" class="day" text-anchor="middle">6</text>
+  <text x="294" y="430" class="day" text-anchor="middle">7</text>
+  <text x="63" y="452" class="day" text-anchor="middle">8</text>
+  <text x="102" y="452" class="day" text-anchor="middle">9</text>
+  <text x="140" y="452" class="day" text-anchor="middle">10</text>
+  <text x="179" y="452" class="day" text-anchor="middle">11</text>
+  <text x="217" y="452" class="day" text-anchor="middle">12</text>
+  <text x="255" y="452" class="day" text-anchor="middle">13</text>
+  <text x="294" y="452" class="day" text-anchor="middle">14</text>
+  <text x="63" y="474" class="day" text-anchor="middle">15</text>
+  <text x="102" y="474" class="day" text-anchor="middle">16</text>
+  <text x="140" y="474" class="day" text-anchor="middle">17</text>
+  <text x="179" y="474" class="day" text-anchor="middle">18</text>
+  <text x="217" y="474" class="day" text-anchor="middle">19</text>
+  <text x="255" y="474" class="day" text-anchor="middle">20</text>
+  <text x="294" y="474" class="day" text-anchor="middle">21</text>
+  <text x="63" y="496" class="day" text-anchor="middle">22</text>
+  <text x="102" y="496" class="day" text-anchor="middle">23</text>
+  <text x="140" y="496" class="day" text-anchor="middle">24</text>
+  <text x="179" y="496" class="day" text-anchor="middle">25</text>
+  <text x="217" y="496" class="day" text-anchor="middle">26</text>
+  <text x="255" y="496" class="day" text-anchor="middle">27</text>
+  <text x="294" y="496" class="day" text-anchor="middle">28</text>
+  <text x="63" y="518" class="day" text-anchor="middle">29</text>
+  <text x="102" y="518" class="day" text-anchor="middle">30</text>
+  <text x="140" y="518" class="day-off" text-anchor="middle">1</text>
+  <text x="179" y="518" class="day-off" text-anchor="middle">2</text>
+  <text x="217" y="518" class="day-off" text-anchor="middle">3</text>
+  <text x="255" y="518" class="day-off" text-anchor="middle">4</text>
+  <text x="294" y="518" class="day-off" text-anchor="middle">5</text>
+
+  <rect x="337" y="368" width="293" height="172" rx="6" class="ws stroke-thin" />
+  <text x="483" y="386" class="label" text-anchor="middle" font-weight="600">June 2026</text>
+  <text x="353" y="386" class="muted" font-size="12">&#8249;</text>
+  <text x="610" y="386" class="muted" font-size="12">&#8250;</text>
+  <line x1="337" y1="394" x2="630" y2="394" class="stroke-thin" stroke-opacity="0.4" />
+  <text x="368" y="410" class="badge" font-size="10" text-anchor="middle">M</text>
+  <text x="407" y="410" class="badge" font-size="10" text-anchor="middle">T</text>
+  <text x="445" y="410" class="badge" font-size="10" text-anchor="middle">W</text>
+  <text x="484" y="410" class="badge" font-size="10" text-anchor="middle">T</text>
+  <text x="522" y="410" class="badge" font-size="10" text-anchor="middle">F</text>
+  <text x="560" y="410" class="badge" font-size="10" text-anchor="middle">S</text>
+  <text x="599" y="410" class="badge" font-size="10" text-anchor="middle">S</text>
+  <text x="368" y="430" class="day" text-anchor="middle">1</text>
+  <text x="407" y="430" class="day" text-anchor="middle">2</text>
+  <text x="445" y="430" class="day" text-anchor="middle">3</text>
+  <text x="484" y="430" class="day" text-anchor="middle">4</text>
+  <text x="522" y="430" class="day" text-anchor="middle">5</text>
+  <text x="560" y="430" class="day" text-anchor="middle">6</text>
+  <text x="599" y="430" class="day" text-anchor="middle">7</text>
+  <circle cx="407" cy="448" r="10" class="accent-bg" />
+  <circle cx="407" cy="448" r="11" class="accent-stroke" />
+  <text x="368" y="452" class="day" text-anchor="middle">8</text>
+  <text x="407" y="452" class="day-on" text-anchor="middle">9</text>
+  <text x="445" y="452" class="day" text-anchor="middle">10</text>
+  <text x="484" y="452" class="day" text-anchor="middle">11</text>
+  <text x="522" y="452" class="day" text-anchor="middle">12</text>
+  <text x="560" y="452" class="day" text-anchor="middle">13</text>
+  <text x="599" y="452" class="day" text-anchor="middle">14</text>
+  <text x="368" y="474" class="day" text-anchor="middle">15</text>
+  <text x="407" y="474" class="day" text-anchor="middle">16</text>
+  <text x="445" y="474" class="day" text-anchor="middle">17</text>
+  <text x="484" y="474" class="day" text-anchor="middle">18</text>
+  <text x="522" y="474" class="day" text-anchor="middle">19</text>
+  <text x="560" y="474" class="day" text-anchor="middle">20</text>
+  <text x="599" y="474" class="day" text-anchor="middle">21</text>
+  <text x="368" y="496" class="day" text-anchor="middle">22</text>
+  <text x="407" y="496" class="day" text-anchor="middle">23</text>
+  <text x="445" y="496" class="day" text-anchor="middle">24</text>
+  <text x="484" y="496" class="day" text-anchor="middle">25</text>
+  <text x="522" y="496" class="day" text-anchor="middle">26</text>
+  <text x="560" y="496" class="day" text-anchor="middle">27</text>
+  <text x="599" y="496" class="day" text-anchor="middle">28</text>
+  <text x="368" y="518" class="day" text-anchor="middle">29</text>
+  <text x="407" y="518" class="day" text-anchor="middle">30</text>
+  <text x="445" y="518" class="day-off" text-anchor="middle">1</text>
+  <text x="484" y="518" class="day-off" text-anchor="middle">2</text>
+  <text x="522" y="518" class="day-off" text-anchor="middle">3</text>
+  <text x="560" y="518" class="day-off" text-anchor="middle">4</text>
+  <text x="599" y="518" class="day-off" text-anchor="middle">5</text>
+
+  <rect x="32" y="368" width="293" height="172" rx="6" class="red-stroke" />
+  <rect x="337" y="368" width="293" height="172" rx="6" class="red-stroke" />
+
+  <text x="32" y="560" class="label">3 Jun &#8211; 9 Jun 2026</text>
+  <text x="150" y="560" class="note">the only thing that names the endpoints</text>
+  <rect x="464" y="571" width="68" height="26" rx="6" class="ws stroke-thin" />
+  <text x="498" y="588" class="label" text-anchor="middle">Clear</text>
+  <rect x="558" y="571" width="72" height="26" rx="6" class="accent-bg accent-stroke" />
+  <text x="594" y="588" class="accent" font-size="12" text-anchor="middle">Apply</text>
+
+  <!-- ================= AFTER: proposed ================= -->
+  <text x="700" y="94" class="title" font-size="13">Proposed &#8212; one grid, explicit endpoint</text>
+  <line x1="700" y1="116" x2="1017" y2="116" class="dim" />
+  <line x1="700" y1="111" x2="700" y2="121" class="dim" />
+  <line x1="1017" y1="111" x2="1017" y2="121" class="dim" />
+  <text x="858" y="107" class="note" text-anchor="middle">317 px content width (&#8722;49%)</text>
+
+  <rect x="700" y="146" width="317" height="494" rx="10" class="ws stroke" />
+  <polygon points="842,146 870,146 856,134" class="ws stroke" />
+
+  <rect x="712" y="155" width="293" height="204" rx="8" class="ws stroke-thin" />
+  <text x="724" y="174" class="row-text">Any time</text>
+  <text x="993" y="174" class="badge" text-anchor="end">1284</text>
+  <line x1="712" y1="184" x2="1005" y2="184" class="stroke-thin" stroke-opacity="0.35" />
+  <text x="724" y="203" class="row-text">Today</text>
+  <text x="993" y="203" class="badge" text-anchor="end">12</text>
+  <line x1="712" y1="213" x2="1005" y2="213" class="stroke-thin" stroke-opacity="0.35" />
+  <text x="724" y="232" class="row-text">Yesterday</text>
+  <text x="993" y="232" class="badge" text-anchor="end">8</text>
+  <line x1="712" y1="242" x2="1005" y2="242" class="stroke-thin" stroke-opacity="0.35" />
+  <text x="724" y="261" class="row-text">Last 7 days</text>
+  <text x="993" y="261" class="badge" text-anchor="end">64</text>
+  <line x1="712" y1="272" x2="1005" y2="272" class="stroke-thin" stroke-opacity="0.35" />
+  <text x="724" y="290" class="row-text">Last 30 days</text>
+  <text x="993" y="290" class="badge" text-anchor="end">210</text>
+  <line x1="712" y1="301" x2="1005" y2="301" class="stroke-thin" stroke-opacity="0.35" />
+  <text x="724" y="319" class="row-text">This year</text>
+  <text x="993" y="319" class="badge" text-anchor="end">900</text>
+  <line x1="712" y1="330" x2="1005" y2="330" class="stroke-thin" stroke-opacity="0.35" />
+  <rect x="713" y="331" width="291" height="27" class="accent-bg" />
+  <text x="724" y="348" class="accent" font-size="12" font-weight="600">Custom range&#8230;</text>
+
+  <!-- AdwToggleGroup: which endpoint the grid edits -->
+  <rect x="712" y="368" width="293" height="26" rx="8" fill="#f2f2f2" stroke="#1a1a1a" stroke-width="1" />
+  <text x="785" y="385" class="label" text-anchor="middle">From &#183; 3 Jun</text>
+  <rect x="860" y="370" width="143" height="22" rx="7" class="accent-bg accent-stroke" />
+  <text x="931" y="385" class="accent" font-size="12" text-anchor="middle" font-weight="600">To &#183; 9 Jun</text>
+  <text x="1027" y="379" class="note">AdwToggleGroup:</text>
+  <text x="1027" y="393" class="note">endpoint switch,</text>
+  <text x="1027" y="407" class="note">each toggle</text>
+  <text x="1027" y="421" class="note">shows its date</text>
+
+  <!-- single GtkCalendar, 293 x 229 -->
+  <rect x="712" y="403" width="293" height="172" rx="6" class="ws stroke-thin" />
+  <text x="858" y="421" class="label" text-anchor="middle" font-weight="600">June 2026</text>
+  <text x="728" y="421" class="muted" font-size="12">&#8249;</text>
+  <text x="985" y="421" class="muted" font-size="12">&#8250;</text>
+  <line x1="712" y1="429" x2="1005" y2="429" class="stroke-thin" stroke-opacity="0.4" />
+  <text x="743" y="445" class="badge" font-size="10" text-anchor="middle">M</text>
+  <text x="782" y="445" class="badge" font-size="10" text-anchor="middle">T</text>
+  <text x="820" y="445" class="badge" font-size="10" text-anchor="middle">W</text>
+  <text x="859" y="445" class="badge" font-size="10" text-anchor="middle">T</text>
+  <text x="897" y="445" class="badge" font-size="10" text-anchor="middle">F</text>
+  <text x="935" y="445" class="badge" font-size="10" text-anchor="middle">S</text>
+  <text x="974" y="445" class="badge" font-size="10" text-anchor="middle">S</text>
+  <circle cx="820" cy="461" r="10" class="accent-bg" />
+  <circle cx="859" cy="461" r="10" class="accent-bg" />
+  <circle cx="897" cy="461" r="10" class="accent-bg" />
+  <circle cx="935" cy="461" r="10" class="accent-bg" />
+  <circle cx="974" cy="461" r="10" class="accent-bg" />
+  <text x="743" y="465" class="day" text-anchor="middle">1</text>
+  <text x="782" y="465" class="day" text-anchor="middle">2</text>
+  <text x="820" y="465" class="day" text-anchor="middle">3</text>
+  <text x="859" y="465" class="day" text-anchor="middle">4</text>
+  <text x="897" y="465" class="day" text-anchor="middle">5</text>
+  <text x="935" y="465" class="day" text-anchor="middle">6</text>
+  <text x="974" y="465" class="day" text-anchor="middle">7</text>
+  <circle cx="743" cy="483" r="10" class="accent-bg" />
+  <circle cx="782" cy="483" r="10" class="accent-bg" />
+  <circle cx="782" cy="483" r="11" class="accent-stroke" />
+  <text x="743" y="487" class="day" text-anchor="middle">8</text>
+  <text x="782" y="487" class="day-on" text-anchor="middle">9</text>
+  <text x="820" y="487" class="day" text-anchor="middle">10</text>
+  <text x="859" y="487" class="day" text-anchor="middle">11</text>
+  <text x="897" y="487" class="day" text-anchor="middle">12</text>
+  <text x="935" y="487" class="day" text-anchor="middle">13</text>
+  <text x="974" y="487" class="day" text-anchor="middle">14</text>
+  <text x="743" y="509" class="day" text-anchor="middle">15</text>
+  <text x="782" y="509" class="day" text-anchor="middle">16</text>
+  <text x="820" y="509" class="day" text-anchor="middle">17</text>
+  <text x="859" y="509" class="day" text-anchor="middle">18</text>
+  <text x="897" y="509" class="day" text-anchor="middle">19</text>
+  <text x="935" y="509" class="day" text-anchor="middle">20</text>
+  <text x="974" y="509" class="day" text-anchor="middle">21</text>
+  <text x="743" y="531" class="day" text-anchor="middle">22</text>
+  <text x="782" y="531" class="day" text-anchor="middle">23</text>
+  <text x="820" y="531" class="day" text-anchor="middle">24</text>
+  <text x="859" y="531" class="day" text-anchor="middle">25</text>
+  <text x="897" y="531" class="day" text-anchor="middle">26</text>
+  <text x="935" y="531" class="day" text-anchor="middle">27</text>
+  <text x="974" y="531" class="day" text-anchor="middle">28</text>
+  <text x="743" y="553" class="day" text-anchor="middle">29</text>
+  <text x="782" y="553" class="day" text-anchor="middle">30</text>
+  <text x="820" y="553" class="day-off" text-anchor="middle">1</text>
+  <text x="859" y="553" class="day-off" text-anchor="middle">2</text>
+  <text x="897" y="553" class="day-off" text-anchor="middle">3</text>
+  <text x="935" y="553" class="day-off" text-anchor="middle">4</text>
+  <text x="974" y="553" class="day-off" text-anchor="middle">5</text>
+  <text x="1027" y="479" class="note">one grid, edits</text>
+  <text x="1027" y="493" class="note">the active</text>
+  <text x="1027" y="507" class="note">endpoint only;</text>
+  <text x="1027" y="521" class="note">in-range days</text>
+  <text x="1027" y="535" class="note">marked</text>
+
+  <!-- range summary: polite live region -->
+  <rect x="708" y="581" width="301" height="21" rx="4" class="red-stroke" />
+  <text x="712" y="596" class="label">3 Jun &#8211; 9 Jun 2026</text>
+  <text x="1027" y="592" class="note">polite live</text>
+  <text x="1027" y="606" class="note">region</text>
+
+  <rect x="859" y="608" width="68" height="26" rx="6" class="ws stroke-thin" />
+  <text x="893" y="625" class="label" text-anchor="middle">Clear</text>
+  <rect x="933" y="608" width="72" height="26" rx="6" class="accent-bg accent-stroke" />
+  <text x="969" y="625" class="accent" font-size="12" text-anchor="middle">Apply</text>
+
+  <!-- ================= focus chain ================= -->
+  <text x="20" y="666" class="title" font-size="13">Focus chain (Tab) &#8212; entry point unchanged</text>
+  <rect x="20" y="678" width="128" height="26" rx="6" class="ws stroke-thin" />
+  <text x="84" y="695" class="label" font-size="11" text-anchor="middle">preset ListBox &#8593;&#8595;</text>
+  <text x="156" y="696" class="muted" font-size="12">&#8594;</text>
+  <rect x="172" y="678" width="142" height="26" rx="6" class="ws stroke-thin" />
+  <text x="243" y="695" class="label" font-size="11" text-anchor="middle">AdwToggleGroup &#8592;&#8594;</text>
+  <text x="322" y="696" class="muted" font-size="12">&#8594;</text>
+  <rect x="338" y="678" width="196" height="26" rx="6" class="ws stroke-thin" />
+  <text x="436" y="695" class="label" font-size="11" text-anchor="middle">GtkCalendar &#8593;&#8595;&#8592;&#8594; PgUp/PgDn</text>
+  <text x="542" y="696" class="muted" font-size="12">&#8594;</text>
+  <rect x="558" y="678" width="62" height="26" rx="6" class="ws stroke-thin" />
+  <text x="589" y="695" class="label" font-size="11" text-anchor="middle">Clear</text>
+  <text x="628" y="696" class="muted" font-size="12">&#8594;</text>
+  <rect x="644" y="678" width="66" height="26" rx="6" class="ws stroke-thin" />
+  <text x="677" y="695" class="label" font-size="11" text-anchor="middle">Apply</text>
+  <text x="734" y="695" class="badge">Esc closes the popover &#183; Ctrl+Shift+D reopens it on the active row</text>
+
+  <!-- ================= annotations ================= -->
+  <text x="20" y="722" class="note">&#9312; The width is already paid in both states today: GtkRevealer reports its child&#8217;s minimum width while collapsed, so the preset-only popover is 622 px wide from the first frame.</text>
+  <text x="20" y="737" class="note">&#9313; One GtkCalendar (293 &#215; 229) edits whichever endpoint the AdwToggleGroup has active. AdwToggleGroup is libadwaita 1.7+, so it is available on the pinned 1.9 &#8212; nothing is invented.</text>
+  <text x="20" y="752" class="note">&#9314; Monotonic clamp: a start after the end pushes the end, and vice versa, so `from &gt; to` is unreachable. Picking a day while the other endpoint is empty mirrors into it &#8212; one pick, valid range.</text>
+  <text x="20" y="767" class="note">&#9315; Screen readers: the calendar&#8217;s accessible label follows the active endpoint (&#8220;Start date&#8221; / &#8220;End date&#8221;); the range summary is a polite live region, so every pick is announced as a range.</text>
+  <text x="20" y="782" class="note">&#9316; Nothing labels the two grids today (`src/ui/date_pill.rs:105-110`); the summary underneath is the only clue. The toggle group makes both roles explicit on screen and to assistive tech.</text>
+  <text x="20" y="797" class="note">&#9317; Cost: +46 px height (613 &#8594; 659) for the toggle group, and one signal-block guard when the calendar date is set programmatically as the active endpoint changes.</text>
+</svg>
