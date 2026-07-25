@@ -5,3 +5,4 @@ src/app.rs
 src/main.rs
 src/ui/modals/shortcuts.rs
 src/ui/sort_pill.rs
+src/ui/date_pill.rs

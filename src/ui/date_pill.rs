@@ -1,10 +1,17 @@
-use chrono::NaiveDate;
+use chrono::{Datelike, Local, NaiveDate};
+use gettextrs::gettext;
 use relm4::{ComponentParts, ComponentSender, SimpleComponent, gtk};
 
 use gtk::glib;
 use gtk::prelude::*;
 
 use crate::models::{DateCounts, DateFilter};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum YearDisplay {
+    WithoutYear,
+    WithYear,
+}
 
 pub struct DatePill {
     current_filter: DateFilter,
@@ -77,7 +84,10 @@ impl SimpleComponent for DatePill {
         button_content.append(&label);
 
         root.set_child(Some(&button_content));
-        root.set_tooltip_text(Some(&tooltip_for_filter(&DateFilter::AnyTime)));
+        root.set_tooltip_text(Some(&tooltip_for_filter(
+            &DateFilter::AnyTime,
+            Local::now().date_naive(),
+        )));
         root.add_css_class("flat");
 
         let popover = gtk::Popover::new();
@@ -94,13 +104,22 @@ impl SimpleComponent for DatePill {
         let last_30_days_count = gtk::Label::new(Some("0"));
         let this_year_count = gtk::Label::new(Some("0"));
 
-        listbox.append(&build_preset_row("Any time", &any_time_count));
-        listbox.append(&build_preset_row("Today", &today_count));
-        listbox.append(&build_preset_row("Yesterday", &yesterday_count));
-        listbox.append(&build_preset_row("Last 7 days", &last_7_days_count));
-        listbox.append(&build_preset_row("Last 30 days", &last_30_days_count));
-        listbox.append(&build_preset_row("This year", &this_year_count));
-        listbox.append(&build_preset_row("Custom range...", &gtk::Label::new(None)));
+        listbox.append(&build_preset_row(&gettext("Any time"), &any_time_count));
+        listbox.append(&build_preset_row(&gettext("Today"), &today_count));
+        listbox.append(&build_preset_row(&gettext("Yesterday"), &yesterday_count));
+        listbox.append(&build_preset_row(
+            &gettext("Last 7 days"),
+            &last_7_days_count,
+        ));
+        listbox.append(&build_preset_row(
+            &gettext("Last 30 days"),
+            &last_30_days_count,
+        ));
+        listbox.append(&build_preset_row(&gettext("This year"), &this_year_count));
+        listbox.append(&build_preset_row(
+            &gettext("Custom range..."),
+            &gtk::Label::new(None),
+        ));
 
         let from_calendar = gtk::Calendar::new();
         let to_calendar = gtk::Calendar::new();
@@ -109,12 +128,16 @@ impl SimpleComponent for DatePill {
         calendars.append(&from_calendar);
         calendars.append(&to_calendar);
 
-        let info_label = gtk::Label::new(Some(&custom_info_text(None, None)));
+        let info_label = gtk::Label::new(Some(&custom_info_text(
+            None,
+            None,
+            Local::now().date_naive(),
+        )));
         info_label.set_xalign(0.0);
         info_label.set_wrap(true);
 
-        let clear_button = gtk::Button::with_label("Clear");
-        let apply_button = gtk::Button::with_label("Apply");
+        let clear_button = gtk::Button::with_label(&gettext("Clear"));
+        let apply_button = gtk::Button::with_label(&gettext("Apply"));
         apply_button.add_css_class("suggested-action");
         apply_button.set_sensitive(false);
 
@@ -328,12 +351,13 @@ impl DatePill {
     }
 
     fn sync_button(&self, widgets: &DatePillWidgets) {
-        let label = self.current_filter.pill_label();
+        let today = Local::now().date_naive();
+        let label = filter_label(&self.current_filter, today);
         widgets.label.set_label(&label);
         widgets.label.set_visible(self.current_filter.is_active());
         widgets
             .root
-            .set_tooltip_text(Some(&tooltip_for_filter(&self.current_filter)));
+            .set_tooltip_text(Some(&tooltip_for_filter(&self.current_filter, today)));
     }
 
     fn sync_counts(&self, widgets: &DatePillWidgets) {
@@ -361,13 +385,87 @@ impl DatePill {
         widgets
             .custom_revealer
             .set_reveal_child(self.custom_revealed);
-        widgets
-            .info_label
-            .set_label(&custom_info_text(self.draft_from, self.draft_to));
+        widgets.info_label.set_label(&custom_info_text(
+            self.draft_from,
+            self.draft_to,
+            Local::now().date_naive(),
+        ));
         widgets
             .apply_button
             .set_sensitive(valid_custom_filter(self.draft_from, self.draft_to).is_some());
     }
+}
+
+fn filter_label(filter: &DateFilter, today: NaiveDate) -> String {
+    match filter {
+        DateFilter::AnyTime => String::new(),
+        DateFilter::Today => gettext("Today"),
+        DateFilter::Yesterday => gettext("Yesterday"),
+        DateFilter::Last7Days => gettext("Last 7 days"),
+        DateFilter::Last30Days => gettext("Last 30 days"),
+        DateFilter::ThisYear => gettext("This year"),
+        DateFilter::Custom { from, to } if from == to => {
+            format_date(*from, year_display_for_range(*from, *to, today))
+        }
+        DateFilter::Custom { from, to } => {
+            let display = year_display_for_range(*from, *to, today);
+            replace_pair(
+                &gettext("{} - {}"),
+                &format_date(*from, display),
+                &format_date(*to, display),
+            )
+        }
+    }
+}
+
+fn year_display_for_range(from: NaiveDate, to: NaiveDate, today: NaiveDate) -> YearDisplay {
+    if from.year() == today.year() && to.year() == today.year() {
+        YearDisplay::WithoutYear
+    } else {
+        YearDisplay::WithYear
+    }
+}
+
+fn format_date(date: NaiveDate, display: YearDisplay) -> String {
+    let msgid = match display {
+        YearDisplay::WithoutYear => {
+            // Translators: strftime format for a date without a year, e.g. "Jun 3".
+            gettext("%b %-d")
+        }
+        YearDisplay::WithYear => {
+            // Translators: strftime format for a date with a year, e.g. "Jun 3, 2026".
+            gettext("%b %-d, %Y")
+        }
+    };
+    let fallback = match display {
+        YearDisplay::WithoutYear => "%b %-d",
+        YearDisplay::WithYear => "%b %-d, %Y",
+    };
+
+    format_date_with_formats(date, &msgid, fallback)
+}
+
+fn format_date_with_formats(date: NaiveDate, translated: &str, fallback: &str) -> String {
+    let Ok(date_time) = glib::DateTime::from_utc(
+        date.year(),
+        i32::try_from(date.month()).expect("chrono month fits i32"),
+        i32::try_from(date.day()).expect("chrono day fits i32"),
+        0,
+        0,
+        0.0,
+    ) else {
+        return date.format("%Y-%m-%d").to_string();
+    };
+
+    date_time
+        .format(translated)
+        .or_else(|_| date_time.format(fallback))
+        .map(|formatted| formatted.to_string())
+        .unwrap_or_else(|_| date.format("%Y-%m-%d").to_string())
+}
+
+fn replace_pair(template: &str, first: &str, second: &str) -> String {
+    template.replacen("{}", first, 1).replacen("{}", second, 1)
 }
 
 fn current_row_index(filter: &DateFilter) -> i32 {
@@ -404,11 +502,11 @@ fn build_preset_row(title: &str, count_label: &gtk::Label) -> gtk::ListBoxRow {
     row
 }
 
-fn tooltip_for_filter(filter: &DateFilter) -> String {
+fn tooltip_for_filter(filter: &DateFilter, today: NaiveDate) -> String {
     if filter.is_active() {
-        format!("Date: {}", filter.pill_label())
+        gettext("Date: {}").replace("{}", &filter_label(filter, today))
     } else {
-        "Filter by date (Ctrl+Shift+D)".to_string()
+        gettext("Filter by date (Ctrl+Shift+D)")
     }
 }
 
@@ -419,11 +517,13 @@ fn valid_custom_filter(from: Option<NaiveDate>, to: Option<NaiveDate>) -> Option
     }
 }
 
-fn custom_info_text(from: Option<NaiveDate>, to: Option<NaiveDate>) -> String {
+fn custom_info_text(from: Option<NaiveDate>, to: Option<NaiveDate>, today: NaiveDate) -> String {
     match (from, to) {
-        (Some(from), Some(to)) if from <= to => DateFilter::Custom { from, to }.pill_label(),
-        (Some(_), Some(_)) => "Start date must be on or before end date".to_string(),
-        _ => "Choose a start and end date to apply a custom range".to_string(),
+        (Some(from), Some(to)) if from <= to => {
+            filter_label(&DateFilter::Custom { from, to }, today)
+        }
+        (Some(_), Some(_)) => gettext("Start date must be on or before end date"),
+        _ => gettext("Choose a start and end date to apply a custom range"),
     }
 }
 
@@ -440,6 +540,87 @@ mod tests {
     use super::*;
     use relm4::{Component, ComponentController};
     use std::time::{Duration, Instant};
+
+    #[test]
+    fn custom_label_year_display_is_consistent_across_both_endpoints() {
+        let today = NaiveDate::from_ymd_opt(2026, 7, 25).unwrap();
+        let current_from = NaiveDate::from_ymd_opt(2026, 6, 3).unwrap();
+        let current_to = NaiveDate::from_ymd_opt(2026, 6, 9).unwrap();
+        let past_from = NaiveDate::from_ymd_opt(2025, 6, 3).unwrap();
+        let past_to = NaiveDate::from_ymd_opt(2025, 6, 9).unwrap();
+        let cross_year_to = NaiveDate::from_ymd_opt(2026, 1, 4).unwrap();
+
+        assert_eq!(
+            year_display_for_range(current_from, current_to, today),
+            YearDisplay::WithoutYear
+        );
+        assert_eq!(
+            year_display_for_range(past_from, past_to, today),
+            YearDisplay::WithYear
+        );
+        assert_eq!(
+            year_display_for_range(past_to, cross_year_to, today),
+            YearDisplay::WithYear
+        );
+        assert_eq!(
+            year_display_for_range(current_from, current_from, today),
+            YearDisplay::WithoutYear
+        );
+        assert_eq!(
+            year_display_for_range(past_from, past_from, today),
+            YearDisplay::WithYear
+        );
+    }
+
+    #[test]
+    fn custom_filter_label_uses_one_date_for_same_day_and_both_years_when_needed() {
+        let today = NaiveDate::from_ymd_opt(2026, 7, 25).unwrap();
+        let same_day = NaiveDate::from_ymd_opt(2026, 6, 3).unwrap();
+        let from = NaiveDate::from_ymd_opt(2025, 12, 28).unwrap();
+        let to = NaiveDate::from_ymd_opt(2026, 1, 4).unwrap();
+
+        assert_eq!(
+            filter_label(
+                &DateFilter::Custom {
+                    from: same_day,
+                    to: same_day,
+                },
+                today,
+            ),
+            format_date(same_day, YearDisplay::WithoutYear)
+        );
+        assert_eq!(
+            filter_label(&DateFilter::Custom { from, to }, today),
+            replace_pair(
+                &gettext("{} - {}"),
+                &format_date(from, YearDisplay::WithYear),
+                &format_date(to, YearDisplay::WithYear),
+            )
+        );
+    }
+
+    #[test]
+    fn glib_date_formatting_falls_back_to_msgid_then_iso() {
+        let date = NaiveDate::from_ymd_opt(2026, 4, 5).unwrap();
+
+        assert_eq!(
+            format_date_with_formats(date, "%Q", "%Y/%m/%d"),
+            "2026/04/05"
+        );
+        assert_eq!(format_date_with_formats(date, "%Q", "%Q"), "2026-04-05");
+    }
+
+    #[test]
+    fn preset_filter_labels_are_localized_in_the_ui_layer() {
+        let today = NaiveDate::from_ymd_opt(2026, 7, 25).unwrap();
+
+        assert_eq!(filter_label(&DateFilter::AnyTime, today), "");
+        assert_eq!(filter_label(&DateFilter::Today, today), "Today");
+        assert_eq!(filter_label(&DateFilter::Yesterday, today), "Yesterday");
+        assert_eq!(filter_label(&DateFilter::Last7Days, today), "Last 7 days");
+        assert_eq!(filter_label(&DateFilter::Last30Days, today), "Last 30 days");
+        assert_eq!(filter_label(&DateFilter::ThisYear, today), "This year");
+    }
 
     fn pump_main_context(condition: impl Fn() -> bool) {
         let context = glib::MainContext::default();
@@ -507,18 +688,19 @@ mod tests {
 
     #[test]
     fn tooltip_reflects_active_filter() {
+        let today = NaiveDate::from_ymd_opt(2026, 7, 25).unwrap();
         let custom = DateFilter::Custom {
             from: NaiveDate::from_ymd_opt(2026, 5, 1).unwrap(),
             to: NaiveDate::from_ymd_opt(2026, 5, 7).unwrap(),
         };
 
         assert_eq!(
-            tooltip_for_filter(&DateFilter::AnyTime),
+            tooltip_for_filter(&DateFilter::AnyTime, today),
             "Filter by date (Ctrl+Shift+D)"
         );
         assert_eq!(
-            tooltip_for_filter(&custom),
-            format!("Date: {}", custom.pill_label())
+            tooltip_for_filter(&custom, today),
+            format!("Date: {}", filter_label(&custom, today))
         );
     }
 

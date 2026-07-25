@@ -61,19 +61,6 @@ impl DateFilter {
         Some((start.with_timezone(&Utc), end.with_timezone(&Utc)))
     }
 
-    pub fn pill_label(&self) -> String {
-        match self {
-            Self::AnyTime => String::new(),
-            Self::Today => "Today".to_string(),
-            Self::Yesterday => "Yesterday".to_string(),
-            Self::Last7Days => "Last 7 days".to_string(),
-            Self::Last30Days => "Last 30 days".to_string(),
-            Self::ThisYear => "This year".to_string(),
-            Self::Custom { from, to } if from == to => format_date(*from),
-            Self::Custom { from, to } => format!("{} - {}", format_date(*from), format_date(*to)),
-        }
-    }
-
     pub fn is_active(&self) -> bool {
         !matches!(self, Self::AnyTime)
     }
@@ -85,10 +72,6 @@ fn local_midnight(date: NaiveDate) -> Option<DateTime<Local>> {
         .from_local_datetime(&naive)
         .single()
         .or_else(|| Local.from_local_datetime(&naive).earliest())
-}
-
-fn format_date(date: NaiveDate) -> String {
-    date.format("%b %-d").to_string()
 }
 
 #[cfg(test)]
@@ -105,7 +88,6 @@ mod tests {
         let filter = DateFilter::AnyTime;
 
         assert_eq!(filter.resolve(utc(2026, 5, 27, 12, 0, 0)), None);
-        assert_eq!(filter.pill_label(), "");
         assert!(!filter.is_active());
     }
 
@@ -141,7 +123,6 @@ mod tests {
             local_yesterday
         );
         assert_eq!(end.with_timezone(&chrono::Local).date_naive(), local_today);
-        assert_eq!(DateFilter::Yesterday.pill_label(), "Yesterday");
     }
 
     #[test]
@@ -160,7 +141,6 @@ mod tests {
             end.with_timezone(&chrono::Local).date_naive(),
             local_today.checked_add_days(Days::new(1)).unwrap()
         );
-        assert_eq!(DateFilter::Last7Days.pill_label(), "Last 7 days");
     }
 
     #[test]
@@ -179,7 +159,6 @@ mod tests {
             end.with_timezone(&chrono::Local).date_naive(),
             local_today.checked_add_days(Days::new(1)).unwrap()
         );
-        assert_eq!(DateFilter::Last30Days.pill_label(), "Last 30 days");
     }
 
     #[test]
@@ -194,7 +173,6 @@ mod tests {
             end.with_timezone(&chrono::Local).date_naive().year(),
             local_year + 1
         );
-        assert_eq!(DateFilter::ThisYear.pill_label(), "This year");
     }
 
     #[test]
@@ -212,30 +190,6 @@ mod tests {
         assert_eq!(
             end.with_timezone(&chrono::Local).date_naive(),
             NaiveDate::from_ymd_opt(2024, 3, 1).unwrap()
-        );
-    }
-
-    #[test]
-    fn custom_same_day_label_uses_single_date() {
-        let date = NaiveDate::from_ymd_opt(2026, 4, 5).unwrap();
-        let filter = DateFilter::Custom {
-            from: date,
-            to: date,
-        };
-
-        assert_eq!(filter.pill_label(), format_date(date));
-        assert!(filter.is_active());
-    }
-
-    #[test]
-    fn custom_range_label_uses_short_month_day_range() {
-        let from = NaiveDate::from_ymd_opt(2026, 4, 5).unwrap();
-        let to = NaiveDate::from_ymd_opt(2026, 4, 17).unwrap();
-        let filter = DateFilter::Custom { from, to };
-
-        assert_eq!(
-            filter.pill_label(),
-            format!("{} - {}", format_date(from), format_date(to))
         );
     }
 
