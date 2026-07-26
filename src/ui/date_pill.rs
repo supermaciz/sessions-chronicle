@@ -310,10 +310,15 @@ impl SimpleComponent for DatePill {
 
         // The keyboard equivalent. `GtkCalendar` ignores Space until a click or
         // an arrow key has placed its internal focus cell, so a keyboard user
-        // who has just tabbed in gets nothing at all. It stops the key whenever
-        // it does act on Space, so this bubble-phase controller only runs when
-        // the calendar left the key unhandled, and then picks the day the
-        // calendar visibly highlights.
+        // who has just tabbed in gets nothing at all.
+        //
+        // This controller runs *before* the calendar's own: controllers are
+        // prepended, and key events break on the first non-gesture controller
+        // that handles them. So it must decline every key the calendar would
+        // have acted on, or it would swallow Space and pick the previously
+        // selected day. `focus_row`/`focus_col` are private, but the calendar
+        // mirrors them onto the focused day cell as `StateFlags::FOCUSED`, and
+        // that is the exact condition its own Space handler tests.
         let input_sender = sender.input_sender().clone();
         let calendar_keys = gtk::EventControllerKey::new();
         calendar_keys.connect_key_pressed(move |controller, keyval, _, _| {
@@ -324,6 +329,9 @@ impl SimpleComponent for DatePill {
             let Some(calendar) = controller.widget().and_downcast::<gtk::Calendar>() else {
                 return glib::Propagation::Proceed;
             };
+            if has_focused_day_cell(&calendar) {
+                return glib::Propagation::Proceed;
+            }
             let Some(date) = calendar_to_naive_date(&calendar.date()) else {
                 return glib::Propagation::Proceed;
             };
@@ -688,26 +696,42 @@ fn focus_row(listbox: &gtk::ListBox, focus_index: i32, selected_index: i32) {
 /// re-picking and fall back to `day-selected`; it can never pick a wrong day.
 fn release_landed_on_a_day(calendar: &gtk::Calendar, x: f64, y: f64) -> bool {
     let point = gtk::graphene::Point::new(x as f32, y as f32);
-    let mut cells = Vec::new();
-    collect_day_cell_bounds(calendar.upcast_ref(), calendar, &mut cells);
+    let mut landed = false;
 
-    cells.iter().any(|bounds| bounds.contains_point(&point))
+    visit_day_cells(calendar.upcast_ref(), &mut |cell| {
+        landed |= cell
+            .compute_bounds(calendar)
+            .is_some_and(|bounds| bounds.contains_point(&point));
+    });
+
+    landed
 }
 
-fn collect_day_cell_bounds(
-    widget: &gtk::Widget,
-    calendar: &gtk::Calendar,
-    bounds: &mut Vec<gtk::graphene::Rect>,
-) {
-    if widget.has_css_class("day-number")
-        && let Some(cell) = widget.compute_bounds(calendar)
-    {
-        bounds.push(cell);
+/// Whether the calendar has placed its internal focus cell yet.
+///
+/// `GtkCalendar` keeps that as private `focus_row`/`focus_col`, set to `-1`
+/// until a click or an arrow key moves it, and gates its own Space handling on
+/// `focus_row > -1`. It mirrors the cell outward by setting
+/// `StateFlags::FOCUSED` on the corresponding `.day-number` label, so reading
+/// that flag reproduces the same test from outside.
+fn has_focused_day_cell(calendar: &gtk::Calendar) -> bool {
+    let mut focused = false;
+
+    visit_day_cells(calendar.upcast_ref(), &mut |cell| {
+        focused |= cell.state_flags().contains(gtk::StateFlags::FOCUSED);
+    });
+
+    focused
+}
+
+fn visit_day_cells(widget: &gtk::Widget, visit: &mut impl FnMut(&gtk::Widget)) {
+    if widget.has_css_class("day-number") {
+        visit(widget);
     }
 
     let mut child = widget.first_child();
     while let Some(current) = child {
-        collect_day_cell_bounds(&current, calendar, bounds);
+        visit_day_cells(&current, visit);
         child = current.next_sibling();
     }
 }
@@ -1427,9 +1451,9 @@ mod tests {
         let today = Local::now().date_naive();
         assert!(!controller.widgets().apply_button.is_sensitive());
 
-        // `GtkCalendar` has no focus cell yet, so it leaves Space unhandled and
-        // the picker's own key controller gets it.
-        assert!(press_space_on_calendar(&controller));
+        // `GtkCalendar` has no focus cell yet, so it ignores Space and the
+        // picker's controller is the one that acts.
+        assert!(run_key_controllers(&calendar, gtk::gdk::Key::space));
 
         pump_main_context(|| controller.widgets().apply_button.is_sensitive());
         let expected = format_date(today, YearDisplay::WithoutYear);
@@ -1439,31 +1463,118 @@ mod tests {
     }
 
     #[gtk::test]
+    fn arrowing_then_pressing_space_picks_the_day_the_calendar_moved_to() {
+        let controller = DatePill::builder().launch(());
+        let calendar = laid_out_custom_page(&controller);
+
+        // Arrow keys are the only way in from outside: they place GtkCalendar's
+        // focus cell without moving its selection. Step until the focus cell is
+        // not the selected day, so Space is bound to move the selection.
+        for _ in 0..8 {
+            assert!(run_key_controllers(&calendar, gtk::gdk::Key::Right));
+            if !focused_day_cell_is_selected(&calendar) {
+                break;
+            }
+        }
+        assert!(has_focused_day_cell(&calendar));
+        assert!(!focused_day_cell_is_selected(&calendar));
+
+        let before_space = calendar_to_naive_date(&calendar.date()).expect("calendar date");
+        assert!(run_key_controllers(&calendar, gtk::gdk::Key::space));
+
+        // GtkCalendar itself has to be the one that handled Space, so its own
+        // selection moves...
+        let arrowed_to = calendar_to_naive_date(&calendar.date()).expect("calendar date");
+        assert_ne!(arrowed_to, before_space);
+
+        // ...and the endpoint takes the day it moved to, not the one that was
+        // selected beforehand.
+        pump_main_context(|| controller.widgets().apply_button.is_sensitive());
+        let display = year_display_for_range(arrowed_to, arrowed_to, Local::now().date_naive());
+        assert_eq!(
+            controller.widgets().start_date_label.label(),
+            format_date(arrowed_to, display)
+        );
+        assert_ne!(
+            controller.widgets().start_date_label.label(),
+            format_date(before_space, display)
+        );
+    }
+
+    #[gtk::test]
+    fn the_pickers_key_controller_runs_before_the_calendars_own() {
+        let controller = DatePill::builder().launch(());
+        let calendar = laid_out_custom_page(&controller);
+        let controllers = key_controllers(&calendar);
+
+        // `gtk_widget_add_controller` prepends, so the picker's controller —
+        // added last — is dispatched first, and a key it reports as handled
+        // never reaches GtkCalendar. Everything about the Space handling
+        // depends on this order, so pin it.
+        assert!(controllers.len() >= 2);
+        assert_eq!(controllers[0], controller.widgets().calendar_keys);
+        assert!(
+            controllers
+                .iter()
+                .all(|each| each.propagation_phase() == gtk::PropagationPhase::Bubble)
+        );
+    }
+
+    #[gtk::test]
     fn other_keys_are_left_to_the_calendar() {
         let controller = DatePill::builder().launch(());
-        laid_out_custom_page(&controller);
+        let calendar = laid_out_custom_page(&controller);
 
-        assert!(!press_key_on_calendar(&controller, gtk::gdk::Key::Right));
+        // Handled — but by GtkCalendar, which moves its focus cell, not by the
+        // picker, which must not turn an arrow key into a pick.
+        assert!(run_key_controllers(&calendar, gtk::gdk::Key::Right));
         drain_main_context();
 
+        assert!(has_focused_day_cell(&calendar));
         assert!(!controller.widgets().apply_button.is_sensitive());
     }
 
-    /// Emits `key-pressed` on the picker's own calendar key controller,
-    /// exercising the real handler. `GtkCalendar`'s controller runs first in
-    /// the real chain and consumes Space whenever it acts on it, so replaying
-    /// only this one matches the case under test: a calendar that has no focus
-    /// cell yet and therefore ignored the key.
-    fn press_space_on_calendar(controller: &Connector<DatePill>) -> bool {
-        press_key_on_calendar(controller, gtk::gdk::Key::space)
+    /// Replays `gtk_widget_run_controllers` for a key press on the calendar and
+    /// reports whether the key was handled.
+    ///
+    /// GTK prepends controllers, walks that list head-first, and breaks at the
+    /// first non-gesture controller that handles the event. Emitting
+    /// `key-pressed` on a single controller cannot catch an ordering mistake,
+    /// which is the whole point here.
+    ///
+    /// Limitation: this replays GTK's dispatch rule rather than feeding a real
+    /// `GdkEvent` through GTK's own dispatcher, which needs input the test
+    /// harness cannot synthesize. The controller order it relies on is asserted
+    /// separately by `the_pickers_key_controller_runs_before_the_calendars_own`.
+    fn run_key_controllers(calendar: &gtk::Calendar, key: gtk::gdk::Key) -> bool {
+        key_controllers(calendar).into_iter().any(|controller| {
+            controller.emit_by_name::<bool>(
+                "key-pressed",
+                &[&key.into_glib(), &0u32, &gtk::gdk::ModifierType::empty()],
+            )
+        })
     }
 
-    fn press_key_on_calendar(controller: &Connector<DatePill>, key: gtk::gdk::Key) -> bool {
-        let keys = controller.widgets().calendar_keys.clone();
-        keys.emit_by_name::<bool>(
-            "key-pressed",
-            &[&key.into_glib(), &0u32, &gtk::gdk::ModifierType::empty()],
-        )
+    /// The calendar's key controllers, in GTK's dispatch order.
+    fn key_controllers(calendar: &gtk::Calendar) -> Vec<gtk::EventControllerKey> {
+        let controllers = calendar.observe_controllers();
+        (0..controllers.n_items())
+            .filter_map(|index| {
+                controllers
+                    .item(index)
+                    .and_downcast::<gtk::EventControllerKey>()
+            })
+            .collect()
+    }
+
+    fn focused_day_cell_is_selected(calendar: &gtk::Calendar) -> bool {
+        let mut selected = false;
+        visit_day_cells(calendar.clone().upcast_ref(), &mut |cell| {
+            let flags = cell.state_flags();
+            selected |= flags.contains(gtk::StateFlags::FOCUSED)
+                && flags.contains(gtk::StateFlags::SELECTED);
+        });
+        selected
     }
 
     /// Switches to the custom page and gives the calendar a real allocation,
