@@ -366,8 +366,15 @@ impl SimpleComponent for DatePill {
                 self.focus_calendar_when_ready();
             }
             DatePillInput::BackToPresets => {
+                // Only a real return trip from the custom page moves focus. The
+                // popover's `closed` handler also lands here, but by then an
+                // applied preset has already put the page back to `Presets`, so
+                // its row selection survives. Keying off the page instead of
+                // popover visibility keeps this deterministic: whether the
+                // popover reports itself mapped at this instant is not reliable.
+                let returning_from_custom = self.page == Page::Custom;
                 self.page = Page::Presets;
-                if self.popover.is_visible() {
+                if returning_from_custom {
                     self.focus_custom_row_when_ready();
                 }
             }
@@ -1137,10 +1144,11 @@ mod tests {
     }
 
     // This checks the Escape shortcut's configuration, not popover visibility: a
-    // MenuButton popover never reports `is_visible() == true` under `#[gtk::test]`
-    // once the main loop is drained, so asserting it here would only measure the
-    // harness. Confirming that capture ordering really beats popover autohide
-    // needs real Escape key presses, which Task 5's manual verification delivers.
+    // MenuButton popover does not reliably report `is_visible() == true` under
+    // `#[gtk::test]` once the main loop is drained, so asserting it here would
+    // mostly measure the harness. Confirming that capture ordering really beats
+    // popover autohide needs real Escape key presses, which Task 5's manual
+    // verification delivers.
     #[gtk::test]
     fn escape_action_returns_to_presets_without_closing_the_popover() {
         let controller = DatePill::builder().launch(());
