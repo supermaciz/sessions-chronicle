@@ -28,6 +28,13 @@ enum Page {
     Custom,
 }
 
+/// Whether a list row's title claims the leftover width of its row.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TitleWidth {
+    Natural,
+    Expanded,
+}
+
 /// Index of the *Custom range...* row in the preset list.
 const CUSTOM_ROW_INDEX: i32 = 6;
 
@@ -443,11 +450,7 @@ impl SimpleComponent for DatePill {
                 self.focus_row_when_ready(current_row_index(&self.current_filter));
             }
             DatePillInput::PresetSelected(filter) => {
-                self.current_filter = filter.clone();
-                self.page = Page::Presets;
-                self.select_current_row();
-                sender.output(DatePillOutput::FilterChanged(filter)).ok();
-                self.popover.popdown();
+                self.commit_filter(filter, &sender);
             }
             DatePillInput::CustomRangeRowSelected => {
                 match &self.current_filter {
@@ -508,11 +511,7 @@ impl SimpleComponent for DatePill {
             }
             DatePillInput::CustomApplyClicked => {
                 if let Some(filter) = valid_custom_filter(self.draft_from, self.draft_to) {
-                    self.current_filter = filter.clone();
-                    self.page = Page::Presets;
-                    self.select_current_row();
-                    sender.output(DatePillOutput::FilterChanged(filter)).ok();
-                    self.popover.popdown();
+                    self.commit_filter(filter, &sender);
                 }
             }
         }
@@ -538,6 +537,16 @@ impl DatePill {
 
             focus_row(&listbox, focus_index, selected_index);
         });
+    }
+
+    /// Makes `filter` the active one: back to the presets page, row highlighted,
+    /// the change published, popover dismissed.
+    fn commit_filter(&mut self, filter: DateFilter, sender: &ComponentSender<Self>) {
+        self.current_filter = filter.clone();
+        self.page = Page::Presets;
+        self.select_current_row();
+        sender.output(DatePillOutput::FilterChanged(filter)).ok();
+        self.popover.popdown();
     }
 
     fn select_current_row(&self) {
@@ -866,30 +875,27 @@ fn current_row_index(filter: &DateFilter) -> i32 {
 fn build_preset_row(title: &str, count_label: &gtk::Label) -> gtk::ListBoxRow {
     count_label.add_css_class("dim-label");
     count_label.set_xalign(1.0);
-
-    let title_label = gtk::Label::new(Some(title));
-    title_label.set_xalign(0.0);
-
-    let row_box = gtk::Box::new(gtk::Orientation::Horizontal, 12);
-    row_box.set_margin_top(8);
-    row_box.set_margin_bottom(8);
-    row_box.set_margin_start(12);
-    row_box.set_margin_end(12);
-    row_box.append(&title_label);
-    row_box.append(count_label);
-
-    let row = gtk::ListBoxRow::new();
-    row.set_activatable(true);
-    row.set_focusable(true);
-    row.set_child(Some(&row_box));
-    row
+    build_row(title, count_label, TitleWidth::Natural)
 }
 
 fn build_custom_row(title: &str) -> gtk::ListBoxRow {
+    let chevron = gtk::Image::from_icon_name("go-next-symbolic");
+    build_row(title, &chevron, TitleWidth::Expanded)
+}
+
+/// Builds a preset list row: `title` on the left, `trailing` after it.
+///
+/// `TitleWidth::Expanded` gives the leftover width to the title, which pushes
+/// `trailing` against the right edge; `TitleWidth::Natural` leaves both packed
+/// at the start.
+fn build_row(
+    title: &str,
+    trailing: &impl IsA<gtk::Widget>,
+    title_width: TitleWidth,
+) -> gtk::ListBoxRow {
     let title_label = gtk::Label::new(Some(title));
     title_label.set_xalign(0.0);
-    title_label.set_hexpand(true);
-    let chevron = gtk::Image::from_icon_name("go-next-symbolic");
+    title_label.set_hexpand(title_width == TitleWidth::Expanded);
 
     let row_box = gtk::Box::new(gtk::Orientation::Horizontal, 12);
     row_box.set_margin_top(8);
@@ -897,7 +903,7 @@ fn build_custom_row(title: &str) -> gtk::ListBoxRow {
     row_box.set_margin_start(12);
     row_box.set_margin_end(12);
     row_box.append(&title_label);
-    row_box.append(&chevron);
+    row_box.append(trailing);
 
     let row = gtk::ListBoxRow::new();
     row.set_activatable(true);
