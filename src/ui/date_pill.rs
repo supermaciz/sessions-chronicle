@@ -5,6 +5,9 @@ use relm4::{ComponentParts, ComponentSender, SimpleComponent, adw, gtk};
 use gtk::glib;
 use gtk::prelude::*;
 
+#[cfg(test)]
+use std::{cell::RefCell, rc::Rc};
+
 use crate::models::{DateCounts, DateFilter};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -38,6 +41,10 @@ pub struct DatePill {
     calendar: gtk::Calendar,
     summary_label: gtk::Label,
     calendar_handler: glib::SignalHandlerId,
+    #[cfg(test)]
+    announcement_log: Rc<RefCell<Vec<(String, gtk::AccessibleAnnouncementPriority)>>>,
+    #[cfg(test)]
+    accessible_label_log: Rc<RefCell<(String, String)>>,
 }
 
 #[derive(Debug, Clone)]
@@ -74,12 +81,17 @@ pub struct DatePillWidgets {
     summary_label: gtk::Label,
     apply_button: gtk::Button,
     escape_controller: gtk::ShortcutController,
+    back_button: gtk::Button,
     any_time_count: gtk::Label,
     today_count: gtk::Label,
     yesterday_count: gtk::Label,
     last_7_days_count: gtk::Label,
     last_30_days_count: gtk::Label,
     this_year_count: gtk::Label,
+    #[cfg(test)]
+    announcement_log: Rc<RefCell<Vec<(String, gtk::AccessibleAnnouncementPriority)>>>,
+    #[cfg(test)]
+    accessible_label_log: Rc<RefCell<(String, String)>>,
 }
 
 impl SimpleComponent for DatePill {
@@ -148,8 +160,19 @@ impl SimpleComponent for DatePill {
         presets_page.set_margin_end(12);
         presets_page.append(&listbox);
 
+        #[cfg(test)]
+        let announcement_log = Rc::new(RefCell::new(Vec::new()));
+        #[cfg(test)]
+        let accessible_label_log = Rc::new(RefCell::new((String::new(), String::new())));
+
         let back_button = gtk::Button::from_icon_name("go-previous-symbolic");
         back_button.add_css_class("flat");
+        let back_accessible_label = gettext("Back to date presets");
+        back_button.update_property(&[gtk::accessible::Property::Label(&back_accessible_label)]);
+        #[cfg(test)]
+        {
+            accessible_label_log.borrow_mut().0 = back_accessible_label;
+        }
         let heading = gtk::Label::new(Some(&gettext("Custom range")));
         heading.add_css_class("heading");
         heading.set_hexpand(true);
@@ -298,6 +321,10 @@ impl SimpleComponent for DatePill {
             calendar: calendar.clone(),
             summary_label: summary_label.clone(),
             calendar_handler,
+            #[cfg(test)]
+            announcement_log: announcement_log.clone(),
+            #[cfg(test)]
+            accessible_label_log: accessible_label_log.clone(),
         };
 
         let widgets = DatePillWidgets {
@@ -314,12 +341,17 @@ impl SimpleComponent for DatePill {
             summary_label,
             apply_button,
             escape_controller,
+            back_button,
             any_time_count,
             today_count,
             yesterday_count,
             last_7_days_count,
             last_30_days_count,
             this_year_count,
+            #[cfg(test)]
+            announcement_log,
+            #[cfg(test)]
+            accessible_label_log,
         };
 
         model.sync_button(&widgets);
@@ -381,6 +413,14 @@ impl SimpleComponent for DatePill {
             DatePillInput::CustomDayPicked(day) => {
                 (self.draft_from, self.draft_to) =
                     apply_pick(self.draft_from, self.draft_to, self.active_endpoint, day);
+                let summary =
+                    custom_info_text(self.draft_from, self.draft_to, Local::now().date_naive());
+                self.summary_label
+                    .announce(&summary, gtk::AccessibleAnnouncementPriority::Medium);
+                #[cfg(test)]
+                self.announcement_log
+                    .borrow_mut()
+                    .push((summary, gtk::AccessibleAnnouncementPriority::Medium));
             }
             DatePillInput::CustomEndpointChanged(endpoint) => {
                 self.active_endpoint = endpoint;
@@ -524,6 +564,28 @@ impl DatePill {
                 .unwrap_or_else(|| gettext("Not set")),
         );
         widgets
+            .start_toggle
+            .set_label(Some(&endpoint_accessible_label(
+                RangeEndpoint::Start,
+                self.draft_from,
+                display,
+            )));
+        widgets
+            .end_toggle
+            .set_label(Some(&endpoint_accessible_label(
+                RangeEndpoint::End,
+                self.draft_to,
+                display,
+            )));
+        let calendar_accessible_label = endpoint_title(self.active_endpoint);
+        widgets
+            .calendar
+            .update_property(&[gtk::accessible::Property::Label(&calendar_accessible_label)]);
+        #[cfg(test)]
+        {
+            self.accessible_label_log.borrow_mut().1 = calendar_accessible_label;
+        }
+        widgets
             .endpoint_toggles
             .set_active(match self.active_endpoint {
                 RangeEndpoint::Start => 0,
@@ -550,6 +612,25 @@ impl DatePill {
             .apply_button
             .set_sensitive(valid_custom_filter(self.draft_from, self.draft_to).is_some());
     }
+}
+
+fn endpoint_title(endpoint: RangeEndpoint) -> String {
+    match endpoint {
+        RangeEndpoint::Start => gettext("Start date"),
+        RangeEndpoint::End => gettext("End date"),
+    }
+}
+
+fn endpoint_accessible_label(
+    endpoint: RangeEndpoint,
+    date: Option<NaiveDate>,
+    display: YearDisplay,
+) -> String {
+    let value = date
+        .map(|date| format_date(date, display))
+        .unwrap_or_else(|| gettext("Not set"));
+    // Translators: accessible name for a date range endpoint, e.g. "Start date, Jun 3".
+    replace_pair(&gettext("{}, {}"), &endpoint_title(endpoint), &value)
 }
 
 fn shows_page(stack: &gtk::Stack, name: &str) -> bool {
@@ -1203,5 +1284,123 @@ mod tests {
                 .row_at_index(6)
                 .is_some_and(|custom_row| custom_row.has_focus())
         });
+    }
+
+    #[gtk::test]
+    fn picker_exposes_endpoint_and_back_accessible_labels() {
+        let controller = DatePill::builder().launch(());
+        let from = date(2025, 12, 28);
+        let to = date(2026, 1, 4);
+        let expected_start = replace_pair(
+            &gettext("{}, {}"),
+            &gettext("Start date"),
+            &format_date(from, YearDisplay::WithYear),
+        );
+        let expected_end = replace_pair(
+            &gettext("{}, {}"),
+            &gettext("End date"),
+            &format_date(to, YearDisplay::WithYear),
+        );
+
+        controller.emit(DatePillInput::PresetSelected(DateFilter::Custom {
+            from,
+            to,
+        }));
+        controller.emit(DatePillInput::CustomRangeRowSelected);
+        pump_main_context(|| {
+            controller.widgets().stack.visible_child_name().as_deref() == Some("custom")
+                && calendar_to_naive_date(&controller.widgets().calendar.date()) == Some(from)
+                && controller.widgets().start_toggle.label().as_deref()
+                    == Some(expected_start.as_str())
+        });
+
+        assert_eq!(
+            controller.widgets().start_toggle.label().as_deref(),
+            Some(expected_start.as_str())
+        );
+        assert_eq!(
+            controller.widgets().end_toggle.label().as_deref(),
+            Some(expected_end.as_str())
+        );
+        assert!(gtk::test_accessible_has_property(
+            &controller.widgets().calendar,
+            gtk::AccessibleProperty::Label,
+        ));
+        assert!(gtk::test_accessible_has_property(
+            &controller.widgets().back_button,
+            gtk::AccessibleProperty::Label,
+        ));
+        // `controller.widgets()` hands back a `Ref`, so the recorder has to be
+        // cloned out before borrowing it; holding the widgets `Ref` across the
+        // assertions would also deadlock the next `update_view`.
+        let accessible_label_log = controller.widgets().accessible_label_log.clone();
+        let labels = accessible_label_log.borrow();
+        assert_eq!(labels.0, gettext("Back to date presets"));
+        assert_eq!(labels.1, gettext("Start date"));
+        drop(labels);
+
+        controller.widgets().endpoint_toggles.set_active(1);
+        pump_main_context(|| {
+            controller.widgets().accessible_label_log.borrow().1 == gettext("End date")
+        });
+    }
+
+    #[gtk::test]
+    fn only_user_picks_request_a_medium_summary_announcement() {
+        let controller = DatePill::builder().launch(());
+        let from = date(2026, 6, 3);
+        let to = date(2026, 6, 9);
+
+        controller.emit(DatePillInput::PresetSelected(DateFilter::Custom {
+            from,
+            to,
+        }));
+        controller.emit(DatePillInput::CustomRangeRowSelected);
+        pump_main_context(|| {
+            controller.widgets().stack.visible_child_name().as_deref() == Some("custom")
+        });
+        assert!(controller.widgets().announcement_log.borrow().is_empty());
+
+        let summary_before_switch = controller.widgets().summary_label.label();
+        let start_before_switch = controller.widgets().start_date_label.label();
+        let end_before_switch = controller.widgets().end_date_label.label();
+        controller.widgets().endpoint_toggles.set_active(1);
+        pump_main_context(|| {
+            controller.widgets().endpoint_toggles.active() == 1
+                && calendar_to_naive_date(&controller.widgets().calendar.date()) == Some(to)
+        });
+        while glib::MainContext::default().pending() {
+            glib::MainContext::default().iteration(false);
+        }
+        assert_eq!(
+            controller.widgets().summary_label.label(),
+            summary_before_switch
+        );
+        assert_eq!(
+            controller.widgets().start_date_label.label(),
+            start_before_switch
+        );
+        assert_eq!(
+            controller.widgets().end_date_label.label(),
+            end_before_switch
+        );
+        assert!(controller.widgets().announcement_log.borrow().is_empty());
+
+        let picked = date(2026, 6, 12);
+        controller
+            .widgets()
+            .calendar
+            .set_date(&naive_to_glib_date(picked).unwrap());
+        pump_main_context(|| controller.widgets().announcement_log.borrow().len() == 1);
+        let announcement_log = controller.widgets().announcement_log.clone();
+        let announcements = announcement_log.borrow();
+        assert_eq!(
+            announcements[0].1,
+            gtk::AccessibleAnnouncementPriority::Medium
+        );
+        assert_eq!(
+            announcements[0].0,
+            custom_info_text(Some(from), Some(picked), Local::now().date_naive())
+        );
     }
 }
