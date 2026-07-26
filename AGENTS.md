@@ -19,7 +19,7 @@
   - `parsers/` handles assistant-specific session formats.
   - `models/` defines domain types.
   - `utils/` contains shared helpers (for example terminal integration).
-- `data/` holds desktop metadata, GSettings schema, icons, CSS, and UI resources in `data/resources/`.
+- `data/` holds desktop metadata, GSettings schema, icons, and the CSS bundled through `data/resources/` (see `resources.gresource.xml`).
 - `tests/` contains integration tests; `tests/fixtures/` contains sample sessions for Claude Code, OpenCode, Codex, and Mistral Vibe.
 - `build-aux/` contains Flatpak manifests (dev and stable) and the vendor script for offline builds.
 - `docs/` hosts architecture notes plus exploration and design documentation.
@@ -42,7 +42,7 @@
 ## Coding Style & Naming Conventions
 - Rust 2024 edition; format with rustfmt and keep standard 4-space indentation.
 - Naming follows Rust conventions: `snake_case` for functions/modules/vars, `CamelCase` for types, `SCREAMING_SNAKE_CASE` for constants.
-- Keep UI definitions in `data/resources/ui/` and CSS in `data/resources/style.css`.
+- Define UI declaratively in Rust with the Relm4 `view!` macro inside `src/ui/`; the project does not use `.ui`/Blueprint files, so there is no `data/resources/ui/` directory. Keep CSS in `data/resources/style.css`.
 
 ## Parsing, Paths, and Data Safety Guardrails
 - Stream JSONL data with `BufReader` and line iteration; do not load large session logs fully into memory.
