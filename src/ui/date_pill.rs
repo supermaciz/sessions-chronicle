@@ -28,6 +28,9 @@ enum Page {
     Custom,
 }
 
+/// Index of the *Custom range...* row in the preset list.
+const CUSTOM_ROW_INDEX: i32 = 6;
+
 pub struct DatePill {
     current_filter: DateFilter,
     counts: DateCounts,
@@ -73,6 +76,8 @@ pub struct DatePillWidgets {
     label: gtk::Label,
     stack: gtk::Stack,
     calendar: gtk::Calendar,
+    calendar_clicks: gtk::GestureClick,
+    calendar_keys: gtk::EventControllerKey,
     endpoint_toggles: adw::ToggleGroup,
     start_toggle: adw::Toggle,
     end_toggle: adw::Toggle,
@@ -182,8 +187,10 @@ impl SimpleComponent for DatePill {
         title_row.append(&back_button);
         title_row.append(&heading);
 
-        let (start_toggle, start_date_label) = build_endpoint_toggle(&gettext("Start date"));
-        let (end_toggle, end_date_label) = build_endpoint_toggle(&gettext("End date"));
+        let (start_toggle, start_date_label) =
+            build_endpoint_toggle(&endpoint_title(RangeEndpoint::Start));
+        let (end_toggle, end_date_label) =
+            build_endpoint_toggle(&endpoint_title(RangeEndpoint::End));
         let endpoint_toggles = adw::ToggleGroup::new();
         endpoint_toggles.set_homogeneous(true);
         endpoint_toggles.add(start_toggle.clone());
@@ -276,6 +283,56 @@ impl SimpleComponent for DatePill {
             }
         });
 
+        // `GtkCalendar` only emits `day-selected` when the selected day actually
+        // changes, so clicking the day it already shows — today, on a freshly
+        // seeded custom page — is a silent no-op and Apply would never enable.
+        // The calendar's own click gesture never claims the event sequence, so
+        // this bubble-phase gesture sees the same release and re-picks the day
+        // unconditionally. `apply_pick` is idempotent for a re-pick of the
+        // current endpoint value, so the extra pick cannot corrupt the draft;
+        // `CustomDayPicked` only has to keep it from announcing twice.
+        // Gestures only run on real input, so the guarded `set_date()` in
+        // `sync_custom_state` still cannot look like a pick.
+        let input_sender = sender.input_sender().clone();
+        let calendar_clicks = gtk::GestureClick::new();
+        calendar_clicks.connect_released(move |gesture, _, x, y| {
+            let Some(calendar) = gesture.widget().and_downcast::<gtk::Calendar>() else {
+                return;
+            };
+            if !release_landed_on_a_day(&calendar, x, y) {
+                return;
+            }
+            if let Some(date) = calendar_to_naive_date(&calendar.date()) {
+                input_sender.send(DatePillInput::CustomDayPicked(date)).ok();
+            }
+        });
+        calendar.add_controller(calendar_clicks.clone());
+
+        // The keyboard equivalent. `GtkCalendar` ignores Space until a click or
+        // an arrow key has placed its internal focus cell, so a keyboard user
+        // who has just tabbed in gets nothing at all. It stops the key whenever
+        // it does act on Space, so this bubble-phase controller only runs when
+        // the calendar left the key unhandled, and then picks the day the
+        // calendar visibly highlights.
+        let input_sender = sender.input_sender().clone();
+        let calendar_keys = gtk::EventControllerKey::new();
+        calendar_keys.connect_key_pressed(move |controller, keyval, _, _| {
+            if keyval != gtk::gdk::Key::space && keyval != gtk::gdk::Key::KP_Space {
+                return glib::Propagation::Proceed;
+            }
+
+            let Some(calendar) = controller.widget().and_downcast::<gtk::Calendar>() else {
+                return glib::Propagation::Proceed;
+            };
+            let Some(date) = calendar_to_naive_date(&calendar.date()) else {
+                return glib::Propagation::Proceed;
+            };
+
+            input_sender.send(DatePillInput::CustomDayPicked(date)).ok();
+            glib::Propagation::Stop
+        });
+        calendar.add_controller(calendar_keys.clone());
+
         let input_sender = sender.input_sender().clone();
         endpoint_toggles.connect_active_notify(move |group| {
             let endpoint = if group.active() == 0 {
@@ -333,6 +390,8 @@ impl SimpleComponent for DatePill {
             label,
             stack,
             calendar,
+            calendar_clicks,
+            calendar_keys,
             endpoint_toggles,
             start_toggle,
             end_toggle,
@@ -364,7 +423,7 @@ impl SimpleComponent for DatePill {
     fn update(&mut self, message: Self::Input, sender: ComponentSender<Self>) {
         match message {
             DatePillInput::PopoverOpened => {
-                self.focus_current_row_when_ready();
+                self.focus_row_when_ready(current_row_index(&self.current_filter));
                 sender.output(DatePillOutput::CountsRequested).ok();
             }
             DatePillInput::CountsReceived(counts) => {
@@ -373,7 +432,7 @@ impl SimpleComponent for DatePill {
             DatePillInput::OpenViaShortcut => {
                 self.page = Page::Presets;
                 self.popover.popup();
-                self.focus_current_row_when_ready();
+                self.focus_row_when_ready(current_row_index(&self.current_filter));
             }
             DatePillInput::PresetSelected(filter) => {
                 self.current_filter = filter.clone();
@@ -407,12 +466,22 @@ impl SimpleComponent for DatePill {
                 let returning_from_custom = self.page == Page::Custom;
                 self.page = Page::Presets;
                 if returning_from_custom {
-                    self.focus_custom_row_when_ready();
+                    self.focus_row_when_ready(CUSTOM_ROW_INDEX);
                 }
             }
             DatePillInput::CustomDayPicked(day) => {
+                let previous = (self.draft_from, self.draft_to);
                 (self.draft_from, self.draft_to) =
                     apply_pick(self.draft_from, self.draft_to, self.active_endpoint, day);
+                // One click reaches this twice whenever the day changes: once
+                // from `day-selected`, once from the gesture that covers the
+                // day the calendar already shows. The second pass is a no-op
+                // thanks to `apply_pick` being idempotent, and skipping the
+                // announcement when nothing moved keeps the screen reader from
+                // repeating the same summary.
+                if (self.draft_from, self.draft_to) == previous {
+                    return;
+                }
                 let summary =
                     custom_info_text(self.draft_from, self.draft_to, Local::now().date_naive());
                 self.summary_label
@@ -449,28 +518,23 @@ impl SimpleComponent for DatePill {
 }
 
 impl DatePill {
-    fn focus_current_row_when_ready(&self) {
+    fn focus_row_when_ready(&self, focus_index: i32) {
         let listbox = self.listbox.clone();
         let stack = self.stack.clone();
-        let row_index = current_row_index(&self.current_filter);
+        let selected_index = current_row_index(&self.current_filter);
 
         glib::idle_add_local_once(move || {
             if !shows_page(&stack, "presets") {
                 return;
             }
 
-            let Some(row) = listbox.row_at_index(row_index) else {
-                return;
-            };
-
-            listbox.select_row(Some(&row));
-            listbox.grab_focus();
-            row.grab_focus();
+            focus_row(&listbox, focus_index, selected_index);
         });
     }
 
     fn select_current_row(&self) {
-        self.select_row(current_row_index(&self.current_filter));
+        let row_index = current_row_index(&self.current_filter);
+        focus_row(&self.listbox, row_index, row_index);
     }
 
     fn focus_calendar_when_ready(&self) {
@@ -482,31 +546,6 @@ impl DatePill {
             }
             calendar.grab_focus();
         });
-    }
-
-    fn focus_custom_row_when_ready(&self) {
-        let listbox = self.listbox.clone();
-        let stack = self.stack.clone();
-        glib::idle_add_local_once(move || {
-            if !shows_page(&stack, "presets") {
-                return;
-            }
-            let Some(row) = listbox.row_at_index(6) else {
-                return;
-            };
-            listbox.select_row(Some(&row));
-            row.grab_focus();
-        });
-    }
-
-    fn select_row(&self, row_index: i32) {
-        let Some(row) = self.listbox.row_at_index(row_index) else {
-            return;
-        };
-
-        self.listbox.select_row(Some(&row));
-        self.listbox.grab_focus();
-        row.grab_focus();
     }
 
     fn sync_button(&self, widgets: &DatePillWidgets) {
@@ -542,7 +581,7 @@ impl DatePill {
 
     fn sync_custom_state(&self, widgets: &DatePillWidgets) {
         let today = Local::now().date_naive();
-        self.stack.set_visible_child_name(match self.page {
+        widgets.stack.set_visible_child_name(match self.page {
             Page::Presets => "presets",
             Page::Custom => "custom",
         });
@@ -611,6 +650,65 @@ impl DatePill {
         widgets
             .apply_button
             .set_sensitive(valid_custom_filter(self.draft_from, self.draft_to).is_some());
+    }
+}
+
+/// Focuses `focus_index` and leaves `selected_index` selected.
+///
+/// `SelectionMode::Browse` couples focus and selection, so focusing a row also
+/// selects it. When the two indices differ — returning from the custom page
+/// focuses *Custom range...* while another preset is still filtering — the
+/// selection is restored afterwards so the highlight never lies about the
+/// active filter.
+fn focus_row(listbox: &gtk::ListBox, focus_index: i32, selected_index: i32) {
+    let Some(row) = listbox.row_at_index(focus_index) else {
+        return;
+    };
+
+    listbox.select_row(Some(&row));
+    listbox.grab_focus();
+    row.grab_focus();
+
+    if selected_index != focus_index
+        && let Some(selected_row) = listbox.row_at_index(selected_index)
+    {
+        listbox.select_row(Some(&selected_row));
+    }
+}
+
+/// Whether a pointer release at `(x, y)`, in the calendar's own coordinate
+/// space, landed on one of its day cells rather than on the heading, the week
+/// numbers, or the day-name row.
+///
+/// `GtkCalendar` draws its days as labels carrying the `.day-number` CSS class
+/// and makes the same distinction on button press, by picking the widget under
+/// the pointer and reacting only for those labels. This compares layout bounds
+/// instead of calling `pick()`, which additionally requires the widget to be
+/// mapped. Should GTK ever rename that class, the gesture would simply stop
+/// re-picking and fall back to `day-selected`; it can never pick a wrong day.
+fn release_landed_on_a_day(calendar: &gtk::Calendar, x: f64, y: f64) -> bool {
+    let point = gtk::graphene::Point::new(x as f32, y as f32);
+    let mut cells = Vec::new();
+    collect_day_cell_bounds(calendar.upcast_ref(), calendar, &mut cells);
+
+    cells.iter().any(|bounds| bounds.contains_point(&point))
+}
+
+fn collect_day_cell_bounds(
+    widget: &gtk::Widget,
+    calendar: &gtk::Calendar,
+    bounds: &mut Vec<gtk::graphene::Rect>,
+) {
+    if widget.has_css_class("day-number")
+        && let Some(cell) = widget.compute_bounds(calendar)
+    {
+        bounds.push(cell);
+    }
+
+    let mut child = widget.first_child();
+    while let Some(current) = child {
+        collect_day_cell_bounds(&current, calendar, bounds);
+        child = current.next_sibling();
     }
 }
 
@@ -707,14 +805,22 @@ fn format_date_with_formats(date: NaiveDate, translated: &str, fallback: &str) -
         0,
         0.0,
     ) else {
-        return date.format("%Y-%m-%d").to_string();
+        return iso_fallback(date);
     };
 
     date_time
         .format(translated)
         .or_else(|_| date_time.format(fallback))
         .map(|formatted| formatted.to_string())
-        .unwrap_or_else(|_| date.format("%Y-%m-%d").to_string())
+        .unwrap_or_else(|_| iso_fallback(date))
+}
+
+/// Last-resort date rendering, deliberately going through chrono rather than
+/// glib: this is only reached once glib has already refused the date or the
+/// format string, so glib could not render it either. ISO 8601 is unambiguous
+/// in every locale, so it needs no translation.
+fn iso_fallback(date: NaiveDate) -> String {
+    date.format("%Y-%m-%d").to_string()
 }
 
 fn replace_pair(template: &str, first: &str, second: &str) -> String {
@@ -729,7 +835,7 @@ fn current_row_index(filter: &DateFilter) -> i32 {
         DateFilter::Last7Days => 3,
         DateFilter::Last30Days => 4,
         DateFilter::ThisYear => 5,
-        DateFilter::Custom { .. } => 6,
+        DateFilter::Custom { .. } => CUSTOM_ROW_INDEX,
     }
 }
 
@@ -810,6 +916,13 @@ fn tooltip_for_filter(filter: &DateFilter, today: NaiveDate) -> String {
     }
 }
 
+/// Writes `day` into `endpoint`, mirroring the missing endpoint and clamping
+/// the other one so `from > to` is unreachable after any user pick.
+///
+/// The draft pair is never mixed (one endpoint `Some`, the other `None`): the
+/// only writers are this function, which always returns both `Some`,
+/// `CustomClearClicked`, which clears both, and page seeding, which sets both
+/// or neither. That is why the test table has no mixed-draft row.
 fn apply_pick(
     from: Option<NaiveDate>,
     to: Option<NaiveDate>,
@@ -853,7 +966,8 @@ fn calendar_to_naive_date(date: &glib::DateTime) -> Option<NaiveDate> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use relm4::{Component, ComponentController};
+    use glib::translate::IntoGlib;
+    use relm4::{Component, ComponentController, component::Connector};
     use std::time::{Duration, Instant};
 
     #[test]
@@ -1202,14 +1316,228 @@ mod tests {
     #[gtk::test]
     fn one_day_pick_enables_apply_and_clear_disables_it_again() {
         let controller = DatePill::builder().launch(());
-        controller.emit(DatePillInput::CustomRangeRowSelected);
+        let calendar = laid_out_custom_page(&controller);
+        // The custom page is on screen with no draft endpoints: Apply being
+        // insensitive here is an observed state, not the initial widget value.
         assert!(!controller.widgets().apply_button.is_sensitive());
 
-        controller.emit(DatePillInput::CustomDayPicked(date(2026, 7, 25)));
+        // Selecting another day in the calendar is what a real click does
+        // whenever the day actually changes.
+        let picked = Local::now().date_naive() - chrono::TimeDelta::days(3);
+        calendar.set_date(&naive_to_glib_date(picked).expect("glib date"));
         pump_main_context(|| controller.widgets().apply_button.is_sensitive());
 
         controller.emit(DatePillInput::CustomClearClicked);
         pump_main_context(|| !controller.widgets().apply_button.is_sensitive());
+    }
+
+    #[gtk::test]
+    fn clicking_the_day_the_calendar_already_shows_is_a_pick() {
+        let controller = DatePill::builder().launch(());
+        let calendar = laid_out_custom_page(&controller);
+        let today = Local::now().date_naive();
+        assert_eq!(calendar_to_naive_date(&calendar.date()), Some(today));
+        assert!(!controller.widgets().apply_button.is_sensitive());
+
+        release_on_calendar(&controller, today_cell_center(&calendar));
+
+        pump_main_context(|| controller.widgets().apply_button.is_sensitive());
+        let expected = format_date(today, YearDisplay::WithoutYear);
+        assert_eq!(controller.widgets().start_date_label.label(), expected);
+        assert_eq!(controller.widgets().end_date_label.label(), expected);
+        assert_eq!(
+            controller.widgets().summary_label.label(),
+            custom_info_text(Some(today), Some(today), today)
+        );
+    }
+
+    #[gtk::test]
+    fn a_release_outside_the_day_grid_is_not_a_pick() {
+        let controller = DatePill::builder().launch(());
+        let calendar = laid_out_custom_page(&controller);
+        let today = Local::now().date_naive();
+
+        // Top-left corner of the calendar: its heading row, never a day cell.
+        release_on_calendar(&controller, (2.0, 2.0));
+        drain_main_context();
+
+        assert!(!controller.widgets().apply_button.is_sensitive());
+        assert_eq!(
+            controller.widgets().start_date_label.label(),
+            gettext("Not set")
+        );
+        assert_eq!(
+            controller.widgets().summary_label.label(),
+            custom_info_text(None, None, today)
+        );
+        assert_eq!(calendar_to_naive_date(&calendar.date()), Some(today));
+    }
+
+    #[gtk::test]
+    fn returning_from_the_custom_page_keeps_the_active_preset_selected() {
+        let controller = DatePill::builder().launch(());
+        let root = controller.widget().clone().upcast::<gtk::Widget>();
+        let listbox = find_list_box(&root).expect("date pill preset list");
+        let stack = controller.widgets().stack.clone();
+
+        controller.emit(DatePillInput::PresetSelected(DateFilter::Last30Days));
+        controller.emit(DatePillInput::CustomRangeRowSelected);
+        pump_main_context(|| shows_page(&stack, "custom"));
+
+        // Returning focuses "Custom range..." so the trip back is
+        // discoverable, and `SelectionMode::Browse` selects whatever gets
+        // focus. Start from that selection so the wait below observes the
+        // restore rather than a highlight that never moved. Focus itself is
+        // not asserted here: grabbing it needs a mapped toplevel, which the
+        // shared harness thread cannot guarantee.
+        let custom_row = listbox
+            .row_at_index(CUSTOM_ROW_INDEX)
+            .expect("custom range row");
+        listbox.select_row(Some(&custom_row));
+
+        controller.emit(DatePillInput::BackToPresets);
+        // The highlighted row must go back to the filter that is applied.
+        pump_main_context(|| listbox.selected_row().map(|row| row.index()) == Some(4));
+    }
+
+    #[gtk::test]
+    fn a_repeated_pick_of_the_same_day_announces_only_once() {
+        let controller = DatePill::builder().launch(());
+        let calendar = laid_out_custom_page(&controller);
+        let center = today_cell_center(&calendar);
+
+        // A real click on a day that does change the selection reaches
+        // `CustomDayPicked` twice — from `day-selected` and from the gesture.
+        // Replaying the same pick twice has the same shape: only the first one
+        // moves the draft, so only the first one is worth announcing.
+        release_on_calendar(&controller, center);
+        pump_main_context(|| controller.widgets().announcement_log.borrow().len() == 1);
+
+        release_on_calendar(&controller, center);
+        drain_main_context();
+
+        assert_eq!(controller.widgets().announcement_log.borrow().len(), 1);
+        assert!(controller.widgets().apply_button.is_sensitive());
+    }
+
+    #[gtk::test]
+    fn space_on_a_freshly_focused_calendar_is_a_pick() {
+        let controller = DatePill::builder().launch(());
+        let calendar = laid_out_custom_page(&controller);
+        let today = Local::now().date_naive();
+        assert!(!controller.widgets().apply_button.is_sensitive());
+
+        // `GtkCalendar` has no focus cell yet, so it leaves Space unhandled and
+        // the picker's own key controller gets it.
+        assert!(press_space_on_calendar(&controller));
+
+        pump_main_context(|| controller.widgets().apply_button.is_sensitive());
+        let expected = format_date(today, YearDisplay::WithoutYear);
+        assert_eq!(controller.widgets().start_date_label.label(), expected);
+        assert_eq!(controller.widgets().end_date_label.label(), expected);
+        assert_eq!(calendar_to_naive_date(&calendar.date()), Some(today));
+    }
+
+    #[gtk::test]
+    fn other_keys_are_left_to_the_calendar() {
+        let controller = DatePill::builder().launch(());
+        laid_out_custom_page(&controller);
+
+        assert!(!press_key_on_calendar(&controller, gtk::gdk::Key::Right));
+        drain_main_context();
+
+        assert!(!controller.widgets().apply_button.is_sensitive());
+    }
+
+    /// Emits `key-pressed` on the picker's own calendar key controller,
+    /// exercising the real handler. `GtkCalendar`'s controller runs first in
+    /// the real chain and consumes Space whenever it acts on it, so replaying
+    /// only this one matches the case under test: a calendar that has no focus
+    /// cell yet and therefore ignored the key.
+    fn press_space_on_calendar(controller: &Connector<DatePill>) -> bool {
+        press_key_on_calendar(controller, gtk::gdk::Key::space)
+    }
+
+    fn press_key_on_calendar(controller: &Connector<DatePill>, key: gtk::gdk::Key) -> bool {
+        let keys = controller.widgets().calendar_keys.clone();
+        keys.emit_by_name::<bool>(
+            "key-pressed",
+            &[&key.into_glib(), &0u32, &gtk::gdk::ModifierType::empty()],
+        )
+    }
+
+    /// Switches to the custom page and gives the calendar a real allocation,
+    /// so its day cells have layout bounds.
+    ///
+    /// The calendar is laid out directly rather than by showing the popover: a
+    /// popover only lays out once its toplevel is mapped, which depends on the
+    /// display backend and on whatever other tests left on the shared harness
+    /// thread. Allocating here is deterministic, and layout is all the day-cell
+    /// geometry needs.
+    fn laid_out_custom_page(controller: &Connector<DatePill>) -> gtk::Calendar {
+        let stack = controller.widgets().stack.clone();
+        let calendar = controller.widgets().calendar.clone();
+
+        controller.emit(DatePillInput::CustomRangeRowSelected);
+        pump_main_context(|| shows_page(&stack, "custom"));
+
+        let (_, width, _, _) = calendar.measure(gtk::Orientation::Horizontal, -1);
+        let (_, height, _, _) = calendar.measure(gtk::Orientation::Vertical, width);
+        calendar.allocate(width, height, -1, None);
+        calendar
+    }
+
+    /// Centre of the day cell the calendar marks as today, in the calendar's
+    /// own coordinate space.
+    fn today_cell_center(calendar: &gtk::Calendar) -> (f64, f64) {
+        let bounds = find_today_cell(calendar.clone().upcast_ref(), calendar)
+            .expect("the calendar marks today's cell");
+
+        (
+            f64::from(bounds.x() + bounds.width() / 2.0),
+            f64::from(bounds.y() + bounds.height() / 2.0),
+        )
+    }
+
+    fn find_today_cell(
+        widget: &gtk::Widget,
+        calendar: &gtk::Calendar,
+    ) -> Option<gtk::graphene::Rect> {
+        if widget.has_css_class("day-number") && widget.has_css_class("today") {
+            return widget.compute_bounds(calendar);
+        }
+
+        let mut child = widget.first_child();
+        while let Some(current) = child {
+            if let Some(found) = find_today_cell(&current, calendar) {
+                return Some(found);
+            }
+            child = current.next_sibling();
+        }
+
+        None
+    }
+
+    /// Emits `released` on the picker's own calendar gesture, exercising the
+    /// real handler and its day-cell filter with real coordinates.
+    ///
+    /// `GtkCalendar`'s own press handling is deliberately not replayed: for the
+    /// day the calendar already shows it is a no-op — `calendar_select_day_internal`
+    /// returns before emitting `day-selected` when nothing changed — which is
+    /// exactly the case these tests cover.
+    fn release_on_calendar(controller: &Connector<DatePill>, (x, y): (f64, f64)) {
+        let gesture = controller.widgets().calendar_clicks.clone();
+        gesture.emit_by_name::<()>("released", &[&1i32, &x, &y]);
+    }
+
+    fn drain_main_context() {
+        let context = glib::MainContext::default();
+        for _ in 0..20 {
+            while context.pending() {
+                context.iteration(false);
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
     }
 
     #[gtk::test]
