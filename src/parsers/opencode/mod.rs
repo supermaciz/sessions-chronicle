@@ -466,6 +466,7 @@ impl OpenCodeParser {
                     return PartOutcome::Subagent(Subagent {
                         id: format!("{}-{}-{}", session_id, message_id, part.id),
                         agent_id: None,
+                        agent_name: None,
                         session_id: session_id.to_string(),
                         title,
                         prompt,
@@ -538,6 +539,7 @@ impl OpenCodeParser {
                 PartOutcome::Subagent(Subagent {
                     id: format!("{}-{}-{}", session_id, message_id, part.id),
                     agent_id: None,
+                    agent_name: None,
                     session_id: session_id.to_string(),
                     title,
                     prompt: part

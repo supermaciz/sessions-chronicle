@@ -2,7 +2,7 @@ use anyhow::Result;
 use rusqlite::Connection;
 
 #[cfg(test)]
-const CURRENT_DB_VERSION: i64 = 15;
+const CURRENT_DB_VERSION: i64 = 16;
 
 fn column_exists(conn: &Connection, table_name: &str, column_name: &str) -> Result<bool> {
     Ok(conn.query_row(
@@ -51,6 +51,10 @@ fn table_exists(conn: &Connection, name: &str) -> Result<bool> {
 ///   15 – replace the top-level activity index with three deterministic sort
 ///        indexes (last_updated, start_time, message_count) to enable
 ///        deterministic session-list reading without temporary sort tables
+///   16 – subagents gains a nullable agent_name for Claude Code teammate
+///        linkage (v2.1.216+ dropped the `agentId:` token); clears
+///        file_fingerprints so parents are re-parsed and the column is
+///        populated
 pub fn initialize_database(conn: &Connection) -> Result<()> {
     let version: i64 = conn.query_row("PRAGMA user_version", [], |row| row.get(0))?;
 
@@ -98,6 +102,9 @@ pub fn initialize_database(conn: &Connection) -> Result<()> {
     }
     if version < 15 {
         apply_v15_migration(conn)?;
+    }
+    if version < 16 {
+        apply_v16_migration(conn)?;
     }
 
     Ok(())
@@ -626,6 +633,37 @@ fn apply_v15_migration(conn: &Connection) -> Result<()> {
              ON sessions(is_subagent, message_count DESC, id DESC);
          PRAGMA user_version = 15;",
     )?;
+    Ok(())
+}
+
+/// Migrate from v15 to v16.
+///
+/// Adds a nullable `agent_name` to `subagents`. Claude Code v2.1.216+ spawns
+/// subagents as background teammates and no longer emits the `agentId:` token
+/// the linkage relied on; the teammate `name` is the only value shared by the
+/// parent transcript and the nested child file.
+///
+/// Clears `file_fingerprints`: teammate sessions already indexed hold
+/// `subagents` rows with a null `agent_id`, and adding a column does not
+/// repair them — the parents must be re-parsed.
+fn apply_v16_migration(conn: &Connection) -> Result<()> {
+    if table_exists(conn, "subagents")? {
+        if !column_exists(conn, "subagents", "agent_name")? {
+            conn.execute("ALTER TABLE subagents ADD COLUMN agent_name TEXT", [])?;
+        }
+
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_subagents_agent_name
+             ON subagents(session_id, agent_name)",
+            [],
+        )?;
+    }
+
+    if table_exists(conn, "file_fingerprints")? {
+        conn.execute("DELETE FROM file_fingerprints", [])?;
+    }
+
+    conn.execute_batch("PRAGMA user_version = 16")?;
     Ok(())
 }
 
@@ -1679,7 +1717,7 @@ mod tests {
         let version: i64 = conn
             .query_row("PRAGMA user_version", [], |row| row.get(0))
             .unwrap();
-        assert_eq!(version, 15);
+        assert_eq!(version, CURRENT_DB_VERSION);
         assert!(!index_exists(&conn, "idx_sessions_top_level_last_updated"));
         assert!(index_exists(
             &conn,
@@ -1690,6 +1728,44 @@ mod tests {
             &conn,
             "idx_sessions_top_level_message_count_id"
         ));
+    }
+
+    #[test]
+    fn v15_to_v16_adds_subagent_agent_name_and_clears_fingerprints() {
+        let conn = Connection::open_in_memory().unwrap();
+        initialize_database(&conn).unwrap();
+
+        conn.execute_batch("PRAGMA user_version = 15").unwrap();
+        conn.execute(
+            "INSERT INTO file_fingerprints (file_path, mtime_ns, size) VALUES ('fixture.jsonl', 1, 1)",
+            [],
+        )
+        .unwrap();
+
+        initialize_database(&conn).unwrap();
+
+        let version: i64 = conn
+            .query_row("PRAGMA user_version", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(version, CURRENT_DB_VERSION);
+
+        let agent_name_column_count: i64 = conn
+            .query_row(
+                "SELECT count(*) FROM pragma_table_info('subagents') WHERE name='agent_name'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(agent_name_column_count, 1);
+
+        assert!(index_exists(&conn, "idx_subagents_agent_name"));
+
+        let fingerprint_count: i64 = conn
+            .query_row("SELECT count(*) FROM file_fingerprints", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(fingerprint_count, 0);
     }
 
     #[test]
