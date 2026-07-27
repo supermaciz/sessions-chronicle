@@ -11,7 +11,7 @@ See [SESSION_FORMAT_ANALYSIS.md](../SESSION_FORMAT_ANALYSIS.md) for cross-assist
 |---------|-------|
 | **Path** | `~/.claude/projects/<project-dir>/UUID.jsonl` (main session)<br>`~/.claude/projects/<project-dir>/<session-id>/subagents/agent-<id>.jsonl` (subagent transcript; documented upstream and confirmed locally)<br>`~/.claude/projects/<project-dir>/<session-id>/subagents/agent-<id>.meta.json` (subagent metadata sidecar; observed locally in v2.1.148)<br>`~/.claude/projects/<project-dir>/<session-id>/tool-results/<id>.<ext>` (materialized large tool output or attachment payloads; observed in current local sessions) |
 | **Pattern** | `UUID.jsonl`, `agent-*.jsonl`, `agent-*.meta.json`, `tool-results/*` |
-| **Example** | `a1b2c3d4-e5f6-7890-abcd-ef1234567890.jsonl`<br>`2a19bf71-3687-49ed-8ae9-8bd15e1522f6/subagents/agent-a60d695.jsonl`<br>`2a19bf71-3687-49ed-8ae9-8bd15e1522f6/subagents/agent-a60d695.meta.json`<br>`82b2d04e-d30e-4370-8e41-f53890baeda1/tool-results/bdw7vxszs.txt` |
+| **Example** | `a1b2c3d4-e5f6-7890-abcd-ef1234567890.jsonl`<br>`2a19bf71-3687-49ed-8ae9-8bd15e1522f6/subagents/agent-a60d695.jsonl` (legacy naming)<br>`66ae4ab6-e5ea-40f4-8e8f-fb80fd307472/subagents/agent-aimpl-task1-d4584135445167d0.jsonl` (teammate naming, v2.1.216+: `agent-a<name>-<hash16>.jsonl`)<br>`2a19bf71-3687-49ed-8ae9-8bd15e1522f6/subagents/agent-a60d695.meta.json`<br>`82b2d04e-d30e-4370-8e41-f53890baeda1/tool-results/bdw7vxszs.txt` |
 | **Format** | JSONL (one JSON object per line, UTF-8, append-only) |
 
 **Path encoding:**
@@ -40,9 +40,18 @@ See [SESSION_FORMAT_ANALYSIS.md](../SESSION_FORMAT_ANALYSIS.md) for cross-assist
   "type": "pr-link",               // PR link events
   "type": "attachment",            // Hook output, skill/agent/MCP listings, command permissions (observed v2.1.148)
   "type": "permission-mode",       // Current permission-mode marker (observed v2.1.148)
-  "type": "last-prompt"            // Last-prompt pointer / leaf marker (observed v2.1.148)
+  "type": "last-prompt",           // Last-prompt pointer / leaf marker (observed v2.1.148)
+  "type": "mode",                  // UI/session mode marker (observed v2.1.216+)
+  "type": "ai-title",              // AI-generated session title (observed v2.1.216+)
+  "type": "file-history-delta"     // Incremental file backup record (observed v2.1.216+)
 }
 ```
+
+Note (2026-07-27 local scan, v2.1.216–v2.1.220): no `summary` events were found
+in the 20 most recent local sessions; `ai-title` appears to be the current
+carrier of the generated session title. `summary` may still exist in older
+transcripts and possibly on some code paths (unconfirmed — Claude Code is
+closed source).
 
 ### User Message Example
 
@@ -224,6 +233,55 @@ prompt text when present and is sometimes absent (leaf-only marker).
 }
 ```
 
+### Mode Event (observed in v2.1.216+ local sessions)
+
+A lightweight marker of the current session mode, similar in spirit to
+`permission-mode`:
+
+```json
+{
+  "type": "mode",
+  "mode": "normal",
+  "sessionId": "UUID"
+}
+```
+
+### AI Title Event (observed in v2.1.216+ local sessions)
+
+Carries the AI-generated session title. In recent local sessions this appears
+to replace the older `summary` event (see note above). A session can contain
+several `ai-title` events as the title is regenerated; the last one wins.
+
+```json
+{
+  "type": "ai-title",
+  "aiTitle": "Explorer UI alternatives pour sélection de plage de dates",
+  "sessionId": "UUID"
+}
+```
+
+### File History Delta Event (observed in v2.1.216+ local sessions)
+
+Incremental companion to `file-history-snapshot`: records one tracked-file
+backup, pointing back to the owning snapshot via `snapshotMessageId`.
+`backup.backupFileName` can be `null`.
+
+```json
+{
+  "type": "file-history-delta",
+  "messageId": "UUID",
+  "snapshotMessageId": "UUID",
+  "trackingPath": "AGENTS.md",
+  "backup": {
+    "backupFileName": "bd059bbd578ebe86@v1",
+    "version": 1,
+    "backupTime": "ISO-8601",
+    "realParentDir": "/path/to/project"
+  },
+  "timestamp": "ISO-8601"
+}
+```
+
 ---
 
 ## Special Features
@@ -284,8 +342,9 @@ derives a local child session ID from the parent session ID plus `agentId`, then
 stores that derived ID in `Subagent.child_session_id` so the existing inspector
 navigation can open the indexed child transcript.
 
-The bridge from the parent transcript to the nested file is the `agentId` token
-emitted inside the `Agent`/`Task` `tool_result` text, e.g.:
+**Legacy form (documented through ~v2.1.148):** the bridge from the parent
+transcript to the nested file was the `agentId` token emitted inside the
+`Agent`/`Task` `tool_result` text, e.g.:
 
 ```
 Async agent launched successfully.
@@ -296,10 +355,37 @@ The parser captures that value onto the parent `Subagent.agent_id`, and the
 indexer matches it against nested `agent-<agentId>.jsonl` files to populate
 `child_session_id`.
 
-#### Subagent Metadata Sidecar (observed in v2.1.148)
+#### Teammate Form (observed in v2.1.216–v2.1.220 local sessions)
 
-Recent local sessions write a sibling `agent-<agentId>.meta.json` next to each
-nested subagent transcript:
+Recent sessions (after subagents started running in the background by default,
+changelog v2.1.198) use a "teammate" spawn shape that breaks the legacy bridge:
+
+- The `tool_result` text uses snake_case `agent_id:` (never `agentId:`) and the
+  value is `<name>@session-<short-parent-id>`, e.g.
+  `agent_id: impl-task1@session-66ae4ab6`.
+- The user event's structured top-level `toolUseResult` object carries the same
+  data: `{agent_id, agent_type, color, is_splitpane, model, name,
+  plan_mode_required, prompt, status: "teammate_spawned", team_name,
+  teammate_id, tmux_pane_id, tmux_session_name, tmux_window_name}`.
+- Nested transcript filenames are now `agent-a<name>-<hash16>.jsonl`, e.g.
+  `agent-aimpl-task1-d4584135445167d0.jsonl`. The 16-hex suffix does not match
+  any value observed in the parent transcript or the sidecar, so filename
+  matching must go through the `<name>` segment.
+- A 2026-07-27 scan of recent local sessions containing subagent transcripts
+  found zero legacy `agentId:` tokens. Whether a non-teammate (foreground,
+  unnamed) launch still emits the legacy token is unconfirmed.
+
+Consequence: the implemented `agentId`-token linkage finds nothing in these
+sessions, so `Subagent.agent_id` stays empty and `child_session_id` is never
+populated — parent→child navigation is broken for new-format sessions until
+the parser learns the teammate form.
+
+#### Subagent Metadata Sidecar
+
+Each nested subagent transcript has a sibling `.meta.json` sidecar. The shape
+changed between v2.1.148 and v2.1.216.
+
+**v2.1.148 (legacy):**
 
 ```json
 {
@@ -310,10 +396,29 @@ nested subagent transcript:
 }
 ```
 
-`toolUseId` links the sidecar directly to the parent `tool_use` block, which is
-a cleaner bridge than scraping the `agentId` token from `tool_result` text. The
-parser does not yet consume this sidecar; the `agentId`-token path above remains
-the implemented linkage.
+`toolUseId` linked the sidecar directly to the parent `tool_use` block.
+
+**v2.1.216+ (teammate form):** `toolUseId` is gone. Observed shape:
+
+```json
+{
+  "agentType": "impl-task1",
+  "description": "Implement Task 1: localized labels",
+  "name": "impl-task1",
+  "spawnDepth": 0,
+  "model": "sonnet",
+  "taskKind": "in_process_teammate",
+  "teamName": "session-66ae4ab6",
+  "color": "blue",
+  "planModeRequired": false,
+  "permissionMode": "auto"
+}
+```
+
+With `toolUseId` removed, `name` is the only observed reliable link back to the
+parent `tool_use` block (`input.name`) and to the `toolUseResult.agent_id`
+prefix (`<name>@session-...`). The parser does not yet consume this sidecar;
+the legacy `agentId`-token path remains the implemented linkage.
 
 ---
 
@@ -338,6 +443,9 @@ Rich per-event metadata:
 | `agentId` | Present in subagent transcript events |
 | `attributionSkill` | Skill slug attributed to an `assistant` event (observed v2.1.148) |
 | `sourceToolAssistantUUID` | On some `user` events, links a tool-result event back to the originating `assistant` event (observed v2.1.148) |
+| `effort` | Reasoning effort level on `assistant` events (`"medium"` observed); added upstream in v2.1.211 per changelog |
+| `requestId` | API request identifier on `assistant` events (observed v2.1.220) |
+| `session_id` | snake_case duplicate of `sessionId` on the same `assistant` events (observed v2.1.220) |
 
 **Model metadata:** Recent Claude Code logs include a stable structured field at
 `message.model` on `assistant` events.
@@ -413,13 +521,21 @@ Current implementation: `src/parsers/claude_code.rs`
 - Does not currently normalize `system/local_command` events into tool calls
 - Does not currently persist/index `message.model` in Sessions Chronicle database schema
 - Dispatches only on `type in {user, assistant}`; other event types — including
-  the newer `attachment`, `permission-mode`, and `last-prompt` events — fall
-  through and are skipped without error (no parser breakage from these additions)
+  the newer `attachment`, `permission-mode`, `last-prompt`, `mode`, `ai-title`,
+  and `file-history-delta` events — fall through and are skipped without error
+  (no parser breakage from these additions)
 - Recent real Claude Code sessions (local scan refreshed 2026-04-13, versions
   observed through v2.1.100) show subagent launches as `name == "Agent"` with
   `input.description`, `input.subagent_type`, and `input.prompt`; optional
   fields include `input.name`, `input.run_in_background`, `input.team_name`,
   and `input.mode`.
+- **Known gap (local scan 2026-07-27, v2.1.216–v2.1.220):** subagent linkage is
+  broken on new-format sessions. `extract_agent_id_from_result_text` only
+  recognizes the legacy `agentId:` token, which no longer appears; the teammate
+  form emits snake_case `agent_id: <name>@session-<shortid>` in `tool_result`
+  text plus a structured `toolUseResult.agent_id`, and nested files are named
+  `agent-a<name>-<hash16>.jsonl`. Fixing this needs a fresh fixture first (see
+  Teammate Form above).
 
 **Title extraction:** First parsed `user` message content (assistant/system/summary are ignored).
 
