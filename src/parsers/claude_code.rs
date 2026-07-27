@@ -386,6 +386,15 @@ impl ParseState {
             if sa.agent_id.is_none() {
                 sa.agent_id = extract_agent_id_from_result_text(&result_text);
             }
+            if sa.agent_name.is_none() {
+                sa.agent_name = event
+                    .get("toolUseResult")
+                    .and_then(|v| v.get("name"))
+                    .and_then(|v| v.as_str())
+                    .map(str::trim)
+                    .filter(|name| !name.is_empty())
+                    .map(str::to_string);
+            }
         }
     }
 
@@ -585,6 +594,13 @@ impl ParseState {
                 .and_then(|v| v.get("prompt"))
                 .and_then(|v| v.as_str())
                 .map(str::to_string);
+            let agent_name = block
+                .get("input")
+                .and_then(|v| v.get("name"))
+                .and_then(|v| v.as_str())
+                .map(str::trim)
+                .filter(|name| !name.is_empty())
+                .map(str::to_string);
             let title = description.clone().unwrap_or_else(|| {
                 prompt
                     .as_deref()
@@ -596,7 +612,7 @@ impl ParseState {
             self.subagents.push(Subagent {
                 id: tool_use_id.clone(),
                 agent_id: None,
-                agent_name: None,
+                agent_name,
                 session_id: String::new(),
                 title,
                 prompt,
@@ -1245,6 +1261,59 @@ mod tests {
             parsed.subagents[0].agent_id.as_deref(),
             Some("a41c0fb07beb52ed6")
         );
+    }
+
+    #[test]
+    fn parse_captures_teammate_agent_name_from_tool_use_input() {
+        let file = create_temp_session(&[
+            r#"{"type":"user","timestamp":"2026-07-25T23:26:50.000Z","sessionId":"s-tm","message":{"content":"Implement task 1"}}"#,
+            r#"{"type":"assistant","timestamp":"2026-07-25T23:26:51.000Z","sessionId":"s-tm","message":{"content":[{"type":"tool_use","id":"toolu_tm_001","name":"Agent","input":{"description":"Implement Task 1","prompt":"Do it","name":"impl-task1","subagent_type":"general-purpose","model":"sonnet"}}]}}"#,
+        ]);
+
+        let parsed = ClaudeCodeParser.parse(file.path()).unwrap();
+
+        assert_eq!(parsed.subagents.len(), 1);
+        assert_eq!(
+            parsed.subagents[0].agent_name.as_deref(),
+            Some("impl-task1")
+        );
+        assert_eq!(parsed.subagents[0].agent_id, None);
+    }
+
+    #[test]
+    fn parse_captures_teammate_agent_name_from_tool_use_result() {
+        let file = create_temp_session(&[
+            r#"{"type":"user","timestamp":"2026-07-25T23:26:50.000Z","sessionId":"s-tm2","message":{"content":"Review it"}}"#,
+            r#"{"type":"assistant","timestamp":"2026-07-25T23:26:51.000Z","sessionId":"s-tm2","message":{"content":[{"type":"tool_use","id":"toolu_tm_002","name":"Agent","input":{"description":"Review","prompt":"Check it"}}]}}"#,
+            r#"{"type":"user","timestamp":"2026-07-25T23:26:52.000Z","sessionId":"s-tm2","toolUseResult":{"status":"teammate_spawned","agent_id":"review-docs@session-s-tm2","name":"review-docs","team_name":"session-s-tm2"},"message":{"content":[{"type":"tool_result","tool_use_id":"toolu_tm_002","content":[{"type":"text","text":"Spawned successfully.\nagent_id: review-docs@session-s-tm2\nname: review-docs"}]}]}}"#,
+        ]);
+
+        let parsed = ClaudeCodeParser.parse(file.path()).unwrap();
+
+        assert_eq!(parsed.subagents.len(), 1);
+        assert_eq!(
+            parsed.subagents[0].agent_name.as_deref(),
+            Some("review-docs")
+        );
+        assert_eq!(parsed.subagents[0].agent_id, None);
+    }
+
+    #[test]
+    fn parse_keeps_legacy_agent_id_and_leaves_agent_name_empty() {
+        let file = create_temp_session(&[
+            r#"{"type":"user","timestamp":"2026-04-11T20:05:00.000Z","sessionId":"s-legacy","message":{"content":"Inspect"}}"#,
+            r#"{"type":"assistant","timestamp":"2026-04-11T20:05:01.000Z","sessionId":"s-legacy","message":{"content":[{"type":"tool_use","id":"toolu_lg_001","name":"Agent","input":{"description":"Analyze project","prompt":"List all files"}}]}}"#,
+            r#"{"type":"user","timestamp":"2026-04-11T20:05:02.000Z","sessionId":"s-legacy","message":{"content":[{"type":"tool_result","tool_use_id":"toolu_lg_001","content":[{"type":"text","text":"Async agent launched successfully.\nagentId: a41c0fb07beb52ed6"}]}]}}"#,
+        ]);
+
+        let parsed = ClaudeCodeParser.parse(file.path()).unwrap();
+
+        assert_eq!(parsed.subagents.len(), 1);
+        assert_eq!(
+            parsed.subagents[0].agent_id.as_deref(),
+            Some("a41c0fb07beb52ed6")
+        );
+        assert_eq!(parsed.subagents[0].agent_name, None);
     }
 
     #[test]
