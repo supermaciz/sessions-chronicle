@@ -97,6 +97,8 @@ struct ParseState {
     latest_timestamp: Option<DateTime<Utc>>,
     project_path: Option<String>,
     session_id_from_event: Option<String>,
+    /// Last non-blank `ai-title` event; supersedes `summary` in v2.1.216+.
+    ai_title: Option<String>,
     has_user_message: bool,
 
     // Output collections
@@ -130,6 +132,7 @@ impl ParseState {
             latest_timestamp: None,
             project_path: None,
             session_id_from_event: None,
+            ai_title: None,
             has_user_message: false,
             messages: Vec::new(),
             tool_calls: Vec::new(),
@@ -727,7 +730,10 @@ impl ParseState {
         }
 
         let last_updated = self.latest_timestamp.unwrap_or(start_time);
-        let first_prompt = first_prompt::extract_first_prompt(&self.messages);
+        let first_prompt = match &self.ai_title {
+            Some(title) if !title.trim().is_empty() => Some(title.clone()),
+            _ => first_prompt::extract_first_prompt(&self.messages),
+        };
 
         let session = Session {
             id: final_session_id,
@@ -816,6 +822,14 @@ impl ClaudeCodeParser {
 
                 Some("assistant") => {
                     state.handle_assistant_event(&event, Self::parse_timestamp);
+                }
+
+                Some("ai-title") => {
+                    if let Some(title) = event.get("aiTitle").and_then(|v| v.as_str())
+                        && !title.trim().is_empty()
+                    {
+                        state.ai_title = Some(title.trim().to_string());
+                    }
                 }
 
                 _ => {}
@@ -950,6 +964,52 @@ mod tests {
         }
         file.flush().unwrap();
         file
+    }
+
+    #[test]
+    fn parse_prefers_ai_title_over_the_first_user_message() {
+        let file = create_temp_session(&[
+            r#"{"type":"user","timestamp":"2026-07-25T10:00:00.000Z","sessionId":"s-title","message":{"content":"il faut que je change le picker"}}"#,
+            r#"{"type":"ai-title","aiTitle":"Explorer UI alternatives pour la plage de dates","sessionId":"s-title"}"#,
+            r#"{"type":"assistant","timestamp":"2026-07-25T10:00:01.000Z","sessionId":"s-title","message":{"content":"On y va"}}"#,
+        ]);
+
+        let parsed = ClaudeCodeParser.parse(file.path()).unwrap();
+
+        assert_eq!(
+            parsed.session.first_prompt.as_deref(),
+            Some("Explorer UI alternatives pour la plage de dates")
+        );
+    }
+
+    #[test]
+    fn parse_keeps_the_last_ai_title_when_regenerated() {
+        let file = create_temp_session(&[
+            r#"{"type":"user","timestamp":"2026-07-25T10:00:00.000Z","sessionId":"s-title2","message":{"content":"Hello"}}"#,
+            r#"{"type":"ai-title","aiTitle":"First guess","sessionId":"s-title2"}"#,
+            r#"{"type":"ai-title","aiTitle":"Better title","sessionId":"s-title2"}"#,
+            r#"{"type":"assistant","timestamp":"2026-07-25T10:00:01.000Z","sessionId":"s-title2","message":{"content":"Hi"}}"#,
+        ]);
+
+        let parsed = ClaudeCodeParser.parse(file.path()).unwrap();
+
+        assert_eq!(parsed.session.first_prompt.as_deref(), Some("Better title"));
+    }
+
+    #[test]
+    fn parse_falls_back_to_the_first_prompt_when_ai_title_is_blank() {
+        let file = create_temp_session(&[
+            r#"{"type":"user","timestamp":"2026-07-25T10:00:00.000Z","sessionId":"s-title3","message":{"content":"Fix the build"}}"#,
+            r#"{"type":"ai-title","aiTitle":"   ","sessionId":"s-title3"}"#,
+            r#"{"type":"assistant","timestamp":"2026-07-25T10:00:01.000Z","sessionId":"s-title3","message":{"content":"On it"}}"#,
+        ]);
+
+        let parsed = ClaudeCodeParser.parse(file.path()).unwrap();
+
+        assert_eq!(
+            parsed.session.first_prompt.as_deref(),
+            Some("Fix the build")
+        );
     }
 
     #[test]
