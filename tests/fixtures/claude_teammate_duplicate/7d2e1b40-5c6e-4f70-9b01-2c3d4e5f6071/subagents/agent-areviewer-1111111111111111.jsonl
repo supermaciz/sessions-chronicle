@@ -1,0 +1,2 @@
+{"parentUuid":null,"isSidechain":true,"agentId":"areviewer-1111111111111111","type":"user","message":{"role":"user","content":"Pass one"},"timestamp":"2026-07-26T09:00:03.000Z","cwd":"/home/user/project","sessionId":"7d2e1b40-5c6e-4f70-9b01-2c3d4e5f6071","version":"2.1.220"}
+{"parentUuid":"msg-1","isSidechain":true,"agentId":"areviewer-1111111111111111","type":"assistant","message":{"role":"assistant","content":"Pass one done"},"timestamp":"2026-07-26T09:00:04.000Z","cwd":"/home/user/project","sessionId":"7d2e1b40-5c6e-4f70-9b01-2c3d4e5f6071","version":"2.1.220"}
