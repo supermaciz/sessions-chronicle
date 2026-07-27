@@ -160,6 +160,33 @@ fn is_claude_skippable_error(err: &anyhow::Error) -> bool {
     )
 }
 
+/// Splits a nested Claude Code transcript's agent id into its full form and,
+/// for v2.1.216+ teammate launches, the teammate name.
+///
+/// Teammate transcripts are named `agent-a<name>-<16 hex>.jsonl`; the 16-hex
+/// suffix appears nowhere in the parent transcript, so `<name>` is the only
+/// value both sides share. Legacy ids are `a` followed by 16 hex digits, which
+/// leaves an empty name and is reported as `None`.
+///
+/// ```text
+/// "aimpl-task1-d4584135445167d0" -> ("aimpl-task1-d4584135445167d0", Some("impl-task1"))
+/// "a41c0fb07beb52ed6"            -> ("a41c0fb07beb52ed6", None)
+/// ```
+#[allow(dead_code)]
+fn child_agent_key(agent_id: &str) -> (&str, Option<&str>) {
+    let Some(rest) = agent_id.strip_prefix('a') else {
+        return (agent_id, None);
+    };
+    let Some((name, hash)) = rest.rsplit_once('-') else {
+        return (agent_id, None);
+    };
+    if name.is_empty() || hash.len() != 16 || !hash.chars().all(|c| c.is_ascii_hexdigit()) {
+        return (agent_id, None);
+    }
+
+    (agent_id, Some(name))
+}
+
 impl SessionIndexer {
     pub fn new(db_path: &Path) -> Result<Self> {
         let db = crate::database::open_connection(db_path)?;
@@ -3804,5 +3831,64 @@ mod tests {
             .unwrap();
         assert_eq!(message_count, 4);
         assert!(transcript_count > 0);
+    }
+
+    #[test]
+    fn child_agent_key_splits_teammate_ids() {
+        assert_eq!(
+            child_agent_key("aimpl-task1-d4584135445167d0"),
+            ("aimpl-task1-d4584135445167d0", Some("impl-task1"))
+        );
+    }
+
+    #[test]
+    fn child_agent_key_keeps_dashes_inside_teammate_names() {
+        assert_eq!(
+            child_agent_key("arereview-task3-r1-f7e65fce6956ed8c"),
+            (
+                "arereview-task3-r1-f7e65fce6956ed8c",
+                Some("rereview-task3-r1")
+            )
+        );
+    }
+
+    #[test]
+    fn child_agent_key_reports_no_name_for_legacy_ids() {
+        assert_eq!(
+            child_agent_key("a41c0fb07beb52ed6"),
+            ("a41c0fb07beb52ed6", None)
+        );
+        assert_eq!(child_agent_key("a60d695"), ("a60d695", None));
+    }
+
+    #[test]
+    fn child_agent_key_rejects_malformed_shapes() {
+        // Bare prefix, nothing to split.
+        assert_eq!(child_agent_key("a"), ("a", None));
+        // 15 hex digits, not 16.
+        assert_eq!(
+            child_agent_key("aname-0123456789abcde"),
+            ("aname-0123456789abcde", None)
+        );
+        // 17 hex digits, not 16.
+        assert_eq!(
+            child_agent_key("aname-0123456789abcdef0"),
+            ("aname-0123456789abcdef0", None)
+        );
+        // Right length, not hex.
+        assert_eq!(
+            child_agent_key("aname-zzzzzzzzzzzzzzzz"),
+            ("aname-zzzzzzzzzzzzzzzz", None)
+        );
+        // Empty name between prefix and hash.
+        assert_eq!(
+            child_agent_key("a-0123456789abcdef"),
+            ("a-0123456789abcdef", None)
+        );
+        // Missing the `a` prefix entirely.
+        assert_eq!(
+            child_agent_key("name-0123456789abcdef"),
+            ("name-0123456789abcdef", None)
+        );
     }
 }
