@@ -1,7 +1,7 @@
 # Custom Range Picker — Design Spec
 
 **Date:** 2026-07-25  
-**Status:** Ready for implementation  
+**Status:** Implemented by [PR #192](https://github.com/supermaciz/sessions-chronicle/pull/192) (merged 2026-07-26); manual UI verification follow-ups remain  
 **Exploration:** [`docs/explorations/2026-07-25-date-range-custom-picker-exploration.md`](../../explorations/2026-07-25-date-range-custom-picker-exploration.md)  
 **Proposal:** B's mechanic (one `GtkCalendar` + an `AdwToggleGroup` endpoint switch) in A's container (`GtkStack` page swap)
 
@@ -56,6 +56,20 @@ Measure `GtkCalendar` only after `Adw.init()`. Without it the number is 27 px sh
 | *Clear* | Empties the draft, stays on page 2 |
 | Persistence | None (inherited from the date-filter spec) |
 | Date display | `glib::DateTime` + gettext-translatable format strings |
+
+## Implementation (PR #192)
+
+PR #192 implemented the core design as specified: the two calendars and revealer became a two-page `GtkStack`, one calendar edits the endpoint selected by an `AdwToggleGroup`, `apply_pick` enforces the monotonic range invariant, display formatting moved from `DateFilter` into the UI layer, and the date-pill strings and accessible labels became translatable. The database layer, filter semantics, persistence behaviour, and dependencies were unchanged.
+
+The implementation differs from, or extends, the plan in these areas:
+
+- **Picking the already-selected day needed an explicit pointer path.** `GtkCalendar` does not emit `day-selected` when the chosen date is unchanged. On an empty draft the calendar displays today, so clicking today would otherwise leave *Apply* insensitive. A bubble-phase `GtkGestureClick` now hit-tests `.day-number` cells and sends `CustomDayPicked` for a release on the displayed day.
+- **A freshly focused calendar needed an explicit keyboard path.** `GtkCalendar` ignores `Space` until one of its private focus cells has been established by a click or arrow key. A bubble-phase `GtkEventControllerKey` handles `Space`/keypad `Space` only when no `.day-number` cell has `StateFlags::FOCUSED`; once a focus cell exists, it yields to the calendar so arrow-then-`Space` commits the day GTK focused.
+- **A normal pointer pick can reach the model twice.** A changed day emits `day-selected` and is also observed by the added click gesture. `apply_pick` is idempotent, and `CustomDayPicked` now returns early when the draft did not change. This also prevents a duplicate accessibility announcement.
+- **Focus and selection are kept separate on return.** With `GtkListBox` in `Browse` mode, focusing *Custom range...* also selects it. The implementation focuses that row for discoverability, then restores selection to the row representing the active filter so the highlight does not falsely imply that a draft was applied.
+- **The Escape test is structural rather than end-to-end.** It verifies the capture-phase controller, key trigger, and page transition. The GTK test harness cannot reliably assert that a `GtkMenuButton` popover remains visible after draining the main loop, so the real first-Escape/second-Escape behaviour remains a manual check.
+
+Before merge, `cargo fmt`, `cargo clippy`, the full test suite, and the Flatpak build passed. Screenshots and the planned interactive checks at narrow/large text sizes, with high contrast, Orca, a French locale, and a 1366×768 display were still outstanding when the PR merged.
 
 ## Widget tree
 
