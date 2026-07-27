@@ -172,7 +172,6 @@ fn is_claude_skippable_error(err: &anyhow::Error) -> bool {
 /// "aimpl-task1-d4584135445167d0" -> ("aimpl-task1-d4584135445167d0", Some("impl-task1"))
 /// "a41c0fb07beb52ed6"            -> ("a41c0fb07beb52ed6", None)
 /// ```
-#[allow(dead_code)]
 fn child_agent_key(agent_id: &str) -> (&str, Option<&str>) {
     let Some(rest) = agent_id.strip_prefix('a') else {
         return (agent_id, None);
@@ -185,6 +184,79 @@ fn child_agent_key(agent_id: &str) -> (&str, Option<&str>) {
     }
 
     (agent_id, Some(name))
+}
+
+/// Returns the ids of `parent_session_id`'s indexed child sessions whose agent
+/// id resolves to `name`.
+fn child_sessions_named(
+    tx: &rusqlite::Transaction<'_>,
+    parent_session_id: &str,
+    name: &str,
+) -> Result<Vec<String>> {
+    let mut stmt = tx.prepare("SELECT id FROM sessions WHERE parent_session_id = ?1")?;
+    let ids: Vec<String> = stmt
+        .query_map([parent_session_id], |row| row.get(0))?
+        .collect::<rusqlite::Result<Vec<String>>>()?;
+
+    Ok(ids
+        .into_iter()
+        .filter(|id| {
+            id.rsplit("::")
+                .next()
+                .is_some_and(|suffix| child_agent_key(suffix).1 == Some(name))
+        })
+        .collect())
+}
+
+/// Links a freshly indexed teammate child transcript back to its parent row.
+///
+/// Links only when `name` is unambiguous on both sides; otherwise leaves the
+/// row unlinked, which is the pre-teammate behaviour, rather than risk opening
+/// the wrong transcript.
+fn link_teammate_child_tx(
+    tx: &rusqlite::Transaction<'_>,
+    parent_session_id: &str,
+    child_session_id: &str,
+    name: &str,
+) -> Result<()> {
+    let mut stmt =
+        tx.prepare("SELECT id FROM subagents WHERE session_id = ?1 AND agent_name = ?2")?;
+    let parent_rows: Vec<String> = stmt
+        .query_map(rusqlite::params![parent_session_id, name], |row| row.get(0))?
+        .collect::<rusqlite::Result<Vec<String>>>()?;
+
+    if parent_rows.len() != 1 {
+        if parent_rows.len() > 1 {
+            tracing::warn!(
+                "Claude teammate name {:?} matches {} subagent rows in session {}; \
+                 leaving the child unlinked.",
+                name,
+                parent_rows.len(),
+                parent_session_id
+            );
+        }
+        return Ok(());
+    }
+
+    let siblings = child_sessions_named(tx, parent_session_id, name)?;
+    if siblings.len() > 1 {
+        tracing::warn!(
+            "Claude teammate name {:?} matches {} child sessions of {}; \
+             leaving the subagent unlinked.",
+            name,
+            siblings.len(),
+            parent_session_id
+        );
+        return Ok(());
+    }
+
+    tx.execute(
+        "UPDATE subagents SET child_session_id = ?1
+         WHERE session_id = ?2 AND id = ?3",
+        rusqlite::params![child_session_id, parent_session_id, &parent_rows[0]],
+    )?;
+
+    Ok(())
 }
 
 impl SessionIndexer {
@@ -1023,36 +1095,88 @@ impl SessionIndexer {
                 .filter(|value| !value.is_empty())
                 .context("Claude child session id missing agent suffix")?;
 
-            tx.execute(
-                "UPDATE subagents
-                 SET child_session_id = ?1
-                 WHERE session_id = ?2 AND agent_id = ?3",
-                rusqlite::params![&parsed.session.id, parent_session_id, agent_id],
-            )?;
+            let (full_agent_id, teammate_name) = child_agent_key(agent_id);
+
+            match teammate_name {
+                // Teammate form: `agent_id` is never stored on the parent row,
+                // so resolve through the name with an ambiguity guard.
+                Some(name) => {
+                    link_teammate_child_tx(tx, parent_session_id, &parsed.session.id, name)?;
+                }
+                // Legacy form: `agent_id` is unique by construction.
+                None => {
+                    tx.execute(
+                        "UPDATE subagents
+                         SET child_session_id = ?1
+                         WHERE session_id = ?2 AND agent_id = ?3",
+                        rusqlite::params![&parsed.session.id, parent_session_id, full_agent_id],
+                    )?;
+                }
+            }
 
             return Ok(());
         }
 
         for subagent in &parsed.subagents {
-            let Some(agent_id) = subagent.agent_id.as_deref() else {
-                continue;
-            };
+            if let Some(agent_id) = subagent.agent_id.as_deref() {
+                // Legacy form: the parent knows the full child id, so build it.
+                let child_session_id =
+                    format!("claude-subagent::{}::{}", parsed.session.id, agent_id);
 
-            let child_session_id = format!("claude-subagent::{}::{}", parsed.session.id, agent_id);
-
-            let child_exists: bool = tx.query_row(
-                "SELECT EXISTS(SELECT 1 FROM sessions WHERE id = ?1)",
-                [&child_session_id],
-                |row| row.get(0),
-            )?;
-
-            if child_exists {
-                tx.execute(
-                    "UPDATE subagents
-                     SET child_session_id = ?1
-                     WHERE session_id = ?2 AND id = ?3",
-                    rusqlite::params![child_session_id, &parsed.session.id, &subagent.id],
+                let child_exists: bool = tx.query_row(
+                    "SELECT EXISTS(SELECT 1 FROM sessions WHERE id = ?1)",
+                    [&child_session_id],
+                    |row| row.get(0),
                 )?;
+
+                if child_exists {
+                    tx.execute(
+                        "UPDATE subagents
+                         SET child_session_id = ?1
+                         WHERE session_id = ?2 AND id = ?3",
+                        rusqlite::params![child_session_id, &parsed.session.id, &subagent.id],
+                    )?;
+                }
+            } else if let Some(name) = subagent.agent_name.as_deref() {
+                // Teammate form: the parent does not know the 16-hex suffix,
+                // so enumerate its children and pair by name.
+                let same_name = parsed
+                    .subagents
+                    .iter()
+                    .filter(|other| other.agent_name.as_deref() == Some(name))
+                    .count();
+                if same_name != 1 {
+                    tracing::warn!(
+                        "Claude teammate name {:?} is used by {} subagents in session {}; \
+                         leaving them unlinked.",
+                        name,
+                        same_name,
+                        parsed.session.id
+                    );
+                    continue;
+                }
+
+                let children = child_sessions_named(tx, &parsed.session.id, name)?;
+                match children.len() {
+                    0 => continue,
+                    1 => {
+                        tx.execute(
+                            "UPDATE subagents
+                             SET child_session_id = ?1
+                             WHERE session_id = ?2 AND id = ?3",
+                            rusqlite::params![&children[0], &parsed.session.id, &subagent.id],
+                        )?;
+                    }
+                    count => {
+                        tracing::warn!(
+                            "Claude teammate name {:?} matches {} child sessions of {}; \
+                             leaving the subagent unlinked.",
+                            name,
+                            count,
+                            parsed.session.id
+                        );
+                    }
+                }
             }
         }
 
