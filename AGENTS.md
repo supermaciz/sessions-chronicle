@@ -37,7 +37,7 @@
 - `flatpak-builder --user flatpak_app build-aux/dev.maciz.sessionschronicle.Devel.json --force-clean`: build the GNOME Flatpak bundle.
 - `flatpak-builder --run flatpak_app build-aux/dev.maciz.sessionschronicle.Devel.json sessions-chronicle`: run with local session data.
 - `flatpak-builder --run flatpak_app build-aux/dev.maciz.sessionschronicle.Devel.json sessions-chronicle --sessions-dir tests/fixtures`: run with fixture data.
-- `cargo fmt --all -- --check && cargo clippy --all -- -D warnings && cargo test --all --no-fail-fast`: run CI-parity checks locally.
+- `cargo fmt --all -- --check && cargo clippy --all -- -D warnings && xvfb-run -a env GDK_BACKEND=x11 GSK_RENDERER=cairo cargo test --all --no-fail-fast`: run CI-parity checks locally.
 
 ## Coding Style & Naming Conventions
 - Rust 2024 edition; format with rustfmt and keep standard 4-space indentation.
@@ -52,7 +52,8 @@
 
 ## Testing Guidelines
 - Use fixtures from `tests/fixtures/` for repeatable manual runs; prefer `--sessions-dir tests/fixtures` for end-to-end checks.
-- Prefer adding integration tests under `tests/` and running them via `cargo test --all --no-fail-fast`.
+- Prefer adding integration tests under `tests/` and running them via `xvfb-run -a env GDK_BACKEND=x11 GSK_RENDERER=cairo cargo test --all --no-fail-fast`.
+- **Always run the test suite headless.** The suite contains ~175 `#[gtk::test]` cases that open real windows and steal keyboard focus on a normal desktop session. `xvfb-run -a` picks a free display; `GDK_BACKEND=x11` is required because GTK 4 otherwise prefers the live Wayland compositor over the Xvfb `DISPLAY` and shows the windows anyway; `GSK_RENDERER=cairo` silences the software-rendering `libEGL`/`MESA` warnings and is slightly faster. CI already runs `xvfb-run cargo test --all --no-fail-fast` (`.github/workflows/ci.yml:19`).
 - Run `cargo clippy --all -- -D warnings` and `cargo fmt --all -- --check` before opening a PR.
 
 ## Commit & Pull Request Guidelines
@@ -63,7 +64,7 @@
 ## Definition of Done (Before PR)
 - `cargo fmt --all -- --check` passes.
 - `cargo clippy --all -- -D warnings` passes.
-- `cargo test --all --no-fail-fast` passes.
+- `xvfb-run -a env GDK_BACKEND=x11 GSK_RENDERER=cairo cargo test --all --no-fail-fast` passes.
 - UI changes include updated screenshots.
 - Packaging/build changes include a Flatpak build verification run.
 
