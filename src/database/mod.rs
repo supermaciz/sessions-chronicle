@@ -1232,11 +1232,12 @@ pub fn insert_tool_call(conn: &Connection, tc: &ToolCall, session_id: &str) -> R
 pub fn insert_subagent(conn: &Connection, sa: &Subagent, session_id: &str) -> Result<()> {
     conn.execute(
         "INSERT OR REPLACE INTO subagents
-         (id, agent_id, session_id, title, prompt, result_summary, child_session_id, parser_ref)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+         (id, agent_id, agent_name, session_id, title, prompt, result_summary, child_session_id, parser_ref)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
         rusqlite::params![
             sa.id,
             sa.agent_id,
+            sa.agent_name,
             session_id,
             sa.title,
             sa.prompt,
@@ -1349,7 +1350,7 @@ pub fn load_subagent(
     }
     let db = open_connection(db_path)?;
     let mut stmt = db.prepare(
-        "SELECT id, agent_id, session_id, title, prompt, result_summary, child_session_id, parser_ref
+        "SELECT id, agent_id, agent_name, session_id, title, prompt, result_summary, child_session_id, parser_ref
           FROM subagents
           WHERE session_id = ?1 AND id = ?2",
     )?;
@@ -1360,12 +1361,13 @@ pub fn load_subagent(
         Ok(Some(Subagent {
             id: row.get(0)?,
             agent_id: row.get(1)?,
-            session_id: row.get(2)?,
-            title: row.get(3)?,
-            prompt: row.get(4)?,
-            result_summary: row.get(5)?,
-            child_session_id: row.get(6)?,
-            parser_ref: row.get(7)?,
+            agent_name: row.get(2)?,
+            session_id: row.get(3)?,
+            title: row.get(4)?,
+            prompt: row.get(5)?,
+            result_summary: row.get(6)?,
+            child_session_id: row.get(7)?,
+            parser_ref: row.get(8)?,
         }))
     } else {
         Ok(None)

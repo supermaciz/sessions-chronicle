@@ -1,0 +1,2 @@
+{"parentUuid":null,"isSidechain":true,"agentId":"ahelper-cccccccccccccccc","type":"user","message":{"role":"user","content":"Do a different job"},"timestamp":"2026-07-27T09:00:05.000Z","cwd":"/home/user/project","sessionId":"3f4a5b60-7c8d-4e9f-a0b1-c2d3e4f5a6b7","version":"2.1.220"}
+{"parentUuid":"msg-1","isSidechain":true,"agentId":"ahelper-cccccccccccccccc","type":"assistant","message":{"role":"assistant","content":"Different job done"},"timestamp":"2026-07-27T09:00:06.000Z","cwd":"/home/user/project","sessionId":"3f4a5b60-7c8d-4e9f-a0b1-c2d3e4f5a6b7","version":"2.1.220"}

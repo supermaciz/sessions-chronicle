@@ -160,6 +160,121 @@ fn is_claude_skippable_error(err: &anyhow::Error) -> bool {
     )
 }
 
+/// Extracts the teammate name from a nested Claude Code transcript's agent
+/// id, for v2.1.216+ teammate launches.
+///
+/// Teammate transcripts are named `agent-a<name>-<16 hex>.jsonl`; the 16-hex
+/// suffix appears nowhere in the parent transcript, so `<name>` is the only
+/// value both sides share. Legacy ids are `a` followed by 16 hex digits, which
+/// leaves an empty name and is reported as `None`.
+///
+/// ```text
+/// "aimpl-task1-d4584135445167d0" -> Some("impl-task1")
+/// "a41c0fb07beb52ed6"            -> None
+/// ```
+fn teammate_name(agent_id: &str) -> Option<&str> {
+    let rest = agent_id.strip_prefix('a')?;
+    let (name, hash) = rest.rsplit_once('-')?;
+    if name.is_empty() || hash.len() != 16 || !hash.chars().all(|c| c.is_ascii_hexdigit()) {
+        return None;
+    }
+
+    Some(name)
+}
+
+/// Returns the ids of `parent_session_id`'s indexed child sessions whose agent
+/// id resolves to `name`.
+fn child_sessions_named(
+    tx: &rusqlite::Transaction<'_>,
+    parent_session_id: &str,
+    name: &str,
+) -> Result<Vec<String>> {
+    let mut stmt = tx.prepare("SELECT id FROM sessions WHERE parent_session_id = ?1")?;
+    let ids: Vec<String> = stmt
+        .query_map([parent_session_id], |row| row.get(0))?
+        .collect::<rusqlite::Result<Vec<String>>>()?;
+
+    Ok(ids
+        .into_iter()
+        .filter(|id| {
+            id.rsplit("::")
+                .next()
+                .is_some_and(|suffix| teammate_name(suffix) == Some(name))
+        })
+        .collect())
+}
+
+/// Links a freshly indexed teammate child transcript back to its parent row.
+///
+/// Links only when `name` is unambiguous on both sides; otherwise leaves the
+/// row unlinked, which is the pre-teammate behaviour, rather than risk opening
+/// the wrong transcript.
+fn link_teammate_child_tx(
+    tx: &rusqlite::Transaction<'_>,
+    parent_session_id: &str,
+    child_session_id: &str,
+    name: &str,
+) -> Result<()> {
+    let mut stmt =
+        tx.prepare("SELECT id FROM subagents WHERE session_id = ?1 AND agent_name = ?2")?;
+    let parent_rows: Vec<String> = stmt
+        .query_map(rusqlite::params![parent_session_id, name], |row| row.get(0))?
+        .collect::<rusqlite::Result<Vec<String>>>()?;
+
+    if parent_rows.len() != 1 {
+        if parent_rows.len() > 1 {
+            tracing::warn!(
+                "Claude teammate name {:?} matches {} subagent rows in session {}; \
+                 leaving the child unlinked.",
+                name,
+                parent_rows.len(),
+                parent_session_id
+            );
+        }
+        return Ok(());
+    }
+
+    let siblings = child_sessions_named(tx, parent_session_id, name)?;
+    if siblings.len() > 1 {
+        // A same-named sibling processed earlier in this batch may already
+        // have linked itself here, back when it looked unambiguous (it was
+        // the only child with this name indexed so far). Retract that link:
+        // an ambiguous name must leave the row unlinked, never mislinked,
+        // regardless of processing order.
+        let retracted = tx.execute(
+            "UPDATE subagents SET child_session_id = NULL
+             WHERE session_id = ?1 AND agent_name = ?2",
+            rusqlite::params![parent_session_id, name],
+        )?;
+        if retracted > 0 {
+            tracing::warn!(
+                "Claude teammate name {:?} matches {} child sessions of {}; \
+                 retracted a previously recorded link and leaving the subagent unlinked.",
+                name,
+                siblings.len(),
+                parent_session_id
+            );
+        } else {
+            tracing::warn!(
+                "Claude teammate name {:?} matches {} child sessions of {}; \
+                 leaving the subagent unlinked.",
+                name,
+                siblings.len(),
+                parent_session_id
+            );
+        }
+        return Ok(());
+    }
+
+    tx.execute(
+        "UPDATE subagents SET child_session_id = ?1
+         WHERE session_id = ?2 AND id = ?3",
+        rusqlite::params![child_session_id, parent_session_id, &parent_rows[0]],
+    )?;
+
+    Ok(())
+}
+
 impl SessionIndexer {
     pub fn new(db_path: &Path) -> Result<Self> {
         let db = crate::database::open_connection(db_path)?;
@@ -968,6 +1083,10 @@ impl SessionIndexer {
         let resolved_project_id = Self::upsert_project_tx(&tx, session.project_path.as_deref())?;
         Self::upsert_session_row_tx(&tx, parsed, file_path, resolved_project_id)?;
         Self::replace_session_contents_tx(&tx, parsed)?;
+        // `link_claude_subagents_tx` must run AFTER `upsert_session_row_tx`
+        // in this same transaction: `link_teammate_child_tx`'s
+        // `siblings.len() > 1` ambiguity guard depends on this child's own
+        // `sessions` row already being present when it enumerates siblings.
         Self::link_claude_subagents_tx(&tx, parsed)?;
         Self::link_codex_subagents_tx(&tx, parsed)?;
         Self::upsert_fingerprint_tx(&tx, fingerprint_path)?;
@@ -996,36 +1115,86 @@ impl SessionIndexer {
                 .filter(|value| !value.is_empty())
                 .context("Claude child session id missing agent suffix")?;
 
-            tx.execute(
-                "UPDATE subagents
-                 SET child_session_id = ?1
-                 WHERE session_id = ?2 AND agent_id = ?3",
-                rusqlite::params![&parsed.session.id, parent_session_id, agent_id],
-            )?;
+            match teammate_name(agent_id) {
+                // Teammate form: `agent_id` is never stored on the parent row,
+                // so resolve through the name with an ambiguity guard.
+                Some(name) => {
+                    link_teammate_child_tx(tx, parent_session_id, &parsed.session.id, name)?;
+                }
+                // Legacy form: `agent_id` is unique by construction.
+                None => {
+                    tx.execute(
+                        "UPDATE subagents
+                         SET child_session_id = ?1
+                         WHERE session_id = ?2 AND agent_id = ?3",
+                        rusqlite::params![&parsed.session.id, parent_session_id, agent_id],
+                    )?;
+                }
+            }
 
             return Ok(());
         }
 
         for subagent in &parsed.subagents {
-            let Some(agent_id) = subagent.agent_id.as_deref() else {
-                continue;
-            };
+            if let Some(agent_id) = subagent.agent_id.as_deref() {
+                // Legacy form: the parent knows the full child id, so build it.
+                let child_session_id =
+                    format!("claude-subagent::{}::{}", parsed.session.id, agent_id);
 
-            let child_session_id = format!("claude-subagent::{}::{}", parsed.session.id, agent_id);
-
-            let child_exists: bool = tx.query_row(
-                "SELECT EXISTS(SELECT 1 FROM sessions WHERE id = ?1)",
-                [&child_session_id],
-                |row| row.get(0),
-            )?;
-
-            if child_exists {
-                tx.execute(
-                    "UPDATE subagents
-                     SET child_session_id = ?1
-                     WHERE session_id = ?2 AND id = ?3",
-                    rusqlite::params![child_session_id, &parsed.session.id, &subagent.id],
+                let child_exists: bool = tx.query_row(
+                    "SELECT EXISTS(SELECT 1 FROM sessions WHERE id = ?1)",
+                    [&child_session_id],
+                    |row| row.get(0),
                 )?;
+
+                if child_exists {
+                    tx.execute(
+                        "UPDATE subagents
+                         SET child_session_id = ?1
+                         WHERE session_id = ?2 AND id = ?3",
+                        rusqlite::params![child_session_id, &parsed.session.id, &subagent.id],
+                    )?;
+                }
+            } else if let Some(name) = subagent.agent_name.as_deref() {
+                // Teammate form: the parent does not know the 16-hex suffix,
+                // so enumerate its children and pair by name.
+                let same_name = parsed
+                    .subagents
+                    .iter()
+                    .filter(|other| other.agent_name.as_deref() == Some(name))
+                    .count();
+                if same_name != 1 {
+                    tracing::warn!(
+                        "Claude teammate name {:?} is used by {} subagents in session {}; \
+                         leaving them unlinked.",
+                        name,
+                        same_name,
+                        parsed.session.id
+                    );
+                    continue;
+                }
+
+                let children = child_sessions_named(tx, &parsed.session.id, name)?;
+                match children.len() {
+                    0 => continue,
+                    1 => {
+                        tx.execute(
+                            "UPDATE subagents
+                             SET child_session_id = ?1
+                             WHERE session_id = ?2 AND id = ?3",
+                            rusqlite::params![&children[0], &parsed.session.id, &subagent.id],
+                        )?;
+                    }
+                    count => {
+                        tracing::warn!(
+                            "Claude teammate name {:?} matches {} child sessions of {}; \
+                             leaving the subagent unlinked.",
+                            name,
+                            count,
+                            parsed.session.id
+                        );
+                    }
+                }
             }
         }
 
@@ -3804,5 +3973,43 @@ mod tests {
             .unwrap();
         assert_eq!(message_count, 4);
         assert!(transcript_count > 0);
+    }
+
+    #[test]
+    fn teammate_name_splits_teammate_ids() {
+        assert_eq!(
+            teammate_name("aimpl-task1-d4584135445167d0"),
+            Some("impl-task1")
+        );
+    }
+
+    #[test]
+    fn teammate_name_keeps_dashes_inside_teammate_names() {
+        assert_eq!(
+            teammate_name("arereview-task3-r1-f7e65fce6956ed8c"),
+            Some("rereview-task3-r1")
+        );
+    }
+
+    #[test]
+    fn teammate_name_reports_no_name_for_legacy_ids() {
+        assert_eq!(teammate_name("a41c0fb07beb52ed6"), None);
+        assert_eq!(teammate_name("a60d695"), None);
+    }
+
+    #[test]
+    fn teammate_name_rejects_malformed_shapes() {
+        // Bare prefix, nothing to split.
+        assert_eq!(teammate_name("a"), None);
+        // 15 hex digits, not 16.
+        assert_eq!(teammate_name("aname-0123456789abcde"), None);
+        // 17 hex digits, not 16.
+        assert_eq!(teammate_name("aname-0123456789abcdef0"), None);
+        // Right length, not hex.
+        assert_eq!(teammate_name("aname-zzzzzzzzzzzzzzzz"), None);
+        // Empty name between prefix and hash.
+        assert_eq!(teammate_name("a-0123456789abcdef"), None);
+        // Missing the `a` prefix entirely.
+        assert_eq!(teammate_name("name-0123456789abcdef"), None);
     }
 }

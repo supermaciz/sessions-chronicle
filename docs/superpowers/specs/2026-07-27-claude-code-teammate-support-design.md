@@ -1,7 +1,7 @@
 # Claude Code Teammate Support — Design Spec
 
 **Date:** 2026-07-27  
-**Status:** Proposed  
+**Status:** Implemented by [PR #194](https://github.com/supermaciz/sessions-chronicle/pull/194) — see [Implementation](#implementation) for what shipped and where it diverged  
 **Format notes:** [`docs/session-formats/claude-code.md`](../../session-formats/claude-code.md) (updated by commit `393a589`)
 
 ## Goal
@@ -268,3 +268,134 @@ flatpak-builder --run flatpak_app build-aux/dev.maciz.sessionschronicle.Devel.js
 - Parent→child navigation verified manually on a real v2.1.216+ session.
 - `docs/session-formats/claude-code.md` known-gap entry removed and the
   implemented linkage described.
+
+---
+
+## Implementation
+
+Shipped in [PR #194](https://github.com/supermaciz/sessions-chronicle/pull/194),
+10 commits on `feat/claude-teammate-linkage` from `96a57f1`:
+
+| Commit | Scope |
+|---|---|
+| `1059671` | `subagents.agent_name` column, migration v16 |
+| `fb6cc24` | Parser captures the teammate name |
+| `2a122c6` | Pure agent-id splitter |
+| `2bdde6b` | Linker rewritten for both indexing orders |
+| `4fede08` | Fixtures and integration tests |
+| `e145cc9` | `ai-title` as the session label |
+| `18c1bba` | Format notes updated |
+| `6bb0ca0` `c0bfe48` `5313205` | Post-review fix wave |
+
+Everything above the fix wave matches this spec. What follows is where the
+shipped code diverges from it, and why.
+
+### 1. The ambiguity guard had to retract, not just refuse
+
+**This is the spec's own defect, not an implementation slip.** *Error handling*
+above says an ambiguous name must leave the row unlinked, and the *Data flow*
+resolution steps enforce that — but only for a link not yet made. They never
+say what to do about a link already recorded.
+
+That gap is reachable. Two same-named children indexed in one pass: child B is
+processed first, finds one sibling (itself), and links. Child A is processed
+next, finds two siblings, correctly refuses to link *itself* — and leaves B's
+link standing. The parent's single subagent row ends up pointing at an
+arbitrary one of the two children, which is exactly the mislink this design
+set out to prevent. It occurs in real use when a parent is indexed in one pass
+and two same-named teammate transcripts in a later incremental one.
+
+`link_teammate_child_tx` therefore retracts on detection, scoped to the parent
+and the name, before returning:
+
+```sql
+UPDATE subagents SET child_session_id = NULL
+ WHERE session_id = ?1 AND agent_name = ?2
+```
+
+The warning distinguishes the two cases using the affected-row count, so a
+retraction is only reported when one happened.
+
+No symmetric hole exists in the parent-indexed direction: re-indexing a parent
+runs `delete_session_contents_tx`, which deletes its `subagents` rows before
+reinserting them, so those rows are always recreated with a null
+`child_session_id`.
+
+### 2. `child_agent_key` became `teammate_name`
+
+```text
+spec:     fn child_agent_key(agent_id: &str) -> (&str, Option<&str>)
+shipped:  fn teammate_name(agent_id: &str)   -> Option<&str>
+```
+
+Every return path returned its own argument as `.0`, so that half carried no
+information — one call site ignored it and the other bound it to a new name
+for the value it already had.
+
+The extraction logic is unchanged: same `strip_prefix('a')`, same
+`rsplit_once('-')`, same exactly-16-ASCII-hex check, same empty-name rejection.
+
+### 3. `ai-title` is normalized, not merely trimmed
+
+The *ai-title* section's sketch only trimmed. `extract_first_prompt` runs every
+fallback label through `normalize_prompt`, which collapses whitespace and
+truncates at `FIRST_PROMPT_MAX_CHARS`; the sketch bypassed it, so an
+arbitrarily long or newline-containing title from an untrusted session file
+would have reached a GTK label verbatim. Since `ai-title` is present on most
+recent sessions, that widened an existing narrow exposure to nearly all Claude
+Code sessions. Shipped as `Some(crate::parsers::normalize_prompt(title))`.
+
+### 4. A third fixture, for the guard the test plan missed
+
+*Testing* above specifies a duplicate-name fixture, but its ambiguity is on the
+parent side — two subagent rows named `reviewer`. Such a case returns early on
+`parent_rows.len() != 1` and never reaches the sibling check, so **the
+child-side guard had no coverage at all**. That is how defect 1 survived
+review.
+
+`tests/fixtures/claude_teammate_child_duplicate/` fills the gap: one parent
+declaring exactly one teammate named `solo`, plus an unambiguous `helper`
+sibling, and two child transcripts `agent-asolo-aaaa…` / `agent-asolo-bbbb…`.
+Reaching `link_teammate_child_tx` at all requires indexing the parent alone
+first and then the children alone, since a mixed directory pass routes through
+the parent loop's separate guard instead. `tests/claude_teammate_linkage.rs`
+holds 7 tests, covering all three orderings and asserting the retraction leaves
+`helper` untouched.
+
+### 5. An undocumented transactional invariant
+
+The sibling-count guard is correct only because `link_claude_subagents_tx` runs
+*after* `upsert_session_row_tx` in the same transaction, so the child being
+indexed is already in `sessions` and `siblings.len() > 1` means precisely "a
+duplicate exists". Reversing the two calls produces mislinks rather than
+missing rows. The spec never stated this. There is now a comment at the call
+site, and hoisting the call fails four tests with a real mislink assertion.
+
+### 6. "Search coverage for free" was wrong
+
+The *ai-title* section claims reusing `first_prompt` brings search coverage.
+It does not: search runs against `messages_fts` only, and `first_prompt` is in
+no FTS index and no `WHERE` clause. The reuse is still right for the reasons
+that actually hold — no migration, no UI change, and consistency with the
+OpenCode precedent — but a model-generated title may name no message, so a
+label visible in the list can now be unfindable by search. Tracked as debt
+alongside the "FIRST PROMPT" heading, both belonging with a future
+`Session.title` field.
+
+### 7. Verification method
+
+*Definition of done* asks for manual GUI verification. That was done, and it
+passed. It was preceded by a stronger check the spec did not ask for: indexing
+the real session directory (84 sessions) into a temporary database and counting
+links — **52/52 subagent rows linked, 13/13 for a 13-teammate session**, against
+zero before the branch.
+
+Tests were also required to fail before being accepted. Breaking only
+`input.name` fails 1 of 4, since the `toolUseResult` fallback rescues the rest —
+itself evidence that the fallback path is covered. Breaking both routes fails
+all 4.
+
+The test command changed during this work, for reasons unrelated to the
+feature: the suite's ~175 `#[gtk::test]` cases open real windows and steal
+keyboard focus, and `xvfb-run` alone is insufficient on Wayland because GTK 4
+prefers the live compositor over the Xvfb `DISPLAY`. See `AGENTS.md`.

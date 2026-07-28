@@ -251,6 +251,7 @@ impl ParseState {
         self.subagents.push(Subagent {
             id: id.clone(),
             agent_id: agent_id.clone(),
+            agent_name: None,
             session_id: self.session_id.clone(),
             title,
             prompt,

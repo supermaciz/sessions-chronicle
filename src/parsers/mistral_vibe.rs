@@ -240,6 +240,7 @@ impl MistralVibeParser {
                                 subagents.push(Subagent {
                                     id: subagent_id.clone(),
                                     agent_id: agent_name.clone(),
+                                    agent_name: None,
                                     session_id: session_id.clone(),
                                     title: agent_name
                                         .clone()
