@@ -375,10 +375,10 @@ changelog v2.1.198) use a "teammate" spawn shape that breaks the legacy bridge:
   found zero legacy `agentId:` tokens. Whether a non-teammate (foreground,
   unnamed) launch still emits the legacy token is unconfirmed.
 
-Consequence: the implemented `agentId`-token linkage finds nothing in these
-sessions, so `Subagent.agent_id` stays empty and `child_session_id` is never
-populated — parent→child navigation is broken for new-format sessions until
-the parser learns the teammate form.
+The parser bridges this by storing the teammate `name` — the only value shared
+by the parent transcript and the nested filename — on `Subagent.agent_name`.
+The 16-hex suffix appears in no parent-side field and no sidecar field, so the
+join is by name with an ambiguity guard rather than by id.
 
 #### Subagent Metadata Sidecar
 
@@ -417,8 +417,10 @@ changed between v2.1.148 and v2.1.216.
 
 With `toolUseId` removed, `name` is the only observed reliable link back to the
 parent `tool_use` block (`input.name`) and to the `toolUseResult.agent_id`
-prefix (`<name>@session-...`). The parser does not yet consume this sidecar;
-the legacy `agentId`-token path remains the implemented linkage.
+prefix (`<name>@session-...`). The parser does not consume this sidecar:
+`name` is already available from the parent transcript's `input.name` and
+`toolUseResult.name`, so reading it would add filesystem I/O and a new failure
+mode without adding information.
 
 ---
 
@@ -529,13 +531,12 @@ Current implementation: `src/parsers/claude_code.rs`
   `input.description`, `input.subagent_type`, and `input.prompt`; optional
   fields include `input.name`, `input.run_in_background`, `input.team_name`,
   and `input.mode`.
-- **Known gap (local scan 2026-07-27, v2.1.216–v2.1.220):** subagent linkage is
-  broken on new-format sessions. `extract_agent_id_from_result_text` only
-  recognizes the legacy `agentId:` token, which no longer appears; the teammate
-  form emits snake_case `agent_id: <name>@session-<shortid>` in `tool_result`
-  text plus a structured `toolUseResult.agent_id`, and nested files are named
-  `agent-a<name>-<hash16>.jsonl`. Fixing this needs a fresh fixture first (see
-  Teammate Form above).
+- **Teammate linkage (implemented 2026-07-28):** the parser stores the
+  `Agent`/`Task` `input.name` (falling back to `toolUseResult.name`) on
+  `Subagent.agent_name`, and the indexer pairs it with nested
+  `agent-a<name>-<hash16>.jsonl` transcripts by name, in either indexing
+  order. A name that is ambiguous on either side is left unlinked rather than
+  linked to the wrong transcript. The legacy `agentId:` path is unchanged.
 
 **Title extraction:** First parsed `user` message content (assistant/system/summary are ignored).
 
