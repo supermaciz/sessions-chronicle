@@ -235,6 +235,46 @@ fn duplicate_child_transcripts_stay_unlinked_regardless_of_processing_order() {
 }
 
 #[test]
+fn retraction_is_scoped_to_the_ambiguous_name_and_does_not_touch_a_sibling() {
+    // The retraction UPDATE is `WHERE session_id = ?1 AND agent_name = ?2`.
+    // Prove that scoping actually holds: the same parent also spawns a
+    // "helper" teammate with its own, unambiguous child. Once "solo"
+    // becomes ambiguous and gets retracted, "helper" must still be linked.
+    let temp_db = NamedTempFile::new().unwrap();
+    let sessions_dir = TempDir::new().unwrap();
+    let mut indexer = SessionIndexer::new(temp_db.path()).unwrap();
+
+    copy_child_dup_parent(sessions_dir.path());
+    indexer.index_claude_sessions(sessions_dir.path()).unwrap();
+    fs::remove_file(
+        sessions_dir
+            .path()
+            .join(format!("{CHILD_DUP_PARENT_ID}.jsonl")),
+    )
+    .unwrap();
+
+    copy_child_dup_one(sessions_dir.path(), "agent-ahelper-cccccccccccccccc.jsonl");
+    indexer.index_claude_sessions(sessions_dir.path()).unwrap();
+
+    copy_child_dup_children(sessions_dir.path());
+    indexer.index_claude_sessions(sessions_dir.path()).unwrap();
+
+    assert_child_dup_unlinked(temp_db.path());
+
+    let helper_child_id =
+        format!("claude-subagent::{CHILD_DUP_PARENT_ID}::ahelper-cccccccccccccccc");
+    let helper = load_subagent(temp_db.path(), CHILD_DUP_PARENT_ID, "toolu_agent_301")
+        .unwrap()
+        .expect("helper subagent should exist");
+    assert_eq!(helper.agent_name.as_deref(), Some("helper"));
+    assert_eq!(
+        helper.child_session_id.as_deref(),
+        Some(helper_child_id.as_str()),
+        "retracting the ambiguous \"solo\" link must not touch \"helper\"'s legitimate link"
+    );
+}
+
+#[test]
 fn duplicate_teammate_names_leave_both_subagents_unlinked() {
     let temp_db = NamedTempFile::new().unwrap();
     let mut indexer = SessionIndexer::new(temp_db.path()).unwrap();
