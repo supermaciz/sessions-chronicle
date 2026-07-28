@@ -160,8 +160,8 @@ fn is_claude_skippable_error(err: &anyhow::Error) -> bool {
     )
 }
 
-/// Splits a nested Claude Code transcript's agent id into its full form and,
-/// for v2.1.216+ teammate launches, the teammate name.
+/// Extracts the teammate name from a nested Claude Code transcript's agent
+/// id, for v2.1.216+ teammate launches.
 ///
 /// Teammate transcripts are named `agent-a<name>-<16 hex>.jsonl`; the 16-hex
 /// suffix appears nowhere in the parent transcript, so `<name>` is the only
@@ -169,21 +169,17 @@ fn is_claude_skippable_error(err: &anyhow::Error) -> bool {
 /// leaves an empty name and is reported as `None`.
 ///
 /// ```text
-/// "aimpl-task1-d4584135445167d0" -> ("aimpl-task1-d4584135445167d0", Some("impl-task1"))
-/// "a41c0fb07beb52ed6"            -> ("a41c0fb07beb52ed6", None)
+/// "aimpl-task1-d4584135445167d0" -> Some("impl-task1")
+/// "a41c0fb07beb52ed6"            -> None
 /// ```
-fn child_agent_key(agent_id: &str) -> (&str, Option<&str>) {
-    let Some(rest) = agent_id.strip_prefix('a') else {
-        return (agent_id, None);
-    };
-    let Some((name, hash)) = rest.rsplit_once('-') else {
-        return (agent_id, None);
-    };
+fn teammate_name(agent_id: &str) -> Option<&str> {
+    let rest = agent_id.strip_prefix('a')?;
+    let (name, hash) = rest.rsplit_once('-')?;
     if name.is_empty() || hash.len() != 16 || !hash.chars().all(|c| c.is_ascii_hexdigit()) {
-        return (agent_id, None);
+        return None;
     }
 
-    (agent_id, Some(name))
+    Some(name)
 }
 
 /// Returns the ids of `parent_session_id`'s indexed child sessions whose agent
@@ -203,7 +199,7 @@ fn child_sessions_named(
         .filter(|id| {
             id.rsplit("::")
                 .next()
-                .is_some_and(|suffix| child_agent_key(suffix).1 == Some(name))
+                .is_some_and(|suffix| teammate_name(suffix) == Some(name))
         })
         .collect())
 }
@@ -1095,9 +1091,7 @@ impl SessionIndexer {
                 .filter(|value| !value.is_empty())
                 .context("Claude child session id missing agent suffix")?;
 
-            let (full_agent_id, teammate_name) = child_agent_key(agent_id);
-
-            match teammate_name {
+            match teammate_name(agent_id) {
                 // Teammate form: `agent_id` is never stored on the parent row,
                 // so resolve through the name with an ambiguity guard.
                 Some(name) => {
@@ -1109,7 +1103,7 @@ impl SessionIndexer {
                         "UPDATE subagents
                          SET child_session_id = ?1
                          WHERE session_id = ?2 AND agent_id = ?3",
-                        rusqlite::params![&parsed.session.id, parent_session_id, full_agent_id],
+                        rusqlite::params![&parsed.session.id, parent_session_id, agent_id],
                     )?;
                 }
             }
@@ -3958,61 +3952,40 @@ mod tests {
     }
 
     #[test]
-    fn child_agent_key_splits_teammate_ids() {
+    fn teammate_name_splits_teammate_ids() {
         assert_eq!(
-            child_agent_key("aimpl-task1-d4584135445167d0"),
-            ("aimpl-task1-d4584135445167d0", Some("impl-task1"))
+            teammate_name("aimpl-task1-d4584135445167d0"),
+            Some("impl-task1")
         );
     }
 
     #[test]
-    fn child_agent_key_keeps_dashes_inside_teammate_names() {
+    fn teammate_name_keeps_dashes_inside_teammate_names() {
         assert_eq!(
-            child_agent_key("arereview-task3-r1-f7e65fce6956ed8c"),
-            (
-                "arereview-task3-r1-f7e65fce6956ed8c",
-                Some("rereview-task3-r1")
-            )
+            teammate_name("arereview-task3-r1-f7e65fce6956ed8c"),
+            Some("rereview-task3-r1")
         );
     }
 
     #[test]
-    fn child_agent_key_reports_no_name_for_legacy_ids() {
-        assert_eq!(
-            child_agent_key("a41c0fb07beb52ed6"),
-            ("a41c0fb07beb52ed6", None)
-        );
-        assert_eq!(child_agent_key("a60d695"), ("a60d695", None));
+    fn teammate_name_reports_no_name_for_legacy_ids() {
+        assert_eq!(teammate_name("a41c0fb07beb52ed6"), None);
+        assert_eq!(teammate_name("a60d695"), None);
     }
 
     #[test]
-    fn child_agent_key_rejects_malformed_shapes() {
+    fn teammate_name_rejects_malformed_shapes() {
         // Bare prefix, nothing to split.
-        assert_eq!(child_agent_key("a"), ("a", None));
+        assert_eq!(teammate_name("a"), None);
         // 15 hex digits, not 16.
-        assert_eq!(
-            child_agent_key("aname-0123456789abcde"),
-            ("aname-0123456789abcde", None)
-        );
+        assert_eq!(teammate_name("aname-0123456789abcde"), None);
         // 17 hex digits, not 16.
-        assert_eq!(
-            child_agent_key("aname-0123456789abcdef0"),
-            ("aname-0123456789abcdef0", None)
-        );
+        assert_eq!(teammate_name("aname-0123456789abcdef0"), None);
         // Right length, not hex.
-        assert_eq!(
-            child_agent_key("aname-zzzzzzzzzzzzzzzz"),
-            ("aname-zzzzzzzzzzzzzzzz", None)
-        );
+        assert_eq!(teammate_name("aname-zzzzzzzzzzzzzzzz"), None);
         // Empty name between prefix and hash.
-        assert_eq!(
-            child_agent_key("a-0123456789abcdef"),
-            ("a-0123456789abcdef", None)
-        );
+        assert_eq!(teammate_name("a-0123456789abcdef"), None);
         // Missing the `a` prefix entirely.
-        assert_eq!(
-            child_agent_key("name-0123456789abcdef"),
-            ("name-0123456789abcdef", None)
-        );
+        assert_eq!(teammate_name("name-0123456789abcdef"), None);
     }
 }

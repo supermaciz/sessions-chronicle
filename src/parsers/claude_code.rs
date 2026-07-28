@@ -731,7 +731,9 @@ impl ParseState {
 
         let last_updated = self.latest_timestamp.unwrap_or(start_time);
         let first_prompt = match &self.ai_title {
-            Some(title) if !title.trim().is_empty() => Some(title.clone()),
+            Some(title) if !title.trim().is_empty() => {
+                Some(crate::parsers::normalize_prompt(title))
+            }
             _ => first_prompt::extract_first_prompt(&self.messages),
         };
 
@@ -1010,6 +1012,40 @@ mod tests {
             parsed.session.first_prompt.as_deref(),
             Some("Fix the build")
         );
+    }
+
+    #[test]
+    fn parse_normalizes_a_newline_containing_ai_title() {
+        let file = create_temp_session(&[
+            r#"{"type":"user","timestamp":"2026-07-25T10:00:00.000Z","sessionId":"s-title4","message":{"content":"Hello"}}"#,
+            r#"{"type":"ai-title","aiTitle":"Line one\nLine two   with   extra   spaces","sessionId":"s-title4"}"#,
+            r#"{"type":"assistant","timestamp":"2026-07-25T10:00:01.000Z","sessionId":"s-title4","message":{"content":"Hi"}}"#,
+        ]);
+
+        let parsed = ClaudeCodeParser.parse(file.path()).unwrap();
+
+        assert_eq!(
+            parsed.session.first_prompt.as_deref(),
+            Some("Line one Line two with extra spaces")
+        );
+    }
+
+    #[test]
+    fn parse_truncates_an_overlong_ai_title() {
+        let long_title = "a".repeat(250);
+        let line = format!(
+            r#"{{"type":"user","timestamp":"2026-07-25T10:00:00.000Z","sessionId":"s-title5","message":{{"content":"Hello"}}}}"#
+        );
+        let ai_title_line =
+            format!(r#"{{"type":"ai-title","aiTitle":"{long_title}","sessionId":"s-title5"}}"#);
+        let assistant_line = r#"{"type":"assistant","timestamp":"2026-07-25T10:00:01.000Z","sessionId":"s-title5","message":{"content":"Hi"}}"#;
+        let file = create_temp_session(&[&line, &ai_title_line, assistant_line]);
+
+        let parsed = ClaudeCodeParser.parse(file.path()).unwrap();
+
+        let first_prompt = parsed.session.first_prompt.expect("first prompt");
+        assert_eq!(first_prompt.chars().count(), 201);
+        assert!(first_prompt.ends_with('\u{2026}'));
     }
 
     #[test]
