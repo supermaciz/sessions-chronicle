@@ -820,26 +820,38 @@ pub fn load_projects(
     Ok(projects)
 }
 
-pub fn count_all_sessions(
+enum SessionCountScope {
+    All,
+    Pinned,
+    Unassigned,
+}
+
+impl SessionCountScope {
+    fn sql_predicate(&self) -> &'static str {
+        match self {
+            Self::All => "is_subagent = 0",
+            Self::Pinned => "pinned_at IS NOT NULL AND is_subagent = 0",
+            Self::Unassigned => "project_id IS NULL AND is_subagent = 0",
+        }
+    }
+}
+
+fn count_sessions(
     db_path: &Path,
     tools: &[AiAssistant],
     date_filter: &DateFilter,
+    scope: SessionCountScope,
 ) -> Result<usize> {
-    if !db_path.exists() {
-        return Ok(0);
-    }
-
-    if tools.is_empty() {
+    if !db_path.exists() || tools.is_empty() {
         return Ok(0);
     }
 
     let db = open_connection(db_path)?;
-
     let (tool_clause, tool_strings) = tool_filter_sql_clause(tools, "");
     let (date_clause, date_values) = date_filter_sql_clause(date_filter, "");
-
+    let predicate = scope.sql_predicate();
     let query =
-        format!("SELECT COUNT(*) FROM sessions WHERE is_subagent = 0{tool_clause}{date_clause}");
+        format!("SELECT COUNT(*) FROM sessions WHERE {predicate}{tool_clause}{date_clause}");
 
     let mut stmt = db.prepare(&query)?;
     let mut params: Vec<&dyn ToSql> = Vec::with_capacity(tool_strings.len() + date_values.len());
@@ -847,6 +859,14 @@ pub fn count_all_sessions(
     let count: i64 = stmt.query_row(params.as_slice(), |row| row.get(0))?;
 
     Ok(count.max(0) as usize)
+}
+
+pub fn count_all_sessions(
+    db_path: &Path,
+    tools: &[AiAssistant],
+    date_filter: &DateFilter,
+) -> Result<usize> {
+    count_sessions(db_path, tools, date_filter, SessionCountScope::All)
 }
 
 pub fn count_pinned_sessions(
@@ -854,31 +874,7 @@ pub fn count_pinned_sessions(
     tools: &[AiAssistant],
     date_filter: &DateFilter,
 ) -> Result<usize> {
-    if !db_path.exists() {
-        return Ok(0);
-    }
-
-    if tools.is_empty() {
-        return Ok(0);
-    }
-
-    let db = open_connection(db_path)?;
-
-    let (tool_clause, tool_strings) = tool_filter_sql_clause(tools, "");
-    let (date_clause, date_values) = date_filter_sql_clause(date_filter, "");
-
-    let query = format!(
-        "SELECT COUNT(*) FROM sessions
-                 WHERE pinned_at IS NOT NULL
-                   AND is_subagent = 0{tool_clause}{date_clause}"
-    );
-
-    let mut stmt = db.prepare(&query)?;
-    let mut params: Vec<&dyn ToSql> = Vec::with_capacity(tool_strings.len() + date_values.len());
-    append_filter_params(&mut params, &tool_strings, &None, &date_values);
-    let count: i64 = stmt.query_row(params.as_slice(), |row| row.get(0))?;
-
-    Ok(count.max(0) as usize)
+    count_sessions(db_path, tools, date_filter, SessionCountScope::Pinned)
 }
 
 pub fn count_unassigned_sessions(
@@ -886,31 +882,7 @@ pub fn count_unassigned_sessions(
     tools: &[AiAssistant],
     date_filter: &DateFilter,
 ) -> Result<usize> {
-    if !db_path.exists() {
-        return Ok(0);
-    }
-
-    if tools.is_empty() {
-        return Ok(0);
-    }
-
-    let db = open_connection(db_path)?;
-
-    let (tool_clause, tool_strings) = tool_filter_sql_clause(tools, "");
-    let (date_clause, date_values) = date_filter_sql_clause(date_filter, "");
-
-    let query = format!(
-        "SELECT COUNT(*) FROM sessions
-                 WHERE project_id IS NULL
-                   AND is_subagent = 0{tool_clause}{date_clause}"
-    );
-
-    let mut stmt = db.prepare(&query)?;
-    let mut params: Vec<&dyn ToSql> = Vec::with_capacity(tool_strings.len() + date_values.len());
-    append_filter_params(&mut params, &tool_strings, &None, &date_values);
-    let count: i64 = stmt.query_row(params.as_slice(), |row| row.get(0))?;
-
-    Ok(count.max(0) as usize)
+    count_sessions(db_path, tools, date_filter, SessionCountScope::Unassigned)
 }
 
 pub fn toggle_pin(db_path: &Path, session_id: &str) -> Result<bool> {
