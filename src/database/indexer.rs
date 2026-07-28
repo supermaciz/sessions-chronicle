@@ -236,13 +236,33 @@ fn link_teammate_child_tx(
 
     let siblings = child_sessions_named(tx, parent_session_id, name)?;
     if siblings.len() > 1 {
-        tracing::warn!(
-            "Claude teammate name {:?} matches {} child sessions of {}; \
-             leaving the subagent unlinked.",
-            name,
-            siblings.len(),
-            parent_session_id
-        );
+        // A same-named sibling processed earlier in this batch may already
+        // have linked itself here, back when it looked unambiguous (it was
+        // the only child with this name indexed so far). Retract that link:
+        // an ambiguous name must leave the row unlinked, never mislinked,
+        // regardless of processing order.
+        let retracted = tx.execute(
+            "UPDATE subagents SET child_session_id = NULL
+             WHERE session_id = ?1 AND agent_name = ?2",
+            rusqlite::params![parent_session_id, name],
+        )?;
+        if retracted > 0 {
+            tracing::warn!(
+                "Claude teammate name {:?} matches {} child sessions of {}; \
+                 retracted a previously recorded link and leaving the subagent unlinked.",
+                name,
+                siblings.len(),
+                parent_session_id
+            );
+        } else {
+            tracing::warn!(
+                "Claude teammate name {:?} matches {} child sessions of {}; \
+                 leaving the subagent unlinked.",
+                name,
+                siblings.len(),
+                parent_session_id
+            );
+        }
         return Ok(());
     }
 
@@ -1063,6 +1083,10 @@ impl SessionIndexer {
         let resolved_project_id = Self::upsert_project_tx(&tx, session.project_path.as_deref())?;
         Self::upsert_session_row_tx(&tx, parsed, file_path, resolved_project_id)?;
         Self::replace_session_contents_tx(&tx, parsed)?;
+        // `link_claude_subagents_tx` must run AFTER `upsert_session_row_tx`
+        // in this same transaction: `link_teammate_child_tx`'s
+        // `siblings.len() > 1` ambiguity guard depends on this child's own
+        // `sessions` row already being present when it enumerates siblings.
         Self::link_claude_subagents_tx(&tx, parsed)?;
         Self::link_codex_subagents_tx(&tx, parsed)?;
         Self::upsert_fingerprint_tx(&tx, fingerprint_path)?;
