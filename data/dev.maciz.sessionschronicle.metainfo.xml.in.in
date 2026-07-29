@@ -49,6 +49,16 @@
   </categories>
   <content_rating type="oars-1.1" />
   <releases>
+    <release version="0.9.0" date="2026-07-29">
+      <description>
+        <p>Improves session organization, date filtering, and Claude Code subagent support.</p>
+        <ul>
+          <li>Add configurable session-list sorting</li>
+          <li>Replace the custom date-range editor with a simpler endpoint picker</li>
+          <li>Restore Claude Code teammate subagent linkage for version 2.1.216 and newer</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.8.0" date="2026-07-17">
       <description>
         <p>Introduces a new Markdown renderer and raw text toggle for transcripts.</p>
