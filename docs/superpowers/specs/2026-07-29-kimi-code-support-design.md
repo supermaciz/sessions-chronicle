@@ -126,10 +126,18 @@ A candidate is parseable when both of these paths exist:
 - `state.json`
 - `agents/main/wire.jsonl`
 
-`session_index.jsonl` and `workspaces.json` are optional discovery aids and
-project-path fallbacks. They are not authoritative because they can be absent,
-stale, or partially written. A valid session directory found by scanning must
-still be indexed when either top-level index is unavailable.
+`session_index.jsonl` and `workspaces.json` are optional for session
+enumeration. They are not authoritative evidence that a session directory
+still exists because they can be absent, stale, or partially written. A valid
+session directory found by scanning must still be indexed when either
+top-level index is unavailable.
+
+They have a stronger role in project-path resolution. Current production
+`state.json` files do not always persist a working directory, while
+`session_index.jsonl` records normally carry `workDir` for every session. The
+session index is therefore the primary project-path fallback when state
+metadata has no usable path; `workspaces.json` is the bucket-based fallback
+when the matching session-index entry is absent or invalid.
 
 The scanner does not traverse the rest of `<kimi_home>`. Paths such as
 `user-history/`, `migration-report.json`, credentials, logs, configuration,
@@ -143,12 +151,16 @@ ignored.
 
 Project path precedence is:
 
-1. `state.json.cwd`, defined by the current upstream metadata contract
-2. `state.json.workDir`, observed in current-format local sessions and retained
-   as a compatibility alias
+1. `state.json.workDir`, used by the production `agent-core` session store and
+   observed in current Kimi Code 0.30.0 sessions
+2. `state.json.cwd`, defined by the emerging `agent-core-v2` metadata contract
+   and accepted for forward compatibility
 3. matching `session_index.jsonl.workDir`
 4. matching workspace entry in `workspaces.json`
 5. no project path
+
+If both state fields exist and differ, `workDir` wins. The parser logs the
+conflict without recording either path value in the diagnostic.
 
 Malformed top-level index lines are skipped independently. They never prevent
 directory scanning.
@@ -179,8 +191,16 @@ does not load complete journals into memory.
 
 ### Main session
 
-The main session keeps the upstream session ID. Prefer `state.json.id` when it
-is present and consistent; otherwise use the `session_<uuid>` directory name.
+The canonical main-session ID is always the `session_<uuid>` directory name.
+This is the persisted identity used by the production session store and the
+top-level session index; current Kimi Code 0.30.0 `state.json` files do not
+contain `id`.
+
+The emerging `agent-core-v2` schema can persist `state.json.id`. When present,
+it is validation metadata only. A matching value is accepted; a mismatching
+value is ignored with a path-only warning, and the directory identity remains
+canonical. Untrusted state metadata must not replace the storage identity or
+create a colliding Sessions Chronicle primary key.
 
 ### Child sessions
 
@@ -525,8 +545,15 @@ Fixture coverage must include:
 - a child journal removed after indexing
 - a title-only `state.json` change
 - a journal-only append
-- one state fixture using upstream `cwd` and another using the observed
-  compatibility field `workDir`
+- a nominal production state using `workDir` and omitting `id`
+- a forward-compatibility `agent-core-v2` state using `cwd` and an `id` that
+  matches its session directory
+- a state with neither `workDir` nor `cwd` plus a matching
+  `session_index.jsonl.workDir`
+- a state with neither path field and no matching session-index entry plus a
+  matching workspace bucket in `workspaces.json`
+- conflicting state `workDir` and `cwd` values, proving `workDir` precedence
+- a mismatching `state.json.id`, proving the directory name remains canonical
 - two sessions linked by `forkedFrom`, both retained as top-level sessions
 - operation without `session_index.jsonl` or `workspaces.json`
 
@@ -546,7 +573,10 @@ proprietary prompt/tool output.
 - Attribute models to the correct steps.
 - Prefer turn usage and avoid token double counting.
 - Parse ISO-8601 and epoch-millisecond metadata timestamps.
-- Prefer upstream `cwd` over compatibility `workDir` and cover both fields.
+- Prefer production `workDir` over forward-compatible `cwd` and cover both
+  fields, including a conflict.
+- Keep the directory session ID canonical when `state.json.id` is absent,
+  matching, or inconsistent.
 - Skip malformed lines and unknown events without losing later valid data.
 - Reject a session without a real user message.
 - Build stable main and synthetic child identities.
@@ -556,7 +586,10 @@ proprietary prompt/tool output.
 ### Indexer tests
 
 - Discover sessions by directory scan with and without top-level indexes.
-- Use top-level index data only as metadata fallback.
+- Use `session_index.jsonl.workDir` as the primary project-path fallback when
+  state has no path.
+- Use the matching `workspaces.json` bucket when state and session index cannot
+  resolve the project path.
 - Persist a complete bundle atomically.
 - Skip unchanged bundles.
 - Reindex after state, journal, agent-directory, or dependency-set changes.
