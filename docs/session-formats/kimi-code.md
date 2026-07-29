@@ -1,0 +1,340 @@
+# Kimi Code — Session Format Reference
+
+Format reference for [Kimi Code CLI](https://github.com/MoonshotAI/kimi-code) session files.
+See [SESSION_FORMAT_ANALYSIS.md](../SESSION_FORMAT_ANALYSIS.md) for cross-assistant comparison tables.
+
+Documented from the official docs (`docs/en/guides/sessions.md`,
+`docs/en/configuration/data-locations.md`), the upstream TypeScript sources
+(`packages/agent-core-v2`), and local sampling of `~/.kimi-code/` (2026-07-29).
+
+---
+
+## Storage & File Naming
+
+| Field | Value |
+|-------|-------|
+| **Data root** | `$KIMI_CODE_HOME` (default: `~/.kimi-code/`) |
+| **Sessions root** | `$KIMI_CODE_HOME/sessions/<workDirKey>/<sessionId>/` |
+| **workDirKey** | `wd_<slug>_<first-12-chars-of-sha256(workDir)>` |
+| **sessionId** | `session_<uuid>` |
+| **Example** | `~/.kimi-code/sessions/wd_sessions-chronicle_a75d38aead93/session_70d49998-f9d1-4546-ab98-3bba4551a6da/` |
+| **Format** | Directory-based: `state.json` + per-agent `wire.jsonl` (JSONL) |
+
+Setting `KIMI_CODE_HOME` relocates **all** Kimi Code data (config, sessions,
+logs, credentials). Sessions are grouped by working directory, one bucket per
+workdir, similar to Claude Code's project directories.
+
+### Session index
+
+`$KIMI_CODE_HOME/session_index.jsonl` — one JSON record per line:
+
+```json
+{"sessionId":"session_759ccf96-...","sessionDir":"/home/user/.kimi-code/sessions/wd_sessions-chronicle_a75d38aead93/session_759ccf96-...","workDir":"/home/user/Projets/sessions-chronicle"}
+```
+
+`$KIMI_CODE_HOME/workspaces.json` maps each `workDirKey` to its working
+directory root, name, and `created_at` / `last_opened_at` timestamps
+(ISO-8601). It is a faster, more reliable way to resolve the project path than
+decoding the bucket name.
+
+---
+
+## Session Directory Structure
+
+```
+sessions/<workDirKey>/<sessionId>/
+├── state.json               # Session metadata (title, timestamps, agents, fork lineage)
+├── agents/
+│   ├── main/
+│   │   ├── wire.jsonl       # Main agent event journal (see below)
+│   │   └── plans/           # Plan-mode plan files (<id>.md), when plan mode was used
+│   └── <subagentId>/        # e.g. agent-0 — one directory per subagent
+│       └── wire.jsonl       # Subagent event journal
+├── logs/
+│   └── kimi-code.log        # Session-level diagnostic log (only when a diagnostic event occurs)
+├── tasks/                   # Background task persistence (<task_id>.json + output.log)
+├── cron/                    # Scheduled task persistence (reloaded on resume)
+└── upcoming-goals.json      # TUI-only queued goals (/goal next), when present
+```
+
+Subagent directories are registered in `state.json` under `agents` with
+`parentAgentId` — the parent/child relationship is metadata-based, not purely
+directory-based. See [Threading](#threading).
+
+---
+
+## `state.json` Format
+
+Session-level metadata. Observed local sample:
+
+```json
+{
+  "createdAt": "2026-07-29T10:05:33.669Z",
+  "updatedAt": "2026-07-29T10:08:56.155Z",
+  "title": "On commence l'issue github 167...",
+  "isCustomTitle": false,
+  "agents": {
+    "main": {
+      "homedir": "/home/user/.kimi-code/sessions/wd_.../session_.../agents/main",
+      "type": "main",
+      "parentAgentId": null
+    }
+  },
+  "custom": {},
+  "workDir": "/home/user/Projets/sessions-chronicle",
+  "lastPrompt": "On commence l'issue github 167..."
+}
+```
+
+| Field | Description |
+|-------|-------------|
+| `createdAt` / `updatedAt` | ISO-8601 strings |
+| `title` | Session title; auto-set once from the first prompt, see below |
+| `isCustomTitle` | Whether the title was set manually (`/title`); once `true`, auto-titling never touches `title` again |
+| `lastPrompt` | Most recent user prompt (sanitized, max 4000 chars) |
+
+**Auto-titling** (`packages/agent-core-v2/src/agent/rpc/prompt-metadata.ts`):
+there is no LLM-generated title. On each submitted prompt, `lastPrompt` is
+updated, and `title` is set only when `!isCustomTitle` and the current title
+is unset/empty/`"New Session"` — so the first prompt effectively freezes the
+title. Before storage, the prompt text is sanitized (private keys, bearer
+tokens, `api_key`/`token`/`secret` values, `sk-…` strings, and long
+base64-ish blobs are replaced with `[redacted]`; whitespace is collapsed) and
+the title is a plain `slice(0, 200)` of the result. Media parts become
+`[image]`/`[audio]`/`[video]`; skill invocations title as
+`/skill-name args`. `/title <text>` (alias `/rename`) persists
+`{title, isCustomTitle: true}`; `/fork` accepts an optional title.
+| `workDir` | Working directory (observed locally) |
+| `agents` | Map of agent id → `{homedir, type, parentAgentId, ...}` — see [Threading](#threading) |
+| `forkedFrom` | Source session id when created via `/fork` (optional) |
+| `custom` | Free-form extension map |
+
+Upstream schema (`packages/klient/src/contract/session/metadata.ts`,
+`sessionMetaSchema` / `agentMetaSchema`) additionally defines `id`, `version`,
+`archived`, and `cwd`; agent entries can also carry `forkedFrom`, `labels`,
+and `swarmItem`.
+
+---
+
+## `wire.jsonl` Format
+
+JSONL event journal — one JSON object per line, append-only, used for session
+recovery and replay. Every record has:
+
+- `type`: record type string (dot-namespaced, e.g. `context.append_loop_event`)
+- `time`: epoch milliseconds (optional in the schema, set in practice)
+
+The **first line** is always a metadata envelope:
+
+```json
+{"type":"metadata","protocol_version":"1.5","created_at":1785279574895}
+```
+
+Upstream references: `packages/agent-core-v2/src/wire/record.ts`
+(`WireRecord`, `WireMetadataRecord`) and the per-domain `*Ops.ts` modules that
+register each record type.
+
+### Record types
+
+Registered upstream (`packages/agent-core-v2/src/agent/**/*Ops.ts`), all
+observed locally unless noted:
+
+| Type | Payload highlights |
+|------|--------------------|
+| `context.append_message` | `message`: full chat message `{role, content[], toolCalls[], origin{kind}}` |
+| `context.append_loop_event` | `event`: one loop event — see [Loop events](#loop-events) |
+| `context.apply_compaction`, `context.clear`, `context.undo` | Context maintenance (compaction summaries, rewind) |
+| `turn.prompt` | `input`: content parts of the user prompt; `origin.kind` |
+| `turn.cancel`, `turn.steer` | Turn interruption / mid-turn steering |
+| `llm.request` | `kind`, `provider`, `model`, `modelAlias`, `thinkingEffort`, `maxTokens`, `messageCount`, `turnStep`, `systemPromptHash`, `toolsHash` — one record per LLM request (per step) |
+| `llm.tools_snapshot` | Tool schemas sent with a request (`hash`, `tools`) |
+| `usage.record` | `model`, `usage` (see [Token usage](#token-usage)), `usageScope` (e.g. `"turn"`) |
+| `config.update` | `modelAlias`, `thinkingEffort` — active model/thinking changes |
+| `tools.set_active_tools`, `tools.reset_active_tools` | Active tool list (`names`) |
+| `tools.update_store` | Observed locally; dynamic tool store updates |
+| `mcp.tools_discovered` | `serverName`, `hash`, `tools`, `enabledNames` |
+| `permission.record_approval_result` | `turnId`, `toolCallId`, `toolName`, `action`, `sessionApprovalRule`, `result` |
+| `permission.set_mode`, `permission.rules.add` | Permission mode / rule changes |
+| `plan_mode.enter`, `plan_mode.exit`, `plan_mode.cancel`, `plan.revision` | Plan mode lifecycle |
+| `skill.activate` | Skill activation (see [Skills](#skills--slash-commands)) |
+| `swarm_mode.enter`, `swarm_mode.exit` | AgentSwarm lifecycle |
+| `task.started`, `task.terminated` | Background task lifecycle |
+| `goal.create`, `goal.update`, `goal.clear`, `forked` | Goal mode / session fork (not observed locally yet) |
+| `full_compaction.begin`, `full_compaction.complete`, `full_compaction.cancel` | Full-compaction lifecycle (not observed locally yet) |
+| `context_size.measured` | Context window measurement (not observed locally yet) |
+
+### Loop events
+
+Assistant turns are recorded as a stream of loop events inside
+`context.append_loop_event` records. The union type is `LoopRecordedEvent` in
+`packages/agent-core-v2/src/agent/contextMemory/loopEventFold.ts`:
+
+| Event | Fields |
+|-------|--------|
+| `step.begin` | `uuid`, `turnId`, `step` — one step = one LLM request/response cycle |
+| `content.part` | `stepUuid`, `part` — a content part (`text`, `think`, `image_url`, `audio_url`, `video_url`) |
+| `tool.call` | `stepUuid`, `toolCallId`, `name`, `args`, optional `display` (UI rendering hints) |
+| `tool.result` | `toolCallId`, `parentUuid`, `result: {output: string \| ContentPart[], isError?, note?}` |
+| `step.end` | `uuid`, `usage`, `finishReason`, latency metrics (`llmFirstTokenLatencyMs`, `llmStreamDurationMs`, ...), `messageId` |
+
+Example (abridged, from local sampling):
+
+```json
+{"type":"context.append_loop_event","event":{"type":"step.begin","uuid":"2cc63775-...","turnId":"0","step":1},"time":1785279582624}
+{"type":"context.append_loop_event","event":{"type":"content.part","stepUuid":"2cc63775-...","part":{"type":"think","think":"..."}},"time":1785279583000}
+{"type":"context.append_loop_event","event":{"type":"content.part","stepUuid":"2cc63775-...","part":{"type":"text","text":"Je regarde le dernier commit."}},"time":1785279583100}
+{"type":"context.append_loop_event","event":{"type":"tool.call","toolCallId":"Bash_0","name":"Bash","args":{"command":"git log -1 --stat"},"display":{"kind":"command","command":"git log -1 --stat","cwd":"/home/user/Projets/sessions-chronicle"}},"time":1785279583200}
+{"type":"context.append_loop_event","event":{"type":"tool.result","parentUuid":"Bash_0","toolCallId":"Bash_0","result":{"output":"commit 124e0d1..."}},"time":1785279584100}
+{"type":"context.append_loop_event","event":{"type":"step.end","uuid":"2cc63775-...","usage":{"inputOther":23815,"output":86,"inputCacheRead":11264,"inputCacheCreation":0},"finishReason":"tool_use","messageId":"chatcmpl-..."},"time":1785279584200}
+```
+
+Tool call correlation: `tool.call.toolCallId` → `tool.result.toolCallId` (and
+`parentUuid` mirrors the call's `uuid`). Note that `toolCallId` values can be
+short synthetic ids (`Bash_0`), not UUIDs.
+
+A turn that ends without a `step.end` for its last `step.begin` means the tool
+exchange was interrupted (e.g. app quit); upstream replay seals such partial
+steps with a "tool execution was interrupted" notice.
+
+### User messages
+
+User prompts appear twice:
+
+- `turn.prompt` records the raw input: `{"input":[{"type":"text","text":"..."}],"origin":{"kind":"user"}}`
+- `context.append_message` records the full message as folded into the model
+  context: `{"message":{"role":"user","content":[...],"toolCalls":[],"origin":{"kind":"user"}}}`
+
+Observed `origin.kind` values: `user`, `injection`, `skill_activation`,
+`system_trigger`.
+
+### Token usage
+
+Two carriers, both per turn/step:
+
+- `usage.record` records: `{"model":"moonshot-ai/kimi-k3","usage":{"inputOther":23815,"output":86,"inputCacheRead":11264,"inputCacheCreation":0},"usageScope":"turn"}`
+- `step.end.usage`: same shape per step
+
+Cache tokens (`inputCacheRead`, `inputCacheCreation`) are reported separately
+from uncached input (`inputOther`) — same convention as Claude Code.
+
+### Model metadata
+
+Per request (per step): `llm.request` carries `provider`, `model`, and
+`modelAlias` (e.g. `provider: "kimi"`, `model: "kimi-k3"`,
+`modelAlias: "moonshot-ai/kimi-k3"`). Session-level model switches appear as
+`config.update` records (`modelAlias`, `thinkingEffort`). Individual messages
+and loop events carry no model field.
+
+---
+
+## Threading
+
+Each agent (main or subagent) has its **own** `wire.jsonl` journal under
+`agents/<agentId>/`; there is no tree structure inside a single journal beyond
+the `turnId`/`step`/`uuid` sequencing of loop events.
+
+### Subagents
+
+A subagent launched via the `Agent` tool:
+
+- appears in the parent's journal as an ordinary `tool.call` / `tool.result`
+  pair (`name: "Agent"`);
+- gets its own journal at `agents/<subagentId>/wire.jsonl`
+  (e.g. `agents/agent-0/wire.jsonl`);
+- is registered in `state.json`:
+
+```json
+"agents": {
+  "main":    {"type": "main", "parentAgentId": null},
+  "agent-0": {"type": "sub",  "parentAgentId": "main"}
+}
+```
+
+`agentMetaSchema.type` is `main | sub | independent`; `parentAgentId` gives
+the parent linkage, and `labels` / `swarmItem` can annotate swarm spawns.
+Unlike Mistral Vibe, the parent tool-call id is not needed for linkage — the
+`agents` map names both endpoints.
+
+### Forks
+
+`/fork` creates an independent copy of a session; lineage is recorded in
+`state.json.forkedFrom` (and a `forked` wire record). The two sessions evolve
+independently afterwards.
+
+---
+
+## Skills / Slash Commands
+
+- Skill activation is recorded as a `skill.activate` wire record.
+- Skill-driven prompts are visible through `turn.prompt` / `context.append_message`
+  records whose `origin.kind` is `skill_activation` (11 observed locally).
+- Other injected content uses `origin.kind` values `injection` or
+  `system_trigger`.
+
+---
+
+## Input History (Not a Session Log)
+
+`$KIMI_CODE_HOME/user-history/<md5(workDir)>.jsonl` stores typed prompts for
+arrow-key recall in the TUI. It does not contain the assistant/tool transcript.
+
+---
+
+## Legacy Format (`~/.kimi`, pre-migration)
+
+The earlier Python-based Kimi CLI stored sessions under
+`~/.kimi/sessions/<md5(workDir)>/<uuid>/` with two JSONL files:
+
+- `context.jsonl` — message history
+- `wire.jsonl` — event journal with a different envelope:
+  `{"timestamp": <float seconds>, "message": {"type": "TurnBegin" | "TurnEnd" | ..., "payload": {...}}}`
+  and `{"type": "metadata", "protocol_version": "1.10"}` as first line
+
+The TypeScript rewrite migrates this data to `~/.kimi-code/` on first run
+(`packages/migration-legacy`), leaving a `~/.kimi/.migrated-to-kimi-code`
+marker and a `~/.kimi-code/migration-report.json`. Legacy files are retained
+on disk. Supporting the current `~/.kimi-code` format is the priority for a
+parser; the legacy layout can be treated as an optional fallback.
+
+---
+
+## Parser Behavior (Sessions Chronicle)
+
+**Not implemented yet** — tracked by
+[issue #167](https://github.com/supermaciz/sessions-chronicle/issues/167).
+This document is the format reference for that work.
+
+Indexing notes for the future parser:
+
+- Resolve sessions via `session_index.jsonl` (or scan `sessions/wd_*/session_*/`),
+  and map `workDirKey` → project path via `workspaces.json` or
+  `session_index.jsonl.workDir`.
+- Read `state.json` for title/timestamps; stream `agents/main/wire.jsonl` with
+  `BufReader` line iteration.
+- User text: `turn.prompt` (or `context.append_message` with
+  `message.role == "user"`); assistant text: `content.part` loop events with
+  `part.type == "text"` (`think` parts optionally indexable).
+- Tool calls: `tool.call` / `tool.result` loop events correlated by `toolCallId`.
+- Subagents: `state.json.agents` entries with `parentAgentId` + the parent's
+  `Agent` tool call; child journal at `agents/<id>/wire.jsonl`.
+- Skip operational records that carry no conversational content
+  (`llm.request`, `llm.tools_snapshot`, `tools.set_active_tools`,
+  `mcp.tools_discovered`, `config.update`, `permission.*`, ...), but keep
+  `usage.record` / `step.end.usage` for token metrics and
+  `llm.request.model` / `config.update.modelAlias` for model metadata.
+- Handle interrupted turns (dangling `step.begin` without `step.end`)
+  gracefully.
+
+---
+
+## Primary Sources
+
+- [Kimi Code CLI Repository](https://github.com/MoonshotAI/kimi-code)
+- [Official docs: Sessions and context](https://github.com/MoonshotAI/kimi-code/blob/main/docs/en/guides/sessions.md)
+- [Official docs: Data locations](https://github.com/MoonshotAI/kimi-code/blob/main/docs/en/configuration/data-locations.md)
+- [Wire record definitions (`packages/agent-core-v2/src/wire/record.ts`)](https://github.com/MoonshotAI/kimi-code/blob/main/packages/agent-core-v2/src/wire/record.ts)
+- [Loop event model (`packages/agent-core-v2/src/agent/contextMemory/loopEventFold.ts`)](https://github.com/MoonshotAI/kimi-code/blob/main/packages/agent-core-v2/src/agent/contextMemory/loopEventFold.ts)
+- [Session metadata contract (`packages/klient/src/contract/session/metadata.ts`)](https://github.com/MoonshotAI/kimi-code/blob/main/packages/klient/src/contract/session/metadata.ts)
+- [Message/content contract (`packages/agent-core-v2/src/kosong/contract/message.ts`)](https://github.com/MoonshotAI/kimi-code/blob/main/packages/agent-core-v2/src/kosong/contract/message.ts)
+- [Legacy migration (`packages/migration-legacy`)](https://github.com/MoonshotAI/kimi-code/tree/main/packages/migration-legacy)
+- Local sampling of `~/.kimi-code/` (2026-07-29)

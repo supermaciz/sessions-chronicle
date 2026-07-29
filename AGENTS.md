@@ -6,7 +6,7 @@
 - `docs/PROJECT_STATUS.md`: current roadmap, phase status, and design references.
 
 ## Terminology
-- Use `AI assistant` for Claude Code, OpenCode, Codex, and Mistral Vibe when they are session sources.
+- Use `AI assistant` for Claude Code, OpenCode, Codex, Mistral Vibe, and Kimi Code when they are session sources.
 - Use `tool call` for actions invoked inside transcripts.
 - Avoid `tool` alone in prose unless you are referring to a literal historical field/schema name or an external format that uses that term.
 
