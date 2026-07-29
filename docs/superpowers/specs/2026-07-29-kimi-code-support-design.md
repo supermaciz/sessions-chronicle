@@ -53,6 +53,8 @@ compared with the other assistants in
   implementations.
 - Adding a Kimi-specific database table or transcript UI.
 - Treating `independent` agents without a parent as subagents.
+- Deduplicating, grouping, or displaying lineage between sessions related by
+  `state.json.forkedFrom`. Each fork remains an independently indexed session.
 - Implementing the unshipped cross-assistant skill-visibility design. Kimi
   skill records remain documented structural signals, not new transcript row
   types in this issue.
@@ -78,6 +80,14 @@ and pruning. It is smaller and safer than introducing a generic composite
 source abstraction, and more cohesive than splitting Kimi semantics between a
 single-journal parser and the database indexer.
 
+Kimi-specific indexer behavior lives in `src/database/indexer/kimi.rs`,
+declared as a private `kimi` submodule from `src/database/indexer.rs`. The
+submodule owns bundle discovery, composite fingerprint checks, transactional
+replacement, and Kimi-scoped pruning. Generic insertion helpers and indexing
+result types remain in `src/database/indexer.rs`. This boundary prevents the
+already large generic indexer file from absorbing source-specific bundle logic
+without refactoring the existing assistants.
+
 ## Source Identity And Paths
 
 Add `AiAssistant::KimiCode` with these mappings:
@@ -95,7 +105,7 @@ the nested `sessions/` directory. This is required because
 provide project-path fallbacks.
 
 `SessionSources` gains a `kimi_home` path. In `--sessions-dir` override mode,
-the canonical fixture subdirectory is `kimi_code/`; if it is absent, the
+the canonical fixture subdirectory is `kimi_home/`; if it is absent, the
 existing fallback-to-root behavior applies.
 
 The default Flatpak home permission covers the standard location. A custom
@@ -121,12 +131,24 @@ project-path fallbacks. They are not authoritative because they can be absent,
 stale, or partially written. A valid session directory found by scanning must
 still be indexed when either top-level index is unavailable.
 
+The scanner does not traverse the rest of `<kimi_home>`. Paths such as
+`user-history/`, `migration-report.json`, credentials, logs, configuration,
+and every other sibling of `sessions/` are ignored. Inside a discovered session,
+the parser likewise ignores `plans/`, `tasks/`, `cron/`, logs, and other files
+outside `state.json` and the declared agent journals. The only files read
+outside `sessions/` are the two targeted metadata sources
+`session_index.jsonl` and `workspaces.json`. The legacy migration marker under
+`~/.kimi/.migrated-to-kimi-code` is outside the current Kimi home and is also
+ignored.
+
 Project path precedence is:
 
-1. `state.json.workDir` or current-schema `state.json.cwd`
-2. matching `session_index.jsonl.workDir`
-3. matching workspace entry in `workspaces.json`
-4. no project path
+1. `state.json.cwd`, defined by the current upstream metadata contract
+2. `state.json.workDir`, observed in current-format local sessions and retained
+   as a compatibility alias
+3. matching `session_index.jsonl.workDir`
+4. matching workspace entry in `workspaces.json`
+5. no project path
 
 Malformed top-level index lines are skipped independently. They never prevent
 directory scanning.
@@ -201,6 +223,12 @@ both representations and reject invalid values locally without panicking.
 The `archived` metadata flag does not exclude a session. Sessions Chronicle is
 a history browser, so archived Kimi sessions remain indexable while their
 directories exist.
+
+`state.json.forkedFrom` records lineage between independently evolving Kimi
+sessions. Each fork is indexed under its own upstream session ID as a normal
+top-level session. The field is not mapped to `parent_session_id`, which is
+reserved for subagent navigation, and #167 does not deduplicate fork content or
+add fork-specific UI.
 
 The placeholder title `"New Session"` is not meaningful and does not override
 the first real user prompt. A non-empty custom or automatically frozen Kimi
@@ -478,7 +506,7 @@ legacy `~/.kimi` parser remains out of scope.
 Add an anonymized Kimi home under:
 
 ```text
-tests/fixtures/kimi_code/
+tests/fixtures/kimi_home/
 ```
 
 Fixture coverage must include:
@@ -497,6 +525,9 @@ Fixture coverage must include:
 - a child journal removed after indexing
 - a title-only `state.json` change
 - a journal-only append
+- one state fixture using upstream `cwd` and another using the observed
+  compatibility field `workDir`
+- two sessions linked by `forkedFrom`, both retained as top-level sessions
 - operation without `session_index.jsonl` or `workspaces.json`
 
 Fixtures must contain no real credentials, user names, private paths, or
@@ -515,6 +546,7 @@ proprietary prompt/tool output.
 - Attribute models to the correct steps.
 - Prefer turn usage and avoid token double counting.
 - Parse ISO-8601 and epoch-millisecond metadata timestamps.
+- Prefer upstream `cwd` over compatibility `workDir` and cover both fields.
 - Skip malformed lines and unknown events without losing later valid data.
 - Reject a session without a real user message.
 - Build stable main and synthetic child identities.
@@ -538,6 +570,7 @@ proprietary prompt/tool output.
 ### Integration and UI tests
 
 - Resolve default `$KIMI_CODE_HOME` and fixture override paths.
+- Resolve `tests/fixtures/kimi_home/` as the Kimi home in override mode.
 - Round-trip the `kimi_code` storage value.
 - Include Kimi Code in the fifth source filter and default selection.
 - Show the Kimi icon and display name.
