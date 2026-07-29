@@ -13,6 +13,7 @@ install_data(
 tool_symbolic_icons = [
   'claude-code-symbolic.svg',
   'codex-symbolic.svg',
+  'kimi-code-symbolic.svg',
   'mistral-vibe-symbolic.svg',
   'opencode-symbolic.svg',
 ]
