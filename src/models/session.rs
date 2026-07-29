@@ -79,6 +79,15 @@ pub enum AiAssistant {
     Codex,
     /// Mistral Vibe coding assistant.
     MistralVibe,
+    /// Moonshot AI's Kimi Code CLI assistant.
+    KimiCode,
+}
+
+fn resolve_kimi_home(home: &str, configured: Option<std::ffi::OsString>) -> String {
+    configured
+        .filter(|value| !value.is_empty())
+        .map(|value| value.to_string_lossy().into_owned())
+        .unwrap_or_else(|| format!("{home}/.kimi-code"))
 }
 
 impl AiAssistant {
@@ -87,6 +96,7 @@ impl AiAssistant {
         AiAssistant::OpenCode,
         AiAssistant::Codex,
         AiAssistant::MistralVibe,
+        AiAssistant::KimiCode,
     ];
 
     #[allow(dead_code)]
@@ -96,6 +106,7 @@ impl AiAssistant {
             AiAssistant::OpenCode => "#26a269",
             AiAssistant::Codex => "#e66100",
             AiAssistant::MistralVibe => "#1c71d8",
+            AiAssistant::KimiCode => "#9141ac",
         }
     }
 
@@ -105,6 +116,7 @@ impl AiAssistant {
             AiAssistant::OpenCode => "opencode-symbolic",
             AiAssistant::Codex => "codex-symbolic",
             AiAssistant::MistralVibe => "mistral-vibe-symbolic",
+            AiAssistant::KimiCode => "kimi-code-symbolic",
         }
     }
 
@@ -114,6 +126,7 @@ impl AiAssistant {
             AiAssistant::OpenCode => "OpenCode",
             AiAssistant::Codex => "Codex",
             AiAssistant::MistralVibe => "Mistral Vibe",
+            AiAssistant::KimiCode => "Kimi Code",
         }
     }
 
@@ -123,6 +136,7 @@ impl AiAssistant {
             "opencode" => Some(AiAssistant::OpenCode),
             "codex" => Some(AiAssistant::Codex),
             "mistral_vibe" => Some(AiAssistant::MistralVibe),
+            "kimi_code" => Some(AiAssistant::KimiCode),
             _ => None,
         }
     }
@@ -133,6 +147,7 @@ impl AiAssistant {
             AiAssistant::OpenCode => "opencode".to_string(),
             AiAssistant::Codex => "codex".to_string(),
             AiAssistant::MistralVibe => "mistral_vibe".to_string(),
+            AiAssistant::KimiCode => "kimi_code".to_string(),
         }
     }
 
@@ -145,6 +160,39 @@ impl AiAssistant {
             AiAssistant::MistralVibe => std::env::var("VIBE_HOME")
                 .map(|vibe_home| format!("{}/logs/session", vibe_home))
                 .unwrap_or_else(|_| format!("{}/.vibe/logs/session", home)),
+            AiAssistant::KimiCode => {
+                resolve_kimi_home(home.as_str(), std::env::var_os("KIMI_CODE_HOME"))
+            }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::AiAssistant;
+    use std::ffi::OsString;
+
+    #[test]
+    fn kimi_code_identity_mappings_are_stable() {
+        assert_eq!(AiAssistant::ALL.len(), 5);
+        assert_eq!(AiAssistant::KimiCode.to_storage(), "kimi_code");
+        assert_eq!(
+            AiAssistant::from_storage("kimi_code"),
+            Some(AiAssistant::KimiCode)
+        );
+        assert_eq!(AiAssistant::KimiCode.display_name(), "Kimi Code");
+        assert_eq!(AiAssistant::KimiCode.icon_name(), "kimi-code-symbolic");
+    }
+
+    #[test]
+    fn kimi_home_path_prefers_custom_root_and_never_appends_sessions() {
+        assert_eq!(
+            super::resolve_kimi_home("/home/tester", Some(OsString::from("/tmp/kimi"))),
+            "/tmp/kimi"
+        );
+        assert_eq!(
+            super::resolve_kimi_home("/home/tester", None),
+            "/home/tester/.kimi-code"
+        );
     }
 }

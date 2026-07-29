@@ -465,6 +465,7 @@ fn build_source_results_list(results: &[PerSourceResult]) -> gtk::ListBox {
             AiAssistant::OpenCode => "OpenCode",
             AiAssistant::Codex => "Codex",
             AiAssistant::MistralVibe => "Mistral Vibe",
+            AiAssistant::KimiCode => "Kimi Code",
         };
 
         let subtitle = if result.status == SourceStatus::NotFound {

@@ -7,8 +7,9 @@ const CLAUDE_SUBDIR: &str = "claude_sessions";
 const OPENCODE_SUBDIR: &str = "opencode_storage";
 const CODEX_SUBDIR: &str = "codex_sessions";
 const VIBE_SUBDIR: &str = "vibe_sessions";
+const KIMI_SUBDIR: &str = "kimi_home";
 
-/// Resolved session source paths for all supported tools.
+/// Resolved session source paths for all supported AI assistants.
 ///
 /// In override mode every path derives from a single user-supplied root.
 /// In default mode each tool uses its own home-based default.
@@ -19,6 +20,8 @@ pub struct SessionSources {
     pub opencode_db_paths: Vec<PathBuf>,
     pub codex_dir: PathBuf,
     pub vibe_dir: PathBuf,
+    #[allow(dead_code)]
+    pub kimi_home: PathBuf,
     pub override_mode: bool,
 }
 
@@ -55,6 +58,7 @@ impl SessionSources {
             opencode_db_paths,
             codex_dir: try_subdir(CODEX_SUBDIR),
             vibe_dir: try_subdir(VIBE_SUBDIR),
+            kimi_home: try_subdir(KIMI_SUBDIR),
             override_mode: true,
         }
     }
@@ -74,6 +78,7 @@ impl SessionSources {
             opencode_db_paths,
             codex_dir: PathBuf::from(AiAssistant::Codex.session_dir()),
             vibe_dir: PathBuf::from(AiAssistant::MistralVibe.session_dir()),
+            kimi_home: PathBuf::from(AiAssistant::KimiCode.session_dir()),
             override_mode: false,
         }
     }
@@ -143,6 +148,7 @@ mod tests {
         assert_eq!(sources.opencode_storage_root, root.join("opencode_storage"));
         assert_eq!(sources.codex_dir, root.join("codex_sessions"));
         assert_eq!(sources.vibe_dir, root.join("vibe_sessions"));
+        assert_eq!(sources.kimi_home, root.join("kimi_home"));
     }
 
     #[test]
@@ -157,6 +163,7 @@ mod tests {
         assert_eq!(sources.opencode_storage_root, root);
         assert_eq!(sources.codex_dir, root);
         assert_eq!(sources.vibe_dir, root);
+        assert_eq!(sources.kimi_home, root);
     }
 
     #[test]
@@ -175,6 +182,10 @@ mod tests {
         assert_eq!(
             sources.vibe_dir,
             PathBuf::from(AiAssistant::MistralVibe.session_dir())
+        );
+        assert_eq!(
+            sources.kimi_home,
+            PathBuf::from(AiAssistant::KimiCode.session_dir())
         );
 
         // OpenCode storage root is the parent of the session dir.

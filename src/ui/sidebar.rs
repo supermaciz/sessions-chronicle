@@ -142,6 +142,7 @@ impl SimpleComponent for Sidebar {
                     AiAssistant::OpenCode => self.opencode_enabled = active,
                     AiAssistant::Codex => self.codex_enabled = active,
                     AiAssistant::MistralVibe => self.mistral_vibe_enabled = active,
+                    AiAssistant::KimiCode => {}
                 }
 
                 self.emit_filters_changed(&sender);

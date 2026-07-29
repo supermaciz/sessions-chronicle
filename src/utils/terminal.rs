@@ -165,6 +165,7 @@ pub fn build_resume_command(
         AiAssistant::OpenCode => "opencode --session \"$2\"".to_string(),
         AiAssistant::Codex => "codex resume \"$2\"".to_string(),
         AiAssistant::MistralVibe => "vibe --resume \"$2\"".to_string(),
+        AiAssistant::KimiCode => anyhow::bail!("Kimi Code resume is not yet supported"),
     };
 
     let shell_cmd = format!("cd \"$1\" && {}; exec bash", tool_cmd);
