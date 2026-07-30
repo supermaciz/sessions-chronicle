@@ -374,7 +374,13 @@ impl SessionIndexer {
             match parse_stable_bundle(parser, &candidate.session_dir, snapshot) {
                 Ok(StableParse::Bundle(bundle, snapshot)) => {
                     match self.replace_kimi_bundle(&bundle, &snapshot) {
-                        Ok(_) => stats.indexed += 1,
+                        // Children that `state.json` no longer declares are deleted
+                        // by the replace, so they count as removals even though the
+                        // bundle itself was reindexed.
+                        Ok(removed) => {
+                            stats.removed += removed;
+                            stats.indexed += 1;
+                        }
                         Err(err) => self.record_index_failure(
                             AiAssistant::KimiCode,
                             &candidate.session_dir,
@@ -740,6 +746,45 @@ mod tests {
                 .unwrap(),
             1
         );
+    }
+
+    #[test]
+    fn dropping_a_child_from_state_counts_as_a_removal() {
+        let home = fixture_home();
+        let db = tempfile::NamedTempFile::new().unwrap();
+        let mut indexer = SessionIndexer::new(db.path()).unwrap();
+        let dir = primary_dir(home.path());
+        let child_id = "kimi-subagent::session_00000000-0000-4000-8000-000000000001::agent-1";
+
+        let child_rows = |indexer: &SessionIndexer| {
+            indexer
+                .db
+                .query_row(
+                    "SELECT COUNT(*) FROM sessions WHERE id = ?1",
+                    [child_id],
+                    |row| row.get::<_, i64>(0),
+                )
+                .unwrap()
+        };
+
+        indexer
+            .index_kimi_sessions_incremental(home.path())
+            .unwrap();
+        assert_eq!(child_rows(&indexer), 1);
+
+        let mut state: serde_json::Value =
+            serde_json::from_slice(&fs::read(dir.join("state.json")).unwrap()).unwrap();
+        state["agents"].as_object_mut().unwrap().remove("agent-1");
+        fs::write(dir.join("state.json"), serde_json::to_vec(&state).unwrap()).unwrap();
+
+        let stats = indexer
+            .index_kimi_sessions_incremental(home.path())
+            .unwrap();
+
+        assert_eq!(stats.indexed, 1);
+        assert_eq!(stats.removed, 1);
+        assert_eq!(stats.errors, 0);
+        assert_eq!(child_rows(&indexer), 0);
     }
 
     #[test]
