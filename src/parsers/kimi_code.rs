@@ -1350,16 +1350,8 @@ impl KimiCodeParser {
     }
 
     fn load_session_index(&mut self, path: &Path) {
-        if !validate_optional_metadata_file(path) {
+        let Some(file) = read_optional_metadata(path, File::open) else {
             return;
-        }
-        let file = match File::open(path) {
-            Ok(file) => file,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return,
-            Err(_) => {
-                tracing::warn!(path = %path.display(), "failed to read optional Kimi metadata");
-                return;
-            }
         };
         for line in BufReader::new(file).lines() {
             let Ok(line) = line else {
@@ -1388,16 +1380,8 @@ impl KimiCodeParser {
     }
 
     fn load_workspaces(&mut self, path: &Path) {
-        if !validate_optional_metadata_file(path) {
+        let Some(bytes) = read_optional_metadata(path, fs::read) else {
             return;
-        }
-        let bytes = match fs::read(path) {
-            Ok(bytes) => bytes,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return,
-            Err(_) => {
-                tracing::warn!(path = %path.display(), "failed to read optional Kimi metadata");
-                return;
-            }
         };
         let Ok(value) = serde_json::from_slice::<Value>(&bytes) else {
             tracing::warn!(path = %path.display(), "ignoring malformed Kimi workspaces metadata");
@@ -1410,6 +1394,29 @@ impl KimiCodeParser {
             if let Some(root) = nonblank(workspace.get("root")) {
                 self.workspace_roots.insert(key.clone(), root);
             }
+        }
+    }
+}
+
+/// Read an optional Kimi metadata file, or `None` when it is absent, is not a
+/// regular file, or cannot be read. Callers share this preamble so the
+/// not-found handling and the diagnostics stay identical across metadata kinds.
+///
+/// The lifetime is explicit on purpose: eliding it makes the bound higher-ranked,
+/// which `File::open` and `fs::read` cannot satisfy as bare function items.
+fn read_optional_metadata<'a, T>(
+    path: &'a Path,
+    read: impl FnOnce(&'a Path) -> std::io::Result<T>,
+) -> Option<T> {
+    if !validate_optional_metadata_file(path) {
+        return None;
+    }
+    match read(path) {
+        Ok(value) => Some(value),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+        Err(_) => {
+            tracing::warn!(path = %path.display(), "failed to read optional Kimi metadata");
+            None
         }
     }
 }
