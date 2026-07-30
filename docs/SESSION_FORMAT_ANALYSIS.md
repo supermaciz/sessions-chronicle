@@ -9,7 +9,7 @@ Cross-tool comparison of Claude Code, Codex, OpenCode, Mistral Vibe, and Kimi Co
 - [Codex](session-formats/codex.md)
 - [OpenCode](session-formats/opencode.md) — includes SQLite (≥ 2026-02-14) and legacy JSON
 - [Mistral Vibe](session-formats/mistral-vibe.md)
-- [Kimi Code](session-formats/kimi-code.md) — includes legacy `~/.kimi` (pre-migration) layout
+- [Kimi Code](session-formats/kimi-code.md) — current `~/.kimi-code` format; legacy `~/.kimi` is documented but not parsed
 
 **Parser architecture and implementation patterns:** [PARSER_DESIGN.md](PARSER_DESIGN.md)
 **Tool call wire formats and normalization:** [TOOL_CALLS_ANALYSIS.md](TOOL_CALLS_ANALYSIS.md)
@@ -29,7 +29,7 @@ Cross-tool comparison of Claude Code, Codex, OpenCode, Mistral Vibe, and Kimi Co
 - ✅ Tool-call wire formats documented for Claude, OpenCode, Mistral Vibe, and Codex rollouts
 - ✅ LLM model metadata availability mapped (per message vs per turn vs per session)
 - ✅ Current parser behavior: tool-call/tool-result content is indexed (Phase 6 delivered)
-- 📄 Kimi Code session format documented ([issue #167](https://github.com/supermaciz/sessions-chronicle/issues/167)); parser not implemented yet
+- ✅ Kimi Code parser + indexer implemented for current `$KIMI_CODE_HOME` sessions (default `~/.kimi-code`); custom locations work when visible in the Flatpak sandbox, while legacy `~/.kimi` sessions are not parsed
 
 ---
 
@@ -41,7 +41,7 @@ Cross-tool comparison of Claude Code, Codex, OpenCode, Mistral Vibe, and Kimi Co
 | **Codex** | `~/.codex/sessions/`<br>`~/.codex/archived_sessions/` | Active sessions: date-sharded `YYYY/MM/DD/rollout-*.jsonl`<br>Archived sessions: flat `rollout-*.jsonl` or cold `rollout-*.jsonl.zst` |
 | **OpenCode** | `~/.local/share/opencode/` | **New (≥ 2026-02-14)**: SQLite WAL-mode DB, usually `opencode.db` and channel-specific `opencode-<channel>.db` for non-default channels; tables: `session`, `message`, `part`, `project`, `todo`, `permission`, `session_share`.<br>**Legacy (pre-migration)**: Multi-directory JSON under `storage/`: `session/<project>/ses_xxx.json`, `message/ses_xxx/`, `part/msg_xxx/`, `session_diff/ses_xxx.json`. Files are retained post-migration (no auto-cleanup). |
 | **Mistral Vibe** | `~/.vibe/logs/session/` | One directory per session:<br>`session_YYYYMMDD_HHMMSS_<shortid>/`<br>Contains `meta.json` + `messages.jsonl`.<br>Subagent traces created by `task` are child session directories under `<parent>/agents/<agent>_YYYYMMDD_HHMMSS_<shortid>/`.<br>Default can be overridden via `VIBE_HOME` or `session_logging.save_dir` in `config.toml`. |
-| **Kimi Code** | `~/.kimi-code/sessions/` (via `$KIMI_CODE_HOME`) | Grouped by working directory: `sessions/<workDirKey>/<sessionId>/` where `workDirKey` is `wd_<slug>_<sha256-12>` and `sessionId` is `session_<uuid>`.<br>Contains `state.json` + `agents/<agentId>/wire.jsonl` (one journal per agent, `main` + subagents).<br>Top-level `session_index.jsonl` + `workspaces.json` map sessions to workdirs.<br>Legacy (pre-migration Python CLI): `~/.kimi/sessions/<md5(workDir)>/<uuid>/` with `context.jsonl` + `wire.jsonl`. |
+| **Kimi Code** | `$KIMI_CODE_HOME/sessions/` (default `~/.kimi-code/sessions/`) | Grouped by working directory: `sessions/<workDirKey>/<sessionId>/` where `workDirKey` is `wd_<slug>_<sha256-12>` and `sessionId` is `session_<uuid>`.<br>Contains `state.json` + `agents/<agentId>/wire.jsonl` (one journal per agent, `main` + subagents).<br>Top-level `session_index.jsonl` + `workspaces.json` map sessions to workdirs.<br>Custom homes are supported when visible in the Flatpak sandbox. Legacy (pre-migration Python CLI) sessions under `~/.kimi` are not parsed. |
 
 ---
 
@@ -205,9 +205,9 @@ Goal: determine whether model information is available per message, per turn, an
   (`inputCacheRead`, `inputCacheCreation`) reported separately from uncached
   input (`inputOther`) — the same convention as Claude Code. Subagents are
   linked through `state.json.agents[*].parentAgentId` with their own journal.
-  A legacy `~/.kimi` layout (Python CLI, different wire envelope) still exists
-  on disk for migrated users. Parser not yet implemented — see
-  [issue #167](https://github.com/supermaciz/sessions-chronicle/issues/167).
+  The parser discovers current bundles under `$KIMI_CODE_HOME` (default
+  `~/.kimi-code`) when visible in the Flatpak sandbox. Legacy `~/.kimi`
+  sessions use a different wire envelope and are not parsed.
 - **Kimi Code skills**: Skill activation has a structural marker — a
   `skill.activate` wire record — and skill-driven prompts carry
   `origin.kind == "skill_activation"` on `turn.prompt` /
@@ -258,7 +258,7 @@ Goal: determine whether model information is available per message, per turn, an
 
 ## Token Usage Availability (All Supported Parsers)
 
-Sessions Chronicle supports parsing Claude Code, Codex, OpenCode, and Mistral Vibe sessions (Kimi Code documented, parser pending).
+Sessions Chronicle supports parsing Claude Code, Codex, OpenCode, Mistral Vibe, and current-format Kimi Code sessions.
 Each tool can persist token usage metrics, but **the granularity and presence are tool- and version-dependent**.
 
 | Tool | Where tokens appear | Granularity | Notes |
@@ -362,4 +362,4 @@ Each tool can persist token usage metrics, but **the granularity and presence ar
 ---
 
 **Last Updated**: 2026-07-29
-**Status**: Kimi Code session format documented (issue #167) from upstream sources (`packages/agent-core-v2`) and local `~/.kimi-code` sampling: directory-based sessions (`state.json` + per-agent `wire.jsonl` journals), loop-event turn structure, per-request model metadata, per-turn/per-step token usage with separate cache counters, `parentAgentId`-based subagent linkage, and the legacy `~/.kimi` layout noted as an optional fallback. Parser not implemented yet. Claude Code docs refreshed from real-session sampling (v2.1.148 logs): new `attachment`, `permission-mode`, and `last-prompt` event types, new `attributionSkill` / `sourceToolAssistantUUID` fields, `isSnapshotUpdate` on file-history snapshots, and the `agent-*.meta.json` subagent metadata sidecar; parser skips the new event types without error, so no parser change is justified yet. Earlier refresh (2026-03-31) covered v2.1.87-era subagent naming (`Agent`), `turn_duration`/`compact_boundary` system events, and `tool-results/` side files. Mistral Vibe docs updated for v2.7.0: new `meta.json` fields (`username`, `title`, `total_messages`, `system_prompt`), new optional `LLMMessage` fields (`message_id`, `reasoning_content`, `reasoning_signature`), system message placement corrected. Mistral Vibe docs refreshed again from upstream source through v2.14.1 (2026-06-09 watch pass): new `SessionMetadata` fields (`parent_session_id`, `title_source`, `loops`, `experiments`), new `LLMMessage` fields (`images`, `injected`, `reasoning_state`, `reasoning_message_id`), expanded `AgentStats` (tool-call counters, performance metrics, per-million pricing), the new `read`/`edit` tool-call format, and directory-based `task` subagent traces under `<parent>/agents/`. The parser's subagent behavior matches upstream; same-profile parallel call-to-child pairing remains best-effort because child metadata contains no parent tool-call id.
+**Status**: Kimi Code parser and indexer implemented for current `$KIMI_CODE_HOME` sessions (default `~/.kimi-code`) when visible in the Flatpak sandbox. Discovery scans `sessions/wd_*/session_*/`; bundle parsing covers messages, tool calls, token/model metadata, and namespaced synthetic child transcripts linked through `parentAgentId`. Incremental indexing fingerprints `state.json` and every declared agent journal as one composite bundle, and bundles without genuine user-origin messages are not retained. Legacy `~/.kimi` sessions are not parsed. Claude Code docs refreshed from real-session sampling (v2.1.148 logs): new `attachment`, `permission-mode`, and `last-prompt` event types, new `attributionSkill` / `sourceToolAssistantUUID` fields, `isSnapshotUpdate` on file-history snapshots, and the `agent-*.meta.json` subagent metadata sidecar; parser skips the new event types without error, so no parser change is justified yet. Earlier refresh (2026-03-31) covered v2.1.87-era subagent naming (`Agent`), `turn_duration`/`compact_boundary` system events, and `tool-results/` side files. Mistral Vibe docs updated for v2.7.0: new `meta.json` fields (`username`, `title`, `total_messages`, `system_prompt`), new optional `LLMMessage` fields (`message_id`, `reasoning_content`, `reasoning_signature`), system message placement corrected. Mistral Vibe docs refreshed again from upstream source through v2.14.1 (2026-06-09 watch pass): new `SessionMetadata` fields (`parent_session_id`, `title_source`, `loops`, `experiments`), new `LLMMessage` fields (`images`, `injected`, `reasoning_state`, `reasoning_message_id`), expanded `AgentStats` (tool-call counters, performance metrics, per-million pricing), the new `read`/`edit` tool-call format, and directory-based `task` subagent traces under `<parent>/agents/`. The parser's subagent behavior matches upstream; same-profile parallel call-to-child pairing remains best-effort because child metadata contains no parent tool-call id.

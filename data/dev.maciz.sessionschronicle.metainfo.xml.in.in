@@ -10,7 +10,7 @@
     <p
         >Sessions Chronicle is a GNOME application for browsing, searching, and resuming AI coding sessions.</p>
     <p
-        >It indexes local session files in SQLite (FTS5) and supports Claude Code, OpenCode, Codex, and Mistral Vibe formats.</p>
+        >It indexes local session files in SQLite (FTS5) and supports Claude Code, OpenCode, Codex, Mistral Vibe, and Kimi Code formats.</p>
   </description>
   <screenshots>
     <screenshot type="default">

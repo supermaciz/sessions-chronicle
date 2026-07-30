@@ -59,13 +59,16 @@ This indexes sessions from all supported AI assistants:
   archived rollouts can be `*.jsonl.zst`)
 - Mistral Vibe: `~/.vibe/logs/session/` (or `$VIBE_HOME/logs/session/` when
   `VIBE_HOME` is set); subagent child sessions live under `<session>/agents/`
+- Kimi Code: `$KIMI_CODE_HOME/` (default `~/.kimi-code/`); current-format
+  sessions live under `sessions/wd_*/session_*/` and legacy `~/.kimi` is not
+  indexed
 
 ## Using Test Fixtures
 
 The `--sessions-dir` flag overrides session source paths **for all assistants**. It maps known fixture subdirectories automatically:
 
 ```bash
-# Override with the full fixture root — maps all four assistants
+# Override with the full fixture root — maps all five assistants
 flatpak-builder --run flatpak_app build-aux/dev.maciz.sessionschronicle.Devel.json sessions-chronicle --sessions-dir tests/fixtures
 ```
 
@@ -82,6 +85,7 @@ This maps to:
 | OpenCode | `tests/fixtures/opencode_storage/` |
 | Codex | `tests/fixtures/codex_sessions/` |
 | Mistral Vibe | `tests/fixtures/vibe_sessions/` |
+| Kimi Code | `tests/fixtures/kimi_home/` |
 
 OpenCode database resolution in override mode:
 - Checks `tests/fixtures/opencode_storage/opencode.db` first
@@ -107,7 +111,7 @@ The Preferences dialog (menu > Preferences > Advanced) includes a **Reset sessio
 
 ## Terminology
 
-- `AI assistant` refers to a session source such as Claude Code, OpenCode, Codex, or Mistral Vibe.
+- `AI assistant` refers to a session source such as Claude Code, OpenCode, Codex, Mistral Vibe, or Kimi Code.
 - `tool call` refers to an action invoked within a transcript.
 - When docs mention a literal field, API key, or legacy storage name called `tool`, that wording is kept intentionally.
 
@@ -192,7 +196,7 @@ RUST_LOG=sessions_chronicle::parsers=trace "$HOME/.local/bin/sessions-chronicle"
 ## Testing
 
 ```bash
-cargo test --all --no-fail-fast
+xvfb-run -a env GDK_BACKEND=x11 GSK_RENDERER=cairo cargo test --all --no-fail-fast
 ```
 
 ### Linting
@@ -281,7 +285,7 @@ Two Flatpak manifests exist in `build-aux/`:
 - **Meson rebuild**: `meson compile -C builddir && meson install -C builddir`
 - **Meson run**: `"$HOME/.local/bin/sessions-chronicle"`
 - **Test Data**: Add `--sessions-dir tests/fixtures` flag
-- **CI parity**: `cargo fmt --all -- --check && cargo clippy --all -- -D warnings && cargo test --all --no-fail-fast`
+- **CI parity**: `cargo fmt --all -- --check && cargo clippy --all -- -D warnings && xvfb-run -a env GDK_BACKEND=x11 GSK_RENDERER=cairo cargo test --all --no-fail-fast`
 
 ---
 

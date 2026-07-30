@@ -22,7 +22,7 @@ tests/fixtures/
 
 ## Purpose
 
-- **Development**: Test parsers without requiring actual Claude Code/OpenCode/Codex installations
+- **Development**: Test parsers for all five supported AI assistants without requiring their CLIs
 - **Testing**: Integration tests use these fixtures to verify parsing and database indexing
 - **CI/CD**: Consistent test data across different environments
 
@@ -75,7 +75,11 @@ This mirrors runtime behavior where `opencode.db` is used when available and leg
 
 ## Kimi Code Session Format
 
-`kimi_home/` represents only the current `~/.kimi-code` layout. It contains synthetic IDs, harmless content, no credentials, and no real paths. Legacy `~/.kimi` data is intentionally excluded.
+`kimi_home/` represents only the current `$KIMI_CODE_HOME` layout (default
+`~/.kimi-code`). It contains synthetic IDs, harmless content, no credentials,
+and no real paths. Custom homes are supported when visible in the Flatpak
+sandbox; legacy `~/.kimi` sessions are not parsed and are intentionally
+excluded.
 
 ## Adding Fixtures
 
