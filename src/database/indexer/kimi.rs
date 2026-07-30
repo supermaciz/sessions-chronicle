@@ -240,29 +240,28 @@ where
     for _ in 0..2 {
         let before_paths = match parser.dependency_paths(session_dir) {
             Ok(paths) => paths,
-            Err(_) => return Ok(None),
+            Err(_) if required_kimi_files_missing(session_dir) => return Ok(None),
+            Err(err) => return Err(err),
         };
         let before = match snapshot_dependencies(&before_paths) {
             Ok(snapshot) => snapshot,
-            Err(_) => return Ok(None),
+            Err(_) if required_kimi_files_missing(session_dir) => return Ok(None),
+            Err(err) => return Err(err),
         };
         let bundle = match parse(session_dir) {
             Ok(bundle) => bundle,
-            Err(_)
-                if !session_dir.join("state.json").is_file()
-                    || !session_dir.join("agents/main/wire.jsonl").is_file() =>
-            {
-                return Ok(None);
-            }
+            Err(_) if required_kimi_files_missing(session_dir) => return Ok(None),
             Err(err) => return Err(err),
         };
         let after_paths = match parser.dependency_paths(session_dir) {
             Ok(paths) => paths,
-            Err(_) => return Ok(None),
+            Err(_) if required_kimi_files_missing(session_dir) => return Ok(None),
+            Err(err) => return Err(err),
         };
         let after = match snapshot_dependencies(&after_paths) {
             Ok(snapshot) => snapshot,
-            Err(_) => return Ok(None),
+            Err(_) if required_kimi_files_missing(session_dir) => return Ok(None),
+            Err(err) => return Err(err),
         };
         if before == after {
             return Ok(Some((bundle, after)));
@@ -275,6 +274,11 @@ where
         "Kimi session changed while being parsed",
     );
     Ok(None)
+}
+
+fn required_kimi_files_missing(session_dir: &Path) -> bool {
+    !session_dir.join("state.json").is_file()
+        || !session_dir.join("agents/main/wire.jsonl").is_file()
 }
 
 #[cfg(test)]
@@ -397,6 +401,36 @@ mod tests {
         let result = parse_kimi_bundle_stably_with(&parser, &session_dir, &mut errors, |_| {
             Err(anyhow::anyhow!("simulated parser failure"))
         });
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn stable_parse_preserves_unrelated_dependency_errors() {
+        let temp = fixture_home();
+        let session_dir = temp
+            .path()
+            .join("sessions/wd_primary_aaaaaaaaaaaa/session_00000000-0000-4000-8000-000000000001");
+        fs::write(session_dir.join("state.json"), "not-json").unwrap();
+        let parser = KimiCodeParser::new(temp.path());
+        let mut errors = VecDeque::new();
+
+        let result = parse_kimi_bundle_stably(&parser, &session_dir, &mut errors);
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn stable_parse_preserves_unrelated_snapshot_errors() {
+        let temp = fixture_home();
+        let session_dir = temp
+            .path()
+            .join("sessions/wd_primary_aaaaaaaaaaaa/session_00000000-0000-4000-8000-000000000001");
+        fs::remove_file(session_dir.join("agents/agent-0/wire.jsonl")).unwrap();
+        let parser = KimiCodeParser::new(temp.path());
+        let mut errors = VecDeque::new();
+
+        let result = parse_kimi_bundle_stably(&parser, &session_dir, &mut errors);
 
         assert!(result.is_err());
     }
