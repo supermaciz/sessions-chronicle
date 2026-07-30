@@ -1,9 +1,10 @@
 #![allow(dead_code)] // Task 6 wires these helpers into the Kimi source run.
 
-use super::{SessionIndexer, push_indexing_error};
+use super::{IndexingStats, SessionIndexer, push_indexing_error};
 use crate::models::{AiAssistant, IndexingError};
-use crate::parsers::kimi_code::{KimiCodeParser, KimiParsedBundle};
-use anyhow::Result;
+use crate::parsers::kimi_code::{KimiCodeParser, KimiParsedBundle, ParseError};
+use anyhow::{Result, bail};
+use rusqlite::OptionalExtension;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -27,6 +28,12 @@ struct PathFingerprint {
     path: PathBuf,
     mtime_ns: i64,
     size: i64,
+}
+
+#[allow(clippy::large_enum_variant)] // Keep the task-defined stable parse interface unboxed.
+enum StableParse {
+    Bundle(KimiParsedBundle, Vec<PathFingerprint>),
+    NoUserMessages(Vec<PathFingerprint>),
 }
 
 fn discover_kimi_sessions(
@@ -215,6 +222,253 @@ impl SessionIndexer {
             .collect::<HashMap<_, _>>();
         Ok(stored != current)
     }
+
+    pub(super) fn index_kimi_sessions_internal(
+        &mut self,
+        kimi_home: &Path,
+        incremental: bool,
+        errors_detail: &mut VecDeque<IndexingError>,
+    ) -> Result<IndexingStats> {
+        let discovery = discover_kimi_sessions(kimi_home, errors_detail)?;
+        let parser = KimiCodeParser::new(kimi_home);
+        self.process_kimi_discovery(kimi_home, incremental, discovery, &parser, errors_detail)
+    }
+
+    pub fn index_kimi_sessions(&mut self, kimi_home: &Path) -> Result<usize> {
+        let mut errors_detail = VecDeque::new();
+        Ok(self
+            .index_kimi_sessions_internal(kimi_home, false, &mut errors_detail)?
+            .indexed)
+    }
+
+    fn process_kimi_discovery(
+        &mut self,
+        kimi_home: &Path,
+        incremental: bool,
+        discovery: KimiDiscovery,
+        parser: &KimiCodeParser,
+        errors_detail: &mut VecDeque<IndexingError>,
+    ) -> Result<IndexingStats> {
+        let mut stats = IndexingStats::default();
+        for candidate in discovery.candidates {
+            let snapshot = match parser
+                .dependency_paths(&candidate.session_dir)
+                .and_then(|paths| snapshot_dependencies(&paths))
+            {
+                Ok(snapshot) => snapshot,
+                Err(err) => {
+                    self.record_index_failure(
+                        AiAssistant::KimiCode,
+                        &candidate.session_dir,
+                        &err,
+                        &mut stats,
+                        errors_detail,
+                    );
+                    continue;
+                }
+            };
+            if incremental && !self.should_reindex_kimi_bundle(&candidate.session_dir, &snapshot)? {
+                stats.skipped += 1;
+                continue;
+            }
+
+            match parse_stable_bundle(parser, &candidate.session_dir) {
+                Ok(StableParse::Bundle(bundle, snapshot)) => {
+                    match self.replace_kimi_bundle(&bundle, &snapshot) {
+                        Ok(_) => stats.indexed += 1,
+                        Err(err) => self.record_index_failure(
+                            AiAssistant::KimiCode,
+                            &candidate.session_dir,
+                            &err,
+                            &mut stats,
+                            errors_detail,
+                        ),
+                    }
+                }
+                Ok(StableParse::NoUserMessages(_snapshot)) => {
+                    match self.prune_kimi_no_user_bundle(
+                        &candidate.session_dir,
+                        &candidate.main_session_id,
+                    ) {
+                        Ok(removed) => stats.removed += removed,
+                        Err(err) => self.record_index_failure(
+                            AiAssistant::KimiCode,
+                            &candidate.session_dir,
+                            &err,
+                            &mut stats,
+                            errors_detail,
+                        ),
+                    }
+                }
+                Err(err) => self.record_index_failure(
+                    AiAssistant::KimiCode,
+                    &candidate.session_dir,
+                    &err,
+                    &mut stats,
+                    errors_detail,
+                ),
+            }
+        }
+
+        if discovery.enumeration_complete
+            && kimi_home.is_dir()
+            && kimi_home.join("sessions").is_dir()
+        {
+            stats.removed +=
+                self.prune_stale_kimi_bundles(kimi_home, &discovery.discovered_dirs)?;
+        }
+        Ok(stats)
+    }
+
+    fn replace_kimi_bundle(
+        &mut self,
+        bundle: &KimiParsedBundle,
+        snapshot: &[PathFingerprint],
+    ) -> Result<usize> {
+        let main_id = &bundle.main.session.id;
+        let child_prefix = format!("kimi-subagent::{main_id}::");
+        let tx = self.db.transaction()?;
+
+        for session_id in &bundle.session_ids {
+            if let Some(tool) = tx
+                .query_row(
+                    "SELECT tool FROM sessions WHERE id = ?1",
+                    [session_id],
+                    |row| row.get::<_, String>(0),
+                )
+                .optional()?
+                && tool != "kimi_code"
+            {
+                bail!("Kimi session id {session_id} is already owned by {tool}");
+            }
+        }
+        let old_children: Vec<String> = {
+            let mut statement = tx.prepare("SELECT id FROM sessions WHERE tool = 'kimi_code'")?;
+            statement
+                .query_map([], |row| row.get::<_, String>(0))?
+                .collect::<rusqlite::Result<Vec<_>>>()?
+                .into_iter()
+                .filter(|id| id.starts_with(&child_prefix))
+                .collect()
+        };
+
+        let main_project =
+            Self::upsert_project_tx(&tx, bundle.main.session.project_path.as_deref())?;
+        Self::upsert_session_row_tx(
+            &tx,
+            &bundle.main,
+            Path::new(&bundle.main.session.file_path),
+            main_project,
+        )?;
+        for child in &bundle.children {
+            let project = Self::upsert_project_tx(&tx, child.session.project_path.as_deref())?;
+            Self::upsert_session_row_tx(&tx, child, Path::new(&child.session.file_path), project)?;
+        }
+        Self::replace_session_contents_tx(&tx, &bundle.main)?;
+        for child in &bundle.children {
+            Self::replace_session_contents_tx(&tx, child)?;
+        }
+        let mut removed = 0;
+        for child_id in old_children {
+            if !bundle.session_ids.contains(&child_id) {
+                removed += Self::delete_session_by_id_tx(&tx, &child_id)?;
+            }
+        }
+        if let Some((lower, upper)) = path_prefix_bounds(Path::new(&bundle.main.session.file_path))
+        {
+            tx.execute(
+                "DELETE FROM file_fingerprints WHERE file_path >= ?1 COLLATE BINARY AND file_path < ?2 COLLATE BINARY",
+                rusqlite::params![lower, upper],
+            )?;
+        }
+        for fingerprint in snapshot {
+            Self::upsert_fingerprint_values_tx(
+                &tx,
+                &fingerprint.path,
+                fingerprint.mtime_ns,
+                fingerprint.size,
+            )?;
+        }
+        tx.commit()?;
+        Ok(removed)
+    }
+
+    fn prune_kimi_no_user_bundle(&mut self, session_dir: &Path, main_id: &str) -> Result<usize> {
+        let child_prefix = format!("kimi-subagent::{main_id}::");
+        let tx = self.db.transaction()?;
+        let ids: Vec<String> = {
+            let mut statement = tx.prepare("SELECT id FROM sessions WHERE tool = 'kimi_code'")?;
+            statement
+                .query_map([], |row| row.get::<_, String>(0))?
+                .collect::<rusqlite::Result<Vec<_>>>()?
+                .into_iter()
+                .filter(|id| id == main_id || id.starts_with(&child_prefix))
+                .collect()
+        };
+        let mut removed = 0;
+        for id in ids {
+            removed += Self::delete_session_by_id_tx(&tx, &id)?;
+        }
+        if let Some((lower, upper)) = path_prefix_bounds(session_dir) {
+            tx.execute(
+                "DELETE FROM file_fingerprints WHERE file_path >= ?1 COLLATE BINARY AND file_path < ?2 COLLATE BINARY",
+                rusqlite::params![lower, upper],
+            )?;
+        }
+        tx.commit()?;
+        Ok(removed)
+    }
+
+    fn prune_stale_kimi_bundles(
+        &mut self,
+        kimi_home: &Path,
+        discovered_dirs: &HashSet<PathBuf>,
+    ) -> Result<usize> {
+        let sessions_dir = kimi_home.join("sessions");
+        let Some((lower, upper)) = path_prefix_bounds(&sessions_dir) else {
+            return Ok(0);
+        };
+        let existing: Vec<(String, String)> = {
+            let mut statement = self.db.prepare(
+                "SELECT id, file_path FROM sessions
+                 WHERE tool = 'kimi_code' AND is_subagent = 0
+                   AND file_path >= ?1 COLLATE BINARY AND file_path < ?2 COLLATE BINARY",
+            )?;
+            statement
+                .query_map(rusqlite::params![lower, upper], |row| {
+                    Ok((row.get(0)?, row.get(1)?))
+                })?
+                .collect::<rusqlite::Result<_>>()?
+        };
+        let mut removed = 0;
+        for (main_id, file_path) in existing {
+            let path = PathBuf::from(&file_path);
+            let Ok(relative) = path.strip_prefix(&sessions_dir) else {
+                continue;
+            };
+            let parts: Vec<_> = relative.components().collect();
+            if parts.len() != 2
+                || !parts[0].as_os_str().to_string_lossy().starts_with("wd_")
+                || !parts[1]
+                    .as_os_str()
+                    .to_string_lossy()
+                    .starts_with("session_")
+                || discovered_dirs.contains(&path)
+            {
+                continue;
+            }
+            removed += self.prune_kimi_no_user_bundle(&path, &main_id)?;
+        }
+        Ok(removed)
+    }
+}
+
+#[cfg(test)]
+impl SessionIndexer {
+    pub fn index_kimi_sessions_incremental(&mut self, kimi_home: &Path) -> Result<IndexingStats> {
+        let mut errors_detail = VecDeque::new();
+        self.index_kimi_sessions_internal(kimi_home, true, &mut errors_detail)
+    }
 }
 
 #[allow(dead_code)]
@@ -279,6 +533,32 @@ where
 fn required_kimi_files_missing(session_dir: &Path) -> bool {
     !session_dir.join("state.json").is_file()
         || !session_dir.join("agents/main/wire.jsonl").is_file()
+}
+
+fn parse_stable_bundle(parser: &KimiCodeParser, session_dir: &Path) -> Result<StableParse> {
+    for _ in 0..2 {
+        let before_paths = parser.dependency_paths(session_dir)?;
+        let before = snapshot_dependencies(&before_paths)?;
+        let parsed = parser.parse_session_dir(session_dir);
+        let after_paths = parser.dependency_paths(session_dir)?;
+        let after = snapshot_dependencies(&after_paths)?;
+        if before != after {
+            continue;
+        }
+        return match parsed {
+            Ok(bundle) => Ok(StableParse::Bundle(bundle, after)),
+            Err(err)
+                if matches!(
+                    err.downcast_ref::<ParseError>(),
+                    Some(ParseError::NoUserMessages)
+                ) =>
+            {
+                Ok(StableParse::NoUserMessages(after))
+            }
+            Err(err) => Err(err),
+        };
+    }
+    bail!("Kimi session changed while being parsed")
 }
 
 #[cfg(test)]

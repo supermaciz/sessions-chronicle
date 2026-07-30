@@ -1,5 +1,6 @@
 use std::path::Path;
 
+use sessions_chronicle::database::SessionIndexer;
 use sessions_chronicle::models::{Role, ToolCallStatus, TranscriptItemKind};
 use sessions_chronicle::parsers::kimi_code::KimiCodeParser;
 
@@ -99,4 +100,32 @@ fn project_fallback_and_directory_identity_fixtures_follow_precedence() {
         conflict.main.session.project_path.as_deref(),
         Some("/tmp/kimi-fixture-workdir")
     );
+}
+
+#[test]
+fn indexes_every_kimi_bundle_and_persists_their_children() {
+    let home = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/kimi_home");
+    let database = tempfile::NamedTempFile::new().unwrap();
+    let mut indexer = SessionIndexer::new(database.path()).unwrap();
+
+    assert_eq!(indexer.index_kimi_sessions(&home).unwrap(), 7);
+
+    let connection = rusqlite::Connection::open(database.path()).unwrap();
+    let sessions: i64 = connection
+        .query_row(
+            "SELECT COUNT(*) FROM sessions WHERE tool = 'kimi_code'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    let children: i64 = connection
+        .query_row(
+            "SELECT COUNT(*) FROM sessions WHERE tool = 'kimi_code' AND is_subagent = 1",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+
+    assert_eq!(sessions, 10);
+    assert_eq!(children, 3);
 }

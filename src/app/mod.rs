@@ -452,12 +452,13 @@ impl SimpleComponent for App {
         let db_path = db_dir.join(select_db_filename(sources.override_mode));
 
         tracing::info!(
-            "Session sources (override={}): claude={}, opencode={}, codex={}, vibe={}",
+            "Session sources (override={}): claude={}, opencode={}, codex={}, vibe={}, kimi={}",
             sources.override_mode,
             sources.claude_dir.display(),
             sources.opencode_storage_root.display(),
             sources.codex_dir.display(),
             sources.vibe_dir.display(),
+            sources.kimi_home.display(),
         );
         tracing::info!("Using database: {}", db_path.display());
 
