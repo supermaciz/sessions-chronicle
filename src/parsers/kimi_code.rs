@@ -247,6 +247,46 @@ mod tests {
     }
 
     #[test]
+    fn unnamed_tool_calls_are_retained_and_match_later_results() {
+        let root = write_bundle(
+            state(),
+            &[
+                r#"{"type":"turn.prompt","input":[{"type":"text","text":"Run"}],"origin":{"kind":"user"}}"#,
+                r#"{"type":"context.append_loop_event","event":{"type":"tool.call","toolCallId":"missing-name","args":{}}}"#,
+                r#"{"type":"context.append_loop_event","event":{"type":"tool.result","toolCallId":"missing-name","result":{"output":"first"}}}"#,
+                r#"{"type":"context.append_loop_event","event":{"type":"tool.call","toolCallId":"blank-name","name":"   ","args":{}}}"#,
+                r#"{"type":"context.append_loop_event","event":{"type":"tool.result","toolCallId":"blank-name","result":{"output":"second"}}}"#,
+            ],
+        );
+        let parsed = KimiCodeParser::new(root.path())
+            .parse_session_dir(&session_dir(&root))
+            .unwrap();
+
+        assert_eq!(parsed.main.tool_calls.len(), 2);
+        assert_eq!(parsed.main.tool_calls[0].tool_name, "unknown");
+        assert_eq!(parsed.main.tool_calls[0].status, ToolCallStatus::Completed);
+        assert_eq!(
+            parsed.main.tool_calls[0].output_text.as_deref(),
+            Some("first")
+        );
+        assert_eq!(parsed.main.tool_calls[1].tool_name, "unknown");
+        assert_eq!(parsed.main.tool_calls[1].status, ToolCallStatus::Completed);
+        assert_eq!(
+            parsed.main.tool_calls[1].output_text.as_deref(),
+            Some("second")
+        );
+        assert_eq!(parsed.main.transcript_items.len(), 3);
+        assert_eq!(
+            parsed.main.transcript_items[1].kind,
+            TranscriptItemKind::ToolCall
+        );
+        assert_eq!(
+            parsed.main.transcript_items[2].kind,
+            TranscriptItemKind::ToolCall
+        );
+    }
+
+    #[test]
     fn reasoning_attaches_to_a_tool_at_the_same_transcript_position() {
         let root = write_bundle(
             state(),
@@ -924,12 +964,11 @@ fn parse_journal(
                         }
                     }
                     Some("tool.call") => {
-                        let (Some(raw_id), Some(name)) = (
-                            nonblank(event.get("toolCallId")),
-                            nonblank(event.get("name")),
-                        ) else {
+                        let Some(raw_id) = nonblank(event.get("toolCallId")) else {
                             continue;
                         };
+                        let name =
+                            nonblank(event.get("name")).unwrap_or_else(|| "unknown".to_string());
                         if state.pending_calls.contains_key(&raw_id) {
                             continue;
                         }
