@@ -1,0 +1,3 @@
+{"type":"metadata","protocol_version":"1.5"}
+{"type":"turn.prompt","time":1785319202450,"input":[{"type":"text","text":"Inspect nested parser"}],"origin":{"kind":"user"}}
+{"type":"context.append_loop_event","time":1785319202460,"event":{"type":"content.part","part":{"type":"text","text":"Nested answer"}}}

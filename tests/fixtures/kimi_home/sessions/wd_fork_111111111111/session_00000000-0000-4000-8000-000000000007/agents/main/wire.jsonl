@@ -1,0 +1,2 @@
+{"type":"turn.prompt","time":1785319300000,"input":[{"type":"text","text":"Fork one"}],"origin":{"kind":"user"}}
+{"type":"context.append_loop_event","time":1785319301000,"event":{"type":"content.part","stepUuid":"step-1","part":{"type":"text","text":"Fixture answer"}}}

@@ -1,0 +1,13 @@
+{
+  "createdAt": "2026-07-29T10:00:00Z",
+  "updatedAt": "2026-07-29T10:05:00Z",
+  "title": "New Session",
+  "workDir": "/tmp/kimi-fixture-primary",
+  "agents": {
+    "main": { "type": "main", "parentAgentId": null },
+    "agent-0": { "type": "sub", "parentAgentId": "main" },
+    "agent-1": { "type": "sub", "parentAgentId": "main" },
+    "agent-nested": { "type": "sub", "parentAgentId": "agent-0" },
+    "independent-0": { "type": "independent", "parentAgentId": null }
+  }
+}

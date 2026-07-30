@@ -1,0 +1,3 @@
+{"type":"turn.prompt","time":1785319300000,"input":[{"type":"text","text":"Injected fixture"}],"origin":{"kind":"injection"}}
+{"type":"turn.prompt","time":1785319300001,"input":[{"type":"text","text":"Skill fixture"}],"origin":{"kind":"skill_activation"}}
+{"type":"turn.prompt","time":1785319300002,"input":[{"type":"text","text":"System fixture"}],"origin":{"kind":"system_trigger"}}

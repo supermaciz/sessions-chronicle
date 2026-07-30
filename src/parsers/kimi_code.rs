@@ -1,3 +1,5 @@
+#![allow(dead_code)] // Runtime parser dispatch is added after the Kimi parsing tasks.
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -28,6 +30,12 @@ mod tests {
     fn session_dir(root: &tempfile::TempDir) -> PathBuf {
         root.path()
             .join("sessions/wd_test_aaaaaaaaaaaa/session_00000000-0000-4000-8000-000000000001")
+    }
+
+    fn write_agent_journal(root: &tempfile::TempDir, agent_id: &str, records: &[&str]) {
+        let path = session_dir(root).join("agents").join(agent_id);
+        fs::create_dir_all(&path).unwrap();
+        fs::write(path.join("wire.jsonl"), format!("{}\n", records.join("\n"))).unwrap();
     }
 
     fn state() -> Value {
@@ -389,6 +397,176 @@ mod tests {
         assert_eq!(parsed.main.token_usage.as_ref().unwrap().input_tokens, 10);
         assert_eq!(parsed.main.token_usage.as_ref().unwrap().output_tokens, 2);
     }
+
+    #[test]
+    fn direct_sibling_and_nested() {
+        let mut metadata = state();
+        metadata["agents"] = json!({
+            "main": { "type": "main", "parentAgentId": null },
+            "agent-0": { "type": "sub", "parentAgentId": "main" },
+            "agent-1": { "type": "sub", "parentAgentId": "main" },
+            "agent-nested": { "type": "sub", "parentAgentId": "agent-0" },
+            "independent-0": { "type": "independent", "parentAgentId": null },
+            "unknown-parent": { "type": "sub", "parentAgentId": "unknown" },
+            "cycle-a": { "type": "sub", "parentAgentId": "cycle-b" },
+            "cycle-b": { "type": "sub", "parentAgentId": "cycle-a" }
+        });
+        let root = write_bundle(
+            metadata,
+            &[
+                r#"{"type":"turn.prompt","time":1785320000000,"input":[{"type":"text","text":"Main"}],"origin":{"kind":"user"}}"#,
+            ],
+        );
+        write_agent_journal(
+            &root,
+            "agent-0",
+            &[
+                r#"{"type":"turn.prompt","time":1785320000100,"input":[{"type":"text","text":"Child 0"}],"origin":{"kind":"user"}}"#,
+            ],
+        );
+        write_agent_journal(
+            &root,
+            "agent-1",
+            &[
+                r#"{"type":"turn.prompt","time":1785320000200,"input":[{"type":"text","text":"Child 1"}],"origin":{"kind":"user"}}"#,
+            ],
+        );
+        write_agent_journal(
+            &root,
+            "agent-nested",
+            &[
+                r#"{"type":"turn.prompt","time":1785320000300,"input":[{"type":"text","text":"Nested"}],"origin":{"kind":"user"}}"#,
+            ],
+        );
+
+        let parsed = KimiCodeParser::new(root.path())
+            .parse_session_dir(&session_dir(&root))
+            .unwrap();
+
+        assert_eq!(
+            parsed
+                .children
+                .iter()
+                .map(|child| child.session.id.as_str())
+                .collect::<Vec<_>>(),
+            vec![
+                "kimi-subagent::session_00000000-0000-4000-8000-000000000001::agent-0",
+                "kimi-subagent::session_00000000-0000-4000-8000-000000000001::agent-1",
+                "kimi-subagent::session_00000000-0000-4000-8000-000000000001::agent-nested",
+            ]
+        );
+        assert_eq!(
+            parsed.children[0].session.parent_session_id.as_deref(),
+            Some(parsed.main.session.id.as_str())
+        );
+        assert_eq!(
+            parsed.children[2].session.parent_session_id.as_deref(),
+            Some(parsed.children[0].session.id.as_str())
+        );
+        assert!(
+            parsed
+                .children
+                .iter()
+                .all(|child| child.session.is_subagent)
+        );
+    }
+
+    #[test]
+    fn matched_agent_call() {
+        let mut metadata = state();
+        metadata["agents"] = json!({
+            "main": { "type": "main", "parentAgentId": null },
+            "agent-0": { "type": "sub", "parentAgentId": "main" }
+        });
+        let root = write_bundle(
+            metadata,
+            &[
+                r#"{"type":"turn.prompt","time":1785320000000,"input":[{"type":"text","text":"Main"}],"origin":{"kind":"user"}}"#,
+                r#"{"type":"context.append_loop_event","time":1785320000010,"event":{"type":"content.part","part":{"type":"text","text":"Planning"}}}"#,
+                r#"{"type":"context.append_loop_event","time":1785320000020,"event":{"type":"tool.call","toolCallId":"Agent_0","name":"Agent","args":{"agent_id":"agent-0","subagent_type":"explore","prompt":"Inspect parser safety"}}}"#,
+                r#"{"type":"context.append_loop_event","time":1785320000030,"event":{"type":"tool.result","toolCallId":"Agent_0","result":{"output":"done"}}}"#,
+            ],
+        );
+        write_agent_journal(
+            &root,
+            "agent-0",
+            &[
+                r#"{"type":"turn.prompt","time":1785320000025,"input":[{"type":"text","text":"Child"}],"origin":{"kind":"user"}}"#,
+            ],
+        );
+
+        let matched = KimiCodeParser::new(root.path())
+            .parse_session_dir(&session_dir(&root))
+            .unwrap()
+            .main;
+
+        assert_eq!(matched.subagents[0].agent_id.as_deref(), Some("agent-0"));
+        assert_eq!(
+            matched.subagents[0].prompt.as_deref(),
+            Some("Inspect parser safety")
+        );
+        assert_eq!(
+            matched.subagents[0].child_session_id.as_deref(),
+            Some("kimi-subagent::session_00000000-0000-4000-8000-000000000001::agent-0")
+        );
+        assert_eq!(matched.subagents[0].parser_ref.as_deref(), Some("Agent_0"));
+        assert!(
+            matched
+                .tool_calls
+                .iter()
+                .all(|call| call.parser_call_id.as_deref() != Some("Agent_0"))
+        );
+        assert_eq!(
+            matched.transcript_items[2].kind,
+            TranscriptItemKind::Subagent
+        );
+    }
+
+    #[test]
+    fn ambiguous_agent_calls() {
+        let mut metadata = state();
+        metadata["agents"] = json!({
+            "main": { "type": "main", "parentAgentId": null },
+            "agent-0": { "type": "sub", "parentAgentId": "main" },
+            "agent-1": { "type": "sub", "parentAgentId": "main" }
+        });
+        let root = write_bundle(
+            metadata,
+            &[
+                r#"{"type":"turn.prompt","time":1785320000000,"input":[{"type":"text","text":"Main"}],"origin":{"kind":"user"}}"#,
+                r#"{"type":"context.append_loop_event","time":1785320000010,"event":{"type":"tool.call","toolCallId":"Agent_0","name":"Agent","args":{}}}"#,
+                r#"{"type":"context.append_loop_event","event":{"type":"tool.call","toolCallId":"Agent_1","name":"Agent","args":{}}}"#,
+            ],
+        );
+        write_agent_journal(
+            &root,
+            "agent-0",
+            &[
+                r#"{"type":"turn.prompt","time":1785320000020,"input":[{"type":"text","text":"Child 0"}],"origin":{"kind":"user"}}"#,
+            ],
+        );
+        write_agent_journal(
+            &root,
+            "agent-1",
+            &[
+                r#"{"type":"turn.prompt","time":1785320000030,"input":[{"type":"text","text":"Child 1"}],"origin":{"kind":"user"}}"#,
+            ],
+        );
+
+        let parsed = KimiCodeParser::new(root.path())
+            .parse_session_dir(&session_dir(&root))
+            .unwrap();
+
+        assert_eq!(parsed.children.len(), 2);
+        assert_eq!(parsed.main.subagents.len(), 0);
+        assert!(
+            parsed
+                .main
+                .tool_calls
+                .iter()
+                .all(|call| call.tool_name == "Agent")
+        );
+    }
 }
 use anyhow::{Context, Result};
 use chrono::{DateTime, Duration, Utc};
@@ -399,8 +577,8 @@ use std::io::{BufRead, BufReader};
 use std::path::{Component, Path, PathBuf};
 
 use crate::models::{
-    AiAssistant, Message, Role, Session, TokenUsage, ToolCall, ToolCallStatus, TranscriptItem,
-    TranscriptItemKind,
+    AiAssistant, Message, Role, Session, Subagent, TokenUsage, ToolCall, ToolCallStatus,
+    TranscriptItem, TranscriptItemKind,
 };
 use crate::parsers::{ParsedSession, PendingReasoning, extract_first_prompt};
 
@@ -436,7 +614,6 @@ struct StateMetadata {
 }
 
 #[derive(Debug, Default)]
-#[allow(dead_code)] // Child-agent graph fields are populated now and consumed in Task 4.
 struct AgentMetadata {
     kind: Option<String>,
     parent_agent_id: Option<String>,
@@ -450,10 +627,35 @@ struct JournalScan {
 }
 
 #[derive(Debug)]
-#[allow(dead_code)] // Used by the child-journal ordering work in Task 4.
 struct ParsedJournal {
     parsed: ParsedSession,
     first_wire_time_ms: Option<i64>,
+    agent_calls: Vec<AgentCallCandidate>,
+}
+
+#[derive(Debug, Clone)]
+struct AgentCallCandidate {
+    raw_call_id: String,
+    transcript_item_index: i64,
+    call_time_ms: Option<i64>,
+    args: Option<Value>,
+    result: Option<Value>,
+    result_text: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+struct ResolvedAgent {
+    id: String,
+    parent_id: String,
+    depth: usize,
+    journal_path: PathBuf,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum VisitState {
+    Visiting,
+    Resolved,
+    Rejected,
 }
 
 #[derive(Debug, Clone)]
@@ -487,6 +689,7 @@ struct JournalState {
     active_model_hint: Option<String>,
     turn_usage: UsageAccumulator,
     step_usage: UsageAccumulator,
+    agent_calls: Vec<AgentCallCandidate>,
 }
 
 impl KimiCodeParser {
@@ -506,8 +709,16 @@ impl KimiCodeParser {
             session_dir.join("agents/main/wire.jsonl"),
         ];
 
+        let resolved_agents = resolve_agents(&state, session_dir);
         if !state.agents.contains_key("main") {
             tracing::warn!(path = %session_dir.join("state.json").display(), "Kimi session state has no main agent");
+        }
+        for agent in resolved_agents {
+            let Some(agent_dir) = agent.journal_path.parent() else {
+                continue;
+            };
+            paths.push(agent_dir.to_path_buf());
+            paths.push(agent.journal_path);
         }
 
         paths.sort();
@@ -519,6 +730,7 @@ impl KimiCodeParser {
         let session_id = canonical_session_id(session_dir)?;
         let state_path = session_dir.join("state.json");
         let state = load_state(&state_path)?;
+        let resolved_agents = resolve_agents(&state, session_dir);
         if state.id.as_deref().is_some_and(|id| id != session_id) {
             tracing::warn!(path = %state_path.display(), "Kimi state identity differs from directory identity");
         }
@@ -551,6 +763,7 @@ impl KimiCodeParser {
         let ParsedJournal {
             mut parsed,
             first_wire_time_ms: _,
+            agent_calls: main_agent_calls,
         } = parse_journal(
             &journal_path,
             &session_id,
@@ -585,11 +798,121 @@ impl KimiCodeParser {
             ending_status: crate::models::SessionEndingStatus::Unknown,
         };
 
+        struct ParsedChild {
+            agent: ResolvedAgent,
+            parsed: ParsedSession,
+            first_wire_time_ms: Option<i64>,
+            agent_calls: Vec<AgentCallCandidate>,
+        }
+
+        let mut children = Vec::new();
+        let mut omitted_agents = HashSet::new();
+        for agent in resolved_agents {
+            if agent.parent_id != "main" && omitted_agents.contains(&agent.parent_id) {
+                omitted_agents.insert(agent.id);
+                continue;
+            }
+            let scan = scan_journal(&agent.journal_path)?;
+            let child_start = scan
+                .earliest_time
+                .or(state.created_at)
+                .unwrap_or(start_time);
+            let ParsedJournal {
+                parsed: mut child,
+                first_wire_time_ms,
+                agent_calls,
+            } = match parse_journal(
+                &agent.journal_path,
+                &child_session_id(&session_id, &agent.id),
+                child_start,
+                scan.has_real_turn_prompt,
+            ) {
+                Ok(parsed) => parsed,
+                Err(error)
+                    if matches!(
+                        error.downcast_ref::<ParseError>(),
+                        Some(ParseError::NoUserMessages)
+                    ) =>
+                {
+                    omitted_agents.insert(agent.id);
+                    continue;
+                }
+                Err(error) => return Err(error),
+            };
+            let child_id = child_session_id(&session_id, &agent.id);
+            let parent_session_id = if agent.parent_id == "main" {
+                session_id.clone()
+            } else {
+                child_session_id(&session_id, &agent.parent_id)
+            };
+            child.session = Session {
+                id: child_id,
+                tool: AiAssistant::KimiCode,
+                project_path: parsed.session.project_path.clone(),
+                project_id: None,
+                start_time: child_start,
+                message_count: child.messages.len(),
+                file_path: agent.journal_path.display().to_string(),
+                last_updated: scan
+                    .latest_time
+                    .unwrap_or(child_start)
+                    .max(state.updated_at.unwrap_or(child_start))
+                    .max(child_start),
+                pinned_at: None,
+                first_prompt: extract_first_prompt(&child.messages),
+                parent_session_id: Some(parent_session_id),
+                is_subagent: true,
+                token_usage: None,
+                edit_count: 0,
+                read_count: 0,
+                command_count: 0,
+                ending_status: crate::models::SessionEndingStatus::Unknown,
+            };
+            children.push(ParsedChild {
+                agent,
+                parsed: child,
+                first_wire_time_ms,
+                agent_calls,
+            });
+        }
+
+        let child_infos: Vec<_> = children
+            .iter()
+            .map(|child| {
+                (
+                    child.agent.id.clone(),
+                    child.agent.parent_id.clone(),
+                    child.parsed.session.id.clone(),
+                    child.first_wire_time_ms,
+                )
+            })
+            .collect();
+        let main_children: Vec<_> = child_infos
+            .iter()
+            .filter(|(_, parent_id, _, _)| parent_id == "main")
+            .map(|(id, _, session_id, time)| (id.as_str(), session_id.as_str(), *time))
+            .collect();
+        match_agent_calls(&mut parsed, &main_agent_calls, &main_children);
+        for child in &mut children {
+            let parent_id = child.agent.id.clone();
+            let agent_calls = child.agent_calls.clone();
+            let immediate_children: Vec<_> = child_infos
+                .iter()
+                .filter(|(_, child_parent_id, _, _)| child_parent_id == &parent_id)
+                .map(|(id, _, session_id, time)| (id.as_str(), session_id.as_str(), *time))
+                .collect();
+            match_agent_calls(&mut child.parsed, &agent_calls, &immediate_children);
+        }
+        let children: Vec<_> = children.into_iter().map(|child| child.parsed).collect();
+        let session_ids = std::iter::once(session_id.clone())
+            .chain(children.iter().map(|child| child.session.id.clone()))
+            .collect();
+
         Ok(KimiParsedBundle {
             main: parsed,
-            children: Vec::new(),
+            children,
             dependency_paths: self.dependency_paths(session_dir)?,
-            session_ids: HashSet::from([session_id]),
+            session_ids,
         })
     }
 
@@ -760,6 +1083,224 @@ fn valid_agent_id(agent_id: &str) -> bool {
             Path::new(agent_id).components().next(),
             Some(Component::Normal(_))
         )
+}
+
+fn child_session_id(main_session_id: &str, agent_id: &str) -> String {
+    format!("kimi-subagent::{main_session_id}::{agent_id}")
+}
+
+fn resolve_agents(state: &StateMetadata, session_dir: &Path) -> Vec<ResolvedAgent> {
+    let mut visits = HashMap::new();
+    let mut resolved = HashMap::new();
+    for agent_id in state.agents.keys() {
+        resolve_agent(agent_id, state, session_dir, &mut visits, &mut resolved, 0);
+    }
+    let mut agents: Vec<_> = resolved.into_values().collect();
+    agents.sort_by(|left, right| (left.depth, &left.id).cmp(&(right.depth, &right.id)));
+    agents
+}
+
+fn resolve_agent(
+    agent_id: &str,
+    state: &StateMetadata,
+    session_dir: &Path,
+    visits: &mut HashMap<String, VisitState>,
+    resolved: &mut HashMap<String, ResolvedAgent>,
+    traversed: usize,
+) -> Option<usize> {
+    if traversed >= state.agents.len() {
+        visits.insert(agent_id.to_string(), VisitState::Rejected);
+        return None;
+    }
+    match visits.get(agent_id) {
+        Some(VisitState::Resolved) => return resolved.get(agent_id).map(|agent| agent.depth),
+        Some(VisitState::Rejected) => return None,
+        Some(VisitState::Visiting) => {
+            visits.insert(agent_id.to_string(), VisitState::Rejected);
+            return None;
+        }
+        None => {}
+    }
+    let agent = state.agents.get(agent_id)?;
+    if agent.kind.as_deref() != Some("sub") {
+        visits.insert(agent_id.to_string(), VisitState::Rejected);
+        return None;
+    }
+    let parent_id = agent.parent_agent_id.as_deref()?;
+    visits.insert(agent_id.to_string(), VisitState::Visiting);
+    let parent_depth = if parent_id == "main" {
+        match state.agents.get("main") {
+            Some(main) if main.kind.as_deref() == Some("main") => Some(0),
+            _ => None,
+        }
+    } else {
+        resolve_agent(
+            parent_id,
+            state,
+            session_dir,
+            visits,
+            resolved,
+            traversed + 1,
+        )
+        .map(|depth| depth + 1)
+    };
+    let Some(depth) = parent_depth else {
+        visits.insert(agent_id.to_string(), VisitState::Rejected);
+        return None;
+    };
+    let resolved_agent = ResolvedAgent {
+        id: agent_id.to_string(),
+        parent_id: parent_id.to_string(),
+        depth,
+        journal_path: session_dir.join("agents").join(agent_id).join("wire.jsonl"),
+    };
+    visits.insert(agent_id.to_string(), VisitState::Resolved);
+    resolved.insert(agent_id.to_string(), resolved_agent);
+    Some(depth)
+}
+
+fn candidate_agent_ids(
+    candidate: &AgentCallCandidate,
+    children: &[(&str, &str, Option<i64>)],
+) -> Vec<String> {
+    let mut ids = HashSet::new();
+    for value in [candidate.args.as_ref(), candidate.result.as_ref()]
+        .into_iter()
+        .flatten()
+    {
+        for key in ["agent_id", "agentId", "resume"] {
+            if let Some(id) = value.get(key).and_then(Value::as_str)
+                && children.iter().any(|(child_id, _, _)| *child_id == id)
+            {
+                ids.insert(id.to_string());
+            }
+        }
+    }
+    ids.into_iter().collect()
+}
+
+fn textual_agent_id(
+    candidate: &AgentCallCandidate,
+    children: &[(&str, &str, Option<i64>)],
+) -> Option<String> {
+    let text = candidate.result_text.as_deref()?;
+    let mut ids = HashSet::new();
+    for line in text.lines() {
+        let Some((key, value)) = line.split_once(':') else {
+            continue;
+        };
+        if matches!(key, "agent_id" | "agentId") {
+            let value = value.trim();
+            if children.iter().any(|(child_id, _, _)| *child_id == value) {
+                ids.insert(value.to_string());
+            }
+        }
+    }
+    (ids.len() == 1).then(|| ids.into_iter().next().expect("single item"))
+}
+
+fn match_agent_calls(
+    parent: &mut ParsedSession,
+    candidates: &[AgentCallCandidate],
+    children: &[(&str, &str, Option<i64>)],
+) {
+    let mut matched = HashMap::new();
+    let mut used_children = HashSet::new();
+    for candidate in candidates {
+        let ids = candidate_agent_ids(candidate, children);
+        if ids.len() == 1 && used_children.insert(ids[0].clone()) {
+            matched.insert(candidate.raw_call_id.clone(), ids[0].clone());
+        }
+    }
+    for candidate in candidates {
+        if matched.contains_key(&candidate.raw_call_id) {
+            continue;
+        }
+        if let Some(id) = textual_agent_id(candidate, children)
+            && used_children.insert(id.clone())
+        {
+            matched.insert(candidate.raw_call_id.clone(), id);
+        }
+    }
+    let remaining_calls: Vec<_> = candidates
+        .iter()
+        .filter(|candidate| !matched.contains_key(&candidate.raw_call_id))
+        .collect();
+    let mut remaining_children: Vec<_> = children
+        .iter()
+        .filter(|(id, _, _)| !used_children.contains(*id))
+        .copied()
+        .collect();
+    if remaining_calls.len() == remaining_children.len()
+        && remaining_calls
+            .iter()
+            .all(|candidate| candidate.call_time_ms.is_some())
+        && remaining_children.iter().all(|(_, _, time)| time.is_some())
+    {
+        let mut ordered_calls = remaining_calls;
+        ordered_calls
+            .sort_by_key(|candidate| (candidate.call_time_ms, candidate.raw_call_id.as_str()));
+        remaining_children.sort_by_key(|(id, _, time)| (*time, *id));
+        for (candidate, (agent_id, _, child_time)) in
+            ordered_calls.into_iter().zip(remaining_children)
+        {
+            if child_time.expect("verified") >= candidate.call_time_ms.expect("verified") {
+                matched.insert(candidate.raw_call_id.clone(), agent_id.to_string());
+            }
+        }
+    }
+
+    let mut removed_tool_ids = HashSet::new();
+    for candidate in candidates {
+        let Some(agent_id) = matched.get(&candidate.raw_call_id) else {
+            continue;
+        };
+        let Some((_, child_session_id, _)) = children.iter().find(|(id, _, _)| *id == agent_id)
+        else {
+            continue;
+        };
+        let subagent_id = format!(
+            "kimi-agent-call::{}::{}",
+            parent.session.id, candidate.raw_call_id
+        );
+        if let Some(item) = parent
+            .transcript_items
+            .iter_mut()
+            .find(|item| item.item_index == candidate.transcript_item_index)
+        {
+            item.kind = TranscriptItemKind::Subagent;
+            item.tool_call_id = None;
+            item.subagent_id = Some(subagent_id.clone());
+        }
+        parent.subagents.push(Subagent {
+            id: subagent_id,
+            agent_id: Some(agent_id.clone()),
+            agent_name: candidate
+                .args
+                .as_ref()
+                .and_then(|value| value.get("subagent_type"))
+                .and_then(Value::as_str)
+                .map(str::to_string),
+            session_id: parent.session.id.clone(),
+            title: agent_id.clone(),
+            prompt: candidate
+                .args
+                .as_ref()
+                .and_then(|value| value.get("prompt"))
+                .and_then(Value::as_str)
+                .map(str::to_string),
+            result_summary: candidate.result_text.clone(),
+            child_session_id: Some((*child_session_id).to_string()),
+            parser_ref: Some(candidate.raw_call_id.clone()),
+        });
+        removed_tool_ids.insert(format!(
+            "kimi-tool::{}::{}",
+            parent.session.id, candidate.raw_call_id
+        ));
+    }
+    parent
+        .tool_calls
+        .retain(|call| !removed_tool_ids.contains(&call.id));
 }
 
 fn load_state(path: &Path) -> Result<StateMetadata> {
@@ -983,6 +1524,19 @@ fn parse_journal(
                             event.get("args"),
                             wire_time.map(|(millis, _)| millis),
                         );
+                        if name == "Agent" {
+                            state.agent_calls.push(AgentCallCandidate {
+                                raw_call_id: raw_id.clone(),
+                                transcript_item_index: transcript_items
+                                    .last()
+                                    .expect("tool call added a transcript item")
+                                    .item_index,
+                                call_time_ms: wire_time.map(|(millis, _)| millis),
+                                args: event.get("args").cloned(),
+                                result: None,
+                                result_text: None,
+                            });
+                        }
                         if let Some((millis, _)) = wire_time {
                             state.call_start_times.insert(raw_id.clone(), millis);
                         }
@@ -1020,6 +1574,16 @@ fn parse_journal(
                                 .get(&raw_id)
                                 .and_then(|start| end.checked_sub(*start))
                                 .filter(|duration| *duration >= 0);
+                        }
+                        if let Some(candidate) = state
+                            .agent_calls
+                            .iter_mut()
+                            .find(|candidate| candidate.raw_call_id == raw_id)
+                        {
+                            candidate.result = result.cloned();
+                            candidate.result_text = normalize_tool_output(
+                                result.and_then(|result| result.get("output")),
+                            );
                         }
                     }
                     Some("content.part") => {
@@ -1093,6 +1657,7 @@ fn parse_journal(
             },
         },
         first_wire_time_ms,
+        agent_calls: state.agent_calls,
     })
 }
 
