@@ -169,6 +169,24 @@ mod tests {
     }
 
     #[test]
+    fn reasoning_from_an_interrupted_turn_is_dropped_at_the_next_prompt() {
+        let root = write_bundle(
+            state(),
+            &[
+                r#"{"type":"turn.prompt","time":1785320000000,"input":[{"type":"text","text":"Explain"}],"origin":{"kind":"user"}}"#,
+                r#"{"type":"context.append_loop_event","time":1785320000100,"event":{"type":"content.part","stepUuid":"s1","part":{"type":"think","think":"Interrupted reasoning"}}}"#,
+                r#"{"type":"turn.prompt","time":1785320000200,"input":[{"type":"text","text":"Never mind"}],"origin":{"kind":"user"}}"#,
+                r#"{"type":"context.append_loop_event","time":1785320000300,"event":{"type":"content.part","stepUuid":"s1","part":{"type":"text","text":"Visible"}}}"#,
+            ],
+        );
+        let parsed = KimiCodeParser::new(root.path())
+            .parse_session_dir(&session_dir(&root))
+            .unwrap();
+
+        assert!(parsed.main.reasoning_attachments.is_empty());
+    }
+
+    #[test]
     fn metadata_paths_ids_titles_and_timestamps_follow_precedence() {
         let mut metadata = state();
         metadata["id"] = json!("session_wrong");
@@ -2257,9 +2275,18 @@ fn push_message(
         tool_call_id: None,
         subagent_id: None,
     });
-    if !reasoning.is_empty() {
+    if reasoning.is_empty() {
+        return;
+    }
+    if role == Role::Assistant {
         reasoning_attachments
             .push(std::mem::take(reasoning).into_attachment(session_id, item_index));
+    } else {
+        // A user prompt closes the turn that produced this reasoning, so the
+        // reasoning has no visible item to attach to: keeping it pending would
+        // move it onto the next turn's assistant output instead.
+        *reasoning = PendingReasoning::default();
+        tracing::debug!("dropping Kimi reasoning orphaned by a user message");
     }
 }
 
