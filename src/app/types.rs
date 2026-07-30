@@ -6,9 +6,9 @@ use crate::{
 #[derive(Debug, Clone)]
 pub(super) struct ActiveSessionRef {
     pub(super) id: String,
-    pub(super) tool: AiAssistant,
     pub(super) project_name: String,
     pub(super) pinned: bool,
+    pub(super) can_resume: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

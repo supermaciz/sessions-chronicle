@@ -7,7 +7,6 @@ use relm4::{
 
 use crate::config::APP_ID;
 use crate::database::load_session;
-use crate::models::session::AiAssistant;
 use crate::utils::terminal::{self, Terminal};
 
 use super::super::{App, AppMsg};
@@ -23,7 +22,7 @@ impl App {
             .map(|dir| dir.to_path_buf())
     }
 
-    pub(crate) fn handle_resume_session(&self, session_id: String, tool: AiAssistant) {
+    pub(crate) fn handle_resume_session(&self, session_id: String) {
         tracing::debug!("Resume session requested: {}", session_id);
 
         let session = match load_session(&self.db_path, &session_id) {
@@ -45,6 +44,15 @@ impl App {
                 return;
             }
         };
+
+        if !session.can_resume() {
+            tracing::warn!(session_id = %session.id, "resume is unavailable for this child session");
+            self.show_error_dialog(
+                "Resume Unavailable",
+                "Kimi Code child sessions cannot be resumed directly.",
+            );
+            return;
+        }
 
         let workdir = match Self::resolve_workdir_for_resume(
             &session.file_path,
@@ -77,7 +85,7 @@ impl App {
             }
         };
 
-        match terminal::build_resume_command(tool, &session_id, &workdir) {
+        match terminal::build_resume_command(session.tool, &session.id, &workdir) {
             Ok(args) => match terminal::spawn_terminal(terminal, &args) {
                 Ok(_) => {
                     tracing::info!("Successfully launched terminal for session: {}", session_id);
@@ -107,7 +115,7 @@ impl App {
 
     pub(crate) fn handle_resume_active_session(&self, sender: &ComponentSender<App>) {
         if let Some(ref session) = self.active_session {
-            sender.input(AppMsg::ResumeSession(session.id.clone(), session.tool));
+            sender.input(AppMsg::ResumeSession(session.id.clone()));
         } else {
             tracing::warn!("ResumeActiveSession ignored — no active session");
         }

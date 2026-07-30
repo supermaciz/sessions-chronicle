@@ -68,6 +68,12 @@ pub struct Session {
     pub ending_status: SessionEndingStatus,
 }
 
+impl Session {
+    pub fn can_resume(&self) -> bool {
+        !(self.tool == AiAssistant::KimiCode && self.is_subagent)
+    }
+}
+
 /// AI coding assistant whose sessions are tracked by this application.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub enum AiAssistant {
@@ -169,7 +175,8 @@ impl AiAssistant {
 
 #[cfg(test)]
 mod tests {
-    use super::AiAssistant;
+    use super::{AiAssistant, Session, SessionEndingStatus};
+    use chrono::Utc;
     use std::ffi::OsString;
 
     #[test]
@@ -194,5 +201,33 @@ mod tests {
             super::resolve_kimi_home("/home/tester", None),
             "/home/tester/.kimi-code"
         );
+    }
+
+    #[test]
+    fn kimi_children_are_not_resumable_but_kimi_mains_are() {
+        let mut session = Session {
+            id: "session_kimi".to_string(),
+            tool: AiAssistant::KimiCode,
+            project_path: Some("/tmp/project".to_string()),
+            project_id: None,
+            start_time: Utc::now(),
+            message_count: 1,
+            file_path: "/tmp/kimi".to_string(),
+            last_updated: Utc::now(),
+            pinned_at: None,
+            first_prompt: Some("Prompt".to_string()),
+            parent_session_id: None,
+            is_subagent: false,
+            token_usage: None,
+            edit_count: 0,
+            read_count: 0,
+            command_count: 0,
+            ending_status: SessionEndingStatus::Unknown,
+        };
+        assert!(session.can_resume());
+        session.id = "kimi-subagent::session_kimi::agent-0".to_string();
+        session.parent_session_id = Some("session_kimi".to_string());
+        session.is_subagent = true;
+        assert!(!session.can_resume());
     }
 }
