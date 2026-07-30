@@ -216,7 +216,107 @@ mod tests {
             .unwrap();
         assert_eq!(parsed.main.session.start_time.timestamp(), 1_785_320_000);
         assert!(parsed.main.session.last_updated >= parsed.main.session.start_time);
-        assert!(parsed.main.messages[1].timestamp >= parsed.main.session.start_time);
+        assert_eq!(
+            parsed.main.messages[1].timestamp.timestamp_millis(),
+            parsed.main.session.start_time.timestamp_millis() + 1
+        );
+    }
+
+    #[test]
+    fn main_last_updated_uses_latest_wire_time_after_state_update() {
+        let mut metadata = state();
+        metadata["updatedAt"] = json!(1785320001000_i64);
+        let root = write_bundle(
+            metadata,
+            &[
+                r#"{"type":"turn.prompt","time":1785320000000,"input":[{"type":"text","text":"Prompt"}],"origin":{"kind":"user"}}"#,
+                r#"{"type":"context.append_loop_event","time":1785320010000,"event":{"type":"content.part","stepUuid":"s1","part":{"type":"text","text":"Latest"}}}"#,
+            ],
+        );
+
+        let parsed = KimiCodeParser::new(root.path())
+            .parse_session_dir(&session_dir(&root))
+            .unwrap();
+
+        assert_eq!(
+            parsed.main.session.last_updated.timestamp_millis(),
+            1_785_320_010_000
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn rejects_symlinked_state_file() {
+        use std::os::unix::fs::symlink;
+
+        let root = write_bundle(
+            state(),
+            &[
+                r#"{"type":"turn.prompt","input":[{"type":"text","text":"Prompt"}],"origin":{"kind":"user"}}"#,
+            ],
+        );
+        let state_path = session_dir(&root).join("state.json");
+        let outside = root.path().join("outside-state.json");
+        fs::rename(&state_path, &outside).unwrap();
+        symlink(&outside, &state_path).unwrap();
+
+        assert!(
+            KimiCodeParser::new(root.path())
+                .parse_session_dir(&session_dir(&root))
+                .is_err()
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn rejects_symlinked_main_journal() {
+        use std::os::unix::fs::symlink;
+
+        let root = write_bundle(
+            state(),
+            &[
+                r#"{"type":"turn.prompt","input":[{"type":"text","text":"Prompt"}],"origin":{"kind":"user"}}"#,
+            ],
+        );
+        let journal_path = session_dir(&root).join("agents/main/wire.jsonl");
+        let outside = root.path().join("outside-wire.jsonl");
+        fs::rename(&journal_path, &outside).unwrap();
+        symlink(&outside, &journal_path).unwrap();
+
+        assert!(
+            KimiCodeParser::new(root.path())
+                .parse_session_dir(&session_dir(&root))
+                .is_err()
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn rejects_symlinked_child_agent_directory() {
+        use std::os::unix::fs::symlink;
+
+        let mut metadata = state();
+        metadata["agents"]["agent-0"] = json!({"type": "sub", "parentAgentId": "main"});
+        let root = write_bundle(
+            metadata,
+            &[
+                r#"{"type":"turn.prompt","input":[{"type":"text","text":"Main"}],"origin":{"kind":"user"}}"#,
+            ],
+        );
+        let outside = root.path().join("outside-agent");
+        fs::create_dir(&outside).unwrap();
+        fs::write(
+            outside.join("wire.jsonl"),
+            r#"{"type":"turn.prompt","input":[{"type":"text","text":"Child"}],"origin":{"kind":"user"}}"#,
+        )
+        .unwrap();
+        symlink(&outside, session_dir(&root).join("agents/agent-0")).unwrap();
+
+        assert!(
+            KimiCodeParser::new(root.path())
+                .parse_session_dir(&session_dir(&root))
+                .is_err()
+        );
     }
 
     #[test]
@@ -650,11 +750,11 @@ mod tests {
         );
     }
 }
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
 use chrono::{DateTime, Duration, Utc};
 use serde_json::Value;
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
-use std::fs::File;
+use std::fs::{self, File};
 use std::io::{BufRead, BufReader};
 use std::path::{Component, Path, PathBuf};
 
@@ -783,7 +883,9 @@ impl KimiCodeParser {
     }
 
     pub fn dependency_paths(&self, session_dir: &Path) -> Result<Vec<PathBuf>> {
-        let state = load_state(&session_dir.join("state.json"))?;
+        let state_path = session_dir.join("state.json");
+        validate_bundle_path(session_dir, &state_path)?;
+        let state = load_state(&state_path)?;
         let mut paths = vec![
             session_dir.join("state.json"),
             session_dir.join("agents"),
@@ -805,12 +907,16 @@ impl KimiCodeParser {
 
         paths.sort();
         paths.dedup();
+        for path in &paths {
+            validate_bundle_path(session_dir, path)?;
+        }
         Ok(paths)
     }
 
     pub fn parse_session_dir(&self, session_dir: &Path) -> Result<KimiParsedBundle> {
         let session_id = canonical_session_id(session_dir)?;
         let state_path = session_dir.join("state.json");
+        validate_bundle_path(session_dir, &state_path)?;
         let state = load_state(&state_path)?;
         let resolved_agents = resolve_agents(&state, session_dir);
         if state.id.as_deref().is_some_and(|id| id != session_id) {
@@ -832,6 +938,7 @@ impl KimiCodeParser {
             });
 
         let journal_path = session_dir.join("agents/main/wire.jsonl");
+        validate_bundle_path(session_dir, &journal_path)?;
         let scan = scan_journal(&journal_path)?;
         let start_time = state
             .created_at
@@ -839,7 +946,7 @@ impl KimiCodeParser {
             .unwrap_or_else(|| DateTime::<Utc>::from_timestamp(0, 0).expect("epoch is valid"));
         let last_updated = state
             .updated_at
-            .or(scan.latest_time)
+            .max(scan.latest_time)
             .unwrap_or(start_time)
             .max(start_time);
         let ParsedJournal {
@@ -894,6 +1001,7 @@ impl KimiCodeParser {
                 omitted_agents.insert(agent.id);
                 continue;
             }
+            validate_bundle_path(session_dir, &agent.journal_path)?;
             let scan = scan_journal(&agent.journal_path)?;
             let child_start = scan
                 .earliest_time
@@ -1045,6 +1153,40 @@ impl KimiCodeParser {
             }
         }
     }
+}
+
+pub(crate) fn validate_bundle_path(session_dir: &Path, path: &Path) -> Result<()> {
+    let relative = path
+        .strip_prefix(session_dir)
+        .with_context(|| format!("path is outside Kimi bundle {}", session_dir.display()))?;
+    let session_metadata = fs::symlink_metadata(session_dir)
+        .with_context(|| format!("failed to inspect {}", session_dir.display()))?;
+    if session_metadata.file_type().is_symlink() {
+        bail!(
+            "Kimi bundle path contains a symlink: {}",
+            session_dir.display()
+        );
+    }
+
+    let mut current = session_dir.to_path_buf();
+    for component in relative.components() {
+        let Component::Normal(component) = component else {
+            bail!("Kimi bundle path is unsafe: {}", path.display());
+        };
+        current.push(component);
+        match fs::symlink_metadata(&current) {
+            Ok(metadata) if metadata.file_type().is_symlink() => {
+                bail!("Kimi bundle path contains a symlink: {}", current.display());
+            }
+            Ok(_) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => break,
+            Err(error) => {
+                return Err(error)
+                    .with_context(|| format!("failed to inspect {}", current.display()));
+            }
+        }
+    }
+    Ok(())
 }
 
 fn nonblank(value: Option<&Value>) -> Option<String> {
@@ -1435,10 +1577,7 @@ fn scan_journal(path: &Path) -> Result<JournalScan> {
         latest_time: None,
     };
     for line in BufReader::new(file).lines() {
-        let Ok(line) = line else {
-            tracing::warn!(path = %path.display(), "failed to read Kimi journal line");
-            continue;
-        };
+        let line = line.with_context(|| format!("failed to read {}", path.display()))?;
         let Ok(value) = serde_json::from_str::<Value>(&line) else {
             tracing::warn!(path = %path.display(), "skipping malformed Kimi journal line");
             continue;
@@ -1468,10 +1607,7 @@ fn parse_journal(
     let mut state = JournalState::default();
 
     for (line_number, line) in BufReader::new(file).lines().enumerate() {
-        let Ok(line) = line else {
-            tracing::warn!(path = %path.display(), "failed to read Kimi journal line");
-            continue;
-        };
+        let line = line.with_context(|| format!("failed to read {}", path.display()))?;
         let Ok(value) = serde_json::from_str::<Value>(&line) else {
             tracing::warn!(path = %path.display(), "skipping malformed Kimi journal line");
             continue;

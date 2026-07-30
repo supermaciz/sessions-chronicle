@@ -1,5 +1,6 @@
 use std::collections::BTreeMap;
 use std::fs;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use sessions_chronicle::database::SessionIndexer;
@@ -386,6 +387,31 @@ fn missing_declared_child_journal_preserves_bundle_and_reports_a_diagnostic() {
     assert_eq!(result.per_source[4].errors, 1);
     assert_eq!(result.errors_detail.len(), 1);
     assert!(result.errors_detail[0].message.contains("No such file"));
+    assert_eq!(bundle_snapshot(&connection, &primary), before);
+}
+
+#[test]
+fn invalid_utf8_after_valid_records_preserves_bundle_and_reports_one_diagnostic() {
+    let home = copied_home();
+    let database = tempfile::NamedTempFile::new().unwrap();
+    let mut indexer = SessionIndexer::new(database.path()).unwrap();
+    let sources = all_sources(home.path());
+    let primary = primary_dir(home.path());
+
+    indexer.index_all_incremental(&sources).unwrap();
+    let connection = rusqlite::Connection::open(database.path()).unwrap();
+    let before = bundle_snapshot(&connection, &primary);
+    fs::OpenOptions::new()
+        .append(true)
+        .open(primary.join("agents/main/wire.jsonl"))
+        .unwrap()
+        .write_all(b"\n{\"type\":\"unknown.future.record\"}\n\xff\n")
+        .unwrap();
+
+    let result = indexer.index_all_incremental(&sources).unwrap();
+
+    assert_eq!(result.per_source[4].errors, 1);
+    assert_eq!(result.errors_detail.len(), 1);
     assert_eq!(bundle_snapshot(&connection, &primary), before);
 }
 
