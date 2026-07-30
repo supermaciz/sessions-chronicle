@@ -46,6 +46,18 @@ fn child_id(agent_id: &str) -> String {
     format!("kimi-subagent::{PRIMARY_ID}::{agent_id}")
 }
 
+fn fallback_session_dir(home: &Path, metadata_name: &str) -> PathBuf {
+    match metadata_name {
+        "session_index.jsonl" => home
+            .join("sessions/wd_index_cccccccccc")
+            .join("session_00000000-0000-4000-8000-000000000003"),
+        "workspaces.json" => home
+            .join("sessions/wd_workspace_dddddddddddd")
+            .join("session_00000000-0000-4000-8000-000000000004"),
+        _ => panic!("unexpected optional metadata file: {metadata_name}"),
+    }
+}
+
 fn session_exists(connection: &rusqlite::Connection, session_id: &str) -> bool {
     connection
         .query_row(
@@ -575,6 +587,115 @@ fn failed_bundle_replacement_rolls_back_all_existing_bundle_data() {
 
     assert_eq!(indexer.index_kimi_sessions(home.path()).unwrap(), 6);
     assert_eq!(bundle_snapshot(&connection, &primary), before);
+}
+
+#[cfg(unix)]
+fn assert_optional_metadata_fifo_does_not_block(metadata_name: &str) {
+    use std::process::Command;
+    use std::sync::mpsc;
+    use std::time::Duration;
+
+    let home = copied_home();
+    let metadata_path = home.path().join(metadata_name);
+    fs::remove_file(&metadata_path).unwrap();
+    assert!(
+        Command::new("mkfifo")
+            .arg(&metadata_path)
+            .status()
+            .unwrap()
+            .success()
+    );
+
+    let (sender, receiver) = mpsc::channel();
+    std::thread::spawn(move || {
+        let parser = KimiCodeParser::new(home.path());
+        let parsed = parser.parse_session_dir(&primary_dir(home.path()));
+        let database = tempfile::NamedTempFile::new().unwrap();
+        let indexed = SessionIndexer::new(database.path())
+            .and_then(|mut indexer| indexer.index_kimi_sessions(home.path()));
+        sender.send((parsed, indexed)).unwrap();
+    });
+
+    let (parsed, indexed) = receiver
+        .recv_timeout(Duration::from_secs(2))
+        .unwrap_or_else(|_| panic!("Kimi indexing blocked while opening {metadata_name}"));
+    assert_eq!(parsed.unwrap().main.session.id, PRIMARY_ID);
+    assert_eq!(indexed.unwrap(), 7);
+}
+
+#[cfg(unix)]
+#[test]
+fn session_index_fifo_is_ignored_without_blocking_discovery() {
+    assert_optional_metadata_fifo_does_not_block("session_index.jsonl");
+}
+
+#[cfg(unix)]
+#[test]
+fn workspaces_fifo_is_ignored_without_blocking_discovery() {
+    assert_optional_metadata_fifo_does_not_block("workspaces.json");
+}
+
+#[cfg(unix)]
+#[test]
+fn symlinked_optional_metadata_is_ignored_without_blocking_discovery() {
+    use std::os::unix::fs::symlink;
+
+    for (metadata_name, contents) in [
+        (
+            "session_index.jsonl",
+            r#"{"sessionId":"session_00000000-0000-4000-8000-000000000003","workDir":"/tmp/untrusted"}"#,
+        ),
+        (
+            "workspaces.json",
+            r#"{"workspaces":{"wd_workspace_dddddddddddd":{"root":"/tmp/untrusted"}}}"#,
+        ),
+    ] {
+        let home = copied_home();
+        let metadata_path = home.path().join(metadata_name);
+        let target = home.path().join(format!("untrusted-{metadata_name}"));
+        fs::remove_file(&metadata_path).unwrap();
+        fs::write(&target, contents).unwrap();
+        symlink(&target, &metadata_path).unwrap();
+
+        let parser = KimiCodeParser::new(home.path());
+        let parsed = parser
+            .parse_session_dir(&fallback_session_dir(home.path(), metadata_name))
+            .unwrap();
+        assert_eq!(parsed.main.session.project_path, None);
+        let database = tempfile::NamedTempFile::new().unwrap();
+        assert_eq!(
+            SessionIndexer::new(database.path())
+                .unwrap()
+                .index_kimi_sessions(home.path())
+                .unwrap(),
+            7
+        );
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn directory_optional_metadata_is_ignored_without_blocking_discovery() {
+    for metadata_name in ["session_index.jsonl", "workspaces.json"] {
+        let home = copied_home();
+        let metadata_path = home.path().join(metadata_name);
+        fs::remove_file(&metadata_path).unwrap();
+        fs::create_dir(&metadata_path).unwrap();
+
+        let parser = KimiCodeParser::new(home.path());
+        let parsed = parser
+            .parse_session_dir(&fallback_session_dir(home.path(), metadata_name))
+            .unwrap();
+        assert_eq!(parsed.main.session.project_path, None);
+        let database = tempfile::NamedTempFile::new().unwrap();
+        assert_eq!(
+            SessionIndexer::new(database.path())
+                .unwrap()
+                .index_kimi_sessions(home.path())
+                .unwrap(),
+            7
+        );
+    }
 }
 
 #[cfg(unix)]

@@ -1332,8 +1332,16 @@ impl KimiCodeParser {
     }
 
     fn load_session_index(&mut self, path: &Path) {
-        let Ok(file) = File::open(path) else {
+        if !validate_optional_metadata_file(path) {
             return;
+        }
+        let file = match File::open(path) {
+            Ok(file) => file,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return,
+            Err(_) => {
+                tracing::warn!(path = %path.display(), "failed to read optional Kimi metadata");
+                return;
+            }
         };
         for line in BufReader::new(file).lines() {
             let Ok(line) = line else {
@@ -1362,8 +1370,16 @@ impl KimiCodeParser {
     }
 
     fn load_workspaces(&mut self, path: &Path) {
-        let Ok(bytes) = std::fs::read(path) else {
+        if !validate_optional_metadata_file(path) {
             return;
+        }
+        let bytes = match fs::read(path) {
+            Ok(bytes) => bytes,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return,
+            Err(_) => {
+                tracing::warn!(path = %path.display(), "failed to read optional Kimi metadata");
+                return;
+            }
         };
         let Ok(value) = serde_json::from_slice::<Value>(&bytes) else {
             tracing::warn!(path = %path.display(), "ignoring malformed Kimi workspaces metadata");
@@ -1376,6 +1392,21 @@ impl KimiCodeParser {
             if let Some(root) = nonblank(workspace.get("root")) {
                 self.workspace_roots.insert(key.clone(), root);
             }
+        }
+    }
+}
+
+fn validate_optional_metadata_file(path: &Path) -> bool {
+    match fs::symlink_metadata(path) {
+        Ok(metadata) if metadata.is_file() && !metadata.file_type().is_symlink() => true,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => false,
+        Ok(_) => {
+            tracing::warn!(path = %path.display(), "ignoring non-regular optional Kimi metadata");
+            false
+        }
+        Err(_) => {
+            tracing::warn!(path = %path.display(), "failed to inspect optional Kimi metadata");
+            false
         }
     }
 }
