@@ -99,10 +99,13 @@ fn sorted_dirs(
     let mut dirs = Vec::new();
     for entry in entries {
         match entry {
-            Ok(entry) if entry.file_type().is_ok_and(|kind| kind.is_dir()) => {
-                dirs.push(entry.path())
-            }
-            Ok(_) => {}
+            Ok(entry) => handle_directory_file_type(
+                entry.path(),
+                entry.file_type(),
+                &mut dirs,
+                discovery,
+                errors,
+            ),
             Err(err) => {
                 discovery.enumeration_complete = false;
                 push_indexing_error(
@@ -116,6 +119,28 @@ fn sorted_dirs(
     }
     dirs.sort();
     dirs
+}
+
+fn handle_directory_file_type(
+    entry_path: PathBuf,
+    file_type: std::io::Result<fs::FileType>,
+    dirs: &mut Vec<PathBuf>,
+    discovery: &mut KimiDiscovery,
+    errors: &mut VecDeque<IndexingError>,
+) {
+    match file_type {
+        Ok(file_type) if file_type.is_dir() => dirs.push(entry_path),
+        Ok(_) => {}
+        Err(err) => {
+            discovery.enumeration_complete = false;
+            push_indexing_error(
+                errors,
+                AiAssistant::KimiCode,
+                Some(entry_path.display().to_string()),
+                format!("Failed to read Kimi session directory entry file type: {err}"),
+            );
+        }
+    }
 }
 
 fn snapshot_dependencies(paths: &[PathBuf]) -> Result<Vec<PathFingerprint>> {
@@ -198,12 +223,21 @@ fn parse_kimi_bundle_stably(
     session_dir: &Path,
     errors: &mut VecDeque<IndexingError>,
 ) -> Result<Option<(KimiParsedBundle, Vec<PathFingerprint>)>> {
+    parse_kimi_bundle_stably_with(parser, session_dir, errors, |path| {
+        parser.parse_session_dir(path)
+    })
+}
+
+fn parse_kimi_bundle_stably_with<F>(
+    parser: &KimiCodeParser,
+    session_dir: &Path,
+    errors: &mut VecDeque<IndexingError>,
+    mut parse: F,
+) -> Result<Option<(KimiParsedBundle, Vec<PathFingerprint>)>>
+where
+    F: FnMut(&Path) -> Result<KimiParsedBundle>,
+{
     for _ in 0..2 {
-        if !session_dir.join("state.json").is_file()
-            || !session_dir.join("agents/main/wire.jsonl").is_file()
-        {
-            return Ok(None);
-        }
         let before_paths = match parser.dependency_paths(session_dir) {
             Ok(paths) => paths,
             Err(_) => return Ok(None),
@@ -212,7 +246,16 @@ fn parse_kimi_bundle_stably(
             Ok(snapshot) => snapshot,
             Err(_) => return Ok(None),
         };
-        let bundle = parser.parse_session_dir(session_dir)?;
+        let bundle = match parse(session_dir) {
+            Ok(bundle) => bundle,
+            Err(_)
+                if !session_dir.join("state.json").is_file()
+                    || !session_dir.join("agents/main/wire.jsonl").is_file() =>
+            {
+                return Ok(None);
+            }
+            Err(err) => return Err(err),
+        };
         let after_paths = match parser.dependency_paths(session_dir) {
             Ok(paths) => paths,
             Err(_) => return Ok(None),
@@ -298,6 +341,64 @@ mod tests {
                 .iter()
                 .all(|candidate| candidate.parseable)
         );
+    }
+
+    #[test]
+    fn discovery_marks_file_type_failures_incomplete_and_reports_them() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut discovery = KimiDiscovery {
+            candidates: Vec::new(),
+            discovered_dirs: HashSet::new(),
+            enumeration_complete: true,
+        };
+        let mut errors = VecDeque::new();
+
+        handle_directory_file_type(
+            temp.path().to_path_buf(),
+            Err(std::io::Error::other("simulated file type failure")),
+            &mut Vec::new(),
+            &mut discovery,
+            &mut errors,
+        );
+
+        assert!(!discovery.enumeration_complete);
+        assert_eq!(errors.len(), 1);
+        assert_eq!(errors[0].assistant, AiAssistant::KimiCode);
+        assert!(errors[0].message.contains("file type"));
+    }
+
+    #[test]
+    fn stable_parse_skips_when_required_file_disappears_during_parsing() {
+        let temp = fixture_home();
+        let session_dir = temp
+            .path()
+            .join("sessions/wd_primary_aaaaaaaaaaaa/session_00000000-0000-4000-8000-000000000001");
+        let parser = KimiCodeParser::new(temp.path());
+        let mut errors = VecDeque::new();
+
+        let result = parse_kimi_bundle_stably_with(&parser, &session_dir, &mut errors, |path| {
+            fs::remove_file(path.join("agents/main/wire.jsonl"))?;
+            parser.parse_session_dir(path)
+        });
+
+        assert!(result.unwrap().is_none());
+        assert!(errors.is_empty());
+    }
+
+    #[test]
+    fn stable_parse_preserves_unrelated_parser_errors() {
+        let temp = fixture_home();
+        let session_dir = temp
+            .path()
+            .join("sessions/wd_primary_aaaaaaaaaaaa/session_00000000-0000-4000-8000-000000000001");
+        let parser = KimiCodeParser::new(temp.path());
+        let mut errors = VecDeque::new();
+
+        let result = parse_kimi_bundle_stably_with(&parser, &session_dir, &mut errors, |_| {
+            Err(anyhow::anyhow!("simulated parser failure"))
+        });
+
+        assert!(result.is_err());
     }
 
     #[test]
