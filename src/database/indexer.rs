@@ -157,6 +157,7 @@ fn is_claude_skippable_error(err: &anyhow::Error) -> bool {
         Some(
             ClaudeCodeParseError::NoMessages
                 | ClaudeCodeParseError::NoUserMessages
+                | ClaudeCodeParseError::NoRealAssistantMessages
                 | ClaudeCodeParseError::MalformedNestedSubagentFile
         )
     )
@@ -2105,6 +2106,34 @@ mod tests {
 
         let removed = indexer.prune_orphan_fingerprints().unwrap();
         assert_eq!(removed, 1);
+    }
+
+    #[test]
+    fn claude_indexing_skips_session_with_only_synthetic_api_error_messages() {
+        let temp_db = NamedTempFile::new().unwrap();
+        let mut indexer = SessionIndexer::new(temp_db.path()).unwrap();
+        let temp_dir = tempfile::tempdir().unwrap();
+        let session_file = temp_dir.path().join("f1ef3039.jsonl");
+
+        std::fs::write(
+            &session_file,
+            concat!(
+                r#"{"type":"user","timestamp":"2024-01-01T00:00:00Z","sessionId":"f1ef3039","message":{"content":"Process this job offer."}}"#,
+                "\n",
+                r#"{"type":"assistant","timestamp":"2024-01-01T00:00:01Z","sessionId":"f1ef3039","isApiErrorMessage":true,"message":{"model":"<synthetic>","content":[{"type":"text","text":"You've hit your monthly spend limit"}]}}"#,
+                "\n"
+            ),
+        )
+        .unwrap();
+
+        let indexed = indexer.index_claude_sessions(temp_dir.path()).unwrap();
+        assert_eq!(indexed, 0);
+
+        let count: i64 = indexer
+            .db
+            .query_row("SELECT COUNT(*) FROM sessions", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(count, 0);
     }
 
     #[test]

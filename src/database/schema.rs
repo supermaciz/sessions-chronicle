@@ -2,7 +2,7 @@ use anyhow::Result;
 use rusqlite::Connection;
 
 #[cfg(test)]
-const CURRENT_DB_VERSION: i64 = 16;
+const CURRENT_DB_VERSION: i64 = 17;
 
 fn column_exists(conn: &Connection, table_name: &str, column_name: &str) -> Result<bool> {
     Ok(conn.query_row(
@@ -55,6 +55,8 @@ fn table_exists(conn: &Connection, name: &str) -> Result<bool> {
 ///        linkage (v2.1.216+ dropped the `agentId:` token); clears
 ///        file_fingerprints so parents are re-parsed and the column is
 ///        populated
+///   17 – clear file_fingerprints so Claude Code sessions whose only assistant
+///        events are synthetic API errors are re-parsed and pruned
 pub fn initialize_database(conn: &Connection) -> Result<()> {
     let version: i64 = conn.query_row("PRAGMA user_version", [], |row| row.get(0))?;
 
@@ -105,6 +107,9 @@ pub fn initialize_database(conn: &Connection) -> Result<()> {
     }
     if version < 16 {
         apply_v16_migration(conn)?;
+    }
+    if version < 17 {
+        apply_v17_migration(conn)?;
     }
 
     Ok(())
@@ -664,6 +669,21 @@ fn apply_v16_migration(conn: &Connection) -> Result<()> {
     }
 
     conn.execute_batch("PRAGMA user_version = 16")?;
+    Ok(())
+}
+
+/// Migrate from v16 to v17.
+///
+/// Clears `file_fingerprints` so Claude Code transcripts whose only assistant
+/// events are synthetic (spend limit, API error) are re-parsed and pruned.
+/// Those sessions are never resumed, so their files never change and an
+/// incremental run would otherwise skip them and keep the stale rows forever.
+fn apply_v17_migration(conn: &Connection) -> Result<()> {
+    if table_exists(conn, "file_fingerprints")? {
+        conn.execute("DELETE FROM file_fingerprints", [])?;
+    }
+
+    conn.execute_batch("PRAGMA user_version = 17")?;
     Ok(())
 }
 
@@ -1759,6 +1779,33 @@ mod tests {
         assert_eq!(agent_name_column_count, 1);
 
         assert!(index_exists(&conn, "idx_subagents_agent_name"));
+
+        let fingerprint_count: i64 = conn
+            .query_row("SELECT count(*) FROM file_fingerprints", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(fingerprint_count, 0);
+    }
+
+    #[test]
+    fn v16_to_v17_clears_fingerprints() {
+        let conn = Connection::open_in_memory().unwrap();
+        initialize_database(&conn).unwrap();
+
+        conn.execute_batch("PRAGMA user_version = 16").unwrap();
+        conn.execute(
+            "INSERT INTO file_fingerprints (file_path, mtime_ns, size) VALUES ('fixture.jsonl', 1, 1)",
+            [],
+        )
+        .unwrap();
+
+        initialize_database(&conn).unwrap();
+
+        let version: i64 = conn
+            .query_row("PRAGMA user_version", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(version, CURRENT_DB_VERSION);
 
         let fingerprint_count: i64 = conn
             .query_row("SELECT count(*) FROM file_fingerprints", [], |row| {

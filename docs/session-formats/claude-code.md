@@ -537,6 +537,14 @@ Current implementation: `src/parsers/claude_code.rs`
   `agent-a<name>-<hash16>.jsonl` transcripts by name, in either indexing
   order. A name that is ambiguous on either side is left unlinked rather than
   linked to the wrong transcript. The legacy `agentId:` path is unchanged.
+- **Synthetic-only sessions (implemented 2026-07-31):** an assistant event is
+  synthetic when it carries `isApiErrorMessage: true` (e.g. spend limit, 429) or
+  `message.model == "<synthetic>"` — both mean the CLI generated the text
+  locally and no model response happened. A session whose assistant events are
+  *all* synthetic is rejected with `NoRealAssistantMessages` and pruned from the
+  index; a session with no assistant event at all (freshly started) stays
+  indexable, and synthetic messages remain visible in the transcript of sessions
+  that also contain real responses.
 
 **Title extraction:** First parsed `user` message content (assistant/system/summary are ignored).
 
