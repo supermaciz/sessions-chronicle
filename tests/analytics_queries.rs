@@ -212,6 +212,59 @@ fn sessions_by_tool_aggregates_top_level_sessions_only() {
 }
 
 #[test]
+fn kimi_code_analytics_exclude_child_sessions() {
+    let db = TempDatabase::new();
+
+    for (id, is_subagent, input_tokens, output_tokens) in [
+        ("kimi-main", 0_i64, 120_i64, 45_i64),
+        ("kimi-child", 1_i64, 900_i64, 800_i64),
+    ] {
+        db.connection
+            .execute(
+                "INSERT INTO sessions (
+                    id, tool, project_path, start_time, message_count, file_path, last_updated,
+                    is_subagent, input_tokens, output_tokens
+                 ) VALUES (?1, 'kimi_code', '/projects/kimi', 10, 1, ?2, 20, ?3, ?4, ?5)",
+                rusqlite::params![
+                    id,
+                    format!("/tmp/{id}.jsonl"),
+                    is_subagent,
+                    input_tokens,
+                    output_tokens,
+                ],
+            )
+            .expect("Failed to insert Kimi Code session");
+    }
+
+    let analytics = load_analytics(&db.path).expect("analytics should load");
+
+    assert_eq!(
+        analytics.sessions_by_tool,
+        vec![
+            sessions_chronicle::models::analytics::AiAssistantSessionCount {
+                tool: "Kimi Code".to_string(),
+                session_count: 1,
+            }
+        ]
+    );
+    assert_eq!(
+        analytics.token_usage_by_tool,
+        vec![
+            sessions_chronicle::models::analytics::AiAssistantTokenUsage {
+                tool: "Kimi Code".to_string(),
+                total_sessions: 1,
+                reported_sessions: 1,
+                input_tokens: Some(120),
+                output_tokens: Some(45),
+                cache_read_tokens: None,
+                cache_write_tokens: None,
+                reasoning_tokens: None,
+            }
+        ]
+    );
+}
+
+#[test]
 fn session_span_buckets_use_fixed_labels_and_clamp_negative_spans() {
     let db = TempDatabase::new();
 

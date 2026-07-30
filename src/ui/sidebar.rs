@@ -13,6 +13,7 @@ pub struct Sidebar {
     opencode_enabled: bool,
     codex_enabled: bool,
     mistral_vibe_enabled: bool,
+    kimi_code_enabled: bool,
     selected_project_filter: ProjectFilter,
     project_row_filters: Vec<ProjectFilter>,
     rebuilding_projects: bool,
@@ -96,6 +97,7 @@ impl SimpleComponent for Sidebar {
             opencode_enabled: true,
             codex_enabled: true,
             mistral_vibe_enabled: true,
+            kimi_code_enabled: true,
             selected_project_filter: ProjectFilter::AllSessions,
             project_row_filters: Vec::new(),
             rebuilding_projects: false,
@@ -118,6 +120,7 @@ impl SimpleComponent for Sidebar {
             (AiAssistant::OpenCode, "OpenCode"),
             (AiAssistant::Codex, "Codex"),
             (AiAssistant::MistralVibe, "Mistral Vibe"),
+            (AiAssistant::KimiCode, "Kimi Code"),
         ] {
             let (row, dot) = Self::build_assistant_row(assistant, title, sender.clone());
             widgets.assistants_list.append(&row);
@@ -142,7 +145,7 @@ impl SimpleComponent for Sidebar {
                     AiAssistant::OpenCode => self.opencode_enabled = active,
                     AiAssistant::Codex => self.codex_enabled = active,
                     AiAssistant::MistralVibe => self.mistral_vibe_enabled = active,
-                    AiAssistant::KimiCode => {}
+                    AiAssistant::KimiCode => self.kimi_code_enabled = active,
                 }
 
                 self.emit_filters_changed(&sender);
@@ -268,6 +271,9 @@ impl Sidebar {
         }
         if self.mistral_vibe_enabled {
             tools.push(AiAssistant::MistralVibe);
+        }
+        if self.kimi_code_enabled {
+            tools.push(AiAssistant::KimiCode);
         }
         tools
     }
@@ -489,6 +495,7 @@ mod tests {
             AiAssistant::OpenCode.icon_name(),
             AiAssistant::Codex.icon_name(),
             AiAssistant::MistralVibe.icon_name(),
+            AiAssistant::KimiCode.icon_name(),
         ];
 
         let parts = controller.state().get();
@@ -515,7 +522,7 @@ mod tests {
         let controller = Sidebar::builder().launch(());
 
         let parts = controller.state().get();
-        for index in 0..4 {
+        for index in 0..5 {
             let row = parts
                 .widgets
                 .assistants_list
@@ -545,11 +552,19 @@ mod tests {
         let controller = Sidebar::builder().launch(());
         let parts = controller.state().get();
 
+        assert_eq!(
+            parts.widgets.assistants_list.observe_children().n_items(),
+            5
+        );
+        assert_eq!(parts.model.active_tools(), AiAssistant::ALL);
+        assert!(parts.model.status_dots.contains_key(&AiAssistant::KimiCode));
+
         for assistant in [
             AiAssistant::ClaudeCode,
             AiAssistant::OpenCode,
             AiAssistant::Codex,
             AiAssistant::MistralVibe,
+            AiAssistant::KimiCode,
         ] {
             let dot = parts
                 .model
@@ -558,6 +573,35 @@ mod tests {
                 .expect("status dot should exist for assistant");
             assert!(!dot.is_visible());
         }
+    }
+
+    #[gtk::test]
+    fn toggling_kimi_code_off_excludes_it_from_filters_changed() {
+        let outputs: Rc<RefCell<Vec<SidebarOutput>>> = Rc::new(RefCell::new(Vec::new()));
+        let outputs_ref = outputs.clone();
+        let controller = Sidebar::builder()
+            .launch(())
+            .connect_receiver(move |_, output| outputs_ref.borrow_mut().push(output));
+
+        assert_eq!(
+            controller.state().get().model.active_tools(),
+            AiAssistant::ALL
+        );
+
+        controller.emit(SidebarMsg::AiAssistantToggled(AiAssistant::KimiCode, false));
+
+        pump_main_context(|| !outputs.borrow().is_empty());
+
+        assert!(matches!(
+            outputs.borrow().as_slice(),
+            [SidebarOutput::FiltersChanged { tools, .. }]
+                if tools == &[
+                    AiAssistant::ClaudeCode,
+                    AiAssistant::OpenCode,
+                    AiAssistant::Codex,
+                    AiAssistant::MistralVibe,
+                ]
+        ));
     }
 
     #[gtk::test]

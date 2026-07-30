@@ -460,13 +460,7 @@ fn build_source_results_list(results: &[PerSourceResult]) -> gtk::ListBox {
     list.add_css_class("boxed-list");
 
     for result in results {
-        let title = match result.assistant {
-            AiAssistant::ClaudeCode => "Claude Code",
-            AiAssistant::OpenCode => "OpenCode",
-            AiAssistant::Codex => "Codex",
-            AiAssistant::MistralVibe => "Mistral Vibe",
-            AiAssistant::KimiCode => "Kimi Code",
-        };
+        let title = result.assistant.display_name();
 
         let subtitle = if result.status == SourceStatus::NotFound {
             format!("{} (not found)", result.display_path)
@@ -532,12 +526,7 @@ impl SimpleComponent for SessionList {
         root: Self::Root,
         sender: ComponentSender<Self>,
     ) -> ComponentParts<Self> {
-        let active_tools = vec![
-            AiAssistant::ClaudeCode,
-            AiAssistant::OpenCode,
-            AiAssistant::Codex,
-            AiAssistant::MistralVibe,
-        ];
+        let active_tools = AiAssistant::ALL.to_vec();
         let search_query = String::new();
         let project_filter = ProjectFilter::AllSessions;
         let date_filter = DateFilter::AnyTime;
@@ -1512,6 +1501,22 @@ mod tests {
         let mut child = widget.first_child();
         while let Some(child_widget) = child {
             if let Some(found) = find_list_box(&child_widget) {
+                return Some(found);
+            }
+            child = child_widget.next_sibling();
+        }
+
+        None
+    }
+
+    fn find_action_row(widget: &gtk::Widget) -> Option<adw::ActionRow> {
+        if let Ok(action_row) = widget.clone().downcast::<adw::ActionRow>() {
+            return Some(action_row);
+        }
+
+        let mut child = widget.first_child();
+        while let Some(child_widget) = child {
+            if let Some(found) = find_action_row(&child_widget) {
                 return Some(found);
             }
             child = child_widget.next_sibling();
@@ -2897,6 +2902,18 @@ mod tests {
         assert!(state.show_source_results);
     }
 
+    #[gtk::test]
+    fn session_list_defaults_to_all_assistant_filters() {
+        let temp_db = TempDatabase::new();
+        let controller =
+            SessionList::builder().launch((temp_db.path.clone(), SortOrder::default()));
+
+        assert_eq!(
+            controller.state().get().model.active_tools,
+            AiAssistant::ALL
+        );
+    }
+
     #[test]
     fn indexing_diagnostics_empty_state_hides_source_results_for_search_results() {
         let state = compute_empty_state(
@@ -2970,6 +2987,27 @@ mod tests {
 
         let parts = controller.state().get();
         assert!(parts.widgets.empty_state.child().is_some());
+    }
+
+    #[gtk::test]
+    fn source_results_list_uses_assistant_display_name() {
+        let list = build_source_results_list(&[PerSourceResult {
+            assistant: AiAssistant::KimiCode,
+            display_path: "/tmp/kimi".into(),
+            indexed: 0,
+            skipped: 0,
+            removed: 0,
+            errors: 0,
+            status: SourceStatus::Empty,
+        }]);
+
+        let row = list
+            .row_at_index(0)
+            .expect("Kimi Code source row should exist");
+        let action_row =
+            find_action_row(&row.upcast()).expect("source row should contain an action row");
+
+        assert_eq!(action_row.title(), "Kimi Code");
     }
 
     #[gtk::test]
