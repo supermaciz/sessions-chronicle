@@ -1,0 +1,428 @@
+#![allow(dead_code)] // Task 6 wires these helpers into the Kimi source run.
+
+use super::{SessionIndexer, push_indexing_error};
+use crate::models::{AiAssistant, IndexingError};
+use crate::parsers::kimi_code::{KimiCodeParser, KimiParsedBundle};
+use anyhow::Result;
+use std::collections::{HashMap, HashSet, VecDeque};
+use std::fs;
+use std::path::{Path, PathBuf};
+
+#[derive(Debug)]
+struct KimiCandidate {
+    session_dir: PathBuf,
+    main_session_id: String,
+    parseable: bool,
+}
+
+#[derive(Debug)]
+struct KimiDiscovery {
+    candidates: Vec<KimiCandidate>,
+    discovered_dirs: HashSet<PathBuf>,
+    enumeration_complete: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct PathFingerprint {
+    path: PathBuf,
+    mtime_ns: i64,
+    size: i64,
+}
+
+fn discover_kimi_sessions(
+    kimi_home: &Path,
+    errors: &mut VecDeque<IndexingError>,
+) -> Result<KimiDiscovery> {
+    let sessions_dir = kimi_home.join("sessions");
+    if !sessions_dir.exists() {
+        return Ok(KimiDiscovery {
+            candidates: Vec::new(),
+            discovered_dirs: HashSet::new(),
+            enumeration_complete: true,
+        });
+    }
+
+    let mut discovery = KimiDiscovery {
+        candidates: Vec::new(),
+        discovered_dirs: HashSet::new(),
+        enumeration_complete: true,
+    };
+    let workspaces = sorted_dirs(&sessions_dir, &mut discovery, errors);
+    for workspace in workspaces {
+        if !workspace
+            .file_name()
+            .is_some_and(|name| name.to_string_lossy().starts_with("wd_"))
+        {
+            continue;
+        }
+        for session_dir in sorted_dirs(&workspace, &mut discovery, errors) {
+            let Some(session_id) = session_dir
+                .file_name()
+                .and_then(|name| name.to_str())
+                .map(str::to_owned)
+            else {
+                continue;
+            };
+            if !session_id.starts_with("session_") {
+                continue;
+            }
+            discovery.discovered_dirs.insert(session_dir.clone());
+            discovery.candidates.push(KimiCandidate {
+                parseable: session_dir.join("state.json").is_file()
+                    && session_dir.join("agents/main/wire.jsonl").is_file(),
+                session_dir,
+                main_session_id: session_id,
+            });
+        }
+    }
+    Ok(discovery)
+}
+
+fn sorted_dirs(
+    path: &Path,
+    discovery: &mut KimiDiscovery,
+    errors: &mut VecDeque<IndexingError>,
+) -> Vec<PathBuf> {
+    let entries = match fs::read_dir(path) {
+        Ok(entries) => entries,
+        Err(err) => {
+            discovery.enumeration_complete = false;
+            push_indexing_error(
+                errors,
+                AiAssistant::KimiCode,
+                Some(path.display().to_string()),
+                format!("Failed to list Kimi session directory: {err}"),
+            );
+            return Vec::new();
+        }
+    };
+    let mut dirs = Vec::new();
+    for entry in entries {
+        match entry {
+            Ok(entry) if entry.file_type().is_ok_and(|kind| kind.is_dir()) => {
+                dirs.push(entry.path())
+            }
+            Ok(_) => {}
+            Err(err) => {
+                discovery.enumeration_complete = false;
+                push_indexing_error(
+                    errors,
+                    AiAssistant::KimiCode,
+                    Some(path.display().to_string()),
+                    format!("Failed to read Kimi session directory entry: {err}"),
+                );
+            }
+        }
+    }
+    dirs.sort();
+    dirs
+}
+
+fn snapshot_dependencies(paths: &[PathBuf]) -> Result<Vec<PathFingerprint>> {
+    let mut paths = paths.to_vec();
+    paths.sort();
+    paths.dedup();
+    paths
+        .into_iter()
+        .map(|path| {
+            let (mtime_ns, size) = SessionIndexer::current_fingerprint(&path)?;
+            Ok(PathFingerprint {
+                path,
+                mtime_ns,
+                size,
+            })
+        })
+        .collect()
+}
+
+fn path_prefix_bounds(path: &Path) -> Option<(String, String)> {
+    let path = path.to_str()?;
+    Some((format!("{path}/"), format!("{path}0")))
+}
+
+impl SessionIndexer {
+    fn stored_kimi_fingerprints(&self, session_dir: &Path) -> Result<HashMap<PathBuf, (i64, i64)>> {
+        let Some((lower, upper)) = path_prefix_bounds(session_dir) else {
+            return Ok(HashMap::new());
+        };
+        let mut stmt = self.db.prepare(
+            "SELECT file_path, mtime_ns, size FROM file_fingerprints
+             WHERE file_path >= ?1 COLLATE BINARY AND file_path < ?2 COLLATE BINARY",
+        )?;
+        Ok(stmt
+            .query_map(rusqlite::params![lower, upper], |row| {
+                Ok((
+                    PathBuf::from(row.get::<_, String>(0)?),
+                    (row.get(1)?, row.get(2)?),
+                ))
+            })?
+            .collect::<std::result::Result<_, _>>()?)
+    }
+
+    fn upsert_kimi_fingerprints(&mut self, snapshot: &[PathFingerprint]) -> Result<()> {
+        let tx = self.db.transaction()?;
+        for fingerprint in snapshot {
+            Self::upsert_fingerprint_values_tx(
+                &tx,
+                &fingerprint.path,
+                fingerprint.mtime_ns,
+                fingerprint.size,
+            )?;
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
+    fn should_reindex_kimi_bundle(
+        &self,
+        session_dir: &Path,
+        snapshot: &[PathFingerprint],
+    ) -> Result<bool> {
+        let stored = self.stored_kimi_fingerprints(session_dir)?;
+        let current = snapshot
+            .iter()
+            .map(|fingerprint| {
+                (
+                    fingerprint.path.clone(),
+                    (fingerprint.mtime_ns, fingerprint.size),
+                )
+            })
+            .collect::<HashMap<_, _>>();
+        Ok(stored != current)
+    }
+}
+
+#[allow(dead_code)]
+fn parse_kimi_bundle_stably(
+    parser: &KimiCodeParser,
+    session_dir: &Path,
+    errors: &mut VecDeque<IndexingError>,
+) -> Result<Option<(KimiParsedBundle, Vec<PathFingerprint>)>> {
+    for _ in 0..2 {
+        if !session_dir.join("state.json").is_file()
+            || !session_dir.join("agents/main/wire.jsonl").is_file()
+        {
+            return Ok(None);
+        }
+        let before_paths = match parser.dependency_paths(session_dir) {
+            Ok(paths) => paths,
+            Err(_) => return Ok(None),
+        };
+        let before = match snapshot_dependencies(&before_paths) {
+            Ok(snapshot) => snapshot,
+            Err(_) => return Ok(None),
+        };
+        let bundle = parser.parse_session_dir(session_dir)?;
+        let after_paths = match parser.dependency_paths(session_dir) {
+            Ok(paths) => paths,
+            Err(_) => return Ok(None),
+        };
+        let after = match snapshot_dependencies(&after_paths) {
+            Ok(snapshot) => snapshot,
+            Err(_) => return Ok(None),
+        };
+        if before == after {
+            return Ok(Some((bundle, after)));
+        }
+    }
+    push_indexing_error(
+        errors,
+        AiAssistant::KimiCode,
+        Some(session_dir.display().to_string()),
+        "Kimi session changed while being parsed",
+    );
+    Ok(None)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::VecDeque;
+    use std::fs;
+    use std::path::Path;
+
+    fn copy_dir(source: &Path, destination: &Path) {
+        fs::create_dir_all(destination).unwrap();
+        for entry in fs::read_dir(source).unwrap() {
+            let entry = entry.unwrap();
+            let target = destination.join(entry.file_name());
+            if entry.file_type().unwrap().is_dir() {
+                copy_dir(&entry.path(), &target);
+            } else {
+                fs::copy(entry.path(), target).unwrap();
+            }
+        }
+    }
+
+    fn fixture_home() -> tempfile::TempDir {
+        let temp = tempfile::tempdir().unwrap();
+        copy_dir(Path::new("tests/fixtures/kimi_home"), temp.path());
+        temp
+    }
+
+    #[test]
+    fn discovery_only_returns_direct_workspace_session_bundles() {
+        let temp = fixture_home();
+        let sessions = temp.path().join("sessions");
+        fs::create_dir_all(temp.path().join("user-history")).unwrap();
+        fs::create_dir_all(temp.path().join("credentials")).unwrap();
+        fs::create_dir_all(temp.path().join("logs")).unwrap();
+        fs::create_dir_all(sessions.join("not-a-workspace")).unwrap();
+        fs::create_dir_all(sessions.join("wd_valid/not-a-session")).unwrap();
+
+        let mut errors = VecDeque::new();
+        let discovery = discover_kimi_sessions(temp.path(), &mut errors).unwrap();
+
+        assert!(discovery.enumeration_complete);
+        assert_eq!(discovery.candidates.len(), 8);
+        assert!(errors.is_empty());
+        assert!(discovery.candidates.iter().all(|candidate| {
+            candidate
+                .session_dir
+                .parent()
+                .unwrap()
+                .file_name()
+                .unwrap()
+                .to_string_lossy()
+                .starts_with("wd_")
+        }));
+        assert!(
+            discovery
+                .candidates
+                .iter()
+                .all(|candidate| candidate.main_session_id.starts_with("session_"))
+        );
+        assert!(
+            discovery
+                .candidates
+                .iter()
+                .all(|candidate| candidate.parseable)
+        );
+    }
+
+    #[test]
+    fn bundle_fingerprints_detect_changes_additions_and_missing_dependencies() {
+        let temp = fixture_home();
+        let session_dir = temp
+            .path()
+            .join("sessions/wd_primary_aaaaaaaaaaaa/session_00000000-0000-4000-8000-000000000001");
+        let parser = KimiCodeParser::new(temp.path());
+        let bundle = parser.parse_session_dir(&session_dir).unwrap();
+        let snapshot = snapshot_dependencies(&bundle.dependency_paths).unwrap();
+        let db = tempfile::NamedTempFile::new().unwrap();
+        let mut indexer = SessionIndexer::new(db.path()).unwrap();
+
+        indexer
+            .insert_parsed_session(&bundle.main, &session_dir)
+            .unwrap();
+        indexer.upsert_kimi_fingerprints(&snapshot).unwrap();
+        assert!(
+            !indexer
+                .should_reindex_kimi_bundle(&session_dir, &snapshot)
+                .unwrap()
+        );
+
+        let mut state: serde_json::Value =
+            serde_json::from_slice(&fs::read(session_dir.join("state.json")).unwrap()).unwrap();
+        state["title"] = serde_json::json!("Changed title");
+        fs::write(
+            session_dir.join("state.json"),
+            serde_json::to_vec(&state).unwrap(),
+        )
+        .unwrap();
+        let changed_state =
+            snapshot_dependencies(&parser.dependency_paths(&session_dir).unwrap()).unwrap();
+        assert!(
+            indexer
+                .should_reindex_kimi_bundle(&session_dir, &changed_state)
+                .unwrap()
+        );
+        indexer.upsert_kimi_fingerprints(&changed_state).unwrap();
+
+        fs::write(session_dir.join("agents/main/wire.jsonl"), "main append\n").unwrap();
+        let changed_main =
+            snapshot_dependencies(&parser.dependency_paths(&session_dir).unwrap()).unwrap();
+        assert!(
+            indexer
+                .should_reindex_kimi_bundle(&session_dir, &changed_main)
+                .unwrap()
+        );
+        indexer.upsert_kimi_fingerprints(&changed_main).unwrap();
+
+        let child = session_dir.join("agents/agent-0/wire.jsonl");
+        fs::write(&child, "child append\n").unwrap();
+        let changed_child =
+            snapshot_dependencies(&parser.dependency_paths(&session_dir).unwrap()).unwrap();
+        assert!(
+            indexer
+                .should_reindex_kimi_bundle(&session_dir, &changed_child)
+                .unwrap()
+        );
+        indexer.upsert_kimi_fingerprints(&changed_child).unwrap();
+
+        fs::create_dir_all(session_dir.join("agents/agent-new")).unwrap();
+        fs::write(session_dir.join("agents/agent-new/wire.jsonl"), "new\n").unwrap();
+        state["agents"]["agent-new"] =
+            serde_json::json!({"type": "agent", "parentAgentId": "main"});
+        fs::write(
+            session_dir.join("state.json"),
+            serde_json::to_vec(&state).unwrap(),
+        )
+        .unwrap();
+        let expanded =
+            snapshot_dependencies(&parser.dependency_paths(&session_dir).unwrap()).unwrap();
+        assert!(
+            indexer
+                .should_reindex_kimi_bundle(&session_dir, &expanded)
+                .unwrap()
+        );
+        indexer.upsert_kimi_fingerprints(&expanded).unwrap();
+
+        fs::remove_file(&child).unwrap();
+        assert_eq!(indexer.prune_orphan_fingerprints().unwrap(), 0);
+        assert!(
+            indexer
+                .stored_kimi_fingerprints(&session_dir)
+                .unwrap()
+                .contains_key(&child)
+        );
+        let current_without_deleted: Vec<_> = expanded
+            .iter()
+            .filter(|fingerprint| fingerprint.path != child)
+            .cloned()
+            .collect();
+        assert!(
+            indexer
+                .should_reindex_kimi_bundle(&session_dir, &current_without_deleted)
+                .unwrap()
+        );
+    }
+
+    #[test]
+    fn stored_fingerprints_use_boundary_safe_prefix_ranges() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("percent%_root");
+        let bundle = root.join("session_one");
+        let sibling = root.join("session_one_extra");
+        fs::create_dir_all(&bundle).unwrap();
+        fs::create_dir_all(&sibling).unwrap();
+        let bundle_file = bundle.join("wire.jsonl");
+        let sibling_file = sibling.join("wire.jsonl");
+        fs::write(&bundle_file, "one\n").unwrap();
+        fs::write(&sibling_file, "extra\n").unwrap();
+
+        let db = tempfile::NamedTempFile::new().unwrap();
+        let mut indexer = SessionIndexer::new(db.path()).unwrap();
+        indexer
+            .upsert_kimi_fingerprints(&snapshot_dependencies(&[bundle_file.clone()]).unwrap())
+            .unwrap();
+        indexer
+            .upsert_kimi_fingerprints(&snapshot_dependencies(&[sibling_file.clone()]).unwrap())
+            .unwrap();
+
+        let stored = indexer.stored_kimi_fingerprints(&bundle).unwrap();
+        assert_eq!(stored.len(), 1);
+        assert!(stored.contains_key(&bundle_file));
+        assert!(!stored.contains_key(&sibling_file));
+    }
+}

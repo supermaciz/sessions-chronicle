@@ -1,3 +1,5 @@
+mod kimi;
+
 use anyhow::{Context, Result};
 use rusqlite::Connection;
 use std::collections::{HashSet, VecDeque};
@@ -1490,11 +1492,20 @@ impl SessionIndexer {
     }
 
     fn upsert_fingerprint_tx(tx: &rusqlite::Transaction<'_>, file_path: &Path) -> Result<()> {
+        let (mtime_ns, size) = Self::current_fingerprint(file_path)?;
+        Self::upsert_fingerprint_values_tx(tx, file_path, mtime_ns, size)
+    }
+
+    fn upsert_fingerprint_values_tx(
+        tx: &rusqlite::Transaction<'_>,
+        file_path: &Path,
+        mtime_ns: i64,
+        size: i64,
+    ) -> Result<()> {
         let Some(file_path_str) = file_path.to_str() else {
             return Ok(());
         };
 
-        let (mtime_ns, size) = Self::current_fingerprint(file_path)?;
         tx.execute(
             "INSERT INTO file_fingerprints (file_path, mtime_ns, size)
              VALUES (?1, ?2, ?3)
@@ -1524,8 +1535,23 @@ impl SessionIndexer {
         let tx = self.db.transaction()?;
         let mut removed = 0usize;
 
+        let kimi_bundle_dirs: HashSet<String> = {
+            let mut stmt = tx.prepare(
+                "SELECT file_path FROM sessions
+                 WHERE tool = ?1 AND parent_session_id IS NULL",
+            )?;
+            stmt.query_map(["kimi_code"], |row| row.get(0))?
+                .collect::<std::result::Result<_, _>>()?
+        };
+
         for file_path in file_paths {
             if !Path::new(&file_path).exists() {
+                if kimi_bundle_dirs
+                    .iter()
+                    .any(|bundle_dir| file_path.starts_with(&format!("{bundle_dir}/")))
+                {
+                    continue;
+                }
                 removed += tx.execute(
                     "DELETE FROM file_fingerprints WHERE file_path = ?1",
                     [file_path],
