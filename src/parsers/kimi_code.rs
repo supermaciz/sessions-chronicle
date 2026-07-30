@@ -1,5 +1,3 @@
-#![allow(dead_code)] // Runtime parser dispatch is added after the Kimi parsing tasks.
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -749,6 +747,121 @@ mod tests {
             Some("Agent_0")
         );
     }
+
+    #[test]
+    fn duplicate_explicit_agent_id_does_not_fall_back_to_another_child() {
+        let mut metadata = state();
+        metadata["agents"] = json!({
+            "main": { "type": "main", "parentAgentId": null },
+            "agent-0": { "type": "sub", "parentAgentId": "main" },
+            "agent-1": { "type": "sub", "parentAgentId": "main" }
+        });
+        let root = write_bundle(
+            metadata,
+            &[
+                r#"{"type":"turn.prompt","time":1785320000000,"input":[{"type":"text","text":"Main"}],"origin":{"kind":"user"}}"#,
+                r#"{"type":"context.append_loop_event","time":1785320000010,"event":{"type":"tool.call","toolCallId":"Agent_0","name":"Agent","args":{"agent_id":"agent-0"}}}"#,
+                r#"{"type":"context.append_loop_event","time":1785320000020,"event":{"type":"tool.call","toolCallId":"Agent_1","name":"Agent","args":{"agent_id":"agent-0"}}}"#,
+            ],
+        );
+        write_agent_journal(
+            &root,
+            "agent-0",
+            &[
+                r#"{"type":"turn.prompt","time":1785320000030,"input":[{"type":"text","text":"Child 0"}],"origin":{"kind":"user"}}"#,
+            ],
+        );
+        write_agent_journal(
+            &root,
+            "agent-1",
+            &[
+                r#"{"type":"turn.prompt","time":1785320000040,"input":[{"type":"text","text":"Child 1"}],"origin":{"kind":"user"}}"#,
+            ],
+        );
+
+        let parsed = KimiCodeParser::new(root.path())
+            .parse_session_dir(&session_dir(&root))
+            .unwrap();
+
+        assert_eq!(parsed.main.subagents.len(), 1);
+        assert_eq!(
+            parsed.main.subagents[0].agent_id.as_deref(),
+            Some("agent-0")
+        );
+        assert!(parsed.main.tool_calls.iter().any(|call| {
+            call.parser_call_id.as_deref() == Some("Agent_1") && call.tool_name == "Agent"
+        }));
+    }
+
+    #[test]
+    fn conflicting_structured_agent_evidence_remains_generic() {
+        let mut metadata = state();
+        metadata["agents"] = json!({
+            "main": { "type": "main", "parentAgentId": null },
+            "agent-0": { "type": "sub", "parentAgentId": "main" }
+        });
+        let root = write_bundle(
+            metadata,
+            &[
+                r#"{"type":"turn.prompt","time":1785320000000,"input":[{"type":"text","text":"Main"}],"origin":{"kind":"user"}}"#,
+                r#"{"type":"context.append_loop_event","time":1785320000010,"event":{"type":"tool.call","toolCallId":"Agent_0","name":"Agent","args":{"agent_id":"agent-0"}}}"#,
+                r#"{"type":"context.append_loop_event","time":1785320000020,"event":{"type":"tool.result","toolCallId":"Agent_0","result":{"agent_id":"unknown-agent","output":"done"}}}"#,
+            ],
+        );
+        write_agent_journal(
+            &root,
+            "agent-0",
+            &[
+                r#"{"type":"turn.prompt","time":1785320000030,"input":[{"type":"text","text":"Child"}],"origin":{"kind":"user"}}"#,
+            ],
+        );
+
+        let parsed = KimiCodeParser::new(root.path())
+            .parse_session_dir(&session_dir(&root))
+            .unwrap();
+
+        assert!(parsed.main.subagents.is_empty());
+        assert_eq!(parsed.main.tool_calls[0].tool_name, "Agent");
+    }
+
+    #[test]
+    fn conflicting_structured_and_text_agent_evidence_remains_generic() {
+        let mut metadata = state();
+        metadata["agents"] = json!({
+            "main": { "type": "main", "parentAgentId": null },
+            "agent-0": { "type": "sub", "parentAgentId": "main" },
+            "agent-1": { "type": "sub", "parentAgentId": "main" }
+        });
+        let root = write_bundle(
+            metadata,
+            &[
+                r#"{"type":"turn.prompt","time":1785320000000,"input":[{"type":"text","text":"Main"}],"origin":{"kind":"user"}}"#,
+                r#"{"type":"context.append_loop_event","time":1785320000010,"event":{"type":"tool.call","toolCallId":"Agent_0","name":"Agent","args":{"agent_id":"agent-0"}}}"#,
+                r#"{"type":"context.append_loop_event","time":1785320000020,"event":{"type":"tool.result","toolCallId":"Agent_0","result":{"output":"agent_id: agent-1"}}}"#,
+            ],
+        );
+        write_agent_journal(
+            &root,
+            "agent-0",
+            &[
+                r#"{"type":"turn.prompt","time":1785320000030,"input":[{"type":"text","text":"Child 0"}],"origin":{"kind":"user"}}"#,
+            ],
+        );
+        write_agent_journal(
+            &root,
+            "agent-1",
+            &[
+                r#"{"type":"turn.prompt","time":1785320000040,"input":[{"type":"text","text":"Child 1"}],"origin":{"kind":"user"}}"#,
+            ],
+        );
+
+        let parsed = KimiCodeParser::new(root.path())
+            .parse_session_dir(&session_dir(&root))
+            .unwrap();
+
+        assert!(parsed.main.subagents.is_empty());
+        assert_eq!(parsed.main.tool_calls[0].tool_name, "Agent");
+    }
 }
 use anyhow::{Context, Result, bail};
 use chrono::{DateTime, Duration, Utc};
@@ -774,12 +887,12 @@ pub enum ParseError {
 pub struct KimiParsedBundle {
     pub main: ParsedSession,
     pub children: Vec<ParsedSession>,
-    pub dependency_paths: Vec<PathBuf>,
     pub session_ids: HashSet<String>,
 }
 
 #[derive(Debug, Default)]
 pub struct KimiCodeParser {
+    kimi_home: PathBuf,
     session_work_dirs: HashMap<String, String>,
     workspace_roots: HashMap<String, String>,
 }
@@ -876,7 +989,15 @@ struct JournalState {
 
 impl KimiCodeParser {
     pub fn new(kimi_home: &Path) -> Self {
-        let mut parser = Self::default();
+        let mut parser = Self {
+            kimi_home: kimi_home.to_path_buf(),
+            ..Self::default()
+        };
+        if !fs::symlink_metadata(kimi_home)
+            .is_ok_and(|metadata| metadata.is_dir() && !metadata.file_type().is_symlink())
+        {
+            return parser;
+        }
         parser.load_session_index(&kimi_home.join("session_index.jsonl"));
         parser.load_workspaces(&kimi_home.join("workspaces.json"));
         parser
@@ -884,7 +1005,7 @@ impl KimiCodeParser {
 
     pub fn dependency_paths(&self, session_dir: &Path) -> Result<Vec<PathBuf>> {
         let state_path = session_dir.join("state.json");
-        validate_bundle_path(session_dir, &state_path)?;
+        validate_bundle_path(&self.kimi_home, session_dir, &state_path)?;
         let state = load_state(&state_path)?;
         let mut paths = vec![
             session_dir.join("state.json"),
@@ -908,7 +1029,7 @@ impl KimiCodeParser {
         paths.sort();
         paths.dedup();
         for path in &paths {
-            validate_bundle_path(session_dir, path)?;
+            validate_bundle_path(&self.kimi_home, session_dir, path)?;
         }
         Ok(paths)
     }
@@ -916,7 +1037,7 @@ impl KimiCodeParser {
     pub fn parse_session_dir(&self, session_dir: &Path) -> Result<KimiParsedBundle> {
         let session_id = canonical_session_id(session_dir)?;
         let state_path = session_dir.join("state.json");
-        validate_bundle_path(session_dir, &state_path)?;
+        validate_bundle_path(&self.kimi_home, session_dir, &state_path)?;
         let state = load_state(&state_path)?;
         let resolved_agents = resolve_agents(&state, session_dir);
         if state.id.as_deref().is_some_and(|id| id != session_id) {
@@ -938,7 +1059,7 @@ impl KimiCodeParser {
             });
 
         let journal_path = session_dir.join("agents/main/wire.jsonl");
-        validate_bundle_path(session_dir, &journal_path)?;
+        validate_bundle_path(&self.kimi_home, session_dir, &journal_path)?;
         let scan = scan_journal(&journal_path)?;
         let start_time = state
             .created_at
@@ -1001,7 +1122,7 @@ impl KimiCodeParser {
                 omitted_agents.insert(agent.id);
                 continue;
             }
-            validate_bundle_path(session_dir, &agent.journal_path)?;
+            validate_bundle_path(&self.kimi_home, session_dir, &agent.journal_path)?;
             let scan = scan_journal(&agent.journal_path)?;
             let child_start = scan
                 .earliest_time
@@ -1101,7 +1222,6 @@ impl KimiCodeParser {
         Ok(KimiParsedBundle {
             main: parsed,
             children,
-            dependency_paths: self.dependency_paths(session_dir)?,
             session_ids,
         })
     }
@@ -1155,21 +1275,31 @@ impl KimiCodeParser {
     }
 }
 
-pub(crate) fn validate_bundle_path(session_dir: &Path, path: &Path) -> Result<()> {
+pub(crate) fn validate_bundle_path(
+    kimi_home: &Path,
+    session_dir: &Path,
+    path: &Path,
+) -> Result<()> {
+    let session_relative = session_dir.strip_prefix(kimi_home).with_context(|| {
+        format!(
+            "Kimi bundle is outside configured home {}",
+            kimi_home.display()
+        )
+    })?;
     let relative = path
         .strip_prefix(session_dir)
         .with_context(|| format!("path is outside Kimi bundle {}", session_dir.display()))?;
-    let session_metadata = fs::symlink_metadata(session_dir)
-        .with_context(|| format!("failed to inspect {}", session_dir.display()))?;
-    if session_metadata.file_type().is_symlink() {
+    let home_metadata = fs::symlink_metadata(kimi_home)
+        .with_context(|| format!("failed to inspect {}", kimi_home.display()))?;
+    if home_metadata.file_type().is_symlink() {
         bail!(
             "Kimi bundle path contains a symlink: {}",
-            session_dir.display()
+            kimi_home.display()
         );
     }
 
-    let mut current = session_dir.to_path_buf();
-    for component in relative.components() {
+    let mut current = kimi_home.to_path_buf();
+    for component in session_relative.components().chain(relative.components()) {
         let Component::Normal(component) = component else {
             bail!("Kimi bundle path is unsafe: {}", path.display());
         };
@@ -1383,10 +1513,8 @@ fn resolve_agent(
     Some(depth)
 }
 
-fn candidate_agent_ids(
-    candidate: &AgentCallCandidate,
-    children: &[(&str, &str, Option<i64>)],
-) -> Vec<String> {
+fn agent_evidence(candidate: &AgentCallCandidate) -> (bool, HashSet<String>) {
+    let mut present = false;
     let mut ids = HashSet::new();
     for (value, keys) in [
         (
@@ -1399,34 +1527,27 @@ fn candidate_agent_ids(
             continue;
         };
         for key in keys {
-            if let Some(id) = value.get(key).and_then(Value::as_str)
-                && children.iter().any(|(child_id, _, _)| *child_id == id)
-            {
-                ids.insert(id.to_string());
+            if let Some(raw) = value.get(key) {
+                present = true;
+                if let Some(id) = raw.as_str() {
+                    ids.insert(id.to_string());
+                }
             }
         }
     }
-    ids.into_iter().collect()
-}
-
-fn textual_agent_id(
-    candidate: &AgentCallCandidate,
-    children: &[(&str, &str, Option<i64>)],
-) -> Option<String> {
-    let text = candidate.result_text.as_deref()?;
-    let mut ids = HashSet::new();
-    for line in text.lines() {
-        let Some((key, value)) = line.split_once(':') else {
-            continue;
-        };
-        if matches!(key, "agent_id" | "agentId") {
-            let value = value.trim();
-            if children.iter().any(|(child_id, _, _)| *child_id == value) {
+    if let Some(text) = candidate.result_text.as_deref() {
+        for line in text.lines() {
+            let Some((key, value)) = line.split_once(':') else {
+                continue;
+            };
+            if matches!(key, "agent_id" | "agentId") {
+                present = true;
+                let value = value.trim();
                 ids.insert(value.to_string());
             }
         }
     }
-    (ids.len() == 1).then(|| ids.into_iter().next().expect("single item"))
+    (present, ids)
 }
 
 fn match_agent_calls(
@@ -1436,25 +1557,26 @@ fn match_agent_calls(
 ) {
     let mut matched = HashMap::new();
     let mut used_children = HashSet::new();
+    let evidence: HashMap<_, _> = candidates
+        .iter()
+        .map(|candidate| (candidate.raw_call_id.as_str(), agent_evidence(candidate)))
+        .collect();
     for candidate in candidates {
-        let ids = candidate_agent_ids(candidate, children);
-        if ids.len() == 1 && used_children.insert(ids[0].clone()) {
-            matched.insert(candidate.raw_call_id.clone(), ids[0].clone());
-        }
-    }
-    for candidate in candidates {
-        if matched.contains_key(&candidate.raw_call_id) {
-            continue;
-        }
-        if let Some(id) = textual_agent_id(candidate, children)
+        let (_, ids) = &evidence[candidate.raw_call_id.as_str()];
+        if ids.len() == 1
+            && let Some(id) = ids.iter().next()
+            && children.iter().any(|(child_id, _, _)| *child_id == id)
             && used_children.insert(id.clone())
         {
-            matched.insert(candidate.raw_call_id.clone(), id);
+            matched.insert(candidate.raw_call_id.clone(), id.clone());
         }
     }
     let remaining_calls: Vec<_> = candidates
         .iter()
-        .filter(|candidate| !matched.contains_key(&candidate.raw_call_id))
+        .filter(|candidate| {
+            !matched.contains_key(&candidate.raw_call_id)
+                && !evidence[candidate.raw_call_id.as_str()].0
+        })
         .collect();
     let mut remaining_children: Vec<_> = children
         .iter()

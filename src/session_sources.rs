@@ -20,7 +20,6 @@ pub struct SessionSources {
     pub opencode_db_paths: Vec<PathBuf>,
     pub codex_dir: PathBuf,
     pub vibe_dir: PathBuf,
-    #[allow(dead_code)]
     pub kimi_home: PathBuf,
     pub override_mode: bool,
 }

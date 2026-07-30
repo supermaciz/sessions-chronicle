@@ -576,3 +576,41 @@ fn failed_bundle_replacement_rolls_back_all_existing_bundle_data() {
     assert_eq!(indexer.index_kimi_sessions(home.path()).unwrap(), 6);
     assert_eq!(bundle_snapshot(&connection, &primary), before);
 }
+
+#[cfg(unix)]
+#[test]
+fn symlinked_sessions_root_cannot_index_an_external_fixture_tree() {
+    use std::os::unix::fs::symlink;
+
+    let configured_home = tempfile::tempdir().unwrap();
+    let external_home = copied_home();
+    symlink(
+        external_home.path().join("sessions"),
+        configured_home.path().join("sessions"),
+    )
+    .unwrap();
+    let database = tempfile::NamedTempFile::new().unwrap();
+    let mut indexer = SessionIndexer::new(database.path()).unwrap();
+    let sources = all_sources(configured_home.path());
+
+    let result = indexer.index_all_incremental(&sources).unwrap();
+
+    assert_eq!(result.per_source[4].indexed, 0);
+    assert_eq!(result.per_source[4].errors, 1);
+    assert_eq!(result.errors_detail.len(), 1);
+    assert_eq!(
+        result.errors_detail[0].location.as_deref(),
+        configured_home.path().join("sessions").to_str()
+    );
+    let connection = rusqlite::Connection::open(database.path()).unwrap();
+    assert_eq!(
+        connection
+            .query_row(
+                "SELECT COUNT(*) FROM sessions WHERE tool = 'kimi_code'",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .unwrap(),
+        0
+    );
+}
