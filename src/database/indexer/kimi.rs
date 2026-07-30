@@ -566,6 +566,7 @@ mod tests {
     use super::*;
     use std::collections::VecDeque;
     use std::fs;
+    use std::io::Write;
     use std::path::Path;
 
     fn copy_dir(source: &Path, destination: &Path) {
@@ -585,6 +586,59 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
         copy_dir(Path::new("tests/fixtures/kimi_home"), temp.path());
         temp
+    }
+
+    fn primary_dir(home: &Path) -> PathBuf {
+        home.join("sessions/wd_primary_aaaaaaaaaaaa/session_00000000-0000-4000-8000-000000000001")
+    }
+
+    #[test]
+    fn incremental_kimi_bundle_reindexes_each_changed_dependency() {
+        let home = fixture_home();
+        let db = tempfile::NamedTempFile::new().unwrap();
+        let mut indexer = SessionIndexer::new(db.path()).unwrap();
+        let dir = primary_dir(home.path());
+
+        let first = indexer
+            .index_kimi_sessions_incremental(home.path())
+            .unwrap();
+        assert_eq!(first.indexed, 7);
+        let unchanged = indexer
+            .index_kimi_sessions_incremental(home.path())
+            .unwrap();
+        assert_eq!(unchanged.indexed, 0);
+        assert_eq!(unchanged.skipped, 7);
+
+        let mut state: serde_json::Value =
+            serde_json::from_slice(&fs::read(dir.join("state.json")).unwrap()).unwrap();
+        state["title"] = serde_json::json!("replacement title");
+        fs::write(dir.join("state.json"), serde_json::to_vec(&state).unwrap()).unwrap();
+        assert_eq!(
+            indexer
+                .index_kimi_sessions_incremental(home.path())
+                .unwrap()
+                .indexed,
+            1
+        );
+
+        for journal in [
+            dir.join("agents/main/wire.jsonl"),
+            dir.join("agents/agent-0/wire.jsonl"),
+        ] {
+            fs::OpenOptions::new()
+                .append(true)
+                .open(&journal)
+                .unwrap()
+                .write_all(b"\nnot-json\n")
+                .unwrap();
+            assert_eq!(
+                indexer
+                    .index_kimi_sessions_incremental(home.path())
+                    .unwrap()
+                    .indexed,
+                1
+            );
+        }
     }
 
     #[test]
