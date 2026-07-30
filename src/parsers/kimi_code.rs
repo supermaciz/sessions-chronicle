@@ -567,6 +567,88 @@ mod tests {
                 .all(|call| call.tool_name == "Agent")
         );
     }
+
+    #[test]
+    fn chronological_agent_matching_rejects_mixed_batch() {
+        let mut metadata = state();
+        metadata["agents"] = json!({
+            "main": { "type": "main", "parentAgentId": null },
+            "agent-0": { "type": "sub", "parentAgentId": "main" },
+            "agent-1": { "type": "sub", "parentAgentId": "main" }
+        });
+        let root = write_bundle(
+            metadata,
+            &[
+                r#"{"type":"turn.prompt","time":1785320000000,"input":[{"type":"text","text":"Main"}],"origin":{"kind":"user"}}"#,
+                r#"{"type":"context.append_loop_event","time":1785320000010,"event":{"type":"tool.call","toolCallId":"Agent_0","name":"Agent","args":{}}}"#,
+                r#"{"type":"context.append_loop_event","time":1785320000030,"event":{"type":"tool.call","toolCallId":"Agent_1","name":"Agent","args":{}}}"#,
+            ],
+        );
+        write_agent_journal(
+            &root,
+            "agent-0",
+            &[
+                r#"{"type":"turn.prompt","time":1785320000020,"input":[{"type":"text","text":"Child 0"}],"origin":{"kind":"user"}}"#,
+            ],
+        );
+        write_agent_journal(
+            &root,
+            "agent-1",
+            &[
+                r#"{"type":"turn.prompt","time":1785320000025,"input":[{"type":"text","text":"Child 1"}],"origin":{"kind":"user"}}"#,
+            ],
+        );
+
+        let parsed = KimiCodeParser::new(root.path())
+            .parse_session_dir(&session_dir(&root))
+            .unwrap();
+
+        assert_eq!(parsed.children.len(), 2);
+        assert!(parsed.main.subagents.is_empty());
+        assert_eq!(parsed.main.tool_calls.len(), 2);
+        assert!(
+            parsed
+                .main
+                .tool_calls
+                .iter()
+                .all(|call| call.tool_name == "Agent")
+        );
+    }
+
+    #[test]
+    fn result_resume_does_not_match_agent() {
+        let mut metadata = state();
+        metadata["agents"] = json!({
+            "main": { "type": "main", "parentAgentId": null },
+            "agent-0": { "type": "sub", "parentAgentId": "main" }
+        });
+        let root = write_bundle(
+            metadata,
+            &[
+                r#"{"type":"turn.prompt","time":1785320000000,"input":[{"type":"text","text":"Main"}],"origin":{"kind":"user"}}"#,
+                r#"{"type":"context.append_loop_event","event":{"type":"tool.call","toolCallId":"Agent_0","name":"Agent","args":{}}}"#,
+                r#"{"type":"context.append_loop_event","event":{"type":"tool.result","toolCallId":"Agent_0","result":{"resume":"agent-0"}}}"#,
+            ],
+        );
+        write_agent_journal(
+            &root,
+            "agent-0",
+            &[
+                r#"{"type":"turn.prompt","time":1785320000020,"input":[{"type":"text","text":"Child"}],"origin":{"kind":"user"}}"#,
+            ],
+        );
+
+        let parsed = KimiCodeParser::new(root.path())
+            .parse_session_dir(&session_dir(&root))
+            .unwrap();
+
+        assert_eq!(parsed.children.len(), 1);
+        assert!(parsed.main.subagents.is_empty());
+        assert_eq!(
+            parsed.main.tool_calls[0].parser_call_id.as_deref(),
+            Some("Agent_0")
+        );
+    }
 }
 use anyhow::{Context, Result};
 use chrono::{DateTime, Duration, Utc};
@@ -1164,11 +1246,17 @@ fn candidate_agent_ids(
     children: &[(&str, &str, Option<i64>)],
 ) -> Vec<String> {
     let mut ids = HashSet::new();
-    for value in [candidate.args.as_ref(), candidate.result.as_ref()]
-        .into_iter()
-        .flatten()
-    {
-        for key in ["agent_id", "agentId", "resume"] {
+    for (value, keys) in [
+        (
+            candidate.args.as_ref(),
+            &["agent_id", "agentId", "resume"][..],
+        ),
+        (candidate.result.as_ref(), &["agent_id", "agentId"][..]),
+    ] {
+        let Some(value) = value else {
+            continue;
+        };
+        for key in keys {
             if let Some(id) = value.get(key).and_then(Value::as_str)
                 && children.iter().any(|(child_id, _, _)| *child_id == id)
             {
@@ -1241,10 +1329,14 @@ fn match_agent_calls(
         ordered_calls
             .sort_by_key(|candidate| (candidate.call_time_ms, candidate.raw_call_id.as_str()));
         remaining_children.sort_by_key(|(id, _, time)| (*time, *id));
-        for (candidate, (agent_id, _, child_time)) in
-            ordered_calls.into_iter().zip(remaining_children)
+        if ordered_calls
+            .iter()
+            .zip(&remaining_children)
+            .all(|(candidate, (_, _, child_time))| {
+                child_time.expect("verified") >= candidate.call_time_ms.expect("verified")
+            })
         {
-            if child_time.expect("verified") >= candidate.call_time_ms.expect("verified") {
+            for (candidate, (agent_id, _, _)) in ordered_calls.into_iter().zip(remaining_children) {
                 matched.insert(candidate.raw_call_id.clone(), agent_id.to_string());
             }
         }
