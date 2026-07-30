@@ -12,6 +12,7 @@ tests/fixtures/
 │   └── 2026/01/18/...
 ├── vibe_sessions/          # Mistral Vibe session samples (meta.json + JSONL)
 │   └── session_20260203_191451_b9383361/
+├── kimi_home/              # Synthetic current ~/.kimi-code session home
 ├── opencode.db             # OpenCode SQLite fixture (preferred backend)
 └── opencode_storage/       # OpenCode legacy JSON storage fixture (fallback backend)
     ├── session/
@@ -21,7 +22,7 @@ tests/fixtures/
 
 ## Purpose
 
-- **Development**: Test parsers without requiring actual Claude Code/OpenCode/Codex installations
+- **Development**: Test parsers for all five supported AI assistants without requiring their CLIs
 - **Testing**: Integration tests use these fixtures to verify parsing and database indexing
 - **CI/CD**: Consistent test data across different environments
 
@@ -71,6 +72,14 @@ OpenCode parsing is SQLite-first, with legacy JSON storage fallback:
 - Fallback: `tests/fixtures/opencode_storage/` (legacy JSON storage backend)
 
 This mirrors runtime behavior where `opencode.db` is used when available and legacy JSON storage is still supported for older data layouts.
+
+## Kimi Code Session Format
+
+`kimi_home/` represents only the current `$KIMI_CODE_HOME` layout (default
+`~/.kimi-code`). It contains synthetic IDs, harmless content, no credentials,
+and no real paths. Custom homes are supported when visible in the Flatpak
+sandbox; legacy `~/.kimi` sessions are not parsed and are intentionally
+excluded.
 
 ## Adding Fixtures
 

@@ -18,7 +18,7 @@ This directory contains project documentation, architecture notes, and implement
    - Cross-assistant comparison tables (storage, file format, event structure, model metadata)
    - Implementation status, open questions, next steps
    - Per-assistant format details: [session-formats/](session-formats/)
-     - [claude-code.md](session-formats/claude-code.md), [codex.md](session-formats/codex.md), [opencode.md](session-formats/opencode.md), [mistral-vibe.md](session-formats/mistral-vibe.md)
+     - [claude-code.md](session-formats/claude-code.md), [codex.md](session-formats/codex.md), [opencode.md](session-formats/opencode.md), [mistral-vibe.md](session-formats/mistral-vibe.md), [kimi-code.md](session-formats/kimi-code.md)
 
 3. **[PARSER_DESIGN.md](PARSER_DESIGN.md)** 🦀
    - Trait-based parser architecture and factory pattern
@@ -81,7 +81,11 @@ All mockups are SVG files in the `mockups/` subfolder (open in browser or image 
 ~/.codex/sessions/                            ← Codex active rollouts
 ~/.codex/archived_sessions/                   ← Codex archived rollouts (not yet indexed; can be .jsonl.zst)
 ~/.vibe/logs/session/                         ← Mistral Vibe (v2)
+$KIMI_CODE_HOME/sessions/                     ← Kimi Code (defaults to ~/.kimi-code/sessions/)
 ```
+
+Custom Kimi Code homes are supported when visible in the Flatpak sandbox.
+Legacy Kimi sessions under `~/.kimi` are not parsed.
 
 ---
 

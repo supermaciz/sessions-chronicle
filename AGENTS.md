@@ -20,7 +20,7 @@
   - `models/` defines domain types.
   - `utils/` contains shared helpers (for example terminal integration).
 - `data/` holds desktop metadata, GSettings schema, icons, and the CSS bundled through `data/resources/` (see `resources.gresource.xml`).
-- `tests/` contains integration tests; `tests/fixtures/` contains sample sessions for Claude Code, OpenCode, Codex, and Mistral Vibe.
+- `tests/` contains integration tests; `tests/fixtures/` contains sample sessions for Claude Code, OpenCode, Codex, Mistral Vibe, and Kimi Code.
 - `build-aux/` contains Flatpak manifests (dev and stable) and the vendor script for offline builds.
 - `docs/` hosts architecture notes plus exploration and design documentation.
   - `docs/explorations/` contains exploration docs (`YYYY-MM-DD-feature-name-exploration.md`) and related mockups.

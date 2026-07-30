@@ -893,11 +893,21 @@ mod tests {
                 0,
                 "/tmp/claude",
             ),
+            make_result(
+                AiAssistant::KimiCode,
+                SourceStatus::Indexed,
+                0,
+                0,
+                0,
+                "/tmp/kimi",
+            ),
         ]);
 
         assert_eq!(rows[0].assistant, AiAssistant::ClaudeCode);
-        assert_eq!(rows[1].assistant, AiAssistant::Codex);
-        assert!(matches!(rows[1].status, SourceStatus::NotFound));
+        assert_eq!(rows[1].assistant, AiAssistant::KimiCode);
+        assert_eq!(rows[1].assistant.display_name(), "Kimi Code");
+        assert_eq!(rows[2].assistant, AiAssistant::Codex);
+        assert!(matches!(rows[2].status, SourceStatus::NotFound));
     }
 
     #[test]

@@ -165,6 +165,7 @@ pub fn build_resume_command(
         AiAssistant::OpenCode => "opencode --session \"$2\"".to_string(),
         AiAssistant::Codex => "codex resume \"$2\"".to_string(),
         AiAssistant::MistralVibe => "vibe --resume \"$2\"".to_string(),
+        AiAssistant::KimiCode => "kimi --session \"$2\"".to_string(),
     };
 
     let shell_cmd = format!("cd \"$1\" && {}; exec bash", tool_cmd);
@@ -335,6 +336,19 @@ mod tests {
         assert_eq!(cmd[3], "--");
         assert!(cmd[4].ends_with("test-project"));
         assert_eq!(cmd[5], "test-session-id");
+    }
+
+    #[test]
+    fn test_build_resume_command_kimi_code() {
+        let project_dir = tempfile::tempdir().unwrap();
+        let cmd = build_resume_command(
+            AiAssistant::KimiCode,
+            "session_00000000-0000-4000-8000-000000000001",
+            project_dir.path(),
+        )
+        .unwrap();
+        assert!(cmd[2].contains("kimi --session \"$2\""));
+        assert_eq!(cmd[5], "session_00000000-0000-4000-8000-000000000001");
     }
 
     #[test]

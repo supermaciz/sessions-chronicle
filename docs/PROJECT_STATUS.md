@@ -7,7 +7,7 @@ Branch snapshot: `main` (`v0.7.1`)
 
 Sessions Chronicle is a GNOME desktop app that indexes local AI coding assistant sessions and provides:
 
-- Cross-assistant session browsing and filtering (Claude Code, OpenCode, Codex, Mistral Vibe)
+- Cross-assistant session browsing and filtering (Claude Code, OpenCode, Codex, Mistral Vibe, Kimi Code)
 - Project sidebar filtering with cross-filtered session queries
 - Full-text search via SQLite FTS5 with in-transcript highlighting and pagination-aware navigation
 - Session detail views with markdown rendering, inline tool calls, and subagent inspection
@@ -29,10 +29,11 @@ Sessions Chronicle is a GNOME desktop app that indexes local AI coding assistant
 - Session summary moved into a header-bar popover (`speaker-notes` button) instead of an inline header block
 - Subagent support for Mistral Vibe (child sessions indexed from `<session>/agents/`) and refreshed Codex subagent parsing (`collab_resume_end` + response-item subagents)
 - Expanded tool call classification: Plan, Skill, and UserInput categories plus snake_case and assistant-specific tool name variants
+- Current Kimi Code sessions are indexed from `$KIMI_CODE_HOME` (default `~/.kimi-code`) when visible in the Flatpak sandbox; legacy `~/.kimi` sessions are not parsed
 
 ## Terminology
 
-- `AI assistant` refers to a session source such as Claude Code, OpenCode, Codex, or Mistral Vibe.
+- `AI assistant` refers to a session source such as Claude Code, OpenCode, Codex, Mistral Vibe, or Kimi Code.
 - `tool call` refers to an action invoked within a transcript.
 - `tool` may still appear as a literal historical storage or schema name, such as the `sessions.tool` column.
 
@@ -110,7 +111,7 @@ sessions-chronicle/
 |  |- project_resolver.rs        # git-root and worktree-aware project detection
 |  |- session_sources.rs         # source path resolution + --sessions-dir behavior
 |  |- database/                  # schema, search, indexing, analytics queries
-|  |- parsers/                   # per-assistant parsers (claude_code/, codex, opencode/, mistral_vibe)
+|  |- parsers/                   # per-assistant parsers (Claude Code, Codex, OpenCode, Mistral Vibe, Kimi Code)
 |  |- models/                    # sessions/messages/tool calls/subagents/token usage
 |  |- ui/                        # list/detail/sidebar/inspector/analytics components
 |  |  |- session_detail/         # typed-ListView transcript + per-row modules
@@ -190,7 +191,7 @@ CI-parity checks:
 ```bash
 cargo fmt --all -- --check
 cargo clippy --all -- -D warnings
-cargo test --all --no-fail-fast
+xvfb-run -a env GDK_BACKEND=x11 GSK_RENDERER=cairo cargo test --all --no-fail-fast
 ```
 
 ## Known Gaps / Active Exploration

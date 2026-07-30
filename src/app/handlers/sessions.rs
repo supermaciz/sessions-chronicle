@@ -28,9 +28,9 @@ impl App {
 
         self.active_session = Some(ActiveSessionRef {
             id: session.id.clone(),
-            tool: session.tool,
             project_name,
             pinned: session.pinned_at.is_some(),
+            can_resume: session.can_resume(),
         });
 
         self.session_detail.emit(SessionDetailMsg::SetSession {
@@ -100,6 +100,7 @@ impl App {
                 Ok(Some(session)) => {
                     let mut parent = parent;
                     parent.pinned = session.pinned_at.is_some();
+                    parent.can_resume = session.can_resume();
                     self.dismiss_summary_popover();
                     self.active_session = Some(parent);
                     self.session_detail.emit(SessionDetailMsg::SetSession {

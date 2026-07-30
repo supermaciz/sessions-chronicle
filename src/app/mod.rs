@@ -183,7 +183,7 @@ pub(super) enum AppMsg {
     RequestNavigateBack,
     /// Detail page popped signal from `NavigationView`.
     NavigateBack,
-    ResumeSession(String, AiAssistant),
+    ResumeSession(String),
     /// Resume the currently active session (triggered from the header bar button).
     ResumeActiveSession,
     TogglePinRequested(String),
@@ -359,7 +359,9 @@ impl SimpleComponent for App {
                             set_tooltip_text: Some("Resume session in terminal"),
                             add_css_class: "suggested-action",
                             #[watch]
-                            set_visible: model.detail_visible && model.are_detail_actions_visible(),
+                            set_visible: model.detail_visible
+                                && model.are_detail_actions_visible()
+                                && model.active_session.as_ref().is_some_and(|session| session.can_resume),
                             connect_clicked => AppMsg::ResumeActiveSession,
                         },
 
@@ -452,12 +454,13 @@ impl SimpleComponent for App {
         let db_path = db_dir.join(select_db_filename(sources.override_mode));
 
         tracing::info!(
-            "Session sources (override={}): claude={}, opencode={}, codex={}, vibe={}",
+            "Session sources (override={}): claude={}, opencode={}, codex={}, vibe={}, kimi={}",
             sources.override_mode,
             sources.claude_dir.display(),
             sources.opencode_storage_root.display(),
             sources.codex_dir.display(),
             sources.vibe_dir.display(),
+            sources.kimi_home.display(),
         );
         tracing::info!("Using database: {}", db_path.display());
 
@@ -687,7 +690,7 @@ impl SimpleComponent for App {
             AppMsg::AnalyticsRefreshRequested => self.handle_analytics_refresh_requested(),
             AppMsg::AnalyticsLoaded(data) => self.handle_analytics_loaded(data),
             AppMsg::AnalyticsLoadFailed(error) => self.handle_analytics_load_failed(error),
-            AppMsg::ResumeSession(session_id, tool) => self.handle_resume_session(session_id, tool),
+            AppMsg::ResumeSession(session_id) => self.handle_resume_session(session_id),
             AppMsg::ResumeActiveSession => self.handle_resume_active_session(&sender),
             AppMsg::TogglePinRequested(session_id) => self.handle_toggle_pin_requested(session_id),
             AppMsg::TogglePinShortcutRequested => self.handle_toggle_pin_shortcut_requested(),
@@ -1190,6 +1193,71 @@ mod tests {
                 .is_visible()
         );
         assert!(!parts.widgets.summary_menu_button.is_visible());
+    }
+
+    #[gtk::test]
+    fn kimi_child_hides_resume_button_and_parent_restores_it() {
+        if !schema_is_available() {
+            return;
+        }
+
+        let controller = App::builder().launch(Some(PathBuf::from("tests/fixtures")));
+        pump_main_context(|| !controller.state().get().model.indexing);
+        controller.emit(AppMsg::SessionSelected(
+            "session_00000000-0000-4000-8000-000000000001".to_string(),
+        ));
+        pump_main_context(|| {
+            controller
+                .state()
+                .get()
+                .model
+                .active_session
+                .as_ref()
+                .is_some_and(|session| session.id == "session_00000000-0000-4000-8000-000000000001")
+        });
+
+        pump_main_context(|| controller.state().get().widgets.resume_button.is_visible());
+        assert!(controller.state().get().widgets.resume_button.is_visible());
+
+        controller.emit(AppMsg::OpenChildSession(
+            "kimi-subagent::session_00000000-0000-4000-8000-000000000001::agent-0".to_string(),
+        ));
+        pump_main_context(|| {
+            controller
+                .state()
+                .get()
+                .model
+                .active_session
+                .as_ref()
+                .is_some_and(|session| session.id.ends_with("::agent-0"))
+        });
+
+        assert!(
+            !controller
+                .state()
+                .get()
+                .model
+                .active_session
+                .as_ref()
+                .is_some_and(|session| session.can_resume),
+            "loaded Kimi child should be non-resumable"
+        );
+        pump_main_context(|| !controller.state().get().widgets.resume_button.is_visible());
+        assert!(!controller.state().get().widgets.resume_button.is_visible());
+
+        controller.emit(AppMsg::ReturnToParentSession);
+        pump_main_context(|| {
+            controller
+                .state()
+                .get()
+                .model
+                .active_session
+                .as_ref()
+                .is_some_and(|session| session.id == "session_00000000-0000-4000-8000-000000000001")
+        });
+
+        pump_main_context(|| controller.state().get().widgets.resume_button.is_visible());
+        assert!(controller.state().get().widgets.resume_button.is_visible());
     }
 
     #[gtk::test]

@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "workspaces": {
+    "wd_workspace_dddddddddddd": {
+      "root": "/tmp/kimi-fixture-workspace",
+      "name": "kimi-fixture-workspace",
+      "created_at": "2026-07-29T10:00:00Z",
+      "last_opened_at": "2026-07-29T10:10:00Z"
+    }
+  }
+}

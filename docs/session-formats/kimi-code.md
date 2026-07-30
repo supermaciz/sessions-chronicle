@@ -293,37 +293,32 @@ The earlier Python-based Kimi CLI stored sessions under
 The TypeScript rewrite migrates this data to `~/.kimi-code/` on first run
 (`packages/migration-legacy`), leaving a `~/.kimi/.migrated-to-kimi-code`
 marker and a `~/.kimi-code/migration-report.json`. Legacy files are retained
-on disk. Supporting the current `~/.kimi-code` format is the priority for a
-parser; the legacy layout can be treated as an optional fallback.
+on disk. Sessions Chronicle supports the current `$KIMI_CODE_HOME` layout
+(default `~/.kimi-code`) when that location is visible in the Flatpak sandbox.
+It does not parse the retained legacy `~/.kimi` layout.
 
 ---
 
 ## Parser Behavior (Sessions Chronicle)
 
-**Not implemented yet** — tracked by
-[issue #167](https://github.com/supermaciz/sessions-chronicle/issues/167).
-This document is the format reference for that work.
+The parser and indexer implement the current TypeScript CLI format:
 
-Indexing notes for the future parser:
-
-- Resolve sessions via `session_index.jsonl` (or scan `sessions/wd_*/session_*/`),
-  and map `workDirKey` → project path via `workspaces.json` or
-  `session_index.jsonl.workDir`.
-- Read `state.json` for title/timestamps; stream `agents/main/wire.jsonl` with
-  `BufReader` line iteration.
-- User text: `turn.prompt` (or `context.append_message` with
-  `message.role == "user"`); assistant text: `content.part` loop events with
-  `part.type == "text"` (`think` parts optionally indexable).
-- Tool calls: `tool.call` / `tool.result` loop events correlated by `toolCallId`.
-- Subagents: `state.json.agents` entries with `parentAgentId` + the parent's
-  `Agent` tool call; child journal at `agents/<id>/wire.jsonl`.
-- Skip operational records that carry no conversational content
-  (`llm.request`, `llm.tools_snapshot`, `tools.set_active_tools`,
-  `mcp.tools_discovered`, `config.update`, `permission.*`, ...), but keep
-  `usage.record` / `step.end.usage` for token metrics and
-  `llm.request.model` / `config.update.modelAlias` for model metadata.
-- Handle interrupted turns (dangling `step.begin` without `step.end`)
-  gracefully.
+- Discovery scans `$KIMI_CODE_HOME/sessions/wd_*/session_*/` and requires
+  `state.json` plus `agents/main/wire.jsonl`.
+- Bundle parsing streams each agent journal with `BufReader`, extracting user
+  and assistant messages, reasoning, tool calls/results, model metadata, and
+  token usage while tolerating malformed or unknown records locally.
+- Incremental indexing uses one composite bundle fingerprint containing
+  `state.json` and every agent journal declared by `state.json.agents`; a
+  changed child journal therefore reindexes the whole bundle atomically.
+- Subagent journals become namespaced synthetic child sessions linked to their
+  parent through `parentAgentId`. Main sessions can resume with
+  `kimi --session <id>`; synthetic children cannot be resumed directly.
+- Bundles without a genuine user-origin prompt are not indexed. If an existing
+  bundle becomes injection-only, its main session, synthetic children, links,
+  transcript content, and fingerprints are pruned.
+- Custom `$KIMI_CODE_HOME` locations work when visible in the Flatpak sandbox.
+  Legacy sessions under `~/.kimi` are not parsed.
 
 ---
 

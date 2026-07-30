@@ -1,3 +1,5 @@
+mod kimi;
+
 use anyhow::{Context, Result};
 use rusqlite::Connection;
 use std::collections::{HashSet, VecDeque};
@@ -1490,11 +1492,20 @@ impl SessionIndexer {
     }
 
     fn upsert_fingerprint_tx(tx: &rusqlite::Transaction<'_>, file_path: &Path) -> Result<()> {
+        let (mtime_ns, size) = Self::current_fingerprint(file_path)?;
+        Self::upsert_fingerprint_values_tx(tx, file_path, mtime_ns, size)
+    }
+
+    fn upsert_fingerprint_values_tx(
+        tx: &rusqlite::Transaction<'_>,
+        file_path: &Path,
+        mtime_ns: i64,
+        size: i64,
+    ) -> Result<()> {
         let Some(file_path_str) = file_path.to_str() else {
             return Ok(());
         };
 
-        let (mtime_ns, size) = Self::current_fingerprint(file_path)?;
         tx.execute(
             "INSERT INTO file_fingerprints (file_path, mtime_ns, size)
              VALUES (?1, ?2, ?3)
@@ -1524,8 +1535,23 @@ impl SessionIndexer {
         let tx = self.db.transaction()?;
         let mut removed = 0usize;
 
+        let kimi_bundle_dirs: HashSet<String> = {
+            let mut stmt = tx.prepare(
+                "SELECT file_path FROM sessions
+                 WHERE tool = ?1 AND parent_session_id IS NULL",
+            )?;
+            stmt.query_map(["kimi_code"], |row| row.get(0))?
+                .collect::<std::result::Result<_, _>>()?
+        };
+
         for file_path in file_paths {
             if !Path::new(&file_path).exists() {
+                if kimi_bundle_dirs
+                    .iter()
+                    .any(|bundle_dir| file_path.starts_with(&format!("{bundle_dir}/")))
+                {
+                    continue;
+                }
                 removed += tx.execute(
                     "DELETE FROM file_fingerprints WHERE file_path = ?1",
                     [file_path],
@@ -1641,6 +1667,8 @@ impl SessionIndexer {
             self.index_codex_sessions_internal(&sources.codex_dir, true, &mut errors_detail)?;
         let vibe =
             self.index_vibe_sessions_internal(&sources.vibe_dir, true, &mut errors_detail)?;
+        let kimi =
+            self.index_kimi_sessions_internal(&sources.kimi_home, true, &mut errors_detail)?;
 
         Ok(Self::build_indexing_run_result(
             sources,
@@ -1648,6 +1676,7 @@ impl SessionIndexer {
             opencode,
             codex,
             vibe,
+            kimi,
             errors_detail,
         ))
     }
@@ -1672,6 +1701,8 @@ impl SessionIndexer {
             self.index_codex_sessions_internal(&sources.codex_dir, false, &mut errors_detail)?;
         let vibe =
             self.index_vibe_sessions_internal(&sources.vibe_dir, false, &mut errors_detail)?;
+        let kimi =
+            self.index_kimi_sessions_internal(&sources.kimi_home, false, &mut errors_detail)?;
 
         Ok(Self::build_indexing_run_result(
             sources,
@@ -1679,6 +1710,7 @@ impl SessionIndexer {
             opencode,
             codex,
             vibe,
+            kimi,
             errors_detail,
         ))
     }
@@ -1689,6 +1721,7 @@ impl SessionIndexer {
         opencode: IndexingStats,
         codex: IndexingStats,
         vibe: IndexingStats,
+        kimi: IndexingStats,
         errors_detail: VecDeque<IndexingError>,
     ) -> IndexingRunResult {
         let per_source = vec![
@@ -1718,6 +1751,12 @@ impl SessionIndexer {
                 sources.vibe_dir.display().to_string(),
                 sources.vibe_dir.exists(),
                 vibe,
+            ),
+            build_per_source_result(
+                AiAssistant::KimiCode,
+                sources.kimi_home.display().to_string(),
+                sources.kimi_home.exists(),
+                kimi,
             ),
         ];
 
@@ -1794,20 +1833,14 @@ impl SessionIndexer {
 
     fn remove_session_by_id(&mut self, session_id: &str) -> Result<usize> {
         let tx = self.db.transaction()?;
-        tx.execute(
-            "DELETE FROM transcript_items WHERE session_id = ?1",
-            [session_id],
-        )?;
-        tx.execute(
-            "DELETE FROM reasoning_attachments WHERE session_id = ?1",
-            [session_id],
-        )?;
-        tx.execute("DELETE FROM tool_calls WHERE session_id = ?1", [session_id])?;
-        tx.execute("DELETE FROM subagents WHERE session_id = ?1", [session_id])?;
-        tx.execute("DELETE FROM messages WHERE session_id = ?1", [session_id])?;
-        let removed = tx.execute("DELETE FROM sessions WHERE id = ?1", [session_id])?;
+        let removed = Self::delete_session_by_id_tx(&tx, session_id)?;
         tx.commit()?;
         Ok(removed)
+    }
+
+    fn delete_session_by_id_tx(tx: &rusqlite::Transaction<'_>, session_id: &str) -> Result<usize> {
+        Self::delete_session_contents_tx(tx, session_id)?;
+        Ok(tx.execute("DELETE FROM sessions WHERE id = ?1", [session_id])?)
     }
 }
 
@@ -3540,13 +3573,19 @@ mod tests {
 
         let result = indexer.index_all_full_reindex(&sources).unwrap();
 
-        assert_eq!(result.per_source.len(), 4);
+        assert_eq!(result.per_source.len(), 5);
         assert!(result.totals.indexed > 0);
         assert!(
             result
                 .per_source
                 .iter()
                 .any(|r| r.assistant == AiAssistant::ClaudeCode)
+        );
+        assert!(
+            result
+                .per_source
+                .iter()
+                .any(|r| r.assistant == AiAssistant::KimiCode)
         );
     }
 

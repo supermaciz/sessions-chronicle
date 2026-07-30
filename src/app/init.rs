@@ -66,7 +66,7 @@ pub(super) fn init_child_components(
             SessionListOutput::SessionSelected(id) => AppMsg::SessionSelected(id),
             SessionListOutput::TogglePinRequested(id) => AppMsg::TogglePinRequested(id),
             SessionListOutput::SelectedSessionForPin(id) => AppMsg::TogglePinRequested(id),
-            SessionListOutput::ResumeRequested(id, tool) => AppMsg::ResumeSession(id, tool),
+            SessionListOutput::ResumeRequested(id, _) => AppMsg::ResumeSession(id),
         });
     let analytics_view = AnalyticsView::builder().launch(None).forward(
         sender.input_sender(),

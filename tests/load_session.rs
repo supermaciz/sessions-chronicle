@@ -145,6 +145,28 @@ fn load_session_returns_existing_session() {
 }
 
 #[test]
+fn load_session_round_trips_kimi_code_storage_value() {
+    let db = TempDatabase::new();
+    db.connection
+        .execute(
+            "INSERT INTO sessions
+             (id, tool, start_time, message_count, file_path, last_updated, is_subagent)
+             VALUES ('session_kimi', 'kimi_code', 1, 1, '/tmp/kimi', 2, 0)",
+            [],
+        )
+        .unwrap();
+
+    let session = load_session(&db.path, "session_kimi")
+        .unwrap()
+        .expect("Kimi session should load");
+
+    assert_eq!(
+        session.tool,
+        sessions_chronicle::models::AiAssistant::KimiCode
+    );
+}
+
+#[test]
 fn load_session_maps_pinned_at_to_utc_datetime() {
     let db = TempDatabase::new();
 

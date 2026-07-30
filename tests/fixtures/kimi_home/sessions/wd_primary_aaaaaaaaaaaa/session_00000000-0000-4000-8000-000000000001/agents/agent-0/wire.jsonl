@@ -1,0 +1,5 @@
+{"type":"metadata","protocol_version":"1.5"}
+{"type":"turn.prompt","time":1785319202250,"input":[{"type":"text","text":"Inspect child parser"}],"origin":{"kind":"user"}}
+{"type":"context.append_loop_event","time":1785319202260,"event":{"type":"tool.call","toolCallId":"Agent_nested","name":"Agent","args":{"agentId":"agent-nested","subagent_type":"explore","prompt":"Inspect nested parser"}}}
+{"type":"context.append_loop_event","time":1785319202270,"event":{"type":"tool.result","toolCallId":"Agent_nested","result":{"output":"agentId: agent-nested"}}}
+{"type":"context.append_loop_event","time":1785319202280,"event":{"type":"content.part","part":{"type":"text","text":"Child answer"}}}

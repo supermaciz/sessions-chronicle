@@ -1,0 +1,24 @@
+{"type":"metadata","protocol_version":"1.5","created_at":1785319200000}
+{"type":"turn.prompt","time":1785319201000,"input":[{"type":"text","text":"Inspect parser safety"}],"origin":{"kind":"user"}}
+{"type":"context.append_message","time":1785319201001,"message":{"role":"user","content":[{"type":"text","text":"Inspect parser safety"}],"origin":{"kind":"user"}}}
+{"type":"llm.request","time":1785319201100,"model":"kimi-k2","modelAlias":"moonshot-ai/kimi-k2","turnStep":"0.1"}
+{"type":"context.append_loop_event","time":1785319201200,"event":{"type":"step.begin","uuid":"step-1","turnId":"0","step":1}}
+{"type":"context.append_loop_event","time":1785319201300,"event":{"type":"content.part","stepUuid":"step-1","part":{"type":"think","think":"Inspect state first"}}}
+not-json
+{"type":"context.append_loop_event","time":1785319201400,"event":{"type":"content.part","stepUuid":"step-1","part":{"type":"text","text":"First text part"}}}
+{"type":"context.append_loop_event","time":1785319201500,"event":{"type":"content.part","stepUuid":"step-1","part":{"type":"text","text":"Second text part"}}}
+{"type":"context.append_loop_event","time":1785319201600,"event":{"type":"tool.call","stepUuid":"step-1","toolCallId":"Read_0","name":"Read","args":{"path":"README.md"}}}
+{"type":"context.append_loop_event","time":1785319201700,"event":{"type":"tool.result","toolCallId":"Read_0","result":{"output":"Fixture README"}}}
+{"type":"context.append_loop_event","time":1785319201800,"event":{"type":"tool.call","stepUuid":"step-1","toolCallId":"Fail_0","name":"Bash","args":{"command":"false"}}}
+{"type":"context.append_loop_event","time":1785319201900,"event":{"type":"tool.result","toolCallId":"Fail_0","result":{"output":"command failed","isError":true}}}
+{"type":"context.append_loop_event","time":1785319202000,"event":{"type":"tool.call","stepUuid":"step-1","toolCallId":"Pending_0","name":"Search","args":{"query":"fixture"}}}
+{"type":"context.append_loop_event","time":1785319202100,"event":{"type":"tool.result","toolCallId":"Unknown_0","result":{"output":"ignored"}}}
+{"type":"context.append_loop_event","time":1785319202200,"event":{"type":"tool.call","stepUuid":"step-1","toolCallId":"Agent_0","name":"Agent","args":{"agent_id":"agent-0","subagent_type":"explore","prompt":"Inspect parser safety"}}}
+{"type":"context.append_loop_event","time":1785319202300,"event":{"type":"tool.result","toolCallId":"Agent_0","result":{"output":"agent_id: agent-0\nDone","agent_id":"agent-0"}}}
+{"type":"context.append_loop_event","event":{"type":"tool.call","stepUuid":"step-1","toolCallId":"Agent_ambiguous","name":"Agent","args":{"subagent_type":"explore","prompt":"Inspect another area"}}}
+{"type":"config.update","time":1785319202400,"modelAlias":"fallback-model"}
+{"type":"llm.request","time":1785319202500,"model":"kimi-k3","modelAlias":"moonshot-ai/kimi-k3","turnStep":"0.2"}
+{"type":"context.append_loop_event","time":1785319202600,"event":{"type":"step.begin","uuid":"step-2","turnId":"0","step":2}}
+{"type":"context.append_loop_event","time":1785319202700,"event":{"type":"content.part","stepUuid":"step-2","part":{"type":"text","text":"Model switched"}}}
+{"type":"usage.record","time":1785319202800,"usageScope":"turn","usage":{"inputOther":100,"output":20,"inputCacheRead":30,"inputCacheCreation":4}}
+{"type":"context.append_loop_event","time":1785319202900,"event":{"type":"step.end","uuid":"step-2","usage":{"inputOther":100,"output":20,"inputCacheRead":30,"inputCacheCreation":4}}}

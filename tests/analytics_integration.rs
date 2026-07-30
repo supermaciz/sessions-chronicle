@@ -111,7 +111,13 @@ fn fixture_index_produces_non_empty_analytics_payload() {
     );
 
     // Verify that tool names use display names instead of storage names
-    let display_names = ["Claude Code", "OpenCode", "Codex", "Mistral Vibe"];
+    let display_names = [
+        "Claude Code",
+        "OpenCode",
+        "Codex",
+        "Mistral Vibe",
+        "Kimi Code",
+    ];
 
     for tool_data in &analytics.sessions_by_tool {
         assert!(
@@ -128,4 +134,19 @@ fn fixture_index_produces_non_empty_analytics_payload() {
             tool_data.tool
         );
     }
+
+    assert!(
+        analytics
+            .sessions_by_tool
+            .iter()
+            .any(|row| row.tool == "Kimi Code"),
+        "Expected fixture indexing to produce a Kimi Code session-count row"
+    );
+    assert!(
+        analytics
+            .token_usage_by_tool
+            .iter()
+            .any(|row| row.tool == "Kimi Code"),
+        "Expected fixture indexing to produce a Kimi Code token-usage row"
+    );
 }

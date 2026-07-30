@@ -25,8 +25,12 @@ and pick up where you left off.
 - Per-session token breakdowns in detail view
 - Assistant status dots, issue banner, empty-state diagnostics, and detailed indexing status dialog
 - Launch sessions directly from the app in your terminal
-- Supports 4 AI assistants — Claude Code, OpenCode, Codex, Mistral Vibe
+- Supports 5 AI assistants — Claude Code, OpenCode, Codex, Mistral Vibe, and Kimi Code
 - View most-used assistants, most-active days, and more
+
+Kimi Code support covers current sessions under `$KIMI_CODE_HOME` (default
+`~/.kimi-code`) when that location is visible in the Flatpak sandbox. Legacy
+sessions under `~/.kimi` are not parsed.
 
 
 ## Installation

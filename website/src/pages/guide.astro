@@ -88,9 +88,9 @@ flatpak run dev.maciz.sessionschronicle</code></pre>
         <h2>What happens on first launch</h2>
         <p>
           On startup, Sessions Chronicle automatically looks for local sessions
-          from Claude Code, OpenCode, Codex, and Mistral Vibe. It then starts
-          indexing them in the background so they become searchable inside the
-          app.
+          from Claude Code, OpenCode, Codex, Mistral Vibe, and Kimi Code. It
+          then starts indexing them in the background so they become searchable
+          inside the app.
         </p>
         <ul>
           <li>The header spinner shows when indexing is in progress.</li>
@@ -249,6 +249,12 @@ flatpak run dev.maciz.sessionschronicle</code></pre>
         <p>
           You can choose which terminal to use in the app&apos;s Preferences.
         </p>
+        <p>
+          Main Kimi Code sessions resume with
+          <code>kimi --session &lt;id&gt;</code>. Linked synthetic child transcripts
+          can be opened in Sessions Chronicle, but they cannot be resumed
+          directly.
+        </p>
       </div>
     </section>
 
@@ -291,6 +297,12 @@ flatpak run dev.maciz.sessionschronicle</code></pre>
           Open <code>Indexing Status</code> to inspect the state of each
           source. If needed, open <code>Preferences</code>, then use
           <code>Reset session index</code> to rebuild the index from scratch.
+        </p>
+        <p>
+          Kimi Code sessions are read from <code>$KIMI_CODE_HOME</code>, which defaults
+          to <code>~/.kimi-code</code>. Custom locations work when they are visible in
+          the Flatpak sandbox. The older Python CLI layout under <code>~/.kimi</code>
+          is not supported.
         </p>
         <p>Quick checks:</p>
         <ul>

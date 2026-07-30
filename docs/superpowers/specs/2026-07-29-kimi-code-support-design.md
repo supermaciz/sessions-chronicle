@@ -612,6 +612,63 @@ proprietary prompt/tool output.
 - Never offer resume for a child synthetic ID.
 - Verify parent-to-child navigation using fixture data.
 
+## Implementation Deviations
+
+The implementation follows the chosen bundle parser/indexer architecture and
+the normalized data model described above. The following deliberate deviations
+were introduced while hardening untrusted filesystem input and ambiguous agent
+linkage:
+
+### Stricter filesystem trust boundary
+
+The design allows a custom `$KIMI_CODE_HOME` when it is visible in the sandbox.
+The implementation additionally requires the configured Kimi home and its
+`sessions/` directory to be real directories rather than symbolic links. It
+also rejects symbolic links in every existing bundle path component. Agent
+paths must be directories, while `state.json` and every main or child
+`wire.jsonl` must be regular files.
+
+This means a symlinked Kimi home or `sessions/` directory is not indexed even
+when its target would otherwise be visible. The stricter rule prevents a
+session bundle from redirecting discovery, fingerprinting, or journal reads
+outside the configured source root.
+
+### Required and optional file classification
+
+The design describes a candidate as parseable when its required paths exist and
+treats missing required files as a nonfatal skip. The implementation narrows
+that behavior: only an actual `NotFound` result is considered transiently
+incomplete. A required path that is a symlink, directory, special file, or
+cannot be inspected produces a path-only Kimi diagnostic and prevents bundle
+replacement.
+
+The optional `session_index.jsonl` and `workspaces.json` files are likewise read
+only when they are regular, non-symlink files. Missing or rejected optional
+metadata never prevents directory discovery; the parser ignores it and uses
+the remaining project-path fallbacks. This avoids blocking on FIFOs or reading
+unbounded special files.
+
+### More conservative Agent-call matching
+
+The design defines structured IDs, textual IDs, and chronology as successive
+matching strategies. The implementation permits chronological fallback only
+when an `Agent` call contains no recognized child-ID evidence at all. If a
+recognized argument or result field is blank, non-string, invalid, unknown,
+conflicting, ambiguous, or names a child already claimed by another call, the
+call remains a generic tool call and is not reconsidered chronologically.
+
+This is intentionally stricter than falling through after unusable explicit
+evidence. It favors an unlinked child transcript over a false parent-to-child
+navigation link.
+
+### Outstanding validation
+
+Rust formatting, Clippy, the complete headless test suite, the website build,
+and desktop/AppStream validation were run against the implementation. The
+Flatpak build was explicitly waived during final verification. Manual fixture
+UI acceptance, launch-by-launch incremental mutation checks, validation with
+real current-format Kimi data, and updated PR screenshots remain outstanding.
+
 ## Verification
 
 Run CI-parity checks:
