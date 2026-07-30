@@ -101,8 +101,6 @@ fn trusted_kimi_directory(
         Ok(metadata) if metadata.is_dir() && !metadata.file_type().is_symlink() => true,
         Err(error) if missing_is_ok && error.kind() == std::io::ErrorKind::NotFound => false,
         result => {
-            discovery.enumeration_complete = false;
-            discovery.errors += 1;
             let message = match result {
                 Ok(_) => "Kimi session directory is not a trusted directory",
                 Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
@@ -110,15 +108,26 @@ fn trusted_kimi_directory(
                 }
                 Err(_) => "Failed to inspect Kimi session directory",
             };
-            push_indexing_error(
-                errors,
-                AiAssistant::KimiCode,
-                Some(path.display().to_string()),
-                message,
-            );
+            record_discovery_error(discovery, errors, path, message);
             false
         }
     }
+}
+
+fn record_discovery_error(
+    discovery: &mut KimiDiscovery,
+    errors: &mut VecDeque<IndexingError>,
+    path: &Path,
+    message: impl Into<String>,
+) {
+    discovery.enumeration_complete = false;
+    discovery.errors += 1;
+    push_indexing_error(
+        errors,
+        AiAssistant::KimiCode,
+        Some(path.display().to_string()),
+        message,
+    );
 }
 
 fn classify_required_kimi_paths(session_dir: &Path) -> RequiredPaths {
@@ -159,11 +168,10 @@ fn sorted_dirs(
     let entries = match fs::read_dir(path) {
         Ok(entries) => entries,
         Err(err) => {
-            discovery.enumeration_complete = false;
-            push_indexing_error(
+            record_discovery_error(
+                discovery,
                 errors,
-                AiAssistant::KimiCode,
-                Some(path.display().to_string()),
+                path,
                 format!("Failed to list Kimi session directory: {err}"),
             );
             return Vec::new();
@@ -180,11 +188,10 @@ fn sorted_dirs(
                 errors,
             ),
             Err(err) => {
-                discovery.enumeration_complete = false;
-                push_indexing_error(
+                record_discovery_error(
+                    discovery,
                     errors,
-                    AiAssistant::KimiCode,
-                    Some(path.display().to_string()),
+                    path,
                     format!("Failed to read Kimi session directory entry: {err}"),
                 );
             }
@@ -205,11 +212,10 @@ fn handle_directory_file_type(
         Ok(file_type) if file_type.is_dir() => dirs.push(entry_path),
         Ok(_) => {}
         Err(err) => {
-            discovery.enumeration_complete = false;
-            push_indexing_error(
+            record_discovery_error(
+                discovery,
                 errors,
-                AiAssistant::KimiCode,
-                Some(entry_path.display().to_string()),
+                &entry_path,
                 format!("Failed to read Kimi session directory entry file type: {err}"),
             );
         }
@@ -346,9 +352,13 @@ impl SessionIndexer {
                     continue;
                 }
                 Err(err) => {
+                    let error_path = err
+                        .downcast_ref::<ParseError>()
+                        .and_then(ParseError::invalid_path)
+                        .unwrap_or(&candidate.session_dir);
                     self.record_index_failure(
                         AiAssistant::KimiCode,
-                        &candidate.session_dir,
+                        error_path,
                         &err,
                         &mut stats,
                         errors_detail,
@@ -392,7 +402,9 @@ impl SessionIndexer {
                 Ok(StableParse::Incomplete) => stats.skipped += 1,
                 Err(err) => self.record_index_failure(
                     AiAssistant::KimiCode,
-                    &candidate.session_dir,
+                    err.downcast_ref::<ParseError>()
+                        .and_then(ParseError::invalid_path)
+                        .unwrap_or(&candidate.session_dir),
                     &err,
                     &mut stats,
                     errors_detail,
@@ -790,9 +802,21 @@ mod tests {
         );
 
         assert!(!discovery.enumeration_complete);
+        assert_eq!(discovery.errors, 1);
         assert_eq!(errors.len(), 1);
         assert_eq!(errors[0].assistant, AiAssistant::KimiCode);
         assert!(errors[0].message.contains("file type"));
+        let source_result = super::super::build_per_source_result(
+            AiAssistant::KimiCode,
+            temp.path().display().to_string(),
+            true,
+            IndexingStats {
+                errors: discovery.errors,
+                ..IndexingStats::default()
+            },
+        );
+        assert_eq!(source_result.errors, 1);
+        assert_eq!(source_result.status, crate::models::SourceStatus::Failed);
     }
 
     #[test]

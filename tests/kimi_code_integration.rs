@@ -4,7 +4,7 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use sessions_chronicle::database::SessionIndexer;
-use sessions_chronicle::models::{Role, ToolCallStatus, TranscriptItemKind};
+use sessions_chronicle::models::{Role, SourceStatus, ToolCallStatus, TranscriptItemKind};
 use sessions_chronicle::parsers::kimi_code::KimiCodeParser;
 use sessions_chronicle::session_sources::SessionSources;
 use tempfile::TempDir;
@@ -597,6 +597,7 @@ fn symlinked_sessions_root_cannot_index_an_external_fixture_tree() {
 
     assert_eq!(result.per_source[4].indexed, 0);
     assert_eq!(result.per_source[4].errors, 1);
+    assert_eq!(result.per_source[4].status, SourceStatus::Failed);
     assert_eq!(result.errors_detail.len(), 1);
     assert_eq!(
         result.errors_detail[0].location.as_deref(),
@@ -613,4 +614,51 @@ fn symlinked_sessions_root_cannot_index_an_external_fixture_tree() {
             .unwrap(),
         0
     );
+}
+
+#[cfg(unix)]
+#[test]
+fn declared_child_fifo_is_diagnosed_without_blocking_and_preserves_bundle() {
+    use std::process::Command;
+    use std::sync::mpsc;
+    use std::time::Duration;
+
+    let home = copied_home();
+    let database = tempfile::NamedTempFile::new().unwrap();
+    let primary = primary_dir(home.path());
+    let child_journal = primary.join("agents/agent-0/wire.jsonl");
+    let mut indexer = SessionIndexer::new(database.path()).unwrap();
+    indexer.index_kimi_sessions(home.path()).unwrap();
+    let connection = rusqlite::Connection::open(database.path()).unwrap();
+    let before = bundle_snapshot(&connection, &primary);
+    fs::remove_file(&child_journal).unwrap();
+    assert!(
+        Command::new("mkfifo")
+            .arg(&child_journal)
+            .status()
+            .unwrap()
+            .success()
+    );
+
+    let database_path = database.path().to_path_buf();
+    let kimi_home = home.path().to_path_buf();
+    let (sender, receiver) = mpsc::channel();
+    std::thread::spawn(move || {
+        let result = SessionIndexer::new(&database_path)
+            .and_then(|mut indexer| indexer.index_all_incremental(&all_sources(&kimi_home)));
+        sender.send(result).unwrap();
+    });
+    let result = receiver
+        .recv_timeout(Duration::from_secs(2))
+        .expect("Kimi indexing blocked while opening a declared child FIFO")
+        .unwrap();
+
+    assert_eq!(result.per_source[4].errors, 1);
+    assert_eq!(result.per_source[4].status, SourceStatus::Degraded);
+    assert_eq!(result.errors_detail.len(), 1);
+    assert_eq!(
+        result.errors_detail[0].location.as_deref(),
+        child_journal.to_str()
+    );
+    assert_eq!(bundle_snapshot(&connection, &primary), before);
 }

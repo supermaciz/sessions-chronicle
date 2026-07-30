@@ -36,6 +36,26 @@ mod tests {
         fs::write(path.join("wire.jsonl"), format!("{}\n", records.join("\n"))).unwrap();
     }
 
+    fn parse_single_agent_call(records: &[&str]) -> ParsedSession {
+        let mut metadata = state();
+        metadata["agents"] = json!({
+            "main": { "type": "main", "parentAgentId": null },
+            "agent-0": { "type": "sub", "parentAgentId": "main" }
+        });
+        let root = write_bundle(metadata, records);
+        write_agent_journal(
+            &root,
+            "agent-0",
+            &[
+                r#"{"type":"turn.prompt","time":1785320000030,"input":[{"type":"text","text":"Child"}],"origin":{"kind":"user"}}"#,
+            ],
+        );
+        KimiCodeParser::new(root.path())
+            .parse_session_dir(&session_dir(&root))
+            .unwrap()
+            .main
+    }
+
     fn state() -> Value {
         json!({
             "createdAt": "2026-07-29T10:00:00Z",
@@ -862,6 +882,55 @@ mod tests {
         assert!(parsed.main.subagents.is_empty());
         assert_eq!(parsed.main.tool_calls[0].tool_name, "Agent");
     }
+
+    #[test]
+    fn null_structured_and_valid_text_agent_evidence_remains_generic() {
+        let parsed = parse_single_agent_call(&[
+            r#"{"type":"turn.prompt","time":1785320000000,"input":[{"type":"text","text":"Main"}],"origin":{"kind":"user"}}"#,
+            r#"{"type":"context.append_loop_event","time":1785320000010,"event":{"type":"tool.call","toolCallId":"Agent_0","name":"Agent","args":{"agent_id":null}}}"#,
+            r#"{"type":"context.append_loop_event","time":1785320000020,"event":{"type":"tool.result","toolCallId":"Agent_0","result":{"output":"agent_id: agent-0"}}}"#,
+        ]);
+
+        assert!(parsed.subagents.is_empty());
+        assert_eq!(parsed.tool_calls[0].tool_name, "Agent");
+    }
+
+    #[test]
+    fn blank_structured_and_valid_text_agent_evidence_remains_generic() {
+        let parsed = parse_single_agent_call(&[
+            r#"{"type":"turn.prompt","time":1785320000000,"input":[{"type":"text","text":"Main"}],"origin":{"kind":"user"}}"#,
+            r#"{"type":"context.append_loop_event","time":1785320000010,"event":{"type":"tool.call","toolCallId":"Agent_0","name":"Agent","args":{"agent_id":"  "}}}"#,
+            r#"{"type":"context.append_loop_event","time":1785320000020,"event":{"type":"tool.result","toolCallId":"Agent_0","result":{"output":"agent_id: agent-0"}}}"#,
+        ]);
+
+        assert!(parsed.subagents.is_empty());
+        assert_eq!(parsed.tool_calls[0].tool_name, "Agent");
+    }
+
+    #[test]
+    fn unknown_and_valid_agent_evidence_remains_generic() {
+        let parsed = parse_single_agent_call(&[
+            r#"{"type":"turn.prompt","time":1785320000000,"input":[{"type":"text","text":"Main"}],"origin":{"kind":"user"}}"#,
+            r#"{"type":"context.append_loop_event","time":1785320000010,"event":{"type":"tool.call","toolCallId":"Agent_0","name":"Agent","args":{"agent_id":"unknown-agent"}}}"#,
+            r#"{"type":"context.append_loop_event","time":1785320000020,"event":{"type":"tool.result","toolCallId":"Agent_0","result":{"output":"agent_id: agent-0"}}}"#,
+        ]);
+
+        assert!(parsed.subagents.is_empty());
+        assert_eq!(parsed.tool_calls[0].tool_name, "Agent");
+    }
+
+    #[test]
+    fn all_valid_same_agent_evidence_matches_child() {
+        let parsed = parse_single_agent_call(&[
+            r#"{"type":"turn.prompt","time":1785320000000,"input":[{"type":"text","text":"Main"}],"origin":{"kind":"user"}}"#,
+            r#"{"type":"context.append_loop_event","time":1785320000010,"event":{"type":"tool.call","toolCallId":"Agent_0","name":"Agent","args":{"agent_id":"agent-0"}}}"#,
+            r#"{"type":"context.append_loop_event","time":1785320000020,"event":{"type":"tool.result","toolCallId":"Agent_0","result":{"agentId":"agent-0","output":"agent_id: agent-0"}}}"#,
+        ]);
+
+        assert_eq!(parsed.subagents.len(), 1);
+        assert_eq!(parsed.subagents[0].agent_id.as_deref(), Some("agent-0"));
+        assert!(parsed.tool_calls.is_empty());
+    }
 }
 use anyhow::{Context, Result, bail};
 use chrono::{DateTime, Duration, Utc};
@@ -881,6 +950,20 @@ use crate::parsers::{ParsedSession, PendingReasoning, extract_first_prompt};
 pub enum ParseError {
     #[error("Session contains no user messages")]
     NoUserMessages,
+    #[error("Kimi bundle path is not a {expected}: {path}")]
+    InvalidBundlePath {
+        path: PathBuf,
+        expected: &'static str,
+    },
+}
+
+impl ParseError {
+    pub(crate) fn invalid_path(&self) -> Option<&Path> {
+        match self {
+            Self::InvalidBundlePath { path, .. } => Some(path),
+            Self::NoUserMessages => None,
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -953,6 +1036,13 @@ enum VisitState {
     Rejected,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum AgentEvidence {
+    Absent,
+    Valid(String),
+    Invalid,
+}
+
 #[derive(Debug, Clone)]
 struct StepState {
     turn_step: Option<String>,
@@ -1006,13 +1096,10 @@ impl KimiCodeParser {
     pub fn dependency_paths(&self, session_dir: &Path) -> Result<Vec<PathBuf>> {
         let state_path = session_dir.join("state.json");
         validate_bundle_path(&self.kimi_home, session_dir, &state_path)?;
+        validate_expected_file(&state_path)?;
         let state = load_state(&state_path)?;
-        let mut paths = vec![
-            session_dir.join("state.json"),
-            session_dir.join("agents"),
-            session_dir.join("agents/main"),
-            session_dir.join("agents/main/wire.jsonl"),
-        ];
+        let mut files = vec![state_path, session_dir.join("agents/main/wire.jsonl")];
+        let mut directories = vec![session_dir.join("agents"), session_dir.join("agents/main")];
 
         let resolved_agents = resolve_agents(&state, session_dir);
         if !state.agents.contains_key("main") {
@@ -1022,15 +1109,22 @@ impl KimiCodeParser {
             let Some(agent_dir) = agent.journal_path.parent() else {
                 continue;
             };
-            paths.push(agent_dir.to_path_buf());
-            paths.push(agent.journal_path);
+            directories.push(agent_dir.to_path_buf());
+            files.push(agent.journal_path);
         }
 
-        paths.sort();
-        paths.dedup();
-        for path in &paths {
+        for path in &directories {
+            validate_expected_directory(path)?;
             validate_bundle_path(&self.kimi_home, session_dir, path)?;
         }
+        for path in &files {
+            validate_expected_file(path)?;
+            validate_bundle_path(&self.kimi_home, session_dir, path)?;
+        }
+        let mut paths = directories;
+        paths.extend(files);
+        paths.sort();
+        paths.dedup();
         Ok(paths)
     }
 
@@ -1038,8 +1132,13 @@ impl KimiCodeParser {
         let session_id = canonical_session_id(session_dir)?;
         let state_path = session_dir.join("state.json");
         validate_bundle_path(&self.kimi_home, session_dir, &state_path)?;
+        validate_expected_file(&state_path)?;
         let state = load_state(&state_path)?;
         let resolved_agents = resolve_agents(&state, session_dir);
+        for path in [session_dir.join("agents"), session_dir.join("agents/main")] {
+            validate_expected_directory(&path)?;
+            validate_bundle_path(&self.kimi_home, session_dir, &path)?;
+        }
         if state.id.as_deref().is_some_and(|id| id != session_id) {
             tracing::warn!(path = %state_path.display(), "Kimi state identity differs from directory identity");
         }
@@ -1059,6 +1158,7 @@ impl KimiCodeParser {
             });
 
         let journal_path = session_dir.join("agents/main/wire.jsonl");
+        validate_expected_file(&journal_path)?;
         validate_bundle_path(&self.kimi_home, session_dir, &journal_path)?;
         let scan = scan_journal(&journal_path)?;
         let start_time = state
@@ -1122,6 +1222,11 @@ impl KimiCodeParser {
                 omitted_agents.insert(agent.id);
                 continue;
             }
+            if let Some(agent_dir) = agent.journal_path.parent() {
+                validate_expected_directory(agent_dir)?;
+                validate_bundle_path(&self.kimi_home, session_dir, agent_dir)?;
+            }
+            validate_expected_file(&agent.journal_path)?;
             validate_bundle_path(&self.kimi_home, session_dir, &agent.journal_path)?;
             let scan = scan_journal(&agent.journal_path)?;
             let child_start = scan
@@ -1315,6 +1420,32 @@ pub(crate) fn validate_bundle_path(
                     .with_context(|| format!("failed to inspect {}", current.display()));
             }
         }
+    }
+    Ok(())
+}
+
+fn validate_expected_file(path: &Path) -> Result<()> {
+    let metadata = fs::symlink_metadata(path)
+        .map_err(|error| anyhow::anyhow!("failed to inspect {}: {error}", path.display()))?;
+    if !metadata.is_file() || metadata.file_type().is_symlink() {
+        return Err(ParseError::InvalidBundlePath {
+            path: path.to_path_buf(),
+            expected: "regular file",
+        }
+        .into());
+    }
+    Ok(())
+}
+
+fn validate_expected_directory(path: &Path) -> Result<()> {
+    let metadata = fs::symlink_metadata(path)
+        .map_err(|error| anyhow::anyhow!("failed to inspect {}: {error}", path.display()))?;
+    if !metadata.is_dir() || metadata.file_type().is_symlink() {
+        return Err(ParseError::InvalidBundlePath {
+            path: path.to_path_buf(),
+            expected: "directory",
+        }
+        .into());
     }
     Ok(())
 }
@@ -1513,9 +1644,20 @@ fn resolve_agent(
     Some(depth)
 }
 
-fn agent_evidence(candidate: &AgentCallCandidate) -> (bool, HashSet<String>) {
-    let mut present = false;
-    let mut ids = HashSet::new();
+fn merge_agent_evidence(evidence: &mut AgentEvidence, id: Option<&str>) {
+    let Some(id) = id.map(str::trim).filter(|id| !id.is_empty()) else {
+        *evidence = AgentEvidence::Invalid;
+        return;
+    };
+    match evidence {
+        AgentEvidence::Absent => *evidence = AgentEvidence::Valid(id.to_string()),
+        AgentEvidence::Valid(existing) if existing == id => {}
+        AgentEvidence::Valid(_) | AgentEvidence::Invalid => *evidence = AgentEvidence::Invalid,
+    }
+}
+
+fn agent_evidence(candidate: &AgentCallCandidate) -> AgentEvidence {
+    let mut evidence = AgentEvidence::Absent;
     for (value, keys) in [
         (
             candidate.args.as_ref(),
@@ -1528,10 +1670,7 @@ fn agent_evidence(candidate: &AgentCallCandidate) -> (bool, HashSet<String>) {
         };
         for key in keys {
             if let Some(raw) = value.get(key) {
-                present = true;
-                if let Some(id) = raw.as_str() {
-                    ids.insert(id.to_string());
-                }
+                merge_agent_evidence(&mut evidence, raw.as_str());
             }
         }
     }
@@ -1541,13 +1680,16 @@ fn agent_evidence(candidate: &AgentCallCandidate) -> (bool, HashSet<String>) {
                 continue;
             };
             if matches!(key, "agent_id" | "agentId") {
-                present = true;
                 let value = value.trim();
-                ids.insert(value.to_string());
+                if valid_agent_id(value) {
+                    merge_agent_evidence(&mut evidence, Some(value));
+                } else {
+                    evidence = AgentEvidence::Invalid;
+                }
             }
         }
     }
-    (present, ids)
+    evidence
 }
 
 fn match_agent_calls(
@@ -1562,9 +1704,7 @@ fn match_agent_calls(
         .map(|candidate| (candidate.raw_call_id.as_str(), agent_evidence(candidate)))
         .collect();
     for candidate in candidates {
-        let (_, ids) = &evidence[candidate.raw_call_id.as_str()];
-        if ids.len() == 1
-            && let Some(id) = ids.iter().next()
+        if let AgentEvidence::Valid(id) = &evidence[candidate.raw_call_id.as_str()]
             && children.iter().any(|(child_id, _, _)| *child_id == id)
             && used_children.insert(id.clone())
         {
@@ -1575,7 +1715,7 @@ fn match_agent_calls(
         .iter()
         .filter(|candidate| {
             !matched.contains_key(&candidate.raw_call_id)
-                && !evidence[candidate.raw_call_id.as_str()].0
+                && evidence[candidate.raw_call_id.as_str()] == AgentEvidence::Absent
         })
         .collect();
     let mut remaining_children: Vec<_> = children
