@@ -14,7 +14,7 @@ use super::super::types::{ActiveSessionRef, Workspace};
 
 #[derive(Debug)]
 enum ExternalSessionLookup {
-    Found(Session),
+    Found(Box<Session>),
     IndexMissing,
     Unavailable,
     Failed(anyhow::Error),
@@ -36,7 +36,9 @@ fn lookup_external_session(db_path: &Path, id: &str, index_ready: bool) -> Exter
     }
 
     match load_session(db_path, id) {
-        Ok(Some(session)) if !session.is_subagent => ExternalSessionLookup::Found(session),
+        Ok(Some(session)) if !session.is_subagent => {
+            ExternalSessionLookup::Found(Box::new(session))
+        }
         Ok(Some(_)) | Ok(None) => ExternalSessionLookup::Unavailable,
         Err(error) => ExternalSessionLookup::Failed(error),
     }
@@ -174,7 +176,7 @@ impl App {
         tracing::debug!(session_id = %id, "External session open requested");
 
         let session = match lookup_external_session(&self.db_path, &id, self.index_ready) {
-            ExternalSessionLookup::Found(session) => session,
+            ExternalSessionLookup::Found(session) => *session,
             ExternalSessionLookup::IndexMissing => {
                 self.show_external_open_failure(ExternalOpenFailure::IndexMissing);
                 return;

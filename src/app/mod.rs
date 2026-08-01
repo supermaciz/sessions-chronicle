@@ -1874,7 +1874,7 @@ mod tests {
     #[gtk::test]
     fn typed_application_action_reaches_root_component_through_broker() {
         use gtk::glib::variant::{StaticVariantType, ToVariant};
-        use gtk::prelude::{ActionExt, ActionGroupExt, ActionMapExt};
+        use gtk::prelude::{ActionExt, ActionMapExt};
 
         if !schema_is_available() {
             return;
