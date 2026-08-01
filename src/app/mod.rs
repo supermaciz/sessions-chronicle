@@ -1,6 +1,6 @@
 use relm4::{
-    Component, ComponentController, ComponentParts, ComponentSender, Controller, SimpleComponent,
-    WorkerController, adw, gtk, main_application,
+    Component, ComponentController, ComponentParts, ComponentSender, Controller, MessageBroker,
+    SimpleComponent, WorkerController, adw, gtk, main_application,
 };
 
 use adw::prelude::*;
@@ -158,6 +158,8 @@ pub(super) struct App {
     banner: adw::Banner,
     banner_has_issues: bool,
 }
+
+pub(super) static APP_BROKER: MessageBroker<AppMsg> = MessageBroker::new();
 
 #[derive(Debug)]
 pub(super) enum AppMsg {
@@ -1867,5 +1869,52 @@ mod tests {
                 original_stack_size
             );
         }
+    }
+
+    #[gtk::test]
+    fn typed_application_action_reaches_root_component_through_broker() {
+        use gtk::glib::variant::{StaticVariantType, ToVariant};
+        use gtk::prelude::{ActionExt, ActionGroupExt, ActionMapExt};
+
+        if !schema_is_available() {
+            return;
+        }
+
+        let app = main_application();
+        crate::register_application_actions(&app);
+        let controller =
+            App::builder().launch_with_broker(Some(PathBuf::from("tests/fixtures")), &APP_BROKER);
+        pump_main_context(|| !controller.state().get().model.indexing);
+
+        let action = app
+            .lookup_action("open-session")
+            .expect("action registered");
+        assert_eq!(
+            action.parameter_type().as_deref(),
+            Some(String::static_variant_type().as_ref())
+        );
+
+        action.activate(Some(&"abc123".to_variant()));
+        pump_main_context(|| {
+            controller
+                .state()
+                .get()
+                .model
+                .active_session
+                .as_ref()
+                .is_some_and(|session| session.id == "abc123")
+        });
+
+        assert_eq!(
+            controller
+                .state()
+                .get()
+                .model
+                .active_session
+                .as_ref()
+                .unwrap()
+                .id,
+            "abc123"
+        );
     }
 }

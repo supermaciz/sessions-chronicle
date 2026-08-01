@@ -22,18 +22,42 @@ mod utils;
 
 use config::{APP_ID, GETTEXT_PACKAGE, LOCALEDIR, RESOURCES_FILE};
 use gettextrs::{LocaleCategory, gettext};
-use gtk::prelude::ApplicationExt;
+use gtk::glib::variant::StaticVariantType;
+use gtk::prelude::{ActionMapExt, ApplicationExt, GtkApplicationExt, GtkWindowExt};
 use gtk::{gio, glib};
 use relm4::{RelmApp, gtk, main_application};
 use std::env;
 
-use app::App;
+use app::{APP_BROKER, App, AppMsg};
 
 use session_sources::{SessionSources, select_db_filename};
 use tracing_subscriber::EnvFilter;
 
 relm4::new_action_group!(AppActionGroup, "app");
 relm4::new_stateless_action!(QuitAction, AppActionGroup, "quit");
+
+fn present_application_window(app: &gtk::Application) {
+    if let Some(window) = app
+        .active_window()
+        .or_else(|| app.windows().into_iter().next())
+    {
+        window.present();
+    }
+}
+
+fn register_application_actions(app: &gtk::Application) {
+    let open_session = gio::SimpleAction::new("open-session", Some(&String::static_variant_type()));
+    let application = app.clone();
+    open_session.connect_activate(move |_, parameter| {
+        present_application_window(&application);
+        let Some(id) = parameter.and_then(|value| value.get::<String>()) else {
+            tracing::warn!("open-session activated without a string parameter");
+            return;
+        };
+        APP_BROKER.send(AppMsg::OpenExternalSession(id));
+    });
+    app.add_action(&open_session);
+}
 
 fn main() {
     let invocation = startup::parse_invocation(env::args()).unwrap_or_else(|error| error.exit());
@@ -72,9 +96,14 @@ fn main() {
     gtk::Window::set_default_icon_name(APP_ID);
 
     let app = main_application();
+    app.set_application_id(Some(APP_ID));
     app.set_resource_base_path(Some("/dev/maciz/sessionschronicle/"));
+    app.connect_activate(present_application_window);
+    register_application_actions(&app);
 
-    let app = RelmApp::from_app(app).with_args(invocation.gapplication_args);
+    let app = RelmApp::from_app(app)
+        .with_broker(&APP_BROKER)
+        .with_args(invocation.gapplication_args);
     app.allow_multiple_instances(startup::allow_multiple_instances(
         args.sessions_dir.as_deref(),
     ));
