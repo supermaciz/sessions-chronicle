@@ -39,7 +39,7 @@ jobs:
           git archive origin/flatpak-repo-data | tar -x -C website/public/flatpak
 
           touch website/public/.nojekyll
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         with:
           node-version: '22'
           cache: 'npm'
