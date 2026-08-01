@@ -48,3 +48,23 @@ fn help_describes_print_db_path_option() {
     assert!(stdout.contains("--print-db-path"));
     assert!(stdout.contains("Print the resolved SQLite database path and exit"));
 }
+
+#[test]
+fn print_db_path_after_gapplication_option_is_handled_locally() {
+    let output = run_cli(&["--gapplication-service", "--print-db-path"]);
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout).expect("stdout should be utf8");
+    assert!(stdout.trim_end().ends_with("sessions.db"));
+}
+
+#[test]
+fn sessions_dir_equals_form_selects_override_database() {
+    let sessions_dir = tempfile::tempdir().expect("failed to create temp sessions dir");
+    let argument = format!("--sessions-dir={}", sessions_dir.path().display());
+    let output = run_cli(&[&argument, "--print-db-path"]);
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout).expect("stdout should be utf8");
+    assert!(stdout.trim_end().ends_with("sessions-override.db"));
+}

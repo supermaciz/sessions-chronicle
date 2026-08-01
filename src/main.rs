@@ -15,6 +15,7 @@ mod models;
 mod parsers;
 mod project_resolver;
 mod session_sources;
+mod startup;
 #[allow(dead_code)]
 mod ui;
 mod utils;
@@ -24,34 +25,19 @@ use gettextrs::{LocaleCategory, gettext};
 use gtk::prelude::ApplicationExt;
 use gtk::{gio, glib};
 use relm4::{RelmApp, gtk, main_application};
-use std::{env, path::PathBuf};
+use std::env;
 
 use app::App;
 
-use clap::Parser;
 use session_sources::{SessionSources, select_db_filename};
 use tracing_subscriber::EnvFilter;
-
-#[derive(Parser)]
-struct Args {
-    /// Override session source root directory.
-    #[arg(long, value_name = "DIR")]
-    sessions_dir: Option<PathBuf>,
-
-    /// Print the resolved SQLite database path and exit.
-    #[arg(long)]
-    print_db_path: bool,
-
-    /// Unknown arguments or everything after -- gets passed through to GTK.
-    #[arg(allow_hyphen_values = true, trailing_var_arg = true)]
-    gtk_options: Vec<String>,
-}
 
 relm4::new_action_group!(AppActionGroup, "app");
 relm4::new_stateless_action!(QuitAction, AppActionGroup, "quit");
 
 fn main() {
-    let args = Args::parse();
+    let invocation = startup::parse_invocation(env::args()).unwrap_or_else(|error| error.exit());
+    let args = invocation.local;
 
     if args.print_db_path {
         let sources = SessionSources::resolve(args.sessions_dir.as_deref());
@@ -88,13 +74,10 @@ fn main() {
     let app = main_application();
     app.set_resource_base_path(Some("/dev/maciz/sessionschronicle/"));
 
-    let program_invocation = env::args()
-        .next()
-        .unwrap_or_else(|| String::from("sessions-chronicle"));
-    let mut gtk_args = vec![program_invocation];
-    gtk_args.extend(args.gtk_options.clone());
-
-    let app = RelmApp::from_app(app).with_args(gtk_args);
+    let app = RelmApp::from_app(app).with_args(invocation.gapplication_args);
+    app.allow_multiple_instances(startup::allow_multiple_instances(
+        args.sessions_dir.as_deref(),
+    ));
 
     let data = res
         .lookup_data(
