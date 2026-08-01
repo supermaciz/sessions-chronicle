@@ -1,5 +1,6 @@
 use std::path::Path;
 
+use gettextrs::gettext;
 use relm4::ComponentController;
 use relm4::gtk::prelude::WidgetExt;
 
@@ -10,6 +11,44 @@ use crate::ui::session_detail::SessionDetailMsg;
 use super::super::App;
 use super::super::helpers::{active_search_query, parent_session_load_failure_message};
 use super::super::types::ActiveSessionRef;
+
+#[derive(Debug)]
+enum ExternalSessionLookup {
+    Found(Session),
+    IndexMissing,
+    Unavailable,
+    Failed(anyhow::Error),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ExternalOpenFailure {
+    IndexMissing,
+    Unavailable,
+    Failed,
+}
+
+fn lookup_external_session(db_path: &Path, id: &str, index_ready: bool) -> ExternalSessionLookup {
+    if id.is_empty() {
+        return ExternalSessionLookup::Unavailable;
+    }
+    if !index_ready || !db_path.exists() {
+        return ExternalSessionLookup::IndexMissing;
+    }
+
+    match load_session(db_path, id) {
+        Ok(Some(session)) if !session.is_subagent => ExternalSessionLookup::Found(session),
+        Ok(Some(_)) | Ok(None) => ExternalSessionLookup::Unavailable,
+        Err(error) => ExternalSessionLookup::Failed(error),
+    }
+}
+
+fn external_open_failure_title(failure: ExternalOpenFailure) -> String {
+    match failure {
+        ExternalOpenFailure::Unavailable => gettext("Session not found"),
+        ExternalOpenFailure::IndexMissing => gettext("Sessions are not indexed yet"),
+        ExternalOpenFailure::Failed => gettext("Could not open session"),
+    }
+}
 
 impl App {
     fn project_name_from_session(session: &Session) -> String {
@@ -122,5 +161,104 @@ impl App {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::database::schema::initialize_database;
+    use rusqlite::Connection;
+
+    fn seeded_database() -> (tempfile::TempDir, std::path::PathBuf) {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("sessions.db");
+        let connection = Connection::open(&path).unwrap();
+        initialize_database(&connection).unwrap();
+        connection
+            .execute(
+                "INSERT INTO sessions
+                 (id, tool, project_path, start_time, message_count, file_path,
+                  last_updated, is_subagent)
+                 VALUES (?1, 'claude_code', '/projects/demo', 1, 1, '/tmp/demo.jsonl', 1, ?2)",
+                rusqlite::params!["top-level", false],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO sessions
+                 (id, tool, project_path, start_time, message_count, file_path,
+                  last_updated, is_subagent)
+                 VALUES (?1, 'claude_code', '/projects/demo', 1, 1, '/tmp/child.jsonl', 1, ?2)",
+                rusqlite::params!["subagent", true],
+            )
+            .unwrap();
+        drop(connection);
+        (directory, path)
+    }
+
+    #[test]
+    fn lookup_accepts_only_existing_top_level_session() {
+        let (_directory, path) = seeded_database();
+
+        match lookup_external_session(&path, "top-level", true) {
+            ExternalSessionLookup::Found(session) => assert_eq!(session.id, "top-level"),
+            outcome => panic!("expected found, got {outcome:?}"),
+        }
+        assert!(matches!(
+            lookup_external_session(&path, "subagent", true),
+            ExternalSessionLookup::Unavailable
+        ));
+        assert!(matches!(
+            lookup_external_session(&path, "missing", true),
+            ExternalSessionLookup::Unavailable
+        ));
+        assert!(matches!(
+            lookup_external_session(&path, "", true),
+            ExternalSessionLookup::Unavailable
+        ));
+    }
+
+    #[test]
+    fn lookup_distinguishes_missing_index_from_missing_row() {
+        let directory = tempfile::tempdir().unwrap();
+        let missing_path = directory.path().join("not-created.db");
+
+        assert!(matches!(
+            lookup_external_session(&missing_path, "stale-id", true),
+            ExternalSessionLookup::IndexMissing
+        ));
+
+        let (_seed_directory, seeded_path) = seeded_database();
+        assert!(matches!(
+            lookup_external_session(&seeded_path, "top-level", false),
+            ExternalSessionLookup::IndexMissing
+        ));
+    }
+
+    #[test]
+    fn lookup_distinguishes_sqlite_failure() {
+        let directory = tempfile::tempdir().unwrap();
+
+        assert!(matches!(
+            lookup_external_session(directory.path(), "any-id", true),
+            ExternalSessionLookup::Failed(_)
+        ));
+    }
+
+    #[test]
+    fn failure_titles_match_the_three_user_outcomes() {
+        assert_eq!(
+            external_open_failure_title(ExternalOpenFailure::Unavailable),
+            "Session not found"
+        );
+        assert_eq!(
+            external_open_failure_title(ExternalOpenFailure::IndexMissing),
+            "Sessions are not indexed yet"
+        );
+        assert_eq!(
+            external_open_failure_title(ExternalOpenFailure::Failed),
+            "Could not open session"
+        );
     }
 }
