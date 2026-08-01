@@ -33,7 +33,7 @@ This is the minimum deep-link contract required by the GNOME Activities search p
 - `RelmApp::from_app` calls `set_main_application` (`relm4-0.11.0/src/app.rs:48`), so the `main_application()` call inside the root `view!` (`src/app/mod.rs:254`) resolves to the same instance. Setting the ID on the existing global application is equivalent and shorter.
 - `RelmApp` exposes `allow_multiple_instances(bool)`, which toggles `gio::ApplicationFlags::NON_UNIQUE` on the underlying application (`relm4-0.11.0/src/app.rs:93`).
 - GLib adds the `--gapplication-service` option in `g_application_real_local_command_line` whenever the flags contain neither `IS_SERVICE` nor `IS_LAUNCHER`. It does **not** depend on `HANDLES_COMMAND_LINE`, so D-Bus service activation needs no extra application flag.
-- The local Clap parser absorbs unknown options into `gtk_options` through `trailing_var_arg` and `allow_hyphen_values`, and forwards them to GApplication. Verified: `sessions-chronicle --gapplication-service --print-db-path` reaches GTK rather than erroring — but everything after the first unknown option is swallowed, so `--print-db-path` is no longer handled locally in that ordering.
+- The local Clap parser currently absorbs unknown options into `gtk_options` through `trailing_var_arg` and `allow_hyphen_values`, and forwards them to GApplication. Verified: `sessions-chronicle --gapplication-service --print-db-path` reaches GTK rather than erroring — but everything after the first unknown option is swallowed, so `--print-db-path` is no longer handled locally in that ordering. The same defect would prevent a later `--sessions-dir` from selecting `NON_UNIQUE`.
 - The root window is declared with `set_visible: true` in the `view!` macro (`src/app/mod.rs:255`) while `main.rs` uses `visible_on_activate(false)`. A cold start therefore always maps a window, including one triggered by D-Bus activation. Sessions Chronicle is not a lazy background service.
 - A GApplication with an application ID owns that well-known name on the session bus and routes application actions to the primary instance. An application carrying `NON_UNIQUE` does not own the name and is not reachable through it.
 - The existing `AppMsg::SessionSelected` path already loads a session by exact ID and drives `SessionDetail` (`src/app/handlers/sessions.rs:42`), but its missing-session branch opens an empty detail page and provides no user feedback (`src/app/handlers/sessions.rs:52-63`). External activation needs a non-destructive failure path.
@@ -110,7 +110,9 @@ The existing local Clap pass remains responsible for:
 - handling `--print-db-path` locally and exiting before GApplication starts;
 - separating options that GApplication/GTK must still receive, including `--gapplication-service`.
 
-Because `trailing_var_arg` swallows every argument following the first unrecognised option, option ordering is significant. `--gapplication-service` arrives alone from the service file, so this is safe for the deep-link path, but it is covered by an explicit test rather than left implicit.
+The current `trailing_var_arg` catch-all is replaced by an order-independent separation pass. Before the `--` delimiter, it extracts the exact local forms `--sessions-dir DIR`, `--sessions-dir=DIR`, and `--print-db-path`; every other argument remains in its original order and is forwarded to GApplication. Everything after `--` is forwarded unchanged. Clap then validates the extracted local arguments, retaining diagnostics for a missing directory value and duplicate local options.
+
+This guarantees that a local option appearing after a GTK/GApplication option still affects startup. In particular, `sessions-chronicle --display=:1 --sessions-dir tests/fixtures` sets `NON_UNIQUE`, while `sessions-chronicle --gapplication-service --print-db-path` handles `--print-db-path` locally instead of starting GApplication. The separator must not maintain a hand-written list of GTK options; unknown non-local arguments are opaque pass-through values.
 
 An instance fixes its sources and database path for its entire lifetime. The application never switches source roots at runtime.
 
@@ -224,7 +226,8 @@ The three new toast strings are translatable. `po/POTFILES.in` currently lists `
 ### Pure tests
 
 - Uniqueness decision: `--sessions-dir` absent yields default flags, present yields `NON_UNIQUE`.
-- Local argument separation: `--gapplication-service` survives the Clap pass and is forwarded to GApplication instead of aborting startup. This is the D-Bus activation path, so it is tested rather than assumed.
+- Local argument separation: `--gapplication-service` survives the separation pass and is forwarded to GApplication instead of aborting startup. This is the D-Bus activation path, so it is tested rather than assumed.
+- Order independence: `--sessions-dir` after a GTK option still yields `NON_UNIQUE`; `--print-db-path` after `--gapplication-service` still exits locally; both `--sessions-dir=DIR` and the split form are accepted; arguments after `--` are forwarded unchanged.
 - External target classification: top-level row accepted, subagent row unavailable, missing row unavailable, missing database distinct from missing row, SQLite error distinct from both.
 - Successful external navigation requests search clearing without changing persisted sort or list filters.
 
