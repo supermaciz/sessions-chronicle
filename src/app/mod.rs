@@ -149,6 +149,7 @@ pub(super) struct App {
     toast_overlay: adw::ToastOverlay,
     filter_state: FilterState,
     db_path: PathBuf,
+    index_ready: bool,
     sources: SessionSources,
     indexing: bool,
     pending_reindex_feedback: bool,
@@ -179,6 +180,7 @@ pub(super) enum AppMsg {
         project_filter: ProjectFilter,
     },
     SessionSelected(String),
+    OpenExternalSession(String),
     /// User-requested navigation back from detail to list.
     RequestNavigateBack,
     /// Detail page popped signal from `NavigationView`.
@@ -452,6 +454,7 @@ impl SimpleComponent for App {
         let sources = SessionSources::resolve(sessions_dir.as_deref());
         let db_dir = glib::user_data_dir().join(APP_ID);
         let db_path = db_dir.join(select_db_filename(sources.override_mode));
+        let index_ready = db_path.exists();
 
         tracing::info!(
             "Session sources (override={}): claude={}, opencode={}, codex={}, vibe={}, kimi={}",
@@ -516,6 +519,7 @@ impl SimpleComponent for App {
             toast_overlay: adw::ToastOverlay::new(),
             filter_state: FilterState::default(),
             db_path,
+            index_ready,
             sources,
             indexing: true,
             pending_reindex_feedback: false,
@@ -647,6 +651,7 @@ impl SimpleComponent for App {
                 ));
             }
             AppMsg::SessionSelected(id) => self.handle_session_selected(id),
+            AppMsg::OpenExternalSession(id) => self.handle_external_session_open(id),
             AppMsg::RequestNavigateBack => self.handle_request_navigate_back(),
             AppMsg::NavigateBack => self.handle_navigate_back(),
             AppMsg::ShowPreferences => {
@@ -1675,5 +1680,192 @@ mod tests {
             result.is_err(),
             "expected loading sidebar project data to fail for a directory path"
         );
+    }
+
+    #[gtk::test]
+    fn external_session_opens_detail_and_replaces_it_without_another_push() {
+        if !schema_is_available() {
+            return;
+        }
+
+        let controller = App::builder().launch(Some(PathBuf::from("tests/fixtures")));
+        pump_main_context(|| !controller.state().get().model.indexing);
+        controller.emit(AppMsg::OpenExternalSession("abc123".to_string()));
+        pump_main_context(|| {
+            controller
+                .state()
+                .get()
+                .model
+                .active_session
+                .as_ref()
+                .is_some_and(|session| session.id == "abc123")
+        });
+
+        let stack_size = controller
+            .state()
+            .get()
+            .model
+            .nav_view
+            .navigation_stack()
+            .n_items();
+        controller.emit(AppMsg::OpenExternalSession("session-001".to_string()));
+        pump_main_context(|| {
+            controller
+                .state()
+                .get()
+                .model
+                .active_session
+                .as_ref()
+                .is_some_and(|session| session.id == "session-001")
+        });
+
+        let parts = controller.state().get();
+        assert!(parts.model.detail_visible);
+        assert_eq!(
+            parts.model.nav_view.navigation_stack().n_items(),
+            stack_size
+        );
+        assert_eq!(
+            parts
+                .model
+                .nav_view
+                .visible_page()
+                .and_then(|page| page.tag())
+                .as_deref(),
+            Some("detail")
+        );
+    }
+
+    #[gtk::test]
+    fn external_session_from_analytics_clears_search_and_parent_context() {
+        if !schema_is_available() {
+            return;
+        }
+
+        let controller = App::builder().launch(Some(PathBuf::from("tests/fixtures")));
+        pump_main_context(|| !controller.state().get().model.indexing);
+        controller.emit(AppMsg::SessionSelected(
+            "session_00000000-0000-4000-8000-000000000001".to_string(),
+        ));
+        pump_main_context(|| controller.state().get().model.active_session.is_some());
+        controller.emit(AppMsg::OpenChildSession(
+            "kimi-subagent::session_00000000-0000-4000-8000-000000000001::agent-0".to_string(),
+        ));
+        pump_main_context(|| controller.state().get().model.parent_session.is_some());
+        controller.emit(AppMsg::SearchModeChanged(true));
+        controller.emit(AppMsg::SearchQueryChanged("needle".to_string()));
+        controller.emit(AppMsg::SortOrderPicked(SortOrder::OldestFirst));
+        controller.emit(AppMsg::DateFilterChanged(DateFilter::Today));
+        controller.emit(AppMsg::FiltersChanged {
+            tools: vec![AiAssistant::ClaudeCode],
+            project_filter: ProjectFilter::Pinned,
+        });
+        controller.emit(AppMsg::WorkspaceChanged(Workspace::Analytics));
+        pump_main_context(|| {
+            controller.state().get().model.active_workspace == Workspace::Analytics
+        });
+
+        controller.emit(AppMsg::OpenExternalSession("abc123".to_string()));
+        pump_main_context(|| {
+            controller
+                .state()
+                .get()
+                .model
+                .active_session
+                .as_ref()
+                .is_some_and(|session| session.id == "abc123")
+        });
+
+        let parts = controller.state().get();
+        assert_eq!(parts.model.active_workspace, Workspace::Sessions);
+        assert!(parts.model.search_query.is_empty());
+        assert!(!parts.model.search_visible);
+        assert_eq!(parts.model.search_sort_override, None);
+        assert_eq!(parts.model.sort_order, SortOrder::OldestFirst);
+        assert_eq!(parts.model.effective_sort(), Some(SortOrder::OldestFirst));
+        assert!(parts.model.parent_session.is_none());
+        assert_eq!(
+            parts.model.filter_state.tools,
+            vec![AiAssistant::ClaudeCode]
+        );
+        assert_eq!(
+            parts.model.filter_state.project_filter,
+            ProjectFilter::Pinned
+        );
+        assert_eq!(parts.model.selected_date_filter, DateFilter::Today);
+    }
+
+    #[gtk::test]
+    fn unavailable_external_targets_preserve_navigation_and_search_state() {
+        if !schema_is_available() {
+            return;
+        }
+
+        let controller = App::builder().launch(Some(PathBuf::from("tests/fixtures")));
+        pump_main_context(|| !controller.state().get().model.indexing);
+        controller.emit(AppMsg::SessionSelected(
+            "session_00000000-0000-4000-8000-000000000001".to_string(),
+        ));
+        pump_main_context(|| controller.state().get().model.active_session.is_some());
+        controller.emit(AppMsg::OpenChildSession(
+            "kimi-subagent::session_00000000-0000-4000-8000-000000000001::agent-0".to_string(),
+        ));
+        pump_main_context(|| controller.state().get().model.parent_session.is_some());
+        controller.emit(AppMsg::SearchModeChanged(true));
+        controller.emit(AppMsg::SearchQueryChanged("keep me".to_string()));
+        controller.emit(AppMsg::InspectorVisibilityChanged(true));
+        pump_main_context(|| controller.state().get().model.search_query == "keep me");
+
+        let original_active = controller
+            .state()
+            .get()
+            .model
+            .active_session
+            .as_ref()
+            .unwrap()
+            .id
+            .clone();
+        let original_parent = controller
+            .state()
+            .get()
+            .model
+            .parent_session
+            .as_ref()
+            .unwrap()
+            .id
+            .clone();
+        let original_stack_size = controller
+            .state()
+            .get()
+            .model
+            .nav_view
+            .navigation_stack()
+            .n_items();
+
+        for id in [
+            "not-an-indexed-session",
+            "kimi-subagent::session_00000000-0000-4000-8000-000000000001::agent-0",
+        ] {
+            controller.emit(AppMsg::OpenExternalSession(id.to_string()));
+            pump_main_context(|| !gtk::glib::MainContext::default().pending());
+
+            let parts = controller.state().get();
+            assert_eq!(
+                parts.model.active_session.as_ref().unwrap().id,
+                original_active
+            );
+            assert_eq!(
+                parts.model.parent_session.as_ref().unwrap().id,
+                original_parent
+            );
+            assert_eq!(parts.model.search_query, "keep me");
+            assert!(parts.model.search_visible);
+            assert!(parts.model.inspector_open);
+            assert!(parts.model.detail_visible);
+            assert_eq!(
+                parts.model.nav_view.navigation_stack().n_items(),
+                original_stack_size
+            );
+        }
     }
 }

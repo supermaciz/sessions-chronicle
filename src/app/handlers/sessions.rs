@@ -10,7 +10,7 @@ use crate::ui::session_detail::SessionDetailMsg;
 
 use super::super::App;
 use super::super::helpers::{active_search_query, parent_session_load_failure_message};
-use super::super::types::ActiveSessionRef;
+use super::super::types::{ActiveSessionRef, Workspace};
 
 #[derive(Debug)]
 enum ExternalSessionLookup {
@@ -160,6 +160,56 @@ impl App {
                         .emit(parent_session_load_failure_message());
                 }
             }
+        }
+    }
+
+    fn show_external_open_failure(&self, failure: ExternalOpenFailure) {
+        let toast = relm4::adw::Toast::builder()
+            .title(external_open_failure_title(failure))
+            .build();
+        self.toast_overlay.add_toast(toast);
+    }
+
+    pub(crate) fn handle_external_session_open(&mut self, id: String) {
+        tracing::debug!(session_id = %id, "External session open requested");
+
+        let session = match lookup_external_session(&self.db_path, &id, self.index_ready) {
+            ExternalSessionLookup::Found(session) => session,
+            ExternalSessionLookup::IndexMissing => {
+                self.show_external_open_failure(ExternalOpenFailure::IndexMissing);
+                return;
+            }
+            ExternalSessionLookup::Unavailable => {
+                self.show_external_open_failure(ExternalOpenFailure::Unavailable);
+                return;
+            }
+            ExternalSessionLookup::Failed(error) => {
+                tracing::error!(session_id = %id, error = %error, "External session lookup failed");
+                self.show_external_open_failure(ExternalOpenFailure::Failed);
+                return;
+            }
+        };
+
+        self.dismiss_summary_popover();
+        self.search_visible = false;
+        self.sync_search_bar.set(true);
+        let (list_msg, detail_msg) = self.clear_search_state();
+        self.session_list.emit(list_msg);
+        self.session_detail.emit(detail_msg);
+
+        self.handle_workspace_changed(Workspace::Sessions);
+        self.workspace_stack
+            .set_visible_child_name(Workspace::Sessions.stack_name());
+        self.parent_session = None;
+        self.session_detail.widget().set_visible(true);
+        self.set_active_session_and_detail(session, None);
+
+        if !self.detail_visible {
+            self.filters_open_before_detail = self.filters_open;
+            self.filters_open = false;
+            self.nav_view.push(&self.detail_page);
+            self.detail_visible = true;
+            self.banner.set_revealed(false);
         }
     }
 }
