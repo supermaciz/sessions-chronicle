@@ -1,0 +1,143 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="720" height="790" font-family="Cantarell, sans-serif" viewBox="0 0 720 790">
+  <rect width="720" height="790" fill="#fafafb"/>
+
+  <!-- Title -->
+  <text x="32" y="40" font-size="22" font-weight="bold" fill="#1a1a1a">One knob, and after rebuttal it is a boolean</text>
+  <text x="32" y="62" font-size="13" fill="#5e5c64">The on/off switch already exists and belongs to GNOME Settings. What we own is what the overlay puts on screen.</text>
+
+  <!-- ===================== PANEL 1 ===================== -->
+  <text x="32" y="100" font-size="15" font-weight="bold" fill="#3d3846">&#9312;  What the Activities overview actually renders</text>
+  <text x="32" y="117" font-size="11" fill="#5e5c64">Same query, same matches &#8212; only the <tspan font-family="monospace">description</tspan> field of GetResultMetas changes.</text>
+
+  <!-- Card A: default -->
+  <rect x="32" y="130" width="320" height="196" rx="12" fill="#ffffff" stroke="#d6d4d2"/>
+  <text x="48" y="152" font-size="11" font-weight="bold" fill="#26a269">DEFAULT &#183; excerpts off</text>
+
+  <rect x="48" y="162" width="288" height="26" rx="13" fill="#f6f5f4" stroke="#d6d4d2"/>
+  <circle cx="63" cy="175" r="5" fill="none" stroke="#5e5c64" stroke-width="1.4"/>
+  <path d="M67 179 L71 183" stroke="#5e5c64" stroke-width="1.4"/>
+  <text x="80" y="179" font-size="11" fill="#1a1a1a">rotated key</text>
+
+  <rect x="48" y="198" width="32" height="32" rx="8" fill="#3584e4" opacity="0.16"/>
+  <text x="64" y="219" font-size="12" font-weight="bold" fill="#3584e4" text-anchor="middle">C</text>
+  <text x="90" y="211" font-size="12" fill="#1a1a1a">Rotate the deploy credentials</text>
+  <text x="90" y="226" font-size="10.5" fill="#5e5c64">Claude Code &#183; sessions-chronicle &#183; 3 days ago</text>
+
+  <rect x="48" y="242" width="32" height="32" rx="8" fill="#9141ac" opacity="0.16"/>
+  <text x="64" y="263" font-size="12" font-weight="bold" fill="#9141ac" text-anchor="middle">O</text>
+  <text x="90" y="255" font-size="12" fill="#1a1a1a">Key rotation runbook</text>
+  <text x="90" y="270" font-size="10.5" fill="#5e5c64">OpenCode &#183; infra-tools &#183; last week</text>
+
+  <rect x="48" y="288" width="288" height="26" rx="6" fill="#eafaf0"/>
+  <text x="58" y="305" font-size="10.5" fill="#26a269">Full FTS power. Zero transcript text on screen.</text>
+
+  <!-- Card B: excerpt -->
+  <rect x="368" y="130" width="320" height="196" rx="12" fill="#ffffff" stroke="#d6d4d2"/>
+  <text x="384" y="152" font-size="11" font-weight="bold" fill="#e66100">OPT-IN &#183; excerpts on</text>
+
+  <rect x="384" y="162" width="288" height="26" rx="13" fill="#f6f5f4" stroke="#d6d4d2"/>
+  <circle cx="399" cy="175" r="5" fill="none" stroke="#5e5c64" stroke-width="1.4"/>
+  <path d="M403 179 L407 183" stroke="#5e5c64" stroke-width="1.4"/>
+  <text x="416" y="179" font-size="11" fill="#1a1a1a">rotated key</text>
+
+  <rect x="384" y="198" width="32" height="32" rx="8" fill="#3584e4" opacity="0.16"/>
+  <text x="400" y="219" font-size="12" font-weight="bold" fill="#3584e4" text-anchor="middle">C</text>
+  <text x="426" y="211" font-size="12" fill="#1a1a1a">Rotate the deploy credentials</text>
+  <rect x="424" y="217" width="248" height="13" rx="3" fill="#f8e6d0"/>
+  <text x="426" y="227" font-size="10.5" fill="#a5540b">&#8230;rotated AWS_SECRET_ACCESS_KEY=AKIA&#8230;</text>
+
+  <rect x="384" y="242" width="32" height="32" rx="8" fill="#9141ac" opacity="0.16"/>
+  <text x="400" y="263" font-size="12" font-weight="bold" fill="#9141ac" text-anchor="middle">O</text>
+  <text x="426" y="255" font-size="12" fill="#1a1a1a">Key rotation runbook</text>
+  <rect x="424" y="261" width="248" height="13" rx="3" fill="#f8e6d0"/>
+  <text x="426" y="271" font-size="10.5" fill="#a5540b">&#8230;ssh acme-prod-07.internal &#8212; client&#8230;</text>
+
+  <rect x="384" y="288" width="288" height="26" rx="6" fill="#fbeae0"/>
+  <text x="394" y="305" font-size="10.5" fill="#c01c28">This is a projector during a screen-share. Opt-in only.</text>
+
+  <!-- ===================== PANEL 2 ===================== -->
+  <text x="32" y="356" font-size="15" font-weight="bold" fill="#3d3846">&#9313;  Where the configuration lives &#8212; two places, and only one of them is ours</text>
+  <text x="32" y="373" font-size="11" fill="#5e5c64">On/off is the OS&#8217;s job. Duplicating it gives you four states, three of which look identical.</text>
+
+  <!-- GNOME Settings card -->
+  <rect x="32" y="386" width="320" height="188" rx="12" fill="#ffffff" stroke="#d6d4d2"/>
+  <text x="48" y="408" font-size="11.5" font-weight="bold" fill="#3d3846">GNOME Settings &#9656; Search</text>
+  <text x="48" y="424" font-size="10" fill="#5e5c64">org.gnome.desktop.search-providers &#183; not ours</text>
+
+  <rect x="48" y="434" width="288" height="34" rx="8" fill="#fbfafa" stroke="#ededeb"/>
+  <text x="62" y="455" font-size="11" fill="#1a1a1a">Files</text>
+  <rect x="296" y="443" width="30" height="16" rx="8" fill="#3584e4"/>
+  <circle cx="318" cy="451" r="6" fill="#ffffff"/>
+
+  <rect x="48" y="472" width="288" height="34" rx="8" fill="#ffffff" stroke="#3584e4" stroke-width="1.5"/>
+  <text x="62" y="493" font-size="11" font-weight="bold" fill="#1a1a1a">Sessions Chronicle</text>
+  <rect x="296" y="481" width="30" height="16" rx="8" fill="#3584e4"/>
+  <circle cx="318" cy="489" r="6" fill="#ffffff"/>
+
+  <rect x="48" y="510" width="288" height="34" rx="8" fill="#fbfafa" stroke="#ededeb"/>
+  <text x="62" y="531" font-size="11" fill="#1a1a1a">Calculator</text>
+  <rect x="296" y="519" width="30" height="16" rx="8" fill="#d6d4d2"/>
+  <circle cx="304" cy="527" r="6" fill="#ffffff"/>
+
+  <text x="48" y="562" font-size="10" fill="#3584e4">Mandatory, authoritative, off by default in Flatpak. We add nothing here.</text>
+
+  <!-- Our Preferences card -->
+  <rect x="368" y="386" width="320" height="188" rx="12" fill="#ffffff" stroke="#d6d4d2"/>
+  <text x="384" y="408" font-size="11.5" font-weight="bold" fill="#3d3846">Preferences &#9656; General</text>
+  <text x="384" y="424" font-size="10" fill="#5e5c64">src/ui/modals/preferences.rs &#183; new group, before &#8220;Advanced&#8221;</text>
+
+  <text x="384" y="446" font-size="10.5" font-weight="bold" fill="#5e5c64">GNOME SEARCH</text>
+
+  <rect x="384" y="454" width="288" height="42" rx="8" fill="#fbfafa" stroke="#ededeb"/>
+  <text x="398" y="472" font-size="11" fill="#1a1a1a">GNOME Search</text>
+  <text x="398" y="487" font-size="10" fill="#5e5c64">Turn results on or off in Settings &#9656; Search</text>
+  <text x="600" y="480" font-size="9.5" fill="#c01c28">no switch here</text>
+
+  <rect x="384" y="500" width="288" height="46" rx="8" fill="#ffffff" stroke="#3584e4" stroke-width="1.5"/>
+  <text x="398" y="518" font-size="11" fill="#1a1a1a">Show matching text in results</text>
+  <text x="398" y="533" font-size="10" fill="#5e5c64">Excerpts appear in the overview</text>
+  <rect x="620" y="513" width="38" height="21" rx="10.5" fill="#d6d4d2"/>
+  <circle cx="630.5" cy="523.5" r="8" fill="#ffffff"/>
+
+  <text x="384" y="562" font-size="10" fill="#5e5c64">One AdwSwitchRow, off by default</text>
+  <text x="384" y="576" font-size="10" font-family="monospace" fill="#3d3846">search-provider-show-excerpts</text>
+
+  <!-- ===================== PANEL 3 ===================== -->
+  <text x="32" y="604" font-size="15" font-weight="bold" fill="#3d3846">&#9314;  Who runs it, and what a keystroke costs</text>
+
+  <rect x="32" y="618" width="656" height="150" rx="12" fill="#ffffff" stroke="#d6d4d2"/>
+
+  <!-- shell -->
+  <rect x="48" y="642" width="140" height="58" rx="8" fill="#fbfafa" stroke="#ededeb"/>
+  <text x="118" y="664" font-size="11" font-weight="bold" fill="#1a1a1a" text-anchor="middle">gnome-shell</text>
+  <text x="118" y="679" font-size="10" fill="#5e5c64" text-anchor="middle">one call per keystroke</text>
+  <text x="118" y="692" font-size="10" fill="#5e5c64" text-anchor="middle">draws ~5 results</text>
+
+  <path d="M194 671 L232 671" stroke="#5e5c64" stroke-width="2" marker-end="url(#a)"/>
+  <text x="213" y="663" font-size="9" fill="#5e5c64" text-anchor="middle">D-Bus</text>
+
+  <!-- provider -->
+  <rect x="238" y="642" width="180" height="58" rx="8" fill="#ffffff" stroke="#3584e4" stroke-width="1.5"/>
+  <text x="328" y="662" font-size="11" font-weight="bold" fill="#3584e4" text-anchor="middle">sessions-chronicle-search-provider</text>
+  <text x="328" y="677" font-size="10" fill="#5e5c64" text-anchor="middle">separate binary &#183; no GTK &#183; idle-exits</text>
+  <text x="328" y="691" font-size="10" fill="#5e5c64" text-anchor="middle">reads GSettings(APP_ID) per call</text>
+
+  <path d="M424 671 L462 671" stroke="#5e5c64" stroke-width="2" marker-end="url(#a)"/>
+  <text x="443" y="663" font-size="9" fill="#5e5c64" text-anchor="middle">RO</text>
+
+  <!-- sqlite -->
+  <rect x="468" y="642" width="204" height="58" rx="8" fill="#fbfafa" stroke="#ededeb"/>
+  <text x="570" y="662" font-size="11" font-weight="bold" fill="#1a1a1a" text-anchor="middle">sessions.db &#183; messages_fts</text>
+  <text x="570" y="677" font-size="10" fill="#5e5c64" text-anchor="middle">GROUP BY s.id &#183; ORDER BY bm25 &#183; LIMIT 20</text>
+  <text x="570" y="691" font-size="10" fill="#5e5c64" text-anchor="middle">never writes &#183; never indexes</text>
+
+  <rect x="48" y="714" width="624" height="38" rx="8" fill="#fbfafa" stroke="#ededeb"/>
+  <text x="60" y="731" font-size="10.5" fill="#3d3846">&lt; 3 chars &#8594; return [] without opening the DB.  IDs only in GetInitialResultSet (250 ms budget, cancel in-flight on the next keystroke).</text>
+  <text x="60" y="745" font-size="10.5" fill="#3d3846">FTS5 snippet() runs in GetResultMetas &#8212; so the excerpt is computed 5 times, not 20. Exposure is a privacy choice, not a performance one.</text>
+
+  <defs>
+    <marker id="a" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+      <path d="M0 0 L6 3 L0 6 z" fill="#5e5c64"/>
+    </marker>
+  </defs>
+</svg>

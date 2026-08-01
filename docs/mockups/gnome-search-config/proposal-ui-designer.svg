@@ -1,0 +1,104 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="720" height="830" viewBox="0 0 720 830" font-family="Cantarell, sans-serif">
+  <rect width="720" height="830" fill="#fafafb"/>
+
+  <!-- Title -->
+  <text x="36" y="44" font-size="22" font-weight="bold" fill="#1a1a1a">System search — one setting, and only one</text>
+  <text x="36" y="68" font-size="13" fill="#5e5c64">On/off already lives in Settings ▸ Search. The app configures the one thing the OS cannot: how much transcript text reaches the overview.</text>
+
+  <!-- ============ PANEL 1: Activities overview rendering ============ -->
+  <text x="36" y="108" font-size="15" font-weight="bold" fill="#3d3846">① GNOME Activities — what a result is allowed to show</text>
+
+  <!-- LEFT: default -->
+  <text x="36" y="132" font-size="12.5" font-weight="bold" fill="#5e5c64">Result Details = “Session and project” (default)</text>
+  <rect x="36" y="142" width="312" height="226" rx="12" fill="#ffffff" stroke="#d6d4d2" stroke-width="1"/>
+
+  <!-- search entry pill -->
+  <rect x="52" y="158" width="280" height="32" rx="16" fill="#f2f1f0" stroke="#d6d4d2" stroke-width="1"/>
+  <circle cx="72" cy="174" r="5.5" fill="none" stroke="#5e5c64" stroke-width="1.6"/>
+  <path d="M 76 178 l 4 4" stroke="#5e5c64" stroke-width="1.6" stroke-linecap="round"/>
+  <text x="88" y="179" font-size="13" fill="#1a1a1a">oauth token</text>
+
+  <!-- provider header -->
+  <text x="52" y="212" font-size="10.5" font-weight="bold" fill="#5e5c64" letter-spacing="0.6">SESSIONS CHRONICLE</text>
+
+  <!-- result 1 -->
+  <rect x="46" y="220" width="292" height="50" rx="8" fill="#f6f5f4"/>
+  <rect x="58" y="232" width="26" height="26" rx="6" fill="#3584e4"/>
+  <text x="96" y="243" font-size="12.5" fill="#1a1a1a">Fix the OAuth token refresh loop in t…</text>
+  <text x="96" y="260" font-size="11" fill="#5e5c64">Claude Code · sessions-chronicle · 2 days ago</text>
+
+  <!-- result 2 -->
+  <rect x="58" y="284" width="26" height="26" rx="6" fill="#3584e4" opacity="0.75"/>
+  <text x="96" y="295" font-size="12.5" fill="#1a1a1a">Audit token expiry handling</text>
+  <text x="96" y="312" font-size="11" fill="#5e5c64">Codex · acme-bank · last week</text>
+
+  <!-- safe callout -->
+  <rect x="46" y="326" width="292" height="30" rx="8" fill="#eaf4ec" stroke="#a3d3ad" stroke-width="1"/>
+  <text x="58" y="346" font-size="11" fill="#1c6b2e">User-authored intent only. No assistant output.</text>
+
+  <!-- RIGHT: opt-in -->
+  <text x="372" y="132" font-size="12.5" font-weight="bold" fill="#5e5c64">Result Details = “Include matching text” (opt-in)</text>
+  <rect x="372" y="142" width="312" height="226" rx="12" fill="#ffffff" stroke="#d6d4d2" stroke-width="1"/>
+
+  <rect x="388" y="158" width="280" height="32" rx="16" fill="#f2f1f0" stroke="#d6d4d2" stroke-width="1"/>
+  <circle cx="408" cy="174" r="5.5" fill="none" stroke="#5e5c64" stroke-width="1.6"/>
+  <path d="M 412 178 l 4 4" stroke="#5e5c64" stroke-width="1.6" stroke-linecap="round"/>
+  <text x="424" y="179" font-size="13" fill="#1a1a1a">oauth token</text>
+
+  <text x="388" y="212" font-size="10.5" font-weight="bold" fill="#5e5c64" letter-spacing="0.6">SESSIONS CHRONICLE</text>
+
+  <rect x="382" y="220" width="292" height="50" rx="8" fill="#f6f5f4"/>
+  <rect x="394" y="232" width="26" height="26" rx="6" fill="#3584e4"/>
+  <text x="432" y="243" font-size="12.5" fill="#1a1a1a">Fix the OAuth token refresh loop in t…</text>
+  <text x="432" y="260" font-size="11" fill="#5e5c64">…ANTHROPIC_API_KEY=sk-ant-api03-4f9c2e…</text>
+
+  <rect x="394" y="284" width="26" height="26" rx="6" fill="#3584e4" opacity="0.75"/>
+  <text x="432" y="295" font-size="12.5" fill="#1a1a1a">Audit token expiry handling</text>
+  <text x="432" y="312" font-size="11" fill="#5e5c64">…curl -H "Authorization: Bearer eyJhbG…</text>
+
+  <rect x="382" y="326" width="292" height="30" rx="8" fill="#fdf3e7" stroke="#e8c89a" stroke-width="1"/>
+  <text x="394" y="346" font-size="11" fill="#a05a00">Visible on screen-shares. Read aloud by Orca.</text>
+
+  <text x="36" y="388" font-size="11.5" fill="#5e5c64">Matching is identical in both modes — the setting changes rendering only, never recall. Name capped at 60 chars, description at 100.</text>
+
+  <!-- ============ PANEL 2: in-app configuration ============ -->
+  <text x="36" y="428" font-size="15" font-weight="bold" fill="#3d3846">② Preferences › General › System Search</text>
+
+  <rect x="36" y="444" width="648" height="150" rx="12" fill="#ffffff" stroke="#d6d4d2" stroke-width="1"/>
+
+  <text x="52" y="470" font-size="12" font-weight="bold" fill="#5e5c64" letter-spacing="0.5">SYSTEM SEARCH</text>
+  <!-- group description: non-interactive, no state to desync -->
+  <text x="52" y="490" font-size="12" fill="#5e5c64">Sessions can be found from the Activities overview.</text>
+  <text x="52" y="507" font-size="12" fill="#5e5c64">Turn this on in Settings ▸ Search.</text>
+
+  <!-- ComboRow -->
+  <rect x="52" y="518" width="616" height="60" rx="8" fill="#ffffff" stroke="#ededed" stroke-width="1"/>
+  <text x="68" y="544" font-size="14" fill="#1a1a1a">Result Details</text>
+  <text x="68" y="562" font-size="12" fill="#5e5c64">What system search results are allowed to show</text>
+  <text x="588" y="553" font-size="13" fill="#5e5c64" text-anchor="end">Session and project</text>
+  <path d="M 604 546 l 5 5 l 5 -5" stroke="#5e5c64" stroke-width="1.6" fill="none" stroke-linecap="round"/>
+
+  <text x="36" y="616" font-size="11.5" fill="#5e5c64">One key: <tspan font-family="monospace" fill="#3d3846">search-provider-detail</tspan> (s) · default <tspan font-family="monospace" fill="#3d3846">"session"</tspan> · values <tspan font-family="monospace" fill="#3d3846">"session" | "match"</tspan> · unknown values fail closed.</text>
+
+  <!-- ============ PANEL 3: what is deliberately absent ============ -->
+  <text x="36" y="656" font-size="15" font-weight="bold" fill="#3d3846">③ Deliberately absent — the switch this design refuses to add</text>
+
+  <rect x="36" y="672" width="316" height="124" rx="12" fill="#ffffff" stroke="#d6d4d2" stroke-width="1"/>
+  <text x="52" y="696" font-size="12.5" font-weight="bold" fill="#5e5c64">Rejected: in-app “Enable GNOME search”</text>
+  <!-- ghosted switch row -->
+  <rect x="52" y="706" width="284" height="44" rx="8" fill="#f6f5f4" opacity="0.6"/>
+  <text x="66" y="733" font-size="13" fill="#9a9996">Enable GNOME search</text>
+  <rect x="286" y="718" width="44" height="24" rx="12" fill="#c0bfbc"/>
+  <circle cx="298" cy="730" r="9" fill="#ffffff"/>
+  <line x1="60" y1="760" x2="330" y2="700" stroke="#c01c28" stroke-width="2" stroke-linecap="round" opacity="0.55"/>
+  <text x="52" y="778" font-size="11" fill="#5e5c64">Settings OFF + app ON = silently broken, with</text>
+  <text x="52" y="791" font-size="11" fill="#5e5c64">the app’s own UI claiming it works.</text>
+
+  <rect x="368" y="672" width="316" height="124" rx="12" fill="#ffffff" stroke="#d6d4d2" stroke-width="1"/>
+  <text x="384" y="696" font-size="12.5" font-weight="bold" fill="#5e5c64">Also rejected</text>
+  <text x="384" y="718" font-size="11.5" fill="#5e5c64">Provider ordering — owned by Settings ▸ Search</text>
+  <text x="384" y="736" font-size="11.5" fill="#5e5c64">Result count — owned by Shell</text>
+  <text x="384" y="754" font-size="11.5" fill="#5e5c64">Assistant / date scope — not privacy axes, silent misses</text>
+  <text x="384" y="772" font-size="11.5" fill="#5e5c64">Per-project exclusion — deferred; belongs in the project</text>
+  <text x="384" y="788" font-size="11.5" fill="#5e5c64">sidebar context menu, not a Preferences checkbox list</text>
+</svg>

@@ -1,0 +1,111 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="720" height="1024" viewBox="0 0 720 1024" font-family="Cantarell, sans-serif">
+  <rect width="720" height="1024" fill="#fafafb"/>
+
+  <!-- Title -->
+  <text x="36" y="44" font-size="22" font-weight="bold" fill="#1a1a1a">GNOME search — "Show me what GNOME will see"</text>
+  <text x="36" y="68" font-size="13" fill="#5e5c64">One exposure dial whose control is a live replica of the Activities row. Per-project opt-out lives on the project.</text>
+
+  <!-- ============ PANEL 1 ============ -->
+  <text x="36" y="108" font-size="15" font-weight="bold" fill="#3d3846">① Preferences › General › GNOME Search — the dial and its preview</text>
+
+  <rect x="36" y="124" width="648" height="246" rx="12" fill="#ffffff" stroke="#d6d4d2" stroke-width="1"/>
+  <text x="52" y="150" font-size="12" font-weight="bold" fill="#5e5c64" letter-spacing="0.5">GNOME SEARCH</text>
+
+  <!-- ComboRow -->
+  <rect x="52" y="162" width="616" height="60" rx="8" fill="#ffffff"/>
+  <text x="68" y="188" font-size="14" fill="#1a1a1a">Result detail</text>
+  <text x="68" y="206" font-size="12" fill="#5e5c64">What Sessions Chronicle shows in the Activities overview</text>
+  <text x="600" y="197" font-size="13" fill="#5e5c64" text-anchor="end">First prompt</text>
+  <path d="M 616 190 l 5 5 l 5 -5" stroke="#5e5c64" stroke-width="1.6" fill="none" stroke-linecap="round"/>
+
+  <rect x="52" y="226" width="616" height="1" fill="#ededed"/>
+
+  <!-- Preview label -->
+  <text x="68" y="250" font-size="11" font-weight="bold" fill="#5e5c64" letter-spacing="0.5">PREVIEW</text>
+
+  <!-- Live mock shell result row -->
+  <rect x="68" y="260" width="584" height="60" rx="10" fill="#f2f1f0" stroke="#e0dedb" stroke-width="1"/>
+  <rect x="84" y="274" width="32" height="32" rx="8" fill="#3584e4"/>
+  <text x="100" y="296" font-size="15" font-weight="bold" fill="#ffffff" text-anchor="middle">S</text>
+  <text x="128" y="285" font-size="13.5" font-weight="bold" fill="#1a1a1a">Add a date range picker to the sidebar</text>
+  <text x="128" y="304" font-size="12" fill="#5e5c64">Claude Code · sessions-chronicle · 3 days ago</text>
+
+  <text x="68" y="340" font-size="11.5" fill="#5e5c64">Built from your most recent indexed session. Redraws on every change of the dial — you look at the</text>
+  <text x="68" y="356" font-size="11.5" fill="#5e5c64">consequence instead of predicting it. Individual projects can be excluded from the sidebar.</text>
+
+  <!-- ============ PANEL 2 ============ -->
+  <text x="36" y="408" font-size="15" font-weight="bold" fill="#3d3846">② The three positions, as the overview renders them</text>
+
+  <!-- A -->
+  <text x="36" y="436" font-size="12" font-weight="bold" fill="#5e5c64">Project and date — nothing the user typed</text>
+  <rect x="36" y="446" width="648" height="56" rx="10" fill="#ffffff" stroke="#d6d4d2" stroke-width="1"/>
+  <rect x="52" y="460" width="28" height="28" rx="7" fill="#3584e4"/>
+  <text x="92" y="471" font-size="13" font-weight="bold" fill="#1a1a1a">sessions-chronicle</text>
+  <text x="92" y="489" font-size="11.5" fill="#5e5c64">Claude Code · 3 days ago · 142 messages</text>
+  <rect x="592" y="462" width="76" height="24" rx="12" fill="#eaf3fd"/>
+  <text x="630" y="478" font-size="10.5" fill="#1a5fb4" text-anchor="middle">safest</text>
+
+  <!-- B -->
+  <text x="36" y="530" font-size="12" font-weight="bold" fill="#5e5c64">First prompt — the opening prompt only  ·  DEFAULT</text>
+  <rect x="36" y="540" width="648" height="56" rx="10" fill="#ffffff" stroke="#3584e4" stroke-width="2"/>
+  <rect x="52" y="554" width="28" height="28" rx="7" fill="#3584e4"/>
+  <text x="92" y="565" font-size="13" font-weight="bold" fill="#1a1a1a">Add a date range picker to the sidebar</text>
+  <text x="92" y="583" font-size="11.5" fill="#5e5c64">Claude Code · sessions-chronicle · 3 days ago</text>
+  <rect x="580" y="556" width="88" height="24" rx="12" fill="#eaf3fd"/>
+  <text x="624" y="572" font-size="10.5" fill="#1a5fb4" text-anchor="middle">usable + honest</text>
+
+  <!-- C -->
+  <text x="36" y="624" font-size="12" font-weight="bold" fill="#5e5c64">Matched text — arbitrary transcript body  ·  OPT-IN</text>
+  <rect x="36" y="634" width="648" height="56" rx="10" fill="#ffffff" stroke="#d6d4d2" stroke-width="1"/>
+  <rect x="52" y="648" width="28" height="28" rx="7" fill="#3584e4"/>
+  <text x="92" y="659" font-size="13" font-weight="bold" fill="#1a1a1a">Add a date range picker to the sidebar</text>
+  <text x="92" y="677" font-size="11.5" fill="#c01c28">…rotate the SUPABASE_SERVICE_KEY before the demo…</text>
+  <rect x="556" y="650" width="112" height="24" rx="12" fill="#fbe9e7"/>
+  <text x="612" y="666" font-size="10.5" fill="#a51d2d" text-anchor="middle">leaks on screen-share</text>
+
+  <!-- ============ PANEL 3 ============ -->
+  <text x="36" y="726" font-size="15" font-weight="bold" fill="#3d3846">③ Second axis: eligibility is a property of the project, so it lives on the project</text>
+
+  <!-- sidebar -->
+  <rect x="36" y="742" width="300" height="196" rx="12" fill="#ffffff" stroke="#d6d4d2" stroke-width="1"/>
+  <text x="52" y="768" font-size="11" font-weight="bold" fill="#5e5c64" letter-spacing="0.5">PROJECTS</text>
+
+  <rect x="46" y="778" width="280" height="34" rx="8" fill="#f2f1f0"/>
+  <text x="62" y="800" font-size="13" fill="#1a1a1a">sessions-chronicle</text>
+  <text x="312" y="800" font-size="11.5" fill="#5e5c64" text-anchor="end">37</text>
+
+  <rect x="46" y="816" width="280" height="34" rx="8" fill="#ffffff"/>
+  <text x="62" y="838" font-size="13" fill="#1a1a1a">acme-client</text>
+  <!-- excluded indicator: magnifier with slash -->
+  <circle cx="278" cy="829" r="5.5" fill="none" stroke="#77767b" stroke-width="1.6"/>
+  <path d="M 282 833 l 4 4" stroke="#77767b" stroke-width="1.6" stroke-linecap="round"/>
+  <path d="M 270 837 l 16 -16" stroke="#c01c28" stroke-width="1.8" stroke-linecap="round"/>
+  <text x="312" y="838" font-size="11.5" fill="#5e5c64" text-anchor="end">12</text>
+
+  <rect x="46" y="854" width="280" height="34" rx="8" fill="#ffffff"/>
+  <text x="62" y="876" font-size="13" fill="#1a1a1a">dotfiles</text>
+  <text x="312" y="876" font-size="11.5" fill="#5e5c64" text-anchor="end">5</text>
+
+  <text x="52" y="914" font-size="11" fill="#5e5c64">The slashed magnifier marks a project that never</text>
+  <text x="52" y="929" font-size="11" fill="#5e5c64">reaches the overview. Visible without opening a menu.</text>
+
+  <!-- context menu -->
+  <rect x="356" y="742" width="248" height="104" rx="10" fill="#ffffff" stroke="#d6d4d2" stroke-width="1"/>
+  <text x="372" y="768" font-size="13" fill="#1a1a1a">Open in Files</text>
+  <text x="372" y="794" font-size="13" fill="#1a1a1a">Copy path</text>
+  <rect x="364" y="804" width="232" height="1" fill="#ededed"/>
+  <rect x="364" y="810" width="232" height="28" rx="6" fill="#f2f1f0"/>
+  <path d="M 374 824 l 4 5 l 8 -10" stroke="#1a1a1a" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+  <text x="394" y="829" font-size="13" fill="#1a1a1a">Exclude from GNOME search</text>
+
+  <!-- storage note -->
+  <rect x="356" y="862" width="328" height="76" rx="10" fill="#ffffff" stroke="#d6d4d2" stroke-width="1"/>
+  <text x="372" y="886" font-size="11.5" font-weight="bold" fill="#5e5c64">Stored as data, not as a preference</text>
+  <text x="372" y="904" font-size="11" fill="#5e5c64" font-family="monospace">projects.exclude_from_shell_search</text>
+  <text x="372" y="922" font-size="11" fill="#5e5c64">schema v18 · survives re-index · filtered in SQL</text>
+
+  <!-- footer -->
+  <text x="36" y="976" font-size="11.5" fill="#5e5c64">Not configurable on purpose: on/off (GNOME Settings › Search owns it — Flatpak ships the .ini disabled), result</text>
+  <text x="36" y="992" font-size="11.5" fill="#5e5c64">count, assistant/date pre-filters (you are retrieving a known item, not browsing), and ranking (bm25).</text>
+  <text x="36" y="1010" font-size="11.5" fill="#5e5c64" font-weight="bold">GSettings: gnome-search-detail (s, default "first-prompt") — one key. Plus one DB column.</text>
+</svg>
