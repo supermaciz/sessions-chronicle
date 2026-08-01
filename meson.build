@@ -8,6 +8,7 @@ project(
 
 i18n = import('i18n')
 gnome = import('gnome')
+python = import('python').find_installation()
 
 base_id = 'dev.maciz.sessionschronicle'
 

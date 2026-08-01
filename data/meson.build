@@ -27,6 +27,30 @@ if desktop_file_validate.found()
   )
 endif
 
+service_conf = configuration_data()
+service_conf.set('APP_ID', application_id)
+service_conf.set('BINDIR', bindir)
+service_file = configure_file(
+  input: '@0@.service.in'.format(base_id),
+  output: '@0@.service'.format(application_id),
+  configuration: service_conf,
+  install: true,
+  install_dir: datadir / 'dbus-1' / 'services',
+)
+
+test(
+  'validate-activation-metadata',
+  python,
+  args: [
+    meson.project_source_root() / 'build-aux' / 'validate-activation-metadata.py',
+    desktop_file.full_path(),
+    service_file.full_path(),
+    application_id,
+    bindir,
+  ],
+  depends: desktop_file,
+)
+
 # Appdata
 appdata_conf = configuration_data()
 appdata_conf.set('app-id', application_id)
