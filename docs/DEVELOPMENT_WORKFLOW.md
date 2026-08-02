@@ -16,6 +16,56 @@ flatpak-builder --run flatpak_app build-aux/dev.maciz.sessionschronicle.Devel.js
 
 Use this path when you want the closest match to the packaged app environment.
 
+### Testing session deep links
+
+The private `open-session` GApplication action opens an indexed top-level
+session by ID. It uses the same command whether Sessions Chronicle is closed or
+already running.
+
+Cold activation requires an installed Flatpak so the profile-specific D-Bus
+service is exported. A `flatpak-builder --run` build alone is not sufficient:
+
+```bash
+flatpak-builder --user --install flatpak_app \
+  build-aux/dev.maciz.sessionschronicle.Devel.json --force-clean
+```
+
+Select a recent top-level session from the default development index and
+activate it:
+
+```bash
+DB_PATH="$(flatpak run dev.maciz.sessionschronicle.Devel --print-db-path)"
+SESSION_ID="$(sqlite3 "$DB_PATH" \
+  'SELECT id FROM sessions WHERE is_subagent = 0 ORDER BY last_updated DESC LIMIT 1;')"
+test -n "$SESSION_ID"
+
+gapplication action dev.maciz.sessionschronicle.Devel \
+  open-session "'$SESSION_ID'"
+```
+
+Run the final command with the application closed to verify cold D-Bus
+activation. Run it again with the application open to verify that the existing
+window is presented and its detail is replaced. The nested quotes around the ID
+are required because `gapplication` expects a GVariant string.
+
+For an installed stable build, select the ID from its own database and use the
+stable App ID:
+
+```bash
+DB_PATH="$(flatpak run dev.maciz.sessionschronicle --print-db-path)"
+SESSION_ID="$(sqlite3 "$DB_PATH" \
+  'SELECT id FROM sessions WHERE is_subagent = 0 ORDER BY last_updated DESC LIMIT 1;')"
+test -n "$SESSION_ID"
+
+gapplication action dev.maciz.sessionschronicle \
+  open-session "'$SESSION_ID'"
+```
+
+`open-session` is an internal protocol for components shipped with Sessions
+Chronicle, not a stable public API. It accepts only IDs from the profile's
+default index. Instances started with `--sessions-dir` are non-unique, own no
+application bus name, and do not receive deep-link actions.
+
 ### Via Meson (faster inner loop)
 
 ```bash
