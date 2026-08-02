@@ -1,10 +1,12 @@
 # GNOME Activities search — what should be configurable — Exploration
 
 **Date**: 2026-08-01  
-**Status**: **Proposed** — recommendation in [Recommendation](#recommendation), pending sign-off.  
+**Last reviewed**: 2026-08-02 — ground facts and packaging deltas refreshed after [PR #200](https://github.com/supermaciz/sessions-chronicle/pull/200) shipped the deep-link prerequisite.  
+**Status**: **Proposed** — recommendation in [Recommendation](#recommendation), pending sign-off. Unblocked, not signed off: #197 removed a blocker, it is not an adoption of this doc's recommendation.  
 **Issue**: [#189 — feat: expose session search in GNOME Activities](https://github.com/supermaciz/sessions-chronicle/issues/189)  
-**Depends on**: #188 (closed — `sort-order`)  
+**Depends on**: #188 (closed — `sort-order`) · #197 (closed — deep-link transport, [PR #200](https://github.com/supermaciz/sessions-chronicle/pull/200))  
 **Related**: [`docs/GNOME_DESKTOP_INTEGRATION.md`](../GNOME_DESKTOP_INTEGRATION.md) — the packaging baseline, and where the search provider was first sketched as an optional GNOME service.  
+**Related**: [`docs/superpowers/specs/2026-08-01-deep-link-session-design.md`](../superpowers/specs/2026-08-01-deep-link-session-design.md) — the `open-session` contract this provider invokes, and the source of the activation-failure behaviour.  
 **Scope of this doc**: not the search provider itself, but the question the issue leaves open — **what is configurable, where does that configuration live, and what are the defaults?**
 
 ---
@@ -19,12 +21,13 @@ That is what makes "la recherche dans GNOME doit être configurable" a requireme
 
 ## Ground facts the three proposals reason from
 
-- **Flatpak exports `share/gnome-shell/search-providers/*.ini` marked disabled.** GNOME Settings ▸ Search therefore already gives every user a mandatory per-app on/off switch and drag-to-reorder, backed by `org.gnome.desktop.search-providers`. That switch is authoritative — when it is off, Shell never opens the D-Bus connection at all. ([Flatpak conventions](https://docs.flatpak.org/en/latest/conventions.html))
+- **Flatpak exports `share/gnome-shell/search-providers/*.ini` marked disabled.** GNOME Settings ▸ Search therefore already gives every user a mandatory per-app on/off switch and drag-to-reorder, backed by `org.gnome.desktop.search-providers`. That switch is authoritative — when it is off, Shell never opens the D-Bus connection at all. ([Flatpak conventions](https://docs.flatpak.org/en/latest/conventions.html)) Confirmed against the five providers installed on this machine (Alpaca, Bazaar, Devtoolbox, Icon Library, Cartridges): **all five** set `DefaultDisabled=true`, and all five point `DesktopId` at the main application desktop file even when the provider owns a separate bus name.
 - Shell calls `GetInitialResultSet` / `GetSubsearchResultSet` **on every keystroke**; handlers must be async, bounded, and cancellable. ([Writing a Search Provider](https://developer.gnome.org/documentation/tutorials/search-provider.html))
 - The existing search path, `search_sessions_with_query` (`src/database/mod.rs:453`), selects 22 columns, joins `messages_fts → messages → sessions`, and dedupes to sessions in Rust with a `HashSet` **after** materialising every matching message row. Fine for a deliberate in-app search, wrong for a per-keystroke path.
 - GSettings today (`data/dev.maciz.sessionschronicle.gschema.xml.in`): `window-width`, `window-height`, `is-maximized`, `resume-terminal`, `sort-order`. Nothing else.
 - Preferences is one `adw::PreferencesPage` titled *General*, with groups *Session Resumption* and *Advanced* (`src/ui/modals/preferences.rs`).
-- **Deep-linking does not exist.** No `DBusActivatable=true` in the desktop file, no `--own-name` in `build-aux/dev.maciz.sessionschronicle.json`, and no `--session <id>` argument in `src/main.rs`. This is a prerequisite of #189, not a configuration concern — but it is the largest hidden cost in the issue.
+- **Deep-linking exists** as of [#197](https://github.com/supermaciz/sessions-chronicle/issues/197) / [PR #200](https://github.com/supermaciz/sessions-chronicle/pull/200) ([design spec](../superpowers/specs/2026-08-01-deep-link-session-design.md)). The app assigns `APP_ID` and is unique by default, ships `DBusActivatable=true` and a per-profile D-Bus service file, and exposes a **private stateless GApplication action `open-session`** taking one string parameter (the exact `sessions.id`). The provider activates it through `org.freedesktop.Application.ActivateAction`. A public `--session <id>` CLI and a `sessions-chronicle:` URI scheme were both **explicitly rejected as non-goals** — their absence is a decision, not a gap. Failure is non-destructive and toast-based: unknown/empty/subagent ID → *Session not found*; database absent → *Sessions are not indexed yet*; SQLite error → *Could not open session*. **The largest hidden cost in #189 is therefore already paid**; what remains is the provider process and its query path. Two constraints follow for #189: (a) the provider must return only top-level IDs (`s.is_subagent = 0`), because a subagent ID resolves to a toast rather than a session; and (b) an instance launched with `--sessions-dir` is `NON_UNIQUE`, owns no bus name, and cannot receive `open-session` — fixture instances are unusable for activation testing.
+- **Concurrent reads are already safe.** `SessionIndexer::new` sets `journal_mode=WAL` (`src/database/indexer.rs:284`) and `open_connection` sets a five-second busy timeout (`src/database/mod.rs:28-30`). A second reader process running alongside incremental indexing needs no new concurrency mechanism. The `SQLITE_BUSY` concern in the body of #189 is stale.
 
 ## Where all three proposals agree
 
@@ -34,7 +37,9 @@ Independently, and this is the strongest signal in the exploration:
 2. **The real axis is exposure** — how much transcript text is permitted to appear on screen outside the app window.
 3. **The safe value is the default**, and the leak is opt-in.
 4. **Ranking, result count, and provider ordering are not configurable.** They are owned by bm25, by Shell, and by Settings ▸ Search respectively.
-5. Same packaging deltas, all of which belong to #189 rather than to this doc: `DBusActivatable=true`, a `dev.maciz.sessionschronicle.search-provider.ini` under `datadir/gnome-shell/search-providers/` (basename prefixed with the app ID so Flatpak exports it), and `--own-name=dev.maciz.sessionschronicle.SearchProvider` in `finish-args`.
+5. Same packaging deltas, all of which belong to #189 rather than to this doc — **narrower since #197**, which already shipped `DBusActivatable=true` and the application's own D-Bus service file. What remains: a `dev.maciz.sessionschronicle.search-provider.ini` under `datadir/gnome-shell/search-providers/` (basename prefixed with the app ID so Flatpak exports it), and — if the provider is a separate binary — a per-profile `@APP_ID@.SearchProvider.service` activating it.
+
+   **No `finish-args` change is needed, and the originally proposed `--own-name` line was wrong twice.** Flatpak auto-grants an app `--own=$APP_ID` and `--own=$APP_ID.*`, so a sub-name needs no permission; verified empirically — of the five providers installed on this machine, four own `$APP_ID.SearchProvider` and **none** declares an `own-name` in its metadata. The second error is subtler: hardcoding `dev.maciz.sessionschronicle.SearchProvider` is a sub-name of the *stable* App ID, but the development App ID is `dev.maciz.sessionschronicle.Devel`, making that same string a **sibling** — not auto-granted, and colliding with the stable build's provider. The name must be generated per-profile as `@APP_ID@.SearchProvider`, exactly as the service file already is.
 
 They diverge on **how many values the dial has**, **whether it gates matching or only rendering**, and **whether a second axis (per-project exclusion) ships in v1**.
 
@@ -69,6 +74,16 @@ The mechanical half is the real contribution. The provider must **not** be hoste
 
 → full detail: [`_section-mii-beta.md`](../mockups/gnome-search-config/_section-mii-beta.md)  
 GSettings: ~~`search-provider-exposure` (`s`, three values)~~ — **withdrawn**, see the rebuttal below. Now `search-provider-show-excerpts` (`b`, default `false`).
+
+### Post-#197 note — the separate binary is strengthened, not challenged
+
+Before #197 the app owned no bus name, so hosting the provider in the main binary was *impossible*. It is now *possible*, which looks like a challenge to this proposal and is the opposite of one.
+
+The new disqualifier is that the root window is declared `set_visible: true` in the `view!` macro (`src/app/mod.rs:259`), and the design spec is explicit that **a D-Bus activation is a launch** — service activation maps a window immediately. If the provider lived on the app's bus name, typing three letters in the overview would map an unrequested window on top of Activities, mid-keystroke. Making that lazy means hold/release counting and turning Sessions Chronicle into a background service, which #197 lists as an explicit non-goal.
+
+The one genuinely new argument *for* in-binary hosting — when the app is already running the process is warm, so the ~60 MB init is free — dies on inspection: Shell queries providers whether or not the app is running, so the same keystroke would answer silently when warm and pop a window when cold. Same input, two different desktops.
+
+What #197 actually did for this proposal is **complete** it. The separate no-GTK provider previously had no supported way to *open* a result and had to hand-wave `--session <id>`; it now calls `ActivateAction("open-session", ["<id>"])` and inherits cold start, warm present, and all three failure toasts for free.
 
 ### Rebuttal — *Session titles only* withdrawn
 
@@ -147,7 +162,7 @@ Three things decide this:
 
 **The safe default is not free, and the doc should not pretend otherwise.** With excerpts off, `description` is always `Claude Code · sessions-chronicle · 3 days ago`, so two sessions in the same project on the same day are indistinguishable in the overview — the discriminating information is exactly the text we chose not to render. Still the right call, but it makes `name` load-bearing: `first_prompt`, ellipsized, is the only thing separating results, and it must never fall back to a filename or a session ID.
 
-Also adopt, because they cost nothing: **truncate on our side** (`name` 60, `description` 100 chars, whitespace collapsed) since Orca reads the untruncated string; **keep `AND s.is_subagent = 0`**; and the **non-interactive signpost row / group description** rather than a link row into `gnome-control-center`. Keep `snippet()` deferred to `GetResultMetas` even though it now buys nothing at the default — it is free, and it is the difference between excerpt mode costing 5 snippets and 20.
+Also adopt, because they cost nothing: **truncate on our side** (`name` 60, `description` 100 chars, whitespace collapsed) since Orca reads the untruncated string; **keep `AND s.is_subagent = 0`** — since #197 this is defence in depth rather than the only guard, and that is exactly why it must stay: the receiving handler rejects subagent rows, so an unfiltered subagent hit would look like an ordinary result in the overview and resolve to a *Session not found* toast on click. A result that opens onto an error is the shipped-but-dead surface this recommendation exists to avoid; and the **non-interactive signpost row / group description** rather than a link row into `gnome-control-center`. Keep `snippet()` deferred to `GetResultMetas` even though it now buys nothing at the default — it is free, and it is the difference between excerpt mode costing 5 snippets and 20.
 
 **Deferred to a follow-up, in this order:**
 
@@ -161,14 +176,17 @@ Also adopt, because they cost nothing: **truncate on our side** (`name` 60, `des
 ## Open questions
 
 - **Storage for per-project exclusion when it ships: `as` GSettings key of project paths, or `projects.exclude_from_shell_search` (schema v18)?** The column is correct under re-index and filters in SQL rather than in Rust after the fact; the `strv` key ships faster and needs no migration. Creative argues the column; deferring the feature defers the choice.
-- **Does the provider get its own `ini` `DesktopId` pointing at the main desktop file, given the provider is a separate binary?** It must — `DesktopId` is how Shell names and icons the provider group, and there is only one user-facing app.
+- ~~**Does the provider get its own `ini` `DesktopId` pointing at the main desktop file, given the provider is a separate binary?**~~ **Settled empirically.** It must — `DesktopId` is how Shell names and icons the provider group, and there is only one user-facing app. All five providers installed on this machine do exactly this, including those whose `BusName` is a separate `$APP_ID.SearchProvider`.
 - **Which icon does a result carry?** Mii Beta wants per-assistant symbolic icons for free disambiguation, and flags the real constraint: icons resolved only from our GResource bundle render blank in the Shell process. They must be installed themed icons, or fall back to the app icon.
 - **Is `first_prompt` ever empty or absent, and how often?** `Session::first_prompt` is `Option<String>` (`src/models/session.rs:54`). This got sharper after the rebuttal: at the default, `name` is the **only** thing separating two results, so a fallback is not a cosmetic detail. It must never be a filename or a session ID — project name + assistant + time is the floor. Worth measuring against `tests/fixtures` how many sessions actually lack a first prompt before deciding whether the fallback is a rare path or a common one.
-- **Does `LaunchSearch` pre-fill the in-app search entry?** All three assume yes; it needs a `--search <query>` argument alongside `--session <id>`, and neither exists in `src/main.rs` today.
+- **Does `LaunchSearch` pre-fill the in-app search entry?** All three proposals assume yes. #197 deferred it here by name and settled the *shape* of the answer, so the premise of the original question (a `--search <query>` argument alongside `--session <id>`) no longer applies: `--session` was rejected as a public API and will not ship, so `LaunchSearch`'s counterpart is a **second stateless GApplication action** — say `search-sessions` with parameter `s` — following `open-session` exactly: present the window, then send an `AppMsg`. What is genuinely still open is (a) whether it ships at all in v1, (b) `s` (Shell's terms joined) versus `as` (the raw `terms` array, joined app-side), and (c) what the app shows when the carried query matches nothing. Note the contract inverts: `open-session` *clears* search mode, the query, transcript highlights, and the search-only sort override, whereas `search-sessions` must *set* them — so the two handlers must not share a code path or they will fight over the shared search entry.
 
 ## Verification (once implemented)
 
-- `--sessions-dir tests/fixtures`, then from the overview: 2 characters → no results **and no SQLite query**; 3 characters → results.
+- **The minimum-query-length check must not go through the overview against fixtures.** The original step here (`--sessions-dir tests/fixtures`, then type in the overview) is invalid twice over. Shell activates the provider with no arguments, so it resolves the *default* database path, while `--sessions-dir` writes to `sessions-override.db` (`select_db_filename`, `src/session_sources.rs:125-127`) — the overview would return nothing for every query and the 2-character case would "pass" for entirely the wrong reason. Separately, a fixture instance is `NON_UNIQUE` and cannot receive `open-session`, so result activation cannot work either. Split the check:
+  - **Query half, no Shell involved.** Give the provider binary a database override for direct invocation only (never in the service file's `Exec`, so Shell can never activate a fixture-backed provider), point it at the fixture database — `sessions-chronicle --print-db-path --sessions-dir tests/fixtures` prints the exact path — and drive it over D-Bus directly with `gdbus call … GetInitialResultSet "['ak']"` → empty array **and no SQLite query in the log**; `"['aki']"` → non-empty. Deterministic, scriptable in CI, no compositor required.
+  - **End-to-end half, default index only.** Overview typing and result activation use the ordinary default-index instance. Fixture instances remain the tool for in-app UI work, not for activation testing.
+- **Activate a result whose session has been deleted or re-indexed away** (or invoke `open-session` with a stale ID directly): the app presents its window, preserves the current page, and shows the *Session not found* toast, while the **provider** itself must not error, log a D-Bus fault, or block the overview. #189's "fail quietly" criterion binds the provider; the app is where the user gets told. Same check with a subagent ID — which the provider must never return in the first place.
 - A term present only in a message body, never in a first prompt: **present in both modes**, with the description differing. If the two values ever render identically for some query, one of them should be deleted.
 - Flip the switch while the provider process is alive; the next keystroke reflects it without a restart (proves the GSettings read is per-call, not cached at startup).
 - Provider cold-start with the GUI closed reads the persisted value, not the schema default.

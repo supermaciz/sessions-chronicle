@@ -1,5 +1,7 @@
 ## Proposal — UI Designer (HIG-conformant, minimal change)
 
+> **Correction note (2026-08-02).** This is the proposal as written on 2026-08-01. Its *argument* stands unchanged, but several codebase facts it cites were invalidated when [PR #200](https://github.com/supermaciz/sessions-chronicle/pull/200) shipped the deep-link prerequisite (#197). Corrected points are marked inline below; the authoritative current facts live in [`../../explorations/2026-08-01-gnome-search-configurability-exploration.md`](../../explorations/2026-08-01-gnome-search-configurability-exploration.md). The reasoning is preserved rather than rewritten so the record of what was argued, and on what basis, stays intact.
+
 **Stance:** Almost none of this should be configurable in-app.  
 GNOME Settings ▸ Search already owns on/off and ordering. The app should add **exactly one** setting — the one thing the OS cannot express: **how much transcript text is allowed to appear on screen in the Activities overview.**
 
@@ -149,7 +151,7 @@ Type `s` with named values, consistent with the existing `resume-terminal` and `
 
 **The provider may not share a process with the GUI.** Shell D-Bus-activates it, so it can start cold while the window is closed, and it can outlive several open/close cycles of the GUI. The design must survive both shapes:
 
-- **In-process**, if the provider is hosted by the main app via `DBusActivatable=true` + `--own-name` in the manifest.
+- **In-process**, if the provider is hosted by the main app via `DBusActivatable=true` + ~~`--own-name` in the manifest~~ (no manifest change needed — Flatpak grants the app its own ID and sub-names). **Note added 2026-08-02:** `DBusActivatable=true` shipped with #197, so this shape is now technically reachable — but it acquired a disqualifier. The root window is declared `set_visible: true` (`src/app/mod.rs:259`) and #197 established that a D-Bus activation *is* a launch, so hosting the provider here would map an unrequested window over the Activities overview mid-keystroke. The exploration recommends the out-of-process shape.
 - **Out-of-process**, if it is a separate entry point (for example `sessions-chronicle --gnome-search-provider`).
 
 `gio::Settings::new(APP_ID)` works identically in both cases — the GSettings backend is per-user, not per-process. Inside Flatpak with the current `finish-args` (no `--talk-name=ca.desrt.dconf`), GIO uses the keyfile backend at `~/.var/app/dev.maciz.sessionschronicle/config/glib-2.0/settings/keyfile`. Every instance of the same app id — GUI and D-Bus-activated provider alike — maps the same file, and `GKeyfileSettingsBackend` watches it with a `GFileMonitor`, so cross-process change notification works without adding dconf to the sandbox. **No manifest change is required for the setting itself.**
@@ -169,8 +171,8 @@ Type `s` with named values, consistent with the existing `resume-terminal` and `
 | `data/dev.maciz.sessionschronicle.gschema.xml.in` | after 25 | add `search-provider-detail` |
 | `src/ui/modals/preferences.rs` | 67–92 | new `System Search` group with description + `ComboRow`, added between `resumption_group` and `advanced_group` |
 | `src/database/mod.rs` | 452 `search_sessions_with_query` | reuse as-is for matching; provider path needs a `LIMIT`-bounded variant and, for `"match"`, a snippet column (`snippet(messages_fts, …)`) |
-| `data/dev.maciz.sessionschronicle.desktop.in.in` | — | `DBusActivatable=true` (provider work, not config work) |
-| `build-aux/dev.maciz.sessionschronicle.json` | `finish-args` | `--own-name=…` (provider work, not config work) |
+| ~~`data/dev.maciz.sessionschronicle.desktop.in.in`~~ | — | ~~`DBusActivatable=true`~~ — **shipped in #197**, no longer a #189 delta |
+| ~~`build-aux/dev.maciz.sessionschronicle.json`~~ | ~~`finish-args`~~ | ~~`--own-name=…`~~ — **not needed** (2026-08-02): Flatpak grants `--own=$APP_ID` and `--own=$APP_ID.*`; the provider name must be generated per profile as `@APP_ID@.SearchProvider` |
 
 The `ComboRow` follows the existing `resume-terminal` pattern in `preferences.rs:74-86` exactly: a `gio::ListStore<StringObject>`, `selected` computed from the current string value, `connect_selected_notify` writing back. No new abstraction.
 
@@ -200,7 +202,7 @@ The `ComboRow` follows the existing `resume-terminal` pattern in `preferences.rs
 
 ### 9. Verification
 
-Run with fixtures: `--sessions-dir tests/fixtures`.
+~~Run with fixtures: `--sessions-dir tests/fixtures`.~~ **Corrected 2026-08-02:** fixtures cannot back these checks as written. A Shell-activated provider receives no arguments and resolves the *default* database, whereas `--sessions-dir` writes to `sessions-override.db` (`src/session_sources.rs:125-127`); fixture instances are also `NON_UNIQUE` and cannot receive `open-session`. The GSettings assertions below (1–3) are unaffected — the key is per-user, not per-database — but any check involving the provider's *results* or result *activation* must run against the default index, or drive the provider directly with an explicit database override used only for direct invocation.
 
 1. **Default is safe on a fresh profile.** `gsettings reset dev.maciz.sessionschronicle search-provider-detail`, search for a term that matches deep in a fixture transcript, confirm no transcript body appears in any result — only prompt, assistant, project, time.
 2. **Cross-process change takes effect.** Start the provider (or trigger it from the overview), change the value in Preferences while it is running, search again, confirm the new detail level applies with no restart. This is the assertion that the per-call read exists.

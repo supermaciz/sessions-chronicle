@@ -1,5 +1,7 @@
 # Proposal — Creative: "Show me what GNOME will see"
 
+> **Correction note (2026-08-02).** This is the proposal as written on 2026-08-01. Its *argument* stands unchanged, but several codebase facts it cites were invalidated when [PR #200](https://github.com/supermaciz/sessions-chronicle/pull/200) shipped the deep-link prerequisite (#197). Corrected points are marked inline below; the authoritative current facts live in [`../../explorations/2026-08-01-gnome-search-configurability-exploration.md`](../../explorations/2026-08-01-gnome-search-configurability-exploration.md). The reasoning is preserved rather than rewritten so the record of what was argued, and on what basis, stays intact.
+
 **Angle**: configuration by direct manipulation, not by abstract preference rows.  
 **One-liner**: a single **exposure dial** whose control *is* a live replica of the Activities result row, plus **per-project opt-out that lives on the project**, not in a settings list.
 
@@ -91,9 +93,9 @@ The provider is a separate D-Bus-activated entry point (`--gnome-search-provider
 
 Packaging deltas this proposal implies (shared with the other proposals, listed for completeness):
 
-- `data/dev.maciz.sessionschronicle.desktop.in.in` gains `DBusActivatable=true`.
+- ~~`data/dev.maciz.sessionschronicle.desktop.in.in` gains `DBusActivatable=true`.~~ **Shipped in #197** (2026-08-02), together with the application's per-profile D-Bus service file.
 - A new `data/dev.maciz.sessionschronicle.search-provider.ini` installed to `datadir/gnome-shell/search-providers/`, basename prefixed with the app ID so Flatpak exports it.
-- `build-aux/dev.maciz.sessionschronicle.json` finish-args gain `--own-name=dev.maciz.sessionschronicle.SearchProvider`.
+- ~~`build-aux/dev.maciz.sessionschronicle.json` finish-args gain `--own-name=dev.maciz.sessionschronicle.SearchProvider`.~~ **Not needed** (2026-08-02): Flatpak grants an app `--own=$APP_ID` and `--own=$APP_ID.*`, so a sub-name requires no permission. The name must be generated per profile as `@APP_ID@.SearchProvider` — hardcoded, it is a *sibling* of the `.Devel` app ID rather than a sub-name, so it would not be granted for development builds.
 
 ---
 
@@ -125,4 +127,4 @@ One key. Plus one DB column, `projects.exclude_from_shell_search`.
 
 ## Complexity
 
-**Medium.** The dial itself is Small — one `ComboRow`, one mock row, one GSettings key. The per-project exclusion adds a schema migration, a sidebar context-menu action, a row-suffix indicator, and one SQL clause: another Small. Both sit on top of the provider work from issue #189, which is where the actual Large lives (D-Bus service, Flatpak `--own-name`, `DBusActivatable`, deep-link activation) and which all three proposals share.
+**Medium.** The dial itself is Small — one `ComboRow`, one mock row, one GSettings key. The per-project exclusion adds a schema migration, a sidebar context-menu action, a row-suffix indicator, and one SQL clause: another Small. Both sit on top of the provider work from issue #189, which is where the actual Large lives (provider binary, its D-Bus service file, and a bounded per-keystroke query path) and which all three proposals share. **Smaller since 2026-08-02:** `DBusActivatable` and deep-link activation shipped with #197, and the Flatpak `--own-name` turned out not to be required at all.
