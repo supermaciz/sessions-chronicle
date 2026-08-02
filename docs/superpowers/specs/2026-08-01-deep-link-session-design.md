@@ -1,7 +1,7 @@
 # Open Session by ID — Design Spec
 
 **Date:** 2026-08-01  
-**Status:** Approved design for [issue #197](https://github.com/supermaciz/sessions-chronicle/issues/197)  
+**Status:** Implemented by [PR #200](https://github.com/supermaciz/sessions-chronicle/pull/200)  
 **Issue:** [#197 — deep-linking: open a session by ID from outside the app](https://github.com/supermaciz/sessions-chronicle/issues/197)  
 **Blocks:** [#189 — expose session search in GNOME Activities](https://github.com/supermaciz/sessions-chronicle/issues/189)  
 **Related exploration:** [`docs/explorations/2026-08-01-gnome-search-configurability-exploration.md`](../../explorations/2026-08-01-gnome-search-configurability-exploration.md)
@@ -281,6 +281,17 @@ flatpak-builder --user flatpak_app build-aux/dev.maciz.sessionschronicle.Devel.j
 ```
 
 The Flatpak must also be installed for the cold host-to-sandbox D-Bus checks; a build alone does not prove service activation.
+
+## Implementation differences
+
+The implementation preserves the protocol, fail-fast lookup behavior, user-visible messages, and navigation guarantees described above. The following details changed while implementing and verifying the design:
+
+| Area | Planned design | Final implementation | Rationale and impact |
+|---|---|---|---|
+| Index availability | Distinguish a missing index from a missing row by checking whether the database exists before lookup. | `App::init` captures `index_available` before `SessionIndexer::new` can create the database, and a successful indexing pass sets it to `true`. | The name describes whether an index can be queried, not whether it reflects the latest files on disk. Existing indexed results still open immediately while incremental indexing runs; no retry or deferred opening was added. |
+| Lookup outcomes | Classify lookup as `Found`, `IndexMissing`, `Unavailable`, or `Failed`, then map failures to user feedback. | `lookup_external_session` returns `Result<Session, ExternalOpenFailure>`, with the SQLite error retained by `Failed(anyhow::Error)`. | This removes duplicate outcome enums and the boxed success payload without changing classification, logging, or toast text. Unknown, empty, and subagent IDs remain `Unavailable`. |
+| Application-action test | Activate `open-session` through the application action map and verify broker delivery. | The GTK unit test looks up the typed `SimpleAction` and activates it directly. Installed-Flatpak acceptance checks exercise the real host-to-sandbox GApplication route. | The test application is not registered on the session bus, so `GApplication::activate_action` rejects activation there. Direct action activation still tests the callback and broker boundary; cold and warm D-Bus routing are verified at the installed-process level. |
+| Popover preservation test | Assert that unavailable targets preserve the visible summary popover together with model navigation and search state. | The headless regression asserts the model, search, inspector, detail, parent, and navigation-stack state; popover preservation was verified during installed-Flatpak acceptance instead. | Under Xvfb, iterating the main context unmaps the popover because the test GApplication has not emitted normal startup, even for a no-op handler. Keeping that assertion would test the harness artifact rather than the failure path. |
 
 ## Success criteria
 
