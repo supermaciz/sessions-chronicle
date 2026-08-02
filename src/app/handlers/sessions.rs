@@ -74,6 +74,16 @@ impl App {
         });
     }
 
+    fn push_detail_page(&mut self) {
+        if !self.detail_visible {
+            self.filters_open_before_detail = self.filters_open;
+            self.filters_open = false;
+            self.nav_view.push(&self.detail_page);
+            self.detail_visible = true;
+            self.banner.set_revealed(false);
+        }
+    }
+
     pub(crate) fn handle_session_selected(&mut self, id: String) {
         tracing::debug!("Session selected: {}", id);
 
@@ -98,13 +108,7 @@ impl App {
             }
         }
 
-        if !self.detail_visible {
-            self.filters_open_before_detail = self.filters_open;
-            self.filters_open = false;
-            self.nav_view.push(&self.detail_page);
-            self.detail_visible = true;
-            self.banner.set_revealed(false);
-        }
+        self.push_detail_page();
     }
 
     pub(crate) fn handle_open_child_session(&mut self, child_session_id: String) {
@@ -194,13 +198,7 @@ impl App {
         self.session_detail.widget().set_visible(true);
         self.set_active_session_and_detail(session, None);
 
-        if !self.detail_visible {
-            self.filters_open_before_detail = self.filters_open;
-            self.filters_open = false;
-            self.nav_view.push(&self.detail_page);
-            self.detail_visible = true;
-            self.banner.set_revealed(false);
-        }
+        self.push_detail_page();
     }
 }
 
