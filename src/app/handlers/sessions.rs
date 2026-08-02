@@ -13,46 +13,36 @@ use super::super::helpers::{active_search_query, parent_session_load_failure_mes
 use super::super::types::{ActiveSessionRef, Workspace};
 
 #[derive(Debug)]
-enum ExternalSessionLookup {
-    Found(Box<Session>),
-    IndexMissing,
-    Unavailable,
-    Failed(anyhow::Error),
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ExternalOpenFailure {
     IndexMissing,
     Unavailable,
-    Failed,
+    Failed(anyhow::Error),
 }
 
 fn lookup_external_session(
     db_path: &Path,
     id: &str,
     index_available: bool,
-) -> ExternalSessionLookup {
+) -> Result<Session, ExternalOpenFailure> {
     if id.is_empty() {
-        return ExternalSessionLookup::Unavailable;
+        return Err(ExternalOpenFailure::Unavailable);
     }
     if !index_available || !db_path.exists() {
-        return ExternalSessionLookup::IndexMissing;
+        return Err(ExternalOpenFailure::IndexMissing);
     }
 
     match load_session(db_path, id) {
-        Ok(Some(session)) if !session.is_subagent => {
-            ExternalSessionLookup::Found(Box::new(session))
-        }
-        Ok(Some(_)) | Ok(None) => ExternalSessionLookup::Unavailable,
-        Err(error) => ExternalSessionLookup::Failed(error),
+        Ok(Some(session)) if !session.is_subagent => Ok(session),
+        Ok(Some(_)) | Ok(None) => Err(ExternalOpenFailure::Unavailable),
+        Err(error) => Err(ExternalOpenFailure::Failed(error)),
     }
 }
 
-fn external_open_failure_title(failure: ExternalOpenFailure) -> String {
+fn external_open_failure_title(failure: &ExternalOpenFailure) -> String {
     match failure {
         ExternalOpenFailure::Unavailable => gettext("Session not found"),
         ExternalOpenFailure::IndexMissing => gettext("Sessions are not indexed yet"),
-        ExternalOpenFailure::Failed => gettext("Could not open session"),
+        ExternalOpenFailure::Failed(_) => gettext("Could not open session"),
     }
 }
 
@@ -169,7 +159,7 @@ impl App {
         }
     }
 
-    fn show_external_open_failure(&self, failure: ExternalOpenFailure) {
+    fn show_external_open_failure(&self, failure: &ExternalOpenFailure) {
         let toast = relm4::adw::Toast::builder()
             .title(external_open_failure_title(failure))
             .build();
@@ -180,18 +170,12 @@ impl App {
         tracing::debug!(session_id = %id, "External session open requested");
 
         let session = match lookup_external_session(&self.db_path, &id, self.index_available) {
-            ExternalSessionLookup::Found(session) => *session,
-            ExternalSessionLookup::IndexMissing => {
-                self.show_external_open_failure(ExternalOpenFailure::IndexMissing);
-                return;
-            }
-            ExternalSessionLookup::Unavailable => {
-                self.show_external_open_failure(ExternalOpenFailure::Unavailable);
-                return;
-            }
-            ExternalSessionLookup::Failed(error) => {
-                tracing::error!(session_id = %id, error = %error, "External session lookup failed");
-                self.show_external_open_failure(ExternalOpenFailure::Failed);
+            Ok(session) => session,
+            Err(failure) => {
+                if let ExternalOpenFailure::Failed(error) = &failure {
+                    tracing::error!(session_id = %id, error = %error, "External session lookup failed");
+                }
+                self.show_external_open_failure(&failure);
                 return;
             }
         };
@@ -258,20 +242,20 @@ mod tests {
         let (_directory, path) = seeded_database();
 
         match lookup_external_session(&path, "top-level", true) {
-            ExternalSessionLookup::Found(session) => assert_eq!(session.id, "top-level"),
+            Ok(session) => assert_eq!(session.id, "top-level"),
             outcome => panic!("expected found, got {outcome:?}"),
         }
         assert!(matches!(
             lookup_external_session(&path, "subagent", true),
-            ExternalSessionLookup::Unavailable
+            Err(ExternalOpenFailure::Unavailable)
         ));
         assert!(matches!(
             lookup_external_session(&path, "missing", true),
-            ExternalSessionLookup::Unavailable
+            Err(ExternalOpenFailure::Unavailable)
         ));
         assert!(matches!(
             lookup_external_session(&path, "", true),
-            ExternalSessionLookup::Unavailable
+            Err(ExternalOpenFailure::Unavailable)
         ));
     }
 
@@ -282,13 +266,13 @@ mod tests {
 
         assert!(matches!(
             lookup_external_session(&missing_path, "stale-id", true),
-            ExternalSessionLookup::IndexMissing
+            Err(ExternalOpenFailure::IndexMissing)
         ));
 
         let (_seed_directory, seeded_path) = seeded_database();
         assert!(matches!(
             lookup_external_session(&seeded_path, "top-level", false),
-            ExternalSessionLookup::IndexMissing
+            Err(ExternalOpenFailure::IndexMissing)
         ));
     }
 
@@ -298,22 +282,22 @@ mod tests {
 
         assert!(matches!(
             lookup_external_session(directory.path(), "any-id", true),
-            ExternalSessionLookup::Failed(_)
+            Err(ExternalOpenFailure::Failed(_))
         ));
     }
 
     #[test]
     fn failure_titles_match_the_three_user_outcomes() {
         assert_eq!(
-            external_open_failure_title(ExternalOpenFailure::Unavailable),
+            external_open_failure_title(&ExternalOpenFailure::Unavailable),
             "Session not found"
         );
         assert_eq!(
-            external_open_failure_title(ExternalOpenFailure::IndexMissing),
+            external_open_failure_title(&ExternalOpenFailure::IndexMissing),
             "Sessions are not indexed yet"
         );
         assert_eq!(
-            external_open_failure_title(ExternalOpenFailure::Failed),
+            external_open_failure_title(&ExternalOpenFailure::Failed(anyhow::anyhow!("database"))),
             "Could not open session"
         );
     }
