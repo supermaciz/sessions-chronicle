@@ -57,7 +57,7 @@ impl App {
             skipped,
             removed
         );
-        self.index_ready = true;
+        self.index_available = true;
         self.indexing = false;
         self.session_list.emit(SessionListMsg::SetIndexing(false));
         self.last_per_source = per_source.clone();

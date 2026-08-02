@@ -149,7 +149,7 @@ pub(super) struct App {
     toast_overlay: adw::ToastOverlay,
     filter_state: FilterState,
     db_path: PathBuf,
-    index_ready: bool,
+    index_available: bool,
     sources: SessionSources,
     indexing: bool,
     pending_reindex_feedback: bool,
@@ -456,7 +456,7 @@ impl SimpleComponent for App {
         let sources = SessionSources::resolve(sessions_dir.as_deref());
         let db_dir = glib::user_data_dir().join(APP_ID);
         let db_path = db_dir.join(select_db_filename(sources.override_mode));
-        let index_ready = db_path.exists();
+        let index_available = db_path.exists();
 
         tracing::info!(
             "Session sources (override={}): claude={}, opencode={}, codex={}, vibe={}, kimi={}",
@@ -521,7 +521,7 @@ impl SimpleComponent for App {
             toast_overlay: adw::ToastOverlay::new(),
             filter_state: FilterState::default(),
             db_path,
-            index_ready,
+            index_available,
             sources,
             indexing: true,
             pending_reindex_feedback: false,

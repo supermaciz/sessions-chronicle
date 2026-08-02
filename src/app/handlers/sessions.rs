@@ -27,11 +27,15 @@ enum ExternalOpenFailure {
     Failed,
 }
 
-fn lookup_external_session(db_path: &Path, id: &str, index_ready: bool) -> ExternalSessionLookup {
+fn lookup_external_session(
+    db_path: &Path,
+    id: &str,
+    index_available: bool,
+) -> ExternalSessionLookup {
     if id.is_empty() {
         return ExternalSessionLookup::Unavailable;
     }
-    if !index_ready || !db_path.exists() {
+    if !index_available || !db_path.exists() {
         return ExternalSessionLookup::IndexMissing;
     }
 
@@ -175,7 +179,7 @@ impl App {
     pub(crate) fn handle_external_session_open(&mut self, id: String) {
         tracing::debug!(session_id = %id, "External session open requested");
 
-        let session = match lookup_external_session(&self.db_path, &id, self.index_ready) {
+        let session = match lookup_external_session(&self.db_path, &id, self.index_available) {
             ExternalSessionLookup::Found(session) => *session,
             ExternalSessionLookup::IndexMissing => {
                 self.show_external_open_failure(ExternalOpenFailure::IndexMissing);
