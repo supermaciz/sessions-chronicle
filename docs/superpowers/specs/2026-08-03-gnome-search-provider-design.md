@@ -180,10 +180,13 @@ reached with `sessions-chronicle --print-db-path --sessions-dir tests/fixtures`.
 
 ### Lifecycle
 
-The provider remains alive after D-Bus activation and exits when its bus connection is
-lost or the desktop session ends. An inactivity exit would be incorrect while Shell is
-still displaying results: a later `GetResultMetas` call must retain the generation-to-
-query association used for matched excerpts.
+The provider exits with status 0 after roughly 30 seconds without a method call, and
+D-Bus activation restarts it on demand — the ecosystem norm for search providers. The
+timer resets on **every** method call, including `GetResultMetas`, so the provider never
+exits mid-conversation with Shell. The exit is safe because the provider holds no state
+a restart cannot survive: result identifiers are plain session IDs, so `ActivateResult`
+works across a restart, and a lost match expression only degrades `GetResultMetas` to
+its excerpt-off form (see [Result identity](#result-identity-and-matched-excerpts)).
 
 ---
 
@@ -256,16 +259,20 @@ contract correctness even if a full re-query would be fast.
 
 ### Result identity and matched excerpts
 
-`GetResultMetas` receives identifiers only; it does not receive the search terms. The
-provider therefore returns opaque, generation-scoped result identifiers. Each identifier
-contains a safely encoded session ID plus a generation token, while a small bounded map
-associates the generation with its normalized match expression. This prevents
-overlapping metadata requests from using whichever query happened to arrive last.
-`GetSubsearchResultSet` creates a new generation from the session IDs decoded from
-`previous_results`, and `ActivateResult` decodes the session ID before invoking the
-application. If the process is unexpectedly restarted, activation still works and
-metadata falls back to the excerpt-off form because the optional expression cache is
-gone.
+`GetResultMetas` receives identifiers only; it does not receive the search terms.
+Result identifiers are therefore plain `sessions.id` values, and the provider keeps the
+normalized match expression of the **most recent** result-set query for snippet
+evaluation. Last query wins — the same policy the cancellation design already applies to
+the queries themselves. The accepted race: a `GetResultMetas` call overlapping a newer
+keystroke may render its snippets against the newer expression. That can only change
+which excerpt text is shown, never result identity or activation, and Shell replaces the
+whole result list on the next keystroke anyway. A generation-scoped identifier scheme
+would close this window at the cost of ID encoding, a generation map, and decoding in
+three methods — machinery this design rejects for v1.
+
+If the provider was restarted between the result-set query and `GetResultMetas` (or the
+stored expression is otherwise missing), activation still works because the identifier
+*is* the session ID, and metadata falls back to the excerpt-off form.
 
 For the handful of rows Shell actually draws, `snippet(messages_fts, …, '…', 32)` is
 evaluated against the stored expression only when `show_excerpts` is true. When excerpts
@@ -291,7 +298,7 @@ Budget: a hard 250 ms deadline per query.
 
 | Field | Value |
 |---|---|
-| `id` | the opaque provider result identifier supplied to `GetResultMetas` |
+| `id` | `sessions.id` |
 | `name` | `first_prompt`, whitespace collapsed, truncated to 60 characters on a `char` boundary |
 | `description`, excerpts off | `Claude Code · sessions-chronicle · 3 days ago` |
 | `description`, excerpts on | the matched snippet, whitespace collapsed, truncated to 100 characters |
@@ -411,8 +418,8 @@ call, and it makes `name` load-bearing.
 
 ### `ActivateResult`
 
-Resolves the opaque result identifier to its exact `sessions.id`, then delegates to the
-existing application contract. The call target is the application App ID at the standard
+The result identifier is the exact `sessions.id`, so activation delegates directly to
+the existing application contract. The call target is the application App ID at the standard
 App-ID-derived object path, on `org.freedesktop.Application.ActivateAction` with the
 signature `(sava{sv})`:
 
@@ -469,8 +476,8 @@ array.
 
 `GetResultMetas` preserves the interface invariant of one dictionary per requested
 identifier, in the same order. If an identifier cannot be resolved or metadata cannot be
-loaded, that entry uses the same opaque `id`, the application `gicon`, the generic name
-*Session unavailable*, and no description. If only the generation's match expression was
+loaded, that entry uses the same `id`, the application `gicon`, the generic name
+*Session unavailable*, and no description. If only the stored match expression was
 lost, the normal excerpt-off metadata is returned. This is quieter and more contract-
 correct than returning an array whose length does not match the identifiers.
 
@@ -513,9 +520,10 @@ and drives the interface directly:
 - `GetInitialResultSet(['ak'])` → empty array, and no SQLite query in the log.
 - `GetInitialResultSet(['aki'])` → non-empty.
 - `GetResultMetas` with excerpts off and on → descriptions differ.
-- The result metadata `id` exactly matches its opaque input identifier, and one
+- The result metadata `id` exactly matches its requested identifier, and one
   dictionary is returned per requested identifier.
-- Overlapping generations retain their own snippet expression.
+- `GetResultMetas` with no stored match expression (fresh process) → excerpt-off
+  metadata, no error.
 - A subsearch never introduces an identifier from outside `previous_results`.
 
 Deterministic, scriptable in CI, no compositor required. This is the query half of the
