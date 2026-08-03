@@ -1,6 +1,6 @@
 # Similar Projects
 
-Last reviewed: 2026-07-17
+Last reviewed: 2026-08-04
 
 A shortlist of projects in the same product space as Sessions Chronicle:
 tools that index, browse, search, analyze, resume, or operationalize local AI
@@ -362,6 +362,26 @@ the cloud and process histories into reusable skills.
   reading.
 - **Maintenance signal:** 1,252 stars, v1.13.0 released on 2026-05-18, pushed
   on 2026-06-19.
+
+### [Engineering Notebook](https://github.com/prime-radiant-inc/engineering-notebook)
+
+Bun CLI and local web UI that ingests Claude Code and Codex session transcripts,
+stores them in SQLite, and generates LLM-powered daily engineering-journal
+entries. Presents a browsable journal with a date index, project timelines,
+calendar/Gantt view, full-text search, transcript inspection, resume commands,
+and an iCal feed.
+
+- **Why it's adjacent:** Uses the same local Claude Code and Codex JSONL inputs
+  and shares the local-first, SQLite-backed, human-readable reading goal.
+- **Why it is not a direct match:** The core artifact is a generated daily
+  narrative/summary rather than a faithful session archive; only two assistants;
+  web app rather than native GTK/Libadwaita desktop.
+- **Maintenance signal:** 243 stars, no releases, page snapshot reviewed on
+  2026-08-04.
+- **Product implication:** Shows that LLM summarization layered on top of raw
+  sessions can create a different, potentially stickier product unit than
+  search/browse alone. Worth watching as a design direction rather than as a
+  feature-checklist competitor.
 
 ### [cli-continues](https://github.com/yigitkonur/cli-continues)
 
