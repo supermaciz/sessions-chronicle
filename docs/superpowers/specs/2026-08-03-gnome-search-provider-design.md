@@ -1,7 +1,7 @@
 # GNOME Shell search provider — Design
 
 **Date**: 2026-08-03  
-**Status**: Approved — ready for an implementation plan.  
+**Status**: Verified — ready for an implementation plan.  
 **Issue**: [#189 — feat: expose session search in GNOME Activities](https://github.com/supermaciz/sessions-chronicle/issues/189)  
 **Implements**: [`docs/explorations/2026-08-01-gnome-search-configurability-exploration.md`](../../explorations/2026-08-01-gnome-search-configurability-exploration.md) — its [Recommendation](../../explorations/2026-08-01-gnome-search-configurability-exploration.md#recommendation) section.  
 **Builds on**: [`2026-08-01-deep-link-session-design.md`](2026-08-01-deep-link-session-design.md) — the `open-session` action contract shipped in [PR #200](https://github.com/supermaciz/sessions-chronicle/pull/200).
@@ -20,14 +20,20 @@ returns a `description` string that Shell renders in the overview — the most
 screen-shared surface on the desktop, and one Orca reads aloud. That is why exposure is
 configurable and why the restrained value is the default.
 
+The setting gates the **matched body snippet**, not the session title: `first_prompt`
+remains the result `name` in both modes and can itself contain sensitive user text. That
+always-visible title is an explicit exposure boundary of this design, not a promise that
+the excerpt-off mode renders no transcript-derived text.
+
 ## Decisions this spec locks in
 
 | Question | Decision |
 |---|---|
 | Provider process | Separate binary, no GTK |
-| Code sharing | Cargo workspace with a GTK-free `sessions-chronicle-core` crate |
+| Code sharing | A GTK-free `sessions-chronicle-core` crate shared through a Cargo workspace |
 | Configuration | One key: `search-provider-show-excerpts` (`b`, default `false`) |
 | Does the setting gate matching? | No — rendering only |
+| Is `first_prompt` gated? | No — it remains the result title in both modes |
 | In-app on/off switch | None. Settings ▸ Search owns on/off |
 | `LaunchSearch` | Ships in v1, carries the query via a new `search-sessions` action |
 | Result icon | The application icon, for every result |
@@ -50,9 +56,9 @@ configurable and why the restrained value is the default.
 
 ## Architecture
 
-### Workspace layout
+### Component boundaries
 
-Three crates. The repository root stays the application package.
+The design has three Rust crates. The repository root remains the application package.
 
 ```
 Cargo.toml                    # [workspace] + the sessions-chronicle package
@@ -61,25 +67,49 @@ crates/search-provider/       # sessions-chronicle-search-provider
 src/                          # the application, unchanged in shape
 ```
 
-`sessions-chronicle-core` receives six modules moved verbatim from `src/`:
-`database/`, `models/`, `parsers/`, `session_sources.rs`, `project_resolver.rs`,
-`utils/`. None of them imports `gtk`, `glib`, `gio`, `relm4`, or `adw` today, so the
-extraction is mechanical rather than a rewrite.
-
-The application crate replaces its `mod database;` (and siblings) declarations with
-`use sessions_chronicle_core::…`, and `src/lib.rs` re-exports the core modules under
-their existing names so that the ~175 tests under `tests/` keep compiling unchanged.
+`sessions-chronicle-core` owns the domain model, parsing, session-source resolution,
+database filename/path construction from a supplied base directory, and all SQLite
+access. It must not depend on GTK, Adwaita, Relm4, GIO, or GLib. Each binary obtains the
+platform base directory with GLib and gives it to core. The exact module moves and
+compatibility re-exports belong in the implementation plan; the design constraint is
+that both binaries use one query and path policy without pulling a display stack into
+the provider.
 
 `sessions-chronicle-search-provider` depends on:
 
 - `sessions-chronicle-core` — the query path and database-path resolution.
-- `zbus` 5 — the D-Bus interface, for its `#[interface]` macro and async dispatch.
-- `gio`/`glib` — **only** for `gio::Settings` and `glib::user_data_dir()`.
+- `zbus` 5 — the D-Bus interface, using `#[interface]` and an async connection built
+  with `zbus::connection::Builder`.
+- `gio`/`glib` — **only** for short-lived `gio::Settings` reads and
+  `glib::user_data_dir()`.
 
 Pulling in glib is not a GTK dependency and does not open a display connection. It buys
 the same GSettings reader and the same data-directory resolution the application uses,
 rather than a second implementation of either. Plain `gio::Settings` reads work without
 a running main loop, and this provider only ever reads.
+
+The zbus interface object does **not** contain a `gio::Settings`: zbus's `Interface`
+trait requires `Send + Sync`, while gtk-rs correctly marks `gio::Settings` as neither.
+The database worker creates, reads, and drops a `gio::Settings` on its own thread for
+each metadata request, returning only the boolean to async code. No GObject crosses a
+thread boundary.
+
+### D-Bus contract
+
+The provider implements version 2 exactly as published by GNOME:
+
+| Method | D-Bus signature |
+|---|---|
+| `GetInitialResultSet` | `(as) → (as)` |
+| `GetSubsearchResultSet` | `(as, as) → (as)` |
+| `GetResultMetas` | `(as) → (aa{sv})` |
+| `ActivateResult` | `(s, as, u) → ()` |
+| `LaunchSearch` | `(as, u) → ()` |
+
+All five methods are asynchronously dispatched. In zbus 5, the wire types map to
+`Vec<String>`, `u32`, and result dictionaries whose values are `zvariant::OwnedValue`.
+The interface is served at the generated object path before the generated well-known
+bus name is requested.
 
 ### Why not in the application process
 
@@ -106,19 +136,18 @@ only through D-Bus.
 
 ## Packaging
 
-Three new generated files, all per-profile. The `.ini` basename is prefixed with the
-App ID so Flatpak exports it.
+Three new generated artifacts, all per-profile. The search-provider basename follows
+Flatpak's required `$FLATPAK_ID-search-provider.ini` pattern.
 
 | Generated file | Installed to | Key contents |
 |---|---|---|
-| `data/dev.maciz.sessionschronicle.search-provider.ini.in` | `datadir/gnome-shell/search-providers/@APP_ID@.search-provider.ini` | `DesktopId=@APP_ID@.desktop`, `BusName=@APP_ID@.SearchProvider`, `ObjectPath`, `Version=2`, `DefaultDisabled=true` |
+| Search-provider keyfile | `datadir/gnome-shell/search-providers/@APP_ID@-search-provider.ini` | `DesktopId=@APP_ID@.desktop`, `BusName=@APP_ID@.SearchProvider`, `ObjectPath`, `Version=2`, `DefaultDisabled=true` |
 | `data/dev.maciz.sessionschronicle.SearchProvider.service.in` | `datadir/dbus-1/services/@APP_ID@.SearchProvider.service` | `Name=@APP_ID@.SearchProvider`, `Exec=@BINDIR@/sessions-chronicle-search-provider` — **no arguments** |
-| — | `bindir/sessions-chronicle-search-provider` | second `custom_target` in `src/meson.build` |
+| Provider executable | `bindir/sessions-chronicle-search-provider` | GTK-free D-Bus service |
 
-This matches every search provider installed on the reference machine (Alpaca, Bazaar,
-Devtoolbox, Icon Library, Cartridges): all five set `DefaultDisabled=true` and point
-`DesktopId` at the main application desktop file even when the provider owns a separate
-bus name.
+`DesktopId` points at the main application desktop file even though the provider owns a
+separate bus name. `DefaultDisabled=true` states the privacy decision in source;
+Flatpak also marks exported providers disabled, independently of this key.
 
 **No `finish-args` change.** Flatpak auto-grants `--own=$APP_ID` and `--own=$APP_ID.*`,
 so `@APP_ID@.SearchProvider` needs no permission. None of the five reference providers
@@ -134,10 +163,9 @@ profile, and colliding with the stable build's provider.
 development profile that yields
 `/dev/maciz/sessionschronicle/Devel/SearchProvider`.
 
-`build-aux/validate-activation-metadata.py` is extended to validate the provider trio —
-the `.ini`'s `BusName` matches the service file's `Name`, the service file's `Exec`
-points at the installed provider binary, and the `DesktopId` names the installed desktop
-file. The equivalent check already exists for the desktop/service pair.
+The packaging contract requires the keyfile's `BusName` to equal the service file's
+`Name`, the service `Exec` to name the provider executable, and `DesktopId` to name the
+installed application desktop file. Packaging verification covers those invariants.
 
 ### Development override
 
@@ -152,8 +180,10 @@ reached with `sessions-chronicle --print-db-path --sessions-dir tests/fixtures`.
 
 ### Lifecycle
 
-The provider exits with status 0 after roughly 30 seconds without a method call. D-Bus
-activation restarts it on demand.
+The provider remains alive after D-Bus activation and exits when its bus connection is
+lost or the desktop session ends. An inactivity exit would be incorrect while Shell is
+still displaying results: a later `GetResultMetas` call must retain the generation-to-
+query association used for matched excerpts.
 
 ---
 
@@ -168,33 +198,48 @@ queries — so a stray quote or a bare `AND` is already an FTS5 syntax error in 
 search. Per keystroke, in a Shell surface, that is not acceptable: it is exactly the
 "malformed input → fails quietly" acceptance criterion.
 
-The provider therefore builds its own expression and does **not** reuse the app's path:
+The provider therefore builds its own expression and does **not** reuse the app's path.
+It extracts runs of Unicode alphanumeric characters from every Shell term, rather than
+deleting punctuation and accidentally joining the two sides of it. Each resulting token
+is quoted, the tokens are joined with `AND` as required by SearchProvider2, and `*` is
+placed **after** the closing quote of the final token for prefix matching (`"term"*`).
 
-1. Reduce each term to its alphanumeric and `_` characters.
-2. Drop terms that are empty after reduction.
-3. Quote each surviving term as `"term"` and join with `AND`.
-4. Append `*` to the last term for prefix matching — the user is still typing.
-5. If nothing survives, or the joined raw terms total fewer than **3 characters**,
-   return an empty result set **without opening SQLite**.
+If no token survives, or the normalized tokens contain fewer than **3 characters** in
+total, the provider returns an empty result set before asking core to open SQLite. The
+normalizer also accepts at most 32 tokens and 256 normalized characters; oversized input
+returns no results instead of creating an unbounded FTS expression.
 
-The 3-character floor and the 20-result limit are values, not preferences. Exposing them
-would ask the user to tune a query planner.
+The character floor, input bounds, and 20-result limit are values, not preferences.
+Exposing them would ask the user to tune a query planner.
 
-### `search_session_ids_for_shell(db, match_expr, limit) -> Vec<String>`
+### Ranked session lookup
+
+FTS5 ranking is calculated per matching message, then materialized before sessions are
+grouped. This boundary is required: SQLite rejects an aggregate such as
+`MIN(bm25(messages_fts))` directly in the FTS scan with `unable to use function bm25
+in the requested context`.
 
 ```sql
-SELECT s.id, MIN(bm25(messages_fts)) AS rank
-FROM messages_fts
-JOIN messages m ON m.id = messages_fts.rowid
-JOIN sessions s ON s.id = m.session_id
-WHERE messages_fts MATCH ?1
-  AND s.is_subagent = 0
-GROUP BY s.id
-ORDER BY rank ASC, s.last_updated DESC
+WITH ranked_messages AS MATERIALIZED (
+    SELECT s.id AS session_id,
+           s.last_updated,
+           messages_fts.rank AS message_rank
+    FROM messages_fts
+    JOIN messages m ON m.id = messages_fts.rowid
+    JOIN sessions s ON s.id = m.session_id
+    WHERE messages_fts MATCH ?1
+      AND s.is_subagent = 0
+)
+SELECT session_id,
+       MIN(message_rank) AS session_rank,
+       MAX(last_updated) AS session_last_updated
+FROM ranked_messages
+GROUP BY session_id
+ORDER BY session_rank ASC, session_last_updated DESC, session_id ASC
 LIMIT 20
 ```
 
-Two columns instead of the 22 that `search_sessions_with_query`
+Three narrow columns instead of the 22 that `search_sessions_with_query`
 (`src/database/mod.rs:453`) selects, deduplication pushed into SQLite **before** the
 limit rather than into a Rust `HashSet` after materialising every matching message row,
 and no `Session` struct constructed at all.
@@ -204,27 +249,41 @@ and no `Session` struct constructed at all.
 An unfiltered subagent hit would look like an ordinary overview result and resolve to a
 *Session not found* toast on click: a result that opens onto an error.
 
-`GetSubsearchResultSet` ignores the previous result set and re-runs
-`GetInitialResultSet`. Filtering a 20-row bounded set gains nothing.
+`GetSubsearchResultSet` searches only within the sessions named by
+`previous_results`. SearchProvider2 defines a subsearch as a refinement that may return
+fewer previous results, but not new ones. The bounded previous set therefore matters for
+contract correctness even if a full re-query would be fast.
 
-### `result_metas_for_shell(db, ids, match_expr, show_excerpts) -> Vec<ShellResultMeta>`
+### Result identity and matched excerpts
 
-Called for the handful of rows Shell actually draws. `snippet(messages_fts, …, '…', 32)`
-is evaluated only when `show_excerpts` is true, so excerpt cost is paid about 5 times
-rather than 20.
+`GetResultMetas` receives identifiers only; it does not receive the search terms. The
+provider therefore returns opaque, generation-scoped result identifiers. Each identifier
+contains a safely encoded session ID plus a generation token, while a small bounded map
+associates the generation with its normalized match expression. This prevents
+overlapping metadata requests from using whichever query happened to arrive last.
+`GetSubsearchResultSet` creates a new generation from the session IDs decoded from
+`previous_results`, and `ActivateResult` decodes the session ID before invoking the
+application. If the process is unexpectedly restarted, activation still works and
+metadata falls back to the excerpt-off form because the optional expression cache is
+gone.
+
+For the handful of rows Shell actually draws, `snippet(messages_fts, …, '…', 32)` is
+evaluated against the stored expression only when `show_excerpts` is true. When excerpts
+are off, the metadata query does not join or invoke FTS5 at all.
 
 ### Cancellation
 
-A dedicated database thread owns a single connection and its rusqlite `InterruptHandle`.
-A newly arriving query interrupts the in-flight one, which surfaces `SQLITE_INTERRUPT`
+A dedicated database thread owns a single connection. It publishes the connection's
+thread-safe rusqlite `InterruptHandle` to the D-Bus side; a newly arriving query or the
+250 ms deadline interrupts the in-flight statement, which surfaces `SQLITE_INTERRUPT`
 and returns empty. This is what makes "the last keystroke wins" true rather than
-"keystrokes queue".
+"keystrokes queue" and makes the stated budget enforceable.
 
 Concurrent reads need no new mechanism: `SessionIndexer::new` sets `journal_mode=WAL`
 (`src/database/indexer.rs:284`) and `open_connection` sets a five-second busy timeout
 (`src/database/mod.rs:28-30`).
 
-Budget: 250 ms per query.
+Budget: a hard 250 ms deadline per query.
 
 ---
 
@@ -232,11 +291,11 @@ Budget: 250 ms per query.
 
 | Field | Value |
 |---|---|
-| `id` | `sessions.id` |
+| `id` | the opaque provider result identifier supplied to `GetResultMetas` |
 | `name` | `first_prompt`, whitespace collapsed, truncated to 60 characters on a `char` boundary |
 | `description`, excerpts off | `Claude Code · sessions-chronicle · 3 days ago` |
 | `description`, excerpts on | the matched snippet, whitespace collapsed, truncated to 100 characters |
-| `gicon` | the application icon |
+| `gicon` | the application icon name |
 
 Truncation happens on our side, not Shell's, because Orca reads the untruncated string.
 Collapsing whitespace is what keeps a 4 KB pasted block or a multi-line stack trace from
@@ -268,6 +327,14 @@ icon name profile-dependent and forces `AiAssistant::icon_name()` to stop return
 here, and the payoff is small: with excerpts off the description already spells the
 assistant out in words.
 
+SearchProvider2 still accepts textual `gicon`, but its installed introspection XML marks
+that field deprecated in favour of `icon`, a serialized `GIcon`. This design uses
+`gicon` deliberately: the value is a single themed icon name and zbus can encode it as
+an ordinary D-Bus string without translating GLib's nested `GVariant` serialization.
+Compatibility with the targeted GNOME Shell version is verified in the packaged build;
+if Shell removes `gicon`, the provider moves to serialized `icon` without changing the
+user-visible design.
+
 ---
 
 ## Configuration
@@ -290,17 +357,20 @@ Type `b` deliberately breaks from the `resume-terminal` / `sort-order` string
 convention. Those are enums with an unknown-value case to fail closed on; this is a
 boolean and has none.
 
-The provider reads the key **on every `GetResultMetas` call**. That is what makes
-flipping the switch take effect without restarting the provider, and what makes a cold
-provider start read the persisted value rather than the schema default.
+The provider reads the key **on every `GetResultMetas` call**, using a short-lived
+`gio::Settings` confined to the database worker thread. That is what makes flipping the
+switch take effect without restarting the provider, makes a cold provider start read the
+persisted value rather than the schema default, and satisfies the `Send + Sync` bound on
+the zbus interface.
 
 ### Preferences
 
-A new *System Search* group on the existing General page
-(`src/ui/modals/preferences.rs`), below *Session Resumption*:
+A new *System Search* group appears on the existing General preferences page, below
+*Session Resumption*:
 
 - An `AdwSwitchRow`, title **"Show matching text in results"**, subtitle *"Transcript
-  excerpts appear in the Activities overview."*, bound with `settings.bind()`.
+  excerpts appear in the Activities overview."*. Its `active` property is bound
+  bidirectionally to the boolean GSettings key.
 - A non-activatable `AdwActionRow` pointing at Settings ▸ Search for the on/off control.
 
 A `SwitchRow` rather than a `ComboRow`: two rendering-only values is a boolean, and a
@@ -341,23 +411,35 @@ call, and it makes `name` load-bearing.
 
 ### `ActivateResult`
 
-Delegates to the existing contract: `org.freedesktop.Application.ActivateAction` with
-`open-session` and the exact `sessions.id`. Cold start, warm present, and all three
-failure toasts come for free from #197.
+Resolves the opaque result identifier to its exact `sessions.id`, then delegates to the
+existing application contract. The call target is the application App ID at the standard
+App-ID-derived object path, on `org.freedesktop.Application.ActivateAction` with the
+signature `(sava{sv})`:
+
+- action name: `open-session`;
+- parameter array: one variant containing the session ID string;
+- platform data: `desktop-startup-id` set to `_TIME<timestamp>`, using the user-event
+  timestamp supplied by Shell.
+
+The call is awaited before returning from the provider method. Cold start, warm present,
+and all three failure toasts then come from #197.
 
 ### `LaunchSearch`
 
 Ships in v1 and carries the query. The provider joins the terms with a single space and
-invokes `ActivateAction("search-sessions", ["<query>"])`.
+invokes the same `(sava{sv})` method with action name `search-sessions`, one string
+variant in the parameter array, and the same `_TIME<timestamp>` platform data.
 
 Parameter type `s`, not `as`: the provider must join the terms to build its own `MATCH`
 expression regardless, so joining app-side would duplicate the same decision in two
 places.
 
-### `search-sessions` — application side
+### `search-sessions` application behavior
 
-A new stateless `GApplication` action registered next to `open-session` in
-`src/main.rs`, forwarding an `AppMsg::ExternalSearch(String)`.
+A new stateless `GApplication` action accepts one string parameter. Its user-visible
+contract is the inverse of opening a particular result: it presents the existing window,
+opens the Sessions workspace and search surface, and submits the carried query through
+the existing search pipeline.
 
 `handle_external_search` is the **mirror** of `handle_external_session_open`
 (`src/app/handlers/sessions.rs:173`), and deliberately shares no code with it. The two
@@ -366,15 +448,10 @@ mode, the query, transcript highlights, and the search-only sort override;
 `search-sessions` must *set* them. Sharing a code path would have them fight over the
 search entry.
 
-The handler:
-
-1. Presents the window.
-2. Switches to `Workspace::Sessions`. This is mandatory, not cosmetic —
-   `workspace_allows_search` (`src/app/helpers.rs:57`) hides the search UI on Analytics,
-   so without this the action would be a silent no-op from the Analytics workspace.
-3. Pops back from the detail page if one is pushed.
-4. Sets `search_visible = true` and `sync_search_bar`.
-5. Sets `search_query` and drives the existing search pipeline.
+The resulting state is the Sessions list with detail navigation dismissed, the search
+surface visible, and the carried query active. Switching workspace is mandatory because
+Analytics does not expose session search. The precise Relm4 messages and widget-update
+order belong in the implementation plan.
 
 A carried query that matches nothing produces the ordinary empty-search state, not a
 toast: the search bar shows the term, so the absence of results is already explained
@@ -385,10 +462,20 @@ on screen.
 ## Error handling
 
 **The provider's three query methods — `GetInitialResultSet`, `GetSubsearchResultSet`,
-`GetResultMetas` — never return a D-Bus error.** Missing database,
-SQLite failure, interrupted query, terms emptied by sanitisation — every case returns an
-empty array, with a `tracing` record. This is what #189's "fails quietly" criterion
-binds.
+`GetResultMetas` — never return an application-level D-Bus error.** Missing database,
+SQLite failure, interrupted query, and terms emptied by sanitisation are recorded with
+`tracing`, not exposed to Shell. Initial and subsearch failures return an empty result
+array.
+
+`GetResultMetas` preserves the interface invariant of one dictionary per requested
+identifier, in the same order. If an identifier cannot be resolved or metadata cannot be
+loaded, that entry uses the same opaque `id`, the application `gicon`, the generic name
+*Session unavailable*, and no description. If only the generation's match expression was
+lost, the normal excerpt-off metadata is returned. This is quieter and more contract-
+correct than returning an array whose length does not match the identifiers.
+
+Activation methods likewise complete normally after logging an application-activation
+failure; a temporarily unavailable GUI must not turn into a Shell search-provider fault.
 
 That criterion does **not** bind the application. Once a result is activated the
 interaction has left Shell, and #197 deliberately reports an unresolvable ID with a
@@ -404,11 +491,12 @@ All three preserve the user's current view.
 
 ---
 
-## Testing
+## Acceptance and verification
 
 ### Core, against the fixture database
 
-- Deduplication happens before `LIMIT`, not after.
+- The materialized per-message rank is valid SQLite FTS5 and deduplication happens
+  before `LIMIT`, not after.
 - `is_subagent = 0` rows only.
 - bm25 ordering, with `last_updated` as tie-breaker.
 - The 3-character floor returns empty **without opening SQLite**.
@@ -425,6 +513,10 @@ and drives the interface directly:
 - `GetInitialResultSet(['ak'])` → empty array, and no SQLite query in the log.
 - `GetInitialResultSet(['aki'])` → non-empty.
 - `GetResultMetas` with excerpts off and on → descriptions differ.
+- The result metadata `id` exactly matches its opaque input identifier, and one
+  dictionary is returned per requested identifier.
+- Overlapping generations retain their own snippet expression.
+- A subsearch never introduces an identifier from outside `previous_results`.
 
 Deterministic, scriptable in CI, no compositor required. This is the query half of the
 verification plan, and it must not go through the overview: Shell activates the provider
@@ -434,12 +526,14 @@ check driven through Activities would return nothing for every query and the
 
 ### Application
 
-A `#[gtk::test]` for `search-sessions`, modelled on the existing `open-session` tests in
-`src/app/handlers/sessions.rs`.
+Headless GTK coverage verifies the `search-sessions` behavior contract: an existing
+window is reused, Analytics switches to Sessions, detail navigation is dismissed, and
+the carried query is visible and active.
 
 ### Build
 
-`validate-activation-metadata.py` extended to the provider trio.
+Packaging validation covers the provider keyfile, D-Bus service, executable, desktop
+file, per-profile names, and Flatpak export naming as one consistent activation chain.
 
 ### Manual, default index only
 
@@ -467,4 +561,11 @@ so activation testing uses the ordinary default-index instance.
 ## Sources
 
 - [Writing a Search Provider — GNOME Developer Documentation](https://developer.gnome.org/documentation/tutorials/search-provider.html)
+- [`org.gnome.Shell.SearchProvider2` introspection XML](https://gitlab.gnome.org/GNOME/gnome-shell/-/blob/main/data/dbus-interfaces/org.gnome.ShellSearchProvider2.xml)
 - [Requirements & Conventions — Flatpak documentation](https://docs.flatpak.org/en/latest/conventions.html)
+- [D-Bus Activation — Desktop Entry Specification](https://specifications.freedesktop.org/desktop-entry/latest/dbus.html)
+- [SQLite FTS5 Extension](https://www.sqlite.org/fts5.html)
+- [zbus service documentation](https://github.com/z-galaxy/zbus/blob/main/book/src/service.md)
+- [zbus `Interface` trait](https://docs.rs/zbus/5/zbus/object_server/trait.Interface.html)
+- [gtk-rs `gio::Settings`](https://gtk-rs.org/gtk-rs-core/stable/latest/docs/gio/struct.Settings.html)
+- [rusqlite `InterruptHandle`](https://docs.rs/rusqlite/0.40.0/rusqlite/struct.InterruptHandle.html)
