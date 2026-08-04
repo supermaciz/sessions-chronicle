@@ -2,6 +2,7 @@ use crate::models::AiAssistant;
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
 use rusqlite::{Connection, OpenFlags, ToSql};
+use std::collections::HashSet;
 use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
@@ -189,9 +190,12 @@ pub fn search_session_ids(
          FROM ranked_messages
          GROUP BY session_id
          ORDER BY session_rank ASC, session_last_updated DESC, session_id ASC
-         LIMIT 20",
+         LIMIT ?2",
     )?;
-    let rows = statement.query_map([match_expression], |row| row.get(0))?;
+    let result_limit = RESULT_LIMIT as i64;
+    let rows = statement.query_map([&match_expression as &dyn ToSql, &result_limit], |row| {
+        row.get(0)
+    })?;
     rows.collect::<rusqlite::Result<Vec<String>>>()
         .map_err(Into::into)
 }
@@ -227,17 +231,27 @@ pub fn subsearch_session_ids(
                 MAX(last_updated) AS session_last_updated
          FROM ranked_messages
          GROUP BY session_id
-         ORDER BY session_rank ASC, session_last_updated DESC, session_id ASC
-         LIMIT 20"
+         LIMIT ?{}",
+        previous_ids.len() + 2
     );
-    let mut params: Vec<&dyn ToSql> = Vec::with_capacity(previous_ids.len() + 1);
+    let mut params: Vec<&dyn ToSql> = Vec::with_capacity(previous_ids.len() + 2);
     params.push(&match_expression);
     params.extend(previous_ids.iter().map(|id| id as &dyn ToSql));
+    let result_limit = RESULT_LIMIT as i64;
+    params.push(&result_limit);
 
     let mut statement = connection.connection.prepare(&query)?;
     let rows = statement.query_map(params.as_slice(), |row| row.get(0))?;
-    rows.collect::<rusqlite::Result<Vec<String>>>()
-        .map_err(Into::into)
+    let matching_ids = rows.collect::<rusqlite::Result<HashSet<String>>>()?;
+
+    Ok(previous_ids
+        .iter()
+        .filter(|id| matching_ids.contains(*id))
+        .scan(HashSet::new(), |seen, id| {
+            seen.insert(id.as_str()).then_some(id.clone())
+        })
+        .take(RESULT_LIMIT)
+        .collect())
 }
 
 impl ShellSearchInterrupt {
