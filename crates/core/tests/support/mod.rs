@@ -22,6 +22,21 @@ impl TempDatabase {
     }
 
     pub fn seed_session(&self, id: &str, last_updated: i64, is_subagent: bool, messages: &[&str]) {
+        let indexed_messages = messages
+            .iter()
+            .enumerate()
+            .map(|(message_index, content)| (message_index as i64, *content))
+            .collect::<Vec<_>>();
+        self.seed_session_with_indexed_messages(id, last_updated, is_subagent, &indexed_messages);
+    }
+
+    pub fn seed_session_with_indexed_messages(
+        &self,
+        id: &str,
+        last_updated: i64,
+        is_subagent: bool,
+        messages: &[(i64, &str)],
+    ) {
         let connection = Connection::open(&self.path).unwrap();
         connection
             .execute(
@@ -38,13 +53,13 @@ impl TempDatabase {
                 ],
             )
             .unwrap();
-        for (message_index, content) in messages.iter().enumerate() {
+        for (message_index, content) in messages {
             connection
                 .execute(
                     "INSERT INTO messages (
                         session_id, message_index, role, content, timestamp
                     ) VALUES (?1, ?2, 'user', ?3, ?4)",
-                    rusqlite::params![id, message_index as i64, content, last_updated],
+                    rusqlite::params![id, *message_index, content, last_updated],
                 )
                 .unwrap();
         }

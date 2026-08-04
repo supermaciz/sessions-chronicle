@@ -246,7 +246,7 @@ impl ShellSearchConnection {
                              FROM messages_fts
                              JOIN messages m ON m.id = messages_fts.rowid
                              WHERE messages_fts MATCH ?1 AND m.session_id = ?2
-                             ORDER BY messages_fts.rank ASC, m.id ASC
+                             ORDER BY messages_fts.rank ASC, m.message_index ASC
                              LIMIT 1",
                             rusqlite::params![expression, &metadata.id],
                             |row| row.get(0),

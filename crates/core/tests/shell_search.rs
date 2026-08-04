@@ -217,6 +217,58 @@ fn metadata_excerpt_on_selects_the_best_matching_message_snippet() {
 }
 
 #[test]
+fn metadata_excerpt_on_uses_transcript_order_for_equal_ranked_messages() {
+    let database = TempDatabase::new();
+    database.seed_session_with_indexed_messages(
+        "session",
+        100,
+        false,
+        &[(1, "needle alpha"), (0, "needle bravo")],
+    );
+
+    let (connection, _interrupt) = database.search_connection();
+    let snippet = connection
+        .load_metadata(&["session".into()], true, Some("needle"))
+        .unwrap()[0]
+        .as_ref()
+        .unwrap()
+        .matched_snippet
+        .as_deref()
+        .unwrap()
+        .to_owned();
+
+    assert!(snippet.contains("bravo"), "snippet was {snippet:?}");
+}
+
+#[test]
+fn metadata_excludes_subagent_rows() {
+    let database = TempDatabase::new();
+    database.seed_session("parent", 100, false, &["parent prompt"]);
+    database.seed_session("subagent", 200, true, &["subagent prompt"]);
+
+    let (connection, _interrupt) = database.search_connection();
+    let metadata = connection
+        .load_metadata(&["parent".into(), "subagent".into()], false, None)
+        .unwrap();
+
+    assert!(metadata[0].is_some());
+    assert!(metadata[1].is_none());
+}
+
+#[test]
+fn metadata_rejects_malformed_timestamp_rows() {
+    let database = TempDatabase::new();
+    database.seed_session("session", i64::MAX, false, &["prompt"]);
+
+    let (connection, _interrupt) = database.search_connection();
+    assert!(
+        connection
+            .load_metadata(&["session".into()], false, None)
+            .is_err()
+    );
+}
+
+#[test]
 fn metadata_excerpt_on_without_expression_falls_back_to_no_snippet() {
     let database = TempDatabase::new();
     database.seed_session("session", 100, false, &["needle prompt"]);
