@@ -236,24 +236,22 @@ impl ShellSearchConnection {
             );
         }
 
-        if show_excerpts {
-            if let Some(expression) = expression {
-                for metadata in metadata_by_id.values_mut() {
-                    metadata.matched_snippet = self
-                        .connection
-                        .query_row(
-                            "SELECT snippet(messages_fts, 0, '', '', '…', 32)
-                             FROM messages_fts
-                             JOIN messages m ON m.id = messages_fts.rowid
-                             WHERE messages_fts MATCH ?1 AND m.session_id = ?2
-                             ORDER BY messages_fts.rank ASC, m.message_index ASC
-                             LIMIT 1",
-                            rusqlite::params![expression, &metadata.id],
-                            |row| row.get(0),
-                        )
-                        .optional()
-                        .context("Failed to load shell search metadata snippet")?;
-                }
+        if show_excerpts && let Some(expression) = expression {
+            for metadata in metadata_by_id.values_mut() {
+                metadata.matched_snippet = self
+                    .connection
+                    .query_row(
+                        "SELECT snippet(messages_fts, 0, '', '', '…', 32)
+                         FROM messages_fts
+                         JOIN messages m ON m.id = messages_fts.rowid
+                         WHERE messages_fts MATCH ?1 AND m.session_id = ?2
+                         ORDER BY messages_fts.rank ASC, m.message_index ASC
+                         LIMIT 1",
+                        rusqlite::params![expression, &metadata.id],
+                        |row| row.get(0),
+                    )
+                    .optional()
+                    .context("Failed to load shell search metadata snippet")?;
             }
         }
 
