@@ -1341,12 +1341,9 @@ dependencies = [
  "similar",
  "sourceview5",
  "tempfile",
- "thiserror",
  "tracing",
  "tracing-subscriber",
- "walkdir",
  "which",
- "zstd",
 ]
 
 [[package]]

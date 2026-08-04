@@ -2130,12 +2130,22 @@ mod tests {
         .unwrap();
         writeln!(
             file,
-            r#"{{"type":"event_msg","timestamp":"not-a-ts","payload":{{"type":"user_message","message":"Hi"}}}}"#
+            r#"{{"type":"event_msg","timestamp":"2026-01-01T00:00:01Z","payload":{{"type":"user_message","message":"Hi"}}}}"#
+        )
+        .unwrap();
+        writeln!(
+            file,
+            r#"{{"type":"turn_context","timestamp":"not-a-ts","payload":{{"model":"o3-mini"}}}}"#
         )
         .unwrap();
 
         let parser = CodexParser;
-        let result = parser.parse(file.path());
-        assert!(result.is_ok());
+        let parsed = parser.parse(file.path()).unwrap();
+        assert_eq!(
+            parsed.session.last_updated,
+            DateTime::parse_from_rfc3339("2026-01-01T00:00:01Z")
+                .unwrap()
+                .with_timezone(&Utc)
+        );
     }
 }
