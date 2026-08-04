@@ -10,23 +10,29 @@ const SQLITE_BUSY_TIMEOUT_SECS: u64 = 5;
 const MIN_NORMALIZED_CHARS: usize = 3;
 const MAX_NORMALIZED_CHARS: usize = 256;
 const MAX_TOKENS: usize = 32;
+const MAX_RENDERED_NAME_CHARS: usize = 60;
 
 pub fn build_match_expression(terms: &[String]) -> Option<String> {
-    let tokens = terms
-        .iter()
-        .flat_map(|term| {
-            term.split(|character: char| !character.is_alphanumeric())
-                .filter(|token| !token.is_empty())
-        })
-        .collect::<Vec<_>>();
-    let character_count = tokens
-        .iter()
-        .map(|token| token.chars().count())
-        .sum::<usize>();
-    if tokens.is_empty()
-        || tokens.len() > MAX_TOKENS
-        || !(MIN_NORMALIZED_CHARS..=MAX_NORMALIZED_CHARS).contains(&character_count)
-    {
+    let mut tokens = Vec::new();
+    let mut character_count = 0;
+    for term in terms {
+        for token in term
+            .split(|character: char| !character.is_alphanumeric())
+            .filter(|token| !token.is_empty())
+        {
+            if tokens.len() >= MAX_TOKENS {
+                return None;
+            }
+            let remaining_chars = MAX_NORMALIZED_CHARS - character_count;
+            let token_chars = token.chars().take(remaining_chars + 1).count();
+            if token_chars > remaining_chars {
+                return None;
+            }
+            character_count += token_chars;
+            tokens.push(token);
+        }
+    }
+    if tokens.is_empty() || character_count < MIN_NORMALIZED_CHARS {
         return None;
     }
     let mut quoted = tokens
@@ -89,12 +95,18 @@ impl ShellSearchMetadata {
             .map(str::trim)
             .filter(|value| !value.is_empty());
         let name = prompt
-            .map(|value| collapse_and_truncate(value, 60))
+            .map(|value| collapse_and_truncate(value, MAX_RENDERED_NAME_CHARS))
             .unwrap_or_else(|| format!("Untitled {} session", self.assistant.display_name()));
+        let project_name = self
+            .project_name
+            .as_deref()
+            .map(|value| collapse_and_truncate(value, MAX_RENDERED_NAME_CHARS))
+            .filter(|value| !value.is_empty())
+            .unwrap_or_else(|| "Unknown project".into());
         let safe_description = format!(
             "{} · {} · {}",
             self.assistant.display_name(),
-            self.project_name.as_deref().unwrap_or("Unknown project"),
+            project_name,
             relative_time(now, self.last_updated)
         );
         let description = if show_excerpts {
@@ -180,6 +192,12 @@ mod tests {
         assert_eq!(build_match_expression(&thirty_three), None);
         assert_eq!(build_match_expression(&["x".repeat(257)]), None);
         assert_eq!(build_match_expression(&["x".repeat(4096)]), None);
+
+        let thirty_two = (0..32)
+            .map(|index| format!("term{index}"))
+            .collect::<Vec<_>>();
+        assert!(build_match_expression(&thirty_two).is_some());
+        assert!(build_match_expression(&["x".repeat(256)]).is_some());
     }
 
     #[test]
@@ -201,6 +219,34 @@ mod tests {
             "Claude Code · sessions-chronicle · 3 days ago"
         );
         assert!(!hidden.description.contains("match"));
+
+        let multiline_project = ShellSearchMetadata {
+            project_name: Some("project\nwith\tmultiple lines".into()),
+            ..metadata.clone()
+        };
+        assert_eq!(
+            multiline_project.render(now, false).description,
+            "Claude Code · project with multiple lines · 3 days ago"
+        );
+
+        let oversized_project = ShellSearchMetadata {
+            project_name: Some("p".repeat(61)),
+            ..metadata.clone()
+        };
+        assert_eq!(
+            oversized_project
+                .render(now, false)
+                .description
+                .chars()
+                .count(),
+            "Claude Code · ".chars().count() + 60 + " · 3 days ago".chars().count()
+        );
+        assert!(
+            !oversized_project
+                .render(now, false)
+                .description
+                .contains('\n')
+        );
 
         let shown = metadata.render(now, true);
         assert_eq!(shown.description.chars().count(), 100);
