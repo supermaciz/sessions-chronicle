@@ -14,9 +14,9 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - name: Install dependencies
-        run: dnf install -y gcc pkg-config gtk4-devel libadwaita-devel glib2-devel gtksourceview5-devel rust cargo git xorg-x11-server-Xvfb
+        run: dnf install -y gcc pkg-config gtk4-devel libadwaita-devel glib2-devel gtksourceview5-devel rust cargo git xorg-x11-server-Xvfb dbus-daemon
       - name: Run cargo test
-        run: xvfb-run cargo test --all --no-fail-fast
+        run: dbus-run-session -- xvfb-run -a env GDK_BACKEND=x11 GSK_RENDERER=cairo cargo test --all --no-fail-fast
 
   clippy:
     name: Clippy
@@ -50,7 +50,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - name: Install system dependencies
-        run: dnf install -y gcc pkg-config gtk4-devel libadwaita-devel glib2-devel gtksourceview5-devel curl git gnupg2 xorg-x11-server-Xvfb
+        run: dnf install -y gcc pkg-config gtk4-devel libadwaita-devel glib2-devel gtksourceview5-devel curl git gnupg2 xorg-x11-server-Xvfb dbus-daemon
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
         with:
@@ -79,7 +79,7 @@ jobs:
       - name: Install cargo-llvm-cov
         uses: taiki-e/install-action@cargo-llvm-cov
       - name: Generate coverage report
-        run: xvfb-run cargo llvm-cov --lcov --output-path lcov.info --no-clean
+        run: dbus-run-session -- xvfb-run -a env GDK_BACKEND=x11 GSK_RENDERER=cairo cargo llvm-cov --lcov --output-path lcov.info --no-clean
       - name: Upload to Codecov
         uses: codecov/codecov-action@v7
         env:
