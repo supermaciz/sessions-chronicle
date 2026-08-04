@@ -114,6 +114,7 @@ pub(super) struct App {
     /// Uses `Cell` because `post_view` takes `&self`.
     sync_search_bar: Cell<bool>,
     sync_search_entry: Cell<bool>,
+    search_changed_handler: Cell<Option<glib::SignalHandlerId>>,
     detail_visible: bool,
     /// Outer OverlaySplitView visibility (Filters pane in the Sessions list view).
     filters_open: bool,
@@ -421,9 +422,6 @@ impl SimpleComponent for App {
                             set_child = &gtk::SearchEntry {
                                 set_placeholder_text: Some("Search sessions..."),
                                 set_hexpand: true,
-                                connect_search_changed[sender] => move |entry| {
-                                    sender.input(AppMsg::SearchQueryChanged(entry.text().to_string()));
-                                },
                             },
                         },
 
@@ -498,6 +496,7 @@ impl SimpleComponent for App {
             search_visible: false,
             sync_search_bar: Cell::new(false),
             sync_search_entry: Cell::new(false),
+            search_changed_handler: Cell::new(None),
             detail_visible: false,
             filters_open: true,
             filters_open_before_detail: true,
@@ -627,6 +626,16 @@ impl SimpleComponent for App {
             .indexing_worker
             .emit(IndexingWorkerInput::StartIncremental(model.sources.clone()));
 
+        // Connect to search_changed signal and store handler ID for signal blocking
+        {
+            use gtk::prelude::*;
+            let sender_clone = sender.clone();
+            let handler_id = widgets.search_entry.connect_search_changed(move |entry| {
+                sender_clone.input(AppMsg::SearchQueryChanged(entry.text().to_string()));
+            });
+            model.search_changed_handler.set(Some(handler_id));
+        }
+
         ComponentParts { model, widgets }
     }
 
@@ -643,7 +652,13 @@ impl SimpleComponent for App {
             AppMsg::InspectorVisibilityChanged(visible) => {
                 self.handle_inspector_visibility_changed(visible)
             }
-            AppMsg::SearchQueryChanged(query) => self.handle_search_query_changed(query),
+            AppMsg::SearchQueryChanged(query) => {
+                // Skip if the query hasn't actually changed (can happen when
+                // post_view programmatically updates entry text after signal blocking fails)
+                if query != self.search_query {
+                    self.handle_search_query_changed(query);
+                }
+            }
             AppMsg::WorkspaceChanged(workspace) => self.handle_workspace_changed(workspace),
             AppMsg::FiltersChanged {
                 tools,
@@ -764,12 +779,21 @@ impl SimpleComponent for App {
     }
 
     fn post_view(&self, widgets: &mut Self::Widgets) {
+        use glib::signal;
+
         // Only sync the SearchEntry when the model explicitly requests it
         // (e.g. external search from a different workspace).  Unconditional sync
         // would interfere with the user typing.
         let sync_entry = self.sync_search_entry.replace(false);
         if sync_entry && widgets.search_entry.text().as_str() != self.search_query {
-            widgets.search_entry.set_text(&self.search_query);
+            // Block the search_changed signal while setting text programmatically
+            // to avoid re-triggering SearchQueryChanged with the same value
+            if let Some(handler_id) = self.search_changed_handler.replace(None) {
+                signal::signal_handler_block(&widgets.search_entry, &handler_id);
+                widgets.search_entry.set_text(&self.search_query);
+                signal::signal_handler_unblock(&widgets.search_entry, &handler_id);
+                self.search_changed_handler.set(Some(handler_id));
+            }
         }
         // Only sync the SearchBar when the model explicitly requests it
         // (e.g. Escape handler).  Unconditional sync would oscillate: closing
@@ -1899,7 +1923,11 @@ mod tests {
         controller.emit(AppMsg::WorkspaceChanged(Workspace::Analytics));
         controller.emit(AppMsg::SearchExternalSessions("carried query".into()));
         pump_main_context(|| controller.state().get().model.search_query == "carried query");
-        // Ensure all pending events are processed before test ends
+        // GTK SearchEntry has a debounced search_changed signal that may fire ~150ms
+        // after the text is set. Pump the main context with explicit wait to ensure
+        // any pending debounce timeout fires and completes before the test ends.
+        std::thread::sleep(std::time::Duration::from_millis(200));
+        pump_main_context(|| !gtk::glib::MainContext::default().pending());
         pump_main_context(|| !gtk::glib::MainContext::default().pending());
 
         let parts = controller.state().get();
