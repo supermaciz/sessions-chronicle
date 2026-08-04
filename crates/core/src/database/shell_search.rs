@@ -1,7 +1,7 @@
 use crate::models::AiAssistant;
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
-use rusqlite::{Connection, OpenFlags};
+use rusqlite::{Connection, OpenFlags, ToSql};
 use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
@@ -13,6 +13,7 @@ const MAX_TOKENS: usize = 32;
 const MAX_RENDERED_NAME_CHARS: usize = 60;
 const MAX_RENDERED_PROJECT_CHARS: usize = 60;
 const MAX_RENDERED_SNIPPET_CHARS: usize = 100;
+pub const RESULT_LIMIT: usize = 20;
 
 pub fn build_match_expression(terms: &[String]) -> Option<String> {
     let mut tokens = Vec::new();
@@ -165,6 +166,78 @@ impl ShellSearchConnection {
 
         Ok(Some((Self { connection }, interrupt)))
     }
+}
+
+pub fn search_session_ids(
+    connection: &ShellSearchConnection,
+    match_expression: &str,
+) -> Result<Vec<String>> {
+    let mut statement = connection.connection.prepare(
+        "WITH ranked_messages AS MATERIALIZED (
+             SELECT s.id AS session_id,
+                    s.last_updated,
+                    messages_fts.rank AS message_rank
+             FROM messages_fts
+             JOIN messages m ON m.id = messages_fts.rowid
+             JOIN sessions s ON s.id = m.session_id
+             WHERE messages_fts MATCH ?1
+               AND s.is_subagent = 0
+         )
+         SELECT session_id,
+                MIN(message_rank) AS session_rank,
+                MAX(last_updated) AS session_last_updated
+         FROM ranked_messages
+         GROUP BY session_id
+         ORDER BY session_rank ASC, session_last_updated DESC, session_id ASC
+         LIMIT 20",
+    )?;
+    let rows = statement.query_map([match_expression], |row| row.get(0))?;
+    rows.collect::<rusqlite::Result<Vec<String>>>()
+        .map_err(Into::into)
+}
+
+pub fn subsearch_session_ids(
+    connection: &ShellSearchConnection,
+    match_expression: &str,
+    previous_ids: &[String],
+) -> Result<Vec<String>> {
+    if previous_ids.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let previous_ids = &previous_ids[..previous_ids.len().min(RESULT_LIMIT)];
+    let placeholders = (2..=previous_ids.len() + 1)
+        .map(|index| format!("?{index}"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let query = format!(
+        "WITH ranked_messages AS MATERIALIZED (
+             SELECT s.id AS session_id,
+                    s.last_updated,
+                    messages_fts.rank AS message_rank
+             FROM messages_fts
+             JOIN messages m ON m.id = messages_fts.rowid
+             JOIN sessions s ON s.id = m.session_id
+             WHERE messages_fts MATCH ?1
+               AND s.is_subagent = 0
+               AND s.id IN ({placeholders})
+         )
+         SELECT session_id,
+                MIN(message_rank) AS session_rank,
+                MAX(last_updated) AS session_last_updated
+         FROM ranked_messages
+         GROUP BY session_id
+         ORDER BY session_rank ASC, session_last_updated DESC, session_id ASC
+         LIMIT 20"
+    );
+    let mut params: Vec<&dyn ToSql> = Vec::with_capacity(previous_ids.len() + 1);
+    params.push(&match_expression);
+    params.extend(previous_ids.iter().map(|id| id as &dyn ToSql));
+
+    let mut statement = connection.connection.prepare(&query)?;
+    let rows = statement.query_map(params.as_slice(), |row| row.get(0))?;
+    rows.collect::<rusqlite::Result<Vec<String>>>()
+        .map_err(Into::into)
 }
 
 impl ShellSearchInterrupt {
