@@ -199,6 +199,19 @@ impl MockApplication {
 
 static BUS_NAME_LOCK: Mutex<()> = Mutex::new(());
 
+async fn recv_activation_call(
+    receiver: &async_channel::Receiver<ActivationCall>,
+) -> ActivationCall {
+    futures_lite::future::or(
+        async { receiver.recv().await.expect("activation channel closed") },
+        async {
+            async_io::Timer::after(Duration::from_secs(5)).await;
+            panic!("timed out waiting for ActivateAction call");
+        },
+    )
+    .await
+}
+
 async fn mock_application() -> (zbus::Connection, async_channel::Receiver<ActivationCall>) {
     let (sender, receiver) = async_channel::unbounded();
     let connection = zbus::connection::Builder::session()
@@ -368,7 +381,7 @@ fn activation_calls_application_action_with_expected_payloads() {
             .activate_result("session-a".into(), vec![], 42)
             .await
             .unwrap();
-        let open = receiver.recv().await.unwrap();
+        let open = recv_activation_call(&receiver).await;
         assert_eq!(open.action, "open-session");
         assert_eq!(open.parameters, vec!["session-a".to_string()]);
         assert_eq!(open.platform_data["desktop-startup-id"], "_TIME42");
@@ -377,7 +390,7 @@ fn activation_calls_application_action_with_expected_payloads() {
             .launch_search(vec!["alpha".into(), "beta".into()], 84)
             .await
             .unwrap();
-        let search = receiver.recv().await.unwrap();
+        let search = recv_activation_call(&receiver).await;
         assert_eq!(search.action, "search-sessions");
         assert_eq!(search.parameters, vec!["alpha beta".to_string()]);
         assert_eq!(search.platform_data["desktop-startup-id"], "_TIME84");
