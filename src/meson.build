@@ -30,13 +30,16 @@ else
   message('Building in debug mode')
 endif
 
-cargo_env = [ 'CARGO_HOME=' + meson.project_build_root() / 'cargo-home' ]
+cargo_env = [
+  'CARGO_HOME=' + meson.project_build_root() / 'cargo-home',
+  'SESSIONS_CHRONICLE_APP_ID=' + application_id,
+]
 
 cargo_build = custom_target(
   'cargo-build',
   build_by_default: true,
   build_always_stale: true,
-  output: meson.project_name(),
+  output: [meson.project_name(), 'sessions-chronicle-search-provider'],
   console: true,
   install: true,
   install_dir: bindir,
@@ -46,7 +49,11 @@ cargo_build = custom_target(
     cargo_env,
     cargo, 'build',
     cargo_options,
+    '--package', 'sessions-chronicle',
+    '--package', 'sessions-chronicle-search-provider',
     '&&',
-    'cp', 'src' / rust_target / meson.project_name(), '@OUTPUT@',
+    'cp', 'src' / rust_target / meson.project_name(), '@OUTPUT0@',
+    '&&',
+    'cp', 'src' / rust_target / 'sessions-chronicle-search-provider', '@OUTPUT1@',
   ]
 )
