@@ -173,8 +173,10 @@ pub fn search_session_ids(
     connection: &ShellSearchConnection,
     match_expression: &str,
 ) -> Result<Vec<String>> {
-    let mut statement = connection.connection.prepare(
-        "WITH ranked_messages AS MATERIALIZED (
+    let mut statement = connection
+        .connection
+        .prepare(
+            "WITH ranked_messages AS MATERIALIZED (
              SELECT s.id AS session_id,
                     s.last_updated,
                     messages_fts.rank AS message_rank
@@ -191,13 +193,16 @@ pub fn search_session_ids(
          GROUP BY session_id
          ORDER BY session_rank ASC, session_last_updated DESC, session_id ASC
          LIMIT ?2",
-    )?;
+        )
+        .context("Failed to prepare ranked shell search query")?;
     let result_limit = RESULT_LIMIT as i64;
-    let rows = statement.query_map([&match_expression as &dyn ToSql, &result_limit], |row| {
-        row.get(0)
-    })?;
+    let rows = statement
+        .query_map([&match_expression as &dyn ToSql, &result_limit], |row| {
+            row.get(0)
+        })
+        .context("Failed to execute ranked shell search query")?;
     rows.collect::<rusqlite::Result<Vec<String>>>()
-        .map_err(Into::into)
+        .context("Failed to read ranked shell search results")
 }
 
 pub fn subsearch_session_ids(
@@ -216,9 +221,7 @@ pub fn subsearch_session_ids(
         .join(", ");
     let query = format!(
         "WITH ranked_messages AS MATERIALIZED (
-             SELECT s.id AS session_id,
-                    s.last_updated,
-                    messages_fts.rank AS message_rank
+             SELECT s.id AS session_id
              FROM messages_fts
              JOIN messages m ON m.id = messages_fts.rowid
              JOIN sessions s ON s.id = m.session_id
@@ -226,11 +229,8 @@ pub fn subsearch_session_ids(
                AND s.is_subagent = 0
                AND s.id IN ({placeholders})
          )
-         SELECT session_id,
-                MIN(message_rank) AS session_rank,
-                MAX(last_updated) AS session_last_updated
+         SELECT DISTINCT session_id
          FROM ranked_messages
-         GROUP BY session_id
          LIMIT ?{}",
         previous_ids.len() + 2
     );
@@ -240,15 +240,23 @@ pub fn subsearch_session_ids(
     let result_limit = RESULT_LIMIT as i64;
     params.push(&result_limit);
 
-    let mut statement = connection.connection.prepare(&query)?;
-    let rows = statement.query_map(params.as_slice(), |row| row.get(0))?;
-    let matching_ids = rows.collect::<rusqlite::Result<HashSet<String>>>()?;
+    let mut statement = connection
+        .connection
+        .prepare(&query)
+        .context("Failed to prepare bounded shell subsearch query")?;
+    let rows = statement
+        .query_map(params.as_slice(), |row| row.get(0))
+        .context("Failed to execute bounded shell subsearch query")?;
+    let matching_ids = rows
+        .collect::<rusqlite::Result<HashSet<String>>>()
+        .context("Failed to read bounded shell subsearch results")?;
 
     Ok(previous_ids
         .iter()
         .filter(|id| matching_ids.contains(*id))
-        .scan(HashSet::new(), |seen, id| {
-            seen.insert(id.as_str()).then_some(id.clone())
+        .filter_map({
+            let mut seen = HashSet::new();
+            move |id| seen.insert(id.as_str()).then_some(id.clone())
         })
         .take(RESULT_LIMIT)
         .collect())

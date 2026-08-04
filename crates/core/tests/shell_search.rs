@@ -106,6 +106,19 @@ fn subsearch_is_empty_for_no_previous_results_and_preserves_previous_order() {
 }
 
 #[test]
+fn subsearch_skips_duplicate_previous_ids_and_keeps_later_matches() {
+    let database = TempDatabase::new();
+    database.seed_session("first", 100, false, &["needle"]);
+    database.seed_session("later", 200, false, &["needle"]);
+
+    let previous_ids = vec!["first".into(), "first".into(), "later".into()];
+    let (connection, _interrupt) = database.search_connection();
+    let results = subsearch_session_ids(&connection, "needle", &previous_ids).unwrap();
+
+    assert_eq!(results, ["first", "later"]);
+}
+
+#[test]
 fn subsearch_caps_supplied_previous_results_at_result_limit() {
     let database = TempDatabase::new();
     for index in 0..=RESULT_LIMIT {
