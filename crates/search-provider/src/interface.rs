@@ -4,7 +4,7 @@ use std::sync::{Arc, Mutex};
 use sessions_chronicle_core::database::shell_search::ShellSearchMetadata;
 use zbus::zvariant::{OwnedValue, Str};
 
-use crate::config::application_object_path;
+use crate::activation::activate_application_action;
 use crate::db_worker::DbWorker;
 use crate::lifecycle::{ActivityTracker, CallGuard};
 
@@ -78,37 +78,6 @@ impl SearchProvider {
         );
         result
     }
-
-    async fn activate(&self, action: &str, parameter: String, timestamp: u32) {
-        let connection = match zbus::Connection::session().await {
-            Ok(connection) => connection,
-            Err(error) => {
-                tracing::debug!(%error, "could not connect to application for search action");
-                return;
-            }
-        };
-        let platform_data: HashMap<&str, zbus::zvariant::Value<'_>> = HashMap::from([(
-            "desktop-startup-id",
-            zbus::zvariant::Value::from(format!("_TIME{timestamp}")),
-        )]);
-        let parameters = (
-            action,
-            vec![zbus::zvariant::Value::from(parameter)],
-            platform_data,
-        );
-        if let Err(error) = connection
-            .call_method(
-                Some(self.app_id.as_str()),
-                application_object_path(&self.app_id),
-                Some("org.freedesktop.Application"),
-                "ActivateAction",
-                &parameters,
-            )
-            .await
-        {
-            tracing::debug!(%error, "application search action failed quietly");
-        }
-    }
 }
 
 #[zbus::interface(name = "org.gnome.Shell.SearchProvider2", spawn = true)]
@@ -151,15 +120,47 @@ impl SearchProvider {
             .collect()
     }
 
-    async fn activate_result(&self, identifier: String, terms: Vec<String>, timestamp: u32) {
+    #[zbus(name = "ActivateResult")]
+    async fn activate_result(
+        &self,
+        identifier: String,
+        _terms: Vec<String>,
+        timestamp: u32,
+        #[zbus(connection)] connection: &zbus::Connection,
+    ) {
         let _guard = self.guard();
-        let _ = terms;
-        self.activate("open-session", identifier, timestamp).await;
+        if let Err(error) = activate_application_action(
+            connection,
+            &self.app_id,
+            "open-session",
+            &identifier,
+            timestamp,
+        )
+        .await
+        {
+            tracing::warn!(%error, "failed to activate Shell search result");
+        }
     }
 
-    async fn launch_search(&self, terms: Vec<String>, timestamp: u32) {
+    #[zbus(name = "LaunchSearch")]
+    async fn launch_search(
+        &self,
+        terms: Vec<String>,
+        timestamp: u32,
+        #[zbus(connection)] connection: &zbus::Connection,
+    ) {
         let _guard = self.guard();
-        self.activate("search-sessions", terms.join(" "), timestamp)
-            .await;
+        let query = terms.join(" ");
+        if let Err(error) = activate_application_action(
+            connection,
+            &self.app_id,
+            "search-sessions",
+            &query,
+            timestamp,
+        )
+        .await
+        {
+            tracing::warn!(%error, "failed to launch carried Shell search");
+        }
     }
 }

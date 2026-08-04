@@ -4,11 +4,14 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
 use std::process::{Child, Command, Stdio};
+use std::sync::Mutex;
 use std::time::Duration;
 
 use rusqlite::Connection;
 use sessions_chronicle_core::database::schema::initialize_database;
-use sessions_chronicle_search_provider::config::{APP_ID, bus_name, provider_object_path};
+use sessions_chronicle_search_provider::config::{
+    APP_ID, application_object_path, bus_name, provider_object_path,
+};
 use tempfile::TempDir;
 use zbus::zvariant::{OwnedValue, Str};
 
@@ -135,14 +138,13 @@ async fn connection() -> &'static zbus::Connection {
 async fn proxy() -> SearchProviderProxy<'static> {
     let connection = connection().await;
     for _ in 0..100 {
-        if let Ok(proxy) = SearchProviderProxy::new(connection).await {
-            if proxy
+        if let Ok(proxy) = SearchProviderProxy::new(connection).await
+            && proxy
                 .get_initial_result_set(vec!["ak".into()])
                 .await
                 .is_ok()
-            {
-                return proxy;
-            }
+        {
+            return proxy;
         }
         async_io::Timer::after(Duration::from_millis(10)).await;
     }
@@ -157,12 +159,69 @@ fn value(meta: &HashMap<String, OwnedValue>, key: &str) -> String {
         .to_string()
 }
 
+#[derive(Debug)]
+struct ActivationCall {
+    action: String,
+    parameters: Vec<String>,
+    platform_data: HashMap<String, String>,
+}
+
+struct MockApplication {
+    sender: async_channel::Sender<ActivationCall>,
+}
+
+#[zbus::interface(name = "org.freedesktop.Application")]
+impl MockApplication {
+    async fn activate_action(
+        &self,
+        action: String,
+        parameters: Vec<OwnedValue>,
+        platform_data: HashMap<String, OwnedValue>,
+    ) {
+        let parameters = parameters
+            .into_iter()
+            .map(|value| value.downcast_ref::<Str>().unwrap().to_string())
+            .collect();
+        let platform_data = platform_data
+            .into_iter()
+            .map(|(key, value)| (key, value.downcast_ref::<Str>().unwrap().to_string()))
+            .collect();
+        let _ = self
+            .sender
+            .send(ActivationCall {
+                action,
+                parameters,
+                platform_data,
+            })
+            .await;
+    }
+}
+
+static BUS_NAME_LOCK: Mutex<()> = Mutex::new(());
+
+async fn mock_application() -> (zbus::Connection, async_channel::Receiver<ActivationCall>) {
+    let (sender, receiver) = async_channel::unbounded();
+    let connection = zbus::connection::Builder::session()
+        .unwrap()
+        .name(APP_ID)
+        .unwrap()
+        .serve_at(application_object_path(APP_ID), MockApplication { sender })
+        .unwrap()
+        .build()
+        .await
+        .unwrap();
+    (connection, receiver)
+}
+
 #[test]
 fn private_bus_provider_contract_and_fresh_process_metadata() {
     if std::env::var_os("DBUS_SESSION_BUS_ADDRESS").is_none() {
         eprintln!("skipping private-bus test: DBUS_SESSION_BUS_ADDRESS is absent");
         return;
     }
+    let _lock = BUS_NAME_LOCK
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
 
     async_io::block_on(async {
         let temp = tempfile::tempdir().unwrap();
@@ -281,5 +340,48 @@ fn private_bus_provider_contract_and_fresh_process_metadata() {
             .unwrap();
         assert_eq!(value(&fresh[0], "description"), hidden_description);
         drop(fresh_child);
+    });
+}
+
+#[test]
+fn activation_calls_application_action_with_expected_payloads() {
+    if std::env::var_os("DBUS_SESSION_BUS_ADDRESS").is_none() {
+        eprintln!("skipping private-bus test: DBUS_SESSION_BUS_ADDRESS is absent");
+        return;
+    }
+    let _lock = BUS_NAME_LOCK
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+
+    async_io::block_on(async {
+        let temp = tempfile::tempdir().unwrap();
+        let database = temp.path().join("sessions.db");
+        seed_database(&database);
+        install_settings(&temp, false);
+
+        let (_app_connection, receiver) = mock_application().await;
+
+        let child = ChildGuard::new(provider(&database, &temp));
+        let provider_proxy = proxy().await;
+
+        provider_proxy
+            .activate_result("session-a".into(), vec![], 42)
+            .await
+            .unwrap();
+        let open = receiver.recv().await.unwrap();
+        assert_eq!(open.action, "open-session");
+        assert_eq!(open.parameters, vec!["session-a".to_string()]);
+        assert_eq!(open.platform_data["desktop-startup-id"], "_TIME42");
+
+        provider_proxy
+            .launch_search(vec!["alpha".into(), "beta".into()], 84)
+            .await
+            .unwrap();
+        let search = receiver.recv().await.unwrap();
+        assert_eq!(search.action, "search-sessions");
+        assert_eq!(search.parameters, vec!["alpha beta".to_string()]);
+        assert_eq!(search.platform_data["desktop-startup-id"], "_TIME84");
+
+        drop(child);
     });
 }
