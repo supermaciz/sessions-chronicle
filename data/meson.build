@@ -38,6 +38,32 @@ service_file = configure_file(
   install_dir: datadir / 'dbus-1' / 'services',
 )
 
+search_provider_bus_name = application_id + '.SearchProvider'
+search_provider_object_path = '/' + application_id.replace('.', '/') + '/SearchProvider'
+
+search_provider_conf = configuration_data()
+search_provider_conf.set('APP_ID', application_id)
+search_provider_conf.set('BUS_NAME', search_provider_bus_name)
+search_provider_conf.set('OBJECT_PATH', search_provider_object_path)
+search_provider_file = configure_file(
+  input: '@0@-search-provider.ini.in'.format(base_id),
+  output: '@0@-search-provider.ini'.format(application_id),
+  configuration: search_provider_conf,
+  install: true,
+  install_dir: datadir / 'gnome-shell' / 'search-providers',
+)
+
+search_provider_service_conf = configuration_data()
+search_provider_service_conf.set('BUS_NAME', search_provider_bus_name)
+search_provider_service_conf.set('BINDIR', bindir)
+search_provider_service_file = configure_file(
+  input: '@0@.SearchProvider.service.in'.format(base_id),
+  output: '@0@.service'.format(search_provider_bus_name),
+  configuration: search_provider_service_conf,
+  install: true,
+  install_dir: datadir / 'dbus-1' / 'services',
+)
+
 test(
   'validate-activation-metadata',
   python,
@@ -47,6 +73,8 @@ test(
     service_file.full_path(),
     application_id,
     bindir,
+    search_provider_file.full_path(),
+    search_provider_service_file.full_path(),
   ],
   depends: desktop_file,
 )
