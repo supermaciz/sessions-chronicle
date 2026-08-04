@@ -114,7 +114,10 @@ pub(super) struct App {
     /// Uses `Cell` because `post_view` takes `&self`.
     sync_search_bar: Cell<bool>,
     sync_search_entry: Cell<bool>,
-    search_changed_handler: Cell<Option<glib::SignalHandlerId>>,
+    /// Stores the raw handler ID (as u64) for the search_changed signal.
+    /// We store the raw value instead of SignalHandlerId because u64 is Copy,
+    /// allowing us to reuse it across multiple sync_entry cycles without ownership issues.
+    search_changed_handler_raw: Cell<Option<u64>>,
     /// Tracks the GLib timeout used to delay unblocking the search_changed handler
     /// after GTK's debounce window, preventing the debounced signal from reaching
     /// a dead component during test teardown.
@@ -500,7 +503,7 @@ impl SimpleComponent for App {
             search_visible: false,
             sync_search_bar: Cell::new(false),
             sync_search_entry: Cell::new(false),
-            search_changed_handler: Cell::new(None),
+            search_changed_handler_raw: Cell::new(None),
             search_unblock_timeout: Cell::new(None),
             detail_visible: false,
             filters_open: true,
@@ -631,14 +634,15 @@ impl SimpleComponent for App {
             .indexing_worker
             .emit(IndexingWorkerInput::StartIncremental(model.sources.clone()));
 
-        // Connect to search_changed signal and store handler ID for signal blocking
+        // Connect to search_changed signal and store raw handler ID for signal blocking
         {
             use gtk::prelude::*;
             let sender_clone = sender.clone();
             let handler_id = widgets.search_entry.connect_search_changed(move |entry| {
                 sender_clone.input(AppMsg::SearchQueryChanged(entry.text().to_string()));
             });
-            model.search_changed_handler.set(Some(handler_id));
+            let handler_raw = unsafe { handler_id.as_raw() };
+            model.search_changed_handler_raw.set(Some(handler_raw));
         }
 
         ComponentParts { model, widgets }
@@ -790,11 +794,13 @@ impl SimpleComponent for App {
             // of our handler's block state, so we keep the handler blocked and schedule
             // a delayed unblock that fires after GTK's debounce window to prevent the
             // signal from reaching a torn-down component during test cleanup.
-            if let Some(handler_id) = self.search_changed_handler.replace(None) {
+            if let Some(handler_raw) = self.search_changed_handler_raw.get() {
+                // Reconstruct the handler ID from the raw value (which is Copy)
+                let handler_id = unsafe { glib::translate::from_glib(handler_raw) };
                 signal::signal_handler_block(&widgets.search_entry, &handler_id);
                 widgets.search_entry.set_text(&self.search_query);
 
-                // Cancel any pending unblock timeout
+                // Cancel any pending unblock timeout to avoid double-unblock
                 if let Some(old_timeout) = self.search_unblock_timeout.replace(None) {
                     old_timeout.remove();
                 }
@@ -804,11 +810,10 @@ impl SimpleComponent for App {
                 let timeout_id = glib::timeout_add_local_once(
                     std::time::Duration::from_millis(200),
                     move || {
-                        signal::signal_handler_unblock(&search_entry_clone, &handler_id);
+                        let handler_to_unblock = unsafe { glib::translate::from_glib(handler_raw) };
+                        signal::signal_handler_unblock(&search_entry_clone, &handler_to_unblock);
                     },
                 );
-                // Note: handler_id is moved into the closure above, so we don't store it back.
-                // It will be re-connected on the next sync_entry cycle if needed.
                 self.search_unblock_timeout.set(Some(timeout_id));
             }
         }
@@ -1959,6 +1964,37 @@ mod tests {
                 .as_deref(),
             Some("sessions")
         );
+    }
+
+    #[gtk::test]
+    fn external_search_twice_updates_entry_both_times() {
+        if !schema_is_available() {
+            return;
+        }
+        let controller = App::builder().launch(Some(PathBuf::from("tests/fixtures")));
+        pump_main_context(|| !controller.state().get().model.indexing);
+
+        // First external search
+        controller.emit(AppMsg::SearchExternalSessions("first query".into()));
+        pump_main_context(|| controller.state().get().model.search_query == "first query");
+
+        let parts = controller.state().get();
+        assert_eq!(parts.widgets.search_entry.text(), "first query");
+        assert_eq!(parts.model.search_query, "first query");
+        drop(parts);
+
+        // Second external search with different query - this is the regression test.
+        // This tests that the handler is kept available across multiple syncs.
+        controller.emit(AppMsg::SearchExternalSessions("second query".into()));
+        pump_main_context(|| controller.state().get().model.search_query == "second query");
+
+        let parts = controller.state().get();
+        assert_eq!(
+            parts.widgets.search_entry.text(),
+            "second query",
+            "Entry text must update on second external search (tests handler reusability)"
+        );
+        assert_eq!(parts.model.search_query, "second query");
     }
 
     #[gtk::test]
