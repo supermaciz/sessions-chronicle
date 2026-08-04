@@ -84,21 +84,26 @@ impl SearchProvider {
 impl SearchProvider {
     async fn get_initial_result_set(&self, terms: Vec<String>) -> Vec<String> {
         let _guard = self.guard();
-        let response = self.worker.search_terms(&terms, None).await;
+        let response = self.worker.search_terms(&terms).await;
         self.set_expression(response.expression);
         response.ids
     }
 
+    /// Shell offers the previous result set so providers can narrow instead of
+    /// searching again. We deliberately ignore it and re-run the full query: our
+    /// result sets are capped, so narrowing would permanently drop matches that
+    /// fell outside the cap of an earlier, shorter query. A full query costs
+    /// ~0.1s cold and is effectively free warm, so the optimisation is not worth
+    /// the lost results.
     async fn get_subsearch_result_set(
         &self,
         previous_results: Vec<String>,
         terms: Vec<String>,
     ) -> Vec<String> {
+        // Named to keep the introspected argument matching the SearchProvider2 contract.
+        drop(previous_results);
         let _guard = self.guard();
-        let response = self
-            .worker
-            .search_terms(&terms, Some(previous_results))
-            .await;
+        let response = self.worker.search_terms(&terms).await;
         self.set_expression(response.expression);
         response.ids
     }

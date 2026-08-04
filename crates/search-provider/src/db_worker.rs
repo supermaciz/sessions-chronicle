@@ -5,7 +5,7 @@ use std::time::Duration;
 
 use sessions_chronicle_core::database::shell_search::{
     ShellSearchConnection, ShellSearchInterrupt, ShellSearchMetadata, build_match_expression,
-    search_session_ids, subsearch_session_ids,
+    search_session_ids,
 };
 
 #[derive(Debug, Default)]
@@ -24,7 +24,6 @@ enum DbRequest {
     Search {
         generation: u64,
         expression: String,
-        previous_results: Option<Vec<String>>,
         reply: async_channel::Sender<Vec<String>>,
     },
     Metadata {
@@ -97,11 +96,7 @@ impl DbWorker {
         }
     }
 
-    pub async fn search_terms(
-        &self,
-        terms: &[String],
-        previous_results: Option<Vec<String>>,
-    ) -> SearchResponse {
+    pub async fn search_terms(&self, terms: &[String]) -> SearchResponse {
         let request_generation = self.generation.fetch_add(1, Ordering::AcqRel) + 1;
         self.interrupt_current();
         let Some(expression) = build_match_expression(terms) else {
@@ -118,7 +113,6 @@ impl DbWorker {
             .send(DbRequest::Search {
                 generation: request_generation,
                 expression: expression.clone(),
-                previous_results,
                 reply,
             })
             .is_err()
@@ -231,7 +225,6 @@ fn run_worker(
             DbRequest::Search {
                 generation: request_generation,
                 expression,
-                previous_results,
                 reply,
             } => {
                 if generation.load(Ordering::Acquire) != request_generation {
@@ -258,11 +251,7 @@ fn run_worker(
                     }
                 }
                 let database = connection.as_ref().expect("connection opened above");
-                let result = match previous_results {
-                    Some(previous) => subsearch_session_ids(database, &expression, &previous),
-                    None => search_session_ids(database, &expression),
-                };
-                let mut ids = result.unwrap_or_else(|error| {
+                let mut ids = search_session_ids(database, &expression).unwrap_or_else(|error| {
                     tracing::debug!(%error, "Shell result query failed quietly");
                     Vec::new()
                 });
@@ -397,7 +386,7 @@ mod tests {
                 "dev.maciz.sessionschronicle.Devel".into(),
                 Duration::from_millis(20),
             );
-            let response = worker.search_terms(&["ak".into()], None).await;
+            let response = worker.search_terms(&["ak".into()]).await;
             assert!(response.expression.is_none());
             assert!(response.ids.is_empty());
             assert_eq!(worker.connection_open_count(), 0);
@@ -416,8 +405,8 @@ mod tests {
             let release = worker.block_worker().await;
             let first_terms = ["first".into()];
             let second_terms = ["second".into()];
-            let first = worker.search_terms(&first_terms, None);
-            let second = worker.search_terms(&second_terms, None);
+            let first = worker.search_terms(&first_terms);
+            let second = worker.search_terms(&second_terms);
             let _ = release.send(()).await;
             let (first, second) = futures_lite::future::zip(first, second).await;
             assert!(first.ids.is_empty());
@@ -455,7 +444,7 @@ mod tests {
                 Duration::from_millis(10),
             );
             let release = worker.block_worker().await;
-            let response = worker.search_terms(&["timeout".into()], None).await;
+            let response = worker.search_terms(&["timeout".into()]).await;
             assert!(response.ids.is_empty());
             let _ = release.send(()).await;
         });
@@ -470,7 +459,7 @@ mod tests {
                 "dev.maciz.sessionschronicle.Devel".into(),
                 Duration::from_millis(100),
             );
-            let response = worker.search_terms(&["needle".into()], None).await;
+            let response = worker.search_terms(&["needle".into()]).await;
             assert!(!response.ids.is_empty());
             assert!(worker.interrupt.lock().unwrap().is_some());
             worker.active_operation.store(1, Ordering::Release);

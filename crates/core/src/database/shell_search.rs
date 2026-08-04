@@ -298,63 +298,6 @@ pub fn search_session_ids(
         .context("Failed to read ranked shell search results")
 }
 
-pub fn subsearch_session_ids(
-    connection: &ShellSearchConnection,
-    match_expression: &str,
-    previous_ids: &[String],
-) -> Result<Vec<String>> {
-    if previous_ids.is_empty() {
-        return Ok(Vec::new());
-    }
-
-    let previous_ids = &previous_ids[..previous_ids.len().min(RESULT_LIMIT)];
-    let placeholders = (2..=previous_ids.len() + 1)
-        .map(|index| format!("?{index}"))
-        .collect::<Vec<_>>()
-        .join(", ");
-    let query = format!(
-        "WITH ranked_messages AS MATERIALIZED (
-             SELECT s.id AS session_id
-             FROM messages_fts
-             JOIN messages m ON m.id = messages_fts.rowid
-             JOIN sessions s ON s.id = m.session_id
-             WHERE messages_fts MATCH ?1
-               AND s.is_subagent = 0
-               AND s.id IN ({placeholders})
-         )
-         SELECT DISTINCT session_id
-         FROM ranked_messages
-         LIMIT ?{}",
-        previous_ids.len() + 2
-    );
-    let mut params: Vec<&dyn ToSql> = Vec::with_capacity(previous_ids.len() + 2);
-    params.push(&match_expression);
-    params.extend(previous_ids.iter().map(|id| id as &dyn ToSql));
-    let result_limit = RESULT_LIMIT as i64;
-    params.push(&result_limit);
-
-    let mut statement = connection
-        .connection
-        .prepare(&query)
-        .context("Failed to prepare bounded shell subsearch query")?;
-    let rows = statement
-        .query_map(params.as_slice(), |row| row.get(0))
-        .context("Failed to execute bounded shell subsearch query")?;
-    let matching_ids = rows
-        .collect::<rusqlite::Result<HashSet<String>>>()
-        .context("Failed to read bounded shell subsearch results")?;
-
-    Ok(previous_ids
-        .iter()
-        .filter(|id| matching_ids.contains(*id))
-        .filter_map({
-            let mut seen = HashSet::new();
-            move |id| seen.insert(id.as_str()).then_some(id.clone())
-        })
-        .take(RESULT_LIMIT)
-        .collect())
-}
-
 impl ShellSearchInterrupt {
     pub fn interrupt(&self) {
         self.handle.interrupt();

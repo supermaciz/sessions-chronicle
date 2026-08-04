@@ -1,8 +1,6 @@
 mod support;
 
-use sessions_chronicle_core::database::shell_search::{
-    RESULT_LIMIT, search_session_ids, subsearch_session_ids,
-};
+use sessions_chronicle_core::database::shell_search::{RESULT_LIMIT, search_session_ids};
 use support::TempDatabase;
 
 #[test]
@@ -71,73 +69,6 @@ fn initial_search_is_deduplicated_and_capped_at_twenty_top_level_ids() {
             .len(),
         RESULT_LIMIT
     );
-}
-
-#[test]
-fn subsearch_is_empty_for_no_previous_results_and_preserves_previous_order() {
-    let database = TempDatabase::new();
-    for index in 0..=RESULT_LIMIT {
-        database.seed_session(
-            &format!("session-{index:02}"),
-            index as i64,
-            false,
-            &["bounded needle"],
-        );
-    }
-    database.seed_session("subagent", 1000, true, &["bounded needle"]);
-
-    let (connection, _interrupt) = database.search_connection();
-    assert!(
-        subsearch_session_ids(&connection, "needle", &[])
-            .unwrap()
-            .is_empty()
-    );
-
-    let previous_ids = vec![
-        "session-01".into(),
-        "unknown".into(),
-        "subagent".into(),
-        "session-05".into(),
-        "session-02".into(),
-    ];
-    let results = subsearch_session_ids(&connection, "needle", &previous_ids).unwrap();
-
-    assert_eq!(results, ["session-01", "session-05", "session-02"]);
-}
-
-#[test]
-fn subsearch_skips_duplicate_previous_ids_and_keeps_later_matches() {
-    let database = TempDatabase::new();
-    database.seed_session("first", 100, false, &["needle"]);
-    database.seed_session("later", 200, false, &["needle"]);
-
-    let previous_ids = vec!["first".into(), "first".into(), "later".into()];
-    let (connection, _interrupt) = database.search_connection();
-    let results = subsearch_session_ids(&connection, "needle", &previous_ids).unwrap();
-
-    assert_eq!(results, ["first", "later"]);
-}
-
-#[test]
-fn subsearch_caps_supplied_previous_results_at_result_limit() {
-    let database = TempDatabase::new();
-    for index in 0..=RESULT_LIMIT {
-        database.seed_session(
-            &format!("session-{index:02}"),
-            index as i64,
-            false,
-            &["bounded needle"],
-        );
-    }
-
-    let previous_ids = (0..=RESULT_LIMIT)
-        .map(|index| format!("session-{index:02}"))
-        .collect::<Vec<_>>();
-    let (connection, _interrupt) = database.search_connection();
-    let results = subsearch_session_ids(&connection, "needle", &previous_ids).unwrap();
-
-    assert_eq!(results.len(), RESULT_LIMIT);
-    assert!(!results.iter().any(|id| id == "session-20"));
 }
 
 #[test]

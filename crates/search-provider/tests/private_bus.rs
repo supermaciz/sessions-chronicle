@@ -119,6 +119,10 @@ impl ChildGuard {
     fn new(child: Child) -> Self {
         Self(Some(child))
     }
+
+    fn pid(&self) -> u32 {
+        self.0.as_ref().expect("child is alive").id()
+    }
 }
 
 impl Drop for ChildGuard {
@@ -135,16 +139,32 @@ async fn connection() -> &'static zbus::Connection {
     Box::leak(Box::new(connection))
 }
 
-async fn proxy() -> SearchProviderProxy<'static> {
+/// Wait for `pid` to own the provider's well-known name before any call is made.
+///
+/// Probing readiness with a provider method would defeat the purpose: a call to an
+/// unowned name is exactly what makes D-Bus start the service. On a machine where the
+/// app is installed, that starts the *installed* provider against the *real* database
+/// instead of the child this test spawned against its fixture. `NameHasOwner` and
+/// `GetConnectionUnixProcessID` never activate anything, so the wait stays inert and
+/// the ownership assertion turns a silent hijack into a clear failure.
+async fn proxy_owned_by(pid: u32) -> SearchProviderProxy<'static> {
     let connection = connection().await;
-    for _ in 0..100 {
-        if let Ok(proxy) = SearchProviderProxy::new(connection).await
-            && proxy
-                .get_initial_result_set(vec!["ak".into()])
+    let dbus = zbus::fdo::DBusProxy::new(connection).await.unwrap();
+    let name = zbus::names::BusName::try_from(bus_name(APP_ID)).unwrap();
+    for _ in 0..500 {
+        if dbus.name_has_owner(name.clone()).await.unwrap_or(false) {
+            let owner = dbus
+                .get_connection_unix_process_id(name.clone())
                 .await
-                .is_ok()
-        {
-            return proxy;
+                .unwrap_or(0);
+            assert_eq!(
+                owner,
+                pid,
+                "{} was taken by pid {owner}, not the provider this test spawned (pid {pid}); \
+                 an installed D-Bus activation file is shadowing the fixture",
+                bus_name(APP_ID)
+            );
+            return SearchProviderProxy::new(connection).await.unwrap();
         }
         async_io::Timer::after(Duration::from_millis(10)).await;
     }
@@ -243,7 +263,7 @@ fn private_bus_provider_contract_and_fresh_process_metadata() {
         install_settings(&temp, false);
 
         let child = ChildGuard::new(provider(&database, &temp));
-        let provider_proxy = proxy().await;
+        let provider_proxy = proxy_owned_by(child.pid()).await;
 
         let xml: String = connection()
             .await
@@ -304,11 +324,26 @@ fn private_bus_provider_contract_and_fresh_process_metadata() {
             .unwrap();
         assert_eq!(ids, ["known"]);
 
+        // Narrowing must never subtract from what the same terms return on their own:
+        // Shell's previous set is capped, so intersecting with it would permanently drop
+        // matches that fell outside the cap of an earlier, shorter query.
         let subsearch = provider_proxy
             .get_subsearch_result_set(vec!["outside".into(), "known".into()], vec!["aki".into()])
             .await
             .unwrap();
         assert_eq!(subsearch, ["known"]);
+
+        let from_empty = provider_proxy
+            .get_subsearch_result_set(Vec::new(), vec!["aki".into()])
+            .await
+            .unwrap();
+        assert_eq!(from_empty, ["known"]);
+
+        let from_unrelated = provider_proxy
+            .get_subsearch_result_set(vec!["outside".into()], vec!["aki".into()])
+            .await
+            .unwrap();
+        assert_eq!(from_unrelated, ["known"]);
 
         let hidden = provider_proxy
             .get_result_metas(vec!["known".into(), "missing".into(), "known".into()])
@@ -328,7 +363,7 @@ fn private_bus_provider_contract_and_fresh_process_metadata() {
 
         install_settings(&temp, true);
         let excerpt_child = ChildGuard::new(provider(&database, &temp));
-        let excerpt_proxy = proxy().await;
+        let excerpt_proxy = proxy_owned_by(excerpt_child.pid()).await;
         assert_eq!(
             excerpt_proxy
                 .get_initial_result_set(vec!["aki".into()])
@@ -346,7 +381,7 @@ fn private_bus_provider_contract_and_fresh_process_metadata() {
 
         install_settings(&temp, true);
         let fresh_child = ChildGuard::new(provider(&database, &temp));
-        let fresh_proxy = proxy().await;
+        let fresh_proxy = proxy_owned_by(fresh_child.pid()).await;
         let fresh = fresh_proxy
             .get_result_metas(vec!["known".into()])
             .await
@@ -375,7 +410,7 @@ fn activation_calls_application_action_with_expected_payloads() {
         let (_app_connection, receiver) = mock_application().await;
 
         let child = ChildGuard::new(provider(&database, &temp));
-        let provider_proxy = proxy().await;
+        let provider_proxy = proxy_owned_by(child.pid()).await;
 
         provider_proxy
             .activate_result("session-a".into(), vec![], 42)
