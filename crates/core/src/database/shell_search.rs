@@ -11,6 +11,8 @@ const MIN_NORMALIZED_CHARS: usize = 3;
 const MAX_NORMALIZED_CHARS: usize = 256;
 const MAX_TOKENS: usize = 32;
 const MAX_RENDERED_NAME_CHARS: usize = 60;
+const MAX_RENDERED_PROJECT_CHARS: usize = 60;
+const MAX_RENDERED_SNIPPET_CHARS: usize = 100;
 
 pub fn build_match_expression(terms: &[String]) -> Option<String> {
     let mut tokens = Vec::new();
@@ -60,13 +62,25 @@ pub struct RenderedShellSearchMetadata {
 }
 
 fn collapse_and_truncate(value: &str, limit: usize) -> String {
-    value
-        .split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ")
-        .chars()
-        .take(limit)
-        .collect()
+    let mut collapsed = String::with_capacity(value.len().min(limit));
+    let mut rendered_chars = 0;
+    for word in value.split_whitespace() {
+        if rendered_chars == limit {
+            break;
+        }
+        if rendered_chars > 0 {
+            collapsed.push(' ');
+            rendered_chars += 1;
+        }
+        for character in word.chars() {
+            if rendered_chars == limit {
+                break;
+            }
+            collapsed.push(character);
+            rendered_chars += 1;
+        }
+    }
+    collapsed
 }
 
 fn relative_time(now: DateTime<Utc>, then: DateTime<Utc>) -> String {
@@ -100,7 +114,7 @@ impl ShellSearchMetadata {
         let project_name = self
             .project_name
             .as_deref()
-            .map(|value| collapse_and_truncate(value, MAX_RENDERED_NAME_CHARS))
+            .map(|value| collapse_and_truncate(value, MAX_RENDERED_PROJECT_CHARS))
             .filter(|value| !value.is_empty())
             .unwrap_or_else(|| "Unknown project".into());
         let safe_description = format!(
@@ -112,7 +126,7 @@ impl ShellSearchMetadata {
         let description = if show_excerpts {
             self.matched_snippet
                 .as_deref()
-                .map(|value| collapse_and_truncate(value, 100))
+                .map(|value| collapse_and_truncate(value, MAX_RENDERED_SNIPPET_CHARS))
                 .filter(|value| !value.is_empty())
                 .unwrap_or(safe_description)
         } else {
@@ -251,6 +265,33 @@ mod tests {
         let shown = metadata.render(now, true);
         assert_eq!(shown.description.chars().count(), 100);
         assert!(shown.description.starts_with("match "));
+    }
+
+    #[test]
+    fn relative_time_formats_units_and_boundaries() {
+        let now = Utc.timestamp_opt(1_700_000_000, 0).unwrap();
+        let cases = [
+            ("future", chrono::Duration::seconds(-1), "Just now"),
+            ("just now", chrono::Duration::seconds(59), "Just now"),
+            ("one minute", chrono::Duration::minutes(1), "1 minute ago"),
+            (
+                "multiple minutes",
+                chrono::Duration::minutes(59),
+                "59 minutes ago",
+            ),
+            ("one hour", chrono::Duration::hours(1), "1 hour ago"),
+            (
+                "multiple hours",
+                chrono::Duration::hours(23),
+                "23 hours ago",
+            ),
+            ("one day", chrono::Duration::days(1), "1 day ago"),
+            ("multiple days", chrono::Duration::days(2), "2 days ago"),
+        ];
+
+        for (label, elapsed, expected) in cases {
+            assert_eq!(relative_time(now, now - elapsed), expected, "{label}");
+        }
     }
 
     #[test]
