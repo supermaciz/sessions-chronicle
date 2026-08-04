@@ -113,6 +113,7 @@ pub(super) struct App {
     /// messages (e.g. `SearchQueryChanged` from clearing the entry).
     /// Uses `Cell` because `post_view` takes `&self`.
     sync_search_bar: Cell<bool>,
+    sync_search_entry: Cell<bool>,
     detail_visible: bool,
     /// Outer OverlaySplitView visibility (Filters pane in the Sessions list view).
     filters_open: bool,
@@ -183,6 +184,7 @@ pub(super) enum AppMsg {
     },
     SessionSelected(String),
     OpenExternalSession(String),
+    SearchExternalSessions(String),
     /// User-requested navigation back from detail to list.
     RequestNavigateBack,
     /// Detail page popped signal from `NavigationView`.
@@ -495,6 +497,7 @@ impl SimpleComponent for App {
         let mut model = Self {
             search_visible: false,
             sync_search_bar: Cell::new(false),
+            sync_search_entry: Cell::new(false),
             detail_visible: false,
             filters_open: true,
             filters_open_before_detail: true,
@@ -656,6 +659,7 @@ impl SimpleComponent for App {
             }
             AppMsg::SessionSelected(id) => self.handle_session_selected(id),
             AppMsg::OpenExternalSession(id) => self.handle_external_session_open(id),
+            AppMsg::SearchExternalSessions(query) => self.handle_external_search(query),
             AppMsg::RequestNavigateBack => self.handle_request_navigate_back(),
             AppMsg::NavigateBack => self.handle_navigate_back(),
             AppMsg::ShowPreferences => {
@@ -760,6 +764,13 @@ impl SimpleComponent for App {
     }
 
     fn post_view(&self, widgets: &mut Self::Widgets) {
+        // Only sync the SearchEntry when the model explicitly requests it
+        // (e.g. external search from a different workspace).  Unconditional sync
+        // would interfere with the user typing.
+        let sync_entry = self.sync_search_entry.replace(false);
+        if sync_entry && widgets.search_entry.text().as_str() != self.search_query {
+            widgets.search_entry.set_text(&self.search_query);
+        }
         // Only sync the SearchBar when the model explicitly requests it
         // (e.g. Escape handler).  Unconditional sync would oscillate: closing
         // the bar clears the entry → SearchQueryChanged fires before
@@ -769,6 +780,9 @@ impl SimpleComponent for App {
             && widgets.search_bar.is_search_mode() != self.search_visible
         {
             widgets.search_bar.set_search_mode(self.search_visible);
+        }
+        if sync_entry {
+            widgets.search_entry.grab_focus();
         }
 
         self.date_pill
@@ -1874,6 +1888,41 @@ mod tests {
     }
 
     #[gtk::test]
+    fn external_search_from_detail_and_analytics_opens_searchable_sessions_list() {
+        if !schema_is_available() {
+            return;
+        }
+        let controller = App::builder().launch(Some(PathBuf::from("tests/fixtures")));
+        pump_main_context(|| !controller.state().get().model.indexing);
+        controller.emit(AppMsg::SessionSelected("abc123".into()));
+        pump_main_context(|| controller.state().get().model.detail_visible);
+        controller.emit(AppMsg::WorkspaceChanged(Workspace::Analytics));
+        controller.emit(AppMsg::SearchExternalSessions("carried query".into()));
+        pump_main_context(|| controller.state().get().model.search_query == "carried query");
+        // Ensure all pending events are processed before test ends
+        pump_main_context(|| !gtk::glib::MainContext::default().pending());
+
+        let parts = controller.state().get();
+        assert_eq!(parts.model.active_workspace, Workspace::Sessions);
+        assert!(!parts.model.detail_visible);
+        assert!(parts.model.active_session.is_none());
+        assert!(parts.model.parent_session.is_none());
+        assert!(parts.model.search_visible);
+        assert_eq!(parts.widgets.search_entry.text(), "carried query");
+        assert!(parts.widgets.search_bar.is_search_mode());
+        assert_eq!(
+            parts
+                .model
+                .nav_view
+                .visible_page()
+                .unwrap()
+                .tag()
+                .as_deref(),
+            Some("sessions")
+        );
+    }
+
+    #[gtk::test]
     fn typed_application_action_reaches_root_component_through_broker() {
         use gtk::glib::variant::{StaticVariantType, ToVariant};
         use gtk::prelude::{ActionExt, ActionMapExt};
@@ -1918,5 +1967,21 @@ mod tests {
                 .id,
             "abc123"
         );
+
+        let search_action = app
+            .lookup_action("search-sessions")
+            .expect("search action registered");
+        assert_eq!(
+            search_action.parameter_type().as_deref(),
+            Some(String::static_variant_type().as_ref())
+        );
+        search_action.activate(Some(&"carried query".to_variant()));
+        pump_main_context(|| controller.state().get().model.search_query == "carried query");
+
+        let parts = controller.state().get();
+        assert_eq!(parts.model.active_workspace, Workspace::Sessions);
+        assert!(!parts.model.detail_visible);
+        assert_eq!(parts.widgets.search_entry.text(), "carried query");
+        assert!(parts.widgets.search_bar.is_search_mode());
     }
 }

@@ -200,6 +200,20 @@ impl App {
 
         self.push_detail_page();
     }
+
+    pub(crate) fn handle_external_search(&mut self, query: String) {
+        tracing::debug!(%query, "External session search requested");
+        if self.detail_visible {
+            self.handle_request_navigate_back();
+        }
+        self.handle_workspace_changed(Workspace::Sessions);
+        self.workspace_stack
+            .set_visible_child_name(Workspace::Sessions.stack_name());
+        self.handle_search_query_changed(query);
+        self.search_visible = true;
+        self.sync_search_entry.set(true);
+        self.sync_search_bar.set(true);
+    }
 }
 
 #[cfg(test)]

@@ -53,6 +53,19 @@ fn register_application_actions(app: &gtk::Application) {
         APP_BROKER.send(AppMsg::OpenExternalSession(id));
     });
     app.add_action(&open_session);
+
+    let search_sessions =
+        gio::SimpleAction::new("search-sessions", Some(&String::static_variant_type()));
+    let application = app.clone();
+    search_sessions.connect_activate(move |_, parameter| {
+        present_application_window(&application);
+        let Some(query) = parameter.and_then(|value| value.get::<String>()) else {
+            tracing::warn!("search-sessions activated without a string parameter");
+            return;
+        };
+        APP_BROKER.send(AppMsg::SearchExternalSessions(query));
+    });
+    app.add_action(&search_sessions);
 }
 
 fn main() {
