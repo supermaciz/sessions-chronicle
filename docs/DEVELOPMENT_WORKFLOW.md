@@ -246,7 +246,7 @@ RUST_LOG=sessions_chronicle::parsers=trace "$HOME/.local/bin/sessions-chronicle"
 ## Testing
 
 ```bash
-xvfb-run -a env GDK_BACKEND=x11 GSK_RENDERER=cairo cargo test --all --no-fail-fast
+dbus-run-session -- xvfb-run -a env GDK_BACKEND=x11 GSK_RENDERER=cairo cargo test --all --no-fail-fast
 ```
 
 ### Linting
@@ -335,7 +335,7 @@ Two Flatpak manifests exist in `build-aux/`:
 - **Meson rebuild**: `meson compile -C builddir && meson install -C builddir`
 - **Meson run**: `"$HOME/.local/bin/sessions-chronicle"`
 - **Test Data**: Add `--sessions-dir tests/fixtures` flag
-- **CI parity**: `cargo fmt --all -- --check && cargo clippy --all -- -D warnings && xvfb-run -a env GDK_BACKEND=x11 GSK_RENDERER=cairo cargo test --all --no-fail-fast`
+- **CI parity**: `cargo fmt --all -- --check && cargo clippy --all -- -D warnings && dbus-run-session -- xvfb-run -a env GDK_BACKEND=x11 GSK_RENDERER=cairo cargo test --all --no-fail-fast`
 
 ---
 
