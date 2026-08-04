@@ -26,7 +26,7 @@ use std::env;
 
 use app::{APP_BROKER, App, AppMsg};
 
-use session_sources::{SessionSources, select_db_filename};
+use session_sources::{SessionSources, database_path};
 use tracing_subscriber::EnvFilter;
 
 relm4::new_action_group!(AppActionGroup, "app");
@@ -61,9 +61,7 @@ fn main() {
 
     if args.print_db_path {
         let sources = SessionSources::resolve(args.sessions_dir.as_deref());
-        let db_path = glib::user_data_dir()
-            .join(APP_ID)
-            .join(select_db_filename(sources.override_mode));
+        let db_path = database_path(&glib::user_data_dir(), APP_ID, sources.override_mode);
         println!("{}", db_path.display());
         return;
     }

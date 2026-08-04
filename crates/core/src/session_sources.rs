@@ -130,6 +130,13 @@ pub fn select_db_filename(override_mode: bool) -> &'static str {
     }
 }
 
+/// Resolve the application database path for the selected session-source mode.
+pub fn database_path(base_data_dir: &Path, app_id: &str, override_mode: bool) -> PathBuf {
+    base_data_dir
+        .join(app_id)
+        .join(select_db_filename(override_mode))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -197,6 +204,20 @@ mod tests {
     fn db_filename_changes_in_override_mode() {
         assert_eq!(select_db_filename(false), "sessions.db");
         assert_eq!(select_db_filename(true), "sessions-override.db");
+    }
+
+    #[test]
+    fn database_path_uses_app_data_directory_and_selected_filename() {
+        let base_data_dir = Path::new("/tmp/data");
+
+        assert_eq!(
+            database_path(base_data_dir, "example.app", false),
+            PathBuf::from("/tmp/data/example.app/sessions.db")
+        );
+        assert_eq!(
+            database_path(base_data_dir, "example.app", true),
+            PathBuf::from("/tmp/data/example.app/sessions-override.db")
+        );
     }
 
     #[test]

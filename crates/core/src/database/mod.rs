@@ -1,6 +1,7 @@
 pub mod analytics;
 pub mod indexer;
 pub mod schema;
+pub mod shell_search;
 
 use anyhow::{Context, Result};
 use chrono::{DateTime, TimeZone, Utc};

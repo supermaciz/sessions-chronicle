@@ -27,7 +27,7 @@ use crate::indexing_worker::{IndexingWorker, IndexingWorkerInput};
 use crate::models::{
     DateFilter, ProjectFilter, ProjectInfo, SessionQuery, SortOrder, session::AiAssistant,
 };
-use crate::session_sources::{SessionSources, select_db_filename};
+use crate::session_sources::{SessionSources, database_path};
 use crate::ui::date_pill::{DatePill, DatePillInput};
 use crate::ui::modals::{
     indexing_status::{IndexingStatusDialog, IndexingStatusMsg, IndexingStatusOutput},
@@ -454,8 +454,10 @@ impl SimpleComponent for App {
     ) -> ComponentParts<Self> {
         // Resolve session sources and database path
         let sources = SessionSources::resolve(sessions_dir.as_deref());
-        let db_dir = glib::user_data_dir().join(APP_ID);
-        let db_path = db_dir.join(select_db_filename(sources.override_mode));
+        let db_path = database_path(&glib::user_data_dir(), APP_ID, sources.override_mode);
+        let db_dir = db_path
+            .parent()
+            .expect("database path has an app directory");
         let index_available = db_path.exists();
 
         tracing::info!(
@@ -469,7 +471,7 @@ impl SimpleComponent for App {
         );
         tracing::info!("Using database: {}", db_path.display());
 
-        if let Err(err) = fs::create_dir_all(&db_dir) {
+        if let Err(err) = fs::create_dir_all(db_dir) {
             tracing::error!("Failed to create data dir {}: {}", db_dir.display(), err);
         } else if let Err(err) = SessionIndexer::new(&db_path) {
             tracing::error!("Failed to initialize session indexer: {}", err);
