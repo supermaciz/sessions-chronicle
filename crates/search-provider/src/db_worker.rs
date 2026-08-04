@@ -132,13 +132,10 @@ impl DbWorker {
             return SearchResponse::default();
         }
         let ids = self.wait_for_reply(operation, receiver).await;
+        let current = self.generation.load(Ordering::Acquire) == request_generation;
         SearchResponse {
-            expression: Some(expression),
-            ids: if self.generation.load(Ordering::Acquire) == request_generation {
-                ids
-            } else {
-                Vec::new()
-            },
+            expression: current.then_some(expression),
+            ids: if current { ids } else { Vec::new() },
         }
     }
 
@@ -424,6 +421,7 @@ mod tests {
             let _ = release.send(()).await;
             let (first, second) = futures_lite::future::zip(first, second).await;
             assert!(first.ids.is_empty());
+            assert!(first.expression.is_none());
             assert_eq!(second.ids, ["second-session"]);
         });
     }

@@ -8,8 +8,6 @@ use crate::config::application_object_path;
 use crate::db_worker::DbWorker;
 use crate::lifecycle::{ActivityTracker, CallGuard};
 
-const APPLICATION_ICON: &str = "dev.maciz.sessionschronicle";
-
 #[derive(Clone)]
 pub struct SearchProvider {
     worker: Arc<DbWorker>,
@@ -53,7 +51,7 @@ impl SearchProvider {
         );
         metadata.insert(
             "gicon".into(),
-            OwnedValue::from(Str::from(APPLICATION_ICON)),
+            OwnedValue::from(Str::from(self.app_id.clone())),
         );
         metadata
     }
@@ -76,7 +74,7 @@ impl SearchProvider {
         );
         result.insert(
             "gicon".into(),
-            OwnedValue::from(Str::from(APPLICATION_ICON)),
+            OwnedValue::from(Str::from(self.app_id.clone())),
         );
         result
     }

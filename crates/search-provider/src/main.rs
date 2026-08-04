@@ -25,5 +25,9 @@ fn main() -> anyhow::Result<()> {
     let database = args
         .database
         .unwrap_or_else(|| database_path(&glib::user_data_dir(), APP_ID, false));
-    async_io::block_on(run(database))
+    async_io::block_on(run(
+        database,
+        APP_ID.to_string(),
+        std::time::Duration::from_secs(30),
+    ))
 }

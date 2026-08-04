@@ -110,6 +110,23 @@ fn provider(database: &Path, settings: &TempDir) -> Child {
         .unwrap()
 }
 
+struct ChildGuard(Option<Child>);
+
+impl ChildGuard {
+    fn new(child: Child) -> Self {
+        Self(Some(child))
+    }
+}
+
+impl Drop for ChildGuard {
+    fn drop(&mut self) {
+        if let Some(mut child) = self.0.take() {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
+    }
+}
+
 async fn connection() -> &'static zbus::Connection {
     let connection = zbus::Connection::session().await.unwrap();
     Box::leak(Box::new(connection))
@@ -142,13 +159,18 @@ fn value(meta: &HashMap<String, OwnedValue>, key: &str) -> String {
 
 #[test]
 fn private_bus_provider_contract_and_fresh_process_metadata() {
+    if std::env::var_os("DBUS_SESSION_BUS_ADDRESS").is_none() {
+        eprintln!("skipping private-bus test: DBUS_SESSION_BUS_ADDRESS is absent");
+        return;
+    }
+
     async_io::block_on(async {
         let temp = tempfile::tempdir().unwrap();
         let database = temp.path().join("sessions.db");
         seed_database(&database);
         install_settings(&temp, false);
 
-        let mut child = provider(&database, &temp);
+        let child = ChildGuard::new(provider(&database, &temp));
         let provider_proxy = proxy().await;
 
         let xml: String = connection()
@@ -224,14 +246,16 @@ fn private_bus_provider_contract_and_fresh_process_metadata() {
         assert_eq!(value(&hidden[0], "id"), "known");
         assert_eq!(value(&hidden[1], "id"), "missing");
         assert_eq!(value(&hidden[1], "name"), "Session unavailable");
+        assert_eq!(value(&hidden[1], "gicon"), APP_ID);
         assert_eq!(value(&hidden[2], "id"), "known");
+        assert_eq!(value(&hidden[2], "gicon"), APP_ID);
         let hidden_description = value(&hidden[0], "description");
+        assert_eq!(value(&hidden[0], "gicon"), APP_ID);
 
-        child.kill().unwrap();
-        child.wait().unwrap();
+        drop(child);
 
         install_settings(&temp, true);
-        let mut excerpt_child = provider(&database, &temp);
+        let excerpt_child = ChildGuard::new(provider(&database, &temp));
         let excerpt_proxy = proxy().await;
         assert_eq!(
             excerpt_proxy
@@ -246,18 +270,16 @@ fn private_bus_provider_contract_and_fresh_process_metadata() {
             .unwrap();
         assert_ne!(value(&shown[0], "description"), hidden_description);
 
-        excerpt_child.kill().unwrap();
-        excerpt_child.wait().unwrap();
+        drop(excerpt_child);
 
         install_settings(&temp, true);
-        let mut fresh_child = provider(&database, &temp);
+        let fresh_child = ChildGuard::new(provider(&database, &temp));
         let fresh_proxy = proxy().await;
         let fresh = fresh_proxy
             .get_result_metas(vec!["known".into()])
             .await
             .unwrap();
         assert_eq!(value(&fresh[0], "description"), hidden_description);
-        fresh_child.kill().unwrap();
-        fresh_child.wait().unwrap();
+        drop(fresh_child);
     });
 }
