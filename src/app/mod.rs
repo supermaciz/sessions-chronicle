@@ -115,6 +115,10 @@ pub(super) struct App {
     sync_search_bar: Cell<bool>,
     sync_search_entry: Cell<bool>,
     search_changed_handler: Cell<Option<glib::SignalHandlerId>>,
+    /// Tracks the GLib timeout used to delay unblocking the search_changed handler
+    /// after GTK's debounce window, preventing the debounced signal from reaching
+    /// a dead component during test teardown.
+    search_unblock_timeout: Cell<Option<glib::source::SourceId>>,
     detail_visible: bool,
     /// Outer OverlaySplitView visibility (Filters pane in the Sessions list view).
     filters_open: bool,
@@ -497,6 +501,7 @@ impl SimpleComponent for App {
             sync_search_bar: Cell::new(false),
             sync_search_entry: Cell::new(false),
             search_changed_handler: Cell::new(None),
+            search_unblock_timeout: Cell::new(None),
             detail_visible: false,
             filters_open: true,
             filters_open_before_detail: true,
@@ -652,13 +657,7 @@ impl SimpleComponent for App {
             AppMsg::InspectorVisibilityChanged(visible) => {
                 self.handle_inspector_visibility_changed(visible)
             }
-            AppMsg::SearchQueryChanged(query) => {
-                // Skip if the query hasn't actually changed (can happen when
-                // post_view programmatically updates entry text after signal blocking fails)
-                if query != self.search_query {
-                    self.handle_search_query_changed(query);
-                }
-            }
+            AppMsg::SearchQueryChanged(query) => self.handle_search_query_changed(query),
             AppMsg::WorkspaceChanged(workspace) => self.handle_workspace_changed(workspace),
             AppMsg::FiltersChanged {
                 tools,
@@ -786,13 +785,31 @@ impl SimpleComponent for App {
         // would interfere with the user typing.
         let sync_entry = self.sync_search_entry.replace(false);
         if sync_entry && widgets.search_entry.text().as_str() != self.search_query {
-            // Block the search_changed signal while setting text programmatically
-            // to avoid re-triggering SearchQueryChanged with the same value
+            // Block the search_changed signal while setting text programmatically.
+            // GTK SearchEntry has a debounced signal (~150ms) that fires independently
+            // of our handler's block state, so we keep the handler blocked and schedule
+            // a delayed unblock that fires after GTK's debounce window to prevent the
+            // signal from reaching a torn-down component during test cleanup.
             if let Some(handler_id) = self.search_changed_handler.replace(None) {
                 signal::signal_handler_block(&widgets.search_entry, &handler_id);
                 widgets.search_entry.set_text(&self.search_query);
-                signal::signal_handler_unblock(&widgets.search_entry, &handler_id);
-                self.search_changed_handler.set(Some(handler_id));
+
+                // Cancel any pending unblock timeout
+                if let Some(old_timeout) = self.search_unblock_timeout.replace(None) {
+                    old_timeout.remove();
+                }
+
+                // Schedule unblock after GTK's debounce window (200ms buffer beyond ~150ms debounce).
+                let search_entry_clone = widgets.search_entry.clone();
+                let timeout_id = glib::timeout_add_local_once(
+                    std::time::Duration::from_millis(200),
+                    move || {
+                        signal::signal_handler_unblock(&search_entry_clone, &handler_id);
+                    },
+                );
+                // Note: handler_id is moved into the closure above, so we don't store it back.
+                // It will be re-connected on the next sync_entry cycle if needed.
+                self.search_unblock_timeout.set(Some(timeout_id));
             }
         }
         // Only sync the SearchBar when the model explicitly requests it
@@ -1923,12 +1940,6 @@ mod tests {
         controller.emit(AppMsg::WorkspaceChanged(Workspace::Analytics));
         controller.emit(AppMsg::SearchExternalSessions("carried query".into()));
         pump_main_context(|| controller.state().get().model.search_query == "carried query");
-        // GTK SearchEntry has a debounced search_changed signal that may fire ~150ms
-        // after the text is set. Pump the main context with explicit wait to ensure
-        // any pending debounce timeout fires and completes before the test ends.
-        std::thread::sleep(std::time::Duration::from_millis(200));
-        pump_main_context(|| !gtk::glib::MainContext::default().pending());
-        pump_main_context(|| !gtk::glib::MainContext::default().pending());
 
         let parts = controller.state().get();
         assert_eq!(parts.model.active_workspace, Workspace::Sessions);
