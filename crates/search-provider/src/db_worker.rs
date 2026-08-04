@@ -28,6 +28,7 @@ enum DbRequest {
         reply: async_channel::Sender<Vec<String>>,
     },
     Metadata {
+        operation: u64,
         identifiers: Vec<String>,
         expression: Option<String>,
         reply: async_channel::Sender<MetadataResponse>,
@@ -67,6 +68,7 @@ impl DbWorker {
             .name("shell-search-db".into())
             .spawn({
                 let generation = Arc::clone(&generation);
+                let active_operation = Arc::clone(&active_operation);
                 let interrupt = Arc::clone(&interrupt);
                 let connection_open_count = Arc::clone(&connection_open_count);
                 move || {
@@ -75,6 +77,7 @@ impl DbWorker {
                         db_path,
                         app_id,
                         generation,
+                        active_operation,
                         interrupt,
                         connection_open_count,
                     )
@@ -151,6 +154,7 @@ impl DbWorker {
         if self
             .sender
             .send(DbRequest::Metadata {
+                operation,
                 identifiers,
                 expression,
                 reply,
@@ -196,12 +200,12 @@ impl DbWorker {
             async move { receiver.recv().await.unwrap_or_default() },
             async move {
                 async_io::Timer::after(self.deadline).await;
-                if timeout_operation.load(Ordering::Acquire) == operation {
+                if timeout_operation.load(Ordering::Acquire) == operation
+                    && let Some(handle) = interrupt.lock().unwrap().as_ref()
+                {
+                    handle.interrupt();
                     #[cfg(test)]
                     interrupt_count.fetch_add(1, Ordering::AcqRel);
-                    if let Some(handle) = interrupt.lock().unwrap().as_ref() {
-                        handle.interrupt();
-                    }
                 }
                 T::default()
             },
@@ -218,6 +222,7 @@ fn run_worker(
     db_path: PathBuf,
     app_id: String,
     generation: Arc<AtomicU64>,
+    active_operation: Arc<AtomicU64>,
     interrupt: Arc<Mutex<Option<ShellSearchInterrupt>>>,
     connection_open_count: Arc<AtomicUsize>,
 ) {
@@ -270,10 +275,18 @@ fn run_worker(
                 let _ = reply.try_send(ids);
             }
             DbRequest::Metadata {
+                operation,
                 identifiers,
                 expression,
                 reply,
             } => {
+                if active_operation.load(Ordering::Acquire) != operation {
+                    let _ = reply.try_send(MetadataResponse {
+                        show_excerpts: false,
+                        rows: vec![None; identifiers.len()],
+                    });
+                    continue;
+                }
                 let settings = gio::Settings::new(&app_id);
                 let show_excerpts =
                     settings.boolean("search-provider-show-excerpts") && expression.is_some();
@@ -321,6 +334,8 @@ fn run_worker(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rusqlite::Connection;
+    use sessions_chronicle_core::database::schema::initialize_database;
 
     impl DbWorker {
         fn connection_open_count(&self) -> usize {
@@ -345,6 +360,37 @@ mod tests {
         }
     }
 
+    fn initialized_database() -> (tempfile::TempDir, PathBuf) {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("sessions.db");
+        let connection = Connection::open(&path).unwrap();
+        initialize_database(&connection).unwrap();
+        for (id, content) in [
+            ("first-session", "first needle"),
+            ("second-session", "second needle"),
+        ] {
+            connection
+                .execute(
+                    "INSERT INTO sessions (
+                         id, tool, start_time, message_count, file_path, last_updated,
+                         is_subagent
+                     ) VALUES (?1, 'claude_code', 1, 1, ?2, 1, 0)",
+                    rusqlite::params![id, format!("/{id}.jsonl")],
+                )
+                .unwrap();
+            connection
+                .execute(
+                    "INSERT INTO messages (
+                         session_id, message_index, role, content, timestamp
+                     ) VALUES (?1, 0, 'user', ?2, 1)",
+                    rusqlite::params![id, content],
+                )
+                .unwrap();
+        }
+        drop(connection);
+        (directory, path)
+    }
+
     #[test]
     fn invalid_terms_do_not_open_database() {
         async_io::block_on(async {
@@ -364,9 +410,9 @@ mod tests {
     #[test]
     fn stale_generation_is_discarded() {
         async_io::block_on(async {
-            let directory = tempfile::tempdir().unwrap();
+            let (_directory, path) = initialized_database();
             let worker = DbWorker::new(
-                directory.path().join("missing.db"),
+                path,
                 "dev.maciz.sessionschronicle.Devel".into(),
                 Duration::from_millis(100),
             );
@@ -378,7 +424,26 @@ mod tests {
             let _ = release.send(()).await;
             let (first, second) = futures_lite::future::zip(first, second).await;
             assert!(first.ids.is_empty());
-            assert!(second.ids.is_empty());
+            assert_eq!(second.ids, ["second-session"]);
+        });
+    }
+
+    #[test]
+    fn timed_out_metadata_is_not_executed_after_queue_release() {
+        async_io::block_on(async {
+            let (_directory, path) = initialized_database();
+            let worker = DbWorker::new(
+                path,
+                "dev.maciz.sessionschronicle.Devel".into(),
+                Duration::from_millis(10),
+            );
+            let release = worker.block_worker().await;
+            let metadata = worker.metadata(vec!["first-session".into()], None);
+            let response = metadata.await;
+            assert_eq!(response.rows, vec![None]);
+            let _ = release.send(()).await;
+            async_io::Timer::after(Duration::from_millis(20)).await;
+            assert_eq!(worker.connection_open_count(), 0);
         });
     }
 
@@ -401,12 +466,15 @@ mod tests {
     #[test]
     fn deadline_interrupts_current_operation_once() {
         async_io::block_on(async {
-            let directory = tempfile::tempdir().unwrap();
+            let (_directory, path) = initialized_database();
             let worker = DbWorker::new(
-                directory.path().join("missing.db"),
+                path,
                 "dev.maciz.sessionschronicle.Devel".into(),
-                Duration::from_millis(10),
+                Duration::from_millis(100),
             );
+            let response = worker.search_terms(&["needle".into()], None).await;
+            assert!(!response.ids.is_empty());
+            assert!(worker.interrupt.lock().unwrap().is_some());
             worker.active_operation.store(1, Ordering::Release);
             let (_sender, receiver) = async_channel::bounded::<()>(1);
             let fallback = worker.wait_for_reply(1, receiver).await;

@@ -1658,6 +1658,7 @@ dependencies = [
  "futures-lite",
  "gio",
  "glib",
+ "rusqlite",
  "sessions-chronicle-core",
  "tempfile",
  "tracing",
