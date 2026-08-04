@@ -1337,6 +1337,7 @@ dependencies = [
  "rusqlite",
  "serde",
  "serde_json",
+ "sessions-chronicle-core",
  "similar",
  "sourceview5",
  "tempfile",
@@ -1345,6 +1346,23 @@ dependencies = [
  "tracing-subscriber",
  "walkdir",
  "which",
+ "zstd",
+]
+
+[[package]]
+name = "sessions-chronicle-core"
+version = "0.9.0"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "regex",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror",
+ "tracing",
+ "walkdir",
  "zstd",
 ]
 

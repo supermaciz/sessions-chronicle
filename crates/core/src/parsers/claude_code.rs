@@ -1666,9 +1666,9 @@ mod tests {
     #[test]
     fn assistant_message_has_model() {
         let parsed = ClaudeCodeParser
-            .parse(std::path::Path::new(
-                "tests/fixtures/claude_sessions/sample-session.jsonl",
-            ))
+            .parse(std::path::Path::new(&crate::fixture_path(
+                "claude_sessions/sample-session.jsonl",
+            )))
             .unwrap();
         let assistant_msgs: Vec<_> = parsed
             .messages
@@ -1685,9 +1685,9 @@ mod tests {
     #[test]
     fn user_message_has_no_model() {
         let parsed = ClaudeCodeParser
-            .parse(std::path::Path::new(
-                "tests/fixtures/claude_sessions/sample-session.jsonl",
-            ))
+            .parse(std::path::Path::new(&crate::fixture_path(
+                "claude_sessions/sample-session.jsonl",
+            )))
             .unwrap();
         let user_msgs: Vec<_> = parsed
             .messages

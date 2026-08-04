@@ -271,11 +271,10 @@ impl OpenCodeBackend for JsonBackend {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::path::PathBuf;
 
     #[test]
     fn list_sessions_finds_json_fixtures() {
-        let storage_root = PathBuf::from("tests/fixtures/opencode_storage");
+        let storage_root = crate::fixture_path("opencode_storage");
         let backend = JsonBackend::new(&storage_root);
         let sessions = backend.list_sessions().unwrap();
 

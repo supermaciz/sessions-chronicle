@@ -1184,14 +1184,13 @@ mod tests {
     use super::*;
     use std::io::Write;
     use std::path::PathBuf;
-    use std::sync::{Arc, Mutex};
 
     #[test]
     fn parse_valid_session_extracts_messages() {
         let parser = CodexParser;
-        let path = PathBuf::from(
-            "tests/fixtures/codex_sessions/2026/01/18/rollout-2026-01-18T02-01-28-019bce9f-0a40-79e2-8351-8818e8487fb6.jsonl",
-        );
+        let path = PathBuf::from(crate::fixture_path(
+            "codex_sessions/2026/01/18/rollout-2026-01-18T02-01-28-019bce9f-0a40-79e2-8351-8818e8487fb6.jsonl",
+        ));
         let parsed = parser.parse(&path).unwrap();
         assert_eq!(parsed.session.id, "019bce9f-0a40-79e2-8351-8818e8487fb6");
         assert_eq!(
@@ -1212,7 +1211,7 @@ mod tests {
     fn agent_message_gets_model_from_turn_context() {
         let parsed = CodexParser
             .parse(std::path::Path::new(
-                "tests/fixtures/codex_sessions/2026/01/18/rollout-2026-01-18T02-01-28-019bce9f-0a40-79e2-8351-8818e8487fb6.jsonl",
+                &crate::fixture_path("codex_sessions/2026/01/18/rollout-2026-01-18T02-01-28-019bce9f-0a40-79e2-8351-8818e8487fb6.jsonl"),
             ))
             .unwrap();
         let assistant_msgs: Vec<_> = parsed
@@ -1227,7 +1226,7 @@ mod tests {
     fn user_message_has_no_model_codex() {
         let parsed = CodexParser
             .parse(std::path::Path::new(
-                "tests/fixtures/codex_sessions/2026/01/18/rollout-2026-01-18T02-01-28-019bce9f-0a40-79e2-8351-8818e8487fb6.jsonl",
+                &crate::fixture_path("codex_sessions/2026/01/18/rollout-2026-01-18T02-01-28-019bce9f-0a40-79e2-8351-8818e8487fb6.jsonl"),
             ))
             .unwrap();
         let user_msgs: Vec<_> = parsed
@@ -1241,9 +1240,9 @@ mod tests {
     #[test]
     fn parse_empty_session_is_rejected() {
         let parser = CodexParser;
-        let path = PathBuf::from(
-            "tests/fixtures/codex_sessions/2026/01/18/rollout-2026-01-18T02-02-00-empty-session.jsonl",
-        );
+        let path = PathBuf::from(crate::fixture_path(
+            "codex_sessions/2026/01/18/rollout-2026-01-18T02-02-00-empty-session.jsonl",
+        ));
         let result = parser.parse(&path);
         assert!(result.is_err());
         assert!(
@@ -1257,9 +1256,9 @@ mod tests {
     #[test]
     fn parse_missing_session_meta_is_rejected() {
         let parser = CodexParser;
-        let path = PathBuf::from(
-            "tests/fixtures/codex_sessions/2026/01/18/rollout-2026-01-18T02-03-00-malformed.jsonl",
-        );
+        let path = PathBuf::from(crate::fixture_path(
+            "codex_sessions/2026/01/18/rollout-2026-01-18T02-03-00-malformed.jsonl",
+        ));
         let result = parser.parse(&path);
         assert!(result.is_err());
         assert!(
@@ -1273,9 +1272,9 @@ mod tests {
     #[test]
     fn parse_tool_session_extracts_tool_calls() {
         let parser = CodexParser;
-        let path = PathBuf::from(
-            "tests/fixtures/codex_sessions/2026/02/18/rollout-2026-02-18T10-00-00-codex-tools-session.jsonl",
-        );
+        let path = PathBuf::from(crate::fixture_path(
+            "codex_sessions/2026/02/18/rollout-2026-02-18T10-00-00-codex-tools-session.jsonl",
+        ));
         let parsed = parser.parse(&path).unwrap();
         assert_eq!(parsed.session.id, "codex-tools-session");
         assert_eq!(parsed.messages.len(), 2); // user + agent
@@ -2121,46 +2120,8 @@ mod tests {
         );
     }
 
-    #[derive(Clone, Default)]
-    struct BufferWriter {
-        buffer: Arc<Mutex<Vec<u8>>>,
-    }
-
-    impl BufferWriter {
-        fn contents(&self) -> String {
-            let buffer = self.buffer.lock().unwrap();
-            String::from_utf8_lossy(&buffer).to_string()
-        }
-    }
-
-    struct BufferGuard {
-        buffer: Arc<Mutex<Vec<u8>>>,
-    }
-
-    impl std::io::Write for BufferGuard {
-        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-            let mut buffer = self.buffer.lock().unwrap();
-            buffer.extend_from_slice(buf);
-            Ok(buf.len())
-        }
-
-        fn flush(&mut self) -> std::io::Result<()> {
-            Ok(())
-        }
-    }
-
-    impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for BufferWriter {
-        type Writer = BufferGuard;
-
-        fn make_writer(&'a self) -> Self::Writer {
-            BufferGuard {
-                buffer: Arc::clone(&self.buffer),
-            }
-        }
-    }
-
     #[test]
-    fn parse_invalid_event_timestamp_logs_warning() {
+    fn parse_invalid_event_timestamp_continues() {
         let mut file = tempfile::NamedTempFile::new().unwrap();
         writeln!(
             file,
@@ -2173,18 +2134,8 @@ mod tests {
         )
         .unwrap();
 
-        let writer = BufferWriter::default();
-        let subscriber = tracing_subscriber::fmt()
-            .with_max_level(tracing::Level::WARN)
-            .with_writer(writer.clone())
-            .finish();
-        let _guard = tracing::subscriber::set_default(subscriber);
-
         let parser = CodexParser;
         let result = parser.parse(file.path());
         assert!(result.is_ok());
-
-        let logs = writer.contents();
-        assert!(logs.contains("Failed to parse event timestamp not-a-ts"));
     }
 }

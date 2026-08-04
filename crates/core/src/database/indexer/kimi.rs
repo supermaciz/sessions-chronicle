@@ -665,7 +665,7 @@ mod tests {
 
     fn fixture_home() -> tempfile::TempDir {
         let temp = tempfile::tempdir().unwrap();
-        copy_dir(Path::new("tests/fixtures/kimi_home"), temp.path());
+        copy_dir(&crate::fixture_path("kimi_home"), temp.path());
         temp
     }
 

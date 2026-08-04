@@ -241,7 +241,7 @@ mod tests {
     use tempfile::NamedTempFile;
 
     fn fixture_db() -> PathBuf {
-        PathBuf::from("tests/fixtures/opencode_storage/opencode.db")
+        crate::fixture_path("opencode_storage/opencode.db")
     }
 
     fn create_task_tool_backend(

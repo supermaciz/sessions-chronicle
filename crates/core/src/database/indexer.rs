@@ -2140,7 +2140,7 @@ mod tests {
     fn claude_incremental_skips_unchanged_files() {
         let temp_db = NamedTempFile::new().unwrap();
         let mut indexer = SessionIndexer::new(temp_db.path()).unwrap();
-        let sessions_dir = PathBuf::from("tests/fixtures/claude_sessions");
+        let sessions_dir = crate::fixture_path("claude_sessions");
 
         let first = indexer
             .index_claude_sessions_incremental(&sessions_dir)
@@ -2158,7 +2158,7 @@ mod tests {
     fn codex_incremental_skips_unchanged_rollouts() {
         let temp_db = NamedTempFile::new().unwrap();
         let mut indexer = SessionIndexer::new(temp_db.path()).unwrap();
-        let sessions_dir = PathBuf::from("tests/fixtures/codex_sessions");
+        let sessions_dir = crate::fixture_path("codex_sessions");
 
         let first = indexer
             .index_codex_sessions_incremental(&sessions_dir)
@@ -2951,7 +2951,7 @@ mod tests {
     fn vibe_incremental_uses_messages_jsonl_fingerprint() {
         let temp_db = NamedTempFile::new().unwrap();
         let mut indexer = SessionIndexer::new(temp_db.path()).unwrap();
-        let sessions_dir = PathBuf::from("tests/fixtures/vibe_sessions");
+        let sessions_dir = crate::fixture_path("vibe_sessions");
 
         let first = indexer
             .index_vibe_sessions_incremental(&sessions_dir)
@@ -2969,7 +2969,7 @@ mod tests {
     fn clear_all_sessions_also_clears_fingerprints() {
         let temp_db = NamedTempFile::new().unwrap();
         let mut indexer = SessionIndexer::new(temp_db.path()).unwrap();
-        let sessions_dir = PathBuf::from("tests/fixtures/claude_sessions");
+        let sessions_dir = crate::fixture_path("claude_sessions");
 
         indexer
             .index_claude_sessions_incremental(&sessions_dir)
@@ -3023,7 +3023,7 @@ mod tests {
     fn opencode_incremental_skip_keeps_sqlite_only_sessions() {
         let temp_db = NamedTempFile::new().unwrap();
         let mut indexer = SessionIndexer::new(temp_db.path()).unwrap();
-        let storage_root = PathBuf::from("tests/fixtures/opencode_storage");
+        let storage_root = crate::fixture_path("opencode_storage");
         let db_path = storage_root.join("opencode.db");
 
         let first = indexer
@@ -3196,7 +3196,7 @@ mod tests {
     fn opencode_indexing_indexes_all_sessions_including_subagents() {
         let temp_db = NamedTempFile::new().unwrap();
         let mut indexer = SessionIndexer::new(temp_db.path()).unwrap();
-        let storage_root = PathBuf::from("tests/fixtures/opencode_storage");
+        let storage_root = crate::fixture_path("opencode_storage");
 
         let count = indexer.index_opencode_sessions(&storage_root, &[]).unwrap();
         // session-002 has parentID but no messages → NoUserMessages → pruned
@@ -3248,7 +3248,7 @@ mod tests {
     fn opencode_indexing_returns_zero_for_missing_storage_root() {
         let temp_db = NamedTempFile::new().unwrap();
         let mut indexer = SessionIndexer::new(temp_db.path()).unwrap();
-        let nonexistent_root = PathBuf::from("tests/fixtures/nonexistent_opencode_storage");
+        let nonexistent_root = crate::fixture_path("nonexistent_opencode_storage");
 
         let count = indexer
             .index_opencode_sessions(&nonexistent_root, &[])
@@ -3260,7 +3260,7 @@ mod tests {
     fn opencode_dual_read_indexes_sqlite_and_json() {
         let temp_db = NamedTempFile::new().unwrap();
         let mut indexer = SessionIndexer::new(temp_db.path()).unwrap();
-        let storage_root = PathBuf::from("tests/fixtures/opencode_storage");
+        let storage_root = crate::fixture_path("opencode_storage");
         let db_path = storage_root.join("opencode.db");
 
         let count = indexer
@@ -3308,7 +3308,7 @@ mod tests {
     fn opencode_dual_read_prefers_sqlite_over_json() {
         let temp_db = NamedTempFile::new().unwrap();
         let mut indexer = SessionIndexer::new(temp_db.path()).unwrap();
-        let storage_root = PathBuf::from("tests/fixtures/opencode_storage");
+        let storage_root = crate::fixture_path("opencode_storage");
         let db_path = storage_root.join("opencode.db");
 
         indexer
@@ -3336,7 +3336,7 @@ mod tests {
     fn opencode_dual_read_discovers_sqlite_only_session() {
         let temp_db = NamedTempFile::new().unwrap();
         let mut indexer = SessionIndexer::new(temp_db.path()).unwrap();
-        let storage_root = PathBuf::from("tests/fixtures/opencode_storage");
+        let storage_root = crate::fixture_path("opencode_storage");
         let db_path = storage_root.join("opencode.db");
 
         indexer
@@ -3359,8 +3359,8 @@ mod tests {
     fn opencode_sqlite_only_when_no_storage_root() {
         let temp_db = NamedTempFile::new().unwrap();
         let mut indexer = SessionIndexer::new(temp_db.path()).unwrap();
-        let nonexistent_root = PathBuf::from("tests/fixtures/nonexistent_opencode_storage");
-        let db_path = PathBuf::from("tests/fixtures/opencode_storage/opencode.db");
+        let nonexistent_root = crate::fixture_path("nonexistent_opencode_storage");
+        let db_path = crate::fixture_path("opencode_storage/opencode.db");
 
         let count = indexer
             .index_opencode_sessions(&nonexistent_root, &[db_path.clone()])
@@ -3386,7 +3386,7 @@ mod tests {
     fn opencode_prune_skipped_when_enumeration_fails() {
         let temp_db = NamedTempFile::new().unwrap();
         let mut indexer = SessionIndexer::new(temp_db.path()).unwrap();
-        let storage_root = PathBuf::from("tests/fixtures/opencode_storage");
+        let storage_root = crate::fixture_path("opencode_storage");
 
         // First: index JSON sessions to populate the app DB
         indexer.index_opencode_sessions(&storage_root, &[]).unwrap();
@@ -3402,8 +3402,8 @@ mod tests {
 
         // Second: reindex with a bad DB path and missing storage root.
         // Both backends fail to enumerate, so pruning must not run.
-        let bad_root = PathBuf::from("tests/fixtures/nonexistent_opencode_storage");
-        let bad_db = PathBuf::from("tests/fixtures/nonexistent.db");
+        let bad_root = crate::fixture_path("nonexistent_opencode_storage");
+        let bad_db = crate::fixture_path("nonexistent.db");
         indexer
             .index_opencode_sessions(&bad_root, &[bad_db.clone()])
             .unwrap();
@@ -3453,7 +3453,7 @@ mod tests {
     fn opencode_json_only_fallback_when_no_db() {
         let temp_db = NamedTempFile::new().unwrap();
         let mut indexer = SessionIndexer::new(temp_db.path()).unwrap();
-        let storage_root = PathBuf::from("tests/fixtures/opencode_storage");
+        let storage_root = crate::fixture_path("opencode_storage");
 
         let count = indexer.index_opencode_sessions(&storage_root, &[]).unwrap();
 
@@ -3467,7 +3467,7 @@ mod tests {
     fn codex_indexing_indexes_sessions() {
         let temp_db = NamedTempFile::new().unwrap();
         let mut indexer = SessionIndexer::new(temp_db.path()).unwrap();
-        let sessions_dir = PathBuf::from("tests/fixtures/codex_sessions");
+        let sessions_dir = crate::fixture_path("codex_sessions");
 
         let count = indexer.index_codex_sessions(&sessions_dir).unwrap();
         assert_eq!(count, 4);
@@ -3489,7 +3489,7 @@ mod tests {
     fn codex_indexing_returns_zero_for_missing_sessions_dir() {
         let temp_db = NamedTempFile::new().unwrap();
         let mut indexer = SessionIndexer::new(temp_db.path()).unwrap();
-        let nonexistent_dir = PathBuf::from("tests/fixtures/nonexistent_codex_sessions");
+        let nonexistent_dir = crate::fixture_path("nonexistent_codex_sessions");
 
         let count = indexer.index_codex_sessions(&nonexistent_dir).unwrap();
         assert_eq!(count, 0);
@@ -3499,7 +3499,7 @@ mod tests {
     fn mistral_vibe_indexing_indexes_sessions() {
         let temp_db = NamedTempFile::new().unwrap();
         let mut indexer = SessionIndexer::new(temp_db.path()).unwrap();
-        let sessions_dir = PathBuf::from("tests/fixtures/vibe_sessions");
+        let sessions_dir = crate::fixture_path("vibe_sessions");
 
         let count = indexer.index_vibe_sessions(&sessions_dir).unwrap();
         assert_eq!(count, 2);
@@ -3521,7 +3521,7 @@ mod tests {
     fn mistral_vibe_indexing_returns_zero_for_missing_sessions_dir() {
         let temp_db = NamedTempFile::new().unwrap();
         let mut indexer = SessionIndexer::new(temp_db.path()).unwrap();
-        let nonexistent_dir = PathBuf::from("tests/fixtures/nonexistent_vibe_sessions");
+        let nonexistent_dir = crate::fixture_path("nonexistent_vibe_sessions");
 
         let count = indexer.index_vibe_sessions(&nonexistent_dir).unwrap();
         assert_eq!(count, 0);
@@ -3531,7 +3531,7 @@ mod tests {
     fn claude_indexing_persists_token_usage() {
         let temp_db = NamedTempFile::new().unwrap();
         let mut indexer = SessionIndexer::new(temp_db.path()).unwrap();
-        let sessions_dir = PathBuf::from("tests/fixtures/claude_sessions");
+        let sessions_dir = crate::fixture_path("claude_sessions");
         indexer.index_claude_sessions(&sessions_dir).unwrap();
 
         let (input, output): (Option<i64>, Option<i64>) = indexer
@@ -3550,7 +3550,7 @@ mod tests {
     fn session_load_roundtrip_includes_token_usage() {
         let temp_db = NamedTempFile::new().unwrap();
         let mut indexer = SessionIndexer::new(temp_db.path()).unwrap();
-        let sessions_dir = PathBuf::from("tests/fixtures/claude_sessions");
+        let sessions_dir = crate::fixture_path("claude_sessions");
         indexer.index_claude_sessions(&sessions_dir).unwrap();
 
         let session = crate::database::load_session(temp_db.path(), "abc123")
@@ -3568,7 +3568,7 @@ mod tests {
         let mut indexer = SessionIndexer::new(temp_db.path()).unwrap();
 
         // Seed with real fixture data
-        let sessions_dir = PathBuf::from("tests/fixtures/claude_sessions");
+        let sessions_dir = crate::fixture_path("claude_sessions");
         let count = indexer.index_claude_sessions(&sessions_dir).unwrap();
         assert!(count > 0, "Should have indexed at least one session");
 
@@ -3598,7 +3598,8 @@ mod tests {
     fn indexing_diagnostics_full_reindex_returns_per_source_results() {
         let temp_db = NamedTempFile::new().unwrap();
         let mut indexer = SessionIndexer::new(temp_db.path()).unwrap();
-        let sources = SessionSources::resolve(Some(std::path::Path::new("tests/fixtures")));
+        let fixture_root = crate::fixture_path("");
+        let sources = SessionSources::resolve(Some(&fixture_root));
 
         let result = indexer.index_all_full_reindex(&sources).unwrap();
 
@@ -3983,7 +3984,8 @@ mod tests {
     #[test]
     fn v10_migration_forces_incremental_reindex_of_stale_fixture_override_db() {
         let temp_db = NamedTempFile::new().unwrap();
-        let sources = SessionSources::resolve(Some(std::path::Path::new("tests/fixtures")));
+        let fixture_root = crate::fixture_path("");
+        let sources = SessionSources::resolve(Some(&fixture_root));
 
         {
             let mut indexer = SessionIndexer::new(temp_db.path()).unwrap();

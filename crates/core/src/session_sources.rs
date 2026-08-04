@@ -137,9 +137,9 @@ mod tests {
 
     #[test]
     fn resolve_override_prefers_known_subdirectories() {
-        // tests/fixtures contains claude_sessions/, opencode_storage/,
+        // The fixture tree contains claude_sessions/, opencode_storage/,
         // codex_sessions/, vibe_sessions/
-        let root = PathBuf::from("tests/fixtures");
+        let root = crate::fixture_path("");
         let sources = SessionSources::resolve(Some(&root));
 
         assert!(sources.override_mode);
@@ -153,7 +153,7 @@ mod tests {
     #[test]
     fn resolve_override_falls_back_to_root_when_subdirs_missing() {
         // Use a directory that exists but has no known subdirectories.
-        let root = PathBuf::from("tests/fixtures/claude_sessions");
+        let root = crate::fixture_path("claude_sessions");
         let sources = SessionSources::resolve(Some(&root));
 
         assert!(sources.override_mode);
@@ -201,7 +201,7 @@ mod tests {
 
     #[test]
     fn resolve_override_finds_opencode_db() {
-        let root = PathBuf::from("tests/fixtures");
+        let root = crate::fixture_path("");
         let sources = SessionSources::resolve(Some(&root));
         assert_eq!(sources.opencode_db_paths.len(), 1);
         assert_eq!(
@@ -212,7 +212,7 @@ mod tests {
 
     #[test]
     fn resolve_override_no_db_returns_none() {
-        let root = PathBuf::from("tests/fixtures/claude_sessions");
+        let root = crate::fixture_path("claude_sessions");
         let sources = SessionSources::resolve(Some(&root));
         assert!(sources.opencode_db_paths.is_empty());
     }

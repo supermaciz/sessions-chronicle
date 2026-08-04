@@ -509,7 +509,7 @@ mod tests {
     use serde_json::json;
     use std::fs::{self, File};
     use std::io::Write;
-    use std::path::{Path, PathBuf};
+    use std::path::Path;
     use tempfile::TempDir;
 
     fn write_meta(path: &Path) {
@@ -540,7 +540,7 @@ mod tests {
     #[test]
     fn parse_valid_session_extracts_messages_and_tool_calls() {
         let parser = MistralVibeParser;
-        let path = PathBuf::from("tests/fixtures/vibe_sessions/session_20260203_191451_b9383361");
+        let path = crate::fixture_path("vibe_sessions/session_20260203_191451_b9383361");
         let parsed = parser.parse(&path).unwrap();
         let session = parsed.session;
         let messages = parsed.messages;
@@ -910,9 +910,9 @@ mod tests {
     #[test]
     fn mistral_vibe_assistant_gets_session_model() {
         let parsed = MistralVibeParser
-            .parse(Path::new(
-                "tests/fixtures/vibe_sessions/session_20260203_191451_b9383361",
-            ))
+            .parse(Path::new(&crate::fixture_path(
+                "vibe_sessions/session_20260203_191451_b9383361",
+            )))
             .unwrap();
         let assistant_msgs: Vec<_> = parsed
             .messages
@@ -929,9 +929,9 @@ mod tests {
     #[test]
     fn mistral_vibe_user_has_no_model() {
         let parsed = MistralVibeParser
-            .parse(Path::new(
-                "tests/fixtures/vibe_sessions/session_20260203_191451_b9383361",
-            ))
+            .parse(Path::new(&crate::fixture_path(
+                "vibe_sessions/session_20260203_191451_b9383361",
+            )))
             .unwrap();
         let user_msgs: Vec<_> = parsed
             .messages

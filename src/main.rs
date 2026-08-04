@@ -3,22 +3,18 @@ mod config;
 mod analytics_worker;
 mod app;
 #[allow(dead_code)]
-mod database;
-#[allow(dead_code)]
 mod icon_names {
     pub use shipped::*;
     include!(concat!(env!("OUT_DIR"), "/icon_names.rs"));
 }
 mod indexing_worker;
 #[allow(dead_code)]
-mod models;
-mod parsers;
-mod project_resolver;
-mod session_sources;
 mod startup;
 #[allow(dead_code)]
 mod ui;
 mod utils;
+
+pub(crate) use sessions_chronicle_core::{database, models, session_sources};
 
 use config::{APP_ID, GETTEXT_PACKAGE, LOCALEDIR, RESOURCES_FILE};
 use gettextrs::{LocaleCategory, gettext};

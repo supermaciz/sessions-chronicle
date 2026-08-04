@@ -1,3 +1,7 @@
+[workspace]
+members = [".", "crates/core"]
+resolver = "3"
+
 [package]
 name = "sessions-chronicle"
 version = "0.9.0"
@@ -10,6 +14,7 @@ license = "MIT"
 lto = true
 
 [dependencies]
+sessions-chronicle-core = { path = "crates/core" }
 gettext-rs = { version = "0.7.7", features = ["gettext-system"] }
 relm4 = { version = "0.11.0", features = ["libadwaita", "gnome_50"] }
 relm4-icons = "0.11.0"

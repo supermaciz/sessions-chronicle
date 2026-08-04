@@ -1816,9 +1816,9 @@ mod tests {
     fn opencode_assistant_message_gets_model() {
         use crate::parsers::opencode::json_backend::JsonBackend;
 
-        let storage_root = Path::new("tests/fixtures/opencode_storage");
-        let parser = OpenCodeParser::new(storage_root);
-        let json_backend = JsonBackend::new(storage_root);
+        let storage_root = crate::fixture_path("opencode_storage");
+        let parser = OpenCodeParser::new(&storage_root);
+        let json_backend = JsonBackend::new(&storage_root);
         let entries = json_backend.list_sessions().unwrap();
         let entry = entries.iter().find(|e| e.id == "session-001").unwrap();
         let parsed = parser.parse_entry(entry, &json_backend).unwrap();
@@ -2039,9 +2039,9 @@ mod tests {
 
     #[test]
     fn parse_no_tokens_anywhere_yields_none() {
-        let storage_root = std::path::Path::new("tests/fixtures/opencode_storage");
-        let parser = OpenCodeParser::new(storage_root);
-        let json_backend = json_backend::JsonBackend::new(storage_root);
+        let storage_root = crate::fixture_path("opencode_storage");
+        let parser = OpenCodeParser::new(&storage_root);
+        let json_backend = json_backend::JsonBackend::new(&storage_root);
         let entries = json_backend.list_sessions().unwrap();
         let entry = entries.iter().find(|e| e.id == "session-001").unwrap();
         let parsed = parser.parse_entry(entry, &json_backend).unwrap();
