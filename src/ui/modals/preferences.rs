@@ -6,7 +6,7 @@ use adw::prelude::{
 };
 use gtk::gio;
 use gtk::glib;
-use gtk::prelude::{ButtonExt, DisplayExt, SettingsExt, WidgetExt};
+use gtk::prelude::{ButtonExt, DisplayExt, SettingsExt, SettingsExtManual, WidgetExt};
 use relm4::{ComponentParts, ComponentSender, SimpleComponent, adw, gtk};
 
 use crate::config::APP_ID;
@@ -78,15 +78,20 @@ impl SimpleComponent for PreferencesDialog {
             .selected(selected_index)
             .build();
 
+        let terminal_settings = settings.clone();
         combo_row.connect_selected_notify(move |row| {
             let selected = row.selected();
             if let Some(terminal) = TERMINALS.get(selected as usize) {
-                let _ = settings.set_string("resume-terminal", terminal.to_str());
+                let _ = terminal_settings.set_string("resume-terminal", terminal.to_str());
             }
         });
 
         resumption_group.add(&combo_row);
         page.add(&resumption_group);
+
+        // System Search group
+        let (system_search_group, _, _) = build_system_search_group(&settings);
+        page.add(&system_search_group);
 
         // Advanced group
         let advanced_group = adw::PreferencesGroup::builder().title("Advanced").build();
@@ -184,4 +189,72 @@ impl SimpleComponent for PreferencesDialog {
     }
 
     fn update_view(&self, _widgets: &mut Self::Widgets, _sender: ComponentSender<Self>) {}
+}
+
+fn build_system_search_group(
+    settings: &gio::Settings,
+) -> (adw::PreferencesGroup, adw::SwitchRow, adw::ActionRow) {
+    let group = adw::PreferencesGroup::builder()
+        .title("System Search")
+        .build();
+
+    let excerpt_switch = adw::SwitchRow::builder()
+        .title("Show matching text in results")
+        .subtitle("Transcript excerpts appear in the Activities overview.")
+        .build();
+
+    settings
+        .bind("search-provider-show-excerpts", &excerpt_switch, "active")
+        .build();
+
+    let signpost = adw::ActionRow::builder()
+        .title("Turn system search on or off in Settings")
+        .subtitle("Open Settings ▸ Search to manage search providers.")
+        .activatable(false)
+        .build();
+
+    group.add(&excerpt_switch);
+    group.add(&signpost);
+
+    (group, excerpt_switch, signpost)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use adw::prelude::PreferencesRowExt;
+    use gtk::prelude::ListBoxRowExt;
+
+    fn schema_has_key(key: &str) -> bool {
+        gio::SettingsSchemaSource::default()
+            .and_then(|source| source.lookup(APP_ID, true))
+            .is_some_and(|schema| schema.has_key(key))
+    }
+
+    #[gtk::test]
+    fn system_search_rows_match_schema_and_design() {
+        if !schema_has_key("search-provider-show-excerpts") {
+            return;
+        }
+
+        let settings = gio::Settings::new(APP_ID);
+        settings.delay();
+        let _ = settings.set_boolean("search-provider-show-excerpts", false);
+
+        let (group, switch, signpost) = build_system_search_group(&settings);
+
+        assert_eq!(group.title().as_str(), "System Search");
+        assert_eq!(switch.title().as_str(), "Show matching text in results");
+        assert_eq!(
+            switch.subtitle().as_deref(),
+            Some("Transcript excerpts appear in the Activities overview.")
+        );
+        assert!(!switch.is_active());
+        assert!(!signpost.is_activatable());
+
+        switch.set_active(true);
+        assert!(settings.boolean("search-provider-show-excerpts"));
+
+        settings.revert();
+    }
 }
