@@ -62,6 +62,11 @@ impl TempDatabase {
         .unwrap()
         .unwrap()
     }
+
+    pub fn drop_messages_fts(&self) {
+        let connection = Connection::open(&self.path).unwrap();
+        connection.execute("DROP TABLE messages_fts", []).unwrap();
+    }
 }
 
 impl Default for TempDatabase {

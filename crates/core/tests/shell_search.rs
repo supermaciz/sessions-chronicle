@@ -139,3 +139,92 @@ fn subsearch_caps_supplied_previous_results_at_result_limit() {
     assert_eq!(results.len(), RESULT_LIMIT);
     assert!(!results.iter().any(|id| id == "session-20"));
 }
+
+#[test]
+fn metadata_excerpt_off_preserves_requested_order_duplicates_and_missing_slots() {
+    let database = TempDatabase::new();
+    database.seed_session("first", 100, false, &["first prompt"]);
+    database.seed_session("second", 200, false, &["second prompt"]);
+
+    let (connection, _interrupt) = database.search_connection();
+    let ids = [
+        "second".into(),
+        "missing".into(),
+        "second".into(),
+        "first".into(),
+    ];
+    let metadata = connection.load_metadata(&ids, false, None).unwrap();
+
+    assert_eq!(metadata.len(), ids.len());
+    assert_eq!(
+        metadata[0].as_ref().map(|row| row.id.as_str()),
+        Some("second")
+    );
+    assert!(metadata[1].is_none());
+    assert_eq!(
+        metadata[2].as_ref().map(|row| row.id.as_str()),
+        Some("second")
+    );
+    assert_eq!(
+        metadata[3].as_ref().map(|row| row.id.as_str()),
+        Some("first")
+    );
+}
+
+#[test]
+fn metadata_excerpt_off_does_not_require_messages_fts() {
+    let database = TempDatabase::new();
+    database.seed_session("session", 100, false, &["prompt"]);
+    database.drop_messages_fts();
+
+    let (connection, _interrupt) = database.search_connection();
+    let metadata = connection
+        .load_metadata(&["session".into()], false, None)
+        .unwrap();
+
+    assert_eq!(metadata.len(), 1);
+    assert!(metadata[0].as_ref().unwrap().matched_snippet.is_none());
+}
+
+#[test]
+fn metadata_excerpt_on_selects_the_best_matching_message_snippet() {
+    let database = TempDatabase::new();
+    database.seed_session(
+        "session",
+        100,
+        false,
+        &[
+            "needle ordinary match",
+            "needle needle needle strongest match",
+        ],
+    );
+
+    let (connection, _interrupt) = database.search_connection();
+    let metadata = connection
+        .load_metadata(&["session".into()], true, Some("needle"))
+        .unwrap();
+    let snippet = metadata[0]
+        .as_ref()
+        .unwrap()
+        .matched_snippet
+        .as_deref()
+        .unwrap();
+
+    assert!(
+        snippet.contains("strongest match"),
+        "snippet was {snippet:?}"
+    );
+}
+
+#[test]
+fn metadata_excerpt_on_without_expression_falls_back_to_no_snippet() {
+    let database = TempDatabase::new();
+    database.seed_session("session", 100, false, &["needle prompt"]);
+
+    let (connection, _interrupt) = database.search_connection();
+    let metadata = connection
+        .load_metadata(&["session".into()], true, None)
+        .unwrap();
+
+    assert_eq!(metadata[0].as_ref().unwrap().matched_snippet, None);
+}

@@ -1,8 +1,8 @@
 use crate::models::AiAssistant;
 use anyhow::{Context, Result};
-use chrono::{DateTime, Utc};
-use rusqlite::{Connection, OpenFlags, ToSql};
-use std::collections::HashSet;
+use chrono::{DateTime, TimeZone, Utc};
+use rusqlite::{Connection, OpenFlags, OptionalExtension, ToSql};
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
@@ -166,6 +166,101 @@ impl ShellSearchConnection {
         };
 
         Ok(Some((Self { connection }, interrupt)))
+    }
+
+    pub fn load_metadata(
+        &self,
+        ids: &[String],
+        show_excerpts: bool,
+        expression: Option<&str>,
+    ) -> Result<Vec<Option<ShellSearchMetadata>>> {
+        if ids.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let mut seen_ids = HashSet::new();
+        let unique_ids = ids
+            .iter()
+            .filter(|id| seen_ids.insert((*id).clone()))
+            .cloned()
+            .collect::<Vec<_>>();
+        let placeholders = (1..=unique_ids.len())
+            .map(|index| format!("?{index}"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let mut statement = self
+            .connection
+            .prepare(&format!(
+                "SELECT s.id, s.first_prompt, s.tool, p.name, s.last_updated
+                 FROM sessions s
+                 LEFT JOIN projects p ON p.id = s.project_id
+                 WHERE s.is_subagent = 0 AND s.id IN ({placeholders})"
+            ))
+            .context("Failed to prepare shell search metadata query")?;
+        let params = unique_ids
+            .iter()
+            .map(|id| id as &dyn ToSql)
+            .collect::<Vec<_>>();
+        let rows = statement
+            .query_map(params.as_slice(), |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, Option<String>>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, Option<String>>(3)?,
+                    row.get::<_, i64>(4)?,
+                ))
+            })
+            .context("Failed to execute shell search metadata query")?;
+        let rows = rows
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .context("Failed to read shell search metadata")?;
+
+        let mut metadata_by_id = HashMap::with_capacity(rows.len());
+        for (id, first_prompt, tool, project_name, last_updated) in rows {
+            let assistant = AiAssistant::from_storage(&tool)
+                .ok_or_else(|| anyhow::anyhow!("Unknown assistant tool in session {id}: {tool}"))?;
+            let last_updated = Utc.timestamp_opt(last_updated, 0).single().ok_or_else(|| {
+                anyhow::anyhow!("Malformed last_updated timestamp for session {id}")
+            })?;
+            metadata_by_id.insert(
+                id.clone(),
+                ShellSearchMetadata {
+                    id,
+                    first_prompt,
+                    assistant,
+                    project_name,
+                    last_updated,
+                    matched_snippet: None,
+                },
+            );
+        }
+
+        if show_excerpts {
+            if let Some(expression) = expression {
+                for metadata in metadata_by_id.values_mut() {
+                    metadata.matched_snippet = self
+                        .connection
+                        .query_row(
+                            "SELECT snippet(messages_fts, 0, '', '', '…', 32)
+                             FROM messages_fts
+                             JOIN messages m ON m.id = messages_fts.rowid
+                             WHERE messages_fts MATCH ?1 AND m.session_id = ?2
+                             ORDER BY messages_fts.rank ASC, m.id ASC
+                             LIMIT 1",
+                            rusqlite::params![expression, &metadata.id],
+                            |row| row.get(0),
+                        )
+                        .optional()
+                        .context("Failed to load shell search metadata snippet")?;
+                }
+            }
+        }
+
+        Ok(ids
+            .iter()
+            .map(|id| metadata_by_id.get(id).cloned())
+            .collect())
     }
 }
 
