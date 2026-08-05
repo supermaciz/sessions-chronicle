@@ -8,6 +8,8 @@ use sessions_chronicle_core::database::shell_search::{
     search_session_ids,
 };
 
+const SHOW_EXCERPTS_KEY: &str = "search-provider-show-excerpts";
+
 #[derive(Debug, Default)]
 pub struct SearchResponse {
     pub expression: Option<String>,
@@ -219,6 +221,7 @@ fn run_worker(
 ) {
     use gio::prelude::SettingsExt;
 
+    let settings = excerpt_settings(&app_id);
     let mut connection: Option<ShellSearchConnection> = None;
     while let Ok(request) = receiver.recv() {
         match request {
@@ -273,10 +276,10 @@ fn run_worker(
                     });
                     continue;
                 }
-                let settings = gio::Settings::new(&app_id);
-                let show_excerpts =
-                    settings.boolean("search-provider-show-excerpts") && expression.is_some();
-                drop(settings);
+                let show_excerpts = expression.is_some()
+                    && settings
+                        .as_ref()
+                        .is_some_and(|settings| settings.boolean(SHOW_EXCERPTS_KEY));
 
                 if connection.is_none() {
                     connection_open_count.fetch_add(1, Ordering::AcqRel);
@@ -315,6 +318,35 @@ fn run_worker(
             }
         }
     }
+}
+
+/// Resolves the excerpt setting once for the worker thread.
+///
+/// `gio::Settings::new` raises a fatal `GLib-GIO-ERROR` when the schema is not installed,
+/// which aborts the whole process rather than the calling thread. The provider is
+/// D-Bus-activated and can therefore start against a broken or partial installation, so the
+/// schema and its key are looked up first and a miss degrades to excerpt-free metadata.
+fn excerpt_settings(app_id: &str) -> Option<gio::Settings> {
+    let Some(source) = gio::SettingsSchemaSource::default() else {
+        tracing::warn!("no GSettings schema source; Shell results will omit excerpts");
+        return None;
+    };
+    let Some(schema) = source.lookup(app_id, true) else {
+        tracing::warn!(
+            schema = app_id,
+            "GSettings schema missing; omitting excerpts"
+        );
+        return None;
+    };
+    if !schema.has_key(SHOW_EXCERPTS_KEY) {
+        tracing::warn!(
+            schema = app_id,
+            key = SHOW_EXCERPTS_KEY,
+            "GSettings key missing; omitting excerpts"
+        );
+        return None;
+    }
+    Some(gio::Settings::new(app_id))
 }
 
 #[cfg(test)]
@@ -390,6 +422,23 @@ mod tests {
             assert!(response.expression.is_none());
             assert!(response.ids.is_empty());
             assert_eq!(worker.connection_open_count(), 0);
+        });
+    }
+
+    #[test]
+    fn missing_schema_degrades_to_metadata_without_excerpts() {
+        async_io::block_on(async {
+            let (_directory, path) = initialized_database();
+            let worker = DbWorker::new(
+                path,
+                "dev.maciz.sessionschronicle.NoSuchSchema".into(),
+                Duration::from_millis(100),
+            );
+            let response = worker
+                .metadata(vec!["first-session".into()], Some("needle".into()))
+                .await;
+            assert!(!response.show_excerpts);
+            assert!(response.rows[0].is_some());
         });
     }
 
