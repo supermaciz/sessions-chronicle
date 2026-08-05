@@ -15,13 +15,6 @@ const plateImg = {
   loading: "lazy" as const,
 };
 
-const plateImgWide = {
-  formats: ["avif", "webp"] as const,
-  fallbackFormat: "png" as const,
-  widths: [640, 960, 1280],
-  sizes: "(max-width: 767px) 100vw, 66vw",
-  loading: "lazy" as const,
-};
 ---
 
 <section class="atlas" id="features">
@@ -100,20 +93,20 @@ const plateImgWide = {
         </div>
       </Card>
 
-      <Card class="plate plate--wide" padding="none">
+      <Card class="plate" padding="none">
+        <div class="plate__visual plate__visual--gnome">
+          <Picture
+            src={gnomeActivitiesSearch}
+            {...plateImg}
+            alt="GNOME Activities overview showing Sessions Chronicle search results"
+          />
+        </div>
         <div class="plate__body">
           <h3 class="plate__title">Search from GNOME Activities</h3>
           <p>
             Find an indexed session right from the Activities overview — type,
             pick a result, and Sessions Chronicle opens it directly.
           </p>
-        </div>
-        <div class="plate__visual plate__visual--gnome">
-          <Picture
-            src={gnomeActivitiesSearch}
-            {...plateImgWide}
-            alt="GNOME Activities overview showing Sessions Chronicle search results"
-          />
         </div>
       </Card>
     </div>
@@ -202,25 +195,6 @@ const plateImgWide = {
   .plate__body p {
     color: color-mix(in srgb, var(--window-fg-color) 70%, transparent);
     font-size: var(--text-body);
-  }
-
-  .plate--wide {
-    grid-column: 1 / -1;
-  }
-  @media (min-width: 768px) {
-    .plate--wide {
-      flex-direction: row;
-    }
-    .plate--wide .plate__body {
-      flex: 0 0 34%;
-      display: flex;
-      flex-direction: column;
-      justify-content: center;
-    }
-    .plate--wide .plate__visual {
-      flex: 1;
-      aspect-ratio: auto;
-    }
   }
 
   .settings-value {
