@@ -49,6 +49,17 @@
   </categories>
   <content_rating type="oars-1.1" />
   <releases>
+    <release version="0.10.0" date="2026-08-05">
+      <description>
+        <p>Adds GNOME search provider integration, session deep-linking, and Kimi Code support.</p>
+        <ul>
+          <li>Expose session search in GNOME Activities with the new search provider</li>
+          <li>Open indexed sessions directly via app action deep-links</li>
+          <li>Add Kimi Code session format support</li>
+          <li>Skip Claude Code sessions containing only synthetic assistant events</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.9.0" date="2026-07-29">
       <description>
         <p>Improves session organization, date filtering, and Claude Code subagent support.</p>
