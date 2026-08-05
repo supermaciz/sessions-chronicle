@@ -17,6 +17,7 @@ and pick up where you left off.
 ## Features
 
 - Full-text search across all conversations (SQLite FTS5)
+- Search your sessions straight from the GNOME Activities overview
 - Sidebar filters by project and assistant with keyword search
 - Filter the session list by date (Today, Yesterday, or a custom range)
 - Markdown rendering (code blocks, tables, task lists, blockquotes)
@@ -27,6 +28,12 @@ and pick up where you left off.
 - Launch sessions directly from the app in your terminal
 - Supports 5 AI assistants — Claude Code, OpenCode, Codex, Mistral Vibe, and Kimi Code
 - View most-used assistants, most-active days, and more
+
+The GNOME search provider is off by default: enable Sessions Chronicle in
+**Settings ▸ Search**, then type at least three characters in the Activities
+overview. Results show the session's first prompt; matching transcript excerpts
+stay hidden unless you turn them on in **Preferences ▸ System Search**. See the
+[User Guide](https://sessions-chronicle.maciz.dev/guide#gnome-search) for details.
 
 Kimi Code support covers current sessions under `$KIMI_CODE_HOME` (default
 `~/.kimi-code`) when that location is visible in the Flatpak sandbox. Legacy
