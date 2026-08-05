@@ -257,6 +257,9 @@ An unfiltered subagent hit would look like an ordinary overview result and resol
 fewer previous results, but not new ones. The bounded previous set therefore matters for
 contract correctness even if a full re-query would be fast.
 
+> **Superseded.** The shipped code ignores `previous_results` and re-runs the full
+> query. See [Subsearches ignore `previous_results` — 2026-08-05](#subsearches-ignore-previous_results--2026-08-05).
+
 ### Result identity and matched excerpts
 
 `GetResultMetas` receives identifiers only; it does not receive the search terms.
@@ -524,7 +527,9 @@ and drives the interface directly:
   dictionary is returned per requested identifier.
 - `GetResultMetas` with no stored match expression (fresh process) → excerpt-off
   metadata, no error.
-- A subsearch never introduces an identifier from outside `previous_results`.
+- ~~A subsearch never introduces an identifier from outside `previous_results`.~~
+  Deliberately dropped; see
+  [Subsearches ignore `previous_results` — 2026-08-05](#subsearches-ignore-previous_results--2026-08-05).
 
 Deterministic, scriptable in CI, no compositor required. This is the query half of the
 verification plan, and it must not go through the overview: Shell activates the provider
