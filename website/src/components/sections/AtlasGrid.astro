@@ -5,6 +5,7 @@ import search from "../../assets/screenshots/session_list_search_light.png";
 import detailToolCalls from "../../assets/screenshots/session_detail_tool_calls.png";
 import analytics from "../../assets/screenshots/analytics_light.png";
 import pinned from "../../assets/screenshots/session_list_pinned_light.png";
+import gnomeActivitiesSearch from "../../assets/screenshots/gnome_activities_search.png";
 
 const plateImg = {
   formats: ["avif", "webp"] as const,
@@ -13,6 +14,15 @@ const plateImg = {
   sizes: "(max-width: 768px) 100vw, (max-width: 1024px) 50vw, 33vw",
   loading: "lazy" as const,
 };
+
+const plateImgWide = {
+  formats: ["avif", "webp"] as const,
+  fallbackFormat: "png" as const,
+  widths: [640, 960, 1280],
+  sizes: "(max-width: 767px) 100vw, 66vw",
+  loading: "lazy" as const,
+};
+
 ---
 
 <section class="atlas" id="features">
@@ -20,7 +30,7 @@ const plateImg = {
     <header class="atlas__header">
       <h2 class="atlas__title">What it does.</h2>
       <p class="atlas__sub">
-        Four views onto a local-first tool for browsing and searching every
+        Five views onto a local-first tool for browsing and searching every
         assistant session you've had.
       </p>
     </header>
@@ -90,6 +100,25 @@ const plateImg = {
           </p>
         </div>
       </Card>
+
+      <div class="plate--wide">
+        <Card class="plate" padding="none">
+          <div class="plate__body">
+            <h3 class="plate__title">Search from GNOME Activities</h3>
+            <p>
+              Find an indexed session right from the Activities overview — type,
+              pick a result, and Sessions Chronicle opens it directly.
+            </p>
+          </div>
+          <div class="plate__visual plate__visual--gnome">
+            <Picture
+              src={gnomeActivitiesSearch}
+              {...plateImgWide}
+              alt="GNOME Activities overview showing Sessions Chronicle search results"
+            />
+          </div>
+        </Card>
+      </div>
     </div>
   </div>
 </section>
@@ -162,6 +191,9 @@ const plateImg = {
   .plate__visual--detail :global(img) {
     object-position: center top;
   }
+  .plate__visual--gnome :global(img) {
+    object-position: center top;
+  }
   .plate__body {
     padding: var(--space-6);
   }
@@ -173,6 +205,26 @@ const plateImg = {
   .plate__body p {
     color: color-mix(in srgb, var(--window-fg-color) 70%, transparent);
     font-size: var(--text-body);
+  }
+
+  .plate--wide {
+    grid-column: 1 / -1;
+  }
+  @media (min-width: 768px) {
+    .plate--wide :global(.plate) {
+      display: flex;
+      flex-direction: row;
+    }
+    .plate--wide :global(.plate__body) {
+      flex: 0 0 34%;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+    }
+    .plate--wide :global(.plate__visual) {
+      flex: 1;
+      aspect-ratio: auto;
+    }
   }
 
   .settings-value {
