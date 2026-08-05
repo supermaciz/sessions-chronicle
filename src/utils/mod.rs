@@ -1,2 +1,2 @@
 pub mod terminal;
-pub mod text_match;
+pub use sessions_chronicle_core::utils::text_match;

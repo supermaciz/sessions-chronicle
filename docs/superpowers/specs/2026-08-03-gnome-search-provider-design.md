@@ -257,6 +257,9 @@ An unfiltered subagent hit would look like an ordinary overview result and resol
 fewer previous results, but not new ones. The bounded previous set therefore matters for
 contract correctness even if a full re-query would be fast.
 
+> **Superseded.** The shipped code ignores `previous_results` and re-runs the full
+> query. See [Subsearches ignore `previous_results` — 2026-08-05](#subsearches-ignore-previous_results--2026-08-05).
+
 ### Result identity and matched excerpts
 
 `GetResultMetas` receives identifiers only; it does not receive the search terms.
@@ -524,7 +527,9 @@ and drives the interface directly:
   dictionary is returned per requested identifier.
 - `GetResultMetas` with no stored match expression (fresh process) → excerpt-off
   metadata, no error.
-- A subsearch never introduces an identifier from outside `previous_results`.
+- ~~A subsearch never introduces an identifier from outside `previous_results`.~~
+  Deliberately dropped; see
+  [Subsearches ignore `previous_results` — 2026-08-05](#subsearches-ignore-previous_results--2026-08-05).
 
 Deterministic, scriptable in CI, no compositor required. This is the query half of the
 verification plan, and it must not go through the overview: Shell activates the provider
@@ -563,6 +568,60 @@ so activation testing uses the ordinary default-index instance.
   default and the one case where it bites.
 - A term present only in a message body, never in a first prompt: present in both
   modes, with the description differing.
+
+---
+
+## Implementation deviations
+
+Where the shipped code departs from this spec. The sections above are left as written on
+2026-08-03; this section records what changed, when, and why.
+
+### Subsearches ignore `previous_results` — 2026-08-05
+
+**Spec says** ([Query path](#query-path)): `GetSubsearchResultSet` searches only within
+the sessions named by `previous_results`, because SearchProvider2 defines a subsearch as
+a refinement that may return fewer previous results but no new ones — so the bounded
+previous set matters for contract correctness "even if a full re-query would be fast".
+The [Acceptance and verification](#acceptance-and-verification) criterion "a subsearch
+never introduces an identifier from outside `previous_results`" follows from it.
+
+**Code does**: `get_subsearch_result_set` ignores `previous_results` and re-runs the full
+query. The narrowing path and `subsearch_session_ids` are removed. The argument keeps its
+contract name so introspection is unchanged. The acceptance criterion above is
+deliberately no longer met.
+
+**Why**: narrowing shipped as specified and made the provider unusable — typing in the
+overview returned no results at all. Two separate faults:
+
+- An empty `previous_results` does not mean "no matches". Shell also calls
+  `GetSubsearchResultSet` after a keystroke the provider rejected as too short
+  (`MIN_NORMALIZED_CHARS = 3`). Typing `career` rejects `c` and `ca`, so every later
+  keystroke narrowed within an empty set and the result set could never recover.
+- Result sets are capped at `RESULT_LIMIT`, so even a populated previous set is already
+  incomplete. Narrowing within it permanently drops matches that fell outside the cap of
+  an earlier, shorter query.
+
+Measured on the real session bus against a 410 MB index, replaying Shell's keystroke
+sequence for `career`:
+
+| prefix | as specified | after fixing the empty set | full re-query |
+|---|---|---|---|
+| `car` | 0 | 20 | 20 |
+| `care` | 0 | 11 | 20 |
+| `caree` | 0 | 10 | 20 |
+| `career` | **0** | 10 | **20** |
+
+The premise the spec reasoned from was too strong. `previous_results` is an optimisation
+hint: what Shell requires is the correct result set for the *new* terms, and nothing
+obliges a provider to derive it from the previous one. A full query costs 0.13 s cold and
+is effectively free warm on that index, so the narrowing bought nothing measurable while
+costing recall in both directions.
+
+Commit `137877e`. Found during the packaged manual acceptance of Task 14, not by the
+automated suite — every unit and D-Bus test passed while the feature was unusable,
+because none of them replayed a multi-keystroke sequence. Regression coverage now asserts
+that narrowing from an empty, unrelated, or partial previous set returns what the same
+terms return on their own.
 
 ---
 

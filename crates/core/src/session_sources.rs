@@ -130,6 +130,13 @@ pub fn select_db_filename(override_mode: bool) -> &'static str {
     }
 }
 
+/// Resolve the application database path for the selected session-source mode.
+pub fn database_path(base_data_dir: &Path, app_id: &str, override_mode: bool) -> PathBuf {
+    base_data_dir
+        .join(app_id)
+        .join(select_db_filename(override_mode))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -137,9 +144,9 @@ mod tests {
 
     #[test]
     fn resolve_override_prefers_known_subdirectories() {
-        // tests/fixtures contains claude_sessions/, opencode_storage/,
+        // The fixture tree contains claude_sessions/, opencode_storage/,
         // codex_sessions/, vibe_sessions/
-        let root = PathBuf::from("tests/fixtures");
+        let root = crate::fixture_path("");
         let sources = SessionSources::resolve(Some(&root));
 
         assert!(sources.override_mode);
@@ -153,7 +160,7 @@ mod tests {
     #[test]
     fn resolve_override_falls_back_to_root_when_subdirs_missing() {
         // Use a directory that exists but has no known subdirectories.
-        let root = PathBuf::from("tests/fixtures/claude_sessions");
+        let root = crate::fixture_path("claude_sessions");
         let sources = SessionSources::resolve(Some(&root));
 
         assert!(sources.override_mode);
@@ -200,8 +207,22 @@ mod tests {
     }
 
     #[test]
+    fn database_path_uses_app_data_directory_and_selected_filename() {
+        let base_data_dir = Path::new("/tmp/data");
+
+        assert_eq!(
+            database_path(base_data_dir, "example.app", false),
+            PathBuf::from("/tmp/data/example.app/sessions.db")
+        );
+        assert_eq!(
+            database_path(base_data_dir, "example.app", true),
+            PathBuf::from("/tmp/data/example.app/sessions-override.db")
+        );
+    }
+
+    #[test]
     fn resolve_override_finds_opencode_db() {
-        let root = PathBuf::from("tests/fixtures");
+        let root = crate::fixture_path("");
         let sources = SessionSources::resolve(Some(&root));
         assert_eq!(sources.opencode_db_paths.len(), 1);
         assert_eq!(
@@ -212,7 +233,7 @@ mod tests {
 
     #[test]
     fn resolve_override_no_db_returns_none() {
-        let root = PathBuf::from("tests/fixtures/claude_sessions");
+        let root = crate::fixture_path("claude_sessions");
         let sources = SessionSources::resolve(Some(&root));
         assert!(sources.opencode_db_paths.is_empty());
     }

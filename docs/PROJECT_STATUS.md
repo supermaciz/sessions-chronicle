@@ -191,7 +191,7 @@ CI-parity checks:
 ```bash
 cargo fmt --all -- --check
 cargo clippy --all -- -D warnings
-xvfb-run -a env GDK_BACKEND=x11 GSK_RENDERER=cairo cargo test --all --no-fail-fast
+dbus-run-session -- xvfb-run -a env GDK_BACKEND=x11 GSK_RENDERER=cairo cargo test --all --no-fail-fast
 ```
 
 ## Known Gaps / Active Exploration

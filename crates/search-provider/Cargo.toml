@@ -1,0 +1,24 @@
+[package]
+name = "sessions-chronicle-search-provider"
+version = "0.9.0"
+edition = "2024"
+publish = false
+license = "MIT"
+
+[dependencies]
+anyhow = "1.0.102"
+async-channel = "2.5"
+async-io = "2.6"
+chrono = "0.4.44"
+clap = { version = "4.6", features = ["derive"] }
+futures-lite = "2.6"
+gio = "0.22"
+glib = "0.22"
+sessions-chronicle-core = { path = "../core" }
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
+zbus = "5.12"
+
+[dev-dependencies]
+rusqlite = { version = "0.40.0", features = ["bundled"] }
+tempfile = "3.27.0"

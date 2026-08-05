@@ -23,5 +23,10 @@
       <summary>Session list sort order</summary>
       <description>Named reading order for the session list. Accepted values: recent-activity, oldest-first, newest-first, most-messages.</description>
     </key>
+    <key name="search-provider-show-excerpts" type="b">
+      <default>false</default>
+      <summary>Show matching transcript text in system search results</summary>
+      <description>When enabled, GNOME Activities search results include an excerpt of the matching transcript text. When disabled, results show only the session's first prompt, assistant, project, and time.</description>
+    </key>
   </schema>
 </schemalist>

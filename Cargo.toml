@@ -1,3 +1,7 @@
+[workspace]
+members = [".", "crates/core", "crates/search-provider"]
+resolver = "3"
+
 [package]
 name = "sessions-chronicle"
 version = "0.9.0"
@@ -10,6 +14,7 @@ license = "MIT"
 lto = true
 
 [dependencies]
+sessions-chronicle-core = { path = "crates/core" }
 gettext-rs = { version = "0.7.7", features = ["gettext-system"] }
 relm4 = { version = "0.11.0", features = ["libadwaita", "gnome_50"] }
 relm4-icons = "0.11.0"
@@ -18,10 +23,8 @@ tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.150"
-walkdir = "2.5.0"
 chrono = { version = "0.4.44", features = ["serde"] }
 anyhow = "1.0.102"
-thiserror = "2.0.18"
 rusqlite = { version = "0.40.0", features = ["bundled"] }
 clap = { version = "4.6", features = ["derive"] }
 which = "8.0.2"
@@ -29,7 +32,6 @@ pulldown-cmark = { version = "0.13", default-features = false, features = ["simd
 regex = "1"
 similar = "3.1.1"
 sourceview5 = "0.11.0"
-zstd = "0.13.3"
 
 [build-dependencies]
 relm4-icons-build = "0.11.0"

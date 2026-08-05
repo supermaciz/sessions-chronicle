@@ -1,6 +1,7 @@
 pub mod analytics;
 pub mod indexer;
 pub mod schema;
+pub mod shell_search;
 
 use anyhow::{Context, Result};
 use chrono::{DateTime, TimeZone, Utc};
@@ -25,7 +26,7 @@ const SESSION_SELECT_COLUMNS: &str =
         cache_write_tokens, reasoning_tokens,
         edit_count, read_count, command_count, ending_status";
 
-pub(crate) fn open_connection(db_path: &Path) -> Result<Connection> {
+pub fn open_connection(db_path: &Path) -> Result<Connection> {
     let conn = Connection::open(db_path).context("Failed to open database")?;
     conn.busy_timeout(Duration::from_secs(SQLITE_BUSY_TIMEOUT_SECS))
         .context("Failed to set SQLite busy timeout")?;

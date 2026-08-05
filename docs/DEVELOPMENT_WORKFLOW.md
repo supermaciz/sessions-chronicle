@@ -98,6 +98,37 @@ Run the locally installed build:
 
 Meson is the faster day-to-day loop because it reuses the local build tree instead of rebuilding the full Flatpak dependency stack each time. Flatpak remains the right choice when you need to verify packaging behavior or reproduce the release-like runtime.
 
+### GNOME search provider: why a `~/.local` install is invisible
+
+A `--prefix="$HOME/.local"` install **cannot** register the GNOME Shell search provider on its own. Shell looks for provider keyfiles only under `GLib.get_system_data_dirs()`:
+
+```
+~/.local/share/flatpak/exports/share
+/var/lib/flatpak/exports/share
+/usr/local/share/
+/usr/share/
+```
+
+`~/.local/share` is `XDG_DATA_HOME`, a separate list that Shell does not scan for search providers. So `meson install` writes the keyfile to `~/.local/share/gnome-shell/search-providers/` where nothing ever reads it, and the provider never appears in Settings ▸ Search. Every provider shipped on a normal system lives in `/usr/share` or a Flatpak exports directory — none in `~/.local/share`.
+
+D-Bus is the confusing part: it *does* scan `XDG_DATA_HOME`, so `~/.local/share/dbus-1/services/…SearchProvider.service` is found and the provider activates normally. A direct `gdbus call` therefore succeeds while Settings ▸ Search stays empty. Testing the provider over D-Bus proves nothing about whether Shell can discover it.
+
+To use the provider from a meson install, link the keyfile into a directory Shell does scan (once, as root):
+
+```bash
+sudo mkdir -p /usr/local/share/gnome-shell/search-providers
+sudo ln -sf ~/.local/share/gnome-shell/search-providers/dev.maciz.sessionschronicle.Devel-search-provider.ini \
+  /usr/local/share/gnome-shell/search-providers/
+```
+
+The link targets the installed file, so later `meson install` runs are picked up with no further action.
+
+This coexists with an installed Flatpak: every name derives from the application ID, so the development and release profiles are disjoint — different keyfile names, `DesktopId`, bus names, and object paths — and Settings ▸ Search toggles them independently. Note that both `.desktop` files carry the same `Name=Sessions Chronicle`, so the two rows are told apart only by their icon.
+
+### Which binary answers D-Bus activation
+
+With both a meson install and a Flatpak present, `~/.local/share/dbus-1/services` takes precedence over the Flatpak exports directory, so the **meson-installed** binary answers search-provider activation. Rebuilding the Flatpak alone will not change what Shell talks to; run `meson install -C builddir` when testing a provider change on a machine that has both.
+
 ### Sessions locations
 
 This indexes sessions from all supported AI assistants:
@@ -246,7 +277,7 @@ RUST_LOG=sessions_chronicle::parsers=trace "$HOME/.local/bin/sessions-chronicle"
 ## Testing
 
 ```bash
-xvfb-run -a env GDK_BACKEND=x11 GSK_RENDERER=cairo cargo test --all --no-fail-fast
+dbus-run-session -- xvfb-run -a env GDK_BACKEND=x11 GSK_RENDERER=cairo cargo test --all --no-fail-fast
 ```
 
 ### Linting
@@ -335,7 +366,7 @@ Two Flatpak manifests exist in `build-aux/`:
 - **Meson rebuild**: `meson compile -C builddir && meson install -C builddir`
 - **Meson run**: `"$HOME/.local/bin/sessions-chronicle"`
 - **Test Data**: Add `--sessions-dir tests/fixtures` flag
-- **CI parity**: `cargo fmt --all -- --check && cargo clippy --all -- -D warnings && xvfb-run -a env GDK_BACKEND=x11 GSK_RENDERER=cairo cargo test --all --no-fail-fast`
+- **CI parity**: `cargo fmt --all -- --check && cargo clippy --all -- -D warnings && dbus-run-session -- xvfb-run -a env GDK_BACKEND=x11 GSK_RENDERER=cairo cargo test --all --no-fail-fast`
 
 ---
 

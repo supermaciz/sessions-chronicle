@@ -3,22 +3,18 @@ mod config;
 mod analytics_worker;
 mod app;
 #[allow(dead_code)]
-mod database;
-#[allow(dead_code)]
 mod icon_names {
     pub use shipped::*;
     include!(concat!(env!("OUT_DIR"), "/icon_names.rs"));
 }
 mod indexing_worker;
 #[allow(dead_code)]
-mod models;
-mod parsers;
-mod project_resolver;
-mod session_sources;
 mod startup;
 #[allow(dead_code)]
 mod ui;
 mod utils;
+
+pub(crate) use sessions_chronicle_core::{database, models, session_sources};
 
 use config::{APP_ID, GETTEXT_PACKAGE, LOCALEDIR, RESOURCES_FILE};
 use gettextrs::{LocaleCategory, gettext};
@@ -30,7 +26,7 @@ use std::env;
 
 use app::{APP_BROKER, App, AppMsg};
 
-use session_sources::{SessionSources, select_db_filename};
+use session_sources::{SessionSources, database_path};
 use tracing_subscriber::EnvFilter;
 
 relm4::new_action_group!(AppActionGroup, "app");
@@ -57,6 +53,19 @@ fn register_application_actions(app: &gtk::Application) {
         APP_BROKER.send(AppMsg::OpenExternalSession(id));
     });
     app.add_action(&open_session);
+
+    let search_sessions =
+        gio::SimpleAction::new("search-sessions", Some(&String::static_variant_type()));
+    let application = app.clone();
+    search_sessions.connect_activate(move |_, parameter| {
+        present_application_window(&application);
+        let Some(query) = parameter.and_then(|value| value.get::<String>()) else {
+            tracing::warn!("search-sessions activated without a string parameter");
+            return;
+        };
+        APP_BROKER.send(AppMsg::SearchExternalSessions(query));
+    });
+    app.add_action(&search_sessions);
 }
 
 fn main() {
@@ -65,9 +74,7 @@ fn main() {
 
     if args.print_db_path {
         let sources = SessionSources::resolve(args.sessions_dir.as_deref());
-        let db_path = glib::user_data_dir()
-            .join(APP_ID)
-            .join(select_db_filename(sources.override_mode));
+        let db_path = database_path(&glib::user_data_dir(), APP_ID, sources.override_mode);
         println!("{}", db_path.display());
         return;
     }

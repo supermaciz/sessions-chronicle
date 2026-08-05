@@ -27,7 +27,7 @@ use crate::indexing_worker::{IndexingWorker, IndexingWorkerInput};
 use crate::models::{
     DateFilter, ProjectFilter, ProjectInfo, SessionQuery, SortOrder, session::AiAssistant,
 };
-use crate::session_sources::{SessionSources, select_db_filename};
+use crate::session_sources::{SessionSources, database_path};
 use crate::ui::date_pill::{DatePill, DatePillInput};
 use crate::ui::modals::{
     indexing_status::{IndexingStatusDialog, IndexingStatusMsg, IndexingStatusOutput},
@@ -113,6 +113,15 @@ pub(super) struct App {
     /// messages (e.g. `SearchQueryChanged` from clearing the entry).
     /// Uses `Cell` because `post_view` takes `&self`.
     sync_search_bar: Cell<bool>,
+    sync_search_entry: Cell<bool>,
+    /// Stores the raw handler ID (as u64) for the search_changed signal.
+    /// We store the raw value instead of SignalHandlerId because u64 is Copy,
+    /// allowing us to reuse it across multiple sync_entry cycles without ownership issues.
+    search_changed_handler_raw: Cell<Option<u64>>,
+    /// Tracks the GLib timeout used to delay unblocking the search_changed handler
+    /// after GTK's debounce window, preventing the debounced signal from reaching
+    /// a dead component during test teardown.
+    search_unblock_timeout: Cell<Option<glib::source::SourceId>>,
     detail_visible: bool,
     /// Outer OverlaySplitView visibility (Filters pane in the Sessions list view).
     filters_open: bool,
@@ -183,6 +192,7 @@ pub(super) enum AppMsg {
     },
     SessionSelected(String),
     OpenExternalSession(String),
+    SearchExternalSessions(String),
     /// User-requested navigation back from detail to list.
     RequestNavigateBack,
     /// Detail page popped signal from `NavigationView`.
@@ -419,9 +429,6 @@ impl SimpleComponent for App {
                             set_child = &gtk::SearchEntry {
                                 set_placeholder_text: Some("Search sessions..."),
                                 set_hexpand: true,
-                                connect_search_changed[sender] => move |entry| {
-                                    sender.input(AppMsg::SearchQueryChanged(entry.text().to_string()));
-                                },
                             },
                         },
 
@@ -454,8 +461,10 @@ impl SimpleComponent for App {
     ) -> ComponentParts<Self> {
         // Resolve session sources and database path
         let sources = SessionSources::resolve(sessions_dir.as_deref());
-        let db_dir = glib::user_data_dir().join(APP_ID);
-        let db_path = db_dir.join(select_db_filename(sources.override_mode));
+        let db_path = database_path(&glib::user_data_dir(), APP_ID, sources.override_mode);
+        let db_dir = db_path
+            .parent()
+            .expect("database path has an app directory");
         let index_available = db_path.exists();
 
         tracing::info!(
@@ -469,7 +478,7 @@ impl SimpleComponent for App {
         );
         tracing::info!("Using database: {}", db_path.display());
 
-        if let Err(err) = fs::create_dir_all(&db_dir) {
+        if let Err(err) = fs::create_dir_all(db_dir) {
             tracing::error!("Failed to create data dir {}: {}", db_dir.display(), err);
         } else if let Err(err) = SessionIndexer::new(&db_path) {
             tracing::error!("Failed to initialize session indexer: {}", err);
@@ -493,6 +502,9 @@ impl SimpleComponent for App {
         let mut model = Self {
             search_visible: false,
             sync_search_bar: Cell::new(false),
+            sync_search_entry: Cell::new(false),
+            search_changed_handler_raw: Cell::new(None),
+            search_unblock_timeout: Cell::new(None),
             detail_visible: false,
             filters_open: true,
             filters_open_before_detail: true,
@@ -622,6 +634,17 @@ impl SimpleComponent for App {
             .indexing_worker
             .emit(IndexingWorkerInput::StartIncremental(model.sources.clone()));
 
+        // Connect to search_changed signal and store raw handler ID for signal blocking
+        {
+            use gtk::prelude::*;
+            let sender_clone = sender.clone();
+            let handler_id = widgets.search_entry.connect_search_changed(move |entry| {
+                sender_clone.input(AppMsg::SearchQueryChanged(entry.text().to_string()));
+            });
+            let handler_raw = unsafe { handler_id.as_raw() };
+            model.search_changed_handler_raw.set(Some(handler_raw));
+        }
+
         ComponentParts { model, widgets }
     }
 
@@ -654,6 +677,7 @@ impl SimpleComponent for App {
             }
             AppMsg::SessionSelected(id) => self.handle_session_selected(id),
             AppMsg::OpenExternalSession(id) => self.handle_external_session_open(id),
+            AppMsg::SearchExternalSessions(query) => self.handle_external_search(query),
             AppMsg::RequestNavigateBack => self.handle_request_navigate_back(),
             AppMsg::NavigateBack => self.handle_navigate_back(),
             AppMsg::ShowPreferences => {
@@ -758,6 +782,47 @@ impl SimpleComponent for App {
     }
 
     fn post_view(&self, widgets: &mut Self::Widgets) {
+        use glib::signal;
+
+        // Only sync the SearchEntry when the model explicitly requests it
+        // (e.g. external search from a different workspace).  Unconditional sync
+        // would interfere with the user typing.
+        let sync_entry = self.sync_search_entry.replace(false);
+        if sync_entry && widgets.search_entry.text().as_str() != self.search_query {
+            // Block the search_changed signal while setting text programmatically.
+            // GTK SearchEntry has a debounced signal (~150ms) that fires independently
+            // of our handler's block state, so we keep the handler blocked and schedule
+            // a delayed unblock that fires after GTK's debounce window to prevent the
+            // signal from reaching a torn-down component during test cleanup.
+            if let Some(handler_raw) = self.search_changed_handler_raw.get() {
+                // Reconstruct the handler ID from the raw value (which is Copy)
+                let handler_id = unsafe { glib::translate::from_glib(handler_raw) };
+
+                // A block from an earlier sync may still be pending. GObject counts
+                // blocks, so cancelling that timeout without undoing its block would
+                // leave the handler blocked forever: two blocks, one unblock. Release
+                // it here, before taking our own. No main loop iteration runs between
+                // the unblock and the block below, so no signal can slip through.
+                if let Some(old_timeout) = self.search_unblock_timeout.replace(None) {
+                    old_timeout.remove();
+                    signal::signal_handler_unblock(&widgets.search_entry, &handler_id);
+                }
+
+                signal::signal_handler_block(&widgets.search_entry, &handler_id);
+                widgets.search_entry.set_text(&self.search_query);
+
+                // Schedule unblock after GTK's debounce window (200ms buffer beyond ~150ms debounce).
+                let search_entry_clone = widgets.search_entry.clone();
+                let timeout_id = glib::timeout_add_local_once(
+                    std::time::Duration::from_millis(200),
+                    move || {
+                        let handler_to_unblock = unsafe { glib::translate::from_glib(handler_raw) };
+                        signal::signal_handler_unblock(&search_entry_clone, &handler_to_unblock);
+                    },
+                );
+                self.search_unblock_timeout.set(Some(timeout_id));
+            }
+        }
         // Only sync the SearchBar when the model explicitly requests it
         // (e.g. Escape handler).  Unconditional sync would oscillate: closing
         // the bar clears the entry → SearchQueryChanged fires before
@@ -767,6 +832,9 @@ impl SimpleComponent for App {
             && widgets.search_bar.is_search_mode() != self.search_visible
         {
             widgets.search_bar.set_search_mode(self.search_visible);
+        }
+        if sync_entry {
+            widgets.search_entry.grab_focus();
         }
 
         self.date_pill
@@ -1872,6 +1940,107 @@ mod tests {
     }
 
     #[gtk::test]
+    fn external_search_from_detail_and_analytics_opens_searchable_sessions_list() {
+        if !schema_is_available() {
+            return;
+        }
+        let controller = App::builder().launch(Some(PathBuf::from("tests/fixtures")));
+        pump_main_context(|| !controller.state().get().model.indexing);
+        controller.emit(AppMsg::SessionSelected("abc123".into()));
+        pump_main_context(|| controller.state().get().model.detail_visible);
+        controller.emit(AppMsg::WorkspaceChanged(Workspace::Analytics));
+        controller.emit(AppMsg::SearchExternalSessions("carried query".into()));
+        pump_main_context(|| controller.state().get().model.search_query == "carried query");
+
+        let parts = controller.state().get();
+        assert_eq!(parts.model.active_workspace, Workspace::Sessions);
+        assert!(!parts.model.detail_visible);
+        assert!(parts.model.active_session.is_none());
+        assert!(parts.model.parent_session.is_none());
+        assert!(parts.model.search_visible);
+        assert_eq!(parts.widgets.search_entry.text(), "carried query");
+        assert!(parts.widgets.search_bar.is_search_mode());
+        assert_eq!(
+            parts
+                .model
+                .nav_view
+                .visible_page()
+                .unwrap()
+                .tag()
+                .as_deref(),
+            Some("sessions")
+        );
+    }
+
+    #[gtk::test]
+    fn external_search_twice_updates_entry_both_times() {
+        if !schema_is_available() {
+            return;
+        }
+        let controller = App::builder().launch(Some(PathBuf::from("tests/fixtures")));
+        pump_main_context(|| !controller.state().get().model.indexing);
+
+        // First external search
+        controller.emit(AppMsg::SearchExternalSessions("first query".into()));
+        pump_main_context(|| controller.state().get().model.search_query == "first query");
+
+        let parts = controller.state().get();
+        assert_eq!(parts.widgets.search_entry.text(), "first query");
+        assert_eq!(parts.model.search_query, "first query");
+        drop(parts);
+
+        // Second external search with different query - this is the regression test.
+        // This tests that the handler is kept available across multiple syncs.
+        controller.emit(AppMsg::SearchExternalSessions("second query".into()));
+        pump_main_context(|| controller.state().get().model.search_query == "second query");
+
+        let parts = controller.state().get();
+        assert_eq!(
+            parts.widgets.search_entry.text(),
+            "second query",
+            "Entry text must update on second external search (tests handler reusability)"
+        );
+        assert_eq!(parts.model.search_query, "second query");
+    }
+
+    #[gtk::test]
+    fn rapid_external_searches_leave_the_search_entry_usable() {
+        if !schema_is_available() {
+            return;
+        }
+        let controller = App::builder().launch(Some(PathBuf::from("tests/fixtures")));
+        pump_main_context(|| !controller.state().get().model.indexing);
+
+        // Two external searches inside the 200 ms unblock window. Each one blocks the
+        // search-changed handler, and GObject block counts stack, so the second sync
+        // must undo the still-pending block instead of adding to it.
+        controller.emit(AppMsg::SearchExternalSessions("first query".into()));
+        pump_main_context(|| controller.state().get().model.search_query == "first query");
+        controller.emit(AppMsg::SearchExternalSessions("second query".into()));
+        pump_main_context(|| controller.state().get().model.search_query == "second query");
+
+        // Let every pending unblock timeout fire.
+        pump_main_context(|| false);
+
+        // The user now types in the entry. Pumping until the model catches up also
+        // drains GTK's debounce timer, so nothing fires after the controller is
+        // dropped at the end of the test.
+        controller
+            .state()
+            .get()
+            .widgets
+            .search_entry
+            .set_text("typed by hand");
+        pump_main_context(|| controller.state().get().model.search_query == "typed by hand");
+
+        assert_eq!(
+            controller.state().get().model.search_query,
+            "typed by hand",
+            "manual typing must still emit SearchQueryChanged after rapid external searches"
+        );
+    }
+
+    #[gtk::test]
     fn typed_application_action_reaches_root_component_through_broker() {
         use gtk::glib::variant::{StaticVariantType, ToVariant};
         use gtk::prelude::{ActionExt, ActionMapExt};
@@ -1916,5 +2085,21 @@ mod tests {
                 .id,
             "abc123"
         );
+
+        let search_action = app
+            .lookup_action("search-sessions")
+            .expect("search action registered");
+        assert_eq!(
+            search_action.parameter_type().as_deref(),
+            Some(String::static_variant_type().as_ref())
+        );
+        search_action.activate(Some(&"carried query".to_variant()));
+        pump_main_context(|| controller.state().get().model.search_query == "carried query");
+
+        let parts = controller.state().get();
+        assert_eq!(parts.model.active_workspace, Workspace::Sessions);
+        assert!(!parts.model.detail_visible);
+        assert_eq!(parts.widgets.search_entry.text(), "carried query");
+        assert!(parts.widgets.search_bar.is_search_mode());
     }
 }
