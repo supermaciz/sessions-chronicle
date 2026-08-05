@@ -54,6 +54,7 @@ const shot = {
             <a href="#first-launch">What happens on first launch</a>
             <a href="#interface">Understand the interface</a>
             <a href="#find">Find a session</a>
+            <a href="#gnome-search">Search from GNOME Activities</a>
             <a href="#read">Read a session</a>
             <a href="#inspect">Inspect tool calls and subagents</a>
             <a href="#pin">Pin important sessions</a>
@@ -159,6 +160,41 @@ flatpak run dev.maciz.sessionschronicle</code></pre>
             alt="Session list search filtering indexed AI assistant sessions"
           />
         </figure>
+      </div>
+    </section>
+
+    <section class="guide__section" id="gnome-search">
+      <div class="container guide__content">
+        <h2>Search from GNOME Activities</h2>
+        <p>
+          Sessions Chronicle can also answer searches from the GNOME Activities
+          overview, so you can find a session without opening the app first.
+        </p>
+        <ul>
+          <li>
+            Enable Sessions Chronicle in <code>Settings ▸ Search</code>. The
+            search provider is off by default.
+          </li>
+          <li>
+            Type at least three characters in Activities to see session results.
+          </li>
+          <li>
+            Select a result to open the session directly in Sessions Chronicle.
+          </li>
+          <li>Only sessions already indexed locally can appear.</li>
+        </ul>
+        <p>
+          A result&apos;s title is the session&apos;s first prompt, which is
+          always visible in the overview. Matching transcript excerpts are
+          hidden by default: to show them, open the app&apos;s
+          <code>Preferences</code>, then enable
+          <code>System Search ▸ Show matching text in results</code>.
+        </p>
+        <p>
+          If Sessions Chronicle does not appear in Activities results, check
+          that it is enabled in <code>Settings ▸ Search</code> and that your
+          sessions are indexed (see <a href="#troubleshooting">Troubleshooting</a>).
+        </p>
       </div>
     </section>
 
