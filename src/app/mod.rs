@@ -797,13 +797,19 @@ impl SimpleComponent for App {
             if let Some(handler_raw) = self.search_changed_handler_raw.get() {
                 // Reconstruct the handler ID from the raw value (which is Copy)
                 let handler_id = unsafe { glib::translate::from_glib(handler_raw) };
-                signal::signal_handler_block(&widgets.search_entry, &handler_id);
-                widgets.search_entry.set_text(&self.search_query);
 
-                // Cancel any pending unblock timeout to avoid double-unblock
+                // A block from an earlier sync may still be pending. GObject counts
+                // blocks, so cancelling that timeout without undoing its block would
+                // leave the handler blocked forever: two blocks, one unblock. Release
+                // it here, before taking our own. No main loop iteration runs between
+                // the unblock and the block below, so no signal can slip through.
                 if let Some(old_timeout) = self.search_unblock_timeout.replace(None) {
                     old_timeout.remove();
+                    signal::signal_handler_unblock(&widgets.search_entry, &handler_id);
                 }
+
+                signal::signal_handler_block(&widgets.search_entry, &handler_id);
+                widgets.search_entry.set_text(&self.search_query);
 
                 // Schedule unblock after GTK's debounce window (200ms buffer beyond ~150ms debounce).
                 let search_entry_clone = widgets.search_entry.clone();
@@ -1995,6 +2001,43 @@ mod tests {
             "Entry text must update on second external search (tests handler reusability)"
         );
         assert_eq!(parts.model.search_query, "second query");
+    }
+
+    #[gtk::test]
+    fn rapid_external_searches_leave_the_search_entry_usable() {
+        if !schema_is_available() {
+            return;
+        }
+        let controller = App::builder().launch(Some(PathBuf::from("tests/fixtures")));
+        pump_main_context(|| !controller.state().get().model.indexing);
+
+        // Two external searches inside the 200 ms unblock window. Each one blocks the
+        // search-changed handler, and GObject block counts stack, so the second sync
+        // must undo the still-pending block instead of adding to it.
+        controller.emit(AppMsg::SearchExternalSessions("first query".into()));
+        pump_main_context(|| controller.state().get().model.search_query == "first query");
+        controller.emit(AppMsg::SearchExternalSessions("second query".into()));
+        pump_main_context(|| controller.state().get().model.search_query == "second query");
+
+        // Let every pending unblock timeout fire.
+        pump_main_context(|| false);
+
+        // The user now types in the entry. Pumping until the model catches up also
+        // drains GTK's debounce timer, so nothing fires after the controller is
+        // dropped at the end of the test.
+        controller
+            .state()
+            .get()
+            .widgets
+            .search_entry
+            .set_text("typed by hand");
+        pump_main_context(|| controller.state().get().model.search_query == "typed by hand");
+
+        assert_eq!(
+            controller.state().get().model.search_query,
+            "typed by hand",
+            "manual typing must still emit SearchQueryChanged after rapid external searches"
+        );
     }
 
     #[gtk::test]
