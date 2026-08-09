@@ -1134,6 +1134,46 @@ fn renderer_init_from_tool_call(tool_call: &ToolCall) -> RendererInit {
 
 // ── Widget builders ───────────────────────────────────────────────────────────
 
+#[derive(Clone, Copy)]
+enum InspectorTextViewStyle {
+    ExpandingCode,
+    Code,
+    ExpandingText,
+    Text,
+}
+
+fn make_inspector_text_view(text: &str, style: InspectorTextViewStyle) -> gtk::TextView {
+    let (monospace, vexpand) = match style {
+        InspectorTextViewStyle::ExpandingCode => (true, true),
+        InspectorTextViewStyle::Code => (true, false),
+        InspectorTextViewStyle::ExpandingText => (false, true),
+        InspectorTextViewStyle::Text => (false, false),
+    };
+
+    let view = gtk::TextView::new();
+    view.buffer().set_text(text);
+    view.set_editable(false);
+    view.set_cursor_visible(false);
+    view.set_wrap_mode(gtk::WrapMode::WordChar);
+    view.set_monospace(monospace);
+    view.add_css_class("inspector-code-block");
+    view.set_vexpand(vexpand);
+    view
+}
+
+fn append_inspector_text_section(
+    container: &gtk::Box,
+    title: &str,
+    text: &str,
+    style: InspectorTextViewStyle,
+) {
+    let header = gtk::Label::new(Some(title));
+    header.add_css_class("inspector-section-heading");
+    header.set_halign(gtk::Align::Start);
+    container.append(&header);
+    container.append(&make_inspector_text_view(text, style));
+}
+
 fn build_generic_widget(
     rendered: &crate::ui::tool_renderers::generic::GenericRenderedData,
 ) -> gtk::Widget {
@@ -1141,20 +1181,12 @@ fn build_generic_widget(
     let has_input = rendered.input_text.as_deref().is_some();
 
     if let Some(input) = rendered.input_text.as_deref() {
-        let header = gtk::Label::new(Some("Input"));
-        header.add_css_class("inspector-section-heading");
-        header.set_halign(gtk::Align::Start);
-        container.append(&header);
-
-        let content = gtk::TextView::new();
-        content.buffer().set_text(input);
-        content.set_editable(false);
-        content.set_cursor_visible(false);
-        content.set_wrap_mode(gtk::WrapMode::WordChar);
-        content.set_monospace(true);
-        content.add_css_class("inspector-code-block");
-        content.set_vexpand(true);
-        container.append(&content);
+        append_inspector_text_section(
+            &container,
+            "Input",
+            input,
+            InspectorTextViewStyle::ExpandingCode,
+        );
     }
 
     if let Some(output) = rendered.output.as_ref() {
@@ -1177,15 +1209,7 @@ fn build_output_render_plan_widget(
 ) -> gtk::Widget {
     match output {
         crate::ui::tool_renderers::generic::OutputRenderPlan::PrettyJson(text) => {
-            let content = gtk::TextView::new();
-            content.buffer().set_text(text);
-            content.set_editable(false);
-            content.set_cursor_visible(false);
-            content.set_wrap_mode(gtk::WrapMode::WordChar);
-            content.set_monospace(true);
-            content.add_css_class("inspector-code-block");
-            content.set_vexpand(true);
-            content.upcast()
+            make_inspector_text_view(text, InspectorTextViewStyle::ExpandingCode).upcast()
         }
         crate::ui::tool_renderers::generic::OutputRenderPlan::Markdown(text) => {
             let wrapper = gtk::Box::new(gtk::Orientation::Vertical, 0);
@@ -1229,15 +1253,8 @@ fn build_terminal_widget(
         }
         container.append(&header);
 
-        let output_view = gtk::TextView::new();
-        output_view.buffer().set_text(output);
-        output_view.set_editable(false);
-        output_view.set_cursor_visible(false);
-        output_view.set_wrap_mode(gtk::WrapMode::WordChar);
-        output_view.set_monospace(true);
+        let output_view = make_inspector_text_view(output, InspectorTextViewStyle::ExpandingCode);
         output_view.add_css_class("terminal-output");
-        output_view.add_css_class("inspector-code-block");
-        output_view.set_vexpand(true);
         container.append(&output_view);
     }
 
@@ -1326,14 +1343,7 @@ fn build_file_widget(rendered: &crate::ui::tool_renderers::file::FileRenderedDat
     }
 
     if let Some(output) = rendered.output_text.as_deref() {
-        let content = gtk::TextView::new();
-        content.buffer().set_text(output);
-        content.set_editable(false);
-        content.set_cursor_visible(false);
-        content.set_wrap_mode(gtk::WrapMode::WordChar);
-        content.set_monospace(true);
-        content.add_css_class("inspector-code-block");
-        content.set_vexpand(true);
+        let content = make_inspector_text_view(output, InspectorTextViewStyle::ExpandingCode);
         container.append(&content);
     }
 
@@ -1387,13 +1397,7 @@ fn build_results_widget(
             container.append(&row);
         }
     } else if let Some(output) = rendered.output_text.as_deref() {
-        let output_view = gtk::TextView::new();
-        output_view.buffer().set_text(output);
-        output_view.set_editable(false);
-        output_view.set_cursor_visible(false);
-        output_view.set_wrap_mode(gtk::WrapMode::WordChar);
-        output_view.add_css_class("inspector-code-block");
-        output_view.set_vexpand(true);
+        let output_view = make_inspector_text_view(output, InspectorTextViewStyle::ExpandingText);
         container.append(&output_view);
     } else {
         let empty_label = gtk::Label::new(Some("No results available."));
@@ -1416,34 +1420,11 @@ fn build_subagent_widget(
     let container = gtk::Box::new(gtk::Orientation::Vertical, 8);
 
     if let Some(input) = rendered.input_text.as_deref() {
-        let header = gtk::Label::new(Some("Input"));
-        header.add_css_class("inspector-section-heading");
-        header.set_halign(gtk::Align::Start);
-        container.append(&header);
-
-        let content = gtk::TextView::new();
-        content.buffer().set_text(input);
-        content.set_editable(false);
-        content.set_cursor_visible(false);
-        content.set_wrap_mode(gtk::WrapMode::WordChar);
-        content.set_monospace(true);
-        content.add_css_class("inspector-code-block");
-        container.append(&content);
+        append_inspector_text_section(&container, "Input", input, InspectorTextViewStyle::Code);
     }
 
     if let Some(result) = rendered.result_text.as_deref() {
-        let header = gtk::Label::new(Some("Result"));
-        header.add_css_class("inspector-section-heading");
-        header.set_halign(gtk::Align::Start);
-        container.append(&header);
-
-        let content = gtk::TextView::new();
-        content.buffer().set_text(result);
-        content.set_editable(false);
-        content.set_cursor_visible(false);
-        content.set_wrap_mode(gtk::WrapMode::WordChar);
-        content.add_css_class("inspector-code-block");
-        container.append(&content);
+        append_inspector_text_section(&container, "Result", result, InspectorTextViewStyle::Text);
     }
 
     if container.first_child().is_none() {
@@ -1731,6 +1712,84 @@ mod tests {
             "permission denied while opening the file"
         );
         assert!(views.label.is_selectable());
+    }
+
+    #[gtk::test]
+    fn inspector_text_view_preserves_shared_properties_and_styles() {
+        let cases = [
+            (InspectorTextViewStyle::ExpandingCode, true, true),
+            (InspectorTextViewStyle::Code, true, false),
+            (InspectorTextViewStyle::ExpandingText, false, true),
+            (InspectorTextViewStyle::Text, false, false),
+        ];
+
+        for (style, monospace, vexpand) in cases {
+            let view = make_inspector_text_view("sample output", style);
+            let buffer = view.buffer();
+
+            assert_eq!(
+                buffer.text(&buffer.start_iter(), &buffer.end_iter(), false),
+                "sample output"
+            );
+            assert!(!view.is_editable());
+            assert!(!view.is_cursor_visible());
+            assert_eq!(view.wrap_mode(), gtk::WrapMode::WordChar);
+            assert_eq!(view.is_monospace(), monospace);
+            assert_eq!(view.vexpands(), vexpand);
+            assert!(view.has_css_class("inspector-code-block"));
+        }
+    }
+
+    #[gtk::test]
+    fn inspector_text_section_appends_heading_and_configured_view() {
+        let container = gtk::Box::new(gtk::Orientation::Vertical, 8);
+        append_inspector_text_section(
+            &container,
+            "Input",
+            "{\"path\":\"README.md\"}",
+            InspectorTextViewStyle::ExpandingCode,
+        );
+
+        let header = container
+            .first_child()
+            .and_then(|child| child.downcast::<gtk::Label>().ok())
+            .expect("section heading");
+        assert_eq!(header.label(), "Input");
+        assert_eq!(header.halign(), gtk::Align::Start);
+        assert!(header.has_css_class("inspector-section-heading"));
+
+        let input = header
+            .next_sibling()
+            .and_then(|child| child.downcast::<gtk::TextView>().ok())
+            .expect("input text view");
+        assert!(input.is_monospace());
+        assert!(input.vexpands());
+    }
+
+    #[gtk::test]
+    fn terminal_output_keeps_its_specific_css_class() {
+        use crate::models::ToolCallStatus;
+        use crate::ui::tool_renderers::terminal::TerminalRenderedData;
+
+        let rendered = TerminalRenderedData {
+            command: None,
+            output_text: Some("done".to_string()),
+            error_text: None,
+            display_text: Some("done".to_string()),
+            exit_code: None,
+            is_non_zero_exit: false,
+            status: ToolCallStatus::Completed,
+            duration_ms: None,
+        };
+
+        let output = build_terminal_widget(&rendered)
+            .downcast::<gtk::Box>()
+            .expect("terminal container")
+            .last_child()
+            .and_then(|child| child.downcast::<gtk::TextView>().ok())
+            .expect("terminal output text view");
+        assert!(output.has_css_class("terminal-output"));
+        assert!(output.has_css_class("inspector-code-block"));
     }
 
     #[gtk::test]
