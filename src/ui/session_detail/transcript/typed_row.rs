@@ -159,6 +159,14 @@ impl TranscriptItemData {
             return;
         };
 
+        Self::bind_message_header(widgets, message);
+        self.bind_message_reasoning(widgets, message);
+        self.render_message_body_and_bind_revision(widgets, message);
+        self.bind_message_expansion(widgets, message);
+        self.bind_message_raw_toggle(widgets, message);
+    }
+
+    fn bind_message_header(widgets: &MessagePageWidgets, message: &MessageItemInit) {
         set_role_css_class(&widgets.root, message.preview.role);
         set_role_css_class(&widgets.role_label, message.preview.role);
         widgets
@@ -184,6 +192,9 @@ impl TranscriptItemData {
         widgets
             .ts_label
             .set_label(&message.preview.timestamp.format("%H:%M:%S").to_string());
+    }
+
+    fn bind_message_reasoning(&self, widgets: &mut MessagePageWidgets, message: &MessageItemInit) {
         clear_box_children(&widgets.reasoning_box);
         if message.preview.reasoning_preview.has_visible_reasoning {
             let button = gtk::Button::with_label("Thinking");
@@ -202,7 +213,13 @@ impl TranscriptItemData {
         } else if message.preview.reasoning_preview.encrypted_only {
             widgets.reasoning_box.append(&encrypted_reasoning_pill());
         }
+    }
 
+    fn render_message_body_and_bind_revision(
+        &self,
+        widgets: &mut MessagePageWidgets,
+        message: &MessageItemInit,
+    ) {
         render_message_body(
             &widgets.content,
             &widgets.expand_button,
@@ -215,24 +232,22 @@ impl TranscriptItemData {
             self.highlight_query.as_deref(),
         );
 
-        let can_expand = message.preview.is_truncated() && message.preview.role != Role::ToolResult;
-
         // Expand/collapse and lazy full-content loading mutate this row in
         // place rather than replacing the list item: replacing it makes
         // GtkListView reset the surrounding scroll back to the top (#170).
         // Re-render whenever `content_revision` is bumped (toggle, content
         // arrival, load-failure rollback). Register for all message rows so
         // raw mode works even on non-truncated messages.
-        let revision_handler = {
-            let content = widgets.content.clone();
-            let expand_button = widgets.expand_button.clone();
-            let raw_toggle = widgets.raw_toggle.clone();
-            let message = message.clone();
-            let expanded = self.expanded.clone();
-            let raw = self.raw.clone();
-            let raw_pending_full_content = self.raw_pending_full_content.clone();
-            let full_content = self.full_content.clone();
-            let highlight_query = self.highlight_query.clone();
+        let content = widgets.content.clone();
+        let expand_button = widgets.expand_button.clone();
+        let raw_toggle = widgets.raw_toggle.clone();
+        let message = message.clone();
+        let expanded = self.expanded.clone();
+        let raw = self.raw.clone();
+        let raw_pending_full_content = self.raw_pending_full_content.clone();
+        let full_content = self.full_content.clone();
+        let highlight_query = self.highlight_query.clone();
+        let revision_handler =
             self.content_revision
                 .connect_notify_local(Some("value"), move |_, _| {
                     render_message_body(
@@ -246,54 +261,62 @@ impl TranscriptItemData {
                         &full_content.borrow(),
                         highlight_query.as_deref(),
                     );
-                })
-        };
+                });
         widgets
             .connected_handlers
             .push((self.content_revision.clone().upcast(), revision_handler));
+    }
 
-        if can_expand {
-            let sender = self.sender.clone();
-            let item_index = self.item_index;
-            let expanded = self.expanded.clone();
-            let full_content = self.full_content.clone();
-            let content_revision = self.content_revision.clone();
-            let id = widgets.expand_button.connect_clicked(move |_| {
-                let now_expanded = !expanded.get();
-                expanded.set(now_expanded);
-                if now_expanded && full_content.borrow().is_none() {
-                    sender.emit(SessionDetailMsg::RequestMessageFullContent { item_index });
-                }
-                content_revision.set(!content_revision.get());
-            });
-            widgets
-                .connected_handlers
-                .push((widgets.expand_button.clone().upcast(), id));
+    fn bind_message_expansion(&self, widgets: &mut MessagePageWidgets, message: &MessageItemInit) {
+        let can_expand = message.preview.is_truncated() && message.preview.role != Role::ToolResult;
+        if !can_expand {
+            return;
         }
 
-        if message.preview.role == Role::Assistant {
-            let sender = self.sender.clone();
-            let item_index = self.item_index;
-            let raw = self.raw.clone();
-            let raw_pending_full_content = self.raw_pending_full_content.clone();
-            let full_content = self.full_content.clone();
-            let content_revision = self.content_revision.clone();
-            let message = message.clone();
-            let id = widgets.raw_toggle.connect_clicked(move |_| {
-                handle_raw_toggle_clicked(
-                    &raw,
-                    &raw_pending_full_content,
-                    &full_content,
-                    &content_revision,
-                    &sender,
-                    item_index,
-                    &message,
-                );
-            });
-            widgets
-                .connected_handlers
-                .push((widgets.raw_toggle.clone().upcast(), id));
+        let sender = self.sender.clone();
+        let item_index = self.item_index;
+        let expanded = self.expanded.clone();
+        let full_content = self.full_content.clone();
+        let content_revision = self.content_revision.clone();
+        let id = widgets.expand_button.connect_clicked(move |_| {
+            let now_expanded = !expanded.get();
+            expanded.set(now_expanded);
+            if now_expanded && full_content.borrow().is_none() {
+                sender.emit(SessionDetailMsg::RequestMessageFullContent { item_index });
+            }
+            content_revision.set(!content_revision.get());
+        });
+        widgets
+            .connected_handlers
+            .push((widgets.expand_button.clone().upcast(), id));
+    }
+
+    fn bind_message_raw_toggle(&self, widgets: &mut MessagePageWidgets, message: &MessageItemInit) {
+        if message.preview.role != Role::Assistant {
+            return;
         }
+
+        let sender = self.sender.clone();
+        let item_index = self.item_index;
+        let raw = self.raw.clone();
+        let raw_pending_full_content = self.raw_pending_full_content.clone();
+        let full_content = self.full_content.clone();
+        let content_revision = self.content_revision.clone();
+        let message = message.clone();
+        let id = widgets.raw_toggle.connect_clicked(move |_| {
+            handle_raw_toggle_clicked(
+                &raw,
+                &raw_pending_full_content,
+                &full_content,
+                &content_revision,
+                &sender,
+                item_index,
+                &message,
+            );
+        });
+        widgets
+            .connected_handlers
+            .push((widgets.raw_toggle.clone().upcast(), id));
     }
 
     pub(crate) fn bind_tool_call_page(&self, widgets: &mut ToolCallPageWidgets) {
@@ -1409,6 +1432,61 @@ mod tests {
         expand_button.emit_clicked();
         assert!(!message.expanded.get());
         assert_eq!(expand_button.label().as_deref(), Some("Show full message"));
+    }
+
+    #[gtk::test]
+    fn message_unbind_disconnects_all_handlers_before_rebind() {
+        let (sender, receiver) = relm4::channel::<SessionDetailMsg>();
+        let message = TranscriptItemData::from_init(
+            TranscriptItemInit::Message({
+                let mut init = truncated_message_init();
+                init.preview.reasoning_preview = ReasoningPreview {
+                    has_reasoning: true,
+                    has_visible_reasoning: true,
+                    encrypted_only: false,
+                };
+                init
+            }),
+            sender,
+        );
+
+        let mut widgets = super::build_message_page();
+        message.bind_message_page(&mut widgets);
+        assert_eq!(widgets.connected_handlers.len(), 4);
+
+        let old_reasoning_button = message_reasoning_button(&widgets.root);
+        let old_expand_button = message_expand_button(&widgets.root);
+        let old_raw_toggle = message_raw_toggle(&widgets.root);
+
+        message.unbind_message_page(&mut widgets);
+        assert!(widgets.connected_handlers.is_empty());
+        assert_eq!(count_box_children(&widgets.content), 0);
+
+        old_reasoning_button.emit_clicked();
+        old_expand_button.emit_clicked();
+        old_raw_toggle.emit_clicked();
+        message
+            .content_revision
+            .set(!message.content_revision.get());
+
+        assert!(!message.expanded.get());
+        assert!(!message.raw.get());
+        assert_eq!(count_box_children(&widgets.content), 0);
+
+        message.bind_message_page(&mut widgets);
+        assert_eq!(widgets.connected_handlers.len(), 4);
+        assert_eq!(count_box_children(&widgets.reasoning_box), 1);
+
+        message_expand_button(&widgets.root).emit_clicked();
+        assert!(message.expanded.get());
+        // Any stale reasoning/raw/expand handler would have queued a message
+        // before this fresh expansion request and make this assertion fail.
+        assert!(matches!(
+            gtk::glib::MainContext::default()
+                .block_on(receiver.recv())
+                .expect("full content request after rebind"),
+            SessionDetailMsg::RequestMessageFullContent { item_index: 1 }
+        ));
     }
 
     #[gtk::test]
