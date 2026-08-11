@@ -48,7 +48,9 @@ Generate the widget structs and move construction to `view!`, but call the exist
 
 ### 3. Hybrid migration preserving the helpers
 
-Same as 1, but keep `build_preset_row`, `build_row`, and `build_endpoint_toggle` as constructors called from `view!`. Rejected: the six count labels and the two endpoint date labels are created *inside* those helpers and returned only indirectly, so they cannot be `#[name]`d and therefore cannot carry `#[watch]`. Under this variant `sync_counts` and most of `sync_custom_state` survive, and roughly half of the issue's stated benefit is lost.
+Keep `build_preset_row`, `build_row`, and `build_endpoint_toggle`, and expose their model-derived child labels to the macro through `#[local_ref]`. This is technically viable: the six count labels are already constructed before the row helpers are called, and the two endpoint date labels can be destructured from `build_endpoint_toggle` before `view_output!()`.
+
+Rejected: it would require constructing the labels, rows, and endpoint-toggle contents imperatively before `view_output!()`, then listing the already-parented labels as detached `#[local_ref]` nodes solely to attach `#[watch]` properties. The resulting `view!` block would not describe the physical hierarchy it updates: row ownership would remain hidden in helpers while the bindings appeared elsewhere in the macro tree. That preserves the helpers, but also preserves the construction/binding split that the issue is intended to remove. Inlining is longer, yet makes both ownership and bindings explicit in one tree.
 
 ### 4. Fully declarative conversion
 
@@ -158,6 +160,8 @@ Blocking it is the correct end state: programmatic reseeding is not a user endpo
 
 A regression test must assert that entering the custom page from the End endpoint leaves `active_endpoint` at `Start` and produces no additional endpoint message.
 
+Because that message is idempotent, final component state alone cannot prove its absence. Under `#[cfg(test)]`, the model gains an `endpoint_change_log: Rc<RefCell<Vec<RangeEndpoint>>>`; the `CustomEndpointChanged` update arm appends each processed endpoint. The test switches to End and drains the main context, clears the log, returns to presets, re-enters the custom page, drains again, then asserts both that the model is on Start and that the log stayed empty. This observes the component message directly without changing the production interface.
+
 ### Calendar signal and controllers
 
 `day-selected` is connected in `view!` with a named `@calendar_handler`. The generated handler ID is available from the generated widgets struct.
@@ -182,7 +186,7 @@ GTK prepends controllers and dispatches from the head of the list, so the key co
 
 `calendar_handler` moves out of the model because the named macro connection owns it.
 
-The `#[cfg(test)]` announcement and accessible-label recorders **cannot** move to `additional_fields!`, which does not accept `#[cfg]` attributes. They stay `#[cfg(test)]` fields of the `DatePill` model, where they already live today, and the affected tests read them through `ComponentController::model()` instead of `widgets()`. This is a mechanical call-site change at the eight existing assertion sites; no test intent changes.
+The `#[cfg(test)]` announcement and accessible-label recorders **cannot** move to `additional_fields!`, which does not accept `#[cfg]` attributes. They stay `#[cfg(test)]` fields of the `DatePill` model, where they already live today, and the affected tests read them through `ComponentController::model()` instead of `widgets()`. This is a mechanical call-site change at the eight existing assertion sites; no test intent changes. The new endpoint-message recorder described above also lives only in the model.
 
 After the migration, `sync_button` and `sync_counts` disappear. `sync_custom_state` is replaced by `sync_calendar_date`, which contains only the conditional calendar operation.
 
@@ -217,7 +221,7 @@ Focus callbacks, selection restoration, output delivery, date validation, and `.
 The work proceeds through three independently compiling checkpoints in the same change:
 
 1. Migrate `SortPill`. It is the smaller component, nothing in it is blocked, and it validates the macro plumbing before the risky component. Verify all tests.
-2. Migrate the `DatePill` tree: component macro, inlined row and toggle subtrees, `#[wrap(Clone::clone)]` assignments, generated widgets struct, test recorders read through `model()`. Keep the existing `sync_*` bodies driven from `post_view()` so behavior is unchanged. Verify all tests.
+2. Migrate the `DatePill` tree: component macro, inlined row and toggle subtrees, `#[wrap(Clone::clone)]` assignments, generated widgets struct, test recorders read through `model()`. Keep the existing `sync_*` bodies, call them explicitly after `view_output!()` for initial synchronization and from `post_view()` after messages, so behavior is unchanged. Verify all tests.
 3. Move the approved pure properties to `#[watch]`, delete `sync_button` and `sync_counts`, reduce `sync_custom_state` to `sync_calendar_date`, add the endpoint-blocking regression test, and verify again.
 
 Checkpoint 2 is where the calendar invariants from PR #192 are at risk, and it deliberately changes no synchronization logic so that any failure there is a pure construction bug. The checkpoints are for regression isolation; they do not require separate pull requests.
@@ -230,6 +234,7 @@ In scope:
 - `src/ui/sort_pill.rs`
 - Dissolving `build_preset_row`, `build_custom_row`, `build_row`, `build_endpoint_toggle`, and `TitleWidth` into the `view!` tree
 - Existing tests in those modules: adaptation to generated fields, and moving recorder assertions from `widgets()` to `model()`
+- One test-only endpoint-message recorder in the `DatePill` model
 - One new regression test for suppressed programmatic endpoint messages
 
 Out of scope:
