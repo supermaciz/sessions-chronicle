@@ -6,6 +6,10 @@ See [SESSION_FORMAT_ANALYSIS.md](../SESSION_FORMAT_ANALYSIS.md) for cross-assist
 Documented from the official docs (`docs/en/guides/sessions.md`,
 `docs/en/configuration/data-locations.md`), the upstream TypeScript sources
 (`packages/agent-core-v2`), and local sampling of `~/.kimi-code/` (2026-07-29).
+Updated 2026-09-06 from an upstream diff of `@moonshot-ai/kimi-code` 0.31.1 →
+main (0.41.0), the generated wire manifest
+(`packages/agent-core-v2/docs/wire-manifest.d.ts`), release notes 0.32.0–0.41.0,
+and fresh local sampling of `~/.kimi-code/` (CLI 0.31.1).
 
 ---
 
@@ -35,7 +39,11 @@ workdir, similar to Claude Code's project directories.
 `$KIMI_CODE_HOME/workspaces.json` maps each `workDirKey` to its working
 directory root, name, and `created_at` / `last_opened_at` timestamps
 (ISO-8601). It is a faster, more reliable way to resolve the project path than
-decoding the bucket name.
+decoding the bucket name. The file is versioned and nested:
+
+```json
+{"version":1,"workspaces":{"wd_sessions-chronicle_a75d38aead93":{"root":"/home/user/Projets/sessions-chronicle","name":"sessions-chronicle","created_at":"...","last_opened_at":"..."}}}
+```
 
 ---
 
@@ -47,9 +55,12 @@ sessions/<workDirKey>/<sessionId>/
 ├── agents/
 │   ├── main/
 │   │   ├── wire.jsonl       # Main agent event journal (see below)
-│   │   └── plans/           # Plan-mode plan files (<id>.md), when plan mode was used
+│   │   ├── plans/           # Plan-mode plan files (<id>.md), when plan mode was used
+│   │   ├── blobs/           # Inline media offloaded out of wire records (0.32+ era)
+│   │   └── file-history/    # Turn-level file history blobs (always on since 0.41.0)
 │   └── <subagentId>/        # e.g. agent-0 — one directory per subagent
-│       └── wire.jsonl       # Subagent event journal
+│       ├── wire.jsonl       # Subagent event journal
+│       └── tool-results/    # Spilled large tool outputs (observed locally 2026-09-06)
 ├── logs/
 │   └── kimi-code.log        # Session-level diagnostic log (only when a diagnostic event occurs)
 ├── tasks/                   # Background task persistence (<task_id>.json + output.log)
@@ -90,7 +101,8 @@ Session-level metadata. Observed local sample:
 |-------|-------------|
 | `createdAt` / `updatedAt` | ISO-8601 strings |
 | `title` | Session title; auto-set once from the first prompt, see below |
-| `isCustomTitle` | Whether the title was set manually (`/title`); once `true`, auto-titling never touches `title` again |
+| `isCustomTitle` | Legacy boolean: whether the title was set manually (`/title`); once `true`, auto-titling never touches `title` again. Still dual-written for back-compat |
+| `titleKind` | `replaceable` \| `generated` \| `custom` — successor of `isCustomTitle` at main (`generated` covers the experimental automatic titling from 0.36.1); readers normalize the legacy boolean |
 | `lastPrompt` | Most recent user prompt (sanitized, max 4000 chars) |
 
 **Auto-titling** (`packages/agent-core-v2/src/agent/rpc/prompt-metadata.ts`):
@@ -104,15 +116,19 @@ the title is a plain `slice(0, 200)` of the result. Media parts become
 `[image]`/`[audio]`/`[video]`; skill invocations title as
 `/skill-name args`. `/title <text>` (alias `/rename`) persists
 `{title, isCustomTitle: true}`; `/fork` accepts an optional title.
-| `workDir` | Working directory (observed locally) |
-| `agents` | Map of agent id → `{homedir, type, parentAgentId, ...}` — see [Threading](#threading) |
+| `workDir` | Working directory. Dual-written with the schema-canonical `cwd`; upstream readers normalize legacy `workDir` to `cwd` on read |
+| `agents` | Map of agent id → `{homedir, type, parentAgentId, labels?, ...}` — see [Threading](#threading) |
 | `forkedFrom` | Source session id when created via `/fork` (optional) |
+| `archivedAt` | Archive timestamp in epoch ms (optional, added after 0.31.1) |
+| `lastTurnReason` | `completed` \| `cancelled` \| `failed` — outcome of the last turn, persisted across restarts (0.34.0) |
 | `custom` | Free-form extension map |
 
 Upstream schema (`packages/klient/src/contract/session/metadata.ts`,
-`sessionMetaSchema` / `agentMetaSchema`) additionally defines `id`, `version`,
-`archived`, and `cwd`; agent entries can also carry `forkedFrom`, `labels`,
-and `swarmItem`.
+`sessionMetaSchema` / `agentMetaSchema`, `SESSION_META_VERSION = 2`)
+additionally defines `id`, `version`, `archived`, and `cwd`; agent entries can
+also carry `forkedFrom`, `labels`, and `swarmItem`. Locally sampled sessions
+already carry `id`, `version`, and `cwd` on disk alongside the dual-written
+`workDir` / `isCustomTitle`.
 
 ---
 
@@ -130,14 +146,22 @@ The **first line** is always a metadata envelope:
 {"type":"metadata","protocol_version":"1.5","created_at":1785279574895}
 ```
 
+`protocol_version` is `"1.5"` at main (no 1.6 yet), but `"1.4"` and `"1.5"`
+coexist in same-day local data, and subagent journals may omit `created_at`.
+Since 0.32-era releases, every wire record payload also carries `agentId`.
+
 Upstream references: `packages/agent-core-v2/src/wire/record.ts`
-(`WireRecord`, `WireMetadataRecord`) and the per-domain `*Ops.ts` modules that
-register each record type.
+(`WireRecord`, `WireMetadataRecord`), the per-domain `*Ops.ts` modules that
+register each record type, and the generated
+`packages/agent-core-v2/docs/wire-manifest.d.ts` — the authoritative list of
+durable record types (60 at main).
 
 ### Record types
 
-Registered upstream (`packages/agent-core-v2/src/agent/**/*Ops.ts`), all
-observed locally unless noted:
+Registered upstream (`packages/agent-core-v2/src/agent/**/*Ops.ts` and the
+generated `wire-manifest.d.ts`), all observed locally unless noted. Records
+marked *(0.32+)* were added between 0.31.1 and main (0.41.0) and are not yet
+observable with a 0.31.1 local install:
 
 | Type | Payload highlights |
 |------|--------------------|
@@ -146,22 +170,39 @@ observed locally unless noted:
 | `context.apply_compaction`, `context.clear`, `context.undo` | Context maintenance (compaction summaries, rewind) |
 | `turn.prompt` | `input`: content parts of the user prompt; `origin.kind` |
 | `turn.cancel`, `turn.steer` | Turn interruption / mid-turn steering |
+| `turn.ended` | Turn outcome summary: `turnId`, `reason`, `durationMs` (observed locally) |
+| `turn.step.interrupted`, `turn.step.retrying` *(0.32+)* | Step interruption / retry markers |
+| `prompt.accepted`, `prompt.steered`, `prompt.completed`, `prompt.aborted` *(0.32+)* | Prompt lifecycle |
 | `llm.request` | `kind`, `provider`, `model`, `modelAlias`, `thinkingEffort`, `maxTokens`, `messageCount`, `turnStep`, `systemPromptHash`, `toolsHash` — one record per LLM request (per step) |
 | `llm.tools_snapshot` | Tool schemas sent with a request (`hash`, `tools`) |
-| `usage.record` | `model`, `usage` (see [Token usage](#token-usage)), `usageScope` (e.g. `"turn"`) |
+| `usage.record` | `model`, `usage` (see [Token usage](#token-usage)), `usageScope` (`"turn"` \| `"session"`) |
 | `config.update` | `modelAlias`, `thinkingEffort` — active model/thinking changes |
 | `tools.set_active_tools`, `tools.reset_active_tools` | Active tool list (`names`) |
 | `tools.update_store` | Observed locally; dynamic tool store updates |
+| `tools.register_user_tool`, `tools.unregister_user_tool` | User-tool registration |
 | `mcp.tools_discovered` | `serverName`, `hash`, `tools`, `enabledNames` |
 | `permission.record_approval_result` | `turnId`, `toolCallId`, `toolName`, `action`, `sessionApprovalRule`, `result` |
-| `permission.set_mode`, `permission.rules.add` | Permission mode / rule changes |
+| `permission.set_mode` | Permission mode changes. (`permission.rules.add` is no longer persisted at main — rule additions are live-only) |
 | `plan_mode.enter`, `plan_mode.exit`, `plan_mode.cancel`, `plan.revision` | Plan mode lifecycle |
-| `skill.activate` | Skill activation (see [Skills](#skills--slash-commands)) |
 | `swarm_mode.enter`, `swarm_mode.exit` | AgentSwarm lifecycle |
+| `tower_mode.enter`, `tower_mode.exit` *(0.32+)* | Experimental tower mode lifecycle (0.40.0–0.41.0) |
 | `task.started`, `task.terminated` | Background task lifecycle |
+| `task.waitDelivered` *(0.32+)* | WaitFor-tool delivery notice (0.38.0) |
+| `cron.add`, `cron.cursor`, `cron.delete` | Scheduled-task persistence |
+| `interaction.request`, `interaction.resolved` | Interactive elicitation request/response (observed locally) |
+| `interruptionReminder.recorded` | Interruption reminder marker (observed locally) |
+| `profile.bind` | Profile binding; observed in subagent journals |
 | `goal.create`, `goal.update`, `goal.clear`, `forked` | Goal mode / session fork (not observed locally yet) |
 | `full_compaction.begin`, `full_compaction.complete`, `full_compaction.cancel` | Full-compaction lifecycle (not observed locally yet) |
-| `context_size.measured` | Context window measurement (not observed locally yet) |
+| `token_counting.measured`, `token_counting.rebased`, `token_counting.truncated`, `token_counting.turn_recorded` *(0.32+)* | Token counting; replaces the removed `context_size.measured` |
+| `file_history.checkpoint`, `file_history.tracked` *(0.32+)* | Turn-level file history; always on since 0.41.0 |
+| `plugin.session_start` *(0.32+)* | Plugin lifecycle |
+| `runtime.set_binding` *(0.32+)* | Runtime binding |
+
+Removed since 0.31.1: `context_size.measured` (→ `token_counting.*`),
+`permission.rules.add` (live-only), and `skill.activate` (renamed
+`skill.activated`, no longer durable — see
+[Skills](#skills--slash-commands)).
 
 ### Loop events
 
@@ -204,8 +245,10 @@ User prompts appear twice:
 - `context.append_message` records the full message as folded into the model
   context: `{"message":{"role":"user","content":[...],"toolCalls":[],"origin":{"kind":"user"}}}`
 
-Observed `origin.kind` values: `user`, `injection`, `skill_activation`,
-`system_trigger`.
+Upstream defines 12 `origin.kind` values: `user`, `skill_activation`,
+`plugin_command`, `injection`, `shell_command`, `compaction_summary`,
+`system_trigger`, `task`, `cron_job`, `cron_missed`, `hook_result`, `retry`.
+Locally observed so far: `user`, `injection`, `skill_activation`.
 
 ### Token usage
 
@@ -265,11 +308,14 @@ independently afterwards.
 
 ## Skills / Slash Commands
 
-- Skill activation is recorded as a `skill.activate` wire record.
-- Skill-driven prompts are visible through `turn.prompt` / `context.append_message`
-  records whose `origin.kind` is `skill_activation` (11 observed locally).
-- Other injected content uses `origin.kind` values `injection` or
-  `system_trigger`.
+- Skill activation is no longer persisted as a wire record at main: the former
+  `skill.activate` record was renamed `skill.activated` and is live-only. The
+  durable marker is `origin.kind == "skill_activation"` on `turn.prompt` /
+  `context.append_message` records (11 observed locally), which also carry
+  structured fields (`skillName`, `skillPath`, `skillSource`, `skillArgs`,
+  `activationId`, `trigger`).
+- Other injected content uses `origin.kind` values such as `injection` or
+  `system_trigger` (12 kinds upstream — see [User messages](#user-messages)).
 
 ---
 
@@ -319,6 +365,13 @@ The parser and indexer implement the current TypeScript CLI format:
   transcript content, and fingerprints are pruned.
 - Custom `$KIMI_CODE_HOME` locations work when visible in the Flatpak sandbox.
   Legacy sessions under `~/.kimi` are not parsed.
+- Unknown or newer wire records (the 0.32–0.41 additions such as `prompt.*`,
+  `token_counting.*`, `file_history.*`, `tower_mode.*`) are skipped without
+  error, and none of the record types removed upstream (`skill.activate`,
+  `context_size.measured`, `permission.rules.add`) were consumed by the parser
+  (verified 2026-09-06). `state.json` is read with both `workDir` and `cwd`,
+  and `workspaces.json` with its versioned nested shape, so the
+  `titleKind`/`cwd` transition is absorbed without parser changes.
 
 ---
 
@@ -328,8 +381,9 @@ The parser and indexer implement the current TypeScript CLI format:
 - [Official docs: Sessions and context](https://github.com/MoonshotAI/kimi-code/blob/main/docs/en/guides/sessions.md)
 - [Official docs: Data locations](https://github.com/MoonshotAI/kimi-code/blob/main/docs/en/configuration/data-locations.md)
 - [Wire record definitions (`packages/agent-core-v2/src/wire/record.ts`)](https://github.com/MoonshotAI/kimi-code/blob/main/packages/agent-core-v2/src/wire/record.ts)
+- [Generated wire manifest (`packages/agent-core-v2/docs/wire-manifest.d.ts`)](https://github.com/MoonshotAI/kimi-code/blob/main/packages/agent-core-v2/docs/wire-manifest.d.ts) — authoritative durable-record list
 - [Loop event model (`packages/agent-core-v2/src/agent/contextMemory/loopEventFold.ts`)](https://github.com/MoonshotAI/kimi-code/blob/main/packages/agent-core-v2/src/agent/contextMemory/loopEventFold.ts)
 - [Session metadata contract (`packages/klient/src/contract/session/metadata.ts`)](https://github.com/MoonshotAI/kimi-code/blob/main/packages/klient/src/contract/session/metadata.ts)
 - [Message/content contract (`packages/agent-core-v2/src/kosong/contract/message.ts`)](https://github.com/MoonshotAI/kimi-code/blob/main/packages/agent-core-v2/src/kosong/contract/message.ts)
 - [Legacy migration (`packages/migration-legacy`)](https://github.com/MoonshotAI/kimi-code/tree/main/packages/migration-legacy)
-- Local sampling of `~/.kimi-code/` (2026-07-29)
+- Local sampling of `~/.kimi-code/` (2026-07-29, 2026-09-06)

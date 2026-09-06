@@ -89,7 +89,7 @@ Cross-assistant comparison of Claude Code, Codex, OpenCode, Mistral Vibe, and Ki
 
 | Field Category | Claude Code | Codex | OpenCode | Mistral Vibe | Kimi Code |
 |----------------|-------------|-------|----------|-------------|-----------|
-| **Event Type** | `type` (`user`, `assistant`, `system`, `summary`, `progress`, `queue-operation`, `saved_hook_context`, `pr-link`, `file-history-snapshot`, `file-history-delta`, `attachment`, `permission-mode`, `last-prompt`, `mode`, `ai-title`, plus v2.1.226+ `atis-latch`, `bridge-session`, `cost-state`, `agent-name`, ...); `system` subtypes observed locally are `local_command`, `turn_duration`, `compact_boundary`, `stop_hook_summary`, `away_summary`, `informational`; local sessions v2.1.216–v2.1.263 carry titles in `ai-title` events and show no `summary` | Rollout envelope `type` (`session_meta`, `event_msg`, `response_item`, `turn_context`, ...); nested `event_msg.payload.type` (`item_completed` for paginated history; historical/protocol variants include `user_message`, `agent_message`, `exec_command_*`, `mcp_tool_call_*`, `collab_agent_*`, `collab_waiting_*`, `collab_close_*`, `collab_resume_*`, ...); tool calls can also appear as `response_item` `function_call` / `function_call_output` | Session metadata only (messages in separate files) | `role` (`system`, `user`, `assistant`, `tool`) in `messages.jsonl`; tool calls on assistant messages via `tool_calls` | Wire record `type` (`context.append_message`, `context.append_loop_event`, `turn.prompt`, `llm.request`, `usage.record`, `config.update`, `skill.activate`, `plan_mode.*`, `swarm_mode.*`, `task.*`, `goal.*`, ...); nested loop-event `event.type` (`step.begin`, `step.end`, `content.part`, `tool.call`, `tool.result`) |
+| **Event Type** | `type` (`user`, `assistant`, `system`, `summary`, `progress`, `queue-operation`, `saved_hook_context`, `pr-link`, `file-history-snapshot`, `file-history-delta`, `attachment`, `permission-mode`, `last-prompt`, `mode`, `ai-title`, plus v2.1.226+ `atis-latch`, `bridge-session`, `cost-state`, `agent-name`, ...); `system` subtypes observed locally are `local_command`, `turn_duration`, `compact_boundary`, `stop_hook_summary`, `away_summary`, `informational`; local sessions v2.1.216–v2.1.263 carry titles in `ai-title` events and show no `summary` | Rollout envelope `type` (`session_meta`, `event_msg`, `response_item`, `turn_context`, ...); nested `event_msg.payload.type` (`item_completed` for paginated history; historical/protocol variants include `user_message`, `agent_message`, `exec_command_*`, `mcp_tool_call_*`, `collab_agent_*`, `collab_waiting_*`, `collab_close_*`, `collab_resume_*`, ...); tool calls can also appear as `response_item` `function_call` / `function_call_output` | Session metadata only (messages in separate files) | `role` (`system`, `user`, `assistant`, `tool`) in `messages.jsonl`; tool calls on assistant messages via `tool_calls` | Wire record `type` (`context.append_message`, `context.append_loop_event`, `turn.prompt`, `llm.request`, `usage.record`, `config.update`, `plan_mode.*`, `swarm_mode.*`, `task.*`, `goal.*`, `cron.*`, `interaction.*`, `turn.ended`, plus post-0.31.1 additions `prompt.*`, `token_counting.*`, `file_history.*`, `tower_mode.*`, ...; `skill.activate` was renamed `skill.activated` and is no longer persisted at main); nested loop-event `event.type` (`step.begin`, `step.end`, `content.part`, `tool.call`, `tool.result`) |
 | **Identity** | `uuid`, `parentUuid` (tree structure), plus `promptId` on user turns, `agentId` in subagent logs, and `logicalParentUuid` on some compaction events | Thread ID at `session_meta.payload.id`; current upstream also carries root `session_id` and can reference another rollout via `history_base`; event-specific IDs like `call_id`, `sender_thread_id`, `receiver_thread_id` | `id`, `parentID` (hierarchical sessions) | `message_id` (UUID, optional) on `user`/`assistant` messages; absent on `tool` role. Tool calls have an `id` and tool responses reference it via `tool_call_id` | Session id in directory name (`session_<uuid>`); loop events carry `uuid`/`stepUuid`, `turnId` + `step`; tool correlation via `toolCallId` (short synthetic ids like `Bash_0`); agents keyed in `state.json.agents` with `parentAgentId` |
 | **Timestamp** | `timestamp` (ISO-8601) | Top-level rollout-line `timestamp` (ISO-8601 string) | `time.created`, `time.updated` (session level) | Session-level only in `meta.json`: `start_time`, `end_time` (ISO-8601). No per-message timestamps | Per-record `time` (epoch ms) on every wire record; session-level `createdAt`/`updatedAt` (ISO-8601) in `state.json` |
 | **Content** | Nested: `message.content`; tool results also appear inline as `tool_result` blocks, can be duplicated in top-level `toolUseResult`, and large outputs may be materialized under `tool-results/` | Legacy messages in `event_msg.payload.message`; paginated messages in `item_completed` TurnItems (not parsed locally), plus optional `response_item.payload.content[]` blocks; skills can also be injected as `response_item` user messages wrapped in `<skill>...</skill>` | Stored in `message/ses_xxx/` directory + `part/msg_xxx/` | `messages.jsonl` lines with `content`; tool output stored as `role: "tool"` messages | User input in `turn.prompt.input` / `context.append_message.message.content`; assistant text in `content.part` loop events (`part.type`: `text`, `think`, `image_url`, ...); tool output in `tool.result.result.output` (string or content parts) |
@@ -112,7 +112,7 @@ Cross-assistant comparison of Claude Code, Codex, OpenCode, Mistral Vibe, and Ki
   `response_item` user message wrapped in `<skill>...</skill>`
 - **OpenCode**: Session-level metadata (`projectID`, `workspaceID?`, `directory`, `version`, `title`)
 - **Mistral Vibe**: Session-level `meta.json` includes environment, optional git info, token/tool usage stats, tools snapshot, and configuration snapshot data
-- **Kimi Code**: Session-level `state.json` (`title`, `isCustomTitle`, `lastPrompt`, `workDir`, `agents` map, `forkedFrom`, `custom`); per-request `llm.request` records carry provider/model/thinking config plus prompt/tools hashes; top-level `workspaces.json` + `session_index.jsonl` index workdirs and sessions
+- **Kimi Code**: Session-level `state.json` (`title`, `titleKind` — dual-written with the legacy `isCustomTitle` boolean — `lastPrompt`, `cwd`/`workDir`, `id`, `version`, `agents` map with `parentAgentId` and `labels`, `forkedFrom`, `archivedAt`, `lastTurnReason`, `custom`); per-request `llm.request` records carry provider/model/thinking config plus prompt/tools hashes; top-level `workspaces.json` + `session_index.jsonl` index workdirs and sessions
 
 **Content Access:**
 - **Claude Code**: `event.message.content` (nested in JSONL events); some current tool-result user events also include top-level `toolUseResult`
@@ -130,8 +130,9 @@ Cross-assistant comparison of Claude Code, Codex, OpenCode, Mistral Vibe, and Ki
   `read_file` tool calls to `skills/<name>/SKILL.md`
 - **Kimi Code**: `turn.prompt.input` for raw user prompts and
   `context.append_loop_event.event.part` for assistant content; skill
-  activation has a structural marker via the `skill.activate` wire record and
-  `origin.kind == "skill_activation"` on prompt/message records
+  activation is marked by `origin.kind == "skill_activation"` on
+  prompt/message records (the former `skill.activate` wire record was renamed
+  `skill.activated` upstream and is no longer persisted at main)
 
 **File Organization:**
 - **Claude Code**: Main `UUID.jsonl` session file plus additional `agent-*.jsonl` subagent transcripts under `<session-id>/subagents/`; large materialized tool outputs can also appear under `<session-id>/tool-results/`
@@ -159,7 +160,7 @@ Goal: determine whether model information is available per message, per turn, an
 - OpenCode: `packages/opencode/src/session/message-v2.ts` and `packages/sdk/js/src/v2/gen/types.gen.ts`.
 - Mistral Vibe: `vibe/core/session/session_logger.py` and `vibe/core/types.py`.
 - Claude Code: direct `~/.claude/projects/**/*.jsonl` sampling (2026-02-24, 2026-03-31, 2026-07-27, and 2026-09-06 covering v2.1.220–v2.1.263), fixture comparison, the official changelog, and Anthropic model documentation. Claude Code is closed source, so no upstream types or migrations are available as primary evidence.
-- Kimi Code: upstream `packages/agent-core-v2` sources (`wire/record.ts`, `agent/llmRequester/llmRequestOps.ts`, `agent/profile/profileOps.ts`) and direct `~/.kimi-code/sessions/**/wire.jsonl` sampling (2026-07-29).
+- Kimi Code: upstream `packages/agent-core-v2` sources (`wire/record.ts`, `agent/llmRequester/llmRequestOps.ts`, `agent/profile/profileOps.ts`), the generated wire manifest (`packages/agent-core-v2/docs/wire-manifest.d.ts`, diffed between tags 0.31.1 and main/0.41.0 on 2026-09-06), and direct `~/.kimi-code/sessions/**/wire.jsonl` sampling (2026-07-29, 2026-09-06).
 
 ---
 
@@ -213,12 +214,21 @@ Goal: determine whether model information is available per message, per turn, an
   linked through `state.json.agents[*].parentAgentId` with their own journal.
   The parser discovers current bundles under `$KIMI_CODE_HOME` (default
   `~/.kimi-code`) when visible in the Flatpak sandbox. Legacy `~/.kimi`
-  sessions use a different wire envelope and are not parsed.
-- **Kimi Code skills**: Skill activation has a structural marker — a
-  `skill.activate` wire record — and skill-driven prompts carry
+  sessions use a different wire envelope and are not parsed. The 0.32–0.41
+  upstream releases added 17 wire record types (`prompt.*`, `token_counting.*`,
+  `file_history.*`, `tower_mode.*`, ...) and renamed/removed three
+  (`skill.activate` → non-durable `skill.activated`, `context_size.measured` →
+  `token_counting.*`, `permission.rules.add` → live-only); all of it is
+  additive from the parser's perspective, which tolerates unknown records and
+  consumes none of the removed types (2026-09-06 watch pass).
+- **Kimi Code skills**: Skill activation is marked by
   `origin.kind == "skill_activation"` on `turn.prompt` /
-  `context.append_message` records. Other injected content uses
-  `origin.kind` values `injection` or `system_trigger`.
+  `context.append_message` records, which also carry structured fields
+  (`skillName`, `skillPath`, `skillSource`, `skillArgs`, `activationId`,
+  `trigger`). The former `skill.activate` wire record was renamed
+  `skill.activated` upstream and is no longer persisted at main (2026-09-06
+  watch pass). Other injected content uses `origin.kind` values such as
+  `injection` or `system_trigger` (12 kinds exist upstream in total).
 
 ---
 
@@ -273,7 +283,7 @@ Each tool can persist token usage metrics, but **the granularity and presence ar
 | **Codex** | `event_msg` events: `payload.type == "token_count"` | Running session totals + per-call deltas | `info.total_token_usage` is a running total; `info.last_token_usage` is the last model call. `cached_input_tokens` is the cached subset of `input_tokens`, while `reasoning_output_tokens` is exposed as a separate field in the payload. Some events may have `info: null`. |
 | **OpenCode** | Assistant message metadata (`message.tokens`) and/or `part.type == "step-finish"` | Per assistant message and/or per step | Presence depends on provider/backends and OpenCode version; avoid double-counting if both are present. `tokens.cache.read` / `tokens.cache.write` are separate fields, but whether `tokens.input` already includes cache is provider-dependent. |
 | **Mistral Vibe** | `meta.json.stats` (`AgentStats`) | Session totals + last turn | `stats` may be `null` in minimal/older logs or when logging is configured without stats. `messages.jsonl` does not include per-message tokens; no separate cache/reasoning token counters in `stats`. Reasoning content itself is available per-message via `reasoning_content` on assistant messages, but not as a separate token counter. `stats` also carries tool-call counters (`tool_calls_agreed/rejected/failed/succeeded`), performance metrics (`steps`, `tokens_per_second`, `last_turn_duration`), and pricing (`input_price_per_million`, `output_price_per_million`, `session_cost`). |
-| **Kimi Code** | `usage.record` wire records (`usageScope: "turn"`) and `step.end.usage` | Per turn + per step | Same shape in both carriers: `inputOther` (uncached input), `output`, `inputCacheRead`, `inputCacheCreation`. Cache is explicit and separate, like Claude Code. `usage.record` also carries the `model`. `step.end` adds latency metrics and `finishReason`. |
+| **Kimi Code** | `usage.record` wire records (`usageScope: "turn" \| "session"`) and `step.end.usage` | Per turn + per step | Same shape in both carriers: `inputOther` (uncached input), `output`, `inputCacheRead`, `inputCacheCreation`. Cache is explicit and separate, like Claude Code. `usage.record` also carries the `model`. `step.end` adds latency metrics and `finishReason`. |
 
 ### Cross-provider token semantics
 
@@ -372,6 +382,7 @@ Each tool can persist token usage metrics, but **the granularity and presence ar
 ---
 
 **Last Updated**: 2026-09-06  
+**Status (2026-09-06 Kimi Code watch pass)**: Upstream diffed between tags 0.31.1 (locally installed CLI) and main (0.41.0) using the generated wire manifest (`packages/agent-core-v2/docs/wire-manifest.d.ts`), plus release notes 0.32.0–0.41.0 and a fresh local sample of `~/.kimi-code/sessions/`. Confirmed: 17 new durable wire record types (`prompt.*`, `token_counting.*`, `file_history.*`, `tower_mode.*`, `turn.step.interrupted/retrying`, `task.waitDelivered`, `plugin.session_start`, `runtime.set_binding`), three removals (`skill.activate` → non-durable `skill.activated`, `context_size.measured` → `token_counting.*`, `permission.rules.add` → live-only), `agentId` on all wire payloads, `usage.record.usageScope`, `state.json` moving to `titleKind` (dual-written with `isCustomTitle`) plus `archivedAt` / `lastTurnReason` / `id` / `version` / `cwd` / agent `labels`, a 12-value `origin.kind` union, versioned nested `workspaces.json`, coexisting `protocol_version` 1.4/1.5, and subagent `tool-results/` spill directories. The parser tolerates unknown records, consumes none of the removed types, and already reads both `workDir`/`cwd` and the nested `workspaces.json`, so no parser change is justified; fixtures for the newer record types are still outstanding.  
 **Status (2026-09-06 Codex watch pass)**: Persistence policy verified at 0.153.4; source and reconstruction tests inspected at `ac192cd7937b0d73edc6dffe009940ae53782dd4`. Documented paginated-message support gaps, shared-prefix resolution, logical byte offsets, revert identity, child projection, and upstream error handling. Corrected existing archive/compression and direct-parent support. Local read-only sampling covered 348 rollouts, including 9 paginated files but no `history_base` examples. Upstream tests were inspected, not executed; introduction versions remain unknown.
 
 **Status (2026-09-06 Claude Code watch pass)**: Docs refreshed from a local scan of every `~/.claude/projects/**/*.jsonl` touched since 2026-08-01 (2269 events, versions v2.1.220 through v2.1.263), cross-checked against the official changelog. New event types `atis-latch`, `bridge-session`, `cost-state`, and `agent-name`; new fields `sessionKind`, `promptSource`, `attributionAgent`, `attributionMcpServer`/`attributionMcpTool`, `apiBlockIndex`, `turnCompanion`, `origin`, `lastSequenceNum`; sixteen new `attachment.type` variants and three new `system` subtypes; a non-session `<project-dir>/memory/` directory. No `summary` events across the whole range, widening the 2026-07-27 finding. The parser's catch-all match arm and the indexer's `.jsonl` extension filter absorb all of it, so no parser change is justified; fixtures for the new event types are still outstanding.  
