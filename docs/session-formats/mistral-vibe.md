@@ -69,11 +69,13 @@ Session-level metadata:
 | `tools_available` | Set of tools available to the agent for the session |
 | `config` | Optional config snapshot: `active_model`, `providers`, `models` arrays |
 | `agent_profile` | Optional selected profile/override metadata. On sub-agent child sessions, `agent_profile.name` holds the agent name (e.g. `"comique"`) used to pair the child with the parent's `task` call — see [Threading](#threading) |
+| `child_sessions` | Optional list of `ChildSessionLink` objects (`session_id`, `tool_call_id`, `agent`, `relative_path`) providing deterministic parent→child subagent linkage — see [Threading](#threading). Added conditionally by `persist_child_sessions()` |
+| `last_message_fingerprint` | SHA-256 of the last persisted non-system message; used internally for incremental append detection. Not parser-relevant |
 | `system_prompt` | System message object (`{"role": "system", "content": "..."}`) — moved here from `messages.jsonl` |
 | `loops` | Optional; agent loop metadata (added conditionally) |
 | `experiments` | Optional; experiment flags (added conditionally) |
 
-Upstream type: `SessionMetadata` in `vibe/core/types.py`.
+Upstream type: `SessionMetadata` in `vibe/core/types.py`. `child_sessions` uses the `ChildSessionLink` type (same module). The metadata dump in `_save_interaction_sync` (`session_logger.py`) merges the `SessionMetadata` model fields with runtime-only fields (`stats`, `tools_available`, `config`, `agent_profile`, `system_prompt`, `total_messages`, `last_message_fingerprint`).
 
 **Model metadata** is session-level via `meta.json.config` snapshot when present
 (`config.active_model`, plus `config.providers`/`config.models`).
@@ -89,12 +91,13 @@ Upstream type: `AgentStats` in `vibe/core/types.py`.
 Token totals:
 
 - `session_prompt_tokens`, `session_completion_tokens`
+- `session_cached_tokens` (provider cache-hit tokens, added v2.23.2)
 - `session_total_llm_tokens` (computed)
-- `context_tokens`, `last_turn_prompt_tokens`, `last_turn_completion_tokens`, `last_turn_total_tokens` (computed)
+- `context_tokens`, `last_turn_prompt_tokens`, `last_turn_completion_tokens`, `last_turn_cached_tokens`, `last_turn_total_tokens` (computed)
 
 Tool-call counters (per session):
 
-- `tool_calls_agreed`, `tool_calls_rejected`, `tool_calls_failed`, `tool_calls_succeeded`
+- `tool_calls_agreed`, `tool_calls_rejected`, `tool_calls_hook_denied` (added with hooks graduation), `tool_calls_failed`, `tool_calls_succeeded`
 
 Performance metrics:
 
@@ -103,6 +106,7 @@ Performance metrics:
 Pricing:
 
 - `input_price_per_million`, `output_price_per_million`
+- `cached_input_price_per_million` (optional, added v2.23.2)
 - `session_cost` (computed)
 
 Example (abridged):
@@ -121,10 +125,10 @@ Example (abridged):
 
 Current observed limitation:
 
-- No separate cache-token counters were observed in `meta.json.stats`.
-- No separate reasoning-token counter was observed in `meta.json.stats`; current logs expose aggregate prompt/completion totals only.
+- Cache-token counters (`session_cached_tokens`, `last_turn_cached_tokens`, `cached_input_price_per_million`) were added in v2.23.2; older logs will not have them. The parser does not currently read them.
+- No separate reasoning-token counter exists in `stats`; current logs expose aggregate prompt/completion (and now cached) totals only.
 - Reasoning content itself is available per-message via `reasoning_content` on assistant messages (see above), but is not reflected as a separate token counter in `stats`.
-- Cost is exposed as aggregate `session_cost` plus per-million unit pricing (`input_price_per_million`, `output_price_per_million`); there is no per-turn cost breakdown.
+- Cost is exposed as aggregate `session_cost` plus per-million unit pricing (`input_price_per_million`, `output_price_per_million`, `cached_input_price_per_million`); there is no per-turn cost breakdown.
 
 ---
 
@@ -151,11 +155,22 @@ Messages do not include a normalized model identifier field.
 | `images` | `user`, `assistant` | Attached image content, when present |
 | `injected` | any | Marks a message injected by the runtime (e.g. compaction summaries) rather than typed by the user |
 | `reasoning_content` | `assistant` | Thinking/reasoning block content (reasoning-capable models) |
-| `reasoning_signature` | `assistant` | Signature for reasoning blocks |
-| `reasoning_state` | `assistant` | State of the reasoning block (accumulates alongside `reasoning_content`) |
+| `reasoning_payloads` | `assistant` | Structured reasoning block payloads (`list[dict]`); supplements `reasoning_content` |
 | `reasoning_message_id` | `assistant` | Auto-generated UUID for the reasoning block when reasoning is present |
+| `tool_result` | `tool` | Optional `PersistedToolResult` object (`output` dict, `duration`, `cancelled`, `presentation`) providing structured tool output alongside the plain `content` string |
+| `context_boundary` | any | Set to `"compaction"` on messages that mark a context-compaction boundary; absent on normal messages |
+| `user_display_content` | `user` | Optional display-form content for the user message |
+| `input_text` | `user` | Optional raw input text |
+| `resources` | `user` | Optional list of `UserResource` attachments |
+| `manual_shell` | any | Optional `ManualShellContext` for manual shell operations |
 
-Upstream type: `LLMMessage` in `vibe/core/types.py`.
+Upstream type: `LLMMessage` in `vibe/core/types.py` (Pydantic model, `extra="ignore"`).
+
+> **Note:** Earlier versions of this document listed `reasoning_signature` and
+> `reasoning_state` as optional `assistant` fields. These do not exist in the
+> upstream `LLMMessage` type as of v2.24.1 (commit `4530b9ce`); they may have been
+> inferred from a now-stale sample. The confirmed reasoning fields are
+> `reasoning_content`, `reasoning_payloads`, and `reasoning_message_id`.
 
 ### Assistant Message with Tool Calls
 
@@ -242,6 +257,14 @@ linkage:
 - The child knows its parent because it lives under `<parent>/agents/`.
 - A parent `task` call is paired to a child by matching the call's `agent`
   argument against the child's `agent_profile.name`.
+
+Since v2.0.0, `meta.json.child_sessions` provides an optional **deterministic**
+linkage: each `ChildSessionLink` entry carries the child's `session_id`, the
+parent's `tool_call_id`, the `agent` name, and an optional `relative_path`.
+When present, this allows exact pairing of `task` calls to children — including
+parallel same-profile calls — without relying on chronological ordering.
+Sessions Chronicle's parser does not currently read `child_sessions` and falls
+back to the directory- and name-based heuristic described below.
 
 Vibe does not persist the parent tool-call id in the child metadata. Sessions
 Chronicle therefore pairs repeated calls to the same agent profile with child
@@ -392,9 +415,24 @@ fn extract_vibe_content(event: &Value) -> Option<String> {
   (by `agent_profile.name`, chronological best-effort pairing for repeats); the
   `tool` result is captured as the subagent's `result_summary`.
 - A missing `task.agent` argument is normalized to upstream's default
-  subagent, `explore`.
+  subagent, `explore`. (Note: the v2.24.1 "Default agent renamed to `ask`"
+  changelog entry refers to the main-session default agent, not the `task`
+  tool's subagent default — `TaskArgs.agent` still defaults to `"explore"`.)
+- `meta.json.child_sessions` (`ChildSessionLink[]`) can provide deterministic
+  `tool_call_id` → `child_session_id` pairing, but the parser does not
+  currently read it; it falls back to the directory-based heuristic above.
 - Generic `meta.json.parent_session_id` lineage is not interpreted as subagent
   linkage.
+
+**Fields not currently read by the parser:**
+
+- `meta.json.child_sessions` — deterministic subagent linkage (see above)
+- `meta.json.stats.session_cached_tokens` / `last_turn_cached_tokens` — cache
+  token counters (added v2.23.2)
+- `messages.jsonl` `tool_result` — structured `PersistedToolResult` with
+  `output`, `duration`, `cancelled`
+- `messages.jsonl` `context_boundary` — compaction boundary marker
+  (`"compaction"`)
 
 **Streaming:** Use `BufReader` line-by-line iteration on `messages.jsonl` —
 do not load entire JSONL into memory.
@@ -406,9 +444,11 @@ do not load entire JSONL into memory.
 - [Mistral Vibe Repository](https://github.com/mistralai/mistral-vibe)
 - [Mistral Vibe session logger (`meta.json` + `messages.jsonl` + config dump)](https://github.com/mistralai/mistral-vibe/blob/main/vibe/core/session/session_logger.py)
 - [Mistral Vibe `task` tool (subagent trace location and agent-prefixed directory naming)](https://github.com/mistralai/mistral-vibe/blob/main/vibe/core/tools/builtins/task.py)
+- [Mistral Vibe `TaskArgs` / `TaskResult` types (default agent = `"explore"`)](https://github.com/mistralai/mistral-vibe/blob/main/vibe/core/subagents.py)
+- [Mistral Vibe builtin agent profiles (`BuiltinAgentName`, `AgentProfile`)](https://github.com/mistralai/mistral-vibe/blob/main/vibe/core/agents/models.py)
 - [Mistral Vibe session loader (filename constants `METADATA_FILENAME` = `meta.json`, `MESSAGES_FILENAME` = `messages.jsonl`)](https://github.com/mistralai/mistral-vibe/blob/main/vibe/core/session/session_loader.py)
 - [Mistral Vibe message/session models (`SessionMetadata`, `LLMMessage`, `AgentStats`)](https://github.com/mistralai/mistral-vibe/blob/main/vibe/core/types.py)
-- [Mistral Vibe CHANGELOG (verified through 2.14.1, 2026-06-08)](https://github.com/mistralai/mistral-vibe/blob/main/CHANGELOG.md)
+- [Mistral Vibe CHANGELOG (verified through 2.24.1, 2026-08-11)](https://github.com/mistralai/mistral-vibe/blob/main/CHANGELOG.md)
 - [Mistral Vibe Configuration Docs](https://docs.mistral.ai/mistral-vibe/introduction/configuration)
 - [Mistral Vibe system prompt skill section (`<available_skills>`)](https://github.com/mistralai/mistral-vibe/blob/main/vibe/core/system_prompt.py)
 - [Mistral Vibe CLI skill slash-command handler](https://github.com/mistralai/mistral-vibe/blob/main/vibe/cli/textual_ui/app.py)
