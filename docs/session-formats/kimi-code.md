@@ -204,7 +204,7 @@ observable with a 0.31.1 local install:
 | `prompt.accepted`, `prompt.steered`, `prompt.completed`, `prompt.aborted` *(0.32+)* | Prompt lifecycle |
 | `llm.request` | `kind`, `provider`, `model`, `modelAlias`, `thinkingEffort`, `maxTokens`, `messageCount`, `turnStep`, `systemPromptHash`, `toolsHash` — one record per LLM request (per step) |
 | `llm.tools_snapshot` | Tool schemas sent with a request (`hash`, `tools`) |
-| `usage.record` | `model`, `usage` (see [Token usage](#token-usage)), `usageScope` (`"turn"` \| `"session"`) |
+| `usage.record` | `model`, `usage` (see [Token usage](#token-usage)), `usageScope` (`"turn"` \| `"session"` — request provenance, both are deltas) |
 | `config.update` | `modelAlias`, `thinkingEffort` — active model/thinking changes |
 | `tools.set_active_tools`, `tools.reset_active_tools` | Active tool list (`names`) |
 | `tools.update_store` | Observed locally; dynamic tool store updates |
@@ -281,13 +281,34 @@ Locally observed so far: `user`, `injection`, `skill_activation`.
 
 ### Token usage
 
-Two carriers, both per turn/step:
+Two carriers:
 
 - `usage.record` records: `{"model":"moonshot-ai/kimi-k3","usage":{"inputOther":23815,"output":86,"inputCacheRead":11264,"inputCacheCreation":0},"usageScope":"turn"}`
-- `step.end.usage`: same shape per step
+- `step.end.usage`: same shape, one per step
 
 Cache tokens (`inputCacheRead`, `inputCacheCreation`) are reported separately
 from uncached input (`inputOther`) — same convention as Claude Code.
+
+**`usageScope`** (`packages/agent-core-v2/src/session/usage/usageAgentModel.ts`)
+labels *what caused* the LLM request, not how the numbers accumulate:
+
+- `"turn"` — the request came from a turn (`source.type === 'turn'`), i.e. the
+  normal prompt → step loop.
+- `"session"` — the request had no turn source: an `operation` request or one
+  emitted with no source at all. At main the only `operation` producer is full
+  compaction (`fullCompactionService.ts`, `requestKind: 'full_compaction'`), so
+  in practice `"session"` records are the tokens auto-compaction spent on the
+  session's behalf.
+
+Both scopes are **deltas, never snapshots**: `UsageAgentModel` folds every
+`usage.record` into `byModel` with `addUsage` regardless of scope, so a correct
+session total is the sum of *all* `usage.record` payloads. Summing only
+`"turn"` yields the conversational cost and under-reports the session's real
+token spend by whatever compaction consumed.
+
+Sessions Chronicle currently sums only `usageScope == "turn"`
+(`crates/core/src/parsers/kimi_code.rs`), so displayed totals exclude
+compaction usage.
 
 ### Model metadata
 
