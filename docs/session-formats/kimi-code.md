@@ -100,22 +100,10 @@ Session-level metadata. Observed local sample:
 | Field | Description |
 |-------|-------------|
 | `createdAt` / `updatedAt` | ISO-8601 strings |
-| `title` | Session title; auto-set once from the first prompt, see below |
-| `isCustomTitle` | Legacy boolean: whether the title was set manually (`/title`); once `true`, auto-titling never touches `title` again. Still dual-written for back-compat |
+| `title` | Session title; prompt-derived, generated, or custom — see [Titling](#titling) |
+| `isCustomTitle` | Legacy boolean: whether the title was set manually (`/title`). Superseded by `titleKind`, still dual-written as `titleKind === 'custom'` for back-compat |
 | `titleKind` | `replaceable` \| `generated` \| `custom` — successor of `isCustomTitle` at main (`generated` covers the experimental automatic titling from 0.36.1); readers normalize the legacy boolean |
 | `lastPrompt` | Most recent user prompt (sanitized, max 4000 chars) |
-
-**Auto-titling** (`packages/agent-core-v2/src/agent/rpc/prompt-metadata.ts`):
-there is no LLM-generated title. On each submitted prompt, `lastPrompt` is
-updated, and `title` is set only when `!isCustomTitle` and the current title
-is unset/empty/`"New Session"` — so the first prompt effectively freezes the
-title. Before storage, the prompt text is sanitized (private keys, bearer
-tokens, `api_key`/`token`/`secret` values, `sk-…` strings, and long
-base64-ish blobs are replaced with `[redacted]`; whitespace is collapsed) and
-the title is a plain `slice(0, 200)` of the result. Media parts become
-`[image]`/`[audio]`/`[video]`; skill invocations title as
-`/skill-name args`. `/title <text>` (alias `/rename`) persists
-`{title, isCustomTitle: true}`; `/fork` accepts an optional title.
 | `workDir` | Working directory. Dual-written with the schema-canonical `cwd`; upstream readers normalize legacy `workDir` to `cwd` on read |
 | `agents` | Map of agent id → `{homedir, type, parentAgentId, labels?, ...}` — see [Threading](#threading) |
 | `forkedFrom` | Source session id when created via `/fork` (optional) |
@@ -129,6 +117,47 @@ additionally defines `id`, `version`, `archived`, and `cwd`; agent entries can
 also carry `forkedFrom`, `labels`, and `swarmItem`. Locally sampled sessions
 already carry `id`, `version`, and `cwd` on disk alongside the dual-written
 `workDir` / `isCustomTitle`.
+
+### Titling
+
+A session title is in one of three states, tracked by `titleKind`
+(`replaceable` | `generated` | `custom`). `isCustomTitle` is derived on write as
+`titleKind === 'custom'` (`packages/agent-core-v2/src/session/sessionMetadata/sessionMetadataService.ts`,
+`toPersisted`), so both fields always agree on disk.
+
+**Prompt-derived (`replaceable`)** —
+`packages/agent-core-v2/src/session/sessionMetadata/promptMetadata.ts`. On each
+submitted prompt `lastPrompt` is updated, and `title` is set only when
+`titleKind !== 'custom'` **and** the current title is unset/empty/`"New Session"`
+— so later prompts never re-derive the title. Before storage the prompt text is
+sanitized (`src/agent/prompt/promptMetadataText.ts`): private keys,
+`Authorization: Bearer …`, `api_key`/`token`/`secret`/`password` values, `sk-…`
+strings and long base64-ish blobs become `[redacted]`; control characters and
+whitespace collapse to single spaces. `lastPrompt` is a `slice(0, 4000)` of the
+result, the title a `slice(0, 200)` of the same text. Media parts become
+`[image]`/`[audio]`/`[video]`; skill invocations title as `/skill-name args`.
+
+**Generated (`generated`, 0.36.1+, experimental)** —
+`packages/agent-core-v2/src/session/sessionTitle/sessionTitleService.ts`, gated
+by the `auto_session_title` flag (env
+`KIMI_CODE_EXPERIMENTAL_AUTO_SESSION_TITLE`, default off). It calls the managed
+`chat_title` endpoint over Kimi OAuth and applies the reply (truncated to 200
+chars) through `setGeneratedTitleIfUncustomized`, which overwrites a
+`replaceable` title but never a `custom` one unless `force` is set. The input is
+built from one of three sources: `user_prompts` (the first three user prompts,
+default), `first_turn` (first user + assistant excerpt), or `digest` (elided
+multi-turn excerpt). Nothing in agent-core triggers it — clients call it over
+RPC (`sessionTitleService.generateTitle`, exposed by `kap-server`) once the
+first turn completes, or on demand from the rename field.
+
+**Custom (`custom`)** — `/title <text>` (alias `/rename`) calls `setTitle()`,
+which persists `{title, titleKind: 'custom'}`. Terminal state: no auto-titling
+path replaces it. `/fork` accepts an optional title.
+
+**Reading legacy files** — `normalizeSessionTitle` maps `isCustomTitle: true` →
+`custom`, an otherwise valid `titleKind` → itself, `isCustomTitle: false` →
+`replaceable`, a bare `customTitle` → `custom`, and a title carrying neither
+marker → `replaceable`.
 
 ---
 
@@ -384,6 +413,7 @@ The parser and indexer implement the current TypeScript CLI format:
 - [Generated wire manifest (`packages/agent-core-v2/docs/wire-manifest.d.ts`)](https://github.com/MoonshotAI/kimi-code/blob/main/packages/agent-core-v2/docs/wire-manifest.d.ts) — authoritative durable-record list
 - [Loop event model (`packages/agent-core-v2/src/agent/contextMemory/loopEventFold.ts`)](https://github.com/MoonshotAI/kimi-code/blob/main/packages/agent-core-v2/src/agent/contextMemory/loopEventFold.ts)
 - [Session metadata contract (`packages/klient/src/contract/session/metadata.ts`)](https://github.com/MoonshotAI/kimi-code/blob/main/packages/klient/src/contract/session/metadata.ts)
+- [Session title service (`packages/agent-core-v2/src/session/sessionTitle/sessionTitleService.ts`)](https://github.com/MoonshotAI/kimi-code/blob/main/packages/agent-core-v2/src/session/sessionTitle/sessionTitleService.ts) — experimental `chat_title` generation
 - [Message/content contract (`packages/agent-core-v2/src/kosong/contract/message.ts`)](https://github.com/MoonshotAI/kimi-code/blob/main/packages/agent-core-v2/src/kosong/contract/message.ts)
 - [Legacy migration (`packages/migration-legacy`)](https://github.com/MoonshotAI/kimi-code/tree/main/packages/migration-legacy)
 - Local sampling of `~/.kimi-code/` (2026-07-29, 2026-09-06)
