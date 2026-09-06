@@ -3,6 +3,11 @@
 Format reference for Codex rollout session files.
 See [SESSION_FORMAT_ANALYSIS.md](../SESSION_FORMAT_ANALYSIS.md) for cross-assistant comparison tables.
 
+**Last checked: 2026-09-06.** Persistence policy checked at `rust-v0.153.4`;
+protocol, response-item types, recorder, and compression inspected at upstream
+commit `ac192cd7937b0d73edc6dffe009940ae53782dd4`. Version introduction dates and
+the prevalence of paginated history in real sessions were not established.
+
 ---
 
 ## Storage & File Naming
@@ -27,15 +32,22 @@ Archived sessions use a flat directory rather than date sharding. Current
 upstream Codex can compress cold archived rollouts from `rollout-*.jsonl` to
 `rollout-*.jsonl.zst` and transparently read either representation.
 
-Sessions Chronicle currently discovers only active `~/.codex/sessions/`
-`rollout-*.jsonl` files. It does not yet index `archived_sessions/` or
-compressed `*.jsonl.zst` rollouts.
+Sessions Chronicle discovers `rollout-*.jsonl` and `rollout-*.jsonl.zst` in the
+configured session directory. When that directory is named `sessions` or
+`codex_sessions`, discovery also includes a sibling `archived_sessions/`, even
+if the active directory is absent. Compressed files are decoded as a stream.
+
+The inspected recorder also supports `rollout-<timestamp>-<thread_id>_<rollout_id>.jsonl`
+after `thread/revert`. A filename's rollout identity must not be assumed to
+equal the stable thread ID in `session_meta.payload.id`.
 
 ---
 
 ## Event Structure
 
-Codex rollout logs are envelope-based JSONL entries (`RolloutLine`).
+Codex rollout logs are envelope-based JSONL entries (`RolloutLine`). The following
+is a schematic example of the historically supported envelope types, not an
+exhaustive current enum:
 
 ```json
 {
@@ -95,9 +107,53 @@ Additional `session_meta` fields now present in upstream types include
 For spawned child sessions, current rollouts can carry the parent identifier in
 both `session_meta.payload.parent_thread_id` and the structured
 `source.subagent.thread_spawn.parent_thread_id`. Sessions Chronicle currently
-uses the structured `source` value for child-session linkage.
+uses the structured `source` value first, then direct `parent_thread_id` as a
+child-session linkage fallback.
+
+### History Modes and Shared Prefixes
+
+**Confirmed upstream:** `SessionMeta.history_mode` distinguishes `legacy` and
+`paginated`; deserialization defaults to `legacy` when the field is absent.
+In the [0.153.4 persistence policy](https://github.com/openai/codex/blob/rust-v0.153.4/codex-rs/rollout/src/policy.rs),
+paginated history persists `event_msg.payload.type == "item_completed"` carrying
+typed `TurnItem` values. Legacy `user_message` and `agent_message` events are
+persisted only in `legacy` mode. Some `item_completed` events are also retained
+in legacy mode, including function-call outputs, plans, and completed subagent
+activities; the event alone does not identify the history mode.
+
+**Confirmed local gap:** the parser ignores `item_completed` and response-item
+messages. A rollout without a legacy `user_message` is rejected with
+`NoUserMessages`, even if it contains user messages as completed items. This is
+a code-inspection finding; no paginated reproduction was run during this watch.
+
+**Confirmed metadata contract:** the inspected
+[protocol types](https://github.com/openai/codex/blob/ac192cd7937b0d73edc6dffe009940ae53782dd4/codex-rs/protocol/src/protocol.rs)
+define optional `history_base` as a prefix reference with these fields:
+
+| Field | Meaning in upstream types |
+|-------|---------------------------|
+| `thread_id` | Referenced rollout ID, despite the historical field name; not necessarily its stable thread ID |
+| `end_ordinal_exclusive` | First rollout ordinal excluded from the inherited prefix |
+| `end_byte_offset` | Byte offset immediately after the last included JSONL record |
+
+Related optional metadata includes `forked_from_ordinal_exclusive` (the logical
+fork boundary, independent of the physical `history_base`) and
+`subagent_history_start_ordinal` (the first record belonging to the child's own
+projected history; earlier records are inherited model context). Current types
+also distinguish root `session_id` from thread `id`.
+
+**Likely impact:** Sessions Chronicle reads each file independently and ignores
+these history fields, so an inherited prefix may be missing from its transcript.
+
+**Unknown / not yet inspected:** upstream prefix resolution and reconstruction,
+chained references, missing-prefix handling, compressed-prefix offset semantics,
+and interaction between revert and child-history projection. The field contract
+is sufficient to identify a gap, but is not an implementation specification.
 
 ### User / Assistant Events (`event_msg`)
+
+The examples below describe legacy message events. See history modes above for
+the paginated representation.
 
 ```json
 {
@@ -136,6 +192,10 @@ uses the structured `source` value for child-session linkage.
 
 ### Session Configured Event (can include model + provider)
 
+Historical/protocol shape supported by the parser. The inspected 0.153.4
+persistence policy does not persist `session_configured`; use `turn_context`
+and `session_meta` for durable model/provider metadata.
+
 ```json
 {
   "timestamp": "2026-01-18T01:01:28.500Z",
@@ -150,6 +210,11 @@ uses the structured `source` value for child-session linkage.
 ```
 
 ### Tool-Related Events
+
+These are historical/protocol event shapes. In the inspected 0.153.4 policy,
+`exec_command_begin`, `exec_command_end`, `mcp_tool_call_begin`, and
+`web_search_begin` are transient; `mcp_tool_call_end` and `web_search_end` are
+retained only in legacy mode. Protocol variants are not a persistence guarantee.
 
 ```json
 {
@@ -235,6 +300,13 @@ Current upstream Codex protocol exposes subagent work through the `collab_*`
 `event_msg.payload.type` family. These events are emitted by the multi-agent
 callable surface (`spawn_agent`, `send_message`, `followup_task`,
 `wait_agent`, `close_agent`, and resume flows).
+
+**Persistence caveat (confirmed at 0.153.4):** the `collab_*` events listed below
+are transient and are not written by the inspected persistence policy. These
+examples remain relevant to older files and parser compatibility tests.
+The policy instead retains `sub_agent_activity` events for non-completed
+activities in legacy mode and completed subagent activities through
+`item_completed`. Sessions Chronicle does not handle either activity carrier.
 
 ```json
 {
@@ -518,13 +590,14 @@ See also: [Codex issue discussion around `token_count` logging](https://github.c
 
 ## Parser Behavior (Sessions Chronicle)
 
-Current implementation: `src/parsers/codex.rs`
+Current implementation: [`crates/core/src/parsers/codex.rs`](../../crates/core/src/parsers/codex.rs)
 
 - Indexes `event_msg.payload.type == user_message|agent_message`
 - Indexes tool lifecycle pairs for `mcp_tool_call_begin|end` and `exec_command_begin|end`
 - Indexes Codex child rollouts as subagent sessions when `session_meta.payload.source.sub_agent.thread_spawn.parent_thread_id` or `source.subagent.thread_spawn.parent_thread_id` is present
-- Does not yet use direct `session_meta.payload.parent_thread_id` as a child-session linkage fallback
-- Discovers active `rollout-*.jsonl` files only; archived and compressed rollouts are not yet indexed
+- Uses direct `session_meta.payload.parent_thread_id` as a child-session linkage fallback
+- Discovers plain and compressed rollouts, including sibling archives under the directory-name rules above
+- Does not handle `item_completed`, `sub_agent_activity`, or shared-prefix reconstruction via `history_base`
 - Indexes `collab_agent_spawn_end` as parent-side `Subagent` rows and transcript items
 - Enriches parent-side subagents from `collab_waiting_end`, `collab_close_end`, `collab_resume_end`, and `collab_agent_interaction_end`
 - Ignores collab timing fields, spawned-agent `model`, and spawned-agent `reasoning_effort`
@@ -539,7 +612,7 @@ Current implementation: `src/parsers/codex.rs`
 **Timestamp parsing:**
 
 - `start_time`: from first-line `session_meta.payload.timestamp`
-- `last_updated`: max `event.timestamp` seen in `event_msg` lines
+- `last_updated`: maximum valid top-level event timestamp across all subsequent envelope types, initialized from the session start time
 
 **Content extraction:**
 
@@ -556,10 +629,11 @@ fn extract_content_codex_event_msg(event: &Value) -> Option<(Role, String)> {
 
 **Tool call handling:**
 
-- Raw data is emitted via `event_msg.payload.type` variants:
+- Historical/protocol data uses `event_msg.payload.type` variants:
   `exec_command_*`, `mcp_tool_call_*`, `web_search_*`, and collab `collab_*`;
   local rollouts can also emit tool calls as `response_item` `function_call`
-  / `function_call_output`.
+  / `function_call_output`. The current persistence policy above determines
+  which protocol events actually reach disk.
 - Tool call correlation typically uses `call_id`.
 - Current parser behavior: indexes `exec_command_*` and `mcp_tool_call_*`
   begin/end pairs plus `response_item` function calls as tool calls; maps Codex
@@ -574,7 +648,10 @@ into memory.
 
 ## Primary Sources
 
-- [Codex protocol `RolloutItem`, `SessionMeta`, `EventMsg`](https://github.com/openai/codex/blob/main/codex-rs/protocol/src/protocol.rs)
+- [Codex persistence policy, verified at 0.153.4](https://github.com/openai/codex/blob/rust-v0.153.4/codex-rs/rollout/src/policy.rs)
+- [Codex protocol `SessionMeta`, `HistoryPosition`, `EventMsg`, inspected commit](https://github.com/openai/codex/blob/ac192cd7937b0d73edc6dffe009940ae53782dd4/codex-rs/protocol/src/protocol.rs)
+- [Codex response-item types, inspected commit](https://github.com/openai/codex/blob/ac192cd7937b0d73edc6dffe009940ae53782dd4/codex-rs/protocol/src/models.rs)
+- [Codex recorder, including revert filename support, inspected commit](https://github.com/openai/codex/blob/ac192cd7937b0d73edc6dffe009940ae53782dd4/codex-rs/rollout/src/recorder.rs)
 - [Codex turn-context persistence](https://github.com/openai/codex/blob/main/codex-rs/core/src/codex.rs)
 - [Codex rollout recorder](https://github.com/openai/codex/blob/main/codex-rs/rollout/src/recorder.rs)
 - [Codex rollout compression and compressed-file discovery](https://github.com/openai/codex/blob/main/codex-rs/rollout/src/compression.rs)
