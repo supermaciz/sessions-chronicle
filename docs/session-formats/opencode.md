@@ -44,6 +44,15 @@ CREATE TABLE session (
   summary_diffs TEXT,               -- JSON: FileDiff[]
   revert TEXT,                      -- JSON: {messageID, partID?, snapshot?, diff?}
   permission TEXT,                  -- JSON: PermissionNext.Ruleset
+  metadata TEXT,                    -- JSON: Record<string, unknown>
+  cost REAL NOT NULL DEFAULT 0,     -- session-level cost
+  tokens_input INTEGER NOT NULL DEFAULT 0,
+  tokens_output INTEGER NOT NULL DEFAULT 0,
+  tokens_reasoning INTEGER NOT NULL DEFAULT 0,
+  tokens_cache_read INTEGER NOT NULL DEFAULT 0,
+  tokens_cache_write INTEGER NOT NULL DEFAULT 0,
+  agent TEXT,                       -- agent name (e.g. "build", "plan", subagent name)
+  model TEXT,                       -- JSON: {id, providerID, variant?}
   time_created INTEGER NOT NULL,    -- Unix ms
   time_updated INTEGER NOT NULL,    -- Unix ms
   time_compacting INTEGER,
@@ -87,6 +96,16 @@ CREATE TABLE project (
 --   session_entry, workspace, project, event, event_sequence, account,
 --   account_state, control_account
 -- (__drizzle_migrations tracks applied schema migrations)
+
+-- Newer tables observed upstream (dev) alongside the V1 message/part tables:
+--   session_message   -- id, session_id, type, seq, data (a newer message model:
+--                        user/assistant/system/shell/synthetic/compaction/
+--                        agent-switched/model-switched)
+--   session_input     -- id, session_id, prompt, delivery, admitted_seq, promoted_seq
+--   session_context_epoch -- session_id, baseline, snapshot, baseline_seq
+-- As of the 2026-09-06 watch pass, message/part remain the transcript write
+-- path (message-v2.ts is still active); session_message is a parallel model
+-- whose write path is not yet confirmed.
 ```
 
 ### Session Object Fields
@@ -114,6 +133,13 @@ CREATE TABLE project (
 
 Newer fields vs previous docs: `slug`, `share`, `permission`, `revert`, `workspaceID`,
 `time.compacting`, `time.archived`, `summary.diffs`.
+
+Additional session-level columns observed upstream (dev, 2026-09-06): `metadata`
+(JSON), `cost` (real), `tokens_input` / `tokens_output` / `tokens_reasoning` /
+`tokens_cache_read` / `tokens_cache_write` (integer, session-level token
+aggregation), `agent` (text), and `model` (JSON `{id, providerID, variant?}`).
+These are session-level rollups and do not change the per-message model
+metadata described below.
 
 ### Message `data` Blob — User
 
@@ -488,13 +514,19 @@ when you need the child session link (`state.metadata.sessionId`).
 
 ## Model Metadata
 
-Model metadata is message-scoped (not session-scoped), unchanged between SQLite and JSON formats:
+Model metadata is primarily message-scoped, unchanged between SQLite and JSON formats:
 
 | Message role | Fields |
 |--------------|--------|
 | User | `model.providerID` + `model.modelID` |
 | Assistant | top-level `providerID` + `modelID` |
 | Subtask parts | optional `model.providerID`, `model.modelID` for delegated model |
+
+Since ~2026 the `session` table also carries optional session-level `model`
+(JSON `{id, providerID, variant?}`) and `agent` (text) columns. These are
+session-level rollups (e.g. the model/agent used to create the session) and
+do not replace the per-message fields, which remain the source of truth for
+individual turns.
 
 ---
 
@@ -535,10 +567,10 @@ Model metadata is message-scoped (not session-scoped), unchanged between SQLite 
 
 Current implementation:
 
-- Parser core: `src/parsers/opencode/mod.rs`
-- JSON backend: `src/parsers/opencode/json_backend.rs`
-- SQLite backend: `src/parsers/opencode/sqlite_backend.rs`
-- Indexer orchestration: `src/database/indexer.rs` (`index_opencode_sessions`)
+- Parser core: `crates/core/src/parsers/opencode/mod.rs`
+- JSON backend: `crates/core/src/parsers/opencode/json_backend.rs`
+- SQLite backend: `crates/core/src/parsers/opencode/sqlite_backend.rs`
+- Indexer orchestration: `crates/core/src/database/indexer.rs` (`index_opencode_sessions`)
 
 Current indexing strategy is **SQLite-first dual-read with JSON fallback**:
 
@@ -586,10 +618,16 @@ used by the JSON backend.
 
 ## Primary Sources
 
+> **Note:** OpenCode's session/parser sources were reorganized into the
+> `packages/core` (`@opencode-ai/core`) and `packages/schema` packages; the
+> `packages/opencode/src/session/` paths below were valid before that move.
+> The URLs listed here reflect the current (`dev`) locations.
+
 - [OpenCode GitHub Repository](https://github.com/anomalyco/opencode)
-- [OpenCode `MessageV2` part schemas](https://github.com/anomalyco/opencode/blob/dev/packages/opencode/src/session/message-v2.ts)
+- [OpenCode `MessageV2` part schemas](https://github.com/anomalyco/opencode/blob/dev/packages/core/src/session/message-v2.ts)
+- [OpenCode SQLite Drizzle schema (`session`/`message`/`part`/`session_message`/`session_input`/`session_context_epoch`)](https://github.com/anomalyco/opencode/blob/dev/packages/core/src/session/sql.ts)
+- [OpenCode V1 part/session types (`Part`, `ToolState`, `Info`, …)](https://github.com/anomalyco/opencode/blob/dev/packages/schema/src/v1/session.ts)
+- [OpenCode newer message model (`session_message` types)](https://github.com/anomalyco/opencode/blob/dev/packages/schema/src/session-message.ts)
 - [OpenCode task tool (creates child sessions with `parentID`)](https://github.com/anomalyco/opencode/blob/dev/packages/opencode/src/tool/task.ts)
-- [OpenCode generated v2 SDK types](https://github.com/anomalyco/opencode/blob/dev/packages/sdk/js/src/v2/gen/types.gen.ts)
-- [OpenCode session schema](https://github.com/anomalyco/opencode/blob/dev/packages/opencode/src/session/index.ts)
 - [OpenCode Sessions Issue #3026](https://github.com/anomalyco/opencode/issues/3026)
 - [OpenCode Sessions Issue #5734](https://github.com/anomalyco/opencode/issues/5734)

@@ -14,6 +14,12 @@ See [SESSION_FORMAT_ANALYSIS.md](../SESSION_FORMAT_ANALYSIS.md) for cross-assist
 | **Example** | `a1b2c3d4-e5f6-7890-abcd-ef1234567890.jsonl`<br>`2a19bf71-3687-49ed-8ae9-8bd15e1522f6/subagents/agent-a60d695.jsonl` (legacy naming)<br>`66ae4ab6-e5ea-40f4-8e8f-fb80fd307472/subagents/agent-aimpl-task1-d4584135445167d0.jsonl` (teammate naming, v2.1.216+: `agent-a<name>-<hash16>.jsonl`)<br>`2a19bf71-3687-49ed-8ae9-8bd15e1522f6/subagents/agent-a60d695.meta.json`<br>`82b2d04e-d30e-4370-8e41-f53890baeda1/tool-results/bdw7vxszs.txt` |
 | **Format** | JSONL (one JSON object per line, UTF-8, append-only) |
 
+**Not session data:** since roughly v2.1.226 a sibling `~/.claude/projects/<project-dir>/memory/`
+directory can exist, holding `MEMORY.md` plus one `*.md` file per stored memory.
+It contains no transcript data. Sessions Chronicle's discovery filters on the
+`.jsonl` extension (`crates/core/src/database/indexer.rs`), so these files are
+ignored; any future discovery change must keep that filter.
+
 **Path encoding:**
 
 ```
@@ -32,7 +38,7 @@ See [SESSION_FORMAT_ANALYSIS.md](../SESSION_FORMAT_ANALYSIS.md) for cross-assist
   "type": "summary",               // Session title
   "type": "user",                  // User messages
   "type": "assistant",             // Assistant messages
-  "type": "system",                // System events (for example: local_command, turn_duration, compact_boundary)
+  "type": "system",                // System events (see `system` subtypes below)
   "type": "file-history-snapshot", // File state tracking
   "type": "progress",              // Streaming/progress events
   "type": "queue-operation",       // Queue orchestration events
@@ -43,14 +49,23 @@ See [SESSION_FORMAT_ANALYSIS.md](../SESSION_FORMAT_ANALYSIS.md) for cross-assist
   "type": "last-prompt",           // Last-prompt pointer / leaf marker (observed v2.1.148)
   "type": "mode",                  // UI/session mode marker (observed v2.1.216+)
   "type": "ai-title",              // AI-generated session title (observed v2.1.216+)
-  "type": "file-history-delta"     // Incremental file backup record (observed v2.1.216+)
+  "type": "file-history-delta",    // Incremental file backup record (observed v2.1.216+)
+  "type": "atis-latch",            // Latch marker carrying an `atis` string (observed v2.1.226+)
+  "type": "bridge-session",        // Remote Control / bridge session link (observed v2.1.226+)
+  "type": "cost-state",            // Running session cost + per-model usage totals (observed v2.1.226+)
+  "type": "agent-name"             // Session name on background sessions (observed v2.1.226+)
 }
 ```
 
-Note (2026-07-27 local scan, v2.1.216–v2.1.220): no `summary` events were found
-in the 20 most recent local sessions; `ai-title` appears to be the current
-carrier of the generated session title. `summary` may still exist in older
-transcripts and possibly on some code paths (unconfirmed — Claude Code is
+Observed `system.subtype` values (2026-09-06 local scan): `local_command`,
+`turn_duration`, `compact_boundary`, `stop_hook_summary`, `away_summary`,
+`informational`. The list is not guaranteed exhaustive.
+
+Note (2026-09-06 local scan, v2.1.220–v2.1.263): no `summary` events were found
+in any local session touched since 2026-08-01 (2269 events). This confirms and
+widens the earlier 2026-07-27 observation (v2.1.216–v2.1.220): `ai-title` is the
+current carrier of the generated session title. `summary` may still exist in
+older transcripts and possibly on some code paths (unconfirmed — Claude Code is
 closed source).
 
 ### User Message Example
@@ -205,9 +220,16 @@ own `type` field selects the variant.
 }
 ```
 
-Observed `attachment.type` values: `hook_success`, `hook_additional_context`,
-`deferred_tools_delta`, `agent_listing_delta`, `mcp_instructions_delta`,
-`skill_listing`, `command_permissions`. The list is not guaranteed exhaustive.
+Observed `attachment.type` values through v2.1.148: `hook_success`,
+`hook_additional_context`, `deferred_tools_delta`, `agent_listing_delta`,
+`mcp_instructions_delta`, `skill_listing`, `command_permissions`.
+
+Added by the 2026-09-06 local scan (v2.1.220–v2.1.263): `total_tokens_reminder`
+(by far the most frequent — 166 of 321 attachment events), `task_reminder`,
+`remote_session_change`, `session_context`, `auto_mode`, `prompt_snapshot`,
+`compact_file_reference`, `instructions`, `environment`, `date`, `date_change`,
+`model`, `file`, `edited_text_file`, `opened_file_in_ide`,
+`hook_system_message`. The list is not guaranteed exhaustive.
 
 ### Permission Mode Event (observed in v2.1.148 local sessions)
 
@@ -279,6 +301,95 @@ backup, pointing back to the owning snapshot via `snapshotMessageId`.
     "realParentDir": "/path/to/project"
   },
   "timestamp": "ISO-8601"
+}
+```
+
+### Atis Latch Event (observed in v2.1.226+ local sessions)
+
+Purpose unknown. Every one of the 59 events in the 2026-09-06 local scan carried
+an empty `atis` string, and no changelog entry names the field.
+
+```json
+{
+  "type": "atis-latch",
+  "atis": "",
+  "sessionId": "UUID"
+}
+```
+
+### Bridge Session Event (observed in v2.1.226+ local sessions)
+
+Links a local transcript to a server-side "bridge" session. Correlates with the
+changelog entry for v2.1.251 ("live streaming of a foreground subagent's tool
+calls and results to Remote Control clients") and with the
+`attachment.remote_session_change` payload.
+
+```json
+{
+  "type": "bridge-session",
+  "sessionId": "UUID",
+  "bridgeSessionId": "cse_01Fw1jZQtU6xnWrBuTBkXxzq",
+  "lastSequenceNum": 0,
+  "ownerAccountUuid": "UUID",
+  "ownerOrganizationUuid": "UUID"
+}
+```
+
+`bridgeSessionId` uses a `cse_` prefix rather than a UUID. `ownerAccountUuid` and
+`ownerOrganizationUuid` identify the account behind the bridge — treat them as
+personal data if ever surfaced in the UI.
+
+### Cost State Event (observed in v2.1.226+ local sessions)
+
+Running aggregate of session cost, wall/API duration, edit line counts, and
+per-model token usage. Emitted repeatedly within a session; two samples from the
+same session differed only in `totalDuration`, suggesting periodic rewrite with
+last-one-wins semantics (single-session observation, not generalized).
+
+```json
+{
+  "type": "cost-state",
+  "sessionId": "UUID",
+  "totalCostUSD": 0.3153286,
+  "totalAPIDuration": 17495,
+  "totalAPIDurationWithoutRetries": 17480,
+  "totalToolDuration": 298,
+  "totalLinesAdded": 0,
+  "totalLinesRemoved": 0,
+  "totalDuration": 4462611,
+  "startTime": 1787921917747,
+  "modelUsage": {
+    "claude-sonnet-5": {
+      "inputTokens": 604,
+      "outputTokens": 459,
+      "cacheReadInputTokens": 247603,
+      "cacheCreationInputTokens": 64384,
+      "webSearchRequests": 0,
+      "costUSD": 0.3128546
+    }
+  },
+  "hasUnknownModelCost": false
+}
+```
+
+Note the camelCase token field names here (`inputTokens`, `cacheReadInputTokens`)
+versus the snake_case names used in `message.usage` (`input_tokens`,
+`cache_read_input_tokens`). `startTime` is epoch milliseconds; the durations are
+milliseconds. This is a per-session alternative to summing `message.usage`, and
+avoids the append-only duplicate-request problem described under Token Usage.
+
+### Agent Name Event (observed in v2.1.226+ local sessions)
+
+Carries a session name. The single local sample appeared on a session with
+`sessionKind: "bg"` (background session) that **also** contained an `ai-title`
+event, so `agent-name` does not currently displace `ai-title` as the title
+carrier. Whether it ever appears without `ai-title` is unconfirmed.
+
+```json
+{
+  "type": "agent-name",
+  "agentName": "Review Mistral AI job posting",
+  "sessionId": "UUID"
 }
 ```
 
@@ -448,6 +559,20 @@ Rich per-event metadata:
 | `effort` | Reasoning effort level on `assistant` events (`"medium"` observed); added upstream in v2.1.211 per changelog |
 | `requestId` | API request identifier on `assistant` events (observed v2.1.220) |
 | `session_id` | snake_case duplicate of `sessionId` on the same `assistant` events (observed v2.1.220) |
+| `sessionKind` | Session flavor; only value observed is `"bg"` (background session), on `user`/`assistant`/`system`/`attachment` events (observed v2.1.226+). Absent on ordinary interactive sessions |
+| `promptSource` | Origin of a `user` prompt (observed v2.1.226+): `typed`, `suggestion_accepted`, `system`, `sdk` |
+| `attributionAgent` | Subagent display name attributed to an `assistant` event, e.g. `"UI Designer"` (observed v2.1.226+); sibling of `attributionSkill` |
+| `attributionMcpServer` / `attributionMcpTool` | MCP server and tool attributed to an `assistant` event (observed v2.1.226+) |
+| `apiBlockIndex` | Index of the content block within an API response, on `assistant` events (observed v2.1.226+) |
+| `turnCompanion` | Companion marker on a small number of events (observed v2.1.226+; purpose unconfirmed) |
+| `origin` | Event origin marker (observed v2.1.226+; value set not yet enumerated) |
+| `lastSequenceNum` | Bridge stream sequence position on `bridge-session` events (observed v2.1.226+) |
+
+The attribution family (`attributionSkill`, `attributionAgent`,
+`attributionMcpServer`, `attributionMcpTool`) marks *why* an assistant event
+happened. In the 2026-09-06 local scan these were mutually exclusive per event
+except for one pair where `attributionSkill` and `attributionMcpTool` co-occurred,
+so do not assume at most one attribution field per event.
 
 **Model metadata:** Recent Claude Code logs include a stable structured field at
 `message.model` on `assistant` events.
@@ -514,7 +639,7 @@ Notes:
 
 ## Parser Behavior (Sessions Chronicle)
 
-Current implementation: `src/parsers/claude_code.rs`
+Current implementation: `crates/core/src/parsers/claude_code.rs`
 
 - Indexes `type == user|assistant` text content
 - Extracts `tool_use` blocks as tool calls; current implementation maps both
@@ -522,10 +647,11 @@ Current implementation: `src/parsers/claude_code.rs`
 - Correlates `tool_result` blocks by `tool_use_id`
 - Does not currently normalize `system/local_command` events into tool calls
 - Does not currently persist/index `message.model` in Sessions Chronicle database schema
-- Dispatches only on `type in {user, assistant}`; other event types — including
-  the newer `attachment`, `permission-mode`, `last-prompt`, `mode`, `ai-title`,
-  and `file-history-delta` events — fall through and are skipped without error
-  (no parser breakage from these additions)
+- Dispatches on `type in {user, assistant, ai-title}` with a catch-all `_ => {}`
+  arm; every other event type — including `attachment`, `permission-mode`,
+  `last-prompt`, `mode`, `file-history-delta`, and the newer `atis-latch`,
+  `bridge-session`, `cost-state`, and `agent-name` events — falls through and is
+  skipped without error (no parser breakage from these additions)
 - Recent real Claude Code sessions (local scan refreshed 2026-04-13, versions
   observed through v2.1.100) show subagent launches as `name == "Agent"` with
   `input.description`, `input.subagent_type`, and `input.prompt`; optional
@@ -546,7 +672,10 @@ Current implementation: `src/parsers/claude_code.rs`
   indexable, and synthetic messages remain visible in the transcript of sessions
   that also contain real responses.
 
-**Title extraction:** First parsed `user` message content (assistant/system/summary are ignored).
+**Title extraction:** The last non-blank `ai-title` event wins; otherwise the
+first parsed `user` message content is used (assistant/system/summary are
+ignored). `agent-name` is **not** consumed — the one local sample carrying it
+also carried `ai-title`, so no fallback is justified yet.
 
 **Timestamp parsing:** Track earliest/latest across `type in {user, assistant}` using
 per-event `timestamp` (ISO-8601).
