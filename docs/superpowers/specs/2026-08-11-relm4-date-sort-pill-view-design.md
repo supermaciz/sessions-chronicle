@@ -2,17 +2,26 @@
 
 **Issue:** [#193](https://github.com/supermaciz/sessions-chronicle/issues/193)  
 **Date:** 2026-08-11  
-**Status:** Approved design, implementation pending  
-**Decision:** Use a hybrid migration with a widened tree scope: declarative static trees and pure bindings, imperative GTK effects. The `DatePill` row-builder and endpoint-toggle helpers are inlined into `view!` rather than preserved, because `#[watch]` can only target widgets that are nodes of the macro tree.
+**Status:** Reference design; implementation deferred pending a concrete maintenance need  
+**Last reviewed:** 2026-09-06  
+**Decision:** Prefer a progressive hybrid migration: declarative static trees and simple bindings, imperative GTK effects. Start with `SortPill` if this maintenance work is scheduled, then assess the resulting readability before committing to `DatePill`. Preserve or inline row and endpoint-toggle helpers according to the clarity of the actual diff; helper removal and complete binding conversion are not acceptance requirements.
+
+## Value and Priority
+
+This is a maintenance refactor with no immediate user-visible benefit. Its potential value is reducing manual widget bookkeeping and making model-to-widget properties easier to locate. Consistency with other `view!` components is useful, but does not by itself justify the migration risk.
+
+Keep this document as a reference, especially its calendar, focus, selection, and accessibility invariants. Schedule `DatePill` migration when a concrete change or recurring maintenance difficulty makes the benefit tangible. `SortPill` is a smaller candidate for evaluating the approach independently; completing it does not commit the project to migrating `DatePill`.
+
+Judge the result by how easily a maintainer can follow widget ownership and change shared row behavior. Moving properties next to widgets can help, while repeating seven similar row trees can make common changes harder. The implementation diff must demonstrate the trade-off; declarative coverage is not a goal in itself.
 
 ## Goal
 
-Convert `DatePill` and `SortPill` from manually constructed widget trees to Relm4 0.11's `#[relm4::component]` and `view!` macros. Let the macro generate `DatePillWidgets` and `SortPillWidgets`, and colocate mechanical model-to-widget bindings with the widgets they update.
+When the work is justified, convert `DatePill` and `SortPill` from manually constructed widget trees to Relm4 0.11's `#[relm4::component]` and `view!` macros. Let the macro generate `DatePillWidgets` and `SortPillWidgets`, and colocate mechanical model-to-widget bindings with the widgets they update.
 
-This refactor must not change visible text, accessibility properties, focus, selection, row ordering, popover behavior, date-picking behavior, or component outputs. It makes two deliberate, enumerated internal changes, both documented below:
+This refactor must not change visible text, accessibility properties, focus, selection, row ordering, popover behavior, date-picking behavior, or component outputs. The original full-migration proposal includes two possible internal changes, both documented below:
 
-- The `DatePill` row-builder and endpoint-toggle helpers are dissolved into the `view!` tree. The widgets they produce are unchanged; only their construction site moves.
-- Programmatic `ToggleGroup` reseeding stops emitting a redundant `CustomEndpointChanged` message (see [Endpoint group signal blocking](#endpoint-group-signal-blocking)).
+- The `DatePill` row-builder and endpoint-toggle helpers may be dissolved into the `view!` tree if the resulting ownership and bindings are easier to follow. Their removal is optional; the widgets they produce must remain unchanged.
+- Programmatic `ToggleGroup` reseeding may stop emitting a redundant `CustomEndpointChanged` message (see [Endpoint group signal blocking](#endpoint-group-signal-blocking)). This is a separable improvement, not a reason to undertake the migration.
 
 ## Context
 
@@ -36,27 +45,29 @@ References:
 
 ## Approaches Considered
 
-### 1. Hybrid migration with a widened tree scope - selected
+### 1. Progressive hybrid migration - preferred
 
-Convert the static trees, inlining the row and toggle helpers so every widget carrying a model-derived property is a node of the macro tree. Then replace all pure, unconditional model-to-widget synchronization with declarative bindings. Keep dynamic collections and ordered or conditional GTK effects imperative.
+Move stable widget construction and straightforward bindings into `view!` where that improves readability. Keep dynamic collections and ordered or conditional GTK effects imperative. Evaluate `SortPill` first and make a separate decision about `DatePill`.
 
-This delivers the issue's readability benefit in full while leaving sensitive behavior explicit and testable.
+Inlining the row and toggle helpers is one possible implementation: it makes ownership and bindings visible in the same tree, but repeats similar widget structures. Accept that cost only if the resulting diff is easier to maintain.
 
 ### 2. Structural conversion only
 
-Generate the widget structs and move construction to `view!`, but call the existing `sync_*` logic from `post_view()`. This minimizes initial risk but leaves property behavior separated from widget declarations and only partially addresses the issue.
+Generate the widget structs and move construction to `view!`, but retain the existing `sync_*` logic through `post_view()`. This leaves some property behavior separate from declarations, but limits the initial change and can be an acceptable stopping point if generated bookkeeping is the main benefit.
 
 ### 3. Hybrid migration preserving the helpers
 
-Keep `build_preset_row`, `build_row`, and `build_endpoint_toggle`, and expose their model-derived child labels to the macro through `#[local_ref]`. This is technically viable: the six count labels are already constructed before the row helpers are called, and the two endpoint date labels can be destructured from `build_endpoint_toggle` before `view_output!()`.
+Keep `build_preset_row`, `build_row`, and `build_endpoint_toggle`, retaining imperative synchronization where it makes helper-owned widgets easier to follow. This preserves shared row construction at the cost of keeping some bindings separate.
 
-Rejected: it would require constructing the labels, rows, and endpoint-toggle contents imperatively before `view_output!()`, then listing the already-parented labels as detached `#[local_ref]` nodes solely to attach `#[watch]` properties. The resulting `view!` block would not describe the physical hierarchy it updates: row ownership would remain hidden in helpers while the bindings appeared elsewhere in the macro tree. That preserves the helpers, but also preserves the construction/binding split that the issue is intended to remove. Inlining is longer, yet makes both ownership and bindings explicit in one tree.
+Exposing child labels through detached `#[local_ref]` nodes is another technical option, but risks obscuring the physical hierarchy. Do not introduce that indirection solely to achieve complete `#[watch]` coverage. Compare the concrete result with inlining before choosing.
 
 ### 4. Fully declarative conversion
 
 Move controllers, calendar synchronization, dynamic rows, and nearly every signal into `view!`. This minimizes handwritten construction code, but makes controller attachment order and conditional signal blocking harder to audit. The extra abstraction is not justified here.
 
 ## Architecture
+
+The following sections describe the full hybrid migration as an implementation reference. A smaller migration may retain helpers and their synchronization methods; the behavior invariants apply at every stopping point.
 
 Both implementations use `#[relm4::component(pub)]`, define a `view!` block, and call `view_output!()` from `init`. The macro-generated widget structs replace the manual `DatePillWidgets` and `SortPillWidgets` definitions.
 
@@ -126,9 +137,9 @@ Each additional field is populated from a local variable of the same name that m
 - Custom page title, endpoint toggles with their inline caption/date content, calendar, summary, and action buttons.
 - Escape shortcut controller, whose capture-phase behavior remains unchanged.
 
-`build_preset_row`, `build_custom_row`, `build_row`, and `build_endpoint_toggle` are removed. Their bodies become `view!` subtrees so that the count labels and endpoint date labels are named nodes. `TitleWidth` disappears with them: `set_hexpand` is written directly on each title label, `true` for the *Custom range...* row and `false` for the six presets.
+If inlining is selected, `build_preset_row`, `build_custom_row`, `build_row`, and `build_endpoint_toggle` are removed. Their bodies become `view!` subtrees so that the count labels and endpoint date labels are named nodes. `TitleWidth` disappears with them: `set_hexpand` is written directly on each title label, `true` for the *Custom range...* row and `false` for the six presets.
 
-This costs repetition — seven near-identical row subtrees instead of one helper plus seven calls. That is the price of the declarative bindings below, and it is accepted deliberately: the rows are static, they never gain a variant at runtime, and the repetition is visible in one place rather than split across a helper and its call sites.
+This costs repetition — seven near-identical row subtrees instead of one helper plus seven calls. The rows are static, and the repetition would be visible in one place, but shared styling and accessibility changes would then require editing multiple subtrees. This cost must be assessed against the binding-locality benefit before accepting the implementation.
 
 The endpoint toggles and the Escape controller use the `#[wrap(Clone::clone)]` form described under [Macro Constraints](#named-children-of-by-value-assign-functions-need-wrapcloneclone).
 
@@ -151,6 +162,8 @@ The following current synchronization becomes `#[watch]` properties near the tar
 The calendar accessible label is written with a watched `update_property` call. Its `#[cfg(test)]` recorder write has no place inside a `view!` property, so the watched expression calls a `&self` method that records the label and returns it, keeping the single-source-of-truth property.
 
 ### Endpoint group signal blocking
+
+This optional improvement can be implemented independently. The requirements in this section apply if it is included; preserving the current redundant message is acceptable for a structural migration.
 
 The endpoint group's active index becomes a watched property with a named `active-notify` handler and `#[block_signal]`.
 
@@ -218,13 +231,13 @@ Focus callbacks, selection restoration, output delivery, date validation, and `.
 
 ## Implementation Sequence
 
-The work proceeds through three independently compiling checkpoints in the same change:
+The work can stop after any independently useful, compiling stage:
 
-1. Migrate `SortPill`. It is the smaller component, nothing in it is blocked, and it validates the macro plumbing before the risky component. Verify all tests.
-2. Migrate the `DatePill` tree: component macro, inlined row and toggle subtrees, `#[wrap(Clone::clone)]` assignments, generated widgets struct, test recorders read through `model()`. Keep the existing `sync_*` bodies, call them explicitly after `view_output!()` for initial synchronization and from `post_view()` after messages, so behavior is unchanged. Verify all tests.
-3. Move the approved pure properties to `#[watch]`, delete `sync_button` and `sync_counts`, reduce `sync_custom_state` to `sync_calendar_date`, add the endpoint-blocking regression test, and verify again.
+1. If scheduled, migrate `SortPill` and run verification. Review whether construction and bindings are easier to follow. This may be a standalone change.
+2. Proceed with `DatePill` only when a concrete maintenance need justifies it. First migrate construction while preserving synchronization behavior. Compare preserved helpers with inline subtrees, accounting for the cost of shared row changes. Verify the calendar invariants before changing synchronization.
+3. Move pure properties to `#[watch]` where it improves clarity. Remove only synchronization methods that become unnecessary; retaining helper-owned widget synchronization is acceptable. If endpoint signal blocking is included, add its message-level regression test.
 
-Checkpoint 2 is where the calendar invariants from PR #192 are at risk, and it deliberately changes no synchronization logic so that any failure there is a pure construction bug. The checkpoints are for regression isolation; they do not require separate pull requests.
+Construction and synchronization changes should remain separate checkpoints to isolate regressions. Neither complete declarative conversion nor completion of all stages is required.
 
 ## Scope Boundaries
 
@@ -232,10 +245,9 @@ In scope:
 
 - `src/ui/date_pill.rs`
 - `src/ui/sort_pill.rs`
-- Dissolving `build_preset_row`, `build_custom_row`, `build_row`, `build_endpoint_toggle`, and `TitleWidth` into the `view!` tree
+- Optionally inlining row and endpoint-toggle helpers into `view!` after reviewing the readability and duplication trade-off
 - Existing tests in those modules: adaptation to generated fields, and moving recorder assertions from `widgets()` to `model()`
-- One test-only endpoint-message recorder in the `DatePill` model
-- One new regression test for suppressed programmatic endpoint messages
+- If endpoint signal blocking is included: one test-only endpoint-message recorder in the `DatePill` model and one regression test for suppressed programmatic endpoint messages
 
 Out of scope:
 
@@ -249,17 +261,16 @@ Out of scope:
 
 ## Acceptance Criteria
 
-- Manual `DatePillWidgets` and `SortPillWidgets` definitions are removed.
-- Both components use `#[relm4::component(pub)]`, `view!`, and `view_output!()`.
-- `sync_button` and `sync_counts` are removed, and `sync_custom_state` is reduced to `sync_calendar_date`.
-- `build_preset_row`, `build_custom_row`, `build_row`, `build_endpoint_toggle`, and `TitleWidth` are removed.
-- All nine listed bindings are `#[watch]` properties in `view!`; none survive as imperative synchronization.
-- Remaining imperative synchronization is limited to effects, controller attachment, the guarded calendar date step, and dynamic widget collections.
+- Each migrated component uses `#[relm4::component(pub)]`, `view!`, and `view_output!()`, replacing its manual widget struct.
+- The reviewed diff makes widget ownership and property updates easier to follow, with explicit consideration of repeated row construction.
+- Helpers may remain; removing them is not a success criterion.
+- Pure properties move to `#[watch]` where useful. Existing `sync_*` methods may remain for helper-owned widgets or at a structural-only stopping point.
+- Effects, controller attachment, guarded calendar date synchronization, and dynamic widget collections remain explicit.
 - The calendar key controller still precedes the calendar's own key controller.
 - Programmatic calendar updates do not emit user-pick behavior or announcements.
-- Programmatic endpoint-group reseeding emits no `CustomEndpointChanged`, and a test covers it.
+- If endpoint signal blocking is included, programmatic endpoint-group reseeding emits no `CustomEndpointChanged`, and a message-level test covers it.
 - Text, accessibility properties, focus, selection, row ordering, and popover behavior are unchanged.
-- No line-count target is imposed; the inlined row subtrees are expected to make `view!` longer than the helpers it replaces. Clarity and explicit invariants take priority.
+- No line-count or declarative-coverage target is imposed. Clarity, shared-change maintenance cost, and explicit invariants take priority.
 
 ## Verification
 
