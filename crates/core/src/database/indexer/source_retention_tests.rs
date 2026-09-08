@@ -995,3 +995,217 @@ fn unowned_ineligible_claude_file_protects_the_scope() {
             .missing
     );
 }
+
+use super::tests::{vibe_plain_messages, vibe_task_messages, write_vibe_session_dir};
+
+/// Build the canonical parent/child Vibe fixture and index it once.
+/// Returns `(sessions_dir, index_db, indexer, parent_dir, child_dir)`.
+fn indexed_vibe_tree(
+    temp: &tempfile::TempDir,
+) -> (
+    std::path::PathBuf,
+    std::path::PathBuf,
+    SessionIndexer,
+    std::path::PathBuf,
+    std::path::PathBuf,
+) {
+    let sessions_dir = temp.path().join("vibe");
+    let parent_dir = sessions_dir.join("session_parent");
+    let child_dir = parent_dir.join("agents").join("comique_20260101_000100");
+    write_vibe_session_dir(
+        &parent_dir,
+        "parent-session",
+        None,
+        &vibe_task_messages("comique", "call_1"),
+    );
+    write_vibe_session_dir(
+        &child_dir,
+        "child-session",
+        Some("comique"),
+        &vibe_plain_messages(),
+    );
+    let index_db = temp.path().join("index.db");
+    let mut indexer = SessionIndexer::new(&index_db).unwrap();
+    indexer
+        .index_vibe_sessions_incremental(&sessions_dir)
+        .unwrap();
+    (sessions_dir, index_db, indexer, parent_dir, child_dir)
+}
+
+fn vibe_missing(index_db: &std::path::Path, id: &str) -> bool {
+    crate::database::load_session(index_db, id)
+        .unwrap()
+        .unwrap()
+        .source
+        .missing
+}
+
+#[test]
+fn vibe_moved_child_directory_is_retained_with_its_parent_link() {
+    let temp = tempfile::tempdir().unwrap();
+    let (sessions_dir, index_db, mut indexer, _parent_dir, child_dir) = indexed_vibe_tree(&temp);
+    let before = crate::database::load_session(&index_db, "child-session")
+        .unwrap()
+        .unwrap();
+
+    std::fs::rename(&child_dir, temp.path().join("saved-child")).unwrap();
+    let mut errors = VecDeque::new();
+    let stats = indexer
+        .index_vibe_sessions_internal(&sessions_dir, true, &mut errors)
+        .unwrap();
+
+    let child = crate::database::load_session(&index_db, "child-session")
+        .unwrap()
+        .unwrap();
+    assert!(child.source.missing);
+    assert_eq!(child.last_updated, before.last_updated);
+    assert_eq!(stats.removed, 0);
+    let linked =
+        crate::database::load_subagent(&index_db, "parent-session", "parent-session-call_1")
+            .unwrap()
+            .unwrap();
+    assert_eq!(linked.child_session_id.as_deref(), Some("child-session"));
+}
+
+#[test]
+fn vibe_root_session_disappearance_is_retained_and_stable_across_scans() {
+    let temp = tempfile::tempdir().unwrap();
+    let (sessions_dir, index_db, mut indexer, parent_dir, _child_dir) = indexed_vibe_tree(&temp);
+
+    std::fs::remove_dir_all(&parent_dir).unwrap();
+    let first = indexer
+        .index_vibe_sessions_incremental(&sessions_dir)
+        .unwrap();
+    let detected: i64 = indexer
+        .db
+        .query_row(
+            "SELECT source_missing_detected_at FROM sessions WHERE id = 'parent-session'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+
+    // The parent directory physically covers the child, so both go missing at
+    // once and a repeated scan reports no further transition.
+    assert_eq!(first.source_state_changes, 2);
+    assert!(vibe_missing(&index_db, "parent-session"));
+    assert!(vibe_missing(&index_db, "child-session"));
+
+    let second = indexer
+        .index_vibe_sessions_incremental(&sessions_dir)
+        .unwrap();
+    assert_eq!(second.source_state_changes, 0);
+    let still: i64 = indexer
+        .db
+        .query_row(
+            "SELECT source_missing_detected_at FROM sessions WHERE id = 'parent-session'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(still, detected);
+}
+
+#[test]
+fn vibe_returned_directory_clears_missing_after_reindex() {
+    let temp = tempfile::tempdir().unwrap();
+    let (sessions_dir, index_db, mut indexer, _parent_dir, child_dir) = indexed_vibe_tree(&temp);
+    let saved = temp.path().join("saved-child");
+
+    std::fs::rename(&child_dir, &saved).unwrap();
+    indexer
+        .index_vibe_sessions_incremental(&sessions_dir)
+        .unwrap();
+    assert!(vibe_missing(&index_db, "child-session"));
+
+    std::fs::rename(&saved, &child_dir).unwrap();
+    let restored = indexer
+        .index_vibe_sessions_incremental(&sessions_dir)
+        .unwrap();
+
+    assert!(!vibe_missing(&index_db, "child-session"));
+    assert_eq!(restored.source_state_changes, 1);
+}
+
+#[test]
+fn vibe_directory_missing_meta_json_is_diagnostic_and_retains_the_session() {
+    let temp = tempfile::tempdir().unwrap();
+    let (sessions_dir, index_db, mut indexer, _parent_dir, child_dir) = indexed_vibe_tree(&temp);
+
+    std::fs::remove_file(child_dir.join("meta.json")).unwrap();
+    let stats = indexer
+        .index_vibe_sessions_incremental(&sessions_dir)
+        .unwrap();
+
+    assert!(stats.errors > 0);
+    assert_eq!(stats.removed, 0);
+    assert!(!vibe_missing(&index_db, "child-session"));
+}
+
+#[test]
+fn vibe_directory_missing_messages_jsonl_is_diagnostic_and_retains_the_session() {
+    let temp = tempfile::tempdir().unwrap();
+    let (sessions_dir, index_db, mut indexer, _parent_dir, child_dir) = indexed_vibe_tree(&temp);
+
+    std::fs::remove_file(child_dir.join("messages.jsonl")).unwrap();
+    let stats = indexer
+        .index_vibe_sessions_incremental(&sessions_dir)
+        .unwrap();
+
+    assert!(stats.errors > 0);
+    assert!(!vibe_missing(&index_db, "child-session"));
+}
+
+#[test]
+fn vibe_unreadable_agents_directory_never_marks_children_missing() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let temp = tempfile::tempdir().unwrap();
+    let (sessions_dir, index_db, mut indexer, parent_dir, _child_dir) = indexed_vibe_tree(&temp);
+    let agents_dir = parent_dir.join("agents");
+
+    std::fs::set_permissions(&agents_dir, std::fs::Permissions::from_mode(0o000)).unwrap();
+    let stats = indexer
+        .index_vibe_sessions_incremental(&sessions_dir)
+        .unwrap();
+    std::fs::set_permissions(&agents_dir, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+    assert!(stats.errors > 0);
+    assert!(!vibe_missing(&index_db, "child-session"));
+    assert!(!vibe_missing(&index_db, "parent-session"));
+}
+
+#[test]
+fn vibe_missing_child_under_relocated_logical_parent_is_scoped_physically() {
+    // A logical parent relationship never authorizes absence: only the
+    // physical directory that disappeared covers its own descendants.
+    let temp = tempfile::tempdir().unwrap();
+    let sessions_dir = temp.path().join("vibe");
+    let parent_dir = sessions_dir.join("session_parent");
+    let sibling_dir = sessions_dir.join("session_sibling");
+    write_vibe_session_dir(
+        &parent_dir,
+        "parent-session",
+        None,
+        &vibe_task_messages("comique", "call_1"),
+    );
+    write_vibe_session_dir(
+        &sibling_dir,
+        "sibling-session",
+        None,
+        &vibe_plain_messages(),
+    );
+    let index_db = temp.path().join("index.db");
+    let mut indexer = SessionIndexer::new(&index_db).unwrap();
+    indexer
+        .index_vibe_sessions_incremental(&sessions_dir)
+        .unwrap();
+
+    std::fs::remove_dir_all(&parent_dir).unwrap();
+    indexer
+        .index_vibe_sessions_incremental(&sessions_dir)
+        .unwrap();
+
+    assert!(vibe_missing(&index_db, "parent-session"));
+    assert!(!vibe_missing(&index_db, "sibling-session"));
+}

@@ -10,7 +10,8 @@ use std::path::{Path, PathBuf};
 use std::time::UNIX_EPOCH;
 
 use crate::database::source_state::{
-    ScopeScan, SourceObservation, SourceScope, reconcile_scope, record_observation_tx,
+    ScopeScan, SourceObservation, SourceScope, path_prefix_bounds, reconcile_scope,
+    record_observation_tx,
 };
 use crate::models::SourceKind;
 use crate::models::{AiAssistant, IndexingError, IndexingRunResult, PerSourceResult, SourceStatus};
@@ -124,6 +125,45 @@ struct OpencodeIndexContext<'a> {
     sqlite_owner_ids: &'a mut HashSet<String>,
     stats: &'a mut IndexingStats,
     errors_detail: &'a mut VecDeque<IndexingError>,
+}
+
+/// Everything one Mistral Vibe scan threads through its recursive descent.
+struct VibeIndexContext<'a> {
+    parser: &'a MistralVibeParser,
+    incremental: bool,
+    scan: &'a mut ScopeScan,
+    stats: &'a mut IndexingStats,
+    errors_detail: &'a mut VecDeque<IndexingError>,
+}
+
+/// One surviving directory observed under a Mistral Vibe session root.
+///
+/// A candidate is recorded because the directory exists, not because it is a
+/// usable session: `fingerprint_target` is `Some` only when both required files
+/// are present.
+struct VibeCandidate {
+    path: PathBuf,
+    fingerprint_target: Option<PathBuf>,
+}
+
+impl VibeCandidate {
+    fn from_dir(path: PathBuf) -> Option<Self> {
+        if !path.is_dir() {
+            return None;
+        }
+        let fingerprint_target = path.join("messages.jsonl");
+        let complete = path.join("meta.json").exists() && fingerprint_target.exists();
+        Some(Self {
+            path,
+            fingerprint_target: complete.then_some(fingerprint_target),
+        })
+    }
+}
+
+/// The result of enumerating one directory level of a Vibe session tree.
+struct VibeDirectoryScan {
+    candidates: Vec<VibeCandidate>,
+    complete: bool,
 }
 
 #[derive(Default)]
@@ -370,6 +410,7 @@ impl SessionIndexer {
                     &mut scan,
                     AiAssistant::ClaudeCode,
                     path,
+                    SourceKind::TranscriptFile,
                     fingerprint,
                     indexed_ids,
                 );
@@ -418,6 +459,14 @@ impl SessionIndexer {
         if !has_storage_root && !has_db {
             return Ok(IndexingStats::default());
         }
+
+        // Source evidence is stored and compared as absolute paths, so every
+        // locator this scan produces must already be rooted.
+        let storage_root = &Self::absolute_source_path(storage_root)?;
+        let db_paths = &db_paths
+            .iter()
+            .map(|path| Self::absolute_source_path(path))
+            .collect::<Result<Vec<_>>>()?;
 
         let parser = OpenCodeParser::new(storage_root);
         let mut sqlite_owner_ids = HashSet::new();
@@ -518,6 +567,7 @@ impl SessionIndexer {
                         &mut scan,
                         AiAssistant::Codex,
                         path,
+                        SourceKind::TranscriptFile,
                         fingerprint,
                         indexed_ids,
                     );
@@ -559,30 +609,33 @@ impl SessionIndexer {
         if !sessions_dir.exists() {
             return Ok(IndexingStats::default());
         }
+        let root = Self::absolute_source_path(sessions_dir)?;
 
         let parser = MistralVibeParser;
         let mut stats = IndexingStats::default();
+        let mut scan = Self::path_scope_scan(AiAssistant::MistralVibe, &root);
 
-        let entries = std::fs::read_dir(sessions_dir)
-            .with_context(|| format!("Failed to read {}", sessions_dir.display()))?;
+        let entries = std::fs::read_dir(&root)
+            .with_context(|| format!("Failed to read {}", root.display()))?;
+
+        let mut context = VibeIndexContext {
+            parser: &parser,
+            incremental,
+            scan: &mut scan,
+            stats: &mut stats,
+            errors_detail,
+        };
 
         for entry in entries {
-            let Some((path, fingerprint_target)) =
-                self.next_vibe_session_path(entry, sessions_dir, errors_detail)?
-            else {
+            let Some(candidate) = Self::next_vibe_candidate(entry, &root, &mut context) else {
                 continue;
             };
 
-            self.index_vibe_session_tree(
-                &path,
-                &fingerprint_target,
-                incremental,
-                &parser,
-                &mut stats,
-                errors_detail,
-            )?;
+            self.index_vibe_session_tree(&candidate, &mut context)?;
         }
 
+        stats.source_state_changes +=
+            reconcile_scope(&mut self.db, &scan, chrono::Utc::now().timestamp())?;
         self.prune_orphan_fingerprints()?;
         Ok(stats)
     }
@@ -592,198 +645,268 @@ impl SessionIndexer {
     /// `task` calls). Returns whether this session dir itself was (re)parsed,
     /// so a parent can refresh its subagent links when a child appears or
     /// changes.
+    ///
+    /// Presence is observed by enumeration: a directory that survives but is
+    /// incomplete protects its indexed owner and every session stored beneath
+    /// it, so a half-written or unreadable tree never reads as disappearance.
     fn index_vibe_session_tree(
         &mut self,
-        path: &Path,
-        fingerprint_target: &Path,
-        incremental: bool,
-        parser: &MistralVibeParser,
-        stats: &mut IndexingStats,
-        errors_detail: &mut VecDeque<IndexingError>,
+        candidate: &VibeCandidate,
+        context: &mut VibeIndexContext<'_>,
     ) -> Result<bool> {
-        let mut reparsed = self.index_vibe_session_dir(
-            path,
-            fingerprint_target,
-            incremental,
-            parser,
-            stats,
-            errors_detail,
-        )?;
+        let Some(fingerprint_target) = candidate.fingerprint_target.as_deref() else {
+            self.protect_incomplete_vibe_dir(&candidate.path, context)?;
+            return Ok(false);
+        };
 
-        // Drop children whose directories were deleted since the last run, so
-        // their session rows do not linger and the parent's subagent links do
-        // not dangle. A removed direct child counts as a change for the parent.
-        let mut child_changed = self.prune_deleted_vibe_children(path, stats)?;
-        for (child_path, child_fingerprint) in Self::vibe_agent_child_dirs(path) {
-            child_changed |= self.index_vibe_session_tree(
-                &child_path,
-                &child_fingerprint,
-                incremental,
-                parser,
-                stats,
-                errors_detail,
-            )?;
+        let mut reparsed =
+            self.index_vibe_session_dir(&candidate.path, fingerprint_target, context)?;
+
+        let children = Self::vibe_child_dirs(&candidate.path);
+        if !children.complete {
+            // A failed nested scan cannot authorize absence under the ancestor
+            // scope, so exclude exactly the subtree that could not be read.
+            let agents_dir = candidate.path.join("agents");
+            push_indexing_error(
+                context.errors_detail,
+                AiAssistant::MistralVibe,
+                Some(agents_dir.display().to_string()),
+                "Failed to enumerate Mistral Vibe agent directory".to_string(),
+            );
+            context.stats.errors += 1;
+            context.scan.protected_locators.insert(agents_dir);
+        }
+
+        let mut child_changed = false;
+        for child in &children.candidates {
+            child_changed |= self.index_vibe_session_tree(child, context)?;
         }
 
         // A child directory only contributes to the parent's subagent links
-        // (e.g. `child_session_id`) at parse time. If a child appeared,
-        // changed, or was removed but the parent was skipped by its
-        // `messages.jsonl` fingerprint, those links would stay stale; force a
-        // reparse.
-        if incremental && child_changed && !reparsed {
-            stats.skipped = stats.skipped.saturating_sub(1);
-            self.process_vibe_session_dir(path, fingerprint_target, parser, stats, errors_detail)?;
+        // (e.g. `child_session_id`) at parse time. If a child appeared or
+        // changed but the parent was skipped by its `messages.jsonl`
+        // fingerprint, those links would stay stale; force a reparse. A
+        // disappeared child never forces one: its link is preserved so the
+        // retained session stays reachable from the parent transcript.
+        if context.incremental && child_changed && !reparsed {
+            context.stats.skipped = context.stats.skipped.saturating_sub(1);
+            let fingerprint = Self::current_fingerprint(fingerprint_target)?;
+            self.process_vibe_session_dir(
+                &candidate.path,
+                fingerprint_target,
+                fingerprint,
+                context,
+            )?;
             reparsed = true;
         }
 
         Ok(reparsed)
     }
 
+    /// Protect a surviving directory whose required files are absent. Its owner
+    /// and owned descendants keep their current state; a previously indexed
+    /// directory also reports the incomplete read as a diagnostic.
+    fn protect_incomplete_vibe_dir(
+        &self,
+        path: &Path,
+        context: &mut VibeIndexContext<'_>,
+    ) -> Result<()> {
+        context.scan.protected_locators.insert(path.to_path_buf());
+        if self.has_indexed_sessions_at_or_under(path)? {
+            push_indexing_error(
+                context.errors_detail,
+                AiAssistant::MistralVibe,
+                Some(path.display().to_string()),
+                "Mistral Vibe session directory is missing meta.json or messages.jsonl".to_string(),
+            );
+            context.stats.errors += 1;
+        }
+        Ok(())
+    }
+
+    /// Whether any session row is stored at `dir` or beneath it.
+    fn has_indexed_sessions_at_or_under(&self, dir: &Path) -> Result<bool> {
+        let Some(locator) = dir.to_str() else {
+            return Ok(false);
+        };
+        let Some((lower, upper)) = path_prefix_bounds(dir) else {
+            return Ok(false);
+        };
+        Ok(self.db.query_row(
+            "SELECT EXISTS(SELECT 1 FROM sessions
+             WHERE file_path = ?1
+                OR (file_path >= ?2 COLLATE BINARY AND file_path < ?3 COLLATE BINARY))",
+            rusqlite::params![locator, lower, upper],
+            |row| row.get::<_, i64>(0),
+        )? != 0)
+    }
+
     fn index_vibe_session_dir(
         &mut self,
         path: &Path,
         fingerprint_target: &Path,
-        incremental: bool,
-        parser: &MistralVibeParser,
-        stats: &mut IndexingStats,
-        errors_detail: &mut VecDeque<IndexingError>,
+        context: &mut VibeIndexContext<'_>,
     ) -> Result<bool> {
-        if incremental && !self.should_reindex(fingerprint_target)? {
-            stats.skipped += 1;
+        let fingerprint = match Self::current_fingerprint(fingerprint_target) {
+            Ok(fingerprint) => fingerprint,
+            Err(error) => {
+                Self::protect_unidentified_source(
+                    context.scan,
+                    context.stats,
+                    context.errors_detail,
+                    AiAssistant::MistralVibe,
+                    path,
+                    &error,
+                );
+                return Ok(false);
+            }
+        };
+        let indexed_ids = self.indexed_ids_at_locator(AiAssistant::MistralVibe, path)?;
+        let needs_parse = !context.incremental
+            || indexed_ids.is_empty()
+            || self.source_needs_reindex(path)?
+            || self.should_reindex(fingerprint_target)?;
+        if !needs_parse {
+            Self::observe_indexed_locator(
+                context.scan,
+                AiAssistant::MistralVibe,
+                path,
+                SourceKind::SessionDirectory,
+                fingerprint,
+                indexed_ids,
+            );
+            context.stats.skipped += 1;
             return Ok(false);
         }
 
-        self.process_vibe_session_dir(path, fingerprint_target, parser, stats, errors_detail)?;
+        self.process_vibe_session_dir(path, fingerprint_target, fingerprint, context)?;
         Ok(true)
     }
 
-    /// Enumerate the child agent session dirs under `<session_dir>/agents/`,
-    /// returning `(session_dir, messages.jsonl)` pairs for each valid one.
-    fn vibe_agent_child_dirs(session_dir: &Path) -> Vec<(PathBuf, PathBuf)> {
-        let Ok(entries) = std::fs::read_dir(session_dir.join("agents")) else {
-            return Vec::new();
-        };
-
-        let mut children = Vec::new();
-        for entry in entries.flatten() {
-            let path = entry.path();
-            let fingerprint_target = path.join("messages.jsonl");
-            if path.is_dir() && path.join("meta.json").exists() && fingerprint_target.exists() {
-                children.push((path, fingerprint_target));
-            }
-        }
-        children
-    }
-
-    /// Remove indexed Vibe child sessions whose **direct** child directory under
-    /// `<session_dir>/agents/` no longer exists on disk, cascading the removal to
-    /// every session beneath that deleted child. Returns `true` if a direct child
-    /// was removed, so the immediate parent can be reparsed to drop the
-    /// now-dangling subagent link.
+    /// Enumerate the child agent session dirs under `<session_dir>/agents/`.
     ///
-    /// Each parent prunes only its own direct children: an ancestor must not
-    /// remove a grandchild on the intermediate parent's behalf, or that
-    /// intermediate would never observe the change and would keep a dangling
-    /// link. Cascading to the deleted child's subtree still cleans up the case
-    /// where an entire intermediate directory was removed (no surviving
-    /// directory recurses into it).
-    fn prune_deleted_vibe_children(
-        &mut self,
-        session_dir: &Path,
-        stats: &mut IndexingStats,
-    ) -> Result<bool> {
-        let agents_dir = session_dir.join("agents");
-        let Some(agents_str) = agents_dir.to_str() else {
-            return Ok(false);
+    /// Every surviving directory is returned as a candidate, whether or not it
+    /// carries the required files: existence is recorded before validity, so an
+    /// incomplete directory can protect its indexed sessions. An absent
+    /// `agents/` entry is a complete enumeration of nothing; any other read
+    /// failure is incomplete and never authorizes absence.
+    fn vibe_child_dirs(session_dir: &Path) -> VibeDirectoryScan {
+        let entries = match std::fs::read_dir(session_dir.join("agents")) {
+            Ok(entries) => entries,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                return VibeDirectoryScan {
+                    candidates: Vec::new(),
+                    complete: true,
+                };
+            }
+            Err(_) => {
+                return VibeDirectoryScan {
+                    candidates: Vec::new(),
+                    complete: false,
+                };
+            }
         };
 
-        let known = self.indexed_paths_under(agents_str)?;
-
-        let mut removed_direct_child = false;
-        for file_path in known {
-            let child = PathBuf::from(&file_path);
-            // Only act on direct children; deeper descendants are removed as part
-            // of the subtree of whichever direct child is gone.
-            if child.parent() != Some(agents_dir.as_path()) {
-                continue;
-            }
-            if child.exists() {
-                continue;
-            }
-            stats.removed += self.remove_vibe_session_subtree(&child)?;
-            removed_direct_child = true;
-        }
-
-        Ok(removed_direct_child)
-    }
-
-    /// Remove a Vibe session directory and every session indexed beneath it,
-    /// returning the number of session rows removed. Used when a child directory
-    /// is deleted so its spawned descendants do not linger as orphans.
-    fn remove_vibe_session_subtree(&mut self, dir: &Path) -> Result<usize> {
-        let mut removed = self.remove_session_for_file(dir)?;
-
-        let Some(dir_str) = dir.to_str() else {
-            return Ok(removed);
+        let mut scan = VibeDirectoryScan {
+            candidates: Vec::new(),
+            complete: true,
         };
-        for file_path in self.indexed_paths_under(dir_str)? {
-            removed += self.remove_session_for_file(Path::new(&file_path))?;
+        for entry in entries {
+            match entry {
+                Ok(entry) => {
+                    if let Some(candidate) = VibeCandidate::from_dir(entry.path()) {
+                        scan.candidates.push(candidate);
+                    }
+                }
+                Err(_) => scan.complete = false,
+            }
         }
-
-        Ok(removed)
-    }
-
-    /// Return the indexed `file_path`s strictly beneath `dir`, i.e. those
-    /// starting with `<dir>/`. Uses a half-open prefix range so the
-    /// `idx_sessions_file_path` index serves it without scanning the table, and
-    /// so the common leaf case (no descendants) returns immediately.
-    fn indexed_paths_under(&self, dir: &str) -> Result<Vec<String>> {
-        // `/` is byte 0x2F, so the next possible byte 0x30 (`0`) bounds every
-        // path beginning with `<dir>/` from above. Comparison uses the column's
-        // default BINARY collation, so the match is exact and case-sensitive.
-        let lower = format!("{dir}/");
-        let upper = format!("{dir}0");
-        let mut stmt = self
-            .db
-            .prepare("SELECT file_path FROM sessions WHERE file_path >= ?1 AND file_path < ?2")?;
-        let rows = stmt
-            .query_map([lower, upper], |row| row.get(0))?
-            .collect::<std::result::Result<Vec<_>, _>>()?;
-        Ok(rows)
+        scan
     }
 
     fn process_vibe_session_dir(
         &mut self,
         path: &Path,
         fingerprint_target: &Path,
-        parser: &MistralVibeParser,
-        stats: &mut IndexingStats,
-        errors_detail: &mut VecDeque<IndexingError>,
+        fingerprint: (i64, i64),
+        context: &mut VibeIndexContext<'_>,
     ) -> Result<()> {
-        match parser.parse(path) {
+        match context.parser.parse(path) {
             Ok(parsed) => {
-                self.insert_parsed_session_with_fingerprint(&parsed, path, fingerprint_target)?;
-                stats.indexed += 1;
+                if let Err(error) =
+                    Self::ensure_fingerprint_unchanged(fingerprint_target, fingerprint)
+                {
+                    Self::protect_unidentified_source(
+                        context.scan,
+                        context.stats,
+                        context.errors_detail,
+                        AiAssistant::MistralVibe,
+                        path,
+                        &error,
+                    );
+                    return Ok(());
+                }
+                let observation = SourceObservation {
+                    assistant: AiAssistant::MistralVibe,
+                    id: parsed.session.id.clone(),
+                    locator: path.to_path_buf(),
+                    kind: SourceKind::SessionDirectory,
+                    scope: None,
+                    // Directory sources carry no size/mtime of their own; this
+                    // `messages.jsonl` evidence only feeds `file_fingerprints`.
+                    fingerprint: Some(fingerprint),
+                };
+                match self.insert_parsed_session_observed(
+                    &parsed,
+                    path,
+                    fingerprint_target,
+                    &observation,
+                    chrono::Utc::now().timestamp(),
+                    true,
+                ) {
+                    Ok(changes) => {
+                        context
+                            .scan
+                            .discovered_ids
+                            .insert(parsed.session.id.clone());
+                        context.scan.observations.push(observation);
+                        context.stats.indexed += 1;
+                        context.stats.source_state_changes += changes;
+                    }
+                    Err(error) => {
+                        self.record_index_failure(
+                            AiAssistant::MistralVibe,
+                            path,
+                            &error,
+                            context.stats,
+                            context.errors_detail,
+                        );
+                        Self::protect_unidentified_locator(context.scan, path);
+                    }
+                }
             }
             Err(err) => {
                 if matches!(
                     err.downcast_ref::<MistralVibeParseError>(),
                     Some(MistralVibeParseError::NoUserMessages)
                 ) {
-                    self.prune_session_after_parse_skip(
+                    self.prune_ineligible_parse_skip(
                         AiAssistant::MistralVibe,
                         path,
-                        stats,
-                        errors_detail,
+                        &err,
+                        context.scan,
+                        context.stats,
+                        context.errors_detail,
                     );
                 } else {
                     self.record_index_failure(
                         AiAssistant::MistralVibe,
                         path,
                         &err,
-                        stats,
-                        errors_detail,
+                        context.stats,
+                        context.errors_detail,
                     );
+                    Self::protect_unidentified_locator(context.scan, path);
                 }
             }
         }
@@ -821,6 +944,7 @@ impl SessionIndexer {
                     path,
                     &observation,
                     chrono::Utc::now().timestamp(),
+                    false,
                 ) {
                     Ok(changes) => {
                         scan.discovered_ids.insert(parsed.session.id.clone());
@@ -894,6 +1018,7 @@ impl SessionIndexer {
                     path,
                     &observation,
                     chrono::Utc::now().timestamp(),
+                    false,
                 ) {
                     Ok(changes) => {
                         scan.discovered_ids.insert(parsed.session.id.clone());
@@ -978,6 +1103,7 @@ impl SessionIndexer {
         scan: &mut ScopeScan,
         assistant: AiAssistant,
         path: &Path,
+        kind: SourceKind,
         fingerprint: (i64, i64),
         ids: Vec<String>,
     ) {
@@ -987,7 +1113,7 @@ impl SessionIndexer {
                 assistant,
                 id,
                 locator: path.to_path_buf(),
-                kind: SourceKind::TranscriptFile,
+                kind,
                 scope: None,
                 fingerprint: Some(fingerprint),
             });
@@ -1055,33 +1181,29 @@ impl SessionIndexer {
         Ok(())
     }
 
-    fn next_vibe_session_path(
-        &self,
+    /// Record one entry of the Vibe session root as a candidate directory.
+    ///
+    /// An unreadable entry makes the enumeration incomplete, so no absence can
+    /// be inferred from a scan that could not see every directory.
+    fn next_vibe_candidate(
         entry: std::io::Result<std::fs::DirEntry>,
         sessions_dir: &Path,
-        errors_detail: &mut VecDeque<IndexingError>,
-    ) -> Result<Option<(PathBuf, PathBuf)>> {
-        let entry = match entry {
-            Ok(entry) => entry,
+        context: &mut VibeIndexContext<'_>,
+    ) -> Option<VibeCandidate> {
+        match entry {
+            Ok(entry) => VibeCandidate::from_dir(entry.path()),
             Err(err) => {
                 tracing::warn!("Failed to read Mistral Vibe session entry: {}", err);
                 push_indexing_error(
-                    errors_detail,
+                    context.errors_detail,
                     AiAssistant::MistralVibe,
                     Some(sessions_dir.display().to_string()),
                     format!("Failed to read Mistral Vibe session entry: {err}"),
                 );
-                return Ok(None);
+                context.scan.complete = false;
+                None
             }
-        };
-
-        let path = entry.path();
-        let fingerprint_target = path.join("messages.jsonl");
-        if !path.is_dir() || !path.join("meta.json").exists() || !fingerprint_target.exists() {
-            return Ok(None);
         }
-
-        Ok(Some((path, fingerprint_target)))
     }
 
     fn is_claude_session_file(path: &Path) -> bool {
@@ -1340,6 +1462,7 @@ impl SessionIndexer {
                     db_path,
                     &observation,
                     chrono::Utc::now().timestamp(),
+                    false,
                 ) {
                     tracing::warn!("Failed to insert SQLite session {}: {}", entry.id, err);
                     push_indexing_error(
@@ -1509,6 +1632,7 @@ impl SessionIndexer {
                     path,
                     &observation,
                     chrono::Utc::now().timestamp(),
+                    false,
                 ) {
                     Ok(changes) => {
                         self.upsert_opencode_json_dependency_fingerprints(
@@ -1591,12 +1715,17 @@ impl SessionIndexer {
         fingerprint_path: &Path,
         observation: &SourceObservation,
         now: i64,
+        preserve_links: bool,
     ) -> Result<usize> {
         let session = &parsed.session;
         let tx = self.db.transaction()?;
         let resolved_project_id = Self::upsert_project_tx(&tx, session.project_path.as_deref())?;
         Self::upsert_session_row_tx(&tx, parsed, file_path, resolved_project_id)?;
-        Self::replace_session_contents_tx(&tx, parsed)?;
+        if preserve_links {
+            Self::replace_session_contents_preserving_links_tx(&tx, parsed)?;
+        } else {
+            Self::replace_session_contents_tx(&tx, parsed)?;
+        }
         let source_state_changes = record_observation_tx(&tx, observation, now, true)?;
         Self::link_claude_subagents_tx(&tx, parsed)?;
         Self::link_codex_subagents_tx(&tx, parsed)?;
@@ -1849,6 +1978,42 @@ impl SessionIndexer {
             ],
         )?;
 
+        Ok(())
+    }
+
+    /// Replace a session's transcript while keeping child links whose target
+    /// still exists in the index.
+    ///
+    /// A Vibe parent resolves `child_session_id` from the directories present
+    /// on disk, so reparsing a parent whose child has disappeared would erase a
+    /// link to a session that is merely unavailable. Restore the previous
+    /// target only for a subagent item that survived the reparse and that the
+    /// new transcript did not explicitly point somewhere else.
+    fn replace_session_contents_preserving_links_tx(
+        tx: &rusqlite::Transaction<'_>,
+        parsed: &ParsedSession,
+    ) -> Result<()> {
+        let session_id = &parsed.session.id;
+        let previous: Vec<(String, String)> = {
+            let mut statement = tx.prepare(
+                "SELECT sa.id, sa.child_session_id FROM subagents sa
+                 JOIN sessions child ON child.id = sa.child_session_id
+                 WHERE sa.session_id = ?1",
+            )?;
+            statement
+                .query_map([session_id], |row| Ok((row.get(0)?, row.get(1)?)))?
+                .collect::<rusqlite::Result<_>>()?
+        };
+
+        Self::replace_session_contents_tx(tx, parsed)?;
+
+        for (subagent_id, child_session_id) in previous {
+            tx.execute(
+                "UPDATE subagents SET child_session_id = ?1
+                 WHERE session_id = ?2 AND id = ?3 AND child_session_id IS NULL",
+                rusqlite::params![child_session_id, session_id, subagent_id],
+            )?;
+        }
         Ok(())
     }
 
@@ -3062,7 +3227,7 @@ mod tests {
         assert_eq!(linked_child, "child-session");
     }
 
-    fn write_vibe_session_dir(
+    pub(super) fn write_vibe_session_dir(
         dir: &Path,
         session_id: &str,
         agent_name: Option<&str>,
@@ -3083,7 +3248,7 @@ mod tests {
         std::fs::write(dir.join("messages.jsonl"), messages.join("\n")).unwrap();
     }
 
-    fn vibe_task_messages(agent: &str, call_id: &str) -> Vec<String> {
+    pub(super) fn vibe_task_messages(agent: &str, call_id: &str) -> Vec<String> {
         let task_args = serde_json::json!({ "agent": agent, "task": "Review" }).to_string();
         vec![
             serde_json::json!({ "role": "user", "content": "Ask the agent" }).to_string(),
@@ -3105,7 +3270,7 @@ mod tests {
         ]
     }
 
-    fn vibe_plain_messages() -> Vec<String> {
+    pub(super) fn vibe_plain_messages() -> Vec<String> {
         vec![
             serde_json::json!({ "role": "user", "content": "Do the bit" }).to_string(),
             serde_json::json!({ "role": "assistant", "content": "Here is my bit" }).to_string(),
@@ -3301,7 +3466,7 @@ mod tests {
     }
 
     #[test]
-    fn vibe_incremental_relinks_intermediate_when_grandchild_deleted() {
+    fn vibe_incremental_retains_grandchild_and_keeps_intermediate_link() {
         let temp_db = NamedTempFile::new().unwrap();
         let mut indexer = SessionIndexer::new(temp_db.path()).unwrap();
         let temp_dir = tempfile::tempdir().unwrap();
@@ -3334,26 +3499,19 @@ mod tests {
             .unwrap();
         assert_eq!(first.indexed, 3);
 
-        // Delete ONLY the grandchild. The intermediate child's messages.jsonl is
-        // unchanged, so the grandchild removal must still force the intermediate
-        // to reparse and drop its now-dangling link.
+        // Delete ONLY the grandchild. The intermediate child's `agents` entry
+        // enumerates completely and reports nothing, so the grandchild is
+        // retained as missing while the intermediate keeps its link.
         std::fs::remove_dir_all(&grandchild_dir).unwrap();
         let second = indexer
             .index_vibe_sessions_incremental(sessions_dir)
             .unwrap();
-        assert!(second.removed >= 1);
+        assert_eq!(second.removed, 0);
+        assert_eq!(second.source_state_changes, 1);
 
-        let grandchild_rows: i64 = indexer
-            .db
-            .query_row(
-                "SELECT COUNT(*) FROM sessions WHERE id = 'grandchild-session'",
-                [],
-                |row| row.get(0),
-            )
-            .unwrap();
-        assert_eq!(grandchild_rows, 0);
+        assert!(source_missing(temp_db.path(), "grandchild-session"));
 
-        let dangling: i64 = indexer
+        let linked: i64 = indexer
             .db
             .query_row(
                 "SELECT COUNT(*) FROM subagents \
@@ -3362,14 +3520,19 @@ mod tests {
                 |row| row.get(0),
             )
             .unwrap();
-        assert_eq!(
-            dangling, 0,
-            "intermediate still links to deleted grandchild"
-        );
+        assert_eq!(linked, 1, "intermediate dropped its retained grandchild");
+    }
+
+    fn source_missing(db_path: &Path, id: &str) -> bool {
+        crate::database::load_session(db_path, id)
+            .unwrap()
+            .unwrap()
+            .source
+            .missing
     }
 
     #[test]
-    fn vibe_incremental_prunes_child_when_whole_agents_dir_removed() {
+    fn vibe_incremental_retains_child_when_whole_agents_dir_removed() {
         let temp_db = NamedTempFile::new().unwrap();
         let mut indexer = SessionIndexer::new(temp_db.path()).unwrap();
         let temp_dir = tempfile::tempdir().unwrap();
@@ -3393,39 +3556,38 @@ mod tests {
         indexer
             .index_vibe_sessions_incremental(sessions_dir)
             .unwrap();
+        let before = crate::database::load_session(temp_db.path(), "child-session")
+            .unwrap()
+            .unwrap();
 
-        // Remove the entire agents/ directory (not just one child). The parent's
-        // messages.jsonl is unchanged, so the prune must still drop the orphaned
-        // child row and relink the parent.
+        // Remove the entire agents/ directory (not just one child). The parent
+        // enumerated successfully and reports no `agents` entry, so the child is
+        // retained and marked missing rather than deleted.
         std::fs::remove_dir_all(&agents_dir).unwrap();
-        indexer
+        let stats = indexer
             .index_vibe_sessions_incremental(sessions_dir)
             .unwrap();
 
-        let child_rows: i64 = indexer
-            .db
-            .query_row(
-                "SELECT COUNT(*) FROM sessions WHERE id = 'child-session'",
-                [],
-                |row| row.get(0),
-            )
+        assert_eq!(stats.removed, 0);
+        let child = crate::database::load_session(temp_db.path(), "child-session")
+            .unwrap()
             .unwrap();
-        assert_eq!(child_rows, 0, "orphaned child row survived agents/ removal");
+        assert!(child.source.missing);
+        assert_eq!(child.last_updated, before.last_updated);
 
-        let dangling: i64 = indexer
+        let linked: String = indexer
             .db
             .query_row(
-                "SELECT COUNT(*) FROM subagents \
-                 WHERE session_id = 'parent-session' AND child_session_id = 'child-session'",
+                "SELECT child_session_id FROM subagents WHERE session_id = 'parent-session'",
                 [],
                 |row| row.get(0),
             )
             .unwrap();
-        assert_eq!(dangling, 0, "parent still links to pruned child");
+        assert_eq!(linked, "child-session", "parent link was dropped");
     }
 
     #[test]
-    fn vibe_incremental_removes_whole_subtree_when_intermediate_deleted() {
+    fn vibe_incremental_retains_whole_subtree_when_intermediate_deleted() {
         let temp_db = NamedTempFile::new().unwrap();
         let mut indexer = SessionIndexer::new(temp_db.path()).unwrap();
         let temp_dir = tempfile::tempdir().unwrap();
@@ -3456,39 +3618,31 @@ mod tests {
             .index_vibe_sessions_incremental(sessions_dir)
             .unwrap();
 
-        // Delete the whole intermediate subtree (B and its grandchild C). The
-        // grandchild must not survive as an orphan even though no surviving
-        // directory recurses into it.
+        // Delete the whole intermediate subtree (B and its grandchild C). A
+        // missing physical directory covers its physical descendants, so both
+        // rows survive as missing.
         std::fs::remove_dir_all(&child_dir).unwrap();
-        indexer
+        let stats = indexer
             .index_vibe_sessions_incremental(sessions_dir)
             .unwrap();
 
-        let surviving: i64 = indexer
-            .db
-            .query_row(
-                "SELECT COUNT(*) FROM sessions \
-                 WHERE id IN ('child-session', 'grandchild-session')",
-                [],
-                |row| row.get(0),
-            )
-            .unwrap();
-        assert_eq!(surviving, 0, "deleted subtree left orphan session rows");
+        assert_eq!(stats.removed, 0);
+        assert!(source_missing(temp_db.path(), "child-session"));
+        assert!(source_missing(temp_db.path(), "grandchild-session"));
 
-        let dangling: i64 = indexer
+        let linked: String = indexer
             .db
             .query_row(
-                "SELECT COUNT(*) FROM subagents \
-                 WHERE session_id = 'parent-session' AND child_session_id = 'child-session'",
+                "SELECT child_session_id FROM subagents WHERE session_id = 'parent-session'",
                 [],
                 |row| row.get(0),
             )
             .unwrap();
-        assert_eq!(dangling, 0, "parent still links to deleted child");
+        assert_eq!(linked, "child-session");
     }
 
     #[test]
-    fn vibe_incremental_subtree_removal_preserves_case_distinct_sibling() {
+    fn vibe_incremental_subtree_absence_preserves_case_distinct_sibling() {
         let temp_db = NamedTempFile::new().unwrap();
         let mut indexer = SessionIndexer::new(temp_db.path()).unwrap();
         let temp_dir = tempfile::tempdir().unwrap();
@@ -3533,31 +3687,20 @@ mod tests {
             .index_vibe_sessions_incremental(sessions_dir)
             .unwrap();
 
-        let removed: i64 = indexer
-            .db
-            .query_row(
-                "SELECT COUNT(*) FROM sessions \
-                 WHERE id IN ('removed-child-session', 'removed-grandchild-session')",
-                [],
-                |row| row.get(0),
-            )
-            .unwrap();
-        assert_eq!(removed, 0);
-
-        let surviving: i64 = indexer
-            .db
-            .query_row(
-                "SELECT COUNT(*) FROM sessions \
-                 WHERE id IN ('surviving-child-session', 'surviving-grandchild-session')",
-                [],
-                |row| row.get(0),
-            )
-            .unwrap();
-        assert_eq!(surviving, 2, "case-distinct sibling subtree was removed");
+        assert!(source_missing(temp_db.path(), "removed-child-session"));
+        assert!(source_missing(temp_db.path(), "removed-grandchild-session"));
+        assert!(
+            !source_missing(temp_db.path(), "surviving-child-session"),
+            "case-distinct sibling subtree was marked missing"
+        );
+        assert!(!source_missing(
+            temp_db.path(),
+            "surviving-grandchild-session"
+        ));
     }
 
     #[test]
-    fn vibe_incremental_removes_deleted_child_and_relinks_parent() {
+    fn vibe_incremental_retains_deleted_child_and_keeps_parent_link() {
         let temp_db = NamedTempFile::new().unwrap();
         let mut indexer = SessionIndexer::new(temp_db.path()).unwrap();
         let temp_dir = tempfile::tempdir().unwrap();
@@ -3583,47 +3726,34 @@ mod tests {
             .unwrap();
         assert_eq!(first.indexed, 2);
 
-        let linked: String = indexer
-            .db
-            .query_row(
-                "SELECT child_session_id FROM subagents WHERE session_id = 'parent-session'",
-                [],
-                |row| row.get(0),
-            )
-            .unwrap();
-        assert_eq!(linked, "child-session");
+        let linked = crate::database::load_subagent(
+            temp_db.path(),
+            "parent-session",
+            "parent-session-call_1",
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(linked.child_session_id.as_deref(), Some("child-session"));
 
-        // The child directory is deleted; the parent's messages.jsonl is
-        // unchanged, so only the removal can trigger the relink.
+        // The child directory is deleted; the parent keeps its link so the
+        // retained child stays reachable from the transcript.
         std::fs::remove_dir_all(&child_dir).unwrap();
 
         let second = indexer
             .index_vibe_sessions_incremental(sessions_dir)
             .unwrap();
-        assert!(second.removed >= 1);
+        assert_eq!(second.removed, 0);
+        assert_eq!(second.source_state_changes, 1);
+        assert!(source_missing(temp_db.path(), "child-session"));
 
-        // The child session row is gone.
-        let child_rows: i64 = indexer
-            .db
-            .query_row(
-                "SELECT COUNT(*) FROM sessions WHERE id = 'child-session'",
-                [],
-                |row| row.get(0),
-            )
-            .unwrap();
-        assert_eq!(child_rows, 0);
-
-        // The parent was reparsed and no longer links to a now-missing child.
-        let dangling: i64 = indexer
-            .db
-            .query_row(
-                "SELECT COUNT(*) FROM subagents \
-                 WHERE session_id = 'parent-session' AND child_session_id = 'child-session'",
-                [],
-                |row| row.get(0),
-            )
-            .unwrap();
-        assert_eq!(dangling, 0);
+        let linked = crate::database::load_subagent(
+            temp_db.path(),
+            "parent-session",
+            "parent-session-call_1",
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(linked.child_session_id.as_deref(), Some("child-session"));
     }
 
     #[test]
