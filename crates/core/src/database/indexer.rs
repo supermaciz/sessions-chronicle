@@ -1,4 +1,6 @@
 mod kimi;
+#[cfg(test)]
+mod source_retention_tests;
 
 use anyhow::{Context, Result};
 use rusqlite::Connection;
@@ -7,6 +9,10 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::UNIX_EPOCH;
 
+use crate::database::source_state::{
+    ScopeScan, SourceObservation, SourceScope, reconcile_scope, record_observation_tx,
+};
+use crate::models::SourceKind;
 use crate::models::{AiAssistant, IndexingError, IndexingRunResult, PerSourceResult, SourceStatus};
 use crate::parsers::ParsedSession;
 use crate::parsers::claude_code::{ClaudeCodeParser, ParseError as ClaudeCodeParseError};
@@ -28,6 +34,7 @@ pub struct IndexingStats {
     pub skipped: usize,
     pub removed: usize,
     pub errors: usize,
+    pub source_state_changes: usize,
 }
 
 pub(crate) fn derive_source_status(
@@ -302,20 +309,35 @@ impl SessionIndexer {
         incremental: bool,
         errors_detail: &mut VecDeque<IndexingError>,
     ) -> Result<IndexingStats> {
+        let root = Self::absolute_source_path(sessions_dir)?;
         let parser = ClaudeCodeParser;
         let mut stats = IndexingStats::default();
+        let mut scan = Self::path_scope_scan(AiAssistant::ClaudeCode, &root);
 
-        for entry in walkdir::WalkDir::new(sessions_dir)
-            .max_depth(5)
-            .into_iter()
-            .filter_map(|e| e.ok())
-        {
+        for entry in walkdir::WalkDir::new(&root).max_depth(5) {
+            let entry = match entry {
+                Ok(entry) => entry,
+                Err(error) => {
+                    scan.complete = false;
+                    stats.errors += 1;
+                    push_indexing_error(
+                        errors_detail,
+                        AiAssistant::ClaudeCode,
+                        error.path().map(|path| path.display().to_string()),
+                        error.to_string(),
+                    );
+                    continue;
+                }
+            };
+            if entry.depth() == 5 && entry.file_type().is_dir() {
+                scan.complete = false;
+            }
             let path = entry.path();
             if !Self::is_claude_session_file(path) {
                 continue;
             }
 
-            if Self::is_prunable_claude_sidechain_file(path, sessions_dir) {
+            if Self::is_prunable_claude_sidechain_file(path, &root) {
                 self.prune_sidechain_session(
                     AiAssistant::ClaudeCode,
                     path,
@@ -325,14 +347,49 @@ impl SessionIndexer {
                 continue;
             }
 
-            if incremental && !self.should_reindex(path)? {
+            let fingerprint = match Self::current_fingerprint(path) {
+                Ok(fingerprint) => fingerprint,
+                Err(error) => {
+                    Self::protect_unidentified_source(
+                        &mut scan,
+                        &mut stats,
+                        errors_detail,
+                        AiAssistant::ClaudeCode,
+                        path,
+                        &error,
+                    );
+                    continue;
+                }
+            };
+            let indexed_ids = self.indexed_ids_at_locator(AiAssistant::ClaudeCode, path)?;
+            let needs_parse = !incremental
+                || indexed_ids.is_empty()
+                || self.source_needs_reindex(path)?
+                || self.should_reindex(path)?;
+            if !needs_parse {
+                Self::observe_indexed_locator(
+                    &mut scan,
+                    AiAssistant::ClaudeCode,
+                    path,
+                    fingerprint,
+                    indexed_ids,
+                );
                 stats.skipped += 1;
                 continue;
             }
 
-            self.process_claude_session_file(path, &parser, &mut stats, errors_detail);
+            self.process_claude_session_file_observed(
+                path,
+                fingerprint,
+                &parser,
+                &mut scan,
+                &mut stats,
+                errors_detail,
+            );
         }
 
+        stats.source_state_changes +=
+            reconcile_scope(&mut self.db, &scan, chrono::Utc::now().timestamp())?;
         self.prune_orphan_fingerprints()?;
         Ok(stats)
     }
@@ -413,23 +470,73 @@ impl SessionIndexer {
         let mut stats = IndexingStats::default();
 
         for root in roots {
-            for entry in walkdir::WalkDir::new(&root)
-                .max_depth(5)
-                .into_iter()
-                .filter_map(|e| e.ok())
-            {
+            let root = Self::absolute_source_path(&root)?;
+            let mut scan = Self::path_scope_scan(AiAssistant::Codex, &root);
+            for entry in walkdir::WalkDir::new(&root).max_depth(5) {
+                let entry = match entry {
+                    Ok(entry) => entry,
+                    Err(error) => {
+                        scan.complete = false;
+                        stats.errors += 1;
+                        push_indexing_error(
+                            errors_detail,
+                            AiAssistant::Codex,
+                            error.path().map(|path| path.display().to_string()),
+                            error.to_string(),
+                        );
+                        continue;
+                    }
+                };
+                if entry.depth() == 5 && entry.file_type().is_dir() {
+                    scan.complete = false;
+                }
                 let path = entry.path();
                 if !Self::is_codex_session_file(path) {
                     continue;
                 }
 
-                if incremental && !self.should_reindex(path)? {
+                let fingerprint = match Self::current_fingerprint(path) {
+                    Ok(fingerprint) => fingerprint,
+                    Err(error) => {
+                        Self::protect_unidentified_source(
+                            &mut scan,
+                            &mut stats,
+                            errors_detail,
+                            AiAssistant::Codex,
+                            path,
+                            &error,
+                        );
+                        continue;
+                    }
+                };
+                let indexed_ids = self.indexed_ids_at_locator(AiAssistant::Codex, path)?;
+                let needs_parse = !incremental
+                    || indexed_ids.is_empty()
+                    || self.source_needs_reindex(path)?
+                    || self.should_reindex(path)?;
+                if !needs_parse {
+                    Self::observe_indexed_locator(
+                        &mut scan,
+                        AiAssistant::Codex,
+                        path,
+                        fingerprint,
+                        indexed_ids,
+                    );
                     stats.skipped += 1;
                     continue;
                 }
 
-                self.process_codex_session_file(path, &parser, &mut stats, errors_detail);
+                self.process_codex_session_file_observed(
+                    path,
+                    fingerprint,
+                    &parser,
+                    &mut scan,
+                    &mut stats,
+                    errors_detail,
+                );
             }
+            stats.source_state_changes +=
+                reconcile_scope(&mut self.db, &scan, chrono::Utc::now().timestamp())?;
         }
 
         self.prune_orphan_fingerprints()?;
@@ -685,60 +792,220 @@ impl SessionIndexer {
         Ok(())
     }
 
-    fn process_claude_session_file(
+    fn process_claude_session_file_observed(
         &mut self,
         path: &Path,
+        fingerprint: (i64, i64),
         parser: &ClaudeCodeParser,
+        scan: &mut ScopeScan,
         stats: &mut IndexingStats,
         errors_detail: &mut VecDeque<IndexingError>,
     ) {
-        match self.index_session_file(path, parser) {
-            Ok(()) => stats.indexed += 1,
-            Err(err) => {
-                if is_claude_skippable_error(&err) {
-                    tracing::debug!("Skipped Claude Code session {}: {}", path.display(), err);
-                    self.prune_session_after_parse_skip(
-                        AiAssistant::ClaudeCode,
-                        path,
+        match parser.parse(path) {
+            Ok(parsed) => {
+                if let Err(error) = Self::ensure_fingerprint_unchanged(path, fingerprint) {
+                    Self::protect_unidentified_source(
+                        scan,
                         stats,
                         errors_detail,
+                        AiAssistant::ClaudeCode,
+                        path,
+                        &error,
                     );
-                } else {
-                    self.record_index_failure(
+                    return;
+                }
+                let observation =
+                    Self::file_observation(AiAssistant::ClaudeCode, &parsed, path, fingerprint);
+                match self.insert_parsed_session_observed(
+                    &parsed,
+                    path,
+                    path,
+                    &observation,
+                    chrono::Utc::now().timestamp(),
+                ) {
+                    Ok(changes) => {
+                        scan.discovered_ids.insert(parsed.session.id.clone());
+                        scan.observations.push(observation);
+                        stats.indexed += 1;
+                        stats.source_state_changes += changes;
+                    }
+                    Err(error) => self.record_index_failure(
                         AiAssistant::ClaudeCode,
                         path,
-                        &err,
+                        &error,
                         stats,
                         errors_detail,
+                    ),
+                }
+            }
+            Err(error) => {
+                if is_claude_skippable_error(&error)
+                    && !self.source_needs_reindex(path).unwrap_or(true)
+                {
+                    Self::protect_unidentified_locator(scan, path);
+                } else {
+                    Self::protect_unidentified_source(
+                        scan,
+                        stats,
+                        errors_detail,
+                        AiAssistant::ClaudeCode,
+                        path,
+                        &error,
                     );
                 }
             }
         }
     }
 
-    fn process_codex_session_file(
+    fn process_codex_session_file_observed(
         &mut self,
         path: &Path,
+        fingerprint: (i64, i64),
         parser: &CodexParser,
+        scan: &mut ScopeScan,
         stats: &mut IndexingStats,
         errors_detail: &mut VecDeque<IndexingError>,
     ) {
-        match self.index_codex_session_file(path, parser) {
-            Ok(()) => stats.indexed += 1,
-            Err(err) => {
-                if is_codex_error(&err) {
-                    tracing::debug!("Skipped Codex session {}: {}", path.display(), err);
-                    self.prune_session_after_parse_skip(
-                        AiAssistant::Codex,
-                        path,
+        match parser.parse(path) {
+            Ok(parsed) => {
+                if let Err(error) = Self::ensure_fingerprint_unchanged(path, fingerprint) {
+                    Self::protect_unidentified_source(
+                        scan,
                         stats,
                         errors_detail,
+                        AiAssistant::Codex,
+                        path,
+                        &error,
                     );
+                    return;
+                }
+                let observation =
+                    Self::file_observation(AiAssistant::Codex, &parsed, path, fingerprint);
+                match self.insert_parsed_session_observed(
+                    &parsed,
+                    path,
+                    path,
+                    &observation,
+                    chrono::Utc::now().timestamp(),
+                ) {
+                    Ok(changes) => {
+                        scan.discovered_ids.insert(parsed.session.id.clone());
+                        scan.observations.push(observation);
+                        stats.indexed += 1;
+                        stats.source_state_changes += changes;
+                    }
+                    Err(error) => self.record_index_failure(
+                        AiAssistant::Codex,
+                        path,
+                        &error,
+                        stats,
+                        errors_detail,
+                    ),
+                }
+            }
+            Err(error) => {
+                if is_codex_error(&error) && !self.source_needs_reindex(path).unwrap_or(true) {
+                    Self::protect_unidentified_locator(scan, path);
                 } else {
-                    self.record_index_failure(AiAssistant::Codex, path, &err, stats, errors_detail);
+                    Self::protect_unidentified_source(
+                        scan,
+                        stats,
+                        errors_detail,
+                        AiAssistant::Codex,
+                        path,
+                        &error,
+                    );
                 }
             }
         }
+    }
+
+    fn absolute_source_path(path: &Path) -> Result<PathBuf> {
+        if path.is_absolute() {
+            Ok(path.to_path_buf())
+        } else {
+            Ok(std::env::current_dir()?.join(path))
+        }
+    }
+
+    fn path_scope_scan(assistant: AiAssistant, root: &Path) -> ScopeScan {
+        ScopeScan {
+            scope: SourceScope::PathRoot {
+                assistant,
+                root: root.to_path_buf(),
+            },
+            complete: root.is_dir(),
+            discovered_ids: HashSet::new(),
+            protected_locators: HashSet::new(),
+            observations: Vec::new(),
+        }
+    }
+
+    fn file_observation(
+        assistant: AiAssistant,
+        parsed: &ParsedSession,
+        path: &Path,
+        fingerprint: (i64, i64),
+    ) -> SourceObservation {
+        SourceObservation {
+            assistant,
+            id: parsed.session.id.clone(),
+            locator: path.to_path_buf(),
+            kind: SourceKind::TranscriptFile,
+            scope: None,
+            fingerprint: Some(fingerprint),
+        }
+    }
+
+    fn observe_indexed_locator(
+        scan: &mut ScopeScan,
+        assistant: AiAssistant,
+        path: &Path,
+        fingerprint: (i64, i64),
+        ids: Vec<String>,
+    ) {
+        for id in ids {
+            scan.discovered_ids.insert(id.clone());
+            scan.observations.push(SourceObservation {
+                assistant,
+                id,
+                locator: path.to_path_buf(),
+                kind: SourceKind::TranscriptFile,
+                scope: None,
+                fingerprint: Some(fingerprint),
+            });
+        }
+    }
+
+    fn protect_unidentified_source(
+        scan: &mut ScopeScan,
+        stats: &mut IndexingStats,
+        errors_detail: &mut VecDeque<IndexingError>,
+        assistant: AiAssistant,
+        path: &Path,
+        error: &anyhow::Error,
+    ) {
+        Self::protect_unidentified_locator(scan, path);
+        stats.errors += 1;
+        push_indexing_error(
+            errors_detail,
+            assistant,
+            Some(path.display().to_string()),
+            format!("Failed to establish session identity: {error}"),
+        );
+    }
+
+    fn protect_unidentified_locator(scan: &mut ScopeScan, path: &Path) {
+        scan.complete = false;
+        scan.protected_locators.insert(path.to_path_buf());
+    }
+
+    fn ensure_fingerprint_unchanged(path: &Path, captured: (i64, i64)) -> Result<()> {
+        anyhow::ensure!(
+            Self::current_fingerprint(path)? == captured,
+            "session changed while it was being parsed"
+        );
+        Ok(())
     }
 
     fn next_vibe_session_path(
@@ -811,7 +1078,7 @@ impl SessionIndexer {
         stats: &mut IndexingStats,
         errors_detail: &mut VecDeque<IndexingError>,
     ) {
-        match self.remove_session_for_file(path) {
+        match self.remove_present_sessions_for_file(assistant, path) {
             Ok(removed) => stats.removed += removed,
             Err(err) => {
                 tracing::warn!(
@@ -827,6 +1094,37 @@ impl SessionIndexer {
                 );
             }
         }
+    }
+
+    /// A sidechain classification proves this locator is ineligible, but it
+    /// does not identify a replacement transcript.  Only prune its currently
+    /// present owner; retained missing rows (and other assistant identities)
+    /// are evidence that must survive a later scan.
+    fn remove_present_sessions_for_file(
+        &mut self,
+        assistant: AiAssistant,
+        file_path: &Path,
+    ) -> Result<usize> {
+        let Some(file_path) = file_path.to_str() else {
+            return Ok(0);
+        };
+        let ids: Vec<String> = {
+            let mut statement = self.db.prepare(
+                "SELECT id FROM sessions
+                 WHERE tool = ?1 AND file_path = ?2 AND source_missing = 0",
+            )?;
+            statement
+                .query_map(
+                    rusqlite::params![assistant.to_storage(), file_path],
+                    |row| row.get(0),
+                )?
+                .collect::<rusqlite::Result<_>>()?
+        };
+        let mut removed = 0;
+        for id in ids {
+            removed += self.remove_session_by_id(&id)?;
+        }
+        Ok(removed)
     }
 
     fn record_index_failure(
@@ -847,23 +1145,11 @@ impl SessionIndexer {
         stats.errors += 1;
     }
 
-    fn index_session_file(&mut self, file_path: &Path, parser: &ClaudeCodeParser) -> Result<()> {
-        let parsed = parser.parse(file_path)?;
-        self.insert_parsed_session(&parsed, file_path)?;
-        Ok(())
-    }
-
     fn index_opencode_session_file(
         &mut self,
         file_path: &Path,
         parser: &OpenCodeParser,
     ) -> Result<()> {
-        let parsed = parser.parse(file_path)?;
-        self.insert_parsed_session(&parsed, file_path)?;
-        Ok(())
-    }
-
-    fn index_codex_session_file(&mut self, file_path: &Path, parser: &CodexParser) -> Result<()> {
         let parsed = parser.parse(file_path)?;
         self.insert_parsed_session(&parsed, file_path)?;
         Ok(())
@@ -1095,6 +1381,30 @@ impl SessionIndexer {
         Self::upsert_fingerprint_tx(&tx, fingerprint_path)?;
         tx.commit()?;
         Ok(())
+    }
+
+    fn insert_parsed_session_observed(
+        &mut self,
+        parsed: &ParsedSession,
+        file_path: &Path,
+        fingerprint_path: &Path,
+        observation: &SourceObservation,
+        now: i64,
+    ) -> Result<usize> {
+        let session = &parsed.session;
+        let tx = self.db.transaction()?;
+        let resolved_project_id = Self::upsert_project_tx(&tx, session.project_path.as_deref())?;
+        Self::upsert_session_row_tx(&tx, parsed, file_path, resolved_project_id)?;
+        Self::replace_session_contents_tx(&tx, parsed)?;
+        let source_state_changes = record_observation_tx(&tx, observation, now, true)?;
+        Self::link_claude_subagents_tx(&tx, parsed)?;
+        Self::link_codex_subagents_tx(&tx, parsed)?;
+        let (mtime_ns, size) = observation
+            .fingerprint
+            .context("transcript observation missing captured fingerprint")?;
+        Self::upsert_fingerprint_values_tx(&tx, fingerprint_path, mtime_ns, size)?;
+        tx.commit()?;
+        Ok(source_state_changes)
     }
 
     fn link_claude_subagents_tx(
@@ -1464,6 +1774,36 @@ impl SessionIndexer {
         }
     }
 
+    pub fn source_needs_reindex(&self, locator: &Path) -> Result<bool> {
+        let Some(locator) = locator.to_str() else {
+            return Ok(false);
+        };
+        let missing: i64 = self.db.query_row(
+            "SELECT EXISTS(SELECT 1 FROM sessions WHERE file_path = ?1 AND source_missing = 1)",
+            [locator],
+            |row| row.get(0),
+        )?;
+        Ok(missing != 0)
+    }
+
+    fn indexed_ids_at_locator(
+        &self,
+        assistant: AiAssistant,
+        locator: &Path,
+    ) -> Result<Vec<String>> {
+        let Some(locator) = locator.to_str() else {
+            return Ok(Vec::new());
+        };
+        let mut statement = self
+            .db
+            .prepare("SELECT id FROM sessions WHERE tool = ?1 AND file_path = ?2")?;
+        Ok(statement
+            .query_map(rusqlite::params![assistant.to_storage(), locator], |row| {
+                row.get(0)
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?)
+    }
+
     fn should_reindex_opencode_sqlite(&self, db_path: &Path) -> Result<bool> {
         if self.should_reindex(db_path)? {
             return Ok(true);
@@ -1725,11 +2065,16 @@ impl SessionIndexer {
         kimi: IndexingStats,
         errors_detail: VecDeque<IndexingError>,
     ) -> IndexingRunResult {
+        let source_state_changes = claude.source_state_changes
+            + opencode.source_state_changes
+            + codex.source_state_changes
+            + vibe.source_state_changes
+            + kimi.source_state_changes;
         let per_source = vec![
             build_per_source_result(
                 AiAssistant::ClaudeCode,
                 sources.claude_dir.display().to_string(),
-                sources.claude_dir.exists(),
+                sources.claude_dir.is_dir(),
                 claude,
             ),
             build_per_source_result(
@@ -1744,7 +2089,9 @@ impl SessionIndexer {
             build_per_source_result(
                 AiAssistant::Codex,
                 sources.codex_dir.display().to_string(),
-                !Self::codex_index_roots(&sources.codex_dir).is_empty(),
+                Self::codex_index_roots(&sources.codex_dir)
+                    .iter()
+                    .any(|root| root.is_dir()),
                 codex,
             ),
             build_per_source_result(
@@ -1770,6 +2117,11 @@ impl SessionIndexer {
                 acc.errors += result.errors;
                 acc
             });
+
+        let totals = IndexingStats {
+            source_state_changes,
+            ..totals
+        };
 
         IndexingRunResult {
             totals,
