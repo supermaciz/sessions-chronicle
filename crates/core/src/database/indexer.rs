@@ -348,6 +348,9 @@ impl SessionIndexer {
         incremental: bool,
         errors_detail: &mut VecDeque<IndexingError>,
     ) -> Result<IndexingStats> {
+        if !sessions_dir.exists() {
+            return Ok(IndexingStats::default());
+        }
         let root = Self::absolute_source_path(sessions_dir)?;
         let parser = ClaudeCodeParser;
         let mut stats = IndexingStats::default();
