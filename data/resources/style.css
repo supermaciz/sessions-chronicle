@@ -547,6 +547,10 @@
   border-left: 2px solid @accent_color;
 }
 
+.source_missing .source-missing-icon {
+  color: @warning_color;
+}
+
 .source-count-pill {
   border-radius: 99px;
   min-height: 0;

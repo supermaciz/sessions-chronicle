@@ -53,6 +53,11 @@ impl FactoryComponent for SessionRow {
             } else {
                 None
             },
+            add_css_class?: if self.session.source.missing {
+                Some("source_missing")
+            } else {
+                None
+            },
 
             append = &adw::ActionRow::builder()
                 .title(Self::session_title(&self.session))
@@ -64,6 +69,17 @@ impl FactoryComponent for SessionRow {
 
                 add_prefix = &gtk::Image::from_icon_name(self.session.tool.icon_name()) {
                     set_pixel_size: 16,
+                },
+
+                add_suffix = &gtk::Image::builder()
+                    .icon_name("action-unavailable-symbolic")
+                    .accessible_role(gtk::AccessibleRole::Presentation)
+                    .build() {
+                    set_visible: self.session.source.missing,
+                    set_pixel_size: 16,
+                    set_valign: gtk::Align::Center,
+                    set_tooltip_text: Some("Source missing — showing retained content"),
+                    add_css_class: "source-missing-icon",
                 },
 
                 add_suffix = &gtk::Image::from_icon_name(PIN_ICON_NAME) {
@@ -117,6 +133,7 @@ impl FactoryComponent for SessionRow {
         let action_group = gio::SimpleActionGroup::new();
         let toggle_pin_action = gio::SimpleAction::new("toggle-pin", None);
         let resume_action = gio::SimpleAction::new("resume", None);
+        resume_action.set_enabled(self.session.can_resume());
 
         let output_sender = sender.output_sender().clone();
         let session_id = self.session.id.clone();
@@ -228,6 +245,12 @@ impl SessionRow {
             )
         } else {
             format!("{location} \u{00b7} {message_count} \u{00b7} {relative_time}")
+        };
+
+        let raw = if session.source.missing {
+            format!("Source missing \u{00b7} {raw}")
+        } else {
+            raw
         };
 
         // Escape for Pango markup (ActionRow subtitle also uses markup).
@@ -402,6 +425,25 @@ mod tests {
     }
 
     #[test]
+    fn missing_session_subtitle_prefixes_and_still_escapes_markup() {
+        let mut session = build_session(Some("/tmp/A&B<demo>"), Some("Prompt"), 5);
+        session.source.missing = true;
+
+        let subtitle = SessionRow::session_subtitle(&session);
+        assert!(subtitle.starts_with("Source missing \u{00b7} "));
+        assert!(subtitle.contains("A&amp;B&lt;demo&gt;"));
+        assert!(!subtitle.contains("<demo>"));
+    }
+
+    #[test]
+    fn missing_session_title_is_unaffected() {
+        let mut session = build_session(Some("/home/user/work/my-project"), Some("Fix bug"), 10);
+        session.source.missing = true;
+
+        assert_eq!(SessionRow::session_title(&session), "Fix bug");
+    }
+
+    #[test]
     fn emit_resume_sends_resume_requested_output() {
         let (sender, receiver) = relm4::channel();
 
@@ -428,5 +470,12 @@ mod tests {
         let display = gtk::gdk::Display::default().expect("display");
         let theme = gtk::IconTheme::for_display(&display);
         assert!(theme.has_icon(PIN_ICON_NAME));
+    }
+
+    #[gtk::test]
+    fn source_missing_icon_name_exists_in_icon_theme() {
+        let display = gtk::gdk::Display::default().expect("display");
+        let theme = gtk::IconTheme::for_display(&display);
+        assert!(theme.has_icon("action-unavailable-symbolic"));
     }
 }

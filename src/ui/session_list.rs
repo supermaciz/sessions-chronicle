@@ -2775,6 +2775,261 @@ mod tests {
         );
     }
 
+    fn row_image_widgets(root: &gtk::Widget) -> Vec<gtk::Image> {
+        let mut images = Vec::new();
+        let mut queue = std::collections::VecDeque::from([root.clone()]);
+        while let Some(widget) = queue.pop_front() {
+            if let Ok(image) = widget.clone().downcast::<gtk::Image>() {
+                images.push(image);
+            }
+            let mut child = widget.first_child();
+            while let Some(child_widget) = child {
+                queue.push_back(child_widget.clone());
+                child = child_widget.next_sibling();
+            }
+        }
+        images
+    }
+
+    fn visible_suffix_icon_names(row_widget: &gtk::Widget) -> Vec<String> {
+        row_image_widgets(row_widget)
+            .into_iter()
+            .filter(|image| image.is_visible())
+            .filter_map(|image| image.icon_name().map(|name| name.to_string()))
+            .filter(|name| {
+                name == "go-next-symbolic"
+                    || matches!(
+                        name.as_str(),
+                        "action-unavailable-symbolic"
+                            | "view-pin-symbolic"
+                            | "error-circle-regular"
+                            | "prohibited-regular"
+                    )
+            })
+            .collect()
+    }
+
+    #[gtk::test]
+    fn rows_mark_missing_source_with_css_class_and_suffix_icons() {
+        let temp_db = tempfile::NamedTempFile::new().expect("temp db");
+        let controller =
+            SessionList::builder().launch((temp_db.path().to_path_buf(), SortOrder::default()));
+
+        let available = make_test_session("available");
+        let mut missing = make_test_session("missing");
+        missing.source.missing = true;
+        let mut missing_pinned_error = make_test_session("missing-pinned-error");
+        missing_pinned_error.source.missing = true;
+        missing_pinned_error.pinned_at = Some(chrono::Utc::now());
+        missing_pinned_error.ending_status = crate::models::SessionEndingStatus::Error;
+
+        {
+            let mut parts = controller.state().get_mut();
+            let mut guard = parts.model.sessions.guard();
+            for session in [available, missing, missing_pinned_error] {
+                guard.push_back(SessionRowInit { session });
+            }
+        }
+
+        let root = controller.widget().clone().upcast::<gtk::Widget>();
+        let list_box = find_list_box(&root).expect("list box");
+
+        let available_root = list_box
+            .row_at_index(0)
+            .expect("row 0")
+            .child()
+            .expect("row 0 child");
+        assert!(!available_root.has_css_class("source_missing"));
+        let available_icons = visible_suffix_icon_names(&available_root);
+        assert_eq!(available_icons, vec!["go-next-symbolic"]);
+        let available_missing_icon = row_image_widgets(&available_root)
+            .into_iter()
+            .find(|image| image.icon_name().as_deref() == Some("action-unavailable-symbolic"))
+            .expect("missing suffix icon widget exists for every row");
+        assert!(!available_missing_icon.is_visible());
+
+        let missing_root = list_box
+            .row_at_index(1)
+            .expect("row 1")
+            .child()
+            .expect("row 1 child");
+        assert!(missing_root.has_css_class("source_missing"));
+        assert_eq!(
+            visible_suffix_icon_names(&missing_root),
+            vec!["action-unavailable-symbolic", "go-next-symbolic"]
+        );
+        let missing_icon = row_image_widgets(&missing_root)
+            .into_iter()
+            .find(|image| image.icon_name().as_deref() == Some("action-unavailable-symbolic"))
+            .expect("missing suffix icon");
+        assert!(missing_icon.is_visible());
+        assert!(missing_icon.has_css_class("source-missing-icon"));
+        assert_eq!(
+            missing_icon.tooltip_text().as_deref(),
+            Some("Source missing — showing retained content")
+        );
+
+        let pinned_root = list_box
+            .row_at_index(2)
+            .expect("row 2")
+            .child()
+            .expect("row 2 child");
+        assert!(pinned_root.has_css_class("source_missing"));
+        assert!(pinned_root.has_css_class("pinned-row"));
+        assert_eq!(
+            visible_suffix_icon_names(&pinned_root),
+            vec![
+                "action-unavailable-symbolic",
+                "view-pin-symbolic",
+                "error-circle-regular",
+                "go-next-symbolic"
+            ]
+        );
+    }
+
+    #[gtk::test]
+    fn rows_reflect_swapped_missing_flags_after_reload() {
+        let temp_db = tempfile::NamedTempFile::new().expect("temp db");
+        let controller =
+            SessionList::builder().launch((temp_db.path().to_path_buf(), SortOrder::default()));
+
+        let mut first = make_test_session("first");
+        first.source.missing = true;
+        let second = make_test_session("second");
+
+        {
+            let mut parts = controller.state().get_mut();
+            let mut guard = parts.model.sessions.guard();
+            guard.push_back(SessionRowInit { session: first });
+            guard.push_back(SessionRowInit { session: second });
+        }
+
+        let root = controller.widget().clone().upcast::<gtk::Widget>();
+        let list_box = find_list_box(&root).expect("list box");
+        let first_root = list_box
+            .row_at_index(0)
+            .expect("row 0")
+            .child()
+            .expect("row 0 child");
+        assert!(first_root.has_css_class("source_missing"));
+        assert!(
+            !list_box
+                .row_at_index(1)
+                .expect("row 1")
+                .child()
+                .unwrap()
+                .has_css_class("source_missing")
+        );
+
+        // Swap the missing flags, mirroring a state transition followed by a
+        // list reload that recreates the factory rows.
+        {
+            let mut parts = controller.state().get_mut();
+            let mut guard = parts.model.sessions.guard();
+            let mut updated_first = make_test_session("first");
+            updated_first.source.missing = false;
+            let mut updated_second = make_test_session("second");
+            updated_second.source.missing = true;
+            guard.clear();
+            guard.push_back(SessionRowInit {
+                session: updated_first,
+            });
+            guard.push_back(SessionRowInit {
+                session: updated_second,
+            });
+        }
+        pump_main_context(|| true);
+
+        let first_root = list_box
+            .row_at_index(0)
+            .expect("row 0")
+            .child()
+            .expect("row 0 child");
+        let second_root = list_box
+            .row_at_index(1)
+            .expect("row 1")
+            .child()
+            .expect("row 1 child");
+        assert!(!first_root.has_css_class("source_missing"));
+        assert!(second_root.has_css_class("source_missing"));
+    }
+
+    #[gtk::test]
+    fn resume_action_is_disabled_for_missing_session_row() {
+        let temp_db = tempfile::NamedTempFile::new().expect("temp db");
+        let outputs: Rc<RefCell<Vec<SessionListOutput>>> = Rc::new(RefCell::new(Vec::new()));
+        let outputs_ref = outputs.clone();
+
+        let controller = SessionList::builder()
+            .launch((temp_db.path().to_path_buf(), SortOrder::default()))
+            .connect_receiver(move |_, output| {
+                outputs_ref.borrow_mut().push(output);
+            });
+
+        let mut missing = make_test_session("missing");
+        missing.source.missing = true;
+        let mut available = make_test_session("available");
+        available.tool = AiAssistant::OpenCode;
+        {
+            let mut parts = controller.state().get_mut();
+            let mut guard = parts.model.sessions.guard();
+            guard.push_back(SessionRowInit { session: missing });
+            guard.push_back(SessionRowInit { session: available });
+        }
+
+        let root = controller.widget().clone().upcast::<gtk::Widget>();
+        let list_box = find_list_box(&root).expect("list box");
+
+        // The missing row's resume action is disabled: activating it must not
+        // forward a ResumeRequested.
+        let missing_row_child = list_box
+            .row_at_index(0)
+            .expect("row 0")
+            .child()
+            .expect("row 0 child");
+        let _ = missing_row_child.activate_action("row.resume", None);
+        pump_main_context(|| !outputs.borrow().is_empty());
+        assert!(
+            !outputs
+                .borrow()
+                .iter()
+                .any(|output| matches!(output, SessionListOutput::ResumeRequested(_, _))),
+            "a missing session row must not forward a resume request"
+        );
+
+        // Pinning is not an availability decision, so it still emits for a
+        // missing row.
+        let _ = missing_row_child.activate_action("row.toggle-pin", None);
+        pump_main_context(|| {
+            outputs.borrow().iter().any(|output| {
+                matches!(output, SessionListOutput::TogglePinRequested(id) if id == "missing")
+            })
+        });
+        assert!(
+            outputs.borrow().iter().any(
+                |output| matches!(output, SessionListOutput::TogglePinRequested(id) if id == "missing")
+            ),
+            "a missing session row must still forward pin toggles"
+        );
+
+        // The available row's resume action stays enabled.
+        let available_row_child = list_box
+            .row_at_index(1)
+            .expect("row 1")
+            .child()
+            .expect("row 1 child");
+        let _ = available_row_child.activate_action("row.resume", None);
+        pump_main_context(|| {
+            outputs
+                .borrow()
+                .iter()
+                .any(|output| matches!(output, SessionListOutput::ResumeRequested(_, _)))
+        });
+        assert!(outputs.borrow().iter().any(
+            |output| matches!(output, SessionListOutput::ResumeRequested(id, _) if id == "available")
+        ));
+    }
+
     #[gtk::test]
     fn date_filter_changed_reloads_visible_rows() {
         let temp_db = TempDatabase::new();
