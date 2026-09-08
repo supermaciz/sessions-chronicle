@@ -118,17 +118,10 @@ const SESSION_UPSERT_SQL: &str = "INSERT INTO sessions
                  command_count = excluded.command_count,
                  ending_status = excluded.ending_status";
 
-#[derive(Debug, Default, Clone, Copy)]
-struct OpencodeEnumerationFlags {
-    enumeration_succeeded: bool,
-    sqlite_enumerated: bool,
-}
-
 struct OpencodeIndexContext<'a> {
     parser: &'a OpenCodeParser,
     incremental: bool,
-    indexed_ids: &'a mut HashSet<String>,
-    flags: &'a mut OpencodeEnumerationFlags,
+    sqlite_owner_ids: &'a mut HashSet<String>,
     stats: &'a mut IndexingStats,
     errors_detail: &'a mut VecDeque<IndexingError>,
 }
@@ -421,26 +414,26 @@ impl SessionIndexer {
         }
 
         let parser = OpenCodeParser::new(storage_root);
-        let mut indexed_ids: HashSet<String> = HashSet::new();
+        let mut sqlite_owner_ids = HashSet::new();
         let mut stats = IndexingStats::default();
-        let mut flags = OpencodeEnumerationFlags::default();
         let mut context = OpencodeIndexContext {
             parser: &parser,
             incremental,
-            indexed_ids: &mut indexed_ids,
-            flags: &mut flags,
+            sqlite_owner_ids: &mut sqlite_owner_ids,
             stats: &mut stats,
             errors_detail,
         };
 
-        self.index_opencode_sqlite_sources(db_paths, &mut context)?;
+        let mut scans = self.index_opencode_sqlite_sources(db_paths, &mut context)?;
 
         if has_storage_root {
-            self.index_opencode_json_sessions(storage_root, &mut context)?;
+            scans.push(self.index_opencode_json_sessions(storage_root, &mut context)?);
         }
 
-        stats.removed +=
-            self.prune_stale_opencode_sessions_if_needed(incremental, flags, &indexed_ids)?;
+        for scan in &scans {
+            stats.source_state_changes +=
+                reconcile_scope(&mut self.db, scan, chrono::Utc::now().timestamp())?;
+        }
 
         self.prune_orphan_fingerprints()?;
 
@@ -1196,41 +1189,36 @@ impl SessionIndexer {
         stats.errors += 1;
     }
 
-    fn index_opencode_session_file(
-        &mut self,
-        file_path: &Path,
-        parser: &OpenCodeParser,
-    ) -> Result<()> {
-        let parsed = parser.parse(file_path)?;
-        self.insert_parsed_session(&parsed, file_path)?;
-        Ok(())
-    }
-
     fn index_opencode_sqlite_sources(
         &mut self,
         db_paths: &[PathBuf],
         context: &mut OpencodeIndexContext<'_>,
-    ) -> Result<()> {
+    ) -> Result<Vec<ScopeScan>> {
+        let mut scans = Vec::new();
         for db_path in db_paths {
-            self.index_opencode_sqlite_source(db_path, context)?;
+            scans.push(self.index_opencode_sqlite_source(db_path, context)?);
         }
 
-        Ok(())
+        Ok(scans)
     }
 
     fn index_opencode_sqlite_source(
         &mut self,
         db_path: &Path,
         context: &mut OpencodeIndexContext<'_>,
-    ) -> Result<()> {
-        if context.incremental && !self.should_reindex_opencode_sqlite(db_path)? {
-            context.stats.skipped += 1;
-            return Ok(());
-        }
-
+    ) -> Result<ScopeScan> {
+        let mut scan = ScopeScan {
+            scope: SourceScope::Database {
+                path: db_path.to_path_buf(),
+            },
+            complete: false,
+            discovered_ids: HashSet::new(),
+            protected_locators: HashSet::new(),
+            observations: Vec::new(),
+        };
         match SqliteBackend::open(db_path) {
             Ok(sqlite_backend) => {
-                self.index_opencode_sqlite_backend(db_path, &sqlite_backend, context)
+                self.index_opencode_sqlite_backend(db_path, &sqlite_backend, context, &mut scan)?
             }
             Err(err) => {
                 tracing::warn!(
@@ -1245,9 +1233,9 @@ impl SessionIndexer {
                     format!("Failed to open OpenCode DB: {err}"),
                 );
                 context.stats.errors += 1;
-                Ok(())
             }
         }
+        Ok(scan)
     }
 
     fn index_opencode_sqlite_backend(
@@ -1255,13 +1243,46 @@ impl SessionIndexer {
         db_path: &Path,
         sqlite_backend: &SqliteBackend,
         context: &mut OpencodeIndexContext<'_>,
+        scan: &mut ScopeScan,
     ) -> Result<()> {
-        match sqlite_backend.list_sessions() {
-            Ok(entries) => {
-                context.flags.enumeration_succeeded = true;
-                context.flags.sqlite_enumerated = true;
-                for entry in &entries {
-                    self.index_opencode_sqlite_entry(db_path, entry, sqlite_backend, context);
+        match sqlite_backend.enumerate_sessions() {
+            Ok(enumeration) => {
+                scan.complete = enumeration.complete;
+                scan.protected_locators = enumeration.protected_locators;
+                for (path, error) in enumeration.errors {
+                    push_indexing_error(
+                        context.errors_detail,
+                        AiAssistant::OpenCode,
+                        path.map(|p| p.display().to_string()),
+                        error,
+                    );
+                    context.stats.errors += 1;
+                }
+                for entry in &enumeration.entries {
+                    scan.discovered_ids.insert(entry.id.clone());
+                    context.sqlite_owner_ids.insert(entry.id.clone());
+                    scan.observations
+                        .push(Self::opencode_database_observation(&entry.id, db_path));
+                }
+                let parse_contents = !context.incremental
+                    || self.source_needs_reindex(db_path)?
+                    || self.should_reindex_opencode_sqlite(db_path)?;
+                if parse_contents {
+                    let mut complete_contents = true;
+                    for entry in &enumeration.entries {
+                        complete_contents &= self.index_opencode_sqlite_entry(
+                            db_path,
+                            entry,
+                            sqlite_backend,
+                            context,
+                            scan,
+                        );
+                    }
+                    if complete_contents {
+                        self.upsert_opencode_sqlite_fingerprints(db_path)?;
+                    }
+                } else {
+                    context.stats.skipped += enumeration.entries.len();
                 }
             }
             Err(err) => {
@@ -1285,13 +1306,30 @@ impl SessionIndexer {
         entry: &SessionEntry,
         sqlite_backend: &SqliteBackend,
         context: &mut OpencodeIndexContext<'_>,
-    ) {
-        match context.parser.parse_entry(entry, sqlite_backend) {
+        scan: &mut ScopeScan,
+    ) -> bool {
+        let observed = context.parser.parse_entry_observed(entry, sqlite_backend);
+        if observed.diagnostics.incomplete {
+            for (path, error) in observed.diagnostics.errors {
+                push_indexing_error(
+                    context.errors_detail,
+                    AiAssistant::OpenCode,
+                    path.map(|p| p.display().to_string()),
+                    error,
+                );
+                context.stats.errors += 1;
+            }
+            return false;
+        }
+        match observed.parsed {
             Ok(parsed) => {
-                if let Err(err) = self.insert_parsed_session_with_fingerprint(
+                let observation = Self::opencode_database_observation(&parsed.session.id, db_path);
+                if let Err(err) = self.insert_parsed_session_observed(
                     &parsed,
                     db_path,
-                    &Self::opencode_sqlite_fingerprint_target(db_path),
+                    db_path,
+                    &observation,
+                    chrono::Utc::now().timestamp(),
                 ) {
                     tracing::warn!("Failed to insert SQLite session {}: {}", entry.id, err);
                     push_indexing_error(
@@ -1301,11 +1339,13 @@ impl SessionIndexer {
                         format!("Failed to insert SQLite session {}: {}", entry.id, err),
                     );
                     context.stats.errors += 1;
-                    return;
+                    scan.protected_locators.insert(db_path.to_path_buf());
+                    return false;
                 }
 
-                context.indexed_ids.insert(entry.id.clone());
+                scan.observations.push(observation);
                 context.stats.indexed += 1;
+                true
             }
             Err(err) => {
                 if is_opencode_error(&err) {
@@ -1320,6 +1360,7 @@ impl SessionIndexer {
                     );
                     context.stats.errors += 1;
                 }
+                false
             }
         }
     }
@@ -1328,13 +1369,25 @@ impl SessionIndexer {
         &mut self,
         storage_root: &Path,
         context: &mut OpencodeIndexContext<'_>,
-    ) -> Result<()> {
+    ) -> Result<ScopeScan> {
         let json_backend = JsonBackend::new(storage_root);
-        match json_backend.list_sessions() {
-            Ok(entries) => {
-                context.flags.enumeration_succeeded = true;
-                for entry in entries {
-                    self.index_opencode_json_entry(entry, context)?;
+        let mut scan = Self::path_scope_scan(AiAssistant::OpenCode, storage_root);
+        match json_backend.enumerate_sessions() {
+            Ok(enumeration) => {
+                scan.complete = enumeration.complete;
+                scan.protected_locators = enumeration.protected_locators;
+                for (path, error) in enumeration.errors {
+                    push_indexing_error(
+                        context.errors_detail,
+                        AiAssistant::OpenCode,
+                        path.map(|p| p.display().to_string()),
+                        error,
+                    );
+                    context.stats.errors += 1;
+                }
+                for entry in enumeration.entries {
+                    scan.discovered_ids.insert(entry.id.clone());
+                    self.index_opencode_json_entry(entry, &json_backend, context, &mut scan)?;
                 }
             }
             Err(err) => {
@@ -1346,20 +1399,23 @@ impl SessionIndexer {
                     format!("Failed to list JSON OpenCode sessions: {err}"),
                 );
                 context.stats.errors += 1;
+                scan.complete = false;
             }
         }
 
-        Ok(())
+        Ok(scan)
     }
 
     fn index_opencode_json_entry(
         &mut self,
         entry: SessionEntry,
+        json_backend: &JsonBackend,
         context: &mut OpencodeIndexContext<'_>,
+        scan: &mut ScopeScan,
     ) -> Result<()> {
         let session_id = entry.id.clone();
 
-        if context.indexed_ids.contains(&session_id) {
+        if context.sqlite_owner_ids.contains(&session_id) {
             tracing::debug!(
                 "Skipping JSON session {} (already indexed from SQLite)",
                 session_id
@@ -1372,16 +1428,75 @@ impl SessionIndexer {
             SessionSource::SqliteRow { .. } => return Ok(()),
         };
 
-        if context.incremental && !self.should_reindex(path)? {
-            context.indexed_ids.insert(session_id);
+        let fingerprint = Self::current_fingerprint(path)?;
+        if context.incremental
+            && !self.source_needs_reindex(path)?
+            && !self.should_reindex(path)?
+            && !self.opencode_json_dependencies_need_reindex(json_backend, &session_id)?
+        {
+            scan.observations.push(SourceObservation {
+                assistant: AiAssistant::OpenCode,
+                id: session_id,
+                locator: path.to_path_buf(),
+                kind: SourceKind::TranscriptFile,
+                scope: None,
+                fingerprint: Some(fingerprint),
+            });
             context.stats.skipped += 1;
             return Ok(());
         }
-
-        match self.index_opencode_session_file(path, context.parser) {
-            Ok(()) => {
-                context.indexed_ids.insert(session_id);
-                context.stats.indexed += 1;
+        let observed = context.parser.parse_entry_observed(&entry, json_backend);
+        if observed.diagnostics.incomplete {
+            for (diagnostic_path, error) in observed.diagnostics.errors {
+                push_indexing_error(
+                    context.errors_detail,
+                    AiAssistant::OpenCode,
+                    diagnostic_path.map(|p| p.display().to_string()),
+                    error,
+                );
+                context.stats.errors += 1;
+            }
+            scan.protected_locators.insert(path.to_path_buf());
+            return Ok(());
+        }
+        match observed.parsed {
+            Ok(parsed) => {
+                let observation = SourceObservation {
+                    assistant: AiAssistant::OpenCode,
+                    id: parsed.session.id.clone(),
+                    locator: path.to_path_buf(),
+                    kind: SourceKind::TranscriptFile,
+                    scope: None,
+                    fingerprint: Some(fingerprint),
+                };
+                match self.insert_parsed_session_observed(
+                    &parsed,
+                    path,
+                    path,
+                    &observation,
+                    chrono::Utc::now().timestamp(),
+                ) {
+                    Ok(changes) => {
+                        self.upsert_opencode_json_dependency_fingerprints(
+                            json_backend,
+                            &parsed.session.id,
+                        )?;
+                        scan.observations.push(observation);
+                        context.stats.indexed += 1;
+                        context.stats.source_state_changes += changes;
+                    }
+                    Err(err) => {
+                        scan.protected_locators.insert(path.to_path_buf());
+                        tracing::warn!("Failed to index {}: {}", path.display(), err);
+                        push_indexing_error(
+                            context.errors_detail,
+                            AiAssistant::OpenCode,
+                            Some(path.display().to_string()),
+                            format!("Failed to index session: {err}"),
+                        );
+                        context.stats.errors += 1;
+                    }
+                }
             }
             Err(err) => {
                 if is_opencode_error(&err) {
@@ -1408,6 +1523,7 @@ impl SessionIndexer {
         Ok(())
     }
 
+    #[allow(dead_code)] // Used by the Kimi bundle indexer in feature builds.
     fn insert_parsed_session(&mut self, parsed: &ParsedSession, file_path: &Path) -> Result<()> {
         self.insert_parsed_session_with_fingerprint(parsed, file_path, file_path)
     }
@@ -1450,10 +1566,9 @@ impl SessionIndexer {
         let source_state_changes = record_observation_tx(&tx, observation, now, true)?;
         Self::link_claude_subagents_tx(&tx, parsed)?;
         Self::link_codex_subagents_tx(&tx, parsed)?;
-        let (mtime_ns, size) = observation
-            .fingerprint
-            .context("transcript observation missing captured fingerprint")?;
-        Self::upsert_fingerprint_values_tx(&tx, fingerprint_path, mtime_ns, size)?;
+        if let Some((mtime_ns, size)) = observation.fingerprint {
+            Self::upsert_fingerprint_values_tx(&tx, fingerprint_path, mtime_ns, size)?;
+        }
         tx.commit()?;
         Ok(source_state_changes)
     }
@@ -1825,6 +1940,128 @@ impl SessionIndexer {
         }
     }
 
+    fn opencode_json_dependency_paths(
+        json_backend: &JsonBackend,
+        session_id: &str,
+    ) -> Result<Vec<PathBuf>> {
+        let root = json_backend.storage_root_path();
+        let messages = root.join("message").join(session_id);
+        let mut paths = Vec::new();
+        let message_entries = match fs::read_dir(&messages) {
+            Ok(entries) => entries,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(paths),
+            Err(error) => return Err(error).context("Failed to enumerate OpenCode messages"),
+        };
+        for entry in message_entries {
+            let entry = entry.context("Failed to enumerate OpenCode message entry")?;
+            if !entry.file_type()?.is_file() {
+                continue;
+            }
+            let message_path = entry.path();
+            paths.push(message_path.clone());
+            let message_id = message_path.file_stem().and_then(|stem| stem.to_str());
+            let Some(message_id) = message_id else {
+                continue;
+            };
+            let parts = root.join("part").join(message_id);
+            match fs::read_dir(parts) {
+                Ok(entries) => {
+                    for entry in entries {
+                        let entry = entry.context("Failed to enumerate OpenCode part entry")?;
+                        if entry.file_type()?.is_file() {
+                            paths.push(entry.path());
+                        }
+                    }
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => return Err(error).context("Failed to enumerate OpenCode parts"),
+            }
+        }
+        Ok(paths)
+    }
+
+    fn opencode_json_dependency_fingerprints(
+        &self,
+        json_backend: &JsonBackend,
+        session_id: &str,
+    ) -> Result<Vec<(PathBuf, (i64, i64))>> {
+        Self::opencode_json_dependency_paths(json_backend, session_id)?
+            .into_iter()
+            .map(|path| Ok((path.clone(), Self::current_fingerprint(&path)?)))
+            .collect()
+    }
+
+    fn opencode_json_dependencies_need_reindex(
+        &self,
+        json_backend: &JsonBackend,
+        session_id: &str,
+    ) -> Result<bool> {
+        let current = self.opencode_json_dependency_fingerprints(json_backend, session_id)?;
+        let root = json_backend.storage_root_path();
+        let message_prefix = root.join("message").join(session_id).display().to_string();
+        let stored: Vec<(String, i64, i64)> = self
+            .db
+            .prepare(
+                "SELECT file_path, mtime_ns, size FROM file_fingerprints WHERE file_path LIKE ?1",
+            )?
+            .query_map([format!("{message_prefix}/%")], |row| {
+                Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+            })?
+            .collect::<rusqlite::Result<_>>()?;
+        let mut stored_paths: HashSet<PathBuf> = stored
+            .iter()
+            .map(|(path, _, _)| PathBuf::from(path))
+            .collect();
+        let mut message_ids: HashSet<String> = stored_paths
+            .iter()
+            .filter_map(|path| {
+                path.file_stem()
+                    .and_then(|stem| stem.to_str())
+                    .map(str::to_string)
+            })
+            .collect();
+        message_ids.extend(current.iter().filter_map(|(path, _)| {
+            path.parent()?
+                .parent()?
+                .file_name()
+                .filter(|name| *name == "message")?;
+            path.file_stem()
+                .and_then(|stem| stem.to_str())
+                .map(str::to_string)
+        }));
+        for message_id in message_ids {
+            let part_prefix = root.join("part").join(message_id).display().to_string();
+            let paths: Vec<String> = self
+                .db
+                .prepare("SELECT file_path FROM file_fingerprints WHERE file_path LIKE ?1")?
+                .query_map([format!("{part_prefix}/%")], |row| row.get(0))?
+                .collect::<rusqlite::Result<_>>()?;
+            stored_paths.extend(paths.into_iter().map(PathBuf::from));
+        }
+        for (path, fingerprint) in current {
+            match self.get_fingerprint(&path)? {
+                Some(saved) if saved == fingerprint => {}
+                _ => return Ok(true),
+            }
+            stored_paths.remove(&path);
+        }
+        Ok(!stored_paths.is_empty())
+    }
+
+    fn upsert_opencode_json_dependency_fingerprints(
+        &mut self,
+        json_backend: &JsonBackend,
+        session_id: &str,
+    ) -> Result<()> {
+        let paths = Self::opencode_json_dependency_paths(json_backend, session_id)?;
+        let tx = self.db.transaction()?;
+        for path in paths {
+            Self::upsert_fingerprint_tx(&tx, &path)?;
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
     pub fn source_needs_reindex(&self, locator: &Path) -> Result<bool> {
         let Some(locator) = locator.to_str() else {
             return Ok(false);
@@ -1874,13 +2111,26 @@ impl SessionIndexer {
         wal.into()
     }
 
-    fn opencode_sqlite_fingerprint_target(db_path: &Path) -> PathBuf {
-        let wal_path = Self::opencode_sqlite_wal_path(db_path);
-        if wal_path.exists() {
-            wal_path
-        } else {
-            db_path.to_path_buf()
+    fn opencode_database_observation(id: &str, db_path: &Path) -> SourceObservation {
+        SourceObservation {
+            assistant: AiAssistant::OpenCode,
+            id: id.to_string(),
+            locator: db_path.to_path_buf(),
+            kind: SourceKind::DatabaseRecord,
+            scope: Some(db_path.to_path_buf()),
+            fingerprint: None,
         }
+    }
+
+    fn upsert_opencode_sqlite_fingerprints(&mut self, db_path: &Path) -> Result<()> {
+        let tx = self.db.transaction()?;
+        Self::upsert_fingerprint_tx(&tx, db_path)?;
+        let wal = Self::opencode_sqlite_wal_path(db_path);
+        if wal.exists() {
+            Self::upsert_fingerprint_tx(&tx, &wal)?;
+        }
+        tx.commit()?;
+        Ok(())
     }
 
     fn upsert_fingerprint_tx(tx: &rusqlite::Transaction<'_>, file_path: &Path) -> Result<()> {
@@ -1938,6 +2188,17 @@ impl SessionIndexer {
 
         for file_path in file_paths {
             if !Path::new(&file_path).exists() {
+                // OpenCode content dependencies are retained deliberately: a
+                // missing former message/part file is evidence that forces a
+                // future retry while the session metadata itself is unchanged.
+                let dependency = Path::new(&file_path)
+                    .parent()
+                    .and_then(Path::parent)
+                    .and_then(Path::file_name)
+                    .is_some_and(|name| name == "message" || name == "part");
+                if dependency {
+                    continue;
+                }
                 if kimi_bundle_dirs
                     .iter()
                     .any(|bundle_dir| file_path.starts_with(&format!("{bundle_dir}/")))
@@ -1953,23 +2214,6 @@ impl SessionIndexer {
 
         tx.commit()?;
         Ok(removed)
-    }
-
-    fn prune_stale_opencode_sessions_if_needed(
-        &mut self,
-        incremental: bool,
-        flags: OpencodeEnumerationFlags,
-        indexed_ids: &HashSet<String>,
-    ) -> Result<usize> {
-        if incremental {
-            if flags.sqlite_enumerated {
-                return self.prune_stale_opencode_sessions(indexed_ids);
-            }
-        } else if flags.enumeration_succeeded {
-            return self.prune_stale_opencode_sessions(indexed_ids);
-        }
-
-        Ok(0)
     }
 
     fn prune_session_after_parse_skip(
@@ -2216,25 +2460,6 @@ impl SessionIndexer {
         Ok(removed)
     }
 
-    fn prune_stale_opencode_sessions(&mut self, indexed_ids: &HashSet<String>) -> Result<usize> {
-        let existing_ids: Vec<String> = {
-            let mut stmt = self
-                .db
-                .prepare("SELECT id FROM sessions WHERE tool = 'opencode'")?;
-            stmt.query_map([], |row| row.get(0))?
-                .collect::<std::result::Result<Vec<_>, _>>()?
-        };
-
-        let mut removed = 0;
-        for id in existing_ids {
-            if !indexed_ids.contains(&id) {
-                removed += self.remove_session_by_id(&id)?;
-            }
-        }
-
-        Ok(removed)
-    }
-
     fn remove_session_by_id(&mut self, session_id: &str) -> Result<usize> {
         let tx = self.db.transaction()?;
         let removed = Self::delete_session_by_id_tx(&tx, session_id)?;
@@ -2294,7 +2519,7 @@ mod tests {
     use std::path::PathBuf;
     use tempfile::NamedTempFile;
 
-    fn create_opencode_sqlite_db(db_path: &std::path::Path) -> Connection {
+    pub(super) fn create_opencode_sqlite_db(db_path: &std::path::Path) -> Connection {
         let conn = Connection::open(db_path).unwrap();
         conn.pragma_update(None, "journal_mode", "WAL").unwrap();
         conn.pragma_update(None, "wal_autocheckpoint", 0).unwrap();
@@ -2327,7 +2552,7 @@ mod tests {
         conn
     }
 
-    fn insert_opencode_session(conn: &Connection, session_id: &str, ts_ms: i64) {
+    pub(super) fn insert_opencode_session(conn: &Connection, session_id: &str, ts_ms: i64) {
         let msg_id = format!("msg-{}", session_id);
         let part_id = format!("prt-{}", session_id);
 
@@ -3824,33 +4049,6 @@ mod tests {
             after_count, initial_count,
             "Existing sessions must survive when enumeration fails"
         );
-    }
-
-    #[test]
-    fn opencode_stale_prune_reports_removed_sessions() {
-        let temp_db = NamedTempFile::new().unwrap();
-        let mut indexer = SessionIndexer::new(temp_db.path()).unwrap();
-
-        indexer
-            .db
-            .execute(
-                "INSERT INTO sessions (id, tool, start_time, message_count, file_path, last_updated)
-                 VALUES ('stale-opencode', 'opencode', 0, 1, '/tmp/stale.json', 0)",
-                [],
-            )
-            .unwrap();
-
-        let removed = indexer
-            .prune_stale_opencode_sessions(&HashSet::new())
-            .unwrap();
-
-        let remaining: i64 = indexer
-            .db
-            .query_row("SELECT COUNT(*) FROM sessions", [], |row| row.get(0))
-            .unwrap();
-
-        assert_eq!(removed, 1);
-        assert_eq!(remaining, 0);
     }
 
     #[test]

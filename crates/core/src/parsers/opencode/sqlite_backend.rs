@@ -1,18 +1,21 @@
 use anyhow::{Context, Result};
 use rusqlite::{Connection, OpenFlags};
+use std::cell::RefCell;
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 use crate::models::Role;
 use crate::parsers::model::normalize_model;
 
 use super::{
-    MessageMetadata, OpenCodeBackend, PartData, SessionEntry, SessionMetadata, SessionSource,
-    timestamp_from_millis,
+    MessageMetadata, OpenCodeBackend, OpenCodeReadDiagnostics, PartData, SessionEntry,
+    SessionEnumeration, SessionMetadata, SessionSource, timestamp_from_millis,
 };
 
 pub struct SqliteBackend {
     conn: Connection,
     db_path: PathBuf,
+    read_diagnostics: RefCell<OpenCodeReadDiagnostics>,
 }
 
 impl SqliteBackend {
@@ -26,7 +29,16 @@ impl SqliteBackend {
         Ok(Self {
             conn,
             db_path: db_path.to_path_buf(),
+            read_diagnostics: RefCell::default(),
         })
+    }
+
+    fn diagnostic(&self, error: impl Into<String>) {
+        let mut diagnostics = self.read_diagnostics.borrow_mut();
+        diagnostics.incomplete = true;
+        diagnostics
+            .errors
+            .push((Some(self.db_path.clone()), error.into()));
     }
 
     fn part_table_has_session_id(&self) -> Result<bool> {
@@ -42,6 +54,10 @@ impl SqliteBackend {
 
 impl OpenCodeBackend for SqliteBackend {
     fn list_sessions(&self) -> Result<Vec<SessionEntry>> {
+        Ok(self.enumerate_sessions()?.entries)
+    }
+
+    fn enumerate_sessions(&self) -> Result<SessionEnumeration> {
         let mut stmt = self.conn.prepare("SELECT id FROM session")?;
         let entries = stmt
             .query_map([], |row| {
@@ -56,7 +72,16 @@ impl OpenCodeBackend for SqliteBackend {
             .collect::<std::result::Result<Vec<_>, _>>()
             .context("Failed to list sessions from SQLite")?;
 
-        Ok(entries)
+        Ok(SessionEnumeration {
+            entries,
+            complete: true,
+            errors: Vec::new(),
+            protected_locators: HashSet::new(),
+        })
+    }
+
+    fn take_read_diagnostics(&self) -> OpenCodeReadDiagnostics {
+        std::mem::take(&mut *self.read_diagnostics.borrow_mut())
     }
 
     fn load_session_metadata(&self, entry: &SessionEntry) -> Result<SessionMetadata> {
@@ -107,6 +132,7 @@ impl OpenCodeBackend for SqliteBackend {
                 let (id, created_ms, data_str) = match result {
                     Ok(tuple) => tuple,
                     Err(err) => {
+                        self.diagnostic(format!("Failed to read message row: {err}"));
                         tracing::warn!("Failed to read message row: {}", err);
                         return None;
                     }
@@ -115,6 +141,7 @@ impl OpenCodeBackend for SqliteBackend {
                 let data: serde_json::Value = match serde_json::from_str(&data_str) {
                     Ok(v) => v,
                     Err(err) => {
+                        self.diagnostic(format!("Failed to parse message data for {id}: {err}"));
                         tracing::warn!("Failed to parse message data for {}: {}", id, err);
                         return None;
                     }
@@ -131,6 +158,7 @@ impl OpenCodeBackend for SqliteBackend {
                 let time_created = match timestamp_from_millis(created_ms) {
                     Ok(ts) => ts,
                     Err(err) => {
+                        self.diagnostic(format!("Invalid timestamp for message {id}: {err}"));
                         tracing::warn!("Invalid timestamp for message {}: {}", id, err);
                         return None;
                     }
@@ -199,6 +227,7 @@ impl OpenCodeBackend for SqliteBackend {
                 let (id, data_str) = match result {
                     Ok(tuple) => tuple,
                     Err(err) => {
+                        self.diagnostic(format!("Failed to read part row: {err}"));
                         tracing::warn!("Failed to read part row: {}", err);
                         return None;
                     }
@@ -207,15 +236,17 @@ impl OpenCodeBackend for SqliteBackend {
                 let raw: serde_json::Value = match serde_json::from_str(&data_str) {
                     Ok(v) => v,
                     Err(err) => {
+                        self.diagnostic(format!("Failed to parse part data for {id}: {err}"));
                         tracing::warn!("Failed to parse part data for {}: {}", id, err);
                         return None;
                     }
                 };
 
-                let kind = raw
-                    .get("type")
-                    .and_then(|v| v.as_str())
-                    .map(str::to_string)?;
+                let Some(kind) = raw.get("type").and_then(|v| v.as_str()).map(str::to_string)
+                else {
+                    self.diagnostic(format!("Part type missing for {id}"));
+                    return None;
+                };
 
                 let order = raw.get("order").and_then(|v| v.as_i64());
 

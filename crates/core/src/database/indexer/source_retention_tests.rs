@@ -2,6 +2,75 @@ use std::collections::VecDeque;
 
 use super::SessionIndexer;
 
+#[test]
+fn opencode_sqlite_completed_enumeration_marks_only_removed_record_missing() {
+    // This catches the old global stale-prune behavior: a completed SQLite
+    // identity snapshot must reconcile its own database scope and retain the
+    // transcript when a row disappears.
+    let temp = tempfile::tempdir().unwrap();
+    let source_db = temp.path().join("source.db");
+    let index_db = temp.path().join("index.db");
+    let json_root = temp.path().join("storage");
+    std::fs::create_dir_all(&json_root).unwrap();
+    let db = super::tests::create_opencode_sqlite_db(&source_db);
+    super::tests::insert_opencode_session(&db, "retained", 1_700_000_000_000);
+    let mut indexer = SessionIndexer::new(&index_db).unwrap();
+
+    indexer
+        .index_opencode_sessions(&json_root, std::slice::from_ref(&source_db))
+        .unwrap();
+    db.execute("DELETE FROM session WHERE id = 'retained'", [])
+        .unwrap();
+    indexer
+        .index_opencode_sessions(&json_root, std::slice::from_ref(&source_db))
+        .unwrap();
+
+    let retained = crate::database::load_session(&index_db, "retained")
+        .unwrap()
+        .unwrap();
+    assert!(retained.source.missing);
+    assert_eq!(retained.source.scope.as_deref(), source_db.to_str());
+    assert_eq!(
+        (retained.source.mtime_ns, retained.source.size),
+        (None, None)
+    );
+}
+
+#[test]
+fn opencode_unavailable_database_does_not_reconcile_another_database_scope() {
+    // A failure to enumerate database A must not make its formerly indexed
+    // rows look absent merely because database B is healthy.
+    let temp = tempfile::tempdir().unwrap();
+    let source_a = temp.path().join("a.db");
+    let source_b = temp.path().join("b.db");
+    let index_db = temp.path().join("index.db");
+    let json_root = temp.path().join("storage");
+    std::fs::create_dir_all(&json_root).unwrap();
+    let db_a = super::tests::create_opencode_sqlite_db(&source_a);
+    super::tests::insert_opencode_session(&db_a, "from-a", 1_700_000_000_000);
+    let db_b = super::tests::create_opencode_sqlite_db(&source_b);
+    super::tests::insert_opencode_session(&db_b, "from-b", 1_700_000_100_000);
+    let mut indexer = SessionIndexer::new(&index_db).unwrap();
+    indexer
+        .index_opencode_sessions(&json_root, &[source_a.clone(), source_b.clone()])
+        .unwrap();
+
+    drop(db_a);
+    std::fs::remove_file(&source_a).unwrap();
+    indexer
+        .index_opencode_sessions(&json_root, &[source_a, source_b])
+        .unwrap();
+
+    let a = crate::database::load_session(&index_db, "from-a")
+        .unwrap()
+        .unwrap();
+    let b = crate::database::load_session(&index_db, "from-b")
+        .unwrap()
+        .unwrap();
+    assert!(!a.source.missing);
+    assert!(!b.source.missing);
+}
+
 fn assert_missing_lifecycle(
     assistant: &str,
     fixture: &str,

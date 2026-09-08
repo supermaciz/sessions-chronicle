@@ -1,4 +1,6 @@
 use anyhow::{Context, Result};
+use std::cell::RefCell;
+use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -6,19 +8,31 @@ use crate::models::Role;
 use crate::parsers::model::normalize_model;
 
 use super::{
-    MessageMetadata, OpenCodeBackend, PartData, SessionEntry, SessionMetadata, SessionSource,
-    read_json, timestamp_from_millis,
+    MessageMetadata, OpenCodeBackend, OpenCodeReadDiagnostics, PartData, SessionEntry,
+    SessionEnumeration, SessionMetadata, SessionSource, read_json, timestamp_from_millis,
 };
 
 pub struct JsonBackend {
     storage_root: PathBuf,
+    read_diagnostics: RefCell<OpenCodeReadDiagnostics>,
 }
 
 impl JsonBackend {
     pub fn new(storage_root: &Path) -> Self {
         Self {
             storage_root: storage_root.to_path_buf(),
+            read_diagnostics: RefCell::default(),
         }
+    }
+
+    pub(crate) fn storage_root_path(&self) -> &Path {
+        &self.storage_root
+    }
+
+    fn diagnostic(&self, path: Option<PathBuf>, error: impl Into<String>) {
+        let mut diagnostics = self.read_diagnostics.borrow_mut();
+        diagnostics.incomplete = true;
+        diagnostics.errors.push((path, error.into()));
     }
 
     pub(crate) fn parse_session_metadata_from_file(
@@ -74,17 +88,39 @@ impl JsonBackend {
 
 impl OpenCodeBackend for JsonBackend {
     fn list_sessions(&self) -> Result<Vec<SessionEntry>> {
+        let enumeration = self.enumerate_sessions()?;
+        anyhow::ensure!(enumeration.complete, "OpenCode JSON enumeration incomplete");
+        Ok(enumeration.entries)
+    }
+
+    fn enumerate_sessions(&self) -> Result<SessionEnumeration> {
         let sessions_dir = self.storage_root.join("session");
         if !sessions_dir.exists() {
-            return Ok(Vec::new());
+            return Ok(SessionEnumeration {
+                entries: Vec::new(),
+                complete: true,
+                errors: Vec::new(),
+                protected_locators: HashSet::new(),
+            });
         }
 
         let mut entries = Vec::new();
-        for entry in walkdir::WalkDir::new(&sessions_dir)
-            .max_depth(5)
-            .into_iter()
-            .filter_map(|e| e.ok())
-        {
+        let mut errors = Vec::new();
+        let mut protected_locators = HashSet::new();
+        let mut complete = true;
+        for entry in walkdir::WalkDir::new(&sessions_dir).max_depth(5) {
+            let entry = match entry {
+                Ok(entry) => entry,
+                Err(err) => {
+                    complete = false;
+                    let path = err.path().map(Path::to_path_buf);
+                    if let Some(path) = &path {
+                        protected_locators.insert(path.clone());
+                    }
+                    errors.push((path, err.to_string()));
+                    continue;
+                }
+            };
             let path = entry.path();
             if entry.file_type().is_file() && path.extension().is_some_and(|ext| ext == "json") {
                 let id = match read_json(path) {
@@ -97,7 +133,12 @@ impl OpenCodeBackend for JsonBackend {
                                 .and_then(|s| s.to_str())
                                 .map(str::to_string)
                         }),
-                    Err(_) => continue,
+                    Err(err) => {
+                        complete = false;
+                        protected_locators.insert(path.to_path_buf());
+                        errors.push((Some(path.to_path_buf()), err.to_string()));
+                        continue;
+                    }
                 };
 
                 if let Some(id) = id {
@@ -105,11 +146,24 @@ impl OpenCodeBackend for JsonBackend {
                         id,
                         source: SessionSource::JsonFile(path.to_path_buf()),
                     });
+                } else {
+                    complete = false;
+                    protected_locators.insert(path.to_path_buf());
+                    errors.push((Some(path.to_path_buf()), "Session id missing".to_string()));
                 }
             }
         }
 
-        Ok(entries)
+        Ok(SessionEnumeration {
+            entries,
+            complete,
+            errors,
+            protected_locators,
+        })
+    }
+
+    fn take_read_diagnostics(&self) -> OpenCodeReadDiagnostics {
+        std::mem::take(&mut *self.read_diagnostics.borrow_mut())
     }
 
     fn load_session_metadata(&self, entry: &SessionEntry) -> Result<SessionMetadata> {
@@ -123,7 +177,10 @@ impl OpenCodeBackend for JsonBackend {
         let messages_dir = self.storage_root.join("message").join(session_id);
         let entries = match fs::read_dir(&messages_dir) {
             Ok(entries) => entries,
-            Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+                self.diagnostic(Some(messages_dir), "Message directory is missing");
+                return Ok(Vec::new());
+            }
             Err(err) => return Err(err).context("Failed to read messages directory"),
         };
 
@@ -141,6 +198,7 @@ impl OpenCodeBackend for JsonBackend {
             let value = match read_json(&entry.path()) {
                 Ok(value) => value,
                 Err(err) => {
+                    self.diagnostic(Some(entry.path()), err.to_string());
                     tracing::warn!(
                         "Failed to parse message {}: {}",
                         entry.path().display(),
@@ -153,6 +211,7 @@ impl OpenCodeBackend for JsonBackend {
             let id = match value.get("id").and_then(|v| v.as_str()).map(str::to_string) {
                 Some(id) => id,
                 None => {
+                    self.diagnostic(Some(entry.path()), "Message id missing");
                     tracing::warn!("Message id missing in {}", entry.path().display());
                     continue;
                 }
@@ -173,6 +232,7 @@ impl OpenCodeBackend for JsonBackend {
             {
                 Some(ms) => ms,
                 None => {
+                    self.diagnostic(Some(entry.path()), "Message created time missing");
                     tracing::warn!("Message created time missing in {}", entry.path().display());
                     continue;
                 }
@@ -181,6 +241,7 @@ impl OpenCodeBackend for JsonBackend {
             let time_created = match timestamp_from_millis(created_ms) {
                 Ok(ts) => ts,
                 Err(err) => {
+                    self.diagnostic(Some(entry.path()), err.to_string());
                     tracing::warn!(
                         "Invalid message timestamp in {}: {}",
                         entry.path().display(),
@@ -209,6 +270,7 @@ impl OpenCodeBackend for JsonBackend {
         let entries = match fs::read_dir(&parts_dir) {
             Ok(entries) => entries,
             Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+                self.diagnostic(Some(parts_dir), "Part directory is missing");
                 tracing::warn!("Missing parts for message {}", message_id);
                 return Ok(Vec::new());
             }
@@ -229,6 +291,7 @@ impl OpenCodeBackend for JsonBackend {
             let value = match read_json(&entry.path()) {
                 Ok(value) => value,
                 Err(err) => {
+                    self.diagnostic(Some(entry.path()), err.to_string());
                     tracing::warn!("Failed to parse part {}: {}", entry.path().display(), err);
                     continue;
                 }
@@ -237,6 +300,7 @@ impl OpenCodeBackend for JsonBackend {
             let id = match value.get("id").and_then(|v| v.as_str()).map(str::to_string) {
                 Some(id) => id,
                 None => {
+                    self.diagnostic(Some(entry.path()), "Part id missing");
                     tracing::warn!("Part id missing in {}", entry.path().display());
                     continue;
                 }
@@ -249,6 +313,7 @@ impl OpenCodeBackend for JsonBackend {
             {
                 Some(kind) => kind,
                 None => {
+                    self.diagnostic(Some(entry.path()), "Part type missing");
                     tracing::warn!("Part type missing in {}", entry.path().display());
                     continue;
                 }

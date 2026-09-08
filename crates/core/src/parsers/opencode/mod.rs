@@ -5,6 +5,7 @@ use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
 use serde_json::Value;
 use std::cmp::Ordering;
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 use crate::models::{
@@ -96,13 +97,34 @@ pub(crate) struct SessionEntry {
     pub source: SessionSource,
 }
 
+pub(crate) struct SessionEnumeration {
+    pub entries: Vec<SessionEntry>,
+    pub complete: bool,
+    pub errors: Vec<(Option<PathBuf>, String)>,
+    pub protected_locators: HashSet<PathBuf>,
+}
+
+#[derive(Default)]
+pub(crate) struct OpenCodeReadDiagnostics {
+    pub incomplete: bool,
+    pub errors: Vec<(Option<PathBuf>, String)>,
+}
+
+pub(crate) struct ObservedOpenCodeParse {
+    pub parsed: Result<ParsedSession>,
+    pub diagnostics: OpenCodeReadDiagnostics,
+}
+
 pub(crate) enum SessionSource {
     JsonFile(PathBuf),
     SqliteRow { db_path: PathBuf },
 }
 
 pub(crate) trait OpenCodeBackend {
+    #[allow(dead_code)] // Kept for backend callers outside the indexer.
     fn list_sessions(&self) -> Result<Vec<SessionEntry>>;
+    fn enumerate_sessions(&self) -> Result<SessionEnumeration>;
+    fn take_read_diagnostics(&self) -> OpenCodeReadDiagnostics;
     fn load_session_metadata(&self, entry: &SessionEntry) -> Result<SessionMetadata>;
     fn load_messages(&self, session_id: &str) -> Result<Vec<MessageMetadata>>;
     fn load_parts(&self, message_id: &str) -> Result<Vec<PartData>>;
@@ -158,6 +180,19 @@ impl OpenCodeParser {
     ) -> Result<ParsedSession> {
         let metadata = backend.load_session_metadata(entry)?;
         self.build_parsed_session(metadata, &entry.source, backend)
+    }
+
+    pub(crate) fn parse_entry_observed(
+        &self,
+        entry: &SessionEntry,
+        backend: &dyn OpenCodeBackend,
+    ) -> ObservedOpenCodeParse {
+        backend.take_read_diagnostics();
+        let parsed = self.parse_entry(entry, backend);
+        ObservedOpenCodeParse {
+            parsed,
+            diagnostics: backend.take_read_diagnostics(),
+        }
     }
 
     pub fn parse(&self, session_path: &Path) -> Result<ParsedSession> {
