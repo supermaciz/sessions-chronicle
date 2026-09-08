@@ -1029,25 +1029,14 @@ impl SessionIndexer {
     ) {
         match self.remove_present_sessions_for_file(assistant, path) {
             Ok(removed) if removed > 0 => stats.removed += removed,
-            Ok(_) => match self.source_needs_reindex(path) {
-                Ok(false) => {}
-                Ok(true) => Self::protect_unidentified_source(
-                    scan,
-                    stats,
-                    errors_detail,
-                    assistant,
-                    path,
-                    parse_error,
-                ),
-                Err(error) => Self::protect_unidentified_source(
-                    scan,
-                    stats,
-                    errors_detail,
-                    assistant,
-                    path,
-                    &error,
-                ),
-            },
+            Ok(_) => Self::protect_unidentified_source(
+                scan,
+                stats,
+                errors_detail,
+                assistant,
+                path,
+                parse_error,
+            ),
             Err(error) => Self::protect_unidentified_source(
                 scan,
                 stats,
@@ -4060,7 +4049,7 @@ mod tests {
     }
 
     #[test]
-    fn indexing_diagnostics_empty_claude_session_does_not_record_error() {
+    fn indexing_diagnostics_unidentified_claude_session_records_error() {
         let temp = tempfile::tempdir().unwrap();
         let claude_root = temp.path().join("claude_sessions").join("project-a");
         std::fs::create_dir_all(&claude_root).unwrap();
@@ -4078,11 +4067,11 @@ mod tests {
             .unwrap();
 
         assert_eq!(claude.indexed, 0);
-        assert_eq!(claude.errors, 0);
-        assert_eq!(result.errors_detail.len(), 0);
+        assert_eq!(claude.errors, 1);
+        assert_eq!(result.errors_detail.len(), 1);
         assert_eq!(
             claude.status,
-            crate::models::indexing_diagnostics::SourceStatus::Empty
+            crate::models::indexing_diagnostics::SourceStatus::Failed
         );
 
         let session_count: i64 = indexer

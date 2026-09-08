@@ -557,3 +557,41 @@ fn codex_insert_failure_protects_other_present_scope_rows() {
         |indexer, root, errors| indexer.index_codex_sessions_internal(root, true, errors),
     );
 }
+
+#[test]
+fn unowned_ineligible_claude_file_protects_the_scope() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().join("claude");
+    std::fs::create_dir(&root).unwrap();
+    let retained_path = root.join("retained.jsonl");
+    std::fs::copy(
+        crate::fixture_path("claude_sessions/sample-session.jsonl"),
+        &retained_path,
+    )
+    .unwrap();
+    let db_path = temp.path().join("index.db");
+    let mut indexer = SessionIndexer::new(&db_path).unwrap();
+    let mut errors = VecDeque::new();
+    indexer
+        .index_claude_sessions_internal(&root, true, &mut errors)
+        .unwrap();
+    let retained_id: String = indexer
+        .db
+        .query_row("SELECT id FROM sessions", [], |row| row.get(0))
+        .unwrap();
+
+    std::fs::remove_file(&retained_path).unwrap();
+    std::fs::write(root.join("unowned-ineligible.jsonl"), b"").unwrap();
+    let result = indexer
+        .index_claude_sessions_internal(&root, true, &mut errors)
+        .unwrap();
+
+    assert!(result.errors > 0);
+    assert!(
+        !crate::database::load_session(&db_path, &retained_id)
+            .unwrap()
+            .unwrap()
+            .source
+            .missing
+    );
+}
