@@ -2,6 +2,7 @@ pub mod analytics;
 pub mod indexer;
 pub mod schema;
 pub mod shell_search;
+pub(crate) mod source_state;
 
 use anyhow::{Context, Result};
 use chrono::{DateTime, TimeZone, Utc};
