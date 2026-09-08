@@ -9,6 +9,10 @@ pub(super) struct ActiveSessionRef {
     pub(super) project_name: String,
     pub(super) pinned: bool,
     pub(super) can_resume: bool,
+    /// Whether the on-disk transcript for this session is currently missing.
+    /// Drives the Resume button's explanation when it is visible but
+    /// insensitive (see [`crate::app::mod::App`]'s header bar).
+    pub(super) source_missing: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

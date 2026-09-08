@@ -9,7 +9,23 @@ use crate::config::APP_ID;
 use crate::database::load_session;
 use crate::utils::terminal::{self, Terminal};
 
+use crate::models::Session;
+
 use super::super::{App, AppMsg};
+
+/// Why resume is unavailable for this session, checked immediately after a
+/// fresh load and before any workdir/settings/terminal access — a missing
+/// source and a non-resumable Kimi child are both explained here, in that
+/// order, so the freshest reason wins.
+fn resume_unavailable_reason(session: &Session) -> Option<&'static str> {
+    if session.source.missing {
+        Some("The session source is missing. Only indexed content is available.")
+    } else if !session.can_resume() {
+        Some("Kimi Code child sessions cannot be resumed directly.")
+    } else {
+        None
+    }
+}
 
 impl App {
     fn resolve_workdir_for_resume(file_path: &str, project_path: Option<&str>) -> Option<PathBuf> {
@@ -45,12 +61,9 @@ impl App {
             }
         };
 
-        if !session.can_resume() {
-            tracing::warn!(session_id = %session.id, "resume is unavailable for this child session");
-            self.show_error_dialog(
-                "Resume Unavailable",
-                "Kimi Code child sessions cannot be resumed directly.",
-            );
+        if let Some(reason) = resume_unavailable_reason(&session) {
+            tracing::warn!(session_id = %session.id, reason, "resume is unavailable for this session");
+            self.show_error_dialog("Resume Unavailable", reason);
             return;
         }
 
@@ -119,5 +132,66 @@ impl App {
         } else {
             tracing::warn!("ResumeActiveSession ignored — no active session");
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::resume_unavailable_reason;
+    use crate::models::Session;
+    use crate::models::session::{AiAssistant, SessionEndingStatus};
+    use chrono::Utc;
+
+    fn test_session() -> Session {
+        Session {
+            id: "session_test".to_string(),
+            tool: AiAssistant::ClaudeCode,
+            project_path: Some("/tmp/project".to_string()),
+            project_id: None,
+            start_time: Utc::now(),
+            message_count: 1,
+            file_path: "/tmp/session.jsonl".to_string(),
+            last_updated: Utc::now(),
+            pinned_at: None,
+            first_prompt: Some("Prompt".to_string()),
+            parent_session_id: None,
+            is_subagent: false,
+            token_usage: None,
+            edit_count: 0,
+            read_count: 0,
+            command_count: 0,
+            ending_status: SessionEndingStatus::Unknown,
+            source: Default::default(),
+        }
+    }
+
+    #[test]
+    fn resumable_session_has_no_unavailable_reason() {
+        assert_eq!(resume_unavailable_reason(&test_session()), None);
+    }
+
+    #[test]
+    fn missing_source_reason_takes_priority_over_kimi_child_check() {
+        let mut session = test_session();
+        session.tool = AiAssistant::KimiCode;
+        session.is_subagent = true;
+        session.source.missing = true;
+
+        assert_eq!(
+            resume_unavailable_reason(&session),
+            Some("The session source is missing. Only indexed content is available.")
+        );
+    }
+
+    #[test]
+    fn kimi_child_reason_is_reported_when_source_is_present() {
+        let mut session = test_session();
+        session.tool = AiAssistant::KimiCode;
+        session.is_subagent = true;
+
+        assert_eq!(
+            resume_unavailable_reason(&session),
+            Some("Kimi Code child sessions cannot be resumed directly.")
+        );
     }
 }

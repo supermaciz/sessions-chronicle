@@ -66,6 +66,7 @@ impl App {
             project_name,
             pinned: session.pinned_at.is_some(),
             can_resume: session.can_resume(),
+            source_missing: session.source.missing,
         });
 
         self.session_detail.emit(SessionDetailMsg::SetSession {
@@ -140,6 +141,7 @@ impl App {
                     let mut parent = parent;
                     parent.pinned = session.pinned_at.is_some();
                     parent.can_resume = session.can_resume();
+                    parent.source_missing = session.source.missing;
                     self.dismiss_summary_popover();
                     self.active_session = Some(parent);
                     self.session_detail.emit(SessionDetailMsg::SetSession {
@@ -158,6 +160,69 @@ impl App {
                     self.active_session = None;
                     self.session_detail
                         .emit(parent_session_load_failure_message());
+                }
+            }
+        }
+    }
+
+    /// Re-reads the active (and cached parent) session rows after an
+    /// indexing pass so pin/resume/source-availability fields reflect the
+    /// latest scan. Detection never rewrites the transcript itself, so this
+    /// only refreshes cached metadata and pushes the updated source state
+    /// into the open detail view — it never replaces the loaded session via
+    /// `SetSession`, which would disturb transcript/search/scroll state.
+    pub(crate) fn refresh_active_session_metadata(&mut self) {
+        if let Some(active) = self.active_session.clone() {
+            match load_session(&self.db_path, &active.id) {
+                Ok(Some(session)) => {
+                    if let Some(active_ref) = self.active_session.as_mut() {
+                        active_ref.pinned = session.pinned_at.is_some();
+                        active_ref.can_resume = session.can_resume();
+                        active_ref.source_missing = session.source.missing;
+                    }
+                    self.session_detail
+                        .emit(SessionDetailMsg::UpdateSourceState {
+                            session_id: session.id.clone(),
+                            source: session.source.clone(),
+                        });
+                }
+                Ok(None) => {
+                    tracing::warn!(
+                        session_id = %active.id,
+                        "Active session vanished from index during metadata refresh"
+                    );
+                }
+                Err(err) => {
+                    tracing::error!(
+                        session_id = %active.id,
+                        error = %err,
+                        "Failed to refresh active session metadata"
+                    );
+                }
+            }
+        }
+
+        if let Some(parent) = self.parent_session.clone() {
+            match load_session(&self.db_path, &parent.id) {
+                Ok(Some(session)) => {
+                    if let Some(parent_ref) = self.parent_session.as_mut() {
+                        parent_ref.pinned = session.pinned_at.is_some();
+                        parent_ref.can_resume = session.can_resume();
+                        parent_ref.source_missing = session.source.missing;
+                    }
+                }
+                Ok(None) => {
+                    tracing::warn!(
+                        session_id = %parent.id,
+                        "Cached parent session vanished from index during metadata refresh"
+                    );
+                }
+                Err(err) => {
+                    tracing::error!(
+                        session_id = %parent.id,
+                        error = %err,
+                        "Failed to refresh parent session metadata"
+                    );
                 }
             }
         }

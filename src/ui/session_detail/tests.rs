@@ -407,6 +407,88 @@ fn clear_message_clears_rows_and_targets() {
     );
 }
 
+#[gtk::test]
+fn update_source_state_refreshes_the_loaded_session_without_disturbing_it() {
+    let temp_db = tempfile::NamedTempFile::new().expect("temp db");
+    seed_message_transcript(temp_db.path(), "test-session-123", 75);
+
+    let controller = SessionDetail::builder().launch(temp_db.path().to_path_buf());
+    controller.emit(SessionDetailMsg::SetSession {
+        session: Box::new(build_test_session(None, None, 0, 0, 0)),
+        search_query: None,
+    });
+
+    pump_main_context(|| {
+        let parts = controller.state().get();
+        !parts.model.transcript.loading && parts.model.messages.len() == 75
+    });
+
+    let loaded_count_before = controller.state().get().model.transcript.loaded_count;
+
+    controller.emit(SessionDetailMsg::UpdateSourceState {
+        session_id: "test-session-123".to_string(),
+        source: crate::models::SessionSourceState {
+            missing: true,
+            ..Default::default()
+        },
+    });
+
+    pump_main_context(|| {
+        controller
+            .state()
+            .get()
+            .model
+            .session
+            .as_ref()
+            .is_some_and(|session| session.source.missing)
+    });
+
+    let parts = controller.state().get();
+    assert!(parts.model.session.as_ref().unwrap().source.missing);
+    // Only the source field changed — the loaded transcript is untouched.
+    assert_eq!(parts.model.messages.len(), 75);
+    assert_eq!(parts.model.transcript.loaded_count, loaded_count_before);
+}
+
+#[gtk::test]
+fn update_source_state_for_a_stale_session_id_is_ignored() {
+    let temp_db = tempfile::NamedTempFile::new().expect("temp db");
+    seed_message_transcript(temp_db.path(), "test-session-123", 75);
+
+    let controller = SessionDetail::builder().launch(temp_db.path().to_path_buf());
+    controller.emit(SessionDetailMsg::SetSession {
+        session: Box::new(build_test_session(None, None, 0, 0, 0)),
+        search_query: None,
+    });
+
+    pump_main_context(|| {
+        let parts = controller.state().get();
+        !parts.model.transcript.loading
+    });
+
+    // An update addressed to a session that is no longer (or never was)
+    // loaded — e.g. arriving after the user navigated elsewhere — must be
+    // ignored rather than applied to whatever happens to be displayed.
+    controller.emit(SessionDetailMsg::UpdateSourceState {
+        session_id: "some-other-session".to_string(),
+        source: crate::models::SessionSourceState {
+            missing: true,
+            ..Default::default()
+        },
+    });
+
+    // This message triggers no async work, so one main-context iteration
+    // is enough to let it (not) apply before asserting.
+    let context = gtk::glib::MainContext::default();
+    context.iteration(false);
+
+    let parts = controller.state().get();
+    assert!(
+        !parts.model.session.as_ref().unwrap().source.missing,
+        "an update for a different session id must not touch the loaded session"
+    );
+}
+
 #[test]
 fn search_positions_loaded_debug_includes_load_duration() {
     let cmd = SessionDetailCmd::SearchPositionsLoaded {

@@ -138,6 +138,14 @@ pub enum SessionDetailMsg {
     /// Updates the active transcript search query and reloads the current
     /// session so match highlighting stays in sync with displayed rows.
     UpdateSearchQuery(Option<String>),
+    /// Refreshes only the source-availability fields of the currently
+    /// displayed session after an indexing pass detects a transition
+    /// (missing or restored). Ignored if the given session is not the one
+    /// currently loaded. Leaves transcript, search, and scroll state intact.
+    UpdateSourceState {
+        session_id: String,
+        source: crate::models::SessionSourceState,
+    },
     SetMatchPositions {
         request_id: u64,
         session_id: String,
@@ -535,6 +543,9 @@ impl Component for SessionDetail {
             SessionDetailMsg::UpdateSearchQuery(query) => {
                 self.update_search_query(query, &sender);
             }
+            SessionDetailMsg::UpdateSourceState { session_id, source } => {
+                self.update_source_state(&session_id, source);
+            }
             SessionDetailMsg::SetMatchPositions {
                 request_id,
                 session_id,
@@ -837,6 +848,24 @@ impl SessionDetail {
 
         self.inspector.emit(ToolInspectorPaneMsg::Clear);
         self.set_inspector_open(false, sender);
+    }
+
+    /// Updates only the loaded session's source-availability fields, in
+    /// place, without touching transcript, search, or scroll state. Ignored
+    /// if `session_id` no longer matches the currently displayed session
+    /// (e.g. the user navigated away before this arrived).
+    fn update_source_state(&mut self, session_id: &str, source: crate::models::SessionSourceState) {
+        match self.session.as_mut() {
+            Some(session) if session.id == session_id => {
+                session.source = source;
+            }
+            _ => {
+                tracing::debug!(
+                    session_id,
+                    "Ignoring source-state update for a session that is no longer displayed"
+                );
+            }
+        }
     }
 
     fn update_search_query(&mut self, query: Option<String>, sender: &ComponentSender<Self>) {

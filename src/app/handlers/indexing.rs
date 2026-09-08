@@ -48,6 +48,7 @@ impl App {
         indexed: usize,
         skipped: usize,
         removed: usize,
+        source_state_changes: usize,
         per_source: Vec<PerSourceResult>,
         errors_detail: Vec<IndexingError>,
     ) {
@@ -99,7 +100,17 @@ impl App {
         self.session_list
             .emit(SessionListMsg::SetSourceResults(per_source.clone()));
 
-        if should_reload_sessions_after_indexing(indexed, removed, self.pending_reindex_feedback) {
+        // Availability transitions never touch last_updated, but a session
+        // that just went missing (or came back) needs its cached pin/resume
+        // metadata and the open detail view's source state refreshed.
+        self.refresh_active_session_metadata();
+
+        if should_reload_sessions_after_indexing(
+            indexed,
+            removed,
+            source_state_changes,
+            self.pending_reindex_feedback,
+        ) {
             self.refresh_sidebar_projects();
             self.session_list.emit(SessionListMsg::ReloadAfterIndexing {
                 assistants: self.filter_state.tools.clone(),
@@ -143,6 +154,22 @@ impl App {
                 indexing: false,
             });
         }
+
+        // A failed run may still have committed earlier adapter transactions,
+        // so availability could have changed even though indexing failed.
+        self.refresh_active_session_metadata();
+
+        self.session_list.emit(SessionListMsg::ReloadAfterIndexing {
+            assistants: self.filter_state.tools.clone(),
+            project_filter: self.filter_state.project_filter.clone(),
+            context: IndexingReloadContext {
+                indexed: 0,
+                skipped: 0,
+                removed: 0,
+                pending_reindex_feedback: self.pending_reindex_feedback,
+                errors_present: true,
+            },
+        });
 
         let title = if self.pending_reindex_feedback {
             self.pending_reindex_feedback = false;

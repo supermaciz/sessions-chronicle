@@ -114,7 +114,7 @@ pub struct Session {
 
 impl Session {
     pub fn can_resume(&self) -> bool {
-        !(self.tool == AiAssistant::KimiCode && self.is_subagent)
+        !(self.source.missing || (self.tool == AiAssistant::KimiCode && self.is_subagent))
     }
 }
 
@@ -272,6 +272,19 @@ mod tests {
         assert!(session.can_resume());
         session.id = "kimi-subagent::session_kimi::agent-0".to_string();
         session.parent_session_id = Some("session_kimi".to_string());
+        session.is_subagent = true;
+        assert!(!session.can_resume());
+
+        // A missing source overrides resumability independently of the
+        // Kimi-child check above: it must veto resume even for a session
+        // that would otherwise qualify (this session is currently a Kimi
+        // child, so flip that off first to isolate the missing-source path).
+        session.is_subagent = false;
+        assert!(session.can_resume());
+        session.source.missing = true;
+        assert!(!session.can_resume());
+        session.source.missing = false;
+        session.tool = AiAssistant::KimiCode;
         session.is_subagent = true;
         assert!(!session.can_resume());
     }

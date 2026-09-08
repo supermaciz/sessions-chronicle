@@ -6,8 +6,8 @@ use relm4::{
 use adw::prelude::*;
 use anyhow::Context;
 use gtk::prelude::{
-    ActionableExt, ApplicationExt, ButtonExt, Cast, EditableExt, GtkApplicationExt, GtkWindowExt,
-    OrientableExt, SettingsExt, ToggleButtonExt, WidgetExt,
+    AccessibleExtManual, ActionableExt, ApplicationExt, ButtonExt, Cast, EditableExt,
+    GtkApplicationExt, GtkWindowExt, OrientableExt, SettingsExt, ToggleButtonExt, WidgetExt,
 };
 use gtk::{gio, glib};
 use std::{
@@ -166,6 +166,11 @@ pub(super) struct App {
     selected_date_filter: DateFilter,
     banner: adw::Banner,
     banner_has_issues: bool,
+    /// Title of the most recently shown error dialog. `show_error_dialog`
+    /// presents a real `AlertDialog` mounted via the application's window
+    /// list, which a headless test harness may not populate — this mirror
+    /// lets tests assert *which* dialog fired without depending on that.
+    last_error_dialog_title: Cell<Option<String>>,
 }
 
 pub(super) static APP_BROKER: MessageBroker<AppMsg> = MessageBroker::new();
@@ -216,6 +221,7 @@ pub(super) enum AppMsg {
         indexed: usize,
         skipped: usize,
         removed: usize,
+        source_state_changes: usize,
         per_source: Vec<crate::models::PerSourceResult>,
         errors_detail: Vec<crate::models::IndexingError>,
     },
@@ -370,12 +376,23 @@ impl SimpleComponent for App {
                         #[name = "resume_button"]
                         pack_end = &gtk::Button {
                             set_label: "Resume",
-                            set_tooltip_text: Some("Resume session in terminal"),
                             add_css_class: "suggested-action",
                             #[watch]
                             set_visible: model.detail_visible
                                 && model.are_detail_actions_visible()
-                                && model.active_session.as_ref().is_some_and(|session| session.can_resume),
+                                && model.active_session.as_ref().is_some_and(|session| {
+                                    session.can_resume || session.source_missing
+                                }),
+                            // Visibility covers the retained-but-missing case too (so the
+                            // explanation below is reachable); actual resumability still
+                            // gates whether the click can do anything.
+                            #[watch]
+                            set_sensitive: model
+                                .active_session
+                                .as_ref()
+                                .is_some_and(|session| session.can_resume),
+                            #[watch]
+                            set_tooltip_text: Some(model.resume_button_tooltip()),
                             connect_clicked => AppMsg::ResumeActiveSession,
                         },
 
@@ -541,6 +558,7 @@ impl SimpleComponent for App {
             selected_date_filter: DateFilter::AnyTime,
             banner: adw::Banner::new(""),
             banner_has_issues: false,
+            last_error_dialog_title: Cell::new(None),
         };
 
         // view_output!() must stay in the SimpleComponent impl (Relm4 macro requirement)
@@ -712,11 +730,17 @@ impl SimpleComponent for App {
                 indexed,
                 skipped,
                 removed,
+                source_state_changes,
                 per_source,
                 errors_detail,
-            } => {
-                self.handle_indexing_completed(indexed, skipped, removed, per_source, errors_detail)
-            }
+            } => self.handle_indexing_completed(
+                indexed,
+                skipped,
+                removed,
+                source_state_changes,
+                per_source,
+                errors_detail,
+            ),
             AppMsg::IndexingFailed => self.handle_indexing_failed(),
             AppMsg::AnalyticsRefreshRequested => self.handle_analytics_refresh_requested(),
             AppMsg::AnalyticsLoaded(data) => self.handle_analytics_loaded(data),
@@ -844,6 +868,14 @@ impl SimpleComponent for App {
         self.sort_pill
             .widget()
             .set_visible(self.is_sort_pill_visible());
+
+        // update_property has no #[watch]-compatible setter form, so the
+        // accessible description is kept in sync here alongside the tooltip.
+        widgets
+            .resume_button
+            .update_property(&[gtk::accessible::Property::Description(
+                self.resume_button_tooltip(),
+            )]);
     }
 
     fn shutdown(&mut self, widgets: &mut Self::Widgets, _output: relm4::Sender<Self::Output>) {
@@ -877,7 +909,19 @@ impl App {
         }
     }
 
+    /// Tooltip (and accessible description, see `post_view`) for the Resume
+    /// button. Explains why a retained-but-missing session's Resume button
+    /// is visible yet insensitive; otherwise the ordinary hint.
+    fn resume_button_tooltip(&self) -> &'static str {
+        match self.active_session.as_ref() {
+            Some(session) if session.source_missing => "Source missing — showing retained content",
+            _ => "Resume session in terminal",
+        }
+    }
+
     fn show_error_dialog(&self, title: &str, message: &str) {
+        self.last_error_dialog_title.set(Some(title.to_string()));
+
         let dialog = adw::AlertDialog::builder()
             .heading(title)
             .body(message)
@@ -886,7 +930,14 @@ impl App {
         dialog.add_response("ok", "OK");
         dialog.set_default_response(Some("ok"));
 
-        dialog.present(Some(&relm4::main_application().windows()[0]));
+        // Matches the defensive `.first()` lookup already used for the
+        // indexing-status dialog: the application's window list can be
+        // momentarily empty (a headless test harness, or a startup race),
+        // and indexing `[0]` there would panic.
+        match relm4::main_application().windows().first() {
+            Some(window) => dialog.present(Some(window)),
+            None => tracing::warn!("No application window available to host error dialog"),
+        }
     }
 
     fn show_resume_failure_toast(&self, error: &terminal::TerminalSpawnError) {
@@ -1035,6 +1086,7 @@ mod tests {
     use gtk::prelude::WidgetExt;
     use relm4::Component;
     use relm4::ComponentController;
+    use rusqlite::Connection;
     use std::path::PathBuf;
     use std::time::Duration;
 
@@ -1367,6 +1419,7 @@ mod tests {
             indexed: 0,
             skipped: 0,
             removed: 0,
+            source_state_changes: 0,
             per_source: vec![],
             errors_detail: vec![],
         });
@@ -1427,6 +1480,7 @@ mod tests {
             indexed: 1,
             skipped: 0,
             removed: 0,
+            source_state_changes: 0,
             per_source: vec![],
             errors_detail: expected_errors.clone(),
         });
@@ -1438,6 +1492,271 @@ mod tests {
 
         let parts = controller.state().get();
         assert_eq!(parts.model.last_errors_detail, expected_errors);
+    }
+
+    #[gtk::test]
+    fn indexing_completed_with_only_source_state_changes_refreshes_missing_active_session() {
+        if !schema_is_available() {
+            return;
+        }
+
+        let controller = App::builder().launch(Some(PathBuf::from("tests/fixtures")));
+        pump_main_context(|| !controller.state().get().model.indexing);
+
+        controller.emit(AppMsg::SessionSelected("abc123".to_string()));
+        pump_main_context(|| {
+            controller
+                .state()
+                .get()
+                .model
+                .active_session
+                .as_ref()
+                .is_some_and(|session| session.id == "abc123")
+        });
+
+        controller.emit(AppMsg::SearchQueryChanged("hello".to_string()));
+        pump_main_context(|| controller.state().get().model.search_query == "hello");
+
+        {
+            let parts = controller.state().get();
+            let active = parts.model.active_session.as_ref().unwrap();
+            assert!(active.can_resume, "abc123 should start out resumable");
+            assert!(!active.source_missing);
+        }
+
+        let match_counter_before = controller
+            .state()
+            .get()
+            .model
+            .session_detail
+            .widgets()
+            .match_counter_label
+            .label();
+        let scroll_position_before = controller
+            .state()
+            .get()
+            .model
+            .session_detail
+            .widgets()
+            .transcript_scroller
+            .vadjustment()
+            .value();
+
+        // Simulate detection flipping this session's source to missing
+        // without going through a real indexing run.
+        let db_path = controller.state().get().model.db_path.clone();
+        {
+            let connection = Connection::open(&db_path).unwrap();
+            connection
+                .execute(
+                    "UPDATE sessions SET source_missing = 1 WHERE id = 'abc123'",
+                    [],
+                )
+                .unwrap();
+        }
+
+        controller.emit(AppMsg::IndexingCompleted {
+            indexed: 0,
+            skipped: 0,
+            removed: 0,
+            source_state_changes: 1,
+            per_source: vec![],
+            errors_detail: vec![],
+        });
+
+        pump_main_context(|| {
+            controller
+                .state()
+                .get()
+                .model
+                .active_session
+                .as_ref()
+                .is_some_and(|session| session.source_missing)
+        });
+
+        let parts = controller.state().get();
+        let active = parts.model.active_session.as_ref().unwrap();
+        assert_eq!(
+            active.id, "abc123",
+            "selected session id must survive an availability-only refresh"
+        );
+        assert!(active.source_missing);
+        assert!(!active.can_resume);
+        assert!(
+            parts.widgets.resume_button.is_visible(),
+            "Resume stays visible for a missing session so its explanation is reachable"
+        );
+        assert!(
+            !parts.widgets.resume_button.is_sensitive(),
+            "Resume must be insensitive once the session's source is missing"
+        );
+        assert_eq!(
+            parts.widgets.resume_button.tooltip_text().as_deref(),
+            Some("Source missing — showing retained content")
+        );
+        assert_eq!(
+            parts.model.search_query, "hello",
+            "search query must survive an availability-only refresh"
+        );
+        assert_eq!(
+            parts
+                .model
+                .session_detail
+                .widgets()
+                .match_counter_label
+                .label(),
+            match_counter_before,
+            "search match state must survive an availability-only refresh"
+        );
+        assert_eq!(
+            parts
+                .model
+                .session_detail
+                .widgets()
+                .transcript_scroller
+                .vadjustment()
+                .value(),
+            scroll_position_before,
+            "transcript scroll position must survive an availability-only refresh"
+        );
+
+        // Restore fixture state so other tests sharing this override db see
+        // the session as available again.
+        let connection = Connection::open(&db_path).unwrap();
+        connection
+            .execute(
+                "UPDATE sessions SET source_missing = 0 WHERE id = 'abc123'",
+                [],
+            )
+            .unwrap();
+    }
+
+    #[gtk::test]
+    fn indexing_failed_still_refreshes_active_session_availability() {
+        if !schema_is_available() {
+            return;
+        }
+
+        // A per-source failure can happen after earlier adapters in the same
+        // run already committed their transactions, so availability may have
+        // changed even though the run overall reports IndexingFailed.
+        let controller = App::builder().launch(Some(PathBuf::from("tests/fixtures")));
+        pump_main_context(|| !controller.state().get().model.indexing);
+
+        controller.emit(AppMsg::SessionSelected("abc123".to_string()));
+        pump_main_context(|| {
+            controller
+                .state()
+                .get()
+                .model
+                .active_session
+                .as_ref()
+                .is_some_and(|session| session.id == "abc123")
+        });
+
+        let db_path = controller.state().get().model.db_path.clone();
+        {
+            let connection = Connection::open(&db_path).unwrap();
+            connection
+                .execute(
+                    "UPDATE sessions SET source_missing = 1 WHERE id = 'abc123'",
+                    [],
+                )
+                .unwrap();
+        }
+
+        controller.emit(AppMsg::IndexingFailed);
+        pump_main_context(|| {
+            controller
+                .state()
+                .get()
+                .model
+                .active_session
+                .as_ref()
+                .is_some_and(|session| session.source_missing)
+        });
+
+        let parts = controller.state().get();
+        assert!(!parts.model.indexing);
+        assert!(
+            parts.model.active_session.as_ref().unwrap().source_missing,
+            "the active session's availability must be refreshed even on a failed run"
+        );
+
+        let connection = Connection::open(&db_path).unwrap();
+        connection
+            .execute(
+                "UPDATE sessions SET source_missing = 0 WHERE id = 'abc123'",
+                [],
+            )
+            .unwrap();
+    }
+
+    #[gtk::test]
+    fn resume_on_a_now_missing_session_shows_unavailable_dialog_before_terminal_launch() {
+        if !schema_is_available() {
+            return;
+        }
+
+        let controller = App::builder().launch(Some(PathBuf::from("tests/fixtures")));
+        pump_main_context(|| !controller.state().get().model.indexing);
+
+        // Prepare the action while the session is still resumable, mirroring
+        // a menu/button click queued moments before the DB transitions.
+        controller.emit(AppMsg::SessionSelected("abc123".to_string()));
+        pump_main_context(|| {
+            controller
+                .state()
+                .get()
+                .model
+                .active_session
+                .as_ref()
+                .is_some_and(|session| session.id == "abc123" && session.can_resume)
+        });
+
+        let db_path = controller.state().get().model.db_path.clone();
+        {
+            let connection = Connection::open(&db_path).unwrap();
+            connection
+                .execute(
+                    "UPDATE sessions SET source_missing = 1 WHERE id = 'abc123'",
+                    [],
+                )
+                .unwrap();
+        }
+
+        // An invalid terminal preference proves the dialog below comes from
+        // the missing-source check, not from a downstream launch failure:
+        // if resume ever reached the settings/spawn logic, this session
+        // would instead surface "Invalid Terminal Preference".
+        let _ = gio::Settings::new(APP_ID).set_string("resume-terminal", "not-a-real-terminal");
+
+        controller.emit(AppMsg::ResumeSession("abc123".to_string()));
+        pump_main_context(|| {
+            let parts = controller.state().get();
+            let title = parts.model.last_error_dialog_title.take();
+            let seen = title.is_some();
+            parts.model.last_error_dialog_title.set(title);
+            seen
+        });
+
+        let parts = controller.state().get();
+        assert_eq!(
+            parts.model.last_error_dialog_title.take(),
+            Some("Resume Unavailable".to_string()),
+            "resume must be refused before any terminal settings/spawn logic runs \
+             (an 'Invalid Terminal Preference' dialog here would mean the missing-source \
+             check was bypassed)"
+        );
+
+        let _ = gio::Settings::new(APP_ID).set_string("resume-terminal", "auto");
+        let connection = Connection::open(&db_path).unwrap();
+        connection
+            .execute(
+                "UPDATE sessions SET source_missing = 0 WHERE id = 'abc123'",
+                [],
+            )
+            .unwrap();
     }
 
     #[gtk::test]
@@ -1649,10 +1968,11 @@ mod tests {
 
     #[test]
     fn skipped_only_incremental_indexing_does_not_need_session_reload() {
-        assert!(!should_reload_sessions_after_indexing(0, 0, false));
-        assert!(should_reload_sessions_after_indexing(1, 0, false));
-        assert!(should_reload_sessions_after_indexing(0, 1, false));
-        assert!(should_reload_sessions_after_indexing(0, 0, true));
+        assert!(!should_reload_sessions_after_indexing(0, 0, 0, false));
+        assert!(should_reload_sessions_after_indexing(1, 0, 0, false));
+        assert!(should_reload_sessions_after_indexing(0, 1, 0, false));
+        assert!(should_reload_sessions_after_indexing(0, 0, 1, false));
+        assert!(should_reload_sessions_after_indexing(0, 0, 0, true));
     }
 
     #[test]

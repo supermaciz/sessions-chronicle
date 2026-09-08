@@ -142,9 +142,10 @@ pub(super) fn analytics_indexing_completion_outcome(
 pub(super) fn should_reload_sessions_after_indexing(
     indexed: usize,
     removed: usize,
+    source_state_changes: usize,
     pending_reindex_feedback: bool,
 ) -> bool {
-    indexed > 0 || removed > 0 || pending_reindex_feedback
+    indexed > 0 || removed > 0 || source_state_changes > 0 || pending_reindex_feedback
 }
 
 pub(super) fn banner_title(results: &[PerSourceResult]) -> Option<String> {
@@ -384,6 +385,12 @@ mod tests {
         let sessions_detail = workspace_header_visibility(Workspace::Sessions, true, false, false);
         assert!(!sessions_detail.date_filter_visible);
         assert!(!sessions_detail.sort_pill_visible);
+    }
+
+    #[test]
+    fn should_reload_sessions_after_indexing_reacts_to_source_state_changes() {
+        assert!(should_reload_sessions_after_indexing(0, 0, 1, false));
+        assert!(!should_reload_sessions_after_indexing(0, 0, 0, false));
     }
 
     #[test]
