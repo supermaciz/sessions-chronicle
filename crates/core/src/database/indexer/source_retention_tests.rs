@@ -5,6 +5,7 @@ use super::SessionIndexer;
 fn assert_missing_lifecycle(
     assistant: &str,
     fixture: &str,
+    fts_term: &str,
     index: impl Fn(
         &mut SessionIndexer,
         &std::path::Path,
@@ -40,6 +41,15 @@ fn assert_missing_lifecycle(
             |row| row.get(0),
         )
         .unwrap();
+    let fts_count: i64 = indexer
+        .db
+        .query_row(
+            "SELECT count(*) FROM messages_fts WHERE messages_fts MATCH ?1",
+            [fts_term],
+            |row| row.get(0),
+        )
+        .unwrap_or(0);
+    assert!(fts_count > 0);
 
     let skipped = index(&mut indexer, &root, &mut errors).unwrap();
     assert!(skipped.skipped > 0);
@@ -65,6 +75,15 @@ fn assert_missing_lifecycle(
         )
         .unwrap();
     assert_eq!(retained_transcript_count, transcript_count);
+    let retained_fts_count: i64 = indexer
+        .db
+        .query_row(
+            "SELECT count(*) FROM messages_fts WHERE messages_fts MATCH ?1",
+            [fts_term],
+            |row| row.get(0),
+        )
+        .unwrap_or(0);
+    assert_eq!(retained_fts_count, fts_count);
 
     let repeated = index(&mut indexer, &root, &mut errors).unwrap();
     assert_eq!(repeated.source_state_changes, 0);
@@ -104,6 +123,7 @@ fn claude_missing_source_survives_incremental_and_returns() {
     assert_missing_lifecycle(
         "claude",
         "claude_sessions/sample-session.jsonl",
+        "refactor",
         |indexer, root, errors| indexer.index_claude_sessions_internal(root, true, errors),
     );
 }
@@ -113,6 +133,7 @@ fn codex_missing_source_survives_incremental_and_returns() {
     assert_missing_lifecycle(
         "codex",
         "codex_sessions/2026/01/18/rollout-2026-01-18T02-01-28-019bce9f-0a40-79e2-8351-8818e8487fb6.jsonl",
+        "Summarize",
         |indexer, root, errors| indexer.index_codex_sessions_internal(root, true, errors),
     );
 }
@@ -314,5 +335,225 @@ fn fixture_override_roots_share_a_database_without_cross_scope_absence() {
             .unwrap()
             .source
             .missing
+    );
+}
+
+fn assert_ineligible_replacement_prunes_only_the_present_owner(
+    assistant: &str,
+    first_fixture: &str,
+    replacement_fixture: &str,
+    index: impl Fn(
+        &mut SessionIndexer,
+        &std::path::Path,
+        &mut VecDeque<crate::models::IndexingError>,
+    ) -> anyhow::Result<super::IndexingStats>,
+) {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().join(assistant);
+    std::fs::create_dir(&root).unwrap();
+    let path = root.join(if assistant == "codex" {
+        "rollout-ineligible.jsonl"
+    } else {
+        "ineligible.jsonl"
+    });
+    std::fs::copy(crate::fixture_path(first_fixture), &path).unwrap();
+    let db_path = temp.path().join("index.db");
+    let mut indexer = SessionIndexer::new(&db_path).unwrap();
+    let mut errors = VecDeque::new();
+    index(&mut indexer, &root, &mut errors).unwrap();
+    let old_id: String = indexer
+        .db
+        .query_row("SELECT id FROM sessions", [], |row| row.get(0))
+        .unwrap();
+
+    std::fs::copy(crate::fixture_path(replacement_fixture), &path).unwrap();
+    index(&mut indexer, &root, &mut errors).unwrap();
+    let present_id: String = indexer
+        .db
+        .query_row(
+            "SELECT id FROM sessions WHERE source_missing = 0",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_ne!(old_id, present_id);
+
+    std::fs::write(&path, b"").unwrap();
+    let result = index(&mut indexer, &root, &mut errors).unwrap();
+    assert_eq!(result.removed, 1);
+    assert_eq!(result.errors, 0);
+    assert!(
+        crate::database::load_session(&db_path, &old_id)
+            .unwrap()
+            .unwrap()
+            .source
+            .missing
+    );
+    assert!(
+        crate::database::load_session(&db_path, &present_id)
+            .unwrap()
+            .is_none()
+    );
+}
+
+#[test]
+fn ineligible_claude_replacement_prunes_only_the_present_owner() {
+    assert_ineligible_replacement_prunes_only_the_present_owner(
+        "claude",
+        "claude_sessions/sample-session.jsonl",
+        "claude_sessions/tool-calls-session.jsonl",
+        |indexer, root, errors| indexer.index_claude_sessions_internal(root, true, errors),
+    );
+}
+
+#[test]
+fn ineligible_codex_replacement_prunes_only_the_present_owner() {
+    assert_ineligible_replacement_prunes_only_the_present_owner(
+        "codex",
+        "codex_sessions/2026/01/18/rollout-2026-01-18T02-01-28-019bce9f-0a40-79e2-8351-8818e8487fb6.jsonl",
+        "codex_sessions/2026/02/18/rollout-2026-02-18T10-00-00-codex-tools-session.jsonl",
+        |indexer, root, errors| indexer.index_codex_sessions_internal(root, true, errors),
+    );
+}
+
+#[test]
+fn failed_codex_return_keeps_the_retained_session_missing() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().join("codex");
+    std::fs::create_dir(&root).unwrap();
+    let path = root.join("rollout-sample.jsonl");
+    std::fs::copy(
+        crate::fixture_path(
+            "codex_sessions/2026/01/18/rollout-2026-01-18T02-01-28-019bce9f-0a40-79e2-8351-8818e8487fb6.jsonl",
+        ),
+        &path,
+    )
+    .unwrap();
+    let db_path = temp.path().join("index.db");
+    let mut indexer = SessionIndexer::new(&db_path).unwrap();
+    let mut errors = VecDeque::new();
+    indexer
+        .index_codex_sessions_internal(&root, true, &mut errors)
+        .unwrap();
+    let id: String = indexer
+        .db
+        .query_row("SELECT id FROM sessions", [], |row| row.get(0))
+        .unwrap();
+    std::fs::remove_file(&path).unwrap();
+    indexer
+        .index_codex_sessions_internal(&root, true, &mut errors)
+        .unwrap();
+    std::fs::write(&path, b"").unwrap();
+    let failed = indexer
+        .index_codex_sessions_internal(&root, true, &mut errors)
+        .unwrap();
+    assert!(failed.errors > 0);
+    assert!(
+        crate::database::load_session(&db_path, &id)
+            .unwrap()
+            .unwrap()
+            .source
+            .missing
+    );
+}
+
+#[test]
+fn unavailable_configured_codex_root_reports_not_found() {
+    let temp = tempfile::tempdir().unwrap();
+    let db_path = temp.path().join("index.db");
+    let mut indexer = SessionIndexer::new(&db_path).unwrap();
+    let mut sources = crate::session_sources::SessionSources::resolve(Some(temp.path()));
+    sources.codex_dir = temp.path().join("missing-codex-root");
+
+    let result = indexer.index_all_incremental(&sources).unwrap();
+    let codex = result
+        .per_source
+        .iter()
+        .find(|source| source.assistant == crate::models::AiAssistant::Codex)
+        .unwrap();
+    assert_eq!(codex.status, crate::models::SourceStatus::NotFound);
+    assert_eq!(codex.display_path, sources.codex_dir.display().to_string());
+}
+
+fn assert_insert_failure_protects_the_scope(
+    assistant: &str,
+    fixture: &str,
+    other_fixture: &str,
+    index: impl Fn(
+        &mut SessionIndexer,
+        &std::path::Path,
+        &mut VecDeque<crate::models::IndexingError>,
+    ) -> anyhow::Result<super::IndexingStats>,
+) {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().join(assistant);
+    std::fs::create_dir(&root).unwrap();
+    let file_name = if assistant == "codex" {
+        "rollout-source.jsonl"
+    } else {
+        "source.jsonl"
+    };
+    let parsed_path = root.join(file_name);
+    let absent_path = root.join(if assistant == "codex" {
+        "rollout-absent.jsonl"
+    } else {
+        "absent.jsonl"
+    });
+    std::fs::copy(crate::fixture_path(fixture), &parsed_path).unwrap();
+    std::fs::copy(crate::fixture_path(other_fixture), &absent_path).unwrap();
+    let db_path = temp.path().join("index.db");
+    let mut indexer = SessionIndexer::new(&db_path).unwrap();
+    let mut errors = VecDeque::new();
+    index(&mut indexer, &root, &mut errors).unwrap();
+    let id: String = indexer
+        .db
+        .query_row(
+            "SELECT id FROM sessions WHERE file_path = ?1",
+            [absent_path.display().to_string()],
+            |row| row.get(0),
+        )
+        .unwrap();
+
+    std::fs::remove_file(&absent_path).unwrap();
+    indexer
+        .db
+        .execute_batch(
+            "CREATE TRIGGER fail_session_update BEFORE UPDATE ON sessions
+             BEGIN SELECT RAISE(ABORT, 'forced insert failure'); END;",
+        )
+        .unwrap();
+    std::fs::write(
+        &parsed_path,
+        format!("{}\n", std::fs::read_to_string(&parsed_path).unwrap()),
+    )
+    .unwrap();
+    let result = index(&mut indexer, &root, &mut errors).unwrap();
+    assert!(result.errors > 0);
+    assert!(
+        !crate::database::load_session(&db_path, &id)
+            .unwrap()
+            .unwrap()
+            .source
+            .missing
+    );
+}
+
+#[test]
+fn claude_insert_failure_protects_other_present_scope_rows() {
+    assert_insert_failure_protects_the_scope(
+        "claude",
+        "claude_sessions/sample-session.jsonl",
+        "claude_sessions/tool-calls-session.jsonl",
+        |indexer, root, errors| indexer.index_claude_sessions_internal(root, true, errors),
+    );
+}
+
+#[test]
+fn codex_insert_failure_protects_other_present_scope_rows() {
+    assert_insert_failure_protects_the_scope(
+        "codex",
+        "codex_sessions/2026/01/18/rollout-2026-01-18T02-01-28-019bce9f-0a40-79e2-8351-8818e8487fb6.jsonl",
+        "codex_sessions/2026/02/18/rollout-2026-02-18T10-00-00-codex-tools-session.jsonl",
+        |indexer, root, errors| indexer.index_codex_sessions_internal(root, true, errors),
     );
 }

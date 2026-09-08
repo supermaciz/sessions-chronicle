@@ -829,20 +829,28 @@ impl SessionIndexer {
                         stats.indexed += 1;
                         stats.source_state_changes += changes;
                     }
-                    Err(error) => self.record_index_failure(
-                        AiAssistant::ClaudeCode,
-                        path,
-                        &error,
-                        stats,
-                        errors_detail,
-                    ),
+                    Err(error) => {
+                        self.record_index_failure(
+                            AiAssistant::ClaudeCode,
+                            path,
+                            &error,
+                            stats,
+                            errors_detail,
+                        );
+                        Self::protect_unidentified_locator(scan, path);
+                    }
                 }
             }
             Err(error) => {
-                if is_claude_skippable_error(&error)
-                    && !self.source_needs_reindex(path).unwrap_or(true)
-                {
-                    Self::protect_unidentified_locator(scan, path);
+                if is_claude_skippable_error(&error) {
+                    self.prune_ineligible_parse_skip(
+                        AiAssistant::ClaudeCode,
+                        path,
+                        &error,
+                        scan,
+                        stats,
+                        errors_detail,
+                    );
                 } else {
                     Self::protect_unidentified_source(
                         scan,
@@ -894,18 +902,28 @@ impl SessionIndexer {
                         stats.indexed += 1;
                         stats.source_state_changes += changes;
                     }
-                    Err(error) => self.record_index_failure(
-                        AiAssistant::Codex,
-                        path,
-                        &error,
-                        stats,
-                        errors_detail,
-                    ),
+                    Err(error) => {
+                        self.record_index_failure(
+                            AiAssistant::Codex,
+                            path,
+                            &error,
+                            stats,
+                            errors_detail,
+                        );
+                        Self::protect_unidentified_locator(scan, path);
+                    }
                 }
             }
             Err(error) => {
-                if is_codex_error(&error) && !self.source_needs_reindex(path).unwrap_or(true) {
-                    Self::protect_unidentified_locator(scan, path);
+                if is_codex_error(&error) {
+                    self.prune_ineligible_parse_skip(
+                        AiAssistant::Codex,
+                        path,
+                        &error,
+                        scan,
+                        stats,
+                        errors_detail,
+                    );
                 } else {
                     Self::protect_unidentified_source(
                         scan,
@@ -998,6 +1016,47 @@ impl SessionIndexer {
     fn protect_unidentified_locator(scan: &mut ScopeScan, path: &Path) {
         scan.complete = false;
         scan.protected_locators.insert(path.to_path_buf());
+    }
+
+    fn prune_ineligible_parse_skip(
+        &mut self,
+        assistant: AiAssistant,
+        path: &Path,
+        parse_error: &anyhow::Error,
+        scan: &mut ScopeScan,
+        stats: &mut IndexingStats,
+        errors_detail: &mut VecDeque<IndexingError>,
+    ) {
+        match self.remove_present_sessions_for_file(assistant, path) {
+            Ok(removed) if removed > 0 => stats.removed += removed,
+            Ok(_) => match self.source_needs_reindex(path) {
+                Ok(false) => {}
+                Ok(true) => Self::protect_unidentified_source(
+                    scan,
+                    stats,
+                    errors_detail,
+                    assistant,
+                    path,
+                    parse_error,
+                ),
+                Err(error) => Self::protect_unidentified_source(
+                    scan,
+                    stats,
+                    errors_detail,
+                    assistant,
+                    path,
+                    &error,
+                ),
+            },
+            Err(error) => Self::protect_unidentified_source(
+                scan,
+                stats,
+                errors_detail,
+                assistant,
+                path,
+                &error,
+            ),
+        }
     }
 
     fn ensure_fingerprint_unchanged(path: &Path, captured: (i64, i64)) -> Result<()> {
@@ -1120,11 +1179,14 @@ impl SessionIndexer {
                 )?
                 .collect::<rusqlite::Result<_>>()?
         };
-        let mut removed = 0;
-        for id in ids {
-            removed += self.remove_session_by_id(&id)?;
+        match ids.as_slice() {
+            [] => Ok(0),
+            [id] => self.remove_session_by_id(id),
+            _ => anyhow::bail!(
+                "Cannot prove a unique present {assistant:?} owner for {}",
+                file_path
+            ),
         }
-        Ok(removed)
     }
 
     fn record_index_failure(
