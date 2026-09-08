@@ -211,3 +211,23 @@ fn metadata_excerpt_on_without_expression_falls_back_to_no_snippet() {
 
     assert_eq!(metadata[0].as_ref().unwrap().matched_snippet, None);
 }
+
+#[test]
+fn missing_sessions_remain_in_shell_search_with_unchanged_metadata() {
+    let database = TempDatabase::new();
+    database.seed_session("retained", 100, false, &["retention needle"]);
+    let (search, _interrupt) = database.search_connection();
+    let ids = vec!["retained".to_string()];
+    let before = search.load_metadata(&ids, false, None).unwrap();
+    database.connection().execute(
+        "UPDATE sessions SET source_missing=1, source_missing_detected_at=200 WHERE id='retained'", [],
+    ).unwrap();
+    assert_eq!(search_session_ids(&search, "needle").unwrap(), ids);
+    let after = search.load_metadata(&ids, false, None).unwrap();
+    assert_eq!(after, before);
+    let now = chrono::DateTime::from_timestamp(300, 0).unwrap();
+    assert_eq!(
+        after[0].as_ref().unwrap().render(now, false),
+        before[0].as_ref().unwrap().render(now, false)
+    );
+}

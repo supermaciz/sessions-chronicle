@@ -232,13 +232,20 @@ fn teammate_name(agent_id: &str) -> Option<&str> {
 }
 
 /// Returns the ids of `parent_session_id`'s indexed child sessions whose agent
-/// id resolves to `name`.
+/// id resolves to `name`, excluding missing sources.
+///
+/// Excludes children with `source_missing = 1` because automatic name-based
+/// selection must not link to unavailable content. Explicit child-ID lookups
+/// are reading/navigation decisions and must not filter missing rows.
 fn child_sessions_named(
     tx: &rusqlite::Transaction<'_>,
     parent_session_id: &str,
     name: &str,
 ) -> Result<Vec<String>> {
-    let mut stmt = tx.prepare("SELECT id FROM sessions WHERE parent_session_id = ?1")?;
+    let mut stmt = tx.prepare(
+        "SELECT id FROM sessions
+         WHERE parent_session_id = ?1 AND source_missing = 0",
+    )?;
     let ids: Vec<String> = stmt
         .query_map([parent_session_id], |row| row.get(0))?
         .collect::<rusqlite::Result<Vec<String>>>()?;
@@ -433,6 +440,7 @@ impl SessionIndexer {
 
         stats.source_state_changes +=
             reconcile_scope(&mut self.db, &scan, chrono::Utc::now().timestamp())?;
+        self.relink_present_teammates(&scan)?;
         self.prune_orphan_fingerprints()?;
         Ok(stats)
     }
@@ -947,7 +955,7 @@ impl SessionIndexer {
                     path,
                     &observation,
                     chrono::Utc::now().timestamp(),
-                    false,
+                    true,
                 ) {
                     Ok(changes) => {
                         scan.discovered_ids.insert(parsed.session.id.clone());
@@ -1021,7 +1029,7 @@ impl SessionIndexer {
                     path,
                     &observation,
                     chrono::Utc::now().timestamp(),
-                    false,
+                    true,
                 ) {
                     Ok(changes) => {
                         scan.discovered_ids.insert(parsed.session.id.clone());
@@ -1465,7 +1473,7 @@ impl SessionIndexer {
                     db_path,
                     &observation,
                     chrono::Utc::now().timestamp(),
-                    false,
+                    true,
                 ) {
                     tracing::warn!("Failed to insert SQLite session {}: {}", entry.id, err);
                     push_indexing_error(
@@ -1657,7 +1665,7 @@ impl SessionIndexer {
                     path,
                     &observation,
                     chrono::Utc::now().timestamp(),
-                    false,
+                    true,
                 ) {
                     Ok(changes) => {
                         // Defensive: index dependency fingerprints after a successful parse.
@@ -1744,7 +1752,9 @@ impl SessionIndexer {
         let tx = self.db.transaction()?;
         let resolved_project_id = Self::upsert_project_tx(&tx, session.project_path.as_deref())?;
         Self::upsert_session_row_tx(&tx, parsed, file_path, resolved_project_id)?;
-        Self::replace_session_contents_tx(&tx, parsed)?;
+        // Preserve locally indexed child links across reparsing so retained children
+        // are not permanently stranded when parents are re-indexed.
+        Self::replace_session_contents_preserving_links_tx(&tx, parsed)?;
         // `link_claude_subagents_tx` must run AFTER `upsert_session_row_tx`
         // in this same transaction: `link_teammate_child_tx`'s
         // `siblings.len() > 1` ambiguity guard depends on this child's own
@@ -1854,6 +1864,16 @@ impl SessionIndexer {
                     .filter(|other| other.agent_name.as_deref() == Some(name))
                     .count();
                 if same_name != 1 {
+                    // Actively clear rather than trust the fresh insert to have
+                    // left this NULL: `replace_session_contents_preserving_links_tx`
+                    // may have just restored a stale link onto this exact
+                    // subagent id from before the reparse, and this row's name
+                    // is ambiguous in the transcript we just parsed.
+                    tx.execute(
+                        "UPDATE subagents SET child_session_id = NULL
+                         WHERE session_id = ?1 AND id = ?2",
+                        rusqlite::params![&parsed.session.id, &subagent.id],
+                    )?;
                     tracing::warn!(
                         "Claude teammate name {:?} is used by {} subagents in session {}; \
                          leaving them unlinked.",
@@ -1866,6 +1886,10 @@ impl SessionIndexer {
 
                 let children = child_sessions_named(tx, &parsed.session.id, name)?;
                 match children.len() {
+                    // Zero present children: leave any existing link alone. It may
+                    // be a retained (missing) child that link preservation just
+                    // restored, and that link must survive until the name
+                    // becomes ambiguous or a present child takes its place.
                     0 => continue,
                     1 => {
                         tx.execute(
@@ -1876,6 +1900,28 @@ impl SessionIndexer {
                         )?;
                     }
                     count => {
+                        // Defensive: actively clear rather than trust the fresh
+                        // insert to have left this NULL, for the same reason as
+                        // the `same_name != 1` guard above — a restored stale
+                        // link could otherwise survive. Unreachable in
+                        // practice: this branch only runs while the PARENT
+                        // itself is being (re)parsed, and `relink_present_teammates`
+                        // (called once, unconditionally, after every scan that
+                        // touches this parent) re-resolves the exact same
+                        // `(parent_session_id, name)` pair afterward with the
+                        // exact same query, retracting it there regardless of
+                        // what this branch does. Confirmed empirically: a test
+                        // built around this precondition passes identically
+                        // whether or not this `UPDATE` runs. Kept live, not a
+                        // no-op, for the same defense-in-depth reason as
+                        // `relink_present_teammates`'s own `_ =>` arm below —
+                        // the backstop it relies on lives in a different
+                        // function and could change.
+                        tx.execute(
+                            "UPDATE subagents SET child_session_id = NULL
+                             WHERE session_id = ?1 AND id = ?2",
+                            rusqlite::params![&parsed.session.id, &subagent.id],
+                        )?;
                         tracing::warn!(
                             "Claude teammate name {:?} matches {} child sessions of {}; \
                              leaving the subagent unlinked.",
@@ -1935,6 +1981,138 @@ impl SessionIndexer {
             rusqlite::params![&parsed.session.id, parent_session_id, &parsed.session.id],
         )?;
 
+        Ok(())
+    }
+
+    /// Re-link subagents to present children after missing-source reconciliation.
+    ///
+    /// After `reconcile_scope` marks sources missing, subagent-to-child links may
+    /// become invalid (linking to a now-absent child) or may become possible
+    /// (ambiguity resolved by presence). This function re-evaluates all named
+    /// subagents and:
+    ///
+    /// - Links the single subagent to a single present child if unambiguous.
+    /// - Retracts links when multiple present children are ambiguous.
+    /// - Preserves existing links to retained (missing) children when zero
+    ///   present candidates exist, preventing data loss.
+    fn relink_present_teammates(&mut self, scan: &ScopeScan) -> Result<()> {
+        // Relink subagents for:
+        // 1. Sessions discovered in this scan (parents)
+        // 2. Parents of subagent children discovered in this scan (children)
+        // Avoid O(all_subagents) cost by only considering affected sessions.
+        if scan.discovered_ids.is_empty() {
+            return Ok(());
+        }
+
+        let tx = self.db.transaction()?;
+
+        // Find all parent session IDs we need to relink.
+        let mut parent_ids = scan.discovered_ids.clone();
+
+        // Also include parents of any discovered children (subagents).
+        for child_id in &scan.discovered_ids {
+            if let Ok(Some(parent_id)) = tx.query_row(
+                "SELECT parent_session_id FROM sessions WHERE id = ?1",
+                [child_id],
+                |row| {
+                    let parent: Option<String> = row.get(0)?;
+                    Ok(parent)
+                },
+            ) {
+                parent_ids.insert(parent_id);
+            }
+        }
+
+        // Collect named subagents only for parent sessions we need to relink.
+        let mut named_subagents = Vec::new();
+        for parent_id in &parent_ids {
+            let mut stmt = tx.prepare(
+                "SELECT DISTINCT agent_name FROM subagents
+                 WHERE session_id = ?1 AND agent_name IS NOT NULL AND agent_name != ''",
+            )?;
+            let names: Vec<String> = stmt
+                .query_map([parent_id], |row| row.get(0))?
+                .collect::<rusqlite::Result<Vec<_>>>()?;
+            for name in names {
+                named_subagents.push((parent_id.clone(), name));
+            }
+        }
+
+        for (parent_session_id, agent_name) in named_subagents {
+            // Find the single parent subagent row with this name.
+            let parent_rows: Vec<String> = {
+                let mut stmt = tx.prepare(
+                    "SELECT id FROM subagents WHERE session_id = ?1 AND agent_name = ?2",
+                )?;
+                stmt.query_map(rusqlite::params![&parent_session_id, &agent_name], |row| {
+                    row.get(0)
+                })?
+                .collect::<rusqlite::Result<Vec<String>>>()?
+            };
+
+            if parent_rows.len() != 1 {
+                // Ambiguous or missing parent: skip relinking.
+                continue;
+            }
+
+            // Find present children with this name (source_missing = 0).
+            // Reuse child_sessions_named which already filters for presence.
+            let present_children = child_sessions_named(&tx, &parent_session_id, &agent_name)?;
+
+            match present_children.len() {
+                0 => {
+                    // Zero present candidates: preserve existing link to retained content.
+                    // Don't clear child_session_id if it already has a value.
+                }
+                1 => {
+                    // Exactly one present child: link if not already linked.
+                    tx.execute(
+                        "UPDATE subagents SET child_session_id = ?1
+                         WHERE session_id = ?2 AND id = ?3 AND child_session_id IS NULL",
+                        rusqlite::params![
+                            &present_children[0],
+                            &parent_session_id,
+                            &parent_rows[0]
+                        ],
+                    )?;
+                }
+                _ => {
+                    // Defensive: retract any existing link when multiple present
+                    // children share the name. Unreachable in practice — every
+                    // path that can make a second same-named child present (a
+                    // fresh discovery, a reparse, or a retained child returning
+                    // from missing) reinserts or relinks that child through
+                    // `link_claude_subagents_tx` / `link_teammate_child_tx`
+                    // first, in its own per-file transaction, and that
+                    // function's `siblings.len() > 1` guard (indexer.rs:294-304)
+                    // already retracts the link there before this whole-scan
+                    // pass ever runs.
+                    //
+                    // A skip-path bypass was considered and ruled out: a
+                    // fingerprint-unchanged file is only skip-observed
+                    // (indexer.rs:414-428) while its row is NOT `source_missing`;
+                    // `source_needs_reindex` (indexer.rs:2481-2491) forces a real
+                    // reparse for ANY row currently marked missing, regardless of
+                    // whether its restored fingerprint matches — confirmed
+                    // empirically: deleting a present sibling, then restoring it
+                    // with byte-for-byte identical content and mtime, still
+                    // reports it as reparsed (not skipped) on the next scan. So a
+                    // retained child returning from missing always re-invokes its
+                    // own linking pass in the same operation; there is no
+                    // deterministic construction where this arm is the first
+                    // detector of ambiguity, so none is shipped for it. Kept live
+                    // rather than a no-op because the ordering it relies on lives
+                    // in a different function and could change.
+                    tx.execute(
+                        "UPDATE subagents SET child_session_id = NULL
+                         WHERE session_id = ?1 AND agent_name = ?2",
+                        rusqlite::params![&parent_session_id, &agent_name],
+                    )?;
+                }
+            }
+        }
+
+        tx.commit()?;
         Ok(())
     }
 
