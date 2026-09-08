@@ -802,7 +802,20 @@ impl SessionIndexer {
     /// `agents/` entry is a complete enumeration of nothing; any other read
     /// failure is incomplete and never authorizes absence.
     fn vibe_child_dirs(session_dir: &Path) -> VibeDirectoryScan {
-        let entries = match std::fs::read_dir(session_dir.join("agents")) {
+        Self::vibe_child_dirs_with(session_dir, |agents| {
+            std::fs::read_dir(agents).map(|entries| entries.collect::<Vec<_>>())
+        })
+    }
+
+    /// Error-injectable core of [`Self::vibe_child_dirs`]: `read` lists the
+    /// `agents/` directory, yielding one result per entry. Tests substitute
+    /// deterministic `PermissionDenied`/iteration failures instead of relying
+    /// on filesystem permissions, which a privileged test process bypasses.
+    fn vibe_child_dirs_with(
+        session_dir: &Path,
+        read: impl FnOnce(&Path) -> std::io::Result<Vec<std::io::Result<std::fs::DirEntry>>>,
+    ) -> VibeDirectoryScan {
+        let entries = match read(&session_dir.join("agents")) {
             Ok(entries) => entries,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
                 return VibeDirectoryScan {

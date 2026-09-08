@@ -1,5 +1,4 @@
 use std::collections::VecDeque;
-use std::fs;
 
 use super::SessionIndexer;
 use serde_json;
@@ -195,6 +194,71 @@ fn opencode_sqlite_completed_enumeration_marks_only_removed_record_missing() {
         (retained.source.mtime_ns, retained.source.size),
         (None, None)
     );
+}
+
+#[test]
+fn opencode_wal_only_deletion_is_detected_by_identity_enumeration() {
+    // Keep the writer connection open so the deletion lives only in -wal and
+    // the main DB file mtime never advances. Identity enumeration reads
+    // through the WAL, so the completed snapshot must mark the row missing.
+    let temp = tempfile::tempdir().unwrap();
+    let source_db = temp.path().join("source.db");
+    let index_db = temp.path().join("index.db");
+    let json_root = temp.path().join("storage");
+    std::fs::create_dir_all(&json_root).unwrap();
+    let writer = super::tests::create_opencode_sqlite_db(&source_db);
+    super::tests::insert_opencode_session(&writer, "wal-retained", 1_700_000_000_000);
+    let mut indexer = SessionIndexer::new(&index_db).unwrap();
+    indexer
+        .index_opencode_sessions_incremental(&json_root, std::slice::from_ref(&source_db))
+        .unwrap();
+
+    let before = crate::database::load_session(&index_db, "wal-retained")
+        .unwrap()
+        .unwrap();
+    assert!(!before.source.missing);
+    let db_mtime = std::fs::metadata(&source_db).unwrap().modified().unwrap();
+    writer
+        .execute("DELETE FROM session WHERE id = 'wal-retained'", [])
+        .unwrap();
+    assert!(
+        std::path::Path::new(&format!("{}-wal", source_db.display())).exists(),
+        "the writer must retain the WAL"
+    );
+    assert_eq!(
+        std::fs::metadata(&source_db).unwrap().modified().unwrap(),
+        db_mtime,
+        "WAL-only deletion must not change the main database mtime"
+    );
+
+    let stats = indexer
+        .index_opencode_sessions_incremental(&json_root, std::slice::from_ref(&source_db))
+        .unwrap();
+    assert_eq!(stats.removed, 0);
+    assert_eq!(stats.source_state_changes, 1);
+
+    let retained = crate::database::load_session(&index_db, "wal-retained")
+        .unwrap()
+        .unwrap();
+    assert!(retained.source.missing);
+    assert_eq!(retained.source.scope.as_deref(), source_db.to_str());
+    assert!(retained.source.missing_detected_at.is_some());
+    assert_eq!(retained.source.last_seen_at, before.source.last_seen_at);
+    assert_eq!(retained.last_updated, before.last_updated);
+    assert_eq!(
+        (retained.source.mtime_ns, retained.source.size),
+        (None, None)
+    );
+    assert!(!retained.can_resume());
+    let content: String = indexer
+        .db
+        .query_row(
+            "SELECT content FROM messages WHERE session_id = 'wal-retained'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(content, "hello");
 }
 
 #[test]
@@ -1207,6 +1271,43 @@ fn vibe_directory_missing_messages_jsonl_is_diagnostic_and_retains_the_session()
 }
 
 #[test]
+fn vibe_child_dir_read_failures_are_incomplete_never_absence() {
+    // Deterministic injection: a privileged test process (e.g. root in a CI
+    // container) bypasses chmod-based denial, so the whole-directory and the
+    // per-entry failure modes are exercised through the injectable reader.
+    use std::io::{Error, ErrorKind};
+
+    let temp = tempfile::tempdir().unwrap();
+    let session_dir = temp.path().join("session");
+    std::fs::create_dir_all(session_dir.join("agents")).unwrap();
+
+    let denied = SessionIndexer::vibe_child_dirs_with(&session_dir, |_| {
+        Err(Error::new(
+            ErrorKind::PermissionDenied,
+            "injected read failure",
+        ))
+    });
+    assert!(!denied.complete);
+    assert!(denied.candidates.is_empty());
+
+    let iteration_failure = SessionIndexer::vibe_child_dirs_with(&session_dir, |_| {
+        Ok(vec![Err(Error::new(
+            ErrorKind::PermissionDenied,
+            "injected entry failure",
+        ))])
+    });
+    assert!(!iteration_failure.complete);
+    assert!(iteration_failure.candidates.is_empty());
+
+    // An absent agents/ entry remains a complete enumeration of nothing.
+    let missing = SessionIndexer::vibe_child_dirs_with(&session_dir, |_| {
+        Err(Error::new(ErrorKind::NotFound, "no agents directory"))
+    });
+    assert!(missing.complete);
+    assert!(missing.candidates.is_empty());
+}
+
+#[test]
 fn vibe_unreadable_agents_directory_never_marks_children_missing() {
     use std::os::unix::fs::PermissionsExt;
 
@@ -1215,6 +1316,12 @@ fn vibe_unreadable_agents_directory_never_marks_children_missing() {
     let agents_dir = parent_dir.join("agents");
 
     std::fs::set_permissions(&agents_dir, std::fs::Permissions::from_mode(0o000)).unwrap();
+    if std::fs::read_dir(&agents_dir).is_ok() {
+        // Permission bits are not enforced for this process (e.g. running as
+        // root); the injected-failure test above covers this scenario.
+        std::fs::set_permissions(&agents_dir, std::fs::Permissions::from_mode(0o755)).unwrap();
+        return;
+    }
     let stats = indexer
         .index_vibe_sessions_incremental(&sessions_dir)
         .unwrap();

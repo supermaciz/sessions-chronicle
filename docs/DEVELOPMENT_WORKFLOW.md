@@ -241,6 +241,17 @@ Run the full app with test fixtures using the `--sessions-dir` flag shown above.
 - The global empty state shows resolved source paths and assistant health once indexing has completed.
 - Preferences -> Advanced -> Reset session index triggers a full reindex.
 
+Sessions whose sources disappear from a successfully scanned source scope remain
+in the local index, including their indexed transcript, pins, and search results.
+They show "Source missing" and cannot be resumed. Inaccessible sources and
+incomplete scans do not prove disappearance. A successful reindex of the same
+session clears the missing state.
+
+Source details shows observations recorded during indexing, not an exact deletion
+time or cause. The index is not a backup of the original source. The explicit
+**Reset session index** operation discards the local index, including retained
+content whose source is no longer available.
+
 ## Adding Test Fixtures
 
 Create new test session files in the appropriate fixture directory:

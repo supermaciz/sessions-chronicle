@@ -2223,6 +2223,217 @@ mod tests {
         }
     }
 
+    /// Drives a fixture session into the retained state and opens its Source
+    /// details page, leaving the navigation stack at
+    /// `sessions → detail → source-details`.
+    fn open_source_details_for_missing_fixture(
+        controller: &relm4::component::Connector<App>,
+        id: &str,
+    ) {
+        controller.emit(AppMsg::SessionSelected(id.to_string()));
+        pump_main_context(|| {
+            controller
+                .state()
+                .get()
+                .model
+                .active_session
+                .as_ref()
+                .is_some_and(|session| session.id == id)
+        });
+
+        {
+            let db_path = controller.state().get().model.db_path.clone();
+            mark_fixture_missing(&db_path, id);
+        }
+        controller.emit(AppMsg::IndexingCompleted {
+            indexed: 0,
+            skipped: 0,
+            removed: 0,
+            source_state_changes: 1,
+            per_source: vec![],
+            errors_detail: vec![],
+        });
+        pump_main_context(|| {
+            controller
+                .state()
+                .get()
+                .model
+                .session_detail
+                .widgets()
+                .source_banner
+                .is_revealed()
+        });
+
+        let session = {
+            let parts = controller.state().get();
+            let active = parts.model.active_session.as_ref().unwrap();
+            crate::database::load_session(&parts.model.db_path, &active.id)
+                .unwrap()
+                .unwrap()
+        };
+        controller.emit(AppMsg::ShowSourceDetails(Box::new(session)));
+        pump_main_context(|| {
+            controller
+                .state()
+                .get()
+                .model
+                .nav_view
+                .visible_page()
+                .and_then(|p| p.tag())
+                .as_deref()
+                == Some("source-details")
+        });
+    }
+
+    #[gtk::test]
+    fn source_details_narrow_width_still_pushes_and_pops_one_level() {
+        if !schema_is_available() {
+            return;
+        }
+
+        let controller = App::builder().launch(Some(PathBuf::from("tests/fixtures")));
+        pump_main_context(|| !controller.state().get().model.indexing);
+
+        // Narrow the window below the detail breakpoint before opening the
+        // page; the overlay must behave the same as at full width.
+        controller.widgets().main_window.set_default_size(400, 600);
+
+        open_source_details_for_missing_fixture(&controller, "abc123");
+        {
+            let parts = controller.state().get();
+            assert_eq!(
+                parts
+                    .model
+                    .nav_view
+                    .visible_page()
+                    .and_then(|page| page.tag())
+                    .as_deref(),
+                Some("source-details")
+            );
+        }
+
+        controller.emit(AppMsg::RequestNavigateBack);
+        pump_main_context(|| {
+            let model = &controller.state().get().model;
+            !model.source_details_visible
+                && model
+                    .nav_view
+                    .visible_page()
+                    .and_then(|p| p.tag())
+                    .as_deref()
+                    == Some("detail")
+        });
+        {
+            let parts = controller.state().get();
+            assert!(parts.model.detail_visible);
+            assert_eq!(parts.model.active_session.as_ref().unwrap().id, "abc123");
+        }
+    }
+
+    #[gtk::test]
+    fn source_details_open_on_child_pops_before_returning_to_parent() {
+        if !schema_is_available() {
+            return;
+        }
+
+        let controller = App::builder().launch(Some(PathBuf::from("tests/fixtures")));
+        pump_main_context(|| !controller.state().get().model.indexing);
+
+        controller.emit(AppMsg::SessionSelected(
+            "session_00000000-0000-4000-8000-000000000001".to_string(),
+        ));
+        pump_main_context(|| {
+            controller
+                .state()
+                .get()
+                .model
+                .active_session
+                .as_ref()
+                .is_some_and(|session| session.id == "session_00000000-0000-4000-8000-000000000001")
+        });
+
+        let child_id = "kimi-subagent::session_00000000-0000-4000-8000-000000000001::agent-0";
+        controller.emit(AppMsg::OpenChildSession(child_id.to_string()));
+        pump_main_context(|| {
+            controller
+                .state()
+                .get()
+                .model
+                .active_session
+                .as_ref()
+                .is_some_and(|session| session.id == child_id)
+        });
+
+        // The retained child shows the banner and opens Source details like
+        // any other session.
+        {
+            let db_path = controller.state().get().model.db_path.clone();
+            mark_fixture_missing(&db_path, child_id);
+        }
+        controller.emit(AppMsg::IndexingCompleted {
+            indexed: 0,
+            skipped: 0,
+            removed: 0,
+            source_state_changes: 1,
+            per_source: vec![],
+            errors_detail: vec![],
+        });
+        pump_main_context(|| {
+            controller
+                .state()
+                .get()
+                .model
+                .session_detail
+                .widgets()
+                .source_banner
+                .is_revealed()
+        });
+        let session = {
+            let parts = controller.state().get();
+            let active = parts.model.active_session.as_ref().unwrap();
+            crate::database::load_session(&parts.model.db_path, &active.id)
+                .unwrap()
+                .unwrap()
+        };
+        controller.emit(AppMsg::ShowSourceDetails(Box::new(session)));
+        pump_main_context(|| {
+            controller
+                .state()
+                .get()
+                .model
+                .nav_view
+                .visible_page()
+                .and_then(|p| p.tag())
+                .as_deref()
+                == Some("source-details")
+        });
+
+        // Back to Parent collapses the overlay first, then loads the parent.
+        controller.emit(AppMsg::ReturnToParentSession);
+        pump_main_context(|| {
+            controller
+                .state()
+                .get()
+                .model
+                .active_session
+                .as_ref()
+                .is_some_and(|session| session.id == "session_00000000-0000-4000-8000-000000000001")
+        });
+        {
+            let parts = controller.state().get();
+            assert!(!parts.model.source_details_visible);
+            assert_eq!(
+                parts
+                    .model
+                    .nav_view
+                    .visible_page()
+                    .and_then(|page| page.tag())
+                    .as_deref(),
+                Some("detail")
+            );
+        }
+    }
+
     #[gtk::test]
     fn escape_with_active_override_restores_persisted_sort_and_clears_search() {
         if !schema_is_available() {

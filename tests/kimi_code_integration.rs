@@ -969,6 +969,12 @@ fn unreadable_kimi_workspace_never_marks_its_bundles_missing() {
     let workspace = home.path().join("sessions/wd_primary_aaaaaaaaaaaa");
 
     fs::set_permissions(&workspace, fs::Permissions::from_mode(0o000)).unwrap();
+    if fs::read_dir(&workspace).is_ok() {
+        // Permission bits are not enforced for this process (e.g. running as
+        // root in a container); nothing to verify in this environment.
+        fs::set_permissions(&workspace, fs::Permissions::from_mode(0o755)).unwrap();
+        return;
+    }
     let stats = kimi_scan(&mut indexer, home.path());
     fs::set_permissions(&workspace, fs::Permissions::from_mode(0o755)).unwrap();
 

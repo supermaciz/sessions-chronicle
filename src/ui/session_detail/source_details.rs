@@ -414,6 +414,21 @@ mod tests {
         None
     }
 
+    /// Pumps the main context until `condition` holds or `timeout` elapses.
+    /// Nonblocking iterations keep the deadline effective when no event arrives.
+    fn pump_until(timeout: std::time::Duration, condition: impl Fn() -> bool) -> bool {
+        let context = gtk::glib::MainContext::default();
+        let deadline = std::time::Instant::now() + timeout;
+        while std::time::Instant::now() < deadline {
+            context.iteration(false);
+            if condition() {
+                return true;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        condition()
+    }
+
     #[gtk::test]
     fn copy_buttons_place_the_exact_full_string_on_the_clipboard() {
         use gtk::glib::prelude::ObjectExt;
@@ -428,11 +443,7 @@ mod tests {
         window.set_child(Some(&content));
         window.present();
 
-        let context = gtk::glib::MainContext::default();
-        let deadline = std::time::Instant::now() + std::time::Duration::from_millis(800);
-        while std::time::Instant::now() < deadline {
-            context.iteration(true);
-        }
+        pump_until(std::time::Duration::from_millis(800), || false);
 
         let path_button = find_copy_button(&content_widget, "Copy path").expect("path copy button");
         path_button.emit_by_name::<()>("clicked", &[]);
@@ -446,10 +457,13 @@ mod tests {
                 *copied.borrow_mut() = text.ok().flatten().map(|s| s.to_string());
             });
         }
-        let deadline = std::time::Instant::now() + std::time::Duration::from_millis(800);
-        while std::time::Instant::now() < deadline && copied.borrow().is_none() {
-            context.iteration(true);
-        }
+        let copied_ref = copied.clone();
+        assert!(
+            pump_until(std::time::Duration::from_millis(800), || {
+                copied_ref.borrow().is_some()
+            }),
+            "clipboard path read did not return text before the deadline"
+        );
         assert_eq!(
             copied.borrow().as_deref(),
             Some("/tmp/database&A&B.db"),
@@ -469,10 +483,10 @@ mod tests {
                 *copied_id.borrow_mut() = text.ok().flatten().map(|s| s.to_string());
             });
         }
-        let deadline = std::time::Instant::now() + std::time::Duration::from_millis(800);
-        while std::time::Instant::now() < deadline && copied_id.borrow().is_none() {
-            context.iteration(true);
-        }
+        let copied_id_ref = copied_id.clone();
+        assert!(pump_until(std::time::Duration::from_millis(800), || {
+            copied_id_ref.borrow().is_some()
+        }));
         assert_eq!(copied_id.borrow().as_deref(), Some(session.id.as_str()));
 
         window.destroy();

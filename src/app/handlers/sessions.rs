@@ -253,6 +253,7 @@ impl App {
 
     pub(crate) fn handle_return_to_parent_session(&mut self) {
         tracing::debug!("Return to parent session");
+        self.pop_source_details_if_visible();
         if let Some(parent) = self.parent_session.take() {
             let search_query = active_search_query(&self.search_query);
             match load_session(&self.db_path, &parent.id) {
