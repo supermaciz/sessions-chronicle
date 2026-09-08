@@ -1973,6 +1973,81 @@ mod tests {
     }
 
     #[test]
+    fn v17_to_v18_initialization_adds_all_source_columns_without_losing_data() {
+        let conn = Connection::open_in_memory().unwrap();
+        initialize_database(&conn).unwrap();
+        conn.execute_batch(
+            "INSERT INTO sessions (id, tool, start_time, message_count, file_path, last_updated, pinned_at)
+             VALUES ('v17-seeded', 'claude_code', 1, 1, '/v17-seeded.jsonl', 2, 3);
+             INSERT INTO transcript_items (session_id, item_index, kind)
+             VALUES ('v17-seeded', 0, 'message');
+             INSERT INTO file_fingerprints VALUES ('/v17-seeded.jsonl', 4, 5);
+             DROP INDEX idx_sessions_source_scope;",
+        )
+        .unwrap();
+        for column in [
+            "source_missing",
+            "source_missing_detected_at",
+            "source_last_seen_at",
+            "source_kind",
+            "source_mtime_ns",
+            "source_size",
+            "source_scope",
+        ] {
+            conn.execute_batch(&format!("ALTER TABLE sessions DROP COLUMN {column}"))
+                .unwrap();
+        }
+        conn.pragma_update(None, "user_version", 17).unwrap();
+
+        initialize_database(&conn).unwrap();
+
+        assert_eq!(
+            conn.query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
+                .unwrap(),
+            18
+        );
+        assert!(index_exists(&conn, "idx_sessions_source_scope"));
+        for column in [
+            "source_missing",
+            "source_missing_detected_at",
+            "source_last_seen_at",
+            "source_kind",
+            "source_mtime_ns",
+            "source_size",
+            "source_scope",
+        ] {
+            assert!(column_exists(&conn, "sessions", column).unwrap());
+        }
+        assert_eq!(
+            conn.query_row(
+                "SELECT COUNT(*) FROM sessions WHERE id = 'v17-seeded' AND pinned_at = 3",
+                [],
+                |row| row.get::<_, i64>(0)
+            )
+            .unwrap(),
+            1
+        );
+        assert_eq!(
+            conn.query_row(
+                "SELECT COUNT(*) FROM transcript_items WHERE session_id = 'v17-seeded'",
+                [],
+                |row| row.get::<_, i64>(0)
+            )
+            .unwrap(),
+            1
+        );
+        assert_eq!(
+            conn.query_row(
+                "SELECT COUNT(*) FROM file_fingerprints WHERE file_path = '/v17-seeded.jsonl'",
+                [],
+                |row| row.get::<_, i64>(0)
+            )
+            .unwrap(),
+            1
+        );
+    }
+
+    #[test]
     fn unfiltered_named_orders_do_not_build_temporary_sort_tables() {
         let conn = Connection::open_in_memory().unwrap();
         initialize_database(&conn).unwrap();
