@@ -2072,15 +2072,11 @@ impl SessionIndexer {
                 .collect::<rusqlite::Result<_>>()?;
             stored_paths.extend(paths.into_iter().map(PathBuf::from));
         }
+        let mut needs_reindex = false;
         for (path, fingerprint) in current {
             match self.get_fingerprint(&path)? {
                 Some(saved) if saved == fingerprint => {}
-                _ => {
-                    return Ok(OpenCodeDependencyInspection {
-                        needs_reindex: true,
-                        diagnostics: Vec::new(),
-                    });
-                }
+                _ => needs_reindex = true,
             }
             stored_paths.remove(&path);
         }
@@ -2097,7 +2093,7 @@ impl SessionIndexer {
             })
             .collect();
         Ok(OpenCodeDependencyInspection {
-            needs_reindex: false,
+            needs_reindex,
             diagnostics,
         })
     }

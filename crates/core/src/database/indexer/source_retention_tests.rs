@@ -61,6 +61,37 @@ fn opencode_missing_former_part_file_is_diagnostic_and_retains_content() {
 }
 
 #[test]
+fn opencode_disappeared_part_beats_added_dependency_change() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().join("storage");
+    let index_db = temp.path().join("index.db");
+    let part = write_opencode_json_session(&root, "part-precedence");
+    let mut indexer = SessionIndexer::new(&index_db).unwrap();
+    indexer
+        .index_opencode_sessions_incremental(&root, &[])
+        .unwrap();
+    let before = crate::database::load_session(&index_db, "part-precedence")
+        .unwrap()
+        .unwrap();
+    std::fs::remove_file(part).unwrap();
+    std::fs::write(
+        root.join("part").join("message-1").join("part-2.json"),
+        r#"{"id":"part-2","type":"text","order":1,"text":"new transcript"}"#,
+    )
+    .unwrap();
+
+    let result = indexer
+        .index_opencode_sessions_incremental(&root, &[])
+        .unwrap();
+    let retained = crate::database::load_session(&index_db, "part-precedence")
+        .unwrap()
+        .unwrap();
+    assert!(result.errors > 0);
+    assert_eq!(retained.message_count, before.message_count);
+    assert_eq!(retained.first_prompt, before.first_prompt);
+}
+
+#[test]
 fn opencode_missing_message_directory_is_diagnostic_and_retains_content() {
     let temp = tempfile::tempdir().unwrap();
     let root = temp.path().join("storage");
