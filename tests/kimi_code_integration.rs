@@ -1028,3 +1028,28 @@ fn a_colliding_bundle_id_in_another_home_never_marks_or_deletes_across_homes() {
         assert!(!source_missing(db.path(), &id));
     }
 }
+
+#[test]
+fn relative_kimi_home_path_is_absolutized_for_reconciliation() {
+    // Regression test: index_kimi_sessions_internal must absolutize kimi_home
+    // so reconciliation doesn't fail with "Source root must be absolute".
+    // This test uses the checked-in fixture with a relative path, which is what
+    // the documented dev loop `--sessions-dir tests/fixtures` produces.
+    let db = tempfile::NamedTempFile::new().unwrap();
+    let mut indexer = SessionIndexer::new(db.path()).unwrap();
+
+    // Use a relative path to the fixture, relative to the repo root
+    // (where integration tests' working directory is set).
+    let relative_home = Path::new("tests/fixtures/kimi_home");
+    assert!(!relative_home.is_absolute(), "Path must be relative");
+
+    let result = indexer.index_kimi_sessions(relative_home);
+
+    // Without absolutization, reconciliation would fail with "Source root must be absolute".
+    // With the fix, it succeeds.
+    assert!(
+        result.is_ok(),
+        "Relative path should be absolutized internally"
+    );
+    assert!(result.unwrap() > 0, "Fixture should have sessions");
+}

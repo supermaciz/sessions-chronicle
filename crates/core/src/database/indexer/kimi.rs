@@ -1,6 +1,7 @@
 use super::{IndexingStats, SessionIndexer, push_indexing_error};
 use crate::database::source_state::{
-    ScopeScan, SourceObservation, SourceScope, reconcile_scope, record_observation_tx,
+    ScopeScan, SourceObservation, SourceScope, path_prefix_bounds, reconcile_scope,
+    record_observation_tx,
 };
 use crate::models::{AiAssistant, IndexingError, SourceKind};
 use crate::parsers::kimi_code::{
@@ -285,10 +286,7 @@ fn snapshot_dependencies(session_dir: &Path, paths: &[PathBuf]) -> Result<Vec<Pa
         .collect()
 }
 
-fn path_prefix_bounds(path: &Path) -> Option<(String, String)> {
-    let path = path.to_str()?;
-    Some((format!("{path}/"), format!("{path}0")))
-}
+// Use path_prefix_bounds from source_state for consistent ownership queries.
 
 impl SessionIndexer {
     fn stored_kimi_fingerprints(&self, session_dir: &Path) -> Result<HashMap<PathBuf, (i64, i64)>> {
@@ -348,6 +346,9 @@ impl SessionIndexer {
         incremental: bool,
         errors_detail: &mut VecDeque<IndexingError>,
     ) -> Result<IndexingStats> {
+        // Source evidence is stored and compared as absolute paths, so every
+        // locator this scan produces must already be rooted.
+        let kimi_home = &Self::absolute_source_path(kimi_home)?;
         let discovery = discover_kimi_sessions(kimi_home, errors_detail)?;
         let parser = KimiCodeParser::new(kimi_home);
         self.process_kimi_discovery(kimi_home, incremental, discovery, &parser, errors_detail)
@@ -717,7 +718,11 @@ impl SessionIndexer {
         for id in ids {
             removed += Self::delete_session_by_id_tx(&tx, &id)?;
         }
-        if let Some((lower, upper)) = path_prefix_bounds(session_dir) {
+        // Only clear fingerprints if we actually removed rows. Never delete
+        // fingerprints for a bundle with retained-missing content.
+        if removed > 0
+            && let Some((lower, upper)) = path_prefix_bounds(session_dir)
+        {
             tx.execute(
                 "DELETE FROM file_fingerprints WHERE file_path >= ?1 COLLATE BINARY AND file_path < ?2 COLLATE BINARY",
                 rusqlite::params![lower, upper],
@@ -1315,5 +1320,64 @@ mod tests {
         assert_eq!(stored.len(), 1);
         assert!(stored.contains_key(&bundle_file));
         assert!(!stored.contains_key(&sibling_file));
+    }
+
+    #[test]
+    fn no_user_bundle_does_not_clear_fingerprints_when_no_rows_removed() {
+        let home = fixture_home();
+        let db = tempfile::NamedTempFile::new().unwrap();
+        let mut indexer = SessionIndexer::new(db.path()).unwrap();
+        let dir = primary_dir(home.path());
+
+        // Index the bundle normally (with user messages).
+        indexer
+            .index_kimi_sessions_incremental(home.path())
+            .unwrap();
+        let stored_before = indexer.stored_kimi_fingerprints(&dir).unwrap();
+        assert!(!stored_before.is_empty());
+
+        // Make the bundle disappear so it becomes retained-missing.
+        let saved = home.path().parent().unwrap().join("saved_bundle");
+        fs::rename(&dir, &saved).unwrap();
+        indexer
+            .index_kimi_sessions_incremental(home.path())
+            .unwrap();
+        assert!(
+            indexer
+                .db
+                .query_row(
+                    "SELECT source_missing FROM sessions WHERE file_path = ?1 LIMIT 1",
+                    rusqlite::params![dir.to_str().unwrap()],
+                    |row| row.get::<_, i32>(0),
+                )
+                .ok()
+                .map(|m| m != 0)
+                .unwrap_or(false)
+        );
+
+        // Restore the bundle but rewrite main wire.jsonl to have only injection messages.
+        fs::rename(&saved, &dir).unwrap();
+        let main_wire = dir.join("agents/main/wire.jsonl");
+        fs::write(
+            &main_wire,
+            r#"{"id":"injection-1","role":"user","origin":"injection"}
+{"id":"injection-2","role":"assistant","origin":"injection"}
+"#,
+        )
+        .unwrap();
+
+        // Rescan: parse_stable_bundle returns NoUserMessages, and prune_kimi_no_user_bundle
+        // should remove 0 rows (the row is still marked missing from the previous scan)
+        // and must NOT clear fingerprints.
+        indexer
+            .index_kimi_sessions_incremental(home.path())
+            .unwrap();
+
+        // Fingerprints should still exist because we removed 0 rows.
+        let stored_after = indexer.stored_kimi_fingerprints(&dir).unwrap();
+        assert!(
+            !stored_after.is_empty(),
+            "Fingerprints should not be cleared when removing 0 rows"
+        );
     }
 }

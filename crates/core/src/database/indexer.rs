@@ -1564,7 +1564,29 @@ impl SessionIndexer {
             SessionSource::SqliteRow { .. } => return Ok(()),
         };
 
-        let fingerprint = Self::current_fingerprint(path)?;
+        // Defensive: stat the metadata file for a fingerprint. Unreachable in
+        // practice — read_json already stat'd this file during enumeration,
+        // and on Unix no deterministic input makes the read succeed and a
+        // later metadata call on the same path fail.
+        let fingerprint = match Self::current_fingerprint(path) {
+            Ok(fp) => fp,
+            Err(err) => {
+                tracing::warn!(
+                    "Failed to fingerprint OpenCode session {}: {}",
+                    path.display(),
+                    err
+                );
+                push_indexing_error(
+                    context.errors_detail,
+                    AiAssistant::OpenCode,
+                    Some(path.display().to_string()),
+                    format!("Failed to fingerprint session: {err}"),
+                );
+                context.stats.errors += 1;
+                scan.protected_locators.insert(path.to_path_buf());
+                return Ok(());
+            }
+        };
         let dependencies = match self.opencode_json_dependency_inspection(json_backend, &session_id)
         {
             Ok(dependencies) => dependencies,
@@ -1638,13 +1660,36 @@ impl SessionIndexer {
                     false,
                 ) {
                     Ok(changes) => {
-                        self.upsert_opencode_json_dependency_fingerprints(
+                        // Defensive: index dependency fingerprints after a successful parse.
+                        // Unreachable in practice — opencode_json_dependency_inspection
+                        // already enumerated the same paths and caught any failures before
+                        // parsing ever started (line ~1586). Both call opencode_json_dependency_paths,
+                        // and any state that fails the upsert fails inspection first.
+                        match self.upsert_opencode_json_dependency_fingerprints(
                             json_backend,
                             &parsed.session.id,
-                        )?;
-                        scan.observations.push(observation);
-                        context.stats.indexed += 1;
-                        context.stats.source_state_changes += changes;
+                        ) {
+                            Ok(_) => {
+                                scan.observations.push(observation);
+                                context.stats.indexed += 1;
+                                context.stats.source_state_changes += changes;
+                            }
+                            Err(err) => {
+                                tracing::warn!(
+                                    "Failed to index OpenCode dependency fingerprints for {}: {}",
+                                    path.display(),
+                                    err
+                                );
+                                push_indexing_error(
+                                    context.errors_detail,
+                                    AiAssistant::OpenCode,
+                                    Some(path.display().to_string()),
+                                    format!("Failed to index dependency fingerprints: {err}"),
+                                );
+                                context.stats.errors += 1;
+                                scan.protected_locators.insert(path.to_path_buf());
+                            }
+                        }
                     }
                     Err(err) => {
                         scan.protected_locators.insert(path.to_path_buf());

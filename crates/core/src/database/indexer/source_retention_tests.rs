@@ -1,6 +1,8 @@
 use std::collections::VecDeque;
+use std::fs;
 
 use super::SessionIndexer;
+use serde_json;
 
 fn write_opencode_json_session(root: &std::path::Path, id: &str) -> std::path::PathBuf {
     let metadata = root
@@ -1068,6 +1070,54 @@ fn vibe_moved_child_directory_is_retained_with_its_parent_link() {
 }
 
 #[test]
+fn vibe_parent_reparse_preserves_link_to_retained_missing_child() {
+    // When a parent is reparsed while a child is missing, the new transcript
+    // still has the same task call id but the child directory is gone.
+    // The subagent link to the retained-missing child must be preserved by
+    // replace_session_contents_preserving_links_tx.
+    let temp = tempfile::tempdir().unwrap();
+    let (sessions_dir, index_db, mut indexer, parent_dir, child_dir) = indexed_vibe_tree(&temp);
+
+    // Remove the child directory so it becomes retained-missing.
+    std::fs::rename(&child_dir, temp.path().join("saved-child")).unwrap();
+    indexer
+        .index_vibe_sessions_incremental(&sessions_dir)
+        .unwrap();
+    assert!(vibe_missing(&index_db, "child-session"));
+
+    // Rewrite parent's messages.jsonl with valid JSON that still has the same
+    // task call id, so fingerprint changes and parent is reparsed.
+    // The new transcript has the same "comique/call_1" task but with additional
+    // plain messages after the tool response.
+    let parent_messages = parent_dir.join("messages.jsonl");
+    let new_messages = vibe_task_messages("comique", "call_1");
+    let mut extended_messages = new_messages.clone();
+    extended_messages
+        .push(serde_json::json!({ "role": "user", "content": "Follow up" }).to_string());
+    extended_messages
+        .push(serde_json::json!({ "role": "assistant", "content": "Explanation" }).to_string());
+    std::fs::write(&parent_messages, extended_messages.join("\n") + "\n").unwrap();
+
+    // Reindex: parent is reparsed with the extended messages.
+    indexer
+        .index_vibe_sessions_incremental(&sessions_dir)
+        .unwrap();
+
+    // Child remains missing.
+    assert!(vibe_missing(&index_db, "child-session"));
+    // But the parent's link to the retained child is preserved.
+    let linked =
+        crate::database::load_subagent(&index_db, "parent-session", "parent-session-call_1")
+            .unwrap()
+            .unwrap();
+    assert_eq!(
+        linked.child_session_id.as_deref(),
+        Some("child-session"),
+        "Link to retained-missing child should be preserved"
+    );
+}
+
+#[test]
 fn vibe_root_session_disappearance_is_retained_and_stable_across_scans() {
     let temp = tempfile::tempdir().unwrap();
     let (sessions_dir, index_db, mut indexer, parent_dir, _child_dir) = indexed_vibe_tree(&temp);
@@ -1179,20 +1229,24 @@ fn vibe_unreadable_agents_directory_never_marks_children_missing() {
 fn vibe_missing_child_under_relocated_logical_parent_is_scoped_physically() {
     // A logical parent relationship never authorizes absence: only the
     // physical directory that disappeared covers its own descendants.
+    // Here the child lives in a separate root-level directory and has a
+    // logical parent elsewhere; the child's own directory survives but its
+    // logical parent disappears, so the child must NOT be marked missing.
     let temp = tempfile::tempdir().unwrap();
     let sessions_dir = temp.path().join("vibe");
     let parent_dir = sessions_dir.join("session_parent");
-    let sibling_dir = sessions_dir.join("session_sibling");
+    let child_dir = sessions_dir.join("session_child_relocated");
     write_vibe_session_dir(
         &parent_dir,
         "parent-session",
         None,
         &vibe_task_messages("comique", "call_1"),
     );
+    // Child is a root-level sibling whose logical parent is the disappeared parent.
     write_vibe_session_dir(
-        &sibling_dir,
-        "sibling-session",
-        None,
+        &child_dir,
+        "child-session",
+        Some("comique"),
         &vibe_plain_messages(),
     );
     let index_db = temp.path().join("index.db");
@@ -1201,11 +1255,14 @@ fn vibe_missing_child_under_relocated_logical_parent_is_scoped_physically() {
         .index_vibe_sessions_incremental(&sessions_dir)
         .unwrap();
 
+    // The logical parent disappears, but the child's own directory remains.
     std::fs::remove_dir_all(&parent_dir).unwrap();
     indexer
         .index_vibe_sessions_incremental(&sessions_dir)
         .unwrap();
 
+    // Parent is missing (its directory vanished), but child is NOT missing
+    // because its own physical directory still exists.
     assert!(vibe_missing(&index_db, "parent-session"));
-    assert!(!vibe_missing(&index_db, "sibling-session"));
+    assert!(!vibe_missing(&index_db, "child-session"));
 }
