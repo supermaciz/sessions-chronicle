@@ -1,12 +1,16 @@
 use std::path::Path;
 
+use adw::prelude::NavigationPageExt;
 use gettextrs::gettext;
 use relm4::ComponentController;
 use relm4::gtk::prelude::WidgetExt;
 
 use crate::database::load_session;
+use crate::database::open_connection;
 use crate::models::Session;
 use crate::ui::session_detail::SessionDetailMsg;
+use crate::ui::session_detail::build_source_details_page;
+use crate::ui::session_detail::source_details_content;
 
 use super::super::App;
 use super::super::helpers::{active_search_query, parent_session_load_failure_message};
@@ -85,8 +89,122 @@ impl App {
         }
     }
 
+    /// Whether the retained session has any locally indexed transcript content.
+    fn session_has_indexed_items(&self, session_id: &str) -> bool {
+        match open_connection(&self.db_path) {
+            Ok(conn) => conn
+                .query_row(
+                    "SELECT EXISTS(
+                        SELECT 1 FROM transcript_items WHERE session_id = ?1
+                        UNION ALL
+                        SELECT 1 FROM messages WHERE session_id = ?1
+                        LIMIT 1)",
+                    [session_id],
+                    |row| row.get(0),
+                )
+                .unwrap_or(false),
+            Err(err) => {
+                tracing::warn!(
+                    session_id,
+                    error = %err,
+                    "Failed to open index while checking retained content"
+                );
+                false
+            }
+        }
+    }
+
+    /// Opens the storage-aware Source details page for a retained session.
+    /// The incoming snapshot is only a trigger: the row is reloaded by ID so
+    /// the page never renders stale evidence. Page contents are queried from
+    /// the local index rather than the currently rendered transcript.
+    pub(crate) fn handle_show_source_details(&mut self, session: Session) {
+        if self.source_details_visible {
+            return;
+        }
+        let reloaded = match load_session(&self.db_path, &session.id) {
+            Ok(Some(session)) => session,
+            Ok(None) | Err(_) => return,
+        };
+        if !reloaded.source.missing {
+            return;
+        }
+
+        let has_indexed_items = self.session_has_indexed_items(&reloaded.id);
+        let content = source_details_content(&reloaded, has_indexed_items);
+
+        match self.source_details_page.as_ref() {
+            // First open: build the page, register it permanently with the
+            // nav view (mirroring detail_page) so it can be re-pushed after
+            // being popped, then push it.
+            None => {
+                let page = build_source_details_page(&reloaded, has_indexed_items);
+                self.nav_view.add(&page);
+                self.source_details_page = Some(page.clone());
+                self.source_details_visible = true;
+                self.nav_view.push(&page);
+            }
+            // Reuse the registered page, refreshing its content in place so a
+            // reopened page never shows stale evidence.
+            Some(page) => {
+                page.set_child(Some(&content));
+                self.source_details_visible = true;
+                self.nav_view.push(page);
+            }
+        }
+    }
+
+    /// Collapses an open Source details overlay back to the transcript detail
+    /// before a session change (selection, external open, or child open).
+    pub(crate) fn pop_source_details_if_visible(&mut self) {
+        if self.source_details_visible {
+            self.handle_request_navigate_back();
+        }
+    }
+
+    /// Refreshes an already-open Source details page after an indexing pass,
+    /// without pushing another page or losing keyboard focus. A successful
+    /// return updates the page's explanation/evidence; once the source is
+    /// available again the page is popped back to the transcript detail.
+    pub(crate) fn refresh_source_details_page(&mut self) {
+        if !self.source_details_visible {
+            return;
+        }
+        let Some(active) = self.active_session.as_ref() else {
+            return;
+        };
+        let reloaded = match load_session(&self.db_path, &active.id) {
+            Ok(Some(session)) => session,
+            Ok(None) | Err(_) => return,
+        };
+        if !reloaded.source.missing {
+            self.nav_view.pop();
+            return;
+        }
+        let Some(page) = self.source_details_page.as_ref() else {
+            return;
+        };
+        let has_indexed_items = self.session_has_indexed_items(&reloaded.id);
+        let content = source_details_content(&reloaded, has_indexed_items);
+        page.set_child(Some(&content));
+    }
+
+    /// Clears Source-details page state after the page was popped (native
+    /// gesture or the app-owned back handler). The registered page is kept so
+    /// it can be re-pushed with refreshed content later. Idempotent: safe to
+    /// call again when a queued `SourceDetailsPopped` arrives after the
+    /// programmatic back handler already cleaned up.
+    pub(crate) fn handle_source_details_popped(&mut self) {
+        if !self.source_details_visible {
+            return;
+        }
+        self.source_details_visible = false;
+        self.session_detail.widget().set_visible(true);
+    }
+
     pub(crate) fn handle_session_selected(&mut self, id: String) {
         tracing::debug!("Session selected: {}", id);
+        self.pop_source_details_if_visible();
 
         self.session_detail.widget().set_visible(true);
         let search_query = active_search_query(&self.search_query);
@@ -114,6 +232,7 @@ impl App {
 
     pub(crate) fn handle_open_child_session(&mut self, child_session_id: String) {
         tracing::debug!("Open child session: {}", child_session_id);
+        self.pop_source_details_if_visible();
         self.parent_session = self.active_session.clone();
 
         let search_query = active_search_query(&self.search_query);
@@ -237,6 +356,7 @@ impl App {
 
     pub(crate) fn handle_external_session_open(&mut self, id: String) {
         tracing::debug!(session_id = %id, "External session open requested");
+        self.pop_source_details_if_visible();
 
         let session = match lookup_external_session(&self.db_path, &id, self.index_available) {
             Ok(session) => session,

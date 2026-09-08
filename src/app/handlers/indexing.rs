@@ -104,6 +104,8 @@ impl App {
         // that just went missing (or came back) needs its cached pin/resume
         // metadata and the open detail view's source state refreshed.
         self.refresh_active_session_metadata();
+        // An open Source details page reflects the same transition.
+        self.refresh_source_details_page();
 
         if should_reload_sessions_after_indexing(
             indexed,
@@ -158,6 +160,7 @@ impl App {
         // A failed run may still have committed earlier adapter transactions,
         // so availability could have changed even though indexing failed.
         self.refresh_active_session_metadata();
+        self.refresh_source_details_page();
 
         self.session_list.emit(SessionListMsg::ReloadAfterIndexing {
             assistants: self.filter_state.tools.clone(),

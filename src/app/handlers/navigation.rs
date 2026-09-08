@@ -98,6 +98,22 @@ impl App {
     }
 
     pub(crate) fn handle_request_navigate_back(&mut self) {
+        // Source details is a sub-page of the transcript detail: the first back
+        // pop returns to the transcript without tearing transcript/search state
+        // down. The app-owned Escape/back handler always targets the visible page.
+        if self
+            .nav_view
+            .visible_page()
+            .and_then(|p| p.tag())
+            .as_deref()
+            == Some("source-details")
+        {
+            self.nav_view.pop();
+            // Clear synchronously so callers see consistent state; the popped
+            // signal's queued SourceDetailsPopped then no-ops.
+            self.handle_source_details_popped();
+            return;
+        }
         if self.detail_visible {
             self.dismiss_summary_popover();
             self.session_detail.widget().set_visible(false);

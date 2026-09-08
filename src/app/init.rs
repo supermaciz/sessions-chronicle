@@ -81,6 +81,7 @@ pub(super) fn init_child_components(
                 AppMsg::InspectorVisibilityChanged(visible)
             }
             SessionDetailOutput::OpenChildSession(id) => AppMsg::OpenChildSession(id),
+            SessionDetailOutput::ShowSourceDetails(session) => AppMsg::ShowSourceDetails(session),
         });
     let date_pill = DatePill::builder()
         .launch(())
@@ -186,10 +187,14 @@ pub(super) fn build_navigation(
 
     // Sync state when detail page is popped natively (e.g. gestures).
     let popped_sender = sender.input_sender().clone();
-    nav_view.connect_popped(move |_, page| {
-        if page.tag().as_deref() == Some("detail") {
+    nav_view.connect_popped(move |_, page| match page.tag().as_deref() {
+        Some("detail") => {
             popped_sender.send(AppMsg::NavigateBack).ok();
         }
+        Some("source-details") => {
+            popped_sender.send(AppMsg::SourceDetailsPopped).ok();
+        }
+        _ => {}
     });
 
     NavigationSetup {

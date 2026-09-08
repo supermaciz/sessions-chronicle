@@ -32,9 +32,14 @@ use crate::ui::tool_inspector_pane::{
 };
 
 mod session_summary;
+mod source_details;
 mod transcript;
 
 use session_summary::SessionSummary;
+// Re-exported for the app shell only; the library target keeps this module
+// for dead-code analysis without a caller.
+#[allow(unused_imports)]
+pub(crate) use source_details::{build_source_details_page, source_details_content};
 
 const PREVIEW_LEN: usize = 2000;
 const DEFERRED_FIRST_PAGE_LOAD_DELAY_MS: u64 = 250;
@@ -120,6 +125,8 @@ pub enum SessionDetailOutput {
     InspectorVisibilityChanged(bool),
     /// User asked to open a child session linked from a subagent inside the inspector.
     OpenChildSession(String),
+    /// The retained-source banner action requested the Source details page.
+    ShowSourceDetails(Box<Session>),
 }
 
 /// Input messages accepted by [`SessionDetail`].
@@ -191,6 +198,8 @@ pub enum SessionDetailMsg {
     InspectorWidgetVisibilityChanged(bool),
     /// Open the child session linked from the inspector (forwarded to App).
     OpenChildSession(String),
+    /// The retained-source banner action was activated.
+    ShowSourceDetails,
 }
 
 pub enum SessionDetailCmd {
@@ -291,6 +300,15 @@ impl Component for SessionDetail {
             set_orientation: gtk::Orientation::Vertical,
             set_spacing: 0,
             set_vexpand: true,
+
+            #[name = "source_banner"]
+            adw::Banner {
+                set_title: "Source missing — showing retained content",
+                set_button_label: Some("Source details"),
+                #[watch]
+                set_revealed: model.session.as_ref().is_some_and(|s| s.source.missing),
+                connect_button_clicked => SessionDetailMsg::ShowSourceDetails,
+            },
 
             #[name = "content_stack"]
             gtk::Stack {
@@ -610,6 +628,9 @@ impl Component for SessionDetail {
             }
             SessionDetailMsg::OpenChildSession(child_session_id) => {
                 self.open_child_session(child_session_id, &sender);
+            }
+            SessionDetailMsg::ShowSourceDetails => {
+                self.show_source_details(&sender);
             }
         }
     }
@@ -1142,6 +1163,19 @@ impl SessionDetail {
         sender
             .output(SessionDetailOutput::OpenChildSession(child_session_id))
             .ok();
+    }
+
+    /// The banner action was activated. Only a session whose source is missing
+    /// shows the banner, so forward the current snapshot; the app reloads the
+    /// row by ID before displaying it to avoid showing stale evidence.
+    fn show_source_details(&self, sender: &ComponentSender<Self>) {
+        if let Some(session) = self.session.as_ref().filter(|s| s.source.missing) {
+            sender
+                .output(SessionDetailOutput::ShowSourceDetails(Box::new(
+                    session.clone(),
+                )))
+                .ok();
+        }
     }
 
     fn handle_start_deferred_first_page_load(

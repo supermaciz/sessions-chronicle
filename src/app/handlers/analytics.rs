@@ -82,7 +82,7 @@ impl App {
     }
 
     pub(crate) fn is_inspector_toggle_visible(&self) -> bool {
-        self.is_pane_controls_visible() && self.detail_visible
+        self.is_pane_controls_visible() && self.detail_visible && !self.source_details_visible
     }
 
     pub(crate) fn are_detail_actions_visible(&self) -> bool {
@@ -93,6 +93,7 @@ impl App {
             self.active_session.is_some(),
         )
         .detail_actions_visible
+            && !self.source_details_visible
     }
 
     pub(crate) fn is_summary_button_visible(&self) -> bool {
@@ -103,5 +104,6 @@ impl App {
             self.active_session.is_some(),
         )
         .summary_button_visible
+            && !self.source_details_visible
     }
 }

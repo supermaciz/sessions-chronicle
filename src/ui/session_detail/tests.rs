@@ -1,5 +1,7 @@
 use super::*;
+use std::cell::RefCell;
 use std::path::PathBuf;
+use std::rc::Rc;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -1066,4 +1068,106 @@ fn prev_next_wrap_around_match_positions() {
 
     let parts = controller.state().get();
     assert_eq!(parts.model.search.current_match, 0);
+}
+
+#[gtk::test]
+fn source_banner_revealed_only_when_active_session_is_missing() {
+    let temp_db = tempfile::NamedTempFile::new().expect("temp db");
+    seed_message_transcript(temp_db.path(), "test-session-123", 5);
+
+    let controller = SessionDetail::builder().launch(temp_db.path().to_path_buf());
+
+    // No session yet (loading/empty): the banner stays hidden.
+    let banner = controller.widgets().source_banner.clone();
+    assert!(!banner.is_revealed());
+
+    let mut session = build_test_session(None, None, 0, 0, 0);
+    controller.emit(SessionDetailMsg::SetSession {
+        session: Box::new(session.clone()),
+        search_query: None,
+    });
+    pump_main_context(|| controller.state().get().model.session.is_some());
+    assert!(!banner.is_revealed());
+
+    session.source.missing = true;
+    controller.emit(SessionDetailMsg::SetSession {
+        session: Box::new(session.clone()),
+        search_query: None,
+    });
+    pump_main_context(|| banner.is_revealed());
+    assert!(banner.is_revealed());
+    assert_eq!(banner.title(), "Source missing — showing retained content");
+    assert_eq!(banner.button_label().as_deref(), Some("Source details"));
+}
+
+#[gtk::test]
+fn source_banner_survives_empty_and_failed_transcript_states() {
+    let temp_db = tempfile::NamedTempFile::new().expect("temp db");
+
+    // An empty database has no transcript content; a missing session must
+    // still reveal the banner above the (empty) content stack.
+    let controller = SessionDetail::builder().launch(temp_db.path().to_path_buf());
+    let banner = controller.widgets().source_banner.clone();
+    let mut session = build_test_session(None, None, 0, 0, 0);
+    session.source.missing = true;
+    controller.emit(SessionDetailMsg::SetSession {
+        session: Box::new(session),
+        search_query: None,
+    });
+    pump_main_context(|| controller.state().get().model.session.is_some());
+    assert!(banner.is_revealed());
+    assert_eq!(controller.state().get().model.messages.len(), 0);
+}
+
+#[gtk::test]
+fn source_banner_action_emits_show_source_details_only_for_missing_session() {
+    let temp_db = tempfile::NamedTempFile::new().expect("temp db");
+    seed_message_transcript(temp_db.path(), "test-session-123", 5);
+
+    let outputs: Rc<RefCell<Vec<Option<String>>>> = Rc::new(RefCell::new(Vec::new()));
+    let outputs_ref = outputs.clone();
+    let controller = SessionDetail::builder()
+        .launch(temp_db.path().to_path_buf())
+        .connect_receiver(move |_, output| {
+            let recorded = match output {
+                SessionDetailOutput::ShowSourceDetails(session) => Some(session.id.clone()),
+                _ => None,
+            };
+            outputs_ref.borrow_mut().push(recorded);
+        });
+
+    let mut session = build_test_session(None, None, 0, 0, 0);
+    controller.emit(SessionDetailMsg::SetSession {
+        session: Box::new(session.clone()),
+        search_query: None,
+    });
+    pump_main_context(|| controller.state().get().model.session.is_some());
+
+    let banner = controller.widgets().source_banner.clone();
+    banner.emit_by_name::<()>("button-clicked", &[]);
+    pump_main_context(|| !outputs.borrow().is_empty());
+    assert!(
+        outputs.borrow().iter().all(Option::is_none),
+        "an available session must not request Source details"
+    );
+
+    session.source.missing = true;
+    controller.emit(SessionDetailMsg::SetSession {
+        session: Box::new(session.clone()),
+        search_query: None,
+    });
+    pump_main_context(|| controller.state().get().model.session.is_some());
+
+    banner.emit_by_name::<()>("button-clicked", &[]);
+    pump_main_context(|| {
+        outputs
+            .borrow()
+            .iter()
+            .any(|id| id.as_deref() == Some("test-session-123"))
+    });
+    let parts = controller.state().get();
+    assert!(matches!(
+        parts.model.session.as_ref(),
+        Some(s) if s.source.missing
+    ));
 }

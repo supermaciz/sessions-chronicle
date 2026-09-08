@@ -25,7 +25,7 @@ use crate::database::{
 use crate::icon_names;
 use crate::indexing_worker::{IndexingWorker, IndexingWorkerInput};
 use crate::models::{
-    DateFilter, ProjectFilter, ProjectInfo, SessionQuery, SortOrder, session::AiAssistant,
+    DateFilter, ProjectFilter, ProjectInfo, Session, SessionQuery, SortOrder, session::AiAssistant,
 };
 use crate::session_sources::{SessionSources, database_path};
 use crate::ui::date_pill::{DatePill, DatePillInput};
@@ -123,6 +123,11 @@ pub(super) struct App {
     /// a dead component during test teardown.
     search_unblock_timeout: Cell<Option<glib::source::SourceId>>,
     detail_visible: bool,
+    /// Whether the Source details sub-page is currently visible above the
+    /// transcript detail page. Drives header gating and navigation pops.
+    source_details_visible: bool,
+    /// The currently open (or reusable) Source details navigation page.
+    source_details_page: Option<adw::NavigationPage>,
     /// Outer OverlaySplitView visibility (Filters pane in the Sessions list view).
     filters_open: bool,
     /// Snapshot of `filters_open` taken when the detail page is pushed, so the
@@ -211,6 +216,10 @@ pub(super) enum AppMsg {
     OpenChildSession(String),
     /// Header-bar button: return to the one-hop parent session.
     ReturnToParentSession,
+    /// User activated "Source details" on a retained session's banner.
+    ShowSourceDetails(Box<Session>),
+    /// The Source details page was popped (native gesture or programmatic).
+    SourceDetailsPopped,
     /// Esc key: close search → close inspector → navigate back.
     Escape,
     OpenDateFilterShortcut,
@@ -302,7 +311,9 @@ impl SimpleComponent for App {
                             set_icon_name: "go-previous-symbolic",
                             set_tooltip_text: Some("Go back"),
                             #[watch]
-                            set_visible: model.detail_visible && model.are_detail_actions_visible(),
+                            set_visible: model.detail_visible
+                                && (model.are_detail_actions_visible()
+                                    || model.source_details_visible),
                             connect_clicked => AppMsg::RequestNavigateBack,
                         },
 
@@ -523,6 +534,8 @@ impl SimpleComponent for App {
             search_changed_handler_raw: Cell::new(None),
             search_unblock_timeout: Cell::new(None),
             detail_visible: false,
+            source_details_visible: false,
+            source_details_page: None,
             filters_open: true,
             filters_open_before_detail: true,
             inspector_open: false,
@@ -753,6 +766,8 @@ impl SimpleComponent for App {
                 self.handle_open_child_session(child_session_id)
             }
             AppMsg::ReturnToParentSession => self.handle_return_to_parent_session(),
+            AppMsg::ShowSourceDetails(session) => self.handle_show_source_details(*session),
+            AppMsg::SourceDetailsPopped => self.handle_source_details_popped(),
             AppMsg::Escape => self.handle_escape(&sender),
             AppMsg::OpenDateFilterShortcut => {
                 if self.is_date_filter_visible() {
@@ -1757,6 +1772,455 @@ mod tests {
                 [],
             )
             .unwrap();
+    }
+
+    fn mark_fixture_missing(db_path: &std::path::Path, id: &str) {
+        let connection = Connection::open(db_path).unwrap();
+        connection
+            .execute(
+                "UPDATE sessions SET source_missing = 1 WHERE id = ?1",
+                rusqlite::params![id],
+            )
+            .unwrap();
+    }
+
+    fn restore_fixture_present(db_path: &std::path::Path, id: &str) {
+        let connection = Connection::open(db_path).unwrap();
+        connection
+            .execute(
+                "UPDATE sessions SET source_missing = 0 WHERE id = ?1",
+                rusqlite::params![id],
+            )
+            .unwrap();
+    }
+
+    #[gtk::test]
+    fn source_details_page_pushes_over_detail_and_pops_one_level() {
+        if !schema_is_available() {
+            return;
+        }
+
+        let controller = App::builder().launch(Some(PathBuf::from("tests/fixtures")));
+        pump_main_context(|| !controller.state().get().model.indexing);
+
+        controller.emit(AppMsg::SessionSelected("abc123".to_string()));
+        pump_main_context(|| {
+            controller
+                .state()
+                .get()
+                .model
+                .active_session
+                .as_ref()
+                .is_some_and(|session| session.id == "abc123")
+        });
+
+        {
+            let db_path = controller.state().get().model.db_path.clone();
+            mark_fixture_missing(&db_path, "abc123");
+        }
+        controller.emit(AppMsg::IndexingCompleted {
+            indexed: 0,
+            skipped: 0,
+            removed: 0,
+            source_state_changes: 1,
+            per_source: vec![],
+            errors_detail: vec![],
+        });
+        pump_main_context(|| {
+            controller
+                .state()
+                .get()
+                .model
+                .session_detail
+                .widgets()
+                .source_banner
+                .is_revealed()
+        });
+
+        // Open the Source details page from the stored session snapshot, as
+        // the SessionDetail banner output would.
+        let session = controller
+            .state()
+            .get()
+            .model
+            .active_session
+            .as_ref()
+            .map(|a| {
+                crate::database::load_session(&controller.state().get().model.db_path, &a.id)
+                    .unwrap()
+                    .unwrap()
+            })
+            .unwrap();
+        controller.emit(AppMsg::ShowSourceDetails(Box::new(session)));
+
+        pump_main_context(|| {
+            controller
+                .state()
+                .get()
+                .model
+                .nav_view
+                .visible_page()
+                .and_then(|p| p.tag())
+                .as_deref()
+                == Some("source-details")
+        });
+
+        {
+            let parts = controller.state().get();
+            assert!(parts.model.source_details_visible);
+            assert_eq!(
+                parts
+                    .model
+                    .nav_view
+                    .visible_page()
+                    .and_then(|page| page.tag())
+                    .as_deref(),
+                Some("source-details")
+            );
+        }
+
+        // Back pops exactly one page and returns to the transcript detail.
+        controller.emit(AppMsg::RequestNavigateBack);
+        pump_main_context(|| {
+            let model = &controller.state().get().model;
+            !model.source_details_visible
+                && model
+                    .nav_view
+                    .visible_page()
+                    .and_then(|p| p.tag())
+                    .as_deref()
+                    == Some("detail")
+        });
+        {
+            let parts = controller.state().get();
+            assert!(parts.model.detail_visible);
+            assert!(!parts.model.source_details_visible);
+            assert_eq!(parts.model.active_session.as_ref().unwrap().id, "abc123");
+        }
+
+        // Second back returns to the list.
+        controller.emit(AppMsg::RequestNavigateBack);
+        pump_main_context(|| !controller.state().get().model.detail_visible);
+        assert!(!controller.state().get().model.detail_visible);
+    }
+
+    #[gtk::test]
+    fn escape_on_source_details_pops_one_level_without_touching_search_or_inspector() {
+        if !schema_is_available() {
+            return;
+        }
+
+        let controller = App::builder().launch(Some(PathBuf::from("tests/fixtures")));
+        pump_main_context(|| !controller.state().get().model.indexing);
+
+        controller.emit(AppMsg::SessionSelected("abc123".to_string()));
+        pump_main_context(|| {
+            controller
+                .state()
+                .get()
+                .model
+                .active_session
+                .as_ref()
+                .is_some_and(|session| session.id == "abc123")
+        });
+        controller.emit(AppMsg::SearchQueryChanged("hello".to_string()));
+        pump_main_context(|| controller.state().get().model.search_query == "hello");
+        controller.emit(AppMsg::InspectorVisibilityChanged(true));
+        pump_main_context(|| controller.state().get().model.inspector_open);
+
+        {
+            let db_path = controller.state().get().model.db_path.clone();
+            mark_fixture_missing(&db_path, "abc123");
+        }
+        controller.emit(AppMsg::IndexingCompleted {
+            indexed: 0,
+            skipped: 0,
+            removed: 0,
+            source_state_changes: 1,
+            per_source: vec![],
+            errors_detail: vec![],
+        });
+        pump_main_context(|| {
+            controller
+                .state()
+                .get()
+                .model
+                .session_detail
+                .widgets()
+                .source_banner
+                .is_revealed()
+        });
+
+        let session = {
+            let parts = controller.state().get();
+            let active = parts.model.active_session.as_ref().unwrap();
+            crate::database::load_session(&parts.model.db_path, &active.id)
+                .unwrap()
+                .unwrap()
+        };
+        controller.emit(AppMsg::ShowSourceDetails(Box::new(session)));
+        pump_main_context(|| {
+            controller
+                .state()
+                .get()
+                .model
+                .nav_view
+                .visible_page()
+                .and_then(|p| p.tag())
+                .as_deref()
+                == Some("source-details")
+        });
+
+        // Escape from Source details resolves to a single pop back to detail.
+        controller.emit(AppMsg::Escape);
+        pump_main_context(|| {
+            let model = &controller.state().get().model;
+            !model.source_details_visible
+                && model
+                    .nav_view
+                    .visible_page()
+                    .and_then(|p| p.tag())
+                    .as_deref()
+                    == Some("detail")
+        });
+
+        let parts = controller.state().get();
+        assert_eq!(parts.model.search_query, "hello");
+        assert!(parts.model.inspector_open);
+        assert_eq!(parts.model.active_session.as_ref().unwrap().id, "abc123");
+    }
+
+    #[gtk::test]
+    fn indexing_return_pops_open_source_details_and_clears_banner() {
+        if !schema_is_available() {
+            return;
+        }
+
+        let controller = App::builder().launch(Some(PathBuf::from("tests/fixtures")));
+        pump_main_context(|| !controller.state().get().model.indexing);
+
+        controller.emit(AppMsg::SessionSelected("abc123".to_string()));
+        pump_main_context(|| {
+            controller
+                .state()
+                .get()
+                .model
+                .active_session
+                .as_ref()
+                .is_some_and(|session| session.id == "abc123")
+        });
+
+        {
+            let db_path = controller.state().get().model.db_path.clone();
+            mark_fixture_missing(&db_path, "abc123");
+        }
+        controller.emit(AppMsg::IndexingCompleted {
+            indexed: 0,
+            skipped: 0,
+            removed: 0,
+            source_state_changes: 1,
+            per_source: vec![],
+            errors_detail: vec![],
+        });
+        pump_main_context(|| {
+            controller
+                .state()
+                .get()
+                .model
+                .session_detail
+                .widgets()
+                .source_banner
+                .is_revealed()
+        });
+
+        let session = {
+            let parts = controller.state().get();
+            let active = parts.model.active_session.as_ref().unwrap();
+            crate::database::load_session(&parts.model.db_path, &active.id)
+                .unwrap()
+                .unwrap()
+        };
+        controller.emit(AppMsg::ShowSourceDetails(Box::new(session)));
+        pump_main_context(|| {
+            controller
+                .state()
+                .get()
+                .model
+                .nav_view
+                .visible_page()
+                .and_then(|p| p.tag())
+                .as_deref()
+                == Some("source-details")
+        });
+        {
+            let parts = controller.state().get();
+            assert!(parts.model.source_details_visible);
+        }
+
+        // The source comes back during the next indexing run.
+        {
+            let db_path = controller.state().get().model.db_path.clone();
+            restore_fixture_present(&db_path, "abc123");
+        }
+        controller.emit(AppMsg::IndexingCompleted {
+            indexed: 1,
+            skipped: 0,
+            removed: 0,
+            source_state_changes: 1,
+            per_source: vec![],
+            errors_detail: vec![],
+        });
+        pump_main_context(|| {
+            !controller.state().get().model.source_details_visible
+                && controller
+                    .state()
+                    .get()
+                    .model
+                    .nav_view
+                    .visible_page()
+                    .and_then(|p| p.tag())
+                    .as_deref()
+                    == Some("detail")
+        });
+
+        let parts = controller.state().get();
+        assert!(!parts.model.source_details_visible);
+        assert_eq!(
+            parts
+                .model
+                .nav_view
+                .visible_page()
+                .and_then(|page| page.tag())
+                .as_deref(),
+            Some("detail")
+        );
+
+        // The banner clears once the transcript detail's session state has been
+        // refreshed with the successful return.
+        pump_main_context(|| {
+            !controller
+                .state()
+                .get()
+                .model
+                .session_detail
+                .widgets()
+                .source_banner
+                .is_revealed()
+        });
+        let parts = controller.state().get();
+        assert!(
+            !parts
+                .model
+                .session_detail
+                .widgets()
+                .source_banner
+                .is_revealed(),
+            "the retained-source banner must clear after a successful return"
+        );
+    }
+
+    #[gtk::test]
+    fn external_session_activation_while_source_details_open_returns_to_detail_first() {
+        if !schema_is_available() {
+            return;
+        }
+
+        let controller = App::builder().launch(Some(PathBuf::from("tests/fixtures")));
+        pump_main_context(|| !controller.state().get().model.indexing);
+
+        controller.emit(AppMsg::OpenExternalSession("abc123".to_string()));
+        pump_main_context(|| {
+            controller
+                .state()
+                .get()
+                .model
+                .active_session
+                .as_ref()
+                .is_some_and(|session| session.id == "abc123")
+        });
+
+        let stack_size = controller
+            .state()
+            .get()
+            .model
+            .nav_view
+            .navigation_stack()
+            .n_items();
+
+        {
+            let db_path = controller.state().get().model.db_path.clone();
+            mark_fixture_missing(&db_path, "abc123");
+        }
+        controller.emit(AppMsg::IndexingCompleted {
+            indexed: 0,
+            skipped: 0,
+            removed: 0,
+            source_state_changes: 1,
+            per_source: vec![],
+            errors_detail: vec![],
+        });
+        pump_main_context(|| {
+            controller
+                .state()
+                .get()
+                .model
+                .session_detail
+                .widgets()
+                .source_banner
+                .is_revealed()
+        });
+
+        let session = {
+            let parts = controller.state().get();
+            let active = parts.model.active_session.as_ref().unwrap();
+            crate::database::load_session(&parts.model.db_path, &active.id)
+                .unwrap()
+                .unwrap()
+        };
+        controller.emit(AppMsg::ShowSourceDetails(Box::new(session)));
+        pump_main_context(|| {
+            controller
+                .state()
+                .get()
+                .model
+                .nav_view
+                .visible_page()
+                .and_then(|p| p.tag())
+                .as_deref()
+                == Some("source-details")
+        });
+
+        // External activation of a different session first pops the Source
+        // details overlay back to the detail page, then loads the new session
+        // without stacking another page.
+        controller.emit(AppMsg::OpenExternalSession("session-001".to_string()));
+        pump_main_context(|| {
+            controller
+                .state()
+                .get()
+                .model
+                .active_session
+                .as_ref()
+                .is_some_and(|session| session.id == "session-001")
+        });
+        {
+            let parts = controller.state().get();
+            assert!(parts.model.detail_visible);
+            assert!(!parts.model.source_details_visible);
+            assert_eq!(
+                parts
+                    .model
+                    .nav_view
+                    .visible_page()
+                    .and_then(|page| page.tag())
+                    .as_deref(),
+                Some("detail")
+            );
+            assert_eq!(
+                parts.model.nav_view.navigation_stack().n_items(),
+                stack_size
+            );
+        }
     }
 
     #[gtk::test]
