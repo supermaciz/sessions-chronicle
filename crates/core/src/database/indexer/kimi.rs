@@ -1,5 +1,8 @@
 use super::{IndexingStats, SessionIndexer, push_indexing_error};
-use crate::models::{AiAssistant, IndexingError};
+use crate::database::source_state::{
+    ScopeScan, SourceObservation, SourceScope, reconcile_scope, record_observation_tx,
+};
+use crate::models::{AiAssistant, IndexingError, SourceKind};
 use crate::parsers::kimi_code::{
     KimiCodeParser, KimiParsedBundle, ParseError, validate_bundle_path,
 };
@@ -20,6 +23,9 @@ struct KimiCandidate {
 struct KimiDiscovery {
     candidates: Vec<KimiCandidate>,
     discovered_dirs: HashSet<PathBuf>,
+    /// Subtrees this scan could not enumerate. They keep whatever state they
+    /// already have instead of failing reconciliation for the whole home.
+    protected_dirs: HashSet<PathBuf>,
     enumeration_complete: bool,
     errors: usize,
 }
@@ -38,6 +44,11 @@ struct PathFingerprint {
     size: i64,
 }
 
+struct KimiReplaceOutcome {
+    removed: usize,
+    source_state_changes: usize,
+}
+
 #[allow(clippy::large_enum_variant)] // Keep the task-defined stable parse interface unboxed.
 enum StableParse {
     Bundle(KimiParsedBundle, Vec<PathFingerprint>),
@@ -53,6 +64,7 @@ fn discover_kimi_sessions(
     let mut discovery = KimiDiscovery {
         candidates: Vec::new(),
         discovered_dirs: HashSet::new(),
+        protected_dirs: HashSet::new(),
         enumeration_complete: true,
         errors: 0,
     };
@@ -61,7 +73,7 @@ fn discover_kimi_sessions(
     {
         return Ok(discovery);
     }
-    let workspaces = sorted_dirs(&sessions_dir, &mut discovery, errors);
+    let workspaces = sorted_dirs(&sessions_dir, None, &mut discovery, errors);
     for workspace in workspaces {
         if !workspace
             .file_name()
@@ -69,7 +81,7 @@ fn discover_kimi_sessions(
         {
             continue;
         }
-        for session_dir in sorted_dirs(&workspace, &mut discovery, errors) {
+        for session_dir in sorted_dirs(&workspace, Some(&workspace), &mut discovery, errors) {
             let Some(session_id) = session_dir
                 .file_name()
                 .and_then(|name| name.to_str())
@@ -130,6 +142,30 @@ fn record_discovery_error(
     );
 }
 
+/// Report a discovery failure, excluding only `protect` when the failure is
+/// scoped to one subtree and failing the whole enumeration otherwise.
+fn record_scoped_discovery_error(
+    discovery: &mut KimiDiscovery,
+    errors: &mut VecDeque<IndexingError>,
+    path: &Path,
+    message: impl Into<String>,
+    protect: Option<&Path>,
+) {
+    match protect {
+        Some(protected) => {
+            discovery.protected_dirs.insert(protected.to_path_buf());
+            discovery.errors += 1;
+            push_indexing_error(
+                errors,
+                AiAssistant::KimiCode,
+                Some(path.display().to_string()),
+                message,
+            );
+        }
+        None => record_discovery_error(discovery, errors, path, message),
+    }
+}
+
 fn classify_required_kimi_paths(session_dir: &Path) -> RequiredPaths {
     let mut missing = false;
     for path in [
@@ -160,19 +196,27 @@ fn classify_required_kimi_paths(session_dir: &Path) -> RequiredPaths {
     }
 }
 
+/// List the directories directly under `path`.
+///
+/// `protect` names the subtree to exclude from reconciliation when this level
+/// cannot be read: a workspace that could not be enumerated proves nothing
+/// about its bundles, while a failure to read `sessions/` itself leaves the
+/// whole home unreconcilable.
 fn sorted_dirs(
     path: &Path,
+    protect: Option<&Path>,
     discovery: &mut KimiDiscovery,
     errors: &mut VecDeque<IndexingError>,
 ) -> Vec<PathBuf> {
     let entries = match fs::read_dir(path) {
         Ok(entries) => entries,
         Err(err) => {
-            record_discovery_error(
+            record_scoped_discovery_error(
                 discovery,
                 errors,
                 path,
                 format!("Failed to list Kimi session directory: {err}"),
+                protect,
             );
             return Vec::new();
         }
@@ -188,11 +232,12 @@ fn sorted_dirs(
                 errors,
             ),
             Err(err) => {
-                record_discovery_error(
+                record_scoped_discovery_error(
                     discovery,
                     errors,
                     path,
                     format!("Failed to read Kimi session directory entry: {err}"),
+                    protect,
                 );
             }
         }
@@ -323,14 +368,34 @@ impl SessionIndexer {
         parser: &KimiCodeParser,
         errors_detail: &mut VecDeque<IndexingError>,
     ) -> Result<IndexingStats> {
+        let sessions_dir = kimi_home.join("sessions");
         let mut stats = IndexingStats {
             errors: discovery.errors,
             ..IndexingStats::default()
         };
+        let mut scan = ScopeScan {
+            scope: SourceScope::PathRoot {
+                assistant: AiAssistant::KimiCode,
+                root: sessions_dir.clone(),
+            },
+            complete: discovery.enumeration_complete && kimi_home.is_dir() && sessions_dir.is_dir(),
+            discovered_ids: HashSet::new(),
+            protected_locators: discovery.protected_dirs,
+            observations: Vec::new(),
+        };
+        // Only a bundle this scan actually read proves what it currently owns.
+        // Every other discovered directory keeps the state it already has.
+        let mut observed_dirs: HashSet<PathBuf> = HashSet::new();
+
         for candidate in discovery.candidates {
             match candidate.required_paths {
                 RequiredPaths::Ready => {}
                 RequiredPaths::Incomplete => {
+                    self.report_incomplete_kimi_bundle(
+                        &candidate.session_dir,
+                        &mut stats,
+                        errors_detail,
+                    )?;
                     stats.skipped += 1;
                     continue;
                 }
@@ -347,6 +412,8 @@ impl SessionIndexer {
             }
             let snapshot = match snapshot_kimi_bundle(parser, &candidate.session_dir) {
                 Ok(Some(snapshot)) => snapshot,
+                // A required file vanished after discovery: the bundle is not
+                // proven absent, so its retained data stays untouched.
                 Ok(None) => {
                     stats.skipped += 1;
                     continue;
@@ -366,20 +433,34 @@ impl SessionIndexer {
                     continue;
                 }
             };
-            if incremental && !self.should_reindex_kimi_bundle(&candidate.session_dir, &snapshot)? {
+            // An unchanged bundle may skip content only while none of the rows
+            // it owns is still marked missing: a returned bundle keeps every
+            // dependency fingerprint, so nothing else would force the reindex.
+            if incremental
+                && !self.kimi_bundle_has_missing_rows(&candidate.session_dir)?
+                && !self.should_reindex_kimi_bundle(&candidate.session_dir, &snapshot)?
+            {
+                let owned = self.kimi_owned_rows(&candidate.session_dir)?;
+                Self::observe_kimi_rows(&mut scan, owned);
+                observed_dirs.insert(candidate.session_dir.clone());
                 stats.skipped += 1;
                 continue;
             }
 
             match parse_stable_bundle(parser, &candidate.session_dir, snapshot) {
                 Ok(StableParse::Bundle(bundle, snapshot)) => {
-                    match self.replace_kimi_bundle(&bundle, &snapshot) {
+                    match self.replace_kimi_bundle(&bundle, &snapshot, &candidate.session_dir) {
                         // Children that `state.json` no longer declares are deleted
                         // by the replace, so they count as removals even though the
                         // bundle itself was reindexed.
-                        Ok(removed) => {
-                            stats.removed += removed;
+                        Ok(outcome) => {
+                            stats.removed += outcome.removed;
                             stats.indexed += 1;
+                            stats.source_state_changes += outcome.source_state_changes;
+                            for session_id in &bundle.session_ids {
+                                scan.discovered_ids.insert(session_id.clone());
+                            }
+                            observed_dirs.insert(candidate.session_dir.clone());
                         }
                         Err(err) => self.record_index_failure(
                             AiAssistant::KimiCode,
@@ -418,21 +499,100 @@ impl SessionIndexer {
             }
         }
 
-        if discovery.enumeration_complete
-            && kimi_home.is_dir()
-            && kimi_home.join("sessions").is_dir()
-        {
-            stats.removed +=
-                self.prune_stale_kimi_bundles(kimi_home, &discovery.discovered_dirs)?;
+        for session_dir in &discovery.discovered_dirs {
+            if !observed_dirs.contains(session_dir) {
+                scan.protected_locators.insert(session_dir.clone());
+            }
         }
+        stats.source_state_changes +=
+            reconcile_scope(&mut self.db, &scan, chrono::Utc::now().timestamp())?;
         Ok(stats)
+    }
+
+    /// Report a surviving bundle whose required files are absent, but only once
+    /// it has actually been indexed: a candidate that was never readable is not
+    /// a regression worth a diagnostic.
+    fn report_incomplete_kimi_bundle(
+        &self,
+        session_dir: &Path,
+        stats: &mut IndexingStats,
+        errors_detail: &mut VecDeque<IndexingError>,
+    ) -> Result<()> {
+        if self.kimi_owned_rows(session_dir)?.is_empty() {
+            return Ok(());
+        }
+        push_indexing_error(
+            errors_detail,
+            AiAssistant::KimiCode,
+            Some(session_dir.display().to_string()),
+            "Kimi session bundle is missing a required file".to_string(),
+        );
+        stats.errors += 1;
+        Ok(())
+    }
+
+    /// The sessions currently stored at or under a bundle directory.
+    fn kimi_owned_rows(&self, session_dir: &Path) -> Result<Vec<(String, PathBuf)>> {
+        let Some(locator) = session_dir.to_str() else {
+            return Ok(Vec::new());
+        };
+        let Some((lower, upper)) = path_prefix_bounds(session_dir) else {
+            return Ok(Vec::new());
+        };
+        let mut statement = self.db.prepare(
+            "SELECT id, file_path FROM sessions
+             WHERE tool = 'kimi_code'
+               AND (file_path = ?1
+                    OR (file_path >= ?2 COLLATE BINARY AND file_path < ?3 COLLATE BINARY))",
+        )?;
+        Ok(statement
+            .query_map(rusqlite::params![locator, lower, upper], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    PathBuf::from(row.get::<_, String>(1)?),
+                ))
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?)
+    }
+
+    fn kimi_bundle_has_missing_rows(&self, session_dir: &Path) -> Result<bool> {
+        let Some(locator) = session_dir.to_str() else {
+            return Ok(false);
+        };
+        let Some((lower, upper)) = path_prefix_bounds(session_dir) else {
+            return Ok(false);
+        };
+        Ok(self.db.query_row(
+            "SELECT EXISTS(SELECT 1 FROM sessions
+             WHERE tool = 'kimi_code'
+               AND (file_path = ?1
+                    OR (file_path >= ?2 COLLATE BINARY AND file_path < ?3 COLLATE BINARY))
+               AND source_missing = 1)",
+            rusqlite::params![locator, lower, upper],
+            |row| row.get::<_, i64>(0),
+        )? != 0)
+    }
+
+    fn observe_kimi_rows(scan: &mut ScopeScan, rows: Vec<(String, PathBuf)>) {
+        for (id, locator) in rows {
+            scan.discovered_ids.insert(id.clone());
+            scan.observations.push(SourceObservation {
+                assistant: AiAssistant::KimiCode,
+                id,
+                locator,
+                kind: SourceKind::SessionBundle,
+                scope: None,
+                fingerprint: None,
+            });
+        }
     }
 
     fn replace_kimi_bundle(
         &mut self,
         bundle: &KimiParsedBundle,
         snapshot: &[PathFingerprint],
-    ) -> Result<usize> {
+        session_dir: &Path,
+    ) -> Result<KimiReplaceOutcome> {
         let main_id = &bundle.main.session.id;
         let child_prefix = format!("kimi-subagent::{main_id}::");
         let tx = self.db.transaction()?;
@@ -450,15 +610,13 @@ impl SessionIndexer {
                 bail!("Kimi session id {session_id} is already owned by {tool}");
             }
         }
-        let old_children: Vec<String> = {
-            let mut statement = tx.prepare("SELECT id FROM sessions WHERE tool = 'kimi_code'")?;
-            statement
-                .query_map([], |row| row.get::<_, String>(0))?
-                .collect::<rusqlite::Result<Vec<_>>>()?
-                .into_iter()
-                .filter(|id| id.starts_with(&child_prefix))
-                .collect()
-        };
+        // Only children this bundle still owns and still has on disk may be
+        // dropped: an identity prefix alone would reach into another home, and
+        // a retained missing row is not evidence of an undeclared child.
+        let old_children: Vec<String> = Self::present_kimi_rows_owned_by_tx(&tx, session_dir)?
+            .into_iter()
+            .filter(|id| id.starts_with(&child_prefix))
+            .collect();
 
         let main_project =
             Self::upsert_project_tx(&tx, bundle.main.session.project_path.as_deref())?;
@@ -472,9 +630,26 @@ impl SessionIndexer {
             let project = Self::upsert_project_tx(&tx, child.session.project_path.as_deref())?;
             Self::upsert_session_row_tx(&tx, child, Path::new(&child.session.file_path), project)?;
         }
-        Self::replace_session_contents_tx(&tx, &bundle.main)?;
+        Self::replace_session_contents_preserving_links_tx(&tx, &bundle.main)?;
         for child in &bundle.children {
-            Self::replace_session_contents_tx(&tx, child)?;
+            Self::replace_session_contents_preserving_links_tx(&tx, child)?;
+        }
+        let now = chrono::Utc::now().timestamp();
+        let mut source_state_changes = 0;
+        for parsed in std::iter::once(&bundle.main).chain(bundle.children.iter()) {
+            source_state_changes += record_observation_tx(
+                &tx,
+                &SourceObservation {
+                    assistant: AiAssistant::KimiCode,
+                    id: parsed.session.id.clone(),
+                    locator: PathBuf::from(&parsed.session.file_path),
+                    kind: SourceKind::SessionBundle,
+                    scope: None,
+                    fingerprint: None,
+                },
+                now,
+                true,
+            )?;
         }
         let mut removed = 0;
         for child_id in old_children {
@@ -498,21 +673,46 @@ impl SessionIndexer {
             )?;
         }
         tx.commit()?;
-        Ok(removed)
+        Ok(KimiReplaceOutcome {
+            removed,
+            source_state_changes,
+        })
     }
 
+    /// The available session ids stored at or under a bundle directory.
+    fn present_kimi_rows_owned_by_tx(
+        tx: &rusqlite::Transaction<'_>,
+        session_dir: &Path,
+    ) -> Result<Vec<String>> {
+        let Some(locator) = session_dir.to_str() else {
+            return Ok(Vec::new());
+        };
+        let Some((lower, upper)) = path_prefix_bounds(session_dir) else {
+            return Ok(Vec::new());
+        };
+        let mut statement = tx.prepare(
+            "SELECT id FROM sessions
+             WHERE tool = 'kimi_code' AND source_missing = 0
+               AND (file_path = ?1
+                    OR (file_path >= ?2 COLLATE BINARY AND file_path < ?3 COLLATE BINARY))",
+        )?;
+        Ok(statement
+            .query_map(rusqlite::params![locator, lower, upper], |row| row.get(0))?
+            .collect::<rusqlite::Result<Vec<_>>>()?)
+    }
+
+    /// Remove a present, fully read bundle that carries no user message.
+    ///
+    /// Ineligibility is proven only for the rows this bundle currently owns and
+    /// that are actually available; a retained missing row is never removed by
+    /// a scan that could not read the source it came from.
     fn prune_kimi_no_user_bundle(&mut self, session_dir: &Path, main_id: &str) -> Result<usize> {
         let child_prefix = format!("kimi-subagent::{main_id}::");
         let tx = self.db.transaction()?;
-        let ids: Vec<String> = {
-            let mut statement = tx.prepare("SELECT id FROM sessions WHERE tool = 'kimi_code'")?;
-            statement
-                .query_map([], |row| row.get::<_, String>(0))?
-                .collect::<rusqlite::Result<Vec<_>>>()?
-                .into_iter()
-                .filter(|id| id == main_id || id.starts_with(&child_prefix))
-                .collect()
-        };
+        let ids: Vec<String> = Self::present_kimi_rows_owned_by_tx(&tx, session_dir)?
+            .into_iter()
+            .filter(|id| id == main_id || id.starts_with(&child_prefix))
+            .collect();
         let mut removed = 0;
         for id in ids {
             removed += Self::delete_session_by_id_tx(&tx, &id)?;
@@ -524,49 +724,6 @@ impl SessionIndexer {
             )?;
         }
         tx.commit()?;
-        Ok(removed)
-    }
-
-    fn prune_stale_kimi_bundles(
-        &mut self,
-        kimi_home: &Path,
-        discovered_dirs: &HashSet<PathBuf>,
-    ) -> Result<usize> {
-        let sessions_dir = kimi_home.join("sessions");
-        let Some((lower, upper)) = path_prefix_bounds(&sessions_dir) else {
-            return Ok(0);
-        };
-        let existing: Vec<(String, String)> = {
-            let mut statement = self.db.prepare(
-                "SELECT id, file_path FROM sessions
-                 WHERE tool = 'kimi_code' AND is_subagent = 0
-                   AND file_path >= ?1 COLLATE BINARY AND file_path < ?2 COLLATE BINARY",
-            )?;
-            statement
-                .query_map(rusqlite::params![lower, upper], |row| {
-                    Ok((row.get(0)?, row.get(1)?))
-                })?
-                .collect::<rusqlite::Result<_>>()?
-        };
-        let mut removed = 0;
-        for (main_id, file_path) in existing {
-            let path = PathBuf::from(&file_path);
-            let Ok(relative) = path.strip_prefix(&sessions_dir) else {
-                continue;
-            };
-            let parts: Vec<_> = relative.components().collect();
-            if parts.len() != 2
-                || !parts[0].as_os_str().to_string_lossy().starts_with("wd_")
-                || !parts[1]
-                    .as_os_str()
-                    .to_string_lossy()
-                    .starts_with("session_")
-                || discovered_dirs.contains(&path)
-            {
-                continue;
-            }
-            removed += self.prune_kimi_no_user_bundle(&path, &main_id)?;
-        }
         Ok(removed)
     }
 }
@@ -833,6 +990,7 @@ mod tests {
         let mut discovery = KimiDiscovery {
             candidates: Vec::new(),
             discovered_dirs: HashSet::new(),
+            protected_dirs: HashSet::new(),
             enumeration_complete: true,
             errors: 0,
         };

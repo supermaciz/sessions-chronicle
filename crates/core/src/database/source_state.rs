@@ -1,6 +1,4 @@
 //! Source availability bookkeeping, independent of transcript parsing.
-// TODO: Remove this allowance when the assistant adapters consume this module.
-#![allow(dead_code)]
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};

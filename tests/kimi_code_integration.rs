@@ -4,7 +4,9 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use sessions_chronicle::database::SessionIndexer;
-use sessions_chronicle::models::{Role, SourceStatus, ToolCallStatus, TranscriptItemKind};
+use sessions_chronicle::models::{
+    AiAssistant, Role, SourceStatus, ToolCallStatus, TranscriptItemKind,
+};
 use sessions_chronicle::parsers::kimi_code::KimiCodeParser;
 use sessions_chronicle::session_sources::SessionSources;
 use tempfile::TempDir;
@@ -513,9 +515,12 @@ fn source_root_pruning_does_not_delete_bundles_from_another_kimi_home() {
     fs::remove_dir_all(primary_dir(&home_a)).unwrap();
 
     assert_eq!(indexer.index_kimi_sessions(&home_a).unwrap(), 6);
-    assert!(!session_exists(&connection, PRIMARY_ID));
-    assert!(!session_exists(&connection, &child_id("agent-0")));
+    // The bundle that disappeared from home A is retained as unavailable; the
+    // similarly named home A2 keeps its own present bundle untouched.
+    assert!(source_missing(database.path(), PRIMARY_ID));
+    assert!(source_missing(database.path(), &child_id("agent-0")));
     assert!(session_exists(&connection, second_id));
+    assert!(!source_missing(database.path(), second_id));
     assert!(session_exists(
         &connection,
         &format!("kimi-subagent::{second_id}::agent-0")
@@ -782,4 +787,244 @@ fn declared_child_fifo_is_diagnosed_without_blocking_and_preserves_bundle() {
         child_journal.to_str()
     );
     assert_eq!(bundle_snapshot(&connection, &primary), before);
+}
+
+/// One incremental Kimi scan, reported as the assistant's own stats.
+fn kimi_scan(indexer: &mut SessionIndexer, home: &Path) -> KimiScan {
+    let result = indexer.index_all_incremental(&all_sources(home)).unwrap();
+    let kimi = result
+        .per_source
+        .iter()
+        .find(|source| source.assistant == AiAssistant::KimiCode)
+        .expect("Kimi source result");
+    KimiScan {
+        indexed: kimi.indexed,
+        removed: kimi.removed,
+        errors: kimi.errors,
+        source_state_changes: result.totals.source_state_changes,
+    }
+}
+
+struct KimiScan {
+    indexed: usize,
+    removed: usize,
+    errors: usize,
+    source_state_changes: usize,
+}
+
+fn source_missing(database: &Path, session_id: &str) -> bool {
+    sessions_chronicle::database::load_session(database, session_id)
+        .unwrap()
+        .unwrap()
+        .source
+        .missing
+}
+
+fn missing_detected_at(connection: &rusqlite::Connection, session_id: &str) -> Option<i64> {
+    connection
+        .query_row(
+            "SELECT source_missing_detected_at FROM sessions WHERE id = ?1",
+            [session_id],
+            |row| row.get(0),
+        )
+        .unwrap()
+}
+
+fn bundle_ids() -> [String; 4] {
+    [
+        PRIMARY_ID.to_string(),
+        child_id("agent-0"),
+        child_id("agent-1"),
+        child_id("agent-nested"),
+    ]
+}
+
+#[test]
+fn absent_kimi_bundle_retains_main_and_owned_children() {
+    let home = copied_home();
+    let db = tempfile::NamedTempFile::new().unwrap();
+    let mut indexer = SessionIndexer::new(db.path()).unwrap();
+    indexer.index_kimi_sessions(home.path()).unwrap();
+    let saved = tempfile::tempdir().unwrap();
+
+    fs::rename(primary_dir(home.path()), saved.path().join("bundle")).unwrap();
+    indexer.index_kimi_sessions(home.path()).unwrap();
+
+    for id in bundle_ids() {
+        assert!(source_missing(db.path(), &id), "{id} was not retained");
+    }
+}
+
+#[test]
+fn unchanged_kimi_bundle_scan_marks_nothing_missing() {
+    let home = copied_home();
+    let db = tempfile::NamedTempFile::new().unwrap();
+    let mut indexer = SessionIndexer::new(db.path()).unwrap();
+    indexer.index_kimi_sessions(home.path()).unwrap();
+
+    let stats = kimi_scan(&mut indexer, home.path());
+
+    assert_eq!(stats.source_state_changes, 0);
+    for id in bundle_ids() {
+        assert!(!source_missing(db.path(), &id));
+    }
+}
+
+#[test]
+fn repeated_kimi_absence_keeps_the_first_detection_timestamp() {
+    let home = copied_home();
+    let db = tempfile::NamedTempFile::new().unwrap();
+    let mut indexer = SessionIndexer::new(db.path()).unwrap();
+    indexer.index_kimi_sessions(home.path()).unwrap();
+    let connection = rusqlite::Connection::open(db.path()).unwrap();
+    let saved = tempfile::tempdir().unwrap();
+
+    fs::rename(primary_dir(home.path()), saved.path().join("bundle")).unwrap();
+    let first = kimi_scan(&mut indexer, home.path());
+    let detected = missing_detected_at(&connection, PRIMARY_ID);
+    let second = kimi_scan(&mut indexer, home.path());
+
+    assert_eq!(first.source_state_changes, 4);
+    assert_eq!(second.source_state_changes, 0);
+    assert!(detected.is_some());
+    assert_eq!(missing_detected_at(&connection, PRIMARY_ID), detected);
+}
+
+#[test]
+fn restored_kimi_bundle_reparses_despite_unchanged_dependency_fingerprints() {
+    let home = copied_home();
+    let db = tempfile::NamedTempFile::new().unwrap();
+    let mut indexer = SessionIndexer::new(db.path()).unwrap();
+    indexer.index_kimi_sessions(home.path()).unwrap();
+    let primary = primary_dir(home.path());
+    let saved = tempfile::tempdir().unwrap();
+    let stashed = saved.path().join("bundle");
+
+    // A rename keeps every dependency mtime and size, so only the retained
+    // missing state can force the return to be reindexed.
+    fs::rename(&primary, &stashed).unwrap();
+    kimi_scan(&mut indexer, home.path());
+    assert!(source_missing(db.path(), PRIMARY_ID));
+
+    fs::rename(&stashed, &primary).unwrap();
+    let restored = kimi_scan(&mut indexer, home.path());
+
+    assert_eq!(restored.indexed, 1);
+    assert_eq!(restored.source_state_changes, 4);
+    for id in bundle_ids() {
+        assert!(!source_missing(db.path(), &id));
+    }
+}
+
+#[test]
+fn malformed_kimi_return_keeps_the_retained_bundle_intact() {
+    let home = copied_home();
+    let db = tempfile::NamedTempFile::new().unwrap();
+    let mut indexer = SessionIndexer::new(db.path()).unwrap();
+    indexer.index_kimi_sessions(home.path()).unwrap();
+    let connection = rusqlite::Connection::open(db.path()).unwrap();
+    let primary = primary_dir(home.path());
+    let saved = tempfile::tempdir().unwrap();
+    let stashed = saved.path().join("bundle");
+    let before = bundle_snapshot(&connection, &primary);
+
+    fs::rename(&primary, &stashed).unwrap();
+    kimi_scan(&mut indexer, home.path());
+    fs::rename(&stashed, &primary).unwrap();
+    fs::write(primary.join("state.json"), "not-json").unwrap();
+    let stats = kimi_scan(&mut indexer, home.path());
+
+    assert!(stats.errors > 0);
+    assert_eq!(stats.removed, 0);
+    assert!(source_missing(db.path(), PRIMARY_ID));
+    assert_eq!(bundle_snapshot(&connection, &primary), before);
+}
+
+#[test]
+fn incomplete_kimi_bundle_reports_a_diagnostic_and_retains_its_sessions() {
+    let home = copied_home();
+    let db = tempfile::NamedTempFile::new().unwrap();
+    let mut indexer = SessionIndexer::new(db.path()).unwrap();
+    indexer.index_kimi_sessions(home.path()).unwrap();
+
+    fs::remove_file(primary_dir(home.path()).join("state.json")).unwrap();
+    let stats = kimi_scan(&mut indexer, home.path());
+
+    assert!(stats.errors > 0);
+    assert_eq!(stats.removed, 0);
+    for id in bundle_ids() {
+        assert!(!source_missing(db.path(), &id));
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn unreadable_kimi_workspace_never_marks_its_bundles_missing() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let home = copied_home();
+    let db = tempfile::NamedTempFile::new().unwrap();
+    let mut indexer = SessionIndexer::new(db.path()).unwrap();
+    indexer.index_kimi_sessions(home.path()).unwrap();
+    let workspace = home.path().join("sessions/wd_primary_aaaaaaaaaaaa");
+
+    fs::set_permissions(&workspace, fs::Permissions::from_mode(0o000)).unwrap();
+    let stats = kimi_scan(&mut indexer, home.path());
+    fs::set_permissions(&workspace, fs::Permissions::from_mode(0o755)).unwrap();
+
+    assert!(stats.errors > 0);
+    assert_eq!(stats.source_state_changes, 0);
+    for id in bundle_ids() {
+        assert!(!source_missing(db.path(), &id));
+    }
+}
+
+#[test]
+fn absent_kimi_workspace_retains_its_bundles() {
+    let home = copied_home();
+    let db = tempfile::NamedTempFile::new().unwrap();
+    let mut indexer = SessionIndexer::new(db.path()).unwrap();
+    indexer.index_kimi_sessions(home.path()).unwrap();
+    let workspace = home.path().join("sessions/wd_primary_aaaaaaaaaaaa");
+    let saved = tempfile::tempdir().unwrap();
+
+    fs::rename(&workspace, saved.path().join("workspace")).unwrap();
+    let stats = kimi_scan(&mut indexer, home.path());
+
+    assert_eq!(stats.removed, 0);
+    for id in bundle_ids() {
+        assert!(source_missing(db.path(), &id));
+    }
+}
+
+#[test]
+fn a_colliding_bundle_id_in_another_home_never_marks_or_deletes_across_homes() {
+    let first = copied_home();
+    let second = tempfile::tempdir().unwrap();
+    copy_fixture_home(second.path());
+    let db = tempfile::NamedTempFile::new().unwrap();
+    let mut indexer = SessionIndexer::new(db.path()).unwrap();
+
+    // Both homes carry the same native bundle id; the second wins the row.
+    indexer.index_kimi_sessions(first.path()).unwrap();
+    indexer.index_kimi_sessions(second.path()).unwrap();
+    let owner: String = rusqlite::Connection::open(db.path())
+        .unwrap()
+        .query_row(
+            "SELECT file_path FROM sessions WHERE id = ?1",
+            [PRIMARY_ID],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(Some(owner.as_str()), primary_dir(second.path()).to_str());
+
+    // The first home loses its bundle entirely: it never owned the row, so it
+    // can neither mark it missing nor delete the children it does not own.
+    fs::remove_dir_all(primary_dir(first.path())).unwrap();
+    let stats = kimi_scan(&mut indexer, first.path());
+
+    assert_eq!(stats.removed, 0);
+    for id in bundle_ids() {
+        assert!(!source_missing(db.path(), &id));
+    }
 }
