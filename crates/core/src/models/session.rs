@@ -37,6 +37,48 @@ impl SessionEndingStatus {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SourceKind {
+    TranscriptFile,
+    SessionDirectory,
+    SessionBundle,
+    DatabaseRecord,
+}
+
+impl SourceKind {
+    pub fn to_storage(self) -> &'static str {
+        match self {
+            Self::TranscriptFile => "transcript_file",
+            Self::SessionDirectory => "session_directory",
+            Self::SessionBundle => "session_bundle",
+            Self::DatabaseRecord => "database_record",
+        }
+    }
+
+    pub fn from_storage(value: &str) -> Option<Self> {
+        match value {
+            "transcript_file" => Some(Self::TranscriptFile),
+            "session_directory" => Some(Self::SessionDirectory),
+            "session_bundle" => Some(Self::SessionBundle),
+            "database_record" => Some(Self::DatabaseRecord),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct SessionSourceState {
+    pub missing: bool,
+    pub missing_detected_at: Option<DateTime<Utc>>,
+    pub last_seen_at: Option<DateTime<Utc>>,
+    pub kind: Option<SourceKind>,
+    pub mtime_ns: Option<i64>,
+    pub size: Option<i64>,
+    pub scope: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Session {
     pub id: String,
@@ -66,6 +108,8 @@ pub struct Session {
     pub command_count: usize,
     #[serde(default)]
     pub ending_status: SessionEndingStatus,
+    #[serde(default)]
+    pub source: SessionSourceState,
 }
 
 impl Session {
@@ -175,7 +219,7 @@ impl AiAssistant {
 
 #[cfg(test)]
 mod tests {
-    use super::{AiAssistant, Session, SessionEndingStatus};
+    use super::{AiAssistant, Session, SessionEndingStatus, SourceKind};
     use chrono::Utc;
     use std::ffi::OsString;
 
@@ -223,11 +267,28 @@ mod tests {
             read_count: 0,
             command_count: 0,
             ending_status: SessionEndingStatus::Unknown,
+            source: Default::default(),
         };
         assert!(session.can_resume());
         session.id = "kimi-subagent::session_kimi::agent-0".to_string();
         session.parent_session_id = Some("session_kimi".to_string());
         session.is_subagent = true;
         assert!(!session.can_resume());
+    }
+
+    #[test]
+    fn source_kind_storage_values_are_stable_and_unknown_values_are_absent() {
+        assert_eq!(SourceKind::TranscriptFile.to_storage(), "transcript_file");
+        assert_eq!(
+            SourceKind::SessionDirectory.to_storage(),
+            "session_directory"
+        );
+        assert_eq!(SourceKind::SessionBundle.to_storage(), "session_bundle");
+        assert_eq!(SourceKind::DatabaseRecord.to_storage(), "database_record");
+        assert_eq!(
+            SourceKind::from_storage("database_record"),
+            Some(SourceKind::DatabaseRecord)
+        );
+        assert_eq!(SourceKind::from_storage("future_kind"), None);
     }
 }

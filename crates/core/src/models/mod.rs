@@ -20,7 +20,7 @@ pub use message::{Message, Role};
 pub use message_preview::MessagePreview;
 pub use project_filter::{ProjectFilter, ProjectInfo};
 pub use reasoning::{ReasoningAttachment, ReasoningPreview};
-pub use session::{AiAssistant, Session, SessionEndingStatus};
+pub use session::{AiAssistant, Session, SessionEndingStatus, SessionSourceState, SourceKind};
 pub use session_query::SessionQuery;
 pub use sort_order::SortOrder;
 pub use subagent::Subagent;

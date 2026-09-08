@@ -12,8 +12,8 @@ use std::time::Duration;
 
 use crate::models::{
     AiAssistant, DateCounts, DateFilter, MessagePreview, ProjectFilter, ProjectInfo,
-    ReasoningAttachment, ReasoningPreview, Role, Session, SortOrder, Subagent, ToolCall,
-    ToolCallStatus, TranscriptItem, TranscriptItemKind,
+    ReasoningAttachment, ReasoningPreview, Role, Session, SessionSourceState, SortOrder,
+    SourceKind, Subagent, ToolCall, ToolCallStatus, TranscriptItem, TranscriptItemKind,
 };
 
 pub use indexer::{IndexingStats, SessionIndexer};
@@ -24,7 +24,9 @@ const SESSION_SELECT_COLUMNS: &str =
         last_updated, pinned_at, first_prompt, parent_session_id, is_subagent,
         input_tokens, output_tokens, cache_read_tokens,
         cache_write_tokens, reasoning_tokens,
-        edit_count, read_count, command_count, ending_status";
+        edit_count, read_count, command_count, ending_status,
+        source_missing, source_missing_detected_at, source_last_seen_at, source_kind,
+        source_mtime_ns, source_size, source_scope";
 
 pub fn open_connection(db_path: &Path) -> Result<Connection> {
     let conn = Connection::open(db_path).context("Failed to open database")?;
@@ -75,6 +77,9 @@ fn session_from_row(row: &Row) -> rusqlite::Result<Session> {
     let pinned_at: Option<i64> = row.get("pinned_at")?;
     let message_count: i64 = row.get("message_count")?;
     let is_subagent_int: i64 = row.get("is_subagent").unwrap_or(0);
+    let missing_at: Option<i64> = row.get("source_missing_detected_at").unwrap_or(None);
+    let seen_at: Option<i64> = row.get("source_last_seen_at").unwrap_or(None);
+    let kind: Option<String> = row.get("source_kind").unwrap_or(None);
 
     let input_tokens: Option<i64> = row.get("input_tokens").unwrap_or(None);
     let output_tokens: Option<i64> = row.get("output_tokens").unwrap_or(None);
@@ -122,6 +127,15 @@ fn session_from_row(row: &Row) -> rusqlite::Result<Session> {
             &row.get::<_, String>("ending_status")
                 .unwrap_or_else(|_| "unknown".to_string()),
         ),
+        source: SessionSourceState {
+            missing: row.get("source_missing").unwrap_or(false),
+            missing_detected_at: missing_at.and_then(|value| Utc.timestamp_opt(value, 0).single()),
+            last_seen_at: seen_at.and_then(|value| Utc.timestamp_opt(value, 0).single()),
+            kind: kind.as_deref().and_then(SourceKind::from_storage),
+            mtime_ns: row.get("source_mtime_ns").unwrap_or(None),
+            size: row.get("source_size").unwrap_or(None),
+            scope: row.get("source_scope").unwrap_or(None),
+        },
     })
 }
 
@@ -472,6 +486,8 @@ fn search_sessions_with_query(
                         s.input_tokens, s.output_tokens, s.cache_read_tokens,
                         s.cache_write_tokens, s.reasoning_tokens,
                         s.edit_count, s.read_count, s.command_count, s.ending_status,
+                        s.source_missing, s.source_missing_detected_at, s.source_last_seen_at,
+                        s.source_kind, s.source_mtime_ns, s.source_size, s.source_scope,
                         bm25(messages_fts) AS rank
                  FROM messages_fts
                  JOIN messages m ON m.id = messages_fts.rowid
@@ -948,7 +964,9 @@ pub fn load_session(db_path: &Path, session_id: &str) -> Result<Option<Session>>
                 last_updated, pinned_at, first_prompt, parent_session_id, is_subagent,
                 input_tokens, output_tokens, cache_read_tokens,
                 cache_write_tokens, reasoning_tokens,
-                edit_count, read_count, command_count, ending_status
+                edit_count, read_count, command_count, ending_status,
+                source_missing, source_missing_detected_at, source_last_seen_at, source_kind,
+                source_mtime_ns, source_size, source_scope
          FROM sessions
          WHERE id = ?1",
     )?;

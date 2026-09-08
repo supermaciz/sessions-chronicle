@@ -334,6 +334,7 @@ impl MistralVibeParser {
                 read_count: 0,
                 command_count: 0,
                 ending_status: crate::models::SessionEndingStatus::Unknown,
+                source: Default::default(),
             },
             messages,
             tool_calls,

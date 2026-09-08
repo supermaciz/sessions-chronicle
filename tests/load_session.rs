@@ -4,7 +4,12 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use sessions_chronicle::database::load_session;
 use sessions_chronicle::database::schema::initialize_database;
-use sessions_chronicle::models::Role;
+use sessions_chronicle::database::{
+    load_session_by_id_for_filter, load_sessions_for_filter, search_sessions_for_filter,
+};
+use sessions_chronicle::models::{
+    AiAssistant, DateFilter, ProjectFilter, Role, SortOrder, SourceKind,
+};
 
 struct TempDatabase {
     path: PathBuf,
@@ -196,6 +201,87 @@ fn load_session_maps_pinned_at_to_utc_datetime() {
         .expect("Session should exist");
 
     assert_eq!(session.pinned_at.unwrap().timestamp(), 1_717_171_717);
+}
+
+#[test]
+fn session_queries_return_persisted_source_evidence() {
+    let db = TempDatabase::new();
+    db.connection
+        .execute(
+            "INSERT INTO sessions (
+                id, tool, start_time, message_count, file_path, last_updated,
+                source_missing, source_missing_detected_at, source_last_seen_at,
+                source_kind, source_mtime_ns, source_size, source_scope
+             ) VALUES (
+                'evidence-session', 'claude_code', 1, 1, '/tmp/evidence.jsonl', 2,
+                1, 1_700_000_000, 1_700_000_100,
+                'transcript_file', 123_456_789, 456, '/sessions/claude'
+             )",
+            [],
+        )
+        .expect("Failed to insert source evidence");
+    db.connection
+        .execute(
+            "INSERT INTO messages (session_id, message_index, role, content, timestamp)
+             VALUES ('evidence-session', 0, 'user', 'source evidence query', 1)",
+            [],
+        )
+        .unwrap();
+
+    let assert_evidence = |session: sessions_chronicle::models::Session| {
+        assert!(session.source.missing);
+        assert_eq!(
+            session.source.missing_detected_at.unwrap().timestamp(),
+            1_700_000_000
+        );
+        assert_eq!(
+            session.source.last_seen_at.unwrap().timestamp(),
+            1_700_000_100
+        );
+        assert_eq!(session.source.kind, Some(SourceKind::TranscriptFile));
+        assert_eq!(session.source.mtime_ns, Some(123_456_789));
+        assert_eq!(session.source.size, Some(456));
+        assert_eq!(session.source.scope.as_deref(), Some("/sessions/claude"));
+    };
+
+    assert_evidence(load_session(&db.path, "evidence-session").unwrap().unwrap());
+    assert_evidence(
+        load_sessions_for_filter(
+            &db.path,
+            AiAssistant::ALL,
+            &ProjectFilter::AllSessions,
+            &DateFilter::AnyTime,
+            SortOrder::default(),
+        )
+        .unwrap()
+        .pop()
+        .unwrap(),
+    );
+    assert_evidence(
+        search_sessions_for_filter(
+            &db.path,
+            AiAssistant::ALL,
+            &ProjectFilter::AllSessions,
+            "source",
+            &DateFilter::AnyTime,
+            None,
+        )
+        .unwrap()
+        .pop()
+        .unwrap(),
+    );
+    assert_evidence(
+        load_session_by_id_for_filter(
+            &db.path,
+            AiAssistant::ALL,
+            &ProjectFilter::AllSessions,
+            "evidence-session",
+            &DateFilter::AnyTime,
+        )
+        .unwrap()
+        .pop()
+        .unwrap(),
+    );
 }
 
 #[test]

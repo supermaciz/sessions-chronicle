@@ -358,6 +358,7 @@ impl OpenCodeParser {
             read_count: 0,
             command_count: 0,
             ending_status: crate::models::SessionEndingStatus::Unknown,
+            source: Default::default(),
         };
 
         Ok(ParsedSession {

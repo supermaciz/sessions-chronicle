@@ -1224,6 +1224,7 @@ impl KimiCodeParser {
             read_count: 0,
             command_count: 0,
             ending_status: crate::models::SessionEndingStatus::Unknown,
+            source: Default::default(),
         };
 
         struct ParsedChild {
@@ -1301,6 +1302,7 @@ impl KimiCodeParser {
                 read_count: 0,
                 command_count: 0,
                 ending_status: crate::models::SessionEndingStatus::Unknown,
+                source: Default::default(),
             };
             children.push(ParsedChild {
                 agent,
@@ -2362,5 +2364,6 @@ fn placeholder_session(session_id: &str, timestamp: DateTime<Utc>) -> Session {
         read_count: 0,
         command_count: 0,
         ending_status: crate::models::SessionEndingStatus::Unknown,
+        source: Default::default(),
     }
 }

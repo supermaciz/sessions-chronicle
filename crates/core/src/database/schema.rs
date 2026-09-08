@@ -2,7 +2,7 @@ use anyhow::Result;
 use rusqlite::Connection;
 
 #[cfg(test)]
-const CURRENT_DB_VERSION: i64 = 17;
+const CURRENT_DB_VERSION: i64 = 18;
 
 fn column_exists(conn: &Connection, table_name: &str, column_name: &str) -> Result<bool> {
     Ok(conn.query_row(
@@ -57,6 +57,8 @@ fn table_exists(conn: &Connection, name: &str) -> Result<bool> {
 ///        populated
 ///   17 – clear file_fingerprints so Claude Code sessions whose only assistant
 ///        events are synthetic API errors are re-parsed and pruned
+///   18 – sessions gains source-evidence fields without invalidating existing
+///        fingerprints
 pub fn initialize_database(conn: &Connection) -> Result<()> {
     let version: i64 = conn.query_row("PRAGMA user_version", [], |row| row.get(0))?;
 
@@ -110,6 +112,9 @@ pub fn initialize_database(conn: &Connection) -> Result<()> {
     }
     if version < 17 {
         apply_v17_migration(conn)?;
+    }
+    if version < 18 {
+        apply_v18_migration(conn)?;
     }
 
     Ok(())
@@ -684,6 +689,33 @@ fn apply_v17_migration(conn: &Connection) -> Result<()> {
     }
 
     conn.execute_batch("PRAGMA user_version = 17")?;
+    Ok(())
+}
+
+/// Migrate from v17 to v18.
+///
+/// Records source evidence for later reconciliation. Existing fingerprints are
+/// deliberately retained: schema-only metadata does not require re-indexing.
+fn apply_v18_migration(conn: &Connection) -> Result<()> {
+    for (name, definition) in [
+        ("source_missing", "INTEGER NOT NULL DEFAULT 0"),
+        ("source_missing_detected_at", "INTEGER"),
+        ("source_last_seen_at", "INTEGER"),
+        ("source_kind", "TEXT"),
+        ("source_mtime_ns", "INTEGER"),
+        ("source_size", "INTEGER"),
+        ("source_scope", "TEXT"),
+    ] {
+        if !column_exists(conn, "sessions", name)? {
+            conn.execute_batch(&format!(
+                "ALTER TABLE sessions ADD COLUMN {name} {definition}"
+            ))?;
+        }
+    }
+    conn.execute_batch(
+        "CREATE INDEX IF NOT EXISTS idx_sessions_source_scope ON sessions(source_scope);
+         PRAGMA user_version = 18;",
+    )?;
     Ok(())
 }
 
@@ -1813,6 +1845,131 @@ mod tests {
             })
             .unwrap();
         assert_eq!(fingerprint_count, 0);
+    }
+
+    #[test]
+    fn v18_preserves_fingerprints_and_is_idempotent() {
+        let conn = Connection::open_in_memory().unwrap();
+        initialize_database(&conn).unwrap();
+        conn.execute(
+            "INSERT INTO file_fingerprints VALUES ('/observed.jsonl', 123, 456)",
+            [],
+        )
+        .unwrap();
+        conn.pragma_update(None, "user_version", 17).unwrap();
+
+        initialize_database(&conn).unwrap();
+        initialize_database(&conn).unwrap();
+
+        let count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM file_fingerprints", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(count, 1);
+        assert!(column_exists(&conn, "sessions", "source_missing").unwrap());
+        assert!(column_exists(&conn, "sessions", "source_scope").unwrap());
+        conn.execute(
+            "INSERT INTO sessions (id, tool, start_time, message_count, file_path, last_updated)
+             VALUES ('v18-default', 'claude_code', 1, 0, '/default.jsonl', 1)",
+            [],
+        )
+        .unwrap();
+        let missing_default: i64 = conn
+            .query_row(
+                "SELECT source_missing FROM sessions WHERE id = 'v18-default'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(missing_default, 0);
+        let version: i64 = conn
+            .query_row("PRAGMA user_version", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(version, 18);
+    }
+
+    #[test]
+    fn v18_rebuilds_a_v17_shape_without_losing_related_data() {
+        let conn = Connection::open_in_memory().unwrap();
+        initialize_database(&conn).unwrap();
+        conn.execute_batch(
+            "INSERT INTO sessions (id, tool, start_time, message_count, file_path, last_updated, pinned_at)
+             VALUES ('seeded', 'claude_code', 1, 1, '/seeded.jsonl', 2, 3);
+             INSERT INTO transcript_items (session_id, item_index, kind) VALUES ('seeded', 0, 'message');
+             INSERT INTO file_fingerprints VALUES ('/seeded.jsonl', 4, 5);
+             DROP INDEX idx_sessions_source_scope;",
+        )
+        .unwrap();
+        for column in [
+            "source_missing",
+            "source_missing_detected_at",
+            "source_last_seen_at",
+            "source_kind",
+            "source_mtime_ns",
+            "source_size",
+            "source_scope",
+        ] {
+            conn.execute_batch(&format!("ALTER TABLE sessions DROP COLUMN {column}"))
+                .unwrap();
+        }
+        conn.execute_batch(
+            "ALTER TABLE sessions ADD COLUMN source_missing INTEGER NOT NULL DEFAULT 0;",
+        )
+        .unwrap();
+        conn.pragma_update(None, "user_version", 17).unwrap();
+
+        apply_v18_migration(&conn).unwrap();
+        apply_v18_migration(&conn).unwrap();
+
+        assert!(index_exists(&conn, "idx_sessions_source_scope"));
+        for column in [
+            "source_missing",
+            "source_missing_detected_at",
+            "source_last_seen_at",
+            "source_kind",
+            "source_mtime_ns",
+            "source_size",
+            "source_scope",
+        ] {
+            assert!(column_exists(&conn, "sessions", column).unwrap());
+        }
+        assert_eq!(
+            conn.query_row(
+                "SELECT COUNT(*) FROM sessions WHERE id = 'seeded'",
+                [],
+                |row| row.get::<_, i64>(0)
+            )
+            .unwrap(),
+            1
+        );
+        assert_eq!(
+            conn.query_row(
+                "SELECT COUNT(*) FROM sessions WHERE id = 'seeded' AND pinned_at = 3",
+                [],
+                |row| row.get::<_, i64>(0)
+            )
+            .unwrap(),
+            1
+        );
+        assert_eq!(
+            conn.query_row(
+                "SELECT COUNT(*) FROM transcript_items WHERE session_id = 'seeded'",
+                [],
+                |row| row.get::<_, i64>(0)
+            )
+            .unwrap(),
+            1
+        );
+        assert_eq!(
+            conn.query_row(
+                "SELECT COUNT(*) FROM file_fingerprints WHERE file_path = '/seeded.jsonl'",
+                [],
+                |row| row.get::<_, i64>(0)
+            )
+            .unwrap(),
+            1
+        );
     }
 
     #[test]

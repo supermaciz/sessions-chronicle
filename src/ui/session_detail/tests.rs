@@ -33,6 +33,7 @@ fn build_test_session(
         read_count,
         command_count,
         ending_status: crate::models::SessionEndingStatus::Clean,
+        source: Default::default(),
     }
 }
 

@@ -496,6 +496,7 @@ mod tests {
             read_count,
             command_count,
             ending_status: crate::models::SessionEndingStatus::Clean,
+            source: Default::default(),
         }
     }
 

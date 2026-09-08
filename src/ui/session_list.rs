@@ -1605,6 +1605,7 @@ mod tests {
             read_count: 0,
             command_count: 0,
             ending_status: crate::models::SessionEndingStatus::Unknown,
+            source: Default::default(),
         };
 
         {
@@ -1670,6 +1671,7 @@ mod tests {
                     read_count: 0,
                     command_count: 0,
                     ending_status: crate::models::SessionEndingStatus::Unknown,
+                    source: Default::default(),
                 },
             });
         }
@@ -2738,6 +2740,7 @@ mod tests {
             read_count: 0,
             command_count: 0,
             ending_status: crate::models::SessionEndingStatus::Unknown,
+            source: Default::default(),
         };
 
         {
@@ -2813,6 +2816,7 @@ mod tests {
             read_count: 0,
             command_count: 0,
             ending_status: crate::models::SessionEndingStatus::Unknown,
+            source: Default::default(),
         }
     }
 
