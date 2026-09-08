@@ -126,6 +126,12 @@ struct OpencodeIndexContext<'a> {
     errors_detail: &'a mut VecDeque<IndexingError>,
 }
 
+#[derive(Default)]
+struct OpenCodeDependencyInspection {
+    needs_reindex: bool,
+    diagnostics: Vec<(Option<PathBuf>, String)>,
+}
+
 fn push_indexing_error(
     errors_detail: &mut VecDeque<IndexingError>,
     assistant: AiAssistant,
@@ -1261,8 +1267,6 @@ impl SessionIndexer {
                 for entry in &enumeration.entries {
                     scan.discovered_ids.insert(entry.id.clone());
                     context.sqlite_owner_ids.insert(entry.id.clone());
-                    scan.observations
-                        .push(Self::opencode_database_observation(&entry.id, db_path));
                 }
                 let parse_contents = !context.incremental
                     || self.source_needs_reindex(db_path)?
@@ -1282,6 +1286,12 @@ impl SessionIndexer {
                         self.upsert_opencode_sqlite_fingerprints(db_path)?;
                     }
                 } else {
+                    scan.observations.extend(
+                        enumeration
+                            .entries
+                            .iter()
+                            .map(|entry| Self::opencode_database_observation(&entry.id, db_path)),
+                    );
                     context.stats.skipped += enumeration.entries.len();
                 }
             }
@@ -1429,10 +1439,34 @@ impl SessionIndexer {
         };
 
         let fingerprint = Self::current_fingerprint(path)?;
+        let dependencies = match self.opencode_json_dependency_inspection(json_backend, &session_id)
+        {
+            Ok(dependencies) => dependencies,
+            Err(error) => OpenCodeDependencyInspection {
+                needs_reindex: true,
+                diagnostics: vec![(
+                    Some(path.to_path_buf()),
+                    format!("Failed to enumerate OpenCode dependencies: {error}"),
+                )],
+            },
+        };
+        if !dependencies.diagnostics.is_empty() {
+            for (diagnostic_path, error) in dependencies.diagnostics {
+                push_indexing_error(
+                    context.errors_detail,
+                    AiAssistant::OpenCode,
+                    diagnostic_path.map(|path| path.display().to_string()),
+                    error,
+                );
+                context.stats.errors += 1;
+            }
+            scan.protected_locators.insert(path.to_path_buf());
+            return Ok(());
+        }
         if context.incremental
             && !self.source_needs_reindex(path)?
             && !self.should_reindex(path)?
-            && !self.opencode_json_dependencies_need_reindex(json_backend, &session_id)?
+            && !dependencies.needs_reindex
         {
             scan.observations.push(SourceObservation {
                 assistant: AiAssistant::OpenCode,
@@ -1991,11 +2025,11 @@ impl SessionIndexer {
             .collect()
     }
 
-    fn opencode_json_dependencies_need_reindex(
+    fn opencode_json_dependency_inspection(
         &self,
         json_backend: &JsonBackend,
         session_id: &str,
-    ) -> Result<bool> {
+    ) -> Result<OpenCodeDependencyInspection> {
         let current = self.opencode_json_dependency_fingerprints(json_backend, session_id)?;
         let root = json_backend.storage_root_path();
         let message_prefix = root.join("message").join(session_id).display().to_string();
@@ -2041,11 +2075,31 @@ impl SessionIndexer {
         for (path, fingerprint) in current {
             match self.get_fingerprint(&path)? {
                 Some(saved) if saved == fingerprint => {}
-                _ => return Ok(true),
+                _ => {
+                    return Ok(OpenCodeDependencyInspection {
+                        needs_reindex: true,
+                        diagnostics: Vec::new(),
+                    });
+                }
             }
             stored_paths.remove(&path);
         }
-        Ok(!stored_paths.is_empty())
+        let diagnostics = stored_paths
+            .into_iter()
+            .map(|path| {
+                (
+                    Some(path.clone()),
+                    format!(
+                        "Previously indexed OpenCode dependency disappeared: {}",
+                        path.display()
+                    ),
+                )
+            })
+            .collect();
+        Ok(OpenCodeDependencyInspection {
+            needs_reindex: false,
+            diagnostics,
+        })
     }
 
     fn upsert_opencode_json_dependency_fingerprints(

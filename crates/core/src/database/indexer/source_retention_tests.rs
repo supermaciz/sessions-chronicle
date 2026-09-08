@@ -2,6 +2,134 @@ use std::collections::VecDeque;
 
 use super::SessionIndexer;
 
+fn write_opencode_json_session(root: &std::path::Path, id: &str) -> std::path::PathBuf {
+    let metadata = root
+        .join("session")
+        .join("project")
+        .join(format!("{id}.json"));
+    let message = root.join("message").join(id).join("message-1.json");
+    let part = root.join("part").join("message-1").join("part-1.json");
+    std::fs::create_dir_all(metadata.parent().unwrap()).unwrap();
+    std::fs::create_dir_all(message.parent().unwrap()).unwrap();
+    std::fs::create_dir_all(part.parent().unwrap()).unwrap();
+    std::fs::write(
+        &metadata,
+        format!(r#"{{"id":"{id}","time":{{"created":1700000000000,"updated":1700000000000}}}}"#),
+    )
+    .unwrap();
+    std::fs::write(
+        message,
+        r#"{"id":"message-1","role":"user","time":{"created":1700000000000}}"#,
+    )
+    .unwrap();
+    std::fs::write(
+        &part,
+        r#"{"id":"part-1","type":"text","order":1,"text":"retained transcript"}"#,
+    )
+    .unwrap();
+    part
+}
+
+#[test]
+fn opencode_missing_former_part_file_is_diagnostic_and_retains_content() {
+    // A former part file is an indexed dependency.  Removing it while the
+    // session metadata stays unchanged must be an incomplete read, not a
+    // successful but shorter replacement transcript.
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().join("storage");
+    let index_db = temp.path().join("index.db");
+    let part = write_opencode_json_session(&root, "json-retained");
+    let mut indexer = SessionIndexer::new(&index_db).unwrap();
+    indexer
+        .index_opencode_sessions_incremental(&root, &[])
+        .unwrap();
+    let before = crate::database::load_session(&index_db, "json-retained")
+        .unwrap()
+        .unwrap();
+    std::fs::remove_file(part).unwrap();
+
+    let result = indexer
+        .index_opencode_sessions_incremental(&root, &[])
+        .unwrap();
+    let retained = crate::database::load_session(&index_db, "json-retained")
+        .unwrap()
+        .unwrap();
+    assert!(result.errors > 0);
+    assert!(!retained.source.missing);
+    assert_eq!(retained.message_count, before.message_count);
+    assert_eq!(retained.source.mtime_ns, before.source.mtime_ns);
+}
+
+#[test]
+fn opencode_missing_message_directory_is_diagnostic_and_retains_content() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().join("storage");
+    let index_db = temp.path().join("index.db");
+    write_opencode_json_session(&root, "missing-message-dir");
+    let mut indexer = SessionIndexer::new(&index_db).unwrap();
+    indexer
+        .index_opencode_sessions_incremental(&root, &[])
+        .unwrap();
+    let before = crate::database::load_session(&index_db, "missing-message-dir")
+        .unwrap()
+        .unwrap();
+    std::fs::remove_dir_all(root.join("message").join("missing-message-dir")).unwrap();
+
+    let result = indexer
+        .index_opencode_sessions_incremental(&root, &[])
+        .unwrap();
+    let retained = crate::database::load_session(&index_db, "missing-message-dir")
+        .unwrap()
+        .unwrap();
+    assert!(result.errors > 0);
+    assert!(!retained.source.missing);
+    assert_eq!(retained.message_count, before.message_count);
+    assert_eq!(retained.source.mtime_ns, before.source.mtime_ns);
+}
+
+#[test]
+fn opencode_completed_json_walk_marks_missing_metadata_session_retained() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().join("storage");
+    let index_db = temp.path().join("index.db");
+    write_opencode_json_session(&root, "removed-metadata");
+    let metadata = root
+        .join("session")
+        .join("project")
+        .join("removed-metadata.json");
+    let mut indexer = SessionIndexer::new(&index_db).unwrap();
+    indexer.index_opencode_sessions(&root, &[]).unwrap();
+    std::fs::remove_file(metadata).unwrap();
+
+    indexer.index_opencode_sessions(&root, &[]).unwrap();
+    let retained = crate::database::load_session(&index_db, "removed-metadata")
+        .unwrap()
+        .unwrap();
+    assert!(retained.source.missing);
+    assert_eq!(retained.source.scope, None);
+}
+
+#[test]
+fn opencode_malformed_metadata_makes_json_enumeration_incomplete() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().join("storage");
+    let index_db = temp.path().join("index.db");
+    write_opencode_json_session(&root, "bad-metadata");
+    let metadata = root
+        .join("session")
+        .join("project")
+        .join("bad-metadata.json");
+    let mut indexer = SessionIndexer::new(&index_db).unwrap();
+    indexer.index_opencode_sessions(&root, &[]).unwrap();
+    std::fs::write(metadata, "not json").unwrap();
+
+    indexer.index_opencode_sessions(&root, &[]).unwrap();
+    let retained = crate::database::load_session(&index_db, "bad-metadata")
+        .unwrap()
+        .unwrap();
+    assert!(!retained.source.missing);
+}
+
 #[test]
 fn opencode_sqlite_completed_enumeration_marks_only_removed_record_missing() {
     // This catches the old global stale-prune behavior: a completed SQLite
@@ -69,6 +197,178 @@ fn opencode_unavailable_database_does_not_reconcile_another_database_scope() {
         .unwrap();
     assert!(!a.source.missing);
     assert!(!b.source.missing);
+}
+
+#[test]
+fn opencode_database_deletion_reconciles_only_the_matching_database_scope() {
+    let temp = tempfile::tempdir().unwrap();
+    let source_a = temp.path().join("a.db");
+    let source_b = temp.path().join("b.db");
+    let index_db = temp.path().join("index.db");
+    let json_root = temp.path().join("storage");
+    std::fs::create_dir_all(&json_root).unwrap();
+    let db_a = super::tests::create_opencode_sqlite_db(&source_a);
+    super::tests::insert_opencode_session(&db_a, "kept-a", 1_700_000_000_000);
+    let db_b = super::tests::create_opencode_sqlite_db(&source_b);
+    super::tests::insert_opencode_session(&db_b, "removed-b", 1_700_000_100_000);
+    let mut indexer = SessionIndexer::new(&index_db).unwrap();
+    indexer
+        .index_opencode_sessions(&json_root, &[source_a.clone(), source_b.clone()])
+        .unwrap();
+    db_b.execute("DELETE FROM session WHERE id = 'removed-b'", [])
+        .unwrap();
+
+    indexer
+        .index_opencode_sessions(&json_root, &[source_a, source_b])
+        .unwrap();
+    assert!(
+        !crate::database::load_session(&index_db, "kept-a")
+            .unwrap()
+            .unwrap()
+            .source
+            .missing
+    );
+    assert!(
+        crate::database::load_session(&index_db, "removed-b")
+            .unwrap()
+            .unwrap()
+            .source
+            .missing
+    );
+}
+
+#[test]
+fn opencode_database_enumeration_backfills_legacy_scope_when_content_is_skipped() {
+    let temp = tempfile::tempdir().unwrap();
+    let source_db = temp.path().join("source.db");
+    let index_db = temp.path().join("index.db");
+    let json_root = temp.path().join("storage");
+    std::fs::create_dir_all(&json_root).unwrap();
+    let source = super::tests::create_opencode_sqlite_db(&source_db);
+    super::tests::insert_opencode_session(&source, "legacy-scope", 1_700_000_000_000);
+    let mut indexer = SessionIndexer::new(&index_db).unwrap();
+    indexer
+        .index_opencode_sessions_incremental(&json_root, std::slice::from_ref(&source_db))
+        .unwrap();
+    indexer
+        .db
+        .execute(
+            "UPDATE sessions SET source_scope = NULL WHERE id = 'legacy-scope'",
+            [],
+        )
+        .unwrap();
+
+    let result = indexer
+        .index_opencode_sessions_incremental(&json_root, std::slice::from_ref(&source_db))
+        .unwrap();
+    let restored = crate::database::load_session(&index_db, "legacy-scope")
+        .unwrap()
+        .unwrap();
+    assert!(result.skipped > 0);
+    assert_eq!(restored.source.scope.as_deref(), source_db.to_str());
+}
+
+#[test]
+fn opencode_sqlite_identity_query_failure_keeps_prior_source_state() {
+    let temp = tempfile::tempdir().unwrap();
+    let source_db = temp.path().join("source.db");
+    let index_db = temp.path().join("index.db");
+    let json_root = temp.path().join("storage");
+    std::fs::create_dir_all(&json_root).unwrap();
+    let source = super::tests::create_opencode_sqlite_db(&source_db);
+    super::tests::insert_opencode_session(&source, "query-failure", 1_700_000_000_000);
+    let mut indexer = SessionIndexer::new(&index_db).unwrap();
+    indexer
+        .index_opencode_sessions(&json_root, std::slice::from_ref(&source_db))
+        .unwrap();
+    source.execute("DROP TABLE session", []).unwrap();
+
+    indexer
+        .index_opencode_sessions(&json_root, std::slice::from_ref(&source_db))
+        .unwrap();
+    assert!(
+        !crate::database::load_session(&index_db, "query-failure")
+            .unwrap()
+            .unwrap()
+            .source
+            .missing
+    );
+}
+
+#[test]
+fn opencode_sqlite_undecodable_identity_keeps_database_scope_incomplete() {
+    let temp = tempfile::tempdir().unwrap();
+    let source_db = temp.path().join("source.db");
+    let index_db = temp.path().join("index.db");
+    let json_root = temp.path().join("storage");
+    std::fs::create_dir_all(&json_root).unwrap();
+    let source = super::tests::create_opencode_sqlite_db(&source_db);
+    super::tests::insert_opencode_session(&source, "decode-failure", 1_700_000_000_000);
+    let mut indexer = SessionIndexer::new(&index_db).unwrap();
+    indexer
+        .index_opencode_sessions(&json_root, std::slice::from_ref(&source_db))
+        .unwrap();
+    source
+        .execute(
+            "INSERT INTO session (id, time_created, time_updated) VALUES (?1, ?2, ?3)",
+            rusqlite::params![vec![0xff_u8], 1_700_000_000_000_i64, 1_700_000_000_000_i64],
+        )
+        .unwrap();
+
+    indexer
+        .index_opencode_sessions(&json_root, std::slice::from_ref(&source_db))
+        .unwrap();
+    assert!(
+        !crate::database::load_session(&index_db, "decode-failure")
+            .unwrap()
+            .unwrap()
+            .source
+            .missing
+    );
+}
+
+#[test]
+fn opencode_recreated_sqlite_record_with_parse_failure_stays_missing_and_retained() {
+    let temp = tempfile::tempdir().unwrap();
+    let source_db = temp.path().join("source.db");
+    let index_db = temp.path().join("index.db");
+    let json_root = temp.path().join("storage");
+    std::fs::create_dir_all(&json_root).unwrap();
+    let source = super::tests::create_opencode_sqlite_db(&source_db);
+    super::tests::insert_opencode_session(&source, "recreated", 1_700_000_000_000);
+    let mut indexer = SessionIndexer::new(&index_db).unwrap();
+    indexer
+        .index_opencode_sessions(&json_root, std::slice::from_ref(&source_db))
+        .unwrap();
+    let before = crate::database::load_session(&index_db, "recreated")
+        .unwrap()
+        .unwrap();
+    source
+        .execute("DELETE FROM session WHERE id = 'recreated'", [])
+        .unwrap();
+    indexer
+        .index_opencode_sessions(&json_root, std::slice::from_ref(&source_db))
+        .unwrap();
+    source
+        .execute("DELETE FROM message WHERE session_id = 'recreated'", [])
+        .unwrap();
+    source.execute("DELETE FROM part", []).unwrap();
+    super::tests::insert_opencode_session(&source, "recreated", 1_700_000_100_000);
+    source
+        .execute(
+            "UPDATE message SET data = 'not json' WHERE session_id = 'recreated'",
+            [],
+        )
+        .unwrap();
+
+    indexer
+        .index_opencode_sessions(&json_root, std::slice::from_ref(&source_db))
+        .unwrap();
+    let retained = crate::database::load_session(&index_db, "recreated")
+        .unwrap()
+        .unwrap();
+    assert!(retained.source.missing);
+    assert_eq!(retained.message_count, before.message_count);
 }
 
 fn assert_missing_lifecycle(
