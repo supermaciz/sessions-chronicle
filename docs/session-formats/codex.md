@@ -3,11 +3,17 @@
 Format reference for Codex rollout session files.
 See [SESSION_FORMAT_ANALYSIS.md](../SESSION_FORMAT_ANALYSIS.md) for cross-assistant comparison tables.
 
-**Last checked: 2026-09-06.** Persistence policy checked at `rust-v0.153.4`;
-protocol, response-item types, recorder, and compression inspected at upstream
-commit `ac192cd7937b0d73edc6dffe009940ae53782dd4`. Version introduction dates and
-population-wide prevalence of paginated history were not established. Local
-sampling and the reconstruction evidence are detailed below.
+**Last checked: 2026-10-01.** Protocol, response-item and turn-item types,
+recorder, and compression compared between upstream commits
+`ac192cd7937b0d73edc6dffe009940ae53782dd4` and
+`83cf88306e806b409f873b63544de3f1224f0fc3`. Protocol additions and persistence
+policy also checked at stable `rust-v0.159.3` (released 2026-09-30).
+The persistence policy is unchanged between the two inspected commits and
+matches 0.159.3. Shared-history reconstruction evidence below remains pinned
+to the September commit; its resolver files were not rechecked in this pass.
+Version introduction dates and population-wide prevalence of paginated history
+were not established. No new local session capture or reproduction test was run.
+Local sampling below dates from 2026-09-06.
 
 ---
 
@@ -105,6 +111,14 @@ Additional `session_meta` fields now present in upstream types include
 `agent_role`, `agent_path`, `base_instructions`, `dynamic_tools`,
 `memory_mode`, and `multi_agent_version`.
 
+**Confirmed additions since the September reference:** the
+[0.159.3 protocol](https://github.com/openai/codex/blob/rust-v0.159.3/codex-rs/protocol/src/protocol.rs)
+also defines optional `creator_user_id`, `creator_account_id`, and
+`runtime_workspace_roots`. The account identifier records the account selected
+at thread creation and is not updated on resume. Workspace roots distinguish
+an absent (unknown) value from an empty list (no roots). Sessions Chronicle
+currently ignores these fields; they do not replace the thread `id` or `cwd`.
+
 For spawned child sessions, current rollouts can carry the parent identifier in
 both `session_meta.payload.parent_thread_id` and the structured
 `source.subagent.thread_spawn.parent_thread_id`. Sessions Chronicle currently
@@ -115,7 +129,7 @@ child-session linkage fallback.
 
 **Confirmed upstream:** `SessionMeta.history_mode` distinguishes `legacy` and
 `paginated`; deserialization defaults to `legacy` when the field is absent.
-In the [0.153.4 persistence policy](https://github.com/openai/codex/blob/rust-v0.153.4/codex-rs/rollout/src/policy.rs),
+In the [0.159.3 persistence policy](https://github.com/openai/codex/blob/rust-v0.159.3/codex-rs/rollout/src/policy.rs),
 paginated history persists `event_msg.payload.type == "item_completed"` carrying
 typed `TurnItem` values. Legacy `user_message` and `agent_message` events are
 persisted only in `legacy` mode. Some `item_completed` events are also retained
@@ -302,6 +316,24 @@ the paginated representation.
 }
 ```
 
+**Confirmed additions since the September reference:** legacy `user_message`
+events can now carry `file_ids`, `file_id_details`, and `image_order`, alongside
+the existing inline `images`. `image_order` contains `inline` / `file` values
+that preserve the original ordering across the two reference lists. When it
+is absent, upstream consumers retain inline-then-file ordering. File IDs are
+opaque references, not local image paths. These fields are defined in the
+[0.159.3 protocol](https://github.com/openai/codex/blob/rust-v0.159.3/codex-rs/protocol/src/protocol.rs).
+The local parser reads only `message` from these user events, so image-reference
+coverage remains incomplete; no fresh multimodal fixture was captured.
+
+The same protocol comparison confirms optional `root_turn_id` on
+`turn_started`, `turn_id` on MCP begin/end events (defaulting for older records),
+and optional `mcp_app_ui` on MCP events. The latter describes a UI resource and
+display preference; it is also available on the typed MCP turn item. These
+additions do not establish that every protocol event is persisted: the
+[persistence policy](https://github.com/openai/codex/blob/rust-v0.159.3/codex-rs/rollout/src/policy.rs)
+still excludes MCP begin events and persists MCP end events only in legacy mode.
+
 ### Turn Context (model captured per turn)
 
 ```json
@@ -320,7 +352,7 @@ the paginated representation.
 
 ### Session Configured Event (can include model + provider)
 
-Historical/protocol shape supported by the parser. The inspected 0.153.4
+Historical/protocol shape supported by the parser. The inspected 0.159.3
 persistence policy does not persist `session_configured`; use `turn_context`
 and `session_meta` for durable model/provider metadata.
 
@@ -776,6 +808,10 @@ into memory.
 
 ## Primary Sources
 
+- [Codex stable 0.159.3 release](https://github.com/openai/codex/releases/tag/rust-v0.159.3)
+- [Codex persistence policy, reverified at 0.159.3](https://github.com/openai/codex/blob/rust-v0.159.3/codex-rs/rollout/src/policy.rs)
+- [Codex protocol additions, verified at 0.159.3](https://github.com/openai/codex/blob/rust-v0.159.3/codex-rs/protocol/src/protocol.rs)
+- [Codex typed turn items, October inspected commit](https://github.com/openai/codex/blob/83cf88306e806b409f873b63544de3f1224f0fc3/codex-rs/protocol/src/items.rs)
 - [Codex persistence policy, verified at 0.153.4](https://github.com/openai/codex/blob/rust-v0.153.4/codex-rs/rollout/src/policy.rs)
 - [Codex protocol `SessionMeta`, `HistoryPosition`, `EventMsg`, inspected commit](https://github.com/openai/codex/blob/ac192cd7937b0d73edc6dffe009940ae53782dd4/codex-rs/protocol/src/protocol.rs)
 - [Codex response-item types, inspected commit](https://github.com/openai/codex/blob/ac192cd7937b0d73edc6dffe009940ae53782dd4/codex-rs/protocol/src/models.rs)
