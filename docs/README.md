@@ -19,6 +19,7 @@ This directory contains project documentation, architecture notes, and implement
    - Implementation status, open questions, next steps
    - Per-assistant format details: [session-formats/](session-formats/)
      - [claude-code.md](session-formats/claude-code.md), [codex.md](session-formats/codex.md), [opencode.md](session-formats/opencode.md), [mistral-vibe.md](session-formats/mistral-vibe.md), [kimi-code.md](session-formats/kimi-code.md)
+     - Exploratory: [ChatGPT desktop storage and imports](session-formats/chatgpt-desktop.md) (not a supported session source)
 
 3. **[PARSER_DESIGN.md](PARSER_DESIGN.md)** 🦀
    - Trait-based parser architecture and factory pattern

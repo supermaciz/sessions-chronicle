@@ -15,6 +15,72 @@ Version introduction dates and population-wide prevalence of paginated history
 were not established. No new local session capture or reproduction test was run.
 Local sampling below dates from 2026-09-06.
 
+**Desktop/import watch: 2026-10-04; documented 2026-10-11.** The focused
+check below does not refresh the protocol comparison above. No desktop import
+capture or end-to-end compatibility test was performed.
+
+## ChatGPT Desktop Linux and Imported Conversations
+
+See the dedicated [ChatGPT desktop watch](chatgpt-desktop.md) for native
+ChatGPT/Work storage unknowns and the capture checklist.
+
+### Confirmed Product Boundaries
+
+The official [Linux app documentation](https://learn.chatgpt.com/docs/linux/linux-app)
+describes a preview desktop application with Codex and local-project access.
+This product availability does not establish a new transcript format.
+
+The [import documentation](https://learn.chatgpt.com/docs/import) describes
+desktop imports from Claude Code, Claude Cowork, and Cursor, including automatic
+updates of imported work. Codex CLI imports from Claude Code and Cursor.
+Configuration migration and conversation migration are separate concerns.
+
+The [projects and chats documentation](https://learn.chatgpt.com/docs/projects)
+also describes adding an existing ChatGPT chat to a Codex chat, while explicitly
+keeping Work conversation history separate from Codex history. Consequently,
+not every conversation visible in the desktop application can be assumed to
+exist as a local Codex rollout.
+
+### Confirmed External-Agent Import Persistence
+
+The inspected upstream
+[session importer](https://github.com/openai/codex/blob/de3721a7be07054c8c2a41102b5a501f34155361/codex-rs/app-server/src/external_agent_migration/session_importer.rs)
+creates Codex threads from converted external-session rollout items:
+
+- New imports explicitly use `ThreadHistoryMode::Legacy` and `history_base: None`.
+- Items pass through `into_persisted_rollout_items` before being appended through
+  the thread store.
+- Completed-import records associate `source_path`, `source_content_sha256`,
+  and `imported_thread_id`, with optional title and connector information.
+- The importer also supports appending to previously imported sessions.
+
+This is evidence for the external-agent import path in upstream source, not
+proof that every released Linux desktop build uses it. Its introduction version
+was not established. It does not establish the persistence mechanism for adding
+a native ChatGPT conversation to Codex.
+
+### Likely Local Impact
+
+Legacy persistence makes these imports candidates for the existing Codex
+parser, but compatibility remains unverified without a captured import.
+Sessions Chronicle does not consult the import provenance ledger. An original
+session and its imported Codex counterpart may therefore appear as separate
+sessions; this is a likely duplication risk, not a reproduced defect.
+
+### Unknowns and Next Evidence
+
+The native ChatGPT/Work storage location and schema on Linux remain unknown
+from the checked sources. Do not infer a supported ChatGPT source from desktop
+integration alone. Conversion fidelity for tool calls, attachments, subagents,
+and per-record timestamps also remains unverified.
+
+The smallest justified follow-up is to compare anonymized captures of a native
+Codex chat, an external-agent import, and a ChatGPT chat added to Codex. Check
+message completeness, timestamps, tool call linkage, provenance, and repeated
+imports before adding fixtures and compatibility tests. No parser change is
+justified by this watch alone. Confidence is high for the inspected importer
+behavior and medium for desktop coverage; compatibility/provenance risk is medium.
+
 ---
 
 ## Storage & File Naming
