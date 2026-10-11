@@ -4,9 +4,26 @@ Exploratory reference for the official ChatGPT desktop application on Linux
 and its relationship to Codex session storage. ChatGPT desktop is not currently
 a supported session source in Sessions Chronicle.
 
-**Evidence checked: 2026-10-04. Documented: 2026-10-11.** This page records the
-previous manual watch; it is not a new upstream verification. No native ChatGPT
-storage capture or desktop import compatibility test was performed.
+**Evidence checked: 2026-10-04 (documentation) and 2026-10-11 (local
+installation). Documented: 2026-10-11.** The 2026-10-11 pass re-read the Linux
+application page and inspected the installed package (`chatgpt-26.1007.21434`, RPM)
+and `~/.codex` read-only. No ChatGPT IndexedDB or Local Storage content was
+opened, and no desktop import compatibility test was run.
+
+## Local Installation (observed 2026-10-11)
+
+- The Linux application is an Electron shell: binary `/usr/bin/chatgpt`, files
+  under `/usr/lib/chatgpt`, profile `~/.config/Codex` (Chromium data such as
+  cookies, `IndexedDB`, `Local Storage`), cache `~/.cache/Codex`.
+- Codex conversations created or imported in the application are ordinary rollouts
+  in `~/.codex/sessions/` with `originator: "Codex Desktop"` and `source: "vscode"`.
+  A daemon runs from `~/.codex/app-server-daemon`.
+- A rollout with `originator: "codex_work_desktop"` is also stored there. The one
+  inspected was an ordinary coding session, not a ChatGPT chat; see
+  [Paginated Item Shapes](codex.md#paginated-item-shapes-captured-2026-10-11).
+- The official page lists `.rpm` (Fedora 43/44), `.deb`, and an Arch script;
+  Wayland is experimental. It does not state where conversations are stored or
+  whether the application syncs with the Codex CLI.
 
 ## ChatGPT Desktop Linux
 
@@ -41,8 +58,9 @@ could obscure provenance or overstate Sessions Chronicle's coverage.
 
 ### Unknowns
 
-- Native ChatGPT and Work storage paths, filenames, schema, and local/cloud split
-  on Linux.
+- Native ChatGPT chat storage paths, filenames, schema, and local/cloud split
+  on Linux. Whether `~/.config/Codex/Default/IndexedDB` holds transcripts or only
+  interface state is not established.
 - Whether adding ChatGPT context to Codex copies messages, attaches a reference,
   creates a summary, or uses another representation.
 - The mapping between documented features and the installed desktop build.
@@ -85,6 +103,11 @@ The public Codex external-agent importer uses legacy Codex persistence in the
 source inspected during the watch; see the [Codex reference](codex.md#confirmed-external-agent-import-persistence)
 for its evidence and limits. That finding does not establish the native ChatGPT
 storage format or the ChatGPT-to-Codex context-transfer mechanism.
+
+The 2026-10-11 local findings (imports mostly `paginated` and rejected by the
+current parser, imported thread IDs unrelated to source session IDs) are in the
+[Codex reference](codex.md#legacy-to-paginated-migration-and-local-impact).
+The Codex `paginated` gap, not a ChatGPT parser, is the actionable item.
 
 **No native ChatGPT parser change justified yet.** Keep this source exploratory
 until concrete persistence evidence establishes a readable format.

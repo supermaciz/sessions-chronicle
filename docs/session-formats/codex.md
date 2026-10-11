@@ -16,8 +16,15 @@ were not established. No new local session capture or reproduction test was run.
 Local sampling below dates from 2026-09-06.
 
 **Desktop/import watch: 2026-10-04; documented 2026-10-11.** The focused
-check below does not refresh the protocol comparison above. No desktop import
-capture or end-to-end compatibility test was performed.
+check below does not refresh the protocol comparison above.
+
+**Local desktop/import verification: 2026-10-11** (Codex CLI 0.159.3 installed;
+latest upstream stable seen: 0.162.1). A read-only scan of `~/.codex` and the
+upstream migration source showed that most local rollouts are now `paginated`
+(see [Legacy-to-Paginated Migration](#legacy-to-paginated-migration-and-local-impact)).
+This supersedes the 2026-09-06 local sampling in
+[Local Evidence and Remaining Work](#local-evidence-and-remaining-work) as a
+statement of what is on disk today. The protocol comparison was not refreshed.
 
 ## ChatGPT Desktop Linux and Imported Conversations
 
@@ -61,11 +68,35 @@ a native ChatGPT conversation to Codex.
 
 ### Likely Local Impact
 
-Legacy persistence makes these imports candidates for the existing Codex
-parser, but compatibility remains unverified without a captured import.
-Sessions Chronicle does not consult the import provenance ledger. An original
-session and its imported Codex counterpart may therefore appear as separate
-sessions; this is a likely duplication risk, not a reproduced defect.
+New imports are written as `legacy`, but locally most imported rollouts are
+`paginated` (older importer versions, or the startup migration), and the current
+parser rejects those; see the ledger table below. Sessions Chronicle does not
+consult the import provenance ledger. An original session and a still-`legacy`
+imported counterpart appear as separate sessions (5 locally with identical first
+prompts). Missing sessions are the larger risk than duplicates.
+
+### Local Import Ledger (observed 2026-10-11)
+
+`~/.codex/external_agent_session_imports.json` has `records[]` with
+`source_path`, `content_sha256`, `imported_thread_id`, `imported_at`,
+`source_modified_at`, `connector_names`, and `title`, plus
+`detected_connector_records`. The importer always creates a new thread ID
+(`ThreadId::new()`); the imported ID is unrelated to the source session ID, so
+the ledger is the only provenance link.
+
+The local ledger held 41 records, all from Claude Code transcripts. Counts below
+are file counts from one machine, not prevalence estimates:
+
+| Imported rollout | Claude Code original | Files | Effect in Sessions Chronicle (by code inspection) |
+|------------------|----------------------|-------|---------------------------------------------------|
+| `paginated`, no `user_message` | gone | 16 | Rejected (`NoUserMessages`); the session is missing |
+| `paginated`, no `user_message` | present | 14 | Copy rejected; original visible; no duplicate |
+| `legacy`, has `user_message` | present | 11 | Copy indexed; 5 share the original's first prompt (duplicate), 6 differ (cause not established) |
+
+The 11 `legacy` imports come from `0.162.0-alpha` and are expected to be rewritten
+to `paginated` by the startup migration below, which would also remove the
+duplicate. That expectation is not verified. Why 16 originals are gone was not
+established.
 
 ### Unknowns and Next Evidence
 
@@ -80,6 +111,72 @@ message completeness, timestamps, tool call linkage, provenance, and repeated
 imports before adding fixtures and compatibility tests. No parser change is
 justified by this watch alone. Confidence is high for the inspected importer
 behavior and medium for desktop coverage; compatibility/provenance risk is medium.
+
+### Legacy-to-Paginated Migration and Local Impact
+
+**Confirmed upstream:** Codex runs a startup migration (`legacy_to_paginated_v1`)
+that rewrites legacy rollouts as `paginated`, tracking progress with a
+creation-ordered cursor in SQLite and a `.pending` journal under
+`~/.codex/rollout-migrations/`. Sources:
+[`startup.rs`](https://github.com/openai/codex/blob/main/codex-rs/thread-store/src/local/rollout_migration/startup.rs)
+(commits `4bb7ee347`, 2026-08-07; `465eafacb`, 2026-08-25) and
+[`publish.rs`](https://github.com/openai/codex/blob/main/codex-rs/thread-store/src/local/rollout_migration/publish.rs).
+The release that first shipped it was not established. `rollback.rs` was not read,
+so reversibility is unknown.
+
+**Observed 2026-10-11:** nearly all local rollouts are `paginated` with
+`item_completed` and no `event_msg.user_message`, including very old ones (for
+example a `0.58.0` file from 2025-11-14). Only 11 files are `legacy` (all
+`0.162.0-alpha` desktop imports). This contradicts the earlier sampling (9 of 348
+paginated), which predates the migration.
+
+**Confirmed local gap:** `crates/core/src/parsers/codex.rs` rejects a rollout
+without `user_message` (`NoUserMessages`) and does not read `item_completed`. By
+code inspection, almost every local Codex rollout is therefore unreadable by the
+current parser. The local `sessions.db` files were last updated 2026-09-09,
+before the migration, so no index run confirmed the count; the rule was
+reproduced by script, not by running the parser.
+
+### Paginated Item Shapes (captured 2026-10-11)
+
+Anonymized structural capture of a `codex_work_desktop` rollout (`0.160.0`,
+`source: vscode`, `history_mode: paginated`, 174 lines). It was an ordinary
+coding session stored in `~/.codex/sessions/`, not a ChatGPT chat. One capture
+is a sample, not a contract.
+
+`item_completed` carried 41 items:
+
+| `item.type` | Count | Notes |
+|-------------|-------|-------|
+| `CommandExecution` | 19 | `command[]`, `cwd`, `status`, `stdout`, `stderr` |
+| `AgentMessage` | 9 | `content[].text`, `phase` (for example `commentary`) |
+| `UserMessage` | 4 | `content[].text`, `text_elements[]` |
+| `Reasoning` | 4 | `summary_text[]`, `raw_content[]` |
+| `Extension` | 3 | `kind: web.search`, `query`, `results[]` |
+| `FileChange` | 2 | `changes{path -> {type, unified_diff}}`, `status` |
+
+Each wrapper has `thread_id`, `turn_id`, `started_at_ms`, `completed_at_ms`.
+Every line also carries an `ordinal`. User prompts exist only as `UserMessage`
+items.
+
+Other observed shapes:
+
+- `session_meta.payload` adds `session_id`, `creator_user_id`,
+  `creator_account_id`, `runtime_workspace_roots`, `thread_source`,
+  `base_instructions.provenance`, `context_window.window_id`, and `git`.
+- New top-level types: `token_usage_record` (22; `usage` and `turn_token_usage`)
+  and `world_state` (2). New `event_msg` type: `thread_settings_applied` (5).
+- `token_count` events were still present (22). `token_usage_record` is not
+  handled by the parser; whether it carries data absent from `token_count` was not
+  compared.
+- Tool calls also appear as `response_item` `function_call` (3) and
+  `custom_tool_call` (15) with matching outputs. The parser already handles both;
+  `CommandExecution` items would be a second representation, and whether they
+  duplicate those calls was not checked.
+
+**Smallest justified parser change:** read `UserMessage` and `AgentMessage`
+`item_completed` items so these rollouts are indexed. Deduplicating against tool
+calls and imported originals needs separate evidence.
 
 ---
 
@@ -332,7 +429,8 @@ must not reuse model-context truncation as its display-history rule.
 
 #### Local Evidence and Remaining Work
 
-**Observed on 2026-09-06:** a read-only scan of `~/.codex/sessions/` and
+**Observed on 2026-09-06 (superseded for current disk state by the 2026-10-11
+scan above):** a read-only scan of `~/.codex/sessions/` and
 `~/.codex/archived_sessions/` found 348 plain rollouts and no `.jsonl.zst` files.
 Initial metadata identified 9 paginated files (5 from `0.147.0`, 4 from `0.153.4`),
 53 legacy files, and 286 files without `history_mode`. A subsequent scan of all
