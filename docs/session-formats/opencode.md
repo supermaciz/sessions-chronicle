@@ -3,10 +3,14 @@
 Format reference for OpenCode session files.
 See [SESSION_FORMAT_ANALYSIS.md](../SESSION_FORMAT_ANALYSIS.md) for cross-assistant comparison tables.
 
-> **⚠️ Breaking change (≥ 2026-02-14):** OpenCode migrated to SQLite.
-> New sessions are written to SQLite databases in `~/.local/share/opencode/`.
-> The default filename is `opencode.db`; non-default channels use `opencode-<channel>.db`.
-> The legacy JSON file tree is retained but no longer the write path.
+> **⚠️ Breaking change (OpenCode v2, confirmed 2026-10-14):** OpenCode's primary
+> session storage moved from the V1 `session` / `message` / `part` tables to
+> `session_v2` / `session_message`. In v2, parts are embedded in each message's
+> `content` array instead of living in a separate `part` table, and a tool part
+> identifies its tool with `name` (not `tool`). V1 tables are retained on
+> migrated databases as a legacy read model but are no longer written.
+> Earlier breaking change (≥ 2026-02-14): the JSON file tree was replaced by
+> SQLite.
 
 ---
 
@@ -14,14 +18,377 @@ See [SESSION_FORMAT_ANALYSIS.md](../SESSION_FORMAT_ANALYSIS.md) for cross-assist
 
 | Format | Path |
 |--------|------|
-| **New (≥ 2026-02-14)** | `~/.local/share/opencode/opencode.db` (default/latest/beta channels, SQLite WAL mode); `~/.local/share/opencode/opencode-<channel>.db` for other channels |
+| **Current (OpenCode v2, confirmed 2026-10-14)** | `~/.local/share/opencode/opencode.db` (default/latest/beta channels, SQLite WAL mode); `~/.local/share/opencode/opencode-<channel>.db` for other channels. Primary tables: `session_v2`, `session_message`. |
+| **SQLite V1 (≥ 2026-02-14, legacy read model under v2)** | Same database files. Tables: `session`, `message`, `part`. Last written by OpenCode v1; retained after the v2 migration. |
 | **Legacy (pre-migration)** | `~/.local/share/opencode/storage/` (JSON files, retained post-migration) |
 
-**Legacy file naming:** `ses_*.json` — e.g. `ses_66a71b6f4ffeq796jvvOpJQ04m.json`
+**Legacy JSON file naming:** `ses_*.json` — e.g. `ses_66a71b6f4ffeq796jvvOpJQ04m.json`
 
 ---
 
-## New Format — SQLite (`opencode.db` / `opencode-<channel>.db`)
+## Current Format — SQLite V2 (`session_v2` / `session_message`)
+
+Confirmed on 2026-10-14 from upstream `dev`
+(`packages/core/src/session/sql.ts`, `packages/schema/src/session-message.ts`,
+`packages/schema/src/session.ts`) and from a local OpenCode v2.0.29 database.
+
+### Schema
+
+```sql
+-- Sessions
+CREATE TABLE session_v2 (
+  id TEXT PRIMARY KEY,              -- "ses_" prefix
+  project_id TEXT NOT NULL REFERENCES project(id) ON DELETE CASCADE,
+  workspace_id TEXT,
+  parent_id TEXT,                   -- set for child/subagent sessions
+  fork_session_id TEXT,             -- session this one was forked from
+  fork_boundary TEXT,               -- JSON: Session.ForkBoundary
+  slug TEXT NOT NULL,
+  directory TEXT NOT NULL,
+  path TEXT,
+  title TEXT,                       -- nullable in v2 (was NOT NULL in v1)
+  version TEXT NOT NULL,
+  share_url TEXT,
+  summary_additions INTEGER,
+  summary_deletions INTEGER,
+  summary_files INTEGER,
+  summary_diffs TEXT,               -- JSON: FileDiff[]
+  metadata TEXT,                    -- JSON: Record<string, unknown>
+  cost REAL NOT NULL DEFAULT 0,     -- session-level rollup
+  tokens_input INTEGER NOT NULL DEFAULT 0,
+  tokens_output INTEGER NOT NULL DEFAULT 0,
+  tokens_reasoning INTEGER NOT NULL DEFAULT 0,
+  tokens_cache_read INTEGER NOT NULL DEFAULT 0,
+  tokens_cache_write INTEGER NOT NULL DEFAULT 0,
+  revert TEXT,                      -- JSON: Session.Revert | RevertV1
+  permission TEXT,                  -- JSON: Permission.Ruleset
+  agent TEXT,                       -- agent name (e.g. "build", "plan")
+  model TEXT,                       -- JSON: {id, providerID, variant?}
+  time_created INTEGER NOT NULL,    -- Unix ms
+  time_updated INTEGER NOT NULL,
+  time_compacting INTEGER,
+  time_archived INTEGER,
+  time_suspended INTEGER,           -- execution claim timestamp (historical name)
+  resume_attempts INTEGER NOT NULL DEFAULT 0,
+  time_idle INTEGER,
+  time_viewed INTEGER,
+  idle_outcome TEXT                 -- "succeeded" | "failed" | "interrupted"
+);
+
+-- Messages (data holds the type-specific SessionMessage payload)
+CREATE TABLE session_message (
+  id TEXT PRIMARY KEY,              -- "msg_" prefix
+  session_id TEXT NOT NULL REFERENCES session_v2(id) ON DELETE CASCADE,
+  type TEXT NOT NULL,               -- see "Message types" below
+  seq INTEGER NOT NULL,             -- monotonic per session (unique with session_id)
+  time_created INTEGER NOT NULL,
+  time_updated INTEGER NOT NULL,
+  data TEXT NOT NULL                -- JSON payload; assistant content is embedded here
+);
+```
+
+V2 companion tables in the same database: `session_pending`, `session_inbox`,
+`instruction_state`, `instruction_blob`, `instruction_entry`, `project`,
+`project_directory`, `worktree`, `permission`, `session_share`, `todo`,
+`credential`, `kv`, `event`, `event_sequence`, `account`, `account_state`,
+`control_account` (`__drizzle_migrations` / `migration` track applied schema
+migrations).
+
+> The `session_input` and `session_context_epoch` tables documented by the
+> 2026-09-06 watch pass no longer exist upstream: queued input moved to
+> `session_pending` / `session_inbox`, and context epochs to `instruction_state`.
+
+### Session Object Fields
+
+```typescript
+{
+  id: string           // "ses_" prefix
+  parentID?: string    // child/subagent sessions
+  fork?: { sessionID: string; boundary: ForkBoundary }
+  projectID: string    // git first-commit hash, or "global"
+  agent?: string
+  model?: { id: string; providerID: string; variant?: string }
+  cost: number
+  tokens: TokenUsage
+  outcome?: "succeeded" | "failed" | "interrupted"   // set once a run reaches terminal
+  time: { created, updated, idle?, viewed?, archived? }  // Unix ms
+  title?: string       // optional in v2
+  location: Location.Ref
+  subpath?: string
+  metadata?: object
+  permissions?: PermissionRuleset   // evaluated after agent rules; last match wins
+  revert?: Revert
+}
+```
+
+> Note: the `Session.Info` type uses `location` / `subpath`, while the persisted
+> `session_v2` table stores `directory` / `path` / `workspace_id`.
+
+### Message types
+
+`session_message.type` is a tagged union:
+
+| `type` | Key `data` fields |
+|--------|-------------------|
+| `user` | `text`, `files`, `agents`, `skills` |
+| `assistant` | `agent`, `model`, `content[]`, `snapshot?`, `finish?`, `rawFinish?`, `providerState?`, `cost?`, `tokens?`, `error?`, `retry?` |
+| `synthetic` | `text`, `description?`, `metadata?` (used for subagent completion) |
+| `system` | `text`, `description?` |
+| `skill` | `skill`, `name`, `text` |
+| `shell` | `shellID`, `command`, `status`, `exit?`, `output?` |
+| `agent-switched` | `agent`, `previous?` |
+| `model-switched` | `model`, `previous?` |
+| `location-switched` | `location`, `projectID?`, `subpath?`, `previous?` |
+| `compaction` | `status`, `reason`, `summary`, `recent`; model/providerState/providerContext when completed, `error` when failed |
+| `idle` | `outcome`, `error?` |
+
+Every message also carries `id`, `metadata?`, and `time.created`.
+
+Locally observed types in active use: `user`, `assistant`, `system`,
+`synthetic`, `compaction`.
+
+### Assistant `content[]` (the V2 equivalent of parts)
+
+Assistant messages embed their parts inline. `AssistantContent` has only three
+variants:
+
+| Content `type` | Key fields |
+|----------------|------------|
+| `text` | `text`, `state?` |
+| `reasoning` | `text`, `state?`, `time?` |
+| `tool` | `id` (e.g. `call_…`), `name`, `executed?`, `providerState?`, `providerResultState?`, `state`, `time` |
+
+The tool name is the `name` field — **not** the V1 `tool` field. The V1
+`part` table's wider type set (`step-start`, `step-finish`, `snapshot`,
+`patch`, `file`, `agent`, `retry`, `compaction`, `subtask`) is not represented as
+V2 `content` items; step usage/snapshots are carried on the assistant message
+itself (`tokens`, `cost`, `snapshot`).
+
+### Tool Part — Lifecycle State Machine
+
+```
+streaming → running → completed
+                    → error
+```
+
+| State | Fields |
+|-------|--------|
+| `streaming` | `input` (raw string) |
+| `running` | `input`, `metadata` |
+| `completed` | `input`, `content`, optional `metadata` |
+| `error` | `input`, `error`, optional `content`, optional `metadata` |
+
+V2 replaced V1's `pending` state with `streaming`, and a completed tool result is
+stored in `state.content` (V1 used `state.output`). Locally observed v2 statuses
+are `running`, `completed`, and `error`.
+
+Example:
+
+```json
+{
+  "type": "tool",
+  "id": "call_00_h4aJzXEelUD3DiPH9wAJ3388",
+  "name": "shell",
+  "executed": false,
+  "state": {
+    "status": "completed",
+    "input": { "command": "ls -la" },
+    "content": [{ "type": "text", "text": "..." }],
+    "metadata": {}
+  },
+  "time": { "created": 1776000000000, "completed": 1776000010000 }
+}
+```
+
+### Task Tool — Subagent Delegation
+
+`task` remains a concrete tool name (locally observed ~990 times under v2), but
+in V2 it is an `AssistantContent` tool item with `name == "task"` rather than a
+V1 `part` row.
+
+**Primary marker (v2):**
+
+```json
+{
+  "type": "tool",
+  "id": "call_xxx",
+  "name": "task",
+  "state": {
+    "status": "completed",
+    "input": {
+      "description": "Explore parser layout",
+      "prompt": "Find all parser files",
+      "subagent_type": "explore",
+      "task_id": "ses_existing_child"
+    },
+    "metadata": { "sessionId": "ses_child123" },
+    "content": [{ "type": "text", "text": "<task_result>…</task_result>" }]
+  }
+}
+```
+
+**Observed semantics:**
+
+- Detect delegated subagent work inside an assistant message by scanning
+  `$.content[]` for `type == "tool"` and `name == "task"`.
+- `$.state.input.description` is the short task title.
+- `$.state.input.prompt` is the task prompt sent to the subagent.
+- `$.state.input.subagent_type` identifies the requested OpenCode agent type.
+- `$.state.input.task_id` is optional and requests resuming an existing child session.
+- `$.state.metadata.sessionId` is the child session ID produced or resumed by the task tool.
+- The child session is also present in `session_v2` with `parent_id` pointing to
+  the parent session.
+- The completed result text moved from V1 `$.state.output` to `$.state.content`
+  (V2 `content` array).
+
+**Secondary marker — subagent completion message:**
+
+Upstream also emits a `synthetic` message when a subagent finishes, carrying a
+deterministic child link in its metadata:
+
+```json
+{
+  "type": "synthetic",
+  "text": "<subagent sessionID=\"ses_child123\" state=\"completed\" description=\"Explore parser layout\">\n…\n</subagent>",
+  "metadata": {
+    "source": "subagent",
+    "childID": "ses_child123",
+    "agent": "explore",
+    "state": "completed"
+  }
+}
+```
+
+This `metadata.source == "subagent"` message (`packages/core/src/session/subagent-completion.ts`)
+is the V2 analogue of the V1 `tool == "task"` child-session link.
+
+Do not collapse this with `part.type == "subtask"` from the V1 format. `subtask`
+was a distinct V1 part schema with `prompt`, `description`, `agent`, optional
+`model`, and optional `command`; it has no direct V2 `content` equivalent.
+
+### Skill Invocation Marker
+
+`skill` remains a concrete tool name (locally observed ~2409 times under v2); in
+V2 it is an `AssistantContent` tool item with `name == "skill"`.
+
+**Primary marker (v2):**
+
+```json
+{
+  "type": "tool",
+  "id": "call_yyy",
+  "name": "skill",
+  "state": {
+    "status": "completed",
+    "input": { "name": "brainstorming" },
+    "metadata": {
+      "name": "brainstorming",
+      "dir": "/home/user/.config/opencode/skills/superpowers/brainstorming"
+    }
+  }
+}
+```
+
+**Observed semantics:**
+
+- Detect skill loading by scanning assistant `$.content[]` for `type == "tool"`
+  and `name == "skill"`.
+- Extract the skill name from `$.state.metadata.name`, falling back to
+  `$.state.input.name`.
+- `$.state.metadata.dir` identifies the loaded skill directory.
+- The injected skill Markdown also appears as a `skills[]` entry on the `user`
+  message (or inline in the skill content); treat it as payload for display, not
+  as the proof that a skill was invoked.
+- One assistant reply can load multiple skills, so grouping should not assume
+  exactly one skill per user message.
+
+### Useful SQLite Queries
+
+Open the database read-only:
+
+```bash
+sqlite3 'file:~/.local/share/opencode/opencode.db?mode=ro'
+```
+
+For non-default channels, replace `opencode.db` with `opencode-<channel>.db`.
+
+Find sessions containing at least one tool with `state.status == "error"`:
+
+```sql
+SELECT
+  s.id,
+  s.title,
+  s.directory,
+  COUNT(*) AS error_tools,
+  datetime(MAX(m.time_created) / 1000, 'unixepoch') AS last_error_utc
+FROM session_message m
+JOIN session_v2 s ON s.id = m.session_id,
+     json_each(m.data, '$.content') c
+WHERE m.type = 'assistant'
+  AND json_extract(c.value, '$.type') = 'tool'
+  AND json_extract(c.value, '$.state.status') = 'error'
+GROUP BY s.id, s.title, s.directory
+ORDER BY MAX(m.time_created) DESC;
+```
+
+Find recent skill invocations:
+
+```sql
+SELECT
+  m.session_id,
+  m.id AS message_id,
+  json_extract(c.value, '$.name') AS tool_name,
+  json_extract(c.value, '$.state.metadata.name') AS skill_name,
+  datetime(m.time_created / 1000, 'unixepoch') AS created_utc
+FROM session_message m, json_each(m.data, '$.content') c
+WHERE m.type = 'assistant'
+  AND json_extract(c.value, '$.type') = 'tool'
+  AND lower(json_extract(c.value, '$.name')) = 'skill'
+ORDER BY m.time_created DESC
+LIMIT 50;
+```
+
+Find recent task-tool subagent invocations:
+
+```sql
+SELECT
+  m.session_id AS parent_session_id,
+  json_extract(c.value, '$.state.metadata.sessionId') AS child_session_id,
+  json_extract(c.value, '$.state.status') AS status,
+  json_extract(c.value, '$.state.input.subagent_type') AS subagent_type,
+  json_extract(c.value, '$.state.input.description') AS description,
+  datetime(m.time_created / 1000, 'unixepoch') AS created_utc
+FROM session_message m, json_each(m.data, '$.content') c
+WHERE m.type = 'assistant'
+  AND json_extract(c.value, '$.type') = 'tool'
+  AND json_extract(c.value, '$.name') = 'task'
+ORDER BY m.time_created DESC
+LIMIT 50;
+```
+
+Find subagent completion markers:
+
+```sql
+SELECT
+  m.session_id AS parent_session_id,
+  json_extract(m.data, '$.metadata.childID') AS child_session_id,
+  json_extract(m.data, '$.metadata.agent') AS agent,
+  json_extract(m.data, '$.metadata.state') AS state,
+  datetime(m.time_created / 1000, 'unixepoch') AS created_utc
+FROM session_message m
+WHERE m.type = 'synthetic'
+  AND json_extract(m.data, '$.metadata.source') = 'subagent'
+ORDER BY m.time_created DESC
+LIMIT 50;
+```
+
+---
+
+## Legacy Format — SQLite V1 (`session` / `message` / `part`)
+
+This was the primary SQLite write path from ≥ 2026-02-14 until the v2 upgrade.
+Under OpenCode v2 these tables are retained as a read model but are no longer
+written. They are still relevant for pre-v2 sessions and for compatibility.
 
 ### Schema
 
@@ -45,16 +412,16 @@ CREATE TABLE session (
   revert TEXT,                      -- JSON: {messageID, partID?, snapshot?, diff?}
   permission TEXT,                  -- JSON: PermissionNext.Ruleset
   metadata TEXT,                    -- JSON: Record<string, unknown>
-  cost REAL NOT NULL DEFAULT 0,     -- session-level cost
+  cost REAL NOT NULL DEFAULT 0,
   tokens_input INTEGER NOT NULL DEFAULT 0,
   tokens_output INTEGER NOT NULL DEFAULT 0,
   tokens_reasoning INTEGER NOT NULL DEFAULT 0,
   tokens_cache_read INTEGER NOT NULL DEFAULT 0,
   tokens_cache_write INTEGER NOT NULL DEFAULT 0,
-  agent TEXT,                       -- agent name (e.g. "build", "plan", subagent name)
+  agent TEXT,
   model TEXT,                       -- JSON: {id, providerID, variant?}
   time_created INTEGER NOT NULL,    -- Unix ms
-  time_updated INTEGER NOT NULL,    -- Unix ms
+  time_updated INTEGER NOT NULL,
   time_compacting INTEGER,
   time_archived INTEGER
 );
@@ -65,12 +432,12 @@ CREATE TABLE message (
   session_id TEXT NOT NULL REFERENCES session(id) ON DELETE CASCADE,
   time_created INTEGER NOT NULL,
   time_updated INTEGER NOT NULL,
-  data TEXT NOT NULL                -- JSON blob (role, model, agent, tokens, cost, …)
+  data TEXT NOT NULL
 );
 
 -- Parts (data blob holds the full Part minus id/sessionID/messageID)
 CREATE TABLE part (
-  id TEXT PRIMARY KEY,              -- "prt_" prefix (new; old JSON files used "part_")
+  id TEXT PRIMARY KEY,              -- "prt_" prefix
   message_id TEXT NOT NULL REFERENCES message(id) ON DELETE CASCADE,
   session_id TEXT NOT NULL,
   time_created INTEGER NOT NULL,
@@ -86,62 +453,14 @@ CREATE TABLE project (
   name TEXT,
   icon_url TEXT, icon_color TEXT,
   time_created INTEGER NOT NULL,    -- Unix ms
-  time_updated INTEGER NOT NULL,    -- Unix ms
+  time_updated INTEGER NOT NULL,
   time_initialized INTEGER,
   sandboxes TEXT NOT NULL,          -- JSON: string[]
   commands TEXT                     -- JSON: {start?: string}
 );
-
--- Companion tables in the same DB: todo, permission, session_share,
---   session_entry, workspace, project, event, event_sequence, account,
---   account_state, control_account
--- (__drizzle_migrations tracks applied schema migrations)
-
--- Newer tables observed upstream (dev) alongside the V1 message/part tables:
---   session_message   -- id, session_id, type, seq, data (a newer message model:
---                        user/assistant/system/shell/synthetic/compaction/
---                        agent-switched/model-switched)
---   session_input     -- id, session_id, prompt, delivery, admitted_seq, promoted_seq
---   session_context_epoch -- session_id, baseline, snapshot, baseline_seq
--- As of the 2026-09-06 watch pass, message/part remain the transcript write
--- path (message-v2.ts is still active); session_message is a parallel model
--- whose write path is not yet confirmed.
 ```
 
-### Session Object Fields
-
-```typescript
-{
-  id: string           // "ses_" prefix
-  slug: string
-  projectID: string    // git first-commit hash, or "global"
-  workspaceID?: string
-  directory: string
-  parentID?: string    // child/subagent sessions
-  title: string
-  version: string
-  share?: { url: string }
-  summary?: { additions, deletions, files, diffs?: FileDiff[] }
-  // ⚠️ v1.4.0 SDK break: FileDiff no longer carries `to`/`from` full-file
-  // contents; only `patch` (unified diff). Applies to session `summary.diffs`,
-  // user-message `summary.diffs`, and edit/patch tool metadata.
-  revert?: { messageID, partID?, snapshot?, diff? }
-  permission?: PermissionRuleset
-  time: { created, updated, compacting?, archived? }  // Unix ms
-}
-```
-
-Newer fields vs previous docs: `slug`, `share`, `permission`, `revert`, `workspaceID`,
-`time.compacting`, `time.archived`, `summary.diffs`.
-
-Additional session-level columns observed upstream (dev, 2026-09-06): `metadata`
-(JSON), `cost` (real), `tokens_input` / `tokens_output` / `tokens_reasoning` /
-`tokens_cache_read` / `tokens_cache_write` (integer, session-level token
-aggregation), `agent` (text), and `model` (JSON `{id, providerID, variant?}`).
-These are session-level rollups and do not change the per-message model
-metadata described below.
-
-### Message `data` Blob — User
+### Message `data` Blob — User (V1)
 
 ```typescript
 {
@@ -154,10 +473,9 @@ metadata described below.
   tools?: Record<string, boolean>
 }
 // ⚠️ v1.4.0 SDK break: `variant` moved from top-level into `model.variant`.
-// Sessions written by OpenCode ≥ 1.4.0 use the nested shape.
 ```
 
-### Message `data` Blob — Assistant
+### Message `data` Blob — Assistant (V1)
 
 ```typescript
 {
@@ -178,18 +496,9 @@ metadata described below.
 }
 ```
 
-### Token Usage Notes
+### Part Types (V1, 12 total)
 
-- `tokens` is commonly present on assistant messages but is **not guaranteed** (provider/backends can omit it).
-- The `part` stream can also include token usage on step boundaries:
-  - `part.type == "step-finish"` includes `tokens` (and `cost`)
-- If both message-level `tokens` and `step-finish.tokens` exist, avoid double-counting when aggregating.
-- `tokens.cache.read` / `tokens.cache.write` are structurally separate, but whether `tokens.input`
-  already includes cached tokens is provider-dependent rather than guaranteed by OpenCode itself.
-
-### Part Types (12 total)
-
-`type` field in `data` blob:
+`type` field in `part.data`:
 
 | Part type | Key `data` fields |
 |-----------|-------------------|
@@ -206,187 +515,19 @@ metadata described below.
 | `compaction` | `auto: boolean`, `overflow?` |
 | `subtask` | `prompt`, `description`, `agent`, `model?`, `command?` |
 
-New part types vs previous docs: `file`, `agent`, `retry`, `patch` (added).
-Part ID prefix changed from `part_` to `prt_`.
+V1 tool lifecycle: `pending → running → completed | error`, with the tool name in
+`data.tool` and the result in `state.output`.
 
-### Tool Part — Lifecycle State Machine
+### Token Usage Notes (V1)
 
-```
-pending  → running → completed
-                   → error
-```
-
-State fields:
-
-| State | Fields |
-|-------|--------|
-| `pending` | `input`, `raw` |
-| `running` | `input`, optional `title`/`metadata`, `time.start` |
-| `completed` | `input`, `output`, `title`, `metadata`, `time.start/end`, optional `attachments` |
-| `error` | `input`, `error`, optional `metadata`, `time.start/end` |
-
-Official upstream tool states are `pending`, `running`, `completed`, and
-`error`. Sessions Chronicle's current OpenCode parser maps `completed`,
-`running`, and `error` explicitly; `pending` currently falls through to an
-unknown status in the local model.
-
-### Task Tool — Subagent Delegation
-
-OpenCode `task` is a concrete tool name inside a `tool` part, not a generic
-todo/task-list marker. The official task tool creates or resumes a child
-session and stores the child session ID in tool state metadata.
-
-**Primary marker:**
-
-```json
-{
-  "type": "tool",
-  "tool": "task",
-  "callID": "call_xxx",
-  "state": {
-    "status": "completed",
-    "input": {
-      "description": "Explore parser layout",
-      "prompt": "Find all parser files",
-      "subagent_type": "explore",
-      "task_id": "ses_existing_child"
-    },
-    "title": "Explore parser layout",
-    "metadata": {
-      "sessionId": "ses_child123",
-      "model": {
-        "providerID": "anthropic",
-        "modelID": "claude-sonnet-4-5"
-      },
-      "truncated": false
-    },
-    "output": "task_id: ses_child123 (for resuming to continue this task if needed)\n\n<task_result>\n...\n</task_result>",
-    "time": { "start": 1776000000000, "end": 1776000010000 }
-  }
-}
-```
-
-**Observed semantics:**
-
-- Detect delegated subagent work with `json_extract(part.data, '$.type') = 'tool'`
-  and `json_extract(part.data, '$.tool') = 'task'`
-- `$.state.input.description` is the short task title
-- `$.state.input.prompt` is the task prompt sent to the subagent
-- `$.state.input.subagent_type` identifies the requested OpenCode agent type
-- `$.state.input.task_id` is optional and requests resuming an existing child session
-- `$.state.metadata.sessionId` is the child session ID produced or resumed by the task tool
-- The child session is also present in the `session` table with `parent_id`
-  pointing to the parent session
-- Local SQLite scan refreshed 2026-04-13: `tool == "task"` appeared 628 times;
-  616 completed, 10 errored, 2 running; every child session in that DB was
-  referenced by at least one task tool via `state.metadata.sessionId`
-
-Do not collapse this with `part.type == "subtask"`. `subtask` is a distinct
-part schema with `prompt`, `description`, `agent`, optional `model`, and optional
-`command`, while `tool == "task"` is a tool lifecycle record with `state`,
-`callID`, and child-session metadata.
-
-### Skill Invocation Marker
-
-OpenCode skill loading is not just implied by Markdown headings in user text.
-It has a native `tool` part marker that should be treated as the primary
-detection signal.
-
-**Primary marker:**
-
-```json
-{
-  "type": "tool",
-  "tool": "skill",
-  "state": {
-    "status": "completed",
-    "input": { "name": "brainstorming" },
-    "metadata": {
-      "name": "brainstorming",
-      "dir": "/home/user/.config/opencode/skills/superpowers/brainstorming",
-      "truncated": false
-    },
-    "title": "Loaded skill: brainstorming"
-  }
-}
-```
-
-**Observed semantics:**
-
-- Detect skill loading with `json_extract(part.data, '$.type') = 'tool'` and
-  `json_extract(part.data, '$.tool') = 'skill'`
-- Extract the skill name from `$.state.metadata.name`, fallback
-  `$.state.input.name`
-- `$.state.metadata.dir` identifies the loaded skill directory
-- `$.state.title` is a readable summary such as `Loaded skill: brainstorming`
-- The assistant message carrying this part links back to the source user
-  message via `message.data.parentID`
-- That parent user message often contains the injected skill markdown as a
-  `text` part; treat it as payload for display, not as the proof that a skill
-  was invoked
-- One assistant reply can load multiple skills, so grouping should not assume
-  exactly one skill per user message
-
-### Useful SQLite Queries
-
-Open the database read-only:
-
-```bash
-sqlite3 'file:~/.local/share/opencode/opencode.db?mode=ro&immutable=1'
-```
-
-For non-default channels, replace `opencode.db` with `opencode-<channel>.db`.
-
-Find sessions containing at least one tool part with `state.status == "error"`:
-
-```sql
-SELECT
-  s.id,
-  s.title,
-  s.directory,
-  COUNT(*) AS error_parts,
-  datetime(MAX(p.time_created) / 1000, 'unixepoch') AS last_error_utc
-FROM part p
-JOIN session s ON s.id = p.session_id
-WHERE json_extract(p.data, '$.type') = 'tool'
-  AND json_extract(p.data, '$.state.status') = 'error'
-GROUP BY s.id, s.title, s.directory
-ORDER BY MAX(p.time_created) DESC;
-```
-
-Find recent skill invocations:
-
-```sql
-SELECT
-  p.session_id,
-  p.message_id,
-  json_extract(p.data, '$.state.metadata.name') AS skill_name,
-  json_extract(p.data, '$.state.metadata.dir') AS skill_dir,
-  json_extract(p.data, '$.state.title') AS title,
-  datetime(p.time_created / 1000, 'unixepoch') AS created_utc
-FROM part p
-WHERE json_extract(p.data, '$.type') = 'tool'
-  AND lower(json_extract(p.data, '$.tool')) = 'skill'
-ORDER BY p.time_created DESC
-LIMIT 50;
-```
-
-Find recent task-tool subagent invocations:
-
-```sql
-SELECT
-  p.session_id AS parent_session_id,
-  json_extract(p.data, '$.state.metadata.sessionId') AS child_session_id,
-  json_extract(p.data, '$.state.status') AS status,
-  json_extract(p.data, '$.state.input.subagent_type') AS subagent_type,
-  json_extract(p.data, '$.state.title') AS title,
-  datetime(p.time_created / 1000, 'unixepoch') AS created_utc
-FROM part p
-WHERE json_extract(p.data, '$.type') = 'tool'
-  AND json_extract(p.data, '$.tool') = 'task'
-ORDER BY p.time_created DESC
-LIMIT 50;
-```
+- `tokens` is commonly present on assistant messages but is **not guaranteed**
+  (provider/backends can omit it).
+- The `part` stream can also include token usage on step boundaries
+  (`part.type == "step-finish"` includes `tokens` and `cost`).
+- If both message-level `tokens` and `step-finish.tokens` exist, avoid
+  double-counting when aggregating.
+- `tokens.cache.read` / `tokens.cache.write` are structurally separate, but
+  whether `tokens.input` already includes cached tokens is provider-dependent.
 
 ---
 
@@ -491,9 +632,9 @@ Key fields:
 }
 ```
 
-### Subtask Part (records delegated work in parent session)
+### Subtask Part (records delegated work in the parent session)
 
-This is a distinct part type from `tool == "task"`. Use the task tool marker
+This is a distinct V1 part type from `tool == "task"`. Use the task tool marker
 when you need the child session link (`state.metadata.sessionId`).
 
 ```json
@@ -514,52 +655,81 @@ when you need the child session link (`state.metadata.sessionId`).
 
 ## Model Metadata
 
-Model metadata is primarily message-scoped, unchanged between SQLite and JSON formats:
+Model metadata is primarily message-scoped in both V1 and V2:
 
 | Message role | Fields |
 |--------------|--------|
-| User | `model.providerID` + `model.modelID` |
-| Assistant | top-level `providerID` + `modelID` |
-| Subtask parts | optional `model.providerID`, `model.modelID` for delegated model |
+| User (V1) | `model.providerID` + `model.modelID` |
+| Assistant (V1) | top-level `providerID` + `modelID` |
+| Assistant (V2) | `model: { id, providerID, variant? }` |
+| Subtask parts (V1) | optional `model.providerID`, `model.modelID` for delegated model |
 
-Since ~2026 the `session` table also carries optional session-level `model`
+Both `session` (V1) and `session_v2` also carry optional session-level `model`
 (JSON `{id, providerID, variant?}`) and `agent` (text) columns. These are
-session-level rollups (e.g. the model/agent used to create the session) and
-do not replace the per-message fields, which remain the source of truth for
-individual turns.
+session-level rollups (the model/agent used to create the session) and do not
+replace the per-message fields, which remain the source of truth for individual
+turns.
 
 ---
 
 ## Subagent Sessions
 
-- Child sessions spawned through task tools or agent mentions
-- Identified by presence of `parentID` field (both formats)
-- In SQLite task-tool records, `part.data.state.metadata.sessionId` points to
-  the child session created or resumed by `tool == "task"`
-- Form hierarchical parent-child relationships
-- Can accumulate without cleanup (known limitation)
+- Child sessions spawned through task tools or agent mentions.
+- Identified by the presence of `parent_id` (SQLite) / `parentID` (JSON).
+- V2: the parent-side link is either `AssistantContent` tool `name == "task"`
+  with `state.metadata.sessionId`, or a `synthetic` message with
+  `metadata.source == "subagent"` and `metadata.childID`.
+- V1: `part.data.state.metadata.sessionId` points to the child session created or
+  resumed by `tool == "task"`.
+- Form hierarchical parent-child relationships.
+- Can accumulate without cleanup (known limitation).
 
 ---
 
 ## Project Identification
 
-- Uses git root commit hash as `projectID`
-- Command: `git rev-list --max-parents=0 --all`
+- Uses git root commit hash as `projectID`.
+- Command: `git rev-list --max-parents=0 --all`.
 - Sessions grouped by project:
   - JSON: under `session/<projectID>/`
-  - SQLite: `project` table with `id` (hash), `worktree`, `vcs`, `name`, etc.
+  - SQLite: `project` table with `id` (hash), `worktree`, `vcs`, `name`, etc.;
+    `project_directory` and `worktree` map projects to directories.
 
 ---
 
-## Storage Migration (≥ 2026-02-14)
+## Storage Migration Timeline
 
-- New primary storage is a SQLite WAL-mode database in `~/.local/share/opencode/`
-- Default/latest/beta channels use `opencode.db`; other channels use `opencode-<channel>.db`
-- On first run after upgrade, OpenCode runs a one-time `JsonMigration` that reads all JSON files
-  from `storage/` and imports them into SQLite
-- The `storage/` directory is **not deleted** after migration; legacy files remain on disk
-- Part ID prefix changed from `part_` to `prt_` in the SQLite era
-- Deduplicate by session `id` when both paths return data
+- **≥ 2026-02-14** — JSON file tree replaced by SQLite WAL-mode database in
+  `~/.local/share/opencode/`. Default/latest/beta channels use `opencode.db`;
+  other channels use `opencode-<channel>.db`.
+- On first run after upgrade, OpenCode runs a one-time `JsonMigration` that
+  imports JSON files into SQLite. The `storage/` directory is **not deleted**;
+  legacy files remain on disk.
+- Part ID prefix changed from `part_` to `prt_` in the SQLite era.
+- **OpenCode v2 (confirmed 2026-10-14)** — the primary write path moved to
+  `session_v2` / `session_message`. V1 `session` / `message` / `part` tables are
+  retained on migrated databases but stop being written after the v2 upgrade.
+  Deduplicate by session `id` when both paths return data.
+
+### V1 → V2 structural changes
+
+- **Table rename:** `session` → `session_v2`, and `message` + `part` →
+  `session_message` (parts are embedded in `content[]`).
+- **New session columns:** `fork_session_id`, `fork_boundary`,
+  `time_suspended`, `resume_attempts`, `time_idle`, `time_viewed`,
+  `idle_outcome`; `title` became nullable.
+- **New message columns:** `type`, `seq`, plus `time_created` / `time_updated`.
+- **New message `type` union:** `agent-switched`, `model-switched`,
+  `location-switched`, `user`, `synthetic`, `system`, `skill`, `shell`,
+  `assistant`, `compaction`, `idle`.
+- **Content shrinks to 3 types:** `text`, `reasoning`, `tool` (was 12 part types).
+- **Tool name field:** `tool` → `name`; tool call id is the content item `id`.
+- **Tool state:** `pending` → `streaming`; completed output `state.output` →
+  `state.content`.
+- **Subagent linkage:** V1 task-tool metadata plus a V2 `synthetic`
+  `metadata.source == "subagent"` completion message.
+- **Input/context tables:** `session_input` / `session_context_epoch` →
+  `session_pending` / `session_inbox` / `instruction_state`.
 
 ---
 
@@ -579,55 +749,56 @@ Current indexing strategy is **SQLite-first dual-read with JSON fallback**:
 3. Deduplicate by session `id` (SQLite wins on overlap)
 4. Support JSON-only and SQLite-only installs
 
+> **⚠️ V2 gap (confirmed 2026-10-14):** the SQLite backend still reads only the
+> V1 tables — `SELECT id FROM session` for discovery and `message` / `part` for
+> the transcript. It does not read `session_v2` / `session_message`, so sessions
+> written after the v2 upgrade are not discovered, and part/tool extraction
+> assumes V1 rows (`.tool`, `.state.output`, `pending`). This is tracked as a
+> known limitation, not a documented contract.
+
+Current behavior:
+
 - Indexes sessions with `parentID` as subagent sessions (`is_subagent = 1`)
 - Converts `part.type == text` into transcript messages
 - Extracts `part.type == tool` into indexed tool-call records, with the exception
   that `tool == "task"` is mapped to subagent records (title from
   `state.input.description`, prompt from `state.input.prompt`, `child_session_id`
   from `state.metadata.sessionId`, result from `state.output`)
-- Official upstream also emits `state.status == "pending"`; the current local
-  parser does not map that status explicitly and falls back to `Unknown`
+- Maps tool state `pending`, `running`, `completed`, and `failed`/`error`;
+  unknown statuses fall back to `Unknown` (V2 `streaming` currently falls here)
 - Extracts `part.type == subtask` into subagent records; when a session also
   contains any `tool == "task"` part, `subtask` records are skipped to avoid
   duplication (legacy sessions without `tool == "task"` continue to use `subtask`)
-- Non-message parts like `reasoning`, `step-start`, `step-finish`, `snapshot`, `compaction`, `file`, `agent`, `retry`, and `patch` are currently not rendered as transcript messages
-- Current official schema also includes optional `workspaceID` on sessions and optional `overflow` on `compaction` parts
+- Non-message parts like `reasoning`, `step-start`, `step-finish`, `snapshot`,
+  `compaction`, `file`, `agent`, `retry`, and `patch` are currently not rendered
+  as transcript messages
 
-**Title extraction:** Prefer session metadata `title` (SQLite `session.title`) when present;
-fallback to first flattened `text` part attached to a `user` message.
+**Title extraction:** Prefer session metadata `title` (SQLite `session.title`
+when present) when present; fallback to first flattened `text` part attached to a
+`user` message.
 
-**Timestamp parsing:** Session timestamps from metadata `time.created` + `time.updated` (ms epoch),
-with per-message `time.created` used for ordering.
+**Timestamp parsing:** Session timestamps from metadata `time.created` +
+`time.updated` (ms epoch), with per-message `time.created` used for ordering.
 
-**Content extraction:**
-
-```rust
-fn extract_opencode_text_part(part: &Value) -> Option<String> {
-    if part.get("type")?.as_str()? != "text" {
-        return None;
-    }
-    part.get("text")?.as_str().map(|s| s.to_string())
-}
-```
-
-**SQLite read path:** Implemented via `SqliteBackend` (`rusqlite` read-only connection).
-SQLite rows deserialize `message.data` and `part.data` JSON blobs and feed the same parser core
-used by the JSON backend.
+**SQLite read path:** Implemented via `SqliteBackend` (`rusqlite` read-only
+connection). SQLite rows deserialize `message.data` and `part.data` JSON blobs
+and feed the same parser core used by the JSON backend.
 
 ---
 
 ## Primary Sources
 
-> **Note:** OpenCode's session/parser sources were reorganized into the
-> `packages/core` (`@opencode-ai/core`) and `packages/schema` packages; the
-> `packages/opencode/src/session/` paths below were valid before that move.
-> The URLs listed here reflect the current (`dev`) locations.
+> **Note:** OpenCode's session/parser sources live in the `packages/core`
+> (`@opencode-ai/core`) and `packages/schema` packages. The
+> `packages/opencode/src/session/` paths were valid before that move. URLs below
+> reflect current (`dev`) locations.
 
 - [OpenCode GitHub Repository](https://github.com/anomalyco/opencode)
-- [OpenCode `MessageV2` part schemas](https://github.com/anomalyco/opencode/blob/dev/packages/core/src/session/message-v2.ts)
-- [OpenCode SQLite Drizzle schema (`session`/`message`/`part`/`session_message`/`session_input`/`session_context_epoch`)](https://github.com/anomalyco/opencode/blob/dev/packages/core/src/session/sql.ts)
+- [OpenCode SQLite Drizzle schema (`session_v2`, `session_message`, `session_pending`, `session_inbox`, `instruction_*`)](https://github.com/anomalyco/opencode/blob/dev/packages/core/src/session/sql.ts)
+- [OpenCode V2 message/part types (`SessionMessage`, `AssistantContent`, `ToolState`)](https://github.com/anomalyco/opencode/blob/dev/packages/schema/src/session-message.ts)
+- [OpenCode V2 session type (`Session.Info`)](https://github.com/anomalyco/opencode/blob/dev/packages/schema/src/session.ts)
+- [OpenCode V2 subagent completion marker](https://github.com/anomalyco/opencode/blob/dev/packages/core/src/session/subagent-completion.ts)
 - [OpenCode V1 part/session types (`Part`, `ToolState`, `Info`, …)](https://github.com/anomalyco/opencode/blob/dev/packages/schema/src/v1/session.ts)
-- [OpenCode newer message model (`session_message` types)](https://github.com/anomalyco/opencode/blob/dev/packages/schema/src/session-message.ts)
 - [OpenCode task tool (creates child sessions with `parentID`)](https://github.com/anomalyco/opencode/blob/dev/packages/opencode/src/tool/task.ts)
 - [OpenCode Sessions Issue #3026](https://github.com/anomalyco/opencode/issues/3026)
 - [OpenCode Sessions Issue #5734](https://github.com/anomalyco/opencode/issues/5734)
