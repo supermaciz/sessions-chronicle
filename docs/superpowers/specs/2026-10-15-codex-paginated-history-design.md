@@ -32,6 +32,14 @@ The parser reads only the legacy events and rejects any rollout without a
 By code inspection, every local Codex session is therefore rejected on the next
 index run.
 
+A subsequent read-only review on the same day covered 414 rollouts (the live
+directory had gained a session). It found 17 files with response-item tool calls
+or reasoning below `subagent_history_start_ordinal`, including 8 with a resolved
+parent. Applying the boundary removes every `UserMessage` item in 20 files:
+16 with a resolved parent, and 4 `source.subagent == "review"` files without
+one. These are separate from the 30 files without any `UserMessage` in the
+original snapshot; raw item presence alone does not determine indexability.
+
 Two subagent issues compound this for the newer multi-agent surface (16 local
 spawns):
 
@@ -48,7 +56,8 @@ spawns):
 ## Goals
 
 - Index `paginated` Codex rollouts with their user and assistant messages.
-- Keep `legacy` parsing byte-for-byte unchanged in behavior.
+- Keep existing `legacy` transcript parsing unchanged; the child-session
+  fallback below additionally admits legacy children without a user message.
 - Index subagent child sessions that have no user message, with a readable
   synthetic first prompt.
 - Link parent subagent rows to child sessions by `task_name` / `agent_path`,
@@ -100,12 +109,27 @@ over reading `response_item` messages (they include injected `developer`,
 
 ### 2. Inherited fork context
 
-When `session_meta.payload.subagent_history_start_ordinal` is an integer `N`,
-`item_completed` messages on lines whose envelope `ordinal` is below `N` are
-skipped: upstream treats those records as inherited model context that produces
-no child turn items. Lines without an `ordinal` are kept. Tool calls and
-reasoning are not filtered (out of scope; they are not observed below the
-boundary locally).
+In paginated mode, when
+`session_meta.payload.subagent_history_start_ordinal` is a non-negative integer
+`N`, records whose envelope `ordinal` is below `N` contribute no child transcript
+content. This excludes messages, tool calls and their outputs, reasoning, and
+subagent activities, including their `response_item` carriers. Inherited records
+must neither create transcript entries nor mutate pending calls, spawns, or
+reasoning that could leak into entries at or above the boundary.
+
+This follows the upstream visible-history projection, which emits an empty
+change set for inherited records, rather than preserving inherited messages as
+child history. See the [format documentation](../../session-formats/codex.md#resolving-a-shared-history)
+and [Codex materialization at `ac192cd`](https://github.com/openai/codex/blob/ac192cd7937b0d73edc6dffe009940ae53782dd4/codex-rs/thread-store/src/local/thread_history_materialization.rs#L221).
+The rule also applies when no parent can be resolved; `source.subagent ==
+"review"` alone does not provide a parent link.
+
+Session metadata and `turn_context` remain available for interpreting the
+child's own records, including model attribution. Records at ordinal `N` are
+included. Lines without a valid non-negative integer `ordinal` are retained
+under this parser's tolerant-input policy; this deliberately differs from
+Codex's strict projection, which skips records without ordinals. Legacy mode
+does not acquire this filter.
 
 ### 3. Synthetic prompt for child sessions
 
@@ -130,6 +154,11 @@ At the end of parsing, if `!has_user_message`:
     `extract_first_prompt`.
 - A child with no other content is still indexed, so the parent row has a link
   target.
+
+The fallback is an application-generated label, not a recovered delegation
+prompt. The actual task text, when available, remains on the parent's
+`Subagent.prompt`. A file without a resolved parent does not qualify for this
+fallback, even if its source identifies a review subagent.
 
 This applies to both history modes; legacy children with a `user_message` are
 unaffected.
@@ -169,6 +198,14 @@ name path in both directions, mirroring `link_teammate_child_tx` /
   session has `parent_session_id = parent AND agent_path = agent_name`, set
   `child_session_id`. Otherwise leave it unlinked and log at `warn`.
 
+The two roles are independent: a session with a parent may itself contain
+subagents. Both linkage directions run for such a session, without returning
+early after linking it to its own parent. Matching uses the immediate parent
+session ID and the full task path, not only the path's final segment. The same
+rule applies to existing `agent_id` linkage so indexing order does not affect
+links when an intermediate session delegates. This requires no change to the
+UI's existing navigation scope.
+
 The linkage runs after `upsert_session_row_tx`, like the existing calls.
 
 ### Error handling
@@ -194,12 +231,23 @@ stays line-streamed through `BufReader`.
    (`source.subagent.thread_spawn`, `agent_path`, inbound encrypted
    `agent_message`, `<recommended_plugins>` user message, no `UserMessage`).
 4. Same directory — a fork child with `subagent_history_start_ordinal` and
-   `UserMessage` / `AgentMessage` items on both sides of the boundary.
+   messages, response-item tool calls and outputs, reasoning, and subagent
+   activities on both sides of the boundary. Include inherited pending
+   activities to verify that no state leaks into the child's own transcript,
+   and a `turn_context` establishing the model for its first retained message.
+5. Same directory — a child whose user messages are all inherited, plus a
+   review subagent without a resolvable parent in the same situation. The child
+   receives the synthetic prompt; the review file is rejected.
+6. Same directory — a root, child, and grandchild with task-name linkage to
+   verify both roles of the intermediate session.
 
 **Unit tests (`codex.rs`):** mode selection (absent / legacy / paginated);
 case-insensitive text extraction and skipped non-text entries; ignored
 non-message items, with no duplicate tool call; legacy events ignored in
-paginated mode; ordinal filtering; synthetic prompt content fallbacks
+paginated mode; ordinal filtering across all transcript carriers, including
+the inclusive boundary, tolerant missing/malformed ordinals, retained model
+context, and absence of inherited pending state; legacy boundary behavior
+unchanged; synthetic prompt content fallbacks
 (`agent_path`, `agent_nickname`, bare) and index shifting including reasoning
 attachments; root without user message still rejected; `task_name` stored in
 `agent_name`.
@@ -209,12 +257,20 @@ fingerprints, is idempotent; fresh databases include the column.
 
 **Integration tests (`tests/`):** parent-then-child and child-then-parent
 indexing both link; an ambiguous duplicate `agent_path` leaves rows unlinked and
-retracts an earlier link; existing Codex fixtures and linkage tests stay green
+retracts an earlier link; root/child/grandchild indexing in different orders
+links both edges, including regression coverage for `agent_id`; existing Codex
+fixtures and linkage tests stay green
 (legacy regression).
 
 **Manual verification:** run with `--sessions-dir tests/fixtures`, then index
-the real `~/.codex`. With the 2026-10-15 data, the expectation is 399 indexed
-Codex sessions (413 minus the 14 empty roots) and 16 linked task-name children.
+the real `~/.codex`. On the subsequent 414-file snapshot, applying the message
+source, inherited-history boundary, and resolved-parent fallback rules predicts
+396 indexed files and 18 rejections: the 14 empty roots and 4 review subagent
+files with no retained user message or resolved parent. This is a structural
+scan prediction, not an executed parser result; verify retained text and unique
+session IDs when comparing it with database counts. The 16 task-name children
+remain expected link targets. Recompute counts for the current snapshot before
+comparison, since the live directory changes.
 
 ## Documentation
 
