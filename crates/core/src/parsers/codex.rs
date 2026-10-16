@@ -90,6 +90,42 @@ fn parse_status_update(status: &Value) -> StatusUpdate {
     }
 }
 
+/// Which event family carries user and assistant message text.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum HistoryMode {
+    Legacy,
+    Paginated,
+}
+
+impl HistoryMode {
+    /// Absent or any value other than `"paginated"` means legacy, matching
+    /// Codex's deserialization default.
+    fn from_metadata(payload: &Value) -> Self {
+        match payload.get("history_mode").and_then(|v| v.as_str()) {
+            Some("paginated") => Self::Paginated,
+            _ => Self::Legacy,
+        }
+    }
+}
+
+/// Joins the `text` entries of a typed turn item's `content` array.
+fn extract_item_text(item: &Value) -> Option<String> {
+    let parts: Vec<&str> = item
+        .get("content")?
+        .as_array()?
+        .iter()
+        .filter(|entry| {
+            entry
+                .get("type")
+                .and_then(|v| v.as_str())
+                .is_some_and(|kind| kind.eq_ignore_ascii_case("text"))
+        })
+        .filter_map(|entry| entry.get("text").and_then(|v| v.as_str()))
+        .collect();
+    let text = parts.join("\n");
+    if text.is_empty() { None } else { Some(text) }
+}
+
 #[derive(Debug, Clone)]
 struct PendingSpawn {
     agent_type: Option<String>,
@@ -100,6 +136,7 @@ struct PendingSpawn {
 struct ParseState {
     session_id: String,
     last_updated: DateTime<Utc>,
+    history_mode: HistoryMode,
     current_turn_model: Option<String>,
     best_snapshot: Option<(i64, TokenUsage)>,
     has_user_message: bool,
@@ -134,6 +171,7 @@ impl ParseState {
         Self {
             session_id,
             last_updated,
+            history_mode: HistoryMode::Legacy,
             current_turn_model: None,
             best_snapshot: None,
             has_user_message: false,
@@ -737,13 +775,32 @@ impl ParseState {
         }
     }
 
+    fn handle_item_completed(&mut self, payload: &Value, event_ts: Option<DateTime<Utc>>) {
+        let Some(item) = payload.get("item") else {
+            return;
+        };
+        let (role, model) = match item.get("type").and_then(|v| v.as_str()) {
+            Some("UserMessage") => (Role::User, None),
+            Some("AgentMessage") => (Role::Assistant, self.current_turn_model.clone()),
+            _ => return,
+        };
+        let Some(content) = extract_item_text(item) else {
+            return;
+        };
+        self.push_message(role, content, event_ts.unwrap_or_else(Utc::now), model);
+    }
+
     fn handle_event_msg(&mut self, payload: &Value, event_ts: Option<DateTime<Utc>>) {
         match payload.get("type").and_then(|v| v.as_str()) {
             Some("turn_context") => {
                 self.handle_turn_context(payload);
             }
 
-            Some("user_message") => {
+            Some("item_completed") if self.history_mode == HistoryMode::Paginated => {
+                self.handle_item_completed(payload, event_ts);
+            }
+
+            Some("user_message") if self.history_mode == HistoryMode::Legacy => {
                 let content = match payload.get("message").and_then(|v| v.as_str()) {
                     Some(c) => c.to_string(),
                     None => return,
@@ -751,7 +808,7 @@ impl ParseState {
                 self.push_message(Role::User, content, event_ts.unwrap_or_else(Utc::now), None);
             }
 
-            Some("agent_message") => {
+            Some("agent_message") if self.history_mode == HistoryMode::Legacy => {
                 let content = match payload.get("message").and_then(|v| v.as_str()) {
                     Some(c) => c.to_string(),
                     None => return,
@@ -1082,6 +1139,7 @@ impl CodexParser {
         let is_subagent = parent_session_id.is_some();
 
         let mut state = ParseState::new(session_id.clone(), start_time);
+        state.history_mode = HistoryMode::from_metadata(payload);
 
         for line in lines {
             let line = line.context("Failed to read line")?;
@@ -2147,5 +2205,243 @@ mod tests {
                 .unwrap()
                 .with_timezone(&Utc)
         );
+    }
+
+    fn parse_records(records: &[Value]) -> anyhow::Result<ParsedSession> {
+        let mut file = tempfile::NamedTempFile::new().unwrap();
+        for record in records {
+            writeln!(file, "{record}").unwrap();
+        }
+        CodexParser.parse(file.path())
+    }
+
+    fn session_meta(overrides: Value) -> Value {
+        let mut payload = serde_json::json!({
+            "id": "00000000-0000-7000-8000-000000000999",
+            "timestamp": "2026-10-15T10:00:00Z",
+            "cwd": "/tmp/codex-pagination-fixture",
+        });
+        if let (Some(base), Some(extra)) = (payload.as_object_mut(), overrides.as_object()) {
+            for (key, value) in extra {
+                base.insert(key.clone(), value.clone());
+            }
+        }
+        serde_json::json!({
+            "timestamp": "2026-10-15T10:00:00Z",
+            "type": "session_meta",
+            "payload": payload,
+        })
+    }
+
+    fn item_completed(ts: &str, item: Value) -> Value {
+        serde_json::json!({
+            "timestamp": ts,
+            "type": "event_msg",
+            "payload": {"type": "item_completed", "item": item},
+        })
+    }
+
+    fn user_item(text: &str) -> Value {
+        serde_json::json!({"type": "UserMessage", "content": [{"type": "text", "text": text}]})
+    }
+
+    fn legacy_user(ts: &str, text: &str) -> Value {
+        serde_json::json!({
+            "timestamp": ts,
+            "type": "event_msg",
+            "payload": {"type": "user_message", "message": text},
+        })
+    }
+
+    fn paginated_root_path() -> PathBuf {
+        crate::fixture_path(
+            "codex_sessions/2026/10/15/rollout-2026-10-15T10-00-00-paginated-root.jsonl",
+        )
+    }
+
+    fn ts(value: &str) -> DateTime<Utc> {
+        DateTime::parse_from_rfc3339(value)
+            .unwrap()
+            .with_timezone(&Utc)
+    }
+
+    #[test]
+    fn paginated_messages_use_item_completed() {
+        let parsed = CodexParser.parse(&paginated_root_path()).unwrap();
+
+        assert_eq!(
+            parsed
+                .messages
+                .iter()
+                .map(|m| m.content.as_str())
+                .collect::<Vec<_>>(),
+            ["Explain\npagination", "Working", "Done", "Follow-up"]
+        );
+        assert_eq!(parsed.messages[0].role, Role::User);
+        assert_eq!(parsed.messages[0].model, None);
+        assert_eq!(parsed.messages[1].model.as_deref(), Some("gpt-5"));
+        assert_eq!(
+            parsed.session.first_prompt.as_deref(),
+            Some("Explain pagination")
+        );
+        assert_eq!(parsed.tool_calls.len(), 1);
+        assert_eq!(parsed.reasoning_attachments.len(), 1);
+        assert_eq!(parsed.reasoning_attachments[0].transcript_item_index, 2);
+        assert_eq!(
+            parsed
+                .transcript_items
+                .iter()
+                .map(|item| item.kind.clone())
+                .collect::<Vec<_>>(),
+            [
+                TranscriptItemKind::Message,
+                TranscriptItemKind::Message,
+                TranscriptItemKind::ToolCall,
+                TranscriptItemKind::Message,
+                TranscriptItemKind::Message,
+            ]
+        );
+        assert_eq!(parsed.messages[0].timestamp, ts("2026-10-15T10:00:03Z"));
+        assert_eq!(parsed.messages[1].timestamp, ts("2026-10-15T10:00:04Z"));
+        assert_eq!(parsed.messages[2].timestamp, ts("2026-10-15T10:00:08Z"));
+        assert_eq!(parsed.messages[3].timestamp, ts("2026-10-15T10:00:09Z"));
+    }
+
+    #[test]
+    fn paginated_missing_timestamp_falls_back_to_now() {
+        for timestamp in [None, Some("not-a-ts")] {
+            let mut record = item_completed("x", user_item("Hello"));
+            match timestamp {
+                Some(value) => record["timestamp"] = Value::String(value.to_string()),
+                None => {
+                    record.as_object_mut().unwrap().remove("timestamp");
+                }
+            }
+            let before = Utc::now();
+            let parsed = parse_records(&[
+                session_meta(serde_json::json!({"history_mode": "paginated"})),
+                record,
+            ])
+            .unwrap();
+            let after = Utc::now();
+            let stamp = parsed.messages[0].timestamp;
+            assert!(stamp >= before && stamp <= after);
+        }
+    }
+
+    #[test]
+    fn history_mode_selects_exactly_one_message_source() {
+        let modes = [
+            (None, false),
+            (Some(serde_json::json!("legacy")), false),
+            (Some(serde_json::json!("future")), false),
+            (Some(serde_json::json!(null)), false),
+            (Some(serde_json::json!(42)), false),
+            (Some(serde_json::json!({})), false),
+            (Some(serde_json::json!("paginated")), true),
+        ];
+        for (mode, paginated) in modes {
+            let overrides = match &mode {
+                Some(value) => serde_json::json!({"history_mode": value}),
+                None => serde_json::json!({}),
+            };
+            let parsed = parse_records(&[
+                session_meta(overrides),
+                legacy_user("2026-10-15T10:00:01Z", "legacy text"),
+                item_completed("2026-10-15T10:00:02Z", user_item("typed text")),
+            ]);
+            let expected = if paginated {
+                "typed text"
+            } else {
+                "legacy text"
+            };
+            let parsed = parsed.unwrap_or_else(|err| panic!("mode {mode:?}: {err}"));
+            assert_eq!(parsed.messages.len(), 1, "mode {mode:?}");
+            assert_eq!(parsed.messages[0].content, expected, "mode {mode:?}");
+        }
+    }
+
+    #[test]
+    fn history_mode_is_selected_by_first_session_meta_only() {
+        let parsed = parse_records(&[
+            session_meta(serde_json::json!({})),
+            session_meta(serde_json::json!({"history_mode": "paginated"})),
+            legacy_user("2026-10-15T10:00:01Z", "legacy text"),
+            item_completed("2026-10-15T10:00:02Z", user_item("typed text")),
+        ])
+        .unwrap();
+        assert_eq!(parsed.messages.len(), 1);
+        assert_eq!(parsed.messages[0].content, "legacy text");
+    }
+
+    #[test]
+    fn paginated_text_tolerates_malformed_items() {
+        let malformed = [
+            serde_json::json!({"type": "UserMessage"}),
+            serde_json::json!({"type": "UserMessage", "content": null}),
+            serde_json::json!({"type": "UserMessage", "content": "text"}),
+            serde_json::json!({"type": "UserMessage", "content": {"text": "x"}}),
+            serde_json::json!({"type": "UserMessage", "content": ["text", 3, null]}),
+            serde_json::json!({"type": "UserMessage", "content": [{"type": "text"}]}),
+            serde_json::json!({"type": "UserMessage", "content": [{"type": "text", "text": 5}]}),
+            serde_json::json!({"type": "UserMessage", "content": [{"type": "text", "text": ""}]}),
+            serde_json::json!({"type": "UserMessage", "content": [{"type": "skill", "text": "no"}]}),
+            serde_json::json!({"type": "AgentMessage", "content": null}),
+            serde_json::json!({"type": 7}),
+            serde_json::json!("not an object"),
+        ];
+        let mut records = vec![session_meta(
+            serde_json::json!({"history_mode": "paginated"}),
+        )];
+        for item in malformed {
+            records.push(item_completed("2026-10-15T10:00:01Z", item));
+        }
+        records.push(serde_json::json!({
+            "timestamp": "2026-10-15T10:00:02Z",
+            "type": "event_msg",
+            "payload": {"type": "item_completed"},
+        }));
+        records.push(item_completed("2026-10-15T10:00:03Z", user_item("kept")));
+        let parsed = parse_records(&records).unwrap();
+        assert_eq!(parsed.messages.len(), 1);
+        assert_eq!(parsed.messages[0].content, "kept");
+    }
+
+    #[test]
+    fn paginated_ignores_non_message_items() {
+        let mut records = vec![
+            session_meta(serde_json::json!({"history_mode": "paginated"})),
+            item_completed("2026-10-15T10:00:01Z", user_item("prompt")),
+        ];
+        for kind in [
+            "CommandExecution",
+            "FileChange",
+            "McpToolCall",
+            "WebSearch",
+            "Extension",
+            "Plan",
+            "Reasoning",
+        ] {
+            records.push(item_completed(
+                "2026-10-15T10:00:02Z",
+                serde_json::json!({"type": kind, "content": [{"type": "text", "text": "x"}]}),
+            ));
+        }
+        let parsed = parse_records(&records).unwrap();
+        assert_eq!(parsed.messages.len(), 1);
+        assert!(parsed.tool_calls.is_empty());
+        assert_eq!(parsed.transcript_items.len(), 1);
+    }
+
+    #[test]
+    fn paginated_empty_root_is_rejected() {
+        let path = crate::fixture_path(
+            "codex_sessions/2026/10/15/rollout-2026-10-15T10-00-00-paginated-empty.jsonl",
+        );
+        let err = CodexParser.parse(&path).unwrap_err();
+        assert!(matches!(
+            err.downcast_ref::<ParseError>(),
+            Some(ParseError::NoUserMessages)
+        ));
     }
 }
