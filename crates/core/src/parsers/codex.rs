@@ -156,6 +156,24 @@ fn is_inherited_transcript_record(
             .is_some_and(|ordinal| ordinal < start)
 }
 
+/// Application-generated first prompt for a child session with no user message.
+fn synthetic_child_prompt(payload: &Value) -> String {
+    let from_path = payload
+        .get("agent_path")
+        .and_then(|v| v.as_str())
+        .and_then(|path| path.rsplit('/').find(|segment| !segment.is_empty()));
+    let from_nickname = || {
+        payload
+            .get("agent_nickname")
+            .and_then(|v| v.as_str())
+            .filter(|nickname| !nickname.trim().is_empty())
+    };
+    match from_path.or_else(from_nickname) {
+        Some(name) => format!("Delegated task: {name}"),
+        None => "Delegated task".to_string(),
+    }
+}
+
 #[derive(Debug, Clone)]
 struct PendingSpawn {
     agent_type: Option<String>,
@@ -298,6 +316,53 @@ impl ParseState {
         });
         self.flush_pending_reasoning_to_item(self.item_counter);
         self.item_counter += 1;
+    }
+
+    /// Inserts an application-generated user message ahead of all entries and
+    /// shifts every stored index that points at the entries behind it.
+    fn prepend_synthetic_user(&mut self, content: String, timestamp: DateTime<Utc>) {
+        // Reasoning still pending has no entry to attach to; it must not
+        // attach to the generated label.
+        self.drop_pending_reasoning_if_orphan();
+
+        for message in &mut self.messages {
+            message.index += 1;
+        }
+        for item in &mut self.transcript_items {
+            item.item_index += 1;
+            if let Some(message_index) = item.message_index.as_mut() {
+                *message_index += 1;
+            }
+        }
+        for attachment in &mut self.reasoning_attachments {
+            attachment.transcript_item_index += 1;
+        }
+
+        self.messages.insert(
+            0,
+            Message {
+                session_id: self.session_id.clone(),
+                index: 0,
+                role: Role::User,
+                content,
+                timestamp,
+                model: None,
+            },
+        );
+        self.transcript_items.insert(
+            0,
+            TranscriptItem {
+                session_id: self.session_id.clone(),
+                item_index: 0,
+                kind: TranscriptItemKind::Message,
+                message_index: Some(0),
+                tool_call_id: None,
+                subagent_id: None,
+            },
+        );
+        self.msg_counter += 1;
+        self.item_counter += 1;
+        self.has_user_message = true;
     }
 
     fn queue_reasoning(&mut self, reasoning: PendingReasoning) {
@@ -1230,7 +1295,10 @@ impl CodexParser {
         }
 
         if !state.has_user_message {
-            return Err(ParseError::NoUserMessages.into());
+            if !is_subagent {
+                return Err(ParseError::NoUserMessages.into());
+            }
+            state.prepend_synthetic_user(synthetic_child_prompt(payload), start_time);
         }
 
         state.drop_pending_reasoning_if_orphan();
@@ -2807,5 +2875,228 @@ mod tests {
         .unwrap();
         assert_eq!(parsed.messages.len(), 1);
         assert_eq!(parsed.tool_calls.len(), 1);
+    }
+
+    fn linkage_fixture(name: &str) -> PathBuf {
+        crate::fixture_path(&format!(
+            "codex_subagent_linkage/2026/10/15/rollout-2026-10-15T10-00-00-{name}.jsonl"
+        ))
+    }
+
+    fn child_overrides(mode: &str, extra: Value) -> Value {
+        let mut overrides = serde_json::json!({
+            "history_mode": mode,
+            "source": {"subagent": {"thread_spawn": {
+                "parent_thread_id": "00000000-0000-7000-8000-000000000201",
+            }}},
+        });
+        for (key, value) in extra.as_object().unwrap() {
+            overrides[key] = value.clone();
+        }
+        overrides
+    }
+
+    fn assert_no_user_messages(result: anyhow::Result<ParsedSession>) {
+        let err = result.unwrap_err();
+        assert!(matches!(
+            err.downcast_ref::<ParseError>(),
+            Some(ParseError::NoUserMessages)
+        ));
+    }
+
+    fn assistant_item(text: &str) -> Value {
+        serde_json::json!({"type": "AgentMessage", "content": [{"type": "text", "text": text}]})
+    }
+
+    #[test]
+    fn child_without_user_gets_synthetic_prompt() {
+        let parsed = CodexParser.parse(&linkage_fixture("task-child")).unwrap();
+
+        assert_eq!(parsed.messages[0].role, Role::User);
+        assert_eq!(parsed.messages[0].content, "Delegated task: analyze");
+        assert_eq!(parsed.messages[0].index, 0);
+        assert_eq!(parsed.messages[0].timestamp, parsed.session.start_time);
+        assert_eq!(parsed.messages[0].model, None);
+        assert_eq!(
+            parsed.session.first_prompt.as_deref(),
+            Some("Delegated task: analyze")
+        );
+        assert_eq!(parsed.session.message_count, parsed.messages.len());
+        assert_eq!(parsed.messages[1].content, "Analysis complete");
+        assert_eq!(parsed.subagents.len(), 1);
+
+        // Metadata-only children and both history modes receive the prompt.
+        for mode in ["legacy", "paginated"] {
+            let parsed = parse_records(&[session_meta(child_overrides(
+                mode,
+                serde_json::json!({"agent_path": "/root/analyze"}),
+            ))])
+            .unwrap();
+            assert_eq!(parsed.messages.len(), 1, "mode {mode}");
+            assert_eq!(parsed.transcript_items.len(), 1, "mode {mode}");
+            assert_eq!(parsed.messages[0].content, "Delegated task: analyze");
+
+            let parsed = parse_records(&[
+                session_meta(child_overrides(
+                    mode,
+                    serde_json::json!({"agent_path": "/root/analyze"}),
+                )),
+                item_completed("2026-10-15T10:00:01Z", assistant_item("Reply")),
+                serde_json::json!({
+                    "timestamp": "2026-10-15T10:00:02Z",
+                    "type": "event_msg",
+                    "payload": {"type": "agent_message", "message": "Legacy reply"},
+                }),
+            ])
+            .unwrap();
+            assert_eq!(parsed.messages[0].content, "Delegated task: analyze");
+            assert_eq!(parsed.messages.len(), 2, "mode {mode}");
+        }
+    }
+
+    #[test]
+    fn synthetic_prompt_label_falls_back_through_path_and_nickname() {
+        let cases = [
+            (
+                serde_json::json!({"agent_path": "/root/analyze/"}),
+                "Delegated task: analyze",
+            ),
+            (
+                serde_json::json!({"agent_path": "/root//analyze"}),
+                "Delegated task: analyze",
+            ),
+            (
+                serde_json::json!({"agent_path": "analyze"}),
+                "Delegated task: analyze",
+            ),
+            (
+                serde_json::json!({"agent_path": "/", "agent_nickname": "Ada"}),
+                "Delegated task: Ada",
+            ),
+            (
+                serde_json::json!({"agent_path": "", "agent_nickname": "Ada"}),
+                "Delegated task: Ada",
+            ),
+            (
+                serde_json::json!({"agent_path": 5, "agent_nickname": "Ada"}),
+                "Delegated task: Ada",
+            ),
+            (
+                serde_json::json!({"agent_nickname": "Ada"}),
+                "Delegated task: Ada",
+            ),
+            (serde_json::json!({"agent_nickname": ""}), "Delegated task"),
+            (
+                serde_json::json!({"agent_nickname": null}),
+                "Delegated task",
+            ),
+            (serde_json::json!({"agent_nickname": 7}), "Delegated task"),
+            (serde_json::json!({"agent_path": "///"}), "Delegated task"),
+            (serde_json::json!({}), "Delegated task"),
+        ];
+        for (extra, expected) in cases {
+            let parsed =
+                parse_records(&[session_meta(child_overrides("paginated", extra.clone()))])
+                    .unwrap();
+            assert_eq!(parsed.messages[0].content, expected, "metadata {extra}");
+        }
+    }
+
+    #[test]
+    fn synthetic_prompt_shifts_all_references() {
+        let ts = "2026-10-15T10:00:01Z";
+        let meta = session_meta(child_overrides(
+            "paginated",
+            serde_json::json!({"agent_path": "/root/analyze"}),
+        ));
+        let records = [
+            meta,
+            item_completed(ts, assistant_item("first reply")),
+            reasoning_record(ts, "thinking"),
+            call_record(ts, "exec_command", "call_a", r#"{"cmd":"ls"}"#),
+            output_record(ts, "call_a", "ok"),
+            call_record(ts, "spawn_agent", "spawn_a", r#"{"message":"go"}"#),
+            item_completed(ts, assistant_item("last reply")),
+            reasoning_record(ts, "orphan thinking"),
+        ];
+        let parsed = parse_records(&records).unwrap();
+
+        // Same stream with a real prompt prepended gives the reference layout.
+        let mut with_prompt = records.to_vec();
+        with_prompt.insert(1, item_completed(ts, user_item("real prompt")));
+        let baseline = parse_records(&with_prompt).unwrap();
+
+        assert_eq!(parsed.messages.len(), baseline.messages.len());
+        for (shifted, base) in parsed.messages.iter().zip(&baseline.messages).skip(1) {
+            assert_eq!(shifted.index, base.index);
+            assert_eq!(shifted.content, base.content);
+        }
+        assert_eq!(
+            parsed.transcript_items.len(),
+            baseline.transcript_items.len()
+        );
+        assert_eq!(parsed.transcript_items[0].kind, TranscriptItemKind::Message);
+        assert_eq!(parsed.transcript_items[0].item_index, 0);
+        assert_eq!(parsed.transcript_items[0].message_index, Some(0));
+        for (shifted, base) in parsed
+            .transcript_items
+            .iter()
+            .zip(&baseline.transcript_items)
+            .skip(1)
+        {
+            assert_eq!(shifted.item_index, base.item_index);
+            assert_eq!(shifted.message_index, base.message_index);
+            assert_eq!(shifted.tool_call_id, base.tool_call_id);
+            assert_eq!(shifted.subagent_id, base.subagent_id);
+        }
+        assert_eq!(parsed.reasoning_attachments.len(), 1);
+        assert_eq!(baseline.reasoning_attachments.len(), 1);
+        assert_eq!(
+            parsed.reasoning_attachments[0].transcript_item_index,
+            baseline.reasoning_attachments[0].transcript_item_index
+        );
+        assert_eq!(parsed.tool_calls[0].id, "call_a");
+        assert_eq!(parsed.subagents[0].id, "spawn_a");
+        assert_eq!(parsed.session.message_count, parsed.messages.len());
+    }
+
+    #[test]
+    fn inherited_only_child_gets_prompt_but_review_is_rejected() {
+        let parsed = CodexParser
+            .parse(&linkage_fixture("inherited-only-child"))
+            .unwrap();
+        assert_eq!(parsed.messages[0].content, "Delegated task: inherited");
+        assert_eq!(parsed.messages.len(), 2);
+        assert_eq!(parsed.messages[1].content, "Own reply");
+
+        assert_no_user_messages(CodexParser.parse(&linkage_fixture("inherited-only-review")));
+        assert_no_user_messages(parse_records(&[session_meta(serde_json::json!({
+            "history_mode": "paginated",
+            "agent_path": "/root/orphan",
+        }))]));
+        assert_no_user_messages(CodexParser.parse(&crate::fixture_path(
+            "codex_sessions/2026/10/15/rollout-2026-10-15T10-00-00-paginated-empty.jsonl",
+        )));
+    }
+
+    #[test]
+    fn child_with_user_keeps_original_prompt() {
+        for mode in ["legacy", "paginated"] {
+            let user = match mode {
+                "legacy" => legacy_user("2026-10-15T10:00:01Z", "Own prompt"),
+                _ => item_completed("2026-10-15T10:00:01Z", user_item("Own prompt")),
+            };
+            let parsed = parse_records(&[
+                session_meta(child_overrides(
+                    mode,
+                    serde_json::json!({"agent_path": "/root/analyze"}),
+                )),
+                user,
+            ])
+            .unwrap();
+            assert_eq!(parsed.messages.len(), 1, "mode {mode}");
+            assert_eq!(parsed.messages[0].content, "Own prompt");
+            assert_eq!(parsed.session.first_prompt.as_deref(), Some("Own prompt"));
+        }
     }
 }
