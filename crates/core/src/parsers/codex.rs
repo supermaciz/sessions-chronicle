@@ -126,6 +126,36 @@ fn extract_item_text(item: &Value) -> Option<String> {
     if text.is_empty() { None } else { Some(text) }
 }
 
+/// Whether `event` is a transcript carrier inherited from a parent session.
+///
+/// Metadata and turn context stay visible so retained records can still use
+/// them. Records without a valid ordinal are retained.
+fn is_inherited_transcript_record(
+    event: &Value,
+    mode: HistoryMode,
+    start_ordinal: Option<u64>,
+) -> bool {
+    let (HistoryMode::Paginated, Some(start)) = (mode, start_ordinal) else {
+        return false;
+    };
+    let is_carrier = match event.get("type").and_then(|v| v.as_str()) {
+        Some("response_item") => true,
+        Some("event_msg") => {
+            event
+                .get("payload")
+                .and_then(|p| p.get("type"))
+                .and_then(|v| v.as_str())
+                != Some("turn_context")
+        }
+        _ => false,
+    };
+    is_carrier
+        && event
+            .get("ordinal")
+            .and_then(|v| v.as_u64())
+            .is_some_and(|ordinal| ordinal < start)
+}
+
 #[derive(Debug, Clone)]
 struct PendingSpawn {
     agent_type: Option<String>,
@@ -1140,6 +1170,9 @@ impl CodexParser {
 
         let mut state = ParseState::new(session_id.clone(), start_time);
         state.history_mode = HistoryMode::from_metadata(payload);
+        let start_ordinal = payload
+            .get("subagent_history_start_ordinal")
+            .and_then(|v| v.as_u64());
 
         for line in lines {
             let line = line.context("Failed to read line")?;
@@ -1170,6 +1203,10 @@ impl CodexParser {
 
             if let Some(ts) = event_ts {
                 state.update_last_updated(ts);
+            }
+
+            if is_inherited_transcript_record(&event, state.history_mode, start_ordinal) {
+                continue;
             }
 
             match event_type {
@@ -2443,5 +2480,332 @@ mod tests {
             err.downcast_ref::<ParseError>(),
             Some(ParseError::NoUserMessages)
         ));
+    }
+
+    fn fork_child_path() -> PathBuf {
+        crate::fixture_path(
+            "codex_subagent_linkage/2026/10/15/rollout-2026-10-15T10-00-00-fork-child.jsonl",
+        )
+    }
+
+    fn at(ordinal: Value, mut record: Value) -> Value {
+        record["ordinal"] = ordinal;
+        record
+    }
+
+    fn paginated_meta(boundary: Value) -> Value {
+        session_meta(serde_json::json!({
+            "history_mode": "paginated",
+            "subagent_history_start_ordinal": boundary,
+        }))
+    }
+
+    fn call_record(ts: &str, name: &str, call_id: &str, arguments: &str) -> Value {
+        serde_json::json!({
+            "timestamp": ts,
+            "type": "response_item",
+            "payload": {
+                "type": "function_call",
+                "name": name,
+                "call_id": call_id,
+                "arguments": arguments,
+            },
+        })
+    }
+
+    fn output_record(ts: &str, call_id: &str, output: &str) -> Value {
+        serde_json::json!({
+            "timestamp": ts,
+            "type": "response_item",
+            "payload": {"type": "function_call_output", "call_id": call_id, "output": output},
+        })
+    }
+
+    fn reasoning_record(ts: &str, text: &str) -> Value {
+        serde_json::json!({
+            "timestamp": ts,
+            "type": "response_item",
+            "payload": {"type": "reasoning", "summary": [{"type": "summary_text", "text": text}]},
+        })
+    }
+
+    #[test]
+    fn paginated_boundary_filters_all_transcript_carriers() {
+        let parsed = CodexParser.parse(&fork_child_path()).unwrap();
+
+        assert_eq!(
+            parsed
+                .messages
+                .iter()
+                .map(|m| m.content.as_str())
+                .collect::<Vec<_>>(),
+            ["Own prompt", "Own reply"]
+        );
+        assert_eq!(parsed.messages[0].model, None);
+        assert_eq!(parsed.messages[1].model.as_deref(), Some("gpt-5"));
+        assert_eq!(parsed.session.first_prompt.as_deref(), Some("Own prompt"));
+
+        assert_eq!(parsed.tool_calls.len(), 1);
+        assert_eq!(parsed.tool_calls[0].id, "own_call");
+        assert_eq!(
+            parsed.tool_calls[0].output_text.as_deref(),
+            Some("own output")
+        );
+
+        assert_eq!(parsed.subagents.len(), 1);
+        assert_eq!(parsed.subagents[0].id, "own_spawn");
+        assert_eq!(
+            parsed.subagents[0].agent_id.as_deref(),
+            Some("00000000-0000-7000-8000-0000000002f1")
+        );
+        assert_eq!(parsed.subagents[0].prompt.as_deref(), Some("Own task"));
+        assert_eq!(parsed.subagents[0].result_summary, None);
+
+        assert_eq!(parsed.reasoning_attachments.len(), 1);
+        assert_eq!(
+            parsed.reasoning_attachments[0].summary_text.as_deref(),
+            Some("Own reasoning")
+        );
+        assert_eq!(parsed.reasoning_attachments[0].transcript_item_index, 2);
+        assert_eq!(
+            parsed
+                .transcript_items
+                .iter()
+                .map(|item| item.kind.clone())
+                .collect::<Vec<_>>(),
+            [
+                TranscriptItemKind::Message,
+                TranscriptItemKind::Message,
+                TranscriptItemKind::ToolCall,
+                TranscriptItemKind::Subagent,
+            ]
+        );
+    }
+
+    #[test]
+    fn paginated_boundary_cannot_seed_pending_state() {
+        let ts = "2026-10-15T10:00:01Z";
+        let spawn_args = r#"{"message":"inherited task"}"#;
+
+        // Call, spawn and wait begun below the boundary, completed above it.
+        let parsed = parse_records(&[
+            paginated_meta(serde_json::json!(10)),
+            at(
+                serde_json::json!(1),
+                call_record(ts, "exec_command", "c1", "{}"),
+            ),
+            at(
+                serde_json::json!(2),
+                call_record(ts, "spawn_agent", "s1", spawn_args),
+            ),
+            at(
+                serde_json::json!(3),
+                call_record(ts, "wait_agent", "w1", "{}"),
+            ),
+            at(
+                serde_json::json!(10),
+                item_completed(ts, user_item("own prompt")),
+            ),
+            at(
+                serde_json::json!(11),
+                output_record(ts, "c1", "late output"),
+            ),
+            at(
+                serde_json::json!(12),
+                output_record(ts, "s1", r#"{"agent_id":"a1","nickname":"Late"}"#),
+            ),
+            at(
+                serde_json::json!(13),
+                output_record(ts, "w1", r#"{"status":{"a1":{"completed":"late"}}}"#),
+            ),
+        ])
+        .unwrap();
+        assert!(parsed.tool_calls.is_empty());
+        assert!(parsed.subagents.is_empty());
+        assert_eq!(parsed.transcript_items.len(), 1);
+
+        // Pending reasoning below the boundary must not attach to the first
+        // retained message.
+        let parsed = parse_records(&[
+            paginated_meta(serde_json::json!(10)),
+            at(
+                serde_json::json!(1),
+                reasoning_record(ts, "inherited thought"),
+            ),
+            at(
+                serde_json::json!(10),
+                item_completed(ts, user_item("own prompt")),
+            ),
+        ])
+        .unwrap();
+        assert!(parsed.reasoning_attachments.is_empty());
+
+        // A retained call reusing an inherited call ID keeps only its own data.
+        let parsed = parse_records(&[
+            paginated_meta(serde_json::json!(10)),
+            at(
+                serde_json::json!(1),
+                call_record(ts, "exec_command", "dup", r#"{"cmd":"inherited"}"#),
+            ),
+            at(
+                serde_json::json!(2),
+                output_record(ts, "dup", "inherited output"),
+            ),
+            at(
+                serde_json::json!(10),
+                item_completed(ts, user_item("own prompt")),
+            ),
+            at(
+                serde_json::json!(11),
+                call_record(ts, "exec_command", "dup", r#"{"cmd":"own"}"#),
+            ),
+            at(
+                serde_json::json!(12),
+                output_record(ts, "dup", "own output"),
+            ),
+        ])
+        .unwrap();
+        assert_eq!(parsed.tool_calls.len(), 1);
+        assert_eq!(
+            parsed.tool_calls[0].input_json.as_deref(),
+            Some(r#"{"cmd":"own"}"#)
+        );
+        assert_eq!(
+            parsed.tool_calls[0].output_text.as_deref(),
+            Some("own output")
+        );
+    }
+
+    #[test]
+    fn paginated_boundary_is_inclusive_and_tolerant() {
+        let below_10 = at(
+            serde_json::json!(9),
+            item_completed("2026-10-15T10:00:01Z", user_item("x")),
+        );
+        let at_10 = at(
+            serde_json::json!(10),
+            item_completed("2026-10-15T10:00:01Z", user_item("x")),
+        );
+        assert!(is_inherited_transcript_record(
+            &below_10,
+            HistoryMode::Paginated,
+            Some(10)
+        ));
+        assert!(!is_inherited_transcript_record(
+            &at_10,
+            HistoryMode::Paginated,
+            Some(10)
+        ));
+        assert!(!is_inherited_transcript_record(
+            &below_10,
+            HistoryMode::Legacy,
+            Some(10)
+        ));
+
+        // Missing or invalid ordinals are retained.
+        for ordinal in [
+            None,
+            Some(serde_json::json!(null)),
+            Some(serde_json::json!(-1)),
+            Some(serde_json::json!("9")),
+            Some(serde_json::json!(9.5)),
+            Some(serde_json::json!({})),
+        ] {
+            let mut record = item_completed("2026-10-15T10:00:01Z", user_item("kept"));
+            if let Some(ordinal) = &ordinal {
+                record["ordinal"] = ordinal.clone();
+            }
+            let parsed = parse_records(&[paginated_meta(serde_json::json!(10)), record]).unwrap();
+            assert_eq!(parsed.messages.len(), 1, "ordinal {ordinal:?}");
+        }
+
+        // Invalid boundaries disable filtering.
+        for boundary in [
+            None,
+            Some(serde_json::json!(null)),
+            Some(serde_json::json!(-1)),
+            Some(serde_json::json!("10")),
+            Some(serde_json::json!(10.5)),
+            Some(serde_json::json!({})),
+        ] {
+            let meta = match &boundary {
+                Some(value) => paginated_meta(value.clone()),
+                None => session_meta(serde_json::json!({"history_mode": "paginated"})),
+            };
+            let parsed = parse_records(&[meta, below_10.clone()]).unwrap();
+            assert_eq!(parsed.messages.len(), 1, "boundary {boundary:?}");
+        }
+
+        // Boundary zero keeps ordinal zero; huge ordinals do not overflow.
+        let parsed = parse_records(&[
+            paginated_meta(serde_json::json!(0)),
+            at(
+                serde_json::json!(0),
+                item_completed("2026-10-15T10:00:01Z", user_item("zero")),
+            ),
+        ])
+        .unwrap();
+        assert_eq!(parsed.messages.len(), 1);
+        let huge = serde_json::json!(u64::MAX);
+        let parsed = parse_records(&[
+            paginated_meta(serde_json::json!(u64::MAX)),
+            at(
+                serde_json::json!(1),
+                item_completed("2026-10-15T10:00:01Z", user_item("dropped")),
+            ),
+            at(
+                huge,
+                item_completed("2026-10-15T10:00:02Z", user_item("kept")),
+            ),
+        ])
+        .unwrap();
+        assert_eq!(parsed.messages.len(), 1);
+        assert_eq!(parsed.messages[0].content, "kept");
+
+        // Both turn-context forms below the boundary still set the model.
+        for context in [
+            serde_json::json!({"type": "turn_context", "payload": {"model": "gpt-5"}}),
+            serde_json::json!({
+                "type": "event_msg",
+                "payload": {"type": "turn_context", "model": "gpt-5"},
+            }),
+        ] {
+            let parsed = parse_records(&[
+                paginated_meta(serde_json::json!(10)),
+                at(serde_json::json!(1), context),
+                at(
+                    serde_json::json!(10),
+                    item_completed(
+                        "2026-10-15T10:00:01Z",
+                        serde_json::json!({
+                            "type": "AgentMessage",
+                            "content": [{"type": "text", "text": "reply"}],
+                        }),
+                    ),
+                ),
+                at(
+                    serde_json::json!(11),
+                    item_completed("2026-10-15T10:00:02Z", user_item("prompt")),
+                ),
+            ])
+            .unwrap();
+            assert_eq!(parsed.messages[0].model.as_deref(), Some("gpt-5"));
+        }
+
+        // Legacy sessions ignore the boundary field entirely.
+        let parsed = parse_records(&[
+            session_meta(serde_json::json!({"subagent_history_start_ordinal": 10})),
+            at(
+                serde_json::json!(1),
+                legacy_user("2026-10-15T10:00:01Z", "legacy prompt"),
+            ),
+            at(
+                serde_json::json!(2),
+                call_record("2026-10-15T10:00:02Z", "exec_command", "c1", "{}"),
+            ),
+        ])
+        .unwrap();
+        assert_eq!(parsed.messages.len(), 1);
+        assert_eq!(parsed.tool_calls.len(), 1);
     }
 }
