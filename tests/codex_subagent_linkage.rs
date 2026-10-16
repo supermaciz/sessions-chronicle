@@ -522,14 +522,31 @@ fn codex_task_name_matches_full_path_and_immediate_parent() {
     assert_child_link(temp_db.path(), ANALYZE_ID, "spawn_check", Some(CHECK_ID));
 }
 
-fn assert_nested_links(order: &[&str]) {
+/// Indexes each named rollout in its own pass, following `order`, into a
+/// fresh database. `stage` returns a session tree holding only that rollout.
+fn index_in_order(order: &[&str], stage: impl Fn(&str) -> TempDir) -> NamedTempFile {
     let temp_db = NamedTempFile::new().unwrap();
     let mut indexer = SessionIndexer::new(temp_db.path()).unwrap();
     for name in order {
-        index_dir(&mut indexer, &task_fixture_dir(&[name]));
+        index_dir(&mut indexer, &stage(name));
     }
-    assert_child_link(temp_db.path(), ROOT_ID, "spawn_analyze", Some(ANALYZE_ID));
-    assert_child_link(temp_db.path(), ANALYZE_ID, "spawn_check", Some(CHECK_ID));
+    temp_db
+}
+
+/// Stages the rollout `name` copied from `source_dir`.
+fn stage_from(source_dir: &Path, name: &str) -> TempDir {
+    let dir = task_fixture_dir(&[]);
+    fs::copy(
+        source_dir.join(task_file(name)),
+        dir.path().join("2026/10/15").join(task_file(name)),
+    )
+    .unwrap();
+    dir
+}
+
+fn assert_nested_edges(db: &Path) {
+    assert_child_link(db, ROOT_ID, "spawn_analyze", Some(ANALYZE_ID));
+    assert_child_link(db, ANALYZE_ID, "spawn_check", Some(CHECK_ID));
 }
 
 #[test]
@@ -539,7 +556,8 @@ fn codex_nested_delegation_links_all_edges_in_every_order() {
     assert_eq!(orders.len(), 6);
 
     for order in &orders {
-        assert_nested_links(order);
+        let db = index_in_order(order, |name| task_fixture_dir(&[name]));
+        assert_nested_edges(db.path());
     }
 
     // Same permutations with synthetic `agent_id` outputs (legacy regression).
@@ -567,20 +585,10 @@ fn codex_nested_delegation_links_all_edges_in_every_order() {
     )
     .unwrap();
 
+    let with_ids_dir = with_ids.path().join("2026/10/15");
     for order in &orders {
-        let temp_db = NamedTempFile::new().unwrap();
-        let mut indexer = SessionIndexer::new(temp_db.path()).unwrap();
-        for name in order {
-            let dir = task_fixture_dir(&[]);
-            fs::copy(
-                with_ids.path().join("2026/10/15").join(task_file(name)),
-                dir.path().join("2026/10/15").join(task_file(name)),
-            )
-            .unwrap();
-            index_dir(&mut indexer, &dir);
-        }
-        assert_child_link(temp_db.path(), ROOT_ID, "spawn_analyze", Some(ANALYZE_ID));
-        assert_child_link(temp_db.path(), ANALYZE_ID, "spawn_check", Some(CHECK_ID));
+        let db = index_in_order(order, |name| stage_from(&with_ids_dir, name));
+        assert_nested_edges(db.path());
     }
 
     // A clean full index keeps one row per spawn and the same links.
@@ -589,8 +597,7 @@ fn codex_nested_delegation_links_all_edges_in_every_order() {
     let everything = task_fixture_dir(&all);
     index_dir(&mut indexer, &everything);
     index_dir(&mut indexer, &everything);
-    assert_child_link(temp_db.path(), ROOT_ID, "spawn_analyze", Some(ANALYZE_ID));
-    assert_child_link(temp_db.path(), ANALYZE_ID, "spawn_check", Some(CHECK_ID));
+    assert_nested_edges(temp_db.path());
     let conn = Connection::open(temp_db.path()).unwrap();
     let rows: i64 = conn
         .query_row(
@@ -640,42 +647,24 @@ fn codex_agent_id_link_precedes_task_name_fallback() {
         );
     });
 
+    let variants_dir = variants.path().join("2026/10/15");
     let pick = |name: &str| {
-        let dir = task_fixture_dir(&[]);
-        let source = if name == TASK_CHILD {
-            Path::new(TASK_BASE).join(task_file(name))
+        if name == TASK_CHILD {
+            stage_from(Path::new(TASK_BASE), name)
         } else {
-            variants.path().join("2026/10/15").join(task_file(name))
-        };
-        fs::copy(source, dir.path().join("2026/10/15").join(task_file(name))).unwrap();
-        dir
+            stage_from(&variants_dir, name)
+        }
     };
 
-    for order in permutations(&["both-parent", TASK_CHILD]) {
-        let temp_db = NamedTempFile::new().unwrap();
-        let mut indexer = SessionIndexer::new(temp_db.path()).unwrap();
-        for name in &order {
-            index_dir(&mut indexer, &pick(name));
+    for scenario in [
+        &["both-parent", TASK_CHILD][..],
+        &["conflict-parent", TASK_CHILD, "decoy-child"],
+        &["ghost-parent", TASK_CHILD],
+    ] {
+        for order in permutations(scenario) {
+            let db = index_in_order(&order, pick);
+            assert_child_link(db.path(), ROOT_ID, "spawn_analyze", Some(ANALYZE_ID));
         }
-        assert_child_link(temp_db.path(), ROOT_ID, "spawn_analyze", Some(ANALYZE_ID));
-    }
-
-    for order in permutations(&["conflict-parent", TASK_CHILD, "decoy-child"]) {
-        let temp_db = NamedTempFile::new().unwrap();
-        let mut indexer = SessionIndexer::new(temp_db.path()).unwrap();
-        for name in &order {
-            index_dir(&mut indexer, &pick(name));
-        }
-        assert_child_link(temp_db.path(), ROOT_ID, "spawn_analyze", Some(ANALYZE_ID));
-    }
-
-    for order in permutations(&["ghost-parent", TASK_CHILD]) {
-        let temp_db = NamedTempFile::new().unwrap();
-        let mut indexer = SessionIndexer::new(temp_db.path()).unwrap();
-        for name in &order {
-            index_dir(&mut indexer, &pick(name));
-        }
-        assert_child_link(temp_db.path(), ROOT_ID, "spawn_analyze", Some(ANALYZE_ID));
     }
 }
 
