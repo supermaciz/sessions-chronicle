@@ -87,9 +87,9 @@ const SESSION_UPSERT_SQL: &str = "INSERT INTO sessions
              (id, tool, project_path, project_id, start_time, message_count, file_path, last_updated,
               first_prompt, parent_session_id, is_subagent,
               input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, reasoning_tokens,
-              edit_count, read_count, command_count, ending_status)
+              edit_count, read_count, command_count, ending_status, agent_path)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16,
-                     ?17, ?18, ?19, ?20)
+                     ?17, ?18, ?19, ?20, ?21)
              ON CONFLICT(id) DO UPDATE SET
                  tool = excluded.tool,
                  project_path = excluded.project_path,
@@ -109,7 +109,8 @@ const SESSION_UPSERT_SQL: &str = "INSERT INTO sessions
                  edit_count = excluded.edit_count,
                  read_count = excluded.read_count,
                  command_count = excluded.command_count,
-                 ending_status = excluded.ending_status";
+                 ending_status = excluded.ending_status,
+                 agent_path = excluded.agent_path";
 
 #[derive(Debug, Default, Clone, Copy)]
 struct OpencodeEnumerationFlags {
@@ -1336,6 +1337,7 @@ impl SessionIndexer {
                 read_count,
                 command_count,
                 ending_status,
+                &parsed.agent_path,
             ],
         )?;
 
@@ -1989,6 +1991,36 @@ mod tests {
             transcript_items: vec![],
             reasoning_attachments: vec![],
             token_usage: None,
+            agent_path: None,
+        }
+    }
+
+    #[test]
+    fn session_upsert_persists_and_replaces_agent_path() {
+        let temp_db = NamedTempFile::new().unwrap();
+        let mut indexer = SessionIndexer::new(temp_db.path()).unwrap();
+        let fingerprint = NamedTempFile::new().unwrap();
+
+        for agent_path in [Some("/root/analyze"), Some("/root/check"), None] {
+            let mut parsed = parsed_session("with-path", None);
+            parsed.agent_path = agent_path.map(str::to_string);
+            indexer
+                .insert_parsed_session_with_fingerprint(
+                    &parsed,
+                    fingerprint.path(),
+                    fingerprint.path(),
+                )
+                .unwrap();
+
+            let stored: Option<String> = indexer
+                .db
+                .query_row(
+                    "SELECT agent_path FROM sessions WHERE id = 'with-path'",
+                    [],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            assert_eq!(stored.as_deref(), agent_path);
         }
     }
 

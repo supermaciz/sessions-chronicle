@@ -90,6 +90,9 @@ fn parse_status_update(status: &Value) -> StatusUpdate {
     }
 }
 
+/// Row title used until a spawn names its subagent.
+const GENERIC_SUBAGENT_TITLE: &str = "Codex subagent";
+
 /// Which event family carries user and assistant message text.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum HistoryMode {
@@ -648,6 +651,17 @@ impl ParseState {
             .filter(|value| !value.is_empty())
             .map(str::to_string);
 
+        let task_name = output
+            .as_ref()
+            .and_then(|output| output.get("task_name"))
+            .and_then(|v| v.as_str())
+            .filter(|value| !value.is_empty())
+            .map(str::to_string);
+        let task_label = task_name
+            .as_deref()
+            .and_then(|name| name.rsplit('/').find(|segment| !segment.is_empty()))
+            .map(str::to_string);
+
         if let Some(&subagent_idx) = self.subagent_idx_by_call_id.get(call_id) {
             if let Some(agent_id) = agent_id {
                 self.subagents[subagent_idx].agent_id = Some(agent_id.clone());
@@ -658,6 +672,13 @@ impl ParseState {
             }
             if let Some(nickname) = nickname {
                 self.subagents[subagent_idx].title = nickname;
+            } else if let Some(label) = task_label
+                && self.subagents[subagent_idx].title == GENERIC_SUBAGENT_TITLE
+            {
+                self.subagents[subagent_idx].title = label;
+            }
+            if task_name.is_some() {
+                self.subagents[subagent_idx].agent_name = task_name;
             }
             return;
         }
@@ -666,8 +687,12 @@ impl ParseState {
         // is observed without the begin-side row having been created.
         let title = nickname
             .or(pending.agent_type)
-            .unwrap_or_else(|| "Codex subagent".to_string());
+            .or(task_label)
+            .unwrap_or_else(|| GENERIC_SUBAGENT_TITLE.to_string());
         self.push_subagent_row(call_id.to_string(), agent_id, title, pending.message);
+        if let Some(last) = self.subagents.last_mut() {
+            last.agent_name = task_name;
+        }
     }
 
     fn complete_pending_wait(&mut self, call_id: &str, response_item: &Value) {
@@ -718,7 +743,7 @@ impl ParseState {
                         let title = pending
                             .agent_type
                             .clone()
-                            .unwrap_or_else(|| "Codex subagent".to_string());
+                            .unwrap_or_else(|| GENERIC_SUBAGENT_TITLE.to_string());
                         self.push_subagent_row(
                             call_id.clone(),
                             None,
@@ -1232,6 +1257,11 @@ impl CodexParser {
                 .map(str::to_string)
         });
         let is_subagent = parent_session_id.is_some();
+        let agent_path = payload
+            .get("agent_path")
+            .and_then(|v| v.as_str())
+            .filter(|path| !path.is_empty())
+            .map(str::to_string);
 
         let mut state = ParseState::new(session_id.clone(), start_time);
         state.history_mode = HistoryMode::from_metadata(payload);
@@ -1332,6 +1362,7 @@ impl CodexParser {
             transcript_items: state.transcript_items,
             reasoning_attachments: state.reasoning_attachments,
             token_usage,
+            agent_path,
         })
     }
 
@@ -3097,6 +3128,140 @@ mod tests {
             assert_eq!(parsed.messages.len(), 1, "mode {mode}");
             assert_eq!(parsed.messages[0].content, "Own prompt");
             assert_eq!(parsed.session.first_prompt.as_deref(), Some("Own prompt"));
+        }
+    }
+
+    fn spawn_records(arguments: &str, output: Option<&str>) -> Vec<Value> {
+        let ts = "2026-10-15T10:00:02Z";
+        let mut records = vec![
+            session_meta(serde_json::json!({"history_mode": "paginated"})),
+            item_completed("2026-10-15T10:00:01Z", user_item("delegate")),
+            call_record(ts, "spawn_agent", "spawn_1", arguments),
+        ];
+        if let Some(output) = output {
+            records.push(output_record(ts, "spawn_1", output));
+        }
+        records
+    }
+
+    #[test]
+    fn spawn_output_task_name_sets_agent_name() {
+        let parent = CodexParser.parse(&linkage_fixture("task-parent")).unwrap();
+        assert_eq!(parent.subagents.len(), 1);
+        assert_eq!(
+            parent.subagents[0].agent_name.as_deref(),
+            Some("/root/analyze")
+        );
+        assert_eq!(
+            parent.subagents[0].prompt.as_deref(),
+            Some("Analyze the parser")
+        );
+        assert_eq!(parent.subagents[0].agent_id, None);
+        assert_eq!(parent.subagents[0].title, "analyze");
+        assert!(parent.tool_calls.is_empty());
+
+        // (arguments, output, expected agent_id, expected agent_name, expected title)
+        let cases = [
+            (
+                "{}",
+                Some(r#"{"task_name":"/root/analyze"}"#),
+                None,
+                Some("/root/analyze"),
+                "analyze",
+            ),
+            (
+                "{}",
+                Some(r#"{"agent_id":"a1","task_name":"/root/analyze"}"#),
+                Some("a1"),
+                Some("/root/analyze"),
+                "analyze",
+            ),
+            (
+                "{}",
+                Some(r#"{"nickname":"Ada","task_name":"/root/analyze"}"#),
+                None,
+                Some("/root/analyze"),
+                "Ada",
+            ),
+            (
+                r#"{"agent_type":"worker"}"#,
+                Some(r#"{"task_name":"/root/analyze"}"#),
+                None,
+                Some("/root/analyze"),
+                "worker",
+            ),
+            ("{}", Some(r#"{}"#), None, None, "Codex subagent"),
+            (
+                "{}",
+                Some(r#"{"task_name":""}"#),
+                None,
+                None,
+                "Codex subagent",
+            ),
+            (
+                "{}",
+                Some(r#"{"task_name":7}"#),
+                None,
+                None,
+                "Codex subagent",
+            ),
+            (
+                "{}",
+                Some(r#"{"task_name":null}"#),
+                None,
+                None,
+                "Codex subagent",
+            ),
+            ("{}", Some("not json"), None, None, "Codex subagent"),
+            ("{}", None, None, None, "Codex subagent"),
+            (
+                "{}",
+                Some(r#"{"task_name":"/"}"#),
+                None,
+                Some("/"),
+                "Codex subagent",
+            ),
+            (
+                "{}",
+                Some(r#"{"task_name":"/root/analyze/"}"#),
+                None,
+                Some("/root/analyze/"),
+                "analyze",
+            ),
+        ];
+        for (arguments, output, agent_id, agent_name, title) in cases {
+            let parsed = parse_records(&spawn_records(arguments, output)).unwrap();
+            assert_eq!(parsed.subagents.len(), 1, "output {output:?}");
+            let row = &parsed.subagents[0];
+            assert_eq!(row.agent_id.as_deref(), agent_id, "output {output:?}");
+            assert_eq!(row.agent_name.as_deref(), agent_name, "output {output:?}");
+            assert_eq!(row.title, title, "output {output:?}");
+            assert!(parsed.tool_calls.is_empty());
+        }
+    }
+
+    #[test]
+    fn codex_metadata_preserves_agent_path() {
+        let child = CodexParser.parse(&linkage_fixture("task-child")).unwrap();
+        assert_eq!(child.agent_path.as_deref(), Some("/root/analyze"));
+        let parent = CodexParser.parse(&linkage_fixture("task-parent")).unwrap();
+        assert_eq!(parent.agent_path, None);
+
+        for (value, expected) in [
+            (serde_json::json!(""), None),
+            (serde_json::json!(5), None),
+            (serde_json::json!(null), None),
+            (serde_json::json!("/root/x"), Some("/root/x")),
+        ] {
+            let parsed = parse_records(&[
+                session_meta(child_overrides(
+                    "paginated",
+                    serde_json::json!({"agent_path": value}),
+                )),
+                item_completed("2026-10-15T10:00:01Z", user_item("hi")),
+            ])
+            .unwrap();
+            assert_eq!(parsed.agent_path.as_deref(), expected, "value {value}");
         }
     }
 }
