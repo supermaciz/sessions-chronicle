@@ -87,7 +87,7 @@ the ledger is the only provenance link.
 The local ledger held 41 records, all from Claude Code transcripts. Counts below
 are file counts from one machine, not prevalence estimates:
 
-| Imported rollout | Claude Code original | Files | Effect in Sessions Chronicle (by code inspection) |
+| Imported rollout | Claude Code original | Files | Effect in Sessions Chronicle on 2026-10-11 (by code inspection) |
 |------------------|----------------------|-------|---------------------------------------------------|
 | `paginated`, no `user_message` | gone | 16 | Rejected (`NoUserMessages`); the session is missing |
 | `paginated`, no `user_message` | present | 14 | Copy rejected; original visible; no duplicate |
@@ -97,6 +97,11 @@ The 11 `legacy` imports come from `0.162.0-alpha` and are expected to be rewritt
 to `paginated` by the startup migration below, which would also remove the
 duplicate. That expectation is not verified. Why 16 originals are gone was not
 established.
+
+**Update 2026-10-16:** the rejections in the table describe the parser before
+paginated-message support. Paginated rollouts with `UserMessage` items are now
+indexed (see [Paginated Item Shapes](#paginated-item-shapes-captured-2026-10-11)),
+so the missing-session and duplicate-original effects need a fresh comparison.
 
 ### Unknowns and Next Evidence
 
@@ -130,12 +135,23 @@ example a `0.58.0` file from 2025-11-14). Only 11 files are `legacy` (all
 `0.162.0-alpha` desktop imports). This contradicts the earlier sampling (9 of 348
 paginated), which predates the migration.
 
-**Confirmed local gap:** `crates/core/src/parsers/codex.rs` rejects a rollout
-without `user_message` (`NoUserMessages`) and does not read `item_completed`. By
-code inspection, almost every local Codex rollout is therefore unreadable by the
-current parser. The local `sessions.db` files were last updated 2026-09-09,
-before the migration, so no index run confirmed the count; the rule was
-reproduced by script, not by running the parser.
+**Observed 2026-10-15:** a read-only scan of 413 local rollouts found every one
+`paginated`, no legacy `event_msg.user_message`, 30 without any `UserMessage`
+item (14 empty roots with at most 5 lines, 16 subagent children), no non-null
+`history_base`, and 83 rollouts with `CommandExecution` items that all also
+contain `function_call` response items. A child's inbound `agent_message`
+response item carries a clear header (`Message Type`, `Task name`, `Sender`, an
+empty `Payload:`) plus `encrypted_content`, so the delegated task prompt is
+readable only on the parent side (the `spawn_agent` `message` argument).
+Multi-agent `spawn_agent` output is `{"task_name": "/root/<name>"}` with no
+`agent_id`.
+
+**Implemented 2026-10-16:** `crates/core/src/parsers/codex.rs` reads the history
+mode from the first `session_meta` and, in `paginated` mode, builds messages from
+`item_completed` items instead of legacy events (see
+[Parser Behavior](#parser-behavior-sessions-chronicle)). Before this change the
+parser rejected such rollouts with `NoUserMessages`, which made almost every
+local rollout unreadable by code inspection.
 
 ### Paginated Item Shapes (captured 2026-10-11)
 
@@ -299,10 +315,18 @@ persisted only in `legacy` mode. Some `item_completed` events are also retained
 in legacy mode, including function-call outputs, plans, and completed subagent
 activities; the event alone does not identify the history mode.
 
-**Confirmed local gap:** the parser ignores `item_completed` and response-item
-messages. A rollout without a legacy `user_message` is rejected with
-`NoUserMessages`, even if it contains user messages as completed items. This is
-a code-inspection finding; no paginated reproduction was run during this watch.
+**Implemented 2026-10-16:** in `paginated` mode the parser reads `UserMessage`
+and `AgentMessage` items from `item_completed` and ignores legacy
+`user_message` / `agent_message` events; in `legacy` mode (including an absent
+or unrecognized `history_mode`) it reads only the legacy events. Only the first
+`session_meta` selects the mode. The parser still ignores response-item
+messages, which include injected developer, `AGENTS.md` and plugin context.
+
+**Remaining gaps:** `history_base` shared-prefix reconstruction, typed
+non-message items (`CommandExecution`, `FileChange`, `McpToolCall`, `WebSearch`,
+`Extension`, `Plan`), non-text `UserMessage` content (`skill`, `mention`,
+`local_image`), `sub_agent_activity`, and `wait_agent` / `close_agent` results
+that target task names instead of agent IDs are not handled.
 
 **Confirmed metadata contract:** the inspected
 [protocol types](https://github.com/openai/codex/blob/ac192cd7937b0d73edc6dffe009940ae53782dd4/codex-rs/protocol/src/protocol.rs)
@@ -916,12 +940,38 @@ See also: [Codex issue discussion around `token_count` logging](https://github.c
 
 Current implementation: [`crates/core/src/parsers/codex.rs`](../../crates/core/src/parsers/codex.rs)
 
-- Indexes `event_msg.payload.type == user_message|agent_message`
+- Selects the message source from the first `session_meta.payload.history_mode`:
+  `"paginated"` reads `item_completed` `UserMessage` / `AgentMessage` items, any
+  other value or an absent field means `legacy` and reads
+  `event_msg.payload.type == user_message|agent_message`. Exactly one source is
+  used per rollout
+- Joins the `text` entries of an item's `content[]` (entry type compared
+  case-insensitively, other entry types skipped) with `"\n"`; items without
+  text produce no message. `commentary`, `final_answer` and absent `phase` are
+  all kept, and the phase is not stored
+- Skips transcript records below `session_meta.payload.subagent_history_start_ordinal`
+  in `paginated` mode (the boundary ordinal itself is kept). The filter covers
+  `event_msg` and `response_item` carriers before any state is touched, so no
+  inherited message, tool call, reasoning or subagent activity leaks into the
+  child; `turn_context` stays available for model attribution. Records without a
+  valid non-negative integer `ordinal` are retained, and `legacy` mode has no
+  such filter
+- Gives a child session (resolved parent) with no user message a synthetic first
+  prompt, `Delegated task: <name>`, taken from the last non-empty `agent_path`
+  segment, else `agent_nickname`, else just `Delegated task`. It is a generated
+  label, not the delegated prompt; the real task text stays on the parent's
+  `Subagent.prompt`. A rollout without a resolved parent, such as a review
+  subagent, and an empty root are still rejected with `NoUserMessages`
+- Stores `session_meta.payload.agent_path` and the `task_name` from `spawn_agent`
+  output (`Subagent.agent_name`) and links parent rows to child sessions by the
+  immediate parent session ID plus the full task path, in either indexing order.
+  A duplicated path leaves the row unlinked. An `agent_id` that resolves to a
+  session keeps priority over the name
 - Indexes tool lifecycle pairs for `mcp_tool_call_begin|end` and `exec_command_begin|end`
 - Indexes Codex child rollouts as subagent sessions when `session_meta.payload.source.sub_agent.thread_spawn.parent_thread_id` or `source.subagent.thread_spawn.parent_thread_id` is present
 - Uses direct `session_meta.payload.parent_thread_id` as a child-session linkage fallback
 - Discovers plain and compressed rollouts, including sibling archives under the directory-name rules above
-- Does not handle `item_completed`, `sub_agent_activity`, or shared-prefix reconstruction via `history_base`
+- Does not handle non-message `item_completed` items, `sub_agent_activity`, or shared-prefix reconstruction via `history_base`
 - Indexes `collab_agent_spawn_end` as parent-side `Subagent` rows and transcript items
 - Enriches parent-side subagents from `collab_waiting_end`, `collab_close_end`, `collab_resume_end`, and `collab_agent_interaction_end`
 - Ignores collab timing fields, spawned-agent `model`, and spawned-agent `reasoning_effort`
@@ -931,14 +981,14 @@ Current implementation: [`crates/core/src/parsers/codex.rs`](../../crates/core/s
   as generic tool calls
 - Does not yet extract Codex skill invocations from `$skill-name` / `<skill>` pairs
 
-**Title extraction:** First `event_msg.payload.type == "user_message"` event (`payload.message`).
+**Title extraction:** The first user message from the active message source: the first `UserMessage` item in `paginated` mode, or the first `event_msg.payload.type == "user_message"` event (`payload.message`) in `legacy` mode. Children without one use the synthetic delegated-task label.
 
 **Timestamp parsing:**
 
 - `start_time`: from first-line `session_meta.payload.timestamp`
 - `last_updated`: maximum valid top-level event timestamp across all subsequent envelope types, initialized from the session start time
 
-**Content extraction:**
+**Content extraction (`legacy` mode only; `paginated` mode uses the item text rule above):**
 
 ```rust
 fn extract_content_codex_event_msg(event: &Value) -> Option<(Role, String)> {
