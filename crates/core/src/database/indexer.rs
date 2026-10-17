@@ -87,9 +87,9 @@ const SESSION_UPSERT_SQL: &str = "INSERT INTO sessions
              (id, tool, project_path, project_id, start_time, message_count, file_path, last_updated,
               first_prompt, parent_session_id, is_subagent,
               input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, reasoning_tokens,
-              edit_count, read_count, command_count, ending_status)
+              edit_count, read_count, command_count, ending_status, agent_path)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16,
-                     ?17, ?18, ?19, ?20)
+                     ?17, ?18, ?19, ?20, ?21)
              ON CONFLICT(id) DO UPDATE SET
                  tool = excluded.tool,
                  project_path = excluded.project_path,
@@ -109,7 +109,8 @@ const SESSION_UPSERT_SQL: &str = "INSERT INTO sessions
                  edit_count = excluded.edit_count,
                  read_count = excluded.read_count,
                  command_count = excluded.command_count,
-                 ending_status = excluded.ending_status";
+                 ending_status = excluded.ending_status,
+                 agent_path = excluded.agent_path";
 
 #[derive(Debug, Default, Clone, Copy)]
 struct OpencodeEnumerationFlags {
@@ -266,6 +267,100 @@ fn link_teammate_child_tx(
                 parent_session_id
             );
         }
+        return Ok(());
+    }
+
+    tx.execute(
+        "UPDATE subagents SET child_session_id = ?1
+         WHERE session_id = ?2 AND id = ?3",
+        rusqlite::params![child_session_id, parent_session_id, &parent_rows[0]],
+    )?;
+
+    Ok(())
+}
+
+/// SQL predicate: the `subagents` row has no successfully resolved `agent_id`
+/// link, so a task-name match may apply to it.
+const SUBAGENT_NAME_ELIGIBLE_SQL: &str = "(agent_id IS NULL
+         OR NOT EXISTS (SELECT 1 FROM sessions WHERE sessions.id = subagents.agent_id))";
+
+/// Returns the ids of `parent_session_id`'s indexed child sessions whose Codex
+/// task path is exactly `agent_path`.
+fn codex_child_sessions_named(
+    tx: &rusqlite::Transaction<'_>,
+    parent_session_id: &str,
+    agent_path: &str,
+) -> Result<Vec<String>> {
+    let mut stmt = tx.prepare(
+        "SELECT id FROM sessions
+         WHERE parent_session_id = ?1 AND agent_path = ?2
+         ORDER BY id",
+    )?;
+    let ids = stmt
+        .query_map(rusqlite::params![parent_session_id, agent_path], |row| {
+            row.get(0)
+        })?
+        .collect::<rusqlite::Result<Vec<String>>>()?;
+    Ok(ids)
+}
+
+/// Links a freshly indexed Codex child to its parent's task-name spawn row.
+///
+/// Matches the immediate parent session and the full task path. Rows whose
+/// `agent_id` already resolves to a session keep that authoritative link.
+/// Links only when the path is unambiguous on both sides; an ambiguous path
+/// retracts earlier name-based links instead of risking the wrong transcript.
+fn link_codex_task_child_tx(
+    tx: &rusqlite::Transaction<'_>,
+    parent_session_id: &str,
+    child_session_id: &str,
+    agent_path: &str,
+) -> Result<()> {
+    let mut stmt = tx.prepare(&format!(
+        "SELECT id FROM subagents
+         WHERE session_id = ?1 AND agent_name = ?2 AND {SUBAGENT_NAME_ELIGIBLE_SQL}"
+    ))?;
+    let parent_rows: Vec<String> = stmt
+        .query_map(rusqlite::params![parent_session_id, agent_path], |row| {
+            row.get(0)
+        })?
+        .collect::<rusqlite::Result<Vec<String>>>()?;
+
+    if parent_rows.is_empty() {
+        return Ok(());
+    }
+    if parent_rows.len() > 1 {
+        tracing::warn!(
+            "Codex task path {:?} matches {} subagent rows in session {}; \
+             leaving them unlinked.",
+            agent_path,
+            parent_rows.len(),
+            parent_session_id
+        );
+        return Ok(());
+    }
+
+    let siblings = codex_child_sessions_named(tx, parent_session_id, agent_path)?;
+    if siblings.len() > 1 {
+        let retracted = tx.execute(
+            &format!(
+                "UPDATE subagents SET child_session_id = NULL
+                 WHERE session_id = ?1 AND agent_name = ?2 AND {SUBAGENT_NAME_ELIGIBLE_SQL}"
+            ),
+            rusqlite::params![parent_session_id, agent_path],
+        )?;
+        tracing::warn!(
+            "Codex task path {:?} matches {} child sessions of {}; leaving the subagent \
+             unlinked{}.",
+            agent_path,
+            siblings.len(),
+            parent_session_id,
+            if retracted > 0 {
+                " and retracting a previous link"
+            } else {
+                ""
+            }
+        );
         return Ok(());
     }
 
@@ -1212,12 +1307,45 @@ impl SessionIndexer {
             return Ok(());
         }
 
-        if !parsed.session.is_subagent {
-            for subagent in &parsed.subagents {
-                let Some(agent_id) = subagent.agent_id.as_deref() else {
-                    continue;
-                };
+        // The two roles are independent: an intermediate session is both a
+        // child of its own parent and the parent of its own subagents.
+        Self::link_codex_as_child_tx(tx, parsed)?;
+        Self::link_codex_as_parent_tx(tx, parsed)
+    }
 
+    /// Links this session's id (and task path) into its parent's subagent rows.
+    fn link_codex_as_child_tx(
+        tx: &rusqlite::Transaction<'_>,
+        parsed: &ParsedSession,
+    ) -> Result<()> {
+        let Some(parent_session_id) = parsed.session.parent_session_id.as_deref() else {
+            return Ok(());
+        };
+
+        tx.execute(
+            "UPDATE subagents
+             SET child_session_id = ?1
+             WHERE session_id = ?2 AND agent_id = ?3",
+            rusqlite::params![&parsed.session.id, parent_session_id, &parsed.session.id],
+        )?;
+
+        if let Some(agent_path) = parsed.agent_path.as_deref() {
+            link_codex_task_child_tx(tx, parent_session_id, &parsed.session.id, agent_path)?;
+        }
+
+        Ok(())
+    }
+
+    /// Links this session's own subagent rows to already indexed children.
+    fn link_codex_as_parent_tx(
+        tx: &rusqlite::Transaction<'_>,
+        parsed: &ParsedSession,
+    ) -> Result<()> {
+        // Resolve `agent_id` links first; only rows left without one may use
+        // the task-name fallback.
+        let mut by_name = Vec::new();
+        for subagent in &parsed.subagents {
+            if let Some(agent_id) = subagent.agent_id.as_deref() {
                 let child_exists: bool = tx.query_row(
                     "SELECT EXISTS(SELECT 1 FROM sessions WHERE id = ?1)",
                     [agent_id],
@@ -1231,22 +1359,55 @@ impl SessionIndexer {
                          WHERE session_id = ?2 AND id = ?3",
                         rusqlite::params![agent_id, &parsed.session.id, &subagent.id],
                     )?;
+                    continue;
                 }
             }
-
-            return Ok(());
+            if subagent.agent_name.is_some() {
+                by_name.push(subagent);
+            }
         }
 
-        let Some(parent_session_id) = parsed.session.parent_session_id.as_deref() else {
-            return Ok(());
-        };
+        for subagent in &by_name {
+            let Some(name) = subagent.agent_name.as_deref() else {
+                continue;
+            };
+            let same_name = by_name
+                .iter()
+                .filter(|other| other.agent_name.as_deref() == Some(name))
+                .count();
+            if same_name != 1 {
+                tracing::warn!(
+                    "Codex task path {:?} is used by {} subagents in session {}; \
+                     leaving them unlinked.",
+                    name,
+                    same_name,
+                    parsed.session.id
+                );
+                continue;
+            }
 
-        tx.execute(
-            "UPDATE subagents
-             SET child_session_id = ?1
-             WHERE session_id = ?2 AND agent_id = ?3",
-            rusqlite::params![&parsed.session.id, parent_session_id, &parsed.session.id],
-        )?;
+            let children = codex_child_sessions_named(tx, &parsed.session.id, name)?;
+            match children.len() {
+                0 => {}
+                1 => {
+                    tx.execute(
+                        "UPDATE subagents
+                         SET child_session_id = ?1
+                         WHERE session_id = ?2 AND id = ?3",
+                        rusqlite::params![&children[0], &parsed.session.id, &subagent.id],
+                    )?;
+                }
+                count => {
+                    tracing::warn!(
+                        "Codex task path {:?} matches {} child sessions of {}; \
+                         leaving the subagent unlinked.",
+                        name,
+                        count,
+                        parsed.session.id
+                    );
+                }
+            }
+        }
 
         Ok(())
     }
@@ -1336,6 +1497,7 @@ impl SessionIndexer {
                 read_count,
                 command_count,
                 ending_status,
+                &parsed.agent_path,
             ],
         )?;
 
@@ -1989,6 +2151,36 @@ mod tests {
             transcript_items: vec![],
             reasoning_attachments: vec![],
             token_usage: None,
+            agent_path: None,
+        }
+    }
+
+    #[test]
+    fn session_upsert_persists_and_replaces_agent_path() {
+        let temp_db = NamedTempFile::new().unwrap();
+        let mut indexer = SessionIndexer::new(temp_db.path()).unwrap();
+        let fingerprint = NamedTempFile::new().unwrap();
+
+        for agent_path in [Some("/root/analyze"), Some("/root/check"), None] {
+            let mut parsed = parsed_session("with-path", None);
+            parsed.agent_path = agent_path.map(str::to_string);
+            indexer
+                .insert_parsed_session_with_fingerprint(
+                    &parsed,
+                    fingerprint.path(),
+                    fingerprint.path(),
+                )
+                .unwrap();
+
+            let stored: Option<String> = indexer
+                .db
+                .query_row(
+                    "SELECT agent_path FROM sessions WHERE id = 'with-path'",
+                    [],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            assert_eq!(stored.as_deref(), agent_path);
         }
     }
 
@@ -3470,7 +3662,7 @@ mod tests {
         let sessions_dir = crate::fixture_path("codex_sessions");
 
         let count = indexer.index_codex_sessions(&sessions_dir).unwrap();
-        assert_eq!(count, 4);
+        assert_eq!(count, 5);
 
         let sessions: Vec<(String, String)> = indexer
             .db
@@ -3481,7 +3673,7 @@ mod tests {
             .collect::<Result<Vec<_>, _>>()
             .unwrap();
 
-        assert_eq!(sessions.len(), 4);
+        assert_eq!(sessions.len(), 5);
         assert!(sessions.iter().all(|(_, tool)| tool == "codex"));
     }
 

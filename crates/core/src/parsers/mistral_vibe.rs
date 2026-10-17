@@ -341,6 +341,7 @@ impl MistralVibeParser {
             transcript_items,
             reasoning_attachments,
             token_usage,
+            agent_path: None,
         })
     }
 

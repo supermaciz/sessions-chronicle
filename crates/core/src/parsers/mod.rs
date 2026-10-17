@@ -91,6 +91,8 @@ pub struct ParsedSession {
     pub transcript_items: Vec<TranscriptItem>,
     pub reasoning_attachments: Vec<ReasoningAttachment>,
     pub token_usage: Option<TokenUsage>,
+    /// Full task path of a Codex child session (`/root/analyze`); `None` elsewhere.
+    pub agent_path: Option<String>,
 }
 
 pub(crate) fn extract_first_prompt(messages: &[Message]) -> Option<String> {

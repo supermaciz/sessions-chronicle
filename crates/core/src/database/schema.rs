@@ -2,7 +2,7 @@ use anyhow::Result;
 use rusqlite::Connection;
 
 #[cfg(test)]
-const CURRENT_DB_VERSION: i64 = 17;
+const CURRENT_DB_VERSION: i64 = 18;
 
 fn column_exists(conn: &Connection, table_name: &str, column_name: &str) -> Result<bool> {
     Ok(conn.query_row(
@@ -57,6 +57,9 @@ fn table_exists(conn: &Connection, name: &str) -> Result<bool> {
 ///        populated
 ///   17 – clear file_fingerprints so Claude Code sessions whose only assistant
 ///        events are synthetic API errors are re-parsed and pruned
+///   18 – sessions gains a nullable agent_path (full Codex task path) and
+///        subagents.agent_name now carries Codex spawn task names; clears
+///        file_fingerprints so existing Codex sessions are re-parsed
 pub fn initialize_database(conn: &Connection) -> Result<()> {
     let version: i64 = conn.query_row("PRAGMA user_version", [], |row| row.get(0))?;
 
@@ -111,6 +114,9 @@ pub fn initialize_database(conn: &Connection) -> Result<()> {
     if version < 17 {
         apply_v17_migration(conn)?;
     }
+    if version < 18 {
+        apply_v18_migration(conn)?;
+    }
 
     Ok(())
 }
@@ -158,7 +164,8 @@ fn apply_v1_migration(conn: &Connection) -> Result<()> {
                 last_updated INTEGER NOT NULL,
                 first_prompt TEXT,
                 parent_session_id TEXT,
-                is_subagent INTEGER NOT NULL DEFAULT 0
+                is_subagent INTEGER NOT NULL DEFAULT 0,
+                agent_path TEXT
             )",
             [],
         )?;
@@ -684,6 +691,25 @@ fn apply_v17_migration(conn: &Connection) -> Result<()> {
     }
 
     conn.execute_batch("PRAGMA user_version = 17")?;
+    Ok(())
+}
+
+/// Migrate from v17 to v18.
+///
+/// Adds a nullable `sessions.agent_path` holding the full Codex task path of a
+/// child session, used to link task-name spawns. Clears `file_fingerprints`
+/// because already indexed Codex sessions must be re-parsed to populate it
+/// (and the matching `subagents.agent_name`).
+fn apply_v18_migration(conn: &Connection) -> Result<()> {
+    if table_exists(conn, "sessions")? && !column_exists(conn, "sessions", "agent_path")? {
+        conn.execute("ALTER TABLE sessions ADD COLUMN agent_path TEXT", [])?;
+    }
+
+    if table_exists(conn, "file_fingerprints")? {
+        conn.execute("DELETE FROM file_fingerprints", [])?;
+    }
+
+    conn.execute_batch("PRAGMA user_version = 18")?;
     Ok(())
 }
 
@@ -1843,5 +1869,131 @@ mod tests {
                 "{order_by} used a temporary sort: {details:?}"
             );
         }
+    }
+
+    fn migrate_to_v17(conn: &Connection) {
+        apply_v1_migration(conn).unwrap();
+        apply_v2_migration(conn).unwrap();
+        apply_v3_migration(conn).unwrap();
+        apply_v4_migration(conn).unwrap();
+        apply_v5_migration(conn).unwrap();
+        apply_v6_migration(conn).unwrap();
+        apply_v7_migration(conn).unwrap();
+        apply_v8_migration(conn).unwrap();
+        apply_v9_migration(conn).unwrap();
+        apply_v10_migration(conn).unwrap();
+        apply_v11_migration(conn).unwrap();
+        apply_v12_migration(conn).unwrap();
+        apply_v13_migration(conn).unwrap();
+        apply_v14_migration(conn).unwrap();
+        apply_v15_migration(conn).unwrap();
+        apply_v16_migration(conn).unwrap();
+        apply_v17_migration(conn).unwrap();
+    }
+
+    fn seed_v17_rows(conn: &Connection) {
+        conn.execute(
+            "INSERT INTO sessions
+                 (id, tool, start_time, message_count, file_path, last_updated, pinned_at)
+             VALUES ('s1', 'codex', 1, 1, '/tmp/s1.jsonl', 1, 42)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO messages (session_id, message_index, role, content, timestamp)
+             VALUES ('s1', 0, 'user', 'hello', 1)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO file_fingerprints (file_path, mtime_ns, size) VALUES ('fixture.jsonl', 1, 1)",
+            [],
+        )
+        .unwrap();
+    }
+
+    fn count(conn: &Connection, sql: &str) -> i64 {
+        conn.query_row(sql, [], |row| row.get(0)).unwrap()
+    }
+
+    #[test]
+    fn fresh_db_has_nullable_agent_path_column() {
+        let conn = Connection::open_in_memory().unwrap();
+        initialize_database(&conn).unwrap();
+        assert!(column_exists(&conn, "sessions", "agent_path").unwrap());
+        let notnull = count(
+            &conn,
+            "SELECT \"notnull\" FROM pragma_table_info('sessions') WHERE name = 'agent_path'",
+        );
+        assert_eq!(notnull, 0);
+    }
+
+    #[test]
+    fn v17_to_v18_adds_agent_path_and_clears_fingerprints() {
+        let conn = Connection::open_in_memory().unwrap();
+        migrate_to_v17(&conn);
+        // The fresh schema already carries the column; an authentic v17
+        // database does not.
+        conn.execute("ALTER TABLE sessions DROP COLUMN agent_path", [])
+            .unwrap();
+        assert!(!column_exists(&conn, "sessions", "agent_path").unwrap());
+        seed_v17_rows(&conn);
+
+        initialize_database(&conn).unwrap();
+
+        let version: i64 = conn
+            .query_row("PRAGMA user_version", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(version, 18);
+        assert!(column_exists(&conn, "sessions", "agent_path").unwrap());
+        assert_eq!(count(&conn, "SELECT count(*) FROM file_fingerprints"), 0);
+        assert_eq!(count(&conn, "SELECT count(*) FROM sessions"), 1);
+        assert_eq!(count(&conn, "SELECT count(*) FROM messages"), 1);
+        assert_eq!(
+            count(&conn, "SELECT pinned_at FROM sessions WHERE id = 's1'"),
+            42
+        );
+    }
+
+    #[test]
+    fn v18_migration_tolerates_existing_column() {
+        let conn = Connection::open_in_memory().unwrap();
+        migrate_to_v17(&conn);
+        assert!(column_exists(&conn, "sessions", "agent_path").unwrap());
+        seed_v17_rows(&conn);
+        conn.execute(
+            "UPDATE sessions SET agent_path = '/root/analyze' WHERE id = 's1'",
+            [],
+        )
+        .unwrap();
+
+        initialize_database(&conn).unwrap();
+
+        let version: i64 = conn
+            .query_row("PRAGMA user_version", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(version, 18);
+        let path: String = conn
+            .query_row("SELECT agent_path FROM sessions WHERE id = 's1'", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        assert_eq!(path, "/root/analyze");
+        assert_eq!(count(&conn, "SELECT count(*) FROM file_fingerprints"), 0);
+    }
+
+    #[test]
+    fn v18_initialization_preserves_fingerprints_on_second_open() {
+        let conn = Connection::open_in_memory().unwrap();
+        initialize_database(&conn).unwrap();
+        conn.execute(
+            "INSERT INTO file_fingerprints (file_path, mtime_ns, size) VALUES ('fixture.jsonl', 1, 1)",
+            [],
+        )
+        .unwrap();
+
+        initialize_database(&conn).unwrap();
+
+        assert_eq!(count(&conn, "SELECT count(*) FROM file_fingerprints"), 1);
     }
 }

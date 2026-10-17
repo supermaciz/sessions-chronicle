@@ -802,6 +802,7 @@ impl ParseState {
             transcript_items: self.transcript_items,
             reasoning_attachments: self.reasoning_attachments,
             token_usage,
+            agent_path: None,
         })
     }
 }

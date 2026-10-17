@@ -1,0 +1,5 @@
+{"timestamp": "2026-10-15T10:00:00Z", "type": "session_meta", "payload": {"id": "00000000-0000-7000-8000-000000000201", "timestamp": "2026-10-15T10:00:00Z", "cwd": "/tmp/codex-pagination-fixture", "originator": "codex_cli_rs", "cli_version": "0.170.0", "history_mode": "paginated"}}
+{"timestamp": "2026-10-15T10:00:01Z", "ordinal": 1, "type": "event_msg", "payload": {"type": "item_completed", "item": {"type": "UserMessage", "content": [{"type": "text", "text": "Delegate analysis"}]}}}
+{"timestamp": "2026-10-15T10:00:02Z", "ordinal": 2, "type": "response_item", "payload": {"type": "function_call", "name": "spawn_agent", "call_id": "spawn_analyze", "arguments": "{\"message\": \"Analyze the parser\", \"task_name\": \"analyze\"}"}}
+{"timestamp": "2026-10-15T10:00:03Z", "ordinal": 3, "type": "response_item", "payload": {"type": "function_call_output", "call_id": "spawn_analyze", "output": "{\"task_name\": \"/root/analyze\"}"}}
+{"timestamp": "2026-10-15T10:00:04Z", "ordinal": 4, "type": "event_msg", "payload": {"type": "item_completed", "item": {"type": "AgentMessage", "content": [{"type": "text", "text": "Delegated"}], "phase": "final_answer"}}}

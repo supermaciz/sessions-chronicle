@@ -2201,6 +2201,7 @@ fn parse_journal(
             } else {
                 state.step_usage.into_token_usage()
             },
+            agent_path: None,
         },
         first_wire_time_ms,
         agent_calls: state.agent_calls,

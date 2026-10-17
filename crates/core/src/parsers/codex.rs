@@ -90,6 +90,93 @@ fn parse_status_update(status: &Value) -> StatusUpdate {
     }
 }
 
+/// Row title used until a spawn names its subagent.
+const GENERIC_SUBAGENT_TITLE: &str = "Codex subagent";
+
+/// Which event family carries user and assistant message text.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum HistoryMode {
+    Legacy,
+    Paginated,
+}
+
+impl HistoryMode {
+    /// Absent or any value other than `"paginated"` means legacy, matching
+    /// Codex's deserialization default.
+    fn from_metadata(payload: &Value) -> Self {
+        match payload.get("history_mode").and_then(|v| v.as_str()) {
+            Some("paginated") => Self::Paginated,
+            _ => Self::Legacy,
+        }
+    }
+}
+
+/// Joins the `text` entries of a typed turn item's `content` array.
+fn extract_item_text(item: &Value) -> Option<String> {
+    let parts: Vec<&str> = item
+        .get("content")?
+        .as_array()?
+        .iter()
+        .filter(|entry| {
+            entry
+                .get("type")
+                .and_then(|v| v.as_str())
+                .is_some_and(|kind| kind.eq_ignore_ascii_case("text"))
+        })
+        .filter_map(|entry| entry.get("text").and_then(|v| v.as_str()))
+        .collect();
+    let text = parts.join("\n");
+    if text.is_empty() { None } else { Some(text) }
+}
+
+/// Whether `event` is a transcript carrier inherited from a parent session.
+///
+/// Metadata and turn context stay visible so retained records can still use
+/// them. Records without a valid ordinal are retained.
+fn is_inherited_transcript_record(
+    event: &Value,
+    mode: HistoryMode,
+    start_ordinal: Option<u64>,
+) -> bool {
+    let (HistoryMode::Paginated, Some(start)) = (mode, start_ordinal) else {
+        return false;
+    };
+    let is_carrier = match event.get("type").and_then(|v| v.as_str()) {
+        Some("response_item") => true,
+        Some("event_msg") => {
+            event
+                .get("payload")
+                .and_then(|p| p.get("type"))
+                .and_then(|v| v.as_str())
+                != Some("turn_context")
+        }
+        _ => false,
+    };
+    is_carrier
+        && event
+            .get("ordinal")
+            .and_then(|v| v.as_u64())
+            .is_some_and(|ordinal| ordinal < start)
+}
+
+/// Application-generated first prompt for a child session with no user message.
+fn synthetic_child_prompt(payload: &Value) -> String {
+    let from_path = payload
+        .get("agent_path")
+        .and_then(|v| v.as_str())
+        .and_then(|path| path.rsplit('/').find(|segment| !segment.is_empty()));
+    let from_nickname = || {
+        payload
+            .get("agent_nickname")
+            .and_then(|v| v.as_str())
+            .filter(|nickname| !nickname.trim().is_empty())
+    };
+    match from_path.or_else(from_nickname) {
+        Some(name) => format!("Delegated task: {name}"),
+        None => "Delegated task".to_string(),
+    }
+}
+
 #[derive(Debug, Clone)]
 struct PendingSpawn {
     agent_type: Option<String>,
@@ -100,6 +187,7 @@ struct PendingSpawn {
 struct ParseState {
     session_id: String,
     last_updated: DateTime<Utc>,
+    history_mode: HistoryMode,
     current_turn_model: Option<String>,
     best_snapshot: Option<(i64, TokenUsage)>,
     has_user_message: bool,
@@ -134,6 +222,7 @@ impl ParseState {
         Self {
             session_id,
             last_updated,
+            history_mode: HistoryMode::Legacy,
             current_turn_model: None,
             best_snapshot: None,
             has_user_message: false,
@@ -230,6 +319,53 @@ impl ParseState {
         });
         self.flush_pending_reasoning_to_item(self.item_counter);
         self.item_counter += 1;
+    }
+
+    /// Inserts an application-generated user message ahead of all entries and
+    /// shifts every stored index that points at the entries behind it.
+    fn prepend_synthetic_user(&mut self, content: String, timestamp: DateTime<Utc>) {
+        // Reasoning still pending has no entry to attach to; it must not
+        // attach to the generated label.
+        self.drop_pending_reasoning_if_orphan();
+
+        for message in &mut self.messages {
+            message.index += 1;
+        }
+        for item in &mut self.transcript_items {
+            item.item_index += 1;
+            if let Some(message_index) = item.message_index.as_mut() {
+                *message_index += 1;
+            }
+        }
+        for attachment in &mut self.reasoning_attachments {
+            attachment.transcript_item_index += 1;
+        }
+
+        self.messages.insert(
+            0,
+            Message {
+                session_id: self.session_id.clone(),
+                index: 0,
+                role: Role::User,
+                content,
+                timestamp,
+                model: None,
+            },
+        );
+        self.transcript_items.insert(
+            0,
+            TranscriptItem {
+                session_id: self.session_id.clone(),
+                item_index: 0,
+                kind: TranscriptItemKind::Message,
+                message_index: Some(0),
+                tool_call_id: None,
+                subagent_id: None,
+            },
+        );
+        self.msg_counter += 1;
+        self.item_counter += 1;
+        self.has_user_message = true;
     }
 
     fn queue_reasoning(&mut self, reasoning: PendingReasoning) {
@@ -515,6 +651,17 @@ impl ParseState {
             .filter(|value| !value.is_empty())
             .map(str::to_string);
 
+        let task_name = output
+            .as_ref()
+            .and_then(|output| output.get("task_name"))
+            .and_then(|v| v.as_str())
+            .filter(|value| !value.is_empty())
+            .map(str::to_string);
+        let task_label = task_name
+            .as_deref()
+            .and_then(|name| name.rsplit('/').find(|segment| !segment.is_empty()))
+            .map(str::to_string);
+
         if let Some(&subagent_idx) = self.subagent_idx_by_call_id.get(call_id) {
             if let Some(agent_id) = agent_id {
                 self.subagents[subagent_idx].agent_id = Some(agent_id.clone());
@@ -525,6 +672,13 @@ impl ParseState {
             }
             if let Some(nickname) = nickname {
                 self.subagents[subagent_idx].title = nickname;
+            } else if let Some(label) = task_label
+                && self.subagents[subagent_idx].title == GENERIC_SUBAGENT_TITLE
+            {
+                self.subagents[subagent_idx].title = label;
+            }
+            if task_name.is_some() {
+                self.subagents[subagent_idx].agent_name = task_name;
             }
             return;
         }
@@ -533,8 +687,12 @@ impl ParseState {
         // is observed without the begin-side row having been created.
         let title = nickname
             .or(pending.agent_type)
-            .unwrap_or_else(|| "Codex subagent".to_string());
+            .or(task_label)
+            .unwrap_or_else(|| GENERIC_SUBAGENT_TITLE.to_string());
         self.push_subagent_row(call_id.to_string(), agent_id, title, pending.message);
+        if let Some(last) = self.subagents.last_mut() {
+            last.agent_name = task_name;
+        }
     }
 
     fn complete_pending_wait(&mut self, call_id: &str, response_item: &Value) {
@@ -585,7 +743,7 @@ impl ParseState {
                         let title = pending
                             .agent_type
                             .clone()
-                            .unwrap_or_else(|| "Codex subagent".to_string());
+                            .unwrap_or_else(|| GENERIC_SUBAGENT_TITLE.to_string());
                         self.push_subagent_row(
                             call_id.clone(),
                             None,
@@ -737,13 +895,32 @@ impl ParseState {
         }
     }
 
+    fn handle_item_completed(&mut self, payload: &Value, event_ts: Option<DateTime<Utc>>) {
+        let Some(item) = payload.get("item") else {
+            return;
+        };
+        let (role, model) = match item.get("type").and_then(|v| v.as_str()) {
+            Some("UserMessage") => (Role::User, None),
+            Some("AgentMessage") => (Role::Assistant, self.current_turn_model.clone()),
+            _ => return,
+        };
+        let Some(content) = extract_item_text(item) else {
+            return;
+        };
+        self.push_message(role, content, event_ts.unwrap_or_else(Utc::now), model);
+    }
+
     fn handle_event_msg(&mut self, payload: &Value, event_ts: Option<DateTime<Utc>>) {
         match payload.get("type").and_then(|v| v.as_str()) {
             Some("turn_context") => {
                 self.handle_turn_context(payload);
             }
 
-            Some("user_message") => {
+            Some("item_completed") if self.history_mode == HistoryMode::Paginated => {
+                self.handle_item_completed(payload, event_ts);
+            }
+
+            Some("user_message") if self.history_mode == HistoryMode::Legacy => {
                 let content = match payload.get("message").and_then(|v| v.as_str()) {
                     Some(c) => c.to_string(),
                     None => return,
@@ -751,7 +928,7 @@ impl ParseState {
                 self.push_message(Role::User, content, event_ts.unwrap_or_else(Utc::now), None);
             }
 
-            Some("agent_message") => {
+            Some("agent_message") if self.history_mode == HistoryMode::Legacy => {
                 let content = match payload.get("message").and_then(|v| v.as_str()) {
                     Some(c) => c.to_string(),
                     None => return,
@@ -1080,8 +1257,17 @@ impl CodexParser {
                 .map(str::to_string)
         });
         let is_subagent = parent_session_id.is_some();
+        let agent_path = payload
+            .get("agent_path")
+            .and_then(|v| v.as_str())
+            .filter(|path| !path.is_empty())
+            .map(str::to_string);
 
         let mut state = ParseState::new(session_id.clone(), start_time);
+        state.history_mode = HistoryMode::from_metadata(payload);
+        let start_ordinal = payload
+            .get("subagent_history_start_ordinal")
+            .and_then(|v| v.as_u64());
 
         for line in lines {
             let line = line.context("Failed to read line")?;
@@ -1114,6 +1300,10 @@ impl CodexParser {
                 state.update_last_updated(ts);
             }
 
+            if is_inherited_transcript_record(&event, state.history_mode, start_ordinal) {
+                continue;
+            }
+
             match event_type {
                 Some("response_item") => {
                     if let Some(payload) = event.get("payload") {
@@ -1135,7 +1325,10 @@ impl CodexParser {
         }
 
         if !state.has_user_message {
-            return Err(ParseError::NoUserMessages.into());
+            if !is_subagent {
+                return Err(ParseError::NoUserMessages.into());
+            }
+            state.prepend_synthetic_user(synthetic_child_prompt(payload), start_time);
         }
 
         state.drop_pending_reasoning_if_orphan();
@@ -1169,6 +1362,7 @@ impl CodexParser {
             transcript_items: state.transcript_items,
             reasoning_attachments: state.reasoning_attachments,
             token_usage,
+            agent_path,
         })
     }
 
@@ -2147,5 +2341,927 @@ mod tests {
                 .unwrap()
                 .with_timezone(&Utc)
         );
+    }
+
+    fn parse_records(records: &[Value]) -> anyhow::Result<ParsedSession> {
+        let mut file = tempfile::NamedTempFile::new().unwrap();
+        for record in records {
+            writeln!(file, "{record}").unwrap();
+        }
+        CodexParser.parse(file.path())
+    }
+
+    fn session_meta(overrides: Value) -> Value {
+        let mut payload = serde_json::json!({
+            "id": "00000000-0000-7000-8000-000000000999",
+            "timestamp": "2026-10-15T10:00:00Z",
+            "cwd": "/tmp/codex-pagination-fixture",
+        });
+        if let (Some(base), Some(extra)) = (payload.as_object_mut(), overrides.as_object()) {
+            for (key, value) in extra {
+                base.insert(key.clone(), value.clone());
+            }
+        }
+        serde_json::json!({
+            "timestamp": "2026-10-15T10:00:00Z",
+            "type": "session_meta",
+            "payload": payload,
+        })
+    }
+
+    fn item_completed(ts: &str, item: Value) -> Value {
+        serde_json::json!({
+            "timestamp": ts,
+            "type": "event_msg",
+            "payload": {"type": "item_completed", "item": item},
+        })
+    }
+
+    fn user_item(text: &str) -> Value {
+        serde_json::json!({"type": "UserMessage", "content": [{"type": "text", "text": text}]})
+    }
+
+    fn legacy_user(ts: &str, text: &str) -> Value {
+        serde_json::json!({
+            "timestamp": ts,
+            "type": "event_msg",
+            "payload": {"type": "user_message", "message": text},
+        })
+    }
+
+    fn paginated_root_path() -> PathBuf {
+        crate::fixture_path(
+            "codex_sessions/2026/10/15/rollout-2026-10-15T10-00-00-paginated-root.jsonl",
+        )
+    }
+
+    fn ts(value: &str) -> DateTime<Utc> {
+        DateTime::parse_from_rfc3339(value)
+            .unwrap()
+            .with_timezone(&Utc)
+    }
+
+    #[test]
+    fn paginated_messages_use_item_completed() {
+        let parsed = CodexParser.parse(&paginated_root_path()).unwrap();
+
+        assert_eq!(
+            parsed
+                .messages
+                .iter()
+                .map(|m| m.content.as_str())
+                .collect::<Vec<_>>(),
+            ["Explain\npagination", "Working", "Done", "Follow-up"]
+        );
+        assert_eq!(parsed.messages[0].role, Role::User);
+        assert_eq!(parsed.messages[0].model, None);
+        assert_eq!(parsed.messages[1].model.as_deref(), Some("gpt-5"));
+        assert_eq!(
+            parsed.session.first_prompt.as_deref(),
+            Some("Explain pagination")
+        );
+        assert_eq!(parsed.tool_calls.len(), 1);
+        assert_eq!(parsed.reasoning_attachments.len(), 1);
+        assert_eq!(parsed.reasoning_attachments[0].transcript_item_index, 2);
+        assert_eq!(
+            parsed
+                .transcript_items
+                .iter()
+                .map(|item| item.kind.clone())
+                .collect::<Vec<_>>(),
+            [
+                TranscriptItemKind::Message,
+                TranscriptItemKind::Message,
+                TranscriptItemKind::ToolCall,
+                TranscriptItemKind::Message,
+                TranscriptItemKind::Message,
+            ]
+        );
+        assert_eq!(parsed.messages[0].timestamp, ts("2026-10-15T10:00:03Z"));
+        assert_eq!(parsed.messages[1].timestamp, ts("2026-10-15T10:00:04Z"));
+        assert_eq!(parsed.messages[2].timestamp, ts("2026-10-15T10:00:08Z"));
+        assert_eq!(parsed.messages[3].timestamp, ts("2026-10-15T10:00:09Z"));
+    }
+
+    #[test]
+    fn paginated_missing_timestamp_falls_back_to_now() {
+        for timestamp in [None, Some("not-a-ts")] {
+            let mut record = item_completed("x", user_item("Hello"));
+            match timestamp {
+                Some(value) => record["timestamp"] = Value::String(value.to_string()),
+                None => {
+                    record.as_object_mut().unwrap().remove("timestamp");
+                }
+            }
+            let before = Utc::now();
+            let parsed = parse_records(&[
+                session_meta(serde_json::json!({"history_mode": "paginated"})),
+                record,
+            ])
+            .unwrap();
+            let after = Utc::now();
+            let stamp = parsed.messages[0].timestamp;
+            assert!(stamp >= before && stamp <= after);
+        }
+    }
+
+    #[test]
+    fn history_mode_selects_exactly_one_message_source() {
+        let modes = [
+            (None, false),
+            (Some(serde_json::json!("legacy")), false),
+            (Some(serde_json::json!("future")), false),
+            (Some(serde_json::json!(null)), false),
+            (Some(serde_json::json!(42)), false),
+            (Some(serde_json::json!({})), false),
+            (Some(serde_json::json!("paginated")), true),
+        ];
+        for (mode, paginated) in modes {
+            let overrides = match &mode {
+                Some(value) => serde_json::json!({"history_mode": value}),
+                None => serde_json::json!({}),
+            };
+            let parsed = parse_records(&[
+                session_meta(overrides),
+                legacy_user("2026-10-15T10:00:01Z", "legacy text"),
+                item_completed("2026-10-15T10:00:02Z", user_item("typed text")),
+            ]);
+            let expected = if paginated {
+                "typed text"
+            } else {
+                "legacy text"
+            };
+            let parsed = parsed.unwrap_or_else(|err| panic!("mode {mode:?}: {err}"));
+            assert_eq!(parsed.messages.len(), 1, "mode {mode:?}");
+            assert_eq!(parsed.messages[0].content, expected, "mode {mode:?}");
+        }
+    }
+
+    #[test]
+    fn history_mode_is_selected_by_first_session_meta_only() {
+        let parsed = parse_records(&[
+            session_meta(serde_json::json!({})),
+            session_meta(serde_json::json!({"history_mode": "paginated"})),
+            legacy_user("2026-10-15T10:00:01Z", "legacy text"),
+            item_completed("2026-10-15T10:00:02Z", user_item("typed text")),
+        ])
+        .unwrap();
+        assert_eq!(parsed.messages.len(), 1);
+        assert_eq!(parsed.messages[0].content, "legacy text");
+    }
+
+    #[test]
+    fn paginated_text_tolerates_malformed_items() {
+        let malformed = [
+            serde_json::json!({"type": "UserMessage"}),
+            serde_json::json!({"type": "UserMessage", "content": null}),
+            serde_json::json!({"type": "UserMessage", "content": "text"}),
+            serde_json::json!({"type": "UserMessage", "content": {"text": "x"}}),
+            serde_json::json!({"type": "UserMessage", "content": ["text", 3, null]}),
+            serde_json::json!({"type": "UserMessage", "content": [{"type": "text"}]}),
+            serde_json::json!({"type": "UserMessage", "content": [{"type": "text", "text": 5}]}),
+            serde_json::json!({"type": "UserMessage", "content": [{"type": "text", "text": ""}]}),
+            serde_json::json!({"type": "UserMessage", "content": [{"type": "skill", "text": "no"}]}),
+            serde_json::json!({"type": "AgentMessage", "content": null}),
+            serde_json::json!({"type": 7}),
+            serde_json::json!("not an object"),
+        ];
+        let mut records = vec![session_meta(
+            serde_json::json!({"history_mode": "paginated"}),
+        )];
+        for item in malformed {
+            records.push(item_completed("2026-10-15T10:00:01Z", item));
+        }
+        records.push(serde_json::json!({
+            "timestamp": "2026-10-15T10:00:02Z",
+            "type": "event_msg",
+            "payload": {"type": "item_completed"},
+        }));
+        records.push(item_completed("2026-10-15T10:00:03Z", user_item("kept")));
+        let parsed = parse_records(&records).unwrap();
+        assert_eq!(parsed.messages.len(), 1);
+        assert_eq!(parsed.messages[0].content, "kept");
+    }
+
+    #[test]
+    fn paginated_ignores_non_message_items() {
+        let mut records = vec![
+            session_meta(serde_json::json!({"history_mode": "paginated"})),
+            item_completed("2026-10-15T10:00:01Z", user_item("prompt")),
+        ];
+        for kind in [
+            "CommandExecution",
+            "FileChange",
+            "McpToolCall",
+            "WebSearch",
+            "Extension",
+            "Plan",
+            "Reasoning",
+        ] {
+            records.push(item_completed(
+                "2026-10-15T10:00:02Z",
+                serde_json::json!({"type": kind, "content": [{"type": "text", "text": "x"}]}),
+            ));
+        }
+        let parsed = parse_records(&records).unwrap();
+        assert_eq!(parsed.messages.len(), 1);
+        assert!(parsed.tool_calls.is_empty());
+        assert_eq!(parsed.transcript_items.len(), 1);
+    }
+
+    #[test]
+    fn paginated_empty_root_is_rejected() {
+        let path = crate::fixture_path(
+            "codex_sessions/2026/10/15/rollout-2026-10-15T10-00-00-paginated-empty.jsonl",
+        );
+        let err = CodexParser.parse(&path).unwrap_err();
+        assert!(matches!(
+            err.downcast_ref::<ParseError>(),
+            Some(ParseError::NoUserMessages)
+        ));
+    }
+
+    fn fork_child_path() -> PathBuf {
+        crate::fixture_path(
+            "codex_subagent_linkage/2026/10/15/rollout-2026-10-15T10-00-00-fork-child.jsonl",
+        )
+    }
+
+    fn at(ordinal: Value, mut record: Value) -> Value {
+        record["ordinal"] = ordinal;
+        record
+    }
+
+    fn paginated_meta(boundary: Value) -> Value {
+        session_meta(serde_json::json!({
+            "history_mode": "paginated",
+            "subagent_history_start_ordinal": boundary,
+        }))
+    }
+
+    fn call_record(ts: &str, name: &str, call_id: &str, arguments: &str) -> Value {
+        serde_json::json!({
+            "timestamp": ts,
+            "type": "response_item",
+            "payload": {
+                "type": "function_call",
+                "name": name,
+                "call_id": call_id,
+                "arguments": arguments,
+            },
+        })
+    }
+
+    fn output_record(ts: &str, call_id: &str, output: &str) -> Value {
+        serde_json::json!({
+            "timestamp": ts,
+            "type": "response_item",
+            "payload": {"type": "function_call_output", "call_id": call_id, "output": output},
+        })
+    }
+
+    fn reasoning_record(ts: &str, text: &str) -> Value {
+        serde_json::json!({
+            "timestamp": ts,
+            "type": "response_item",
+            "payload": {"type": "reasoning", "summary": [{"type": "summary_text", "text": text}]},
+        })
+    }
+
+    #[test]
+    fn paginated_boundary_filters_all_transcript_carriers() {
+        let parsed = CodexParser.parse(&fork_child_path()).unwrap();
+
+        assert_eq!(
+            parsed
+                .messages
+                .iter()
+                .map(|m| m.content.as_str())
+                .collect::<Vec<_>>(),
+            ["Own prompt", "Own reply"]
+        );
+        assert_eq!(parsed.messages[0].model, None);
+        assert_eq!(parsed.messages[1].model.as_deref(), Some("gpt-5"));
+        assert_eq!(parsed.session.first_prompt.as_deref(), Some("Own prompt"));
+
+        assert_eq!(parsed.tool_calls.len(), 1);
+        assert_eq!(parsed.tool_calls[0].id, "own_call");
+        assert_eq!(
+            parsed.tool_calls[0].output_text.as_deref(),
+            Some("own output")
+        );
+
+        assert_eq!(parsed.subagents.len(), 1);
+        assert_eq!(parsed.subagents[0].id, "own_spawn");
+        assert_eq!(
+            parsed.subagents[0].agent_id.as_deref(),
+            Some("00000000-0000-7000-8000-0000000002f1")
+        );
+        assert_eq!(parsed.subagents[0].prompt.as_deref(), Some("Own task"));
+        assert_eq!(parsed.subagents[0].result_summary, None);
+
+        assert_eq!(parsed.reasoning_attachments.len(), 1);
+        assert_eq!(
+            parsed.reasoning_attachments[0].summary_text.as_deref(),
+            Some("Own reasoning")
+        );
+        assert_eq!(parsed.reasoning_attachments[0].transcript_item_index, 2);
+        assert_eq!(
+            parsed
+                .transcript_items
+                .iter()
+                .map(|item| item.kind.clone())
+                .collect::<Vec<_>>(),
+            [
+                TranscriptItemKind::Message,
+                TranscriptItemKind::Message,
+                TranscriptItemKind::ToolCall,
+                TranscriptItemKind::Subagent,
+            ]
+        );
+    }
+
+    #[test]
+    fn paginated_boundary_cannot_seed_pending_state() {
+        let ts = "2026-10-15T10:00:01Z";
+        let spawn_args = r#"{"message":"inherited task"}"#;
+
+        // Call, spawn and wait begun below the boundary, completed above it.
+        let parsed = parse_records(&[
+            paginated_meta(serde_json::json!(10)),
+            at(
+                serde_json::json!(1),
+                call_record(ts, "exec_command", "c1", "{}"),
+            ),
+            at(
+                serde_json::json!(2),
+                call_record(ts, "spawn_agent", "s1", spawn_args),
+            ),
+            at(
+                serde_json::json!(3),
+                call_record(ts, "wait_agent", "w1", "{}"),
+            ),
+            at(
+                serde_json::json!(10),
+                item_completed(ts, user_item("own prompt")),
+            ),
+            at(
+                serde_json::json!(11),
+                output_record(ts, "c1", "late output"),
+            ),
+            at(
+                serde_json::json!(12),
+                output_record(ts, "s1", r#"{"agent_id":"a1","nickname":"Late"}"#),
+            ),
+            at(
+                serde_json::json!(13),
+                output_record(ts, "w1", r#"{"status":{"a1":{"completed":"late"}}}"#),
+            ),
+        ])
+        .unwrap();
+        assert!(parsed.tool_calls.is_empty());
+        assert!(parsed.subagents.is_empty());
+        assert_eq!(parsed.transcript_items.len(), 1);
+
+        // Pending reasoning below the boundary must not attach to the first
+        // retained message.
+        let parsed = parse_records(&[
+            paginated_meta(serde_json::json!(10)),
+            at(
+                serde_json::json!(1),
+                reasoning_record(ts, "inherited thought"),
+            ),
+            at(
+                serde_json::json!(10),
+                item_completed(ts, user_item("own prompt")),
+            ),
+        ])
+        .unwrap();
+        assert!(parsed.reasoning_attachments.is_empty());
+
+        // A retained call reusing an inherited call ID keeps only its own data.
+        let parsed = parse_records(&[
+            paginated_meta(serde_json::json!(10)),
+            at(
+                serde_json::json!(1),
+                call_record(ts, "exec_command", "dup", r#"{"cmd":"inherited"}"#),
+            ),
+            at(
+                serde_json::json!(2),
+                output_record(ts, "dup", "inherited output"),
+            ),
+            at(
+                serde_json::json!(10),
+                item_completed(ts, user_item("own prompt")),
+            ),
+            at(
+                serde_json::json!(11),
+                call_record(ts, "exec_command", "dup", r#"{"cmd":"own"}"#),
+            ),
+            at(
+                serde_json::json!(12),
+                output_record(ts, "dup", "own output"),
+            ),
+        ])
+        .unwrap();
+        assert_eq!(parsed.tool_calls.len(), 1);
+        assert_eq!(
+            parsed.tool_calls[0].input_json.as_deref(),
+            Some(r#"{"cmd":"own"}"#)
+        );
+        assert_eq!(
+            parsed.tool_calls[0].output_text.as_deref(),
+            Some("own output")
+        );
+    }
+
+    #[test]
+    fn paginated_boundary_is_inclusive_and_tolerant() {
+        let below_10 = at(
+            serde_json::json!(9),
+            item_completed("2026-10-15T10:00:01Z", user_item("x")),
+        );
+        let at_10 = at(
+            serde_json::json!(10),
+            item_completed("2026-10-15T10:00:01Z", user_item("x")),
+        );
+        assert!(is_inherited_transcript_record(
+            &below_10,
+            HistoryMode::Paginated,
+            Some(10)
+        ));
+        assert!(!is_inherited_transcript_record(
+            &at_10,
+            HistoryMode::Paginated,
+            Some(10)
+        ));
+        assert!(!is_inherited_transcript_record(
+            &below_10,
+            HistoryMode::Legacy,
+            Some(10)
+        ));
+
+        // Missing or invalid ordinals are retained.
+        for ordinal in [
+            None,
+            Some(serde_json::json!(null)),
+            Some(serde_json::json!(-1)),
+            Some(serde_json::json!("9")),
+            Some(serde_json::json!(9.5)),
+            Some(serde_json::json!({})),
+        ] {
+            let mut record = item_completed("2026-10-15T10:00:01Z", user_item("kept"));
+            if let Some(ordinal) = &ordinal {
+                record["ordinal"] = ordinal.clone();
+            }
+            let parsed = parse_records(&[paginated_meta(serde_json::json!(10)), record]).unwrap();
+            assert_eq!(parsed.messages.len(), 1, "ordinal {ordinal:?}");
+        }
+
+        // Invalid boundaries disable filtering.
+        for boundary in [
+            None,
+            Some(serde_json::json!(null)),
+            Some(serde_json::json!(-1)),
+            Some(serde_json::json!("10")),
+            Some(serde_json::json!(10.5)),
+            Some(serde_json::json!({})),
+        ] {
+            let meta = match &boundary {
+                Some(value) => paginated_meta(value.clone()),
+                None => session_meta(serde_json::json!({"history_mode": "paginated"})),
+            };
+            let parsed = parse_records(&[meta, below_10.clone()]).unwrap();
+            assert_eq!(parsed.messages.len(), 1, "boundary {boundary:?}");
+        }
+
+        // Boundary zero keeps ordinal zero; huge ordinals do not overflow.
+        let parsed = parse_records(&[
+            paginated_meta(serde_json::json!(0)),
+            at(
+                serde_json::json!(0),
+                item_completed("2026-10-15T10:00:01Z", user_item("zero")),
+            ),
+        ])
+        .unwrap();
+        assert_eq!(parsed.messages.len(), 1);
+        let huge = serde_json::json!(u64::MAX);
+        let parsed = parse_records(&[
+            paginated_meta(serde_json::json!(u64::MAX)),
+            at(
+                serde_json::json!(1),
+                item_completed("2026-10-15T10:00:01Z", user_item("dropped")),
+            ),
+            at(
+                huge,
+                item_completed("2026-10-15T10:00:02Z", user_item("kept")),
+            ),
+        ])
+        .unwrap();
+        assert_eq!(parsed.messages.len(), 1);
+        assert_eq!(parsed.messages[0].content, "kept");
+
+        // Both turn-context forms below the boundary still set the model.
+        for context in [
+            serde_json::json!({"type": "turn_context", "payload": {"model": "gpt-5"}}),
+            serde_json::json!({
+                "type": "event_msg",
+                "payload": {"type": "turn_context", "model": "gpt-5"},
+            }),
+        ] {
+            let parsed = parse_records(&[
+                paginated_meta(serde_json::json!(10)),
+                at(serde_json::json!(1), context),
+                at(
+                    serde_json::json!(10),
+                    item_completed(
+                        "2026-10-15T10:00:01Z",
+                        serde_json::json!({
+                            "type": "AgentMessage",
+                            "content": [{"type": "text", "text": "reply"}],
+                        }),
+                    ),
+                ),
+                at(
+                    serde_json::json!(11),
+                    item_completed("2026-10-15T10:00:02Z", user_item("prompt")),
+                ),
+            ])
+            .unwrap();
+            assert_eq!(parsed.messages[0].model.as_deref(), Some("gpt-5"));
+        }
+
+        // Legacy sessions ignore the boundary field entirely.
+        let parsed = parse_records(&[
+            session_meta(serde_json::json!({"subagent_history_start_ordinal": 10})),
+            at(
+                serde_json::json!(1),
+                legacy_user("2026-10-15T10:00:01Z", "legacy prompt"),
+            ),
+            at(
+                serde_json::json!(2),
+                call_record("2026-10-15T10:00:02Z", "exec_command", "c1", "{}"),
+            ),
+        ])
+        .unwrap();
+        assert_eq!(parsed.messages.len(), 1);
+        assert_eq!(parsed.tool_calls.len(), 1);
+    }
+
+    fn linkage_fixture(name: &str) -> PathBuf {
+        crate::fixture_path(&format!(
+            "codex_subagent_linkage/2026/10/15/rollout-2026-10-15T10-00-00-{name}.jsonl"
+        ))
+    }
+
+    fn child_overrides(mode: &str, extra: Value) -> Value {
+        let mut overrides = serde_json::json!({
+            "history_mode": mode,
+            "source": {"subagent": {"thread_spawn": {
+                "parent_thread_id": "00000000-0000-7000-8000-000000000201",
+            }}},
+        });
+        for (key, value) in extra.as_object().unwrap() {
+            overrides[key] = value.clone();
+        }
+        overrides
+    }
+
+    fn assert_no_user_messages(result: anyhow::Result<ParsedSession>) {
+        let err = result.unwrap_err();
+        assert!(matches!(
+            err.downcast_ref::<ParseError>(),
+            Some(ParseError::NoUserMessages)
+        ));
+    }
+
+    fn assistant_item(text: &str) -> Value {
+        serde_json::json!({"type": "AgentMessage", "content": [{"type": "text", "text": text}]})
+    }
+
+    #[test]
+    fn child_without_user_gets_synthetic_prompt() {
+        let parsed = CodexParser.parse(&linkage_fixture("task-child")).unwrap();
+
+        assert_eq!(parsed.messages[0].role, Role::User);
+        assert_eq!(parsed.messages[0].content, "Delegated task: analyze");
+        assert_eq!(parsed.messages[0].index, 0);
+        assert_eq!(parsed.messages[0].timestamp, parsed.session.start_time);
+        assert_eq!(parsed.messages[0].model, None);
+        assert_eq!(
+            parsed.session.first_prompt.as_deref(),
+            Some("Delegated task: analyze")
+        );
+        assert_eq!(parsed.session.message_count, parsed.messages.len());
+        assert_eq!(parsed.messages[1].content, "Analysis complete");
+        assert_eq!(parsed.subagents.len(), 1);
+
+        // Metadata-only children and both history modes receive the prompt.
+        for mode in ["legacy", "paginated"] {
+            let parsed = parse_records(&[session_meta(child_overrides(
+                mode,
+                serde_json::json!({"agent_path": "/root/analyze"}),
+            ))])
+            .unwrap();
+            assert_eq!(parsed.messages.len(), 1, "mode {mode}");
+            assert_eq!(parsed.transcript_items.len(), 1, "mode {mode}");
+            assert_eq!(parsed.messages[0].content, "Delegated task: analyze");
+
+            let parsed = parse_records(&[
+                session_meta(child_overrides(
+                    mode,
+                    serde_json::json!({"agent_path": "/root/analyze"}),
+                )),
+                item_completed("2026-10-15T10:00:01Z", assistant_item("Reply")),
+                serde_json::json!({
+                    "timestamp": "2026-10-15T10:00:02Z",
+                    "type": "event_msg",
+                    "payload": {"type": "agent_message", "message": "Legacy reply"},
+                }),
+            ])
+            .unwrap();
+            assert_eq!(parsed.messages[0].content, "Delegated task: analyze");
+            assert_eq!(parsed.messages.len(), 2, "mode {mode}");
+        }
+    }
+
+    #[test]
+    fn synthetic_prompt_label_falls_back_through_path_and_nickname() {
+        let cases = [
+            (
+                serde_json::json!({"agent_path": "/root/analyze/"}),
+                "Delegated task: analyze",
+            ),
+            (
+                serde_json::json!({"agent_path": "/root//analyze"}),
+                "Delegated task: analyze",
+            ),
+            (
+                serde_json::json!({"agent_path": "analyze"}),
+                "Delegated task: analyze",
+            ),
+            (
+                serde_json::json!({"agent_path": "/", "agent_nickname": "Ada"}),
+                "Delegated task: Ada",
+            ),
+            (
+                serde_json::json!({"agent_path": "", "agent_nickname": "Ada"}),
+                "Delegated task: Ada",
+            ),
+            (
+                serde_json::json!({"agent_path": 5, "agent_nickname": "Ada"}),
+                "Delegated task: Ada",
+            ),
+            (
+                serde_json::json!({"agent_nickname": "Ada"}),
+                "Delegated task: Ada",
+            ),
+            (serde_json::json!({"agent_nickname": ""}), "Delegated task"),
+            (
+                serde_json::json!({"agent_nickname": null}),
+                "Delegated task",
+            ),
+            (serde_json::json!({"agent_nickname": 7}), "Delegated task"),
+            (serde_json::json!({"agent_path": "///"}), "Delegated task"),
+            (serde_json::json!({}), "Delegated task"),
+        ];
+        for (extra, expected) in cases {
+            let parsed =
+                parse_records(&[session_meta(child_overrides("paginated", extra.clone()))])
+                    .unwrap();
+            assert_eq!(parsed.messages[0].content, expected, "metadata {extra}");
+        }
+    }
+
+    #[test]
+    fn synthetic_prompt_shifts_all_references() {
+        let ts = "2026-10-15T10:00:01Z";
+        let meta = session_meta(child_overrides(
+            "paginated",
+            serde_json::json!({"agent_path": "/root/analyze"}),
+        ));
+        let records = [
+            meta,
+            item_completed(ts, assistant_item("first reply")),
+            reasoning_record(ts, "thinking"),
+            call_record(ts, "exec_command", "call_a", r#"{"cmd":"ls"}"#),
+            output_record(ts, "call_a", "ok"),
+            call_record(ts, "spawn_agent", "spawn_a", r#"{"message":"go"}"#),
+            item_completed(ts, assistant_item("last reply")),
+            reasoning_record(ts, "orphan thinking"),
+        ];
+        let parsed = parse_records(&records).unwrap();
+
+        // Same stream with a real prompt prepended gives the reference layout.
+        let mut with_prompt = records.to_vec();
+        with_prompt.insert(1, item_completed(ts, user_item("real prompt")));
+        let baseline = parse_records(&with_prompt).unwrap();
+
+        assert_eq!(parsed.messages.len(), baseline.messages.len());
+        for (shifted, base) in parsed.messages.iter().zip(&baseline.messages).skip(1) {
+            assert_eq!(shifted.index, base.index);
+            assert_eq!(shifted.content, base.content);
+        }
+        assert_eq!(
+            parsed.transcript_items.len(),
+            baseline.transcript_items.len()
+        );
+        assert_eq!(parsed.transcript_items[0].kind, TranscriptItemKind::Message);
+        assert_eq!(parsed.transcript_items[0].item_index, 0);
+        assert_eq!(parsed.transcript_items[0].message_index, Some(0));
+        for (shifted, base) in parsed
+            .transcript_items
+            .iter()
+            .zip(&baseline.transcript_items)
+            .skip(1)
+        {
+            assert_eq!(shifted.item_index, base.item_index);
+            assert_eq!(shifted.message_index, base.message_index);
+            assert_eq!(shifted.tool_call_id, base.tool_call_id);
+            assert_eq!(shifted.subagent_id, base.subagent_id);
+        }
+        assert_eq!(parsed.reasoning_attachments.len(), 1);
+        assert_eq!(baseline.reasoning_attachments.len(), 1);
+        assert_eq!(
+            parsed.reasoning_attachments[0].transcript_item_index,
+            baseline.reasoning_attachments[0].transcript_item_index
+        );
+        assert_eq!(parsed.tool_calls[0].id, "call_a");
+        assert_eq!(parsed.subagents[0].id, "spawn_a");
+        assert_eq!(parsed.session.message_count, parsed.messages.len());
+    }
+
+    #[test]
+    fn inherited_only_child_gets_prompt_but_review_is_rejected() {
+        let parsed = CodexParser
+            .parse(&linkage_fixture("inherited-only-child"))
+            .unwrap();
+        assert_eq!(parsed.messages[0].content, "Delegated task: inherited");
+        assert_eq!(parsed.messages.len(), 2);
+        assert_eq!(parsed.messages[1].content, "Own reply");
+
+        assert_no_user_messages(CodexParser.parse(&linkage_fixture("inherited-only-review")));
+        assert_no_user_messages(parse_records(&[session_meta(serde_json::json!({
+            "history_mode": "paginated",
+            "agent_path": "/root/orphan",
+        }))]));
+        assert_no_user_messages(CodexParser.parse(&crate::fixture_path(
+            "codex_sessions/2026/10/15/rollout-2026-10-15T10-00-00-paginated-empty.jsonl",
+        )));
+    }
+
+    #[test]
+    fn child_with_user_keeps_original_prompt() {
+        for mode in ["legacy", "paginated"] {
+            let user = match mode {
+                "legacy" => legacy_user("2026-10-15T10:00:01Z", "Own prompt"),
+                _ => item_completed("2026-10-15T10:00:01Z", user_item("Own prompt")),
+            };
+            let parsed = parse_records(&[
+                session_meta(child_overrides(
+                    mode,
+                    serde_json::json!({"agent_path": "/root/analyze"}),
+                )),
+                user,
+            ])
+            .unwrap();
+            assert_eq!(parsed.messages.len(), 1, "mode {mode}");
+            assert_eq!(parsed.messages[0].content, "Own prompt");
+            assert_eq!(parsed.session.first_prompt.as_deref(), Some("Own prompt"));
+        }
+    }
+
+    fn spawn_records(arguments: &str, output: Option<&str>) -> Vec<Value> {
+        let ts = "2026-10-15T10:00:02Z";
+        let mut records = vec![
+            session_meta(serde_json::json!({"history_mode": "paginated"})),
+            item_completed("2026-10-15T10:00:01Z", user_item("delegate")),
+            call_record(ts, "spawn_agent", "spawn_1", arguments),
+        ];
+        if let Some(output) = output {
+            records.push(output_record(ts, "spawn_1", output));
+        }
+        records
+    }
+
+    #[test]
+    fn spawn_output_task_name_sets_agent_name() {
+        let parent = CodexParser.parse(&linkage_fixture("task-parent")).unwrap();
+        assert_eq!(parent.subagents.len(), 1);
+        assert_eq!(
+            parent.subagents[0].agent_name.as_deref(),
+            Some("/root/analyze")
+        );
+        assert_eq!(
+            parent.subagents[0].prompt.as_deref(),
+            Some("Analyze the parser")
+        );
+        assert_eq!(parent.subagents[0].agent_id, None);
+        assert_eq!(parent.subagents[0].title, "analyze");
+        assert!(parent.tool_calls.is_empty());
+
+        // (arguments, output, expected agent_id, expected agent_name, expected title)
+        let cases = [
+            (
+                "{}",
+                Some(r#"{"task_name":"/root/analyze"}"#),
+                None,
+                Some("/root/analyze"),
+                "analyze",
+            ),
+            (
+                "{}",
+                Some(r#"{"agent_id":"a1","task_name":"/root/analyze"}"#),
+                Some("a1"),
+                Some("/root/analyze"),
+                "analyze",
+            ),
+            (
+                "{}",
+                Some(r#"{"nickname":"Ada","task_name":"/root/analyze"}"#),
+                None,
+                Some("/root/analyze"),
+                "Ada",
+            ),
+            (
+                r#"{"agent_type":"worker"}"#,
+                Some(r#"{"task_name":"/root/analyze"}"#),
+                None,
+                Some("/root/analyze"),
+                "worker",
+            ),
+            ("{}", Some(r#"{}"#), None, None, "Codex subagent"),
+            (
+                "{}",
+                Some(r#"{"task_name":""}"#),
+                None,
+                None,
+                "Codex subagent",
+            ),
+            (
+                "{}",
+                Some(r#"{"task_name":7}"#),
+                None,
+                None,
+                "Codex subagent",
+            ),
+            (
+                "{}",
+                Some(r#"{"task_name":null}"#),
+                None,
+                None,
+                "Codex subagent",
+            ),
+            ("{}", Some("not json"), None, None, "Codex subagent"),
+            ("{}", None, None, None, "Codex subagent"),
+            (
+                "{}",
+                Some(r#"{"task_name":"/"}"#),
+                None,
+                Some("/"),
+                "Codex subagent",
+            ),
+            (
+                "{}",
+                Some(r#"{"task_name":"/root/analyze/"}"#),
+                None,
+                Some("/root/analyze/"),
+                "analyze",
+            ),
+        ];
+        for (arguments, output, agent_id, agent_name, title) in cases {
+            let parsed = parse_records(&spawn_records(arguments, output)).unwrap();
+            assert_eq!(parsed.subagents.len(), 1, "output {output:?}");
+            let row = &parsed.subagents[0];
+            assert_eq!(row.agent_id.as_deref(), agent_id, "output {output:?}");
+            assert_eq!(row.agent_name.as_deref(), agent_name, "output {output:?}");
+            assert_eq!(row.title, title, "output {output:?}");
+            assert!(parsed.tool_calls.is_empty());
+        }
+    }
+
+    #[test]
+    fn codex_metadata_preserves_agent_path() {
+        let child = CodexParser.parse(&linkage_fixture("task-child")).unwrap();
+        assert_eq!(child.agent_path.as_deref(), Some("/root/analyze"));
+        let parent = CodexParser.parse(&linkage_fixture("task-parent")).unwrap();
+        assert_eq!(parent.agent_path, None);
+
+        for (value, expected) in [
+            (serde_json::json!(""), None),
+            (serde_json::json!(5), None),
+            (serde_json::json!(null), None),
+            (serde_json::json!("/root/x"), Some("/root/x")),
+        ] {
+            let parsed = parse_records(&[
+                session_meta(child_overrides(
+                    "paginated",
+                    serde_json::json!({"agent_path": value}),
+                )),
+                item_completed("2026-10-15T10:00:01Z", user_item("hi")),
+            ])
+            .unwrap();
+            assert_eq!(parsed.agent_path.as_deref(), expected, "value {value}");
+        }
     }
 }
