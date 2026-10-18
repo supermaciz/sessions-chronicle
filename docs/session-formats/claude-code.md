@@ -9,8 +9,8 @@ See [SESSION_FORMAT_ANALYSIS.md](../SESSION_FORMAT_ANALYSIS.md) for cross-assist
 
 | Field   | Value |
 |---------|-------|
-| **Path** | `~/.claude/projects/<project-dir>/UUID.jsonl` (main session)<br>`~/.claude/projects/<project-dir>/<session-id>/subagents/agent-<id>.jsonl` (subagent transcript; documented upstream and confirmed locally)<br>`~/.claude/projects/<project-dir>/<session-id>/subagents/agent-<id>.meta.json` (subagent metadata sidecar; observed locally in v2.1.148)<br>`~/.claude/projects/<project-dir>/<session-id>/tool-results/<id>.<ext>` (materialized large tool output or attachment payloads; observed in current local sessions) |
-| **Pattern** | `UUID.jsonl`, `agent-*.jsonl`, `agent-*.meta.json`, `tool-results/*` |
+| **Path** | `~/.claude/projects/<project-dir>/UUID.jsonl` (main session)<br>`~/.claude/projects/<project-dir>/<session-id>/subagents/agent-<id>.jsonl` (subagent transcript; documented upstream and confirmed locally)<br>`~/.claude/projects/<project-dir>/<session-id>/subagents/agent-<id>.meta.json` (subagent metadata sidecar; observed locally in v2.1.148)<br>`~/.claude/projects/<project-dir>/<session-id>/tool-results/<id>.<ext>` (materialized large tool output or attachment payloads; observed in current local sessions)<br>`~/.claude/projects/<project-dir>/<session-id>/ccr-tip.json` (non-session sidecar; observed locally in v2.1.300+)<br>`~/.claude/projects/<project-dir>/bridge-pointer.json` (non-session sidecar; observed locally in v2.1.300+) |
+| **Pattern** | `UUID.jsonl`, `agent-*.jsonl`, `agent-*.meta.json`, `tool-results/*`, `ccr-tip.json`, `bridge-pointer.json` |
 | **Example** | `a1b2c3d4-e5f6-7890-abcd-ef1234567890.jsonl`<br>`2a19bf71-3687-49ed-8ae9-8bd15e1522f6/subagents/agent-a60d695.jsonl` (legacy naming)<br>`66ae4ab6-e5ea-40f4-8e8f-fb80fd307472/subagents/agent-aimpl-task1-d4584135445167d0.jsonl` (teammate naming, v2.1.216+: `agent-a<name>-<hash16>.jsonl`)<br>`2a19bf71-3687-49ed-8ae9-8bd15e1522f6/subagents/agent-a60d695.meta.json`<br>`82b2d04e-d30e-4370-8e41-f53890baeda1/tool-results/bdw7vxszs.txt` |
 | **Format** | JSONL (one JSON object per line, UTF-8, append-only) |
 
@@ -19,6 +19,16 @@ directory can exist, holding `MEMORY.md` plus one `*.md` file per stored memory.
 It contains no transcript data. Sessions Chronicle's discovery filters on the
 `.jsonl` extension (`crates/core/src/database/indexer.rs`), so these files are
 ignored; any future discovery change must keep that filter.
+
+**Not session data either (2026-10-18 local scan, v2.1.300+):** two small JSON
+sidecars appeared next to transcripts. Both are skipped by the `.jsonl` filter.
+
+| File | Observed keys | Notes |
+|------|---------------|-------|
+| `<project-dir>/bridge-pointer.json` | `sessionId`, `environmentId`, `source`, `pid`, `procStart` | Points a project at a live Remote Control / bridge process; holds a PID, so it is transient process state |
+| `<project-dir>/<session-id>/ccr-tip.json` | `eventId`, `updatedAt` | Tip (last event) pointer for a cloud / Remote Control session |
+
+Both were seen on a single project; purpose is inferred from key names only.
 
 **Path encoding:**
 
@@ -53,7 +63,10 @@ ignored; any future discovery change must keep that filter.
   "type": "atis-latch",            // Latch marker carrying an `atis` string (observed v2.1.226+)
   "type": "bridge-session",        // Remote Control / bridge session link (observed v2.1.226+)
   "type": "cost-state",            // Running session cost + per-model usage totals (observed v2.1.226+)
-  "type": "agent-name"             // Session name on background sessions (observed v2.1.226+)
+  "type": "agent-name",            // Session name on background sessions (observed v2.1.226+)
+  "type": "api-request",           // Recorded API request: params + references (v2.1.300+)
+  "type": "api-request-shape",     // Recorded system prompt + tools, keyed by hash (v2.1.300+)
+  "type": "api-request-blob"       // Recorded request message, keyed by hash (v2.1.300+)
 }
 ```
 
@@ -231,6 +244,18 @@ Added by the 2026-09-06 local scan (v2.1.220–v2.1.263): `total_tokens_reminder
 `model`, `file`, `edited_text_file`, `opened_file_in_ide`,
 `hook_system_message`. The list is not guaranteed exhaustive.
 
+Added by the 2026-10-18 local scan (v2.1.264–v2.1.302, 2414 attachment events):
+`deferred_tools_record` (559 events; keys `entries`, `toolInputCopies`),
+`credential_org` (`organizationUuid` — personal data), `silent_turn_reminder`
+(`text`), `read_truncation_notice` (`banner`, `toolUseID`), `queued_command`
+(`commandMode`, `prompt`, `source_uuid`, `timestamp`), and
+`workflow_size_guideline_change` (`size`). `total_tokens_reminder` remains the
+most frequent variant (1098 events).
+
+The same scan shows new top-level keys on `attachment` events describing how
+the attachment is rendered to the model: `rendered`, `renderedRole`
+(`system` or `user`), `renderedBesideToolResult`, and `renderedInHumanTurn`.
+
 ### Permission Mode Event (observed in v2.1.148 local sessions)
 
 ```json
@@ -393,6 +418,96 @@ carrier. Whether it ever appears without `ai-title` is unconfirmed.
 }
 ```
 
+### API Request Recording Events (v2.1.300+)
+
+Confirmed upstream by the v2.1.300 changelog entry: "Changed local session
+transcripts to also record each API request's system prompt, tools and
+parameters". Locally, the three event types first appear in v2.1.300 and are
+present in every v2.1.301+ session sampled on 2026-10-18.
+
+The recording is content-addressed: an `api-request` event references a
+deduplicated `api-request-shape` (system prompt + tool definitions) through
+`shapeHash`, and request messages are stored once as `api-request-blob` events
+keyed by `hash`. All three can carry `agentId` when the request came from a
+subagent.
+
+```json
+{
+  "type": "api-request",
+  "sessionId": "UUID",
+  "id": "UUID",
+  "timestamp": "ISO-8601",
+  "version": "2.1.301",
+  "querySource": "repl_main_thread",
+  "shapeHash": "sha256-hex",
+  "params": {
+    "model": "claude-sonnet-5-5",
+    "betas": ["claude-code-20250219", "..."],
+    "max_tokens": 128000,
+    "thinking": {"type": "adaptive", "display": "updates"},
+    "context_management": {},
+    "output_config": {},
+    "safeguards": {}
+  },
+  "keep": 5,
+  "tail": ["sha256-hex", "sha256-hex", "sha256-hex"],
+  "base": null,
+  "cacheControl": [
+    {"path": ["system"], "value": {"type": "ephemeral", "ttl": "1h", "scope": "global"}}
+  ],
+  "requestDigest": "sha256-hex"
+}
+```
+
+```json
+{
+  "type": "api-request-shape",
+  "sessionId": "UUID",
+  "shapeHash": "sha256-hex",
+  "timestamp": "ISO-8601",
+  "version": "2.1.301",
+  "shape": {
+    "system": [{"type": "text", "text": "You are Claude Code, ..."}],
+    "tools": []
+  }
+}
+```
+
+```json
+{
+  "type": "api-request-blob",
+  "sessionId": "UUID",
+  "hash": "sha256-hex",
+  "message": {
+    "role": "user",
+    "content": [{"type": "text", "text": "..."}]
+  }
+}
+```
+
+Observations from the 2026-10-18 local scan:
+
+- `querySource` values: `repl_main_thread`, `agent:custom`.
+- `params.thinking` was `{"type": "adaptive", "display": "updates"}` on every
+  sampled request; `keep` is an integer and `tail` a short list of blob hashes
+  (usually 3). Their exact semantics (how many earlier messages are reused vs.
+  newly appended) are inferred, not confirmed.
+- `api-request-blob.message.role` values: `system`, `user`, `assistant`. Content
+  block types: `text`, `thinking`, `tool_use`, `tool_result`, plus a new
+  `tool_addition` block (`{type: "tool_addition", tool: {type:
+  "tool_definition", definition: {name, description, input_schema}}}`) that
+  records a tool added mid-conversation.
+- `assistant` events gained a top-level `requestRef` equal to the `id` of the
+  matching `api-request`. The assistant `message.content` is **still inline**
+  on those events (504 of 504 sampled), so the recording duplicates content
+  rather than moving it.
+- **Size impact:** `api-request*` lines account for 35–69 % of the bytes of
+  v2.1.300+ transcripts (e.g. 4.54 MB of a 6.61 MB v2.1.301 session), because
+  shapes carry the full system prompt and tool schemas.
+- `api-request-blob` events with `role: "user"` / `"assistant"` look like
+  conversation messages but are not: any code that dispatches on
+  `message.role` instead of the top-level `type` would index them twice.
+
 ---
 
 ## Special Features
@@ -430,6 +545,20 @@ boolean, and the nested `snapshot` object repeats `messageId`.
 - Tool results are still represented inline in user `message.content[]` via `type: "tool_result"` blocks.
 - Recent local sessions also show a top-level `toolUseResult` object on some user events, duplicating stdout/stderr in structured form.
 - Large tool outputs can be materialized to sibling files under `tool-results/` and then referenced by later `Read` tool calls.
+
+### Transcript Completeness Notes (changelog, v2.1.296–v2.1.300)
+
+Changelog entries that affect what a transcript file contains, without
+changing its structure:
+
+- v2.1.296: `CLAUDE_CODE_TRANSCRIPT_LOCAL_GC` (opt-in env var) could drop a
+  message from the saved transcript; fixed, and a large transcript is no longer
+  rewritten. When enabled, a transcript can therefore change other than by
+  appending — relevant to fingerprint-based incremental indexing.
+- v2.1.299: bytes of @-mentioned PDFs are no longer kept in the session
+  transcript.
+- v2.1.300: fixed the first transcript entry written after resuming a session
+  being lost. Resumed sessions written by earlier versions may miss one entry.
 
 ### Meta Flag
 
@@ -526,6 +655,13 @@ changed between v2.1.148 and v2.1.216.
 }
 ```
 
+**v2.1.300+ (single local sample, 2026-10-18):** the one sidecar touched since
+2026-09-06 carried `agentType`, `description`, `name`, `spawnDepth` plus new
+`requestShape`, `requestNonInteractive`, and `stoppedByUser`, and lacked the
+teammate-form `model` / `taskKind` / `teamName` / `color` /
+`planModeRequired` / `permissionMode` keys. One sample does not establish a new
+contract — it may simply be a non-teammate launch.
+
 With `toolUseId` removed, `name` is the only observed reliable link back to the
 parent `tool_use` block (`input.name`) and to the `toolUseResult.agent_id`
 prefix (`<name>@session-...`). The parser does not consume this sidecar:
@@ -567,6 +703,24 @@ Rich per-event metadata:
 | `turnCompanion` | Companion marker on a small number of events (observed v2.1.226+; purpose unconfirmed) |
 | `origin` | Event origin marker (observed v2.1.226+; value set not yet enumerated) |
 | `lastSequenceNum` | Bridge stream sequence position on `bridge-session` events (observed v2.1.226+) |
+| `requestRef` | On `assistant` events, the `id` of the matching `api-request` event (observed v2.1.300+) |
+| `requestedModel` | Model the request asked for, on `assistant` events (observed v2.1.295+); can differ from `message.model` |
+| `advisorModel` | Advisor model slug paired with the session, on `assistant` events (observed v2.1.287+; see `/advisor` in the changelog) |
+| `perTurnEffort` | Per-turn reasoning effort on `assistant` events (`"medium"` or `null`; observed v2.1.267+); sibling of `effort` |
+| `thinkingDisplay` / `thinkingDurationMs` | Thinking display mode (`"updates"` only observed) and thinking time on `assistant` events (observed v2.1.296+) |
+| `wireToolInputs` / `wireIngestContext` | Maps keyed by `tool_use_id`: the tool input as sent on the wire and its ingest context (e.g. `cwd`), on `assistant` events (observed v2.1.267+) |
+| `serverClassifierRequest` / `serverClassifierContext` | Auto-mode classifier request id (`assistant`) and its context, including git state and live cwd (`user`) (observed v2.1.278+) |
+| `attributionPlugin` | Plugin attributed to an `assistant` event, e.g. `"superpowers"` (observed v2.1.299+); joins the attribution family |
+| `permissionDecision` | On tool-result `user` events: `{decision, source, reasonType}`. Observed `decision`: `accept`; `source`: `config`, `user_temporary`, `user_permanent`; `reasonType`: `classifier`, `mode`, `subcommandResults`, `rule`, `other` (observed v2.1.294+) |
+| `toolDenialKind` | Denial reason on tool-result `user` events (`"automode-unavailable"` observed) |
+| `turnOrigin` / `origin` | Turn origin on `user` events: `turnOrigin` `human` or `task_notification`; `origin.kind` `human` or `task-notification` (observed v2.1.278+) |
+| `turnPosition` | `{promptIndex, turnIndex}` on `user` events (observed v2.1.287+) |
+| `sourceToolUseID` / `queueSkipAttachments` | Rare `user` event fields (observed v2.1.300+; purpose unconfirmed) |
+
+The `observed vX+` versions on rows added by the 2026-10-18 scan are the lowest
+version in which the field appeared among sessions modified since 2026-09-06
+(oldest: v2.1.220). They bound when a field was first seen locally, not when it
+was introduced upstream.
 
 The attribution family (`attributionSkill`, `attributionAgent`,
 `attributionMcpServer`, `attributionMcpTool`) marks *why* an assistant event
@@ -588,10 +742,17 @@ so do not assume at most one attribution field per event.
   - `claude-sonnet-4-5-20250929`
   - `claude-haiku-4-5-20251001`
   - `<synthetic>` (sentinel used for locally generated assistant error/limit messages)
+- Local sample refresh (2026-10-18, v2.1.264–v2.1.302): only Claude 5 family slugs
+  remain: `claude-haiku-5-5`, `claude-sonnet-5-5`, `claude-opus-5-5`,
+  `claude-sonnet-5`, `claude-opus-5`, plus `<synthetic>`. Slugs are undated
+  (no `-YYYYMMDD` suffix).
 
 ### Supported Claude Code Model Slugs
 
-Official Claude Code model configuration currently documents:
+The table below predates the Claude 5 family and has not been re-checked
+against the official model configuration page; use the 2026-10-18 local slugs
+above as the current observed set. At the time, official Claude Code model
+configuration documented:
 
 | Product name | Slug |
 |-------------|------|
@@ -651,7 +812,16 @@ Current implementation: `crates/core/src/parsers/claude_code.rs`
   arm; every other event type — including `attachment`, `permission-mode`,
   `last-prompt`, `mode`, `file-history-delta`, and the newer `atis-latch`,
   `bridge-session`, `cost-state`, and `agent-name` events — falls through and is
-  skipped without error (no parser breakage from these additions)
+  skipped without error (no parser breakage from these additions). The same
+  holds for the v2.1.300+ `api-request`, `api-request-shape`, and
+  `api-request-blob` events; their `message.role: user|assistant` blobs are not
+  mistaken for messages because dispatch keys on the top-level `type`
+- Every line is still fully deserialized into `serde_json::Value` before the
+  `type` dispatch (event loop in `ClaudeCodeParser::parse`). Since v2.1.300 the skipped
+  `api-request*` lines are 35–69 % of transcript bytes, so indexing does
+  noticeably more parsing work for no indexed content. Not yet measured; a
+  cheap pre-filter on the `type` field is the candidate fix if it shows up in
+  profiling
 - Recent real Claude Code sessions (local scan refreshed 2026-04-13, versions
   observed through v2.1.100) show subagent launches as `name == "Agent"` with
   `input.description`, `input.subagent_type`, and `input.prompt`; optional
@@ -712,6 +882,7 @@ fn extract_content_claude(event: &Value) -> Option<String> {
 - [Anthropic prompt caching docs (`cache_read_input_tokens`, `cache_creation_input_tokens`, `input_tokens`)](https://docs.anthropic.com/en/docs/build-with-claude/prompt-caching)
 - [Claude Code subagents docs (subagent transcript path)](https://docs.anthropic.com/en/docs/claude-code/sub-agents)
 - [Claude Code changelog (compaction/transcript behavior changes)](https://docs.anthropic.com/en/docs/claude-code/changelog)
+- [Claude Code CHANGELOG.md (v2.1.300 API request recording entry)](https://github.com/anthropics/claude-code/blob/main/CHANGELOG.md)
 - [Claude Code model configuration (support article)](https://support.claude.com/en/articles/11940350-claude-code-model-configuration)
 - [Claude Sonnet 4.6 page (`claude-sonnet-4-6`)](https://www.anthropic.com/claude/sonnet)
 - [Claude Opus 4.6 page (`claude-opus-4-6`)](https://www.anthropic.com/claude/opus)
