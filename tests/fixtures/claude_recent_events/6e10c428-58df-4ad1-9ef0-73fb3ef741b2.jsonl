@@ -1,0 +1,16 @@
+{"type":"permission-mode","permissionMode":"default","sessionId":"6e10c428-58df-4ad1-9ef0-73fb3ef741b2"}
+{"type":"mode","mode":"normal"}
+{"type":"atis-latch","latch":"synthetic-latch-0001"}
+{"type":"bridge-session","bridgeId":"synthetic-bridge-0001"}
+{"type":"agent-name","agentName":"synthetic-agent"}
+{"type":"attachment","timestamp":"2026-10-18T09:00:00.000Z","cwd":"/synthetic/recent-events","attachment":{"type":"queued_command","prompt":"synthetic queued command"}}
+{"type":"attachment","timestamp":"2026-10-18T09:00:00.500Z","attachment":{"type":"deferred_tools_record","tools":["SyntheticTool"]}}
+{"type":"api-request-shape","shape":{"model":"synthetic-model","messages":[{"role":"user","content":[{"type":"text","text":"shape placeholder"}]}]}}
+{"type":"api-request","request":{"headers":{"x-synthetic":"1"},"body":{"messages":[{"role":"user","content":"request placeholder"}],"system":[{"type":"text","text":"synthetic system"}]}}}
+{"type":"api-request-blob","message":{"role":"user","content":[{"type":"text","text":"blobuseronlytoken"}]}}
+{"type":"api-request-blob","message":{"role":"assistant","content":[{"type":"text","text":"blobassistantonlytoken"}]}}
+{"type":"user","timestamp":"2026-10-18T09:00:01.000Z","isMeta":true,"message":{"role":"user","content":"Base directory for this skill: /synthetic/skill skillonlytoken"}}
+{"type":"user","timestamp":"2026-10-18T09:00:02.000Z","origin":{"kind":"task-notification"},"message":{"role":"user","content":"<task-notification>Synthetic task finished notificationonlytoken</task-notification>"}}
+{"type":"user","timestamp":"2026-10-18T09:00:03.000Z","message":{"role":"user","content":"Explain recent event indexing"}}
+{"type":"assistant","timestamp":"2026-10-18T09:00:04.000Z","requestRef":"req_synthetic_0001","effort":"medium","requestedModel":"synthetic-model","message":{"role":"assistant","model":"synthetic-model","content":[{"type":"text","text":"Recent events indexed"}],"usage":{"input_tokens":10,"output_tokens":5}}}
+{"type":"cost-state","costUsd":0.01}

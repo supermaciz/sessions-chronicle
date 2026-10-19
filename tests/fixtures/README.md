@@ -8,6 +8,8 @@ This directory contains sample session files for testing and development.
 tests/fixtures/
 ├── claude_sessions/        # Claude Code session samples (JSONL format)
 │   └── sample-session.jsonl
+├── claude_recent_events/   # Synthetic Claude Code v2.1.300+ events (skip/title/search coverage)
+│   └── 6e10c428-58df-4ad1-9ef0-73fb3ef741b2.jsonl
 ├── codex_sessions/         # Codex CLI session samples (JSONL format)
 │   └── 2026/01/18/...
 ├── vibe_sessions/          # Mistral Vibe session samples (meta.json + JSONL)
@@ -36,6 +38,13 @@ Files are in JSONL (JSON Lines) format, with one JSON object per line:
 - **Summary**: `type: "summary"` containing session title
 
 See `docs/SESSION_FORMAT_ANALYSIS.md` for detailed format documentation.
+
+Recent-event fixture (`tests/fixtures/claude_recent_events/`, **synthetic**, kept separate from `claude_sessions/` so session counts stay valid):
+
+- Covers event types the parser skips without error (`permission-mode`, `mode`, `atis-latch`, `bridge-session`, `agent-name`, `attachment`, `api-request-shape`, `api-request`, `api-request-blob`, `cost-state`), including `api-request-blob` lines whose `message.role` must not become messages
+- Covers title selection: an `isMeta` skill body and a `task-notification` turn must not become the first prompt (no `ai-title`, so the fallback is exercised)
+- Covers search: the non-human turns stay searchable; blob-only tokens do not
+- Exercised by `tests/claude_recent_events.rs`
 
 ## Codex Session Format
 
