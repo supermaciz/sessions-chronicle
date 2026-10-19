@@ -837,34 +837,16 @@ Current implementation: `crates/core/src/parsers/claude_code.rs`
   holds for the v2.1.300+ `api-request`, `api-request-shape`, and
   `api-request-blob` events; their `message.role: user|assistant` blobs are not
   mistaken for messages because dispatch keys on the top-level `type`
-- **Skipped-line pre-filter (2026-10-19):** since v2.1.300 the skipped
-  `api-request*` lines are 35-69 % of transcript bytes, so the parser no longer
-  builds a full `serde_json::Value` for lines it ignores. A line that starts
-  with `{` (object guard, so positional arrays such as `["permission-mode", ...]`
-  cannot decode as a header) is first deserialized into a three-field borrowed
-  `EventHeader` (`type`, `sessionId`, `cwd`). If its `type` is not `user`,
-  `assistant`, or `ai-title`, only the session id and cwd are captured
-  (first-wins, as before) and the line is skipped. Capture happens only after
-  the header deserialized successfully. Everything else takes the unchanged
-  full-`Value` path: the three retained types, lines whose header fails to
-  deserialize (escaped, non-string, or duplicate fields, non-objects), and
-  missing, null, or non-string `type`.
-- **Accepted divergence of the pre-filter:** serde_json's skipping path for
-  the header's ignored fields is more lenient than a full `Value` parse: it
-  does not reject out-of-range numbers such as `1e999` (overflow), and it is
-  not bound by `Value`'s nesting limit in the same way (depth). A *skipped*
-  line that a full parse would reject is therefore no longer counted as a
-  parse error and can supply the first session id / cwd when none was captured
-  yet. Making it strict would require fully parsing skipped lines, defeating
-  the optimization. Observable effect: the parse-error flag only changes the
-  error returned for a session with no messages at all (a session whose only
-  failures are such lines now reports "Session contains no messages" instead
-  of "Session contained parse errors and no messages"), and the captured
-  id / cwd come from a line that is syntactically JSON but rejected by a full parse. Retained
-  (`user` / `assistant` / `ai-title`) lines are unaffected, since their capture
-  happens after the full parse. This leniency is pinned by tests
-  (`recent_header_*`).
-- Measured effect: see [Parse-time measurements](#parse-time-measurements).
+- **Skipped-line pre-filter: evaluated, not retained (2026-10-19).** Since
+  v2.1.300 the skipped `api-request*` lines are 35-69 % of transcript bytes,
+  and every line is still fully parsed into a `serde_json::Value` before
+  dispatch. A borrowed three-field header pre-filter (`type`, `sessionId`,
+  `cwd`) was prototyped and measured: it roughly halved per-file parse time,
+  but the absolute saving is about 1-2.5 ms per transcript, which is not
+  perceptible to users, while it added a second parsing path and a lenient
+  divergence (skipped lines rejected by a full parse, e.g. `1e999`, could
+  supply metadata). It was removed to keep a single parsing path. See
+  [Parse-time measurements](#parse-time-measurements).
 - Recent real Claude Code sessions (local scan refreshed 2026-04-13, versions
   observed through v2.1.100) show subagent launches as `name == "Agent"` with
   `input.description`, `input.subagent_type`, and `input.prompt`; optional
@@ -945,8 +927,10 @@ fn extract_content_claude(event: &Value) -> Option<String> {
 ## Parse-time measurements
 
 Measured 2026-10-19 for the skipped-line pre-filter described under Parser
-Behavior. **Decision: retained** (gate: at least 20 % faster on the high-skip
-transcript, no more than 5 % slower on low-skip transcripts).
+Behavior. **Decision: not retained.** It passed the performance gate (at least
+20 % faster on the high-skip transcript, no more than 5 % slower on low-skip
+transcripts), but the absolute saving is too small to justify a second parsing
+path (see Gate decision below).
 
 **Method.** Opt-in harness `crates/core/tests/claude_parse_timing.rs` (ignored
 in the ordinary suite), release build with `lto = true`, rustc 1.96.0. Fixed
@@ -987,9 +971,13 @@ ranges are disjoint, so the difference far exceeds the spread. The newer
 low-skip proxy also improved 48.3 % with disjoint ranges. The old low-skip
 proxy shows no slowdown (-2.4 %, computed from unrounded values, i.e. faster), but its ranges overlap because of
 outlier batches, so treat it as "no measurable regression", not as a speed-up.
-The pre-filter was therefore retained as shipped in `fec9eec`. Caveats: three
-transcripts from one machine, parse time only (not end-to-end indexing), and
-proxy low-skip workloads.
+Although the gate passed, the saving is about 1.1-2.4 ms per transcript in
+parse time alone (not end-to-end indexing), i.e. at most a few seconds on a
+full reindex of a large history and nothing on incremental indexing. That is
+not perceptible to users, so the pre-filter (`fec9eec`) was removed in favor of
+a single full-`Value` parsing path. Caveats: three transcripts from one
+machine, and proxy low-skip workloads. The ignored timing harness stays in
+place to re-evaluate if transcripts grow.
 
 ---
 

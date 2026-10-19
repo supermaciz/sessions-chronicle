@@ -1,6 +1,5 @@
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
-use serde::Deserialize;
 use serde_json::Value;
 use std::collections::{HashMap, HashSet};
 use std::fs::File;
@@ -178,15 +177,21 @@ impl ParseState {
         }
     }
 
-    fn maybe_capture_session_id(&mut self, session_id: Option<&str>) {
+    fn maybe_capture_session_id(&mut self, event: &Value) {
         if self.session_id_from_event.is_none() {
-            self.session_id_from_event = session_id.map(|s| s.to_string());
+            self.session_id_from_event = event
+                .get("sessionId")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string());
         }
     }
 
-    fn maybe_capture_cwd(&mut self, cwd: Option<&str>) {
+    fn maybe_capture_cwd(&mut self, event: &Value) {
         if self.project_path.is_none() {
-            self.project_path = cwd.map(|s| s.to_string());
+            self.project_path = event
+                .get("cwd")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string());
         }
     }
 
@@ -823,19 +828,6 @@ impl ParseState {
     }
 }
 
-/// Cheap view of the three top-level fields needed to decide whether a line
-/// can be skipped. Anything that does not deserialize into it (escaped or
-/// non-string fields, duplicate keys, non-objects) takes the full-parse path.
-#[derive(Deserialize)]
-struct EventHeader<'a> {
-    #[serde(rename = "type", borrow)]
-    kind: Option<&'a str>,
-    #[serde(rename = "sessionId", borrow)]
-    session_id: Option<&'a str>,
-    #[serde(borrow)]
-    cwd: Option<&'a str>,
-}
-
 impl ClaudeCodeParser {
     pub fn parse(&self, file_path: &Path) -> Result<ParsedSession> {
         let file = File::open(file_path).context("Failed to open session file")?;
@@ -855,18 +847,6 @@ impl ClaudeCodeParser {
                 continue;
             }
 
-            // Pre-filter: lines whose type the parser ignores only need their
-            // session id / cwd captured. The object guard keeps positional
-            // arrays from decoding as a header.
-            if line.trim_start().starts_with('{')
-                && let Ok(header) = serde_json::from_str::<EventHeader>(&line)
-                && !matches!(header.kind, Some("user" | "assistant" | "ai-title"))
-            {
-                state.maybe_capture_session_id(header.session_id);
-                state.maybe_capture_cwd(header.cwd);
-                continue;
-            }
-
             let event: Value = match serde_json::from_str(&line) {
                 Ok(v) => v,
                 Err(err) => {
@@ -876,8 +856,8 @@ impl ClaudeCodeParser {
                 }
             };
 
-            state.maybe_capture_session_id(event.get("sessionId").and_then(Value::as_str));
-            state.maybe_capture_cwd(event.get("cwd").and_then(Value::as_str));
+            state.maybe_capture_session_id(&event);
+            state.maybe_capture_cwd(&event);
 
             let event_type = event.get("type").and_then(|v| v.as_str());
             let is_message_like = matches!(event_type, Some("user") | Some("assistant"));
@@ -1869,7 +1849,7 @@ mod tests {
         assert_eq!(parsed.transcript_items[4].message_index, Some(3));
     }
 
-    // ---- Header pre-filter preservation tests ----
+    // ---- Metadata capture tests ----
 
     const TAIL_USER: &str = r#"{"type":"user","timestamp":"2026-10-19T10:00:00Z","sessionId":"tail-id","cwd":"/synthetic/tail","message":{"content":"Hello"}}"#;
     const TAIL_ASSISTANT: &str = r#"{"type":"assistant","timestamp":"2026-10-19T10:00:02Z","sessionId":"tail-id","cwd":"/synthetic/tail","message":{"content":"Hi"}}"#;
@@ -2121,75 +2101,6 @@ mod tests {
         assert_tail_range(&parsed);
 
         let file = create_temp_session(&[failing]);
-        let err = ClaudeCodeParser.parse(file.path()).unwrap_err();
-        assert!(
-            err.to_string()
-                .contains("Session contained parse errors and no messages")
-        );
-    }
-
-    fn deeply_nested_array(depth: usize) -> String {
-        format!("{}{}", "[".repeat(depth), "]".repeat(depth))
-    }
-
-    #[test]
-    fn recent_header_skipped_overflow_can_supply_metadata() {
-        let skipped = r#"{"type":"permission-mode","timestamp":"2026-10-19T09:00:00Z","n":1e999,"sessionId":"leading-id","cwd":"/synthetic/leading"}"#;
-        let parsed = parse_with_tail(&[skipped], &[]).unwrap();
-        assert_eq!(parsed.session.id, "leading-id");
-        assert_eq!(
-            parsed.session.project_path.as_deref(),
-            Some("/synthetic/leading")
-        );
-        assert_tail_range(&parsed);
-
-        // Skipped-only input is a plain NoMessages, not a parse-error diagnostic.
-        let file = create_temp_session(&[skipped]);
-        let err = ClaudeCodeParser.parse(file.path()).unwrap_err();
-        assert!(matches!(
-            err.downcast_ref::<ParseError>(),
-            Some(ParseError::NoMessages)
-        ));
-    }
-
-    #[test]
-    fn recent_header_skipped_deep_nesting_can_supply_metadata() {
-        let deep = deeply_nested_array(100_000);
-        // Confirm the full parse rejects this payload.
-        assert!(
-            serde_json::from_str::<Value>(&format!(r#"{{"x":{deep}}}"#)).is_err(),
-            "full Value parse must reject the deep payload"
-        );
-
-        let skipped = format!(
-            r#"{{"type":"permission-mode","timestamp":"2026-10-19T09:00:00Z","deep":{deep},"sessionId":"leading-id","cwd":"/synthetic/leading"}}"#
-        );
-        let parsed = parse_with_tail(&[&skipped], &[]).unwrap();
-        assert_eq!(parsed.session.id, "leading-id");
-        assert_eq!(
-            parsed.session.project_path.as_deref(),
-            Some("/synthetic/leading")
-        );
-        assert_tail_range(&parsed);
-
-        let file = create_temp_session(&[&skipped]);
-        let err = ClaudeCodeParser.parse(file.path()).unwrap_err();
-        assert!(matches!(
-            err.downcast_ref::<ParseError>(),
-            Some(ParseError::NoMessages)
-        ));
-
-        // Retained equivalent: parse-error diagnostic and no metadata capture.
-        let retained = format!(
-            r#"{{"type":"user","timestamp":"2026-10-19T09:00:00Z","deep":{deep},"sessionId":"bogus-id","cwd":"/synthetic/bogus"}}"#
-        );
-        let parsed = parse_with_tail(&[&retained], &[]).unwrap();
-        assert_eq!(parsed.session.id, "tail-id");
-        assert_eq!(
-            parsed.session.project_path.as_deref(),
-            Some("/synthetic/tail")
-        );
-        let file = create_temp_session(&[&retained]);
         let err = ClaudeCodeParser.parse(file.path()).unwrap_err();
         assert!(
             err.to_string()
