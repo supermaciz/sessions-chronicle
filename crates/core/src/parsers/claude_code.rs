@@ -1,7 +1,7 @@
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
 use serde_json::Value;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::path::Path;
@@ -114,6 +114,9 @@ struct ParseState {
     /// Last non-blank `ai-title` event; supersedes `summary` in v2.1.216+.
     ai_title: Option<String>,
     has_user_message: bool,
+    /// Indices into `messages` of user messages flagged as non-human context
+    /// (meta or task-notification); only used to prefer human first prompts.
+    non_human_message_indices: HashSet<usize>,
     /// True once a non-synthetic assistant event is seen. Synthetic events
     /// (`isApiErrorMessage`, `model == "<synthetic>"`) are generated locally by
     /// the CLI, so a session with only those never produced a model response.
@@ -155,6 +158,7 @@ impl ParseState {
             session_id_from_event: None,
             ai_title: None,
             has_user_message: false,
+            non_human_message_indices: HashSet::new(),
             has_real_assistant_message: false,
             has_synthetic_assistant_message: false,
             messages: Vec::new(),
@@ -442,6 +446,16 @@ impl ParseState {
             .and_then(|v| v.as_str())
             .unwrap_or("unknown")
             .to_string();
+        let is_non_human = event.get("isMeta").and_then(Value::as_bool) == Some(true)
+            || event
+                .get("origin")
+                .and_then(|o| o.get("kind"))
+                .and_then(Value::as_str)
+                == Some("task-notification")
+            || event.get("turnOrigin").and_then(Value::as_str) == Some("task_notification");
+        if is_non_human {
+            self.non_human_message_indices.insert(self.messages.len());
+        }
         self.push_message(evt_sid, Role::User, text, ts, None);
         self.push_message_transcript_item();
     }
@@ -771,7 +785,14 @@ impl ParseState {
             Some(title) if !title.trim().is_empty() => {
                 Some(crate::parsers::normalize_prompt(title))
             }
-            _ => first_prompt::extract_first_prompt(&self.messages),
+            _ => first_prompt::extract_first_prompt(
+                self.messages
+                    .iter()
+                    .enumerate()
+                    .filter(|(index, _)| !self.non_human_message_indices.contains(index))
+                    .map(|(_, message)| message),
+            )
+            .or_else(|| first_prompt::extract_first_prompt(&self.messages)),
         };
 
         let session = Session {
@@ -1826,5 +1847,386 @@ mod tests {
         assert_eq!(parsed.transcript_items[3].message_index, Some(2));
         assert_eq!(parsed.transcript_items[4].kind, TranscriptItemKind::Message);
         assert_eq!(parsed.transcript_items[4].message_index, Some(3));
+    }
+
+    // ---- Metadata capture tests ----
+
+    const TAIL_USER: &str = r#"{"type":"user","timestamp":"2026-10-19T10:00:00Z","sessionId":"tail-id","cwd":"/synthetic/tail","message":{"content":"Hello"}}"#;
+    const TAIL_ASSISTANT: &str = r#"{"type":"assistant","timestamp":"2026-10-19T10:00:02Z","sessionId":"tail-id","cwd":"/synthetic/tail","message":{"content":"Hi"}}"#;
+
+    fn parse_with_tail(prefix: &[&str], suffix: &[&str]) -> Result<ParsedSession> {
+        let mut lines: Vec<&str> = prefix.to_vec();
+        lines.push(TAIL_USER);
+        lines.push(TAIL_ASSISTANT);
+        lines.extend_from_slice(suffix);
+        let file = create_temp_session(&lines);
+        ClaudeCodeParser.parse(file.path())
+    }
+
+    fn assert_tail_range(parsed: &ParsedSession) {
+        assert_eq!(
+            parsed.session.start_time.to_rfc3339(),
+            "2026-10-19T10:00:00+00:00"
+        );
+        assert_eq!(
+            parsed.session.last_updated.to_rfc3339(),
+            "2026-10-19T10:00:02+00:00"
+        );
+        assert_eq!(parsed.session.message_count, 2);
+        assert_eq!(parsed.messages.len(), 2);
+    }
+
+    #[test]
+    fn recent_header_preserves_metadata() {
+        let ts = r#""timestamp":"2026-10-19T09:00:00Z""#;
+        let cases: Vec<(&str, Vec<String>, &str, &str)> = vec![
+            (
+                "permission-mode session id",
+                vec![format!(
+                    r#"{{"type":"permission-mode",{ts},"sessionId":"leading-id","permissionMode":"default"}}"#
+                )],
+                "leading-id",
+                "/synthetic/tail",
+            ),
+            (
+                "attachment cwd",
+                vec![format!(
+                    r#"{{"type":"attachment",{ts},"cwd":"/synthetic/leading","attachment":{{}}}}"#
+                )],
+                "tail-id",
+                "/synthetic/leading",
+            ),
+            (
+                "header-shaped array",
+                vec![r#"["permission-mode","bogus-id","/synthetic/bogus"]"#.to_string()],
+                "tail-id",
+                "/synthetic/tail",
+            ),
+            (
+                "duplicate sessionId",
+                vec![format!(
+                    r#"{{"type":"permission-mode",{ts},"sessionId":"first","sessionId":"last"}}"#
+                )],
+                "last",
+                "/synthetic/tail",
+            ),
+            (
+                "duplicate cwd",
+                vec![format!(
+                    r#"{{"type":"permission-mode",{ts},"cwd":"/synthetic/first","cwd":"/synthetic/last"}}"#
+                )],
+                "tail-id",
+                "/synthetic/last",
+            ),
+            (
+                "escaped type",
+                vec![format!(
+                    r#"{{"type":"permission\u002dmode",{ts},"sessionId":"leading-id","cwd":"/synthetic/leading"}}"#
+                )],
+                "leading-id",
+                "/synthetic/leading",
+            ),
+            (
+                "escaped sessionId",
+                vec![format!(
+                    r#"{{"type":"permission-mode",{ts},"sessionId":"escaped\u002did"}}"#
+                )],
+                "escaped-id",
+                "/synthetic/tail",
+            ),
+            (
+                "escaped cwd",
+                vec![format!(
+                    r#"{{"type":"permission-mode",{ts},"cwd":"/synthetic/esc\u0061ped"}}"#
+                )],
+                "tail-id",
+                "/synthetic/escaped",
+            ),
+            (
+                "non-string type",
+                vec![format!(
+                    r#"{{"type":7,{ts},"sessionId":"leading-id","cwd":"/synthetic/leading"}}"#
+                )],
+                "leading-id",
+                "/synthetic/leading",
+            ),
+            (
+                "non-string sessionId",
+                vec![format!(
+                    r#"{{"type":"permission-mode",{ts},"sessionId":7,"cwd":"/synthetic/leading"}}"#
+                )],
+                "tail-id",
+                "/synthetic/leading",
+            ),
+            (
+                "non-string cwd",
+                vec![format!(
+                    r#"{{"type":"permission-mode",{ts},"sessionId":"leading-id","cwd":7}}"#
+                )],
+                "leading-id",
+                "/synthetic/tail",
+            ),
+            (
+                "missing type",
+                vec![format!(
+                    r#"{{{ts},"sessionId":"leading-id","cwd":"/synthetic/leading"}}"#
+                )],
+                "leading-id",
+                "/synthetic/leading",
+            ),
+            (
+                "null type",
+                vec![format!(
+                    r#"{{"type":null,{ts},"sessionId":"leading-id","cwd":"/synthetic/leading"}}"#
+                )],
+                "leading-id",
+                "/synthetic/leading",
+            ),
+            (
+                "unknown type",
+                vec![format!(
+                    r#"{{"type":"future-event",{ts},"sessionId":"leading-id","cwd":"/synthetic/leading"}}"#
+                )],
+                "leading-id",
+                "/synthetic/leading",
+            ),
+            (
+                "null metadata then populated",
+                vec![
+                    format!(r#"{{"type":"permission-mode",{ts},"sessionId":null,"cwd":null}}"#),
+                    format!(
+                        r#"{{"type":"attachment",{ts},"sessionId":"leading-id","cwd":"/synthetic/leading"}}"#
+                    ),
+                ],
+                "leading-id",
+                "/synthetic/leading",
+            ),
+            (
+                "first wins over later conflicting metadata",
+                vec![
+                    format!(
+                        r#"{{"type":"permission-mode",{ts},"sessionId":"leading-id","cwd":"/synthetic/leading"}}"#
+                    ),
+                    format!(
+                        r#"{{"type":"attachment",{ts},"sessionId":"later-id","cwd":"/synthetic/later"}}"#
+                    ),
+                ],
+                "leading-id",
+                "/synthetic/leading",
+            ),
+        ];
+
+        for (name, prefix, expected_id, expected_cwd) in cases {
+            if name.starts_with("escaped ") {
+                assert!(
+                    prefix.iter().any(|l| l.contains("\\u")),
+                    "case {name} must contain a JSON escape"
+                );
+            }
+            let prefix_refs: Vec<&str> = prefix.iter().map(String::as_str).collect();
+            let parsed = parse_with_tail(&prefix_refs, &[]).unwrap_or_else(|e| {
+                panic!("case {name}: {e}");
+            });
+            assert_eq!(parsed.session.id, expected_id, "case {name}");
+            assert_eq!(
+                parsed.session.project_path.as_deref(),
+                Some(expected_cwd),
+                "case {name}"
+            );
+            assert_eq!(
+                parsed.session.start_time.to_rfc3339(),
+                "2026-10-19T10:00:00+00:00",
+                "case {name}"
+            );
+            assert_eq!(
+                parsed.session.last_updated.to_rfc3339(),
+                "2026-10-19T10:00:02+00:00",
+                "case {name}"
+            );
+            assert_eq!(parsed.session.message_count, 2, "case {name}");
+            assert_eq!(parsed.messages.len(), 2, "case {name}");
+        }
+    }
+
+    #[test]
+    fn recent_header_duplicate_type_uses_last_value() {
+        let user_then_mode = r#"{"type":"user","type":"permission-mode","timestamp":"2026-10-19T10:00:01Z","message":{"content":"Extra"}}"#;
+        let parsed = parse_with_tail(&[user_then_mode], &[]).unwrap();
+        assert_eq!(parsed.session.message_count, 2);
+        assert!(parsed.messages.iter().all(|m| m.content != "Extra"));
+
+        let mode_then_user = r#"{"type":"permission-mode","type":"user","timestamp":"2026-10-19T10:00:01Z","message":{"content":"Extra"}}"#;
+        let parsed = parse_with_tail(&[mode_then_user], &[]).unwrap();
+        assert_eq!(parsed.session.message_count, 3);
+        assert!(parsed.messages.iter().any(|m| m.content == "Extra"));
+    }
+
+    #[test]
+    fn recent_header_escaped_user_is_retained() {
+        let escaped_user = r#"{"type":"us\u0065r","timestamp":"2026-10-19T10:00:01Z","message":{"content":"Extra"}}"#;
+        assert!(escaped_user.contains("\\u0065"));
+        let parsed = parse_with_tail(&[escaped_user], &[]).unwrap();
+        assert_eq!(parsed.session.message_count, 3);
+        assert!(parsed.messages.iter().any(|m| m.content == "Extra"));
+        assert_eq!(
+            parsed.session.start_time.to_rfc3339(),
+            "2026-10-19T10:00:00+00:00"
+        );
+        assert_eq!(
+            parsed.session.last_updated.to_rfc3339(),
+            "2026-10-19T10:00:02+00:00"
+        );
+    }
+
+    #[test]
+    fn recent_header_tool_result_preserves_timestamp() {
+        let tool_result = r#"{"type":"user","timestamp":"2026-10-19T10:00:05Z","message":{"content":[{"type":"tool_result","tool_use_id":"toolu_x","content":"ok"}]}}"#;
+        let parsed = parse_with_tail(&[], &[tool_result]).unwrap();
+        assert_eq!(parsed.session.message_count, 2);
+        assert_eq!(
+            parsed.session.last_updated.to_rfc3339(),
+            "2026-10-19T10:00:05+00:00"
+        );
+    }
+
+    #[test]
+    fn recent_header_retained_parse_failure() {
+        let failing = r#"{"type":"user","timestamp":"2026-10-19T09:00:00Z","sessionId":"bogus-id","cwd":"/synthetic/bogus","n":1e999,"message":{"content":"Bogus"}}"#;
+        let parsed = parse_with_tail(&[failing], &[]).unwrap();
+        assert_eq!(parsed.session.id, "tail-id");
+        assert_eq!(
+            parsed.session.project_path.as_deref(),
+            Some("/synthetic/tail")
+        );
+        assert_tail_range(&parsed);
+
+        let file = create_temp_session(&[failing]);
+        let err = ClaudeCodeParser.parse(file.path()).unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("Session contained parse errors and no messages")
+        );
+    }
+
+    fn user_line(extra: &str, content: &str) -> String {
+        format!(
+            r#"{{"type":"user","timestamp":"2026-07-25T10:00:00.000Z","sessionId":"s-rp"{extra},"message":{{"content":{content}}}}}"#
+        )
+    }
+
+    const RP_ASSISTANT: &str = r#"{"type":"assistant","timestamp":"2026-07-25T10:00:09.000Z","sessionId":"s-rp","message":{"content":"Done"}}"#;
+
+    fn parse_lines(lines: &[&str]) -> ParsedSession {
+        let file = create_temp_session(lines);
+        ClaudeCodeParser.parse(file.path()).unwrap()
+    }
+
+    fn assert_first_prompt(lines: &[&str], expected: &str, label: &str) -> ParsedSession {
+        let parsed = parse_lines(lines);
+        assert_eq!(
+            parsed.session.first_prompt.as_deref(),
+            Some(expected),
+            "{label}"
+        );
+        parsed
+    }
+
+    #[test]
+    fn recent_prompt_prefers_human() {
+        let markers = [
+            r#","isMeta":true"#,
+            r#","origin":{"kind":"task-notification"}"#,
+            r#","turnOrigin":"task_notification""#,
+        ];
+        for marker in markers {
+            let lead = user_line(marker, r#""Injected context""#);
+            let human = user_line("", r#""Explain the parser""#);
+            let parsed =
+                assert_first_prompt(&[&lead, &human, RP_ASSISTANT], "Explain the parser", marker);
+            assert_eq!(parsed.session.message_count, 3);
+            assert_eq!(parsed.messages[0].content, "Injected context");
+            assert_eq!(parsed.transcript_items.len(), 3);
+        }
+    }
+
+    #[test]
+    fn recent_prompt_falls_back_without_eligible_human() {
+        let lead = user_line(r#","isMeta":true"#, r#""Injected context""#);
+        assert_first_prompt(&[&lead, RP_ASSISTANT], "Injected context", "non-human only");
+
+        let reminder = user_line("", r#""<system-reminder>Context</system-reminder>""#);
+        assert_first_prompt(
+            &[&lead, &reminder, RP_ASSISTANT],
+            "Injected context",
+            "system-reminder human",
+        );
+    }
+
+    #[test]
+    fn recent_prompt_classifies_only_exact_markers() {
+        let cases = [
+            (r#","isMeta":false"#, "First text"),
+            (r#","isMeta":"true""#, "First text"),
+            (r#","origin":{"kind":"other"}"#, "First text"),
+            (r#","turnOrigin":"other""#, "First text"),
+            (
+                r#","isMeta":null,"origin":null,"turnOrigin":null"#,
+                "First text",
+            ),
+            ("", "<task-notification>Human quotation</task-notification>"),
+        ];
+        for (marker, text) in cases {
+            let first = user_line(marker, &format!("{text:?}"));
+            let human = user_line("", r#""Later human""#);
+            assert_first_prompt(
+                &[&first, &human, RP_ASSISTANT],
+                &crate::parsers::normalize_prompt(text),
+                marker,
+            );
+        }
+    }
+
+    #[test]
+    fn recent_prompt_ai_title_wins() {
+        let lead = user_line(r#","isMeta":true"#, r#""Injected context""#);
+        let human = user_line("", r#""Explain the parser""#);
+        assert_first_prompt(
+            &[
+                &lead,
+                &human,
+                r#"{"type":"ai-title","aiTitle":"First title","sessionId":"s-rp"}"#,
+                r#"{"type":"ai-title","aiTitle":"  ","sessionId":"s-rp"}"#,
+                r#"{"type":"ai-title","aiTitle":"Last title","sessionId":"s-rp"}"#,
+                RP_ASSISTANT,
+            ],
+            "Last title",
+            "ai-title",
+        );
+    }
+
+    #[test]
+    fn recent_prompt_mixed_event_keeps_indices() {
+        let early = r#"{"type":"assistant","timestamp":"2026-07-25T10:00:00.000Z","sessionId":"s-rp","message":{"content":"Starting"}}"#;
+        let result_only = user_line(
+            r#","isMeta":true"#,
+            r#"[{"type":"tool_result","tool_use_id":"t0","content":"ok"}]"#,
+        );
+        let mixed = user_line(
+            r#","isMeta":true"#,
+            r#"[{"type":"tool_result","tool_use_id":"t1","content":"ok"},{"type":"text","text":"Injected context"}]"#,
+        );
+        let human = user_line("", r#""Explain the parser""#);
+        let parsed = assert_first_prompt(
+            &[early, &result_only, &mixed, &human, RP_ASSISTANT],
+            "Explain the parser",
+            "mixed event",
+        );
+        let contents: Vec<&str> = parsed.messages.iter().map(|m| m.content.as_str()).collect();
+        assert_eq!(
+            contents,
+            ["Starting", "Injected context", "Explain the parser", "Done"]
+        );
+        let indices: Vec<usize> = parsed.messages.iter().map(|m| m.index).collect();
+        assert_eq!(indices, [0, 1, 2, 3]);
     }
 }

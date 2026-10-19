@@ -749,18 +749,39 @@ so do not assume at most one attribution field per event.
 
 ### Supported Claude Code Model Slugs
 
-The table below predates the Claude 5 family and has not been re-checked
-against the official model configuration page; use the 2026-10-18 local slugs
-above as the current observed set. At the time, official Claude Code model
-configuration documented:
+Checked 2026-10-19 against the official
+[Claude Code model configuration](https://code.claude.com/docs/en/model-config)
+page (the older support-article link now superseded it). The official page maps
+aliases to display names per provider rather than listing a slug table. On the
+Anthropic API the aliases resolve to: `opus` = Opus 5.5 (v2.1.280+), `sonnet` =
+Sonnet 5.5 (v2.1.284+), `haiku` = Haiku 5.5 (v2.1.293+). It also resolves
+`fable` to Fable 5.1 (v2.1.257+).
 
-| Product name | Slug |
-|-------------|------|
-| Sonnet 4.6 | `claude-sonnet-4-6` |
-| Opus 4.6 | `claude-opus-4-6` |
-| Opus 4.5 | `claude-opus-4-5-20251101` |
-| Haiku 4.5 | `claude-haiku-4-5-20251001` |
-| Sonnet 4.5 | `claude-sonnet-4-5-20250929` |
+| Product name | Slug | Status |
+|--------------|------|--------|
+| Opus 5.5 | `claude-opus-5-5` | Verified: named in the official page ("use the full model name, for example `claude-opus-5-5`") and observed locally |
+| Haiku 5.5 | `claude-haiku-5-5` | Verified: named in the official page (`/model claude-haiku-5-5`) and observed locally |
+| Opus 5 | `claude-opus-5` | Verified as an ID used in official `availableModels` examples; observed locally |
+| Sonnet 5 | `claude-sonnet-5` | Verified as an ID used in official `fallbackModel` examples; observed locally |
+| Sonnet 5.5 | `claude-sonnet-5-5` | **Observed locally, not verified upstream.** The official page names "Sonnet 5.5" but never prints this slug; it follows the `claude-opus-5-5` / `claude-haiku-5-5` pattern, which is an inference, not proof |
+
+Notes and disagreements:
+
+- The official page also documents slugs that were **not** observed in local
+  transcripts: `claude-fable-5-1`, `claude-fable-5`, `claude-opus-4-8`, and the
+  older `claude-opus-4-6`, `claude-sonnet-4-6`, `claude-sonnet-4-5`,
+  `claude-sonnet-4-5-20250929`, `claude-haiku-4-5`. The local set is what
+  sessions on one machine happened to use, not the full supported set.
+- The official page uses undated IDs for current models; the local 5.x slugs
+  are undated too. Older 4.x slugs in historical transcripts may be dated
+  (`claude-opus-4-5-20251101`, `claude-haiku-4-5-20251001`).
+- Third-party providers resolve aliases differently (for example Bedrock
+  resolves `sonnet` to Sonnet 4.5); the slugs recorded in transcripts reflect
+  the provider actually used, so the table above is the Anthropic API view.
+- `<synthetic>` is a sentinel written by the CLI for locally generated
+  assistant error/limit messages, not a model.
+- The 2026-10-18 local set remains `claude-haiku-5-5`, `claude-sonnet-5-5`,
+  `claude-opus-5-5`, `claude-sonnet-5`, `claude-opus-5` plus `<synthetic>`.
 
 ---
 
@@ -816,12 +837,16 @@ Current implementation: `crates/core/src/parsers/claude_code.rs`
   holds for the v2.1.300+ `api-request`, `api-request-shape`, and
   `api-request-blob` events; their `message.role: user|assistant` blobs are not
   mistaken for messages because dispatch keys on the top-level `type`
-- Every line is still fully deserialized into `serde_json::Value` before the
-  `type` dispatch (event loop in `ClaudeCodeParser::parse`). Since v2.1.300 the skipped
-  `api-request*` lines are 35–69 % of transcript bytes, so indexing does
-  noticeably more parsing work for no indexed content. Not yet measured; a
-  cheap pre-filter on the `type` field is the candidate fix if it shows up in
-  profiling
+- **Skipped-line pre-filter: evaluated, not retained (2026-10-19).** Since
+  v2.1.300 the skipped `api-request*` lines are 35-69 % of transcript bytes,
+  and every line is still fully parsed into a `serde_json::Value` before
+  dispatch. A borrowed three-field header pre-filter (`type`, `sessionId`,
+  `cwd`) was prototyped and measured: it roughly halved per-file parse time,
+  but the absolute saving is about 1-2.5 ms per transcript, which is not
+  perceptible to users, while it added a second parsing path and a lenient
+  divergence (skipped lines rejected by a full parse, e.g. `1e999`, could
+  supply metadata). It was removed to keep a single parsing path. See
+  [Parse-time measurements](#parse-time-measurements).
 - Recent real Claude Code sessions (local scan refreshed 2026-04-13, versions
   observed through v2.1.100) show subagent launches as `name == "Agent"` with
   `input.description`, `input.subagent_type`, and `input.prompt`; optional
@@ -842,10 +867,32 @@ Current implementation: `crates/core/src/parsers/claude_code.rs`
   indexable, and synthetic messages remain visible in the transcript of sessions
   that also contain real responses.
 
-**Title extraction:** The last non-blank `ai-title` event wins; otherwise the
-first parsed `user` message content is used (assistant/system/summary are
-ignored). `agent-name` is **not** consumed — the one local sample carrying it
-also carried `ai-title`, so no fallback is justified yet.
+**Title extraction:** The last non-blank `ai-title` event wins and takes
+precedence over everything below. Otherwise the first prompt is chosen
+human-first: user messages carrying any of three structured non-human markers
+are excluded from the first-prompt search:
+
+- `isMeta == true` (system-generated context, e.g. an injected skill body)
+- `origin.kind == "task-notification"`
+- `turnOrigin == "task_notification"`
+
+Matching is exact: `isMeta: false`, a string `"true"`, other `origin.kind` /
+`turnOrigin` values, and null values do not mark a message, and a human prompt
+that merely quotes `<task-notification>` is not excluded (text is never
+inspected for these markers). Among the remaining messages the usual wrapper
+filtering still applies (`<system-reminder>` and `<command-output>` wrapped
+messages are skipped, blank results ignored). If no eligible human prompt
+survives, the search falls back to all user messages including the flagged
+ones, so a session never loses its title only because its sole prompt was
+flagged. The flagged messages are still indexed, counted, and searchable; only
+first-prompt selection changes, and message counts, indices, and transcript
+items are unchanged. `agent-name` is **not** consumed — the one local sample
+carrying it also carried `ai-title`, so no fallback is justified yet.
+
+Slash-command invocations (`<command-name>`, `<command-message>`,
+`<command-args>`) are normalized for the first prompt into the command and its
+arguments when the message is a single well-formed invocation; anything else is
+left as-is. This is unchanged.
 
 **Timestamp parsing:** Track earliest/latest across `type in {user, assistant}` using
 per-event `timestamp` (ISO-8601).
@@ -877,13 +924,69 @@ fn extract_content_claude(event: &Value) -> Option<String> {
 
 ---
 
+## Parse-time measurements
+
+Measured 2026-10-19 for the skipped-line pre-filter described under Parser
+Behavior. **Decision: not retained.** It passed the performance gate (at least
+20 % faster on the high-skip transcript, no more than 5 % slower on low-skip
+transcripts), but the absolute saving is too small to justify a second parsing
+path (see Gate decision below).
+
+**Method.** Temporary opt-in harness (ignored test, introduced in `c9be49c`
+and removed with the pre-filter; recover it from git history to re-measure),
+release build with `lto = true`, rustc 1.96.0. Fixed
+private copies of three real transcripts, identical for both variants. One
+discarded warm-up, then 8 batches alternating baseline and candidate, 50 timed
+parses per batch, process pinned to one CPU core. Baseline is the parser as of
+`0c937c1`; candidate is `fec9eec`. Times are per-parse milliseconds. An earlier
+3 batches x 20 runs attempt was inconclusive because batch medians swung about
+2x within a single variant (machine noise), so it was discarded and
+re-measured with the setup above.
+
+**Workloads.** No transcript from v2.1.301+ with a low skipped-byte share (nor
+a near-zero-skip one) existed locally, so the low-skip rows are **proxies**,
+not true low-skip workloads: the lowest v2.1.301+ share found was 62.05 %, and
+a pre-v2.1.301 transcript (20.86 %) stands in for the case where the filter
+saves little.
+
+| Workload | Version | Bytes | Lines | Skipped-type bytes |
+|----------|---------|------:|------:|-------------------:|
+| High-skip | v2.1.301 | 955,846 | 227 | 87.27 % |
+| Low-skip proxy (new) | v2.1.302 | 2,373,281 | 482 | 62.05 % |
+| Low-skip proxy (old) | v2.1.287 | 720,808 | 166 | 20.86 % |
+
+**Results** (per-batch medians, ms, in run order; aggregate is the median of
+the eight batch medians):
+
+| Workload | Variant | Batch medians | Batch-median range | Overall min-max | Aggregate | Change |
+|----------|---------|---------------|-------------------:|----------------:|----------:|-------:|
+| High-skip | baseline | 1.832, 2.027, 2.043, 2.005, 2.017, 2.016, 2.021, 2.008 | 1.832-2.043 | 1.405-2.297 | 2.016 | |
+| High-skip | candidate | 0.854, 0.859, 0.867, 0.871, 0.871, 0.881, 0.875, 0.874 | 0.854-0.881 | 0.844-1.147 | 0.871 | -56.8 % |
+| Low-skip proxy (new) | baseline | 5.005, 5.046, 5.024, 5.137, 5.024, 4.982, 4.991, 5.008 | 4.982-5.137 | 3.528-7.226 | 5.016 | |
+| Low-skip proxy (new) | candidate | 2.657, 2.590, 2.598, 2.634, 2.586, 2.582, 2.586, 2.607 | 2.582-2.657 | 2.551-3.250 | 2.594 | -48.3 % |
+| Low-skip proxy (old) | baseline | 0.814, 0.828, 0.824, 0.827, 0.822, 0.822, 0.858, 0.816 | 0.814-0.858 | 0.795-1.048 | 0.823 | |
+| Low-skip proxy (old) | candidate | 0.793, 0.796, 0.578, 0.816, 0.805, 0.802, 0.810, 0.891 | 0.578-0.891 | 0.551-1.187 | 0.804 | -2.4 % (computed from unrounded values) |
+
+**Gate decision.** High-skip improved 56.8 % (threshold 20 %); batch-median
+ranges are disjoint, so the difference far exceeds the spread. The newer
+low-skip proxy also improved 48.3 % with disjoint ranges. The old low-skip
+proxy shows no slowdown (-2.4 %, computed from unrounded values, i.e. faster), but its ranges overlap because of
+outlier batches, so treat it as "no measurable regression", not as a speed-up.
+Although the gate passed, the saving is about 1.1-2.4 ms per transcript in
+parse time alone (not end-to-end indexing), i.e. at most a few seconds on a
+full reindex of a large history and nothing on incremental indexing. That is
+not perceptible to users, so the pre-filter (`fec9eec`) was removed in favor of
+a single full-`Value` parsing path. Caveats: three transcripts from one
+machine, and proxy low-skip workloads.
+
+---
+
 ## References
 
 - [Anthropic prompt caching docs (`cache_read_input_tokens`, `cache_creation_input_tokens`, `input_tokens`)](https://docs.anthropic.com/en/docs/build-with-claude/prompt-caching)
 - [Claude Code subagents docs (subagent transcript path)](https://docs.anthropic.com/en/docs/claude-code/sub-agents)
 - [Claude Code changelog (compaction/transcript behavior changes)](https://docs.anthropic.com/en/docs/claude-code/changelog)
 - [Claude Code CHANGELOG.md (v2.1.300 API request recording entry)](https://github.com/anthropics/claude-code/blob/main/CHANGELOG.md)
-- [Claude Code model configuration (support article)](https://support.claude.com/en/articles/11940350-claude-code-model-configuration)
-- [Claude Sonnet 4.6 page (`claude-sonnet-4-6`)](https://www.anthropic.com/claude/sonnet)
-- [Claude Opus 4.6 page (`claude-opus-4-6`)](https://www.anthropic.com/claude/opus)
+- [Claude Code model configuration (official; aliases, version history, full model names)](https://code.claude.com/docs/en/model-config)
+- [Models overview (API model IDs)](https://platform.claude.com/docs/en/about-claude/models/overview)
 - [Claude Code issue: duplicate entries in session logs](https://github.com/anthropics/claude-code/issues/1524)
