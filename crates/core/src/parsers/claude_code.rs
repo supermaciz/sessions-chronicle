@@ -1,5 +1,6 @@
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
+use serde::Deserialize;
 use serde_json::Value;
 use std::collections::HashMap;
 use std::fs::File;
@@ -173,21 +174,15 @@ impl ParseState {
         }
     }
 
-    fn maybe_capture_session_id(&mut self, event: &Value) {
+    fn maybe_capture_session_id(&mut self, session_id: Option<&str>) {
         if self.session_id_from_event.is_none() {
-            self.session_id_from_event = event
-                .get("sessionId")
-                .and_then(|v| v.as_str())
-                .map(|s| s.to_string());
+            self.session_id_from_event = session_id.map(|s| s.to_string());
         }
     }
 
-    fn maybe_capture_cwd(&mut self, event: &Value) {
+    fn maybe_capture_cwd(&mut self, cwd: Option<&str>) {
         if self.project_path.is_none() {
-            self.project_path = event
-                .get("cwd")
-                .and_then(|v| v.as_str())
-                .map(|s| s.to_string());
+            self.project_path = cwd.map(|s| s.to_string());
         }
     }
 
@@ -807,6 +802,19 @@ impl ParseState {
     }
 }
 
+/// Cheap view of the three top-level fields needed to decide whether a line
+/// can be skipped. Anything that does not deserialize into it (escaped or
+/// non-string fields, duplicate keys, non-objects) takes the full-parse path.
+#[derive(Deserialize)]
+struct EventHeader<'a> {
+    #[serde(rename = "type", borrow)]
+    kind: Option<&'a str>,
+    #[serde(rename = "sessionId", borrow)]
+    session_id: Option<&'a str>,
+    #[serde(borrow)]
+    cwd: Option<&'a str>,
+}
+
 impl ClaudeCodeParser {
     pub fn parse(&self, file_path: &Path) -> Result<ParsedSession> {
         let file = File::open(file_path).context("Failed to open session file")?;
@@ -826,6 +834,18 @@ impl ClaudeCodeParser {
                 continue;
             }
 
+            // Pre-filter: lines whose type the parser ignores only need their
+            // session id / cwd captured. The object guard keeps positional
+            // arrays from decoding as a header.
+            if line.trim_start().starts_with('{')
+                && let Ok(header) = serde_json::from_str::<EventHeader>(&line)
+                && !matches!(header.kind, Some("user" | "assistant" | "ai-title"))
+            {
+                state.maybe_capture_session_id(header.session_id);
+                state.maybe_capture_cwd(header.cwd);
+                continue;
+            }
+
             let event: Value = match serde_json::from_str(&line) {
                 Ok(v) => v,
                 Err(err) => {
@@ -835,8 +855,8 @@ impl ClaudeCodeParser {
                 }
             };
 
-            state.maybe_capture_session_id(&event);
-            state.maybe_capture_cwd(&event);
+            state.maybe_capture_session_id(event.get("sessionId").and_then(Value::as_str));
+            state.maybe_capture_cwd(event.get("cwd").and_then(Value::as_str));
 
             let event_type = event.get("type").and_then(|v| v.as_str());
             let is_message_like = matches!(event_type, Some("user") | Some("assistant"));
@@ -1826,5 +1846,327 @@ mod tests {
         assert_eq!(parsed.transcript_items[3].message_index, Some(2));
         assert_eq!(parsed.transcript_items[4].kind, TranscriptItemKind::Message);
         assert_eq!(parsed.transcript_items[4].message_index, Some(3));
+    }
+
+    // ---- Header pre-filter preservation tests ----
+
+    const TAIL_USER: &str = r#"{"type":"user","timestamp":"2026-10-19T10:00:00Z","sessionId":"tail-id","cwd":"/synthetic/tail","message":{"content":"Hello"}}"#;
+    const TAIL_ASSISTANT: &str = r#"{"type":"assistant","timestamp":"2026-10-19T10:00:02Z","sessionId":"tail-id","cwd":"/synthetic/tail","message":{"content":"Hi"}}"#;
+
+    fn parse_with_tail(prefix: &[&str], suffix: &[&str]) -> Result<ParsedSession> {
+        let mut lines: Vec<&str> = prefix.to_vec();
+        lines.push(TAIL_USER);
+        lines.push(TAIL_ASSISTANT);
+        lines.extend_from_slice(suffix);
+        let file = create_temp_session(&lines);
+        ClaudeCodeParser.parse(file.path())
+    }
+
+    fn assert_tail_range(parsed: &ParsedSession) {
+        assert_eq!(
+            parsed.session.start_time.to_rfc3339(),
+            "2026-10-19T10:00:00+00:00"
+        );
+        assert_eq!(
+            parsed.session.last_updated.to_rfc3339(),
+            "2026-10-19T10:00:02+00:00"
+        );
+        assert_eq!(parsed.session.message_count, 2);
+        assert_eq!(parsed.messages.len(), 2);
+    }
+
+    #[test]
+    fn recent_header_preserves_metadata() {
+        let ts = r#""timestamp":"2026-10-19T09:00:00Z""#;
+        let cases: Vec<(&str, Vec<String>, &str, &str)> = vec![
+            (
+                "permission-mode session id",
+                vec![format!(
+                    r#"{{"type":"permission-mode",{ts},"sessionId":"leading-id","permissionMode":"default"}}"#
+                )],
+                "leading-id",
+                "/synthetic/tail",
+            ),
+            (
+                "attachment cwd",
+                vec![format!(
+                    r#"{{"type":"attachment",{ts},"cwd":"/synthetic/leading","attachment":{{}}}}"#
+                )],
+                "tail-id",
+                "/synthetic/leading",
+            ),
+            (
+                "header-shaped array",
+                vec![r#"["permission-mode","bogus-id","/synthetic/bogus"]"#.to_string()],
+                "tail-id",
+                "/synthetic/tail",
+            ),
+            (
+                "duplicate sessionId",
+                vec![format!(
+                    r#"{{"type":"permission-mode",{ts},"sessionId":"first","sessionId":"last"}}"#
+                )],
+                "last",
+                "/synthetic/tail",
+            ),
+            (
+                "duplicate cwd",
+                vec![format!(
+                    r#"{{"type":"permission-mode",{ts},"cwd":"/synthetic/first","cwd":"/synthetic/last"}}"#
+                )],
+                "tail-id",
+                "/synthetic/last",
+            ),
+            (
+                "escaped type",
+                vec![format!(
+                    r#"{{"type":"permission-mode",{ts},"sessionId":"leading-id","cwd":"/synthetic/leading"}}"#
+                )],
+                "leading-id",
+                "/synthetic/leading",
+            ),
+            (
+                "escaped sessionId",
+                vec![format!(
+                    r#"{{"type":"permission-mode",{ts},"sessionId":"escaped-id"}}"#
+                )],
+                "escaped-id",
+                "/synthetic/tail",
+            ),
+            (
+                "escaped cwd",
+                vec![format!(
+                    r#"{{"type":"permission-mode",{ts},"cwd":"/synthetic/escaped"}}"#
+                )],
+                "tail-id",
+                "/synthetic/escaped",
+            ),
+            (
+                "non-string type",
+                vec![format!(
+                    r#"{{"type":7,{ts},"sessionId":"leading-id","cwd":"/synthetic/leading"}}"#
+                )],
+                "leading-id",
+                "/synthetic/leading",
+            ),
+            (
+                "non-string sessionId",
+                vec![format!(
+                    r#"{{"type":"permission-mode",{ts},"sessionId":7,"cwd":"/synthetic/leading"}}"#
+                )],
+                "tail-id",
+                "/synthetic/leading",
+            ),
+            (
+                "non-string cwd",
+                vec![format!(
+                    r#"{{"type":"permission-mode",{ts},"sessionId":"leading-id","cwd":7}}"#
+                )],
+                "leading-id",
+                "/synthetic/tail",
+            ),
+            (
+                "missing type",
+                vec![format!(
+                    r#"{{{ts},"sessionId":"leading-id","cwd":"/synthetic/leading"}}"#
+                )],
+                "leading-id",
+                "/synthetic/leading",
+            ),
+            (
+                "null type",
+                vec![format!(
+                    r#"{{"type":null,{ts},"sessionId":"leading-id","cwd":"/synthetic/leading"}}"#
+                )],
+                "leading-id",
+                "/synthetic/leading",
+            ),
+            (
+                "unknown type",
+                vec![format!(
+                    r#"{{"type":"future-event",{ts},"sessionId":"leading-id","cwd":"/synthetic/leading"}}"#
+                )],
+                "leading-id",
+                "/synthetic/leading",
+            ),
+            (
+                "null metadata then populated",
+                vec![
+                    format!(r#"{{"type":"permission-mode",{ts},"sessionId":null,"cwd":null}}"#),
+                    format!(
+                        r#"{{"type":"attachment",{ts},"sessionId":"leading-id","cwd":"/synthetic/leading"}}"#
+                    ),
+                ],
+                "leading-id",
+                "/synthetic/leading",
+            ),
+            (
+                "first wins over later conflicting metadata",
+                vec![
+                    format!(
+                        r#"{{"type":"permission-mode",{ts},"sessionId":"leading-id","cwd":"/synthetic/leading"}}"#
+                    ),
+                    format!(
+                        r#"{{"type":"attachment",{ts},"sessionId":"later-id","cwd":"/synthetic/later"}}"#
+                    ),
+                ],
+                "leading-id",
+                "/synthetic/leading",
+            ),
+        ];
+
+        for (name, prefix, expected_id, expected_cwd) in cases {
+            let prefix_refs: Vec<&str> = prefix.iter().map(String::as_str).collect();
+            let parsed = parse_with_tail(&prefix_refs, &[]).unwrap_or_else(|e| {
+                panic!("case {name}: {e}");
+            });
+            assert_eq!(parsed.session.id, expected_id, "case {name}");
+            assert_eq!(
+                parsed.session.project_path.as_deref(),
+                Some(expected_cwd),
+                "case {name}"
+            );
+            assert_eq!(
+                parsed.session.start_time.to_rfc3339(),
+                "2026-10-19T10:00:00+00:00",
+                "case {name}"
+            );
+            assert_eq!(
+                parsed.session.last_updated.to_rfc3339(),
+                "2026-10-19T10:00:02+00:00",
+                "case {name}"
+            );
+            assert_eq!(parsed.session.message_count, 2, "case {name}");
+            assert_eq!(parsed.messages.len(), 2, "case {name}");
+        }
+    }
+
+    #[test]
+    fn recent_header_duplicate_type_uses_last_value() {
+        let user_then_mode = r#"{"type":"user","type":"permission-mode","timestamp":"2026-10-19T10:00:01Z","message":{"content":"Extra"}}"#;
+        let parsed = parse_with_tail(&[user_then_mode], &[]).unwrap();
+        assert_eq!(parsed.session.message_count, 2);
+        assert!(parsed.messages.iter().all(|m| m.content != "Extra"));
+
+        let mode_then_user = r#"{"type":"permission-mode","type":"user","timestamp":"2026-10-19T10:00:01Z","message":{"content":"Extra"}}"#;
+        let parsed = parse_with_tail(&[mode_then_user], &[]).unwrap();
+        assert_eq!(parsed.session.message_count, 3);
+        assert!(parsed.messages.iter().any(|m| m.content == "Extra"));
+    }
+
+    #[test]
+    fn recent_header_escaped_user_is_retained() {
+        let escaped_user =
+            r#"{"type":"user","timestamp":"2026-10-19T10:00:01Z","message":{"content":"Extra"}}"#;
+        let parsed = parse_with_tail(&[escaped_user], &[]).unwrap();
+        assert_eq!(parsed.session.message_count, 3);
+        assert!(parsed.messages.iter().any(|m| m.content == "Extra"));
+        assert_eq!(
+            parsed.session.start_time.to_rfc3339(),
+            "2026-10-19T10:00:00+00:00"
+        );
+        assert_eq!(
+            parsed.session.last_updated.to_rfc3339(),
+            "2026-10-19T10:00:02+00:00"
+        );
+    }
+
+    #[test]
+    fn recent_header_tool_result_preserves_timestamp() {
+        let tool_result = r#"{"type":"user","timestamp":"2026-10-19T10:00:05Z","message":{"content":[{"type":"tool_result","tool_use_id":"toolu_x","content":"ok"}]}}"#;
+        let parsed = parse_with_tail(&[], &[tool_result]).unwrap();
+        assert_eq!(parsed.session.message_count, 2);
+        assert_eq!(
+            parsed.session.last_updated.to_rfc3339(),
+            "2026-10-19T10:00:05+00:00"
+        );
+    }
+
+    #[test]
+    fn recent_header_retained_parse_failure() {
+        let failing = r#"{"type":"user","timestamp":"2026-10-19T09:00:00Z","sessionId":"bogus-id","cwd":"/synthetic/bogus","n":1e999,"message":{"content":"Bogus"}}"#;
+        let parsed = parse_with_tail(&[failing], &[]).unwrap();
+        assert_eq!(parsed.session.id, "tail-id");
+        assert_eq!(
+            parsed.session.project_path.as_deref(),
+            Some("/synthetic/tail")
+        );
+        assert_tail_range(&parsed);
+
+        let file = create_temp_session(&[failing]);
+        let err = ClaudeCodeParser.parse(file.path()).unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("Session contained parse errors and no messages")
+        );
+    }
+
+    fn deeply_nested_array(depth: usize) -> String {
+        format!("{}{}", "[".repeat(depth), "]".repeat(depth))
+    }
+
+    #[test]
+    fn recent_header_skipped_overflow_can_supply_metadata() {
+        let skipped = r#"{"type":"permission-mode","timestamp":"2026-10-19T09:00:00Z","n":1e999,"sessionId":"leading-id","cwd":"/synthetic/leading"}"#;
+        let parsed = parse_with_tail(&[skipped], &[]).unwrap();
+        assert_eq!(parsed.session.id, "leading-id");
+        assert_eq!(
+            parsed.session.project_path.as_deref(),
+            Some("/synthetic/leading")
+        );
+        assert_tail_range(&parsed);
+
+        // Skipped-only input is a plain NoMessages, not a parse-error diagnostic.
+        let file = create_temp_session(&[skipped]);
+        let err = ClaudeCodeParser.parse(file.path()).unwrap_err();
+        assert!(matches!(
+            err.downcast_ref::<ParseError>(),
+            Some(ParseError::NoMessages)
+        ));
+    }
+
+    #[test]
+    fn recent_header_skipped_deep_nesting_can_supply_metadata() {
+        let deep = deeply_nested_array(100_000);
+        // Confirm the full parse rejects this payload.
+        assert!(
+            serde_json::from_str::<Value>(&format!(r#"{{"x":{deep}}}"#)).is_err(),
+            "full Value parse must reject the deep payload"
+        );
+
+        let skipped = format!(
+            r#"{{"type":"permission-mode","timestamp":"2026-10-19T09:00:00Z","deep":{deep},"sessionId":"leading-id","cwd":"/synthetic/leading"}}"#
+        );
+        let parsed = parse_with_tail(&[&skipped], &[]).unwrap();
+        assert_eq!(parsed.session.id, "leading-id");
+        assert_eq!(
+            parsed.session.project_path.as_deref(),
+            Some("/synthetic/leading")
+        );
+        assert_tail_range(&parsed);
+
+        let file = create_temp_session(&[&skipped]);
+        let err = ClaudeCodeParser.parse(file.path()).unwrap_err();
+        assert!(matches!(
+            err.downcast_ref::<ParseError>(),
+            Some(ParseError::NoMessages)
+        ));
+
+        // Retained equivalent: parse-error diagnostic and no metadata capture.
+        let retained = format!(
+            r#"{{"type":"user","timestamp":"2026-10-19T09:00:00Z","deep":{deep},"sessionId":"bogus-id","cwd":"/synthetic/bogus"}}"#
+        );
+        let parsed = parse_with_tail(&[&retained], &[]).unwrap();
+        assert_eq!(parsed.session.id, "tail-id");
+        assert_eq!(
+            parsed.session.project_path.as_deref(),
+            Some("/synthetic/tail")
+        );
+        let file = create_temp_session(&[&retained]);
+        let err = ClaudeCodeParser.parse(file.path()).unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("Session contained parse errors and no messages")
+        );
     }
 }
