@@ -16,9 +16,11 @@ static RE_SYSTEM_REMINDER_WRAPPER: LazyLock<Regex> =
 static RE_COMMAND_OUTPUT_WRAPPER: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"(?s)^<command-output>.*</command-output>$").unwrap());
 
-pub(super) fn extract_first_prompt(messages: &[Message]) -> Option<String> {
+pub(super) fn extract_first_prompt<'a>(
+    messages: impl IntoIterator<Item = &'a Message>,
+) -> Option<String> {
     messages
-        .iter()
+        .into_iter()
         .filter(|message| message.role == Role::User)
         .filter(|message| !is_system_injected(&message.content))
         .map(|message| normalize_prompt(&strip_command_tags(&message.content)))

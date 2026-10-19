@@ -2,7 +2,7 @@ use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
 use serde::Deserialize;
 use serde_json::Value;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::path::Path;
@@ -115,6 +115,9 @@ struct ParseState {
     /// Last non-blank `ai-title` event; supersedes `summary` in v2.1.216+.
     ai_title: Option<String>,
     has_user_message: bool,
+    /// Indices into `messages` of user messages flagged as non-human context
+    /// (meta or task-notification); only used to prefer human first prompts.
+    non_human_message_indices: HashSet<usize>,
     /// True once a non-synthetic assistant event is seen. Synthetic events
     /// (`isApiErrorMessage`, `model == "<synthetic>"`) are generated locally by
     /// the CLI, so a session with only those never produced a model response.
@@ -156,6 +159,7 @@ impl ParseState {
             session_id_from_event: None,
             ai_title: None,
             has_user_message: false,
+            non_human_message_indices: HashSet::new(),
             has_real_assistant_message: false,
             has_synthetic_assistant_message: false,
             messages: Vec::new(),
@@ -437,6 +441,16 @@ impl ParseState {
             .and_then(|v| v.as_str())
             .unwrap_or("unknown")
             .to_string();
+        let is_non_human = event.get("isMeta").and_then(Value::as_bool) == Some(true)
+            || event
+                .get("origin")
+                .and_then(|o| o.get("kind"))
+                .and_then(Value::as_str)
+                == Some("task-notification")
+            || event.get("turnOrigin").and_then(Value::as_str) == Some("task_notification");
+        if is_non_human {
+            self.non_human_message_indices.insert(self.messages.len());
+        }
         self.push_message(evt_sid, Role::User, text, ts, None);
         self.push_message_transcript_item();
     }
@@ -766,7 +780,14 @@ impl ParseState {
             Some(title) if !title.trim().is_empty() => {
                 Some(crate::parsers::normalize_prompt(title))
             }
-            _ => first_prompt::extract_first_prompt(&self.messages),
+            _ => first_prompt::extract_first_prompt(
+                self.messages
+                    .iter()
+                    .enumerate()
+                    .filter(|(index, _)| !self.non_human_message_indices.contains(index))
+                    .map(|(_, message)| message),
+            )
+            .or_else(|| first_prompt::extract_first_prompt(&self.messages)),
         };
 
         let session = Session {
@@ -2174,5 +2195,124 @@ mod tests {
             err.to_string()
                 .contains("Session contained parse errors and no messages")
         );
+    }
+
+    fn user_line(extra: &str, content: &str) -> String {
+        format!(
+            r#"{{"type":"user","timestamp":"2026-07-25T10:00:00.000Z","sessionId":"s-rp"{extra},"message":{{"content":{content}}}}}"#
+        )
+    }
+
+    const RP_ASSISTANT: &str = r#"{"type":"assistant","timestamp":"2026-07-25T10:00:09.000Z","sessionId":"s-rp","message":{"content":"Done"}}"#;
+
+    #[test]
+    fn recent_prompt_prefers_human() {
+        let markers = [
+            r#","isMeta":true"#,
+            r#","origin":{"kind":"task-notification"}"#,
+            r#","turnOrigin":"task_notification""#,
+        ];
+        for marker in markers {
+            let lead = user_line(marker, r#""Injected context""#);
+            let human = user_line("", r#""Explain the parser""#);
+            let file = create_temp_session(&[&lead, &human, RP_ASSISTANT]);
+            let parsed = ClaudeCodeParser.parse(file.path()).unwrap();
+            assert_eq!(
+                parsed.session.first_prompt.as_deref(),
+                Some("Explain the parser"),
+                "{marker}"
+            );
+            assert_eq!(parsed.session.message_count, 3);
+            assert_eq!(parsed.messages[0].content, "Injected context");
+            assert_eq!(parsed.transcript_items.len(), 3);
+        }
+    }
+
+    #[test]
+    fn recent_prompt_falls_back_without_eligible_human() {
+        let lead = user_line(r#","isMeta":true"#, r#""Injected context""#);
+        let file = create_temp_session(&[&lead, RP_ASSISTANT]);
+        let parsed = ClaudeCodeParser.parse(file.path()).unwrap();
+        assert_eq!(
+            parsed.session.first_prompt.as_deref(),
+            Some("Injected context")
+        );
+
+        let reminder = user_line("", r#""<system-reminder>Context</system-reminder>""#);
+        let file = create_temp_session(&[&lead, &reminder, RP_ASSISTANT]);
+        let parsed = ClaudeCodeParser.parse(file.path()).unwrap();
+        assert_eq!(
+            parsed.session.first_prompt.as_deref(),
+            Some("Injected context")
+        );
+    }
+
+    #[test]
+    fn recent_prompt_classifies_only_exact_markers() {
+        let cases = [
+            (r#","isMeta":false"#, "First text"),
+            (r#","isMeta":"true""#, "First text"),
+            (r#","origin":{"kind":"other"}"#, "First text"),
+            (r#","turnOrigin":"other""#, "First text"),
+            (
+                r#","isMeta":null,"origin":null,"turnOrigin":null"#,
+                "First text",
+            ),
+            ("", "<task-notification>Human quotation</task-notification>"),
+        ];
+        for (marker, text) in cases {
+            let first = user_line(marker, &format!("{text:?}"));
+            let human = user_line("", r#""Later human""#);
+            let file = create_temp_session(&[&first, &human, RP_ASSISTANT]);
+            let parsed = ClaudeCodeParser.parse(file.path()).unwrap();
+            assert_eq!(
+                parsed.session.first_prompt.as_deref(),
+                Some(crate::parsers::normalize_prompt(text).as_str()),
+                "{marker}"
+            );
+        }
+    }
+
+    #[test]
+    fn recent_prompt_ai_title_wins() {
+        let lead = user_line(r#","isMeta":true"#, r#""Injected context""#);
+        let human = user_line("", r#""Explain the parser""#);
+        let file = create_temp_session(&[
+            &lead,
+            &human,
+            r#"{"type":"ai-title","aiTitle":"First title","sessionId":"s-rp"}"#,
+            r#"{"type":"ai-title","aiTitle":"  ","sessionId":"s-rp"}"#,
+            r#"{"type":"ai-title","aiTitle":"Last title","sessionId":"s-rp"}"#,
+            RP_ASSISTANT,
+        ]);
+        let parsed = ClaudeCodeParser.parse(file.path()).unwrap();
+        assert_eq!(parsed.session.first_prompt.as_deref(), Some("Last title"));
+    }
+
+    #[test]
+    fn recent_prompt_mixed_event_keeps_indices() {
+        let early = r#"{"type":"assistant","timestamp":"2026-07-25T10:00:00.000Z","sessionId":"s-rp","message":{"content":"Starting"}}"#;
+        let result_only = user_line(
+            r#","isMeta":true"#,
+            r#"[{"type":"tool_result","tool_use_id":"t0","content":"ok"}]"#,
+        );
+        let mixed = user_line(
+            r#","isMeta":true"#,
+            r#"[{"type":"tool_result","tool_use_id":"t1","content":"ok"},{"type":"text","text":"Injected context"}]"#,
+        );
+        let human = user_line("", r#""Explain the parser""#);
+        let file = create_temp_session(&[early, &result_only, &mixed, &human, RP_ASSISTANT]);
+        let parsed = ClaudeCodeParser.parse(file.path()).unwrap();
+        assert_eq!(
+            parsed.session.first_prompt.as_deref(),
+            Some("Explain the parser")
+        );
+        let contents: Vec<&str> = parsed.messages.iter().map(|m| m.content.as_str()).collect();
+        assert_eq!(
+            contents,
+            ["Starting", "Injected context", "Explain the parser", "Done"]
+        );
+        let indices: Vec<usize> = parsed.messages.iter().map(|m| m.index).collect();
+        assert_eq!(indices, [0, 1, 2, 3]);
     }
 }
