@@ -860,7 +860,7 @@ Current implementation: `crates/core/src/parsers/claude_code.rs`
   error returned for a session with no messages at all (a session whose only
   failures are such lines now reports "Session contains no messages" instead
   of "Session contained parse errors and no messages"), and the captured
-  id / cwd come from a line that is otherwise valid JSON. Retained
+  id / cwd come from a line that is syntactically JSON but rejected by a full parse. Retained
   (`user` / `assistant` / `ai-title`) lines are unaffected, since their capture
   happens after the full parse. This leniency is pinned by tests
   (`recent_header_*`).
@@ -980,12 +980,12 @@ the eight batch medians):
 | Low-skip proxy (new) | baseline | 5.005, 5.046, 5.024, 5.137, 5.024, 4.982, 4.991, 5.008 | 4.982-5.137 | 3.528-7.226 | 5.016 | |
 | Low-skip proxy (new) | candidate | 2.657, 2.590, 2.598, 2.634, 2.586, 2.582, 2.586, 2.607 | 2.582-2.657 | 2.551-3.250 | 2.594 | -48.3 % |
 | Low-skip proxy (old) | baseline | 0.814, 0.828, 0.824, 0.827, 0.822, 0.822, 0.858, 0.816 | 0.814-0.858 | 0.795-1.048 | 0.823 | |
-| Low-skip proxy (old) | candidate | 0.793, 0.796, 0.578, 0.816, 0.805, 0.802, 0.810, 0.891 | 0.578-0.891 | 0.551-1.187 | 0.804 | -2.4 % |
+| Low-skip proxy (old) | candidate | 0.793, 0.796, 0.578, 0.816, 0.805, 0.802, 0.810, 0.891 | 0.578-0.891 | 0.551-1.187 | 0.804 | -2.4 % (computed from unrounded values) |
 
 **Gate decision.** High-skip improved 56.8 % (threshold 20 %); batch-median
 ranges are disjoint, so the difference far exceeds the spread. The newer
 low-skip proxy also improved 48.3 % with disjoint ranges. The old low-skip
-proxy shows no slowdown (-2.4 %, i.e. faster), but its ranges overlap because of
+proxy shows no slowdown (-2.4 %, computed from unrounded values, i.e. faster), but its ranges overlap because of
 outlier batches, so treat it as "no measurable regression", not as a speed-up.
 The pre-filter was therefore retained as shipped in `fec9eec`. Caveats: three
 transcripts from one machine, parse time only (not end-to-end indexing), and
