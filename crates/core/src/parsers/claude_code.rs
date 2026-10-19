@@ -1920,7 +1920,7 @@ mod tests {
             (
                 "escaped type",
                 vec![format!(
-                    r#"{{"type":"permission-mode",{ts},"sessionId":"leading-id","cwd":"/synthetic/leading"}}"#
+                    r#"{{"type":"permission\u002dmode",{ts},"sessionId":"leading-id","cwd":"/synthetic/leading"}}"#
                 )],
                 "leading-id",
                 "/synthetic/leading",
@@ -1928,7 +1928,7 @@ mod tests {
             (
                 "escaped sessionId",
                 vec![format!(
-                    r#"{{"type":"permission-mode",{ts},"sessionId":"escaped-id"}}"#
+                    r#"{{"type":"permission-mode",{ts},"sessionId":"escaped\u002did"}}"#
                 )],
                 "escaped-id",
                 "/synthetic/tail",
@@ -1936,7 +1936,7 @@ mod tests {
             (
                 "escaped cwd",
                 vec![format!(
-                    r#"{{"type":"permission-mode",{ts},"cwd":"/synthetic/escaped"}}"#
+                    r#"{{"type":"permission-mode",{ts},"cwd":"/synthetic/esc\u0061ped"}}"#
                 )],
                 "tail-id",
                 "/synthetic/escaped",
@@ -2016,6 +2016,12 @@ mod tests {
         ];
 
         for (name, prefix, expected_id, expected_cwd) in cases {
+            if name.starts_with("escaped ") {
+                assert!(
+                    prefix.iter().any(|l| l.contains("\\u")),
+                    "case {name} must contain a JSON escape"
+                );
+            }
             let prefix_refs: Vec<&str> = prefix.iter().map(String::as_str).collect();
             let parsed = parse_with_tail(&prefix_refs, &[]).unwrap_or_else(|e| {
                 panic!("case {name}: {e}");
@@ -2056,8 +2062,8 @@ mod tests {
 
     #[test]
     fn recent_header_escaped_user_is_retained() {
-        let escaped_user =
-            r#"{"type":"user","timestamp":"2026-10-19T10:00:01Z","message":{"content":"Extra"}}"#;
+        let escaped_user = r#"{"type":"us\u0065r","timestamp":"2026-10-19T10:00:01Z","message":{"content":"Extra"}}"#;
+        assert!(escaped_user.contains("\\u0065"));
         let parsed = parse_with_tail(&[escaped_user], &[]).unwrap();
         assert_eq!(parsed.session.message_count, 3);
         assert!(parsed.messages.iter().any(|m| m.content == "Extra"));
