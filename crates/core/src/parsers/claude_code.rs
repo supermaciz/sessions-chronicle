@@ -2205,6 +2205,21 @@ mod tests {
 
     const RP_ASSISTANT: &str = r#"{"type":"assistant","timestamp":"2026-07-25T10:00:09.000Z","sessionId":"s-rp","message":{"content":"Done"}}"#;
 
+    fn parse_lines(lines: &[&str]) -> ParsedSession {
+        let file = create_temp_session(lines);
+        ClaudeCodeParser.parse(file.path()).unwrap()
+    }
+
+    fn assert_first_prompt(lines: &[&str], expected: &str, label: &str) -> ParsedSession {
+        let parsed = parse_lines(lines);
+        assert_eq!(
+            parsed.session.first_prompt.as_deref(),
+            Some(expected),
+            "{label}"
+        );
+        parsed
+    }
+
     #[test]
     fn recent_prompt_prefers_human() {
         let markers = [
@@ -2215,13 +2230,8 @@ mod tests {
         for marker in markers {
             let lead = user_line(marker, r#""Injected context""#);
             let human = user_line("", r#""Explain the parser""#);
-            let file = create_temp_session(&[&lead, &human, RP_ASSISTANT]);
-            let parsed = ClaudeCodeParser.parse(file.path()).unwrap();
-            assert_eq!(
-                parsed.session.first_prompt.as_deref(),
-                Some("Explain the parser"),
-                "{marker}"
-            );
+            let parsed =
+                assert_first_prompt(&[&lead, &human, RP_ASSISTANT], "Explain the parser", marker);
             assert_eq!(parsed.session.message_count, 3);
             assert_eq!(parsed.messages[0].content, "Injected context");
             assert_eq!(parsed.transcript_items.len(), 3);
@@ -2231,19 +2241,13 @@ mod tests {
     #[test]
     fn recent_prompt_falls_back_without_eligible_human() {
         let lead = user_line(r#","isMeta":true"#, r#""Injected context""#);
-        let file = create_temp_session(&[&lead, RP_ASSISTANT]);
-        let parsed = ClaudeCodeParser.parse(file.path()).unwrap();
-        assert_eq!(
-            parsed.session.first_prompt.as_deref(),
-            Some("Injected context")
-        );
+        assert_first_prompt(&[&lead, RP_ASSISTANT], "Injected context", "non-human only");
 
         let reminder = user_line("", r#""<system-reminder>Context</system-reminder>""#);
-        let file = create_temp_session(&[&lead, &reminder, RP_ASSISTANT]);
-        let parsed = ClaudeCodeParser.parse(file.path()).unwrap();
-        assert_eq!(
-            parsed.session.first_prompt.as_deref(),
-            Some("Injected context")
+        assert_first_prompt(
+            &[&lead, &reminder, RP_ASSISTANT],
+            "Injected context",
+            "system-reminder human",
         );
     }
 
@@ -2263,12 +2267,10 @@ mod tests {
         for (marker, text) in cases {
             let first = user_line(marker, &format!("{text:?}"));
             let human = user_line("", r#""Later human""#);
-            let file = create_temp_session(&[&first, &human, RP_ASSISTANT]);
-            let parsed = ClaudeCodeParser.parse(file.path()).unwrap();
-            assert_eq!(
-                parsed.session.first_prompt.as_deref(),
-                Some(crate::parsers::normalize_prompt(text).as_str()),
-                "{marker}"
+            assert_first_prompt(
+                &[&first, &human, RP_ASSISTANT],
+                &crate::parsers::normalize_prompt(text),
+                marker,
             );
         }
     }
@@ -2277,16 +2279,18 @@ mod tests {
     fn recent_prompt_ai_title_wins() {
         let lead = user_line(r#","isMeta":true"#, r#""Injected context""#);
         let human = user_line("", r#""Explain the parser""#);
-        let file = create_temp_session(&[
-            &lead,
-            &human,
-            r#"{"type":"ai-title","aiTitle":"First title","sessionId":"s-rp"}"#,
-            r#"{"type":"ai-title","aiTitle":"  ","sessionId":"s-rp"}"#,
-            r#"{"type":"ai-title","aiTitle":"Last title","sessionId":"s-rp"}"#,
-            RP_ASSISTANT,
-        ]);
-        let parsed = ClaudeCodeParser.parse(file.path()).unwrap();
-        assert_eq!(parsed.session.first_prompt.as_deref(), Some("Last title"));
+        assert_first_prompt(
+            &[
+                &lead,
+                &human,
+                r#"{"type":"ai-title","aiTitle":"First title","sessionId":"s-rp"}"#,
+                r#"{"type":"ai-title","aiTitle":"  ","sessionId":"s-rp"}"#,
+                r#"{"type":"ai-title","aiTitle":"Last title","sessionId":"s-rp"}"#,
+                RP_ASSISTANT,
+            ],
+            "Last title",
+            "ai-title",
+        );
     }
 
     #[test]
@@ -2301,11 +2305,10 @@ mod tests {
             r#"[{"type":"tool_result","tool_use_id":"t1","content":"ok"},{"type":"text","text":"Injected context"}]"#,
         );
         let human = user_line("", r#""Explain the parser""#);
-        let file = create_temp_session(&[early, &result_only, &mixed, &human, RP_ASSISTANT]);
-        let parsed = ClaudeCodeParser.parse(file.path()).unwrap();
-        assert_eq!(
-            parsed.session.first_prompt.as_deref(),
-            Some("Explain the parser")
+        let parsed = assert_first_prompt(
+            &[early, &result_only, &mixed, &human, RP_ASSISTANT],
+            "Explain the parser",
+            "mixed event",
         );
         let contents: Vec<&str> = parsed.messages.iter().map(|m| m.content.as_str()).collect();
         assert_eq!(
