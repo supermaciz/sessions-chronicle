@@ -932,8 +932,9 @@ Behavior. **Decision: not retained.** It passed the performance gate (at least
 transcripts), but the absolute saving is too small to justify a second parsing
 path (see Gate decision below).
 
-**Method.** Opt-in harness `crates/core/tests/claude_parse_timing.rs` (ignored
-in the ordinary suite), release build with `lto = true`, rustc 1.96.0. Fixed
+**Method.** Temporary opt-in harness (ignored test, introduced in `c9be49c`
+and removed with the pre-filter; recover it from git history to re-measure),
+release build with `lto = true`, rustc 1.96.0. Fixed
 private copies of three real transcripts, identical for both variants. One
 discarded warm-up, then 8 batches alternating baseline and candidate, 50 timed
 parses per batch, process pinned to one CPU core. Baseline is the parser as of
@@ -976,8 +977,7 @@ parse time alone (not end-to-end indexing), i.e. at most a few seconds on a
 full reindex of a large history and nothing on incremental indexing. That is
 not perceptible to users, so the pre-filter (`fec9eec`) was removed in favor of
 a single full-`Value` parsing path. Caveats: three transcripts from one
-machine, and proxy low-skip workloads. The ignored timing harness stays in
-place to re-evaluate if transcripts grow.
+machine, and proxy low-skip workloads.
 
 ---
 
