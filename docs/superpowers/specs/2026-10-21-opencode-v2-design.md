@@ -6,7 +6,7 @@ Status: reviewed draft pending user approval. No implementation authorized yet.
 
 Restore OpenCode support after its primary storage moved to `session_v2` and
 `session_message`. Success means feature parity with the actual V1 implementation,
-plus searchable system messages, skill injections, and compaction summaries.
+plus visible system messages, skill injections, and compaction summaries.
 
 User-approved decisions:
 
@@ -19,8 +19,9 @@ User-approved decisions:
   compaction summaries; these are not user or assistant messages.
 - Extend the existing transcript rather than redesigning the UI.
 - Context entries are collapsed initially (visual option A), with their full
-  text available on expansion. Search includes them by default and identifies
-  their kind; navigating to a match expands the targeted entry.
+  text available on expansion. Context entries are excluded from search in
+  this delivery (revised 2026-10-21: avoids repeated system prompts and skill
+  bodies flooding results, and removes the search plumbing).
 
 The technical policies below are proposed builder decisions, not additional
 requirements explicitly supplied by the user.
@@ -78,7 +79,7 @@ sequence ordering would require exceptions throughout the old parser.
 ### Rejected: store context as ordinary assistant messages
 
 This reuses rendering immediately but misattributes system content, affects
-message counts/title selection, and loses meaningful search labels. A typed
+message counts/title selection, and pushes context text into message search. A typed
 context item is a smaller durable abstraction than broadening speaker roles.
 
 ## Discovery, compatibility, and incremental indexing
@@ -90,12 +91,48 @@ context item is a smaller durable abstraction than broadening speaker roles.
 - Select one representation per session ID globally across discovered sources:
   V2 > V1 > JSON. Within one generation, retain a deterministic configured-source
   order. Do not merge a frozen V1 transcript with its V2 counterpart.
-- Distinguish absence from failure. If no V2 row exists, use V1/JSON normally.
-  If a selected V2 session fails to parse, report the error and retain the last
-  successfully indexed representation; do not silently replace it with stale V1.
-  Unreadable databases must not trigger destructive cleanup of their sessions.
-- Establish source ownership even for unchanged/skipped databases, so an older
-  JSON entry cannot overwrite an already indexed V2 session.
+- Distinguish absence, ineligibility, and failure for each session ID:
+  - Absence: no V2 row exists. Use V1/JSON normally.
+  - Ineligibility: the session was read but is excluded by policy, such as
+    having no user message. Keep the current behavior: it is not indexed and
+    its cached representation may be pruned.
+  - Failure: a selected session cannot be read, parsed, or persisted. Report the error
+    and add its ID to the retained set, so stale-session pruning keeps the
+    last successfully indexed representation. Do not fall back to V1 or JSON
+    for that ID in the same run.
+- Commit a SQLite source's fingerprint (DB or WAL target) only after all of
+  its selected sessions have been processed successfully, including cache
+  persistence. Expected policy exclusions are not failures. Do not advance
+  the source fingerprint as part of each individual session write: a later
+  failure must leave the previous source fingerprint intact. The next incremental run then re-reads that
+  source and retries the failed IDs, instead of skipping them until OpenCode
+  writes again. Re-reading the whole DB in this case is acceptable.
+- A database that fails to open, probe, or enumerate retains every cached
+  session it owns. Pruning decisions are made per source, never from one
+  global "SQLite enumerated" flag: a successfully enumerated database must not
+  prune sessions owned by another database that was skipped or unreadable.
+- Source ownership comes from the cache. `sessions.file_path` already records
+  the owning DB path for SQLite sessions and the file path for JSON sessions.
+  Also persist the indexed representation's generation (V2, V1, or JSON);
+  the DB path alone cannot distinguish generations in a mixed database.
+  Populate this metadata during the mandatory one-time reindex.
+  At the start of an OpenCode run, preload the cached IDs owned by each SQLite
+  source that is skipped as unchanged or is unreadable, and treat them as
+  retained candidates with their source and generation, not unconditionally
+  finalized IDs. Resolve candidates using the global generation priority and
+  configured-source order, including candidates discovered in other databases.
+  A lower-priority candidate for a preloaded ID is skipped even when its own
+  file changed. A higher-priority candidate may replace the cached owner only
+  after successful parsing and atomic persistence; failure retains the previous
+  cache and prevents the selected source's fingerprint from advancing. Within a database
+  that is actually read, V2 is enumerated first and V1 rows for V2-present
+  IDs are ignored.
+- Ownership moves to a lower-priority source only when the owning database
+  was successfully enumerated and no longer contains that ID. A failed or
+  skipped owner never yields ownership to a lower-priority source, but does not
+  block promotion to a higher-priority representation. In particular, an
+  unchanged cached V1 owner must not prevent a newly discovered V2 candidate
+  in another database from becoming the owner.
 - Preserve WAL-aware change detection. A changed embedded result must refresh
   the session even if message count and creation timestamps are unchanged.
 - Force a one-time OpenCode reindex when deploying this reader; unchanged file
@@ -179,10 +216,10 @@ Introduce a context entity with session identity, stable source identity, subtyp
 and transcript position. Add a `Context` transcript-item variant and corresponding
 reference; exactly one domain reference remains populated per transcript item.
 
-Persist context in a dedicated local-cache table, with a full-text index maintained
-transactionally using the repository’s existing FTS conventions. Extend normalized
-search results with context subtype and a stable transcript target. Reuse common
-query and snippet facilities rather than treating context as a fake message.
+Persist context in a dedicated local-cache table, written in the same
+transaction as the other session rows. It has no full-text index, and context
+text must never be written to `messages` / `messages_fts`; existing search
+queries stay unchanged.
 
 Provide a versioned cache migration. Preserve favorites and user-owned settings;
 invalidate only derived data as needed. Other AI assistants remain behaviorally
@@ -200,15 +237,17 @@ in the design workspace; it is illustrative, not a pixel-perfect GTK specificati
 Its essential approved behavior is fully described here and does not depend on
 that local artifact remaining available.
 
-Global and in-transcript search include full context text by default, even when
-collapsed. Search snippets identify the context kind; activating a hit loads,
-expands, scrolls to, and highlights its exact transcript entry. Context participates
-in transcript ordering, match counts, and next/previous match navigation. Expansion
-can remain transient for the current detail view; no persistent setting is needed.
+Context entries participate in transcript ordering only. Global search,
+in-transcript search (match counts, next/previous navigation, highlighting),
+and the GNOME search provider ignore context text: a session matches only
+through its user, assistant, and tool content, as today. In-transcript search
+navigation skips context rows. Expansion can remain transient for the current
+detail view; no persistent setting is needed.
 
-The system search provider inherits session eligibility through the shared search
-path, while retaining its existing excerpt/privacy preferences. Do not expose
-additional context text in GNOME results when transcript excerpts are disabled.
+This exclusion applies to typed context entries, not to every occurrence of
+the same text. Skill tool calls and their results remain searchable through
+the existing tool-call search behavior, even when their text also appears in
+a context entry.
 
 ## Robustness
 
@@ -221,7 +260,7 @@ entire prompt or result bodies.
 Failure modes to avoid: stale V1 replacing V2, duplicated tool results or subagent
 rows, chronology reordered by timestamps, double-counted tokens, injected text
 presented as human speech, context-only sessions appearing as conversations, and
-search hits which cannot be reached in the transcript.
+context text leaking into search results or snippets.
 
 ## Acceptance and verification
 
@@ -229,7 +268,17 @@ Use synthetic, source-derived fixtures without personal transcript content.
 
 1. V2-only discovery and full indexing; V1-only and JSON regressions pass.
 2. Mixed DB and JSON overlap yields one V2-backed session; test the same behavior
-   on an incremental run with unchanged SQLite and modified JSON.
+   on an incremental run with unchanged SQLite and modified JSON. With two
+   channel databases, an incremental run that reads only one of them keeps
+   the sessions of the other. An unreadable database keeps its sessions.
+   A V2 parse failure keeps the previous cached session, does not advance the
+   fingerprint, and is retried on the next incremental run; an ineligible
+   session is still pruned.
+   A cached V1 session in an unchanged database is promoted when V2 is discovered
+   in another database, regardless of discovery order. A failed promotion keeps
+   the previous cache and is retried. A cache-persistence failure after another
+   session in the same source succeeded still leaves the source fingerprint
+   unchanged and preserves the failed session's previous cached representation.
 3. Native `seq` and content-array order win over conflicting timestamps/IDs.
 4. Nullable/blank titles fall back to genuine user text; context cannot become
    the first prompt, inflate exchange counts, or create an otherwise empty session.
@@ -240,10 +289,11 @@ Use synthetic, source-derived fixtures without personal transcript content.
    adding session rollups to assistant usage.
 7. Subagent tests cover task+completion, completion alone, multiple resumed calls,
    missing children, and deterministic parent navigation without duplicates.
-8. System, skill, and compaction context round-trip through persistence and search;
-   test structured duplicate injections and unknown/malformed records.
-9. UI tests verify initially collapsed rows, keyboard expansion, Markdown, search
-   match counts, targeted expansion/highlighting, and navigation through context.
+8. System, skill, and compaction context round-trip through persistence; a term
+   present only in context matches no session in global, in-transcript, or GNOME
+   search. Test structured duplicate injections and unknown/malformed records.
+9. UI tests verify initially collapsed rows, keyboard expansion, Markdown, and
+   that in-transcript match counts and navigation are unchanged by context rows.
 10. Migration reindexes an unchanged existing source and preserves favorites;
     repeat indexing does not accumulate dependent rows. WAL-only updates refresh
     mutable content; failed reads do not erase the last good cache.
