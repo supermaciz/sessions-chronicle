@@ -100,17 +100,33 @@ context item is a smaller durable abstraction than broadening speaker roles.
     and add its ID to the retained set, so stale-session pruning keeps the
     last successfully indexed representation. Do not fall back to V1 or JSON
     for that ID in the same run.
-- Commit a SQLite source's fingerprint (DB or WAL target) only after all of
+- Commit a SQLite source's fingerprint (DB and WAL state) only after all of
   its selected sessions have been processed successfully, including cache
   persistence. Expected policy exclusions are not failures. Do not advance
   the source fingerprint as part of each individual session write: a later
-  failure must leave the previous source fingerprint intact. The next incremental run then re-reads that
-  source and retries the failed IDs, instead of skipping them until OpenCode
-  writes again. Re-reading the whole DB in this case is acceptable.
+  failure must leave the previous source fingerprint intact. The next
+  incremental run then re-reads that source and retries the failed IDs,
+  instead of skipping them until OpenCode writes again. Re-reading the whole
+  DB in this case is acceptable.
+- Capture the DB and WAL fingerprint values before opening the read snapshot,
+  and commit those captured values, not a fresh stat taken after processing.
+  Writes made by OpenCode during indexing then still differ from the stored
+  fingerprint and are picked up by the next incremental run. The captured
+  state includes whether the WAL exists: its creation or disappearance also
+  triggers a re-read.
 - A database that fails to open, probe, or enumerate retains every cached
   session it owns. Pruning decisions are made per source, never from one
   global "SQLite enumerated" flag: a successfully enumerated database must not
   prune sessions owned by another database that was skipped or unreadable.
+- Not being discovered is not proof of deletion: current discovery returns an
+  empty list when the directory cannot be read and ignores entry and `is_file`
+  errors (`session_sources.rs`). A cached owner database that is not
+  discovered loses its sessions only when its absence is confirmed, for
+  example a direct check of its cached path reporting "not found". In every
+  case, a session can still move to another discovered source that owns the
+  same ID. Any discovery or access error (an unreadable directory, permission
+  denied, or a failed metadata check) is not proof of deletion and retains
+  the affected sessions.
 - Source ownership comes from the cache. `sessions.file_path` already records
   the owning DB path for SQLite sessions and the file path for JSON sessions.
   Also persist the indexed representation's generation (V2, V1, or JSON);
@@ -240,14 +256,14 @@ that local artifact remaining available.
 Context entries participate in transcript ordering only. Global search,
 in-transcript search (match counts, next/previous navigation, highlighting),
 and the GNOME search provider ignore context text: a session matches only
-through its user, assistant, and tool content, as today. In-transcript search
+through its user and assistant message content, as today. In-transcript search
 navigation skips context rows. Expansion can remain transient for the current
 detail view; no persistent setting is needed.
 
 This exclusion applies to typed context entries, not to every occurrence of
-the same text. Skill tool calls and their results remain searchable through
-the existing tool-call search behavior, even when their text also appears in
-a context entry.
+the same text. Tool calls, including skill tool calls, keep their existing
+search behavior: they are stored in their own table and are not full-text
+indexed today. This delivery does not change that.
 
 ## Robustness
 
@@ -279,12 +295,16 @@ Use synthetic, source-derived fixtures without personal transcript content.
    the previous cache and is retried. A cache-persistence failure after another
    session in the same source succeeded still leaves the source fingerprint
    unchanged and preserves the failed session's previous cached representation.
+   A write to the source DB/WAL during indexing is detected on the next
+   incremental run, and so are WAL creation and removal. Removing a channel
+   database prunes its sessions; making it unreadable retains them, and so
+   does an inaccessible discovery directory.
 3. Native `seq` and content-array order win over conflicting timestamps/IDs.
 4. Nullable/blank titles fall back to genuine user text; context cannot become
    the first prompt, inflate exchange counts, or create an otherwise empty session.
 5. Tool lifecycle covers streaming strings, running, completed multi-block text,
    error with partial content, unknown states, missing timestamps, and updates to
-   an existing message. Verify inspector payloads and search text.
+   an existing message. Verify inspector payloads and displayed result text.
 6. Reasoning, model metadata, and tokens match V1 feature semantics, without
    adding session rollups to assistant usage.
 7. Subagent tests cover task+completion, completion alone, multiple resumed calls,
