@@ -1,6 +1,6 @@
 # OpenCode V2 support
 
-Status: reviewed draft pending user approval. No implementation authorized yet.
+Status: implemented by [PR #210](https://github.com/supermaciz/sessions-chronicle/pull/210).
 
 ## Intent and agreed scope
 
@@ -336,3 +336,87 @@ SQL batching/index details, and test file organization are builder choices.
 Verify nested payload contracts against pinned upstream sources or sanitized
 fixtures before encoding them. If that reveals a product-level ambiguity rather
 than a schema detail, bring it back for a decision.
+
+## Implementation record — 2026-10-22
+
+Implemented through `1e75ca4` on `opencode-v2`, submitted in
+[PR #210](https://github.com/supermaciz/sessions-chronicle/pull/210).
+The design sections above are preserved as the original specification; this
+section records implementation choices, extensions, and remaining gaps.
+
+### Deviations and clarifications
+
+- **Unchanged sources use persisted inventories, not only cached owners.**
+  Retaining only cached session IDs loses reservations for excluded IDs and
+  omits lower-priority representations never selected before. The coordinator
+  therefore stores every enumerated SQLite representation with its fingerprint
+  in `opencode_source_sessions`. Unchanged sources participate in arbitration
+  without opening SQLite; readers open lazily for fallback or promotion parses.
+- **Ineligibility is proven per representation, not inferred from cache absence.**
+  `opencode_source_sessions.ineligible` records actual `NoUserMessages` outcomes
+  for a source path, generation, and session ID. A never-selected representation
+  is parsed when it first wins, even if no session is cached. Known exclusions
+  continue to reserve priority without reopening unchanged sources. Inventory,
+  exclusions, and fingerprint commit atomically after successful processing and
+  cleanup; failed parses remain retryable without another source write.
+- **Confirmed deletion permits lower-priority fallback.** The original sentence
+  requiring successful enumeration is qualified by direct confirmation that the
+  owner is missing. Access errors still retain ownership. A fresh JSON fingerprint
+  skips parsing only if the cache already holds that same JSON representation.
+- **Generation belongs to the coordinator's source candidate.** The unused
+  `generation` field was removed from the legacy `SessionSource::SqliteRow`;
+  the V1 backend contract retains its DB path without duplicating that metadata.
+- **Native subagent variants extend the specified `task` format.** Both `task`
+  and `subagent` names produce subagent rows. Child links accept
+  `state.metadata.sessionId` and `sessionID` (the former takes precedence when
+  both are strings); `state.input.agent` supplies the agent name. A targeted
+  read-only investigation confirmed the native variant in a user-reported
+  session; regression fixtures use synthetic content, not personal transcripts.
+  Completion correlation occurs while streaming rows rather than in a final pass.
+- **Context does not consume pending reasoning.** Reasoning carries across
+  context rows to the next message, tool-call, or subagent item, keeping its
+  inspection affordance visible. A missing context entry uses the existing
+  unknown-item fallback rather than an expander that cannot load.
+- **Metadata failures are isolated.** Failure to load cached owners preserves
+  the cache; unreadable fingerprint/inventory metadata forces a re-read. Cleanup
+  precedes fingerprint commits, and finalization errors do not abort indexing
+  of other AI assistants. Read snapshots are released before cache cleanup.
+
+### Delivered structure and migrations
+
+The native reader and projection live in `parsers/opencode/{v2,v2_projection}.rs`;
+source arbitration and coordination live in `database/opencode_sources.rs` and
+`database/indexer/opencode.rs`. Context has dedicated model/storage modules and
+a typed GTK transcript row with lazy body loading, stale-response guards, and
+search exclusion.
+
+| Cache version | Delivered change |
+| --- | --- |
+| 19 | Typed context storage and transcript references; OpenCode owner generations and DB/WAL fingerprints |
+| 20 | Source inventories persisted alongside fingerprints |
+| 21 | Proven per-representation ineligibility; existing inventory defaults to unproven without deleting cached sessions |
+
+OpenCode reader generation **5** forces a one-time refresh of earlier inventories,
+independently of upstream writes. Cache schema version, reader generation, and
+source representation generation (`v2`, `v1`, `json`) are distinct concepts.
+
+### Verification and outstanding evidence
+
+- Synthetic fixture provenance is pinned to upstream commit
+  `0c6be8694894dc96b87c5a7b773d52e57ddaa1b2` in
+  `tests/fixtures/opencode_v2/README.md`. Both format references were updated.
+- Parser, coordinator, migration, GTK, public-path integration, and GNOME search
+  tests cover the delivered behavior, including fallback from an unchanged,
+  never-selected source and retries without another source write.
+- Formatting, Clippy, and the full headless suite passed for `1e75ca4` before
+  PR creation. No dependency or packaging configuration changes were made.
+- **Screenshots are not delivered:** the maintainer explicitly chose to capture
+  them separately. This is a waiver of the screenshot deliverable, not a claim
+  of exhaustive live-UI verification.
+- The coordinator test named
+  `opencode_snapshot_fingerprint_detects_concurrent_write` checks WAL changes
+  between runs, not a synchronized write during finalization. Reader snapshot
+  consistency is tested separately.
+- The UI loads the transcript in one query; the planned "across pages" coverage
+  exercises interleaved context and message ordering rather than a literal UI
+  page boundary.
