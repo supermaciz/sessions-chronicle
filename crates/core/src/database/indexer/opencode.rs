@@ -28,8 +28,9 @@ use super::{IndexingStats, SessionIndexer, push_indexing_error};
 
 /// Cache-side reader generation. Bumping this forces a one-time reindex of
 /// every OpenCode SQLite source, because a stored fingerprint whose generation
-/// does not match this value is treated as stale.
-const OPENCODE_READER_GENERATION: i64 = 3;
+/// does not match this value is treated as stale. Generation 4 stores each
+/// source's enumeration next to its fingerprint (`opencode_source_sessions`).
+const OPENCODE_READER_GENERATION: i64 = 4;
 
 /// Outcome of processing one selected session.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -66,8 +67,10 @@ enum OwnerDisposition {
     Prunable,
 }
 
-/// A successfully opened and enumerated SQLite source, kept alive (its read
-/// snapshot held) until every selected session has been parsed.
+/// A successfully enumerated SQLite source. A changed source is opened and its
+/// read snapshot held until every selected session has been parsed. An
+/// unchanged source is enumerated from the cache and only opened if one of its
+/// sessions must still be parsed (a fallback or a retried promotion).
 struct EnumeratedSqliteSource {
     path: PathBuf,
     fingerprint: SourceFingerprint,
@@ -75,13 +78,34 @@ struct EnumeratedSqliteSource {
     v2_ids: Vec<String>,
     v1: Option<SqliteBackend>,
     v1_entries: Vec<SessionEntry>,
-    /// True when the source fingerprint was unchanged this run: its IDs are
-    /// still enumerated (so reservations and fallbacks hold), but parsing is
-    /// skipped unless the cached owner differs.
+    /// True when the source fingerprint was unchanged this run: its IDs come
+    /// from the stored enumeration (so reservations and fallbacks hold), the
+    /// readers stay closed until needed, and parsing is skipped unless the
+    /// cached owner differs.
     unchanged: bool,
     /// Cleared when any selected session in this source fails; a cleared flag
     /// prevents the captured fingerprint from being committed.
     successful: bool,
+}
+
+impl EnumeratedSqliteSource {
+    /// Open the readers of a source enumerated from the cache. Sources opened
+    /// for enumeration already hold their readers and are left unchanged.
+    fn ensure_open(&mut self) -> Result<()> {
+        if self.v2.is_some() || self.v1.is_some() {
+            return Ok(());
+        }
+        let generations = probe_source_generations(&self.path)?;
+        if generations.contains(&OpenCodeGeneration::V2) {
+            self.v2 = Some(V2Reader::open(&self.path)?);
+        }
+        if generations.contains(&OpenCodeGeneration::V1) {
+            let backend = SqliteBackend::open(&self.path)?;
+            backend.begin_read_snapshot()?;
+            self.v1 = Some(backend);
+        }
+        Ok(())
+    }
 }
 
 /// The legacy JSON source after enumeration.
@@ -199,7 +223,22 @@ impl SessionIndexer {
         // Preload cached owners before any availability check, so an
         // inaccessible or merely undiscovered source still contributes retained
         // candidates instead of silently disappearing.
-        let cached_owners = opencode_sources::load_cached_owners(&self.db)?;
+        let cached_owners = match opencode_sources::load_cached_owners(&self.db) {
+            Ok(owners) => owners,
+            Err(err) => {
+                // Without ownership we cannot tell what is safe to prune: leave
+                // the OpenCode cache untouched and let other AI assistants index.
+                tracing::warn!("Failed to load cached OpenCode owners: {err:#}");
+                push_indexing_error(
+                    errors_detail,
+                    AiAssistant::OpenCode,
+                    None,
+                    format!("Failed to load cached OpenCode owners: {err:#}"),
+                );
+                stats.errors += 1;
+                return Ok(stats);
+            }
+        };
         let cached_owner_map: BTreeMap<String, (PathBuf, OpenCodeGeneration)> = cached_owners
             .iter()
             .map(|(id, path, generation)| (id.clone(), (path.clone(), *generation)))
@@ -356,6 +395,13 @@ impl SessionIndexer {
             }
         }
 
+        // Every selected session is parsed: end the read snapshots now so the
+        // source databases can checkpoint while the cache is cleaned up.
+        for source in &mut enumerated {
+            source.v2 = None;
+            source.v1 = None;
+        }
+
         // Prune only ids whose owners were successfully enumerated or confirmed
         // missing: everything not freshly indexed and not retained.
         let kept: HashSet<String> = indexed_ids.union(&retained_ids).cloned().collect();
@@ -373,10 +419,12 @@ impl SessionIndexer {
             Ok(()) => {
                 // Commit captured fingerprints only for fully successful sources
                 // and only after cleanup succeeded.
+                // An unchanged source already holds this fingerprint and
+                // enumeration.
                 for source in &enumerated {
                     if source.successful
-                        && let Err(err) =
-                            self.commit_opencode_fingerprint(&source.path, &source.fingerprint)
+                        && !source.unchanged
+                        && let Err(err) = self.commit_opencode_fingerprint(source)
                     {
                         tracing::warn!(
                             "Failed to commit OpenCode fingerprint for {}: {err:#}",
@@ -438,11 +486,12 @@ impl SessionIndexer {
                     }
                 };
 
-                // An unchanged source still enumerates its IDs (so reservations
-                // and lower-priority fallbacks hold on later runs); only parsing
-                // is skipped.
-                let unchanged =
-                    incremental && self.opencode_source_unchanged(db_path, &fingerprint)?;
+                // An unchanged source is enumerated from the cache without
+                // being opened; its IDs still reserve priority and allow
+                // lower-priority fallbacks.
+                if incremental && let Some(source) = self.unchanged_source(db_path, fingerprint) {
+                    return Ok((SourceOutcome::Enumerated, Some(source)));
+                }
 
                 let generations = match probe_source_generations(db_path) {
                     Ok(generations) => generations,
@@ -459,10 +508,7 @@ impl SessionIndexer {
                     errors_detail,
                     stats,
                 )? {
-                    Some(mut source) => {
-                        source.unchanged = unchanged;
-                        Ok((SourceOutcome::Enumerated, Some(source)))
-                    }
+                    Some(source) => Ok((SourceOutcome::Enumerated, Some(source))),
                     None => Ok((SourceOutcome::Unavailable, None)),
                 }
             }
@@ -584,18 +630,60 @@ impl SessionIndexer {
         }
     }
 
-    /// True when the stored fingerprint matches the captured DB/WAL state and
-    /// the reader generation is current, so the source can be skipped.
-    fn opencode_source_unchanged(
+    /// Build an unopened source from the stored enumeration when the stored
+    /// fingerprint matches the captured DB/WAL state and the reader generation
+    /// is current. Any cache read error means "changed": the caller re-reads
+    /// the source instead of failing the run.
+    fn unchanged_source(
         &self,
         db_path: &Path,
-        captured: &SourceFingerprint,
-    ) -> Result<bool> {
-        let Some(stored) = opencode_sources::load_source_fingerprint(&self.db, db_path)? else {
-            return Ok(false);
+        captured: SourceFingerprint,
+    ) -> Option<EnumeratedSqliteSource> {
+        let stored = match opencode_sources::load_source_fingerprint(&self.db, db_path) {
+            Ok(stored) => stored?,
+            Err(err) => {
+                tracing::warn!(
+                    "Failed to load OpenCode fingerprint for {}: {err:#}; re-reading",
+                    db_path.display()
+                );
+                return None;
+            }
         };
-        Ok(stored.reader_generation == OPENCODE_READER_GENERATION
-            && stored.fingerprint == *captured)
+        if stored.reader_generation != OPENCODE_READER_GENERATION || stored.fingerprint != captured
+        {
+            return None;
+        }
+
+        let (v2_ids, v1_ids) = match opencode_sources::load_source_enumeration(&self.db, db_path) {
+            Ok(enumeration) => enumeration,
+            Err(err) => {
+                tracing::warn!(
+                    "Failed to load OpenCode enumeration for {}: {err:#}; re-reading",
+                    db_path.display()
+                );
+                return None;
+            }
+        };
+        let v1_entries = v1_ids
+            .into_iter()
+            .map(|id| SessionEntry {
+                id,
+                source: SessionSource::SqliteRow {
+                    db_path: db_path.to_path_buf(),
+                },
+            })
+            .collect();
+
+        Some(EnumeratedSqliteSource {
+            path: db_path.to_path_buf(),
+            fingerprint: captured,
+            v2: None,
+            v2_ids,
+            v1: None,
+            v1_entries,
+            unchanged: true,
+            successful: true,
+        })
     }
 
     /// Parse one selected (non-retained) winner and persist it.
@@ -617,13 +705,13 @@ impl SessionIndexer {
                 let index = *source_index
                     .get(&winner.path)
                     .context("V2 source not enumerated")?;
-                let parsed = {
-                    let reader = enumerated[index]
+                let parsed = enumerated[index].ensure_open().and_then(|()| {
+                    enumerated[index]
                         .v2
                         .as_ref()
-                        .context("V2 reader missing for enumerated source")?;
-                    reader.parse_session(&winner.session_id)
-                };
+                        .context("V2 reader missing for enumerated source")?
+                        .parse_session(&winner.session_id)
+                });
                 match parsed {
                     Ok(parsed) => match self.insert_opencode_session(&parsed, winner) {
                         Ok(()) => {
@@ -660,18 +748,19 @@ impl SessionIndexer {
                 let index = *source_index
                     .get(&winner.path)
                     .context("V1 source not enumerated")?;
-                let parsed = {
-                    let backend = enumerated[index]
+                let parsed = enumerated[index].ensure_open().and_then(|()| {
+                    let source = &enumerated[index];
+                    let backend = source
                         .v1
                         .as_ref()
                         .context("V1 backend missing for enumerated source")?;
-                    let entry = enumerated[index]
+                    let entry = source
                         .v1_entries
                         .iter()
                         .find(|entry| entry.id == winner.session_id)
                         .context("V1 entry not enumerated")?;
                     parser.parse_entry(entry, backend)
-                };
+                });
                 match parsed {
                     Ok(parsed) => match self.insert_opencode_session(&parsed, winner) {
                         Ok(()) => {
@@ -795,16 +884,38 @@ impl SessionIndexer {
         Ok(())
     }
 
-    /// Commit a captured source fingerprint with the current reader generation.
-    fn commit_opencode_fingerprint(
-        &mut self,
-        path: &Path,
-        captured: &SourceFingerprint,
-    ) -> Result<()> {
-        let Some(path_str) = path.to_str() else {
+    /// Commit a source's captured fingerprint, with the current reader
+    /// generation, together with the session IDs it enumerated.
+    fn commit_opencode_fingerprint(&mut self, source: &EnumeratedSqliteSource) -> Result<()> {
+        let Some(path_str) = source.path.to_str() else {
             return Ok(());
         };
+        let captured = &source.fingerprint;
         let tx = self.db.transaction()?;
+        tx.execute(
+            "DELETE FROM opencode_source_sessions WHERE db_path = ?1",
+            [path_str],
+        )?;
+        {
+            let mut insert = tx.prepare(
+                "INSERT OR IGNORE INTO opencode_source_sessions (db_path, session_id, generation)
+                 VALUES (?1, ?2, ?3)",
+            )?;
+            for id in &source.v2_ids {
+                insert.execute(rusqlite::params![
+                    path_str,
+                    id,
+                    OpenCodeGeneration::V2.to_storage()
+                ])?;
+            }
+            for entry in &source.v1_entries {
+                insert.execute(rusqlite::params![
+                    path_str,
+                    &entry.id,
+                    OpenCodeGeneration::V1.to_storage()
+                ])?;
+            }
+        }
         tx.execute(
             "INSERT INTO opencode_source_fingerprints
                 (db_path, db_mtime_ns, db_size, wal_mtime_ns, wal_size, reader_generation)
@@ -845,7 +956,7 @@ impl SessionIndexer {
 fn json_file_path(entry: &SessionEntry) -> PathBuf {
     match &entry.source {
         SessionSource::JsonFile(path) => path.clone(),
-        SessionSource::SqliteRow { db_path, .. } => db_path.clone(),
+        SessionSource::SqliteRow { db_path } => db_path.clone(),
     }
 }
 

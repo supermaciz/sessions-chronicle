@@ -1242,3 +1242,117 @@ fn opencode_replacement_preserves_pin() {
         Some("pin body v2")
     );
 }
+
+/// Overwrite `path` with zeroes of the same length and restore its mtime, so
+/// its fingerprint is unchanged but opening it as SQLite would fail.
+fn corrupt_keeping_fingerprint(path: &Path) {
+    let modified = std::fs::metadata(path).unwrap().modified().unwrap();
+    let len = std::fs::metadata(path).unwrap().len() as usize;
+    std::fs::write(path, vec![0u8; len]).unwrap();
+    std::fs::File::options()
+        .write(true)
+        .open(path)
+        .unwrap()
+        .set_modified(modified)
+        .unwrap();
+}
+
+#[test]
+fn opencode_unchanged_source_is_not_opened() {
+    let source_dir = tempfile::tempdir().unwrap();
+    let v2_path = source_dir.path().join("v2.db");
+    drop(create_v2_source(&v2_path, &[("ses_quiet", "quiet body")]));
+    let missing = source_dir.path().join("missing");
+
+    let (_dir, mut indexer) = new_indexer();
+    indexer
+        .index_opencode_sessions_incremental(&missing, &[v2_path.clone()])
+        .unwrap();
+    let enumerated: Vec<String> = {
+        let mut stmt = indexer
+            .db
+            .prepare("SELECT session_id || '=' || generation FROM opencode_source_sessions")
+            .unwrap();
+        stmt.query_map([], |row| row.get(0))
+            .unwrap()
+            .collect::<rusqlite::Result<_>>()
+            .unwrap()
+    };
+    assert_eq!(enumerated, ["ses_quiet=v2"]);
+
+    // Any attempt to open the source would now fail and be reported.
+    corrupt_keeping_fingerprint(&v2_path);
+    let second = indexer
+        .index_opencode_sessions_incremental(&missing, &[v2_path.clone()])
+        .unwrap();
+
+    assert_eq!(second.errors, 0, "an unchanged source must not be opened");
+    assert_eq!(second.skipped, 1);
+    assert_eq!(second.removed, 0);
+    assert_eq!(
+        cached_body(&indexer.db, "ses_quiet").as_deref(),
+        Some("quiet body")
+    );
+}
+
+#[test]
+fn opencode_inconsistent_wal_fingerprint_rereads_source() {
+    let source_dir = tempfile::tempdir().unwrap();
+    let v2_path = source_dir.path().join("v2.db");
+    drop(create_v2_source(&v2_path, &[("ses_wal", "wal body")]));
+    let missing = source_dir.path().join("missing");
+
+    let (_dir, mut indexer) = new_indexer();
+    indexer
+        .index_opencode_sessions_incremental(&missing, &[v2_path.clone()])
+        .unwrap();
+    indexer
+        .db
+        .execute(
+            "UPDATE opencode_source_fingerprints SET wal_mtime_ns = 1, wal_size = NULL",
+            [],
+        )
+        .unwrap();
+
+    let second = indexer
+        .index_opencode_sessions_incremental(&missing, &[v2_path.clone()])
+        .unwrap();
+
+    assert_eq!(second.errors, 0);
+    assert_eq!(second.indexed, 1, "a damaged fingerprint row means re-read");
+    let third = indexer
+        .index_opencode_sessions_incremental(&missing, &[v2_path.clone()])
+        .unwrap();
+    assert_eq!(third.indexed, 0);
+}
+
+#[test]
+fn opencode_owner_load_failure_keeps_cache() {
+    let source_dir = tempfile::tempdir().unwrap();
+    let v2_path = source_dir.path().join("v2.db");
+    drop(create_v2_source(&v2_path, &[("ses_kept", "kept body")]));
+    let missing = source_dir.path().join("missing");
+
+    let (_dir, mut indexer) = new_indexer();
+    indexer
+        .index_opencode_sessions_incremental(&missing, &[v2_path.clone()])
+        .unwrap();
+    indexer
+        .db
+        .execute_batch("DROP TABLE opencode_session_sources")
+        .unwrap();
+
+    // The run reports the error instead of aborting the caller, and prunes
+    // nothing even though the only source has disappeared.
+    std::fs::remove_file(&v2_path).unwrap();
+    let stats = indexer
+        .index_opencode_sessions_incremental(&missing, &[v2_path.clone()])
+        .unwrap();
+
+    assert_eq!(stats.errors, 1);
+    assert_eq!(stats.removed, 0);
+    assert_eq!(
+        cached_body(&indexer.db, "ses_kept").as_deref(),
+        Some("kept body")
+    );
+}

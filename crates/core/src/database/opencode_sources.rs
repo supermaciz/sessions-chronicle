@@ -276,13 +276,52 @@ pub(crate) fn load_source_fingerprint(
     let wal = match (row.get::<_, Option<i64>>(2)?, row.get::<_, Option<i64>>(3)?) {
         (Some(mtime_ns), Some(size)) => Some(FileStamp { mtime_ns, size }),
         (None, None) => None,
-        _ => anyhow::bail!("Inconsistent WAL fingerprint columns for {db_path_str}"),
+        _ => {
+            // A damaged cache row only means the source must be re-read; it is
+            // not worth failing the whole indexing run over.
+            tracing::warn!("Inconsistent WAL fingerprint columns for {db_path_str}; re-reading");
+            return Ok(None);
+        }
     };
 
     Ok(Some(StoredSourceFingerprint {
         fingerprint: SourceFingerprint { db: db_stamp, wal },
         reader_generation: row.get(4)?,
     }))
+}
+
+/// Session IDs a source exposed when its fingerprint was last committed, per
+/// generation: `(v2_ids, v1_ids)`. Stored with the fingerprint, so an unchanged
+/// source can take part in candidate selection without being opened.
+pub(crate) fn load_source_enumeration(
+    db: &Connection,
+    db_path: &Path,
+) -> Result<(Vec<String>, Vec<String>)> {
+    let Some(db_path_str) = db_path.to_str() else {
+        return Ok((Vec::new(), Vec::new()));
+    };
+
+    let mut stmt = db.prepare(
+        "SELECT session_id, generation FROM opencode_source_sessions
+         WHERE db_path = ?1 ORDER BY session_id",
+    )?;
+    let rows = stmt.query_map([db_path_str], |row| {
+        Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+    })?;
+
+    let mut v2_ids = Vec::new();
+    let mut v1_ids = Vec::new();
+    for row in rows {
+        let (id, generation) = row?;
+        match OpenCodeGeneration::from_storage(&generation) {
+            Some(OpenCodeGeneration::V2) => v2_ids.push(id),
+            Some(OpenCodeGeneration::V1) => v1_ids.push(id),
+            _ => anyhow::bail!(
+                "Unexpected generation '{generation}' in enumeration of {db_path_str}"
+            ),
+        }
+    }
+    Ok((v2_ids, v1_ids))
 }
 
 fn file_stamp(path: &Path) -> Result<FileStamp> {

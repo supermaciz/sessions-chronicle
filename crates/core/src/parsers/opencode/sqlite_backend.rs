@@ -2,7 +2,6 @@ use anyhow::{Context, Result};
 use rusqlite::{Connection, OpenFlags};
 use std::path::{Path, PathBuf};
 
-use crate::database::opencode_sources::OpenCodeGeneration;
 use crate::models::Role;
 use crate::parsers::model::normalize_model;
 
@@ -71,7 +70,6 @@ impl OpenCodeBackend for SqliteBackend {
                     id,
                     source: SessionSource::SqliteRow {
                         db_path: self.db_path.clone(),
-                        generation: OpenCodeGeneration::V1,
                     },
                 })
             })?

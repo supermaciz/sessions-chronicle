@@ -14,7 +14,6 @@ use serde_json::Value;
 use std::cmp::Ordering;
 use std::path::{Path, PathBuf};
 
-use crate::database::opencode_sources::OpenCodeGeneration;
 use crate::models::{
     AiAssistant, Message, ReasoningAttachment, Role, Session, Subagent, TokenUsage, ToolCall,
     ToolCallStatus, TranscriptItem, TranscriptItemKind,
@@ -108,12 +107,7 @@ pub(crate) struct SessionEntry {
 
 pub(crate) enum SessionSource {
     JsonFile(PathBuf),
-    SqliteRow {
-        db_path: PathBuf,
-        /// Read by the coordinator (Task 5) when building [`SourceCandidate`]s.
-        #[allow(dead_code)]
-        generation: OpenCodeGeneration,
-    },
+    SqliteRow { db_path: PathBuf },
 }
 
 pub(crate) trait OpenCodeBackend {
@@ -353,7 +347,7 @@ impl OpenCodeParser {
 
         let file_path = match source {
             SessionSource::JsonFile(path) => path.to_str().unwrap_or_default().to_string(),
-            SessionSource::SqliteRow { db_path, .. } => {
+            SessionSource::SqliteRow { db_path } => {
                 db_path.to_str().unwrap_or_default().to_string()
             }
         };

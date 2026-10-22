@@ -760,6 +760,10 @@ persisted keeps its previous cache and is retried on the next run; a confirmed
 missing source prunes its sessions, while an inaccessible or merely undiscovered
 one retains them. A source's DB/WAL fingerprint is committed only after all of
 its selected sessions succeed, so a later failure re-reads the whole source. The
+session IDs the source exposed are stored with that fingerprint
+(`opencode_source_sessions`), so an unchanged source takes part in selection on
+incremental runs without being opened; it is opened only when one of its
+sessions must still be parsed (a fallback or a retried promotion). The
 one-time v19 migration reindexes every OpenCode source (V2 > V1 promotion) while
 preserving favorites and other user-owned state.
 

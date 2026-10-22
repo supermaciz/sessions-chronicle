@@ -1492,6 +1492,7 @@ impl SessionIndexer {
         tx.execute("DELETE FROM file_fingerprints", [])?;
         tx.execute("DELETE FROM opencode_session_sources", [])?;
         tx.execute("DELETE FROM opencode_source_fingerprints", [])?;
+        tx.execute("DELETE FROM opencode_source_sessions", [])?;
         tx.commit()?;
         Ok(())
     }

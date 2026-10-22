@@ -6,9 +6,7 @@ use std::sync::Arc;
 
 use chrono::{TimeZone, Utc};
 
-use crate::models::{
-    ContextKind, ContextPreview, MessagePreview, ReasoningPreview, Role, ToolCallStatus,
-};
+use crate::models::{ContextPreview, MessagePreview, ReasoningPreview, Role, ToolCallStatus};
 
 #[derive(Clone)]
 pub struct MessageItemInit {
@@ -266,41 +264,57 @@ fn transcript_item_init_from_row_with_index(
                 .unwrap_or_else(|| "Subagent".to_string()),
             reasoning_preview: row.reasoning_preview,
         }),
-        TranscriptItemKind::Context => TranscriptItemInit::Context(ContextItemInit {
-            item_index,
-            transcript_item_index: row.item_index,
-            session_id: session_id.to_string(),
-            preview: row.context.clone().unwrap_or_else(|| ContextPreview {
-                id: String::new(),
-                kind: ContextKind::System,
-                name: None,
-                timestamp: Utc::now(),
+        TranscriptItemKind::Context => match row.context.clone() {
+            Some(preview) => TranscriptItemInit::Context(ContextItemInit {
+                item_index,
+                transcript_item_index: row.item_index,
+                session_id: session_id.to_string(),
+                preview,
+                db_path,
             }),
-            db_path,
-        }),
+            // The context entry is missing or has an unknown kind: a context
+            // row could never load its body, so render it like an unknown item.
+            None => {
+                tracing::warn!(
+                    item_index = row.item_index,
+                    "context transcript item without a readable entry; rendering as empty message"
+                );
+                empty_message_init(row, item_index, session_id, highlight_query, db_path)
+            }
+        },
         TranscriptItemKind::Unknown => {
             tracing::warn!(
                 item_index = row.item_index,
                 "transcript item with unknown kind; rendering as empty message"
             );
-            TranscriptItemInit::Message(MessageItemInit {
-                item_index,
-                transcript_item_index: row.item_index,
-                preview: MessagePreview {
-                    session_id: session_id.to_string(),
-                    message_index: 0,
-                    role: Role::User,
-                    content_preview: String::new(),
-                    content_len: 0,
-                    timestamp: Utc::now(),
-                    model: None,
-                    reasoning_preview: row.reasoning_preview,
-                },
-                highlight_query,
-                db_path,
-            })
+            empty_message_init(row, item_index, session_id, highlight_query, db_path)
         }
     }
+}
+
+fn empty_message_init(
+    row: &crate::database::TranscriptItemRow,
+    item_index: usize,
+    session_id: &str,
+    highlight_query: Option<String>,
+    db_path: Arc<PathBuf>,
+) -> TranscriptItemInit {
+    TranscriptItemInit::Message(MessageItemInit {
+        item_index,
+        transcript_item_index: row.item_index,
+        preview: MessagePreview {
+            session_id: session_id.to_string(),
+            message_index: 0,
+            role: Role::User,
+            content_preview: String::new(),
+            content_len: 0,
+            timestamp: Utc::now(),
+            model: None,
+            reasoning_preview: row.reasoning_preview,
+        },
+        highlight_query,
+        db_path,
+    })
 }
 
 pub fn transcript_item_init_from_display_item(
@@ -500,6 +514,45 @@ mod tests {
 
         assert_eq!(burst_init.tool_calls[0].transcript_item_index, 11);
         assert_eq!(burst_init.tool_calls[1].transcript_item_index, 12);
+    }
+
+    #[test]
+    fn context_item_without_entry_renders_as_empty_message() {
+        let row = crate::database::TranscriptItemRow {
+            item_index: 3,
+            kind: crate::models::TranscriptItemKind::Context,
+            reasoning_preview: ReasoningPreview::default(),
+            message_index: None,
+            role: None,
+            content_preview: None,
+            content_len: None,
+            timestamp: None,
+            model: None,
+            tool_call_id: None,
+            tool_name: None,
+            tool_status: None,
+            tool_summary: None,
+            tool_input_json: None,
+            tool_output_text: None,
+            duration_ms: None,
+            subagent_id: None,
+            subagent_title: None,
+            subagent_prompt: None,
+            context: None,
+        };
+
+        let init = transcript_item_init_from_row(
+            &row,
+            "session-1",
+            None,
+            Arc::new(PathBuf::from("/tmp/test.db")),
+        );
+
+        let TranscriptItemInit::Message(message_init) = init else {
+            panic!("a context row without its entry must not become a context row");
+        };
+        assert_eq!(message_init.transcript_item_index, 3);
+        assert_eq!(message_init.preview.content_len, 0);
     }
 
     #[test]

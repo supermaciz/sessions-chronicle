@@ -2,7 +2,7 @@ use anyhow::Result;
 use rusqlite::Connection;
 
 #[cfg(test)]
-const CURRENT_DB_VERSION: i64 = 19;
+const CURRENT_DB_VERSION: i64 = 20;
 
 fn column_exists(conn: &Connection, table_name: &str, column_name: &str) -> Result<bool> {
     Ok(conn.query_row(
@@ -65,6 +65,9 @@ fn table_exists(conn: &Connection, name: &str) -> Result<bool> {
 ///        (opencode_session_sources, opencode_source_fingerprints). Existing
 ///        OpenCode owners are tagged `v1`/`json` and only OpenCode-owned
 ///        file_fingerprints rows are removed so OpenCode sources are re-read
+///   20 – opencode_source_sessions records the session IDs each OpenCode
+///        SQLite source exposed at its last committed fingerprint, so an
+///        unchanged source is no longer opened on incremental runs
 pub fn initialize_database(conn: &Connection) -> Result<()> {
     let version: i64 = conn.query_row("PRAGMA user_version", [], |row| row.get(0))?;
 
@@ -124,6 +127,9 @@ pub fn initialize_database(conn: &Connection) -> Result<()> {
     }
     if version < 19 {
         apply_v19_migration(conn)?;
+    }
+    if version < 20 {
+        apply_v20_migration(conn)?;
     }
 
     Ok(())
@@ -804,6 +810,25 @@ fn apply_v19_migration_inner(conn: &Connection) -> Result<()> {
     }
 
     conn.execute_batch("PRAGMA user_version = 19")?;
+    Ok(())
+}
+
+/// Migrate from v19 to v20.
+///
+/// Adds `opencode_source_sessions`, written in the same transaction as each
+/// `opencode_source_fingerprints` row. Existing fingerprint rows predate it and
+/// carry an older reader generation, so their sources are re-read once and the
+/// table fills in then; no data is cleared here.
+fn apply_v20_migration(conn: &Connection) -> Result<()> {
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS opencode_source_sessions (
+             db_path TEXT NOT NULL,
+             session_id TEXT NOT NULL,
+             generation TEXT NOT NULL,
+             PRIMARY KEY (db_path, generation, session_id)
+         );
+         PRAGMA user_version = 20;",
+    )?;
     Ok(())
 }
 
@@ -2160,7 +2185,7 @@ mod tests {
 
         initialize_database(&conn).unwrap();
 
-        assert_eq!(count(&conn, "PRAGMA user_version"), 19);
+        assert_eq!(count(&conn, "PRAGMA user_version"), CURRENT_DB_VERSION);
         assert!(column_exists(&conn, "transcript_items", "context_id").unwrap());
         for table in [
             "context_entries",
@@ -2257,7 +2282,7 @@ mod tests {
         )
         .unwrap();
         initialize_database(&conn).unwrap();
-        assert_eq!(count(&conn, "PRAGMA user_version"), 19);
+        assert_eq!(count(&conn, "PRAGMA user_version"), CURRENT_DB_VERSION);
         assert_eq!(
             count(&conn, "SELECT count(*) FROM opencode_source_fingerprints"),
             1
@@ -2285,7 +2310,40 @@ mod tests {
 
         initialize_database(&conn).unwrap();
 
-        assert_eq!(count(&conn, "PRAGMA user_version"), 19);
+        assert_eq!(count(&conn, "PRAGMA user_version"), CURRENT_DB_VERSION);
         assert!(column_exists(&conn, "transcript_items", "context_id").unwrap());
+    }
+
+    #[test]
+    fn opencode_source_sessions_v20_migration_keeps_v19_cache() {
+        let conn = Connection::open_in_memory().unwrap();
+        migrate_to_v18(&conn);
+        apply_v19_migration(&conn).unwrap();
+        conn.execute(
+            "INSERT INTO opencode_source_fingerprints
+             (db_path, db_mtime_ns, db_size, wal_mtime_ns, wal_size, reader_generation)
+             VALUES ('/data/opencode.db', 1, 2, NULL, NULL, 3)",
+            [],
+        )
+        .unwrap();
+        assert!(!table_exists(&conn, "opencode_source_sessions"));
+
+        initialize_database(&conn).unwrap();
+
+        assert_eq!(count(&conn, "PRAGMA user_version"), 20);
+        assert_eq!(
+            string_rows(
+                &conn,
+                "SELECT name FROM pragma_table_info('opencode_source_sessions') \
+                 WHERE pk > 0 ORDER BY pk"
+            ),
+            ["db_path", "generation", "session_id"]
+        );
+        // Existing fingerprints stay; their stale reader generation forces the
+        // one re-read that fills the new table.
+        assert_eq!(
+            count(&conn, "SELECT count(*) FROM opencode_source_fingerprints"),
+            1
+        );
     }
 }
