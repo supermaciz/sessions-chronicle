@@ -21,6 +21,8 @@ Source paths verified against that commit:
 | `packages/schema/src/session-error.ts` | Structured error `{ type, message, status?, response?, retryAfterMs? }` |
 | `packages/schema/src/token-usage.ts` | `TokenUsage.Info` = `{ input, output, reasoning, cache: { read, write } }` |
 | `packages/schema/src/model.ts` | `Model.Ref` = `{ id, providerID, variant? }` (assistant `model.id` is read) |
+| `packages/schema/src/tool.ts` | Tool result blocks are `{ type: "text", text }` or `{ type: "file", uri, mime, name? }` |
+| `packages/core/src/session/subagent-completion.ts` | Synthetic completion `metadata = { source: "subagent", childID, agent, state }` and the `<subagent …>` `text` payload |
 
 The message `data` column stores `SessionMessageData` — the encoded
 `SessionMessage.Info` with the `type` and `id` fields lifted into the
@@ -75,3 +77,31 @@ the omitted columns still opens and parses successfully.
   `IncompleteTranscript`, not `NoUserMessages`.
 - `ses_v2_malformed_then_valid` — a corrupt user row followed by a valid user.
 - `ses_v2_null_title` — a NULL title falling back to its first prompt.
+- `ses_v2_tools` — tool-call lifecycle in one assistant message: `streaming`
+  (raw string input `{"path":`), `running` (object input + metadata),
+  `completed` (text/file/text result blocks), `error` (structured `message`
+  plus partial text), an unknown status, and a reversed `ran`/`completed`
+  range (invalid duration). Proves `\n`-joined result text, file bodies
+  skipped, structured error message, and duration only from valid content
+  times.
+- `ses_v2_skill_tool` — an ordinary `skill` tool call next to a user-attached
+  skill injection: the call stays a tool call, the injection stays context.
+- `ses_v2_task_done` — a `task` tool with no result content plus a synthetic
+  completion. The completion fills the absent result; its prose deliberately
+  names a different `sessionID` than `metadata.childID` to prove the metadata
+  is authoritative.
+- `ses_v2_completion_only` — a completion with no matching task, yielding a
+  standalone subagent row keyed by the native message id (`msg_completion`).
+- `ses_v2_child_missing` — a completion whose `childID` has no `session_v2`
+  row; the native child ID is preserved unindexed.
+- `ses_v2_resumed` — two task invocations resuming the same child, each with
+  its own completion; explicit task results survive and no `task` tool call is
+  emitted.
+- `ses_v2_completion_before_task` — a completion that precedes its task in
+  `seq` order; correlation looks backwards only.
+- `ses_v2_ambiguous` — two task invocations for the same child sharing one
+  message `seq`; the completion cannot be matched uniquely and stays
+  standalone.
+- `ses_v2_task_id_link` — a task carrying only `input.task_id` (a resume
+  request) and no `state.metadata.sessionId`; `task_id` alone establishes no
+  child link, so a completion naming that id stays standalone.

@@ -1,7 +1,22 @@
 use super::ParseError;
 use super::test_support;
 use super::v2::V2Reader;
-use crate::models::{ContextKind, Role, TranscriptItemKind};
+use crate::models::{ContextKind, Role, ToolCall, ToolCallStatus, TranscriptItemKind};
+use crate::parsers::ParsedSession;
+
+/// Builds the synthetic fixture in a temporary database and parses `session_id`.
+fn parse_session(session_id: &str) -> ParsedSession {
+    let dir = tempfile::tempdir().unwrap();
+    let db_path = dir.path().join("fixture.db");
+    let conn = test_support::create_v2_db(&db_path);
+    drop(conn);
+    let reader = V2Reader::open(&db_path).unwrap();
+    reader.parse_session(session_id).unwrap()
+}
+
+fn find_tool<'a>(parsed: &'a ParsedSession, id: &str) -> &'a ToolCall {
+    parsed.tool_calls.iter().find(|tc| tc.id == id).unwrap()
+}
 
 #[test]
 fn v2_sequence_and_content_order() {
@@ -256,4 +271,162 @@ fn v2_snapshot_is_consistent() {
     assert_eq!(final_b.content, "final answer v2");
 
     drop(writer);
+}
+
+#[test]
+fn v2_tool_lifecycle() {
+    let parsed = parse_session("ses_v2_tools");
+
+    let streaming = find_tool(&parsed, "call_stream");
+    assert_eq!(streaming.status, ToolCallStatus::Pending);
+    assert_eq!(streaming.input_json.as_deref(), Some("{\"path\":"));
+
+    let running = find_tool(&parsed, "call_run");
+    assert_eq!(running.status, ToolCallStatus::Running);
+    assert_eq!(running.input_json.as_deref(), Some("{\"command\":\"ls\"}"));
+    assert_eq!(running.duration_ms, None);
+
+    let completed = find_tool(&parsed, "call_done");
+    assert_eq!(completed.status, ToolCallStatus::Completed);
+    assert_eq!(completed.output_text.as_deref(), Some("first\nsecond"));
+    assert_eq!(completed.started_at, Some(1712000201200));
+    assert_eq!(completed.ended_at, Some(1712000201700));
+    assert_eq!(completed.duration_ms, Some(500));
+
+    let failed = find_tool(&parsed, "call_err");
+    assert_eq!(failed.status, ToolCallStatus::Error);
+    assert_eq!(failed.error_text.as_deref(), Some("permission denied"));
+    assert_eq!(failed.output_text.as_deref(), Some("partial output"));
+
+    let unknown = find_tool(&parsed, "call_unk");
+    assert_eq!(unknown.status, ToolCallStatus::Unknown);
+
+    let invalid_duration = find_tool(&parsed, "call_inv");
+    assert_eq!(invalid_duration.status, ToolCallStatus::Completed);
+    assert_eq!(invalid_duration.duration_ms, None);
+    assert_eq!(invalid_duration.started_at, Some(1712000202200));
+    assert_eq!(invalid_duration.ended_at, Some(1712000202000));
+
+    assert_eq!(parsed.tool_calls.len(), 6);
+}
+
+#[test]
+fn v2_subagent_completion_links_once() {
+    // task + completion: metadata.childID (not the completion prose) is
+    // authoritative, and the absent result is filled from the completion.
+    let task_done = parse_session("ses_v2_task_done");
+    assert_eq!(task_done.subagents.len(), 1);
+    assert_eq!(
+        task_done.subagents[0].child_session_id.as_deref(),
+        Some("ses_child_a")
+    );
+    assert_eq!(
+        task_done.subagents[0].result_summary.as_deref(),
+        Some("<subagent sessionID=\"ses_child_fake\" state=\"completed\">done</subagent>")
+    );
+    assert!(task_done.tool_calls.iter().all(|tc| tc.tool_name != "task"));
+    // The synthetic completion must not create a context row.
+    assert!(task_done.context_entries.is_empty());
+
+    // completion alone: a standalone subagent row keyed by the native message id.
+    let completion_only = parse_session("ses_v2_completion_only");
+    assert_eq!(completion_only.subagents.len(), 1);
+    assert_eq!(completion_only.subagents[0].id, "msg_completion");
+    assert_eq!(
+        completion_only.subagents[0].child_session_id.as_deref(),
+        Some("ses_child_o")
+    );
+
+    // child missing: the native childID is preserved even though unindexed.
+    let child_missing = parse_session("ses_v2_child_missing");
+    assert_eq!(child_missing.subagents.len(), 1);
+    assert_eq!(
+        child_missing.subagents[0].child_session_id.as_deref(),
+        Some("ses_child_missing")
+    );
+    assert_eq!(child_missing.subagents[0].id, "msg_missing_completion");
+
+    // two resumed calls to the same child: two subagents, no task tool calls,
+    // and completion text never overwrites explicit task results.
+    let resumed = parse_session("ses_v2_resumed");
+    assert_eq!(resumed.subagents.len(), 2);
+    assert!(resumed.tool_calls.iter().all(|tc| tc.tool_name != "task"));
+    let results: Vec<&str> = resumed
+        .subagents
+        .iter()
+        .map(|s| s.result_summary.as_deref().unwrap())
+        .collect();
+    assert_eq!(results, vec!["first result", "second result"]);
+    assert!(
+        resumed
+            .subagents
+            .iter()
+            .all(|s| s.child_session_id.as_deref() == Some("ses_child_r"))
+    );
+
+    // completion before a task: correlation only looks backwards.
+    let before = parse_session("ses_v2_completion_before_task");
+    assert_eq!(before.subagents.len(), 2);
+    assert_eq!(before.subagents[0].id, "msg_early_completion");
+    assert_eq!(
+        before.subagents[0].result_summary.as_deref(),
+        Some("early completion")
+    );
+    assert_eq!(before.subagents[1].id, "call_b1");
+    assert_eq!(
+        before.subagents[1].result_summary.as_deref(),
+        Some("late task")
+    );
+
+    // ambiguous duplicate-sequence candidates: no merge, completion standalone.
+    let ambiguous = parse_session("ses_v2_ambiguous");
+    assert_eq!(ambiguous.subagents.len(), 3);
+    let results: Vec<&str> = ambiguous
+        .subagents
+        .iter()
+        .map(|s| s.result_summary.as_deref().unwrap())
+        .collect();
+    assert_eq!(
+        results,
+        vec!["task one result", "task two result", "ambiguous completion"]
+    );
+    assert!(ambiguous.tool_calls.iter().all(|tc| tc.tool_name != "task"));
+
+    // input.task_id alone does not establish a child link.
+    let task_id = parse_session("ses_v2_task_id_link");
+    assert_eq!(task_id.subagents.len(), 2);
+    assert_eq!(task_id.subagents[0].child_session_id, None);
+    assert_eq!(
+        task_id.subagents[0].result_summary.as_deref(),
+        Some("resumed result")
+    );
+    assert_eq!(
+        task_id.subagents[1].child_session_id.as_deref(),
+        Some("ses_requested")
+    );
+    assert_eq!(task_id.subagents[1].id, "msg_task_id_completion");
+}
+
+#[test]
+fn v2_skill_calls_remain_tool_calls() {
+    let parsed = parse_session("ses_v2_skill_tool");
+
+    // The ordinary `skill` tool call is a tool call, not context.
+    assert_eq!(parsed.tool_calls.len(), 1);
+    assert_eq!(parsed.tool_calls[0].tool_name, "skill");
+    assert_eq!(parsed.tool_calls[0].status, ToolCallStatus::Completed);
+
+    // The injected skill content stays context, not a tool call or message.
+    let skill_context: Vec<_> = parsed
+        .context_entries
+        .iter()
+        .filter(|c| c.kind == ContextKind::Skill)
+        .collect();
+    assert_eq!(skill_context.len(), 1);
+    assert_eq!(skill_context[0].id, "msg_skill_tool_user:skill:0");
+
+    // No task tool was emitted, and no skill body leaked into messages.
+    assert!(parsed.subagents.is_empty());
+    assert!(parsed.messages.iter().all(|m| m.role != Role::Assistant
+        || m.content != "Run the brainstorming workflow before starting creative work."));
 }
