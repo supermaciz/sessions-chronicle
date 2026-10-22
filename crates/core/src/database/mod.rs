@@ -1,6 +1,7 @@
 pub mod analytics;
 mod context;
 pub mod indexer;
+pub(crate) mod opencode_sources;
 pub mod schema;
 pub mod shell_search;
 
