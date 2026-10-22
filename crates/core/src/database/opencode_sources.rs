@@ -337,8 +337,8 @@ pub(crate) fn load_source_enumeration(
         match generation {
             OpenCodeGeneration::V2 => inventory.v2_ids.push(id),
             OpenCodeGeneration::V1 => inventory.v1_ids.push(id),
-            _ => anyhow::bail!(
-                "Unexpected generation '{generation_str}' in enumeration of {db_path_str}"
+            OpenCodeGeneration::Json => anyhow::bail!(
+                "JSON generation cannot belong to SQLite enumeration of {db_path_str}"
             ),
         }
     }

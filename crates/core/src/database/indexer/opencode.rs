@@ -100,6 +100,10 @@ struct EnumeratedSqliteSource {
 impl EnumeratedSqliteSource {
     /// Open the readers of a source enumerated from the cache. Sources opened
     /// for enumeration already hold their readers and are left unchanged.
+    ///
+    /// The snapshot opened here may be newer than the fingerprint captured
+    /// earlier in this run. That is safe: the older fingerprint is committed,
+    /// so the next run sees a changed source and reparses it.
     fn ensure_open(&mut self) -> Result<()> {
         if self.v2.is_some() || self.v1.is_some() {
             return Ok(());
