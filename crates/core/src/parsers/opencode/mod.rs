@@ -4,7 +4,7 @@ pub(crate) mod v2;
 pub(crate) mod v2_projection;
 
 #[cfg(test)]
-mod test_support;
+pub(crate) mod test_support;
 #[cfg(test)]
 mod v2_tests;
 

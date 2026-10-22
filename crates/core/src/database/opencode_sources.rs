@@ -6,12 +6,9 @@
 //! discovery and cached ownership, calls [`select_candidates`] once before any
 //! parsing, and treats the returned map as the single owner per session ID.
 
-// Consumed by the OpenCode coordinator (Task 5) but not referenced by
-// production code in this commit.
-#![allow(dead_code)]
-
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
+use std::time::UNIX_EPOCH;
 
 use anyhow::{Context, Result};
 use rusqlite::Connection;
@@ -211,6 +208,105 @@ fn table_exists(conn: &Connection, name: &str) -> Result<bool> {
         )
         .context("Failed to inspect source table names")?
         > 0)
+}
+
+/// A captured `(mtime_ns, size)` pair for one source file.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct FileStamp {
+    pub mtime_ns: i64,
+    pub size: i64,
+}
+
+/// Captured DB and optional WAL state for an OpenCode SQLite source. The WAL
+/// is `None` only when the `-wal` sidecar is absent; its appearance or
+/// disappearance is therefore itself a detectable change.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct SourceFingerprint {
+    pub db: FileStamp,
+    pub wal: Option<FileStamp>,
+}
+
+/// Capture the current DB and WAL stamps for a source database, before any
+/// read snapshot is opened. A missing WAL is `None`; any other WAL metadata
+/// error fails the capture so the caller retains the cache and retries.
+pub(crate) fn capture_source_fingerprint(db_path: &Path) -> Result<SourceFingerprint> {
+    let db =
+        file_stamp(db_path).with_context(|| format!("Failed to stat {}", db_path.display()))?;
+    let wal_path = wal_path(db_path);
+    let wal = match std::fs::metadata(&wal_path) {
+        Ok(metadata) => Some(stamp_from_metadata(&metadata)?),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => None,
+        Err(err) => {
+            return Err(err).with_context(|| format!("Failed to stat {}", wal_path.display()));
+        }
+    };
+    Ok(SourceFingerprint { db, wal })
+}
+
+/// A source fingerprint as stored in `opencode_source_fingerprints`, plus the
+/// reader generation that produced it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct StoredSourceFingerprint {
+    pub fingerprint: SourceFingerprint,
+    pub reader_generation: i64,
+}
+
+/// Load the stored fingerprint for a source database, if any.
+pub(crate) fn load_source_fingerprint(
+    db: &Connection,
+    db_path: &Path,
+) -> Result<Option<StoredSourceFingerprint>> {
+    let Some(db_path_str) = db_path.to_str() else {
+        return Ok(None);
+    };
+
+    let mut stmt = db.prepare(
+        "SELECT db_mtime_ns, db_size, wal_mtime_ns, wal_size, reader_generation
+         FROM opencode_source_fingerprints WHERE db_path = ?1",
+    )?;
+    let mut rows = stmt.query([db_path_str])?;
+    let Some(row) = rows.next()? else {
+        return Ok(None);
+    };
+
+    let db_stamp = FileStamp {
+        mtime_ns: row.get(0)?,
+        size: row.get(1)?,
+    };
+    let wal = match (row.get::<_, Option<i64>>(2)?, row.get::<_, Option<i64>>(3)?) {
+        (Some(mtime_ns), Some(size)) => Some(FileStamp { mtime_ns, size }),
+        (None, None) => None,
+        _ => anyhow::bail!("Inconsistent WAL fingerprint columns for {db_path_str}"),
+    };
+
+    Ok(Some(StoredSourceFingerprint {
+        fingerprint: SourceFingerprint { db: db_stamp, wal },
+        reader_generation: row.get(4)?,
+    }))
+}
+
+fn file_stamp(path: &Path) -> Result<FileStamp> {
+    let metadata = std::fs::metadata(path)?;
+    stamp_from_metadata(&metadata)
+}
+
+fn stamp_from_metadata(metadata: &std::fs::Metadata) -> Result<FileStamp> {
+    let mtime_ns = i64::try_from(
+        metadata
+            .modified()?
+            .duration_since(UNIX_EPOCH)
+            .context("mtime predates unix epoch")?
+            .as_nanos(),
+    )
+    .context("mtime nanoseconds overflow")?;
+    let size = i64::try_from(metadata.len()).context("file size overflow")?;
+    Ok(FileStamp { mtime_ns, size })
+}
+
+fn wal_path(db_path: &Path) -> PathBuf {
+    let mut wal = db_path.as_os_str().to_os_string();
+    wal.push("-wal");
+    wal.into()
 }
 
 #[cfg(test)]

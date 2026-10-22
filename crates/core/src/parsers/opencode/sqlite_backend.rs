@@ -35,7 +35,6 @@ impl SqliteBackend {
     /// enumeration and keeps the backend alive through parsing. The transaction
     /// is rolled back on drop; standalone callers that never call this keep
     /// their current behavior.
-    #[allow(dead_code)]
     pub(crate) fn begin_read_snapshot(&self) -> Result<()> {
         self.conn
             .execute_batch("BEGIN")
