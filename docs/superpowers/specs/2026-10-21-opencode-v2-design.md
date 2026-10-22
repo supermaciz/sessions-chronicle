@@ -100,14 +100,18 @@ context item is a smaller durable abstraction than broadening speaker roles.
     and add its ID to the retained set, so stale-session pruning keeps the
     last successfully indexed representation. Do not fall back to V1 or JSON
     for that ID in the same run.
-- Commit a SQLite source's fingerprint (DB and WAL state) only after all of
-  its selected sessions have been processed successfully, including cache
-  persistence. Expected policy exclusions are not failures. Do not advance
-  the source fingerprint as part of each individual session write: a later
-  failure must leave the previous source fingerprint intact. The next
-  incremental run then re-reads that source and retries the failed IDs,
-  instead of skipping them until OpenCode writes again. Re-reading the whole
-  DB in this case is acceptable.
+- Revised 2026-10-22 (review points 1 and 2): commit a SQLite source's captured
+  fingerprint (DB and WAL state) atomically with its enumerated representations,
+  proven policy exclusions, and explicit per-representation `retry_required`
+  flags, only after cleanup succeeds. A failed selected session retains its
+  last good cache and sets its retry flag; it is never marked ineligible.
+  The next incremental run retries flagged winners even without source writes,
+  while successfully indexed siblings of an unchanged source are skipped.
+  Success or proven policy exclusion clears the representation's retry flag.
+  An inventory/fingerprint commit failure rolls back all that metadata, so the
+  previous fingerprint or pending retry continues to force a safe retry.
+  Opening, probing, or enumeration failure still prevents a source metadata
+  commit and retains its cached owners.
 - Capture the DB and WAL fingerprint values before opening the read snapshot,
   and commit those captured values, not a fresh stat taken after processing.
   Writes made by OpenCode during indexing then still differ from the stored
@@ -140,9 +144,11 @@ context item is a smaller durable abstraction than broadening speaker roles.
   A lower-priority candidate for a preloaded ID is skipped even when its own
   file changed. A higher-priority candidate may replace the cached owner only
   after successful parsing and atomic persistence; failure retains the previous
-  cache and prevents the selected source's fingerprint from advancing. Within a database
-  that is actually read, V2 is enumerated first and V1 rows for V2-present
-  IDs are ignored.
+  cache and records a retry for the selected representation. Within a database
+  that is actually read, generation probing, V2/V1 enumeration, and parsing
+  share one read-only connection and one consistent snapshot. V2 is enumerated
+  first and V1 rows for V2-present IDs are ignored. Dropping either reader must
+  not end the snapshot while another reader still uses it.
 - Ownership moves to a lower-priority source only when the owning database
   was successfully enumerated and no longer contains that ID. A failed or
   skipped owner never yields ownership to a lower-priority source, but does not

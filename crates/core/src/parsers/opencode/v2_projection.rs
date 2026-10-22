@@ -8,12 +8,11 @@ use std::path::Path;
 
 use crate::models::{
     AiAssistant, ContextEntry, ContextKind, Message, ReasoningAttachment, Role, Session,
-    SessionEndingStatus, Subagent, TokenUsage, ToolCall, ToolCallStatus, TranscriptItem,
-    TranscriptItemKind,
+    SessionEndingStatus, Subagent, ToolCall, ToolCallStatus, TranscriptItem, TranscriptItemKind,
 };
 use crate::parsers::{ParsedSession, PendingReasoning};
 
-use super::{ParseError, SessionMetadata, extract_tokens};
+use super::{ParseError, SessionMetadata, extract_tokens, token_usage::TokenUsageAccumulator};
 
 /// One native `session_message` row, ordered by `seq, id` by the reader.
 pub(crate) struct V2MessageRow {
@@ -43,12 +42,7 @@ pub(crate) struct V2Projection {
     /// Task invocations emitted so far, in transcript order, for completion
     /// correlation. `subagent_index` points into `subagents`.
     task_invocations: Vec<TaskInvocation>,
-    token_input: i64,
-    token_output: i64,
-    token_reasoning: i64,
-    token_cache_read: i64,
-    token_cache_write: i64,
-    saw_tokens: bool,
+    token_usage: TokenUsageAccumulator,
     has_user_message: bool,
     saw_corrupt_user: bool,
 }
@@ -76,12 +70,7 @@ impl V2Projection {
             reasoning_attachments: Vec::new(),
             pending_reasoning: PendingReasoning::default(),
             task_invocations: Vec::new(),
-            token_input: 0,
-            token_output: 0,
-            token_reasoning: 0,
-            token_cache_read: 0,
-            token_cache_write: 0,
-            saw_tokens: false,
+            token_usage: TokenUsageAccumulator::default(),
             has_user_message: false,
             saw_corrupt_user: false,
         }
@@ -538,12 +527,7 @@ impl V2Projection {
         let Some(tokens) = extract_tokens(tokens) else {
             return;
         };
-        self.saw_tokens = true;
-        self.token_input += tokens.input;
-        self.token_output += tokens.output;
-        self.token_reasoning += tokens.reasoning.unwrap_or(0);
-        self.token_cache_read += tokens.cache_read.unwrap_or(0);
-        self.token_cache_write += tokens.cache_write.unwrap_or(0);
+        self.token_usage.push(tokens);
     }
 
     pub(crate) fn finish(self) -> Result<ParsedSession> {
@@ -564,13 +548,7 @@ impl V2Projection {
             _ => crate::parsers::extract_first_prompt(&messages),
         };
 
-        let token_usage = self.saw_tokens.then(|| TokenUsage {
-            input_tokens: self.token_input,
-            output_tokens: self.token_output,
-            reasoning_tokens: (self.token_reasoning > 0).then_some(self.token_reasoning),
-            cache_read_tokens: (self.token_cache_read > 0).then_some(self.token_cache_read),
-            cache_write_tokens: (self.token_cache_write > 0).then_some(self.token_cache_write),
-        });
+        let token_usage = self.token_usage.finish();
 
         let session = Session {
             id: self.metadata.id.clone(),

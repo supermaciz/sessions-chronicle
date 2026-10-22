@@ -6,11 +6,12 @@
 //! whose source is unreadable, unchanged, or simply not discovered are kept as
 //! retained candidates so a partial discovery failure never prunes them, while
 //! a confirmed missing source still does. Captured DB/WAL fingerprints are
-//! committed per source only after every selected session in that source has
-//! been processed successfully.
+//! committed atomically with policy exclusions and explicit retry flags, so a
+//! failed session retains its cache without forcing successful siblings to parse.
 
 use std::collections::{BTreeMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
+use std::rc::Rc;
 
 use anyhow::{Context, Result};
 
@@ -21,16 +22,17 @@ use crate::models::{AiAssistant, IndexingError};
 use crate::parsers::ParsedSession;
 use crate::parsers::opencode::{
     OpenCodeBackend, OpenCodeParser, ParseError as OpenCodeParseError, SessionEntry, SessionSource,
-    json_backend::JsonBackend, sqlite_backend::SqliteBackend, v2::V2Reader,
+    json_backend::JsonBackend, sqlite_backend::SqliteBackend, sqlite_source::open_read_snapshot,
+    v2::V2Reader,
 };
 
 use super::{IndexingStats, SessionIndexer, push_indexing_error};
 
 /// Cache-side reader generation. Bumping this forces a one-time reindex of
 /// every OpenCode SQLite source, because a stored fingerprint whose generation
-/// does not match this value is treated as stale. Generation 5 records actual
-/// per-representation ineligibility instead of inferring it from absent owners.
-const OPENCODE_READER_GENERATION: i64 = 5;
+/// does not match this value is treated as stale. Generation 6 uses a common
+/// V1/V2 snapshot and explicit per-representation retry state.
+const OPENCODE_READER_GENERATION: i64 = 6;
 
 /// Outcome of processing one selected session.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -39,9 +41,10 @@ enum SessionOutcome {
     Indexed,
     /// Read but excluded by policy (`NoUserMessages`); pruned from cache.
     Ineligible,
-    /// Read/parse/persist failed (or the source file was unchanged); the
-    /// previous cache is retained.
+    /// Read/parse/persist failed; the previous cache is retained.
     RetainedFailure,
+    /// Deliberately skipped because the cached JSON representation is current.
+    Unchanged,
 }
 
 /// Outcome of resolving one configured source.
@@ -77,21 +80,21 @@ struct EnumeratedSqliteSource {
     v2: Option<V2Reader>,
     v2_ids: Vec<String>,
     v1: Option<SqliteBackend>,
-    v1_entries: Vec<SessionEntry>,
+    v1_entries: BTreeMap<String, SessionEntry>,
     /// True when the source fingerprint was unchanged this run: its IDs come
     /// from the stored enumeration (so reservations and fallbacks hold), the
     /// readers stay closed until needed, and parsing is skipped unless the
-    /// cached owner differs.
+    /// cached owner differs or this representation requires a retry.
     unchanged: bool,
-    /// Cleared when any selected session in this source fails; a cleared flag
-    /// prevents the captured fingerprint from being committed.
-    successful: bool,
     /// Only actual NoUserMessages results for this source snapshot, keyed by
     /// generation and ID (not by ID alone or by absence from cached owners).
     ineligible: HashSet<(OpenCodeGeneration, String)>,
-    /// An unchanged, previously unselected representation may be parsed for
-    /// the first time. Its exclusion must be committed with the inventory too.
-    eligibility_changed: bool,
+    /// Failures must be retried even when the cache already has this owner and
+    /// the source fingerprint is unchanged. Never treat them as ineligible.
+    retry_required: HashSet<(OpenCodeGeneration, String)>,
+    /// Exclusions and retry flags can change even in an unchanged source;
+    /// persist those changes atomically with its existing fingerprint.
+    inventory_changed: bool,
 }
 
 impl EnumeratedSqliteSource {
@@ -101,14 +104,13 @@ impl EnumeratedSqliteSource {
         if self.v2.is_some() || self.v1.is_some() {
             return Ok(());
         }
-        let generations = probe_source_generations(&self.path)?;
+        let conn = open_read_snapshot(&self.path)?;
+        let generations = opencode_sources::probe_generations(&conn)?;
         if generations.contains(&OpenCodeGeneration::V2) {
-            self.v2 = Some(V2Reader::open(&self.path)?);
+            self.v2 = Some(V2Reader::from_connection(&self.path, Rc::clone(&conn)));
         }
         if generations.contains(&OpenCodeGeneration::V1) {
-            let backend = SqliteBackend::open(&self.path)?;
-            backend.begin_read_snapshot()?;
-            self.v1 = Some(backend);
+            self.v1 = Some(SqliteBackend::from_connection(&self.path, conn));
         }
         Ok(())
     }
@@ -126,6 +128,38 @@ struct JsonEnumeration {
 #[cfg(test)]
 thread_local! {
     static FORCED_UNAVAILABLE: std::cell::RefCell<Vec<PathBuf>> = std::cell::RefCell::new(Vec::new());
+    static AFTER_V2_ENUMERATION: std::cell::RefCell<Option<EnumerationHook>> = const { std::cell::RefCell::new(None) };
+}
+
+#[cfg(test)]
+struct EnumerationHook {
+    path: PathBuf,
+    callback: Box<dyn FnOnce()>,
+}
+
+#[cfg(test)]
+pub(super) fn after_v2_enumeration(path: &Path, callback: impl FnOnce() + 'static) {
+    AFTER_V2_ENUMERATION.with(|hook| {
+        *hook.borrow_mut() = Some(EnumerationHook {
+            path: path.to_path_buf(),
+            callback: Box::new(callback),
+        });
+    });
+}
+
+#[cfg(test)]
+fn run_enumeration_hook(path: &Path) {
+    let hook = AFTER_V2_ENUMERATION.with(|hook| {
+        let mut hook = hook.borrow_mut();
+        if hook.as_ref().is_some_and(|hook| hook.path == path) {
+            hook.take()
+        } else {
+            None
+        }
+    });
+    if let Some(hook) = hook {
+        (hook.callback)();
+    }
 }
 
 #[cfg(test)]
@@ -191,17 +225,6 @@ fn record_session_error(
         format!("Failed to index session {id}: {err:#}"),
     );
     stats.errors += 1;
-}
-
-/// Open a short-lived read-only connection and probe which generations the
-/// source database can serve.
-fn probe_source_generations(db_path: &Path) -> Result<Vec<OpenCodeGeneration>> {
-    let conn = rusqlite::Connection::open_with_flags(
-        db_path,
-        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
-    )
-    .with_context(|| format!("Failed to open OpenCode DB: {}", db_path.display()))?;
-    opencode_sources::probe_generations(&conn)
 }
 
 impl SessionIndexer {
@@ -280,7 +303,7 @@ impl SessionIndexer {
                             retained: false,
                         });
                     }
-                    for entry in &source.v1_entries {
+                    for entry in source.v1_entries.values() {
                         candidates.push(SourceCandidate {
                             session_id: entry.id.clone(),
                             path: db_path.clone(),
@@ -353,14 +376,18 @@ impl SessionIndexer {
                 .unwrap_or(false);
             if is_unchanged {
                 let source = &enumerated[source_index[&winner.path]];
-                if source.ineligible.contains(&(winner.generation, id.clone())) {
+                let representation = (winner.generation, id.clone());
+                let needs_retry = source.retry_required.contains(&representation);
+                if !needs_retry && source.ineligible.contains(&representation) {
                     // This exact representation was actually parsed and
                     // excluded in the committed source snapshot.
                     continue;
                 }
                 match cached_owner_map.get(id) {
                     Some((path, generation))
-                        if path == &winner.path && *generation == winner.generation =>
+                        if !needs_retry
+                            && path == &winner.path
+                            && *generation == winner.generation =>
                     {
                         // The cache already holds this exact owner: retain
                         // without parsing.
@@ -387,19 +414,28 @@ impl SessionIndexer {
                 &mut stats,
                 &cached_owner_map,
             )?;
+            if let Some(&index) = source_index.get(&winner.path) {
+                let source = &mut enumerated[index];
+                let representation = (winner.generation, id.clone());
+                source.inventory_changed |= if outcome == SessionOutcome::RetainedFailure {
+                    source.retry_required.insert(representation.clone())
+                } else {
+                    source.retry_required.remove(&representation)
+                };
+                source.inventory_changed |= if outcome == SessionOutcome::Ineligible {
+                    source.ineligible.insert(representation)
+                } else {
+                    source.ineligible.remove(&representation)
+                };
+            }
             match outcome {
                 SessionOutcome::Indexed => {
                     indexed_ids.insert(id.clone());
                 }
                 SessionOutcome::Ineligible => {
                     // Reserved priority but excluded by policy; pruned below.
-                    if let Some(&index) = source_index.get(&winner.path) {
-                        let source = &mut enumerated[index];
-                        source.eligibility_changed |=
-                            source.ineligible.insert((winner.generation, id.clone()));
-                    }
                 }
-                SessionOutcome::RetainedFailure => {
+                SessionOutcome::RetainedFailure | SessionOutcome::Unchanged => {
                     retained_ids.insert(id.clone());
                 }
             }
@@ -427,14 +463,13 @@ impl SessionIndexer {
 
         match cleanup {
             Ok(()) => {
-                // Commit captured fingerprints only for fully successful sources
-                // and only after cleanup succeeded.
+                // A captured source fingerprint is safe to commit only together
+                // with retry flags for every failed representation, after cleanup.
                 // An unchanged source already holds this fingerprint and
-                // enumeration, but may have learned a new exclusion when a
-                // previously unselected representation became the winner.
+                // enumeration, but may have learned a new exclusion or changed
+                // a retry flag when a representation was parsed.
                 for source in &enumerated {
-                    if source.successful
-                        && (!source.unchanged || source.eligibility_changed)
+                    if (!source.unchanged || source.inventory_changed)
                         && let Err(err) = self.commit_opencode_fingerprint(source)
                     {
                         tracing::warn!(
@@ -504,8 +539,11 @@ impl SessionIndexer {
                     return Ok((SourceOutcome::Enumerated, Some(source)));
                 }
 
-                let generations = match probe_source_generations(db_path) {
-                    Ok(generations) => generations,
+                let (conn, generations) = match open_read_snapshot(db_path).and_then(|conn| {
+                    let generations = opencode_sources::probe_generations(&conn)?;
+                    Ok((conn, generations))
+                }) {
+                    Ok(opened) => opened,
                     Err(err) => {
                         record_source_error(db_path, err.to_string(), errors_detail, stats);
                         return Ok((SourceOutcome::Unavailable, None));
@@ -515,6 +553,7 @@ impl SessionIndexer {
                 match self.open_sqlite_source(
                     db_path,
                     fingerprint,
+                    conn,
                     &generations,
                     errors_detail,
                     stats,
@@ -532,6 +571,7 @@ impl SessionIndexer {
         &self,
         db_path: &Path,
         fingerprint: SourceFingerprint,
+        conn: Rc<rusqlite::Connection>,
         generations: &[OpenCodeGeneration],
         errors_detail: &mut VecDeque<IndexingError>,
         stats: &mut IndexingStats,
@@ -542,21 +582,24 @@ impl SessionIndexer {
             v2: None,
             v2_ids: Vec::new(),
             v1: None,
-            v1_entries: Vec::new(),
+            v1_entries: BTreeMap::new(),
             unchanged: false,
-            successful: true,
             ineligible: HashSet::new(),
-            eligibility_changed: false,
+            retry_required: HashSet::new(),
+            inventory_changed: false,
         };
 
         if generations.contains(&OpenCodeGeneration::V2) {
-            match V2Reader::open(db_path).and_then(|reader| {
+            let reader = V2Reader::from_connection(db_path, Rc::clone(&conn));
+            match (|| -> Result<_> {
                 let ids = reader.list_session_ids()?;
                 Ok((reader, ids))
-            }) {
+            })() {
                 Ok((reader, ids)) => {
                     source.v2_ids = ids;
                     source.v2 = Some(reader);
+                    #[cfg(test)]
+                    run_enumeration_hook(db_path);
                 }
                 Err(err) => {
                     record_source_error(db_path, err.to_string(), errors_detail, stats);
@@ -566,13 +609,16 @@ impl SessionIndexer {
         }
 
         if generations.contains(&OpenCodeGeneration::V1) {
-            match SqliteBackend::open(db_path).and_then(|backend| {
-                backend.begin_read_snapshot()?;
+            let backend = SqliteBackend::from_connection(db_path, conn);
+            match (|| -> Result<_> {
                 let entries = backend.list_sessions()?;
                 Ok((backend, entries))
-            }) {
+            })() {
                 Ok((backend, entries)) => {
-                    source.v1_entries = entries;
+                    source.v1_entries = entries
+                        .into_iter()
+                        .map(|entry| (entry.id.clone(), entry))
+                        .collect();
                     source.v1 = Some(backend);
                 }
                 Err(err) => {
@@ -667,24 +713,29 @@ impl SessionIndexer {
             return None;
         }
 
-        let (v2_ids, v1_ids, ineligible) =
-            match opencode_sources::load_source_enumeration(&self.db, db_path) {
-                Ok(enumeration) => enumeration,
-                Err(err) => {
-                    tracing::warn!(
-                        "Failed to load OpenCode enumeration for {}: {err:#}; re-reading",
-                        db_path.display()
-                    );
-                    return None;
-                }
-            };
-        let v1_entries = v1_ids
+        let inventory = match opencode_sources::load_source_enumeration(&self.db, db_path) {
+            Ok(enumeration) => enumeration,
+            Err(err) => {
+                tracing::warn!(
+                    "Failed to load OpenCode enumeration for {}: {err:#}; re-reading",
+                    db_path.display()
+                );
+                return None;
+            }
+        };
+        let v1_entries = inventory
+            .v1_ids
             .into_iter()
-            .map(|id| SessionEntry {
-                id,
-                source: SessionSource::SqliteRow {
-                    db_path: db_path.to_path_buf(),
-                },
+            .map(|id| {
+                (
+                    id.clone(),
+                    SessionEntry {
+                        id,
+                        source: SessionSource::SqliteRow {
+                            db_path: db_path.to_path_buf(),
+                        },
+                    },
+                )
             })
             .collect();
 
@@ -692,13 +743,13 @@ impl SessionIndexer {
             path: db_path.to_path_buf(),
             fingerprint: captured,
             v2: None,
-            v2_ids,
+            v2_ids: inventory.v2_ids,
             v1: None,
             v1_entries,
             unchanged: true,
-            successful: true,
-            ineligible,
-            eligibility_changed: false,
+            ineligible: inventory.ineligible,
+            retry_required: inventory.retry_required,
+            inventory_changed: false,
         })
     }
 
@@ -740,8 +791,7 @@ impl SessionIndexer {
                         .context("V1 backend missing for enumerated source")?;
                     let entry = source
                         .v1_entries
-                        .iter()
-                        .find(|entry| entry.id == winner.session_id)
+                        .get(&winner.session_id)
                         .context("V1 entry not enumerated")?;
                     parser.parse_entry(entry, backend)
                 });
@@ -752,7 +802,6 @@ impl SessionIndexer {
                             Ok(SessionOutcome::Indexed)
                         }
                         Err(err) => {
-                            enumerated[index].successful = false;
                             record_session_error(
                                 &winner.path,
                                 &winner.session_id,
@@ -765,7 +814,6 @@ impl SessionIndexer {
                     },
                     Err(err) if is_no_user_messages(&err) => Ok(SessionOutcome::Ineligible),
                     Err(err) => {
-                        enumerated[index].successful = false;
                         record_session_error(
                             &winner.path,
                             &winner.session_id,
@@ -795,7 +843,7 @@ impl SessionIndexer {
                 );
                 if incremental && cached_is_same_json && !self.should_reindex(&path)? {
                     stats.skipped += 1;
-                    return Ok(SessionOutcome::RetainedFailure);
+                    return Ok(SessionOutcome::Unchanged);
                 }
                 let parsed = parser.parse_entry(entry, &json.backend);
                 match parsed {
@@ -882,8 +930,8 @@ impl SessionIndexer {
         )?;
         {
             let mut insert = tx.prepare(
-                "INSERT OR IGNORE INTO opencode_source_sessions (db_path, session_id, generation, ineligible)
-                 VALUES (?1, ?2, ?3, ?4)",
+                "INSERT OR IGNORE INTO opencode_source_sessions (db_path, session_id, generation, ineligible, retry_required)
+                 VALUES (?1, ?2, ?3, ?4, ?5)",
             )?;
             for id in &source.v2_ids {
                 insert.execute(rusqlite::params![
@@ -892,16 +940,22 @@ impl SessionIndexer {
                     OpenCodeGeneration::V2.to_storage(),
                     source
                         .ineligible
+                        .contains(&(OpenCodeGeneration::V2, id.clone())),
+                    source
+                        .retry_required
                         .contains(&(OpenCodeGeneration::V2, id.clone()))
                 ])?;
             }
-            for entry in &source.v1_entries {
+            for entry in source.v1_entries.values() {
                 insert.execute(rusqlite::params![
                     path_str,
                     &entry.id,
                     OpenCodeGeneration::V1.to_storage(),
                     source
                         .ineligible
+                        .contains(&(OpenCodeGeneration::V1, entry.id.clone())),
+                    source
+                        .retry_required
                         .contains(&(OpenCodeGeneration::V1, entry.id.clone()))
                 ])?;
             }

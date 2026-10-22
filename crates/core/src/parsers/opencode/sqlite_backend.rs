@@ -1,6 +1,7 @@
 use anyhow::{Context, Result};
 use rusqlite::{Connection, OpenFlags};
 use std::path::{Path, PathBuf};
+use std::rc::Rc;
 
 use crate::models::Role;
 use crate::parsers::model::normalize_model;
@@ -11,7 +12,7 @@ use super::{
 };
 
 pub struct SqliteBackend {
-    conn: Connection,
+    conn: Rc<Connection>,
     db_path: PathBuf,
 }
 
@@ -23,21 +24,15 @@ impl SqliteBackend {
 
         conn.busy_timeout(std::time::Duration::from_secs(5))?;
 
-        Ok(Self {
-            conn,
-            db_path: db_path.to_path_buf(),
-        })
+        Ok(Self::from_connection(db_path, Rc::new(conn)))
     }
 
-    /// Begin a deferred read transaction pinning one consistent snapshot for
-    /// the backend's lifetime. The coordinator calls this once before V1
-    /// enumeration and keeps the backend alive through parsing. The transaction
-    /// is rolled back on drop; standalone callers that never call this keep
-    /// their current behavior.
-    pub(crate) fn begin_read_snapshot(&self) -> Result<()> {
-        self.conn
-            .execute_batch("BEGIN")
-            .context("Failed to begin OpenCode read snapshot")
+    /// Join the source snapshot already used for generation probing and V2.
+    pub(crate) fn from_connection(db_path: &Path, conn: Rc<Connection>) -> Self {
+        Self {
+            conn,
+            db_path: db_path.to_path_buf(),
+        }
     }
 
     fn part_table_has_session_id(&self) -> Result<bool> {
@@ -48,15 +43,6 @@ impl SqliteBackend {
             .context("Failed to inspect OpenCode part table")?;
 
         Ok(columns.iter().any(|column| column == "session_id"))
-    }
-}
-
-impl Drop for SqliteBackend {
-    fn drop(&mut self) {
-        // End any read snapshot established by `begin_read_snapshot`. When no
-        // transaction is open this is a no-op, so standalone callers are
-        // unaffected.
-        let _ = self.conn.execute_batch("ROLLBACK");
     }
 }
 

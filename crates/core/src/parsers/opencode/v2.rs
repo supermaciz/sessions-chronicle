@@ -2,15 +2,16 @@
 //!
 //! Reads the `session_v2` / `session_message` tables (see the pinned upstream
 //! `packages/core/src/session/sql.ts`) through a read-only connection. A
-//! deferred read transaction opened in [`V2Reader::open`] pins one consistent
-//! snapshot for the reader's lifetime; it is rolled back on drop and the source
+//! shared read transaction pins one consistent snapshot for both generations;
+//! it is rolled back when the last reader is dropped and the source
 //! database is never modified.
 
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
-use rusqlite::{Connection, OpenFlags, OptionalExtension};
+use rusqlite::{Connection, OptionalExtension};
 use serde_json::Value;
 use std::path::{Path, PathBuf};
+use std::rc::Rc;
 
 use crate::parsers::ParsedSession;
 
@@ -18,23 +19,24 @@ use super::v2_projection::{V2MessageRow, V2Projection};
 use super::{SessionMetadata, timestamp_from_millis};
 
 pub(crate) struct V2Reader {
-    conn: Connection,
+    conn: Rc<Connection>,
     db_path: PathBuf,
 }
 
 impl V2Reader {
+    #[cfg(test)]
     pub(crate) fn open(db_path: &Path) -> Result<Self> {
-        let flags = OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX;
-        let conn = Connection::open_with_flags(db_path, flags)
-            .with_context(|| format!("Failed to open OpenCode V2 DB: {}", db_path.display()))?;
-        conn.busy_timeout(std::time::Duration::from_secs(5))?;
-        // Begin a deferred read transaction so enumeration and every parse see
-        // one consistent snapshot. It is rolled back on drop.
-        conn.execute_batch("BEGIN")?;
-        Ok(Self {
+        Ok(Self::from_connection(
+            db_path,
+            super::sqlite_source::open_read_snapshot(db_path)?,
+        ))
+    }
+
+    pub(crate) fn from_connection(db_path: &Path, conn: Rc<Connection>) -> Self {
+        Self {
             conn,
             db_path: db_path.to_path_buf(),
-        })
+        }
     }
 
     pub(crate) fn list_session_ids(&self) -> Result<Vec<String>> {
@@ -165,12 +167,6 @@ impl V2Reader {
             time_created: timestamp_from_millis(created_ms)?,
             time_updated: timestamp_from_millis(updated_ms)?,
         })
-    }
-}
-
-impl Drop for V2Reader {
-    fn drop(&mut self) {
-        let _ = self.conn.execute_batch("ROLLBACK");
     }
 }
 

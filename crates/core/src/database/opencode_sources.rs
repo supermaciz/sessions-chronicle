@@ -290,26 +290,27 @@ pub(crate) fn load_source_fingerprint(
     }))
 }
 
-/// Session IDs a source exposed when its fingerprint was last committed, per
-/// generation: `(v2_ids, v1_ids)`. Stored with the fingerprint, so an unchanged
-/// source can take part in candidate selection without being opened.
-/// The final set contains only representations actually parsed as ineligible.
-pub(crate) type SourceEnumeration = (
-    Vec<String>,
-    Vec<String>,
-    HashSet<(OpenCodeGeneration, String)>,
-);
+/// Source inventory committed atomically with its captured fingerprint.
+/// Ineligibility is a proven exclusion; retry-required retains the previous
+/// cache and bypasses the unchanged-owner skip on the next run.
+#[derive(Default)]
+pub(crate) struct SourceEnumeration {
+    pub v2_ids: Vec<String>,
+    pub v1_ids: Vec<String>,
+    pub ineligible: HashSet<(OpenCodeGeneration, String)>,
+    pub retry_required: HashSet<(OpenCodeGeneration, String)>,
+}
 
 pub(crate) fn load_source_enumeration(
     db: &Connection,
     db_path: &Path,
 ) -> Result<SourceEnumeration> {
     let Some(db_path_str) = db_path.to_str() else {
-        return Ok((Vec::new(), Vec::new(), HashSet::new()));
+        return Ok(SourceEnumeration::default());
     };
 
     let mut stmt = db.prepare(
-        "SELECT session_id, generation, ineligible FROM opencode_source_sessions
+        "SELECT session_id, generation, ineligible, retry_required FROM opencode_source_sessions
          WHERE db_path = ?1 ORDER BY session_id",
     )?;
     let rows = stmt.query_map([db_path_str], |row| {
@@ -317,26 +318,31 @@ pub(crate) fn load_source_enumeration(
             row.get::<_, String>(0)?,
             row.get::<_, String>(1)?,
             row.get::<_, bool>(2)?,
+            row.get::<_, bool>(3)?,
         ))
     })?;
 
-    let mut v2_ids = Vec::new();
-    let mut v1_ids = Vec::new();
-    let mut ineligible = HashSet::new();
+    let mut inventory = SourceEnumeration::default();
     for row in rows {
-        let (id, generation, excluded) = row?;
-        if excluded && let Some(generation) = OpenCodeGeneration::from_storage(&generation) {
-            ineligible.insert((generation, id.clone()));
+        let (id, generation_str, excluded, retry) = row?;
+        let generation = OpenCodeGeneration::from_storage(&generation_str).with_context(|| {
+            format!("Unexpected generation '{generation_str}' in enumeration of {db_path_str}")
+        })?;
+        if excluded {
+            inventory.ineligible.insert((generation, id.clone()));
         }
-        match OpenCodeGeneration::from_storage(&generation) {
-            Some(OpenCodeGeneration::V2) => v2_ids.push(id),
-            Some(OpenCodeGeneration::V1) => v1_ids.push(id),
+        if retry {
+            inventory.retry_required.insert((generation, id.clone()));
+        }
+        match generation {
+            OpenCodeGeneration::V2 => inventory.v2_ids.push(id),
+            OpenCodeGeneration::V1 => inventory.v1_ids.push(id),
             _ => anyhow::bail!(
-                "Unexpected generation '{generation}' in enumeration of {db_path_str}"
+                "Unexpected generation '{generation_str}' in enumeration of {db_path_str}"
             ),
         }
     }
-    Ok((v2_ids, v1_ids, ineligible))
+    Ok(inventory)
 }
 
 fn file_stamp(path: &Path) -> Result<FileStamp> {

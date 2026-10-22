@@ -191,6 +191,52 @@ fn v2_usage_is_assistant_only() {
 }
 
 #[test]
+fn v2_optional_usage_ignores_user_and_context_tokens() {
+    use crate::models::TokenUsage;
+    use serde_json::json;
+
+    for (tokens, expected) in [
+        (None, None),
+        (
+            Some(json!({"input": 0, "output": 0})),
+            Some(TokenUsage {
+                input_tokens: 0,
+                output_tokens: 0,
+                reasoning_tokens: None,
+                cache_read_tokens: None,
+                cache_write_tokens: None,
+            }),
+        ),
+        (
+            Some(
+                json!({"input": 10, "output": 20, "reasoning": 3, "cache": {"read": 4, "write": 5}}),
+            ),
+            Some(TokenUsage {
+                input_tokens: 20,
+                output_tokens: 40,
+                reasoning_tokens: Some(6),
+                cache_read_tokens: Some(8),
+                cache_write_tokens: Some(10),
+            }),
+        ),
+    ] {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("usage.db");
+        let conn = test_support::create_v2_db(&path);
+        conn.execute("UPDATE session_message SET data = json_set(data, '$.tokens', json('{\"input\":9999,\"output\":9999}')) WHERE session_id = 'ses_v2' AND type != 'assistant'", []).unwrap();
+        conn.execute("UPDATE session_message SET data = json_remove(data, '$.tokens') WHERE session_id = 'ses_v2' AND type = 'assistant'", []).unwrap();
+        if let Some(tokens) = tokens {
+            conn.execute("UPDATE session_message SET data = json_set(data, '$.tokens', json(?1)) WHERE id IN ('msg_asst_reason', 'msg_final')", [tokens.to_string()]).unwrap();
+        }
+        let parsed = V2Reader::open(&path)
+            .unwrap()
+            .parse_session("ses_v2")
+            .unwrap();
+        assert_eq!(parsed.token_usage, expected);
+    }
+}
+
+#[test]
 fn v2_malformed_rows_continue() {
     let dir = tempfile::tempdir().unwrap();
     let db_path = dir.path().join("malformed.db");

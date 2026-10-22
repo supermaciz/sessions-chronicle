@@ -2,7 +2,7 @@ use anyhow::Result;
 use rusqlite::Connection;
 
 #[cfg(test)]
-const CURRENT_DB_VERSION: i64 = 21;
+const CURRENT_DB_VERSION: i64 = 22;
 
 fn column_exists(conn: &Connection, table_name: &str, column_name: &str) -> Result<bool> {
     Ok(conn.query_row(
@@ -70,6 +70,8 @@ fn table_exists(conn: &Connection, name: &str) -> Result<bool> {
 ///        unchanged source is no longer opened on incremental runs
 ///   21 – per-representation proven ineligibility in opencode_source_sessions;
 ///        existing inventory defaults to unknown, without clearing cached data
+///   22 – explicit per-representation retry state, so failures retain cached
+///        data and retry without reparsing successful siblings
 pub fn initialize_database(conn: &Connection) -> Result<()> {
     let version: i64 = conn.query_row("PRAGMA user_version", [], |row| row.get(0))?;
 
@@ -135,6 +137,9 @@ pub fn initialize_database(conn: &Connection) -> Result<()> {
     }
     if version < 21 {
         apply_v21_migration(conn)?;
+    }
+    if version < 22 {
+        apply_v22_migration(conn)?;
     }
 
     Ok(())
@@ -846,6 +851,18 @@ fn apply_v21_migration(conn: &Connection) -> Result<()> {
         )?;
     }
     conn.execute_batch("PRAGMA user_version = 21;")?;
+    Ok(())
+}
+
+/// Persist failures separately from policy exclusions so successful siblings
+/// can be skipped without abandoning retries or pruning the last good cache.
+fn apply_v22_migration(conn: &Connection) -> Result<()> {
+    if !column_exists(conn, "opencode_source_sessions", "retry_required")? {
+        conn.execute_batch(
+            "ALTER TABLE opencode_source_sessions ADD COLUMN retry_required INTEGER NOT NULL DEFAULT 0;",
+        )?;
+    }
+    conn.execute_batch("PRAGMA user_version = 22;")?;
     Ok(())
 }
 
@@ -2332,6 +2349,59 @@ mod tests {
     }
 
     #[test]
+    fn opencode_retry_v22_migration_preserves_cache_and_inventory() {
+        let conn = Connection::open_in_memory().unwrap();
+        migrate_to_v18(&conn);
+        seed_v18_cache(&conn);
+        apply_v19_migration(&conn).unwrap();
+        apply_v20_migration(&conn).unwrap();
+        apply_v21_migration(&conn).unwrap();
+        conn.execute_batch(
+            "INSERT INTO opencode_source_fingerprints VALUES ('/data/opencode.db', 1, 2, 3, 4, 5);
+             INSERT INTO opencode_source_sessions VALUES ('/data/opencode.db', 'oc_sqlite', 'v2', 0), ('/data/opencode.db', 'excluded', 'v2', 1);"
+        ).unwrap();
+        let sessions = string_rows(
+            &conn,
+            "SELECT id || ':' || pinned_at FROM sessions ORDER BY id",
+        );
+        let messages = string_rows(
+            &conn,
+            "SELECT session_id || ':' || content FROM messages ORDER BY session_id",
+        );
+        initialize_database(&conn).unwrap();
+        initialize_database(&conn).unwrap();
+        assert_eq!(count(&conn, "PRAGMA user_version"), 22);
+        assert_eq!(
+            string_rows(
+                &conn,
+                "SELECT session_id || ':' || ineligible || ':' || retry_required FROM opencode_source_sessions ORDER BY session_id"
+            ),
+            ["excluded:1:0", "oc_sqlite:0:0"]
+        );
+        assert_eq!(
+            string_rows(
+                &conn,
+                "SELECT db_mtime_ns || ':' || db_size || ':' || wal_mtime_ns || ':' || wal_size || ':' || reader_generation FROM opencode_source_fingerprints"
+            ),
+            ["1:2:3:4:5"]
+        );
+        assert_eq!(
+            string_rows(
+                &conn,
+                "SELECT id || ':' || pinned_at FROM sessions ORDER BY id"
+            ),
+            sessions
+        );
+        assert_eq!(
+            string_rows(
+                &conn,
+                "SELECT session_id || ':' || content FROM messages ORDER BY session_id"
+            ),
+            messages
+        );
+    }
+
+    #[test]
     fn opencode_source_eligibility_v21_migration_preserves_cache() {
         let conn = Connection::open_in_memory().unwrap();
         migrate_to_v18(&conn);
@@ -2359,7 +2429,7 @@ mod tests {
         initialize_database(&conn).unwrap();
         initialize_database(&conn).unwrap();
 
-        assert_eq!(count(&conn, "PRAGMA user_version"), 21);
+        assert_eq!(count(&conn, "PRAGMA user_version"), CURRENT_DB_VERSION);
         assert_eq!(
             count(&conn, "SELECT ineligible FROM opencode_source_sessions"),
             0

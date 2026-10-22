@@ -20,7 +20,7 @@ use rusqlite::Connection;
 use crate::parsers::opencode::test_support::create_v2_db;
 
 use super::SessionIndexer;
-use super::opencode::force_unavailable;
+use super::opencode::{after_v2_enumeration, force_unavailable};
 
 // ---------------------------------------------------------------------------
 // Cache inspection helpers (SQL only).
@@ -91,6 +91,14 @@ fn pinned_at(db: &Connection, id: &str) -> Option<i64> {
         |row| row.get(0),
     )
     .ok()
+}
+
+fn retry_required(db: &Connection, path: &Path, generation: &str, id: &str) -> bool {
+    db.query_row(
+        "SELECT retry_required FROM opencode_source_sessions WHERE db_path = ?1 AND generation = ?2 AND session_id = ?3",
+        rusqlite::params![path.to_str().unwrap(), generation, id],
+        |row| row.get(0),
+    ).unwrap()
 }
 
 // ---------------------------------------------------------------------------
@@ -338,6 +346,102 @@ fn new_indexer() -> (tempfile::TempDir, SessionIndexer) {
     (dir, indexer)
 }
 
+#[test]
+fn opencode_mixed_migration_preserves_cache_and_pin() {
+    let source_dir = tempfile::tempdir().unwrap();
+    let path = source_dir.path().join("mixed.db");
+    drop(create_v2_source(&path, &[]));
+    let writer = create_v1_source(&path, &[("ses_migrating", "v1 body")]);
+    writer.pragma_update(None, "journal_mode", "WAL").unwrap();
+    let (_dir, mut indexer) = new_indexer();
+    let json = source_dir.path().join("missing");
+    indexer
+        .index_opencode_sessions(&json, &[path.clone()])
+        .unwrap();
+    indexer
+        .db
+        .execute(
+            "UPDATE sessions SET pinned_at = 123 WHERE id = 'ses_migrating'",
+            [],
+        )
+        .unwrap();
+
+    after_v2_enumeration(&path, move || {
+        writer.execute_batch("BEGIN IMMEDIATE;").unwrap();
+        insert_v2_session(&writer, "ses_migrating", "v2 body");
+        writer
+            .execute("DELETE FROM session WHERE id = 'ses_migrating'", [])
+            .unwrap();
+        writer.execute_batch("COMMIT;").unwrap();
+    });
+    let during = indexer
+        .index_opencode_sessions_internal(&json, &[path.clone()], false, &mut Default::default())
+        .unwrap();
+    assert_eq!(during.removed, 0, "a migration is not a confirmed deletion");
+    assert_eq!(
+        cached_body(&indexer.db, "ses_migrating").as_deref(),
+        Some("v1 body")
+    );
+    assert_eq!(pinned_at(&indexer.db, "ses_migrating"), Some(123));
+
+    let after = indexer
+        .index_opencode_sessions_incremental(&json, &[path])
+        .unwrap();
+    assert_eq!(after.errors, 0);
+    assert_eq!(
+        owner_generation(&indexer.db, "ses_migrating").as_deref(),
+        Some("v2")
+    );
+    assert_eq!(
+        cached_body(&indexer.db, "ses_migrating").as_deref(),
+        Some("v2 body")
+    );
+    assert_eq!(pinned_at(&indexer.db, "ses_migrating"), Some(123));
+}
+
+#[test]
+fn opencode_dropping_one_reader_preserves_shared_snapshot() {
+    use crate::parsers::opencode::{
+        OpenCodeBackend, sqlite_backend::SqliteBackend, sqlite_source::open_read_snapshot,
+        v2::V2Reader,
+    };
+
+    let source_dir = tempfile::tempdir().unwrap();
+    let path = source_dir.path().join("mixed.db");
+    drop(create_v2_source(&path, &[("ses_original", "original")]));
+    let writer = create_v1_source(&path, &[("ses_v1", "v1")]);
+    writer.pragma_update(None, "journal_mode", "WAL").unwrap();
+    let conn = open_read_snapshot(&path).unwrap();
+    let v2 = V2Reader::from_connection(&path, std::rc::Rc::clone(&conn));
+    let v1 = SqliteBackend::from_connection(&path, conn);
+    assert_eq!(v2.list_session_ids().unwrap(), vec!["ses_original"]);
+    drop(v1);
+    insert_v2_session(&writer, "ses_new", "new");
+    assert_eq!(v2.list_session_ids().unwrap(), vec!["ses_original"]);
+    drop(v2);
+
+    let conn = open_read_snapshot(&path).unwrap();
+    let v2 = V2Reader::from_connection(&path, std::rc::Rc::clone(&conn));
+    let v1 = SqliteBackend::from_connection(&path, conn);
+    assert_eq!(v1.list_sessions().unwrap().len(), 1);
+    drop(v2);
+    insert_v1_session(&writer, "ses_new_v1", "new v1");
+    assert_eq!(v1.list_sessions().unwrap().len(), 1);
+    let fresh = V2Reader::open(&path).unwrap();
+    assert_eq!(
+        fresh.list_session_ids().unwrap(),
+        vec!["ses_new", "ses_original"]
+    );
+    assert_eq!(
+        SqliteBackend::open(&path)
+            .unwrap()
+            .list_sessions()
+            .unwrap()
+            .len(),
+        2
+    );
+}
+
 fn install_abort_trigger(indexer: &SessionIndexer, id: &str) {
     let name = id.replace('-', "_");
     indexer
@@ -564,10 +668,11 @@ fn opencode_failure_retries_without_source_write() {
         cached_body(&indexer.db, "ses_failed").as_deref(),
         Some("previous good body")
     );
-    assert_eq!(
+    assert_ne!(
         stored_fingerprint(&indexer.db, &v2_path),
         Some(before_failure)
     );
+    assert!(retry_required(&indexer.db, &v2_path, "v2", "ses_failed"));
 
     // Remove the injected fault, do not touch the source, and retry.
     drop_abort_trigger(&indexer, "ses_failed");
@@ -582,7 +687,263 @@ fn opencode_failure_retries_without_source_write() {
 }
 
 #[test]
-fn opencode_late_persistence_failure_does_not_commit_fingerprint() {
+fn opencode_failed_session_retries_without_reparsing_successful_sibling() {
+    let source_dir = tempfile::tempdir().unwrap();
+    let path = source_dir.path().join("retry.db");
+    let writer = create_v2_source(&path, &[("ses_good", "good"), ("ses_failed", "old body")]);
+    let (_dir, mut indexer) = new_indexer();
+    let json = source_dir.path().join("missing");
+    indexer
+        .index_opencode_sessions_incremental(&json, &[path.clone()])
+        .unwrap();
+    indexer
+        .db
+        .execute(
+            "UPDATE sessions SET pinned_at = 123 WHERE id = 'ses_failed'",
+            [],
+        )
+        .unwrap();
+    writer
+        .execute(
+            "UPDATE session_message SET data = ?1 WHERE session_id = 'ses_failed'",
+            [v2_user_data("new body")],
+        )
+        .unwrap();
+    writer
+        .execute(
+            "UPDATE session_message SET data = ?1 WHERE session_id = 'ses_good'",
+            [v2_user_data("new good")],
+        )
+        .unwrap();
+    install_abort_trigger(&indexer, "ses_failed");
+    let first = indexer
+        .index_opencode_sessions_incremental(&json, &[path.clone()])
+        .unwrap();
+    assert_eq!((first.indexed, first.errors), (1, 1));
+
+    let second = indexer
+        .index_opencode_sessions_incremental(&json, &[path.clone()])
+        .unwrap();
+    assert_eq!((second.indexed, second.skipped, second.errors), (0, 1, 1));
+    assert_eq!(
+        cached_body(&indexer.db, "ses_failed").as_deref(),
+        Some("old body")
+    );
+    assert_eq!(pinned_at(&indexer.db, "ses_failed"), Some(123));
+    assert!(retry_required(&indexer.db, &path, "v2", "ses_failed"));
+
+    drop_abort_trigger(&indexer, "ses_failed");
+    let recovered = indexer
+        .index_opencode_sessions_incremental(&json, &[path.clone()])
+        .unwrap();
+    assert_eq!(
+        (recovered.indexed, recovered.skipped, recovered.errors),
+        (1, 1, 0)
+    );
+    assert_eq!(
+        cached_body(&indexer.db, "ses_failed").as_deref(),
+        Some("new body")
+    );
+    assert_eq!(pinned_at(&indexer.db, "ses_failed"), Some(123));
+    assert!(!indexer.db.query_row("SELECT retry_required FROM opencode_source_sessions WHERE session_id = 'ses_failed'", [], |row| row.get::<_, bool>(0)).unwrap());
+    let settled = indexer
+        .index_opencode_sessions_incremental(&json, &[path])
+        .unwrap();
+    assert_eq!(
+        (settled.indexed, settled.skipped, settled.errors),
+        (0, 2, 0)
+    );
+}
+
+#[test]
+fn opencode_incomplete_transcript_retries_without_reparsing_successful_sibling() {
+    let source_dir = tempfile::tempdir().unwrap();
+    let path = source_dir.path().join("corrupt.db");
+    let writer = create_v2_source(
+        &path,
+        &[("ses_good", "good"), ("ses_corrupt", "cached body")],
+    );
+    let (_dir, mut indexer) = new_indexer();
+    let json = source_dir.path().join("missing");
+    indexer
+        .index_opencode_sessions_incremental(&json, &[path.clone()])
+        .unwrap();
+    indexer
+        .db
+        .execute(
+            "UPDATE sessions SET pinned_at = 123 WHERE id = 'ses_corrupt'",
+            [],
+        )
+        .unwrap();
+    writer
+        .execute(
+            "UPDATE session_message SET data = 'not json' WHERE session_id = 'ses_corrupt'",
+            [],
+        )
+        .unwrap();
+    indexer
+        .index_opencode_sessions_incremental(&json, &[path.clone()])
+        .unwrap();
+    let retry = indexer
+        .index_opencode_sessions_incremental(&json, &[path])
+        .unwrap();
+    assert_eq!(
+        (retry.indexed, retry.skipped, retry.errors, retry.removed),
+        (0, 1, 1, 0)
+    );
+    assert_eq!(
+        cached_body(&indexer.db, "ses_corrupt").as_deref(),
+        Some("cached body")
+    );
+    assert_eq!(pinned_at(&indexer.db, "ses_corrupt"), Some(123));
+    assert_eq!(indexer.db.query_row("SELECT ineligible, retry_required FROM opencode_source_sessions WHERE session_id = 'ses_corrupt'", [], |row| Ok((row.get::<_, bool>(0)?, row.get::<_, bool>(1)?))).unwrap(), (false, true));
+}
+
+#[test]
+fn opencode_retry_commit_failure_keeps_previous_metadata_and_retries() {
+    let source_dir = tempfile::tempdir().unwrap();
+    let path = source_dir.path().join("retry.db");
+    let writer = create_v2_source(&path, &[("ses_failed", "old body")]);
+    let (_dir, mut indexer) = new_indexer();
+    let json = source_dir.path().join("missing");
+    indexer
+        .index_opencode_sessions_incremental(&json, &[path.clone()])
+        .unwrap();
+    let before = stored_fingerprint(&indexer.db, &path).unwrap();
+    indexer
+        .db
+        .execute(
+            "UPDATE sessions SET pinned_at = 123 WHERE id = 'ses_failed'",
+            [],
+        )
+        .unwrap();
+    writer
+        .execute(
+            "UPDATE session_message SET data = ?1",
+            [v2_user_data("new body")],
+        )
+        .unwrap();
+    install_abort_trigger(&indexer, "ses_failed");
+    indexer.db.execute_batch("CREATE TRIGGER abort_source_commit BEFORE UPDATE ON opencode_source_fingerprints BEGIN SELECT RAISE(ABORT, 'metadata failure'); END;").unwrap();
+    let failed = indexer
+        .index_opencode_sessions_incremental(&json, &[path.clone()])
+        .unwrap();
+    assert_eq!(failed.errors, 2);
+    assert_eq!(stored_fingerprint(&indexer.db, &path), Some(before));
+    assert!(
+        !retry_required(&indexer.db, &path, "v2", "ses_failed"),
+        "inventory transaction must roll back too"
+    );
+    assert_eq!(
+        cached_body(&indexer.db, "ses_failed").as_deref(),
+        Some("old body")
+    );
+    assert_eq!(pinned_at(&indexer.db, "ses_failed"), Some(123));
+
+    drop_abort_trigger(&indexer, "ses_failed");
+    indexer
+        .db
+        .execute_batch("DROP TRIGGER abort_source_commit;")
+        .unwrap();
+    let retried = indexer
+        .index_opencode_sessions_incremental(&json, &[path])
+        .unwrap();
+    assert_eq!((retried.indexed, retried.errors), (1, 0));
+    assert_eq!(
+        cached_body(&indexer.db, "ses_failed").as_deref(),
+        Some("new body")
+    );
+    assert_eq!(pinned_at(&indexer.db, "ses_failed"), Some(123));
+}
+
+#[test]
+fn opencode_failed_promotion_retries_unchanged_and_preserves_lower_owner_pin() {
+    let source_dir = tempfile::tempdir().unwrap();
+    let v1 = source_dir.path().join("v1.db");
+    let v2 = source_dir.path().join("v2.db");
+    let _v1_writer = create_v1_source(&v1, &[("ses_shared", "v1 body")]);
+    let (_dir, mut indexer) = new_indexer();
+    let json = source_dir.path().join("missing");
+    indexer
+        .index_opencode_sessions_incremental(&json, std::slice::from_ref(&v1))
+        .unwrap();
+    indexer
+        .db
+        .execute(
+            "UPDATE sessions SET pinned_at = 123 WHERE id = 'ses_shared'",
+            [],
+        )
+        .unwrap();
+    let _v2_writer = create_v2_source(&v2, &[("ses_shared", "v2 body")]);
+    let paths = [v1, v2.clone()];
+    install_abort_trigger(&indexer, "ses_shared");
+    for _ in 0..2 {
+        let failed = indexer
+            .index_opencode_sessions_incremental(&json, &paths)
+            .unwrap();
+        assert_eq!((failed.indexed, failed.errors, failed.removed), (0, 1, 0));
+        assert_eq!(
+            owner_generation(&indexer.db, "ses_shared").as_deref(),
+            Some("v1")
+        );
+        assert_eq!(
+            cached_body(&indexer.db, "ses_shared").as_deref(),
+            Some("v1 body")
+        );
+        assert_eq!(pinned_at(&indexer.db, "ses_shared"), Some(123));
+        assert!(retry_required(&indexer.db, &v2, "v2", "ses_shared"));
+    }
+    drop_abort_trigger(&indexer, "ses_shared");
+    let recovered = indexer
+        .index_opencode_sessions_incremental(&json, &paths)
+        .unwrap();
+    assert_eq!(
+        (recovered.indexed, recovered.errors, recovered.removed),
+        (1, 0, 0)
+    );
+    assert_eq!(
+        owner_generation(&indexer.db, "ses_shared").as_deref(),
+        Some("v2")
+    );
+    assert_eq!(
+        cached_body(&indexer.db, "ses_shared").as_deref(),
+        Some("v2 body")
+    );
+    assert_eq!(pinned_at(&indexer.db, "ses_shared"), Some(123));
+    assert!(!retry_required(&indexer.db, &v2, "v2", "ses_shared"));
+}
+
+#[test]
+fn opencode_generation_five_cache_refreshes_once_and_preserves_pin() {
+    let source_dir = tempfile::tempdir().unwrap();
+    let path = source_dir.path().join("old-reader.db");
+    let _writer = create_v2_source(&path, &[("ses_old_reader", "source body")]);
+    let (_dir, mut indexer) = new_indexer();
+    let json = source_dir.path().join("missing");
+    indexer
+        .index_opencode_sessions_incremental(&json, &[path.clone()])
+        .unwrap();
+    indexer.db.execute_batch("UPDATE opencode_source_fingerprints SET reader_generation = 5; UPDATE sessions SET pinned_at = 123; UPDATE messages SET content = 'old cache';").unwrap();
+    let refreshed = indexer
+        .index_opencode_sessions_incremental(&json, &[path.clone()])
+        .unwrap();
+    assert_eq!((refreshed.indexed, refreshed.errors), (1, 0));
+    assert_eq!(
+        cached_body(&indexer.db, "ses_old_reader").as_deref(),
+        Some("source body")
+    );
+    assert_eq!(pinned_at(&indexer.db, "ses_old_reader"), Some(123));
+    let settled = indexer
+        .index_opencode_sessions_incremental(&json, &[path])
+        .unwrap();
+    assert_eq!(
+        (settled.indexed, settled.skipped, settled.errors),
+        (0, 1, 0)
+    );
+}
+
+#[test]
+fn opencode_late_persistence_failure_commits_retry_with_fingerprint() {
     let source_dir = tempfile::tempdir().unwrap();
     let v2_path = source_dir.path().join("v2.db");
     create_v2_source(&v2_path, &[("ses_a", "a"), ("ses_b", "b")]);
@@ -613,12 +974,14 @@ fn opencode_late_persistence_failure_does_not_commit_fingerprint() {
         .index_opencode_sessions_incremental(&source_dir.path().join("missing"), &[v2_path.clone()])
         .unwrap();
 
-    // The earlier session succeeded, but the later failure must leave the
-    // previous fingerprint intact and preserve the failed session's old cache.
-    assert_eq!(
+    // The fingerprint advances together with an explicit retry for the failed
+    // session, preserving its old cache without reparsing the successful one.
+    assert_ne!(
         stored_fingerprint(&indexer.db, &v2_path),
         Some(before_failure)
     );
+    assert!(!retry_required(&indexer.db, &v2_path, "v2", "ses_a"));
+    assert!(retry_required(&indexer.db, &v2_path, "v2", "ses_b"));
     assert_eq!(cached_body(&indexer.db, "ses_a").as_deref(), Some("a v2"));
     assert_eq!(cached_body(&indexer.db, "ses_b").as_deref(), Some("b"));
 }
@@ -729,6 +1092,42 @@ fn opencode_json_owner_retained_when_storage_root_unavailable() {
 }
 
 #[test]
+fn opencode_unchanged_json_is_skipped_without_error_and_preserves_pin() {
+    let source_dir = tempfile::tempdir().unwrap();
+    let root = source_dir.path().join("json");
+    create_json_session(&root, "ses_json", "json body");
+    let (_dir, mut indexer) = new_indexer();
+    let first = indexer
+        .index_opencode_sessions_incremental(&root, &[])
+        .unwrap();
+    assert_eq!(first.indexed, 1);
+    indexer
+        .db
+        .execute(
+            "UPDATE sessions SET pinned_at = 123 WHERE id = 'ses_json'",
+            [],
+        )
+        .unwrap();
+    let second = indexer
+        .index_opencode_sessions_incremental(&root, &[])
+        .unwrap();
+    assert_eq!(
+        (
+            second.indexed,
+            second.skipped,
+            second.errors,
+            second.removed
+        ),
+        (0, 1, 0, 0)
+    );
+    assert_eq!(
+        cached_body(&indexer.db, "ses_json").as_deref(),
+        Some("json body")
+    );
+    assert_eq!(pinned_at(&indexer.db, "ses_json"), Some(123));
+}
+
+#[test]
 fn opencode_ineligible_does_not_fall_back() {
     let source_dir = tempfile::tempdir().unwrap();
     let v2_path = source_dir.path().join("v2.db");
@@ -798,7 +1197,7 @@ fn opencode_ineligible_not_reintroduced_on_unchanged_run() {
 }
 
 #[test]
-fn opencode_new_fallback_exclusion_commits_only_after_source_success() {
+fn opencode_new_fallback_exclusion_and_retry_commit_atomically() {
     let source_dir = tempfile::tempdir().unwrap();
     let a = source_dir.path().join("a.db");
     let b = source_dir.path().join("b.db");
@@ -841,9 +1240,10 @@ fn opencode_new_fallback_exclusion_commits_only_after_source_success() {
     assert_eq!(failed.errors, 1);
     assert_eq!(
         exclusion(&indexer),
-        0,
-        "a sibling failure prevents eligibility metadata commit"
+        1,
+        "proven ineligibility is committed alongside the sibling's retry"
     );
+    assert!(retry_required(&indexer.db, &b, "v2", "ses_y"));
     assert_eq!(stored_fingerprint(&indexer.db, &b), Some(fingerprint));
 
     drop_abort_trigger(&indexer, "ses_y");
@@ -860,8 +1260,12 @@ fn opencode_new_fallback_exclusion_commits_only_after_source_success() {
     assert_eq!(failed_commit.errors, 1);
     assert_eq!(
         exclusion(&indexer),
-        0,
-        "fingerprint failure must roll back the new exclusion too"
+        1,
+        "fingerprint failure must preserve the old inventory"
+    );
+    assert!(
+        retry_required(&indexer.db, &b, "v2", "ses_y"),
+        "failed commit must not clear the pending retry"
     );
     assert_eq!(stored_fingerprint(&indexer.db, &b), Some(fingerprint));
     indexer
@@ -873,6 +1277,8 @@ fn opencode_new_fallback_exclusion_commits_only_after_source_success() {
         .index_opencode_sessions_incremental(&json_root, &paths)
         .unwrap();
     assert_eq!(retried.errors, 0);
+    assert_eq!(retried.indexed, 1);
+    assert!(!retry_required(&indexer.db, &b, "v2", "ses_y"));
     assert_eq!(
         cached_body(&indexer.db, "ses_y").as_deref(),
         Some("valid y")
