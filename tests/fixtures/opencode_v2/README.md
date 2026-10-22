@@ -105,3 +105,33 @@ the omitted columns still opens and parses successfully.
 - `ses_v2_task_id_link` — a task carrying only `input.task_id` (a resume
   request) and no `state.metadata.sessionId`; `task_id` alone establishes no
   child link, so a completion naming that id stays standalone.
+
+## Reproducible database creation
+
+The fixture is shipped as two reviewed SQL files so it can be audited as text.
+A disposable runnable database is built from them with the SQLite CLI (or any
+SQLite client):
+
+```bash
+# From the repository root.
+mkdir -p /tmp/opencode-v2-run/opencode_storage
+sqlite3 /tmp/opencode-v2-run/opencode_storage/opencode.db \
+  < tests/fixtures/opencode_v2/schema.sql
+sqlite3 /tmp/opencode-v2-run/opencode_storage/opencode.db \
+  < tests/fixtures/opencode_v2/sessions.sql
+```
+
+That layout follows the repository's `--sessions-dir` fixture override
+convention (an `opencode_storage/` subdirectory holding `opencode.db`), so the
+built application can be run against it:
+
+```bash
+flatpak-builder --run flatpak_app \
+  build-aux/dev.maciz.sessionschronicle.Devel.json sessions-chronicle \
+  --sessions-dir /tmp/opencode-v2-run
+```
+
+The acceptance tests in `tests/opencode_v2_integration.rs` build this same
+database in-process (see the `create_source` helper) and drive the public
+indexing, search, and transcript-reading paths headlessly; no personal
+transcript content is involved.

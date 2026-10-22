@@ -463,6 +463,72 @@ mod tests {
     }
 
     #[test]
+    fn context_text_is_excluded_from_search_provider_query_path() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let database_path = temp_dir.path().join("sessions.db");
+
+        // Build a real cache: one OpenCode session with a genuine user message,
+        // plus context text stored only in `context_entries` (never `messages`).
+        {
+            let connection = Connection::open(&database_path).unwrap();
+            crate::database::schema::initialize_database(&connection).unwrap();
+            connection
+                .execute(
+                    "INSERT INTO sessions (id, tool, project_path, start_time, message_count,
+                                           file_path, last_updated, first_prompt)
+                     VALUES ('ses_v2', 'opencode', NULL, 1, 1, '/tmp/ses_v2.db', 2, 'real prompt')",
+                    [],
+                )
+                .unwrap();
+            connection
+                .execute(
+                    "INSERT INTO messages (session_id, message_index, role, content, timestamp, model)
+                     VALUES ('ses_v2', 0, 'user', 'real prompt', 1, NULL)",
+                    [],
+                )
+                .unwrap();
+            connection
+                .execute(
+                    "INSERT INTO context_entries (session_id, id, kind, name, text, timestamp, item_index)
+                     VALUES ('ses_v2', 'msg_system', 'system', NULL, 'contextonlyneedle', 1, 0)",
+                    [],
+                )
+                .unwrap();
+        }
+
+        let (connection, _interrupt) = ShellSearchConnection::open_read_only(&database_path)
+            .unwrap()
+            .unwrap();
+
+        let genuine = build_match_expression(&["real prompt".to_string()]).unwrap();
+        let needle = build_match_expression(&["contextonlyneedle".to_string()]).unwrap();
+
+        // The genuine user term ranks through `messages_fts`; the context-only
+        // term never reached it, so it yields no result and no snippet.
+        assert_eq!(
+            search_session_ids(&connection, &genuine).unwrap(),
+            ["ses_v2"]
+        );
+        assert!(search_session_ids(&connection, &needle).unwrap().is_empty());
+
+        let context_meta = connection
+            .load_metadata(&["ses_v2".to_string()], true, Some(&needle))
+            .unwrap();
+        assert!(
+            context_meta[0].as_ref().unwrap().matched_snippet.is_none(),
+            "context-only term must produce no GNOME snippet"
+        );
+
+        let genuine_meta = connection
+            .load_metadata(&["ses_v2".to_string()], true, Some(&genuine))
+            .unwrap();
+        assert!(
+            genuine_meta[0].as_ref().unwrap().matched_snippet.is_some(),
+            "genuine term must produce a GNOME snippet"
+        );
+    }
+
+    #[test]
     fn opened_database_rejects_writes() {
         let temp_dir = tempfile::tempdir().unwrap();
         let database_path = temp_dir.path().join("existing.db");
