@@ -785,6 +785,8 @@ fn opencode_ineligible_not_reintroduced_on_unchanged_run() {
         .unwrap();
     assert!(!cached_ids(&indexer.db).iter().any(|id| id == "ses_x"));
 
+    // Prove the known-ineligible reservation does not reopen its source.
+    corrupt_keeping_fingerprint(&v2_path);
     // Run 2: A is unchanged, so it must still reserve X's priority and keep it
     // pruned rather than letting the JSON source reintroduce it.
     let second = indexer
@@ -792,6 +794,203 @@ fn opencode_ineligible_not_reintroduced_on_unchanged_run() {
         .unwrap();
     assert!(!cached_ids(&indexer.db).iter().any(|id| id == "ses_x"));
     assert_eq!(second.indexed, 0);
+    assert_eq!(second.errors, 0);
+}
+
+#[test]
+fn opencode_new_fallback_exclusion_commits_only_after_source_success() {
+    let source_dir = tempfile::tempdir().unwrap();
+    let a = source_dir.path().join("a.db");
+    let b = source_dir.path().join("b.db");
+    let json_root = source_dir.path().join("json");
+    let conn = create_v2_source(&a, &[("ses_x", "unused"), ("ses_y", "unused")]);
+    conn.execute_batch("DELETE FROM session_message;").unwrap();
+    drop(conn);
+    let conn = create_v2_source(&b, &[("ses_x", "unused"), ("ses_y", "valid y")]);
+    conn.execute("DELETE FROM session_message WHERE session_id = 'ses_x'", [])
+        .unwrap();
+    drop(conn);
+    drop(create_v1_source(
+        &b,
+        &[("ses_x", "unparsed V1 representation")],
+    ));
+    create_json_session(&json_root, "ses_x", "must stay suppressed");
+    let paths = [a.clone(), b.clone()];
+    let (_dir, mut indexer) = new_indexer();
+    indexer
+        .index_opencode_sessions_incremental(&json_root, &paths)
+        .unwrap();
+    let fingerprint = stored_fingerprint(&indexer.db, &b).unwrap();
+    let exclusion = |indexer: &SessionIndexer| -> i64 {
+        indexer.db.query_row(
+            "SELECT ineligible FROM opencode_source_sessions WHERE db_path = ?1 AND generation = 'v2' AND session_id = 'ses_x'",
+            [b.to_str().unwrap()], |row| row.get(0),
+        ).unwrap()
+    };
+    assert_eq!(
+        exclusion(&indexer),
+        0,
+        "the non-selected representation is unknown"
+    );
+
+    std::fs::remove_file(&a).unwrap();
+    install_abort_trigger(&indexer, "ses_y");
+    let failed = indexer
+        .index_opencode_sessions_incremental(&json_root, &paths)
+        .unwrap();
+    assert_eq!(failed.errors, 1);
+    assert_eq!(
+        exclusion(&indexer),
+        0,
+        "a sibling failure prevents eligibility metadata commit"
+    );
+    assert_eq!(stored_fingerprint(&indexer.db, &b), Some(fingerprint));
+
+    drop_abort_trigger(&indexer, "ses_y");
+    indexer
+        .db
+        .execute_batch(
+            "CREATE TRIGGER abort_source_commit BEFORE UPDATE ON opencode_source_fingerprints
+         BEGIN SELECT RAISE(ABORT, 'injected fingerprint failure'); END;",
+        )
+        .unwrap();
+    let failed_commit = indexer
+        .index_opencode_sessions_incremental(&json_root, &paths)
+        .unwrap();
+    assert_eq!(failed_commit.errors, 1);
+    assert_eq!(
+        exclusion(&indexer),
+        0,
+        "fingerprint failure must roll back the new exclusion too"
+    );
+    assert_eq!(stored_fingerprint(&indexer.db, &b), Some(fingerprint));
+    indexer
+        .db
+        .execute_batch("DROP TRIGGER abort_source_commit;")
+        .unwrap();
+
+    let retried = indexer
+        .index_opencode_sessions_incremental(&json_root, &paths)
+        .unwrap();
+    assert_eq!(retried.errors, 0);
+    assert_eq!(
+        cached_body(&indexer.db, "ses_y").as_deref(),
+        Some("valid y")
+    );
+    assert_eq!(
+        exclusion(&indexer),
+        1,
+        "new ineligibility must persist even for an unchanged source"
+    );
+    assert_eq!(indexer.db.query_row(
+        "SELECT ineligible FROM opencode_source_sessions WHERE db_path = ?1 AND generation = 'v1' AND session_id = 'ses_x'",
+        [b.to_str().unwrap()], |row| row.get::<_, i64>(0),
+    ).unwrap(), 0, "V2 exclusion must not label the same source's unparsed V1 representation");
+    assert_eq!(stored_fingerprint(&indexer.db, &b), Some(fingerprint));
+
+    corrupt_keeping_fingerprint(&b);
+    for _ in 0..2 {
+        let unchanged = indexer
+            .index_opencode_sessions_incremental(&json_root, &paths)
+            .unwrap();
+        assert_eq!(
+            unchanged.errors, 0,
+            "known ineligibility must not reopen the source"
+        );
+        assert_eq!(unchanged.indexed, 0);
+        assert_eq!(cached_ids(&indexer.db), ["ses_y"]);
+    }
+}
+
+#[test]
+fn opencode_never_parsed_fallback_retries_without_source_write() {
+    let source_dir = tempfile::tempdir().unwrap();
+    let v2_path = source_dir.path().join("v2.db");
+    let v1_path = source_dir.path().join("v1.db");
+    let conn = create_v2_source(&v2_path, &[("ses_x", "unused")]);
+    conn.execute_batch("DELETE FROM session_message;").unwrap();
+    drop(conn);
+    create_v1_source(&v1_path, &[("ses_x", "retried fallback body")]);
+    let root = source_dir.path().join("missing");
+    let paths = [v2_path.clone(), v1_path.clone()];
+    let (_dir, mut indexer) = new_indexer();
+    indexer
+        .index_opencode_sessions_incremental(&root, &paths)
+        .unwrap();
+    assert!(cached_ids(&indexer.db).is_empty());
+    let fingerprint = stored_fingerprint(&indexer.db, &v1_path).unwrap();
+
+    std::fs::remove_file(&v2_path).unwrap();
+    install_abort_trigger(&indexer, "ses_x");
+    let failed = indexer
+        .index_opencode_sessions_incremental(&root, &paths)
+        .unwrap();
+    assert_eq!(
+        failed.errors, 1,
+        "the newly selected fallback must be attempted"
+    );
+    assert!(cached_ids(&indexer.db).is_empty());
+    assert_eq!(stored_fingerprint(&indexer.db, &v1_path), Some(fingerprint));
+
+    drop_abort_trigger(&indexer, "ses_x");
+    let retried = indexer
+        .index_opencode_sessions_incremental(&root, &paths)
+        .unwrap();
+    assert_eq!(retried.errors, 0);
+    assert_eq!(retried.indexed, 1);
+    assert_eq!(
+        cached_body(&indexer.db, "ses_x").as_deref(),
+        Some("retried fallback body")
+    );
+    assert_eq!(
+        owner_generation(&indexer.db, "ses_x").as_deref(),
+        Some("v1")
+    );
+    assert_eq!(stored_fingerprint(&indexer.db, &v1_path), Some(fingerprint));
+}
+
+#[test]
+fn opencode_never_parsed_fallback_after_ineligible_source_removed() {
+    let source_dir = tempfile::tempdir().unwrap();
+    let v2_path = source_dir.path().join("v2.db");
+    let v1_path = source_dir.path().join("v1.db");
+    let conn = create_v2_source(&v2_path, &[("ses_x", "unused")]);
+    conn.execute_batch("DELETE FROM session_message;").unwrap();
+    drop(conn);
+    create_v1_source(&v1_path, &[("ses_x", "valid unchanged fallback body")]);
+    let root = source_dir.path().join("missing");
+    let paths = [v2_path.clone(), v1_path.clone()];
+    let (_dir, mut indexer) = new_indexer();
+
+    let first = indexer
+        .index_opencode_sessions_incremental(&root, &paths)
+        .unwrap();
+    assert_eq!(first.errors, 0);
+    assert!(cached_ids(&indexer.db).is_empty());
+    let fingerprint = stored_fingerprint(&indexer.db, &v1_path).unwrap();
+    assert_eq!(indexer.db.query_row(
+        "SELECT count(*) FROM opencode_source_sessions WHERE db_path = ?1 AND session_id = 'ses_x'",
+        [v1_path.to_str().unwrap()], |row| row.get::<_, i64>(0),
+    ).unwrap(), 1);
+
+    std::fs::remove_file(&v2_path).unwrap();
+    let second = indexer
+        .index_opencode_sessions_incremental(&root, &paths)
+        .unwrap();
+    assert_eq!(second.errors, 0);
+    assert_eq!(
+        second.indexed, 1,
+        "enumerated is not the same as parsed/ineligible"
+    );
+    assert_eq!(
+        owner_generation(&indexer.db, "ses_x").as_deref(),
+        Some("v1")
+    );
+    assert_eq!(
+        cached_body(&indexer.db, "ses_x").as_deref(),
+        Some("valid unchanged fallback body")
+    );
+    assert_eq!(stored_fingerprint(&indexer.db, &v1_path), Some(fingerprint));
 }
 
 #[test]
@@ -1155,6 +1354,66 @@ fn opencode_migration_reindexes_once() {
         .index_opencode_sessions_incremental(&source_dir.path().join("missing"), &[v2_path.clone()])
         .unwrap();
     assert_eq!(unchanged_third_run.indexed, 0);
+}
+
+#[test]
+fn opencode_generation_four_inventory_refreshes_exclusions_and_preserves_pin() {
+    let source_dir = tempfile::tempdir().unwrap();
+    let source = source_dir.path().join("v2.db");
+    let conn = create_v2_source(&source, &[("ses_excluded", "unused"), ("ses_pin", "body")]);
+    conn.execute(
+        "DELETE FROM session_message WHERE session_id = 'ses_excluded'",
+        [],
+    )
+    .unwrap();
+    drop(conn);
+    let source_bytes = std::fs::read(&source).unwrap();
+    let source_stamp = file_stamp_of(&source);
+    let (_dir, mut indexer) = new_indexer();
+    let missing = source_dir.path().join("missing");
+    indexer
+        .index_opencode_sessions_incremental(&missing, &[source.clone()])
+        .unwrap();
+    // A v20 cache has enumeration but no knowledge of exclusions. Its old
+    // fingerprint must force one re-read even when the source is unchanged.
+    indexer
+        .db
+        .execute_batch(
+            "UPDATE opencode_source_fingerprints SET reader_generation = 4;
+         UPDATE opencode_source_sessions SET ineligible = 0;
+         UPDATE sessions SET pinned_at = 1234 WHERE id = 'ses_pin';
+         UPDATE messages SET content = 'stale projection' WHERE session_id = 'ses_pin';",
+        )
+        .unwrap();
+    let refreshed = indexer
+        .index_opencode_sessions_incremental(&missing, &[source.clone()])
+        .unwrap();
+    assert_eq!(refreshed.errors, 0);
+    assert_eq!(refreshed.indexed, 1);
+    assert_eq!(pinned_at(&indexer.db, "ses_pin"), Some(1234));
+    assert_eq!(cached_body(&indexer.db, "ses_pin").as_deref(), Some("body"));
+    assert_eq!(
+        indexer
+            .db
+            .query_row(
+                "SELECT ineligible FROM opencode_source_sessions WHERE session_id = 'ses_excluded'",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .unwrap(),
+        1
+    );
+    assert_eq!(std::fs::read(&source).unwrap(), source_bytes);
+    assert_eq!(file_stamp_of(&source), source_stamp);
+
+    corrupt_keeping_fingerprint(&source);
+    let unchanged = indexer
+        .index_opencode_sessions_incremental(&missing, &[source.clone()])
+        .unwrap();
+    assert_eq!(unchanged.errors, 0);
+    assert_eq!(unchanged.indexed, 0);
+    assert_eq!(unchanged.skipped, 1);
+    assert_eq!(cached_ids(&indexer.db), ["ses_pin"]);
 }
 
 #[test]

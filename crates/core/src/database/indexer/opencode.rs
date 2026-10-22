@@ -28,9 +28,9 @@ use super::{IndexingStats, SessionIndexer, push_indexing_error};
 
 /// Cache-side reader generation. Bumping this forces a one-time reindex of
 /// every OpenCode SQLite source, because a stored fingerprint whose generation
-/// does not match this value is treated as stale. Generation 4 stores each
-/// source's enumeration next to its fingerprint (`opencode_source_sessions`).
-const OPENCODE_READER_GENERATION: i64 = 4;
+/// does not match this value is treated as stale. Generation 5 records actual
+/// per-representation ineligibility instead of inferring it from absent owners.
+const OPENCODE_READER_GENERATION: i64 = 5;
 
 /// Outcome of processing one selected session.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -86,6 +86,12 @@ struct EnumeratedSqliteSource {
     /// Cleared when any selected session in this source fails; a cleared flag
     /// prevents the captured fingerprint from being committed.
     successful: bool,
+    /// Only actual NoUserMessages results for this source snapshot, keyed by
+    /// generation and ID (not by ID alone or by absence from cached owners).
+    ineligible: HashSet<(OpenCodeGeneration, String)>,
+    /// An unchanged, previously unselected representation may be parsed for
+    /// the first time. Its exclusion must be committed with the inventory too.
+    eligibility_changed: bool,
 }
 
 impl EnumeratedSqliteSource {
@@ -339,13 +345,19 @@ impl SessionIndexer {
             }
 
             // An unchanged source is still enumerated, so its IDs reserve their
-            // priority and its readers stay open. Decide per-winner whether
+            // priority and its readers stay closed. Decide per-winner whether
             // parsing can be skipped.
             let is_unchanged = source_index
                 .get(&winner.path)
                 .map(|&index| enumerated[index].unchanged)
                 .unwrap_or(false);
             if is_unchanged {
+                let source = &enumerated[source_index[&winner.path]];
+                if source.ineligible.contains(&(winner.generation, id.clone())) {
+                    // This exact representation was actually parsed and
+                    // excluded in the committed source snapshot.
+                    continue;
+                }
                 match cached_owner_map.get(id) {
                     Some((path, generation))
                         if path == &winner.path && *generation == winner.generation =>
@@ -356,17 +368,10 @@ impl SessionIndexer {
                         stats.skipped += 1;
                         continue;
                     }
-                    None => {
-                        // No cached owner: an ineligible ID from the previous
-                        // run reserves priority. Skip the parse and let it be
-                        // pruned rather than reintroducing a lower-priority
-                        // representation.
-                        continue;
-                    }
-                    Some(_) => {
-                        // Cached owner differs: this is the lower-priority
-                        // fallback / promotion path. The source's readers are
-                        // open because it was enumerated, so parse normally.
+                    _ => {
+                        // Absent/different owner is not proof of ineligibility:
+                        // a previously unselected fallback must be opened and
+                        // parsed, and failures must be retried next run.
                     }
                 }
             }
@@ -388,6 +393,11 @@ impl SessionIndexer {
                 }
                 SessionOutcome::Ineligible => {
                     // Reserved priority but excluded by policy; pruned below.
+                    if let Some(&index) = source_index.get(&winner.path) {
+                        let source = &mut enumerated[index];
+                        source.eligibility_changed |=
+                            source.ineligible.insert((winner.generation, id.clone()));
+                    }
                 }
                 SessionOutcome::RetainedFailure => {
                     retained_ids.insert(id.clone());
@@ -420,10 +430,11 @@ impl SessionIndexer {
                 // Commit captured fingerprints only for fully successful sources
                 // and only after cleanup succeeded.
                 // An unchanged source already holds this fingerprint and
-                // enumeration.
+                // enumeration, but may have learned a new exclusion when a
+                // previously unselected representation became the winner.
                 for source in &enumerated {
                     if source.successful
-                        && !source.unchanged
+                        && (!source.unchanged || source.eligibility_changed)
                         && let Err(err) = self.commit_opencode_fingerprint(source)
                     {
                         tracing::warn!(
@@ -534,6 +545,8 @@ impl SessionIndexer {
             v1_entries: Vec::new(),
             unchanged: false,
             successful: true,
+            ineligible: HashSet::new(),
+            eligibility_changed: false,
         };
 
         if generations.contains(&OpenCodeGeneration::V2) {
@@ -654,16 +667,17 @@ impl SessionIndexer {
             return None;
         }
 
-        let (v2_ids, v1_ids) = match opencode_sources::load_source_enumeration(&self.db, db_path) {
-            Ok(enumeration) => enumeration,
-            Err(err) => {
-                tracing::warn!(
-                    "Failed to load OpenCode enumeration for {}: {err:#}; re-reading",
-                    db_path.display()
-                );
-                return None;
-            }
-        };
+        let (v2_ids, v1_ids, ineligible) =
+            match opencode_sources::load_source_enumeration(&self.db, db_path) {
+                Ok(enumeration) => enumeration,
+                Err(err) => {
+                    tracing::warn!(
+                        "Failed to load OpenCode enumeration for {}: {err:#}; re-reading",
+                        db_path.display()
+                    );
+                    return None;
+                }
+            };
         let v1_entries = v1_ids
             .into_iter()
             .map(|id| SessionEntry {
@@ -683,6 +697,8 @@ impl SessionIndexer {
             v1_entries,
             unchanged: true,
             successful: true,
+            ineligible,
+            eligibility_changed: false,
         })
     }
 
@@ -898,21 +914,27 @@ impl SessionIndexer {
         )?;
         {
             let mut insert = tx.prepare(
-                "INSERT OR IGNORE INTO opencode_source_sessions (db_path, session_id, generation)
-                 VALUES (?1, ?2, ?3)",
+                "INSERT OR IGNORE INTO opencode_source_sessions (db_path, session_id, generation, ineligible)
+                 VALUES (?1, ?2, ?3, ?4)",
             )?;
             for id in &source.v2_ids {
                 insert.execute(rusqlite::params![
                     path_str,
                     id,
-                    OpenCodeGeneration::V2.to_storage()
+                    OpenCodeGeneration::V2.to_storage(),
+                    source
+                        .ineligible
+                        .contains(&(OpenCodeGeneration::V2, id.clone()))
                 ])?;
             }
             for entry in &source.v1_entries {
                 insert.execute(rusqlite::params![
                     path_str,
                     &entry.id,
-                    OpenCodeGeneration::V1.to_storage()
+                    OpenCodeGeneration::V1.to_storage(),
+                    source
+                        .ineligible
+                        .contains(&(OpenCodeGeneration::V1, entry.id.clone()))
                 ])?;
             }
         }

@@ -6,7 +6,7 @@
 //! discovery and cached ownership, calls [`select_candidates`] once before any
 //! parsing, and treats the returned map as the single owner per session ID.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::time::UNIX_EPOCH;
 
@@ -293,26 +293,41 @@ pub(crate) fn load_source_fingerprint(
 /// Session IDs a source exposed when its fingerprint was last committed, per
 /// generation: `(v2_ids, v1_ids)`. Stored with the fingerprint, so an unchanged
 /// source can take part in candidate selection without being opened.
+/// The final set contains only representations actually parsed as ineligible.
+pub(crate) type SourceEnumeration = (
+    Vec<String>,
+    Vec<String>,
+    HashSet<(OpenCodeGeneration, String)>,
+);
+
 pub(crate) fn load_source_enumeration(
     db: &Connection,
     db_path: &Path,
-) -> Result<(Vec<String>, Vec<String>)> {
+) -> Result<SourceEnumeration> {
     let Some(db_path_str) = db_path.to_str() else {
-        return Ok((Vec::new(), Vec::new()));
+        return Ok((Vec::new(), Vec::new(), HashSet::new()));
     };
 
     let mut stmt = db.prepare(
-        "SELECT session_id, generation FROM opencode_source_sessions
+        "SELECT session_id, generation, ineligible FROM opencode_source_sessions
          WHERE db_path = ?1 ORDER BY session_id",
     )?;
     let rows = stmt.query_map([db_path_str], |row| {
-        Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        Ok((
+            row.get::<_, String>(0)?,
+            row.get::<_, String>(1)?,
+            row.get::<_, bool>(2)?,
+        ))
     })?;
 
     let mut v2_ids = Vec::new();
     let mut v1_ids = Vec::new();
+    let mut ineligible = HashSet::new();
     for row in rows {
-        let (id, generation) = row?;
+        let (id, generation, excluded) = row?;
+        if excluded && let Some(generation) = OpenCodeGeneration::from_storage(&generation) {
+            ineligible.insert((generation, id.clone()));
+        }
         match OpenCodeGeneration::from_storage(&generation) {
             Some(OpenCodeGeneration::V2) => v2_ids.push(id),
             Some(OpenCodeGeneration::V1) => v1_ids.push(id),
@@ -321,7 +336,7 @@ pub(crate) fn load_source_enumeration(
             ),
         }
     }
-    Ok((v2_ids, v1_ids))
+    Ok((v2_ids, v1_ids, ineligible))
 }
 
 fn file_stamp(path: &Path) -> Result<FileStamp> {
