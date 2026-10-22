@@ -532,6 +532,68 @@ fn v2_subagent_completion_links_once() {
 }
 
 #[test]
+fn v2_subagent_invocation_names_and_child_metadata() {
+    for name in ["subagent", "task"] {
+        for child_key in [Some("sessionID"), Some("sessionId"), None] {
+            let dir = tempfile::tempdir().unwrap();
+            let db_path = dir.path().join("fixture.db");
+            let conn = test_support::create_v2_db(&db_path);
+            let mut metadata = serde_json::json!({"status": "completed", "truncated": false});
+            if let Some(key) = child_key {
+                metadata[key] = serde_json::json!("ses_synthetic_child");
+            }
+            let data = serde_json::json!({"content": [{
+                "type": "tool", "id": "call_synthetic", "name": name,
+                "executed": true, "native": true,
+                "state": {
+                    "input": {"agent": "explore", "description": "Inspect sample",
+                              "prompt": "Synthetic prompt", "task_id": "ses_not_a_link"},
+                    "content": [{"type": "text", "text": "Synthetic result"}],
+                    "metadata": metadata
+                },
+                "time": {"created": 1712000000000_i64, "completed": 1712000000100_i64}
+            }]});
+            conn.execute(
+                "INSERT INTO session_message (id, session_id, type, seq, time_created, time_updated, data)
+                 VALUES ('msg_synthetic', 'ses_v2', 'assistant', 999, 1712000000000, 1712000000100, ?1)",
+                [data.to_string()],
+            ).unwrap();
+            drop(conn);
+            let parsed = V2Reader::open(&db_path)
+                .unwrap()
+                .parse_session("ses_v2")
+                .unwrap();
+            let item = parsed
+                .transcript_items
+                .iter()
+                .find(|item| item.subagent_id.as_deref() == Some("call_synthetic"))
+                .expect("invocation must be a subagent transcript item");
+            assert_eq!(item.kind, TranscriptItemKind::Subagent);
+            assert_eq!(item.tool_call_id, None);
+            assert!(
+                parsed
+                    .tool_calls
+                    .iter()
+                    .all(|call| call.id != "call_synthetic")
+            );
+            let subagent = parsed
+                .subagents
+                .iter()
+                .find(|s| s.id == "call_synthetic")
+                .unwrap();
+            assert_eq!(
+                subagent.child_session_id.as_deref(),
+                child_key.map(|_| "ses_synthetic_child")
+            );
+            assert_eq!(subagent.agent_name.as_deref(), Some("explore"));
+            assert_eq!(subagent.title, "Inspect sample");
+            assert_eq!(subagent.prompt.as_deref(), Some("Synthetic prompt"));
+            assert_eq!(subagent.result_summary.as_deref(), Some("Synthetic result"));
+        }
+    }
+}
+
+#[test]
 fn v2_skill_calls_remain_tool_calls() {
     let parsed = parse_session("ses_v2_skill_tool");
 

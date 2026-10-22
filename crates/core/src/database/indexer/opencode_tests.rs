@@ -1158,6 +1158,54 @@ fn opencode_migration_reindexes_once() {
 }
 
 #[test]
+fn opencode_generation_two_cache_refreshes_unchanged_source_once() {
+    let source_dir = tempfile::tempdir().unwrap();
+    let source = source_dir.path().join("v2.db");
+    drop(create_v2_source(&source, &[("ses_refresh", "source body")]));
+    let source_bytes = std::fs::read(&source).unwrap();
+    let source_stamp = file_stamp_of(&source);
+    let (_dir, mut indexer) = new_indexer();
+    let missing = source_dir.path().join("missing");
+    indexer
+        .index_opencode_sessions_incremental(&missing, &[source.clone()])
+        .unwrap();
+    // Simulate an already indexed generation-2 cache, not a source edit.
+    indexer
+        .db
+        .execute(
+            "UPDATE messages SET content = 'stale projection' WHERE session_id = 'ses_refresh'",
+            [],
+        )
+        .unwrap();
+    indexer
+        .db
+        .execute(
+            "UPDATE opencode_source_fingerprints SET reader_generation = 2",
+            [],
+        )
+        .unwrap();
+
+    let refreshed = indexer
+        .index_opencode_sessions_incremental(&missing, &[source.clone()])
+        .unwrap();
+    assert_eq!(
+        refreshed.indexed, 1,
+        "generation-2 cache must be reprojected"
+    );
+    assert_eq!(
+        cached_body(&indexer.db, "ses_refresh").as_deref(),
+        Some("source body")
+    );
+    let second = indexer
+        .index_opencode_sessions_incremental(&missing, &[source.clone()])
+        .unwrap();
+    assert_eq!(second.indexed, 0);
+    assert_eq!(second.skipped, 1);
+    assert_eq!(std::fs::read(&source).unwrap(), source_bytes);
+    assert_eq!(file_stamp_of(&source), source_stamp);
+}
+
+#[test]
 fn opencode_replacement_preserves_pin() {
     let source_dir = tempfile::tempdir().unwrap();
     let v2_path = source_dir.path().join("v2.db");

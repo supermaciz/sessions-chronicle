@@ -29,7 +29,7 @@ use super::{IndexingStats, SessionIndexer, push_indexing_error};
 /// Cache-side reader generation. Bumping this forces a one-time reindex of
 /// every OpenCode SQLite source, because a stored fingerprint whose generation
 /// does not match this value is treated as stale.
-const OPENCODE_READER_GENERATION: i64 = 2;
+const OPENCODE_READER_GENERATION: i64 = 3;
 
 /// Outcome of processing one selected session.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

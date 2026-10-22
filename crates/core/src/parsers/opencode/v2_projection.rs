@@ -53,7 +53,7 @@ pub(crate) struct V2Projection {
     saw_corrupt_user: bool,
 }
 
-/// A projected `name == "task"` subagent, remembered so a later synthetic
+/// A projected `task` or `subagent` invocation, remembered so a later synthetic
 /// completion can be matched to it. Matching only ever looks backwards, so the
 /// completion is resolved as it streams through `push`.
 struct TaskInvocation {
@@ -194,7 +194,7 @@ impl V2Projection {
                         tracing::warn!("malformed assistant tool in {}: missing name", row.id);
                         continue;
                     };
-                    if name == "task" {
+                    if matches!(name, "task" | "subagent") {
                         let subagent = self.project_task_subagent(&row.id, item, position);
                         self.push_task_subagent(subagent, row.seq);
                     } else {
@@ -272,8 +272,8 @@ impl V2Projection {
         }
     }
 
-    /// Projects a `name == "task"` tool item into a subagent row (never an
-    /// ordinary tool call). `state.metadata.sessionId` is the only child link;
+    /// Projects a `task` or `subagent` item into a subagent row (never an
+    /// ordinary tool call). Only `state.metadata.sessionId` / `sessionID` link a child;
     /// `input.task_id` alone establishes nothing.
     fn project_task_subagent(
         &self,
@@ -300,8 +300,11 @@ impl V2Projection {
             .map(str::to_string);
         let child_session_id = state
             .and_then(|s| s.get("metadata"))
-            .and_then(|m| m.get("sessionId"))
-            .and_then(|v| v.as_str())
+            .and_then(|m| {
+                m.get("sessionId")
+                    .and_then(|v| v.as_str())
+                    .or_else(|| m.get("sessionID").and_then(|v| v.as_str()))
+            })
             .map(str::to_string);
         let result_summary = state
             .and_then(|s| s.get("content"))
@@ -318,7 +321,10 @@ impl V2Projection {
         Subagent {
             id,
             agent_id: None,
-            agent_name: None,
+            agent_name: input
+                .and_then(|i| i.get("agent"))
+                .and_then(|v| v.as_str())
+                .map(str::to_string),
             session_id: self.metadata.id.clone(),
             title,
             prompt,
@@ -345,7 +351,7 @@ impl V2Projection {
         self.flush_reasoning(item_index);
         self.subagents.push(subagent);
         // Only a task with an authoritative child link can ever match a
-        // completion; a missing sessionId is not recorded and stays unmatched.
+        // completion; missing child metadata is not recorded and stays unmatched.
         if let Some(child_id) = child_id {
             self.task_invocations.push(TaskInvocation {
                 child_id,
