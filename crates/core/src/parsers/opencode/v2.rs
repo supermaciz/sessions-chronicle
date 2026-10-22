@@ -6,10 +6,6 @@
 //! snapshot for the reader's lifetime; it is rolled back on drop and the source
 //! database is never modified.
 
-// `V2Reader` is consumed by the indexer (Task 5) and the parser tests, but is
-// not referenced by production code in this commit.
-#![allow(dead_code)]
-
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
 use rusqlite::{Connection, OpenFlags, OptionalExtension};
