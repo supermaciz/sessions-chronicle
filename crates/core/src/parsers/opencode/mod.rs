@@ -226,6 +226,7 @@ impl OpenCodeParser {
                             message_index: Some(msg_idx),
                             tool_call_id: None,
                             subagent_id: None,
+                            context_id: None,
                         });
                         if !pending_reasoning.is_empty() {
                             reasoning_attachments
@@ -243,6 +244,7 @@ impl OpenCodeParser {
                             message_index: None,
                             tool_call_id: Some(tc_id),
                             subagent_id: None,
+                            context_id: None,
                         });
                         if !pending_reasoning.is_empty() {
                             reasoning_attachments
@@ -260,6 +262,7 @@ impl OpenCodeParser {
                             message_index: None,
                             tool_call_id: None,
                             subagent_id: Some(sa_id),
+                            context_id: None,
                         });
                         if !pending_reasoning.is_empty() {
                             reasoning_attachments
@@ -369,6 +372,7 @@ impl OpenCodeParser {
             reasoning_attachments,
             token_usage,
             agent_path: None,
+            context_entries: Vec::new(),
         })
     }
 

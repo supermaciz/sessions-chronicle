@@ -1170,7 +1170,7 @@ impl SessionIndexer {
         self.insert_parsed_session_with_fingerprint(parsed, file_path, file_path)
     }
 
-    fn insert_parsed_session_with_fingerprint(
+    pub(super) fn insert_parsed_session_with_fingerprint(
         &mut self,
         parsed: &ParsedSession,
         file_path: &Path,
@@ -1534,6 +1534,10 @@ impl SessionIndexer {
             crate::database::insert_subagent(tx, subagent, session_id)?;
         }
 
+        for context in &parsed.context_entries {
+            crate::database::insert_context_entry(tx, context)?;
+        }
+
         for item in &parsed.transcript_items {
             crate::database::insert_transcript_item(tx, item, session_id)?;
         }
@@ -1553,6 +1557,10 @@ impl SessionIndexer {
         )?;
         tx.execute(
             "DELETE FROM reasoning_attachments WHERE session_id = ?1",
+            [session_id],
+        )?;
+        tx.execute(
+            "DELETE FROM context_entries WHERE session_id = ?1",
             [session_id],
         )?;
         tx.execute("DELETE FROM tool_calls WHERE session_id = ?1", [session_id])?;
@@ -1805,12 +1813,15 @@ impl SessionIndexer {
     pub fn clear_all_sessions(&mut self) -> Result<()> {
         let tx = self.db.transaction()?;
         tx.execute("DELETE FROM reasoning_attachments", [])?;
+        tx.execute("DELETE FROM context_entries", [])?;
         tx.execute("DELETE FROM transcript_items", [])?;
         tx.execute("DELETE FROM tool_calls", [])?;
         tx.execute("DELETE FROM subagents", [])?;
         tx.execute("DELETE FROM messages", [])?;
         tx.execute("DELETE FROM sessions", [])?;
         tx.execute("DELETE FROM file_fingerprints", [])?;
+        tx.execute("DELETE FROM opencode_session_sources", [])?;
+        tx.execute("DELETE FROM opencode_source_fingerprints", [])?;
         tx.commit()?;
         Ok(())
     }
@@ -1940,7 +1951,7 @@ impl SessionIndexer {
         }
     }
 
-    fn remove_session_for_file(&mut self, file_path: &Path) -> Result<usize> {
+    pub(super) fn remove_session_for_file(&mut self, file_path: &Path) -> Result<usize> {
         let Some(file_path_str) = file_path.to_str() else {
             tracing::warn!("Cannot prune session with non-UTF8 path: {:?}", file_path);
             return Ok(0);
@@ -1954,6 +1965,14 @@ impl SessionIndexer {
         )?;
         tx.execute(
             "DELETE FROM reasoning_attachments WHERE session_id IN (SELECT id FROM sessions WHERE file_path = ?1)",
+            [file_path_str],
+        )?;
+        tx.execute(
+            "DELETE FROM context_entries WHERE session_id IN (SELECT id FROM sessions WHERE file_path = ?1)",
+            [file_path_str],
+        )?;
+        tx.execute(
+            "DELETE FROM opencode_session_sources WHERE session_id IN (SELECT id FROM sessions WHERE file_path = ?1)",
             [file_path_str],
         )?;
         tx.execute(
@@ -1975,7 +1994,10 @@ impl SessionIndexer {
         Ok(removed)
     }
 
-    fn prune_stale_opencode_sessions(&mut self, indexed_ids: &HashSet<String>) -> Result<usize> {
+    pub(super) fn prune_stale_opencode_sessions(
+        &mut self,
+        indexed_ids: &HashSet<String>,
+    ) -> Result<usize> {
         let existing_ids: Vec<String> = {
             let mut stmt = self
                 .db
@@ -1994,7 +2016,7 @@ impl SessionIndexer {
         Ok(removed)
     }
 
-    fn remove_session_by_id(&mut self, session_id: &str) -> Result<usize> {
+    pub(super) fn remove_session_by_id(&mut self, session_id: &str) -> Result<usize> {
         let tx = self.db.transaction()?;
         let removed = Self::delete_session_by_id_tx(&tx, session_id)?;
         tx.commit()?;
@@ -2003,6 +2025,10 @@ impl SessionIndexer {
 
     fn delete_session_by_id_tx(tx: &rusqlite::Transaction<'_>, session_id: &str) -> Result<usize> {
         Self::delete_session_contents_tx(tx, session_id)?;
+        tx.execute(
+            "DELETE FROM opencode_session_sources WHERE session_id = ?1",
+            [session_id],
+        )?;
         Ok(tx.execute("DELETE FROM sessions WHERE id = ?1", [session_id])?)
     }
 }
@@ -2150,6 +2176,7 @@ mod tests {
             subagents: vec![],
             transcript_items: vec![],
             reasoning_attachments: vec![],
+            context_entries: vec![],
             token_usage: None,
             agent_path: None,
         }

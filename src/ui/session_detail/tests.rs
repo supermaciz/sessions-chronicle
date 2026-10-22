@@ -139,6 +139,7 @@ fn transcript_message_row(
         subagent_id: None,
         subagent_title: None,
         subagent_prompt: None,
+        context: None,
     }
 }
 
@@ -163,6 +164,7 @@ fn transcript_tool_row(item_index: i64, tool_name: &str) -> crate::database::Tra
         subagent_id: None,
         subagent_title: None,
         subagent_prompt: None,
+        context: None,
     }
 }
 
@@ -187,6 +189,7 @@ fn transcript_subagent_row(item_index: i64, title: &str) -> crate::database::Tra
         subagent_id: Some(format!("subagent-{item_index}")),
         subagent_title: Some(title.to_string()),
         subagent_prompt: Some("investigate".to_string()),
+        context: None,
     }
 }
 

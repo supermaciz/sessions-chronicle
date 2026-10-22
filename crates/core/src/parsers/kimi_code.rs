@@ -2202,6 +2202,7 @@ fn parse_journal(
                 state.step_usage.into_token_usage()
             },
             agent_path: None,
+            context_entries: Vec::new(),
         },
         first_wire_time_ms,
         agent_calls: state.agent_calls,
@@ -2282,6 +2283,7 @@ fn push_message(
         message_index: Some(message_index as i64),
         tool_call_id: None,
         subagent_id: None,
+        context_id: None,
     });
     if reasoning.is_empty() {
         return;
@@ -2336,6 +2338,7 @@ fn push_tool_call(
         message_index: None,
         tool_call_id: Some(local_id),
         subagent_id: None,
+        context_id: None,
     });
     if !reasoning.is_empty() {
         reasoning_attachments

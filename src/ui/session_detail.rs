@@ -1197,6 +1197,11 @@ impl SessionDetail {
         let mut items = Vec::new();
         let mut display_targets_by_item_index = BTreeMap::new();
 
+        let rows = rows
+            .into_iter()
+            .filter(|row| row.kind != crate::models::TranscriptItemKind::Context)
+            .collect();
+
         for (offset, item) in group_transcript_rows(rows).into_iter().enumerate() {
             let display_index = base_display_index + offset;
             display_targets_by_item_index

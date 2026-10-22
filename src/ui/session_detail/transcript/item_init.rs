@@ -252,7 +252,8 @@ fn transcript_item_init_from_row_with_index(
                 .unwrap_or_else(|| "Subagent".to_string()),
             reasoning_preview: row.reasoning_preview,
         }),
-        TranscriptItemKind::Unknown => {
+        // Context rows are dropped before conversion until they get a dedicated row.
+        TranscriptItemKind::Unknown | TranscriptItemKind::Context => {
             tracing::warn!(
                 item_index = row.item_index,
                 "transcript item with unknown kind; rendering as empty message"
@@ -354,6 +355,7 @@ mod tests {
             subagent_id: None,
             subagent_title: None,
             subagent_prompt: None,
+            context: None,
         }
     }
 
@@ -497,6 +499,7 @@ mod tests {
             subagent_id: None,
             subagent_title: None,
             subagent_prompt: None,
+            context: None,
         };
 
         let init = transcript_item_init_from_row(
