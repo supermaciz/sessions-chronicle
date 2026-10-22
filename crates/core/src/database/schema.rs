@@ -2,7 +2,7 @@ use anyhow::Result;
 use rusqlite::Connection;
 
 #[cfg(test)]
-const CURRENT_DB_VERSION: i64 = 22;
+const CURRENT_DB_VERSION: i64 = 20;
 
 fn column_exists(conn: &Connection, table_name: &str, column_name: &str) -> Result<bool> {
     Ok(conn.query_row(
@@ -67,11 +67,8 @@ fn table_exists(conn: &Connection, name: &str) -> Result<bool> {
 ///        file_fingerprints rows are removed so OpenCode sources are re-read
 ///   20 – opencode_source_sessions records the session IDs each OpenCode
 ///        SQLite source exposed at its last committed fingerprint, so an
-///        unchanged source is no longer opened on incremental runs
-///   21 – per-representation proven ineligibility in opencode_source_sessions;
-///        existing inventory defaults to unknown, without clearing cached data
-///   22 – explicit per-representation retry state, so failures retain cached
-///        data and retry without reparsing successful siblings
+///        unchanged source is no longer opened on incremental runs, with
+///        per-representation proven ineligibility and retry state
 pub fn initialize_database(conn: &Connection) -> Result<()> {
     let version: i64 = conn.query_row("PRAGMA user_version", [], |row| row.get(0))?;
 
@@ -134,12 +131,6 @@ pub fn initialize_database(conn: &Connection) -> Result<()> {
     }
     if version < 20 {
         apply_v20_migration(conn)?;
-    }
-    if version < 21 {
-        apply_v21_migration(conn)?;
-    }
-    if version < 22 {
-        apply_v22_migration(conn)?;
     }
 
     Ok(())
@@ -826,43 +817,24 @@ fn apply_v19_migration_inner(conn: &Connection) -> Result<()> {
 /// Migrate from v19 to v20.
 ///
 /// Adds `opencode_source_sessions`, written in the same transaction as each
-/// `opencode_source_fingerprints` row. Existing fingerprint rows predate it and
-/// carry an older reader generation, so their sources are re-read once and the
-/// table fills in then; no data is cleared here.
+/// `opencode_source_fingerprints` row. `ineligible` records only proven policy
+/// exclusions, never inferred from absent owners; `retry_required` marks
+/// failures so they retain cached data and retry without reparsing successful
+/// siblings. Existing fingerprint rows predate it and carry an older reader
+/// generation, so their sources are re-read once and the table fills in then;
+/// no data is cleared here.
 fn apply_v20_migration(conn: &Connection) -> Result<()> {
     conn.execute_batch(
         "CREATE TABLE IF NOT EXISTS opencode_source_sessions (
              db_path TEXT NOT NULL,
              session_id TEXT NOT NULL,
              generation TEXT NOT NULL,
+             ineligible INTEGER NOT NULL DEFAULT 0,
+             retry_required INTEGER NOT NULL DEFAULT 0,
              PRIMARY KEY (db_path, generation, session_id)
          );
          PRAGMA user_version = 20;",
     )?;
-    Ok(())
-}
-
-/// Record only proven policy exclusions, never infer them from absent owners.
-/// Existing inventory is unknown; the reader-generation bump refreshes it.
-fn apply_v21_migration(conn: &Connection) -> Result<()> {
-    if !column_exists(conn, "opencode_source_sessions", "ineligible")? {
-        conn.execute_batch(
-            "ALTER TABLE opencode_source_sessions ADD COLUMN ineligible INTEGER NOT NULL DEFAULT 0;",
-        )?;
-    }
-    conn.execute_batch("PRAGMA user_version = 21;")?;
-    Ok(())
-}
-
-/// Persist failures separately from policy exclusions so successful siblings
-/// can be skipped without abandoning retries or pruning the last good cache.
-fn apply_v22_migration(conn: &Connection) -> Result<()> {
-    if !column_exists(conn, "opencode_source_sessions", "retry_required")? {
-        conn.execute_batch(
-            "ALTER TABLE opencode_source_sessions ADD COLUMN retry_required INTEGER NOT NULL DEFAULT 0;",
-        )?;
-    }
-    conn.execute_batch("PRAGMA user_version = 22;")?;
     Ok(())
 }
 
@@ -2349,70 +2321,19 @@ mod tests {
     }
 
     #[test]
-    fn opencode_retry_v22_migration_preserves_cache_and_inventory() {
+    fn opencode_source_sessions_v20_migration_keeps_v19_cache() {
         let conn = Connection::open_in_memory().unwrap();
         migrate_to_v18(&conn);
         seed_v18_cache(&conn);
         apply_v19_migration(&conn).unwrap();
-        apply_v20_migration(&conn).unwrap();
-        apply_v21_migration(&conn).unwrap();
-        conn.execute_batch(
-            "INSERT INTO opencode_source_fingerprints VALUES ('/data/opencode.db', 1, 2, 3, 4, 5);
-             INSERT INTO opencode_source_sessions VALUES ('/data/opencode.db', 'oc_sqlite', 'v2', 0), ('/data/opencode.db', 'excluded', 'v2', 1);"
-        ).unwrap();
-        let sessions = string_rows(
-            &conn,
-            "SELECT id || ':' || pinned_at FROM sessions ORDER BY id",
-        );
-        let messages = string_rows(
-            &conn,
-            "SELECT session_id || ':' || content FROM messages ORDER BY session_id",
-        );
-        initialize_database(&conn).unwrap();
-        initialize_database(&conn).unwrap();
-        assert_eq!(count(&conn, "PRAGMA user_version"), 22);
-        assert_eq!(
-            string_rows(
-                &conn,
-                "SELECT session_id || ':' || ineligible || ':' || retry_required FROM opencode_source_sessions ORDER BY session_id"
-            ),
-            ["excluded:1:0", "oc_sqlite:0:0"]
-        );
-        assert_eq!(
-            string_rows(
-                &conn,
-                "SELECT db_mtime_ns || ':' || db_size || ':' || wal_mtime_ns || ':' || wal_size || ':' || reader_generation FROM opencode_source_fingerprints"
-            ),
-            ["1:2:3:4:5"]
-        );
-        assert_eq!(
-            string_rows(
-                &conn,
-                "SELECT id || ':' || pinned_at FROM sessions ORDER BY id"
-            ),
-            sessions
-        );
-        assert_eq!(
-            string_rows(
-                &conn,
-                "SELECT session_id || ':' || content FROM messages ORDER BY session_id"
-            ),
-            messages
-        );
-    }
-
-    #[test]
-    fn opencode_source_eligibility_v21_migration_preserves_cache() {
-        let conn = Connection::open_in_memory().unwrap();
-        migrate_to_v18(&conn);
-        seed_v18_cache(&conn);
-        apply_v19_migration(&conn).unwrap();
-        apply_v20_migration(&conn).unwrap();
-        conn.execute_batch(
-            "INSERT INTO opencode_source_fingerprints VALUES ('/data/opencode.db', 1, 2, NULL, NULL, 4);
-             INSERT INTO opencode_source_sessions VALUES ('/data/opencode.db', 'oc_sqlite', 'v2');
-             UPDATE opencode_session_sources SET generation = 'v2' WHERE session_id = 'oc_sqlite';",
-        ).unwrap();
+        conn.execute(
+            "INSERT INTO opencode_source_fingerprints
+             (db_path, db_mtime_ns, db_size, wal_mtime_ns, wal_size, reader_generation)
+             VALUES ('/data/opencode.db', 1, 2, 3, 4, 3)",
+            [],
+        )
+        .unwrap();
+        assert!(!table_exists(&conn, "opencode_source_sessions"));
         let sessions = string_rows(
             &conn,
             "SELECT id || ':' || tool || ':' || pinned_at FROM sessions ORDER BY id",
@@ -2431,22 +2352,35 @@ mod tests {
 
         assert_eq!(count(&conn, "PRAGMA user_version"), CURRENT_DB_VERSION);
         assert_eq!(
-            count(&conn, "SELECT ineligible FROM opencode_source_sessions"),
-            0
-        );
-        assert_eq!(
-            count(
+            string_rows(
                 &conn,
-                "SELECT reader_generation FROM opencode_source_fingerprints"
+                "SELECT name FROM pragma_table_info('opencode_source_sessions') \
+                 WHERE pk > 0 ORDER BY pk"
             ),
-            4
+            ["db_path", "generation", "session_id"]
         );
+        // Inventory rows default to neither proven ineligible nor retrying.
+        conn.execute(
+            "INSERT INTO opencode_source_sessions (db_path, session_id, generation)
+             VALUES ('/data/opencode.db', 'oc_sqlite', 'v1')",
+            [],
+        )
+        .unwrap();
         assert_eq!(
             string_rows(
                 &conn,
-                "SELECT generation FROM opencode_session_sources WHERE session_id = 'oc_sqlite'"
+                "SELECT ineligible || ':' || retry_required FROM opencode_source_sessions"
             ),
-            ["v2"]
+            ["0:0"]
+        );
+        // Existing fingerprints stay; their stale reader generation forces the
+        // one re-read that fills the new table.
+        assert_eq!(
+            string_rows(
+                &conn,
+                "SELECT db_mtime_ns || ':' || db_size || ':' || wal_mtime_ns || ':' || wal_size || ':' || reader_generation FROM opencode_source_fingerprints"
+            ),
+            ["1:2:3:4:3"]
         );
         assert_eq!(
             string_rows(
@@ -2468,39 +2402,6 @@ mod tests {
                 "SELECT file_path FROM file_fingerprints ORDER BY file_path"
             ),
             fingerprints
-        );
-    }
-
-    #[test]
-    fn opencode_source_sessions_v20_migration_keeps_v19_cache() {
-        let conn = Connection::open_in_memory().unwrap();
-        migrate_to_v18(&conn);
-        apply_v19_migration(&conn).unwrap();
-        conn.execute(
-            "INSERT INTO opencode_source_fingerprints
-             (db_path, db_mtime_ns, db_size, wal_mtime_ns, wal_size, reader_generation)
-             VALUES ('/data/opencode.db', 1, 2, NULL, NULL, 3)",
-            [],
-        )
-        .unwrap();
-        assert!(!table_exists(&conn, "opencode_source_sessions"));
-
-        initialize_database(&conn).unwrap();
-
-        assert_eq!(count(&conn, "PRAGMA user_version"), CURRENT_DB_VERSION);
-        assert_eq!(
-            string_rows(
-                &conn,
-                "SELECT name FROM pragma_table_info('opencode_source_sessions') \
-                 WHERE pk > 0 ORDER BY pk"
-            ),
-            ["db_path", "generation", "session_id"]
-        );
-        // Existing fingerprints stay; their stale reader generation forces the
-        // one re-read that fills the new table.
-        assert_eq!(
-            count(&conn, "SELECT count(*) FROM opencode_source_fingerprints"),
-            1
         );
     }
 }

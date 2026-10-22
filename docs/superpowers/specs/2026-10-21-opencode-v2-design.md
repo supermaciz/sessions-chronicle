@@ -399,10 +399,9 @@ search exclusion.
 | Cache version | Delivered change |
 | --- | --- |
 | 19 | Typed context storage and transcript references; OpenCode owner generations and DB/WAL fingerprints |
-| 20 | Source inventories persisted alongside fingerprints |
-| 21 | Proven per-representation ineligibility; existing inventory defaults to unproven without deleting cached sessions |
+| 20 | Source inventories persisted alongside fingerprints, with proven per-representation ineligibility and retry state |
 
-OpenCode reader generation **5** forces a one-time refresh of earlier inventories,
+OpenCode reader generation **6** forces a one-time refresh of earlier inventories,
 independently of upstream writes. Cache schema version, reader generation, and
 source representation generation (`v2`, `v1`, `json`) are distinct concepts.
 

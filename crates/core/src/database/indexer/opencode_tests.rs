@@ -1780,7 +1780,7 @@ fn opencode_generation_four_inventory_refreshes_exclusions_and_preserves_pin() {
     indexer
         .index_opencode_sessions_incremental(&missing, &[source.clone()])
         .unwrap();
-    // A v20 cache has enumeration but no knowledge of exclusions. Its old
+    // A reader-generation-4 cache has enumeration but no knowledge of exclusions. Its old
     // fingerprint must force one re-read even when the source is unchanged.
     indexer
         .db
