@@ -4,6 +4,7 @@
 //! `SessionDetailMsg`) and are not meant as a general-purpose UI API, so they
 //! live here rather than at the top level of `ui`.
 
+pub(crate) mod context_row;
 pub(crate) mod display;
 pub(crate) mod item_data;
 pub(crate) mod item_init;

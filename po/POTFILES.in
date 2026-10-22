@@ -5,4 +5,5 @@ src/app/handlers/sessions.rs
 src/main.rs
 src/ui/date_pill.rs
 src/ui/modals/shortcuts.rs
+src/ui/session_detail/transcript/context_row.rs
 src/ui/sort_pill.rs

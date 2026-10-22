@@ -11,6 +11,9 @@ use crate::models::{Role, tool_name_icon};
 use crate::ui::format::format_duration_ms;
 use crate::ui::highlight;
 use crate::ui::session_detail::SessionDetailMsg;
+use crate::ui::session_detail::transcript::context_row::{
+    ContextPageWidgets, bind_context_page, build_context_page, unbind_context_page,
+};
 use crate::ui::session_detail::transcript::item_data::{TranscriptItemData, TranscriptItemKind};
 use crate::ui::session_detail::transcript::item_init::{MessageItemInit, TranscriptRowBuildKind};
 use crate::ui::session_detail::transcript::row_rendering::{
@@ -30,6 +33,7 @@ const MESSAGE_PAGE_NAME: &str = "message";
 const TOOL_CALL_PAGE_NAME: &str = "tool-call";
 const TOOL_BURST_PAGE_NAME: &str = "tool-burst";
 const SUBAGENT_PAGE_NAME: &str = "subagent";
+const CONTEXT_PAGE_NAME: &str = "context";
 pub(crate) const TRANSCRIPT_ROW_WIDGET_NAME_PREFIX: &str = "transcript-row-";
 
 pub struct TranscriptRowWidgets {
@@ -38,6 +42,7 @@ pub struct TranscriptRowWidgets {
     tool_call: ToolCallPageWidgets,
     tool_burst: ToolBurstPageWidgets,
     subagent: SubagentPageWidgets,
+    context: ContextPageWidgets,
 }
 
 pub struct MessagePageWidgets {
@@ -102,6 +107,9 @@ impl RelmListItem for TranscriptItemData {
         let subagent = build_subagent_page();
         stack.add_named(&subagent.root, Some(SUBAGENT_PAGE_NAME));
 
+        let context = build_context_page();
+        stack.add_named(&context.root, Some(CONTEXT_PAGE_NAME));
+
         (
             root,
             TranscriptRowWidgets {
@@ -110,6 +118,7 @@ impl RelmListItem for TranscriptItemData {
                 tool_call,
                 tool_burst,
                 subagent,
+                context,
             },
         )
     }
@@ -128,6 +137,7 @@ impl RelmListItem for TranscriptItemData {
             TranscriptRowBuildKind::ToolCall => self.bind_tool_call_page(&mut widgets.tool_call),
             TranscriptRowBuildKind::ToolBurst => self.bind_tool_burst_page(&mut widgets.tool_burst),
             TranscriptRowBuildKind::Subagent => self.bind_subagent_page(&mut widgets.subagent),
+            TranscriptRowBuildKind::Context => bind_context_page(self, &mut widgets.context),
         }
 
         self.sender
@@ -147,6 +157,7 @@ impl RelmListItem for TranscriptItemData {
                 self.unbind_tool_burst_page(&mut widgets.tool_burst)
             }
             TranscriptRowBuildKind::Subagent => self.unbind_subagent_page(&mut widgets.subagent),
+            TranscriptRowBuildKind::Context => unbind_context_page(&mut widgets.context),
         }
 
         cleanup_transcript_row_widgets(widgets);
@@ -507,6 +518,7 @@ impl TranscriptRowBuildKind {
             Self::ToolCall => TOOL_CALL_PAGE_NAME,
             Self::ToolBurst => TOOL_BURST_PAGE_NAME,
             Self::Subagent => SUBAGENT_PAGE_NAME,
+            Self::Context => CONTEXT_PAGE_NAME,
         }
     }
 }
@@ -518,6 +530,7 @@ impl From<&TranscriptItemKind> for TranscriptRowBuildKind {
             TranscriptItemKind::ToolCall(_) => Self::ToolCall,
             TranscriptItemKind::ToolBurst(_) => Self::ToolBurst,
             TranscriptItemKind::Subagent(_) => Self::Subagent,
+            TranscriptItemKind::Context(_) => Self::Context,
         }
     }
 }
@@ -1059,14 +1072,16 @@ mod tests {
     use relm4::gtk::prelude::*;
     use relm4::typed_view::list::RelmListItem;
 
-    use crate::models::{MessagePreview, ReasoningPreview, Role, ToolCallStatus};
+    use crate::models::{
+        ContextKind, ContextPreview, MessagePreview, ReasoningPreview, Role, ToolCallStatus,
+    };
     use crate::ui::session_detail::SessionDetailMsg;
     use crate::ui::session_detail::transcript::item_data::{
         TranscriptItemData, TranscriptItemKind,
     };
     use crate::ui::session_detail::transcript::item_init::{
-        MessageItemInit, SubagentItemInit, ToolBurstItemInit, ToolCallItemInit, TranscriptItemInit,
-        TranscriptRowBuildKind,
+        ContextItemInit, MessageItemInit, SubagentItemInit, ToolBurstItemInit, ToolCallItemInit,
+        TranscriptItemInit, TranscriptRowBuildKind,
     };
 
     fn message_init() -> MessageItemInit {
@@ -1128,6 +1143,21 @@ mod tests {
             subagent_id: "agent-1".to_string(),
             title: "Explore".to_string(),
             reasoning_preview: ReasoningPreview::default(),
+        }
+    }
+
+    fn context_init() -> ContextItemInit {
+        ContextItemInit {
+            item_index: 5,
+            transcript_item_index: 15,
+            session_id: "session-1".to_string(),
+            preview: ContextPreview {
+                id: "ctx-1".to_string(),
+                kind: ContextKind::System,
+                name: None,
+                timestamp: Utc::now(),
+            },
+            db_path: Arc::new(PathBuf::from("/tmp/typed-context-row.db")),
         }
     }
 
@@ -1271,6 +1301,10 @@ mod tests {
                 TranscriptItemKind::Subagent(subagent_init()),
                 TranscriptRowBuildKind::Subagent,
             ),
+            (
+                TranscriptItemKind::Context(context_init()),
+                TranscriptRowBuildKind::Context,
+            ),
         ];
 
         for (kind, expected) in cases {
@@ -1305,8 +1339,12 @@ mod tests {
             }),
             sender.clone(),
         );
-        let mut subagent =
-            TranscriptItemData::from_init(TranscriptItemInit::Subagent(subagent_init()), sender);
+        let mut subagent = TranscriptItemData::from_init(
+            TranscriptItemInit::Subagent(subagent_init()),
+            sender.clone(),
+        );
+        let mut context =
+            TranscriptItemData::from_init(TranscriptItemInit::Context(context_init()), sender);
 
         let list_item: gtk::ListItem = gtk::glib::Object::builder().build();
         let (_, mut message_widgets) = TranscriptItemData::setup(&list_item);
@@ -1328,6 +1366,11 @@ mod tests {
         let mut root = gtk::Box::new(gtk::Orientation::Vertical, 0);
         subagent.bind(&mut subagent_widgets, &mut root);
         subagent.unbind(&mut subagent_widgets, &mut root);
+
+        let (_, mut context_widgets) = TranscriptItemData::setup(&list_item);
+        let mut root = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        context.bind(&mut context_widgets, &mut root);
+        context.unbind(&mut context_widgets, &mut root);
     }
 
     #[gtk::test]

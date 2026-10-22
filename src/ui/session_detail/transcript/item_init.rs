@@ -6,7 +6,9 @@ use std::sync::Arc;
 
 use chrono::{TimeZone, Utc};
 
-use crate::models::{MessagePreview, ReasoningPreview, Role, ToolCallStatus};
+use crate::models::{
+    ContextKind, ContextPreview, MessagePreview, ReasoningPreview, Role, ToolCallStatus,
+};
 
 #[derive(Clone)]
 pub struct MessageItemInit {
@@ -83,11 +85,21 @@ pub struct SubagentItemInit {
 }
 
 #[derive(Clone)]
+pub struct ContextItemInit {
+    pub item_index: usize,
+    pub transcript_item_index: i64,
+    pub session_id: String,
+    pub preview: ContextPreview,
+    pub db_path: Arc<PathBuf>,
+}
+
+#[derive(Clone)]
 pub enum TranscriptItemInit {
     Message(MessageItemInit),
     ToolCall(ToolCallItemInit),
     ToolBurst(ToolBurstItemInit),
     Subagent(SubagentItemInit),
+    Context(ContextItemInit),
 }
 
 impl TranscriptItemInit {
@@ -97,6 +109,7 @@ impl TranscriptItemInit {
             Self::ToolCall(init) => init.item_index,
             Self::ToolBurst(init) => init.item_index,
             Self::Subagent(init) => init.item_index,
+            Self::Context(init) => init.item_index,
         }
     }
 }
@@ -107,6 +120,7 @@ pub enum TranscriptRowBuildKind {
     ToolCall,
     ToolBurst,
     Subagent,
+    Context,
 }
 
 pub(crate) fn count_tool_call_matches(init: &ToolCallItemInit) -> usize {
@@ -252,8 +266,19 @@ fn transcript_item_init_from_row_with_index(
                 .unwrap_or_else(|| "Subagent".to_string()),
             reasoning_preview: row.reasoning_preview,
         }),
-        // Context rows are dropped before conversion until they get a dedicated row.
-        TranscriptItemKind::Unknown | TranscriptItemKind::Context => {
+        TranscriptItemKind::Context => TranscriptItemInit::Context(ContextItemInit {
+            item_index,
+            transcript_item_index: row.item_index,
+            session_id: session_id.to_string(),
+            preview: row.context.clone().unwrap_or_else(|| ContextPreview {
+                id: String::new(),
+                kind: ContextKind::System,
+                name: None,
+                timestamp: Utc::now(),
+            }),
+            db_path,
+        }),
+        TranscriptItemKind::Unknown => {
             tracing::warn!(
                 item_index = row.item_index,
                 "transcript item with unknown kind; rendering as empty message"
