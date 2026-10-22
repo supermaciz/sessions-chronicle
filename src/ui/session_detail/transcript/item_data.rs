@@ -7,8 +7,8 @@ use relm4::binding::{Binding, BoolBinding};
 
 use crate::ui::session_detail::SessionDetailMsg;
 use crate::ui::session_detail::transcript::item_init::{
-    MessageItemInit, SubagentItemInit, ToolBurstItemInit, ToolCallItemInit, TranscriptItemInit,
-    count_tool_call_matches,
+    ContextItemInit, MessageItemInit, SubagentItemInit, ToolBurstItemInit, ToolCallItemInit,
+    TranscriptItemInit, count_tool_call_matches,
 };
 
 #[derive(Clone)]
@@ -42,6 +42,7 @@ pub enum TranscriptItemKind {
     ToolCall(ToolCallItemInit),
     ToolBurst(ToolBurstItemInit),
     Subagent(SubagentItemInit),
+    Context(ContextItemInit),
 }
 
 impl fmt::Debug for TranscriptItemKind {
@@ -51,6 +52,7 @@ impl fmt::Debug for TranscriptItemKind {
             Self::ToolCall(_) => f.write_str("ToolCall"),
             Self::ToolBurst(_) => f.write_str("ToolBurst"),
             Self::Subagent(_) => f.write_str("Subagent"),
+            Self::Context(_) => f.write_str("Context"),
         }
     }
 }
@@ -111,6 +113,12 @@ impl TranscriptItemData {
                 Some(subagent.transcript_item_index),
                 None,
             ),
+            TranscriptItemInit::Context(context) => (
+                TranscriptItemKind::Context(context.clone()),
+                BoolBinding::new(false),
+                Some(context.transcript_item_index),
+                None,
+            ),
         };
 
         Self {
@@ -136,16 +144,25 @@ impl TranscriptItemData {
     pub fn apply_highlight_query(&mut self, query: Option<String>) {
         self.highlight_query = query.clone();
 
-        if let TranscriptItemKind::ToolBurst(burst) = &mut self.kind {
-            for tool_call in &mut burst.tool_calls {
-                tool_call.highlight_query = query.clone();
+        match &mut self.kind {
+            TranscriptItemKind::ToolBurst(burst) => {
+                for tool_call in &mut burst.tool_calls {
+                    tool_call.highlight_query = query.clone();
+                }
+                burst.child_match_counts = burst
+                    .tool_calls
+                    .iter()
+                    .map(count_tool_call_matches)
+                    .collect();
+                burst.match_count = burst.child_match_counts.iter().sum();
             }
-            burst.child_match_counts = burst
-                .tool_calls
-                .iter()
-                .map(count_tool_call_matches)
-                .collect();
-            burst.match_count = burst.child_match_counts.iter().sum();
+            // Context rows never receive a highlight query: their content is
+            // excluded from in-transcript search and never a Next/Previous
+            // target. Explicitly drop any query so it cannot leak into the row.
+            TranscriptItemKind::Context(_) => {
+                self.highlight_query = None;
+            }
+            _ => {}
         }
     }
 }

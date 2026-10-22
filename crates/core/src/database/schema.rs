@@ -2,7 +2,7 @@ use anyhow::Result;
 use rusqlite::Connection;
 
 #[cfg(test)]
-const CURRENT_DB_VERSION: i64 = 18;
+const CURRENT_DB_VERSION: i64 = 20;
 
 fn column_exists(conn: &Connection, table_name: &str, column_name: &str) -> Result<bool> {
     Ok(conn.query_row(
@@ -60,6 +60,15 @@ fn table_exists(conn: &Connection, name: &str) -> Result<bool> {
 ///   18 – sessions gains a nullable agent_path (full Codex task path) and
 ///        subagents.agent_name now carries Codex spawn task names; clears
 ///        file_fingerprints so existing Codex sessions are re-parsed
+///   19 – typed transcript context: context_entries table and nullable
+///        transcript_items.context_id; OpenCode source-generation tables
+///        (opencode_session_sources, opencode_source_fingerprints). Existing
+///        OpenCode owners are tagged `v1`/`json` and only OpenCode-owned
+///        file_fingerprints rows are removed so OpenCode sources are re-read
+///   20 – opencode_source_sessions records the session IDs each OpenCode
+///        SQLite source exposed at its last committed fingerprint, so an
+///        unchanged source is no longer opened on incremental runs, with
+///        per-representation proven ineligibility and retry state
 pub fn initialize_database(conn: &Connection) -> Result<()> {
     let version: i64 = conn.query_row("PRAGMA user_version", [], |row| row.get(0))?;
 
@@ -116,6 +125,12 @@ pub fn initialize_database(conn: &Connection) -> Result<()> {
     }
     if version < 18 {
         apply_v18_migration(conn)?;
+    }
+    if version < 19 {
+        apply_v19_migration(conn)?;
+    }
+    if version < 20 {
+        apply_v20_migration(conn)?;
     }
 
     Ok(())
@@ -710,6 +725,116 @@ fn apply_v18_migration(conn: &Connection) -> Result<()> {
     }
 
     conn.execute_batch("PRAGMA user_version = 18")?;
+    Ok(())
+}
+
+/// Migrate from v18 to v19.
+///
+/// Adds typed transcript context (`context_entries`, `transcript_items.context_id`)
+/// and the OpenCode source bookkeeping tables. Existing OpenCode owners are
+/// tagged with the generation that produced them before V2 existed (`v1` for
+/// SQLite owners, `json` for JSON owners) so cached sessions stay in place.
+/// Only OpenCode-owned `file_fingerprints` rows (owner files and their `-wal`
+/// companions) are removed; with the new fingerprint table starting empty,
+/// every OpenCode source is re-read while other AI assistants and
+/// user-owned data such as `pinned_at` are untouched.
+fn apply_v19_migration(conn: &Connection) -> Result<()> {
+    conn.execute_batch("BEGIN IMMEDIATE")?;
+    match apply_v19_migration_inner(conn) {
+        Ok(()) => {
+            conn.execute_batch("COMMIT")?;
+            Ok(())
+        }
+        Err(err) => {
+            let _ = conn.execute_batch("ROLLBACK");
+            Err(err)
+        }
+    }
+}
+
+fn apply_v19_migration_inner(conn: &Connection) -> Result<()> {
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS context_entries (
+             session_id TEXT NOT NULL,
+             id TEXT NOT NULL,
+             kind TEXT NOT NULL,
+             name TEXT,
+             text TEXT NOT NULL,
+             timestamp INTEGER NOT NULL,
+             item_index INTEGER NOT NULL,
+             PRIMARY KEY (session_id, id)
+         );
+
+         CREATE TABLE IF NOT EXISTS opencode_session_sources (
+             session_id TEXT PRIMARY KEY,
+             generation TEXT NOT NULL
+         );
+
+         CREATE TABLE IF NOT EXISTS opencode_source_fingerprints (
+             db_path TEXT PRIMARY KEY,
+             db_mtime_ns INTEGER NOT NULL,
+             db_size INTEGER NOT NULL,
+             wal_mtime_ns INTEGER,
+             wal_size INTEGER,
+             reader_generation INTEGER NOT NULL
+         );",
+    )?;
+
+    if table_exists(conn, "transcript_items")?
+        && !column_exists(conn, "transcript_items", "context_id")?
+    {
+        conn.execute(
+            "ALTER TABLE transcript_items ADD COLUMN context_id TEXT",
+            [],
+        )?;
+    }
+
+    if table_exists(conn, "sessions")? {
+        conn.execute(
+            "INSERT OR IGNORE INTO opencode_session_sources (session_id, generation)
+             SELECT id, CASE WHEN lower(file_path) LIKE '%.json' THEN 'json' ELSE 'v1' END
+             FROM sessions WHERE tool = 'opencode'",
+            [],
+        )?;
+
+        if table_exists(conn, "file_fingerprints")? {
+            conn.execute(
+                "DELETE FROM file_fingerprints
+                 WHERE file_path IN (SELECT file_path FROM sessions WHERE tool = 'opencode')
+                    OR file_path IN (
+                        SELECT file_path || '-wal' FROM sessions
+                        WHERE tool = 'opencode' AND lower(file_path) NOT LIKE '%.json'
+                    )",
+                [],
+            )?;
+        }
+    }
+
+    conn.execute_batch("PRAGMA user_version = 19")?;
+    Ok(())
+}
+
+/// Migrate from v19 to v20.
+///
+/// Adds `opencode_source_sessions`, written in the same transaction as each
+/// `opencode_source_fingerprints` row. `ineligible` records only proven policy
+/// exclusions, never inferred from absent owners; `retry_required` marks
+/// failures so they retain cached data and retry without reparsing successful
+/// siblings. Existing fingerprint rows predate it and carry an older reader
+/// generation, so their sources are re-read once and the table fills in then;
+/// no data is cleared here.
+fn apply_v20_migration(conn: &Connection) -> Result<()> {
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS opencode_source_sessions (
+             db_path TEXT NOT NULL,
+             session_id TEXT NOT NULL,
+             generation TEXT NOT NULL,
+             ineligible INTEGER NOT NULL DEFAULT 0,
+             retry_required INTEGER NOT NULL DEFAULT 0,
+             PRIMARY KEY (db_path, generation, session_id)
+         );
+         PRAGMA user_version = 20;",
+    )?;
     Ok(())
 }
 
@@ -1944,7 +2069,7 @@ mod tests {
         let version: i64 = conn
             .query_row("PRAGMA user_version", [], |row| row.get(0))
             .unwrap();
-        assert_eq!(version, 18);
+        assert_eq!(version, CURRENT_DB_VERSION);
         assert!(column_exists(&conn, "sessions", "agent_path").unwrap());
         assert_eq!(count(&conn, "SELECT count(*) FROM file_fingerprints"), 0);
         assert_eq!(count(&conn, "SELECT count(*) FROM sessions"), 1);
@@ -1972,7 +2097,7 @@ mod tests {
         let version: i64 = conn
             .query_row("PRAGMA user_version", [], |row| row.get(0))
             .unwrap();
-        assert_eq!(version, 18);
+        assert_eq!(version, CURRENT_DB_VERSION);
         let path: String = conn
             .query_row("SELECT agent_path FROM sessions WHERE id = 's1'", [], |r| {
                 r.get(0)
@@ -1995,5 +2120,288 @@ mod tests {
         initialize_database(&conn).unwrap();
 
         assert_eq!(count(&conn, "SELECT count(*) FROM file_fingerprints"), 1);
+    }
+
+    fn migrate_to_v18(conn: &Connection) {
+        migrate_to_v17(conn);
+        apply_v18_migration(conn).unwrap();
+    }
+
+    fn seed_v18_cache(conn: &Connection) {
+        for (id, tool, file_path, pinned_at) in [
+            ("oc_sqlite", "opencode", "/data/opencode.db", 42),
+            (
+                "oc_json",
+                "opencode",
+                "/data/storage/session/proj/oc_json.json",
+                77,
+            ),
+            ("cl_one", "claude_code", "/data/claude/cl_one.jsonl", 99),
+        ] {
+            conn.execute(
+                "INSERT INTO sessions
+                     (id, tool, start_time, message_count, file_path, last_updated, pinned_at)
+                 VALUES (?1, ?2, 1, 1, ?3, 1, ?4)",
+                rusqlite::params![id, tool, file_path, pinned_at],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO messages (session_id, message_index, role, content, timestamp)
+                 VALUES (?1, 0, 'user', 'hello', 1)",
+                [id],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO transcript_items (session_id, item_index, kind, message_index)
+                 VALUES (?1, 0, 'message', 0)",
+                [id],
+            )
+            .unwrap();
+        }
+        for (path, mtime) in [
+            ("/data/opencode.db", 1),
+            ("/data/opencode.db-wal", 2),
+            ("/data/storage/session/proj/oc_json.json", 3),
+            ("/data/claude/cl_one.jsonl", 4),
+            ("/data/unrelated.jsonl", 5),
+        ] {
+            conn.execute(
+                "INSERT INTO file_fingerprints (file_path, mtime_ns, size) VALUES (?1, ?2, 10)",
+                rusqlite::params![path, mtime],
+            )
+            .unwrap();
+        }
+    }
+
+    fn string_rows(conn: &Connection, sql: &str) -> Vec<String> {
+        let mut stmt = conn.prepare(sql).unwrap();
+        stmt.query_map([], |row| row.get::<_, String>(0))
+            .unwrap()
+            .collect::<std::result::Result<_, _>>()
+            .unwrap()
+    }
+
+    #[test]
+    fn context_v19_migration_preserves_pins() {
+        let conn = Connection::open_in_memory().unwrap();
+        migrate_to_v18(&conn);
+        seed_v18_cache(&conn);
+        assert!(!table_exists(&conn, "context_entries"));
+        assert!(!column_exists(&conn, "transcript_items", "context_id").unwrap());
+
+        initialize_database(&conn).unwrap();
+
+        assert_eq!(count(&conn, "PRAGMA user_version"), CURRENT_DB_VERSION);
+        assert!(column_exists(&conn, "transcript_items", "context_id").unwrap());
+        for table in [
+            "context_entries",
+            "opencode_session_sources",
+            "opencode_source_fingerprints",
+        ] {
+            assert!(table_exists(&conn, table), "{table} missing");
+        }
+        assert_eq!(
+            string_rows(
+                &conn,
+                "SELECT name FROM pragma_table_info('context_entries') ORDER BY cid"
+            ),
+            [
+                "session_id",
+                "id",
+                "kind",
+                "name",
+                "text",
+                "timestamp",
+                "item_index"
+            ]
+        );
+        assert_eq!(
+            string_rows(
+                &conn,
+                "SELECT name FROM pragma_table_info('context_entries') WHERE pk > 0 ORDER BY pk"
+            ),
+            ["session_id", "id"]
+        );
+        assert_eq!(
+            string_rows(
+                &conn,
+                "SELECT name FROM pragma_table_info('opencode_source_fingerprints') \
+                 WHERE \"notnull\" = 0 AND pk = 0 ORDER BY cid"
+            ),
+            ["wal_mtime_ns", "wal_size"]
+        );
+
+        // User-owned pins and every cached session survive.
+        assert_eq!(count(&conn, "SELECT count(*) FROM sessions"), 3);
+        assert_eq!(count(&conn, "SELECT count(*) FROM messages"), 3);
+        assert_eq!(count(&conn, "SELECT count(*) FROM transcript_items"), 3);
+        assert_eq!(
+            string_rows(
+                &conn,
+                "SELECT id || '=' || pinned_at FROM sessions ORDER BY id"
+            ),
+            ["cl_one=99", "oc_json=77", "oc_sqlite=42"]
+        );
+        assert_eq!(
+            count(
+                &conn,
+                "SELECT count(*) FROM transcript_items WHERE context_id IS NOT NULL"
+            ),
+            0
+        );
+
+        // Owner generations follow the pre-V2 cache contract.
+        assert_eq!(
+            string_rows(
+                &conn,
+                "SELECT session_id || '=' || generation FROM opencode_session_sources \
+                 ORDER BY session_id"
+            ),
+            ["oc_json=json", "oc_sqlite=v1"]
+        );
+
+        // Only OpenCode-owned fingerprints (and their WAL) are dropped; the
+        // empty new fingerprint table forces every source to be re-read.
+        assert_eq!(
+            string_rows(
+                &conn,
+                "SELECT file_path || '@' || mtime_ns FROM file_fingerprints ORDER BY file_path"
+            ),
+            ["/data/claude/cl_one.jsonl@4", "/data/unrelated.jsonl@5"]
+        );
+        assert_eq!(
+            count(&conn, "SELECT count(*) FROM opencode_source_fingerprints"),
+            0
+        );
+
+        // Re-initialising is a no-op: nothing is re-seeded or cleared again.
+        conn.execute(
+            "INSERT INTO opencode_source_fingerprints
+             (db_path, db_mtime_ns, db_size, wal_mtime_ns, wal_size, reader_generation)
+             VALUES ('/data/opencode.db', 1, 2, NULL, NULL, 2)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "UPDATE opencode_session_sources SET generation = 'v2' WHERE session_id = 'oc_sqlite'",
+            [],
+        )
+        .unwrap();
+        initialize_database(&conn).unwrap();
+        assert_eq!(count(&conn, "PRAGMA user_version"), CURRENT_DB_VERSION);
+        assert_eq!(
+            count(&conn, "SELECT count(*) FROM opencode_source_fingerprints"),
+            1
+        );
+        assert_eq!(
+            string_rows(
+                &conn,
+                "SELECT generation FROM opencode_session_sources WHERE session_id = 'oc_sqlite'"
+            ),
+            ["v2"]
+        );
+        assert_eq!(count(&conn, "SELECT count(*) FROM file_fingerprints"), 2);
+        assert_eq!(count(&conn, "SELECT count(*) FROM sessions"), 3);
+    }
+
+    #[test]
+    fn context_v19_migration_tolerates_existing_column() {
+        let conn = Connection::open_in_memory().unwrap();
+        migrate_to_v18(&conn);
+        conn.execute(
+            "ALTER TABLE transcript_items ADD COLUMN context_id TEXT",
+            [],
+        )
+        .unwrap();
+
+        initialize_database(&conn).unwrap();
+
+        assert_eq!(count(&conn, "PRAGMA user_version"), CURRENT_DB_VERSION);
+        assert!(column_exists(&conn, "transcript_items", "context_id").unwrap());
+    }
+
+    #[test]
+    fn opencode_source_sessions_v20_migration_keeps_v19_cache() {
+        let conn = Connection::open_in_memory().unwrap();
+        migrate_to_v18(&conn);
+        seed_v18_cache(&conn);
+        apply_v19_migration(&conn).unwrap();
+        conn.execute(
+            "INSERT INTO opencode_source_fingerprints
+             (db_path, db_mtime_ns, db_size, wal_mtime_ns, wal_size, reader_generation)
+             VALUES ('/data/opencode.db', 1, 2, 3, 4, 3)",
+            [],
+        )
+        .unwrap();
+        assert!(!table_exists(&conn, "opencode_source_sessions"));
+        let sessions = string_rows(
+            &conn,
+            "SELECT id || ':' || tool || ':' || pinned_at FROM sessions ORDER BY id",
+        );
+        let messages = string_rows(
+            &conn,
+            "SELECT session_id || ':' || content FROM messages ORDER BY session_id",
+        );
+        let fingerprints = string_rows(
+            &conn,
+            "SELECT file_path FROM file_fingerprints ORDER BY file_path",
+        );
+
+        initialize_database(&conn).unwrap();
+        initialize_database(&conn).unwrap();
+
+        assert_eq!(count(&conn, "PRAGMA user_version"), CURRENT_DB_VERSION);
+        assert_eq!(
+            string_rows(
+                &conn,
+                "SELECT name FROM pragma_table_info('opencode_source_sessions') \
+                 WHERE pk > 0 ORDER BY pk"
+            ),
+            ["db_path", "generation", "session_id"]
+        );
+        // Inventory rows default to neither proven ineligible nor retrying.
+        conn.execute(
+            "INSERT INTO opencode_source_sessions (db_path, session_id, generation)
+             VALUES ('/data/opencode.db', 'oc_sqlite', 'v1')",
+            [],
+        )
+        .unwrap();
+        assert_eq!(
+            string_rows(
+                &conn,
+                "SELECT ineligible || ':' || retry_required FROM opencode_source_sessions"
+            ),
+            ["0:0"]
+        );
+        // Existing fingerprints stay; their stale reader generation forces the
+        // one re-read that fills the new table.
+        assert_eq!(
+            string_rows(
+                &conn,
+                "SELECT db_mtime_ns || ':' || db_size || ':' || wal_mtime_ns || ':' || wal_size || ':' || reader_generation FROM opencode_source_fingerprints"
+            ),
+            ["1:2:3:4:3"]
+        );
+        assert_eq!(
+            string_rows(
+                &conn,
+                "SELECT id || ':' || tool || ':' || pinned_at FROM sessions ORDER BY id"
+            ),
+            sessions
+        );
+        assert_eq!(
+            string_rows(
+                &conn,
+                "SELECT session_id || ':' || content FROM messages ORDER BY session_id"
+            ),
+            messages
+        );
+        assert_eq!(
+            string_rows(
+                &conn,
+                "SELECT file_path FROM file_fingerprints ORDER BY file_path"
+            ),
+            fingerprints
+        );
     }
 }

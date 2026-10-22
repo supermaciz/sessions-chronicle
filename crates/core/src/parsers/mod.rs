@@ -8,7 +8,8 @@ pub mod opencode;
 use chrono::{DateTime, Utc};
 
 use crate::models::{
-    Message, ReasoningAttachment, Role, Subagent, TokenUsage, ToolCall, TranscriptItem,
+    ContextEntry, Message, ReasoningAttachment, Role, Subagent, TokenUsage, ToolCall,
+    TranscriptItem,
 };
 
 const FIRST_PROMPT_MAX_CHARS: usize = 200;
@@ -90,6 +91,7 @@ pub struct ParsedSession {
     pub subagents: Vec<Subagent>,
     pub transcript_items: Vec<TranscriptItem>,
     pub reasoning_attachments: Vec<ReasoningAttachment>,
+    pub context_entries: Vec<ContextEntry>,
     pub token_usage: Option<TokenUsage>,
     /// Full task path of a Codex child session (`/root/analyze`); `None` elsewhere.
     pub agent_path: Option<String>,

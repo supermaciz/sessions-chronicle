@@ -249,6 +249,30 @@
   margin-bottom: 2px;
 }
 
+/* Compact context entry row (system messages, skill injections, compaction
+   summaries). Neutral accent to distinguish it from tool calls and subagents. */
+.context-row {
+  padding: 2px 8px;
+  border-radius: 6px;
+  background-color: alpha(@card_bg_color, 0.4);
+  border-left: 2px solid alpha(@accent_color, 0.6);
+  margin-bottom: 2px;
+}
+
+.context-header-button {
+  padding: 4px 8px;
+  min-height: 0;
+  background: none;
+}
+
+.context-header-button:hover {
+  background: alpha(@card_bg_color, 0.6);
+}
+
+.context-arrow {
+  margin-top: 4px;
+}
+
 /* Tool call status chip colors */
 .status-completed {
   color: #26a269;

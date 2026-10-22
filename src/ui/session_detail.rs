@@ -16,7 +16,7 @@ use relm4::{
 
 use crate::database::{
     MatchPosition, find_session_match_positions, load_all_transcript_items,
-    load_message_full_content,
+    load_context_full_content, load_message_full_content,
 };
 use crate::models::Session;
 use crate::ui::session_detail::transcript::display::{
@@ -166,6 +166,12 @@ pub enum SessionDetailMsg {
     RequestMessageFullContent {
         item_index: usize,
     },
+    /// Request the lazy load of a context entry's full body after its row
+    /// expanded in place. Context bodies are excluded from the transcript
+    /// listing and from search, so they load on demand only.
+    RequestContextFullContent {
+        item_index: usize,
+    },
     RowBuilt {
         item_index: usize,
         kind: TranscriptRowBuildKind,
@@ -203,6 +209,12 @@ pub enum SessionDetailCmd {
         session_id: String,
         message_index: usize,
         result: Result<String, String>,
+    },
+    ContextFullContentReady {
+        item_index: usize,
+        session_id: String,
+        context_id: String,
+        result: Result<Option<String>, String>,
     },
 }
 
@@ -258,6 +270,24 @@ impl std::fmt::Debug for SessionDetailCmd {
                     .field("item_index", item_index)
                     .field("session_id", session_id)
                     .field("message_index", message_index)
+                    .field("result", &result_summary)
+                    .finish()
+            }
+            Self::ContextFullContentReady {
+                item_index,
+                session_id,
+                context_id,
+                result,
+            } => {
+                let result_summary = match result {
+                    Ok(Some(content)) => format!("Ok(Some({} chars))", content.len()),
+                    Ok(None) => "Ok(None)".to_string(),
+                    Err(err) => format!("Err({err})"),
+                };
+                f.debug_struct("ContextFullContentReady")
+                    .field("item_index", item_index)
+                    .field("session_id", session_id)
+                    .field("context_id", context_id)
                     .field("result", &result_summary)
                     .finish()
             }
@@ -566,6 +596,9 @@ impl Component for SessionDetail {
             SessionDetailMsg::RequestMessageFullContent { item_index } => {
                 self.request_message_full_content(item_index, &sender);
             }
+            SessionDetailMsg::RequestContextFullContent { item_index } => {
+                self.request_context_full_content(item_index, &sender);
+            }
             SessionDetailMsg::RowBuilt {
                 item_index: _,
                 kind: _,
@@ -650,6 +683,14 @@ impl Component for SessionDetail {
                     message_index,
                     result,
                 );
+            }
+            SessionDetailCmd::ContextFullContentReady {
+                item_index,
+                session_id,
+                context_id,
+                result,
+            } => {
+                self.handle_context_full_content_ready(item_index, session_id, context_id, result);
             }
         }
     }
@@ -982,6 +1023,49 @@ impl SessionDetail {
                     .map_err(|err| format!("{err:#}")),
             });
             tracing::debug!(item_index, "Full message content load requested");
+        }
+    }
+
+    /// Kick off the off-thread load of a context entry's full body.
+    ///
+    /// Mirrors [`Self::request_message_full_content`]: the row widget already
+    /// toggled expansion, and here we only resolve the load target and spawn the
+    /// database read. The result is applied back in place, guarded against stale
+    /// sessions and recycled rows, via [`Self::handle_context_full_content_ready`].
+    fn request_context_full_content(&self, item_index: usize, sender: &ComponentSender<Self>) {
+        let idx = item_index as u32;
+        let Some(item) = self.messages.get(idx) else {
+            tracing::debug!(
+                item_index,
+                "Context full content load ignored: item not found"
+            );
+            return;
+        };
+
+        let load_request = {
+            let ref_data = item.borrow();
+            if ref_data.full_content.borrow().is_some() {
+                None
+            } else if let TranscriptItemKind::Context(context) = &ref_data.kind {
+                Some((
+                    context.db_path.clone(),
+                    context.session_id.clone(),
+                    context.preview.id.clone(),
+                ))
+            } else {
+                None
+            }
+        };
+
+        if let Some((db_path, session_id, context_id)) = load_request {
+            sender.spawn_oneshot_command(move || SessionDetailCmd::ContextFullContentReady {
+                item_index,
+                session_id: session_id.clone(),
+                context_id: context_id.clone(),
+                result: load_context_full_content(&db_path, &session_id, &context_id)
+                    .map_err(|err| format!("{err:#}")),
+            });
+            tracing::debug!(item_index, "Context full content load requested");
         }
     }
 
@@ -1474,6 +1558,42 @@ impl SessionDetail {
         }
     }
 
+    fn handle_context_full_content_ready(
+        &mut self,
+        item_index: usize,
+        session_id: String,
+        context_id: String,
+        result: Result<Option<String>, String>,
+    ) {
+        if !self.typed_context_full_content_target_matches(item_index, &session_id, &context_id) {
+            tracing::debug!(
+                item_index,
+                session_id = session_id.as_str(),
+                context_id = context_id.as_str(),
+                "Ignoring stale context full content result"
+            );
+            return;
+        }
+
+        match result {
+            Ok(Some(content)) => self.set_typed_context_full_content(item_index, content),
+            // The context entry was deleted after the transcript listed it, or
+            // the read failed: reset the row so a later expansion can retry.
+            Ok(None) => {
+                tracing::debug!(
+                    item_index,
+                    context_id = context_id.as_str(),
+                    "Context body missing; resetting row so expansion can be retried"
+                );
+                self.reset_typed_context_expansion(item_index);
+            }
+            Err(err) => {
+                tracing::error!(item_index, "Failed to load context full content: {err}");
+                self.reset_typed_context_expansion(item_index);
+            }
+        }
+    }
+
     fn apply_transcript_page_result(
         &mut self,
         sender: &ComponentSender<Self>,
@@ -1639,6 +1759,75 @@ impl SessionDetail {
         item.expanded.set(false);
         item.raw.set(false);
         item.raw_pending_full_content.set(false);
+    }
+
+    fn set_typed_context_full_content(&mut self, item_index: usize, content: String) {
+        let idx = item_index as u32;
+        let Some(item) = self.messages.get(idx) else {
+            return;
+        };
+
+        let item = item.borrow();
+        Self::apply_context_full_content_success(&item, content);
+        Self::bump_content_revision(&item);
+    }
+
+    fn reset_typed_context_expansion(&mut self, item_index: usize) {
+        let idx = item_index as u32;
+        let Some(item) = self.messages.get(idx) else {
+            return;
+        };
+
+        let item = item.borrow();
+        Self::reset_context_expansion_after_missing_content(&item);
+        Self::bump_content_revision(&item);
+    }
+
+    pub(crate) fn apply_context_full_content_success(item: &TranscriptItemData, content: String) {
+        *item.full_content.borrow_mut() = Some(content);
+    }
+
+    fn reset_context_expansion_after_missing_content(item: &TranscriptItemData) {
+        item.expanded.set(false);
+    }
+
+    fn typed_context_full_content_target_matches(
+        &self,
+        item_index: usize,
+        session_id: &str,
+        context_id: &str,
+    ) -> bool {
+        let active_session_id = self.session.as_ref().map(|session| session.id.as_str());
+        let Some(item) = self.messages.get(item_index as u32) else {
+            return false;
+        };
+
+        Self::context_full_content_target_matches(
+            &item.borrow(),
+            active_session_id,
+            session_id,
+            context_id,
+        )
+    }
+
+    fn context_full_content_target_matches(
+        item: &TranscriptItemData,
+        active_session_id: Option<&str>,
+        session_id: &str,
+        context_id: &str,
+    ) -> bool {
+        let Some(active_session_id) = active_session_id else {
+            return false;
+        };
+        if active_session_id != session_id {
+            return false;
+        }
+
+        let TranscriptItemKind::Context(context) = &item.kind else {
+            return false;
+        };
+
+        context.preview.id == context_id
     }
 
     fn typed_message_full_content_target_matches(

@@ -275,6 +275,7 @@ impl ParseState {
             message_index: Some(self.msg_counter),
             tool_call_id: None,
             subagent_id: None,
+            context_id: None,
         });
         self.flush_pending_reasoning_to_item(self.item_counter);
         self.msg_counter += 1;
@@ -316,6 +317,7 @@ impl ParseState {
             message_index: None,
             tool_call_id: Some(call_id),
             subagent_id: None,
+            context_id: None,
         });
         self.flush_pending_reasoning_to_item(self.item_counter);
         self.item_counter += 1;
@@ -361,6 +363,7 @@ impl ParseState {
                 message_index: Some(0),
                 tool_call_id: None,
                 subagent_id: None,
+                context_id: None,
             },
         );
         self.msg_counter += 1;
@@ -413,6 +416,7 @@ impl ParseState {
             message_index: None,
             tool_call_id: None,
             subagent_id: Some(id),
+            context_id: None,
         });
         self.flush_pending_reasoning_to_item(self.item_counter);
         self.item_counter += 1;
@@ -1363,6 +1367,7 @@ impl CodexParser {
             reasoning_attachments: state.reasoning_attachments,
             token_usage,
             agent_path,
+            context_entries: Vec::new(),
         })
     }
 

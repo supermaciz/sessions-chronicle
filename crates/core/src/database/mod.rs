@@ -1,5 +1,7 @@
 pub mod analytics;
+mod context;
 pub mod indexer;
+pub(crate) mod opencode_sources;
 pub mod schema;
 pub mod shell_search;
 
@@ -11,11 +13,13 @@ use std::path::Path;
 use std::time::Duration;
 
 use crate::models::{
-    AiAssistant, DateCounts, DateFilter, MessagePreview, ProjectFilter, ProjectInfo,
-    ReasoningAttachment, ReasoningPreview, Role, Session, SortOrder, Subagent, ToolCall,
-    ToolCallStatus, TranscriptItem, TranscriptItemKind,
+    AiAssistant, ContextKind, ContextPreview, DateCounts, DateFilter, MessagePreview,
+    ProjectFilter, ProjectInfo, ReasoningAttachment, ReasoningPreview, Role, Session, SortOrder,
+    Subagent, ToolCall, ToolCallStatus, TranscriptItem, TranscriptItemKind,
 };
 
+pub(crate) use context::insert_context_entry;
+pub use context::load_context_full_content;
 pub use indexer::{IndexingStats, SessionIndexer};
 
 const SQLITE_BUSY_TIMEOUT_SECS: u64 = 5;
@@ -60,6 +64,8 @@ pub struct TranscriptItemRow {
     pub subagent_title: Option<String>,
     #[allow(dead_code)]
     pub subagent_prompt: Option<String>,
+    // Context fields (metadata only; the body loads lazily)
+    pub context: Option<ContextPreview>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1075,6 +1081,7 @@ pub fn load_transcript_items(
 
     let sql =
         "SELECT ti.item_index, ti.kind, ti.message_index, ti.tool_call_id, ti.subagent_id,
+                ti.context_id,
                 COALESCE((ra.visible_text IS NOT NULL OR ra.summary_text IS NOT NULL OR ra.has_encrypted_content = 1), 0) AS has_reasoning,
                 (ra.visible_text IS NOT NULL OR ra.summary_text IS NOT NULL) AS has_visible_reasoning,
                 COALESCE((ra.has_encrypted_content = 1 AND ra.visible_text IS NULL AND ra.summary_text IS NULL), 0) AS encrypted_only,
@@ -1084,7 +1091,9 @@ pub fn load_transcript_items(
                 substr(tc.input_json, 1, 512) AS input_json,
                 substr(tc.output_text, 1, 512) AS output_text,
                 tc.duration_ms,
-                sa.title AS subagent_title, sa.prompt AS subagent_prompt
+                sa.title AS subagent_title, sa.prompt AS subagent_prompt,
+                ctx.kind AS context_kind, ctx.name AS context_name,
+                ctx.timestamp AS context_timestamp
          FROM transcript_items ti
          LEFT JOIN reasoning_attachments ra ON ti.session_id = ra.session_id
                                         AND ti.item_index = ra.transcript_item_index
@@ -1094,6 +1103,8 @@ pub fn load_transcript_items(
                                 AND ti.tool_call_id = tc.id
          LEFT JOIN subagents sa ON ti.session_id = sa.session_id
                                AND ti.subagent_id = sa.id
+         LEFT JOIN context_entries ctx ON ti.session_id = ctx.session_id
+                                      AND ti.context_id = ctx.id
          WHERE ti.session_id = ?1
          ORDER BY ti.item_index
          LIMIT ?3 OFFSET ?4";
@@ -1121,6 +1132,10 @@ pub fn load_transcript_items(
     let col_duration_ms = stmt.column_index("duration_ms")?;
     let col_subagent_title = stmt.column_index("subagent_title")?;
     let col_subagent_prompt = stmt.column_index("subagent_prompt")?;
+    let col_context_id = stmt.column_index("context_id")?;
+    let col_context_kind = stmt.column_index("context_kind")?;
+    let col_context_name = stmt.column_index("context_name")?;
+    let col_context_timestamp = stmt.column_index("context_timestamp")?;
 
     let mut rows = stmt
         .query([&session_id as &dyn ToSql, &preview_len, &limit, &offset])
@@ -1133,6 +1148,20 @@ pub fn load_transcript_items(
 
         let role: Option<String> = row.get(col_role)?;
         let tool_status: Option<String> = row.get(col_tool_status)?;
+        let context_id: Option<String> = row.get(col_context_id)?;
+        let context_kind: Option<String> = row.get(col_context_kind)?;
+        let context = match (
+            context_id,
+            context_kind.as_deref().and_then(ContextKind::from_storage),
+        ) {
+            (Some(id), Some(kind)) => Some(ContextPreview {
+                id,
+                kind,
+                name: row.get(col_context_name)?,
+                timestamp: context::context_timestamp(row.get(col_context_timestamp)?),
+            }),
+            _ => None,
+        };
 
         items.push(TranscriptItemRow {
             item_index: row.get(col_item_index)?,
@@ -1158,6 +1187,7 @@ pub fn load_transcript_items(
             duration_ms: row.get(col_duration_ms)?,
             subagent_title: row.get(col_subagent_title)?,
             subagent_prompt: row.get(col_subagent_prompt)?,
+            context,
         });
     }
 
@@ -1223,16 +1253,42 @@ pub fn insert_subagent(conn: &Connection, sa: &Subagent, session_id: &str) -> Re
     Ok(())
 }
 
+/// Reject items whose references do not match their kind: exactly the one
+/// reference named by the kind is set. `Unknown` carries none.
+fn validate_transcript_item_reference(item: &TranscriptItem) -> Result<()> {
+    let actual = (
+        item.message_index.is_some(),
+        item.tool_call_id.is_some(),
+        item.subagent_id.is_some(),
+        item.context_id.is_some(),
+    );
+    let expected = match item.kind {
+        TranscriptItemKind::Message => (true, false, false, false),
+        TranscriptItemKind::ToolCall => (false, true, false, false),
+        TranscriptItemKind::Subagent => (false, false, true, false),
+        TranscriptItemKind::Context => (false, false, false, true),
+        TranscriptItemKind::Unknown => (false, false, false, false),
+    };
+    anyhow::ensure!(
+        actual == expected,
+        "Transcript item {} of kind {:?} has inconsistent references",
+        item.item_index,
+        item.kind
+    );
+    Ok(())
+}
+
 /// Insert a transcript item (upsert by session_id + item_index).
 pub fn insert_transcript_item(
     conn: &Connection,
     item: &TranscriptItem,
     session_id: &str,
 ) -> Result<()> {
+    validate_transcript_item_reference(item)?;
     conn.execute(
         "INSERT OR REPLACE INTO transcript_items
-         (session_id, item_index, kind, message_index, tool_call_id, subagent_id)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+         (session_id, item_index, kind, message_index, tool_call_id, subagent_id, context_id)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
         rusqlite::params![
             session_id,
             item.item_index,
@@ -1240,6 +1296,7 @@ pub fn insert_transcript_item(
             item.message_index,
             item.tool_call_id,
             item.subagent_id,
+            item.context_id,
         ],
     )
     .context("Failed to insert transcript item")?;

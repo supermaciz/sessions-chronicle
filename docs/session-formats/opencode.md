@@ -735,54 +735,97 @@ turns.
 
 ## Parser Behavior (Sessions Chronicle)
 
-Current implementation:
+Implemented:
 
-- Parser core: `crates/core/src/parsers/opencode/mod.rs`
-- JSON backend: `crates/core/src/parsers/opencode/json_backend.rs`
-- SQLite backend: `crates/core/src/parsers/opencode/sqlite_backend.rs`
-- Indexer orchestration: `crates/core/src/database/indexer.rs` (`index_opencode_sessions`)
+- V2 reader: `crates/core/src/parsers/opencode/v2.rs` + `v2_projection.rs`
+  (reads `session_v2` / `session_message`).
+- V1 SQLite backend: `crates/core/src/parsers/opencode/sqlite_backend.rs`
+  (reads `session` / `message` / `part`).
+- JSON backend: `crates/core/src/parsers/opencode/json_backend.rs` (legacy
+  `storage/` tree).
+- Source-aware coordinator: `crates/core/src/database/indexer/opencode.rs`
+  (generation arbitration, retained ownership, captured DB/WAL fingerprints).
 
-Current indexing strategy is **SQLite-first dual-read with JSON fallback**:
+### Source priority and retention
 
-1. If an OpenCode SQLite database is available, list/parse sessions from SQLite first
-2. Also enumerate legacy JSON storage when present
-3. Deduplicate by session `id` (SQLite wins on overlap)
-4. Support JSON-only and SQLite-only installs
+One representation is selected per session ID across every discovered source,
+by generation first then configured source order: **V2 > V1 > JSON**. Within one
+generation the deterministic configured-source order wins; traversal order and
+modification time never influence the result, and a frozen V1 transcript is
+never merged with its V2 counterpart.
 
-> **⚠️ V2 gap (confirmed 2026-10-14):** the SQLite backend still reads only the
-> V1 tables — `SELECT id FROM session` for discovery and `message` / `part` for
-> the transcript. It does not read `session_v2` / `session_message`, so sessions
-> written after the v2 upgrade are not discovered, and part/tool extraction
-> assumes V1 rows (`.tool`, `.state.output`, `pending`). This is tracked as a
-> known limitation, not a documented contract.
+Ownership is recorded in the local cache (`opencode_session_sources.generation`
+plus `sessions.file_path`). A selected source that cannot be read, parsed, or
+persisted keeps its previous cache and is retried on the next run; a confirmed
+missing source prunes its sessions, while an inaccessible or merely undiscovered
+one retains them. A source's DB/WAL fingerprint is committed only after all of
+its selected sessions succeed, so a later failure re-reads the whole source. The
+session IDs the source exposed are stored with that fingerprint
+(`opencode_source_sessions`), so an unchanged source takes part in selection on
+incremental runs without being opened; it is opened only when one of its
+sessions must still be parsed (a fallback or a retried promotion). The
+one-time v19 migration reindexes every OpenCode source (V2 > V1 promotion) while
+preserving favorites and other user-owned state.
 
-Current behavior:
+### Transcript projection
 
-- Indexes sessions with `parentID` as subagent sessions (`is_subagent = 1`)
-- Converts `part.type == text` into transcript messages
-- Extracts `part.type == tool` into indexed tool-call records, with the exception
-  that `tool == "task"` is mapped to subagent records (title from
-  `state.input.description`, prompt from `state.input.prompt`, `child_session_id`
-  from `state.metadata.sessionId`, result from `state.output`)
-- Maps tool state `pending`, `running`, `completed`, and `failed`/`error`;
-  unknown statuses fall back to `Unknown` (V2 `streaming` currently falls here)
-- Extracts `part.type == subtask` into subagent records; when a session also
-  contains any `tool == "task"` part, `subtask` records are skipped to avoid
-  duplication (legacy sessions without `tool == "task"` continue to use `subtask`)
-- Non-message parts like `reasoning`, `step-start`, `step-finish`, `snapshot`,
-  `compaction`, `file`, `agent`, `retry`, and `patch` are currently not rendered
-  as transcript messages
+- Native `session_message` rows stream in `seq, id` order (never collected into
+  a vector before projection) and feed the shared `ParsedSession`.
+- `user.text` becomes a user message; assistant `text` becomes an assistant
+  message with per-message model; assistant `reasoning` uses the existing
+  reasoning-attachment semantics (see below).
+- Assistant `tool` items become tool-call records; `name == "task"` becomes a
+  subagent row, and a `synthetic` subagent completion enriches the matched task
+  (`metadata.childID` is authoritative).
+- `system.text`, a standalone `skill`, and a completed `compaction` summary
+  become typed **context** entries — visible in the transcript but neither user
+  nor assistant messages.
 
-**Title extraction:** Prefer session metadata `title` (SQLite `session.title`
-when present) when present; fallback to first flattened `text` part attached to a
-`user` message.
+### Context and search exclusion
 
-**Timestamp parsing:** Session timestamps from metadata `time.created` +
-`time.updated` (ms epoch), with per-message `time.created` used for ordering.
+Context text is stored in its own `context_entries` table, never in `messages`
+or `messages_fts`. Context does not count as a user/assistant exchange, does not
+contribute token usage, and is excluded from global search, in-transcript search
+(match counts, next/previous navigation, highlighting), and the GNOME search
+provider. Tool calls (including skill tool calls) keep their existing behavior:
+they are stored in their own table and are not full-text indexed.
 
-**SQLite read path:** Implemented via `SqliteBackend` (`rusqlite` read-only
-connection). SQLite rows deserialize `message.data` and `part.data` JSON blobs
-and feed the same parser core used by the JSON backend.
+### Reasoning
+
+Reasoning is already projected through the existing reasoning-attachment model
+in both V1 (the `reasoning` part) and V2 (the `reasoning` assistant content
+item). In V2 the reasoning text attaches to the following assistant text item.
+
+### Token usage
+
+Assistant `tokens` is aggregated once per session (`input`, `output`,
+`reasoning`, cache read/write). Missing usage stays unknown rather than becoming
+zero, and session-level rollup columns (`tokens_*`, `cost`, `model`) are ignored.
+
+### Compatibility limits (explicit)
+
+- Unknown `session_message` types (`idle`, switches, standalone `shell`,
+  non-subagent `synthetic`) and unknown assistant content types are skipped
+  with a diagnostic.
+- Tool-result `file` blocks are skipped; attachments are never fetched and
+  binary content is never rendered.
+- Compaction `recent` history and fork ancestry are not reconstructed.
+- Context has no full-text index, by design.
+
+### Title and eligibility
+
+Title is a nonblank explicit title, else the first genuine user text. A session
+with no genuine user message is excluded by policy (`NoUserMessages`); a corrupt
+user record is a failure (`IncompleteTranscript`), never an apparent no-user
+exclusion that could erase a last good cache.
+
+**Timestamps:** session dates come from `time_created` / `time_updated` (epoch
+ms), native message timestamps from the row; transcript ordering is `seq, id`,
+never timestamps.
+
+**SQLite read path:** `V2Reader` and `SqliteBackend` open read-only connections
+and hold a deferred read transaction (snapshot) for their lifetime, so the
+source database is never modified and a consistent snapshot is parsed.
 
 ---
 

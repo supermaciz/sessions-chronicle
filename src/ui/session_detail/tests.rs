@@ -3,6 +3,8 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
+use crate::models::{ContextKind, ContextPreview};
+use crate::ui::session_detail::transcript::item_init::count_tool_call_matches;
 use relm4::{Component, ComponentController};
 use rusqlite::{Connection, params};
 
@@ -139,6 +141,7 @@ fn transcript_message_row(
         subagent_id: None,
         subagent_title: None,
         subagent_prompt: None,
+        context: None,
     }
 }
 
@@ -163,6 +166,7 @@ fn transcript_tool_row(item_index: i64, tool_name: &str) -> crate::database::Tra
         subagent_id: None,
         subagent_title: None,
         subagent_prompt: None,
+        context: None,
     }
 }
 
@@ -187,7 +191,117 @@ fn transcript_subagent_row(item_index: i64, title: &str) -> crate::database::Tra
         subagent_id: Some(format!("subagent-{item_index}")),
         subagent_title: Some(title.to_string()),
         subagent_prompt: Some("investigate".to_string()),
+        context: None,
     }
+}
+
+fn transcript_context_row(
+    item_index: i64,
+    context_id: &str,
+    kind: ContextKind,
+) -> crate::database::TranscriptItemRow {
+    crate::database::TranscriptItemRow {
+        item_index,
+        kind: crate::models::TranscriptItemKind::Context,
+        reasoning_preview: crate::models::ReasoningPreview::default(),
+        message_index: None,
+        role: None,
+        content_preview: None,
+        content_len: None,
+        timestamp: None,
+        model: None,
+        tool_call_id: None,
+        tool_name: None,
+        tool_status: None,
+        tool_summary: None,
+        tool_input_json: None,
+        tool_output_text: None,
+        duration_ms: None,
+        subagent_id: None,
+        subagent_title: None,
+        subagent_prompt: None,
+        context: Some(ContextPreview {
+            id: context_id.to_string(),
+            kind,
+            name: None,
+            timestamp: chrono::Utc::now(),
+        }),
+    }
+}
+
+fn seed_context_transcript(db_path: &std::path::Path, session_id: &str) {
+    let conn = Connection::open(db_path).expect("open temp db");
+    crate::database::schema::initialize_database(&conn).expect("initialize db");
+
+    conn.execute(
+        "INSERT INTO messages (session_id, message_index, role, content, timestamp, model)
+         VALUES (?1, 0, 'user', 'ordinary message', 0, NULL)",
+        params![session_id],
+    )
+    .expect("insert message");
+    conn.execute(
+        "INSERT INTO transcript_items (session_id, item_index, kind, message_index)
+         VALUES (?1, 0, 'message', 0)",
+        params![session_id],
+    )
+    .expect("insert message transcript item");
+
+    conn.execute(
+        "INSERT INTO context_entries (session_id, id, kind, name, text, timestamp, item_index)
+         VALUES (?1, 'ctx-1', 'system', NULL, 'contextonlyneedle body', 1, 1)",
+        params![session_id],
+    )
+    .expect("insert context entry");
+    conn.execute(
+        "INSERT INTO transcript_items (session_id, item_index, kind, context_id)
+         VALUES (?1, 1, 'context', 'ctx-1')",
+        params![session_id],
+    )
+    .expect("insert context transcript item");
+}
+
+fn seed_context_search_transcript(db_path: &std::path::Path, session_id: &str) {
+    let conn = Connection::open(db_path).expect("open temp db");
+    crate::database::schema::initialize_database(&conn).expect("initialize db");
+
+    conn.execute(
+        "INSERT INTO messages (session_id, message_index, role, content, timestamp, model)
+         VALUES (?1, 0, 'user', 'plain message', 0, NULL)",
+        params![session_id],
+    )
+    .expect("insert plain message");
+    conn.execute(
+        "INSERT INTO transcript_items (session_id, item_index, kind, message_index)
+         VALUES (?1, 0, 'message', 0)",
+        params![session_id],
+    )
+    .expect("insert plain message transcript item");
+
+    conn.execute(
+        "INSERT INTO context_entries (session_id, id, kind, name, text, timestamp, item_index)
+         VALUES (?1, 'ctx-1', 'system', NULL, 'needle inside context only', 1, 1)",
+        params![session_id],
+    )
+    .expect("insert context entry");
+    conn.execute(
+        "INSERT INTO transcript_items (session_id, item_index, kind, context_id)
+         VALUES (?1, 1, 'context', 'ctx-1')",
+        params![session_id],
+    )
+    .expect("insert context transcript item");
+
+    conn.execute(
+        "INSERT INTO messages (session_id, message_index, role, content, timestamp, model)
+         VALUES (?1, 1, 'user', 'needle inside message', 2, NULL)",
+        params![session_id],
+    )
+    .expect("insert needle message");
+    conn.execute(
+        "INSERT INTO transcript_items (session_id, item_index, kind, message_index)
+         VALUES (?1, 2, 'message', 1)",
+        params![session_id],
+    )
+    .expect("insert needle message transcript item");
 }
 
 #[test]
@@ -983,4 +1097,357 @@ fn prev_next_wrap_around_match_positions() {
 
     let parts = controller.state().get();
     assert_eq!(parts.model.search.current_match, 0);
+}
+
+#[test]
+fn context_breaks_tool_bursts_without_changing_matches() {
+    let matched_item_indexes = BTreeSet::from([0_i64]);
+
+    let without_context = SessionDetail::build_display_items(
+        vec![
+            transcript_message_row(0, crate::models::Role::User, "needle here"),
+            transcript_tool_row(1, "Read"),
+            transcript_tool_row(2, "Edit"),
+        ],
+        "session-1",
+        Some("needle".to_string()),
+        &matched_item_indexes,
+        Arc::new(PathBuf::from("/tmp/test.db")),
+        0,
+    );
+
+    let with_context = SessionDetail::build_display_items(
+        vec![
+            transcript_message_row(0, crate::models::Role::User, "needle here"),
+            transcript_context_row(1, "ctx-1", ContextKind::System),
+            transcript_tool_row(2, "Read"),
+            transcript_tool_row(3, "Edit"),
+        ],
+        "session-1",
+        Some("needle".to_string()),
+        &matched_item_indexes,
+        Arc::new(PathBuf::from("/tmp/test.db")),
+        0,
+    );
+
+    // Navigable message identity is unchanged by the inserted context row.
+    let message_identities = |items: &[TranscriptItemInit]| -> Vec<i64> {
+        items
+            .iter()
+            .filter_map(|item| match item {
+                TranscriptItemInit::Message(message) => Some(message.transcript_item_index),
+                _ => None,
+            })
+            .collect()
+    };
+    assert_eq!(
+        message_identities(&without_context.items),
+        message_identities(&with_context.items)
+    );
+
+    // A context row is a normal boundary: the two tool calls stay consecutive
+    // only when no context sits between them.
+    assert_eq!(without_context.items.len(), 2);
+    assert!(matches!(
+        without_context.items[1],
+        TranscriptItemInit::ToolBurst(_)
+    ));
+    assert_eq!(with_context.items.len(), 3);
+    assert!(matches!(
+        with_context.items[1],
+        TranscriptItemInit::Context(_)
+    ));
+    assert!(matches!(
+        with_context.items[2],
+        TranscriptItemInit::ToolBurst(_)
+    ));
+
+    // Tool-preview match counts are unchanged by the inserted context row. The
+    // grouping path assigns no highlight query to tool rows, so seed tool calls
+    // whose names/previews actually match the query directly; otherwise this
+    // assertion would keep comparing 0 == 0.
+    use crate::models::{ReasoningPreview, ToolCallStatus};
+    use crate::ui::session_detail::transcript::item_init::{
+        ToolCallItemInit, build_tool_burst_init,
+    };
+    let needle_tool = |item_index: usize, id: &str, name: &str| ToolCallItemInit {
+        item_index,
+        transcript_item_index: item_index as i64,
+        session_id: "session-1".to_string(),
+        tool_call_id: id.to_string(),
+        tool_name: name.to_string(),
+        status: ToolCallStatus::Completed,
+        preview: Some(format!("needle {name} preview")),
+        summary: None,
+        duration_ms: None,
+        highlight_query: Some("needle".to_string()),
+        reasoning_preview: ReasoningPreview::default(),
+    };
+    let read = needle_tool(1, "call-read", "Read");
+    let edit = needle_tool(2, "call-edit", "Edit");
+
+    let burst = build_tool_burst_init(0, vec![read.clone(), edit.clone()], false);
+    assert!(
+        burst.match_count > 0,
+        "seeded tool previews must actually match the query"
+    );
+
+    let split_total = count_tool_call_matches(&read) + count_tool_call_matches(&edit);
+    assert_eq!(
+        split_total, burst.match_count,
+        "splitting the burst with a context row must not change the total match count"
+    );
+}
+
+#[test]
+fn context_full_content_target_rejects_stale_session_or_context() {
+    let (sender, _receiver) = relm4::channel::<SessionDetailMsg>();
+    let prepared = SessionDetail::build_display_items(
+        vec![transcript_context_row(0, "ctx-1", ContextKind::System)],
+        "session-1",
+        None,
+        &BTreeSet::new(),
+        Arc::new(PathBuf::from("/tmp/test.db")),
+        0,
+    );
+    let item = TranscriptItemData::from_init(
+        prepared.items.into_iter().next().expect("context item"),
+        sender,
+    );
+
+    assert!(SessionDetail::context_full_content_target_matches(
+        &item,
+        Some("session-1"),
+        "session-1",
+        "ctx-1",
+    ));
+    assert!(!SessionDetail::context_full_content_target_matches(
+        &item,
+        Some("session-2"),
+        "session-1",
+        "ctx-1",
+    ));
+    assert!(!SessionDetail::context_full_content_target_matches(
+        &item,
+        Some("session-1"),
+        "session-1",
+        "ctx-other",
+    ));
+    assert!(!SessionDetail::context_full_content_target_matches(
+        &item,
+        None,
+        "session-1",
+        "ctx-1",
+    ));
+}
+
+#[gtk::test]
+fn context_late_body_response_is_ignored() {
+    let temp_db = tempfile::NamedTempFile::new().expect("temp db");
+    seed_context_transcript(temp_db.path(), "test-session-123");
+
+    let controller = SessionDetail::builder().launch(temp_db.path().to_path_buf());
+    controller.emit(SessionDetailMsg::SetSession {
+        session: Box::new(build_test_session(None, None, 0, 0, 0)),
+        search_query: None,
+    });
+    pump_main_context(|| {
+        let parts = controller.state().get();
+        !parts.model.transcript.loading && parts.model.messages.len() == 2
+    });
+
+    // A stale response for another session must not populate the context row.
+    controller
+        .state()
+        .get_mut()
+        .model
+        .handle_context_full_content_ready(
+            1,
+            "other-session".to_string(),
+            "ctx-1".to_string(),
+            Ok(Some("stale body".to_string())),
+        );
+    assert!(
+        controller
+            .state()
+            .get()
+            .model
+            .messages
+            .get(1)
+            .expect("context row")
+            .borrow()
+            .full_content
+            .borrow()
+            .is_none()
+    );
+
+    // A stale context id in the active session is also ignored.
+    controller
+        .state()
+        .get_mut()
+        .model
+        .handle_context_full_content_ready(
+            1,
+            "test-session-123".to_string(),
+            "ctx-other".to_string(),
+            Ok(Some("stale body".to_string())),
+        );
+    assert!(
+        controller
+            .state()
+            .get()
+            .model
+            .messages
+            .get(1)
+            .expect("context row")
+            .borrow()
+            .full_content
+            .borrow()
+            .is_none()
+    );
+
+    // A non-context row (the message at display index 0) is never a target.
+    controller
+        .state()
+        .get_mut()
+        .model
+        .handle_context_full_content_ready(
+            0,
+            "test-session-123".to_string(),
+            "ctx-1".to_string(),
+            Ok(Some("stale body".to_string())),
+        );
+    assert!(
+        controller
+            .state()
+            .get()
+            .model
+            .messages
+            .get(0)
+            .expect("message row")
+            .borrow()
+            .full_content
+            .borrow()
+            .is_none()
+    );
+
+    // A matching response populates the row.
+    controller
+        .state()
+        .get_mut()
+        .model
+        .handle_context_full_content_ready(
+            1,
+            "test-session-123".to_string(),
+            "ctx-1".to_string(),
+            Ok(Some("real body".to_string())),
+        );
+    assert_eq!(
+        controller
+            .state()
+            .get()
+            .model
+            .messages
+            .get(1)
+            .expect("context row")
+            .borrow()
+            .full_content
+            .borrow()
+            .as_deref(),
+        Some("real body")
+    );
+}
+
+#[gtk::test]
+fn context_failure_can_retry() {
+    let temp_db = tempfile::NamedTempFile::new().expect("temp db");
+    seed_context_transcript(temp_db.path(), "test-session-123");
+
+    let controller = SessionDetail::builder().launch(temp_db.path().to_path_buf());
+    controller.emit(SessionDetailMsg::SetSession {
+        session: Box::new(build_test_session(None, None, 0, 0, 0)),
+        search_query: None,
+    });
+    pump_main_context(|| {
+        let parts = controller.state().get();
+        !parts.model.transcript.loading && parts.model.messages.len() == 2
+    });
+
+    // Expand the context row (as the header click would) and have the body come
+    // back missing/deleted.
+    {
+        let parts = controller.state().get_mut();
+        let item = parts.model.messages.get(1).expect("context row");
+        item.borrow().expanded.set(true);
+    }
+    controller
+        .state()
+        .get_mut()
+        .model
+        .handle_context_full_content_ready(
+            1,
+            "test-session-123".to_string(),
+            "ctx-1".to_string(),
+            Ok(None),
+        );
+    {
+        let parts = controller.state().get();
+        let item = parts.model.messages.get(1).expect("context row");
+        let item = item.borrow();
+        assert!(!item.expanded.get(), "missing context resets the expansion");
+        assert!(
+            item.full_content.borrow().is_none(),
+            "body stays unset so a retry is possible"
+        );
+    }
+
+    // A retry still reaches the loader and populates the body from the DB.
+    controller.emit(SessionDetailMsg::RequestContextFullContent { item_index: 1 });
+    pump_main_context(|| {
+        let parts = controller.state().get();
+        let item = parts.model.messages.get(1).expect("context row");
+        item.borrow().full_content.borrow().is_some()
+    });
+
+    let parts = controller.state().get();
+    let item = parts.model.messages.get(1).expect("context row");
+    assert_eq!(
+        item.borrow().full_content.borrow().as_deref(),
+        Some("contextonlyneedle body")
+    );
+}
+
+#[gtk::test]
+fn context_search_skips_rows_across_pages() {
+    let temp_db = tempfile::NamedTempFile::new().expect("temp db");
+    seed_context_search_transcript(temp_db.path(), "test-session-123");
+
+    let controller = SessionDetail::builder().launch(temp_db.path().to_path_buf());
+    controller.emit(SessionDetailMsg::SetSession {
+        session: Box::new(build_test_session(None, None, 0, 0, 0)),
+        search_query: Some("needle".to_string()),
+    });
+    pump_main_context(|| {
+        let parts = controller.state().get();
+        !parts.model.transcript.loading && !parts.model.search.match_positions.is_empty()
+    });
+
+    let parts = controller.state().get();
+    // The context body also contains "needle" but is not a message, so only the
+    // message at item_index 2 is a match — the context row is skipped.
+    let indexes: Vec<i64> = parts
+        .model
+        .search
+        .match_positions
+        .iter()
+        .map(|p| p.item_index)
+        .collect();
+    assert_eq!(indexes, vec![2]);
+
+    // The context row (display index 1) is present, collapsed and unhighlighted.
+    let context_item = parts.model.messages.get(1).expect("context row");
+    let context_item = context_item.borrow();
+    assert!(matches!(context_item.kind, TranscriptItemKind::Context(_)));
+    assert!(context_item.highlight_query.is_none());
+    assert!(!context_item.expanded.get());
 }

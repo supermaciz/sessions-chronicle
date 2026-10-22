@@ -147,6 +147,7 @@ impl MistralVibeParser {
                             message_index: Some(msg_idx),
                             tool_call_id: None,
                             subagent_id: None,
+                            context_id: None,
                         });
                     }
                 }
@@ -198,6 +199,7 @@ impl MistralVibeParser {
                             message_index: Some(msg_idx),
                             tool_call_id: None,
                             subagent_id: None,
+                            context_id: None,
                         });
                         if let Some(mut attachment) = pending_reasoning.take() {
                             attachment.transcript_item_index = item_idx;
@@ -257,6 +259,7 @@ impl MistralVibeParser {
                                     message_index: None,
                                     tool_call_id: None,
                                     subagent_id: Some(subagent_id),
+                                    context_id: None,
                                 });
                                 if let Some(mut attachment) = pending_reasoning.take() {
                                     attachment.transcript_item_index = item_idx;
@@ -293,6 +296,7 @@ impl MistralVibeParser {
                                 message_index: None,
                                 tool_call_id: Some(tc_id),
                                 subagent_id: None,
+                                context_id: None,
                             });
                             if let Some(mut attachment) = pending_reasoning.take() {
                                 attachment.transcript_item_index = item_idx;
@@ -342,6 +346,7 @@ impl MistralVibeParser {
             reasoning_attachments,
             token_usage,
             agent_path: None,
+            context_entries: Vec::new(),
         })
     }
 

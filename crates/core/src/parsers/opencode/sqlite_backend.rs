@@ -1,6 +1,7 @@
 use anyhow::{Context, Result};
 use rusqlite::{Connection, OpenFlags};
 use std::path::{Path, PathBuf};
+use std::rc::Rc;
 
 use crate::models::Role;
 use crate::parsers::model::normalize_model;
@@ -11,7 +12,7 @@ use super::{
 };
 
 pub struct SqliteBackend {
-    conn: Connection,
+    conn: Rc<Connection>,
     db_path: PathBuf,
 }
 
@@ -23,10 +24,15 @@ impl SqliteBackend {
 
         conn.busy_timeout(std::time::Duration::from_secs(5))?;
 
-        Ok(Self {
+        Ok(Self::from_connection(db_path, Rc::new(conn)))
+    }
+
+    /// Join the source snapshot already used for generation probing and V2.
+    pub(crate) fn from_connection(db_path: &Path, conn: Rc<Connection>) -> Self {
+        Self {
             conn,
             db_path: db_path.to_path_buf(),
-        })
+        }
     }
 
     fn part_table_has_session_id(&self) -> Result<bool> {

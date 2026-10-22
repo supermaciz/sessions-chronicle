@@ -71,6 +71,7 @@ mod tests {
             subagent_id: None,
             subagent_title: None,
             subagent_prompt: None,
+            context: None,
         }
     }
 
@@ -95,6 +96,7 @@ mod tests {
             subagent_id: None,
             subagent_title: None,
             subagent_prompt: None,
+            context: None,
         }
     }
 
@@ -119,6 +121,7 @@ mod tests {
             subagent_id: Some(format!("sub-{item_index}")),
             subagent_title: Some("Subagent".to_string()),
             subagent_prompt: None,
+            context: None,
         }
     }
 
@@ -149,6 +152,7 @@ mod tests {
                 subagent_id: None,
                 subagent_title: None,
                 subagent_prompt: None,
+                context: None,
             },
             TranscriptItemRow {
                 item_index: 1,
@@ -174,6 +178,7 @@ mod tests {
                 subagent_id: None,
                 subagent_title: None,
                 subagent_prompt: None,
+                context: None,
             },
         ];
 

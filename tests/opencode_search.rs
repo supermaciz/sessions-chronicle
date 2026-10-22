@@ -164,6 +164,61 @@ fn opencode_dual_read_sqlite_only_session_is_searchable() {
 }
 
 #[test]
+fn opencode_v2_fixture_sessions_are_searchable_and_context_is_excluded() {
+    let db = TempDatabase::new();
+    let dir = tempfile::tempdir().expect("tempdir");
+    let source = dir.path().join("opencode.db");
+
+    // Build the synthetic V2 fixture in a disposable source database.
+    {
+        let conn = Connection::open(&source).expect("open V2 fixture db");
+        let schema = std::fs::read_to_string("tests/fixtures/opencode_v2/schema.sql")
+            .expect("read schema.sql");
+        let sessions = std::fs::read_to_string("tests/fixtures/opencode_v2/sessions.sql")
+            .expect("read sessions.sql");
+        conn.execute_batch(&schema).expect("apply schema.sql");
+        conn.execute_batch(&sessions).expect("apply sessions.sql");
+    }
+
+    let mut indexer = SessionIndexer::new(&db.path).expect("Failed to create indexer");
+    indexer
+        .index_opencode_sessions(&dir.path().join("no-json"), &[source])
+        .expect("Failed to index V2 sessions");
+
+    // Genuine user/assistant terms across several V2 sessions remain searchable.
+    for term in ["real prompt", "final answer", "run the tools"] {
+        let sessions = search_sessions_for_filter(
+            &db.path,
+            &[AiAssistant::OpenCode],
+            &ProjectFilter::AllSessions,
+            term,
+            &DateFilter::AnyTime,
+            None,
+        )
+        .expect("Search failed");
+        assert!(
+            !sessions.is_empty(),
+            "genuine term {term:?} should match a V2 session"
+        );
+    }
+
+    // A term that appears only in context text matches no session.
+    let sessions = search_sessions_for_filter(
+        &db.path,
+        &[AiAssistant::OpenCode],
+        &ProjectFilter::AllSessions,
+        "contextonlyneedle",
+        &DateFilter::AnyTime,
+        None,
+    )
+    .expect("Search failed");
+    assert!(
+        sessions.is_empty(),
+        "context-only term must not match any session"
+    );
+}
+
+#[test]
 fn opencode_dual_read_total_session_count() {
     let db = TempDatabase::new();
     let storage_root = PathBuf::from("tests/fixtures/opencode_storage");

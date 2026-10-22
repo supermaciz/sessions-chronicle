@@ -1,5 +1,14 @@
 pub mod json_backend;
 pub mod sqlite_backend;
+pub(crate) mod sqlite_source;
+mod token_usage;
+pub(crate) mod v2;
+pub(crate) mod v2_projection;
+
+#[cfg(test)]
+pub(crate) mod test_support;
+#[cfg(test)]
+mod v2_tests;
 
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
@@ -8,15 +17,18 @@ use std::cmp::Ordering;
 use std::path::{Path, PathBuf};
 
 use crate::models::{
-    AiAssistant, Message, ReasoningAttachment, Role, Session, Subagent, TokenUsage, ToolCall,
-    ToolCallStatus, TranscriptItem, TranscriptItemKind,
+    AiAssistant, Message, ReasoningAttachment, Role, Session, Subagent, ToolCall, ToolCallStatus,
+    TranscriptItem, TranscriptItemKind,
 };
 use crate::parsers::{ParsedSession, PendingReasoning};
+use token_usage::TokenUsageAccumulator;
 
 #[derive(Debug, thiserror::Error)]
 pub enum ParseError {
     #[error("Session contains no user messages")]
     NoUserMessages,
+    #[error("Session transcript is incomplete (corruption prevented eligibility)")]
+    IncompleteTranscript,
 }
 
 pub(crate) struct SessionMetadata {
@@ -189,7 +201,7 @@ impl OpenCodeParser {
         let mut transcript_items: Vec<TranscriptItem> = Vec::new();
         let mut reasoning_attachments: Vec<ReasoningAttachment> = Vec::new();
         let mut has_user_message = false;
-        let mut step_finish_tokens: Vec<MessageTokens> = Vec::new();
+        let mut step_finish_tokens = TokenUsageAccumulator::default();
         let mut pending_reasoning = PendingReasoning::default();
 
         let has_task_tool_in_session = backend.session_has_task_tool(&metadata.id, &messages)?;
@@ -226,6 +238,7 @@ impl OpenCodeParser {
                             message_index: Some(msg_idx),
                             tool_call_id: None,
                             subagent_id: None,
+                            context_id: None,
                         });
                         if !pending_reasoning.is_empty() {
                             reasoning_attachments
@@ -243,6 +256,7 @@ impl OpenCodeParser {
                             message_index: None,
                             tool_call_id: Some(tc_id),
                             subagent_id: None,
+                            context_id: None,
                         });
                         if !pending_reasoning.is_empty() {
                             reasoning_attachments
@@ -260,6 +274,7 @@ impl OpenCodeParser {
                             message_index: None,
                             tool_call_id: None,
                             subagent_id: Some(sa_id),
+                            context_id: None,
                         });
                         if !pending_reasoning.is_empty() {
                             reasoning_attachments
@@ -297,41 +312,7 @@ impl OpenCodeParser {
         };
 
         // Aggregate token usage from step-finish parts only.
-        let token_usage = if !step_finish_tokens.is_empty() {
-            let mut sf_input: i64 = 0;
-            let mut sf_output: i64 = 0;
-            let mut sf_reasoning: i64 = 0;
-            let mut sf_cache_read: i64 = 0;
-            let mut sf_cache_write: i64 = 0;
-            for tok in &step_finish_tokens {
-                sf_input += tok.input;
-                sf_output += tok.output;
-                sf_reasoning += tok.reasoning.unwrap_or(0);
-                sf_cache_read += tok.cache_read.unwrap_or(0);
-                sf_cache_write += tok.cache_write.unwrap_or(0);
-            }
-            Some(TokenUsage {
-                input_tokens: sf_input,
-                output_tokens: sf_output,
-                reasoning_tokens: if sf_reasoning > 0 {
-                    Some(sf_reasoning)
-                } else {
-                    None
-                },
-                cache_read_tokens: if sf_cache_read > 0 {
-                    Some(sf_cache_read)
-                } else {
-                    None
-                },
-                cache_write_tokens: if sf_cache_write > 0 {
-                    Some(sf_cache_write)
-                } else {
-                    None
-                },
-            })
-        } else {
-            None
-        };
+        let token_usage = step_finish_tokens.finish();
 
         let file_path = match source {
             SessionSource::JsonFile(path) => path.to_str().unwrap_or_default().to_string(),
@@ -369,6 +350,7 @@ impl OpenCodeParser {
             reasoning_attachments,
             token_usage,
             agent_path: None,
+            context_entries: Vec::new(),
         })
     }
 
@@ -1950,6 +1932,15 @@ mod tests {
         write_part_file(
             root,
             "msg-asst",
+            "part-sf-second.json",
+            json!({
+                "id": "part-sf-second", "order": 3, "type": "step-finish",
+                "tokens": { "input": 23, "output": 17, "cache": { "read": 5 } }
+            }),
+        );
+        write_part_file(
+            root,
+            "msg-asst",
             "part-text.json",
             json!({
                 "id": "part-text", "order": 2, "type": "text", "text": "Hi!"
@@ -1961,81 +1952,86 @@ mod tests {
         let usage = parsed
             .token_usage
             .expect("should have token_usage from step-finish");
-        assert_eq!(usage.input_tokens, 800);
-        assert_eq!(usage.output_tokens, 400);
+        assert_eq!(usage.input_tokens, 823);
+        assert_eq!(usage.output_tokens, 417);
         assert_eq!(usage.reasoning_tokens, Some(100));
-        assert_eq!(usage.cache_read_tokens, Some(55));
+        assert_eq!(usage.cache_read_tokens, Some(60));
         assert_eq!(usage.cache_write_tokens, Some(25));
     }
 
     #[test]
     fn parse_step_finish_fallback_when_no_message_tokens() {
-        let temp_dir = TempDir::new().unwrap();
-        let root = temp_dir.path();
+        for (input, output) in [(800, 400), (0, 0)] {
+            let temp_dir = TempDir::new().unwrap();
+            let root = temp_dir.path();
 
-        let session_path = write_session_file(
-            root,
-            "project-a",
-            "session-tok-sf.json",
-            json!({
-                "id": "session-tok-sf",
-                "directory": "/projects/alpha",
-                "time": { "created": 1_704_067_200_000i64, "updated": 1_704_067_260_000i64 }
-            }),
-        );
+            let session_path = write_session_file(
+                root,
+                "project-a",
+                "session-tok-sf.json",
+                json!({
+                    "id": "session-tok-sf",
+                    "directory": "/projects/alpha",
+                    "time": { "created": 1_704_067_200_000i64, "updated": 1_704_067_260_000i64 }
+                }),
+            );
 
-        write_message_file(
-            root,
-            "session-tok-sf",
-            "msg-user.json",
-            json!({
-                "id": "msg-user", "sessionID": "session-tok-sf", "role": "user",
-                "time": { "created": 1_704_067_200_000i64 }
-            }),
-        );
-        write_message_file(
-            root,
-            "session-tok-sf",
-            "msg-asst.json",
-            json!({
-                "id": "msg-asst", "sessionID": "session-tok-sf", "role": "assistant",
-                "time": { "created": 1_704_067_260_000i64 }
-            }),
-        );
+            write_message_file(
+                root,
+                "session-tok-sf",
+                "msg-user.json",
+                json!({
+                    "id": "msg-user", "sessionID": "session-tok-sf", "role": "user",
+                    "time": { "created": 1_704_067_200_000i64 }
+                }),
+            );
+            write_message_file(
+                root,
+                "session-tok-sf",
+                "msg-asst.json",
+                json!({
+                    "id": "msg-asst", "sessionID": "session-tok-sf", "role": "assistant",
+                    "time": { "created": 1_704_067_260_000i64 }
+                }),
+            );
 
-        write_part_file(
-            root,
-            "msg-user",
-            "part-user.json",
-            json!({
-                "id": "part-user", "order": 1, "type": "text", "text": "Hello"
-            }),
-        );
-        write_part_file(
-            root,
-            "msg-asst",
-            "part-sf.json",
-            json!({
-                "id": "part-sf", "order": 1, "type": "step-finish",
-                "tokens": { "input": 800, "output": 400 }
-            }),
-        );
-        write_part_file(
-            root,
-            "msg-asst",
-            "part-text.json",
-            json!({
-                "id": "part-text", "order": 2, "type": "text", "text": "Hi!"
-            }),
-        );
+            write_part_file(
+                root,
+                "msg-user",
+                "part-user.json",
+                json!({
+                    "id": "part-user", "order": 1, "type": "text", "text": "Hello"
+                }),
+            );
+            write_part_file(
+                root,
+                "msg-asst",
+                "part-sf.json",
+                json!({
+                    "id": "part-sf", "order": 1, "type": "step-finish",
+                    "tokens": { "input": input, "output": output }
+                }),
+            );
+            write_part_file(
+                root,
+                "msg-asst",
+                "part-text.json",
+                json!({
+                    "id": "part-text", "order": 2, "type": "text", "text": "Hi!"
+                }),
+            );
 
-        let parser = OpenCodeParser::new(root);
-        let parsed = parser.parse(&session_path).unwrap();
-        let usage = parsed
-            .token_usage
-            .expect("should have token_usage from step-finish");
-        assert_eq!(usage.input_tokens, 800);
-        assert_eq!(usage.output_tokens, 400);
+            let parser = OpenCodeParser::new(root);
+            let parsed = parser.parse(&session_path).unwrap();
+            let usage = parsed
+                .token_usage
+                .expect("should have token_usage from step-finish");
+            assert_eq!(usage.input_tokens, input);
+            assert_eq!(usage.output_tokens, output);
+            assert_eq!(usage.reasoning_tokens, None);
+            assert_eq!(usage.cache_read_tokens, None);
+            assert_eq!(usage.cache_write_tokens, None);
+        }
     }
 
     #[test]
