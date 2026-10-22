@@ -717,55 +717,23 @@ impl SessionIndexer {
         cached_owner_map: &BTreeMap<String, (PathBuf, OpenCodeGeneration)>,
     ) -> Result<SessionOutcome> {
         match winner.generation {
-            OpenCodeGeneration::V2 => {
-                let index = *source_index
-                    .get(&winner.path)
-                    .context("V2 source not enumerated")?;
-                let parsed = enumerated[index].ensure_open().and_then(|()| {
-                    enumerated[index]
-                        .v2
-                        .as_ref()
-                        .context("V2 reader missing for enumerated source")?
-                        .parse_session(&winner.session_id)
-                });
-                match parsed {
-                    Ok(parsed) => match self.insert_opencode_session(&parsed, winner) {
-                        Ok(()) => {
-                            stats.indexed += 1;
-                            Ok(SessionOutcome::Indexed)
-                        }
-                        Err(err) => {
-                            enumerated[index].successful = false;
-                            record_session_error(
-                                &winner.path,
-                                &winner.session_id,
-                                &err,
-                                errors_detail,
-                                stats,
-                            );
-                            Ok(SessionOutcome::RetainedFailure)
-                        }
-                    },
-                    Err(err) if is_no_user_messages(&err) => Ok(SessionOutcome::Ineligible),
-                    Err(err) => {
-                        enumerated[index].successful = false;
-                        record_session_error(
-                            &winner.path,
-                            &winner.session_id,
-                            &err,
-                            errors_detail,
-                            stats,
-                        );
-                        Ok(SessionOutcome::RetainedFailure)
-                    }
-                }
-            }
-            OpenCodeGeneration::V1 => {
-                let index = *source_index
-                    .get(&winner.path)
-                    .context("V1 source not enumerated")?;
+            OpenCodeGeneration::V1 | OpenCodeGeneration::V2 => {
+                let index =
+                    *source_index
+                        .get(&winner.path)
+                        .with_context(|| match winner.generation {
+                            OpenCodeGeneration::V2 => "V2 source not enumerated",
+                            _ => "V1 source not enumerated",
+                        })?;
                 let parsed = enumerated[index].ensure_open().and_then(|()| {
                     let source = &enumerated[index];
+                    if winner.generation == OpenCodeGeneration::V2 {
+                        return source
+                            .v2
+                            .as_ref()
+                            .context("V2 reader missing for enumerated source")?
+                            .parse_session(&winner.session_id);
+                    }
                     let backend = source
                         .v1
                         .as_ref()

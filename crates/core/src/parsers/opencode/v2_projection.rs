@@ -110,27 +110,7 @@ impl V2Projection {
             return;
         }
 
-        let session_id = self.metadata.id.clone();
-        let message_index = self.messages.len() as i64;
-        let item_index = self.transcript_items.len() as i64;
-        self.transcript_items.push(TranscriptItem {
-            session_id: session_id.clone(),
-            item_index,
-            kind: TranscriptItemKind::Message,
-            message_index: Some(message_index),
-            tool_call_id: None,
-            subagent_id: None,
-            context_id: None,
-        });
-        self.flush_reasoning(item_index);
-        self.messages.push(Message {
-            session_id,
-            index: 0,
-            role: Role::User,
-            content: text.to_string(),
-            timestamp: row.timestamp,
-            model: None,
-        });
+        self.push_message(Role::User, text, None, row.timestamp);
         self.has_user_message = true;
 
         // User-attached skills become context entries immediately after the
@@ -172,7 +152,7 @@ impl V2Projection {
                     if text.trim().is_empty() {
                         continue;
                     }
-                    self.push_assistant_text(text, model.as_deref(), row.timestamp);
+                    self.push_message(Role::Assistant, text, model.as_deref(), row.timestamp);
                 }
                 Some("reasoning") => {
                     let visible_text = item
@@ -337,19 +317,7 @@ impl V2Projection {
     fn push_task_subagent(&mut self, subagent: Subagent, seq: i64) {
         let child_id = subagent.child_session_id.clone();
         let subagent_index = self.subagents.len();
-        let id = subagent.id.clone();
-        let item_index = self.transcript_items.len() as i64;
-        self.transcript_items.push(TranscriptItem {
-            session_id: self.metadata.id.clone(),
-            item_index,
-            kind: TranscriptItemKind::Subagent,
-            message_index: None,
-            tool_call_id: None,
-            subagent_id: Some(id),
-            context_id: None,
-        });
-        self.flush_reasoning(item_index);
-        self.subagents.push(subagent);
+        self.push_subagent(subagent);
         // Only a task with an authoritative child link can ever match a
         // completion; missing child metadata is not recorded and stays unmatched.
         if let Some(child_id) = child_id {
@@ -452,10 +420,10 @@ impl V2Projection {
             child_session_id: Some(child_id.to_string()),
             parser_ref: None,
         };
-        self.push_orphan_subagent(subagent);
+        self.push_subagent(subagent);
     }
 
-    fn push_orphan_subagent(&mut self, subagent: Subagent) {
+    fn push_subagent(&mut self, subagent: Subagent) {
         let id = subagent.id.clone();
         let item_index = self.transcript_items.len() as i64;
         self.transcript_items.push(TranscriptItem {
@@ -480,7 +448,13 @@ impl V2Projection {
         }
     }
 
-    fn push_assistant_text(&mut self, text: &str, model: Option<&str>, timestamp: DateTime<Utc>) {
+    fn push_message(
+        &mut self,
+        role: Role,
+        text: &str,
+        model: Option<&str>,
+        timestamp: DateTime<Utc>,
+    ) {
         let session_id = self.metadata.id.clone();
         let message_index = self.messages.len() as i64;
         let item_index = self.transcript_items.len() as i64;
@@ -497,7 +471,7 @@ impl V2Projection {
         self.messages.push(Message {
             session_id,
             index: 0,
-            role: Role::Assistant,
+            role,
             content: text.to_string(),
             timestamp,
             model: model.map(str::to_string),

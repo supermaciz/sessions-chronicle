@@ -26,6 +26,8 @@ use crate::ui::session_detail::transcript::tool_call_row::{
     encrypted_reasoning_pill, encrypted_reasoning_pill_with_label,
 };
 
+use super::{clear_box_children, disconnect_handlers};
+
 const TOOL_BURST_ARROW_COLLAPSED: &str = "pan-end-symbolic";
 const TOOL_BURST_ARROW_EXPANDED: &str = "pan-down-symbolic";
 
@@ -1046,18 +1048,6 @@ fn build_tool_burst_children_if_needed(
     clear_box_children(children);
     populate_tool_burst_children(children, burst, sender, item_index);
     children_built_for.set(Some(item_index));
-}
-
-fn disconnect_handlers(handlers: &mut Vec<(gtk::glib::Object, gtk::glib::SignalHandlerId)>) {
-    while let Some((object, id)) = handlers.pop() {
-        object.disconnect(id);
-    }
-}
-
-fn clear_box_children(container: &gtk::Box) {
-    while let Some(child) = container.first_child() {
-        container.remove(&child);
-    }
 }
 
 #[cfg(test)]

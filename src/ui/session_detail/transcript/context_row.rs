@@ -16,6 +16,8 @@ use crate::ui::markdown;
 use crate::ui::session_detail::SessionDetailMsg;
 use crate::ui::session_detail::transcript::item_data::{TranscriptItemData, TranscriptItemKind};
 
+use super::{clear_box_children, disconnect_handlers};
+
 const CONTEXT_ARROW_COLLAPSED: &str = "pan-end-symbolic";
 const CONTEXT_ARROW_EXPANDED: &str = "pan-down-symbolic";
 
@@ -189,18 +191,6 @@ fn set_context_expanded_state(button: &gtk::Button, arrow_icon: &gtk::Image, exp
     } else {
         CONTEXT_ARROW_COLLAPSED
     }));
-}
-
-fn disconnect_handlers(handlers: &mut Vec<(gtk::glib::Object, gtk::glib::SignalHandlerId)>) {
-    while let Some((object, id)) = handlers.pop() {
-        object.disconnect(id);
-    }
-}
-
-fn clear_box_children(container: &gtk::Box) {
-    while let Some(child) = container.first_child() {
-        container.remove(&child);
-    }
 }
 
 #[cfg(test)]
