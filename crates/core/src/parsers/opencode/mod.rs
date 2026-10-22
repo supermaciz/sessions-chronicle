@@ -1,5 +1,12 @@
 pub mod json_backend;
 pub mod sqlite_backend;
+pub(crate) mod v2;
+pub(crate) mod v2_projection;
+
+#[cfg(test)]
+mod test_support;
+#[cfg(test)]
+mod v2_tests;
 
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
@@ -17,6 +24,8 @@ use crate::parsers::{ParsedSession, PendingReasoning};
 pub enum ParseError {
     #[error("Session contains no user messages")]
     NoUserMessages,
+    #[error("Session transcript is incomplete (corruption prevented eligibility)")]
+    IncompleteTranscript,
 }
 
 pub(crate) struct SessionMetadata {
