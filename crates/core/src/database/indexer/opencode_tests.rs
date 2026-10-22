@@ -5,10 +5,19 @@
 //! APIs), and failure injection uses SQLite abort triggers plus the
 //! [`super::opencode::force_unavailable`] metadata-probe seam — never sleeps
 //! for WAL timing.
+//!
+//! The Task 2 fixture builder [`create_v2_db`] is reused for the canonical V2
+//! schema bootstrap and for the fixture's fixed `ses_v2_system_only` /
+//! `ses_v2_corrupt_user` sessions. The remaining local builders insert custom
+//! session IDs and content that the fixed fixture cannot express (cross-source
+//! ownership arbitration needs the *same* id in several sources with different
+//! bodies, and the WAL tests need in-place content mutation).
 
 use std::path::{Path, PathBuf};
 
 use rusqlite::Connection;
+
+use crate::parsers::opencode::test_support::create_v2_db;
 
 use super::SessionIndexer;
 use super::opencode::force_unavailable;
@@ -88,19 +97,19 @@ fn pinned_at(db: &Connection, id: &str) -> Option<i64> {
 // Source builders.
 // ---------------------------------------------------------------------------
 
-fn v2_schema() -> String {
-    std::fs::read_to_string(crate::fixture_path("opencode_v2/schema.sql"))
-        .expect("read opencode_v2 schema.sql")
-}
-
 fn v2_user_data(text: &str) -> String {
     serde_json::json!({ "text": text, "time": { "created": 1_712_000_000_000_i64 } }).to_string()
 }
 
 /// Create a V2 source database with one user message per session.
+///
+/// Reuses the Task 2 fixture builder for the schema bootstrap, then clears the
+/// fixed fixture sessions (whose IDs and content the cross-source arbitration
+/// tests cannot express) and inserts the caller's own sessions.
 fn create_v2_source(path: &Path, sessions: &[(&str, &str)]) -> Connection {
-    let conn = Connection::open(path).unwrap();
-    conn.execute_batch(&v2_schema()).unwrap();
+    let conn = create_v2_db(path);
+    conn.execute_batch("DELETE FROM session_message; DELETE FROM session_v2;")
+        .unwrap();
     for (id, text) in sessions {
         insert_v2_session(&conn, id, text);
     }
@@ -120,44 +129,6 @@ fn insert_v2_session(conn: &Connection, id: &str, user_text: &str) {
         "INSERT INTO session_message (id, session_id, type, seq, time_created, time_updated, data)
          VALUES (?1, ?2, 'user', 1, 1712000000000, 1712000000000, ?3)",
         rusqlite::params![format!("msg-{id}"), id, v2_user_data(user_text)],
-    )
-    .unwrap();
-}
-
-fn insert_v2_system_only_session(conn: &Connection, id: &str) {
-    conn.execute(
-        "INSERT INTO session_v2 (id, project_id, directory, title, parent_id, version, slug, model,
-                                  tokens_input, tokens_output, tokens_reasoning, tokens_cache_read,
-                                  tokens_cache_write, time_created, time_updated)
-         VALUES (?1, 'prj', '/tmp/proj', NULL, NULL, '0.0.0', ?2, NULL, 0, 0, 0, 0, 0, 1712000000000, 1712000000000)",
-        rusqlite::params![id, format!("slug-{id}")],
-    )
-    .unwrap();
-    conn.execute(
-        "INSERT INTO session_message (id, session_id, type, seq, time_created, time_updated, data)
-         VALUES (?1, ?2, 'system', 1, 1712000000000, 1712000000000, ?3)",
-        rusqlite::params![
-            format!("msg-{id}"),
-            id,
-            serde_json::json!({ "text": "system only", "time": { "created": 1_712_000_000_000_i64 } }).to_string(),
-        ],
-    )
-    .unwrap();
-}
-
-fn insert_v2_corrupt_user_session(conn: &Connection, id: &str) {
-    conn.execute(
-        "INSERT INTO session_v2 (id, project_id, directory, title, parent_id, version, slug, model,
-                                  tokens_input, tokens_output, tokens_reasoning, tokens_cache_read,
-                                  tokens_cache_write, time_created, time_updated)
-         VALUES (?1, 'prj', '/tmp/proj', NULL, NULL, '0.0.0', ?2, NULL, 0, 0, 0, 0, 0, 1712000000000, 1712000000000)",
-        rusqlite::params![id, format!("slug-{id}")],
-    )
-    .unwrap();
-    conn.execute(
-        "INSERT INTO session_message (id, session_id, type, seq, time_created, time_updated, data)
-         VALUES (?1, ?2, 'user', 1, 1712000000000, 1712000000000, '{broken user json')",
-        rusqlite::params![format!("msg-{id}"), id],
     )
     .unwrap();
 }
@@ -214,6 +185,55 @@ fn set_v2_tool_output(path: &Path, id: &str, output: &str) {
         rusqlite::params![v2_tool_data(output), id],
     )
     .unwrap();
+}
+
+fn file_stamp_of(path: &Path) -> (i64, i64) {
+    let meta = std::fs::metadata(path).unwrap();
+    let mtime_ns = meta
+        .modified()
+        .unwrap()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    (
+        i64::try_from(mtime_ns).unwrap(),
+        i64::try_from(meta.len()).unwrap(),
+    )
+}
+
+fn wal_path_of(db: &Path) -> PathBuf {
+    let mut wal = db.as_os_str().to_os_string();
+    wal.push("-wal");
+    wal.into()
+}
+
+/// Seed a fingerprint row whose DB/WAL stamps match the source files but whose
+/// reader generation is stale, simulating a pre-migration cache.
+fn seed_fingerprint(indexer: &SessionIndexer, path: &Path, reader_generation: i64) {
+    let (db_mtime_ns, db_size) = file_stamp_of(path);
+    let wal = wal_path_of(path);
+    let (wal_mtime_ns, wal_size) = if wal.exists() {
+        let (mtime_ns, size) = file_stamp_of(&wal);
+        (Some(mtime_ns), Some(size))
+    } else {
+        (None, None)
+    };
+    indexer
+        .db
+        .execute(
+            "INSERT INTO opencode_source_fingerprints
+                (db_path, db_mtime_ns, db_size, wal_mtime_ns, wal_size, reader_generation)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            rusqlite::params![
+                path.to_str().unwrap(),
+                db_mtime_ns,
+                db_size,
+                wal_mtime_ns,
+                wal_size,
+                reader_generation,
+            ],
+        )
+        .unwrap();
 }
 
 fn create_v1_source(path: &Path, sessions: &[(&str, &str)]) -> Connection {
@@ -630,22 +650,26 @@ fn opencode_ineligible_does_not_fall_back() {
     let v2_path = source_dir.path().join("v2.db");
     let v1_path = source_dir.path().join("v1.db");
 
-    // V2 session has no user message (ineligible); V1 has a genuine user.
-    let v2_conn = Connection::open(&v2_path).unwrap();
-    v2_conn.execute_batch(&v2_schema()).unwrap();
-    insert_v2_system_only_session(&v2_conn, "ses_shared");
-    drop(v2_conn);
-
-    create_v1_source(&v1_path, &[("ses_shared", "v1 fallback body")]);
+    // The V2 source is the Task 2 fixture, which contains `ses_v2_system_only`
+    // (no user message → ineligible); V1 supplies the same id with a user.
+    create_v2_db(&v2_path);
+    create_v1_source(&v1_path, &[("ses_v2_system_only", "v1 fallback body")]);
 
     let (_dir, mut indexer) = new_indexer();
     indexer
-        .index_opencode_sessions(&source_dir.path().join("missing"), &[v2_path, v1_path])
+        .index_opencode_sessions(
+            &source_dir.path().join("missing"),
+            &[v2_path.clone(), v1_path.clone()],
+        )
         .unwrap();
 
     // The ineligible V2 session reserves priority and is pruned; the V1 row
     // must not reintroduce it.
-    assert!(!cached_ids(&indexer.db).iter().any(|id| id == "ses_shared"));
+    assert!(
+        !cached_ids(&indexer.db)
+            .iter()
+            .any(|id| id == "ses_v2_system_only")
+    );
 }
 
 #[test]
@@ -653,18 +677,16 @@ fn opencode_corrupt_user_retains_previous_owner() {
     let source_dir = tempfile::tempdir().unwrap();
     let v1_path = source_dir.path().join("v1.db");
     let v2_path = source_dir.path().join("v2.db");
-    create_v1_source(&v1_path, &[("ses_shared", "v1 body")]);
+    create_v1_source(&v1_path, &[("ses_v2_corrupt_user", "v1 body")]);
 
     let (_dir, mut indexer) = new_indexer();
     indexer
         .index_opencode_sessions(&source_dir.path().join("missing"), &[v1_path.clone()])
         .unwrap();
 
-    // A corrupt V2 user must be a retained failure, not an erase-and-fall-back.
-    let v2_conn = Connection::open(&v2_path).unwrap();
-    v2_conn.execute_batch(&v2_schema()).unwrap();
-    insert_v2_corrupt_user_session(&v2_conn, "ses_shared");
-    drop(v2_conn);
+    // The V2 fixture's `ses_v2_corrupt_user` must be a retained failure, not an
+    // erase-and-fall-back to the V1 owner.
+    create_v2_db(&v2_path);
 
     indexer
         .index_opencode_sessions_incremental(
@@ -674,11 +696,11 @@ fn opencode_corrupt_user_retains_previous_owner() {
         .unwrap();
 
     assert_eq!(
-        owner_generation(&indexer.db, "ses_shared").as_deref(),
+        owner_generation(&indexer.db, "ses_v2_corrupt_user").as_deref(),
         Some("v1")
     );
     assert_eq!(
-        cached_body(&indexer.db, "ses_shared").as_deref(),
+        cached_body(&indexer.db, "ses_v2_corrupt_user").as_deref(),
         Some("v1 body")
     );
 }
@@ -811,10 +833,18 @@ fn opencode_migration_reindexes_once() {
     create_v2_source(&v2_path, &[("ses_mig", "migrated body")]);
 
     let (_dir, mut indexer) = new_indexer();
+    // Simulate a pre-migration cache: the source was last read by an older
+    // reader (generation 1) but the DB/WAL stamps still match. Only the reader
+    // generation mismatch must force the one-time reindex.
+    seed_fingerprint(&indexer, &v2_path, 1);
+
     let first = indexer
         .index_opencode_sessions_incremental(&source_dir.path().join("missing"), &[v2_path.clone()])
         .unwrap();
-    assert!(first.indexed > 0);
+    assert!(
+        first.indexed > 0,
+        "generation mismatch must force a reindex"
+    );
 
     let second = indexer
         .index_opencode_sessions_incremental(&source_dir.path().join("missing"), &[v2_path.clone()])
