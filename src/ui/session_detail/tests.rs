@@ -1162,20 +1162,40 @@ fn context_breaks_tool_bursts_without_changing_matches() {
         TranscriptItemInit::ToolBurst(_)
     ));
 
-    // Tool-preview match counts are unchanged by the inserted context row.
-    let tool_match_count = |items: &[TranscriptItemInit]| -> usize {
-        items
-            .iter()
-            .map(|item| match item {
-                TranscriptItemInit::ToolCall(tool_call) => count_tool_call_matches(tool_call),
-                TranscriptItemInit::ToolBurst(burst) => burst.match_count,
-                _ => 0,
-            })
-            .sum()
+    // Tool-preview match counts are unchanged by the inserted context row. The
+    // grouping path assigns no highlight query to tool rows, so seed tool calls
+    // whose names/previews actually match the query directly; otherwise this
+    // assertion would keep comparing 0 == 0.
+    use crate::models::{ReasoningPreview, ToolCallStatus};
+    use crate::ui::session_detail::transcript::item_init::{
+        ToolCallItemInit, build_tool_burst_init,
     };
+    let needle_tool = |item_index: usize, id: &str, name: &str| ToolCallItemInit {
+        item_index,
+        transcript_item_index: item_index as i64,
+        session_id: "session-1".to_string(),
+        tool_call_id: id.to_string(),
+        tool_name: name.to_string(),
+        status: ToolCallStatus::Completed,
+        preview: Some(format!("needle {name} preview")),
+        summary: None,
+        duration_ms: None,
+        highlight_query: Some("needle".to_string()),
+        reasoning_preview: ReasoningPreview::default(),
+    };
+    let read = needle_tool(1, "call-read", "Read");
+    let edit = needle_tool(2, "call-edit", "Edit");
+
+    let burst = build_tool_burst_init(0, vec![read.clone(), edit.clone()], false);
+    assert!(
+        burst.match_count > 0,
+        "seeded tool previews must actually match the query"
+    );
+
+    let split_total = count_tool_call_matches(&read) + count_tool_call_matches(&edit);
     assert_eq!(
-        tool_match_count(&with_context.items),
-        tool_match_count(&without_context.items)
+        split_total, burst.match_count,
+        "splitting the burst with a context row must not change the total match count"
     );
 }
 

@@ -227,6 +227,130 @@ fn v2_corrupt_user_is_not_ineligible() {
 }
 
 #[test]
+fn v2_unreadable_user_time_created_is_incomplete() {
+    let dir = tempfile::tempdir().unwrap();
+    let db_path = dir.path().join("badtime.db");
+    let conn = test_support::create_v2_db(&db_path);
+    conn.execute_batch("DELETE FROM session_message; DELETE FROM session_v2;")
+        .unwrap();
+    conn.execute(
+        "INSERT INTO session_v2 (id, project_id, directory, title, parent_id, version, slug, model,
+                                  tokens_input, tokens_output, tokens_reasoning, tokens_cache_read,
+                                  tokens_cache_write, time_created, time_updated)
+         VALUES ('ses_badtime', 'prj', '/tmp/proj', NULL, NULL, '0.0.0', 'slug-badtime', NULL,
+                 0, 0, 0, 0, 0, 1712000000000, 1712000000000)",
+        [],
+    )
+    .unwrap();
+    conn.execute(
+        "INSERT INTO session_message (id, session_id, type, seq, time_created, time_updated, data)
+         VALUES ('msg-badtime', 'ses_badtime', 'user', 1, 9223372036854775807, 9223372036854775807, ?1)",
+        rusqlite::params![serde_json::json!({ "text": "hello" }).to_string()],
+    )
+    .unwrap();
+    drop(conn);
+
+    let reader = V2Reader::open(&db_path).unwrap();
+    let err = reader.parse_session("ses_badtime").unwrap_err();
+    assert!(matches!(
+        err.downcast_ref::<ParseError>(),
+        Some(ParseError::IncompleteTranscript)
+    ));
+}
+
+#[test]
+fn v2_reasoning_skips_context_and_attaches_to_next_visible_item() {
+    let dir = tempfile::tempdir().unwrap();
+    let db_path = dir.path().join("reason_ctx.db");
+    let conn = test_support::create_v2_db(&db_path);
+    conn.execute_batch("DELETE FROM session_message; DELETE FROM session_v2;")
+        .unwrap();
+    conn.execute(
+        "INSERT INTO session_v2 (id, project_id, directory, title, parent_id, version, slug, model,
+                                  tokens_input, tokens_output, tokens_reasoning, tokens_cache_read,
+                                  tokens_cache_write, time_created, time_updated)
+         VALUES ('ses_reason_ctx', 'prj', '/tmp/proj', NULL, NULL, '0.0.0', 'slug-reason-ctx', NULL,
+                 0, 0, 0, 0, 0, 1712000000000, 1712000000000)",
+        [],
+    )
+    .unwrap();
+    conn.execute(
+        "INSERT INTO session_message (id, session_id, type, seq, time_created, time_updated, data)
+         VALUES ('msg-r-user', 'ses_reason_ctx', 'user', 1, 1712000010000, 1712000010000, ?1)",
+        rusqlite::params![serde_json::json!({ "text": "prompt" }).to_string()],
+    )
+    .unwrap();
+    conn.execute(
+        "INSERT INTO session_message (id, session_id, type, seq, time_created, time_updated, data)
+         VALUES ('msg-r-reason', 'ses_reason_ctx', 'assistant', 2, 1712000020000, 1712000020000, ?1)",
+        rusqlite::params![serde_json::json!({
+            "agent": "primary",
+            "content": [{ "type": "reasoning", "text": "thinking about compaction" }],
+            "time": { "created": 1712000020000_i64 }
+        })
+        .to_string()],
+    )
+    .unwrap();
+    conn.execute(
+        "INSERT INTO session_message (id, session_id, type, seq, time_created, time_updated, data)
+         VALUES ('msg-r-ctx', 'ses_reason_ctx', 'system', 3, 1712000030000, 1712000030000, ?1)",
+        rusqlite::params![
+            serde_json::json!({
+                "text": "context row",
+                "description": "System prompt",
+                "time": { "created": 1712000030000_i64 }
+            })
+            .to_string()
+        ],
+    )
+    .unwrap();
+    conn.execute(
+        "INSERT INTO session_message (id, session_id, type, seq, time_created, time_updated, data)
+         VALUES ('msg-r-final', 'ses_reason_ctx', 'assistant', 4, 1712000040000, 1712000040000, ?1)",
+        rusqlite::params![serde_json::json!({
+            "agent": "primary",
+            "content": [{ "type": "text", "text": "final answer" }],
+            "time": { "created": 1712000040000_i64 }
+        })
+        .to_string()],
+    )
+    .unwrap();
+    drop(conn);
+
+    let reader = V2Reader::open(&db_path).unwrap();
+    let parsed = reader.parse_session("ses_reason_ctx").unwrap();
+
+    // The reasoning must attach to the following assistant text item, not the
+    // intervening context item.
+    assert_eq!(parsed.reasoning_attachments.len(), 1);
+    assert_eq!(
+        parsed.reasoning_attachments[0].visible_text.as_deref(),
+        Some("thinking about compaction")
+    );
+    let context_item = parsed
+        .transcript_items
+        .iter()
+        .position(|t| t.kind == TranscriptItemKind::Context)
+        .expect("context transcript item");
+    let assistant_item = parsed
+        .transcript_items
+        .iter()
+        .position(|t| {
+            t.kind == TranscriptItemKind::Message
+                && parsed.messages[t.message_index.unwrap() as usize].role == Role::Assistant
+        })
+        .expect("assistant text transcript item");
+    assert_ne!(
+        parsed.reasoning_attachments[0].transcript_item_index as usize, context_item,
+        "reasoning must not attach to the context item"
+    );
+    assert_eq!(
+        parsed.reasoning_attachments[0].transcript_item_index as usize,
+        assistant_item
+    );
+}
+
+#[test]
 fn v2_snapshot_is_consistent() {
     let dir = tempfile::tempdir().unwrap();
     let db_path = dir.path().join("snapshot.db");

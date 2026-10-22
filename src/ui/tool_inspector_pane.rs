@@ -6,7 +6,7 @@ use adw::prelude::*;
 use chrono::TimeZone;
 use relm4::{Component, ComponentParts, ComponentSender, RelmWidgetExt, adw, gtk};
 
-use crate::database::{load_reasoning_attachment, load_subagent, load_tool_call};
+use crate::database::{load_reasoning_attachment, load_session, load_subagent, load_tool_call};
 use crate::models::{ReasoningAttachment, Subagent, ToolCall, ToolCallStatus};
 use crate::ui::format::format_duration_ms;
 use crate::ui::markdown;
@@ -119,6 +119,11 @@ pub struct ToolInspectorPane {
     tool_call: Option<ToolCall>,
     subagent: Option<Subagent>,
     reasoning: Option<ReasoningAttachment>,
+    /// Whether the loaded subagent's child session actually exists in the cache.
+    /// V2 keeps native child IDs that are not indexed (including completion-only
+    /// rows), so a non-empty child ID alone must not enable the navigation
+    /// button.
+    child_session_available: bool,
 
     // Overview content switcher: "empty" / "tool" / "subagent"
     content_stack: gtk::Stack,
@@ -186,6 +191,7 @@ pub enum ToolInspectorPaneCmd {
         subagent_id: String,
         load_duration_ms: u128,
         subagent_result: Result<Option<Subagent>, String>,
+        child_available: bool,
     },
     Reasoning {
         request_id: u64,
@@ -275,12 +281,14 @@ impl Component for ToolInspectorPane {
                 subagent_id,
                 load_duration_ms,
                 subagent_result,
+                child_available,
             } => self.apply_subagent_cmd(
                 request_id,
                 &session_id,
                 &subagent_id,
                 load_duration_ms,
                 subagent_result,
+                child_available,
             ),
             ToolInspectorPaneCmd::Reasoning {
                 request_id,
@@ -309,6 +317,7 @@ impl ToolInspectorPane {
         self.tool_call = None;
         self.subagent = None;
         self.reasoning = None;
+        self.child_session_available = false;
     }
 
     fn begin_selection_load(&mut self) -> u64 {
@@ -378,6 +387,20 @@ impl ToolInspectorPane {
             let started_at = Instant::now();
             let subagent_result = load_subagent(db_path.as_path(), &session_id, &subagent_id)
                 .map_err(|err| err.to_string());
+            // Compute child availability while the subagent loads, so the render
+            // never queries the cache. A V2 completion-only child has a native
+            // child ID but no cached session and must stay unopenable.
+            let child_available = subagent_result
+                .as_ref()
+                .ok()
+                .and_then(|subagent| subagent.as_ref())
+                .and_then(|subagent| subagent.child_session_id.as_deref())
+                .map(|child_id| {
+                    load_session(db_path.as_path(), child_id)
+                        .map(|session| session.is_some())
+                        .unwrap_or(false)
+                })
+                .unwrap_or(false);
             let load_duration_ms = started_at.elapsed().as_millis();
             ToolInspectorPaneCmd::Subagent {
                 request_id,
@@ -385,6 +408,7 @@ impl ToolInspectorPane {
                 subagent_id: subagent_id.clone(),
                 load_duration_ms,
                 subagent_result,
+                child_available,
             }
         });
     }
@@ -498,6 +522,7 @@ impl ToolInspectorPane {
         subagent_id: &str,
         load_duration_ms: u128,
         subagent_result: Result<Option<Subagent>, String>,
+        child_available: bool,
     ) {
         if !self.accept_request_result(request_id, &subagent_result) {
             return;
@@ -528,10 +553,12 @@ impl ToolInspectorPane {
                     );
                 }
                 self.subagent = subagent;
+                self.child_session_available = child_available;
             }
             Err(err) => {
                 tracing::error!("Failed to load subagent {}: {}", subagent_id, err);
                 self.subagent = None;
+                self.child_session_available = false;
             }
         }
     }
@@ -612,7 +639,10 @@ impl ToolInspectorPane {
                 subagent.result_summary.as_deref(),
             );
             self.open_session_button
-                .set_visible(subagent.child_session_id.is_some());
+                .set_visible(should_show_open_session_button(
+                    subagent.child_session_id.as_deref(),
+                    self.child_session_available,
+                ));
         }
     }
 
@@ -828,6 +858,7 @@ fn build_tool_inspector_model(
         tool_call: None,
         subagent: None,
         reasoning: None,
+        child_session_available: false,
         content_stack: overview_views.content_stack,
         error_label: overview_views.error_label,
         tool_name_label: overview_views.tool_detail.name_label,
@@ -1553,6 +1584,14 @@ fn format_unix_timestamp(timestamp: i64) -> Option<String> {
         .map(|dt| dt.format("%Y-%m-%d %H:%M:%S UTC").to_string())
 }
 
+/// Whether the "Open Full Session" button may be shown for a subagent. A child
+/// ID alone is not enough: V2 keeps native child IDs that are not indexed
+/// (including completion-only rows), so the button must only appear when the
+/// child actually exists in the cache.
+fn should_show_open_session_button(child_session_id: Option<&str>, child_is_cached: bool) -> bool {
+    child_session_id.is_some() && child_is_cached
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1908,6 +1947,26 @@ mod tests {
             .expect("results path label");
 
         assert!(path.wraps(), "results entry path must wrap");
+    }
+
+    #[gtk::test]
+    fn open_session_button_hidden_unless_child_is_cached() {
+        let button = gtk::Button::with_label("Open Full Session");
+
+        // An existing child: the button is visible/enabled.
+        button.set_visible(should_show_open_session_button(Some("ses_child"), true));
+        assert!(button.is_visible());
+
+        // A V2 completion-only child ID with no cached session: hidden.
+        button.set_visible(should_show_open_session_button(
+            Some("ses_child_missing"),
+            false,
+        ));
+        assert!(!button.is_visible());
+
+        // No child link at all: hidden.
+        button.set_visible(should_show_open_session_button(None, true));
+        assert!(!button.is_visible());
     }
 
     fn sample_tool_call(status: ToolCallStatus) -> ToolCall {

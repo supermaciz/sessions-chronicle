@@ -517,7 +517,9 @@ impl V2Projection {
             subagent_id: None,
             context_id: Some(id.clone()),
         });
-        self.flush_reasoning(item_index);
+        // Do not flush pending reasoning here: context rows carry no reasoning
+        // preview, so flushing would make an interrupted turn's reasoning
+        // invisible. Carry it forward to the next message/tool/subagent item.
         self.context_entries.push(ContextEntry {
             id,
             session_id,
@@ -527,6 +529,17 @@ impl V2Projection {
             timestamp,
             item_index,
         });
+    }
+
+    /// Records a row the reader could not fully decode. When the row is (or may
+    /// be) a user row, mark the transcript as corrupt so `finish` returns
+    /// `IncompleteTranscript` rather than misclassifying the session as having
+    /// no user messages. A `None` kind means the `type` column itself (or an
+    /// earlier column) was unreadable, so the row could be a user row.
+    pub(crate) fn note_corrupt_row(&mut self, kind: Option<&str>) {
+        if kind.is_none() || kind == Some("user") {
+            self.saw_corrupt_user = true;
+        }
     }
 
     fn flush_reasoning(&mut self, item_index: i64) {

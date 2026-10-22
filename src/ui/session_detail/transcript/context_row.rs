@@ -120,14 +120,19 @@ pub(super) fn bind_context_page(item: &TranscriptItemData, widgets: &mut Context
     );
 
     // Re-render the body in place whenever the content revision is bumped
-    // (expand/collapse toggle, full-content arrival, load-failure rollback).
+    // (expand/collapse toggle, full-content arrival, load-failure rollback),
+    // and keep the arrow icon plus the accessible expanded state in sync with
+    // `expanded`.
     let body = widgets.body.clone();
     let expanded = item.expanded.clone();
     let full_content = item.full_content.clone();
+    let header_button = widgets.header_button.clone();
+    let arrow_icon = widgets.arrow_icon.clone();
     let revision_handler =
         item.content_revision
             .connect_notify_local(Some("value"), move |_, _| {
                 render_context_body(&body, &full_content.borrow(), expanded.get());
+                set_context_expanded_state(&header_button, &arrow_icon, expanded.get());
             });
     widgets
         .connected_handlers
@@ -288,11 +293,22 @@ mod tests {
 
         // No body content and no request before expansion.
         assert_eq!(count_box_children(&widgets.body), 0);
+        assert_eq!(
+            widgets.arrow_icon.icon_name().as_deref(),
+            Some(CONTEXT_ARROW_COLLAPSED),
+            "the arrow and its accessible Expanded state start collapsed"
+        );
 
         // Enter/Space activate a focused button through the `clicked` signal.
         widgets.header_button.emit_clicked();
 
         assert!(item.expanded.get());
+        assert_eq!(
+            widgets.arrow_icon.icon_name().as_deref(),
+            Some(CONTEXT_ARROW_EXPANDED),
+            "the arrow (and its accessible Expanded state, updated in the same \
+             call) must flip on keyboard activation"
+        );
         // The only message emitted is the off-thread lazy body request.
         assert!(matches!(
             gtk::glib::MainContext::default()
@@ -304,6 +320,11 @@ mod tests {
         // Collapsing toggles back without requesting again.
         widgets.header_button.emit_clicked();
         assert!(!item.expanded.get());
+        assert_eq!(
+            widgets.arrow_icon.icon_name().as_deref(),
+            Some(CONTEXT_ARROW_COLLAPSED),
+            "the arrow and accessible state must collapse again"
+        );
     }
 
     #[gtk::test]

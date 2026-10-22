@@ -69,6 +69,7 @@ impl V2Reader {
                 Ok(id) => id,
                 Err(_) => {
                     tracing::warn!("V2 message row with unreadable id in session {session_id}");
+                    projection.note_corrupt_row(None);
                     continue;
                 }
             };
@@ -76,6 +77,7 @@ impl V2Reader {
                 Ok(seq) => seq,
                 Err(_) => {
                     tracing::warn!("V2 message {id} has unreadable seq in session {session_id}");
+                    projection.note_corrupt_row(None);
                     continue;
                 }
             };
@@ -83,6 +85,7 @@ impl V2Reader {
                 Ok(kind) => kind,
                 Err(_) => {
                     tracing::warn!("V2 message {id} has unreadable type in session {session_id}");
+                    projection.note_corrupt_row(None);
                     continue;
                 }
             };
@@ -90,6 +93,7 @@ impl V2Reader {
                 Ok(ms) => ms,
                 Err(_) => {
                     tracing::warn!("V2 message {id} has unreadable time in session {session_id}");
+                    projection.note_corrupt_row(Some(&kind));
                     continue;
                 }
             };
@@ -97,6 +101,7 @@ impl V2Reader {
                 Ok(ts) => ts,
                 Err(_) => {
                     tracing::warn!("V2 message {id} has invalid timestamp in session {session_id}");
+                    projection.note_corrupt_row(Some(&kind));
                     continue;
                 }
             };

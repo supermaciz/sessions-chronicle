@@ -46,9 +46,8 @@ enum SessionOutcome {
 /// Outcome of resolving one configured source.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum SourceOutcome {
-    /// Present but unchanged this run; its cached owners are retained.
-    Unchanged,
-    /// Present and successfully enumerated.
+    /// Present and successfully enumerated. `unchanged` on the opened source
+    /// distinguishes "enumerate only, skip parse" from a full re-read.
     Enumerated,
     /// Present-but-unreadable (or a metadata probe failed); owners retained.
     Unavailable,
@@ -76,6 +75,10 @@ struct EnumeratedSqliteSource {
     v2_ids: Vec<String>,
     v1: Option<SqliteBackend>,
     v1_entries: Vec<SessionEntry>,
+    /// True when the source fingerprint was unchanged this run: its IDs are
+    /// still enumerated (so reservations and fallbacks hold), but parsing is
+    /// skipped unless the cached owner differs.
+    unchanged: bool,
     /// Cleared when any selected session in this source fails; a cleared flag
     /// prevents the captured fingerprint from being committed.
     successful: bool,
@@ -197,6 +200,10 @@ impl SessionIndexer {
         // inaccessible or merely undiscovered source still contributes retained
         // candidates instead of silently disappearing.
         let cached_owners = opencode_sources::load_cached_owners(&self.db)?;
+        let cached_owner_map: BTreeMap<String, (PathBuf, OpenCodeGeneration)> = cached_owners
+            .iter()
+            .map(|(id, path, generation)| (id.clone(), (path.clone(), *generation)))
+            .collect();
 
         let json_order = db_paths.len() + 1;
 
@@ -216,10 +223,6 @@ impl SessionIndexer {
                 }
                 SourceOutcome::Unavailable => {
                     retained_paths.insert(db_path.clone());
-                }
-                SourceOutcome::Unchanged => {
-                    retained_paths.insert(db_path.clone());
-                    stats.skipped += 1;
                 }
                 SourceOutcome::Enumerated => {
                     let source = opened.expect("enumerated source is present");
@@ -295,6 +298,40 @@ impl SessionIndexer {
                 retained_ids.insert(id.clone());
                 continue;
             }
+
+            // An unchanged source is still enumerated, so its IDs reserve their
+            // priority and its readers stay open. Decide per-winner whether
+            // parsing can be skipped.
+            let is_unchanged = source_index
+                .get(&winner.path)
+                .map(|&index| enumerated[index].unchanged)
+                .unwrap_or(false);
+            if is_unchanged {
+                match cached_owner_map.get(id) {
+                    Some((path, generation))
+                        if path == &winner.path && *generation == winner.generation =>
+                    {
+                        // The cache already holds this exact owner: retain
+                        // without parsing.
+                        retained_ids.insert(id.clone());
+                        stats.skipped += 1;
+                        continue;
+                    }
+                    None => {
+                        // No cached owner: an ineligible ID from the previous
+                        // run reserves priority. Skip the parse and let it be
+                        // pruned rather than reintroducing a lower-priority
+                        // representation.
+                        continue;
+                    }
+                    Some(_) => {
+                        // Cached owner differs: this is the lower-priority
+                        // fallback / promotion path. The source's readers are
+                        // open because it was enumerated, so parse normally.
+                    }
+                }
+            }
+
             let outcome = self.parse_selected(
                 &parser,
                 winner,
@@ -304,6 +341,7 @@ impl SessionIndexer {
                 incremental,
                 errors_detail,
                 &mut stats,
+                &cached_owner_map,
             )?;
             match outcome {
                 SessionOutcome::Indexed => {
@@ -318,19 +356,53 @@ impl SessionIndexer {
             }
         }
 
-        // Commit captured fingerprints only for fully successful sources.
-        for source in &enumerated {
-            if source.successful {
-                self.commit_opencode_fingerprint(&source.path, &source.fingerprint)?;
-            }
-        }
-
         // Prune only ids whose owners were successfully enumerated or confirmed
         // missing: everything not freshly indexed and not retained.
         let kept: HashSet<String> = indexed_ids.union(&retained_ids).cloned().collect();
-        stats.removed += self.prune_stale_opencode_sessions(&kept)?;
 
-        self.prune_orphan_fingerprints()?;
+        // Prune and drop orphan fingerprints before committing any fingerprint
+        // (Task 5 Step 4): a cleanup failure must prevent this run's fingerprint
+        // commit, but must not abort the other assistants' indexing.
+        let cleanup = (|| -> Result<()> {
+            stats.removed += self.prune_stale_opencode_sessions(&kept)?;
+            self.prune_orphan_fingerprints()?;
+            Ok(())
+        })();
+
+        match cleanup {
+            Ok(()) => {
+                // Commit captured fingerprints only for fully successful sources
+                // and only after cleanup succeeded.
+                for source in &enumerated {
+                    if source.successful
+                        && let Err(err) =
+                            self.commit_opencode_fingerprint(&source.path, &source.fingerprint)
+                    {
+                        tracing::warn!(
+                            "Failed to commit OpenCode fingerprint for {}: {err:#}",
+                            source.path.display()
+                        );
+                        push_indexing_error(
+                            errors_detail,
+                            AiAssistant::OpenCode,
+                            Some(source.path.display().to_string()),
+                            format!("Failed to commit OpenCode source fingerprint: {err:#}"),
+                        );
+                        stats.errors += 1;
+                    }
+                }
+            }
+            Err(err) => {
+                tracing::warn!("Failed to clean up OpenCode cache: {err:#}");
+                push_indexing_error(
+                    errors_detail,
+                    AiAssistant::OpenCode,
+                    None,
+                    format!("Failed to clean up OpenCode cache: {err:#}"),
+                );
+                stats.errors += 1;
+            }
+        }
 
         Ok(stats)
     }
@@ -366,9 +438,11 @@ impl SessionIndexer {
                     }
                 };
 
-                if incremental && self.opencode_source_unchanged(db_path, &fingerprint)? {
-                    return Ok((SourceOutcome::Unchanged, None));
-                }
+                // An unchanged source still enumerates its IDs (so reservations
+                // and lower-priority fallbacks hold on later runs); only parsing
+                // is skipped.
+                let unchanged =
+                    incremental && self.opencode_source_unchanged(db_path, &fingerprint)?;
 
                 let generations = match probe_source_generations(db_path) {
                     Ok(generations) => generations,
@@ -385,7 +459,10 @@ impl SessionIndexer {
                     errors_detail,
                     stats,
                 )? {
-                    Some(source) => Ok((SourceOutcome::Enumerated, Some(source))),
+                    Some(mut source) => {
+                        source.unchanged = unchanged;
+                        Ok((SourceOutcome::Enumerated, Some(source)))
+                    }
                     None => Ok((SourceOutcome::Unavailable, None)),
                 }
             }
@@ -409,6 +486,7 @@ impl SessionIndexer {
             v2_ids: Vec::new(),
             v1: None,
             v1_entries: Vec::new(),
+            unchanged: false,
             successful: true,
         };
 
@@ -532,6 +610,7 @@ impl SessionIndexer {
         incremental: bool,
         errors_detail: &mut VecDeque<IndexingError>,
         stats: &mut IndexingStats,
+        cached_owner_map: &BTreeMap<String, (PathBuf, OpenCodeGeneration)>,
     ) -> Result<SessionOutcome> {
         match winner.generation {
             OpenCodeGeneration::V2 => {
@@ -631,7 +710,17 @@ impl SessionIndexer {
                     .get(&winner.session_id)
                     .context("JSON entry not enumerated")?;
                 let path = json_file_path(entry);
-                if incremental && !self.should_reindex(&path)? {
+                // Skip only when the cache already holds this exact JSON
+                // representation and its file is unchanged. If the cached owner
+                // is a V1/V2 row elsewhere (or a different JSON path), the
+                // JSON candidate must be parsed so a confirmed-missing SQLite
+                // owner can fall back to it.
+                let cached_is_same_json = cached_owner_map.get(&winner.session_id).is_some_and(
+                    |(cached_path, generation)| {
+                        *generation == OpenCodeGeneration::Json && cached_path == &path
+                    },
+                );
+                if incremental && cached_is_same_json && !self.should_reindex(&path)? {
                     stats.skipped += 1;
                     return Ok(SessionOutcome::RetainedFailure);
                 }

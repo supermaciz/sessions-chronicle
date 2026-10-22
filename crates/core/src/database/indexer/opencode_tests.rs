@@ -358,6 +358,26 @@ fn drop_abort_trigger(indexer: &SessionIndexer, id: &str) {
         .unwrap();
 }
 
+fn install_delete_abort_trigger(indexer: &SessionIndexer, id: &str) {
+    let name = id.replace('-', "_");
+    indexer
+        .db
+        .execute_batch(&format!(
+            "CREATE TRIGGER abort_delete_{name} BEFORE DELETE ON sessions
+             WHEN OLD.id = '{id}'
+             BEGIN SELECT RAISE(ABORT, 'injected cleanup failure'); END;"
+        ))
+        .unwrap();
+}
+
+fn drop_delete_abort_trigger(indexer: &SessionIndexer, id: &str) {
+    let name = id.replace('-', "_");
+    indexer
+        .db
+        .execute_batch(&format!("DROP TRIGGER IF EXISTS abort_delete_{name};"))
+        .unwrap();
+}
+
 // ---------------------------------------------------------------------------
 // Tests.
 // ---------------------------------------------------------------------------
@@ -645,6 +665,70 @@ fn opencode_last_db_removal_prunes() {
 }
 
 #[test]
+fn opencode_last_db_removal_prunes_when_path_omitted() {
+    let source_dir = tempfile::tempdir().unwrap();
+    let v2_path = source_dir.path().join("v2.db");
+    create_v2_source(&v2_path, &[("ses_gone", "gone")]);
+
+    let (_dir, mut indexer) = new_indexer();
+    indexer
+        .index_opencode_sessions_incremental(&source_dir.path().join("missing"), &[v2_path.clone()])
+        .unwrap();
+    assert_eq!(cached_ids(&indexer.db), vec!["ses_gone"]);
+
+    // Delete the file AND omit it from `db_paths`: the owner is undiscovered,
+    // so only the per-file metadata probe can confirm its absence.
+    std::fs::remove_file(&v2_path).unwrap();
+    let second = indexer
+        .index_opencode_sessions_incremental(&source_dir.path().join("missing"), &[])
+        .unwrap();
+    assert_eq!(second.removed, 1);
+    assert!(cached_ids(&indexer.db).is_empty());
+}
+
+#[test]
+fn opencode_undiscovered_owner_retained_when_unavailable() {
+    let source_dir = tempfile::tempdir().unwrap();
+    let v2_path = source_dir.path().join("v2.db");
+    create_v2_source(&v2_path, &[("ses_keep", "keep body")]);
+
+    let (_dir, mut indexer) = new_indexer();
+    indexer
+        .index_opencode_sessions_incremental(&source_dir.path().join("missing"), &[v2_path.clone()])
+        .unwrap();
+    assert_eq!(cached_ids(&indexer.db), vec!["ses_keep"]);
+
+    // The cached owner's path is undiscovered (`db_paths = []`) and its
+    // metadata probe reports Unavailable: it must still be retained.
+    force_unavailable(&v2_path);
+    indexer
+        .index_opencode_sessions_incremental(&source_dir.path().join("missing"), &[])
+        .unwrap();
+    assert_eq!(cached_ids(&indexer.db), vec!["ses_keep"]);
+}
+
+#[test]
+fn opencode_json_owner_retained_when_storage_root_unavailable() {
+    let source_dir = tempfile::tempdir().unwrap();
+    let json_root = source_dir.path().join("json");
+    create_json_session(&json_root, "ses_json", "json body");
+
+    let (_dir, mut indexer) = new_indexer();
+    indexer
+        .index_opencode_sessions_incremental(&json_root, &[])
+        .unwrap();
+    assert_eq!(cached_ids(&indexer.db), vec!["ses_json"]);
+
+    // The JSON storage root becomes unreadable and no DB paths are configured:
+    // the cached JSON owner must still be retained via its per-file presence.
+    force_unavailable(&json_root);
+    indexer
+        .index_opencode_sessions_incremental(&json_root, &[])
+        .unwrap();
+    assert_eq!(cached_ids(&indexer.db), vec!["ses_json"]);
+}
+
+#[test]
 fn opencode_ineligible_does_not_fall_back() {
     let source_dir = tempfile::tempdir().unwrap();
     let v2_path = source_dir.path().join("v2.db");
@@ -669,6 +753,136 @@ fn opencode_ineligible_does_not_fall_back() {
         !cached_ids(&indexer.db)
             .iter()
             .any(|id| id == "ses_v2_system_only")
+    );
+}
+
+#[test]
+fn opencode_ineligible_not_reintroduced_on_unchanged_run() {
+    let source_dir = tempfile::tempdir().unwrap();
+    let v2_path = source_dir.path().join("v2.db");
+    let json_root = source_dir.path().join("json");
+
+    // V2 DB A holds X with no user message (ineligible); a lower-priority JSON
+    // source also holds X.
+    let conn = create_v2_db(&v2_path);
+    conn.execute_batch("DELETE FROM session_message; DELETE FROM session_v2;")
+        .unwrap();
+    conn.execute(
+        "INSERT INTO session_v2 (id, project_id, directory, title, parent_id, version, slug, model,
+                                  tokens_input, tokens_output, tokens_reasoning, tokens_cache_read,
+                                  tokens_cache_write, time_created, time_updated)
+         VALUES ('ses_x', 'prj', '/tmp/proj', NULL, NULL, '0.0.0', 'slug-x', NULL,
+                 0, 0, 0, 0, 0, 1712000000000, 1712000000000)",
+        [],
+    )
+    .unwrap();
+    drop(conn);
+    create_json_session(&json_root, "ses_x", "json body");
+
+    let (_dir, mut indexer) = new_indexer();
+    indexer
+        .index_opencode_sessions(&json_root, &[v2_path.clone()])
+        .unwrap();
+    assert!(!cached_ids(&indexer.db).iter().any(|id| id == "ses_x"));
+
+    // Run 2: A is unchanged, so it must still reserve X's priority and keep it
+    // pruned rather than letting the JSON source reintroduce it.
+    let second = indexer
+        .index_opencode_sessions_incremental(&json_root, &[v2_path.clone()])
+        .unwrap();
+    assert!(!cached_ids(&indexer.db).iter().any(|id| id == "ses_x"));
+    assert_eq!(second.indexed, 0);
+}
+
+#[test]
+fn opencode_unchanged_v1_falls_back_after_v2_removed() {
+    let source_dir = tempfile::tempdir().unwrap();
+    let v1_path = source_dir.path().join("v1.db");
+    let v2_path = source_dir.path().join("v2.db");
+    create_v1_source(&v1_path, &[("ses_shared", "v1 body")]);
+    create_v2_source(&v2_path, &[("ses_shared", "v2 body")]);
+
+    let (_dir, mut indexer) = new_indexer();
+    indexer
+        .index_opencode_sessions(
+            &source_dir.path().join("missing"),
+            &[v1_path.clone(), v2_path.clone()],
+        )
+        .unwrap();
+    assert_eq!(
+        owner_generation(&indexer.db, "ses_shared").as_deref(),
+        Some("v2")
+    );
+    assert_eq!(
+        cached_body(&indexer.db, "ses_shared").as_deref(),
+        Some("v2 body")
+    );
+
+    // Delete the V2 DB; the V1 DB is unchanged.
+    std::fs::remove_file(&v2_path).unwrap();
+
+    // Run 2: after the V2 owner's confirmed absence, the unchanged V1 source
+    // must fall back and re-own X instead of letting it disappear.
+    indexer
+        .index_opencode_sessions_incremental(
+            &source_dir.path().join("missing"),
+            &[v1_path.clone(), v2_path.clone()],
+        )
+        .unwrap();
+
+    assert_eq!(
+        owner_generation(&indexer.db, "ses_shared").as_deref(),
+        Some("v1")
+    );
+    assert_eq!(
+        cached_body(&indexer.db, "ses_shared").as_deref(),
+        Some("v1 body")
+    );
+}
+
+#[test]
+fn opencode_json_falls_back_when_sqlite_owner_confirmed_missing() {
+    let source_dir = tempfile::tempdir().unwrap();
+    let json_root = source_dir.path().join("json");
+    let v2_path = source_dir.path().join("v2.db");
+
+    // Run 1: JSON owns X and commits its file fingerprint.
+    create_json_session(&json_root, "ses_shared", "json body");
+    let (_dir, mut indexer) = new_indexer();
+    indexer
+        .index_opencode_sessions_incremental(&json_root, &[])
+        .unwrap();
+    assert_eq!(
+        owner_generation(&indexer.db, "ses_shared").as_deref(),
+        Some("json")
+    );
+
+    // Run 2: a V2 source takes ownership, leaving the JSON fingerprint intact.
+    create_v2_source(&v2_path, &[("ses_shared", "v2 body")]);
+    indexer
+        .index_opencode_sessions_incremental(&json_root, &[v2_path.clone()])
+        .unwrap();
+    assert_eq!(
+        owner_generation(&indexer.db, "ses_shared").as_deref(),
+        Some("v2")
+    );
+
+    // Delete the V2 DB, leaving the JSON file (and its fingerprint) untouched.
+    std::fs::remove_file(&v2_path).unwrap();
+
+    // Run 3: the confirmed-missing V2 owner must fall back to the fresh JSON
+    // file even though its fingerprint still matches (should_reindex == false).
+    indexer
+        .index_opencode_sessions_incremental(&json_root, &[v2_path.clone()])
+        .unwrap();
+
+    assert_eq!(
+        owner_generation(&indexer.db, "ses_shared").as_deref(),
+        Some("json")
+    );
+    assert_eq!(
+        cached_body(&indexer.db, "ses_shared").as_deref(),
+        Some("json body")
     );
 }
 
@@ -703,6 +917,91 @@ fn opencode_corrupt_user_retains_previous_owner() {
         cached_body(&indexer.db, "ses_v2_corrupt_user").as_deref(),
         Some("v1 body")
     );
+}
+
+#[test]
+fn opencode_unreadable_user_time_retains_cached_owner() {
+    let source_dir = tempfile::tempdir().unwrap();
+    let v2_path = source_dir.path().join("v2.db");
+    create_v2_source(&v2_path, &[("ses_time", "good body")]);
+
+    let (_dir, mut indexer) = new_indexer();
+    indexer
+        .index_opencode_sessions_incremental(&source_dir.path().join("missing"), &[v2_path.clone()])
+        .unwrap();
+    assert_eq!(cached_ids(&indexer.db), vec!["ses_time"]);
+
+    // Make the only user row's `time_created` out of range so the reader cannot
+    // establish the timestamp. This must surface as an incomplete transcript
+    // (retained failure), not a "no user messages" ineligibility that prunes
+    // the last good cache.
+    {
+        let conn = Connection::open(&v2_path).unwrap();
+        conn.execute(
+            "UPDATE session_message SET time_created = 9223372036854775807
+             WHERE session_id = 'ses_time' AND type = 'user'",
+            [],
+        )
+        .unwrap();
+    }
+
+    indexer
+        .index_opencode_sessions_incremental(&source_dir.path().join("missing"), &[v2_path.clone()])
+        .unwrap();
+
+    assert_eq!(cached_ids(&indexer.db), vec!["ses_time"]);
+    assert_eq!(
+        cached_body(&indexer.db, "ses_time").as_deref(),
+        Some("good body")
+    );
+    assert_eq!(
+        owner_generation(&indexer.db, "ses_time").as_deref(),
+        Some("v2")
+    );
+}
+
+#[test]
+fn opencode_cleanup_failure_skips_fingerprint_commit() {
+    let source_dir = tempfile::tempdir().unwrap();
+    let v2_path = source_dir.path().join("v2.db");
+    create_v2_source(&v2_path, &[("ses_a", "a"), ("ses_gone", "gone")]);
+
+    let (_dir, mut indexer) = new_indexer();
+    indexer
+        .index_opencode_sessions_incremental(&source_dir.path().join("missing"), &[v2_path.clone()])
+        .unwrap();
+    let before = stored_fingerprint(&indexer.db, &v2_path).expect("fingerprint committed");
+
+    // Remove `ses_gone` from the source so it must be pruned, then make that
+    // prune delete fail deterministically.
+    {
+        let conn = Connection::open(&v2_path).unwrap();
+        conn.execute(
+            "DELETE FROM session_message WHERE session_id = 'ses_gone'",
+            [],
+        )
+        .unwrap();
+        conn.execute("DELETE FROM session_v2 WHERE id = 'ses_gone'", [])
+            .unwrap();
+    }
+    install_delete_abort_trigger(&indexer, "ses_gone");
+
+    let result = indexer
+        .index_opencode_sessions_incremental(&source_dir.path().join("missing"), &[v2_path.clone()])
+        .unwrap();
+
+    // A cleanup failure must prevent the fingerprint commit, not abort the run.
+    assert_eq!(stored_fingerprint(&indexer.db, &v2_path), Some(before));
+    assert!(result.errors > 0, "cleanup failure must be recorded");
+    assert!(cached_ids(&indexer.db).iter().any(|id| id == "ses_gone"));
+
+    // Remove the fault and retry: cleanup succeeds and the fingerprint commits.
+    drop_delete_abort_trigger(&indexer, "ses_gone");
+    indexer
+        .index_opencode_sessions_incremental(&source_dir.path().join("missing"), &[v2_path.clone()])
+        .unwrap();
+    assert!(!cached_ids(&indexer.db).iter().any(|id| id == "ses_gone"));
+    assert_ne!(stored_fingerprint(&indexer.db, &v2_path), Some(before));
 }
 
 #[test]
