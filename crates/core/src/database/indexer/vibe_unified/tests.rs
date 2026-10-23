@@ -212,6 +212,43 @@ fn pool_child_projection(dir: &Path) {
 }
 
 #[test]
+fn runtime_identity_shapes_and_conflicts_preserve_prior_state() {
+    use serde_json::json;
+    for field in ["root_session_id", "parent_session_id"] {
+        let mut h = Harness::empty();
+        h.add(CHILD_B);
+        assert!(h.run(false).1.is_empty());
+        let old = (h.messages(CHILD_B), h.signature(CHILD_B));
+        rewrite_document(&h.dir(CHILD_B), "runtime-state.json", |doc| {
+            doc["session_metadata"][field] = json!("other");
+        });
+        let result = MistralVibeUnifiedParser.parse(&h.dir(CHILD_B));
+        assert!(
+            matches!(result, Err(UnifiedError::IdentityConflict(_))),
+            "{field}: {result:?}"
+        );
+        assert_eq!(h.run(true).0.errors, 1);
+        assert_eq!(old, (h.messages(CHILD_B), h.signature(CHILD_B)));
+    }
+    let mut h = Harness::empty();
+    h.add(R302);
+    assert!(h.run(false).1.is_empty());
+    let old = (h.messages(R302), h.signature(R302));
+    rewrite_document(&h.dir(R302), "runtime-state.json", |doc| {
+        doc["session_metadata"]
+            .as_object_mut()
+            .unwrap()
+            .remove("parent_session_id");
+    });
+    assert!(matches!(
+        MistralVibeUnifiedParser.parse(&h.dir(R302)),
+        Err(UnifiedError::Corrupt(_))
+    ));
+    assert_eq!(h.run(true).0.errors, 1);
+    assert_eq!(old, (h.messages(R302), h.signature(R302)));
+}
+
+#[test]
 fn duplicate_subagent_ids_roundtrip_distinct_prompts_and_results() {
     use serde_json::json;
     let mut h = Harness::empty();

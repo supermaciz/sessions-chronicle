@@ -7,7 +7,9 @@ use serde::{Deserialize, Serialize};
 pub use super::saved_results::FileStat;
 use super::store::FileSample;
 
-pub const UNIFIED_READER_VERSION: u32 = 1;
+// Version 2 invalidates signatures published before the journal/state/identity
+// fixes: unchanged stores must be revalidated, not silently skipped forever.
+pub const UNIFIED_READER_VERSION: u32 = 2;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct UnifiedSignature {
@@ -87,6 +89,22 @@ fn sample_matches(expected: &FileSample, path: &Path) -> bool {
 mod tests {
     use super::*;
     use tempfile::tempdir;
+
+    #[test]
+    fn pre_fix_reader_signature_requires_revalidation() {
+        let temp = super::super::store::test_support::copy_fixture(
+            "vibe_sessions/unified/child-600cf6121578955c8405618d",
+        );
+        let session = temp.path().join("child-600cf6121578955c8405618d");
+        let store = super::super::store::load_generation(&session).unwrap();
+        let mut signature = UnifiedSignature::from_parse(&store, vec![]);
+        assert!(signature.is_current(&session));
+        signature.reader_version = 1;
+        assert!(
+            !signature.is_current(&session),
+            "old accepted content must be validated under the corrected contracts"
+        );
+    }
 
     #[test]
     fn storage_round_trip_and_freshness_rejects_changed_current() {

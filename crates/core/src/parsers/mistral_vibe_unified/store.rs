@@ -646,13 +646,21 @@ fn runtime_identity(
             UnifiedError::Corrupt("session_metadata root_session_id is missing".to_string())
         })?;
     if metadata_root != root_session_id {
-        return Err(UnifiedError::Corrupt(
+        return Err(UnifiedError::IdentityConflict(
             "session_metadata root_session_id does not match identity".to_string(),
         ));
     }
-    let metadata_parent = metadata.get("parent_session_id").and_then(Value::as_str);
+    let metadata_parent = match metadata.get("parent_session_id") {
+        Some(Value::Null) => None,
+        Some(Value::String(parent)) => Some(parent.as_str()),
+        _ => {
+            return Err(UnifiedError::Corrupt(
+                "session_metadata parent_session_id is missing or malformed".into(),
+            ));
+        }
+    };
     if metadata_parent != parent_id {
-        return Err(UnifiedError::Corrupt(
+        return Err(UnifiedError::IdentityConflict(
             "session_metadata parent_session_id does not match identity".to_string(),
         ));
     }
