@@ -185,6 +185,22 @@ projection operations; a stability check guards the read against publication
 while Vibe is writing. The reader does not acquire Vibe leases or locks and
 never writes to the source store.
 
+The byte-level integrity rules are pinned in plan facts **C** and **E**. For
+the projection/runtime documents and pooled chunk documents, the reader hashes
+the raw stored bytes after removing exactly one required final LF; it does not
+re-serialize or re-canonicalize those document bodies. `CURRENT` and the
+manifest, in contrast, are checked for canonical JSON encoding (and the
+manifest digest is checked against its canonical body).
+
+Each journal record must be a canonical JSON record terminated by LF. To
+calculate `record_sha256`, omit the entire last
+`,"record_sha256":"<64-hex-digest>"` field—including its leading comma, key,
+digest value and closing quote—from the record bytes, then SHA-256 the remaining
+bytes. The omitted value must be 64 hexadecimal characters and match the
+record's `record_sha256`. The reader also validates consecutive sequence
+numbers and `previous_record_sha256` chaining. A final journal fragment without
+LF is ignored, not parsed or replayed.
+
 The implementation follows pinned upstream facts **E–K** in
 `docs/superpowers/plans/2026-10-23-mistral-vibe-unified.md`: E, journal record
 validation and chaining; F, projection replay operations and watermarks; G,
