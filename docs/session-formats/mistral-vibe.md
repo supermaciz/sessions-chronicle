@@ -22,9 +22,9 @@ or `session_logging.save_dir` in `config.toml`), so unified sessions live under
 the legacy format that the rest of this document describes.
 
 Upstream store identity: `mistral.vibe.unified-session-store/v1` with a
-`store_format_minor` revision counter (9 as of v3.0.2). Readers accept lower
-minor versions and **reject higher ones**, so a minor bump is a hard
-compatibility boundary and a ready-made drift signal for watch passes.
+`store_format_minor` revision counter. **Sessions Chronicle accepts minor 9
+only**; its fixture-backed range is stores written by Vibe 3.0.0, 3.0.1 and
+3.0.2 (all minor 9). Other minor versions are rejected, including lower ones.
 
 ---
 
@@ -172,7 +172,26 @@ resolved via manifest chunk references, not inline records only.
   transcripts; 5: checkpoint capability baselines; 6: self-describing
   reservations and abandoned receipts; 7: checkpoint configuration baselines
   and recorded transition shapes; 8: pruned request/result bodies on settled
-  actions; 9: pooled chunks
+  actions and pooled capability catalogs; 9: atomic session relocation and
+  system-instruction baselines
+
+### Sessions Chronicle Unified Reader
+
+The read-only reader in `crates/core/src/parsers/mistral_vibe_unified/` follows
+the `CURRENT` pointer to its manifest, validates and loads the projection and
+referenced history chunks, then streams and replays the journal suffix. It
+checks canonical pointer/manifest bytes, digests, sequence/hash chaining, and
+projection operations; a stability check guards the read against publication
+while Vibe is writing. The reader does not acquire Vibe leases or locks and
+never writes to the source store.
+
+The implementation follows pinned upstream facts **E–K** in
+`docs/superpowers/plans/2026-10-23-mistral-vibe-unified.md`: E, journal record
+validation and chaining; F, projection replay operations and watermarks; G,
+snapshot envelope; H, entry shapes; I, skill invocation display; J,
+deterministic child identity; K, offloaded large tool-result resolution.
+`checkpoint.json` is not read. Neither are `scheduled-loops.json`, the sibling
+`.session-index.json` catalog, or `scratchpad/`.
 
 ---
 

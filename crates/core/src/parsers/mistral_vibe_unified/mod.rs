@@ -113,6 +113,42 @@ fn read_is_stable(session_dir: &Path, store: &LoadedStore) -> Result<(), String>
     Ok(())
 }
 
+#[cfg(test)]
+mod real_store_test {
+    use super::load_stable;
+
+    #[test]
+    #[ignore = "manual, read-only check against a local Mistral Vibe Unified store"]
+    fn real_unified_root_loads() {
+        let root = std::env::var_os("VIBE_UNIFIED_REAL_ROOT")
+            .expect("set VIBE_UNIFIED_REAL_ROOT to a Unified store root");
+        let root = std::path::PathBuf::from(root);
+        let mut stores = std::fs::read_dir(&root)
+            .unwrap_or_else(|error| panic!("cannot read {}: {error}", root.display()))
+            .filter_map(Result::ok)
+            .filter(|entry| entry.file_type().is_ok_and(|kind| kind.is_dir()))
+            .map(|entry| entry.path())
+            .collect::<Vec<_>>();
+        stores.sort();
+
+        let mut loaded = 0;
+        for path in stores {
+            if !path.join("CURRENT").is_file() {
+                continue;
+            }
+            let (entries, store) = load_stable(&path, |store| Ok(store.projection.entries.len()))
+                .unwrap_or_else(|error| panic!("{}: {error}", path.display()));
+            println!("{} entries={entries}", store.runtime.session_id);
+            loaded += 1;
+        }
+        assert!(
+            loaded > 0,
+            "no Unified stores found under {}",
+            root.display()
+        );
+    }
+}
+
 /// Compares two pointer reads: byte-identical bodies, or the same
 /// failure to produce them.
 fn same_pointer_read(
