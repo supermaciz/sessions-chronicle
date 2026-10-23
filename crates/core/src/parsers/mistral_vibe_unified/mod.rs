@@ -30,9 +30,8 @@ pub use store::{FileSample, child_session_id, is_unified_session_dir};
 /// After `build` runs, `CURRENT` is re-read and the journal segment is
 /// re-stat'ed: the read is retried once when the pointer bytes changed,
 /// the journal was replaced (different `dev`/`ino`), the segment is
-/// shorter than the sampled size, or the attempt failed with
-/// [`UnifiedError::Incomplete`] while the pointer moved — a concurrent
-/// publication can briefly remove referenced files.  A second
+/// shorter than the sampled size. These checks also guard errors and removal
+/// outcomes: concurrent publication can invalidate even a failed replay. A second
 /// instability is [`UnifiedError::Unstable`]; every other error is
 /// returned as-is.  The returned store keeps the journal sample taken
 /// before the replay, the validated prefix a caller should publish.
@@ -40,26 +39,34 @@ pub(crate) fn load_stable<T>(
     session_dir: &Path,
     build: impl Fn(&LoadedStore) -> Result<T, UnifiedError>,
 ) -> Result<(T, LoadedStore), UnifiedError> {
+    load_stable_with_replay(session_dir, build, journal::replay_journal)
+}
+
+fn load_stable_with_replay<T>(
+    session_dir: &Path,
+    build: impl Fn(&LoadedStore) -> Result<T, UnifiedError>,
+    replay: impl Fn(&Path, &mut LoadedStore) -> Result<(), UnifiedError>,
+) -> Result<(T, LoadedStore), UnifiedError> {
     let mut instability: Option<String> = None;
     for _ in 0..2 {
         // Baseline the pointer before the attempt so a mid-read failure
         // can be attributed to a publication in flight.
         let attempt_current = fs::read(session_dir.join("CURRENT"));
-        match stable_attempt(session_dir, &build) {
-            Ok((value, store)) => {
+        match store::load_generation(session_dir) {
+            Ok(mut store) => {
+                // Keep the pre-replay samples even when replay/build fails.
+                // A stable corrupt record must still fail immediately.
+                let outcome = replay(session_dir, &mut store).and_then(|()| build(&store));
                 if let Err(reason) = read_is_stable(session_dir, &store) {
                     instability = Some(reason);
                     continue;
                 }
-                return Ok((value, store));
+                return outcome.map(|value| (value, store));
             }
             Err(error) => {
                 let current_now = fs::read(session_dir.join("CURRENT"));
-                if matches!(error, UnifiedError::Incomplete(_))
-                    && !same_pointer_read(&current_now, &attempt_current)
-                {
-                    instability =
-                        Some("CURRENT changed while referenced files went missing".to_string());
+                if !same_pointer_read(&current_now, &attempt_current) {
+                    instability = Some("CURRENT changed while loading the generation".to_string());
                     continue;
                 }
                 return Err(error);
@@ -69,17 +76,6 @@ pub(crate) fn load_stable<T>(
     Err(UnifiedError::Unstable(instability.unwrap_or_else(|| {
         "store changed during the read".to_string()
     })))
-}
-
-/// One full read attempt: generation load, journal replay, build.
-fn stable_attempt<T>(
-    session_dir: &Path,
-    build: &impl Fn(&LoadedStore) -> Result<T, UnifiedError>,
-) -> Result<(T, LoadedStore), UnifiedError> {
-    let mut store = store::load_generation(session_dir)?;
-    journal::replay_journal(session_dir, &mut store)?;
-    let value = build(&store)?;
-    Ok((value, store))
 }
 
 /// Re-reads the pointer and the journal metadata, comparing them with

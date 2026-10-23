@@ -66,6 +66,14 @@ pub(crate) fn replay_journal(
     session_dir: &Path,
     store: &mut LoadedStore,
 ) -> Result<(), UnifiedError> {
+    replay_journal_with_open_hook(session_dir, store, || {})
+}
+
+fn replay_journal_with_open_hook(
+    session_dir: &Path,
+    store: &mut LoadedStore,
+    after_open: impl FnOnce(),
+) -> Result<(), UnifiedError> {
     let journal_path = session_dir.join(&store.journal.relative_path);
     reject_symlink(&journal_path)?;
     let file = File::open(&journal_path).map_err(|error| match error.kind() {
@@ -75,6 +83,7 @@ pub(crate) fn replay_journal(
         )),
         _ => UnifiedError::Io(error),
     })?;
+    after_open();
     let mut reader = BufReader::new(file).take(store.journal.size);
 
     let mut line: Vec<u8> = Vec::new();
@@ -1028,6 +1037,101 @@ mod tests {
             entry_ids(&gen1.projection.entries),
             ["u1", "a1", "u2", "a2"]
         );
+    }
+
+    #[test]
+    fn unstable_replay_errors_retry_before_classification() {
+        for during in [false, true] {
+            let (_temp, session) = copy_store(R302);
+            let calls = Cell::new(0);
+            let result = super::super::load_stable_with_replay(
+                &session,
+                |_| Ok(()),
+                |path, store| {
+                    calls.set(calls.get() + 1);
+                    let journal = path.join(&store.journal.relative_path);
+                    let replace = || {
+                        // Valid upstream record, wrong sequence for R302. Replace
+                        // the inode, not just the bytes: demonstrable instability.
+                        let source = crate::fixture_path(&session_rel(R300))
+                            .join("journal/0000000000000002.jsonl");
+                        let sibling = journal.with_extension("replacement");
+                        fs::copy(&source, &sibling).unwrap();
+                        if during {
+                            // Repopulate the already opened inode too, so replay
+                            // fails on a valid record from a different segment.
+                            fs::write(&journal, fs::read(&source).unwrap()).unwrap();
+                        }
+                        fs::rename(sibling, &journal).unwrap();
+                    };
+                    if during {
+                        // The replay has opened its handle before replacement.
+                        replay_journal_with_open_hook(path, store, replace)
+                    } else {
+                        replace();
+                        replay_journal(path, store)
+                    }
+                },
+            );
+            assert!(
+                matches!(result, Err(UnifiedError::Unstable(_))),
+                "during={during}: {result:?}"
+            );
+            assert_eq!(calls.get(), 2);
+        }
+    }
+
+    #[test]
+    fn stable_corruption_is_not_retried() {
+        let (_temp, session) = copy_store(R302);
+        rewrite_journal_record(&session, 10, |record| {
+            record["sequence"] = json!(99);
+        });
+        let calls = Cell::new(0);
+        let result = super::super::load_stable_with_replay(
+            &session,
+            |_| Ok(()),
+            |path, store| {
+                calls.set(calls.get() + 1);
+                replay_journal(path, store)
+            },
+        );
+        assert!(matches!(result, Err(UnifiedError::Corrupt(_))));
+        assert_eq!(calls.get(), 1);
+    }
+
+    #[test]
+    fn removal_outcomes_require_a_stable_pointer() {
+        for kind in ["empty", "ephemeral", "deleting"] {
+            let (_temp, session) = copy_store(R302);
+            let pointer_a = fs::read(session.join("CURRENT")).unwrap();
+            let pointer_b = write_alternate_generation(&session);
+            let calls = Cell::new(0);
+            let result: Result<((), LoadedStore), _> = load_stable(&session, |_| {
+                calls.set(calls.get() + 1);
+                fs::write(
+                    session.join("CURRENT"),
+                    if calls.get() % 2 == 1 {
+                        &pointer_b
+                    } else {
+                        &pointer_a
+                    },
+                )
+                .unwrap();
+                Err(match kind {
+                    "empty" => UnifiedError::NoUserMessages,
+                    "ephemeral" => UnifiedError::Ephemeral,
+                    _ => UnifiedError::DeletingTree {
+                        child_session_ids: vec![],
+                    },
+                })
+            });
+            assert!(
+                matches!(result, Err(UnifiedError::Unstable(_))),
+                "{kind}: {result:?}"
+            );
+            assert_eq!(calls.get(), 2);
+        }
     }
 
     #[test]
