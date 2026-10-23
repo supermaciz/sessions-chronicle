@@ -1,11 +1,12 @@
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
 use std::sync::{LazyLock, Mutex};
 
 use super::{IndexingStats, SessionIndexer, push_indexing_error};
 use crate::models::{AiAssistant, IndexingError};
 use crate::parsers::mistral_vibe_unified::{
-    MistralVibeUnifiedParser, UnifiedError, is_unified_session_dir,
+    MistralVibeUnifiedParser, UnifiedError, UnifiedParse, UnifiedSignature, child_session_id,
+    is_unified_session_dir,
 };
 use anyhow::Result;
 use rusqlite::OptionalExtension;
@@ -26,13 +27,27 @@ impl SessionIndexer {
             Ok(entries) => entries,
             Err(_) => return Ok(()),
         };
+        self.index_unified_candidates(
+            &root,
+            entries.filter_map(|entry| entry.ok().map(|entry| entry.path())),
+            incremental,
+            stats,
+            errors_detail,
+        )
+    }
+
+    fn index_unified_candidates(
+        &mut self,
+        root: &Path,
+        entries: impl Iterator<Item = PathBuf>,
+        incremental: bool,
+        stats: &mut IndexingStats,
+        errors_detail: &mut VecDeque<IndexingError>,
+    ) -> Result<()> {
         let mut present = std::collections::HashSet::new();
-        for entry in entries {
-            let entry = match entry {
-                Ok(entry) => entry,
-                Err(_) => continue,
-            };
-            let path = entry.path();
+        let mut children = Vec::new();
+        let mut deleting = HashSet::new();
+        for path in entries {
             let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
                 continue;
             };
@@ -44,7 +59,7 @@ impl SessionIndexer {
                 if self.unified_row_exists(&path)? {
                     self.unified_failure(
                         &path,
-                        &anyhow::anyhow!("CURRENT missing"),
+                        &UnifiedError::Incomplete("CURRENT missing".into()).into(),
                         stats,
                         errors_detail,
                     );
@@ -58,97 +73,106 @@ impl SessionIndexer {
                 stats.skipped += 1;
                 continue;
             }
-            match MistralVibeUnifiedParser.parse(&path) {
-                Ok(parsed) => {
-                    if self.unified_id_collision(
-                        &parsed.parsed.session.id,
-                        &path,
-                        errors_detail,
-                        stats,
-                    )? {
-                        continue;
+            let outcome = MistralVibeUnifiedParser.parse(&path);
+            // Publish children only after all lifecycle outcomes are known. A root
+            // enumerated before OR after its children must prevent reinsertion.
+            match outcome {
+                Ok(parsed) if parsed.parsed.session.is_subagent => {
+                    children.push((path, parsed));
+                }
+                outcome => {
+                    if let Err(UnifiedError::DeletingTree { child_session_ids }) = &outcome {
+                        deleting.insert(name.to_string());
+                        deleting.extend(child_session_ids.iter().cloned());
                     }
-                    let tx = self.db.transaction()?;
-                    let project = Self::upsert_project_tx(
-                        &tx,
-                        parsed.parsed.session.project_path.as_deref(),
-                    )?;
-                    Self::upsert_session_row_tx(&tx, &parsed.parsed, &path, project)?;
-                    Self::replace_session_contents_tx(&tx, &parsed.parsed)?;
-                    Self::link_vibe_unified_subagents_tx(&tx, &parsed.parsed)?;
-                    tx.execute("INSERT INTO vibe_unified_signatures(session_dir, signature) VALUES (?1, ?2) ON CONFLICT(session_dir) DO UPDATE SET signature=excluded.signature", rusqlite::params![path.to_string_lossy(), parsed.signature.to_storage()])?;
-                    tx.commit()?;
-                    UNIFIED_DEFERRALS.lock().unwrap().remove(&path);
-                    stats.indexed += 1;
+                    self.handle_unified_outcome(&path, outcome, stats, errors_detail)?;
                 }
-                Err(UnifiedError::NoUserMessages) => {
-                    self.prune_session_after_parse_skip(
-                        AiAssistant::MistralVibe,
-                        &path,
-                        stats,
-                        errors_detail,
-                    );
-                    self.delete_unified_signature(&path)?;
-                }
-                Err(UnifiedError::Ephemeral) => self
-                    .remove_session_for_file(&path)
-                    .map(|n| stats.removed += n)?,
-                Err(UnifiedError::DeletingTree { child_session_ids }) => {
-                    self.remove_unified_tree(&path, &child_session_ids, stats)?
-                }
-                Err(err @ UnifiedError::Unstable(_)) => {
-                    let mut deferrals = UNIFIED_DEFERRALS.lock().unwrap();
-                    let count = deferrals.entry(path.clone()).or_default();
-                    *count += 1;
-                    if *count == 1 {
-                        tracing::debug!(
-                            "Deferring unstable Mistral Vibe Unified session {}: {err}",
-                            path.display()
-                        );
-                        stats.skipped += 1;
-                    } else {
-                        self.unified_failure(&path, &err.into(), stats, errors_detail);
-                    }
-                }
-                Err(err) => self.unified_failure(&path, &err.into(), stats, errors_detail),
             }
         }
-        // Prune only after successful directory enumeration; independent of entry order.
-        for path in self.unified_indexed_paths(&root)? {
-            let child = PathBuf::from(&path);
-            if child.parent() == Some(root.as_path())
-                && !present.contains(&child)
-                && !child.exists()
+        for (path, parsed) in children {
+            if deleting.contains(&parsed.parsed.session.id)
+                || parsed
+                    .parsed
+                    .session
+                    .parent_session_id
+                    .as_ref()
+                    .is_some_and(|parent| deleting.contains(parent))
             {
-                let tx = self.db.transaction()?;
-                let ids: Vec<String> = {
-                    let mut stmt = tx.prepare("SELECT id FROM sessions WHERE file_path = ?1 OR (parent_session_id = (SELECT id FROM sessions WHERE file_path = ?1) AND tool='mistral_vibe')")?;
-                    stmt.query_map([&path], |r| r.get(0))?
-                        .collect::<rusqlite::Result<_>>()?
-                };
-                for id in ids {
-                    tx.execute(
-                        "UPDATE subagents SET child_session_id=NULL WHERE child_session_id=?1",
-                        [&id],
-                    )?;
-                    tx.execute("DELETE FROM sessions WHERE id=?1", [&id])?;
-                    tx.execute("DELETE FROM messages WHERE session_id=?1", [&id])?;
-                    tx.execute("DELETE FROM tool_calls WHERE session_id=?1", [&id])?;
-                    tx.execute("DELETE FROM subagents WHERE session_id=?1", [&id])?;
-                    tx.execute("DELETE FROM transcript_items WHERE session_id=?1", [&id])?;
-                    tx.execute(
-                        "DELETE FROM reasoning_attachments WHERE session_id=?1",
-                        [&id],
-                    )?;
-                }
-                tx.execute(
-                    "DELETE FROM vibe_unified_signatures WHERE session_dir=?1",
-                    [&path],
-                )?;
-                tx.commit()?;
-                UNIFIED_DEFERRALS.lock().unwrap().remove(&child);
-                stats.removed += 1;
+                continue;
             }
+            self.handle_unified_outcome(&path, Ok(parsed), stats, errors_detail)?;
+        }
+        // Recheck accessibility: a mount/source may disappear after read_dir
+        // succeeded. Its absence is never evidence that its sessions were deleted.
+        if std::fs::read_dir(root).is_err() {
+            return Ok(());
+        }
+        // Only a missing direct directory is physical deletion evidence, not lineage.
+        for path in self.unified_indexed_paths(root)? {
+            let child = PathBuf::from(&path);
+            if child.parent() == Some(root)
+                && !present.contains(&child)
+                && !child.try_exists().unwrap_or(true)
+            {
+                self.remove_unified_paths(&[child], stats)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn handle_unified_outcome(
+        &mut self,
+        path: &Path,
+        outcome: std::result::Result<UnifiedParse, UnifiedError>,
+        stats: &mut IndexingStats,
+        errors_detail: &mut VecDeque<IndexingError>,
+    ) -> Result<()> {
+        match outcome {
+            Ok(parsed) => {
+                let tx = self.db.transaction()?;
+                if Self::unified_id_collision(
+                    &tx,
+                    &parsed.parsed.session.id,
+                    path,
+                    errors_detail,
+                    stats,
+                )? {
+                    return Ok(());
+                }
+                let project =
+                    Self::upsert_project_tx(&tx, parsed.parsed.session.project_path.as_deref())?;
+                Self::upsert_session_row_tx(&tx, &parsed.parsed, path, project)?;
+                Self::replace_session_contents_tx(&tx, &parsed.parsed)?;
+                Self::link_vibe_unified_subagents_tx(&tx, &parsed.parsed)?;
+                tx.execute("INSERT INTO vibe_unified_signatures(session_dir, signature) VALUES (?1, ?2) ON CONFLICT(session_dir) DO UPDATE SET signature=excluded.signature", rusqlite::params![path.to_string_lossy(), parsed.signature.to_storage()])?;
+                tx.commit()?;
+                UNIFIED_DEFERRALS.lock().unwrap().remove(path);
+                stats.indexed += 1;
+            }
+            Err(UnifiedError::NoUserMessages) => {
+                self.remove_unified_paths(&[path.to_path_buf()], stats)?;
+            }
+            Err(UnifiedError::Ephemeral) => {
+                self.remove_unified_paths(&[path.to_path_buf()], stats)?
+            }
+            Err(UnifiedError::DeletingTree { child_session_ids }) => {
+                self.remove_unified_tree(path, &child_session_ids, stats)?
+            }
+            Err(err @ UnifiedError::Unstable(_)) => {
+                let mut deferrals = UNIFIED_DEFERRALS.lock().unwrap();
+                let count = deferrals.entry(path.to_path_buf()).or_default();
+                *count += 1;
+                if *count == 1 {
+                    tracing::debug!(
+                        "Deferring unstable Mistral Vibe Unified session {}: {err}",
+                        path.display()
+                    );
+                    stats.skipped += 1;
+                } else {
+                    self.unified_failure(path, &err.into(), stats, errors_detail);
+                }
+            }
+            Err(err) => self.unified_failure(path, &err.into(), stats, errors_detail),
         }
         Ok(())
     }
@@ -175,10 +199,7 @@ impl SessionIndexer {
             |r| r.get::<_, bool>(0),
         )?)
     }
-    fn unified_signature(
-        &self,
-        path: &Path,
-    ) -> Result<Option<crate::parsers::mistral_vibe_unified::signature::UnifiedSignature>> {
+    fn unified_signature(&self, path: &Path) -> Result<Option<UnifiedSignature>> {
         let raw: Option<String> = self
             .db
             .query_row(
@@ -187,26 +208,16 @@ impl SessionIndexer {
                 |r| r.get(0),
             )
             .optional()?;
-        Ok(raw.as_deref().and_then(
-            crate::parsers::mistral_vibe_unified::signature::UnifiedSignature::from_storage,
-        ))
-    }
-    fn delete_unified_signature(&self, path: &Path) -> Result<()> {
-        self.db.execute(
-            "DELETE FROM vibe_unified_signatures WHERE session_dir=?1",
-            [path.to_string_lossy().as_ref()],
-        )?;
-        Ok(())
+        Ok(raw.as_deref().and_then(UnifiedSignature::from_storage))
     }
     fn unified_id_collision(
-        &self,
+        tx: &rusqlite::Transaction<'_>,
         id: &str,
         path: &Path,
         errors: &mut VecDeque<IndexingError>,
         stats: &mut IndexingStats,
     ) -> Result<bool> {
-        let row: Option<String> = self
-            .db
+        let row: Option<String> = tx
             .query_row("SELECT file_path FROM sessions WHERE id=?1", [id], |r| {
                 r.get(0)
             })
@@ -229,7 +240,10 @@ impl SessionIndexer {
     fn unified_indexed_paths(&self, root: &Path) -> Result<Vec<String>> {
         let prefix = format!("{}/", root.display());
         let upper = format!("{}0", root.display());
-        let mut stmt=self.db.prepare("SELECT file_path FROM sessions WHERE file_path>=?1 AND file_path<?2 AND tool='mistral_vibe'")?;
+        let mut stmt = self.db.prepare(
+            "SELECT file_path FROM sessions
+             WHERE file_path>=?1 AND file_path<?2 AND tool='mistral_vibe'",
+        )?;
         Ok(stmt
             .query_map([prefix, upper], |r| r.get(0))?
             .collect::<rusqlite::Result<_>>()?)
@@ -240,49 +254,70 @@ impl SessionIndexer {
         listed: &[String],
         stats: &mut IndexingStats,
     ) -> Result<()> {
+        let root_id = path.file_name().unwrap().to_string_lossy();
+        let root = path.parent().unwrap();
+        let mut paths = HashSet::from([path.to_path_buf()]);
         let tx = self.db.transaction()?;
-        let root_id: Option<String> = tx
-            .query_row(
-                "SELECT id FROM sessions WHERE file_path=?1",
-                [path.to_string_lossy().as_ref()],
-                |r| r.get(0),
-            )
-            .optional()?;
-        let mut ids = listed.to_vec();
-        if let Some(root_id) = root_id {
-            ids.push(root_id);
-        }
-        if let Some(root) = ids.last().cloned() {
-            let mut stmt = tx.prepare(
-                "SELECT id FROM sessions WHERE parent_session_id=?1 AND tool='mistral_vibe'",
-            )?;
-            ids.extend(
-                stmt.query_map([root], |r| r.get(0))?
-                    .collect::<rusqlite::Result<Vec<_>>>()?,
-            );
-        }
-        for id in &ids {
-            tx.execute(
-                "UPDATE subagents SET child_session_id=NULL WHERE child_session_id=?1",
-                [id],
-            )?;
-            tx.execute("DELETE FROM sessions WHERE id=?1", [id])?;
-            tx.execute("DELETE FROM messages WHERE session_id=?1", [id])?;
-            tx.execute("DELETE FROM tool_calls WHERE session_id=?1", [id])?;
-            tx.execute("DELETE FROM subagents WHERE session_id=?1", [id])?;
-            tx.execute("DELETE FROM transcript_items WHERE session_id=?1", [id])?;
-            tx.execute(
-                "DELETE FROM reasoning_attachments WHERE session_id=?1",
-                [id],
-            )?;
-        }
-        tx.execute(
-            "DELETE FROM vibe_unified_signatures WHERE session_dir=?1",
-            [path.to_string_lossy().as_ref()],
+        let mut stmt = tx.prepare(
+            "SELECT file_path FROM sessions
+             WHERE tool='mistral_vibe' AND (parent_session_id=?1 OR id=?1)",
         )?;
+        let rows = stmt.query_map([root_id.as_ref()], |r| r.get::<_, String>(0))?;
+        for row in rows {
+            let candidate = PathBuf::from(row?);
+            if candidate.parent() == Some(root) {
+                paths.insert(candidate);
+            }
+        }
+        drop(stmt);
+        for id in listed.iter().filter(|id| valid_id(id)) {
+            paths.insert(root.join(id));
+        }
+        let paths = paths.into_iter().collect::<Vec<_>>();
+        let removed = Self::remove_unified_paths_tx(&tx, &paths)?;
         tx.commit()?;
-        stats.removed += ids.len();
+        Self::record_unified_removal(&paths, removed, stats);
         Ok(())
+    }
+
+    fn remove_unified_paths(&mut self, paths: &[PathBuf], stats: &mut IndexingStats) -> Result<()> {
+        let tx = self.db.transaction()?;
+        let removed = Self::remove_unified_paths_tx(&tx, paths)?;
+        tx.commit()?;
+        Self::record_unified_removal(paths, removed, stats);
+        Ok(())
+    }
+
+    fn remove_unified_paths_tx(tx: &rusqlite::Transaction<'_>, paths: &[PathBuf]) -> Result<usize> {
+        let mut removed = 0;
+        for path in paths {
+            let id: Option<String> = tx
+                .query_row(
+                    "SELECT id FROM sessions WHERE file_path=?1 AND tool='mistral_vibe'",
+                    [path.to_string_lossy().as_ref()],
+                    |r| r.get(0),
+                )
+                .optional()?;
+            if let Some(id) = id {
+                tx.execute(
+                    "UPDATE subagents SET child_session_id=NULL WHERE child_session_id=?1",
+                    [&id],
+                )?;
+                removed += Self::delete_session_by_id_tx(tx, &id)?;
+            }
+            tx.execute(
+                "DELETE FROM vibe_unified_signatures WHERE session_dir=?1",
+                [path.to_string_lossy().as_ref()],
+            )?;
+        }
+        Ok(removed)
+    }
+
+    fn record_unified_removal(paths: &[PathBuf], removed: usize, stats: &mut IndexingStats) {
+        for path in paths {
+            UNIFIED_DEFERRALS.lock().unwrap().remove(path);
+        }
+        stats.removed += removed;
     }
     fn link_vibe_unified_subagents_tx(
         tx: &rusqlite::Transaction<'_>,
@@ -291,12 +326,33 @@ impl SessionIndexer {
         if !is_unified_session_dir(Path::new(&parsed.session.file_path)) {
             return Ok(());
         }
-        if parsed.session.is_subagent {
-            if let Some(parent) = parsed.session.parent_session_id.as_deref() {
-                tx.execute("UPDATE subagents SET child_session_id=?1 WHERE session_id=?2 AND agent_id=?1 AND ?2 IN (SELECT id FROM sessions WHERE is_subagent=0)",rusqlite::params![parsed.session.id,parent])?;
-            }
+        let parent = if parsed.session.is_subagent {
+            let Some(parent) = parsed.session.parent_session_id.as_deref() else {
+                return Ok(());
+            };
+            parent
         } else {
-            tx.execute("UPDATE subagents SET child_session_id=agent_id WHERE session_id=?1 AND agent_id IN (SELECT id FROM sessions WHERE tool='mistral_vibe' AND is_subagent=1 AND parent_session_id=?1)",[&parsed.session.id])?;
+            &parsed.session.id
+        };
+        let mut stmt = tx.prepare("SELECT subagents.id, subagents.agent_id, subagents.parser_ref, child.file_path FROM subagents JOIN sessions parent ON parent.id=subagents.session_id JOIN sessions child ON child.id=subagents.agent_id WHERE parent.id=?1 AND parent.is_subagent=0 AND parent.tool='mistral_vibe' AND child.tool='mistral_vibe' AND child.is_subagent=1 AND child.parent_session_id=parent.id")?;
+        let rows = stmt.query_map([parent], |r| {
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, Option<String>>(2)?,
+                r.get::<_, String>(3)?,
+            ))
+        })?;
+        for row in rows {
+            let (effect, child, action, file_path) = row?;
+            if action.is_some_and(|action| child_session_id(parent, &action) == child)
+                && is_unified_session_dir(Path::new(&file_path))
+            {
+                tx.execute(
+                    "UPDATE subagents SET child_session_id=?1 WHERE id=?2",
+                    rusqlite::params![child, effect],
+                )?;
+            }
         }
         Ok(())
     }
@@ -310,3 +366,6 @@ fn valid_id(id: &str) -> bool {
         && b.iter()
             .all(|c| c.is_ascii_alphanumeric() || *c == b'_' || *c == b'-')
 }
+
+#[cfg(test)]
+mod tests;

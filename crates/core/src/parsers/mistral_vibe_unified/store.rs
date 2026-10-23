@@ -86,7 +86,7 @@ pub(crate) struct ProjectionState {
 #[derive(Debug, Clone)]
 pub(crate) enum Identity {
     Root,
-    Fork { parent: String },
+    Fork,
     Subagent { parent: String, spawn_key: String },
 }
 
@@ -99,7 +99,6 @@ pub(crate) struct RuntimeView {
     pub cwd: Option<String>,
     pub active_model: Option<String>,
     pub deleting_children: Option<Vec<String>>,
-    pub imported_from_legacy: Option<String>,
 }
 
 /// One store generation, fully validated and sampled for the journal
@@ -109,7 +108,6 @@ pub(crate) struct RuntimeView {
 #[derive(Debug, Clone)]
 pub(crate) struct LoadedStore {
     pub current_bytes: Vec<u8>,
-    pub snapshot_sequence: u64,
     pub journal_first_sequence: u64,
     pub journal: FileSample,
     pub runtime: RuntimeView,
@@ -334,7 +332,6 @@ pub(crate) fn load_generation(session_dir: &Path) -> Result<LoadedStore, Unified
 
     Ok(LoadedStore {
         current_bytes,
-        snapshot_sequence,
         journal_first_sequence,
         journal,
         runtime,
@@ -528,6 +525,9 @@ fn runtime_view(document: &Value, directory_name: &str) -> Result<RuntimeView, U
             UnifiedError::Corrupt("runtime session_metadata is not an object".to_string())
         })?;
     let identity = runtime_identity(document, metadata, directory_name)?;
+    // Validate provenance without retaining lineage: migrated stores are
+    // independent sessions, not aliases for their legacy source.
+    imported_legacy_session(document)?;
     Ok(RuntimeView {
         session_id: session_id.to_string(),
         ephemeral: ephemeral_lifetime(document)?,
@@ -541,7 +541,6 @@ fn runtime_view(document: &Value, directory_name: &str) -> Result<RuntimeView, U
             .and_then(Value::as_str)
             .map(str::to_string),
         deleting_children: lifecycle_children(document)?,
-        imported_from_legacy: imported_legacy_session(document)?,
     })
 }
 
@@ -625,9 +624,7 @@ fn runtime_identity(
                     "fork identity parent_session_id must differ from session_id".to_string(),
                 ));
             }
-            Ok(Identity::Fork {
-                parent: parent_id.to_string(),
-            })
+            Ok(Identity::Fork)
         }
         "subagent" => {
             if depth != 1 {
@@ -1149,7 +1146,6 @@ mod tests {
     fn loads_chunked_r302_generation() {
         let loaded = load_generation(&crate::fixture_path(&session_rel(R302))).unwrap();
 
-        assert_eq!(loaded.snapshot_sequence, 4);
         assert_eq!(loaded.journal_first_sequence, 5);
         assert_eq!(
             loaded.journal.relative_path,
@@ -1213,7 +1209,6 @@ mod tests {
         assert!(matches!(loaded.runtime.identity, Identity::Root));
         assert!(!loaded.runtime.ephemeral);
         assert!(loaded.runtime.deleting_children.is_none());
-        assert!(loaded.runtime.imported_from_legacy.is_none());
         // Raw pointer bytes keep their trailing newline for stability checks.
         assert_eq!(loaded.current_bytes.last(), Some(&b'\n'));
     }
@@ -1222,7 +1217,6 @@ mod tests {
     fn loads_inline_r300_generation() {
         let loaded = load_generation(&crate::fixture_path(&session_rel(R300))).unwrap();
 
-        assert_eq!(loaded.snapshot_sequence, 1);
         assert_eq!(loaded.journal_first_sequence, 2);
         assert_eq!(
             loaded.journal.relative_path,
@@ -1274,10 +1268,7 @@ mod tests {
     fn fork_identity_is_not_a_subagent() {
         let loaded = load_generation(&crate::fixture_path(&session_rel(F301))).unwrap();
 
-        assert!(matches!(
-            &loaded.runtime.identity,
-            Identity::Fork { parent } if parent == R302
-        ));
+        assert!(matches!(&loaded.runtime.identity, Identity::Fork));
         assert!(!matches!(
             loaded.runtime.identity,
             Identity::Subagent { .. }

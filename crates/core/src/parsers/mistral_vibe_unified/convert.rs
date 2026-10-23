@@ -102,15 +102,8 @@ pub(crate) fn convert(
         });
     }
 
-    let session_id = session_dir
-        .file_name()
-        .and_then(|name| name.to_str())
-        .ok_or_else(|| {
-            UnifiedError::Corrupt(
-                "session directory name is missing or not valid UTF-8".to_string(),
-            )
-        })?
-        .to_string();
+    // The loader validated this identity against CURRENT and the directory.
+    let session_id = store.runtime.session_id.clone();
 
     let envelope = &store.projection.envelope;
     let session_object = envelope
@@ -173,7 +166,7 @@ pub(crate) fn convert(
             }
             (Some(parent.clone()), true)
         }
-        Identity::Root | Identity::Fork { .. } => (None, false),
+        Identity::Root | Identity::Fork => (None, false),
     };
 
     // Model attribution (fact H): once any model_change checkpoint exists,
@@ -769,7 +762,6 @@ mod tests {
     fn in_memory_store(entries: Vec<Value>) -> LoadedStore {
         LoadedStore {
             current_bytes: b"{}\n".to_vec(),
-            snapshot_sequence: 1,
             journal_first_sequence: 2,
             journal: FileSample {
                 relative_path: "journal/0000000000000002.jsonl".to_string(),
@@ -785,7 +777,6 @@ mod tests {
                 cwd: Some("/home/fixture/projects/original".to_string()),
                 active_model: Some("mistral-large-4".to_string()),
                 deleting_children: None,
-                imported_from_legacy: None,
             },
             projection: ProjectionState {
                 envelope: json!({

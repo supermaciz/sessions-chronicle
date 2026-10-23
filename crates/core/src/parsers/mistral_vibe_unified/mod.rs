@@ -19,7 +19,9 @@ use store::LoadedStore;
 
 pub use convert::{MistralVibeUnifiedParser, UnifiedParse};
 pub use error::UnifiedError;
-pub use store::{child_session_id, is_unified_session_dir};
+pub use saved_results::FileStat;
+pub use signature::{UNIFIED_READER_VERSION, UnifiedSignature};
+pub use store::{FileSample, child_session_id, is_unified_session_dir};
 
 /// Loads one generation, replays its journal segment and hands the
 /// loaded store to `build`, guarding the whole read with a retry-once

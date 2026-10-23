@@ -387,7 +387,6 @@ mod tests {
     fn in_memory_store(entries: Vec<Value>) -> LoadedStore {
         LoadedStore {
             current_bytes: b"{}\n".to_vec(),
-            snapshot_sequence: 1,
             journal_first_sequence: 2,
             journal: FileSample {
                 relative_path: "journal/0000000000000002.jsonl".to_string(),
@@ -403,7 +402,6 @@ mod tests {
                 cwd: Some("/home/fixture/projects/original".to_string()),
                 active_model: Some("mistral-large-4".to_string()),
                 deleting_children: None,
-                imported_from_legacy: None,
             },
             projection: ProjectionState {
                 envelope: json!({

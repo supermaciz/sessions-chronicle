@@ -3825,6 +3825,49 @@ mod tests {
     }
 
     #[test]
+    fn explicit_parser_ending_status_wins_over_last_tool_call() {
+        use crate::models::{SessionEndingStatus, ToolCallStatus};
+        let temp_db = NamedTempFile::new().unwrap();
+        let mut indexer = SessionIndexer::new(temp_db.path()).unwrap();
+        let fingerprint = NamedTempFile::new().unwrap();
+        let mut parsed = crate::parsers::mistral_vibe_unified::MistralVibeUnifiedParser::parse(
+            &crate::parsers::mistral_vibe_unified::MistralVibeUnifiedParser,
+            &crate::fixture_path("vibe_sessions/unified/aaaaaaaa-0000-4000-8000-000000000302"),
+        )
+        .unwrap()
+        .parsed;
+        for status in [
+            SessionEndingStatus::Clean,
+            SessionEndingStatus::Error,
+            SessionEndingStatus::Abrupt,
+        ] {
+            parsed.session.ending_status = status.clone();
+            parsed.tool_calls.last_mut().unwrap().status = if status == SessionEndingStatus::Abrupt
+            {
+                ToolCallStatus::Completed
+            } else {
+                ToolCallStatus::Pending
+            };
+            indexer
+                .insert_parsed_session_with_fingerprint(
+                    &parsed,
+                    fingerprint.path(),
+                    fingerprint.path(),
+                )
+                .unwrap();
+            let actual: String = indexer
+                .db
+                .query_row(
+                    "SELECT ending_status FROM sessions WHERE id=?1",
+                    [&parsed.session.id],
+                    |r| r.get(0),
+                )
+                .unwrap();
+            assert_eq!(actual, status.to_storage());
+        }
+    }
+
+    #[test]
     fn insert_parsed_session_sets_unknown_when_no_tool_calls() {
         let temp_db = NamedTempFile::new().unwrap();
         let mut indexer = SessionIndexer::new(temp_db.path()).unwrap();

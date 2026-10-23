@@ -31,9 +31,13 @@ impl UnifiedSignature {
         if !sample_matches(&self.journal, &journal_path) {
             return false;
         }
-        if let Some(expected) = &self.meta
-            && !stat_matches(expected, &session_dir.join("meta.json"))
-        {
+        let meta_path = session_dir.join("meta.json");
+        let meta_matches = match (&self.meta, FileStat::for_path(&meta_path)) {
+            (Some(expected), Ok(actual)) => *expected == actual,
+            (None, Err(error)) => error.kind() == std::io::ErrorKind::NotFound,
+            _ => false,
+        };
+        if !meta_matches {
             return false;
         }
         self.saved_results.iter().all(|(name, expected)| {

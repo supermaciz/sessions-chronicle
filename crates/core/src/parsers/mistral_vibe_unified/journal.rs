@@ -1057,7 +1057,7 @@ mod tests {
         })
         .unwrap();
         assert_eq!(calls.get(), 2);
-        assert_eq!(store.snapshot_sequence, 5);
+        assert_eq!(store.journal_first_sequence, 6);
         assert_eq!(
             store.journal.relative_path,
             "journal/0000000000000006.jsonl"
@@ -1084,7 +1084,7 @@ mod tests {
         })
         .unwrap();
         assert_eq!(calls.get(), 2);
-        assert_eq!(store.snapshot_sequence, 5);
+        assert_eq!(store.journal_first_sequence, 6);
     }
 
     #[test]
