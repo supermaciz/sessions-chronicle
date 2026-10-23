@@ -3,5 +3,7 @@
 
 mod canonical;
 mod error;
+pub(crate) mod store;
 
 pub use error::UnifiedError;
+pub use store::{child_session_id, is_unified_session_dir};
