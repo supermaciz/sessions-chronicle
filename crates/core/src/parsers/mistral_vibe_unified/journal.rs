@@ -372,25 +372,27 @@ pub(crate) fn apply_ops(state: &mut ProjectionState, ops: &[Value]) -> Result<()
                     op.get("state").and_then(Value::as_object).ok_or_else(|| {
                         UnifiedError::Corrupt("set_envelope state is not an object".to_string())
                     })?;
-                for (key, value) in envelope_state {
-                    if key == "history" {
-                        // Its own history.entries is ignored; every other
-                        // history field is replaced.
-                        let history = value.as_object().ok_or_else(|| {
-                            UnifiedError::Corrupt(
-                                "set_envelope state history is not an object".to_string(),
-                            )
-                        })?;
-                        for (history_key, history_value) in history {
-                            if history_key != "entries" {
-                                state.envelope["history"][history_key.as_str()] =
-                                    history_value.clone();
-                            }
-                        }
-                    } else {
-                        state.envelope[key.as_str()] = value.clone();
-                    }
+                // Fact F: the state replaces every snapshot field except
+                // history.entries.  The replacement envelope is built
+                // from the incoming state alone so fields it omits
+                // disappear; its own history.entries is ignored and the
+                // prior entries placeholder survives.
+                if let Some(history) = envelope_state.get("history")
+                    && !history.is_object()
+                {
+                    return Err(UnifiedError::Corrupt(
+                        "set_envelope state history is not an object".to_string(),
+                    ));
                 }
+                let preserved_entries = state
+                    .envelope
+                    .get("history")
+                    .and_then(|history| history.get("entries"))
+                    .cloned()
+                    .unwrap_or_else(|| Value::Array(Vec::new()));
+                let mut envelope = Value::Object(envelope_state.clone());
+                envelope["history"]["entries"] = preserved_entries;
+                state.envelope = envelope;
             }
             Some(other) => {
                 return Err(UnifiedError::Unsupported(format!(
@@ -702,6 +704,53 @@ mod tests {
             apply_ops(&mut state, &[json!({"op": "move_entry"})]),
             Err(UnifiedError::Unsupported(_))
         ));
+    }
+
+    #[test]
+    fn set_envelope_replaces_the_whole_envelope() {
+        // Fact F: set_envelope replaces every snapshot field except
+        // history.entries, so fields the incoming state omits disappear
+        // instead of surviving from the old envelope (review finding:
+        // the op is a replacement, not a merge).
+        let mut state = ProjectionState {
+            envelope: json!({
+                "format": "harness.public-session-state/v1",
+                "session": {"id": "s", "title": "Old title"},
+                "latestTurn": {"id": "t1", "status": "in_progress"},
+                "history": {"cursor": 7, "entries": []},
+            }),
+            entries: vec![json!({"id": "y", "text": "b"})],
+            watermark: 0,
+        };
+        apply_ops(
+            &mut state,
+            &[json!({
+                "op": "set_envelope",
+                "state": {
+                    "session": {"id": "t"},
+                    "history": {"cursor": 9, "entries": [{"id": "sneaky"}]},
+                }
+            })],
+        )
+        .unwrap();
+        // The envelope is the incoming state, not a merge: fields the
+        // state omits (format, latestTurn) are gone.
+        assert!(state.envelope.get("format").is_none());
+        assert!(state.envelope.get("latestTurn").is_none());
+        // history is replaced too, except its entries: the cursor moved
+        // to the incoming value and the state's own entries were ignored
+        // in favor of the prior placeholder.
+        assert_eq!(state.envelope["history"]["cursor"].as_u64(), Some(9));
+        assert_eq!(
+            state.envelope["history"]["entries"]
+                .as_array()
+                .unwrap()
+                .len(),
+            0
+        );
+        assert_eq!(state.envelope["session"]["id"].as_str(), Some("t"));
+        // The current history entries are kept.
+        assert_eq!(entry_ids(&state.entries), ["y"]);
     }
 
     #[test]
