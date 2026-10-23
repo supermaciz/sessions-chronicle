@@ -6,6 +6,7 @@ mod convert;
 mod effects;
 mod error;
 mod journal;
+pub(crate) mod saved_results;
 pub(crate) mod store;
 
 use std::fs;

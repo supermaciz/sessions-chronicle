@@ -4,8 +4,8 @@
 //! The converter walks the projection entries in history order, mapping
 //! messages, reasoning and checkpoints per the pinned upstream facts G-I.
 //! Effect entries and skill payload blocks are routed through the effect
-//! sink ([`super::effects::EffectSink`]); Task 5 ships a no-op sink and
-//! Task 6 implements the real tool-call/subagent/skill mapping.
+//! sink ([`super::effects::EffectSink`]), which maps them to tool-call,
+//! saved-result and subagent rows (facts H, I, K).
 
 use std::fs;
 use std::path::Path;
@@ -23,7 +23,8 @@ use crate::parsers::{ParsedSession, PendingReasoning, extract_first_prompt};
 
 use super::effects;
 use super::error::UnifiedError;
-use super::store::{Identity, LoadedStore, reject_symlink};
+use super::saved_results::SavedResultResolver;
+use super::store::{Identity, LoadedStore, child_session_id, reject_symlink};
 
 /// Parser for Mistral Vibe Unified session stores
 /// (`<vibe-root>/unified/<id>/`, Vibe 3.0.x).
@@ -34,10 +35,30 @@ impl MistralVibeUnifiedParser {
     ///
     /// The read is guarded by the load-twice stability loop
     /// ([`super::load_stable`]); `convert` turns the validated projection
-    /// into a [`ParsedSession`].
+    /// into a [`ParsedSession`], routing effects through a fresh sink per
+    /// load attempt.
     pub fn parse(&self, session_dir: &Path) -> Result<UnifiedParse, UnifiedError> {
+        let session_id = session_dir
+            .file_name()
+            .and_then(|name| name.to_str())
+            .ok_or_else(|| {
+                UnifiedError::Corrupt(
+                    "session directory name is missing or not valid UTF-8".to_string(),
+                )
+            })?
+            .to_string();
         let (parsed, _store) = super::load_stable(session_dir, |store| {
-            convert(session_dir, store, &mut effects::EffectSink)
+            // A fresh resolver per attempt: an unstable retry never
+            // reuses partial consumed-file state.
+            let mut results = SavedResultResolver::new(session_dir.join("tool-results"));
+            let converted = {
+                let mut effects = effects::EffectSink::new(&session_id, &mut results);
+                convert(session_dir, store, &mut effects)
+            };
+            // Task 7 folds the consumed saved results into the freshness
+            // signature; on failure the list is dropped with the parse.
+            let _consumed = results.into_consumed();
+            converted
         })?;
         Ok(UnifiedParse { parsed })
     }
@@ -57,11 +78,11 @@ pub struct UnifiedParse {
 /// `session_dir` names the store (its basename is the session id) and
 /// holds the optional `meta.json` fallback for project path and model.
 /// Effect entries and skill payload blocks are recorded through
-/// `effects`; Task 5's sink records nothing.
+/// `effects` into tool-call, saved-result and subagent rows.
 pub(crate) fn convert(
     session_dir: &Path,
     store: &LoadedStore,
-    effects: &mut effects::EffectSink,
+    effects: &mut effects::EffectSink<'_>,
 ) -> Result<ParsedSession, UnifiedError> {
     if store.runtime.ephemeral {
         return Err(UnifiedError::Ephemeral);
@@ -129,9 +150,20 @@ pub(crate) fn convert(
         )
     });
 
-    // Only subagent identities are children; forks stay top-level.
+    // Only subagent identities are children; forks stay top-level.  Fact
+    // J self-verification: a child's session id must derive from its
+    // parent id and spawn key, so a forged or stale child directory is an
+    // identity conflict.
     let (parent_session_id, is_subagent) = match &store.runtime.identity {
-        Identity::Subagent { parent, .. } => (Some(parent.clone()), true),
+        Identity::Subagent { parent, spawn_key } => {
+            let derived = child_session_id(parent, spawn_key);
+            if derived != session_id {
+                return Err(UnifiedError::IdentityConflict(format!(
+                    "subagent session id {session_id} does not match the child id {derived} derived from parent {parent} and spawn key {spawn_key}"
+                )));
+            }
+            (Some(parent.clone()), true)
+        }
         Identity::Root | Identity::Fork { .. } => (None, false),
     };
 
@@ -153,8 +185,8 @@ pub(crate) fn convert(
             .get("type")
             .and_then(Value::as_str)
             .ok_or_else(|| UnifiedError::Corrupt("entry type is missing".to_string()))?;
-        // The id is required on every entry (fact H); only the effect
-        // mapping (Task 6) consumes it.
+        // The id is required on every entry (fact H); the effect mapping
+        // consumes it.
         if entry.get("id").and_then(Value::as_str).is_none() {
             return Err(UnifiedError::Corrupt("entry id is missing".to_string()));
         }
@@ -328,11 +360,11 @@ pub(crate) fn convert(
 /// Conversion accumulator shared by the converter and the effect sink.
 ///
 /// Messages land here through [`Transcript::push_message`]; the effect
-/// sink (Task 6) appends tool calls and subagents together with their
-/// transcript items through [`Transcript::push_item`].  Pending reasoning
-/// attaches to the next same-turn assistant message, tool call or
-/// subagent item and is dropped with a debug diagnostic when an item of
-/// another turn or the end of the history is reached first.
+/// sink appends tool calls and subagents together with their transcript
+/// items through [`Transcript::push_item`].  Pending reasoning attaches
+/// to the next same-turn assistant message, tool call or subagent item
+/// and is dropped with a debug diagnostic when an item of another turn
+/// or the end of the history is reached first.
 pub(crate) struct Transcript {
     session_id: String,
     pub(crate) messages: Vec<Message>,
@@ -418,8 +450,8 @@ impl Transcript {
         }
     }
 
-    /// Appends an effect-derived transcript item (tool call or subagent,
-    /// Task 6), attaching same-turn pending reasoning.  The item index is
+    /// Appends an effect-derived transcript item (tool call or subagent),
+    /// attaching same-turn pending reasoning.  The item index is
     /// `transcript_items.len()` before the caller builds the item.
     pub(crate) fn push_item(&mut self, item: TranscriptItem, turn_id: Option<&str>) {
         let item_index = item.item_index;
@@ -478,7 +510,7 @@ fn is_model_change(entry: &Value) -> bool {
 }
 
 /// Text blocks joined with `\n`; non-text blocks are omitted (fact H).
-fn text_blocks_joined(blocks: &[Value]) -> String {
+pub(crate) fn text_blocks_joined(blocks: &[Value]) -> String {
     blocks
         .iter()
         .filter(|block| block.get("type").and_then(Value::as_str) == Some("text"))
@@ -647,6 +679,7 @@ fn read_meta_json(session_dir: &Path, session_id: &str) -> Option<Value> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::models::ToolCallStatus;
     use crate::parsers::mistral_vibe_unified::store::{
         FileSample, ProjectionState, RuntimeView,
         test_support::{copy_fixture, rewrite_document},
@@ -775,8 +808,10 @@ mod tests {
 
     fn convert_entries(entries: Vec<Value>) -> Result<ParsedSession, UnifiedError> {
         let store = in_memory_store(entries);
-        let mut effects = EffectSink;
-        convert(&in_memory_session_dir(), &store, &mut effects)
+        let session_dir = in_memory_session_dir();
+        let mut results = SavedResultResolver::new(session_dir.join("tool-results"));
+        let mut effects = EffectSink::new(IN_MEMORY_SESSION, &mut results);
+        convert(&session_dir, &store, &mut effects)
     }
 
     fn user_message(id: &str, blocks: Value) -> Value {
@@ -891,24 +926,39 @@ mod tests {
         );
     }
 
-    /// Task 5 scope (controller ruling): with the no-op effect sink,
-    /// reasoning attaches to the next same-turn assistant message.  The
-    /// effect-attached assertions (e2 on the `act-read` tool call, e7 on
-    /// `act-patch`, e20b on `act-write`) land in Task 6 once
-    /// `EffectSink::push_effect` creates tool-call/subagent items.
+    /// Finds the transcript item of the tool call with the given
+    /// parser_call_id (action id).
+    fn tool_call_item<'a>(parsed: &'a ParsedSession, action_id: &str) -> &'a TranscriptItem {
+        let call = parsed
+            .tool_calls
+            .iter()
+            .find(|call| call.parser_call_id.as_deref() == Some(action_id))
+            .unwrap_or_else(|| panic!("tool call {action_id}"));
+        parsed
+            .transcript_items
+            .iter()
+            .find(|item| item.tool_call_id.as_deref() == Some(call.id.as_str()))
+            .unwrap_or_else(|| panic!("transcript item of tool call {action_id}"))
+    }
+
+    /// The deferred Task 5 assertions, now over the real effect sink:
+    /// reasoning attaches through `Transcript::push_item` to the first
+    /// same-turn effect item — e2 on `act-read`, e7 on `act-patch` and
+    /// e20b on `act-write`.
     #[test]
-    fn r302_reasoning_attaches_to_same_turn_assistant_messages() {
+    fn r302_reasoning_attachments() {
         let parsed = parse_fixture(&unified_rel(R302)).unwrap().parsed;
 
         let attachments = &parsed.reasoning_attachments;
         assert_eq!(
             attachments.len(),
-            2,
-            "e2 and e7 attach; e20b is dropped at the end of the history"
+            3,
+            "e2, e7 and e20b attach to their turn's effect items"
         );
 
-        // e2 (turn t1) attaches to the assistant message "Voici le résumé.".
-        assert_eq!(attachments[0].transcript_item_index, 1);
+        // e2 (turn t1) attaches to the act-read tool call item.
+        let read_item = tool_call_item(&parsed, "act-read");
+        assert_eq!(attachments[0].transcript_item_index, read_item.item_index);
         assert_eq!(
             attachments[0].visible_text.as_deref(),
             Some("Je regarde le dépôt")
@@ -919,12 +969,16 @@ mod tests {
             attachments[0].source_model, None,
             "e2 precedes the model_change checkpoint"
         );
-        let item = &parsed.transcript_items[attachments[0].transcript_item_index as usize];
-        let message = &parsed.messages[item.message_index.unwrap() as usize];
-        assert_eq!(message.content, "Voici le résumé.");
+        assert_eq!(
+            parsed.transcript_items[read_item.item_index as usize]
+                .kind
+                .to_storage(),
+            "tool_call"
+        );
 
-        // e7 (turn t2, redacted) attaches to the assistant message "Test corrigé.".
-        assert_eq!(attachments[1].transcript_item_index, 3);
+        // e7 (turn t2, redacted) attaches to the act-patch tool call item.
+        let patch_item = tool_call_item(&parsed, "act-patch");
+        assert_eq!(attachments[1].transcript_item_index, patch_item.item_index);
         assert_eq!(attachments[1].visible_text, None);
         assert_eq!(
             attachments[1].summary_text.as_deref(),
@@ -935,9 +989,43 @@ mod tests {
             attachments[1].source_model.as_deref(),
             Some("mistral-large-4")
         );
-        let item = &parsed.transcript_items[attachments[1].transcript_item_index as usize];
+
+        // e20b (turn t3) attaches to the act-write tool call item.
+        let write_item = tool_call_item(&parsed, "act-write");
+        assert_eq!(attachments[2].transcript_item_index, write_item.item_index);
+        assert_eq!(
+            attachments[2].visible_text.as_deref(),
+            Some("Plan: write docs")
+        );
+    }
+
+    /// Sessions without effect items still attach reasoning to the next
+    /// same-turn assistant message.
+    #[test]
+    fn reasoning_attaches_to_next_same_turn_assistant_message() {
+        let entries = vec![
+            user_message("u1", json!([{"type": "text", "text": "Question"}])),
+            json!({
+                "type": "reasoning", "id": "r1", "turnId": "t1",
+                "createdAt": T0_MS, "updatedAt": T0_MS, "generationStatus": "completed",
+                "text": "Thinking", "summary": [], "outcome": {"type": "committed"},
+            }),
+            json!({
+                "type": "message", "id": "a1", "turnId": "t1",
+                "createdAt": T0_MS, "updatedAt": T0_MS, "generationStatus": "completed",
+                "role": "assistant", "content": [ {"type": "text", "text": "Answer"} ],
+                "outcome": {"type": "committed"},
+            }),
+        ];
+
+        let parsed = convert_entries(entries).unwrap();
+        assert_eq!(parsed.reasoning_attachments.len(), 1);
+        let attachment = &parsed.reasoning_attachments[0];
+        assert_eq!(attachment.visible_text.as_deref(), Some("Thinking"));
+        let item = &parsed.transcript_items[attachment.transcript_item_index as usize];
+        assert_eq!(item.kind.to_storage(), "message");
         let message = &parsed.messages[item.message_index.unwrap() as usize];
-        assert_eq!(message.content, "Test corrigé.");
+        assert_eq!(message.content, "Answer");
     }
 
     #[test]
@@ -1088,9 +1176,54 @@ mod tests {
         let parsed = convert_entries(vec![entry]).unwrap();
         assert_eq!(parsed.messages.len(), 1);
         assert_eq!(parsed.messages[0].content, "Do the thing");
-        // The Task 5 sink records nothing; Task 6 turns each payload into
-        // a settled `skill` tool call right after the message item.
-        assert!(parsed.tool_calls.is_empty());
+
+        // Each payload becomes a settled `skill` tool call right after
+        // the message item.
+        assert_eq!(parsed.tool_calls.len(), 2);
+        let names: Vec<&str> = parsed
+            .tool_calls
+            .iter()
+            .map(|call| call.tool_name.as_str())
+            .collect();
+        assert_eq!(names, ["skill", "skill"]);
+        assert_eq!(
+            parsed.tool_calls[0].id,
+            format!("{IN_MEMORY_SESSION}-u1:invoked-skill:vibe-skill")
+        );
+        assert_eq!(
+            parsed.tool_calls[1].id,
+            format!("{IN_MEMORY_SESSION}-u1:invoked-skill:other-skill")
+        );
+        assert_eq!(
+            parsed.tool_calls[0].input_json.as_deref(),
+            Some("{\"name\":\"vibe-skill\"}")
+        );
+        assert_eq!(parsed.tool_calls[0].status, ToolCallStatus::Completed);
+        let output = parsed.tool_calls[0]
+            .output_text
+            .as_deref()
+            .expect("skill payload output");
+        assert!(output.starts_with("<skill_content name=\"vibe-skill\">"));
+        let loaded = parsed.tool_calls[1]
+            .output_text
+            .as_deref()
+            .expect("already-loaded payload output");
+        assert_eq!(
+            loaded,
+            "Skill 'other-skill' is already loaded earlier in this conversation. Reuse those instructions."
+        );
+
+        // The skill items sit right after the message item.
+        let kinds: Vec<&str> = parsed
+            .transcript_items
+            .iter()
+            .map(|item| item.kind.to_storage())
+            .collect();
+        assert_eq!(kinds, ["message", "tool_call", "tool_call"]);
+        assert_eq!(
+            parsed.transcript_items[1].tool_call_id.as_deref(),
+            Some(parsed.tool_calls[0].id.as_str())
+        );
     }
 
     /// Review finding (regraded Important): the already-loaded sentence
