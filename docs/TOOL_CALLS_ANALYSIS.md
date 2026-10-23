@@ -16,7 +16,7 @@ Document real-world tool call and tool result shapes for the 4 supported agents:
 Sources used:
 
 - Sampling real sessions from `~/.claude`, `~/.local/share/opencode`, `~/.codex/sessions`, `~/.vibe/logs/session`
-- Reviewing current parsers in `src/parsers/*.rs`
+- Reviewing current parsers in `crates/core/src/parsers/*.rs`
 - Verifying upstream schemas:
   - Claude Code: [Anthropic API tool use docs](https://docs.anthropic.com/en/docs/build-with-claude/tool-use/overview)
   - Codex protocol/models: `openai/codex` (`codex-rs/protocol/src/protocol.rs`, `codex-rs/protocol/src/models.rs`)
@@ -221,7 +221,7 @@ Other `response_item` types:
 
 ### 2) Legacy format still present in fixtures/tests
 
-The current parser (`src/parsers/codex.rs`) indexes `event_msg` begin/end pairs:
+The current parser (`crates/core/src/parsers/codex.rs`) indexes `event_msg` begin/end pairs:
 
 - `mcp_tool_call_begin` / `mcp_tool_call_end`
 - `exec_command_begin` / `exec_command_end`

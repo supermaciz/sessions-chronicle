@@ -11,14 +11,10 @@
 - Avoid `tool` alone in prose unless you are referring to a literal historical field/schema name or an external format that uses that term.
 
 ## Project Structure & Module Organization
-- `src/` contains the Rust app:
-  - `main.rs` and `app.rs` wire app startup and top-level Relm4 flow.
-  - `session_sources.rs` resolves per-assistant session paths and `--sessions-dir` overrides.
-  - `ui/` holds Relm4 widgets, with dialogs under `ui/modals/`.
-  - `database/` owns SQLite schema, indexing, and search.
-  - `parsers/` handles assistant-specific session formats.
-  - `models/` defines domain types.
-  - `utils/` contains shared helpers (for example terminal integration).
+- The repository is a Cargo workspace with three members:
+  - `crates/core/` is the shared library (`sessions-chronicle-core`): `database/` owns SQLite schema, indexing, and search; `parsers/` handles assistant-specific session formats; `models/` defines domain types; `session_sources.rs` resolves per-assistant session paths and `--sessions-dir` overrides.
+  - `crates/search-provider/` is the standalone GNOME Shell search provider D-Bus service (`sessions-chronicle-search-provider`).
+  - `src/` contains the Relm4 app crate: `main.rs` and `startup.rs` wire app startup and CLI args, `app/` holds the top-level component and update handlers, `ui/` holds Relm4 widgets (dialogs under `ui/modals/`), `indexing_worker.rs` and `analytics_worker.rs` run background workers, and `utils/` contains shared helpers (for example terminal integration).
 - `data/` holds desktop metadata, GSettings schema, icons, and the CSS bundled through `data/resources/` (see `resources.gresource.xml`).
 - `tests/` contains integration tests; `tests/fixtures/` contains sample sessions for Claude Code, OpenCode, Codex, Mistral Vibe, and Kimi Code.
 - `build-aux/` contains Flatpak manifests (dev and stable) and the vendor script for offline builds.

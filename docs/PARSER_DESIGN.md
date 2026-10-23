@@ -246,9 +246,9 @@ For sessions created with OpenCode ≥ 2026-02-14, Sessions Chronicle now uses d
 
 Implementation references:
 
-- `src/parsers/opencode/sqlite_backend.rs`
-- `src/parsers/opencode/json_backend.rs`
-- `src/database/indexer.rs` (`index_opencode_sessions`)
+- `crates/core/src/parsers/opencode/sqlite_backend.rs`
+- `crates/core/src/parsers/opencode/json_backend.rs`
+- `crates/core/src/database/indexer.rs` (`index_opencode_sessions`)
 
 ---
 

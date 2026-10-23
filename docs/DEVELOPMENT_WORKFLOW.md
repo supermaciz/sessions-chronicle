@@ -264,14 +264,14 @@ Enable trace logging by setting `RUST_LOG`:
 RUST_LOG=debug flatpak-builder --run flatpak_app build-aux/dev.maciz.sessionschronicle.Devel.json sessions-chronicle
 
 # Filter to specific modules
-RUST_LOG=sessions_chronicle::parsers=trace flatpak-builder --run flatpak_app build-aux/dev.maciz.sessionschronicle.Devel.json sessions-chronicle
+RUST_LOG=sessions_chronicle_core::parsers=trace flatpak-builder --run flatpak_app build-aux/dev.maciz.sessionschronicle.Devel.json sessions-chronicle
 ```
 
 Meson-installed build equivalent:
 
 ```bash
 RUST_LOG=debug "$HOME/.local/bin/sessions-chronicle"
-RUST_LOG=sessions_chronicle::parsers=trace "$HOME/.local/bin/sessions-chronicle"
+RUST_LOG=sessions_chronicle_core::parsers=trace "$HOME/.local/bin/sessions-chronicle"
 ```
 
 ## Testing

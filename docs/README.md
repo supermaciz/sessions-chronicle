@@ -35,15 +35,39 @@ This directory contains project documentation, architecture notes, and implement
 
 ### Design Decisions
 
-5. **[UI_DESIGN_COMPARISON.md](UI_DESIGN_COMPARISON.md)**
+5. **[UI_DESIGN_COMPARISON.md](UI_DESIGN_COMPARISON.md)** *(archive)*
    - List view vs Cards view analysis
    - Pros/cons of each approach
    - Recommendation: Start with List View
 
-6. **[SEARCH_ARCHITECTURE.md](SEARCH_ARCHITECTURE.md)**
+6. **[SEARCH_ARCHITECTURE.md](SEARCH_ARCHITECTURE.md)** *(archive)*
    - How agent-sessions implements search
    - Two-phase progressive search explained
    - Recommendation for Sessions Chronicle: SQLite FTS5
+
+7. **[TOOL_CALLS_ANALYSIS.md](TOOL_CALLS_ANALYSIS.md)**
+   - Tool call format analysis across AI assistants
+   - Enables richer Tool Inspector rendering than raw JSON
+
+### Desktop Integration & Packaging
+
+8. **[GNOME_DESKTOP_INTEGRATION.md](GNOME_DESKTOP_INTEGRATION.md)**
+   - GNOME Shell search provider, session deep links, D-Bus activation
+   - Remaining integration ideas (notifications, portals, MIME types)
+
+9. **[FLATPAK_REPOSITORY.md](FLATPAK_REPOSITORY.md)**
+   - Self-hosted signed Flatpak repository under the GitHub Pages website
+   - Signing-key setup, publishing workflow, install commands
+
+### Planning & Research
+
+10. **[superpowers/specs/](superpowers/specs/)** — design specs (`YYYY-MM-DD-feature-name-design.md`, ~86 dated entries)
+11. **[superpowers/plans/](superpowers/plans/)** — implementation plans derived from the specs (~48 dated entries)
+12. **[explorations/](explorations/)** — exploration docs comparing implementation approaches (~30 dated entries)
+13. **[product-assessments/](product-assessments/)** — periodic product assessments
+14. **[reports/](reports/)** — investigation, benchmark, and verification reports tied to issues
+15. **[IDEAS.md](IDEAS.md)** — raw ideas backlog, before promotion to an issue or an exploration
+16. **[SIMILAR_PROJECTS.md](SIMILAR_PROJECTS.md)** — shortlist of projects in the same product space
 
 ## 🎨 Visual Mockups
 
@@ -100,7 +124,7 @@ Legacy Kimi sessions under `~/.kimi` are not parsed.
 
 ---
 
-**Last Updated**: 2026-06-21
+**Last Updated**: 2026-10-23
 
-**Current Status**: `v0.7.1`. Analytics workspace, project filtering, token usage display, incremental indexing, and indexing diagnostics are implemented. Recent work: typed-ListView transcript with `GtkLabel` prose rendering, date filter pill, header-bar session summary popover, Mistral Vibe subagents, and an external-content FTS5 search index (schema `user_version = 14`).  
+**Current Status**: `v0.10.0`. GNOME Shell search provider, session deep links, Kimi Code support, analytics workspace, project filtering, token usage display, and incremental indexing are implemented. See [PROJECT_STATUS.md](PROJECT_STATUS.md) for the current phase and roadmap.  
 **Next Milestone**: Ongoing UX/documentation polish and follow-up refinements tracked in newer files under `docs/explorations/`.

@@ -1,7 +1,7 @@
 # Sessions Chronicle - Project Status
 
-Last updated: 2026-06-21
-Branch snapshot: `main` (`v0.7.1`)
+Last updated: 2026-10-23
+Branch snapshot: `main` (`v0.10.0`)
 
 ## Current Product State
 
@@ -30,6 +30,13 @@ Sessions Chronicle is a GNOME desktop app that indexes local AI coding assistant
 - Subagent support for Mistral Vibe (child sessions indexed from `<session>/agents/`) and refreshed Codex subagent parsing (`collab_resume_end` + response-item subagents)
 - Expanded tool call classification: Plan, Skill, and UserInput categories plus snake_case and assistant-specific tool name variants
 - Current Kimi Code sessions are indexed from `$KIMI_CODE_HOME` (default `~/.kimi-code`) when visible in the Flatpak sandbox; legacy `~/.kimi` sessions are not parsed
+- Session list sorting via a dedicated sort pill (recent activity, oldest/newest first, most messages)
+- Custom date range picker streamlined into a one-calendar endpoint picker in the date filter pill
+- Markdown tables in transcripts rendered with a custom `MarkdownTable` widget
+- Session deep links: indexed sessions can be opened from external callers via the `open-session` app action
+- GNOME Shell search provider: indexed sessions searchable from GNOME Activities, launching the app on the selected session
+- Codex paginated history indexing with task-name subagent linkage
+- OpenCode V2 session sources (SQLite store) indexed alongside legacy JSONL logs, with lazily loaded typed transcript context entries
 
 ## Terminology
 
@@ -38,6 +45,19 @@ Sessions Chronicle is a GNOME desktop app that indexes local AI coding assistant
 - `tool` may still appear as a literal historical storage or schema name, such as the `sessions.tool` column.
 
 ## Recently Landed Work
+
+### Since `v0.7.1` (`v0.8.0` → `v0.10.0`)
+
+- Session list sorting with a dedicated sort pill: recent activity (default), oldest/newest first, most messages (#190)
+- Custom date range editor replaced by a one-calendar endpoint picker (#192)
+- Claude Code teammate subagent linkage restored for v2.1.216+ sessions (#194)
+- Kimi Code support: sessions indexed from `$KIMI_CODE_HOME` (default `~/.kimi-code`), with a dedicated symbolic icon (#196)
+- Markdown tables rendered with a custom `MarkdownTable` widget, wired into the production renderer with wheel-scroll support (#181, #183, #184)
+- Claude Code sessions whose only assistant events are synthetic API errors are skipped during indexing (61de25e)
+- Session deep links: indexed sessions openable via the `open-session` app action (#200)
+- GNOME Shell search provider: sessions searchable from GNOME Activities via a standalone D-Bus service in `crates/search-provider/` (#201)
+- Codex paginated history indexing and task-name subagents (#208)
+- OpenCode V2 support: SQLite session store indexed with lazy, typed transcript context entries (#210)
 
 ### Since `v0.4.8` (`v0.5.0` → `v0.7.1`)
 
@@ -96,38 +116,52 @@ Sessions Chronicle is a GNOME desktop app that indexes local AI coding assistant
 
 ```text
 sessions-chronicle/
+|- Cargo.toml                   # workspace root (app crate + members)
+|- crates/
+|  |- core/                     # sessions-chronicle-core library
+|  |  `- src/
+|  |     |- database/           # schema, search, indexing, analytics queries
+|  |     |- parsers/            # per-assistant parsers (Claude Code, Codex, OpenCode, Mistral Vibe, Kimi Code)
+|  |     |- models/             # sessions/messages/tool calls/subagents/token usage
+|  |     |- session_sources.rs  # source path resolution + --sessions-dir behavior
+|  |     `- project_resolver.rs # git-root and worktree-aware project detection
+|  `- search-provider/          # sessions-chronicle-search-provider D-Bus service
+|     `- src/
+|        |- main.rs             # standalone service entry point
+|        |- interface.rs        # GNOME Shell SearchProvider2 D-Bus interface
+|        |- db_worker.rs        # background database query worker
+|        |- activation.rs       # result activation via the open-session app action
+|        `- lifecycle.rs        # service lifecycle (name ownership, idle shutdown)
 |- src/
-|  |- main.rs                    # startup, args, Relm4 app launch
-|  |- lib.rs                     # crate root (re-exports for tests)
-|  |- config.rs / config.rs.in   # build-time config constants
-|  |- app/                       # top-level app component + update handlers
+|  |- main.rs                   # startup, args, Relm4 app launch
+|  |- startup.rs                # CLI parsing and startup wiring
+|  |- lib.rs                    # crate root (re-exports for tests)
+|  |- config.rs / config.rs.in  # build-time config constants
+|  |- app/                      # top-level app component + update handlers
 |  |  |- mod.rs
-|  |  |- init.rs                 # app initialization logic
+|  |  |- init.rs                # app initialization logic
 |  |  |- handlers/
 |  |  |- helpers.rs
 |  |  `- types.rs
-|  |- indexing_worker.rs         # background indexing worker
-|  |- analytics_worker.rs        # background analytics computation worker
-|  |- project_resolver.rs        # git-root and worktree-aware project detection
-|  |- session_sources.rs         # source path resolution + --sessions-dir behavior
-|  |- database/                  # schema, search, indexing, analytics queries
-|  |- parsers/                   # per-assistant parsers (Claude Code, Codex, OpenCode, Mistral Vibe, Kimi Code)
-|  |- models/                    # sessions/messages/tool calls/subagents/token usage
-|  |- ui/                        # list/detail/sidebar/inspector/analytics components
-|  |  |- session_detail/         # typed-ListView transcript + per-row modules
-|  |  |- tool_renderers/         # per-tool-call type renderers
-|  |  |- date_pill.rs            # session-list date filter pill
-|  |  |- activity_bar.rs         # session activity indicators
-|  |  `- modals/                 # dialogs (about, preferences, shortcuts)
-|  `- utils/terminal.rs          # terminal detection/spawn for resume
-|- data/resources/               # UI templates and CSS
-|- tests/                        # integration and behavior tests
-`- docs/                         # architecture notes and plans
+|  |- indexing_worker.rs        # background indexing worker
+|  |- analytics_worker.rs       # background analytics computation worker
+|  |- ui/                       # list/detail/sidebar/inspector/analytics components
+|  |  |- session_detail/        # typed-ListView transcript + per-row modules
+|  |  |- tool_renderers/        # per-tool-call type renderers
+|  |  |- date_pill.rs           # session-list date filter pill
+|  |  |- sort_pill.rs           # session-list sort control
+|  |  |- markdown_table.rs      # custom Markdown table widget
+|  |  |- activity_bar.rs        # session activity indicators
+|  |  `- modals/                # dialogs (about, preferences, shortcuts)
+|  `- utils/                    # shared helpers (terminal detection/spawn for resume)
+|- data/resources/              # UI templates and CSS
+|- tests/                       # integration and behavior tests
+`- docs/                        # architecture notes and plans
 ```
 
 ## Database Snapshot
 
-Current migration level is `PRAGMA user_version = 14`.
+Current migration level is `PRAGMA user_version = 20`.
 
 Migrations since v8:
 
@@ -137,6 +171,12 @@ Migrations since v8:
 - v12 — session-list ordering indexes for faster startup/filter reloads
 - v13 — replaces the FTS5-virtual `messages` table with a b-tree source table backed by an external-content `messages_fts` index; clears `file_fingerprints`
 - v14 — clears `file_fingerprints` to re-index after Mistral Vibe subagent support; adds an index on `sessions.file_path` for efficient Vibe subtree pruning
+- v15 — replaces the top-level activity index with three deterministic sort indexes (last_updated, start_time, message_count) for deterministic session-list reading
+- v16 — `subagents.agent_name` (nullable) for Claude Code teammate linkage; clears `file_fingerprints` so parents are re-parsed
+- v17 — clears `file_fingerprints` so Claude Code sessions whose only assistant events are synthetic API errors are re-parsed and pruned
+- v18 — `sessions.agent_path` (nullable full Codex task path); `subagents.agent_name` now carries Codex spawn task names; clears `file_fingerprints`
+- v19 — typed transcript context: `context_entries` table and nullable `transcript_items.context_id`; OpenCode source-generation tables (`opencode_session_sources`, `opencode_source_fingerprints`); only OpenCode-owned fingerprint rows are removed so OpenCode sources are re-read
+- v20 — `opencode_source_sessions` records the session IDs each OpenCode SQLite source exposed at its last committed fingerprint, so unchanged sources are no longer opened on incremental runs
 
 ### Core Tables
 
@@ -159,6 +199,8 @@ Migrations since v8:
   - subagent metadata and optional child session linkage; `agent_id` nullable (added in v11)
 - `reasoning_attachments`
   - per-message reasoning payloads kept out of the FTS path (added in v9)
+- `context_entries`
+  - typed transcript context payloads linked from `transcript_items.context_id` (added in v19)
 - `file_fingerprints`
   - incremental indexing state (`file_path`, `mtime_ns`, `size`)
 
