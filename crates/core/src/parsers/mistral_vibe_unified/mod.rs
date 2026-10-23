@@ -2,6 +2,8 @@
 //! (`<vibe-root>/unified/<id>/`, `mistral.vibe.unified-session-store/v1`).
 
 mod canonical;
+mod convert;
+mod effects;
 mod error;
 mod journal;
 pub(crate) mod store;
@@ -13,6 +15,7 @@ use std::path::Path;
 
 use store::LoadedStore;
 
+pub use convert::{MistralVibeUnifiedParser, UnifiedParse};
 pub use error::UnifiedError;
 pub use store::{child_session_id, is_unified_session_dir};
 
