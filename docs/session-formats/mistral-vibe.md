@@ -5,7 +5,178 @@ See [SESSION_FORMAT_ANALYSIS.md](../SESSION_FORMAT_ANALYSIS.md) for cross-assist
 
 ---
 
-## Storage & File Naming
+## Format Generations
+
+Mistral Vibe has **two** on-disk session formats, which coexist on a single
+machine (pre-3.x directories are never rewritten or migrated):
+
+| Generation | Introduced | Path | Written by |
+|------------|-----------|------|------------|
+| **Legacy** | ≤ 2.x (documented through v2.24.1) | `<save_dir>/session_YYYYMMDD_HHMMSS_<shortid>/` | Vibe ≤ 2.x only |
+| **Unified** | 3.0.0 (2026-10-15) | `<save_dir>/unified/<session-uuid>/` | Vibe 3.x (the "Unified Harness" backend) |
+
+The default save dir is `~/.vibe/logs/session/` (overridable via `VIBE_HOME`
+or `session_logging.save_dir` in `config.toml`), so unified sessions live under
+`~/.vibe/logs/session/unified/`. Both generations are documented below:
+[Unified Session Store (Vibe 3.x)](#unified-session-store-vibe-3x) first, then
+the legacy format that the rest of this document describes.
+
+Upstream store identity: `mistral.vibe.unified-session-store/v1` with a
+`store_format_minor` revision counter (9 as of v3.0.2). Readers accept lower
+minor versions and **reject higher ones**, so a minor bump is a hard
+compatibility boundary and a ready-made drift signal for watch passes.
+
+---
+
+## Unified Session Store (Vibe 3.x)
+
+Confirmed from upstream source (`harness/runtimes/python/python/mistralai_vibe_local_harness/vibe/_storage.py`,
+`_session_catalog.py`, `_subagents/_operations.py`) at commit `63d0e8f`
+(v3.0.2) and from local v3.0.2 samples under `~/.vibe/logs/session/unified/`.
+
+### Storage & File Naming
+
+| Field   | Value |
+|---------|-------|
+| **Path** | `~/.vibe/logs/session/unified/<session-uuid>/` |
+| **Pattern** | `<session-uuid>/` (directory named by session id only) |
+| **Example** | `unified/8a968d96-6a64-d6e1-57d5-a2ed990c3559/` |
+| **Format** | Event-sourced recovery store: journal + generation snapshots + content-addressed chunks |
+
+Directory names **no longer embed timestamps**; session times come from
+`meta.json`. Subagent children are sibling directories named `child-<hex>`
+under the same `unified/` root (no `agents/` nesting, and observed child
+directories carry no `meta.json`). A shared `unified/scratchpad/` directory
+holds cross-session scratch files and is not session data.
+
+### Session Directory Structure
+
+```
+unified/<session-uuid>/
+├── CURRENT                  # JSON pointer: active generation, manifest hash, store format
+├── meta.json                # Slim session-level metadata (see below)
+├── journal/
+│   └── 0000000000000001.jsonl   # Hash-chained recovery journal (16-digit segments)
+├── generations/
+│   └── 0000000000000001/
+│       ├── manifest.json    # Generation manifest (points at all files below)
+│       ├── checkpoint.json
+│       ├── runtime-state.json
+│       └── projection-state.json
+├── chunks/
+│   └── <sha256>.json        # Content-addressed payload chunks (~64 KB sealed target)
+├── tool-results/
+│   └── <name>.json          # Large tool outputs offloaded from the journal
+└── scheduled-loops.json     # Present only when the session has cron/loop schedules
+```
+
+A sibling `.session-index.json` catalog (maintained by
+`UnifiedSessionCatalog`, `_session_catalog.py`) caches one key per session:
+`CURRENT` hash, journal path (`journal/[0-9]{16}\.jsonl`), size, and mtime.
+
+### `CURRENT` Pointer
+
+```json
+{
+  "generation": "0000000000000001",
+  "manifest_sha256": "<sha256>",
+  "session_id": "<uuid>",
+  "snapshot_sequence": 0,
+  "store_format": "mistral.vibe.unified-session-store/v1",
+  "store_format_minor": 9
+}
+```
+
+Upstream type: `CurrentPointerV1` in `_storage.py`.
+
+### `meta.json` Format (Unified)
+
+Slimmer than the legacy dump — no `stats`, `tools_available`,
+`total_messages`, `system_prompt`, or `last_message_fingerprint`. Observed
+fields (v3.0.2):
+
+| Field | Description |
+|-------|-------------|
+| `session_id` | UUID |
+| `parent_session_id` | Optional lineage field (forks/resets), as in legacy |
+| `start_time` / `end_time` | ISO-8601 strings |
+| `environment.working_directory` | Working directory |
+| `origin_directory` | Where the session started, when it differs from the current working directory |
+| `username` | Username of the session owner |
+| `title`, `title_source` | Title (`auto`/`manual`); observed `null` while a session is untitled |
+| `child_sessions` | Optional child-session links, as in legacy |
+| `loops` | Optional loop metadata |
+| `experiments` | Optional experiment flags |
+| `config` | `{ "active_model", "model_name" }` — changelog v3.0.1: "Session meta.json records the active model and provider model name for Unified Harness sessions" |
+| `bumped_at`, `pinned_at`, `archived_at`, `unseen_at`, `seen_at` | Session-list bookkeeping timestamps |
+| `import_provenance` | Optional metadata for sessions imported from another AI assistant |
+| `created_worktree` | Optional worktree association |
+
+Store-internal metadata lives in the generation's `runtime-state.json`
+(`RuntimeStateV3.session_metadata` → `SessionMetadataV1`: `cwd`, `origin_cwd`,
+`active_model`, ...), not in `meta.json`.
+
+### Recovery Journal (`journal/*.jsonl`)
+
+One JSON object per line; each record carries `sequence`,
+`record_sha256`, `previous_record_sha256` (a hash chain), and
+`recovery_journal_record_version: 1`. There is **no plain `messages.jsonl`** —
+the transcript is embedded in journal records.
+
+Observed record types (payload `type` field):
+
+| Record type | Payload keys | Role |
+|-------------|--------------|------|
+| `command_reserved` | `method` (e.g. `turn/start`), `params`, `params_sha256`, `client_command_id`, `abandon_on_restart` | Reserved client command (turn start) |
+| `core_input` | `input` (command with content blocks), `checkpoint_*`, `transition_*` | Input handed to the core (user message content) |
+| `action_intent` | `kind` (`completion`, `tool`, `filesystem`, `hook`), `action_id`, `lease_id`, `request`, `request_sha256`, `recovery_mode` | Outbound action: LLM call or tool call |
+| `action_result` | `action_id`, `result`, `state` (e.g. `succeeded`) | Result of the matching `action_intent` (assistant content, tool output) |
+| `projection_delta` | `delta`, `watermark` | Public session-state projection update |
+| `callback_registered` / `callback_resolved` | `callback_id`, `kind` (e.g. `approval`), `routing` / `result`, `state` | Approval and question round-trips |
+
+Message content inside these records uses OpenAI-style roles
+(`user`/`assistant`/`tool`/`system`) with content-block arrays
+(`{ "type": "text", "text": ... }`, plus `_meta` and `annotations`).
+
+### Interop History (Transcript Schema)
+
+`_storage.py` defines a stable interop history schema used by
+`committed_history()` / `CommittedHistoryV1`:
+
+- `InteropUserMessageV1` — `role: "user"`, `content[]` blocks
+- `InteropAssistantMessageV1` — `role: "assistant"`, `parts[]` where each part is
+  `content` (a block), a reasoning part, or a model tool-call part
+- `InteropToolMessageV1` — `role: "tool"`, `tool_call_id`, `name`,
+  `outcome: "success" | "failure"`, `content[]` blocks
+- `InteropSystemMessageV1` — `role: "system"`
+
+Generations written before store minor 3 could carry a standalone
+`interop_export` document in their manifest; from minor 3 the interop history is
+re-derived from checkpoints and payloads live in the shared chunk pool
+(`manifest.interop_export` is `null` in current generations).
+
+### Generation Snapshots & Chunks
+
+Each `generations/<16-digit>/manifest.json` (`GenerationManifestV1`) references
+its `checkpoint.json`, `runtime-state.json`, `projection-state.json` (format
+`harness.public-session-state/v1`), and the journal segment it supersedes, with
+SHA-256 integrity hashes and optional chunk references per file. Payloads
+larger than the ~64 KB chunk target are sealed into `chunks/<sha256>.json` and
+referenced from the manifests; large tool outputs also spill to
+`tool-results/<name>.json`. A parser must therefore expect **indirect content**
+resolved via manifest chunk references, not inline records only.
+
+### Store Minor Version History (from source comments)
+
+- 2: projection deltas; 3: checkpoint-derived interop exports; 4: chunked
+  transcripts; 5: checkpoint capability baselines; 6: self-describing
+  reservations and abandoned receipts; 7: checkpoint configuration baselines
+  and recorded transition shapes; 8: pruned request/result bodies on settled
+  actions; 9: pooled chunks
+
+---
+
+## Storage & File Naming (Legacy, ≤ 2.x)
 
 | Field   | Value |
 |---------|-------|
@@ -28,7 +199,7 @@ The default path can be overridden via:
 
 ---
 
-## Session Directory Structure
+## Session Directory Structure (Legacy, ≤ 2.x)
 
 ```
 session_YYYYMMDD_HHMMSS_<shortid>/
@@ -48,7 +219,7 @@ metadata field. See [Threading](#threading).
 
 ---
 
-## `meta.json` Format
+## `meta.json` Format (Legacy, ≤ 2.x)
 
 Session-level metadata:
 
@@ -132,7 +303,7 @@ Current observed limitation:
 
 ---
 
-## `messages.jsonl` Format
+## `messages.jsonl` Format (Legacy, ≤ 2.x)
 
 OpenAI-style chat transcript. One JSON object per line.
 
@@ -214,7 +385,7 @@ Arguments are stored as JSON-encoded strings (`tool_calls[*].function.arguments`
 
 ---
 
-## Threading
+## Threading (Legacy, ≤ 2.x)
 
 Linear message list in `messages.jsonl`.
 Tool calls are embedded in assistant messages and resolved by subsequent `tool` role messages.
@@ -368,12 +539,22 @@ It does **not** contain the full assistant/tool transcript.
 
 ## Parser Behavior (Sessions Chronicle)
 
-Current implementation: `src/parsers/mistral_vibe.rs`
+Current implementation: `crates/core/src/parsers/mistral_vibe.rs` (legacy
+format only; discovery in `crates/core/src/database/indexer.rs`)
 
 - Indexes `role == user|assistant` text
 - Uses `role == tool` records to complete matching tool calls or subagent results,
   but does not render them as standalone messages
 - Indexes assistant `tool_calls` even when assistant text is empty
+
+**Unified store (Vibe 3.x) impact:** discovery (`next_vibe_session_path` in
+`crates/core/src/database/indexer.rs`) requires both `meta.json` and
+`messages.jsonl` in a directory. Unified session directories have `meta.json`
+but no `messages.jsonl`, so **all Vibe 3.x sessions are silently skipped** —
+pre-3.x sessions keep indexing unchanged, and nothing is misindexed, but no
+session created since Vibe 3.0.0 (2026-10-15) is visible. Supporting the unified
+store requires a new reader (journal + generation snapshots + chunk
+references); see [Unified Session Store (Vibe 3.x)](#unified-session-store-vibe-3x).
 
 **Title extraction:** First `messages.jsonl` entry where `role == "user"` and `content` is non-empty.
 
@@ -448,7 +629,9 @@ do not load entire JSONL into memory.
 - [Mistral Vibe builtin agent profiles (`BuiltinAgentName`, `AgentProfile`)](https://github.com/mistralai/mistral-vibe/blob/main/vibe/core/agents/models.py)
 - [Mistral Vibe session loader (filename constants `METADATA_FILENAME` = `meta.json`, `MESSAGES_FILENAME` = `messages.jsonl`)](https://github.com/mistralai/mistral-vibe/blob/main/vibe/core/session/session_loader.py)
 - [Mistral Vibe message/session models (`SessionMetadata`, `LLMMessage`, `AgentStats`)](https://github.com/mistralai/mistral-vibe/blob/main/vibe/core/types.py)
-- [Mistral Vibe CHANGELOG (verified through 2.24.1, 2026-08-11)](https://github.com/mistralai/mistral-vibe/blob/main/CHANGELOG.md)
+- [Mistral Vibe CHANGELOG (verified through 3.0.2, 2026-10-22)](https://github.com/mistralai/mistral-vibe/blob/main/CHANGELOG.md)
+- [Mistral Vibe unified session store (`STORE_FORMAT`, `CurrentPointerV1`, `GenerationManifestV1`, `RuntimeStateV3`, interop history)](https://github.com/mistralai/mistral-vibe/blob/main/harness/runtimes/python/python/mistralai_vibe_local_harness/vibe/_storage.py)
+- [Mistral Vibe unified session catalog (`.session-index.json`, journal path pattern)](https://github.com/mistralai/mistral-vibe/blob/main/harness/runtimes/python/python/mistralai_vibe_local_harness/vibe/_session_catalog.py)
 - [Mistral Vibe Configuration Docs](https://docs.mistral.ai/mistral-vibe/introduction/configuration)
 - [Mistral Vibe system prompt skill section (`<available_skills>`)](https://github.com/mistralai/mistral-vibe/blob/main/vibe/core/system_prompt.py)
 - [Mistral Vibe CLI skill slash-command handler](https://github.com/mistralai/mistral-vibe/blob/main/vibe/cli/textual_ui/app.py)
