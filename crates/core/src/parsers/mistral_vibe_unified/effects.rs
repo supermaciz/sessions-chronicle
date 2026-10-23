@@ -402,6 +402,8 @@ mod tests {
             },
             runtime: RuntimeView {
                 session_id: IN_MEMORY.to_string(),
+                root_session_id: IN_MEMORY.to_string(),
+                parent_session_id: None,
                 ephemeral: false,
                 identity: Identity::Root,
                 cwd: Some("/home/fixture/projects/original".to_string()),
@@ -413,6 +415,8 @@ mod tests {
                     "format": "harness.public-session-state/v1",
                     "session": {
                         "id": IN_MEMORY,
+                        "rootSessionId": IN_MEMORY,
+                        "parentSessionId": null,
                         "createdAt": T0_MS,
                         "updatedAt": T0_MS,
                         "status": {"type": "idle"},

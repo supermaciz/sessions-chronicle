@@ -1456,8 +1456,8 @@ def _variant_store(unified_root: Path, session_id: str, entries, *, runtime_stat
     snapshot = with_history(
         envelope(
             session_id,
-            session_id,
-            None,
+            runtime_state["identity"]["root_session_id"] if runtime_state else session_id,
+            runtime_state["identity"]["parent_session_id"] if runtime_state else None,
             title,
             T0,
             ts(max(len(entries), 1)),

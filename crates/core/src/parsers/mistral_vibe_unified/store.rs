@@ -94,6 +94,8 @@ pub(crate) enum Identity {
 #[derive(Debug, Clone)]
 pub(crate) struct RuntimeView {
     pub session_id: String,
+    pub root_session_id: String,
+    pub parent_session_id: Option<String>,
     pub ephemeral: bool,
     pub identity: Identity,
     pub cwd: Option<String>,
@@ -295,6 +297,7 @@ pub(crate) fn load_generation(session_dir: &Path) -> Result<LoadedStore, Unified
     }
     let runtime_document = parse_document(&runtime_body, "runtime-state.json")?;
     let runtime = runtime_view(&runtime_document, directory_name)?;
+    validate_envelope(&Value::Object(snapshot.clone()), &runtime)?;
 
     // Pooled history chunks (fact C): a chunked snapshot stores its
     // entries empty and refills them by concatenating the chunk arrays.
@@ -534,6 +537,10 @@ fn runtime_view(document: &Value, directory_name: &str) -> Result<RuntimeView, U
     imported_legacy_session(document)?;
     Ok(RuntimeView {
         session_id: session_id.to_string(),
+        root_session_id: field_str(&document["identity"], "identity", "root_session_id")?
+            .to_string(),
+        parent_session_id: nullable_identity(&document["identity"], "parent_session_id")?
+            .map(str::to_string),
         ephemeral: ephemeral_lifetime(document)?,
         identity,
         cwd: metadata
@@ -546,6 +553,45 @@ fn runtime_view(document: &Value, directory_name: &str) -> Result<RuntimeView, U
             .map(str::to_string),
         deleting_children: lifecycle_children(document)?,
     })
+}
+
+fn nullable_identity<'a>(object: &'a Value, field: &str) -> Result<Option<&'a str>, UnifiedError> {
+    match object.get(field) {
+        Some(Value::Null) => Ok(None),
+        Some(Value::String(value)) => Ok(Some(value)),
+        _ => Err(UnifiedError::Corrupt(format!(
+            "{field} is missing or malformed"
+        ))),
+    }
+}
+
+/// Every selected/replaced snapshot must describe the loaded runtime identity.
+/// Fork lineage is compared verbatim, not forced to the fork's own ID.
+pub(crate) fn validate_envelope(
+    envelope: &Value,
+    runtime: &RuntimeView,
+) -> Result<(), UnifiedError> {
+    let format = field_str(envelope, "snapshot", "format")?;
+    if format != PROJECTION_FORMAT {
+        return Err(UnifiedError::Unsupported(format!(
+            "snapshot format {format}"
+        )));
+    }
+    let session = envelope
+        .get("session")
+        .ok_or_else(|| UnifiedError::Corrupt("snapshot session missing".into()))?;
+    let id = field_str(session, "snapshot session", "id")?;
+    let root = field_str(session, "snapshot session", "rootSessionId")?;
+    let parent = nullable_identity(session, "parentSessionId")?;
+    if id != runtime.session_id
+        || root != runtime.root_session_id
+        || parent != runtime.parent_session_id.as_deref()
+    {
+        return Err(UnifiedError::IdentityConflict(
+            "snapshot session identity/lineage does not match runtime".into(),
+        ));
+    }
+    Ok(())
 }
 
 /// Validates the runtime identity rules (fact D) and returns the parsed

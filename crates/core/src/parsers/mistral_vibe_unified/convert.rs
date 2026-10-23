@@ -86,6 +86,7 @@ pub(crate) fn convert(
     store: &LoadedStore,
     effects: &mut effects::EffectSink<'_>,
 ) -> Result<ParsedSession, UnifiedError> {
+    super::store::validate_envelope(&store.projection.envelope, &store.runtime)?;
     if store.runtime.ephemeral {
         return Err(UnifiedError::Ephemeral);
     }
@@ -928,6 +929,8 @@ mod tests {
             },
             runtime: RuntimeView {
                 session_id: IN_MEMORY_SESSION.to_string(),
+                root_session_id: IN_MEMORY_SESSION.to_string(),
+                parent_session_id: None,
                 ephemeral: false,
                 identity: Identity::Root,
                 cwd: Some("/home/fixture/projects/original".to_string()),

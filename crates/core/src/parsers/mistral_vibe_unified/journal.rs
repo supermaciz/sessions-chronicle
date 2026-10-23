@@ -248,6 +248,9 @@ fn apply_record(
         }
         _ => {}
     }
+    if PROJECTION_KINDS.contains(&kind) {
+        super::store::validate_envelope(&store.projection.envelope, &store.runtime)?;
+    }
     Ok(())
 }
 

@@ -212,6 +212,73 @@ fn pool_child_projection(dir: &Path) {
 }
 
 #[test]
+fn snapshot_envelope_rejections_preserve_prior_contents_and_signature() {
+    use crate::parsers::mistral_vibe_unified::store::test_support::rewrite_journal_record;
+    use serde_json::{Value, json};
+    let mut failures = Vec::new();
+    for mode in ["initial", "advanced", "set_envelope"] {
+        for (pointer, value, expected) in [
+            ("/session/id", json!("other"), "IdentityConflict"),
+            ("/session/id", Value::Null, "Corrupt"),
+            ("/session/rootSessionId", json!("other"), "IdentityConflict"),
+            (
+                "/session/parentSessionId",
+                json!("other"),
+                "IdentityConflict",
+            ),
+            ("/format", json!("future"), "Unsupported"),
+            ("/format", Value::Null, "Corrupt"),
+        ] {
+            let id = if mode == "initial" { CHILD_B } else { R302 };
+            let mut h = Harness::empty();
+            h.add(id);
+            assert!(h.run(false).1.is_empty());
+            let old = (h.row(id), h.messages(id), h.signature(id));
+            if mode == "initial" {
+                rewrite_document(&h.dir(id), "projection-state.json", |doc| {
+                    *doc["snapshot"].pointer_mut(pointer).unwrap() = value;
+                });
+            } else {
+                let current: Value =
+                    serde_json::from_slice(&fs::read(h.dir(id).join("CURRENT")).unwrap()).unwrap();
+                let path = h
+                    .dir(id)
+                    .join("generations")
+                    .join(current["generation"].as_str().unwrap())
+                    .join("projection-state.json");
+                let doc: Value = serde_json::from_slice(&fs::read(path).unwrap()).unwrap();
+                let mut snapshot = doc["snapshot"].clone();
+                *snapshot.pointer_mut(pointer).unwrap() = value;
+                rewrite_journal_record(&h.dir(id), 10, |record| {
+                    if mode == "advanced" {
+                        record["type"] = json!("projection_advanced");
+                        record["payload"] = json!({"watermark":10, "snapshot":snapshot});
+                    } else {
+                        record["type"] = json!("projection_delta");
+                        record["payload"] = json!({"watermark":10,"delta":[{"op":"set_envelope", "state":snapshot}]});
+                    }
+                });
+            }
+            let result = MistralVibeUnifiedParser.parse(&h.dir(id));
+            let classified = matches!(
+                (&result, expected),
+                (Err(UnifiedError::Corrupt(_)), "Corrupt")
+                    | (Err(UnifiedError::Unsupported(_)), "Unsupported")
+                    | (Err(UnifiedError::IdentityConflict(_)), "IdentityConflict")
+            );
+            let (stats, _) = h.run(true);
+            if !classified
+                || stats.errors != 1
+                || old != (h.row(id), h.messages(id), h.signature(id))
+            {
+                failures.push(format!("{mode} {pointer}: expected {expected}"));
+            }
+        }
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+#[test]
 fn malformed_reasoning_preserves_prior_contents_and_signature() {
     use serde_json::json;
     for (field, value, unsupported) in [
