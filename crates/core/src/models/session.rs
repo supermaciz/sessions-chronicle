@@ -1,7 +1,10 @@
+use std::path::Path;
+
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 use crate::models::token_usage::TokenUsage;
+use crate::parsers::mistral_vibe_unified::is_unified_session_dir;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 #[serde(rename_all = "snake_case")]
@@ -70,7 +73,18 @@ pub struct Session {
 
 impl Session {
     pub fn can_resume(&self) -> bool {
-        !(self.tool == AiAssistant::KimiCode && self.is_subagent)
+        if self.tool == AiAssistant::KimiCode && self.is_subagent {
+            return false;
+        }
+        // Unified Vibe subagents are resumed through their parent session
+        // upstream; legacy Vibe children keep their historical resumability.
+        if self.tool == AiAssistant::MistralVibe
+            && self.is_subagent
+            && is_unified_session_dir(Path::new(&self.file_path))
+        {
+            return false;
+        }
+        true
     }
 }
 
@@ -201,6 +215,46 @@ mod tests {
             super::resolve_kimi_home("/home/tester", None),
             "/home/tester/.kimi-code"
         );
+    }
+
+    fn vibe_session(file_path: &str, is_subagent: bool) -> Session {
+        Session {
+            id: "aaaaaaaa-0000-4000-8000-000000000302".to_string(),
+            tool: AiAssistant::MistralVibe,
+            project_path: Some("/tmp/project".to_string()),
+            project_id: None,
+            start_time: Utc::now(),
+            message_count: 1,
+            file_path: file_path.to_string(),
+            last_updated: Utc::now(),
+            pinned_at: None,
+            first_prompt: Some("Prompt".to_string()),
+            parent_session_id: Some("aaaaaaaa-0000-4000-8000-000000000302".to_string()),
+            is_subagent,
+            token_usage: None,
+            edit_count: 0,
+            read_count: 0,
+            command_count: 0,
+            ending_status: SessionEndingStatus::Unknown,
+        }
+    }
+
+    #[test]
+    fn unified_vibe_children_are_not_resumable() {
+        // Unified children live in a `unified/` directory and are resumed
+        // through their parent session upstream.
+        let mut session = vibe_session("/x/unified/child-ea9b00b3ad4061f4ca36fd81", true);
+        assert!(!session.can_resume());
+
+        // Legacy Vibe children keep their historical resumability.
+        session.file_path = "/x/session_20261020_100000_bbbbbbbb/agents/explore_main".to_string();
+        assert!(session.can_resume());
+
+        // Unified roots (and forks) remain resumable.
+        session.file_path = "/x/unified/aaaaaaaa-0000-4000-8000-000000000302".to_string();
+        session.is_subagent = false;
+        session.parent_session_id = None;
+        assert!(session.can_resume());
     }
 
     #[test]
