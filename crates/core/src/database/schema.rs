@@ -2,7 +2,7 @@ use anyhow::Result;
 use rusqlite::Connection;
 
 #[cfg(test)]
-const CURRENT_DB_VERSION: i64 = 20;
+const CURRENT_DB_VERSION: i64 = 21;
 
 fn column_exists(conn: &Connection, table_name: &str, column_name: &str) -> Result<bool> {
     Ok(conn.query_row(
@@ -69,6 +69,7 @@ fn table_exists(conn: &Connection, name: &str) -> Result<bool> {
 ///        SQLite source exposed at its last committed fingerprint, so an
 ///        unchanged source is no longer opened on incremental runs, with
 ///        per-representation proven ineligibility and retry state
+///   21 – vibe_unified_signatures stores Unified Mistral Vibe freshness inputs
 pub fn initialize_database(conn: &Connection) -> Result<()> {
     let version: i64 = conn.query_row("PRAGMA user_version", [], |row| row.get(0))?;
 
@@ -131,6 +132,9 @@ pub fn initialize_database(conn: &Connection) -> Result<()> {
     }
     if version < 20 {
         apply_v20_migration(conn)?;
+    }
+    if version < 21 {
+        conn.execute_batch("CREATE TABLE IF NOT EXISTS vibe_unified_signatures (session_dir TEXT PRIMARY KEY, signature TEXT NOT NULL); PRAGMA user_version = 21;")?;
     }
 
     Ok(())

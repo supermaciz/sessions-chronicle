@@ -62,7 +62,7 @@ pub(crate) fn reject_symlink(path: &Path) -> Result<(), UnifiedError> {
 /// A `symlink_metadata` snapshot of one store file, used for freshness
 /// signatures and read-stability checks.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub(crate) struct FileSample {
+pub struct FileSample {
     /// Path relative to the session directory, as listed by the manifest.
     pub relative_path: String,
     pub size: u64,

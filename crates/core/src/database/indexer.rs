@@ -2,9 +2,10 @@ mod kimi;
 mod opencode;
 #[cfg(test)]
 mod opencode_tests;
+mod vibe_unified;
 
 use anyhow::{Context, Result};
-use rusqlite::Connection;
+use rusqlite::{Connection, OptionalExtension};
 use std::collections::{HashSet, VecDeque};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -499,6 +500,7 @@ impl SessionIndexer {
             )?;
         }
 
+        self.index_vibe_unified_sessions(sessions_dir, incremental, &mut stats, errors_detail)?;
         self.prune_orphan_fingerprints()?;
         Ok(stats)
     }
@@ -678,6 +680,30 @@ impl SessionIndexer {
     ) -> Result<()> {
         match parser.parse(path) {
             Ok(parsed) => {
+                let existing: Option<String> = self
+                    .db
+                    .query_row(
+                        "SELECT file_path FROM sessions WHERE id=?1",
+                        [&parsed.session.id],
+                        |row| row.get(0),
+                    )
+                    .optional()?;
+                if let Some(existing) = existing
+                    && existing != path.to_string_lossy()
+                    && Path::new(&existing).exists()
+                {
+                    push_indexing_error(
+                        errors_detail,
+                        AiAssistant::MistralVibe,
+                        Some(path.display().to_string()),
+                        format!(
+                            "Mistral Vibe session id {} is already indexed from {}",
+                            parsed.session.id, existing
+                        ),
+                    );
+                    stats.errors += 1;
+                    return Ok(());
+                }
                 self.insert_parsed_session_with_fingerprint(&parsed, path, fingerprint_target)?;
                 stats.indexed += 1;
             }
@@ -1181,7 +1207,13 @@ impl SessionIndexer {
         let session = &parsed.session;
         let (edit_count, read_count, command_count) =
             Self::compute_activity_counts(&parsed.tool_calls);
-        let ending_status = Self::determine_ending_status(&parsed.tool_calls).to_storage();
+        let ending_status =
+            (if session.ending_status != crate::models::SessionEndingStatus::Unknown {
+                session.ending_status.clone()
+            } else {
+                Self::determine_ending_status(&parsed.tool_calls)
+            })
+            .to_storage();
 
         tx.execute(
             SESSION_UPSERT_SQL,
@@ -1490,6 +1522,7 @@ impl SessionIndexer {
         tx.execute("DELETE FROM messages", [])?;
         tx.execute("DELETE FROM sessions", [])?;
         tx.execute("DELETE FROM file_fingerprints", [])?;
+        tx.execute("DELETE FROM vibe_unified_signatures", [])?;
         tx.execute("DELETE FROM opencode_session_sources", [])?;
         tx.execute("DELETE FROM opencode_source_fingerprints", [])?;
         tx.execute("DELETE FROM opencode_source_sessions", [])?;
@@ -3383,7 +3416,7 @@ mod tests {
         let sessions_dir = crate::fixture_path("vibe_sessions");
 
         let count = indexer.index_vibe_sessions(&sessions_dir).unwrap();
-        assert_eq!(count, 2);
+        assert_eq!(count, 10);
 
         let sessions: Vec<(String, String)> = indexer
             .db
@@ -3394,7 +3427,7 @@ mod tests {
             .collect::<Result<Vec<_>, _>>()
             .unwrap();
 
-        assert_eq!(sessions.len(), 2);
+        assert_eq!(sessions.len(), 10);
         assert!(sessions.iter().all(|(_, tool)| tool == "mistral_vibe"));
     }
 

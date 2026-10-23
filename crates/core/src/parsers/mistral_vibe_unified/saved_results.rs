@@ -40,10 +40,20 @@ static ENCODED_NAME: LazyLock<Regex> = LazyLock::new(|| {
 /// A `symlink_metadata` snapshot of one consumed saved result, used for
 /// freshness signatures.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub(crate) struct FileStat {
+pub struct FileStat {
     pub size: u64,
     /// Modification time in nanoseconds since the Unix epoch.
     pub mtime_ns: i64,
+}
+
+impl FileStat {
+    pub fn for_path(path: &Path) -> io::Result<Self> {
+        let metadata = fs::symlink_metadata(path)?;
+        Ok(Self {
+            size: metadata.len(),
+            mtime_ns: metadata.mtime() * 1_000_000_000 + metadata.mtime_nsec(),
+        })
+    }
 }
 
 /// Resolves receipt texts against a session's local `tool-results/`

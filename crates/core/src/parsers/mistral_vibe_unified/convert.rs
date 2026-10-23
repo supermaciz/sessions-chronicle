@@ -47,7 +47,7 @@ impl MistralVibeUnifiedParser {
                 )
             })?
             .to_string();
-        let (parsed, _store) = super::load_stable(session_dir, |store| {
+        let ((parsed, signature), _store) = super::load_stable(session_dir, |store| {
             // A fresh resolver per attempt: an unstable retry never
             // reuses partial consumed-file state.
             let mut results = SavedResultResolver::new(session_dir.join("tool-results"));
@@ -57,10 +57,19 @@ impl MistralVibeUnifiedParser {
             };
             // Task 7 folds the consumed saved results into the freshness
             // signature; on failure the list is dropped with the parse.
-            let _consumed = results.into_consumed();
-            converted
+            let consumed = results.into_consumed();
+            let parsed = converted?;
+            let meta = super::signature::FileStat::for_path(&session_dir.join("meta.json")).ok();
+            let signature = super::signature::UnifiedSignature {
+                reader_version: super::signature::UNIFIED_READER_VERSION,
+                current_sha256: super::canonical::sha256_hex(&store.current_bytes),
+                journal: store.journal.clone(),
+                meta,
+                saved_results: consumed,
+            };
+            Ok((parsed, signature))
         })?;
-        Ok(UnifiedParse { parsed })
+        Ok(UnifiedParse { parsed, signature })
     }
 }
 
@@ -69,7 +78,7 @@ impl MistralVibeUnifiedParser {
 pub struct UnifiedParse {
     /// The converted session, ready for indexing.
     pub parsed: ParsedSession,
-    // Task 7 adds `signature: UnifiedSignature` (freshness inputs).
+    pub signature: super::signature::UnifiedSignature,
 }
 
 /// Converts a loaded, journal-replayed Unified store into a
