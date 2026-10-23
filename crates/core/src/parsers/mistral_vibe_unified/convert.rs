@@ -59,14 +59,7 @@ impl MistralVibeUnifiedParser {
             // signature; on failure the list is dropped with the parse.
             let consumed = results.into_consumed();
             let parsed = converted?;
-            let meta = super::signature::FileStat::for_path(&session_dir.join("meta.json")).ok();
-            let signature = super::signature::UnifiedSignature {
-                reader_version: super::signature::UNIFIED_READER_VERSION,
-                current_sha256: super::canonical::sha256_hex(&store.current_bytes),
-                journal: store.journal.clone(),
-                meta,
-                saved_results: consumed,
-            };
+            let signature = super::signature::UnifiedSignature::from_parse(store, consumed);
             Ok((parsed, signature))
         })?;
         Ok(UnifiedParse { parsed, signature })
@@ -727,6 +720,70 @@ mod tests {
         (temp, session)
     }
 
+    fn metadata_change_after_consumption(initial: Option<&str>) {
+        let (_temp, dir) = copy_unified(R300);
+        rewrite_document(&dir, "runtime-state.json", |doc| {
+            doc["session_metadata"]["cwd"] = Value::Null;
+            doc["session_metadata"]["active_model"] = Value::Null;
+        });
+        let meta_path = dir.join("meta.json");
+        if meta_path.exists() {
+            fs::remove_file(&meta_path).unwrap();
+        }
+        let metadata = |cwd: &str| {
+            json!({
+                "session_id": R300,
+                "environment": {"working_directory": cwd},
+                "config": {"active_model": "mistral-medium-3"}
+            })
+            .to_string()
+        };
+        if let Some(cwd) = initial {
+            fs::write(&meta_path, metadata(cwd)).unwrap();
+        }
+        // Use the production stable loader, conversion, and signature builder.
+        // Mutate exactly after consumption and before signature assembly; no
+        // timing, sleeping, or writer thread is involved.
+        let ((parsed, signature), _) = super::super::load_stable(&dir, |store| {
+            let mut results = SavedResultResolver::new(dir.join("tool-results"));
+            let parsed = {
+                let mut effects = EffectSink::new(R300, &mut results);
+                convert(&dir, store, &mut effects)?
+            };
+            assert_eq!(parsed.session.project_path.as_deref(), initial);
+            fs::write(&meta_path, metadata("/project/new-metadata")).unwrap();
+            let signature = super::super::signature::UnifiedSignature::from_parse(
+                store,
+                results.into_consumed(),
+            );
+            Ok((parsed, signature))
+        })
+        .unwrap();
+        assert_eq!(parsed.session.project_path.as_deref(), initial);
+        assert!(
+            !signature.is_current(&dir),
+            "signature acknowledged metadata the conversion never consumed"
+        );
+        // The next incremental freshness check must request a new parse, which
+        // imports the new fallback and produces a genuinely current signature.
+        let next = MistralVibeUnifiedParser.parse(&dir).unwrap();
+        assert_eq!(
+            next.parsed.session.project_path.as_deref(),
+            Some("/project/new-metadata")
+        );
+        assert!(next.signature.is_current(&dir));
+    }
+
+    #[test]
+    fn metadata_mutation_after_consumption_invalidates_signature() {
+        metadata_change_after_consumption(Some("/project/old"));
+    }
+
+    #[test]
+    fn metadata_appearance_after_consumption_invalidates_signature() {
+        metadata_change_after_consumption(None);
+    }
+
     fn expect_variant(result: Result<UnifiedParse, UnifiedError>, expected: &str) {
         let error = result.expect_err("expected the parse to fail");
         let actual = match &error {
@@ -763,6 +820,7 @@ mod tests {
         LoadedStore {
             current_bytes: b"{}\n".to_vec(),
             journal_first_sequence: 2,
+            meta: None,
             journal: FileSample {
                 relative_path: "journal/0000000000000002.jsonl".to_string(),
                 size: 0,

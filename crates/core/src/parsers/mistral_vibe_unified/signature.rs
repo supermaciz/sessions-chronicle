@@ -19,6 +19,21 @@ pub struct UnifiedSignature {
 }
 
 impl UnifiedSignature {
+    pub(crate) fn from_parse(
+        store: &super::store::LoadedStore,
+        saved_results: Vec<(String, FileStat)>,
+    ) -> Self {
+        Self {
+            reader_version: UNIFIED_READER_VERSION,
+            current_sha256: super::canonical::sha256_hex(&store.current_bytes),
+            journal: store.journal.clone(),
+            // This sample belongs to the load attempt, before fallback reads.
+            // Sampling here could acknowledge a version conversion never saw.
+            meta: store.meta.clone(),
+            saved_results,
+        }
+    }
+
     pub fn is_current(&self, session_dir: &Path) -> bool {
         let Ok(current) = fs::read(session_dir.join("CURRENT")) else {
             return false;

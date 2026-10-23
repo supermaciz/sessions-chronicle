@@ -103,13 +103,16 @@ pub(crate) struct RuntimeView {
 
 /// One store generation, fully validated and sampled for the journal
 /// reader: the raw `CURRENT` bytes, the manifest-derived sequences, a
-/// `symlink_metadata` sample of the journal segment taken before
-/// returning, the runtime view and the snapshot projection.
+/// `symlink_metadata` samples of the journal and optional metadata taken
+/// before consumption, the runtime view and the snapshot projection.
 #[derive(Debug, Clone)]
 pub(crate) struct LoadedStore {
     pub current_bytes: Vec<u8>,
     pub journal_first_sequence: u64,
     pub journal: FileSample,
+    /// Optional metadata sampled before conversion can consume its fallback.
+    /// Keep absence too: a later appearance must invalidate this attempt.
+    pub meta: Option<super::saved_results::FileStat>,
     pub runtime: RuntimeView,
     pub projection: ProjectionState,
 }
@@ -334,6 +337,7 @@ pub(crate) fn load_generation(session_dir: &Path) -> Result<LoadedStore, Unified
         current_bytes,
         journal_first_sequence,
         journal,
+        meta: super::saved_results::FileStat::for_path(&session_dir.join("meta.json")).ok(),
         runtime,
         projection: ProjectionState {
             envelope,

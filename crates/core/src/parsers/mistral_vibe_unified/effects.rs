@@ -388,6 +388,7 @@ mod tests {
         LoadedStore {
             current_bytes: b"{}\n".to_vec(),
             journal_first_sequence: 2,
+            meta: None,
             journal: FileSample {
                 relative_path: "journal/0000000000000002.jsonl".to_string(),
                 size: 0,
