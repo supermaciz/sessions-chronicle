@@ -241,6 +241,24 @@ pub(crate) fn load_generation(session_dir: &Path) -> Result<LoadedStore, Unified
             "projection_state_version {projection_state_version}"
         )));
     }
+    // Fact C: the projection document carries its own identity and
+    // sequence; both must match the pointer.  Malformed or missing fields
+    // are corrupt, mismatches are identity conflicts.
+    if field_str(&projection_document, "projection-state.json", "session_id")? != session_id {
+        return Err(UnifiedError::IdentityConflict(
+            "projection-state.json session_id does not match CURRENT".to_string(),
+        ));
+    }
+    if field_u64(
+        &projection_document,
+        "projection-state.json",
+        "snapshot_sequence",
+    )? != snapshot_sequence
+    {
+        return Err(UnifiedError::IdentityConflict(
+            "projection-state.json snapshot_sequence does not match CURRENT".to_string(),
+        ));
+    }
     let watermark = field_u64(&projection_document, "projection-state.json", "watermark")?;
     let snapshot = projection_document
         .get("snapshot")
@@ -443,7 +461,15 @@ fn recovery_segment(
                 "manifest recovery_journal_segment first_sequence is not an integer".to_string(),
             )
         })?;
-    if first_sequence != snapshot_sequence + 1 {
+    // Untrusted sequence data: guard the next-sequence arithmetic even
+    // though canonical pointer documents already bound integers to the
+    // canonical safe range.
+    let next_sequence = snapshot_sequence.checked_add(1).ok_or_else(|| {
+        UnifiedError::Corrupt(format!(
+            "snapshot_sequence {snapshot_sequence} has no representable next sequence"
+        ))
+    })?;
+    if first_sequence != next_sequence {
         return Err(UnifiedError::Corrupt(format!(
             "recovery journal first_sequence {first_sequence} does not follow snapshot_sequence {snapshot_sequence}"
         )));
@@ -1389,6 +1415,64 @@ mod tests {
             document["identity"]["depth"] = json!(2);
         });
         expect_variant(load_generation(&session), "Corrupt");
+    }
+
+    #[test]
+    fn rejects_projection_session_id_mismatch() {
+        let (_temp, session) = copy_store(R302);
+        rewrite_document(&session, "projection-state.json", |document| {
+            document["session_id"] = json!("aaaaaaaa-0000-4000-8000-000000000300");
+        });
+        expect_variant(load_generation(&session), "IdentityConflict");
+    }
+
+    #[test]
+    fn rejects_projection_snapshot_sequence_mismatch() {
+        let (_temp, session) = copy_store(R302);
+        rewrite_document(&session, "projection-state.json", |document| {
+            document["snapshot_sequence"] = json!(5);
+        });
+        expect_variant(load_generation(&session), "IdentityConflict");
+    }
+
+    #[test]
+    fn rejects_projection_missing_session_id() {
+        let (_temp, session) = copy_store(R302);
+        rewrite_document(&session, "projection-state.json", |document| {
+            document
+                .as_object_mut()
+                .expect("projection document is an object")
+                .remove("session_id");
+        });
+        expect_variant(load_generation(&session), "Corrupt");
+    }
+
+    #[test]
+    fn rejects_projection_malformed_snapshot_sequence() {
+        let (_temp, session) = copy_store(R302);
+        rewrite_document(&session, "projection-state.json", |document| {
+            document["snapshot_sequence"] = json!("four");
+        });
+        expect_variant(load_generation(&session), "Corrupt");
+    }
+
+    #[test]
+    fn recovery_segment_rejects_unrepresentable_next_sequence() {
+        let manifest = json!({
+            "recovery_journal_segment": {
+                "first_sequence": 0,
+                "path": "journal/0000000000000000.jsonl",
+            }
+        });
+        // Canonical CURRENT documents cannot carry u64::MAX (integers are
+        // bounded to the canonical safe range), so the guard is exercised
+        // at the helper level only, never through an on-disk store.
+        let error =
+            recovery_segment(&manifest, u64::MAX).expect_err("expected the segment check to fail");
+        assert!(
+            matches!(error, UnifiedError::Corrupt(_)),
+            "unexpected variant: {error}"
+        );
     }
 
     #[test]
