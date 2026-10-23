@@ -212,6 +212,46 @@ fn pool_child_projection(dir: &Path) {
 }
 
 #[test]
+fn duplicate_subagent_ids_roundtrip_distinct_prompts_and_results() {
+    use serde_json::json;
+    let mut h = Harness::empty();
+    h.add(CHILD_B);
+    rewrite_document(&h.dir(CHILD_B), "projection-state.json", |doc| {
+        let entries = doc["snapshot"]["history"]["entries"]
+            .as_array_mut()
+            .unwrap();
+        for (prompt, result) in [
+            ("First task", "First result"),
+            ("Second task", "Second result"),
+        ] {
+            entries.push(json!({"id":"effect-repeat", "type":"effect", "generationStatus":"completed", "detail":{"kind":"subagent", "agentName":"worker", "input":{"task":prompt}}, "state":{"status":"completed", "outputText":result}}));
+        }
+    });
+    assert!(h.run(false).1.is_empty());
+    let rows: Vec<(String, String, String, String)> = h.indexer.db.prepare(
+        "SELECT s.id,s.prompt,s.result_summary,s.parser_ref FROM transcript_items t JOIN subagents s ON s.id=t.subagent_id WHERE t.session_id=?1 ORDER BY t.item_index"
+    ).unwrap().query_map([CHILD_B], |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?))).unwrap().collect::<rusqlite::Result<_>>().unwrap();
+    assert_eq!(rows.len(), 2);
+    assert_ne!(rows[0].0, rows[1].0);
+    assert_eq!(
+        (&rows[0].1, &rows[0].2, &rows[0].3),
+        (
+            &"First task".into(),
+            &"First result".into(),
+            &"repeat".into()
+        )
+    );
+    assert_eq!(
+        (&rows[1].1, &rows[1].2, &rows[1].3),
+        (
+            &"Second task".into(),
+            &"Second result".into(),
+            &"repeat".into()
+        )
+    );
+}
+
+#[test]
 fn symlinked_unified_ancestor_is_indexed() {
     let mut h = Harness::fixtures();
     let target = h.temp.path().join("stores");

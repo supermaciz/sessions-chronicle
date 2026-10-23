@@ -22,7 +22,7 @@ use crate::models::{Subagent, ToolCall, ToolCallStatus, TranscriptItem, Transcri
 pub(crate) struct EffectSink<'a> {
     session_id: &'a str,
     results: &'a mut SavedResultResolver,
-    used_tool_call_ids: HashSet<String>,
+    used_row_ids: HashSet<String>,
 }
 
 impl<'a> EffectSink<'a> {
@@ -32,7 +32,7 @@ impl<'a> EffectSink<'a> {
         Self {
             session_id,
             results,
-            used_tool_call_ids: HashSet::new(),
+            used_row_ids: HashSet::new(),
         }
     }
 
@@ -67,7 +67,7 @@ impl<'a> EffectSink<'a> {
         // child link is resolved by the indexer, never here.
         if kind == "subagent" {
             let subagent = Subagent {
-                id: format!("{}-{entry_id}", self.session_id),
+                id: self.unique_row_id(&format!("{}-{entry_id}", self.session_id)),
                 agent_id: Some(
                     detail
                         .get("childSessionId")
@@ -124,7 +124,7 @@ impl<'a> EffectSink<'a> {
                     },
                 )
             };
-        let id = self.unique_tool_call_id(&format!("{}-{entry_id}", self.session_id));
+        let id = self.unique_row_id(&format!("{}-{entry_id}", self.session_id));
         out.tool_calls.push(ToolCall {
             id: id.clone(),
             session_id: self.session_id.to_string(),
@@ -169,7 +169,7 @@ impl<'a> EffectSink<'a> {
             .get("id")
             .and_then(Value::as_str)
             .unwrap_or_default();
-        let id = self.unique_tool_call_id(&format!(
+        let id = self.unique_row_id(&format!(
             "{}-{message_id}:invoked-skill:{name}",
             self.session_id
         ));
@@ -218,15 +218,15 @@ impl<'a> EffectSink<'a> {
         );
     }
 
-    /// Tool-call ids: a repeated id gets `-dup{n}`.
-    fn unique_tool_call_id(&mut self, base: &str) -> String {
-        if self.used_tool_call_ids.insert(base.to_string()) {
+    /// Persisted row IDs: repeats get `-dup{n}`; parser action refs stay intact.
+    fn unique_row_id(&mut self, base: &str) -> String {
+        if self.used_row_ids.insert(base.to_string()) {
             return base.to_string();
         }
         let mut repeat = 1;
         loop {
             let candidate = format!("{base}-dup{repeat}");
-            if self.used_tool_call_ids.insert(candidate.clone()) {
+            if self.used_row_ids.insert(candidate.clone()) {
                 return candidate;
             }
             repeat += 1;
