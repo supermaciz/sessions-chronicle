@@ -105,7 +105,7 @@ pub(crate) fn convert(
         .ok_or_else(|| UnifiedError::Corrupt("snapshot session is missing".to_string()))?;
     let start_time = envelope_timestamp(session_object.get("createdAt"), "createdAt")?;
     let last_updated = envelope_timestamp(session_object.get("updatedAt"), "updatedAt")?;
-    let ending_status = ending_status(envelope);
+    let ending_status = ending_status(envelope)?;
     let token_usage = token_usage(session_object.get("tokenUsage"));
 
     // The runtime cwd wins over meta.json; a blank one falls back to a
@@ -186,6 +186,11 @@ pub(crate) fn convert(
             return Err(UnifiedError::Corrupt("entry id is missing".to_string()));
         }
         let turn_id = entry.get("turnId").and_then(Value::as_str);
+        closed_variant(
+            entry.get("generationStatus"),
+            "generationStatus",
+            &["in_progress", "completed"],
+        )?;
 
         match entry_type {
             "message" => {
@@ -217,7 +222,7 @@ pub(crate) fn convert(
                         }
                     }
                     "assistant" => {
-                        if is_uncommitted(entry) {
+                        if is_uncommitted(entry)? {
                             continue;
                         }
                         let text = text_blocks_joined(content);
@@ -238,7 +243,17 @@ pub(crate) fn convert(
                 }
             }
             "reasoning" => {
-                if is_uncommitted(entry) {
+                required_string(entry.get("text"), "reasoning.text")?;
+                if !entry
+                    .get("summary")
+                    .and_then(Value::as_array)
+                    .is_some_and(|parts| parts.iter().all(Value::is_string))
+                {
+                    return Err(UnifiedError::Corrupt(
+                        "reasoning.summary is not a string array".into(),
+                    ));
+                }
+                if is_uncommitted(entry)? {
                     continue;
                 }
                 let mut piece = PendingReasoning::default();
@@ -488,15 +503,54 @@ impl Transcript {
 /// A committed entry: provisional generations
 /// (`generationStatus == "in_progress"`) and discarded outcomes are
 /// omitted from the visible transcript (fact H).
-fn is_uncommitted(entry: &Value) -> bool {
-    if entry.get("generationStatus").and_then(Value::as_str) == Some("in_progress") {
-        return true;
+fn is_uncommitted(entry: &Value) -> Result<bool, UnifiedError> {
+    let provisional = entry.get("generationStatus").and_then(Value::as_str) == Some("in_progress");
+    if provisional && entry.get("outcome") == Some(&Value::Null) {
+        return Ok(true);
     }
-    entry
-        .get("outcome")
-        .and_then(|outcome| outcome.get("type"))
+    let outcome = closed_variant(
+        entry.pointer("/outcome/type"),
+        "outcome.type",
+        &["committed", "discarded"],
+    )?;
+    if outcome == "discarded" {
+        closed_variant(
+            entry.pointer("/outcome/cause"),
+            "outcome.cause",
+            &["failure", "steer", "interrupt", "retry"],
+        )?;
+    }
+    if provisional {
+        return Err(UnifiedError::Corrupt(
+            "provisional entry has a settled outcome".into(),
+        ));
+    }
+    Ok(outcome == "discarded")
+}
+
+/// Closed minor-9 discriminants: unknown strings are unsupported, malformed
+/// required values are corrupt. Extra object fields remain additive.
+pub(super) fn closed_variant<'a>(
+    value: Option<&'a Value>,
+    field: &str,
+    variants: &[&str],
+) -> Result<&'a str, UnifiedError> {
+    let variant = value
         .and_then(Value::as_str)
-        == Some("discarded")
+        .ok_or_else(|| UnifiedError::Corrupt(format!("{field} is not a string")))?;
+    if !variants.contains(&variant) {
+        return Err(UnifiedError::Unsupported(format!("{field} {variant:?}")));
+    }
+    Ok(variant)
+}
+
+pub(super) fn required_string<'a>(
+    value: Option<&'a Value>,
+    field: &str,
+) -> Result<&'a str, UnifiedError> {
+    value
+        .and_then(Value::as_str)
+        .ok_or_else(|| UnifiedError::Corrupt(format!("{field} is not a string")))
 }
 
 fn is_model_change(entry: &Value) -> bool {
@@ -595,25 +649,69 @@ fn entry_timestamp(entry: &Value, fallback: DateTime<Utc>) -> DateTime<Utc> {
 /// Ending status precedence (pinned rule): failed session or latest turn
 /// → Error; running/blocked session or in-progress/interrupted latest
 /// turn → Abrupt; completed latest turn → Clean; otherwise Unknown.
-fn ending_status(envelope: &Value) -> SessionEndingStatus {
-    let session_status = envelope
-        .pointer("/session/status/type")
-        .and_then(Value::as_str);
-    let latest_turn = envelope
-        .pointer("/latestTurn/status")
-        .and_then(Value::as_str);
+fn ending_status(envelope: &Value) -> Result<SessionEndingStatus, UnifiedError> {
+    let status = envelope.pointer("/session/status");
+    let session_status = Some(closed_variant(
+        status.and_then(|s| s.get("type")),
+        "session.status.type",
+        &["idle", "running", "blocked", "failed", "archived"],
+    )?);
+    match session_status {
+        Some("running" | "blocked") => {
+            required_string(status.and_then(|s| s.get("activeTurnId")), "activeTurnId")?;
+            if session_status == Some("blocked") {
+                required_string(status.and_then(|s| s.get("callbackId")), "callbackId")?;
+                closed_variant(
+                    status.and_then(|s| s.get("callbackKind")),
+                    "callbackKind",
+                    &["approval", "user_input"],
+                )?;
+            }
+        }
+        Some("failed") => {
+            required_string(
+                status.and_then(|s| s.get("message")),
+                "session failure message",
+            )?;
+        }
+        _ => {}
+    }
+    let latest_turn = match envelope.get("latestTurn") {
+        Some(Value::Null) => None,
+        Some(turn) if turn.is_object() => {
+            let state = closed_variant(
+                turn.get("status"),
+                "latestTurn.status",
+                &["in_progress", "completed", "failed", "interrupted"],
+            )?;
+            required_string(turn.get("id"), "latestTurn.id")?;
+            envelope_timestamp(turn.get("startedAt"), "latestTurn.startedAt")?;
+            if state != "in_progress" {
+                envelope_timestamp(turn.get("completedAt"), "latestTurn.completedAt")?;
+            }
+            if state == "failed" {
+                required_string(turn.pointer("/error/message"), "latestTurn.error.message")?;
+            }
+            Some(state)
+        }
+        _ => {
+            return Err(UnifiedError::Corrupt(
+                "latestTurn is missing or malformed".into(),
+            ));
+        }
+    };
     if session_status == Some("failed") || latest_turn == Some("failed") {
-        return SessionEndingStatus::Error;
+        return Ok(SessionEndingStatus::Error);
     }
     if matches!(session_status, Some("running") | Some("blocked"))
         || matches!(latest_turn, Some("in_progress") | Some("interrupted"))
     {
-        return SessionEndingStatus::Abrupt;
+        return Ok(SessionEndingStatus::Abrupt);
     }
     if latest_turn == Some("completed") {
-        return SessionEndingStatus::Clean;
+        return Ok(SessionEndingStatus::Clean);
     }
-    SessionEndingStatus::Unknown
+    Ok(SessionEndingStatus::Unknown)
 }
 
 /// Session token usage comes from `session.tokenUsage`, never

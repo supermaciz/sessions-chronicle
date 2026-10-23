@@ -212,6 +212,134 @@ fn pool_child_projection(dir: &Path) {
 }
 
 #[test]
+fn malformed_reasoning_preserves_prior_contents_and_signature() {
+    use serde_json::json;
+    for (field, value, unsupported) in [
+        ("outcome", json!({"type":"future"}), true),
+        ("generationStatus", json!("future"), true),
+        ("text", json!(42), false),
+        ("summary", json!([42]), false),
+    ] {
+        let mut h = Harness::empty();
+        h.add(CHILD_B);
+        assert!(h.run(false).1.is_empty());
+        let old = (h.messages(CHILD_B), h.signature(CHILD_B));
+        rewrite_document(&h.dir(CHILD_B), "projection-state.json", |doc| {
+            let mut reasoning = json!({"id":"r", "type":"reasoning", "generationStatus":"completed", "text":"thinking", "summary":[], "outcome":{"type":"committed"}});
+            reasoning[field] = value;
+            doc["snapshot"]["history"]["entries"]
+                .as_array_mut()
+                .unwrap()
+                .insert(1, reasoning);
+        });
+        let result = MistralVibeUnifiedParser.parse(&h.dir(CHILD_B));
+        assert!(
+            if unsupported {
+                matches!(result, Err(UnifiedError::Unsupported(_)))
+            } else {
+                matches!(result, Err(UnifiedError::Corrupt(_)))
+            },
+            "{field}: {result:?}"
+        );
+        assert_eq!(h.run(true).0.errors, 1);
+        assert_eq!(old, (h.messages(CHILD_B), h.signature(CHILD_B)));
+    }
+}
+
+#[test]
+fn closed_state_unions_preserve_prior_contents_and_signature() {
+    use serde_json::json;
+    let cases = [
+        (
+            "/history/entries/1/outcome/type",
+            json!("future"),
+            "Unsupported",
+        ),
+        ("/history/entries/1/outcome", json!(null), "Corrupt"),
+        (
+            "/history/entries/1/outcome",
+            json!({"type":"discarded"}),
+            "Corrupt",
+        ),
+        (
+            "/history/entries/1/outcome",
+            json!({"type":"discarded", "cause":"future"}),
+            "Unsupported",
+        ),
+        (
+            "/history/entries/1/generationStatus",
+            json!("future"),
+            "Unsupported",
+        ),
+        (
+            "/history/entries/1/generationStatus",
+            json!(null),
+            "Corrupt",
+        ),
+        ("/session/status/type", json!("future"), "Unsupported"),
+        ("/session/status", json!(null), "Corrupt"),
+        ("/latestTurn/status", json!("future"), "Unsupported"),
+        ("/latestTurn/status", json!(null), "Corrupt"),
+    ];
+    let mut failures = Vec::new();
+    for (pointer, value, expected) in cases {
+        let mut h = Harness::empty();
+        h.add(CHILD_B);
+        assert!(h.run(false).1.is_empty());
+        let old = (h.row(CHILD_B), h.messages(CHILD_B), h.signature(CHILD_B));
+        rewrite_document(&h.dir(CHILD_B), "projection-state.json", |doc| {
+            *doc["snapshot"].pointer_mut(pointer).unwrap() = value;
+        });
+        let result = MistralVibeUnifiedParser.parse(&h.dir(CHILD_B));
+        let classified = matches!(
+            (&result, expected),
+            (Err(UnifiedError::Corrupt(_)), "Corrupt")
+                | (Err(UnifiedError::Unsupported(_)), "Unsupported")
+        );
+        let (stats, _) = h.run(true);
+        if !classified
+            || stats.errors != 1
+            || old != (h.row(CHILD_B), h.messages(CHILD_B), h.signature(CHILD_B))
+        {
+            failures.push(format!("{pointer}: expected {expected}, got {result:?}"));
+        }
+    }
+    for (kind, status, expected) in [
+        ("future", "completed", "Unsupported"),
+        ("tool", "pending", "Unsupported"),
+        ("tool", "failed", "Corrupt"),
+    ] {
+        let mut h = Harness::empty();
+        h.add(CHILD_B);
+        assert!(h.run(false).1.is_empty());
+        let old = (h.row(CHILD_B), h.messages(CHILD_B), h.signature(CHILD_B));
+        rewrite_document(&h.dir(CHILD_B), "projection-state.json", |doc| {
+            doc["snapshot"]["history"]["entries"]
+                .as_array_mut()
+                .unwrap()
+                .push(json!({
+                    "id":"effect-bad", "type":"effect", "generationStatus":"completed",
+                    "detail":{"kind":kind,"toolName":"read_file"}, "state":{"status":status}
+                }));
+        });
+        let result = MistralVibeUnifiedParser.parse(&h.dir(CHILD_B));
+        let classified = matches!(
+            (&result, expected),
+            (Err(UnifiedError::Corrupt(_)), "Corrupt")
+                | (Err(UnifiedError::Unsupported(_)), "Unsupported")
+        );
+        let (stats, _) = h.run(true);
+        if !classified
+            || stats.errors != 1
+            || old != (h.row(CHILD_B), h.messages(CHILD_B), h.signature(CHILD_B))
+        {
+            failures.push(format!("effect {kind}/{status}: {result:?}"));
+        }
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+#[test]
 fn indexes_unified_and_legacy_side_by_side() {
     let mut h = Harness::fixtures();
     let (stats, errors) = h.run(false);

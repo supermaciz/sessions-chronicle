@@ -574,7 +574,10 @@ def with_history(env, entries):
 
 
 def turn(status, turn_id, started, completed=None):
-    return {"completedAt": completed, "id": turn_id, "startedAt": started, "status": status}
+    value = {"completedAt": completed, "id": turn_id, "startedAt": started, "status": status}
+    if status == "failed":
+        value["error"] = {"message": "Synthetic turn failure"}
+    return value
 
 
 def token_usage(input_tokens, output_tokens, total_tokens, cached_input_tokens):

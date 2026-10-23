@@ -11,7 +11,7 @@ use std::collections::HashSet;
 
 use serde_json::Value;
 
-use super::convert::{Transcript, text_blocks_joined};
+use super::convert::{Transcript, closed_variant, required_string, text_blocks_joined};
 use super::error::UnifiedError;
 use super::saved_results::SavedResultResolver;
 use super::store::child_session_id;
@@ -57,10 +57,15 @@ impl<'a> EffectSink<'a> {
             .get("detail")
             .ok_or_else(|| UnifiedError::Corrupt("effect detail is missing".to_string()))?;
         let (status, error_text) = effect_status(entry)?;
+        let kind = closed_variant(
+            detail.get("kind"),
+            "effect detail.kind",
+            &["tool", "subagent"],
+        )?;
 
         // Subagent effects (fact H): one subagent row plus its item; the
         // child link is resolved by the indexer, never here.
-        if detail.get("kind").and_then(Value::as_str) == Some("subagent") {
+        if kind == "subagent" {
             let subagent = Subagent {
                 id: format!("{}-{entry_id}", self.session_id),
                 agent_id: Some(
@@ -270,20 +275,19 @@ fn effect_status(entry: &Value) -> Result<(ToolCallStatus, Option<String>), Unif
     match status {
         "running" => Ok((ToolCallStatus::Running, None)),
         "completed" => Ok((ToolCallStatus::Completed, None)),
-        "pending" => Ok((ToolCallStatus::Pending, None)),
         "failed" => Ok((
             ToolCallStatus::Error,
-            entry
-                .pointer("/state/error/message")
-                .and_then(Value::as_str)
-                .map(str::to_string),
+            Some(
+                required_string(
+                    entry.pointer("/state/error/message"),
+                    "effect error.message",
+                )?
+                .to_string(),
+            ),
         )),
         "cancelled" | "skipped" => Ok((
             ToolCallStatus::Error,
-            entry
-                .pointer("/state/reason")
-                .and_then(Value::as_str)
-                .map(str::to_string),
+            Some(required_string(entry.pointer("/state/reason"), "effect reason")?.to_string()),
         )),
         other => Err(UnifiedError::Unsupported(format!(
             "effect status {other:?}"
@@ -758,17 +762,15 @@ mod tests {
     // ------------------------------------------------------------------
 
     #[test]
-    fn running_and_pending_effects_have_no_end() {
+    fn running_effects_have_no_end() {
         let entries = vec![
             in_memory_user_message(),
             tool_effect("act-run", "running", json!({"outputText": ""})),
-            tool_effect("act-wait", "pending", json!({})),
         ];
 
         let parsed = convert_entries(entries).unwrap();
-        assert_eq!(parsed.tool_calls.len(), 2);
+        assert_eq!(parsed.tool_calls.len(), 1);
         assert_eq!(parsed.tool_calls[0].status, ToolCallStatus::Running);
-        assert_eq!(parsed.tool_calls[1].status, ToolCallStatus::Pending);
         for call in &parsed.tool_calls {
             assert!(
                 call.started_at.is_some(),
