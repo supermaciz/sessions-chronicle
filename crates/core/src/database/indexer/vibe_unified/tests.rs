@@ -502,14 +502,113 @@ fn child_indexed_before_parent_is_linked() {
 }
 
 #[test]
-fn deeper_nesting_is_not_linked() {
-    let mut h = Harness::empty();
-    h.copy("vibe_unified_variants/deeper");
-    assert!(h.run(false).1.is_empty());
+fn deeper_nesting_is_rejected_in_both_orders() {
     let child = "child-cd3a1a55a67abb357cddaa83";
     let grandchild = "child-f3f3440f1d900f6bd4712277";
-    assert!(h.exists(grandchild));
-    assert_eq!(h.links(child), vec![None]);
+    for child_first in [true, false] {
+        let mut h = Harness::empty();
+        h.copy("vibe_unified_variants/deeper");
+        let root = h.root().join("unified");
+        let ids = if child_first {
+            [child, grandchild]
+        } else {
+            [grandchild, child]
+        };
+        let mut stats = IndexingStats::default();
+        let mut errors = VecDeque::new();
+        h.indexer
+            .index_unified_candidates(
+                &root,
+                ids.map(|id| root.join(id)).into_iter(),
+                false,
+                &mut stats,
+                &mut errors,
+            )
+            .unwrap();
+        h.assert_no_contents(grandchild);
+        assert!(h.exists(child));
+        assert_eq!(stats.errors, 1);
+        assert!(errors[0].message.contains("nesting"));
+        assert_eq!(h.links(child), vec![None]);
+    }
+}
+
+#[test]
+fn deeper_nesting_is_removed_when_parent_is_revealed_cross_pass() {
+    let child = "child-cd3a1a55a67abb357cddaa83";
+    let grandchild = "child-f3f3440f1d900f6bd4712277";
+    for child_first in [true, false] {
+        let mut h = Harness::empty();
+        let ids = if child_first {
+            [child, grandchild]
+        } else {
+            [grandchild, child]
+        };
+        for id in ids {
+            copy_tree(
+                &crate::fixture_path(&format!("vibe_unified_variants/deeper/unified/{id}")),
+                &h.dir(id),
+            );
+            let (_, errors) = h.run(true);
+            if id == ids[0] {
+                assert!(errors.is_empty());
+                assert!(h.exists(id));
+            }
+        }
+        h.assert_no_contents(grandchild);
+        assert_eq!(h.links(child), vec![None]);
+        assert!(h.exists(child));
+    }
+}
+
+#[test]
+fn deeper_nesting_cleanup_does_not_claim_other_source_rows() {
+    let child = "child-cd3a1a55a67abb357cddaa83";
+    let grandchild = "child-f3f3440f1d900f6bd4712277";
+    let mut h = Harness::empty();
+    copy_tree(
+        &crate::fixture_path(&format!(
+            "vibe_unified_variants/deeper/unified/{grandchild}"
+        )),
+        &h.dir(grandchild),
+    );
+    assert!(h.run(true).1.is_empty());
+    let outside = h.temp.path().join("other-source/unified").join(grandchild);
+    fs::create_dir_all(&outside).unwrap();
+    h.indexer
+        .db
+        .execute(
+            "UPDATE sessions SET file_path=?1 WHERE id=?2",
+            rusqlite::params![outside.to_string_lossy(), grandchild],
+        )
+        .unwrap();
+    h.indexer
+        .db
+        .execute(
+            "UPDATE vibe_unified_signatures SET session_dir=?1 WHERE session_dir=?2",
+            rusqlite::params![
+                outside.to_string_lossy(),
+                h.dir(grandchild).to_string_lossy()
+            ],
+        )
+        .unwrap();
+    let old = h.row(grandchild);
+    copy_tree(
+        &crate::fixture_path(&format!("vibe_unified_variants/deeper/unified/{child}")),
+        &h.dir(child),
+    );
+    h.run(true);
+    assert_eq!(old, h.row(grandchild));
+    let n: i64 = h
+        .indexer
+        .db
+        .query_row(
+            "SELECT count(*) FROM vibe_unified_signatures WHERE session_dir=?1",
+            [outside.to_string_lossy().as_ref()],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(n, 1);
 }
 
 #[test]

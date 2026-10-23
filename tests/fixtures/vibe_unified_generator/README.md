@@ -77,6 +77,12 @@ two corruption variants (`unknown-op`, `unknown-record`) on stderr and exits
 1; every other variant replays cleanly. `rollover/gen1` (journal replay) and
 `rollover/gen2` (snapshot) both end at 4 entries — the rollover invariant.
 
+The `deeper` variant has internally coherent snapshot/runtime identities but
+invalid cross-session ancestry. Indexing rejects its grandchild once the
+intermediate parent is known as a subagent, in either enumeration order and
+across incremental passes. A grandchild discovered alone cannot be distinguished
+from a legitimate orphan until the missing parent is revealed.
+
 ## Store layout produced
 
 ```

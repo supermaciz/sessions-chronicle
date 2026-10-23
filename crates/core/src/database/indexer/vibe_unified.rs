@@ -89,6 +89,28 @@ impl SessionIndexer {
                 }
             }
         }
+        // An orphan may be a legitimate first-level child: absence of its
+        // parent is not evidence of nesting. Use only verified candidates and
+        // persisted Unified rows owned by this source to establish ancestry.
+        let persisted = self.owned_unified_subagents(root)?;
+        let mut subagent_ids: HashSet<String> =
+            persisted.iter().map(|(id, _, _)| id.clone()).collect();
+        for (path, parsed) in &children {
+            let existing: Option<String> = self
+                .db
+                .query_row(
+                    "SELECT file_path FROM sessions WHERE id=?1",
+                    [&parsed.parsed.session.id],
+                    |r| r.get(0),
+                )
+                .optional()?;
+            if existing.as_ref().is_none_or(|owner| {
+                owner == path.to_string_lossy().as_ref() || !Path::new(owner).exists()
+            }) {
+                subagent_ids.insert(parsed.parsed.session.id.clone());
+            }
+        }
+        let mut rejected = HashSet::new();
         for (path, parsed) in children {
             if deleting.contains(&parsed.parsed.session.id)
                 || parsed
@@ -100,7 +122,44 @@ impl SessionIndexer {
             {
                 continue;
             }
+            if parsed
+                .parsed
+                .session
+                .parent_session_id
+                .as_ref()
+                .is_some_and(|parent| subagent_ids.contains(parent))
+            {
+                self.remove_unified_paths(std::slice::from_ref(&path), stats)?;
+                rejected.insert(path.clone());
+                self.unified_failure(
+                    &path,
+                    &UnifiedError::Corrupt("deeper subagent nesting is not supported".into())
+                        .into(),
+                    stats,
+                    errors_detail,
+                );
+                continue;
+            }
             self.handle_unified_outcome(&path, Ok(parsed), stats, errors_detail)?;
+        }
+        // A previously accepted orphan can become provably invalid when its
+        // parent is first revealed as a subagent (even if the orphan was skipped
+        // incrementally). Cleanup is path-owned, never ID-only or legacy-wide.
+        for (_, parent, path) in persisted {
+            if parent
+                .as_ref()
+                .is_some_and(|parent| subagent_ids.contains(parent))
+                && !rejected.contains(&path)
+            {
+                self.remove_unified_paths(std::slice::from_ref(&path), stats)?;
+                self.unified_failure(
+                    &path,
+                    &UnifiedError::Corrupt("deeper subagent nesting is not supported".into())
+                        .into(),
+                    stats,
+                    errors_detail,
+                );
+            }
         }
         // Recheck accessibility: a mount/source may disappear after read_dir
         // succeeded. Its absence is never evidence that its sessions were deleted.
@@ -198,6 +257,29 @@ impl SessionIndexer {
             [path.to_string_lossy().as_ref()],
             |r| r.get::<_, bool>(0),
         )?)
+    }
+
+    fn owned_unified_subagents(
+        &self,
+        root: &Path,
+    ) -> Result<Vec<(String, Option<String>, PathBuf)>> {
+        let mut stmt = self.db.prepare(
+            "SELECT s.id,s.parent_session_id,s.file_path FROM sessions s
+             JOIN vibe_unified_signatures sig ON sig.session_dir=s.file_path
+             WHERE s.tool='mistral_vibe' AND s.is_subagent=1",
+        )?;
+        let rows = stmt.query_map([], |r| {
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, Option<String>>(1)?,
+                PathBuf::from(r.get::<_, String>(2)?),
+            ))
+        })?;
+        Ok(rows
+            .collect::<rusqlite::Result<Vec<_>>>()?
+            .into_iter()
+            .filter(|(_, _, path)| path.parent() == Some(root))
+            .collect())
     }
     fn unified_signature(&self, path: &Path) -> Result<Option<UnifiedSignature>> {
         let raw: Option<String> = self

@@ -209,6 +209,16 @@ deterministic child identity; K, offloaded large tool-result resolution.
 `checkpoint.json` is not read. Neither are `scheduled-loops.json`, the sibling
 `.session-index.json` catalog, or `scratchpad/`.
 
+Only first-level Unified subagent sessions are supported. A verified child whose
+parent is itself a known Unified subagent is rejected, regardless of discovery
+order; an already indexed orphan is removed (including contents, signature and
+incoming links) when its parent is later revealed to be a subagent. An absent
+parent cannot establish invalid ancestry: the orphan must remain indexable until
+that evidence exists. Ancestry/cleanup is scoped to verified candidates and
+owned Unified rows in the same source root; legacy nested-child behavior is
+unchanged. Unknown minor-9 state variants (including `pending` effect states)
+are unsupported rather than presented as successful activity.
+
 ---
 
 ## Storage & File Naming (Legacy, ≤ 2.x)
