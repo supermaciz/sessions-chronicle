@@ -525,8 +525,10 @@ fn user_display_text(entry: &Value, content: &[Value]) -> (String, Vec<(String, 
 }
 
 /// Fact I: identifies a skill payload text block — one starting with
-/// `<skill_content name="{name}">` or equal to the upstream
-/// already-loaded sentence — and extracts the invoked skill name.
+/// `<skill_content name="{name}">` or exactly equal to the upstream
+/// already-loaded sentence — and extracts the invoked skill name.  The
+/// already-loaded form must match the whole sentence: anything before or
+/// after it is real user content and stays visible.
 fn skill_payload_name(text: &str) -> Option<&str> {
     const OPEN: &str = "<skill_content name=\"";
     if let Some(rest) = text.strip_prefix(OPEN) {
@@ -534,11 +536,13 @@ fn skill_payload_name(text: &str) -> Option<&str> {
         let name = &rest[..end];
         return (!name.is_empty()).then_some(name);
     }
-    const LOADED_SUFFIX: &str =
+    const LOADED_TAIL: &str =
         "' is already loaded earlier in this conversation. Reuse those instructions.";
     let rest = text.strip_prefix("Skill '")?;
-    let end = rest.find(LOADED_SUFFIX)?;
-    let name = &rest[..end];
+    if !rest.ends_with(LOADED_TAIL) {
+        return None;
+    }
+    let name = &rest[..rest.len() - LOADED_TAIL.len()];
     (!name.is_empty()).then_some(name)
 }
 
@@ -1086,6 +1090,30 @@ mod tests {
         assert_eq!(parsed.messages[0].content, "Do the thing");
         // The Task 5 sink records nothing; Task 6 turns each payload into
         // a settled `skill` tool call right after the message item.
+        assert!(parsed.tool_calls.is_empty());
+    }
+
+    /// Review finding (regraded Important): the already-loaded sentence
+    /// matcher must be exact.  Text after the sentence is real user
+    /// content and stays visible; only the exact upstream sentence is a
+    /// skill payload block.
+    #[test]
+    fn near_match_already_loaded_sentence_stays_visible() {
+        let entry = user_message(
+            "u1",
+            json!([
+                {"type": "text", "text": "Do the thing"},
+                {"type": "text", "text": "Skill 'vibe-skill' is already loaded earlier in this conversation. Reuse those instructions. But also read the docs"},
+            ]),
+        );
+
+        let parsed = convert_entries(vec![entry]).unwrap();
+        assert_eq!(parsed.messages.len(), 1);
+        assert_eq!(
+            parsed.messages[0].content,
+            "Do the thing\nSkill 'vibe-skill' is already loaded earlier in this conversation. Reuse those instructions. But also read the docs"
+        );
+        // No skill payload was extracted for the near match.
         assert!(parsed.tool_calls.is_empty());
     }
 
