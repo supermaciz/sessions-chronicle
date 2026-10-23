@@ -26,7 +26,7 @@ The primary use case is: "I searched for something, now show me *where* it appea
 
 | Proposal A | Proposal B |
 |------------|------------|
-| ![Proposal A](mockup-a-inline-highlight.svg) | ![Proposal B](mockup-b-filtered-matches.svg) |
+| ![Proposal A](../mockups/search-highlighting/mockup-a-inline-highlight.svg) | ![Proposal B](../mockups/search-highlighting/mockup-b-filtered-matches.svg) |
 
 ---
 
