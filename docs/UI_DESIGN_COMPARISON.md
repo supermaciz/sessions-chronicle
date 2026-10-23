@@ -1,5 +1,7 @@
 # UI Design Comparison: List vs Cards
 
+> **Archive** — Early design analysis (2026-01-19) comparing list and cards layouts, kept as historical context. The list view shipped long ago; see `docs/mockups/` for current design explorations.
+
 ## List View (`mockup-list-view.svg`)
 
 ### Pros

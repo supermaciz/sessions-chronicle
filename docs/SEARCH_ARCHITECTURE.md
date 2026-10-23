@@ -1,5 +1,7 @@
 # Search Architecture Analysis (from agent-sessions)
 
+> **Archive** — Historical analysis of the `agent-sessions` project (2026-01-19), kept as design context. Search is implemented with SQLite FTS5; see `crates/core/src/database/` for the current implementation.
+
 ## How agent-sessions Implements Search
 
 ### Two-Phase Progressive Search (Not Traditional Indexing)
