@@ -1,0 +1,1 @@
+{"payload":{"delta":[{"id":"u1","index":0,"op":"move_entry"}],"watermark":2},"previous_record_sha256":null,"record_sha256":"f5f8f1865b56f62e46f69a8e4e6c0bd3ee2cd811256ce217c9ecc000a8bb1afd","recovery_journal_record_version":1,"sequence":2,"type":"projection_delta"}
