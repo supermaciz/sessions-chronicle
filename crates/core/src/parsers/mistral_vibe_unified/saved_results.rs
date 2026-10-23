@@ -8,8 +8,9 @@
 
 use std::fs;
 use std::io;
+use std::io::Read;
 use std::os::unix::fs::MetadataExt;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 use regex::Regex;
 use serde::{Deserialize, Serialize};
@@ -25,6 +26,15 @@ static RECEIPT: LazyLock<Regex> = LazyLock::new(|| {
         r"saved to the file system under (?P<path>[^\n]+)\.\nOutput size: (?P<n>[0-9]+) characters",
     )
     .expect("saved-result receipt regex compiles")
+});
+
+/// Encoded saved-result file name (fact K): `encode` keeps
+/// `[A-Za-z0-9-_.!~*'()]` and writes other bytes as `%XX` hex triplets,
+/// and the record always ends in `.json`.  Malformed escapes (`%`,
+/// `%Q1`, `%1`) are rejected.
+static ENCODED_NAME: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"^(?:[A-Za-z0-9\-_.!~*'()]|%[0-9A-Fa-f]{2})+\.json$")
+        .expect("encoded saved-result name regex compiles")
 });
 
 /// A `symlink_metadata` snapshot of one consumed saved result, used for
@@ -62,10 +72,24 @@ impl SavedResultResolver {
         let Some((path, expected_utf16_len)) = parse_receipt(receipt_text) else {
             return Ok(None);
         };
-        // The receipt names the host that saved the record; only its
-        // encoded basename is trusted and used, so resolution always
-        // stays inside the local tool-results directory.
+        // The receipt names the host that saved the record (fact K: an
+        // absolute path); only its encoded basename is trusted and used,
+        // so resolution always stays inside the local tool-results
+        // directory whatever host path the receipt carries.
         let path = Path::new(path);
+        if !path.is_absolute() {
+            return Err(UnifiedError::Corrupt(format!(
+                "saved-result receipt path {path:?} is not absolute"
+            )));
+        }
+        if path
+            .components()
+            .any(|component| component == Component::ParentDir)
+        {
+            return Err(UnifiedError::Corrupt(format!(
+                "saved-result receipt path {path:?} contains a traversal component"
+            )));
+        }
         let parent_is_tool_results = path
             .parent()
             .and_then(|parent| parent.file_name())
@@ -81,28 +105,48 @@ impl SavedResultResolver {
                 "saved-result receipt path {path:?} has no file name"
             )));
         };
-        if !is_encoded_json_name(basename) {
+        if !ENCODED_NAME.is_match(basename) {
             return Err(UnifiedError::Corrupt(format!(
                 "saved-result name {basename:?} is not an encoded .json file name"
             )));
         }
-        // The store's symlink boundary applies to the directory and the
-        // record itself.
+        // The store's symlink boundary applies to the directory; the
+        // record itself is validated, opened and read through one handle
+        // below, so a path swapped between the checks and the read is
+        // always detected.
         reject_symlink(&self.tool_results_dir)?;
         let local_path = self.tool_results_dir.join(basename);
-        reject_symlink(&local_path)?;
-        let metadata = fs::symlink_metadata(&local_path).map_err(|error| match error.kind() {
+        // No-follow validation of the record: a symlink is corrupt, a
+        // missing record is incomplete data.
+        let validated = fs::symlink_metadata(&local_path).map_err(|error| match error.kind() {
             io::ErrorKind::NotFound => UnifiedError::MissingSavedResult(format!(
                 "saved result {basename} referenced by a receipt is missing"
             )),
             _ => UnifiedError::Io(error),
         })?;
-        let raw = fs::read(&local_path).map_err(|error| match error.kind() {
+        if validated.file_type().is_symlink() {
+            return Err(UnifiedError::Corrupt(format!(
+                "saved result {basename} is a symlink"
+            )));
+        }
+        #[cfg(test)]
+        test_hooks::run_between_check_and_open();
+        // Open the record and fstat that same handle: whatever the path
+        // points at now, only the validated file itself may be read.
+        let mut file = fs::File::open(&local_path).map_err(|error| match error.kind() {
             io::ErrorKind::NotFound => UnifiedError::MissingSavedResult(format!(
                 "saved result {basename} referenced by a receipt is missing"
             )),
             _ => UnifiedError::Io(error),
         })?;
+        let opened = file.metadata().map_err(UnifiedError::Io)?;
+        if opened.dev() != validated.dev() || opened.ino() != validated.ino() {
+            return Err(UnifiedError::Corrupt(format!(
+                "saved result {basename} changed while it was being read"
+            )));
+        }
+        let mut raw = Vec::new();
+        file.read_to_end(&mut raw).map_err(UnifiedError::Io)?;
         let content = String::from_utf8(raw).map_err(|_| {
             UnifiedError::Corrupt(format!("saved result {basename} is not valid UTF-8"))
         })?;
@@ -112,11 +156,18 @@ impl SavedResultResolver {
                 "saved result {basename} holds {utf16_len} UTF-16 characters, the receipt says {expected_utf16_len}"
             )));
         }
+        // Fact K: the record holds pretty JSON; validate before it is
+        // recorded as consumed.
+        if let Err(error) = serde_json::from_str::<serde_json::Value>(&content) {
+            return Err(UnifiedError::Corrupt(format!(
+                "saved result {basename} is not valid JSON: {error}"
+            )));
+        }
         self.consumed.push((
             basename.to_string(),
             FileStat {
-                size: metadata.len(),
-                mtime_ns: metadata.mtime() * 1_000_000_000 + metadata.mtime_nsec() as i64,
+                size: opened.len(),
+                mtime_ns: opened.mtime() * 1_000_000_000 + opened.mtime_nsec(),
             },
         ));
         Ok(Some(content))
@@ -142,21 +193,33 @@ fn parse_receipt(text: &str) -> Option<(&str, u64)> {
     Some((path, size))
 }
 
-/// Encoded saved-result file name (fact K): `encode` keeps
-/// `[A-Za-z0-9-_.!~*'()]` and writes other bytes as `%XX`, and the record
-/// always ends in `.json`.
-fn is_encoded_json_name(name: &str) -> bool {
-    let Some(stem) = name.strip_suffix(".json") else {
-        return false;
-    };
-    !stem.is_empty()
-        && stem.bytes().all(|byte| {
-            byte.is_ascii_alphanumeric()
-                || matches!(
-                    byte,
-                    b'-' | b'_' | b'.' | b'!' | b'~' | b'*' | b'\'' | b'(' | b')' | b'%'
-                )
-        })
+/// Test seam for the check/use race: runs once, between the record's
+/// no-follow validation and its open, so tests can swap the record (or
+/// the tool-results directory) deterministically at the exact point an
+/// attacker would.  Thread-local so parallel test threads cannot consume
+/// each other's hooks.
+#[cfg(test)]
+mod test_hooks {
+    use std::cell::RefCell;
+
+    type Hook = Box<dyn FnOnce() + Send>;
+
+    thread_local! {
+        static BETWEEN_CHECK_AND_OPEN: RefCell<Option<Hook>> = const { RefCell::new(None) };
+    }
+
+    /// Installs the hook for the current thread's next `resolve` that
+    /// reaches the seam.
+    pub(crate) fn on_between_check_and_open(hook: Hook) {
+        BETWEEN_CHECK_AND_OPEN.with(|slot| *slot.borrow_mut() = Some(hook));
+    }
+
+    pub(crate) fn run_between_check_and_open() {
+        let hook = BETWEEN_CHECK_AND_OPEN.with(|slot| slot.borrow_mut().take());
+        if let Some(hook) = hook {
+            hook();
+        }
+    }
 }
 
 #[cfg(test)]
@@ -221,22 +284,23 @@ mod tests {
     #[test]
     fn receipt_resolves_local_record_and_records_stat() {
         let (temp, dir) = temp_tool_results();
-        write_saved(&dir, "saved.json", "abc");
+        let content = r#"{"out":"abc"}"#;
+        write_saved(&dir, "saved.json", content);
 
         let mut resolver = SavedResultResolver::new(dir.clone());
         let resolved = resolver
             .resolve(&receipt(
                 "/home/host/.vibe/logs/session/unified/x/tool-results/saved.json",
-                3,
+                content.encode_utf16().count(),
             ))
             .unwrap()
             .expect("the local record resolves");
-        assert_eq!(resolved, "abc");
+        assert_eq!(resolved, content);
 
         let consumed = resolver.into_consumed();
         assert_eq!(consumed.len(), 1);
         assert_eq!(consumed[0].0, "saved.json");
-        assert_eq!(consumed[0].1.size, 3);
+        assert_eq!(consumed[0].1.size, content.len() as u64);
         let metadata = fs::symlink_metadata(dir.join("saved.json")).unwrap();
         assert_eq!(
             consumed[0].1.mtime_ns,
@@ -250,16 +314,17 @@ mod tests {
         // A sandbox receipt names a tmp host directory; only the
         // basename is used, so the store's own record resolves.
         let (temp, dir) = temp_tool_results();
-        write_saved(&dir, "bash-call-7.json", "sandbox output");
+        let content = r#"{"out":"sandbox"}"#;
+        write_saved(&dir, "bash-call-7.json", content);
         let mut resolver = SavedResultResolver::new(dir);
         let resolved = resolver
             .resolve(&receipt(
                 "/tmp/vibe-sandbox-1a2b/tool-results/bash-call-7.json",
-                14, // "sandbox output" in UTF-16 code units
+                content.encode_utf16().count(),
             ))
             .unwrap()
             .expect("the sandbox record resolves");
-        assert_eq!(resolved, "sandbox output");
+        assert_eq!(resolved, content);
         let _ = temp;
     }
 
@@ -322,18 +387,23 @@ mod tests {
     #[test]
     fn utf16_length_counts_code_units_not_chars() {
         let (temp, dir) = temp_tool_results();
-        write_saved(&dir, "saved.json", "🚀é"); // 3 UTF-16 units, 2 chars
+        // The emoji is one char but two UTF-16 code units.
+        let content = "{\"e\":\"🚀é\"}";
+        let units = content.encode_utf16().count();
+        let chars = content.chars().count();
+        assert_eq!(units, chars + 1, "fixture premise: the emoji doubles");
+        write_saved(&dir, "saved.json", content);
 
         let mut resolver = SavedResultResolver::new(dir.clone());
         let resolved = resolver
-            .resolve(&receipt("/x/tool-results/saved.json", 3))
+            .resolve(&receipt("/x/tool-results/saved.json", units))
             .unwrap()
             .expect("UTF-16 units match");
-        assert_eq!(resolved, "🚀é");
+        assert_eq!(resolved, content);
 
         let mut resolver = SavedResultResolver::new(dir);
         let error = resolver
-            .resolve(&receipt("/x/tool-results/saved.json", 2))
+            .resolve(&receipt("/x/tool-results/saved.json", chars))
             .unwrap_err();
         assert_eq!(error_variant(&error), "Corrupt");
         let _ = temp;
@@ -364,6 +434,158 @@ mod tests {
         let mut resolver = SavedResultResolver::new(link);
         let error = resolver
             .resolve(&receipt("/x/tool-results/saved.json", 3))
+            .unwrap_err();
+        assert_eq!(error_variant(&error), "Corrupt");
+    }
+
+    // ------------------------------------------------------------------
+    // Review fixes: path shape, percent triplets, JSON validity and the
+    // check/use race (swaps happen at the deterministic test seam).
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn receipt_with_relative_path_is_corrupt() {
+        let (temp, dir) = temp_tool_results();
+        write_saved(&dir, "saved.json", r#"{"out":"abc"}"#);
+        let mut resolver = SavedResultResolver::new(dir);
+        // Relative: a `tool-results` parent component alone is not
+        // enough; the receipt names an absolute host path (fact K).
+        let error = resolver
+            .resolve(&receipt("tool-results/saved.json", 13))
+            .unwrap_err();
+        assert_eq!(error_variant(&error), "Corrupt");
+        let _ = temp;
+    }
+
+    #[test]
+    fn receipt_with_traversal_component_is_corrupt() {
+        let (temp, dir) = temp_tool_results();
+        write_saved(&dir, "saved.json", r#"{"out":"abc"}"#);
+        let mut resolver = SavedResultResolver::new(dir);
+        // The review's example: the final parent component is
+        // `tool-results`, but a `..` component traverses elsewhere.
+        let error = resolver
+            .resolve(&receipt(
+                "/tmp/tool-results/../elsewhere/tool-results/saved.json",
+                13,
+            ))
+            .unwrap_err();
+        assert_eq!(error_variant(&error), "Corrupt");
+        let _ = temp;
+    }
+
+    #[test]
+    fn receipt_with_malformed_percent_escape_is_corrupt() {
+        let (temp, dir) = temp_tool_results();
+        let mut resolver = SavedResultResolver::new(dir);
+        // Only valid `%XX` triplets are encoded names: a bare `%`, a
+        // non-hex `%Q1` and an incomplete `%1` are all rejected.
+        for name in ["bash-call%.json", "bash-call%Q19.json", "bash-call%1.json"] {
+            let error = resolver
+                .resolve(&receipt(&format!("/x/tool-results/{name}"), 3))
+                .unwrap_err();
+            assert_eq!(
+                error_variant(&error),
+                "Corrupt",
+                "malformed percent escape {name:?} must be rejected"
+            );
+        }
+        let _ = temp;
+    }
+
+    #[test]
+    fn invalid_json_record_is_corrupt() {
+        let (temp, dir) = temp_tool_results();
+        let content = "not json at all";
+        write_saved(&dir, "saved.json", content);
+        let mut resolver = SavedResultResolver::new(dir);
+        // Fact K: the record holds pretty JSON; a same-length non-JSON
+        // file is not a saved result.
+        let error = resolver
+            .resolve(&receipt(
+                "/x/tool-results/saved.json",
+                content.encode_utf16().count(),
+            ))
+            .unwrap_err();
+        assert_eq!(error_variant(&error), "Corrupt");
+        let _ = temp;
+    }
+
+    #[test]
+    fn record_swapped_for_symlink_after_check_is_rejected() {
+        let (temp, dir) = temp_tool_results();
+        let content = r#"{"out":"abc"}"#;
+        write_saved(&dir, "saved.json", content);
+        // The swap target holds identical, fully valid content — only
+        // the identity of the file behind the path changes.
+        let target = temp.path().join("elsewhere.json");
+        fs::write(&target, content).unwrap();
+        let swap_dir = dir.clone();
+        test_hooks::on_between_check_and_open(Box::new(move || {
+            fs::remove_file(swap_dir.join("saved.json")).unwrap();
+            std::os::unix::fs::symlink(&target, swap_dir.join("saved.json")).unwrap();
+        }));
+
+        let mut resolver = SavedResultResolver::new(dir);
+        let error = resolver
+            .resolve(&receipt(
+                "/x/tool-results/saved.json",
+                content.encode_utf16().count(),
+            ))
+            .unwrap_err();
+        assert_eq!(error_variant(&error), "Corrupt");
+        let _ = temp;
+    }
+
+    #[test]
+    fn record_swapped_for_other_file_after_check_is_rejected() {
+        let (temp, dir) = temp_tool_results();
+        let content = r#"{"out":"abc"}"#;
+        write_saved(&dir, "saved.json", content);
+        // A different regular file with identical bytes: same content,
+        // different inode — still a swap.
+        let swap_dir = dir.clone();
+        let swap_content = content.to_string();
+        test_hooks::on_between_check_and_open(Box::new(move || {
+            fs::remove_file(swap_dir.join("saved.json")).unwrap();
+            fs::write(swap_dir.join("saved.json"), swap_content).unwrap();
+        }));
+
+        let mut resolver = SavedResultResolver::new(dir);
+        let error = resolver
+            .resolve(&receipt(
+                "/x/tool-results/saved.json",
+                content.encode_utf16().count(),
+            ))
+            .unwrap_err();
+        assert_eq!(error_variant(&error), "Corrupt");
+        let _ = temp;
+    }
+
+    #[test]
+    fn tool_results_dir_swapped_for_symlink_after_check_is_rejected() {
+        let temp = TempDir::new().expect("temp dir");
+        let dir = temp.path().join("tool-results");
+        fs::create_dir_all(&dir).unwrap();
+        let content = r#"{"out":"abc"}"#;
+        fs::write(dir.join("saved.json"), content).unwrap();
+        // A twin directory with an identical record: swapping the
+        // directory mid-resolution must still be detected.
+        let twin = temp.path().join("twin-tool-results");
+        fs::create_dir_all(&twin).unwrap();
+        fs::write(twin.join("saved.json"), content).unwrap();
+        let swap_dir = dir.clone();
+        test_hooks::on_between_check_and_open(Box::new(move || {
+            fs::remove_dir_all(&swap_dir).unwrap();
+            std::os::unix::fs::symlink(&twin, &swap_dir).unwrap();
+        }));
+
+        let mut resolver = SavedResultResolver::new(dir);
+        let error = resolver
+            .resolve(&receipt(
+                "/x/tool-results/saved.json",
+                content.encode_utf16().count(),
+            ))
             .unwrap_err();
         assert_eq!(error_variant(&error), "Corrupt");
     }
