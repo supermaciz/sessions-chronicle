@@ -35,7 +35,7 @@ impl UnifiedSignature {
     }
 
     pub fn is_current(&self, session_dir: &Path) -> bool {
-        let Ok(current) = fs::read(session_dir.join("CURRENT")) else {
+        let Ok(current) = super::store::read_current(session_dir) else {
             return false;
         };
         let digest = super::canonical::sha256_hex(&current);

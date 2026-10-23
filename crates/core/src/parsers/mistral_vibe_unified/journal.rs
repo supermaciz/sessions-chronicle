@@ -1082,6 +1082,25 @@ mod tests {
     }
 
     #[test]
+    fn current_symlink_is_rejected_by_load_stability_and_freshness() {
+        use std::os::unix::fs::symlink;
+        let (_temp, session) = copy_store(R302);
+        let store = load_generation(&session).unwrap();
+        let signature = super::super::UnifiedSignature::from_parse(&store, vec![]);
+        let outside = session.parent().unwrap().join("outside-current");
+        fs::write(&outside, &store.current_bytes).unwrap();
+        fs::remove_file(session.join("CURRENT")).unwrap();
+        symlink(outside, session.join("CURRENT")).unwrap();
+        let rejected = matches!(load_generation(&session), Err(UnifiedError::Corrupt(_)));
+        assert!(
+            rejected
+                && super::super::read_is_stable(&session, &store).is_err()
+                && !signature.is_current(&session),
+            "CURRENT symlink escaped load/stability/freshness boundary"
+        );
+    }
+
+    #[test]
     fn stable_corruption_is_not_retried() {
         let (_temp, session) = copy_store(R302);
         rewrite_journal_record(&session, 10, |record| {

@@ -59,6 +59,16 @@ pub(crate) fn reject_symlink(path: &Path) -> Result<(), UnifiedError> {
     }
 }
 
+/// Shared pointer boundary for loading, stability and incremental freshness.
+pub(crate) fn read_current(session_dir: &Path) -> Result<Vec<u8>, UnifiedError> {
+    let path = session_dir.join("CURRENT");
+    reject_symlink(&path)?;
+    fs::read(path).map_err(|error| match error.kind() {
+        io::ErrorKind::NotFound => UnifiedError::Incomplete("CURRENT missing".to_string()),
+        _ => UnifiedError::Io(error),
+    })
+}
+
 /// A `symlink_metadata` snapshot of one store file, used for freshness
 /// signatures and read-stability checks.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -130,11 +140,7 @@ pub(crate) fn load_generation(session_dir: &Path) -> Result<LoadedStore, Unified
     // symlinks, nothing inside the session directory may be.
     reject_symlink(session_dir)?;
 
-    let current_bytes =
-        fs::read(session_dir.join("CURRENT")).map_err(|error| match error.kind() {
-            io::ErrorKind::NotFound => UnifiedError::Incomplete("CURRENT missing".to_string()),
-            _ => UnifiedError::Io(error),
-        })?;
+    let current_bytes = read_current(session_dir)?;
     if current_bytes.last() != Some(&b'\n') {
         return Err(UnifiedError::Corrupt(
             "CURRENT is missing its final newline".to_string(),

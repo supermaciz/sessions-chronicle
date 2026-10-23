@@ -122,8 +122,9 @@ impl SavedResultResolver {
         }
         // The store's symlink boundary applies to the directory; the
         // record itself is validated, opened and read through one handle
-        // below, so a path swapped between the checks and the read is
-        // always detected.
+        // below. Device/inode comparison detects substitution of a different
+        // file; a same-inode symlink/hardlink ABA can still evade the literal
+        // no-symlink rule (it cannot substitute another inode's contents).
         reject_symlink(&self.tool_results_dir)?;
         let local_path = self.tool_results_dir.join(basename);
         // No-follow validation of the record: a symlink is corrupt, a

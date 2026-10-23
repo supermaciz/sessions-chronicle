@@ -11,7 +11,6 @@ pub(crate) mod signature;
 pub(crate) mod store;
 
 use std::fs;
-use std::io;
 use std::os::unix::fs::MetadataExt;
 use std::path::Path;
 
@@ -51,7 +50,7 @@ fn load_stable_with_replay<T>(
     for _ in 0..2 {
         // Baseline the pointer before the attempt so a mid-read failure
         // can be attributed to a publication in flight.
-        let attempt_current = fs::read(session_dir.join("CURRENT"));
+        let attempt_current = store::read_current(session_dir);
         match store::load_generation(session_dir) {
             Ok(mut store) => {
                 // Keep the pre-replay samples even when replay/build fails.
@@ -64,7 +63,7 @@ fn load_stable_with_replay<T>(
                 return outcome.map(|value| (value, store));
             }
             Err(error) => {
-                let current_now = fs::read(session_dir.join("CURRENT"));
+                let current_now = store::read_current(session_dir);
                 if !same_pointer_read(&current_now, &attempt_current) {
                     instability = Some("CURRENT changed while loading the generation".to_string());
                     continue;
@@ -82,7 +81,7 @@ fn load_stable_with_replay<T>(
 /// the samples taken while loading: byte-identical `CURRENT`, the same
 /// journal `dev`/`ino`, and a size at or above the sample.
 fn read_is_stable(session_dir: &Path, store: &LoadedStore) -> Result<(), String> {
-    let current = fs::read(session_dir.join("CURRENT"))
+    let current = store::read_current(session_dir)
         .map_err(|_| "CURRENT became unreadable during the read".to_string())?;
     if current != store.current_bytes {
         return Err("CURRENT changed during the read".to_string());
@@ -148,8 +147,8 @@ mod real_store_test {
 /// Compares two pointer reads: byte-identical bodies, or the same
 /// failure to produce them.
 fn same_pointer_read(
-    current: &Result<Vec<u8>, io::Error>,
-    baseline: &Result<Vec<u8>, io::Error>,
+    current: &Result<Vec<u8>, UnifiedError>,
+    baseline: &Result<Vec<u8>, UnifiedError>,
 ) -> bool {
     match (current, baseline) {
         (Ok(current), Ok(baseline)) => current == baseline,

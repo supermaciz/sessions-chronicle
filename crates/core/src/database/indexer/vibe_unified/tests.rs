@@ -212,6 +212,17 @@ fn pool_child_projection(dir: &Path) {
 }
 
 #[test]
+fn symlinked_unified_ancestor_is_indexed() {
+    let mut h = Harness::fixtures();
+    let target = h.temp.path().join("stores");
+    fs::rename(h.root().join("unified"), &target).unwrap();
+    std::os::unix::fs::symlink(target, h.root().join("unified")).unwrap();
+    let (stats, errors) = h.run(true);
+    assert!(errors.is_empty(), "{errors:?}");
+    assert_eq!(stats.indexed, 10);
+}
+
+#[test]
 fn snapshot_envelope_rejections_preserve_prior_contents_and_signature() {
     use crate::parsers::mistral_vibe_unified::store::test_support::rewrite_journal_record;
     use serde_json::{Value, json};
