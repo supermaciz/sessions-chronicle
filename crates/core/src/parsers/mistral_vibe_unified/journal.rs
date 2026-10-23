@@ -254,22 +254,22 @@ fn apply_record(
 /// Computes the fact-E record digest: in the line without its newline,
 /// find the last `,"record_sha256":"`; the 64 bytes after it are the
 /// digest and must be followed by a quote; the SHA-256 of the line with
-/// those 64 bytes spliced out must equal them.
+/// the entire field (including its leading comma) omitted must equal them.
 fn record_digest(line: &[u8]) -> Result<String, UnifiedError> {
-    let start = line
+    let marker_start = line
         .windows(RECORD_SHA_MARKER.len())
         .rposition(|window| window == RECORD_SHA_MARKER)
         .ok_or_else(|| {
             UnifiedError::Corrupt("journal record has no record_sha256 marker".to_string())
-        })?
-        + RECORD_SHA_MARKER.len();
+        })?;
+    let start = marker_start + RECORD_SHA_MARKER.len();
     if line.len() < start + 65 || line[start + 64] != b'"' {
         return Err(UnifiedError::Corrupt(
             "journal record_sha256 digest is malformed".to_string(),
         ));
     }
     let digest_bytes = &line[start..start + 64];
-    let spliced: Vec<u8> = [&line[..start], &line[start + 65..]].concat();
+    let spliced: Vec<u8> = [&line[..marker_start], &line[start + 65..]].concat();
     let computed = sha256_hex(&spliced);
     if computed.as_bytes() != digest_bytes {
         return Err(UnifiedError::Corrupt(
@@ -609,6 +609,17 @@ mod tests {
         let mut body = canonical_json(&new_pointer).unwrap();
         body.push(b'\n');
         body
+    }
+
+    #[test]
+    fn upstream_writer_fixed_digest_vector() {
+        // Pinned _storage.py writer: hash the header/payload BEFORE inserting
+        // record_sha256. Fixed bytes deliberately do not use our splice helper.
+        let line = r#"{"payload":{"text":"Résumé 🚀"},"previous_record_sha256":null,"record_sha256":"c958f277ea827a385e8ea3eaac80935f1d8f9973ce13190f086449ae4ff3e55e","recovery_journal_record_version":1,"sequence":1,"type":"core_input"}"#;
+        assert_eq!(
+            record_digest(line.as_bytes()).unwrap(),
+            "c958f277ea827a385e8ea3eaac80935f1d8f9973ce13190f086449ae4ff3e55e"
+        );
     }
 
     #[test]

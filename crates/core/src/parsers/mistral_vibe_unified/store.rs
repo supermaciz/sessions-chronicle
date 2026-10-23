@@ -984,29 +984,13 @@ pub(crate) mod test_support {
     }
 
     /// Re-encodes one journal record per the upstream rule: the digest is
-    /// computed over the canonical line with the 64 `record_sha256` bytes
-    /// spliced out, then written back in place of the placeholder.
+    /// computed before inserting the `record_sha256` field.
     fn encode_record_line(record: &Value) -> Vec<u8> {
         let mut record = record.clone();
-        record["record_sha256"] = Value::String("0".repeat(64));
+        record.as_object_mut().unwrap().remove("record_sha256");
         let line = canonical_json(&record).expect("canonicalize record");
-        let text = String::from_utf8(line).expect("record line is UTF-8");
-        let marker = ",\"record_sha256\":\"";
-        let start = text.rfind(marker).expect("record_sha256 marker") + marker.len();
-        let mut line = text.into_bytes();
-        assert_eq!(
-            &line[start..start + 64],
-            &"0".repeat(64).into_bytes()[..],
-            "record_sha256 placeholder"
-        );
-        assert_eq!(
-            line[start + 64],
-            b'"',
-            "record_sha256 placeholder ends with a quote"
-        );
-        let digest = sha256_hex(&[&line[..start], &line[start + 65..]].concat());
-        line[start..start + 64].copy_from_slice(digest.as_bytes());
-        line
+        record["record_sha256"] = Value::String(sha256_hex(&line));
+        canonical_json(&record).expect("canonicalize record with digest")
     }
 
     fn read_document_at(session_dir: &Path, file_name: &str) -> Value {
@@ -1510,18 +1494,17 @@ mod tests {
         let first = lines.next().unwrap();
         let second = lines.next().unwrap();
 
-        // Upstream digest rule (fact E): hash the line with the 64
-        // record_sha256 bytes (plus their closing quote) spliced out.
+        // Upstream reader rule (fact E): omit the entire digest field.
         let marker: &[u8] = &[
             b',', b'"', b'r', b'e', b'c', b'o', b'r', b'd', b'_', b's', b'h', b'a', b'2', b'5',
             b'6', b'"', b':', b'"',
         ];
-        let start = first
+        let marker_start = first
             .windows(marker.len())
             .rposition(|window| window == marker)
-            .unwrap()
-            + marker.len();
-        let digest = sha256_hex(&[&first[..start], &first[start + 65..]].concat());
+            .unwrap();
+        let start = marker_start + marker.len();
+        let digest = sha256_hex(&[&first[..marker_start], &first[start + 65..]].concat());
         let record: Value = serde_json::from_slice(first).unwrap();
         assert_eq!(record["payload"]["watermark"].as_u64(), Some(6));
         assert_eq!(record["record_sha256"].as_str().unwrap(), digest);

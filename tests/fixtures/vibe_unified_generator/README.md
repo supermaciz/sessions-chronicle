@@ -128,10 +128,12 @@ while True:
         break
     line = data[position:newline]; position = newline + 1
     record = json.loads(line)
-    start = line.rfind(b',"record_sha256":"') + len(b',"record_sha256":"')
+    marker_start = line.rfind(b',"record_sha256":"')
+    assert marker_start >= 0
+    start = marker_start + len(b',"record_sha256":"')
     embedded = line[start:start + 64].decode("ascii")
     assert line[start + 64:start + 65] == b'"'
-    assert sha(line[:start] + line[start + 65:]) == embedded == record["record_sha256"]
+    assert sha(line[:marker_start] + line[start + 65:]) == embedded == record["record_sha256"]
     assert record["sequence"] == expected
     assert record["previous_record_sha256"] == previous
     previous, expected, records = embedded, expected + 1, records + 1

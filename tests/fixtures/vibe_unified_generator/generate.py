@@ -188,23 +188,19 @@ def journal_record_line(payload, previous_digest, sequence: int, record_type: st
     """Build one canonical journal record line exactly as upstream writes it.
 
     The record is ``b'{"payload":' + canonical(payload) + b"," +
-    canonical(header)[1:]`` and the digest is computed with the rule-E
-    slicing over the finished line (last ``,"record_sha256":"`` marker,
-    64 digest bytes, hash of the line with those bytes spliced out).
+    canonical(header)[1:]``. As in the upstream writer, hash that record
+    BEFORE adding record_sha256; do not share the reader's slicing algorithm.
     """
     header = {
         "previous_record_sha256": previous_digest,
-        "record_sha256": "0" * 64,  # placeholder with the real digest length
         "recovery_journal_record_version": 1,
         "sequence": sequence,
         "type": record_type,
     }
     line = b'{"payload":' + canonical(payload) + b"," + canonical(header)[1:]
-    start = line.rfind(_RECORD_SHA_MARKER) + len(_RECORD_SHA_MARKER)
-    if line[start + 64 : start + 65] != b'"':
-        raise ValueError("record_sha256 placeholder is not a 64-char string")
-    digest = sha256_hex(line[:start] + line[start + 65 :])
-    line = line[:start] + digest.encode("ascii") + line[start + 64 :]
+    digest = sha256_hex(line)
+    header["record_sha256"] = digest
+    line = b'{"payload":' + canonical(payload) + b"," + canonical(header)[1:]
     return line, digest
 
 
@@ -2005,7 +2001,7 @@ def replay_store(store: Path):
         digest_end = digest_start + 64
         if line[digest_end : digest_end + 1] != b'"':
             raise ReplayError("record_sha256 digest is not a 64-char string")
-        sliced_digest = sha256_hex(line[:digest_start] + line[digest_end + 1 :])
+        sliced_digest = sha256_hex(line[:marker_start] + line[digest_end + 1 :])
         embedded = line[digest_start:digest_end].decode("ascii")
         if sliced_digest != embedded or embedded != record["record_sha256"]:
             raise ReplayError(f"journal record {record.get('sequence')} digest mismatch")
