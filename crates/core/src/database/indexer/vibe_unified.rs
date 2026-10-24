@@ -332,15 +332,9 @@ impl SessionIndexer {
         Ok(false)
     }
     fn unified_indexed_paths(&self, root: &Path) -> Result<Vec<String>> {
-        let prefix = format!("{}/", root.display());
-        let upper = format!("{}0", root.display());
-        let mut stmt = self.db.prepare(
-            "SELECT file_path FROM sessions
-             WHERE file_path>=?1 AND file_path<?2 AND tool='mistral_vibe'",
-        )?;
-        Ok(stmt
-            .query_map([prefix, upper], |r| r.get(0))?
-            .collect::<rusqlite::Result<_>>()?)
+        // Unified Mistral Vibe sessions only: other assistants indexed
+        // under the same root stay owned by their own source.
+        self.indexed_paths_under(&root.display().to_string(), Some(&AiAssistant::MistralVibe))
     }
     fn remove_unified_tree(
         &mut self,

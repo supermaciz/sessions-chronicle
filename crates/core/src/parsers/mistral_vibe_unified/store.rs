@@ -8,14 +8,14 @@
 
 use std::fs;
 use std::io;
-use std::os::unix::fs::MetadataExt;
 use std::path::Path;
 
-use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use super::canonical::{parse_canonical, sha256_hex};
 use super::error::UnifiedError;
+
+pub use super::file_stats::FileSample;
 
 /// Pinned store format of the Unified session store (Vibe 3.0.x).
 const STORE_FORMAT: &str = "mistral.vibe.unified-session-store/v1";
@@ -36,12 +36,7 @@ pub fn child_session_id(parent_session_id: &str, action_id: &str) -> String {
 
 /// A Unified session directory lives directly inside a directory named
 /// `unified`.
-pub fn is_unified_session_dir(path: &Path) -> bool {
-    path.parent()
-        .and_then(|parent| parent.file_name())
-        .and_then(|name| name.to_str())
-        .is_some_and(|name| name == "unified")
-}
+pub use crate::utils::session_path::is_unified_session_dir;
 
 /// Rejects `path` when it is itself a symlink.  A missing path is fine:
 /// the caller's follow-up read reports it as [`UnifiedError::Incomplete`].
@@ -69,20 +64,6 @@ pub(crate) fn read_current(session_dir: &Path) -> Result<Vec<u8>, UnifiedError> 
     })
 }
 
-/// A `symlink_metadata` snapshot of one store file, used for freshness
-/// signatures and read-stability checks.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct FileSample {
-    /// Path relative to the session directory, as listed by the manifest.
-    pub relative_path: String,
-    pub size: u64,
-    /// Modification time in nanoseconds since the Unix epoch.
-    pub mtime_ns: i64,
-    /// Device and inode identify the same file across pointer flips.
-    pub dev: u64,
-    pub ino: u64,
-}
-
 /// The snapshot projection of one generation, split into the envelope
 /// (`snapshot` with `history.entries` emptied) and the history entries.
 #[derive(Debug, Clone)]
@@ -90,6 +71,48 @@ pub(crate) struct ProjectionState {
     pub envelope: Value,
     pub entries: Vec<Value>,
     pub watermark: u64,
+}
+
+impl ProjectionState {
+    /// Splits an owned snapshot into envelope plus entries without
+    /// deep-copying the history: `history.entries` is moved out and the
+    /// envelope keeps an empty entries placeholder, while every other
+    /// envelope/history field survives verbatim.
+    ///
+    /// The snapshot's `format` and history shape are validated here; the
+    /// caller checks the snapshot is an object first and owns that error
+    /// message (`load_generation` and `apply_advanced_snapshot` word it
+    /// differently).
+    pub(crate) fn from_snapshot(snapshot: Value, watermark: u64) -> Result<Self, UnifiedError> {
+        let format = snapshot
+            .get("format")
+            .and_then(Value::as_str)
+            .ok_or_else(|| UnifiedError::Corrupt("snapshot format is missing".to_string()))?;
+        if format != PROJECTION_FORMAT {
+            return Err(UnifiedError::Unsupported(format!(
+                "snapshot format {format}"
+            )));
+        }
+        let mut envelope = snapshot;
+        // The array check and the move are one operation, so the
+        // history is validated and extracted without ever cloning it.
+        let entries = envelope
+            .get_mut("history")
+            .and_then(|history| history.get_mut("entries"))
+            .map(|entries| std::mem::replace(entries, Value::Array(Vec::new())))
+            .and_then(|entries| match entries {
+                Value::Array(entries) => Some(entries),
+                _ => None,
+            })
+            .ok_or_else(|| {
+                UnifiedError::Corrupt("snapshot history entries are not an array".to_string())
+            })?;
+        Ok(Self {
+            envelope,
+            entries,
+            watermark,
+        })
+    }
 }
 
 /// The identity a runtime state declares for its session (fact D).
@@ -239,7 +262,7 @@ pub(crate) fn load_generation(session_dir: &Path) -> Result<LoadedStore, Unified
             "projection-state.json does not match the manifest digest".to_string(),
         ));
     }
-    let projection_document = parse_document(&projection_body, "projection-state.json")?;
+    let mut projection_document = parse_document(&projection_body, "projection-state.json")?;
     let projection_state_version = field_u64(
         &projection_document,
         "projection-state.json",
@@ -269,26 +292,18 @@ pub(crate) fn load_generation(session_dir: &Path) -> Result<LoadedStore, Unified
         ));
     }
     let watermark = field_u64(&projection_document, "projection-state.json", "watermark")?;
+    // The snapshot is consumed by value: its history entries move into
+    // the projection state instead of being deep-copied for validation.
     let snapshot = projection_document
-        .get("snapshot")
-        .and_then(Value::as_object)
-        .ok_or_else(|| UnifiedError::Corrupt("projection snapshot is not an object".to_string()))?;
-    let snapshot_format = snapshot
-        .get("format")
-        .and_then(Value::as_str)
-        .ok_or_else(|| UnifiedError::Corrupt("snapshot format is missing".to_string()))?;
-    if snapshot_format != PROJECTION_FORMAT {
-        return Err(UnifiedError::Unsupported(format!(
-            "snapshot format {snapshot_format}"
-        )));
+        .get_mut("snapshot")
+        .map(Value::take)
+        .unwrap_or(Value::Null);
+    if !snapshot.is_object() {
+        return Err(UnifiedError::Corrupt(
+            "projection snapshot is not an object".to_string(),
+        ));
     }
-    let history_entries = snapshot
-        .get("history")
-        .and_then(|history| history.get("entries"))
-        .and_then(Value::as_array)
-        .ok_or_else(|| {
-            UnifiedError::Corrupt("snapshot history entries are not an array".to_string())
-        })?;
+    let mut projection = ProjectionState::from_snapshot(snapshot, watermark)?;
 
     // Runtime document (fact C): read whole and digest-checked; its pooled
     // core_capabilities chunk is not consumed and not read.
@@ -303,23 +318,18 @@ pub(crate) fn load_generation(session_dir: &Path) -> Result<LoadedStore, Unified
     }
     let runtime_document = parse_document(&runtime_body, "runtime-state.json")?;
     let runtime = runtime_view(&runtime_document, directory_name)?;
-    validate_envelope(&Value::Object(snapshot.clone()), &runtime)?;
+    validate_envelope(&projection.envelope, &runtime)?;
 
     // Pooled history chunks (fact C): a chunked snapshot stores its
     // entries empty and refills them by concatenating the chunk arrays.
-    let entries = match &projection_descriptor.chunks {
-        Some(digests) => {
-            if !history_entries.is_empty() {
-                return Err(UnifiedError::Corrupt(
-                    "chunked projection snapshot must store empty history entries".to_string(),
-                ));
-            }
-            read_chunks(session_dir, digests)?
+    if let Some(digests) = &projection_descriptor.chunks {
+        if !projection.entries.is_empty() {
+            return Err(UnifiedError::Corrupt(
+                "chunked projection snapshot must store empty history entries".to_string(),
+            ));
         }
-        None => history_entries.clone(),
-    };
-    let mut envelope = projection_document["snapshot"].clone();
-    envelope["history"]["entries"] = Value::Array(Vec::new());
+        projection.entries = read_chunks(session_dir, digests)?;
+    }
 
     // Journal segment sample, taken with symlink_metadata right before
     // returning so the journal reader can bound its later read.
@@ -334,13 +344,7 @@ pub(crate) fn load_generation(session_dir: &Path) -> Result<LoadedStore, Unified
             }
             _ => UnifiedError::Io(error),
         })?;
-    let journal = FileSample {
-        relative_path: journal_relative,
-        size: journal_metadata.len(),
-        mtime_ns: journal_metadata.mtime() * 1_000_000_000 + journal_metadata.mtime_nsec() as i64,
-        dev: journal_metadata.dev(),
-        ino: journal_metadata.ino(),
-    };
+    let journal = FileSample::from_metadata(journal_relative, &journal_metadata);
 
     Ok(LoadedStore {
         current_bytes,
@@ -348,11 +352,7 @@ pub(crate) fn load_generation(session_dir: &Path) -> Result<LoadedStore, Unified
         journal,
         meta: super::saved_results::FileStat::for_path(&session_dir.join("meta.json")).ok(),
         runtime,
-        projection: ProjectionState {
-            envelope,
-            entries,
-            watermark,
-        },
+        projection,
     })
 }
 
@@ -507,10 +507,14 @@ fn read_chunks(session_dir: &Path, digests: &[String]) -> Result<Vec<Value>, Uni
             )));
         }
         let chunk = parse_document(&body, &format!("chunk {digest}"))?;
-        let chunk_entries = chunk
-            .as_array()
-            .ok_or_else(|| UnifiedError::Corrupt(format!("chunk {digest} is not a JSON array")))?;
-        entries.extend(chunk_entries.iter().cloned());
+        match chunk {
+            Value::Array(chunk_entries) => entries.extend(chunk_entries),
+            _ => {
+                return Err(UnifiedError::Corrupt(format!(
+                    "chunk {digest} is not a JSON array"
+                )));
+            }
+        }
     }
     Ok(entries)
 }
@@ -1534,6 +1538,175 @@ mod tests {
         let loaded = load_generation(&through_link).unwrap();
         assert_eq!(loaded.projection.entries.len(), 17);
         assert!(matches!(loaded.runtime.identity, Identity::Root));
+    }
+
+    // ------------------------------------------------------------------
+    // ProjectionState::from_snapshot: ownership split and history shape
+    // (review follow-up Task 2).
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn from_snapshot_moves_history_entries_without_cloning() {
+        // A nonempty `String` is heap-backed; its buffer address survives
+        // a move but not a clone. Recording the address before the
+        // snapshot moves and asserting it on the resulting entry proves
+        // the history was extracted, not deep-copied (no unsafe, no
+        // allocation counting).
+        let text = "a heap-backed history entry text that must move".to_string();
+        let buffer = text.as_ptr();
+        let mut entry = json!({"id": "e1"});
+        entry["text"] = Value::String(text);
+
+        let mut snapshot = json!({
+            "format": "harness.public-session-state/v1",
+            "session": {
+                "id": "s",
+                "rootSessionId": "s",
+                "parentSessionId": null,
+                "title": "Kept title",
+                "status": {"type": "idle"},
+            },
+            "latestTurn": {"id": "t1", "status": "completed"},
+            "history": {"cursor": 12, "entries": []},
+        });
+        snapshot["history"]["entries"]
+            .as_array_mut()
+            .expect("entries placeholder")
+            .push(entry);
+
+        let state = ProjectionState::from_snapshot(snapshot, 7).unwrap();
+
+        assert_eq!(state.entries.len(), 1);
+        let moved = state.entries[0]["text"].as_str().unwrap();
+        assert_eq!(
+            moved.as_ptr(),
+            buffer,
+            "history entries were cloned instead of moved"
+        );
+        assert_eq!(moved, "a heap-backed history entry text that must move");
+
+        // The envelope keeps an empty entries placeholder, and every
+        // other envelope/history field survives the split untouched.
+        assert_eq!(
+            state.envelope["history"]["entries"]
+                .as_array()
+                .unwrap()
+                .len(),
+            0
+        );
+        assert_eq!(state.envelope["history"]["cursor"].as_u64(), Some(12));
+        assert_eq!(state.envelope["format"].as_str(), Some(PROJECTION_FORMAT));
+        assert_eq!(state.envelope["session"]["id"].as_str(), Some("s"));
+        assert_eq!(
+            state.envelope["session"]["title"].as_str(),
+            Some("Kept title")
+        );
+        assert_eq!(state.envelope["latestTurn"]["id"].as_str(), Some("t1"));
+        assert_eq!(state.watermark, 7);
+    }
+
+    #[test]
+    fn from_snapshot_rejects_missing_or_malformed_history_shape() {
+        let session = json!({"id": "s", "rootSessionId": "s", "parentSessionId": null});
+        let cases = [
+            (
+                "missing history",
+                json!({"format": PROJECTION_FORMAT, "session": session}),
+                "snapshot history entries are not an array",
+            ),
+            (
+                "history is not an object",
+                json!({"format": PROJECTION_FORMAT, "session": session, "history": "flat"}),
+                "snapshot history entries are not an array",
+            ),
+            (
+                "missing entries",
+                json!({"format": PROJECTION_FORMAT, "session": session, "history": {}}),
+                "snapshot history entries are not an array",
+            ),
+            (
+                "entries is not an array",
+                json!({
+                    "format": PROJECTION_FORMAT,
+                    "session": session,
+                    "history": {"entries": {"id": "e1"}},
+                }),
+                "snapshot history entries are not an array",
+            ),
+        ];
+        for (label, snapshot, expected) in cases {
+            let error = ProjectionState::from_snapshot(snapshot, 0).expect_err(label);
+            assert!(
+                matches!(error, UnifiedError::Corrupt(ref message) if message == expected),
+                "{label}: unexpected error {error:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn from_snapshot_rejects_missing_or_unknown_format() {
+        let session = json!({"id": "s", "rootSessionId": "s", "parentSessionId": null});
+        let missing = json!({"session": session, "history": {"entries": []}});
+        let error = ProjectionState::from_snapshot(missing, 0).unwrap_err();
+        assert!(
+            matches!(error, UnifiedError::Corrupt(ref message) if message == "snapshot format is missing"),
+            "unexpected error {error:?}"
+        );
+
+        let unknown = json!({
+            "format": "harness.other-state/v9",
+            "session": session,
+            "history": {"entries": []},
+        });
+        let error = ProjectionState::from_snapshot(unknown, 0).unwrap_err();
+        assert!(
+            matches!(error, UnifiedError::Unsupported(ref message) if message == "snapshot format harness.other-state/v9"),
+            "unexpected error {error:?}"
+        );
+    }
+
+    #[test]
+    fn rejects_chunked_snapshot_with_inline_entries() {
+        // Characterization of the chunk empty-inline constraint through
+        // the ownership-based split: when the manifest declares pooled
+        // chunks, non-empty inline entries stay corrupt even with
+        // fully consistent document digests.
+        let (_temp, session) = copy_store(R302);
+        let mut projection: Value = {
+            let raw = fs::read(generation_dir(&session).join("projection-state.json")).unwrap();
+            serde_json::from_slice(&raw[..raw.len() - 1]).unwrap()
+        };
+        projection["snapshot"]["history"]["entries"] = json!([{"id": "inline-e1"}]);
+        let body = canonical_json(&projection).unwrap();
+        let mut stored = body.clone();
+        stored.push(b'\n');
+        fs::write(
+            generation_dir(&session).join("projection-state.json"),
+            &stored,
+        )
+        .unwrap();
+
+        let mut manifest = read_manifest(&session);
+        manifest["projection_state"]["sha256"] = json!(sha256_hex(&body));
+        let manifest_body = canonical_json(&manifest).unwrap();
+        let mut manifest_stored = manifest_body.clone();
+        manifest_stored.push(b'\n');
+        fs::write(
+            generation_dir(&session).join("manifest.json"),
+            &manifest_stored,
+        )
+        .unwrap();
+
+        let mut pointer = read_pointer(&session);
+        pointer["manifest_sha256"] = json!(sha256_hex(&manifest_body));
+        write_pointer(&session, &pointer);
+
+        let error = load_generation(&session).expect_err("inline entries must be rejected");
+        assert!(
+            matches!(error, UnifiedError::Corrupt(ref message)
+                if message == "chunked projection snapshot must store empty history entries"),
+            "unexpected error {error:?}"
+        );
     }
 
     #[test]

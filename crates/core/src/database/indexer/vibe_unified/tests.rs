@@ -1623,3 +1623,69 @@ fn confirmed_removal_breaks_deferral_sequence() {
     defer_unstable(&mut h.indexer, &path, "new race", &mut stats, &mut errors);
     assert_eq!((stats.skipped, stats.errors, errors.len()), (2, 0, 0));
 }
+
+// ---------------------------------------------------------------------
+// Shared half-open BINARY prefix query (review follow-up Task 2):
+// characterization of the range bounds, wildcard-free matching and the
+// optional assistant filter.
+// ---------------------------------------------------------------------
+
+/// Inserts a bare session row; query characterization needs no parser.
+fn insert_session_row(h: &Harness, tool: &str, id: &str, file_path: &str) {
+    h.indexer
+        .db
+        .execute(
+            "INSERT INTO sessions (id, tool, start_time, message_count, file_path, last_updated, is_subagent)
+             VALUES (?1, ?2, 0, 0, ?3, 0, 0)",
+            rusqlite::params![id, tool, file_path],
+        )
+        .unwrap();
+}
+
+#[test]
+fn prefix_query_matches_descendants_only_and_honors_the_assistant_filter() {
+    let h = Harness::empty();
+    let dir = "/base/we%ird_dir";
+
+    insert_session_row(&h, "mistral_vibe", "m1", &format!("{dir}/child-a"));
+    insert_session_row(&h, "mistral_vibe", "m2", &format!("{dir}/nested/deeper"));
+    insert_session_row(&h, "claude_code", "c1", &format!("{dir}/claude-child"));
+    // LIKE-wildcard traps: `%` and `_` are literal bytes under the
+    // default BINARY collation, never patterns.
+    insert_session_row(&h, "mistral_vibe", "t1", "/base/weXird_dir/child");
+    insert_session_row(&h, "mistral_vibe", "t2", "/base/we%irdXdir/child");
+    // Sibling traps: the directory itself, a sibling sorting right
+    // after the `0` upper bound, and one sorting before the `/`
+    // lower bound are all outside the half-open range.
+    insert_session_row(&h, "mistral_vibe", "t3", dir);
+    insert_session_row(&h, "mistral_vibe", "t4", &format!("{dir}0sibling"));
+    insert_session_row(&h, "mistral_vibe", "t5", &format!("{dir}!child"));
+
+    let mut unfiltered = h.indexer.indexed_paths_under(dir, None).unwrap();
+    unfiltered.sort();
+    assert_eq!(
+        unfiltered,
+        [
+            format!("{dir}/child-a"),
+            format!("{dir}/claude-child"),
+            format!("{dir}/nested/deeper"),
+        ],
+        "the unfiltered query returns exactly the rows strictly beneath the directory"
+    );
+
+    let mut filtered = h
+        .indexer
+        .indexed_paths_under(dir, Some(&AiAssistant::MistralVibe))
+        .unwrap();
+    filtered.sort();
+    assert_eq!(
+        filtered,
+        [format!("{dir}/child-a"), format!("{dir}/nested/deeper")],
+        "the assistant filter keeps only the tool's own rows"
+    );
+
+    // The Unified Mistral-Vibe-only scope is the filtered query.
+    let mut unified = h.indexer.unified_indexed_paths(Path::new(dir)).unwrap();
+    unified.sort();
+    assert_eq!(unified, filtered);
+}

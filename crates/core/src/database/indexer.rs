@@ -691,7 +691,7 @@ impl SessionIndexer {
             return Ok(false);
         };
 
-        let known = self.indexed_paths_under(agents_str)?;
+        let known = self.indexed_paths_under(agents_str, None)?;
 
         let mut removed_direct_child = false;
         for file_path in known {
@@ -720,7 +720,7 @@ impl SessionIndexer {
         let Some(dir_str) = dir.to_str() else {
             return Ok(removed);
         };
-        for file_path in self.indexed_paths_under(dir_str)? {
+        for file_path in self.indexed_paths_under(dir_str, None)? {
             removed += self.remove_session_for_file(Path::new(&file_path))?;
         }
 
@@ -731,18 +731,37 @@ impl SessionIndexer {
     /// starting with `<dir>/`. Uses a half-open prefix range so the
     /// `idx_sessions_file_path` index serves it without scanning the table, and
     /// so the common leaf case (no descendants) returns immediately.
-    fn indexed_paths_under(&self, dir: &str) -> Result<Vec<String>> {
+    /// `assistant` optionally restricts the range to one tool's sessions;
+    /// the range bounds themselves are byte comparisons under the
+    /// column's default BINARY collation, so `%` and `_` in `dir` are
+    /// literal bytes, never LIKE wildcards.
+    fn indexed_paths_under(
+        &self,
+        dir: &str,
+        assistant: Option<&AiAssistant>,
+    ) -> Result<Vec<String>> {
         // `/` is byte 0x2F, so the next possible byte 0x30 (`0`) bounds every
         // path beginning with `<dir>/` from above. Comparison uses the column's
         // default BINARY collation, so the match is exact and case-sensitive.
         let lower = format!("{dir}/");
         let upper = format!("{dir}0");
-        let mut stmt = self
-            .db
-            .prepare("SELECT file_path FROM sessions WHERE file_path >= ?1 AND file_path < ?2")?;
-        let rows = stmt
-            .query_map([lower, upper], |row| row.get(0))?
-            .collect::<std::result::Result<Vec<_>, _>>()?;
+        let mut stmt = self.db.prepare(match assistant {
+            Some(_) => {
+                "SELECT file_path FROM sessions WHERE file_path >= ?1 AND file_path < ?2 AND tool=?3"
+            }
+            None => "SELECT file_path FROM sessions WHERE file_path >= ?1 AND file_path < ?2",
+        })?;
+        let rows = match assistant {
+            Some(assistant) => stmt
+                .query_map(
+                    rusqlite::params![lower, upper, assistant.to_storage()],
+                    |row| row.get(0),
+                )?
+                .collect::<std::result::Result<Vec<_>, _>>()?,
+            None => stmt
+                .query_map(rusqlite::params![lower, upper], |row| row.get(0))?
+                .collect::<std::result::Result<Vec<_>, _>>()?,
+        };
         Ok(rows)
     }
 

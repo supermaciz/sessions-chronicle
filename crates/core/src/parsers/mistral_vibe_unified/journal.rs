@@ -19,10 +19,6 @@ use super::canonical::sha256_hex;
 use super::error::UnifiedError;
 use super::store::{LoadedStore, ProjectionState, reject_symlink};
 
-/// Pinned snapshot format of the public session state (fact G): the same
-/// gate the generation loader applies to the projection document.
-const PROJECTION_FORMAT: &str = "harness.public-session-state/v1";
-
 /// The 14 journal record kinds of `store_format` minor 9 (fact E).
 const RECORD_KINDS: [&str; 14] = [
     "command_reserved",
@@ -102,7 +98,7 @@ fn replay_journal_with_open_hook(
             UnifiedError::Corrupt(format!("journal record is not valid JSON: {error}"))
         })?;
         apply_record(
-            &record,
+            record,
             &digest,
             &mut expected_sequence,
             &mut previous_digest,
@@ -117,8 +113,12 @@ fn replay_journal_with_open_hook(
 /// order version, type, payload, sequence, chain, then the watermark
 /// rule and the projection dispatch (fact F).  Every other known kind
 /// was fully envelope-checked and is skipped.
+///
+/// The record is consumed: the digest was verified over the raw line
+/// bytes before parsing, and the `projection_advanced` snapshot is
+/// taken out of the payload rather than cloned.
 fn apply_record(
-    record: &Value,
+    mut record: Value,
     digest: &str,
     expected_sequence: &mut u64,
     previous_digest: &mut Option<String>,
@@ -149,11 +149,14 @@ fn apply_record(
         )));
     }
 
+    // Owned copy of the kind: the dispatch below needs a mutable borrow
+    // of the record to take the advanced snapshot out of its payload.
     let kind = record
         .get("type")
         .and_then(Value::as_str)
-        .ok_or_else(|| UnifiedError::Corrupt("journal record type is missing".to_string()))?;
-    if !RECORD_KINDS.contains(&kind) {
+        .ok_or_else(|| UnifiedError::Corrupt("journal record type is missing".to_string()))?
+        .to_string();
+    if !RECORD_KINDS.contains(&kind.as_str()) {
         return Err(UnifiedError::Unsupported(format!("record type {kind:?}")));
     }
 
@@ -226,7 +229,7 @@ fn apply_record(
             }
             store.projection.watermark = watermark;
         }
-        None if PROJECTION_KINDS.contains(&kind) => {
+        None if PROJECTION_KINDS.contains(&kind.as_str()) => {
             return Err(UnifiedError::Corrupt(format!(
                 "{kind} record watermark is missing"
             )));
@@ -235,14 +238,30 @@ fn apply_record(
     }
 
     // Dispatch (fact F).
-    match kind {
+    match kind.as_str() {
         "projection_advanced" => {
-            apply_advanced_snapshot(&mut store.projection, payload.get("snapshot"))?;
+            let snapshot = record
+                .get_mut("payload")
+                .and_then(|payload| payload.get_mut("snapshot"))
+                .map(Value::take);
+            apply_advanced_snapshot(&mut store.projection, snapshot)?;
         }
         "projection_delta" => {
+            let payload = record
+                .get("payload")
+                .and_then(Value::as_object)
+                .ok_or_else(|| {
+                    UnifiedError::Corrupt("journal record payload is not an object".to_string())
+                })?;
             apply_ops(&mut store.projection, delta_ops(payload)?)?;
         }
         "session_relocated" => {
+            let payload = record
+                .get("payload")
+                .and_then(Value::as_object)
+                .ok_or_else(|| {
+                    UnifiedError::Corrupt("journal record payload is not an object".to_string())
+                })?;
             let metadata = payload
                 .get("metadata")
                 .and_then(Value::as_object)
@@ -257,7 +276,7 @@ fn apply_record(
         }
         _ => {}
     }
-    if PROJECTION_KINDS.contains(&kind) {
+    if PROJECTION_KINDS.contains(&kind.as_str()) {
         super::store::validate_envelope(&store.projection.envelope, &store.runtime)?;
     }
     Ok(())
@@ -302,34 +321,24 @@ fn delta_ops(payload: &serde_json::Map<String, Value>) -> Result<&[Value], Unifi
 
 /// Replaces the whole projection with a `projection_advanced` snapshot,
 /// split into envelope and entries the same way the generation loader
-/// splits the projection document.
+/// splits the projection document.  The snapshot is consumed by value;
+/// its history entries move instead of being deep-copied.
 fn apply_advanced_snapshot(
     state: &mut ProjectionState,
-    snapshot: Option<&Value>,
+    snapshot: Option<Value>,
 ) -> Result<(), UnifiedError> {
-    let snapshot = snapshot.and_then(Value::as_object).ok_or_else(|| {
+    let snapshot = snapshot.ok_or_else(|| {
         UnifiedError::Corrupt("projection_advanced snapshot is not an object".to_string())
     })?;
-    let format = snapshot
-        .get("format")
-        .and_then(Value::as_str)
-        .ok_or_else(|| UnifiedError::Corrupt("snapshot format is missing".to_string()))?;
-    if format != PROJECTION_FORMAT {
-        return Err(UnifiedError::Unsupported(format!(
-            "snapshot format {format}"
-        )));
+    if !snapshot.is_object() {
+        return Err(UnifiedError::Corrupt(
+            "projection_advanced snapshot is not an object".to_string(),
+        ));
     }
-    let entries = snapshot
-        .get("history")
-        .and_then(|history| history.get("entries"))
-        .and_then(Value::as_array)
-        .ok_or_else(|| {
-            UnifiedError::Corrupt("snapshot history entries are not an array".to_string())
-        })?;
-    let mut envelope = Value::Object(snapshot.clone());
-    envelope["history"]["entries"] = Value::Array(Vec::new());
-    state.envelope = envelope;
-    state.entries = entries.clone();
+    // The record's watermark was validated and applied before the
+    // dispatch, so the incoming state keeps the current one.
+    let watermark = state.watermark;
+    *state = ProjectionState::from_snapshot(snapshot, watermark)?;
     Ok(())
 }
 
@@ -1020,6 +1029,39 @@ mod tests {
             ]
         );
         assert!(fresh.journal.size > sampled_size);
+    }
+
+    #[test]
+    fn freshness_is_exact_while_read_stability_tolerates_journal_growth() {
+        // Deliberate split (review focus 6): stability accepts a
+        // same-inode journal that grew during the read — the sampled
+        // prefix is a valid publication — while the signature's
+        // freshness check stays exact and rejects the change.
+        let (_temp, session) = copy_store(R302);
+        let store = load_generation(&session).unwrap();
+        let signature = super::super::UnifiedSignature::from_parse(&store, vec![]);
+
+        let path = session.join(&store.journal.relative_path);
+        use std::io::Write as _;
+        fs::OpenOptions::new()
+            .append(true)
+            .open(&path)
+            .unwrap()
+            .write_all(b"{\"grown\":true}\n")
+            .unwrap();
+
+        assert!(
+            super::super::read_is_stable(&session, &store).is_ok(),
+            "same dev/ino with size >= sample must stay stable"
+        );
+        assert!(
+            fs::symlink_metadata(&path).unwrap().len() > store.journal.size,
+            "the fixture precondition: the journal grew"
+        );
+        assert!(
+            !signature.is_current(&session),
+            "freshness must stay exact: journal growth is a change"
+        );
     }
 
     #[test]

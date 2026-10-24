@@ -4,7 +4,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 use crate::models::token_usage::TokenUsage;
-use crate::parsers::mistral_vibe_unified::is_unified_session_dir;
+use crate::utils::session_path::is_unified_session_dir;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 #[serde(rename_all = "snake_case")]

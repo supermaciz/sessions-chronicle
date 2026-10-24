@@ -13,11 +13,12 @@ use std::os::unix::fs::MetadataExt;
 use std::path::{Component, Path, PathBuf};
 
 use regex::Regex;
-use serde::{Deserialize, Serialize};
 use std::sync::LazyLock;
 
 use super::error::UnifiedError;
 use super::store::reject_symlink;
+
+pub use super::file_stats::FileStat;
 
 /// Receipt sentence (fact K): the saving host names the absolute path and
 /// the record's UTF-16 size.
@@ -36,25 +37,6 @@ static ENCODED_NAME: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"^(?:[A-Za-z0-9\-_.!~*'()]|%[0-9A-Fa-f]{2})+\.json$")
         .expect("encoded saved-result name regex compiles")
 });
-
-/// A `symlink_metadata` snapshot of one consumed saved result, used for
-/// freshness signatures.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct FileStat {
-    pub size: u64,
-    /// Modification time in nanoseconds since the Unix epoch.
-    pub mtime_ns: i64,
-}
-
-impl FileStat {
-    pub fn for_path(path: &Path) -> io::Result<Self> {
-        let metadata = fs::symlink_metadata(path)?;
-        Ok(Self {
-            size: metadata.len(),
-            mtime_ns: metadata.mtime() * 1_000_000_000 + metadata.mtime_nsec(),
-        })
-    }
-}
 
 /// Resolves receipt texts against a session's local `tool-results/`
 /// records and collects the consumed files' stats for the freshness
@@ -176,10 +158,9 @@ impl SavedResultResolver {
         }
         self.consumed.push((
             basename.to_string(),
-            FileStat {
-                size: opened.len(),
-                mtime_ns: opened.mtime() * 1_000_000_000 + opened.mtime_nsec(),
-            },
+            // The stat belongs to the handle that produced the consumed
+            // bytes, not to whatever the path points at now.
+            FileStat::from_metadata(&opened),
         ));
         Ok(Some(content))
     }

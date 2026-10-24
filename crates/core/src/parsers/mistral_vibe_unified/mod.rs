@@ -5,6 +5,7 @@ mod canonical;
 mod convert;
 mod effects;
 mod error;
+mod file_stats;
 mod journal;
 pub(crate) mod saved_results;
 pub(crate) mod signature;
