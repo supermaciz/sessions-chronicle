@@ -6,6 +6,15 @@ mod tests {
     use std::fs;
     use std::path::PathBuf;
 
+    const GIT_CONTEXT: &str =
+        r"<git-context>\nWorking directory: /tmp/project\nBranch: main\n</git-context>\n\n";
+
+    fn child_prompt(time: i64, text: &str) -> String {
+        format!(
+            r#"{{"type":"turn.prompt","time":{time},"input":[{{"type":"text","text":"{GIT_CONTEXT}{text}"}}],"origin":{{"kind":"system_trigger","name":"subagent"}}}}"#
+        )
+    }
+
     fn write_bundle(state: Value, records: &[&str]) -> tempfile::TempDir {
         let root = tempfile::tempdir().unwrap();
         let session_dir = root
@@ -134,6 +143,241 @@ mod tests {
             error.downcast_ref::<ParseError>(),
             Some(ParseError::NoUserMessages)
         ));
+    }
+
+    #[test]
+    fn child_journal_accepts_subagent_trigger_prompt() {
+        let mut metadata = state();
+        metadata["agents"]["agent-0"] = json!({"type": "sub", "parentAgentId": "main"});
+        let root = write_bundle(
+            metadata,
+            &[
+                r#"{"type":"turn.prompt","time":1785320000000,"input":[{"type":"text","text":"Main prompt"}],"origin":{"kind":"user"}}"#,
+            ],
+        );
+        write_agent_journal(
+            &root,
+            "agent-0",
+            &[&child_prompt(1785320000010, "Inspect parser safety")],
+        );
+
+        let parsed = KimiCodeParser::new(root.path())
+            .parse_session_dir(&session_dir(&root))
+            .unwrap();
+
+        assert_eq!(parsed.children.len(), 1);
+        assert_eq!(
+            parsed.children[0].messages[0].content,
+            "Inspect parser safety"
+        );
+        assert_eq!(
+            parsed.children[0].session.first_prompt.as_deref(),
+            Some("Inspect parser safety")
+        );
+    }
+
+    #[test]
+    fn main_journal_rejects_subagent_trigger_prompt() {
+        let root = write_bundle(state(), &[&child_prompt(1785320000000, "Subagent task")]);
+
+        let error = KimiCodeParser::new(root.path())
+            .parse_session_dir(&session_dir(&root))
+            .unwrap_err();
+
+        assert!(matches!(
+            error.downcast_ref::<ParseError>(),
+            Some(ParseError::NoUserMessages)
+        ));
+    }
+
+    #[test]
+    fn child_rejects_other_system_triggers_and_injections() {
+        let mut metadata = state();
+        metadata["agents"]["agent-0"] = json!({"type": "sub", "parentAgentId": "main"});
+        let root = write_bundle(
+            metadata,
+            &[
+                r#"{"type":"turn.prompt","input":[{"type":"text","text":"Main prompt"}],"origin":{"kind":"user"}}"#,
+            ],
+        );
+        write_agent_journal(
+            &root,
+            "agent-0",
+            &[
+                r#"{"type":"turn.prompt","input":[{"type":"text","text":"Cron"}],"origin":{"kind":"system_trigger","name":"cron"}}"#,
+                r#"{"type":"turn.prompt","input":[{"type":"text","text":"Injection"}],"origin":{"kind":"injection"}}"#,
+            ],
+        );
+
+        let parsed = KimiCodeParser::new(root.path())
+            .parse_session_dir(&session_dir(&root))
+            .unwrap();
+
+        assert!(parsed.children.is_empty());
+    }
+
+    #[test]
+    fn child_resume_prompts_become_user_messages() {
+        let mut metadata = state();
+        metadata["agents"]["agent-0"] = json!({"type": "sub", "parentAgentId": "main"});
+        let root = write_bundle(
+            metadata,
+            &[
+                r#"{"type":"turn.prompt","input":[{"type":"text","text":"Main prompt"}],"origin":{"kind":"user"}}"#,
+            ],
+        );
+        write_agent_journal(
+            &root,
+            "agent-0",
+            &[
+                &child_prompt(1785320000010, "First task"),
+                r#"{"type":"turn.prompt","time":1785320000020,"input":[{"type":"text","text":"Second task"}],"origin":{"kind":"system_trigger","name":"subagent"}}"#,
+                r#"{"type":"turn.prompt","time":1785320000030,"input":[{"type":"text","text":"Third task"}],"origin":{"kind":"system_trigger","name":"subagent"}}"#,
+            ],
+        );
+
+        let parsed = KimiCodeParser::new(root.path())
+            .parse_session_dir(&session_dir(&root))
+            .unwrap();
+        let child = &parsed.children[0];
+
+        assert_eq!(child.messages.len(), 3);
+        assert!(
+            child
+                .messages
+                .iter()
+                .all(|message| message.role == Role::User)
+        );
+        assert_eq!(
+            child
+                .messages
+                .iter()
+                .map(|message| message.content.as_str())
+                .collect::<Vec<_>>(),
+            ["First task", "Second task", "Third task"]
+        );
+    }
+
+    #[test]
+    fn child_unclosed_git_context_is_kept() {
+        let mut metadata = state();
+        metadata["agents"]["agent-0"] = json!({"type": "sub", "parentAgentId": "main"});
+        let root = write_bundle(
+            metadata,
+            &[
+                r#"{"type":"turn.prompt","input":[{"type":"text","text":"Main prompt"}],"origin":{"kind":"user"}}"#,
+            ],
+        );
+        let unclosed = "<git-context>\\nWorking directory: /tmp/project\\nTask remains here";
+        let prompt = format!(
+            r#"{{"type":"turn.prompt","input":[{{"type":"text","text":"{unclosed}"}}],"origin":{{"kind":"system_trigger","name":"subagent"}}}}"#
+        );
+        write_agent_journal(&root, "agent-0", &[&prompt]);
+
+        let parsed = KimiCodeParser::new(root.path())
+            .parse_session_dir(&session_dir(&root))
+            .unwrap();
+
+        assert_eq!(parsed.children.len(), 1);
+        assert_eq!(
+            parsed.children[0].messages[0].content,
+            unclosed.replace("\\n", "\n")
+        );
+    }
+
+    #[test]
+    fn child_with_only_git_context_remains_indexed() {
+        let mut metadata = state();
+        metadata["agents"]["agent-0"] = json!({"type": "sub", "parentAgentId": "main"});
+        let root = write_bundle(
+            metadata,
+            &[
+                r#"{"type":"turn.prompt","input":[{"type":"text","text":"Main prompt"}],"origin":{"kind":"user"}}"#,
+            ],
+        );
+        write_agent_journal(&root, "agent-0", &[&child_prompt(1785320000010, "")]);
+
+        let parsed = KimiCodeParser::new(root.path())
+            .parse_session_dir(&session_dir(&root))
+            .unwrap();
+
+        assert_eq!(parsed.children.len(), 1);
+        assert_eq!(
+            parsed.children[0].messages[0].content,
+            GIT_CONTEXT.replace("\\n", "\n")
+        );
+    }
+
+    #[test]
+    fn forked_child_hides_copied_context() {
+        let mut metadata = state();
+        metadata["agents"]["agent-0"] = json!({"type": "sub", "parentAgentId": "main"});
+        let root = write_bundle(
+            metadata,
+            &[
+                r#"{"type":"turn.prompt","input":[{"type":"text","text":"Main prompt"}],"origin":{"kind":"user"}}"#,
+            ],
+        );
+        write_agent_journal(
+            &root,
+            "agent-0",
+            &[
+                r#"{"type":"context.append_message","message":{"role":"user","content":[{"type":"text","text":"Copied parent prompt"}],"origin":{"kind":"user"}}}"#,
+                r#"{"type":"context.append_message","message":{"role":"user","content":[{"type":"text","text":"Copied parent follow-up"}],"origin":{"kind":"user"}}}"#,
+                &child_prompt(1785320000010, "Actual child task"),
+            ],
+        );
+
+        let parsed = KimiCodeParser::new(root.path())
+            .parse_session_dir(&session_dir(&root))
+            .unwrap();
+
+        assert_eq!(parsed.children.len(), 1);
+        assert_eq!(parsed.children[0].messages.len(), 1);
+        assert_eq!(parsed.children[0].messages[0].content, "Actual child task");
+    }
+
+    #[test]
+    fn labels_supply_profile_swarm_item_and_parent_fallback() {
+        let mut metadata = state();
+        metadata["agents"]["agent-0"] = json!({
+            "type": "sub",
+            "labels": {
+                "parentAgentId": "main",
+                "profileName": "explore",
+                "swarmItem": "A"
+            }
+        });
+        metadata["agents"]["agent-1"] = json!({
+            "type": "sub",
+            "parentAgentId": "main",
+            "swarmItem": "B"
+        });
+        let root = write_bundle(
+            metadata,
+            &[
+                r#"{"type":"turn.prompt","input":[{"type":"text","text":"Main prompt"}],"origin":{"kind":"user"}}"#,
+            ],
+        );
+        write_agent_journal(&root, "agent-0", &[&child_prompt(1785320000010, "Task A")]);
+        write_agent_journal(&root, "agent-1", &[&child_prompt(1785320000020, "Task B")]);
+
+        let parsed = KimiCodeParser::new(root.path())
+            .parse_session_dir(&session_dir(&root))
+            .unwrap();
+        let loaded = load_state(&session_dir(&root).join("state.json")).unwrap();
+
+        assert_eq!(parsed.children.len(), 2);
+        assert_eq!(
+            loaded.agents["agent-0"].parent_agent_id.as_deref(),
+            Some("main")
+        );
+        assert_eq!(
+            loaded.agents["agent-0"].profile_name.as_deref(),
+            Some("explore")
+        );
+        assert_eq!(loaded.agents["agent-0"].swarm_item.as_deref(), Some("A"));
+        assert_eq!(loaded.agents["agent-1"].swarm_item.as_deref(), Some("B"));
     }
 
     #[test]
@@ -1017,6 +1261,8 @@ struct StateMetadata {
 struct AgentMetadata {
     kind: Option<String>,
     parent_agent_id: Option<String>,
+    profile_name: Option<String>,
+    swarm_item: Option<String>,
 }
 
 #[derive(Debug)]
@@ -1182,7 +1428,7 @@ impl KimiCodeParser {
         let journal_path = session_dir.join("agents/main/wire.jsonl");
         validate_expected_file(&journal_path)?;
         validate_bundle_path(&self.kimi_home, session_dir, &journal_path)?;
-        let scan = scan_journal(&journal_path)?;
+        let scan = scan_journal(&journal_path, false)?;
         let start_time = state
             .created_at
             .or(scan.earliest_time)
@@ -1201,6 +1447,7 @@ impl KimiCodeParser {
             &session_id,
             start_time,
             scan.has_real_turn_prompt,
+            false,
         )?;
         let title = state
             .title
@@ -1250,7 +1497,7 @@ impl KimiCodeParser {
             }
             validate_expected_file(&agent.journal_path)?;
             validate_bundle_path(&self.kimi_home, session_dir, &agent.journal_path)?;
-            let scan = scan_journal(&agent.journal_path)?;
+            let scan = scan_journal(&agent.journal_path, true)?;
             let child_start = scan
                 .earliest_time
                 .or(state.created_at)
@@ -1264,6 +1511,7 @@ impl KimiCodeParser {
                 &child_session_id(&session_id, &agent.id),
                 child_start,
                 scan.has_real_turn_prompt,
+                true,
             ) {
                 Ok(parsed) => parsed,
                 Err(error)
@@ -1883,7 +2131,24 @@ fn load_state(path: &Path) -> Result<StateMetadata> {
                 agent_id.clone(),
                 AgentMetadata {
                     kind: nonblank(agent.get("type")),
-                    parent_agent_id: nonblank(agent.get("parentAgentId")),
+                    parent_agent_id: nonblank(agent.get("parentAgentId")).or_else(|| {
+                        nonblank(
+                            agent
+                                .get("labels")
+                                .and_then(|labels| labels.get("parentAgentId")),
+                        )
+                    }),
+                    profile_name: nonblank(
+                        agent
+                            .get("labels")
+                            .and_then(|labels| labels.get("profileName")),
+                    ),
+                    swarm_item: nonblank(
+                        agent
+                            .get("labels")
+                            .and_then(|labels| labels.get("swarmItem")),
+                    )
+                    .or_else(|| nonblank(agent.get("swarmItem"))),
                 },
             );
         }
@@ -1891,7 +2156,7 @@ fn load_state(path: &Path) -> Result<StateMetadata> {
     Ok(state)
 }
 
-fn scan_journal(path: &Path) -> Result<JournalScan> {
+fn scan_journal(path: &Path, is_child: bool) -> Result<JournalScan> {
     let file = File::open(path).with_context(|| format!("failed to open {}", path.display()))?;
     let mut scan = JournalScan {
         has_real_turn_prompt: false,
@@ -1908,7 +2173,7 @@ fn scan_journal(path: &Path) -> Result<JournalScan> {
             scan.earliest_time = Some(scan.earliest_time.map_or(time, |current| current.min(time)));
             scan.latest_time = Some(scan.latest_time.map_or(time, |current| current.max(time)));
         }
-        scan.has_real_turn_prompt |= is_real_turn_prompt(&value);
+        scan.has_real_turn_prompt |= is_real_turn_prompt(&value, is_child);
     }
     Ok(scan)
 }
@@ -1918,6 +2183,7 @@ fn parse_journal(
     session_id: &str,
     start_time: DateTime<Utc>,
     has_real_turn_prompt: bool,
+    is_child: bool,
 ) -> Result<ParsedJournal> {
     let file = File::open(path).with_context(|| format!("failed to open {}", path.display()))?;
     let mut messages = Vec::new();
@@ -1974,8 +2240,15 @@ fn parse_journal(
                     state.turn_usage.add(usage);
                 }
             }
-            Some("turn.prompt") if has_real_turn_prompt && is_real_turn_prompt(&value) => {
+            Some("turn.prompt")
+                if has_real_turn_prompt && is_real_turn_prompt(&value, is_child) =>
+            {
                 if let Some(content) = normalize_content_parts(value.get("input"), true) {
+                    let content = if is_child {
+                        text::strip_git_context(&content).to_string()
+                    } else {
+                        content
+                    };
                     push_message(
                         &mut messages,
                         &mut transcript_items,
@@ -2213,13 +2486,17 @@ fn parse_journal(
     })
 }
 
-fn is_real_turn_prompt(value: &Value) -> bool {
+fn is_real_turn_prompt(value: &Value, is_child: bool) -> bool {
+    let Some(origin) = value.get("origin") else {
+        return false;
+    };
+    let origin_kind = origin.get("kind").and_then(Value::as_str);
+    let has_accepted_origin = origin_kind == Some("user")
+        || (is_child
+            && origin_kind == Some("system_trigger")
+            && origin.get("name").and_then(Value::as_str) == Some("subagent"));
     value.get("type").and_then(Value::as_str) == Some("turn.prompt")
-        && value
-            .get("origin")
-            .and_then(|origin| origin.get("kind"))
-            .and_then(Value::as_str)
-            == Some("user")
+        && has_accepted_origin
         && normalize_content_parts(value.get("input"), true).is_some()
 }
 
