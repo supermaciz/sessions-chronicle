@@ -142,7 +142,9 @@ fn parse_tag_attributes(tag: &str) -> Option<HashMap<&str, &str>> {
             return None;
         }
         let value = tag.get(value_start..position)?;
-        attributes.insert(key, value);
+        if attributes.insert(key, value).is_some() {
+            return None;
+        }
         position += 1;
     }
 
@@ -354,6 +356,20 @@ mod tests {
             ),
             None
         );
+    }
+
+    #[test]
+    fn duplicate_attribute_names_make_result_unusable() {
+        for output in [
+            "<agent_swarm_result>\n<subagent agent_id=\"agent-0\" agent_id=\"agent-1\" item=\"A\">body</subagent>\n</agent_swarm_result>",
+            "<agent_swarm_result>\n<subagent agent_id=\"agent-0\" item=\"A\" item=\"B\">body</subagent>\n</agent_swarm_result>",
+            "<agent_swarm_result>\n<subagent agent_id=\"agent-0\" item=\"A\" outcome=\"done\" outcome=\"failed\">body</subagent>\n</agent_swarm_result>",
+        ] {
+            assert!(
+                parse_swarm_result(output).is_none(),
+                "duplicate attributes should invalidate result: {output}"
+            );
+        }
     }
 
     #[test]
