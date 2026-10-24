@@ -237,18 +237,44 @@ tool call is removed. Each item's `Subagent` row:
 | `child_session_id` | the synthetic child session id |
 | `parser_ref` | raw call id |
 
-Inserting N items in place of one shifts every later `item_index`. All
-indexes that point into the transcript (reasoning attachments, subagent and
-tool call item references) must stay consistent. Reasoning that was attached
-to the swarm call attaches to the first expanded item. How this is done
-(expansion during parsing vs. a renumbering pass after matching) is left to
-the builder.
+**Index renumbering.** Inserting N items in place of one shifts every later
+`item_index`. Expansion is done in a single pass after all call matching for
+the journal is finished, never during streaming:
 
-Parsing the result block is a small, tolerant scan of the expected tags, not
-a general XML parser. If the block is malformed, it counts as "no usable
-result" and the `args.items` fallback applies. Whether attribute and body
-text need entity unescaping is for the builder to check against real data
-(none was seen in the sample).
+1. Rebuild `transcript_items` in order. Keep an old → new index map, where a
+   swarm call's old index maps to the index of its first expanded item.
+   Renumber `item_index` so the indexes stay contiguous from 0.
+2. Apply the map to every structure that stores a transcript index:
+   `ReasoningAttachment.transcript_item_index` and the `item_index` of context
+   entries (`models/context.rs`, empty for Kimi today but covered for safety).
+   Reasoning that was attached to the swarm call therefore moves to the first
+   expanded item.
+3. A test checks the invariant on an expanded fixture: indexes are contiguous,
+   and every reasoning attachment and context entry points to an existing
+   item of the expected kind.
+
+`Agent` matches keep their in-place conversion (one item becomes one item),
+and they run before the expansion pass so the map stays one-to-one for them.
+
+**Result block parsing.** A small line-oriented scan of `result.output`, not
+an XML parser. Both local swarm results contain no entities but plenty of raw
+`<` and `"` inside bodies (markdown, code). One of them even quotes a literal
+`<subagent agent_id="…" …>` tag inside a body. So:
+
+- No entity decoding. Attribute values and bodies are used verbatim.
+- A block starts only at a line that begins with `<subagent agent_id="`
+  (after optional leading whitespace) and whose opening tag closes with `>` on
+  the same line. `agent_id`, `item`, and `outcome` are read from that opening
+  tag.
+- A block's body runs to the **last** `</subagent>` before the next block
+  start or `</agent_swarm_result>`, whichever comes first.
+- A block without a closing tag, a missing `agent_id`, or a missing
+  `</agent_swarm_result>` makes the whole result unusable, and the
+  `args.items` fallback applies.
+
+A unit test uses a body that contains a quoted `<subagent …>` line in the
+middle of a paragraph (not at line start) and an inline `</subagent>`, taken
+from the real sample.
 
 Nested swarms or `Agent` calls inside a child journal follow the same rules
 recursively, scoped to that child's own children.
@@ -335,5 +361,4 @@ closes, and document `AgentSwarm` (call args, result block, `swarmItem`), the
 - Swarm items are ordered by `args.items`.
 - A swarm result whose `<subagent>` blocks do not cover exactly `args.items`
   counts as unusable.
-- Tolerant tag scan rather than an XML dependency.
 - Fingerprint clearing: Kimi-only if simple, otherwise global.
