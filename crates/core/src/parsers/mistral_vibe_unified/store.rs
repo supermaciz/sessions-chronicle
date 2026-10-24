@@ -1009,6 +1009,15 @@ pub(crate) mod test_support {
         refresh_manifest_and_pointer(session_dir, &manifest);
     }
 
+    /// Rewrites `manifest.json` with `edit` and updates
+    /// `CURRENT.manifest_sha256`, so the edit survives the manifest digest
+    /// check and reaches the descriptor validation behind it.
+    pub(crate) fn rewrite_manifest(session_dir: &Path, edit: impl FnOnce(&mut Value)) {
+        let mut manifest = read_document_at(session_dir, "manifest.json");
+        edit(&mut manifest);
+        refresh_manifest_and_pointer(session_dir, &manifest);
+    }
+
     /// Rewrites the journal record with the given `sequence`: applies
     /// `edit`, re-encodes the record canonically and recomputes its
     /// `record_sha256` per the upstream digest rule.  Successor records
@@ -1227,6 +1236,7 @@ pub(crate) mod test_support {
 mod tests {
     use super::test_support::{
         copy_fixture, copy_tree, error_variant, rewrite_document, rewrite_journal_record,
+        rewrite_manifest,
     };
     use super::*;
     use crate::parsers::mistral_vibe_unified::canonical::canonical_json;
@@ -1849,5 +1859,508 @@ mod tests {
         // leaves the chain to the test.
         let previous: Value = serde_json::from_slice(second).unwrap();
         assert_ne!(previous["previous_record_sha256"], record["record_sha256"]);
+    }
+
+    // ------------------------------------------------------------------
+    // Validation tables: each case edits a fresh fixture copy and expects
+    // one failure class, so every rejection rule of facts A–D is pinned.
+    // ------------------------------------------------------------------
+
+    type Edit = fn(&mut Value);
+
+    /// A digest that is well formed but matches no stored body.
+    const ZERO_DIGEST: &str = "0000000000000000000000000000000000000000000000000000000000000000";
+
+    fn assert_cases(
+        file_name: &str,
+        rewrite: fn(&Path, &str, Edit),
+        cases: &[(&str, &str, Edit, &'static str)],
+    ) {
+        for (store, label, edit, expected) in cases {
+            let (_temp, session) = copy_store(store);
+            rewrite(&session, file_name, *edit);
+            let error = load_generation(&session)
+                .expect_err(&format!("{file_name} case {label:?} must fail to load"));
+            assert_eq!(
+                error_variant(&error),
+                *expected,
+                "{file_name} case {label:?} failed with the wrong variant: {error}"
+            );
+        }
+    }
+
+    fn rewrite_generation_document(session: &Path, file_name: &str, edit: Edit) {
+        rewrite_document(session, file_name, edit);
+    }
+
+    fn rewrite_pointer(session: &Path, _file_name: &str, edit: Edit) {
+        let mut pointer = read_pointer(session);
+        edit(&mut pointer);
+        write_pointer(session, &pointer);
+    }
+
+    fn rewrite_manifest_document(session: &Path, _file_name: &str, edit: Edit) {
+        rewrite_manifest(session, edit);
+    }
+
+    #[test]
+    fn runtime_state_rules_reject_malformed_identity_and_metadata() {
+        let cases: &[(&str, &str, Edit, &'static str)] = &[
+            (
+                R302,
+                "session_metadata not an object",
+                |d| {
+                    d["session_metadata"] = json!([]);
+                },
+                "Corrupt",
+            ),
+            (
+                R302,
+                "identity session_id differs from directory",
+                |d| {
+                    d["identity"]["session_id"] = json!(R300);
+                },
+                "IdentityConflict",
+            ),
+            (
+                R302,
+                "metadata root_session_id missing",
+                |d| {
+                    d["session_metadata"]
+                        .as_object_mut()
+                        .unwrap()
+                        .remove("root_session_id");
+                },
+                "Corrupt",
+            ),
+            (
+                R302,
+                "metadata root_session_id disagrees",
+                |d| {
+                    d["session_metadata"]["root_session_id"] = json!(R300);
+                },
+                "IdentityConflict",
+            ),
+            (
+                R302,
+                "metadata parent_session_id malformed",
+                |d| {
+                    d["session_metadata"]["parent_session_id"] = json!(7);
+                },
+                "Corrupt",
+            ),
+            (
+                R302,
+                "metadata parent_session_id disagrees",
+                |d| {
+                    d["session_metadata"]["parent_session_id"] = json!(R300);
+                },
+                "IdentityConflict",
+            ),
+            (
+                R302,
+                "root identity rooted elsewhere",
+                |d| {
+                    d["identity"]["root_session_id"] = json!(R300);
+                    d["session_metadata"]["root_session_id"] = json!(R300);
+                },
+                "IdentityConflict",
+            ),
+            (
+                R302,
+                "root identity with a parent",
+                |d| {
+                    d["identity"]["parent_session_id"] = json!(R300);
+                    d["session_metadata"]["parent_session_id"] = json!(R300);
+                },
+                "Corrupt",
+            ),
+            (
+                R302,
+                "unknown identity kind",
+                |d| {
+                    d["identity"]["kind"] = json!("clone");
+                },
+                "Corrupt",
+            ),
+            (
+                F301,
+                "fork without a parent",
+                |d| {
+                    d["identity"]["parent_session_id"] = json!(null);
+                    d["session_metadata"]["parent_session_id"] = json!(null);
+                },
+                "Corrupt",
+            ),
+            (
+                F301,
+                "fork parented to itself",
+                |d| {
+                    d["identity"]["parent_session_id"] = json!(F301);
+                    d["session_metadata"]["parent_session_id"] = json!(F301);
+                },
+                "Corrupt",
+            ),
+            (
+                CHILD_A,
+                "subagent without a parent",
+                |d| {
+                    d["identity"]["parent_session_id"] = json!(null);
+                    d["session_metadata"]["parent_session_id"] = json!(null);
+                },
+                "Corrupt",
+            ),
+            (
+                CHILD_A,
+                "subagent parent differs from root",
+                |d| {
+                    d["identity"]["parent_session_id"] = json!(R300);
+                    d["session_metadata"]["parent_session_id"] = json!(R300);
+                },
+                "Corrupt",
+            ),
+            (
+                CHILD_A,
+                "subagent that is its own root",
+                |d| {
+                    for object in ["identity", "session_metadata"] {
+                        d[object]["root_session_id"] = json!(CHILD_A);
+                        d[object]["parent_session_id"] = json!(CHILD_A);
+                    }
+                },
+                "Corrupt",
+            ),
+            (
+                CHILD_A,
+                "subagent without a spawn key",
+                |d| {
+                    d["session_metadata"]["subagent_spawn_key"] = json!(null);
+                },
+                "Corrupt",
+            ),
+            (
+                CHILD_A,
+                "subagent with an empty spawn key",
+                |d| {
+                    d["session_metadata"]["subagent_spawn_key"] = json!("");
+                },
+                "Corrupt",
+            ),
+        ];
+        assert_cases("runtime-state.json", rewrite_generation_document, cases);
+    }
+
+    #[test]
+    fn runtime_state_rules_reject_malformed_lifetime_lifecycle_and_provenance() {
+        let cases: &[(&str, &str, Edit, &'static str)] = &[
+            (
+                R302,
+                "unknown storage_lifetime",
+                |d| {
+                    d["storage_lifetime"] = json!("forever");
+                },
+                "Corrupt",
+            ),
+            (
+                R302,
+                "lifecycle not an object",
+                |d| {
+                    d["lifecycle"] = json!("active");
+                },
+                "Corrupt",
+            ),
+            (
+                R302,
+                "lifecycle type missing",
+                |d| {
+                    d["lifecycle"] = json!({});
+                },
+                "Corrupt",
+            ),
+            (
+                R302,
+                "deleting_tree without children",
+                |d| {
+                    d["lifecycle"] = json!({"type": "deleting_tree"});
+                },
+                "Corrupt",
+            ),
+            (
+                R302,
+                "deleting_tree with non-string children",
+                |d| {
+                    d["lifecycle"] =
+                        json!({"type": "deleting_tree", "ordered_child_session_ids": [1]});
+                },
+                "Corrupt",
+            ),
+            (
+                R302,
+                "import_provenance not an object",
+                |d| {
+                    d["import_provenance"] = json!("legacy");
+                },
+                "Corrupt",
+            ),
+            (
+                R302,
+                "import_provenance source not an object",
+                |d| {
+                    d["import_provenance"] = json!({"source": null});
+                },
+                "Corrupt",
+            ),
+            (
+                R302,
+                "import_provenance backend missing",
+                |d| {
+                    d["import_provenance"] = json!({"source": {}});
+                },
+                "Corrupt",
+            ),
+            (
+                R302,
+                "unknown import_provenance backend",
+                |d| {
+                    d["import_provenance"] = json!({"source": {"backend": "cloud"}});
+                },
+                "Corrupt",
+            ),
+            (
+                R302,
+                "legacy import_provenance without session_id",
+                |d| {
+                    d["import_provenance"] = json!({"source": {"backend": "legacy"}});
+                },
+                "Corrupt",
+            ),
+        ];
+        assert_cases("runtime-state.json", rewrite_generation_document, cases);
+    }
+
+    #[test]
+    fn current_rules_reject_malformed_pointer() {
+        let cases: &[(&str, &str, Edit, &'static str)] = &[
+            (
+                R302,
+                "unknown store_format",
+                |p| {
+                    p["store_format"] = json!("mistral.vibe.unified-session-store/v2");
+                },
+                "Unsupported",
+            ),
+            (
+                R302,
+                "generation not 16 digits",
+                |p| {
+                    p["generation"] = json!("4");
+                },
+                "Corrupt",
+            ),
+            (
+                R302,
+                "manifest_sha256 not a digest",
+                |p| {
+                    p["manifest_sha256"] = json!("abc");
+                },
+                "Corrupt",
+            ),
+            (
+                R302,
+                "manifest_sha256 matches no manifest",
+                |p| {
+                    p["manifest_sha256"] = json!(ZERO_DIGEST);
+                },
+                "Corrupt",
+            ),
+        ];
+        assert_cases("CURRENT", rewrite_pointer, cases);
+    }
+
+    #[test]
+    fn manifest_rules_reject_malformed_descriptors() {
+        let cases: &[(&str, &str, Edit, &'static str)] = &[
+            (
+                R302,
+                "unsupported manifest_version",
+                |m| {
+                    m["manifest_version"] = json!(2);
+                },
+                "Unsupported",
+            ),
+            (
+                R302,
+                "session_id differs from CURRENT",
+                |m| {
+                    m["session_id"] = json!(R300);
+                },
+                "IdentityConflict",
+            ),
+            (
+                R302,
+                "snapshot_sequence differs from CURRENT",
+                |m| {
+                    m["snapshot_sequence"] = json!(5);
+                },
+                "IdentityConflict",
+            ),
+            (
+                R302,
+                "descriptor path escapes the generation",
+                |m| {
+                    m["runtime_state"]["path"] = json!("../runtime-state.json");
+                },
+                "Corrupt",
+            ),
+            (
+                R302,
+                "descriptor sha256 not a digest",
+                |m| {
+                    m["runtime_state"]["sha256"] = json!("abc");
+                },
+                "Corrupt",
+            ),
+            (
+                R302,
+                "descriptor chunks hold a non-string",
+                |m| {
+                    m["projection_state"]["chunks"] = json!([1]);
+                },
+                "Corrupt",
+            ),
+            (
+                R302,
+                "descriptor chunks hold a non-digest",
+                |m| {
+                    m["projection_state"]["chunks"] = json!(["abc"]);
+                },
+                "Corrupt",
+            ),
+            (
+                R302,
+                "descriptor chunks neither null nor array",
+                |m| {
+                    m["projection_state"]["chunks"] = json!("abc");
+                },
+                "Corrupt",
+            ),
+            (
+                R302,
+                "projection digest matches no body",
+                |m| {
+                    m["projection_state"]["sha256"] = json!(ZERO_DIGEST);
+                },
+                "Corrupt",
+            ),
+            (
+                R302,
+                "runtime digest matches no body",
+                |m| {
+                    m["runtime_state"]["sha256"] = json!(ZERO_DIGEST);
+                },
+                "Corrupt",
+            ),
+            (
+                R302,
+                "recovery segment not an object",
+                |m| {
+                    m["recovery_journal_segment"] = json!(null);
+                },
+                "Corrupt",
+            ),
+            (
+                R302,
+                "recovery segment path missing",
+                |m| {
+                    m["recovery_journal_segment"]
+                        .as_object_mut()
+                        .unwrap()
+                        .remove("path");
+                },
+                "Corrupt",
+            ),
+            (
+                R302,
+                "recovery segment path not a segment",
+                |m| {
+                    m["recovery_journal_segment"]["path"] = json!("journal/5.jsonl");
+                },
+                "Corrupt",
+            ),
+            (
+                R302,
+                "recovery first_sequence not an integer",
+                |m| {
+                    m["recovery_journal_segment"]["first_sequence"] = json!("five");
+                },
+                "Corrupt",
+            ),
+            (
+                R302,
+                "recovery first_sequence skips ahead",
+                |m| {
+                    m["recovery_journal_segment"]["first_sequence"] = json!(7);
+                },
+                "Corrupt",
+            ),
+        ];
+        assert_cases("manifest.json", rewrite_manifest_document, cases);
+    }
+
+    #[test]
+    fn projection_rules_reject_unsupported_version_and_non_object_snapshot() {
+        let cases: &[(&str, &str, Edit, &'static str)] = &[
+            (
+                R302,
+                "unsupported projection_state_version",
+                |d| {
+                    d["projection_state_version"] = json!(2);
+                },
+                "Unsupported",
+            ),
+            // Inline store: the chunked rewrite refills snapshot entries.
+            (
+                R300,
+                "snapshot not an object",
+                |d| {
+                    d["snapshot"] = json!("history");
+                },
+                "Corrupt",
+            ),
+        ];
+        assert_cases("projection-state.json", rewrite_generation_document, cases);
+    }
+
+    #[test]
+    fn chunk_that_is_not_an_array_is_corrupt() {
+        let (_temp, session) = copy_store(R302);
+        let body = canonical_json(&json!({"entries": []})).unwrap();
+        let digest = sha256_hex(&body);
+        let mut stored = body;
+        stored.push(b'\n');
+        fs::write(
+            session.join("chunks").join(format!("{digest}.json")),
+            stored,
+        )
+        .unwrap();
+        rewrite_manifest(&session, |manifest| {
+            manifest["projection_state"]["chunks"] = json!([digest]);
+        });
+        expect_variant(load_generation(&session), "Corrupt");
+    }
+
+    #[test]
+    fn missing_current_and_journal_segment_are_incomplete() {
+        let (_temp, session) = copy_store(R302);
+        fs::remove_file(session.join("CURRENT")).unwrap();
+        expect_variant(load_generation(&session), "Incomplete");
+
+        let (_temp, session) = copy_store(R302);
+        let journal = read_manifest(&session)["recovery_journal_segment"]["path"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        fs::remove_file(session.join(journal)).unwrap();
+        expect_variant(load_generation(&session), "Incomplete");
     }
 }

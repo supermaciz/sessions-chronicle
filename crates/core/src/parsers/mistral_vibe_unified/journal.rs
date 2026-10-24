@@ -454,7 +454,7 @@ mod tests {
     use crate::parsers::mistral_vibe_unified::load_stable;
     use crate::parsers::mistral_vibe_unified::store::load_generation;
     use crate::parsers::mistral_vibe_unified::store::test_support::{
-        copy_fixture, error_variant, rewrite_journal_record,
+        copy_fixture, error_variant, in_memory_store, rewrite_journal_record,
     };
     use serde_json::json;
     use std::cell::Cell;
@@ -1316,5 +1316,284 @@ mod tests {
         // The retry published the sampled prefix of the shrunken journal.
         assert_eq!(entry_ids(&store.projection.entries).last(), Some(&"e18"));
         assert_eq!(store.projection.watermark, 5);
+    }
+
+    // ------------------------------------------------------------------
+    // Envelope validation table (facts E and F): each case edits one
+    // otherwise valid first record and applies it to an in-memory store,
+    // so every rejection rule is pinned without a journal file.
+    // ------------------------------------------------------------------
+
+    /// Line digest the table records claim; `apply_record` receives it
+    /// as already verified against the raw line.
+    const LINE_DIGEST: &str = "line-digest";
+
+    /// A valid first `projection_delta` record for [`in_memory_store`].
+    fn first_record() -> Value {
+        json!({
+            "payload": {"delta": [], "watermark": 2},
+            "previous_record_sha256": null,
+            "record_sha256": LINE_DIGEST,
+            "recovery_journal_record_version": 1,
+            "sequence": 2,
+            "type": "projection_delta",
+        })
+    }
+
+    fn apply_first(record: Value) -> Result<(), UnifiedError> {
+        let mut store = in_memory_store(Vec::new());
+        let mut expected_sequence = store.journal_first_sequence;
+        let mut previous_digest = None;
+        apply_record(
+            record,
+            LINE_DIGEST,
+            &mut expected_sequence,
+            &mut previous_digest,
+            &mut store,
+        )
+    }
+
+    #[test]
+    fn first_record_fixture_applies() {
+        apply_first(first_record()).expect("the table's base record is valid");
+    }
+
+    #[test]
+    fn record_envelope_rules_reject_malformed_records() {
+        type Edit = fn(&mut Value);
+        let cases: &[(&str, Edit, &'static str)] = &[
+            (
+                "record_sha256 missing",
+                |r| {
+                    r.as_object_mut().unwrap().remove("record_sha256");
+                },
+                "Corrupt",
+            ),
+            (
+                "record_sha256 differs from the line digest",
+                |r| {
+                    r["record_sha256"] = json!("other-digest");
+                },
+                "Corrupt",
+            ),
+            (
+                "version not an integer",
+                |r| {
+                    r["recovery_journal_record_version"] = json!("1");
+                },
+                "Corrupt",
+            ),
+            (
+                "unsupported version",
+                |r| {
+                    r["recovery_journal_record_version"] = json!(2);
+                },
+                "Unsupported",
+            ),
+            (
+                "payload not an object",
+                |r| {
+                    r["payload"] = json!([]);
+                },
+                "Corrupt",
+            ),
+            (
+                "sequence not an integer",
+                |r| {
+                    r["sequence"] = json!("2");
+                },
+                "Corrupt",
+            ),
+            (
+                "first record chains to a digest",
+                |r| {
+                    r["previous_record_sha256"] = json!("earlier-digest");
+                },
+                "Corrupt",
+            ),
+            (
+                "watermark not an integer",
+                |r| {
+                    r["payload"]["watermark"] = json!("two");
+                },
+                "Corrupt",
+            ),
+            (
+                "projection record without a watermark",
+                |r| {
+                    r["payload"].as_object_mut().unwrap().remove("watermark");
+                },
+                "Corrupt",
+            ),
+            (
+                "projection record without a delta",
+                |r| {
+                    r["payload"].as_object_mut().unwrap().remove("delta");
+                },
+                "Corrupt",
+            ),
+            (
+                "projection_advanced without a snapshot",
+                |r| {
+                    r["type"] = json!("projection_advanced");
+                },
+                "Corrupt",
+            ),
+            (
+                "projection_advanced with a non-object snapshot",
+                |r| {
+                    r["type"] = json!("projection_advanced");
+                    r["payload"]["snapshot"] = json!("history");
+                },
+                "Corrupt",
+            ),
+            (
+                "session_relocated without metadata",
+                |r| {
+                    r["type"] = json!("session_relocated");
+                },
+                "Corrupt",
+            ),
+            (
+                "delta op not an object",
+                |r| {
+                    r["payload"]["delta"] = json!([1]);
+                },
+                "Corrupt",
+            ),
+            (
+                "delta op without an op field",
+                |r| {
+                    r["payload"]["delta"] = json!([{}]);
+                },
+                "Corrupt",
+            ),
+            (
+                "set_history_entries without an entries array",
+                |r| {
+                    r["payload"]["delta"] = json!([{"op": "set_history_entries", "entries": {}}]);
+                },
+                "Corrupt",
+            ),
+            (
+                "set_envelope without a state object",
+                |r| {
+                    r["payload"]["delta"] = json!([{"op": "set_envelope", "state": []}]);
+                },
+                "Corrupt",
+            ),
+            (
+                "set_envelope with a non-object history",
+                |r| {
+                    r["payload"]["delta"] =
+                        json!([{"op": "set_envelope", "state": {"history": []}}]);
+                },
+                "Corrupt",
+            ),
+        ];
+        for (label, edit, expected) in cases {
+            let mut record = first_record();
+            edit(&mut record);
+            let error = apply_first(record).expect_err(&format!("case {label:?} must fail"));
+            assert_eq!(
+                error_variant(&error),
+                *expected,
+                "case {label:?} failed with the wrong variant: {error}"
+            );
+        }
+    }
+
+    #[test]
+    fn successor_record_without_previous_digest_is_corrupt() {
+        let mut store = in_memory_store(Vec::new());
+        let mut expected_sequence = store.journal_first_sequence;
+        let mut previous_digest = None;
+        apply_record(
+            first_record(),
+            LINE_DIGEST,
+            &mut expected_sequence,
+            &mut previous_digest,
+            &mut store,
+        )
+        .unwrap();
+
+        let mut successor = first_record();
+        successor["sequence"] = json!(3);
+        successor["record_sha256"] = json!("successor-digest");
+        successor
+            .as_object_mut()
+            .unwrap()
+            .remove("previous_record_sha256");
+        expect_variant(
+            apply_record(
+                successor,
+                "successor-digest",
+                &mut expected_sequence,
+                &mut previous_digest,
+                &mut store,
+            ),
+            "Corrupt",
+        );
+    }
+
+    #[test]
+    fn sequence_without_a_successor_is_corrupt() {
+        let mut store = in_memory_store(Vec::new());
+        let mut record = first_record();
+        record["sequence"] = json!(u64::MAX);
+        let mut expected_sequence = u64::MAX;
+        let mut previous_digest = None;
+        expect_variant(
+            apply_record(
+                record,
+                LINE_DIGEST,
+                &mut expected_sequence,
+                &mut previous_digest,
+                &mut store,
+            ),
+            "Corrupt",
+        );
+    }
+
+    #[test]
+    fn replay_rejects_malformed_digest_and_non_json_lines() {
+        // A digest that is too short, and a line whose digest is valid
+        // but whose bytes are not JSON.
+        let not_json = format!("X,\"record_sha256\":\"{}\"", sha256_hex(b"X"));
+        for line in ["{\"a\":1,\"record_sha256\":\"abc\"}".to_string(), not_json] {
+            let (_temp, session) = copy_store(R302);
+            fs::write(journal_path(&session), format!("{line}\n")).unwrap();
+            let mut store = load_generation(&session).unwrap();
+            expect_variant(replay_journal(&session, &mut store), "Corrupt");
+        }
+    }
+
+    #[test]
+    fn replay_reports_a_journal_removed_after_loading_as_incomplete() {
+        let (_temp, session) = copy_store(R302);
+        let mut store = load_generation(&session).unwrap();
+        fs::remove_file(journal_path(&session)).unwrap();
+        expect_variant(replay_journal(&session, &mut store), "Incomplete");
+    }
+
+    #[test]
+    fn load_stable_reports_a_store_removed_mid_read_as_incomplete() {
+        // CURRENT vanishing during the build is an instability; the
+        // retry then finds no pointer before and after its failed load,
+        // so the stable outcome is the missing pointer, not Unstable.
+        let (_temp, session) = copy_store(R302);
+        let calls = Cell::new(0u32);
+        let result = load_stable(&session, |_store| {
+            calls.set(calls.get() + 1);
+            fs::remove_file(session.join("CURRENT")).unwrap();
+            Ok(())
+        });
+        let error = result.map(|_| ()).expect_err("a removed store cannot load");
+        assert_eq!(
+            error_variant(&error),
+            "Incomplete",
+            "unexpected error: {error}"
+        );
+        assert_eq!(calls.get(), 1);
     }
 }
