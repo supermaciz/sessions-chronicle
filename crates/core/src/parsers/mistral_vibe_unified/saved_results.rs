@@ -109,14 +109,16 @@ impl SavedResultResolver {
         // no-symlink rule (it cannot substitute another inode's contents).
         reject_symlink(&self.tool_results_dir)?;
         let local_path = self.tool_results_dir.join(basename);
-        // No-follow validation of the record: a symlink is corrupt, a
-        // missing record is incomplete data.
-        let validated = fs::symlink_metadata(&local_path).map_err(|error| match error.kind() {
+        // A record that vanishes before the check or the open is missing data.
+        let missing_or_io = |error: io::Error| match error.kind() {
             io::ErrorKind::NotFound => UnifiedError::MissingSavedResult(format!(
                 "saved result {basename} referenced by a receipt is missing"
             )),
             _ => UnifiedError::Io(error),
-        })?;
+        };
+        // No-follow validation of the record: a symlink is corrupt, a
+        // missing record is incomplete data.
+        let validated = fs::symlink_metadata(&local_path).map_err(missing_or_io)?;
         if validated.file_type().is_symlink() {
             return Err(UnifiedError::Corrupt(format!(
                 "saved result {basename} is a symlink"
@@ -126,12 +128,7 @@ impl SavedResultResolver {
         test_hooks::run_between_check_and_open();
         // Open the record and fstat that same handle: whatever the path
         // points at now, only the validated file itself may be read.
-        let mut file = fs::File::open(&local_path).map_err(|error| match error.kind() {
-            io::ErrorKind::NotFound => UnifiedError::MissingSavedResult(format!(
-                "saved result {basename} referenced by a receipt is missing"
-            )),
-            _ => UnifiedError::Io(error),
-        })?;
+        let mut file = fs::File::open(&local_path).map_err(missing_or_io)?;
         let opened = file.metadata().map_err(UnifiedError::Io)?;
         if opened.dev() != validated.dev() || opened.ino() != validated.ino() {
             return Err(UnifiedError::Corrupt(format!(
@@ -227,6 +224,19 @@ mod tests {
         format!(
             "<system>The tool output is large. To preserve your context window, it was saved to the file system under {path}.\nOutput size: {size} characters\nMax size before saving: 16000 characters</system>\n<truncated-output>\nThe full output is available in the saved file.\n</truncated-output>"
         )
+    }
+
+    /// Resolves a receipt for `saved.json` sized for `content` and
+    /// asserts the record is rejected as corrupt.
+    fn assert_saved_corrupt(dir: PathBuf, content: &str) {
+        let mut resolver = SavedResultResolver::new(dir);
+        let error = resolver
+            .resolve(&receipt(
+                "/x/tool-results/saved.json",
+                content.encode_utf16().count(),
+            ))
+            .unwrap_err();
+        assert_eq!(error_variant(&error), "Corrupt");
     }
 
     fn temp_tool_results() -> (TempDir, PathBuf) {
@@ -476,16 +486,9 @@ mod tests {
         let (temp, dir) = temp_tool_results();
         let content = "not json at all";
         write_saved(&dir, "saved.json", content);
-        let mut resolver = SavedResultResolver::new(dir);
         // Fact K: the record holds pretty JSON; a same-length non-JSON
         // file is not a saved result.
-        let error = resolver
-            .resolve(&receipt(
-                "/x/tool-results/saved.json",
-                content.encode_utf16().count(),
-            ))
-            .unwrap_err();
-        assert_eq!(error_variant(&error), "Corrupt");
+        assert_saved_corrupt(dir, content);
         let _ = temp;
     }
 
@@ -504,14 +507,7 @@ mod tests {
             std::os::unix::fs::symlink(&target, swap_dir.join("saved.json")).unwrap();
         }));
 
-        let mut resolver = SavedResultResolver::new(dir);
-        let error = resolver
-            .resolve(&receipt(
-                "/x/tool-results/saved.json",
-                content.encode_utf16().count(),
-            ))
-            .unwrap_err();
-        assert_eq!(error_variant(&error), "Corrupt");
+        assert_saved_corrupt(dir, content);
         let _ = temp;
     }
 
@@ -529,14 +525,7 @@ mod tests {
             fs::write(swap_dir.join("saved.json"), swap_content).unwrap();
         }));
 
-        let mut resolver = SavedResultResolver::new(dir);
-        let error = resolver
-            .resolve(&receipt(
-                "/x/tool-results/saved.json",
-                content.encode_utf16().count(),
-            ))
-            .unwrap_err();
-        assert_eq!(error_variant(&error), "Corrupt");
+        assert_saved_corrupt(dir, content);
         let _ = temp;
     }
 
@@ -558,13 +547,6 @@ mod tests {
             std::os::unix::fs::symlink(&twin, &swap_dir).unwrap();
         }));
 
-        let mut resolver = SavedResultResolver::new(dir);
-        let error = resolver
-            .resolve(&receipt(
-                "/x/tool-results/saved.json",
-                content.encode_utf16().count(),
-            ))
-            .unwrap_err();
-        assert_eq!(error_variant(&error), "Corrupt");
+        assert_saved_corrupt(dir, content);
     }
 }

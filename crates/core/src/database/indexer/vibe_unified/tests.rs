@@ -51,6 +51,24 @@ impl Harness {
             &self.dir(id),
         );
     }
+    /// Writes a legacy session claiming `id`, which collides with any
+    /// Unified store of the same ID, and returns its directory.
+    fn add_legacy(&self, id: &str, prompt: &str) -> PathBuf {
+        let legacy = self.root().join("legacy");
+        fs::create_dir(&legacy).unwrap();
+        fs::write(
+            legacy.join("meta.json"),
+            serde_json::json!({"session_id": id, "start_time": "2026-10-20T10:00:00Z"}).to_string(),
+        )
+        .unwrap();
+        fs::write(
+            legacy.join("messages.jsonl"),
+            serde_json::json!({"role": "user", "content": prompt}).to_string() + "\n",
+        )
+        .unwrap();
+        legacy
+    }
+
     fn run(&mut self, incremental: bool) -> (IndexingStats, VecDeque<IndexingError>) {
         let mut errors = VecDeque::new();
         let stats = self
@@ -179,23 +197,33 @@ fn corrupt_document(dir: &Path) -> (PathBuf, Vec<u8>) {
     (path, original)
 }
 
-/// Feed one real unstable outcome for `path` through the production outcome
-/// handler into caller-owned cumulative stats and diagnostics.
-fn defer_unstable(
-    indexer: &mut SessionIndexer,
-    path: &Path,
-    reason: &str,
-    stats: &mut IndexingStats,
-    errors: &mut VecDeque<IndexingError>,
-) {
-    indexer
-        .handle_unified_outcome(
-            path,
-            Err(UnifiedError::Unstable(reason.to_string())),
-            stats,
-            errors,
-        )
-        .unwrap();
+/// Caller-owned cumulative stats and diagnostics fed by real unstable
+/// outcomes through the production outcome handler.
+#[derive(Default)]
+struct Deferrals {
+    stats: IndexingStats,
+    errors: VecDeque<IndexingError>,
+}
+
+impl Deferrals {
+    /// Feeds one unstable outcome for `path` and returns the cumulative
+    /// `(skipped, errors, diagnostics)` counts.
+    fn defer(
+        &mut self,
+        indexer: &mut SessionIndexer,
+        path: &Path,
+        reason: &str,
+    ) -> (usize, usize, usize) {
+        indexer
+            .handle_unified_outcome(
+                path,
+                Err(UnifiedError::Unstable(reason.to_string())),
+                &mut self.stats,
+                &mut self.errors,
+            )
+            .unwrap();
+        (self.stats.skipped, self.stats.errors, self.errors.len())
+    }
 }
 
 fn pool_child_projection(dir: &Path) {
@@ -881,18 +909,7 @@ fn absent_current_in_indexed_dir_is_diagnosed_and_kept() {
 #[test]
 fn legacy_id_collision_keeps_prior_record() {
     let mut h = Harness::empty();
-    let legacy = h.root().join("legacy");
-    fs::create_dir(&legacy).unwrap();
-    fs::write(
-        legacy.join("meta.json"),
-        serde_json::json!({"session_id": R302, "start_time":"2026-10-20T10:00:00Z"}).to_string(),
-    )
-    .unwrap();
-    fs::write(
-        legacy.join("messages.jsonl"),
-        b"{\"role\":\"user\",\"content\":\"Legacy collision prompt\"}\n",
-    )
-    .unwrap();
+    let legacy = h.add_legacy(R302, "Legacy collision prompt");
     assert!(h.run(true).1.is_empty());
     assert!(h.exists(R302));
     h.add(R302);
@@ -1134,18 +1151,7 @@ fn legacy_collision_with_existing_unified_keeps_prior_record() {
     assert!(h.run(true).1.is_empty());
     let before = h.messages(R302);
     let signature = h.signature(R302);
-    let legacy = h.root().join("legacy");
-    fs::create_dir(&legacy).unwrap();
-    fs::write(
-        legacy.join("meta.json"),
-        serde_json::json!({"session_id":R302, "start_time":"2026-10-20T10:00:00Z"}).to_string(),
-    )
-    .unwrap();
-    fs::write(
-        legacy.join("messages.jsonl"),
-        b"{\"role\":\"user\",\"content\":\"colliding legacy\"}\n",
-    )
-    .unwrap();
+    h.add_legacy(R302, "colliding legacy");
     let (stats, errors) = h.run(true);
     assert_eq!(stats.errors, 1);
     assert_eq!(errors.len(), 1);
@@ -1219,19 +1225,13 @@ fn unstable_errors_are_consecutive() {
 
     // Only the first pass of a consecutive unstable sequence is deferred
     // quietly; every later pass of the same sequence is reported.
-    let mut stats = IndexingStats::default();
-    let mut errors = VecDeque::new();
+    let mut deferrals = Deferrals::default();
     for reported in [0, 1, 2] {
-        defer_unstable(
-            &mut h.indexer,
-            &path,
-            "pointer flipped",
-            &mut stats,
-            &mut errors,
+        assert_eq!(
+            deferrals.defer(&mut h.indexer, &path, "pointer flipped"),
+            (1, reported, reported),
+            "only the first unstable pass defers"
         );
-        assert_eq!(stats.skipped, 1, "only the first unstable pass defers");
-        assert_eq!(stats.errors, reported);
-        assert_eq!(errors.len(), reported);
         assert_eq!(before, (h.messages(R302), h.signature(R302)));
     }
 }
@@ -1245,16 +1245,11 @@ fn intervening_non_unstable_failure_defers_both_unstable_firsts() {
     let path = h.dir(R302);
 
     // First unstable pass of a sequence: deferred quietly.
-    let mut stats = IndexingStats::default();
-    let mut errors = VecDeque::new();
-    defer_unstable(
-        &mut h.indexer,
-        &path,
-        "pointer flipped",
-        &mut stats,
-        &mut errors,
+    let mut deferrals = Deferrals::default();
+    assert_eq!(
+        deferrals.defer(&mut h.indexer, &path, "pointer flipped"),
+        (1, 0, 0)
     );
-    assert_eq!((stats.skipped, stats.errors, errors.len()), (1, 0, 0));
 
     // An intervening corrupt read is diagnosed immediately through the real
     // outcome path and must break the pending unstable sequence.
@@ -1266,8 +1261,10 @@ fn intervening_non_unstable_failure_defers_both_unstable_firsts() {
 
     // The next unstable outcome is a fresh first occurrence, not the second
     // pass of a stale sequence: it is deferred quietly again.
-    defer_unstable(&mut h.indexer, &path, "new race", &mut stats, &mut errors);
-    assert_eq!((stats.skipped, stats.errors, errors.len()), (2, 0, 0));
+    assert_eq!(
+        deferrals.defer(&mut h.indexer, &path, "new race"),
+        (2, 0, 0)
+    );
     assert_eq!(before, (h.messages(R302), h.signature(R302)));
 }
 
@@ -1307,27 +1304,20 @@ fn independent_indexers_do_not_share_deferrals() {
 
     let path = unified.join(R302);
     for indexer in &mut indexers {
-        let mut stats = IndexingStats::default();
-        let mut errors = VecDeque::new();
-        defer_unstable(indexer, &path, "pointer flipped", &mut stats, &mut errors);
+        let mut deferrals = Deferrals::default();
         assert_eq!(
-            (stats.skipped, stats.errors, errors.len()),
+            deferrals.defer(indexer, &path, "pointer flipped"),
             (1, 0, 0),
             "an independently created indexer must start with clean deferrals"
         );
     }
 
     let mut fresh = SessionIndexer::new(&temp.path().join("one.db")).unwrap();
-    let mut stats = IndexingStats::default();
-    let mut errors = VecDeque::new();
-    defer_unstable(
-        &mut fresh,
-        &path,
-        "pointer flipped",
-        &mut stats,
-        &mut errors,
+    let mut deferrals = Deferrals::default();
+    assert_eq!(
+        deferrals.defer(&mut fresh, &path, "pointer flipped"),
+        (1, 0, 0)
     );
-    assert_eq!((stats.skipped, stats.errors, errors.len()), (1, 0, 0));
 }
 
 #[test]
@@ -1347,8 +1337,7 @@ fn shared_context_survives_recreated_indexer() {
     // database and recreates the indexer (and SQLite connection) per
     // request from a clone of it.
     let state = IndexingRuntimeState::default();
-    let mut stats = IndexingStats::default();
-    let mut errors = VecDeque::new();
+    let mut deferrals = Deferrals::default();
 
     {
         let mut indexer = SessionIndexer::new_with_state(&db, state.clone()).unwrap();
@@ -1357,28 +1346,20 @@ fn shared_context_survives_recreated_indexer() {
             .index_vibe_sessions_internal(&root, false, &mut run_errors)
             .unwrap();
         assert!(run_errors.is_empty());
-        defer_unstable(
-            &mut indexer,
-            &path,
-            "pointer flipped",
-            &mut stats,
-            &mut errors,
+        assert_eq!(
+            deferrals.defer(&mut indexer, &path, "pointer flipped"),
+            (1, 0, 0)
         );
-        assert_eq!((stats.skipped, stats.errors, errors.len()), (1, 0, 0));
     }
 
     // A recreated indexer sharing the state keeps the sequence: the second
     // consecutive unstable pass is reported, not silently deferred again.
     {
         let mut indexer = SessionIndexer::new_with_state(&db, state.clone()).unwrap();
-        defer_unstable(
-            &mut indexer,
-            &path,
-            "pointer flipped",
-            &mut stats,
-            &mut errors,
+        assert_eq!(
+            deferrals.defer(&mut indexer, &path, "pointer flipped"),
+            (1, 1, 1)
         );
-        assert_eq!((stats.skipped, stats.errors, errors.len()), (1, 1, 1));
     }
 
     // The retained state observes the accumulated sequence.
@@ -1393,38 +1374,25 @@ fn clear_all_sessions_resets_deferrals() {
     let path = h.dir(R302);
 
     // Two consecutive unstable passes: the second is reported.
-    let mut stats = IndexingStats::default();
-    let mut errors = VecDeque::new();
-    defer_unstable(
-        &mut h.indexer,
-        &path,
-        "pointer flipped",
-        &mut stats,
-        &mut errors,
+    let mut deferrals = Deferrals::default();
+    assert_eq!(
+        deferrals.defer(&mut h.indexer, &path, "pointer flipped"),
+        (1, 0, 0)
     );
-    assert_eq!((stats.skipped, stats.errors, errors.len()), (1, 0, 0));
-    defer_unstable(
-        &mut h.indexer,
-        &path,
-        "pointer flipped",
-        &mut stats,
-        &mut errors,
+    assert_eq!(
+        deferrals.defer(&mut h.indexer, &path, "pointer flipped"),
+        (1, 1, 1)
     );
-    assert_eq!((stats.skipped, stats.errors, errors.len()), (1, 1, 1));
 
     h.indexer.clear_all_sessions().unwrap();
     assert_eq!(h.count("vibe_unified_signatures"), 0);
 
     // The committed clear wiped the retry context: the next unstable
     // outcome is a fresh first pass and is deferred quietly again.
-    defer_unstable(
-        &mut h.indexer,
-        &path,
-        "pointer flipped",
-        &mut stats,
-        &mut errors,
+    assert_eq!(
+        deferrals.defer(&mut h.indexer, &path, "pointer flipped"),
+        (2, 1, 1)
     );
-    assert_eq!((stats.skipped, stats.errors, errors.len()), (2, 1, 1));
 }
 
 #[test]
@@ -1435,24 +1403,15 @@ fn failed_clear_all_preserves_deferral_context() {
     let path = h.dir(R302);
 
     // Two consecutive unstable passes: the sequence is in its reporting state.
-    let mut stats = IndexingStats::default();
-    let mut errors = VecDeque::new();
-    defer_unstable(
-        &mut h.indexer,
-        &path,
-        "pointer flipped",
-        &mut stats,
-        &mut errors,
+    let mut deferrals = Deferrals::default();
+    assert_eq!(
+        deferrals.defer(&mut h.indexer, &path, "pointer flipped"),
+        (1, 0, 0)
     );
-    assert_eq!((stats.skipped, stats.errors, errors.len()), (1, 0, 0));
-    defer_unstable(
-        &mut h.indexer,
-        &path,
-        "pointer flipped",
-        &mut stats,
-        &mut errors,
+    assert_eq!(
+        deferrals.defer(&mut h.indexer, &path, "pointer flipped"),
+        (1, 1, 1)
     );
-    assert_eq!((stats.skipped, stats.errors, errors.len()), (1, 1, 1));
 
     // An aborted clear transaction must not touch the runtime context.
     h.indexer
@@ -1471,14 +1430,10 @@ fn failed_clear_all_preserves_deferral_context() {
 
     // Still the same consecutive sequence: the next unstable pass is
     // reported, not silently deferred.
-    defer_unstable(
-        &mut h.indexer,
-        &path,
-        "pointer flipped",
-        &mut stats,
-        &mut errors,
+    assert_eq!(
+        deferrals.defer(&mut h.indexer, &path, "pointer flipped"),
+        (1, 2, 2)
     );
-    assert_eq!((stats.skipped, stats.errors, errors.len()), (1, 2, 2));
 }
 
 #[test]
@@ -1490,16 +1445,11 @@ fn current_signature_skip_breaks_deferral_sequence() {
     let before = (h.messages(R302), h.signature(R302));
 
     // First unstable pass of a sequence: deferred quietly.
-    let mut stats = IndexingStats::default();
-    let mut errors = VecDeque::new();
-    defer_unstable(
-        &mut h.indexer,
-        &path,
-        "pointer flipped",
-        &mut stats,
-        &mut errors,
+    let mut deferrals = Deferrals::default();
+    assert_eq!(
+        deferrals.defer(&mut h.indexer, &path, "pointer flipped"),
+        (1, 0, 0)
     );
-    assert_eq!((stats.skipped, stats.errors, errors.len()), (1, 0, 0));
 
     // An unchanged session is skipped by its current signature; that
     // healthy observation must break the pending sequence.
@@ -1509,25 +1459,16 @@ fn current_signature_skip_breaks_deferral_sequence() {
     assert_eq!(before, (h.messages(R302), h.signature(R302)));
 
     // The skip broke the sequence: the next unstable pass defers again.
-    defer_unstable(&mut h.indexer, &path, "new race", &mut stats, &mut errors);
-    assert_eq!((stats.skipped, stats.errors, errors.len()), (2, 0, 0));
+    assert_eq!(
+        deferrals.defer(&mut h.indexer, &path, "new race"),
+        (2, 0, 0)
+    );
 }
 
 #[test]
 fn collision_diagnostic_breaks_deferral_sequence() {
     let mut h = Harness::empty();
-    let legacy = h.root().join("legacy");
-    fs::create_dir(&legacy).unwrap();
-    fs::write(
-        legacy.join("meta.json"),
-        serde_json::json!({"session_id": R302, "start_time":"2026-10-20T10:00:00Z"}).to_string(),
-    )
-    .unwrap();
-    fs::write(
-        legacy.join("messages.jsonl"),
-        b"{\"role\":\"user\",\"content\":\"Legacy collision prompt\"}\n",
-    )
-    .unwrap();
+    h.add_legacy(R302, "Legacy collision prompt");
     assert!(h.run(true).1.is_empty());
     assert!(h.exists(R302));
 
@@ -1536,16 +1477,11 @@ fn collision_diagnostic_breaks_deferral_sequence() {
     let before = h.messages(R302);
 
     // First unstable pass of a sequence: deferred quietly.
-    let mut stats = IndexingStats::default();
-    let mut errors = VecDeque::new();
-    defer_unstable(
-        &mut h.indexer,
-        &path,
-        "pointer flipped",
-        &mut stats,
-        &mut errors,
+    let mut deferrals = Deferrals::default();
+    assert_eq!(
+        deferrals.defer(&mut h.indexer, &path, "pointer flipped"),
+        (1, 0, 0)
     );
-    assert_eq!((stats.skipped, stats.errors, errors.len()), (1, 0, 0));
 
     // The same-ID collision is diagnosed and keeps the prior record.
     let (run_stats, run_errors) = h.run(true);
@@ -1553,8 +1489,10 @@ fn collision_diagnostic_breaks_deferral_sequence() {
     assert_eq!(h.messages(R302), before);
 
     // The collision broke the sequence: the next unstable pass defers again.
-    defer_unstable(&mut h.indexer, &path, "new race", &mut stats, &mut errors);
-    assert_eq!((stats.skipped, stats.errors, errors.len()), (2, 0, 0));
+    assert_eq!(
+        deferrals.defer(&mut h.indexer, &path, "new race"),
+        (2, 0, 0)
+    );
 }
 
 #[test]
@@ -1566,16 +1504,11 @@ fn missing_current_diagnostic_breaks_deferral_sequence() {
     let current = fs::read(path.join("CURRENT")).unwrap();
 
     // First unstable pass of a sequence: deferred quietly.
-    let mut stats = IndexingStats::default();
-    let mut errors = VecDeque::new();
-    defer_unstable(
-        &mut h.indexer,
-        &path,
-        "pointer flipped",
-        &mut stats,
-        &mut errors,
+    let mut deferrals = Deferrals::default();
+    assert_eq!(
+        deferrals.defer(&mut h.indexer, &path, "pointer flipped"),
+        (1, 0, 0)
     );
-    assert_eq!((stats.skipped, stats.errors, errors.len()), (1, 0, 0));
 
     // A missing CURRENT in an indexed directory is a direct diagnostic.
     fs::remove_file(path.join("CURRENT")).unwrap();
@@ -1585,8 +1518,10 @@ fn missing_current_diagnostic_breaks_deferral_sequence() {
     fs::write(path.join("CURRENT"), &current).unwrap();
 
     // The diagnostic broke the sequence: the next unstable pass defers again.
-    defer_unstable(&mut h.indexer, &path, "new race", &mut stats, &mut errors);
-    assert_eq!((stats.skipped, stats.errors, errors.len()), (2, 0, 0));
+    assert_eq!(
+        deferrals.defer(&mut h.indexer, &path, "new race"),
+        (2, 0, 0)
+    );
 }
 
 #[test]
@@ -1597,31 +1532,28 @@ fn confirmed_removal_breaks_deferral_sequence() {
     let path = h.dir(R302);
 
     // First unstable pass of a sequence: deferred quietly.
-    let mut stats = IndexingStats::default();
-    let mut errors = VecDeque::new();
-    defer_unstable(
-        &mut h.indexer,
-        &path,
-        "pointer flipped",
-        &mut stats,
-        &mut errors,
+    let mut deferrals = Deferrals::default();
+    assert_eq!(
+        deferrals.defer(&mut h.indexer, &path, "pointer flipped"),
+        (1, 0, 0)
     );
-    assert_eq!((stats.skipped, stats.errors, errors.len()), (1, 0, 0));
 
     // A no-user-messages outcome is a confirmed lifecycle removal.
     h.indexer
         .handle_unified_outcome(
             &path,
             Err(UnifiedError::NoUserMessages),
-            &mut stats,
-            &mut errors,
+            &mut deferrals.stats,
+            &mut deferrals.errors,
         )
         .unwrap();
     h.assert_no_contents(R302);
 
     // The removal broke the sequence: the next unstable pass defers again.
-    defer_unstable(&mut h.indexer, &path, "new race", &mut stats, &mut errors);
-    assert_eq!((stats.skipped, stats.errors, errors.len()), (2, 0, 0));
+    assert_eq!(
+        deferrals.defer(&mut h.indexer, &path, "new race"),
+        (2, 0, 0)
+    );
 }
 
 // ---------------------------------------------------------------------
