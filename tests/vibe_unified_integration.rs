@@ -67,7 +67,7 @@ struct IndexedFixtures {
 impl IndexedFixtures {
     fn new() -> Self {
         let fixtures = FixtureCopy::new();
-        let database = tempfile::NamedTempFile::new().unwrap();
+        let database = NamedTempFile::new().unwrap();
         let mut indexer = SessionIndexer::new(database.path()).unwrap();
         indexer
             .index_all_incremental(&fixtures.sources)
@@ -242,7 +242,7 @@ fn unified_root_resume_and_child_resume_flags() {
 #[test]
 fn full_reindex_then_incremental_is_stable() {
     let fixtures = FixtureCopy::new();
-    let database = tempfile::NamedTempFile::new().unwrap();
+    let database = NamedTempFile::new().unwrap();
     let mut indexer = SessionIndexer::new(database.path()).unwrap();
 
     let full = indexer

@@ -136,9 +136,9 @@ mod tests {
     fn constructors_agree_on_regular_files() {
         let temp = TempDir::new().unwrap();
         let path = temp.path().join("meta.json");
-        std::fs::write(&path, "{}").unwrap();
-        let path_metadata = std::fs::symlink_metadata(&path).unwrap();
-        let handle = std::fs::File::open(&path).unwrap();
+        fs::write(&path, "{}").unwrap();
+        let path_metadata = fs::symlink_metadata(&path).unwrap();
+        let handle = fs::File::open(&path).unwrap();
 
         let by_path = FileStat::for_path(&path).unwrap();
         let from_path_metadata = FileStat::from_metadata(&path_metadata);
@@ -163,7 +163,7 @@ mod tests {
         // through one reports the target it actually reads.
         let temp = TempDir::new().unwrap();
         let target = temp.path().join("target.json");
-        std::fs::write(&target, "abc").unwrap();
+        fs::write(&target, "abc").unwrap();
         let link = temp.path().join("link.json");
         std::os::unix::fs::symlink(&target, &link).unwrap();
 
@@ -171,7 +171,7 @@ mod tests {
         let link_stat = FileStat::for_path(&link).unwrap();
         assert_ne!(link_stat, target_stat, "for_path followed the symlink");
 
-        let handle = std::fs::File::open(&link).unwrap();
+        let handle = fs::File::open(&link).unwrap();
         assert_eq!(
             FileStat::from_metadata(&handle.metadata().unwrap()),
             target_stat,
@@ -190,25 +190,22 @@ mod tests {
         let temp = TempDir::new().unwrap();
         let relative = "journal/0000000000000002.jsonl";
         let path = temp.path().join(relative);
-        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-        std::fs::write(&path, "record\n").unwrap();
-        let metadata = std::fs::symlink_metadata(&path).unwrap();
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(&path, "record\n").unwrap();
+        let metadata = fs::symlink_metadata(&path).unwrap();
         let sample = FileSample::for_path(relative.to_string(), &path).unwrap();
 
         // Exact equality: the very stat that produced the sample matches,
         // and so does an unchanged re-read of the same file.
         assert!(sample.matches_metadata(&metadata));
-        assert!(sample.matches_metadata(&std::fs::symlink_metadata(&path).unwrap()));
+        assert!(sample.matches_metadata(&fs::symlink_metadata(&path).unwrap()));
 
         // Growth after the sample is a change for freshness.
         use std::io::Write as _;
-        let mut file = std::fs::OpenOptions::new()
-            .append(true)
-            .open(&path)
-            .unwrap();
+        let mut file = fs::OpenOptions::new().append(true).open(&path).unwrap();
         file.write_all(b"more\n").unwrap();
         drop(file);
-        let grown = std::fs::symlink_metadata(&path).unwrap();
+        let grown = fs::symlink_metadata(&path).unwrap();
         assert_eq!(grown.ino(), metadata.ino(), "fixture premise: same inode");
         assert!(
             grown.len() > metadata.len(),
@@ -222,8 +219,8 @@ mod tests {
         // Replacement: identical bytes — same size — under a different
         // inode is still a different file.
         let twin = temp.path().join("twin.jsonl");
-        std::fs::write(&twin, "record\n").unwrap();
-        let twin_metadata = std::fs::symlink_metadata(&twin).unwrap();
+        fs::write(&twin, "record\n").unwrap();
+        let twin_metadata = fs::symlink_metadata(&twin).unwrap();
         assert_eq!(twin_metadata.len(), metadata.len());
         assert_ne!(twin_metadata.ino(), metadata.ino());
         assert!(

@@ -40,7 +40,7 @@ impl SessionIndexer {
         stats: &mut IndexingStats,
         errors_detail: &mut VecDeque<IndexingError>,
     ) -> Result<()> {
-        let mut present = std::collections::HashSet::new();
+        let mut present = HashSet::new();
         let mut children = Vec::new();
         let mut deleting = HashSet::new();
         for path in entries {
