@@ -1,7 +1,7 @@
 # Codex paginated history — design
 
 **Date:** 2026-10-15  
-**Status:** Approved design  
+**Status:** Implemented by [PR #208](https://github.com/supermaciz/sessions-chronicle/pull/208) (merged 2026-10-17). The PR records verification results and known follow-ups.  
 **Scope:** Codex parser (`crates/core/src/parsers/codex.rs`), Codex subagent
 linkage (`crates/core/src/database/indexer.rs`), schema migration v18  
 **Format reference:** [docs/session-formats/codex.md](../../session-formats/codex.md)

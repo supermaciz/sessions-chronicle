@@ -1,7 +1,7 @@
 # Claude Code Recent Format Update — Design
 
 **Date:** 2026-10-19  
-**Status:** Approved design, pending implementation plan  
+**Status:** Implemented by [PR #209](https://github.com/supermaciz/sessions-chronicle/pull/209) (merged 2026-10-19). The borrowed-header optimization was measured and deliberately not shipped; see the PR and [parse-time measurements](../../session-formats/claude-code.md#parse-time-measurements).  
 **Related docs:** [claude-code.md](../../session-formats/claude-code.md), [SESSION_FORMAT_ANALYSIS.md](../../SESSION_FORMAT_ANALYSIS.md)
 
 ## Problem

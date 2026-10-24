@@ -1,7 +1,7 @@
 # Missing-source retention — design
 
 **Date:** 2026-09-07  
-**Status:** Approved design  
+**Status:** Approved design; implementation not yet evidenced in the current codebase (no matching PR or `source_missing` schema fields found).  
 **Scope:** Claude Code, OpenCode JSON and SQLite, Codex, Mistral Vibe, and Kimi Code
 
 ## Goal

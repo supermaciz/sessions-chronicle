@@ -1,7 +1,7 @@
 # Mistral Vibe Unified Session Support
 
 - Date: 2026-10-23
-- Status: Implemented — PR open; manual release validation pending
+- Status: Implemented by [PR #211](https://github.com/supermaciz/sessions-chronicle/pull/211) (merged 2026-10-24); documented limitations and manual release checks remain below.
 - Scope: Full functional parity with existing Mistral Vibe sessions
 - Revision: Implementation status and deviations recorded on 2026-10-24
 - Implementation: [PR #211](https://github.com/supermaciz/sessions-chronicle/pull/211), branch `vibe-v3`; code baseline `9bf2b16`

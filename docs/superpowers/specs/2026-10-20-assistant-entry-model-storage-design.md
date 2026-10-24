@@ -1,5 +1,7 @@
 # Model storage for assistant transcript entries
 
+**Status:** Approved design; implementation not yet evidenced in the current codebase.  
+
 ## Intent and scope
 
 Preserve the model that produced each indexed assistant entry, including entries

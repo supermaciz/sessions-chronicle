@@ -2,7 +2,7 @@
 
 **Date:** 2026-10-24
 
-**Status:** Ready for review
+**Status:** Implemented by [PR #213](https://github.com/supermaciz/sessions-chronicle/pull/213) (merged 2026-10-24). See PR #213 for the confirmed escaped-attribute limitation and other follow-ups.
 
 **References:** [Kimi Code format reference](../../session-formats/kimi-code.md),
 [original Kimi Code support design](2026-07-29-kimi-code-support-design.md)
