@@ -49,6 +49,17 @@
   </categories>
   <content_rating type="oars-1.1" />
   <releases>
+    <release version="0.11.0" date="2026-10-24">
+      <description>
+        <p>Improves support for session formats and indexing reliability.</p>
+        <ul>
+          <li>Add OpenCode V2 session support and transcript context</li>
+          <li>Support Mistral Vibe v3 Unified sessions</li>
+          <li>Index Codex paginated history and link its subagents</li>
+          <li>Improve Claude Code titles and Kimi Code subagent detection, including resumes and swarms</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.10.0" date="2026-08-05">
       <description>
         <p>Adds GNOME search provider integration, session deep-linking, and Kimi Code support.</p>
