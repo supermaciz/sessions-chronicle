@@ -171,6 +171,212 @@ mod tests {
     }
 
     #[test]
+    fn swarm_retry_explicit_result_reserves_child_before_earlier_fallback() {
+        let mut records = swarm_records(Some(json!({"output":"Session closed", "isError":true})));
+        records[2]["event"]["args"]["items"] = json!(["A"]);
+        records.push(json!({"type":"context.append_loop_event", "time":1785320000020_i64, "event":{"type":"tool.call", "toolCallId":"AgentSwarm_retry", "name":"AgentSwarm", "args":{"items":["A"]}}}));
+        records.push(json!({"type":"context.append_loop_event", "event":{"type":"tool.result", "toolCallId":"AgentSwarm_retry", "result":{"output":"<agent_swarm_result>\n<subagent agent_id=\"agent-0\" item=\"A\">Retry body</subagent>\n</agent_swarm_result>"}}}));
+
+        let parsed = parse_swarm_records(swarm_state(), &records).main;
+        assert_eq!(parsed.subagents.len(), 1);
+        let row = &parsed.subagents[0];
+        assert_eq!(row.parser_ref.as_deref(), Some("AgentSwarm_retry"));
+        assert_eq!(row.agent_id.as_deref(), Some("agent-0"));
+        assert_eq!(row.result_summary.as_deref(), Some("Retry body"));
+        assert_eq!(parsed.tool_calls.len(), 1);
+        assert!(parsed.tool_calls[0].id.ends_with("::AgentSwarm_0"));
+        assert_eq!(
+            parsed.transcript_items[2].kind,
+            TranscriptItemKind::ToolCall
+        );
+        assert_eq!(
+            parsed.transcript_items[4].subagent_id.as_deref(),
+            Some(row.id.as_str())
+        );
+    }
+
+    #[test]
+    fn swarm_shared_fallback_child_keeps_both_attempts_generic() {
+        let mut records = swarm_records(None);
+        records[2]["event"]["args"]["items"] = json!(["A"]);
+        records.push(json!({"type":"context.append_loop_event", "time":1785320000020_i64, "event":{"type":"tool.call", "toolCallId":"AgentSwarm_retry", "name":"AgentSwarm", "args":{"items":["A"]}}}));
+        records.push(json!({"type":"context.append_loop_event", "time":1785320000020_i64, "event":{"type":"tool.call", "toolCallId":"AgentSwarm_independent", "name":"AgentSwarm", "args":{"items":["B"]}}}));
+
+        let parsed = parse_swarm_records(swarm_state(), &records).main;
+        assert_eq!(parsed.subagents.len(), 1);
+        assert_eq!(
+            parsed.subagents[0].parser_ref.as_deref(),
+            Some("AgentSwarm_independent")
+        );
+        assert_eq!(parsed.subagents[0].agent_id.as_deref(), Some("agent-1"));
+        assert_eq!(parsed.tool_calls.len(), 2);
+        assert!(
+            parsed
+                .tool_calls
+                .iter()
+                .any(|call| call.id.ends_with("::AgentSwarm_0"))
+        );
+        assert!(
+            parsed
+                .tool_calls
+                .iter()
+                .any(|call| call.id.ends_with("::AgentSwarm_retry"))
+        );
+    }
+
+    #[test]
+    fn swarm_incomplete_fallback_claim_prevents_wrong_link_from_other_attempt() {
+        let mut records = swarm_records(None);
+        records[2]["event"]["args"]["items"] = json!(["A"]);
+        records.push(json!({"type":"context.append_loop_event", "time":1785320000020_i64, "event":{"type":"tool.call", "toolCallId":"AgentSwarm_retry", "name":"AgentSwarm", "args":{"items":["A", "missing"]}}}));
+
+        let parsed = parse_swarm_records(swarm_state(), &records).main;
+        assert!(parsed.subagents.is_empty());
+        assert_eq!(parsed.tool_calls.len(), 2);
+    }
+
+    #[test]
+    fn swarm_duplicate_explicit_claims_stay_generic_and_reserve_children() {
+        let output = "<agent_swarm_result>\n<subagent agent_id=\"agent-0\" item=\"A\">Body A</subagent>\n<subagent agent_id=\"agent-1\" item=\"B\">Body B</subagent>\n</agent_swarm_result>";
+        let mut records = swarm_records(Some(json!({"output":output})));
+        // Overlap on A invalidates both whole explicit swarms, including B.
+        records.push(json!({"type":"context.append_loop_event", "time":1785320000020_i64, "event":{"type":"tool.call", "toolCallId":"AgentSwarm_duplicate", "name":"AgentSwarm", "args":{"items":["A"]}}}));
+        records.push(json!({"type":"context.append_loop_event", "event":{"type":"tool.result", "toolCallId":"AgentSwarm_duplicate", "result":{"output":"<agent_swarm_result>\n<subagent agent_id=\"agent-0\" item=\"A\">Duplicate A</subagent>\n</agent_swarm_result>"}}}));
+        records.push(json!({"type":"context.append_loop_event", "time":1785320000020_i64, "event":{"type":"tool.call", "toolCallId":"AgentSwarm_fallback", "name":"AgentSwarm", "args":{"items":["B"]}}}));
+
+        let parsed = parse_swarm_records(swarm_state(), &records).main;
+        assert!(parsed.subagents.is_empty());
+        assert_eq!(parsed.tool_calls.len(), 3);
+        assert_eq!(
+            parsed
+                .transcript_items
+                .iter()
+                .filter(|item| item.kind == TranscriptItemKind::ToolCall)
+                .count(),
+            3
+        );
+    }
+
+    #[test]
+    fn swarm_label_items_preserve_whitespace_in_results() {
+        assert_swarm_preserves_whitespace_identity(false, true);
+    }
+
+    #[test]
+    fn swarm_legacy_items_preserve_whitespace_in_results() {
+        assert_swarm_preserves_whitespace_identity(true, true);
+    }
+
+    #[test]
+    fn swarm_label_items_preserve_whitespace_in_pending_fallback() {
+        assert_swarm_preserves_whitespace_identity(false, false);
+    }
+
+    #[test]
+    fn swarm_legacy_items_preserve_whitespace_in_pending_fallback() {
+        assert_swarm_preserves_whitespace_identity(true, false);
+    }
+
+    fn assert_swarm_preserves_whitespace_identity(legacy: bool, with_result: bool) {
+        let mut metadata = swarm_state();
+        for (agent_id, item) in [("agent-0", " A "), ("agent-1", "A")] {
+            if legacy {
+                metadata["agents"][agent_id]["labels"]
+                    .as_object_mut()
+                    .unwrap()
+                    .remove("swarmItem");
+                metadata["agents"][agent_id]["swarmItem"] = json!(item);
+            } else {
+                metadata["agents"][agent_id]["labels"]["swarmItem"] = json!(item);
+            }
+        }
+        let result = with_result.then(|| json!({"output":"<agent_swarm_result>\n<subagent agent_id=\"agent-1\" item=\"A\">Plain body</subagent>\n<subagent agent_id=\"agent-0\" item=\" A \">Spaced body</subagent>\n</agent_swarm_result>"}));
+        let mut records = swarm_records(result);
+        records[2]["event"]["args"]["items"] = json!([" A ", "A"]);
+        let parsed = parse_swarm_records(metadata, &records);
+        assert_eq!(parsed.main.subagents.len(), 2);
+        assert!(parsed.main.tool_calls.is_empty());
+        for (index, (agent_id, title, prompt, summary)) in [
+            ("agent-0", " A ", "Review  A  now", "Spaced body"),
+            ("agent-1", "A", "Review A now", "Plain body"),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let row = &parsed.main.subagents[index];
+            assert_eq!(row.agent_id.as_deref(), Some(agent_id));
+            assert_eq!(row.title, title);
+            assert_eq!(row.prompt.as_deref(), Some(prompt));
+            assert_eq!(
+                row.result_summary.as_deref(),
+                with_result.then_some(summary)
+            );
+            assert_eq!(
+                row.child_session_id.as_deref(),
+                Some(parsed.children[index].session.id.as_str())
+            );
+            assert_eq!(
+                parsed.main.transcript_items[index + 2]
+                    .subagent_id
+                    .as_deref(),
+                Some(row.id.as_str())
+            );
+        }
+    }
+
+    #[test]
+    fn swarm_null_items_stay_generic_despite_valid_result() {
+        assert_invalid_swarm_items_stay_generic(Value::Null);
+    }
+
+    #[test]
+    fn swarm_non_array_items_stay_generic_despite_valid_result() {
+        assert_invalid_swarm_items_stay_generic(json!("A"));
+    }
+
+    #[test]
+    fn swarm_mixed_items_stay_generic_despite_valid_result() {
+        assert_invalid_swarm_items_stay_generic(json!(["A", null]));
+    }
+
+    fn assert_invalid_swarm_items_stay_generic(items: Value) {
+        const OUTPUT: &str = "<agent_swarm_result>\n<subagent agent_id=\"agent-0\" item=\"A\">Body A</subagent>\n</agent_swarm_result>";
+        let mut records = swarm_records(Some(json!({"output":OUTPUT})));
+        records[2]["event"]["args"]
+            .as_object_mut()
+            .unwrap()
+            .remove("items");
+        // Absence still permits result-order resolution through the real parser.
+        let absent = parse_swarm_records(swarm_state(), &records).main;
+        assert_eq!(absent.subagents.len(), 1);
+        assert_eq!(absent.subagents[0].agent_id.as_deref(), Some("agent-0"));
+        assert_eq!(
+            absent.subagents[0].result_summary.as_deref(),
+            Some("Body A")
+        );
+        assert!(absent.tool_calls.is_empty());
+
+        records[2]["event"]["args"]["items"] = items.clone();
+        let parsed = parse_swarm_records(swarm_state(), &records);
+        assert_eq!(parsed.children.len(), 2);
+        assert!(parsed.main.subagents.is_empty());
+        assert_eq!(parsed.main.tool_calls.len(), 1);
+        let call = &parsed.main.tool_calls[0];
+        assert_eq!(call.tool_name, "AgentSwarm");
+        assert_eq!(call.output_text.as_deref(), Some(OUTPUT));
+        let input: Value = serde_json::from_str(call.input_json.as_deref().unwrap()).unwrap();
+        assert_eq!(input["items"], items);
+        assert_eq!(
+            parsed.main.transcript_items[2].kind,
+            TranscriptItemKind::ToolCall
+        );
+        assert_eq!(
+            parsed.main.transcript_items[2].tool_call_id.as_deref(),
+            Some(call.id.as_str())
+        );
+    }
+
+    #[test]
     fn swarm_reasoning_moves_to_first_item() {
         let mut records = swarm_records(None);
         records.insert(2, json!({"type":"context.append_loop_event", "event":{"type":"content.part", "part":{"type":"think", "think":"Fan out"}}}));
@@ -2292,6 +2498,13 @@ fn nonblank(value: Option<&Value>) -> Option<String> {
         .map(str::to_string)
 }
 
+fn nonblank_verbatim(value: Option<&Value>) -> Option<String> {
+    value
+        .and_then(Value::as_str)
+        .filter(|value| !value.trim().is_empty())
+        .map(str::to_string)
+}
+
 fn normalized_model(value: Option<&Value>) -> Option<String> {
     let raw = value?.as_str()?;
     crate::parsers::model::normalize_model(Some(&Value::String(raw.to_string())))
@@ -2542,33 +2755,39 @@ fn match_agent_calls(
     let mut swarm_candidates: Vec<_> = candidates
         .iter()
         .filter(|candidate| candidate.kind == DelegationKind::Swarm)
+        .filter_map(|candidate| {
+            // Only absence permits result-order resolution. An invalid present
+            // list must retain its generic call, even with an otherwise valid result.
+            let items = match candidate.args.as_ref().and_then(|args| args.get("items")) {
+                None => None,
+                Some(items) => Some(
+                    items
+                        .as_array()?
+                        .iter()
+                        .map(|item| item.as_str().map(str::to_string))
+                        .collect::<Option<Vec<_>>>()?,
+                ),
+            };
+            Some((candidate, items))
+        })
         .collect();
-    swarm_candidates.sort_by_key(|candidate| candidate.transcript_item_index);
+    swarm_candidates.sort_by_key(|(candidate, _)| candidate.transcript_item_index);
     let mut taken = HashSet::new();
     let mut consumed_at = HashMap::new();
     let mut expansions = Vec::new();
     let mut removed_tool_ids = HashSet::new();
-    for candidate in swarm_candidates {
-        let items: Option<Vec<String>> = candidate
-            .args
-            .as_ref()
-            .and_then(|args| args.get("items"))
-            .and_then(Value::as_array)
-            .and_then(|items| {
-                items
-                    .iter()
-                    .map(|item| item.as_str().map(str::to_string))
-                    .collect()
-            });
-        let call = swarm::SwarmCall {
+    let swarm_calls: Vec<_> = swarm_candidates
+        .iter()
+        .map(|(candidate, items)| swarm::SwarmCall {
             items: items.as_deref(),
             call_time_ms: candidate.call_time_ms,
             result_output: candidate.result_text.as_deref(),
             result_is_error: candidate.result_is_error,
-        };
-        let Some(members) = swarm::resolve_swarm(&call, &swarm_children, &taken)
-            .filter(|members| !members.is_empty())
-        else {
+        })
+        .collect();
+    let resolved_swarms = swarm::resolve_swarms(&swarm_calls, &swarm_children);
+    for ((candidate, _), members) in swarm_candidates.into_iter().zip(resolved_swarms) {
+        let Some(members) = members.filter(|members| !members.is_empty()) else {
             continue;
         };
         let args = candidate.args.as_ref();
@@ -2786,12 +3005,12 @@ fn load_state(path: &Path) -> Result<StateMetadata> {
                             .get("labels")
                             .and_then(|labels| labels.get("profileName")),
                     ),
-                    swarm_item: nonblank(
+                    swarm_item: nonblank_verbatim(
                         agent
                             .get("labels")
                             .and_then(|labels| labels.get("swarmItem")),
                     )
-                    .or_else(|| nonblank(agent.get("swarmItem"))),
+                    .or_else(|| nonblank_verbatim(agent.get("swarmItem"))),
                 },
             );
         }

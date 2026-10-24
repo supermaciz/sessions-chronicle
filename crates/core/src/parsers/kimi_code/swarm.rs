@@ -166,6 +166,68 @@ pub(super) fn resolve_swarm(
     resolve_swarm_fallback(call, children, taken)
 }
 
+pub(super) fn resolve_swarms(
+    calls: &[SwarmCall<'_>],
+    children: &[SwarmChild<'_>],
+) -> Vec<Option<Vec<SwarmMember>>> {
+    // Validate explicit evidence independently, before any fallback can take a child.
+    let explicit: Vec<_> = calls
+        .iter()
+        .map(|call| {
+            let blocks = parse_swarm_result(call.result_output?)?;
+            resolve_result_blocks(call, children, &HashSet::new(), &blocks)
+        })
+        .collect();
+    let mut explicit_claims = HashMap::new();
+    for member in explicit.iter().flatten().flatten() {
+        *explicit_claims.entry(member.agent_id.clone()).or_insert(0) += 1;
+    }
+    // Even conflicting explicit claims reserve every member: neither the first
+    // claimant nor a fallback may turn ambiguous ownership into a navigable link.
+    let reserved: HashSet<_> = explicit_claims.keys().cloned().collect();
+    let mut fallback_claims = HashMap::new();
+    for (call, explicit_members) in calls.iter().zip(&explicit) {
+        if explicit_members.is_some() {
+            continue;
+        }
+        let (Some(items), Some(call_time)) = (call.items, call.call_time_ms) else {
+            continue;
+        };
+        for child in children {
+            if !reserved.contains(child.agent_id)
+                && child
+                    .swarm_item
+                    .is_some_and(|item| items.iter().any(|want| want == item))
+                && child
+                    .first_wire_time_ms
+                    .is_some_and(|time| time >= call_time)
+            {
+                *fallback_claims.entry(child.agent_id).or_insert(0) += 1;
+            }
+        }
+    }
+
+    calls
+        .iter()
+        .zip(explicit)
+        .map(|(call, explicit_members)| {
+            if let Some(members) = explicit_members {
+                return members
+                    .iter()
+                    .all(|member| explicit_claims[&member.agent_id] == 1)
+                    .then_some(members);
+            }
+            // Count possible claims even for incomplete fallbacks. Failing to resolve
+            // another item does not prove that this attempt did not create the child.
+            resolve_swarm(call, children, &reserved).filter(|members| {
+                members
+                    .iter()
+                    .all(|member| fallback_claims.get(member.agent_id.as_str()) == Some(&1))
+            })
+        })
+        .collect()
+}
+
 fn resolve_result_blocks(
     call: &SwarmCall<'_>,
     children: &[SwarmChild<'_>],
