@@ -6,8 +6,25 @@ use serde::{Deserialize, Serialize};
 pub use super::saved_results::FileStat;
 use super::store::FileSample;
 
-// Version 2 invalidates signatures published before the journal/state/identity
-// fixes: unchanged stores must be revalidated, not silently skipped forever.
+/// Revision of Sessions Chronicle's Unified reader semantics, stored in each
+/// successful [`UnifiedSignature`]. This is independent of Vibe's store-format
+/// minor version and the SQLite schema version.
+///
+/// Increment this monotonically when a parsing, replay, conversion, validation,
+/// or freshness change requires previously indexed, unchanged stores to be read
+/// again. Do not increment it for behavior-preserving refactors, optimizations,
+/// documentation, or test-only changes.
+///
+/// A version mismatch makes [`UnifiedSignature::is_current`] return `false`, so
+/// the next incremental pass reprocesses affected Unified stores without a
+/// global database clear or forcing other AI assistants to reindex. Successful
+/// publication atomically replaces the session contents and signature while
+/// preserving favorites. Failed or deferred reads retain the previous indexed
+/// snapshot and signature; no source store is modified.
+///
+/// Version 2 invalidates signatures published before the journal-digest,
+/// state-union, and identity-validation fixes. Keep the maintenance policy in
+/// `docs/session-formats/mistral-vibe.md` aligned with this contract.
 pub const UNIFIED_READER_VERSION: u32 = 2;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

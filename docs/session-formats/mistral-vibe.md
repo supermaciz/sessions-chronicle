@@ -232,6 +232,40 @@ owned Unified rows in the same source root; legacy nested-child behavior is
 unchanged. Unknown minor-9 state variants (including `pending` effect states)
 are unsupported rather than presented as successful activity.
 
+#### Reader Semantic Version and Incremental Invalidation
+
+`UNIFIED_READER_VERSION` in
+`crates/core/src/parsers/mistral_vibe_unified/signature.rs` is a monotonically
+increasing revision of **Sessions Chronicle's reader semantics**, not a Vibe
+storage revision or an application release number. Its value is stored in
+`UnifiedSignature.reader_version` in the `vibe_unified_signatures` table.
+
+Increment it when a parsing, journal-replay, conversion, validation, or
+freshness change requires **already indexed stores to be reprocessed even when
+their source files have not changed**. For example, corrected transcript
+mapping or stricter validation of previously accepted content must not leave
+an old successful signature silently skipping the affected store. Do not bump
+it for behavior-preserving refactors, optimizations, documentation, or test-only
+changes. Add or update a regression proving that an old reader-version
+signature is no longer current. Version **2** invalidates signatures predating
+the journal-digest, state-union, and identity-validation fixes.
+
+A stored version unequal to the current constant makes `is_current()` return
+`false`. The next incremental pass retries those Unified stores through the
+normal reader; no global database clear is required and other AI assistants
+are not forced to reindex. Successful publication atomically updates session
+contents and the signature while preserving favorites. A failed or deferred
+read keeps the previous indexed snapshot and signature, so a later pass can
+retry. Source stores remain read-only.
+
+Keep these version domains separate:
+
+| Version | Purpose |
+|---|---|
+| Vibe `store_format` / `store_format_minor` (currently minor 9 only) | Which upstream on-disk format the reader accepts. |
+| `UNIFIED_READER_VERSION` (currently 2) | Whether a prior successful Unified read may still be skipped. |
+| SQLite schema version | Structure of Sessions Chronicle's index database; changing reader semantics alone does not require a schema migration. |
+
 ---
 
 ## Storage & File Naming (Legacy, ≤ 2.x)
