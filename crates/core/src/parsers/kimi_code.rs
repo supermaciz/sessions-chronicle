@@ -950,6 +950,7 @@ mod tests {
         assert!(parsed.tool_calls.is_empty());
     }
 }
+mod expansion;
 mod swarm;
 mod text;
 
