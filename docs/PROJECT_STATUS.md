@@ -59,6 +59,7 @@ Sessions Chronicle is a GNOME desktop app that indexes local AI coding assistant
 - Codex paginated history indexing and task-name subagents (#208)
 - OpenCode V2 support: SQLite session store indexed with lazy, typed transcript context entries (#210)
 - Mistral Vibe Unified reader: pointer/manifest/projection/chunk loading and journal replay for minor 9 stores; legacy Vibe indexing remains supported
+- Kimi Code subagents linked on real sessions, including resumed subagents and AgentSwarm fan-outs; token totals include compaction usage
 
 ### Since `v0.4.8` (`v0.5.0` → `v0.7.1`)
 
